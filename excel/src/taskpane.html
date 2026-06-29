@@ -39,6 +39,39 @@
         <span id="conn" class="pill pill-off" role="status" aria-live="polite">disconnected</span>
       </header>
 
+      <!-- Sign-in: interactive AuthService.Login over the shared WS transport. A
+           signed-in identity authenticates BOTH the pane and the CELNET.* cells
+           (one shared runtime) and captures the caller's effective capabilities,
+           which DISABLE-gate the dealing affordances below by action × asset. The
+           server still enforces every RPC — this is client-side UX parity. -->
+      <section class="card" aria-labelledby="auth-title">
+        <h2 id="auth-title">Sign in</h2>
+
+        <div id="auth-signedout">
+          <div class="frow">
+            <label class="full" for="auth-email">Email
+              <input id="auth-email" type="email" autocomplete="username" spellcheck="false" placeholder="trader@celnet.com" />
+            </label>
+            <label class="full" for="auth-password">Password
+              <input id="auth-password" type="password" autocomplete="current-password" placeholder="••••••••" />
+            </label>
+          </div>
+          <div class="btnrow">
+            <button id="auth-signin" class="btn primary" type="button">Sign in</button>
+          </div>
+          <div class="row"><span id="auth-state" class="state" role="status" aria-live="polite"></span></div>
+          <div class="footnote">Sign in to deal. Price-preview cells stay available signed-out (the server enforces every request).</div>
+        </div>
+
+        <div id="auth-signedin" hidden>
+          <div class="row">
+            <span id="auth-who" class="result"></span>
+            <button id="auth-signout" class="btn ghost" type="button">Sign out</button>
+          </div>
+          <ul id="auth-caps" class="footnote" aria-label="Your permissions"></ul>
+        </div>
+      </section>
+
       <section class="card" aria-labelledby="rfq-title">
         <h2 id="rfq-title">RFQ · multi-dealer</h2>
 

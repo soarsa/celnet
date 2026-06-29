@@ -28,6 +28,10 @@ import type {
   CcyPair,
   Conventions,
   CreateUserInput,
+  EntityDesc,
+  EntityInput,
+  BookDesc,
+  BookInput,
   Deal,
   DealerQuote,
   DeskDesc,
@@ -89,6 +93,7 @@ import type {
   Update,
   UpdateUserInput,
   UserCapabilities,
+  RoleCapabilities,
   UserDesc,
   UserRole,
   VegaBucket,
@@ -691,6 +696,30 @@ export class MockTransport implements CelnetTransport {
     },
   ];
   private readonly mockDesks: DeskDesc[] = [];
+  /**
+   * The offline legal-entity / netting-book registry, seeded to MIRROR the
+   * server's default registry (`celnet-server` `IdentityStore::seed_registry`) so
+   * the rates booking form's named dropdowns and the Book/blotter name-resolution
+   * behave identically with no server. Stores are real (admin CRUD mutates them);
+   * `next*Key` mints the lowest free key, exactly like the server.
+   */
+  private readonly mockEntities: EntityDesc[] = [
+    { key: 1, name: "Celnet Global Markets", code: "CGM" },
+    { key: 2, name: "Celnet Securities", code: "CSEC" },
+  ];
+  private readonly mockBooks: BookDesc[] = [
+    { key: 1, name: "Rates Trading", entityKey: 1 },
+    { key: 2, name: "Rates Relative Value", entityKey: 1 },
+    { key: 3, name: "Government Bonds", entityKey: 2 },
+    { key: 4, name: "Swaps", entityKey: 2 },
+  ];
+  /**
+   * The admin-editable per-role capability bundles (the role's base authority).
+   * Only **non-admin** roles are ever stored (`ADMIN` is grant-all and immutable); a
+   * role absent here resolves to {@link mockDefaultTraderBundle}, mirroring the
+   * server's `IdentityStore::role_bundles` serde-default behaviour.
+   */
+  private readonly mockRoleBundles = new Map<UserRole, Capability[]>();
   /** Issued session tokens (offline liveness for `logout`'s `ended` result). */
   private readonly mockTokens = new Set<string>();
   private mockTokenSeq = 0n;
@@ -1300,6 +1329,7 @@ export class MockTransport implements CelnetTransport {
     // offline affordance gating is coherent real behaviour, not a stub.
     const capabilities = mockResolveEffective(
       found.user.role,
+      this.mockRoleBase(found.user.role),
       found.grants,
       found.denies,
     );
@@ -1385,7 +1415,12 @@ export class MockTransport implements CelnetTransport {
     return {
       grants: entry.grants.map((c) => ({ ...c })),
       denies: entry.denies.map((c) => ({ ...c })),
-      effective: mockResolveEffective(entry.user.role, entry.grants, entry.denies),
+      effective: mockResolveEffective(
+        entry.user.role,
+        this.mockRoleBase(entry.user.role),
+        entry.grants,
+        entry.denies,
+      ),
     };
   }
 
@@ -1412,8 +1447,56 @@ export class MockTransport implements CelnetTransport {
     return {
       grants: entry.grants.map((c) => ({ ...c })),
       denies: entry.denies.map((c) => ({ ...c })),
-      effective: mockResolveEffective(entry.user.role, entry.grants, entry.denies),
+      effective: mockResolveEffective(
+        entry.user.role,
+        this.mockRoleBase(entry.user.role),
+        entry.grants,
+        entry.denies,
+      ),
     };
+  }
+
+  /**
+   * The resolved capability base a role confers (the admin-editable bundle).
+   * `ADMIN` resolves to an empty base here — its grant-all is handled by the
+   * resolver's role check, never a stored bundle; a non-admin role resolves to its
+   * stored bundle, or the default trader bundle when none has been set.
+   */
+  private mockRoleBase(role: UserRole): Capability[] {
+    if (role === "ADMIN") return [];
+    return this.mockRoleBundles.get(role) ?? mockDefaultTraderBundle();
+  }
+
+  async getRoleCapabilities(role: UserRole): Promise<RoleCapabilities> {
+    // ADMIN is grant-all and immutable; report the full surface, never a stored bundle.
+    const capabilities = role === "ADMIN" ? mockGrantAll() : this.mockRoleBase(role);
+    return { capabilities: capabilities.map((c) => ({ ...c })) };
+  }
+
+  async setRoleCapabilities(
+    role: UserRole,
+    capabilities: readonly Capability[],
+  ): Promise<RoleCapabilities> {
+    // The Admin role is grant-all and can never be narrowed (mirrors the server's
+    // `failed_precondition`).
+    if (role === "ADMIN") {
+      throw new Error("the Admin role is grant-all and cannot be narrowed");
+    }
+    // Server parity: an unknown action/asset label is rejected, never silently dropped.
+    for (const cap of capabilities) {
+      if (!CAPABILITY_ACTIONS.includes(cap.action) || !CAPABILITY_ASSETS.includes(cap.asset)) {
+        throw new Error(`unknown capability \`${cap.action}/${cap.asset}\``);
+      }
+    }
+    // The bundle is replaced wholesale. A successful set revokes the live sessions of
+    // every user holding the role server-side; offline the single in-browser session
+    // is the admin's own, so there is nothing to revoke here — the contract semantics
+    // are surfaced to the admin by the workspace's success note.
+    this.mockRoleBundles.set(
+      role,
+      capabilities.map((c) => ({ ...c })),
+    );
+    return { capabilities: this.mockRoleBase(role).map((c) => ({ ...c })) };
   }
 
   async listDesks(): Promise<DeskDesc[]> {
@@ -1449,6 +1532,114 @@ export class MockTransport implements CelnetTransport {
   /** The number of enabled (non-disabled) administrators in the offline roster. */
   private activeAdminCount(): number {
     return this.mockUsers.filter((u) => u.user.role === "ADMIN" && !u.user.disabled).length;
+  }
+
+  // --- legal-entity / netting-book registry (offline) ------------------------
+  //
+  // A GENUINE in-memory registry (not a stub): admin CRUD mutates the stores and
+  // create auto-assigns the lowest free key (`key: 0` ⇒ auto), exactly like the
+  // server. Listing is unauthenticated here (offline has no role gate); the live
+  // server enforces admin-only mutation and any-user listing.
+
+  /** The lowest free key ≥ 1 across the given used keys (server parity). */
+  private static lowestFreeKey(used: readonly number[]): number {
+    const set = new Set(used);
+    let k = 1;
+    while (set.has(k)) k += 1;
+    return k;
+  }
+
+  async listEntities(): Promise<EntityDesc[]> {
+    return this.mockEntities.map((e) => ({ ...e }));
+  }
+
+  async createEntity(input: EntityInput): Promise<EntityDesc> {
+    const name = input.name.trim();
+    const code = input.code.trim();
+    if (name.length === 0) throw new Error("entity name is required");
+    if (code.length === 0) throw new Error("entity code is required");
+    if (this.mockEntities.some((e) => e.name === name)) {
+      throw new Error(`an entity named \`${name}\` already exists`);
+    }
+    if (this.mockEntities.some((e) => e.code === code)) {
+      throw new Error(`an entity with code \`${code}\` already exists`);
+    }
+    const key = MockTransport.lowestFreeKey(this.mockEntities.map((e) => e.key));
+    const entity: EntityDesc = { key, name, code };
+    this.mockEntities.push(entity);
+    return { ...entity };
+  }
+
+  async updateEntity(key: number, input: EntityInput): Promise<EntityDesc> {
+    const existing = this.mockEntities.find((e) => e.key === key);
+    if (!existing) throw new Error(`no entity with key ${key}`);
+    const name = input.name.trim();
+    const code = input.code.trim();
+    if (name.length === 0) throw new Error("entity name is required");
+    if (code.length === 0) throw new Error("entity code is required");
+    if (this.mockEntities.some((e) => e.key !== key && e.name === name)) {
+      throw new Error(`an entity named \`${name}\` already exists`);
+    }
+    if (this.mockEntities.some((e) => e.key !== key && e.code === code)) {
+      throw new Error(`an entity with code \`${code}\` already exists`);
+    }
+    existing.name = name;
+    existing.code = code;
+    return { ...existing };
+  }
+
+  async deleteEntity(key: number): Promise<boolean> {
+    // Referential integrity: refuse while any book still references the entity
+    // (mirrors the server's FailedPrecondition).
+    if (this.mockBooks.some((b) => b.entityKey === key)) {
+      throw new Error("cannot delete an entity while books still reference it");
+    }
+    const idx = this.mockEntities.findIndex((e) => e.key === key);
+    if (idx < 0) return false;
+    this.mockEntities.splice(idx, 1);
+    return true;
+  }
+
+  async listBooks(): Promise<BookDesc[]> {
+    return this.mockBooks.map((b) => ({ ...b }));
+  }
+
+  async createBook(input: BookInput): Promise<BookDesc> {
+    const name = input.name.trim();
+    if (name.length === 0) throw new Error("book name is required");
+    if (!this.mockEntities.some((e) => e.key === input.entityKey)) {
+      throw new Error(`no entity with key ${input.entityKey}`);
+    }
+    if (this.mockBooks.some((b) => b.name === name)) {
+      throw new Error(`a book named \`${name}\` already exists`);
+    }
+    const key = MockTransport.lowestFreeKey(this.mockBooks.map((b) => b.key));
+    const book: BookDesc = { key, name, entityKey: input.entityKey };
+    this.mockBooks.push(book);
+    return { ...book };
+  }
+
+  async updateBook(key: number, input: BookInput): Promise<BookDesc> {
+    const existing = this.mockBooks.find((b) => b.key === key);
+    if (!existing) throw new Error(`no book with key ${key}`);
+    const name = input.name.trim();
+    if (name.length === 0) throw new Error("book name is required");
+    if (!this.mockEntities.some((e) => e.key === input.entityKey)) {
+      throw new Error(`no entity with key ${input.entityKey}`);
+    }
+    if (this.mockBooks.some((b) => b.key !== key && b.name === name)) {
+      throw new Error(`a book named \`${name}\` already exists`);
+    }
+    existing.name = name;
+    existing.entityKey = input.entityKey;
+    return { ...existing };
+  }
+
+  async deleteBook(key: number): Promise<boolean> {
+    const idx = this.mockBooks.findIndex((b) => b.key === key);
+    if (idx < 0) return false;
+    this.mockBooks.splice(idx, 1);
+    return true;
   }
 
   // --- RfqDeskService (offline) ----------------------------------------------
@@ -1724,6 +1915,29 @@ const MOCK_MIN_PASSWORD_LEN = 12;
  * except `administer` (mirrors the server's `TRADER_ACTIONS`). `ADMIN` is grant-all. */
 const MOCK_TRADER_DENIED_ACTION: CapabilityAction = "administer";
 
+/** The full action-by-asset surface (the ADMIN grant-all bundle). */
+function mockGrantAll(): Capability[] {
+  const caps: Capability[] = [];
+  for (const action of CAPABILITY_ACTIONS) {
+    for (const asset of CAPABILITY_ASSETS) caps.push({ action, asset });
+  }
+  return caps;
+}
+
+/**
+ * The default non-admin role bundle: every action except `administer` on both
+ * asset classes (mirrors the server's `default_trader_bundle`). The base a role
+ * confers until an admin narrows or widens it.
+ */
+function mockDefaultTraderBundle(): Capability[] {
+  const caps: Capability[] = [];
+  for (const action of CAPABILITY_ACTIONS) {
+    if (action === MOCK_TRADER_DENIED_ACTION) continue;
+    for (const asset of CAPABILITY_ASSETS) caps.push({ action, asset });
+  }
+  return caps;
+}
+
 /** A stable key for set membership over a capability. */
 function mockCapKey(action: CapabilityAction, asset: CapabilityAsset): string {
   return `${action} ${asset}`;
@@ -1738,9 +1952,11 @@ function mockCapKey(action: CapabilityAction, asset: CapabilityAsset): string {
  */
 function mockResolveEffective(
   role: UserRole,
+  roleBase: readonly Capability[],
   grants: readonly Capability[],
   denies: readonly Capability[],
 ): Capability[] {
+  const baseSet = new Set(roleBase.map((c) => mockCapKey(c.action, c.asset)));
   const grantSet = new Set(grants.map((c) => mockCapKey(c.action, c.asset)));
   const denySet = new Set(denies.map((c) => mockCapKey(c.action, c.asset)));
   const effective: Capability[] = [];
@@ -1748,7 +1964,7 @@ function mockResolveEffective(
     for (const asset of CAPABILITY_ASSETS) {
       const key = mockCapKey(action, asset);
       if (denySet.has(key)) continue; // deny-wins
-      const roleAllows = role === "ADMIN" || action !== MOCK_TRADER_DENIED_ACTION;
+      const roleAllows = role === "ADMIN" || baseSet.has(key);
       if (roleAllows || grantSet.has(key)) effective.push({ action, asset });
     }
   }

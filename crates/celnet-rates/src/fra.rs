@@ -20,8 +20,11 @@
 
 use crate::bootstrap::{BootstrapError, OisQuote, bootstrap_ois};
 use crate::curve::Curve;
+use crate::daycount::AccrualBasis;
 use crate::risk::ONE_BP;
-use celnet_types::{Rate, Time};
+use celnet_calendar::year_fraction;
+use celnet_types::{DayCount, Rate, Time};
+use time::Date;
 
 /// A forward rate agreement over the accrual period `[fixing, maturity]`.
 ///
@@ -87,6 +90,32 @@ impl Fra {
             fixed_rate,
             notional,
         })
+    }
+
+    /// Construct a FRA from calendar dates, taking the accrual fraction `tau`
+    /// from `accrual_basis` (e.g. ACT/360 or 30/360 Bond Basis).
+    ///
+    /// The contractual accrual `tau` is `accrual_basis.year_fraction(fixing_date,
+    /// maturity_date)` — this is the only place the leg's day-count convention
+    /// enters pricing. The curve coordinates `fixing` and `maturity` are measured
+    /// ACT/365F from `reference`, matching the curve time axis used by
+    /// [`crate::schedule`] (so a FRA and the OIS/discount curve share one axis).
+    ///
+    /// # Errors
+    /// Returns [`FraError`] if `maturity_date <= fixing_date` (non-increasing
+    /// curve times) or the resulting `tau <= 0`.
+    pub fn from_dates(
+        reference: Date,
+        fixing_date: Date,
+        maturity_date: Date,
+        accrual_basis: AccrualBasis,
+        fixed_rate: Rate,
+        notional: f64,
+    ) -> Result<Self, FraError> {
+        let fixing = year_fraction(DayCount::Act365Fixed, reference, fixing_date);
+        let maturity = year_fraction(DayCount::Act365Fixed, reference, maturity_date);
+        let accrual = accrual_basis.year_fraction(fixing_date, maturity_date).0;
+        Self::new(fixing, maturity, accrual, fixed_rate, notional)
     }
 }
 
@@ -253,6 +282,70 @@ mod tests {
         up.fixed_rate = Rate(base.fixed_rate.0 + ONE_BP);
         let fd = fra_pv(&curve, &up) - fra_pv(&curve, &base);
         assert!((fd - fra_pv01(&curve, &base)).abs() < 1e-15);
+    }
+
+    /// A dated FRA prices under a selectable accrual basis. The accrual fraction
+    /// `tau` is validated against the QuantLib 1.42.1 day counts for the window
+    /// [16 Sep 2025, 16 Dec 2025]: ACT/360 = 91 days, 30/360 Bond Basis = 90 days.
+    /// Because only the fixed leg carries `tau`, the par rate scales exactly
+    /// inversely with it (par_3360 / par_act == 91/90) and the curve coordinates
+    /// are basis-independent.
+    #[test]
+    fn fra_accrual_basis_selects_day_count_against_quantlib() {
+        use crate::daycount::AccrualBasis;
+        use time::{Date, Month};
+
+        let reference = Date::from_calendar_date(2025, Month::June, 16).unwrap();
+        let fixing_date = Date::from_calendar_date(2025, Month::September, 16).unwrap();
+        let maturity_date = Date::from_calendar_date(2025, Month::December, 16).unwrap();
+        let curve = test_curve();
+        let k = Rate(0.030);
+        let n = 50_000_000.0;
+
+        let fra_act = Fra::from_dates(
+            reference,
+            fixing_date,
+            maturity_date,
+            AccrualBasis::Act360,
+            k,
+            n,
+        )
+        .expect("act/360 fra");
+        let fra_3360 = Fra::from_dates(
+            reference,
+            fixing_date,
+            maturity_date,
+            AccrualBasis::Thirty360BondBasis,
+            k,
+            n,
+        )
+        .expect("30/360 fra");
+
+        // QuantLib-oracle accrual fractions.
+        assert!((fra_act.accrual - 91.0 / 360.0).abs() < 1e-15);
+        assert!((fra_3360.accrual - 90.0 / 360.0).abs() < 1e-15);
+
+        // Curve coordinates (ACT/365F from the reference) do not depend on the accrual basis.
+        assert_eq!(fra_act.fixing, fra_3360.fixing);
+        assert_eq!(fra_act.maturity, fra_3360.maturity);
+
+        // Only the fixed leg carries tau ⇒ par rate scales inversely with it.
+        let par_act = fra_par_rate(&curve, &fra_act).0;
+        let par_3360 = fra_par_rate(&curve, &fra_3360).0;
+        assert!(
+            par_3360 > par_act,
+            "30/360 has the smaller tau ⇒ higher par"
+        );
+        assert!((par_3360 / par_act - 91.0 / 90.0).abs() < 1e-12);
+
+        // At a shared fixed rate the PV difference is exactly the fixed-leg accrual change.
+        let df_mat = curve.discount_factor(fra_act.maturity).0;
+        let pv_diff = fra_pv(&curve, &fra_3360) - fra_pv(&curve, &fra_act);
+        let expected = n * k.0 * df_mat * (90.0 / 360.0 - 91.0 / 360.0);
+        assert!(
+            (pv_diff - expected).abs() < 1e-6,
+            "pv_diff {pv_diff} expected {expected}"
+        );
     }
 
     /// Key-rate ladder sums to the parallel DV01 (Jacobian completeness,

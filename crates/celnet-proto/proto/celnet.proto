@@ -3084,6 +3084,16 @@ service SurfaceService {
 enum FixAcceptorKind {
   // The FX-options dialect served by the existing acceptor.
   FIX_ACCEPTOR_KIND_OPTIONS = 0;
+  // The fixed-income (linear-rates / OIS) one-shot RFQ dialect: an inbound
+  // QuoteRequest(R) with SubscriptionRequestType(263)=0 is priced to a one-shot
+  // Quote(S). Standing one up requires the QuoteRespond capability on the
+  // FixedIncome asset class (in addition to connection administration).
+  FIX_ACCEPTOR_KIND_FIXED_INCOME_QUOTE = 1;
+  // The fixed-income (linear-rates / OIS) streaming RFS dialect: an inbound
+  // QuoteRequest(R) with SubscriptionRequestType(263)=1 subscribes to a streamed
+  // request-for-stream. Standing one up requires the Stream capability on the
+  // FixedIncome asset class (in addition to connection administration).
+  FIX_ACCEPTOR_KIND_FIXED_INCOME_STREAM = 2;
 }
 
 // A managed inbound FIX-acceptor connection: the persisted definition plus its
@@ -3546,6 +3556,182 @@ message DeleteDeskResponse {
   optional uint64 correlation_id = 2;
 }
 
+// A named legal entity / account: the display name + short code for a `uint32`
+// `RatesPosition.entity` partition key. The position wire stays numeric; this only
+// names the key so traders pick a name and the Book/blotter show a name.
+message EntityDesc {
+  // The `uint32` wire partition key (`RatesPosition.entity`) this entry names.
+  uint32 key = 1;
+  // Human-friendly legal-entity / account name (unique, case-insensitive).
+  string name = 2;
+  // Short display code shown in compact cells (unique, case-insensitive).
+  string code = 3;
+}
+
+// A named netting book: the display name for a `uint32` `RatesPosition.book` key,
+// belonging to exactly one entity.
+message BookDesc {
+  // The `uint32` wire key (`RatesPosition.book`) this entry names.
+  uint32 key = 1;
+  // Human-friendly book name (unique, case-insensitive).
+  string name = 2;
+  // The `EntityDesc.key` of the entity this book belongs to.
+  uint32 entity_key = 3;
+}
+
+// List the named legal entities / accounts (any authenticated caller).
+message ListEntitiesRequest {
+  // The caller's bearer token (must resolve to a valid session; not admin-gated).
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The full entity roster.
+message ListEntitiesResponse {
+  // Every entity, in creation order.
+  repeated EntityDesc entities = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Create a named legal entity / account (admin only).
+message CreateEntityRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The new entity's display name (must be unique, case-insensitive).
+  string name = 2;
+  // The new entity's short display code (must be unique, case-insensitive).
+  string code = 3;
+  // The `uint32` wire key to map. `0` ⇒ the server assigns the lowest free key; a
+  // non-zero value pins that key (must be unused).
+  uint32 key = 4;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 5;
+}
+// The created entity.
+message CreateEntityResponse {
+  // The newly created entity (its `key` is the assigned or pinned wire key).
+  EntityDesc entity = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Update a named legal entity / account's name/code (admin only). The wire `key` is
+// immutable (positions already reference it); identify the entity by `key`.
+message UpdateEntityRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The wire key of the entity to update (immutable identity).
+  uint32 key = 2;
+  // The new display name (must stay unique, case-insensitive).
+  string name = 3;
+  // The new short display code (must stay unique, case-insensitive).
+  string code = 4;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 5;
+}
+// The updated entity.
+message UpdateEntityResponse {
+  // The entity after the update.
+  EntityDesc entity = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Delete a named legal entity / account (admin only). Rejected while any book still
+// references it (`failed_precondition`).
+message DeleteEntityRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The wire key of the entity to delete.
+  uint32 key = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// Delete acknowledgement.
+message DeleteEntityResponse {
+  // Whether an entity was removed.
+  bool removed = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// List the named netting books (any authenticated caller).
+message ListBooksRequest {
+  // The caller's bearer token (must resolve to a valid session; not admin-gated).
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The full book roster.
+message ListBooksResponse {
+  // Every book, in creation order.
+  repeated BookDesc books = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Create a named netting book under an entity (admin only).
+message CreateBookRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The new book's display name (must be unique, case-insensitive).
+  string name = 2;
+  // The `EntityDesc.key` of the entity this book belongs to (must exist).
+  uint32 entity_key = 3;
+  // The `uint32` wire key to map. `0` ⇒ the server assigns the lowest free key; a
+  // non-zero value pins that key (must be unused).
+  uint32 key = 4;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 5;
+}
+// The created book.
+message CreateBookResponse {
+  // The newly created book (its `key` is the assigned or pinned wire key).
+  BookDesc book = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Update a named netting book's name/entity (admin only). The wire `key` is
+// immutable (positions already reference it); identify the book by `key`.
+message UpdateBookRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The wire key of the book to update (immutable identity).
+  uint32 key = 2;
+  // The new display name (must stay unique, case-insensitive).
+  string name = 3;
+  // The new owning entity key (must exist).
+  uint32 entity_key = 4;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 5;
+}
+// The updated book.
+message UpdateBookResponse {
+  // The book after the update.
+  BookDesc book = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Delete a named netting book (admin only).
+message DeleteBookRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The wire key of the book to delete.
+  uint32 key = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// Delete acknowledgement.
+message DeleteBookResponse {
+  // Whether a book was removed.
+  bool removed = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
 // One capability on the wire: an action label crossed with an asset-class label.
 // The labels are the entitlement kernel's canonical snake_case tokens (e.g.
 // `execute` × `fixed_income`); they round-trip exactly and an unknown token is
@@ -3609,6 +3795,49 @@ message SetUserCapabilitiesResponse {
   optional uint64 correlation_id = 4;
 }
 
+// Read a role's capability bundle — the base authority the role confers before
+// any per-user overlay (admin only).
+message GetRoleCapabilitiesRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The role whose bundle is read.
+  UserRole role = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// A role's resolved capability bundle.
+message GetRoleCapabilitiesResponse {
+  // The capabilities the role confers as its base. For ADMIN this is the full
+  // action × asset surface (grant-all, immutable); for a non-admin role it is the
+  // admin-editable bundle, defaulting to every action but `administer` on both
+  // asset classes when none has been stored.
+  repeated CapabilityDesc capabilities = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Replace a role's capability bundle (admin only). `capabilities` is the full new
+// bundle (not a delta); the change persists and revokes the live sessions of every
+// user holding the role so it takes effect on their next login. The ADMIN role is
+// grant-all and immutable — setting it is rejected with `failed_precondition`.
+message SetRoleCapabilitiesRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The non-admin role whose bundle is replaced.
+  UserRole role = 2;
+  // The new base capability bundle for the role.
+  repeated CapabilityDesc capabilities = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+// The role's bundle after the update (an admin read-back).
+message SetRoleCapabilitiesResponse {
+  // The capabilities now in effect as the role's base.
+  repeated CapabilityDesc capabilities = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
 // Server-enforced authentication + user/desk administration. Login mints a bearer
 // token the server validates on every subsequent RPC; administrative RPCs require
 // the resolved identity to be an admin. Accounts persist to disk and a default
@@ -3632,12 +3861,35 @@ service AuthService {
   rpc GetUserCapabilities(GetUserCapabilitiesRequest) returns (GetUserCapabilitiesResponse);
   // Replace a user's capability overlay (admin only).
   rpc SetUserCapabilities(SetUserCapabilitiesRequest) returns (SetUserCapabilitiesResponse);
+  // Read a role's capability bundle — its base authority (admin only).
+  rpc GetRoleCapabilities(GetRoleCapabilitiesRequest) returns (GetRoleCapabilitiesResponse);
+  // Replace a non-admin role's capability bundle (admin only).
+  rpc SetRoleCapabilities(SetRoleCapabilitiesRequest) returns (SetRoleCapabilitiesResponse);
   // List all desks (admin only).
   rpc ListDesks(ListDesksRequest) returns (ListDesksResponse);
   // Create a desk (admin only).
   rpc CreateDesk(CreateDeskRequest) returns (CreateDeskResponse);
   // Delete a desk (admin only).
   rpc DeleteDesk(DeleteDeskRequest) returns (DeleteDeskResponse);
+  // List the named legal entities / accounts (any authenticated caller — the rates
+  // booking form reads this to offer named entity choices, so it is NOT admin-only).
+  rpc ListEntities(ListEntitiesRequest) returns (ListEntitiesResponse);
+  // Create a named legal entity / account (admin only).
+  rpc CreateEntity(CreateEntityRequest) returns (CreateEntityResponse);
+  // Update a named legal entity / account (admin only).
+  rpc UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse);
+  // Delete a named legal entity / account (admin only). Rejected while any book
+  // still references it.
+  rpc DeleteEntity(DeleteEntityRequest) returns (DeleteEntityResponse);
+  // List the named netting books (any authenticated caller — the rates booking form
+  // reads this to offer named book choices, so it is NOT admin-only).
+  rpc ListBooks(ListBooksRequest) returns (ListBooksResponse);
+  // Create a named netting book under an entity (admin only).
+  rpc CreateBook(CreateBookRequest) returns (CreateBookResponse);
+  // Update a named netting book (admin only).
+  rpc UpdateBook(UpdateBookRequest) returns (UpdateBookResponse);
+  // Delete a named netting book (admin only).
+  rpc DeleteBook(DeleteBookRequest) returns (DeleteBookResponse);
 }
 
 // ===========================================================================

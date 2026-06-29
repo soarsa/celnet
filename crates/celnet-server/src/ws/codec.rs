@@ -41,14 +41,20 @@ use celnet_proto::{
     ListFixMessagesResponse, SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse,
     UpdateFixConnectionRequest, UpdateFixConnectionResponse,
 };
-// AuthService — server-enforced sessions + user/desk administration (WS mirror).
+// AuthService — server-enforced sessions + user/desk/entity/book administration (WS mirror).
 use celnet_proto::{
-    CapabilityDesc, CreateDeskRequest, CreateDeskResponse, CreateUserRequest, CreateUserResponse,
-    DeleteDeskRequest, DeleteDeskResponse, DeleteUserRequest, DeleteUserResponse, DeskDesc,
-    GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, ListDesksRequest, ListDesksResponse,
-    ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest,
-    LogoutResponse, ResetPasswordRequest, ResetPasswordResponse, SetUserCapabilitiesRequest,
-    SetUserCapabilitiesResponse, UpdateUserRequest, UpdateUserResponse, UserDesc,
+    BookDesc, CapabilityDesc, CreateBookRequest, CreateBookResponse, CreateDeskRequest,
+    CreateDeskResponse, CreateEntityRequest, CreateEntityResponse, CreateUserRequest,
+    CreateUserResponse, DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest,
+    DeleteDeskResponse, DeleteEntityRequest, DeleteEntityResponse, DeleteUserRequest,
+    DeleteUserResponse, DeskDesc, EntityDesc, GetRoleCapabilitiesRequest,
+    GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest, GetUserCapabilitiesResponse,
+    ListBooksRequest, ListBooksResponse, ListDesksRequest, ListDesksResponse, ListEntitiesRequest,
+    ListEntitiesResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
+    LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
+    SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
+    SetUserCapabilitiesResponse, UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest,
+    UpdateEntityResponse, UpdateUserRequest, UpdateUserResponse, UserDesc,
 };
 // Linear-rates (fixed-income) contract — the WS mirror of PricingService::PriceRates.
 use celnet_proto::{
@@ -2849,6 +2855,41 @@ pub(super) fn set_user_capabilities_response_to_json(r: &SetUserCapabilitiesResp
     })
 }
 
+pub(super) fn get_role_capabilities_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<GetRoleCapabilitiesRequest> {
+    Ok(GetRoleCapabilitiesRequest {
+        session_token: string_field(o, "session_token")?,
+        role: enum_or_zero(o, "role"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn get_role_capabilities_response_to_json(r: &GetRoleCapabilitiesResponse) -> Value {
+    json!({
+        "capabilities": capability_list_to_json(&r.capabilities),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn set_role_capabilities_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<SetRoleCapabilitiesRequest> {
+    Ok(SetRoleCapabilitiesRequest {
+        session_token: string_field(o, "session_token")?,
+        role: enum_or_zero(o, "role"),
+        capabilities: capability_list_from_json(o, "capabilities")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn set_role_capabilities_response_to_json(r: &SetRoleCapabilitiesResponse) -> Value {
+    json!({
+        "capabilities": capability_list_to_json(&r.capabilities),
+        "correlation_id": r.correlation_id,
+    })
+}
+
 pub(super) fn list_desks_request_from_json(o: &Map<String, Value>) -> Result<ListDesksRequest> {
     Ok(ListDesksRequest {
         session_token: string_field(o, "session_token")?,
@@ -2887,6 +2928,144 @@ pub(super) fn delete_desk_request_from_json(o: &Map<String, Value>) -> Result<De
 }
 
 pub(super) fn delete_desk_response_to_json(r: &DeleteDeskResponse) -> Value {
+    json!({ "removed": r.removed, "correlation_id": r.correlation_id })
+}
+
+/// An entity → JSON.
+fn entity_desc_to_json(e: &EntityDesc) -> Value {
+    json!({ "key": e.key, "name": e.name, "code": e.code })
+}
+
+/// A book → JSON.
+fn book_desc_to_json(b: &BookDesc) -> Value {
+    json!({ "key": b.key, "name": b.name, "entity_key": b.entity_key })
+}
+
+pub(super) fn list_entities_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListEntitiesRequest> {
+    Ok(ListEntitiesRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_entities_response_to_json(r: &ListEntitiesResponse) -> Value {
+    json!({
+        "entities": Value::Array(r.entities.iter().map(entity_desc_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn create_entity_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<CreateEntityRequest> {
+    Ok(CreateEntityRequest {
+        session_token: string_field(o, "session_token")?,
+        name: string_field(o, "name")?,
+        code: string_field(o, "code")?,
+        key: opt_u32(o, "key").unwrap_or(0),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn create_entity_response_to_json(r: &CreateEntityResponse) -> Value {
+    json!({
+        "entity": r.entity.as_ref().map(entity_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_entity_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdateEntityRequest> {
+    Ok(UpdateEntityRequest {
+        session_token: string_field(o, "session_token")?,
+        key: u32_field(o, "key")?,
+        name: string_field(o, "name")?,
+        code: string_field(o, "code")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_entity_response_to_json(r: &UpdateEntityResponse) -> Value {
+    json!({
+        "entity": r.entity.as_ref().map(entity_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn delete_entity_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<DeleteEntityRequest> {
+    Ok(DeleteEntityRequest {
+        session_token: string_field(o, "session_token")?,
+        key: u32_field(o, "key")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn delete_entity_response_to_json(r: &DeleteEntityResponse) -> Value {
+    json!({ "removed": r.removed, "correlation_id": r.correlation_id })
+}
+
+pub(super) fn list_books_request_from_json(o: &Map<String, Value>) -> Result<ListBooksRequest> {
+    Ok(ListBooksRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_books_response_to_json(r: &ListBooksResponse) -> Value {
+    json!({
+        "books": Value::Array(r.books.iter().map(book_desc_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn create_book_request_from_json(o: &Map<String, Value>) -> Result<CreateBookRequest> {
+    Ok(CreateBookRequest {
+        session_token: string_field(o, "session_token")?,
+        name: string_field(o, "name")?,
+        entity_key: u32_field(o, "entity_key")?,
+        key: opt_u32(o, "key").unwrap_or(0),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn create_book_response_to_json(r: &CreateBookResponse) -> Value {
+    json!({
+        "book": r.book.as_ref().map(book_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_book_request_from_json(o: &Map<String, Value>) -> Result<UpdateBookRequest> {
+    Ok(UpdateBookRequest {
+        session_token: string_field(o, "session_token")?,
+        key: u32_field(o, "key")?,
+        name: string_field(o, "name")?,
+        entity_key: u32_field(o, "entity_key")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_book_response_to_json(r: &UpdateBookResponse) -> Value {
+    json!({
+        "book": r.book.as_ref().map(book_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn delete_book_request_from_json(o: &Map<String, Value>) -> Result<DeleteBookRequest> {
+    Ok(DeleteBookRequest {
+        session_token: string_field(o, "session_token")?,
+        key: u32_field(o, "key")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn delete_book_response_to_json(r: &DeleteBookResponse) -> Value {
     json!({ "removed": r.removed, "correlation_id": r.correlation_id })
 }
 
@@ -4155,5 +4334,45 @@ mod tests {
         });
         assert_eq!(v["grants"][0]["asset"], json!("fixed_income"));
         assert_eq!(v["effective"][0]["action"], json!("book"));
+    }
+
+    /// The fixed-income acceptor kinds round-trip through the FIX-connection codec:
+    /// the spec decoder reads the integer enum tag (1 = FI-quote, 2 = FI-stream) and
+    /// the descriptor encoder emits it, so the decoder/router stay in lockstep with
+    /// the proto enum's new variants.
+    #[test]
+    fn fix_acceptor_fi_kinds_round_trip_through_the_codec() {
+        for tag in [
+            celnet_proto::FixAcceptorKind::Options as i32,
+            celnet_proto::FixAcceptorKind::FixedIncomeQuote as i32,
+            celnet_proto::FixAcceptorKind::FixedIncomeStream as i32,
+        ] {
+            let spec_json = json!({
+                "name": "Bank A — FI",
+                "kind": tag,
+                "bind_addr": "127.0.0.1:9099",
+                "sender_comp_id": "CELNET",
+                "target_comp_id": "CELNET-CPTY",
+                "enabled": true,
+                "desk": "g10",
+            });
+            let spec = fix_connection_spec_from_json(&spec_json).expect("spec decodes");
+            assert_eq!(spec.kind, tag, "the wire enum tag survives the decode");
+
+            let desc = FixConnectionDesc {
+                id: "fi-1".into(),
+                name: spec.name.clone(),
+                kind: tag,
+                bind_addr: spec.bind_addr.clone(),
+                sender_comp_id: spec.sender_comp_id.clone(),
+                target_comp_id: spec.target_comp_id.clone(),
+                enabled: true,
+                running: false,
+                bound_addr: String::new(),
+                desk: spec.desk.clone(),
+            };
+            let v = fix_connection_desc_to_json(&desc);
+            assert_eq!(v["kind"], json!(tag), "the descriptor re-emits the tag");
+        }
     }
 }

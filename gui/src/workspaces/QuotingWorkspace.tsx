@@ -4,9 +4,11 @@
  * right. A trader prices the selected request against its curve (the SAME
  * `priceRates` engine the Rates workspace uses), then RESPONDS — quoting a rate
  * or rejecting — and can ACCEPT (simulating the counterparty lifting the quote)
- * to demonstrate booking a deal + a rates position. A "counterparty simulator"
- * injects fresh inbound RFQ/IOIs so the whole lifecycle is exercisable
- * end-to-end with no external counterparty.
+ * to demonstrate booking a deal + a rates position. The inbox is populated only
+ * by REAL inbound requests (the FIX gateway / live counterparties); exploratory
+ * mock requests live in the standalone, permission-gated Simulator popup
+ * (`components/SimulatorPanel`), a pure client-side sandbox that never injects
+ * into this priced flow.
  *
  * One contract, two transports (GUI-DESIGN §6.2): the workspace talks ONLY to the
  * `CelnetTransport` desk seam (`submitDeskRequest` / `respondDeskRequest` /
@@ -21,21 +23,12 @@ import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
 import { principalForScope } from "../data/riskView";
-import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import { fmtPnlAdaptive, fmtRate, fmtClock } from "../lib/format";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
-import type {
-  DeskRequest,
-  DeskRequestKind,
-  RatesPricingResult,
-  Side,
-} from "../data/contract";
+import type { DeskRequest, RatesPricingResult, Side } from "../data/contract";
 import styles from "./QuotingWorkspace.module.css";
 
 const MM = 1_000_000;
-
-/** The default desk inbound requests are routed to (the offline simulator desk). */
-const DEFAULT_DESK = "g10-rates";
 
 /** A human label for a request's OIS direction (carried on the wire `Side`). */
 function sideLabel(side: Side): string {
@@ -129,9 +122,7 @@ export function QuotingWorkspace(): React.ReactElement {
           </p>
         )}
         {requests.length === 0 ? (
-          <p className={styles.empty}>
-            No inbound requests — inject one with the counterparty simulator below.
-          </p>
+          <p className={styles.empty}>No inbound requests.</p>
         ) : (
           <ul className={styles.reqList} aria-label="inbound requests">
             {requests.map((r) => {
@@ -163,32 +154,6 @@ export function QuotingWorkspace(): React.ReactElement {
             })}
           </ul>
         )}
-        <CounterpartySimulator
-          onSubmit={async (kind, counterparty, tenorYears, notionalMm, side) => {
-            try {
-              const res = await app.transport.submitDeskRequest({
-                kind,
-                counterparty,
-                desk: DEFAULT_DESK,
-                instrument: {
-                  tenorYears,
-                  fixedRate: 0.04,
-                  notional: notionalMm * MM,
-                  direction: side === "BUY" ? "PAY_FIXED" : "RECEIVE_FIXED",
-                },
-                curveSet: DEFAULT_USD_SOFR_CURVE,
-                side,
-                notional: notionalMm * MM,
-                ttlMs: 120_000,
-                ...(principal ? { principal } : {}),
-              });
-              setSelectedId(res.request.requestId);
-              refresh();
-            } catch (err) {
-              setError(err instanceof Error ? err.message : "failed to inject request");
-            }
-          }}
-        />
       </Panel>
 
       <Panel className={styles.deal} title="Price & respond">
@@ -463,100 +428,6 @@ function PricePanel({
         </p>
       )}
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// counterparty simulator
-// ---------------------------------------------------------------------------
-
-function CounterpartySimulator({
-  onSubmit,
-}: {
-  onSubmit: (
-    kind: DeskRequestKind,
-    counterparty: string,
-    tenorYears: number,
-    notionalMm: number,
-    side: Side,
-  ) => Promise<void>;
-}): React.ReactElement {
-  const [kind, setKind] = useState<DeskRequestKind>("RFQ");
-  const [counterparty, setCounterparty] = useState("Demo Counterparty");
-  const [tenorYears, setTenorYears] = useState(5);
-  const [notionalMm, setNotionalMm] = useState(50);
-  const [side, setSide] = useState<Side>("BUY");
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    setBusy(true);
-    try {
-      await onSubmit(kind, counterparty.trim() || "Counterparty", tenorYears, notionalMm, side);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <fieldset className={styles.simulator}>
-      <legend className={styles.simLegend}>Counterparty simulator</legend>
-      <div className={styles.simRow}>
-        <select
-          className={styles.simSelect}
-          value={kind}
-          aria-label="request kind"
-          onChange={(e) => setKind(e.target.value as DeskRequestKind)}
-        >
-          <option value="RFQ">RFQ</option>
-          <option value="IOI">IOI</option>
-        </select>
-        <input
-          className={styles.simInput}
-          type="text"
-          value={counterparty}
-          aria-label="counterparty name"
-          onChange={(e) => setCounterparty(e.target.value)}
-        />
-      </div>
-      <div className={styles.simRow}>
-        <label className={styles.simField}>
-          <span className={styles.fieldLabel}>Tenor</span>
-          <input
-            className={styles.simNum}
-            type="number"
-            min={1}
-            step={1}
-            value={tenorYears}
-            aria-label="tenor in years"
-            onChange={(e) => setTenorYears(Math.max(1, Math.trunc(Number(e.target.value))))}
-          />
-        </label>
-        <label className={styles.simField}>
-          <span className={styles.fieldLabel}>Notional mm</span>
-          <input
-            className={styles.simNum}
-            type="number"
-            min={1}
-            step={5}
-            value={notionalMm}
-            aria-label="notional in millions"
-            onChange={(e) => setNotionalMm(Math.max(1, Number(e.target.value)))}
-          />
-        </label>
-        <select
-          className={styles.simSelect}
-          value={side}
-          aria-label="request side"
-          onChange={(e) => setSide(e.target.value as Side)}
-        >
-          <option value="BUY">Pay</option>
-          <option value="SELL">Receive</option>
-        </select>
-        <Button variant="secondary" disabled={busy} onClick={submit}>
-          Inject
-        </Button>
-      </div>
-    </fieldset>
   );
 }
 

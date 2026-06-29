@@ -27,8 +27,10 @@
 pub mod bond;
 pub mod bootstrap;
 pub mod curve;
+pub mod daycount;
 pub mod fra;
 pub mod futures;
+pub mod futures_strip;
 pub mod ois;
 pub mod risk;
 pub mod schedule;
@@ -42,15 +44,19 @@ pub use bond::{
 };
 pub use bootstrap::{BootstrapError, OisQuote, bootstrap_ois};
 pub use curve::{Curve, CurveError, Interpolation};
+pub use daycount::AccrualBasis;
 pub use fra::{Fra, FraError, FraRisk, fra_par_rate, fra_pv, fra_pv01, fra_risk};
 pub use futures::{
     Deliverable, FutureError, StirFuture, cheapest_to_deliver, conversion_factor,
     convexity_adjustment, gross_basis, implied_repo_rate, stir_forward_rate, stir_futures_price,
     stir_futures_rate,
 };
+pub use futures_strip::{
+    FuturesStripError, StirFuturesQuote, bootstrap_futures_strip, implied_forward_rate,
+};
 pub use ois::{FixedPeriod, OisSchedule, ScheduleError, ois_annuity, ois_par_rate, ois_pv};
 pub use risk::{OisRisk, ois_risk, pv01};
-pub use schedule::{us_settlement_calendar, usd_sofr_ois_schedule};
+pub use schedule::{us_settlement_calendar, usd_ois_schedule_with_basis, usd_sofr_ois_schedule};
 pub use solver::{SolverError, brent_root};
 pub use turns::{TurnError, TurnJump, turn_discount_factor, with_turns};
 pub use vanilla_swap::{

@@ -33,6 +33,10 @@ import type {
   Conventions,
   CreateUserInput,
   DeskDesc,
+  EntityDesc,
+  EntityInput,
+  BookDesc,
+  BookInput,
   DrillRiskRequest,
   DrillRiskResponse,
   Execution,
@@ -71,6 +75,8 @@ import type {
   SmileModel,
   UpdateUserInput,
   UserCapabilities,
+  RoleCapabilities,
+  UserRole,
   UserDesc,
   Capability,
 } from "./contract";
@@ -117,6 +123,18 @@ import {
   createDeskRequestToWire,
   createUserRequestToWire,
   deleteDeskRequestToWire,
+  listEntitiesRequestToWire,
+  entitiesResponseFromWire,
+  createEntityRequestToWire,
+  updateEntityRequestToWire,
+  entityResponseFromWire,
+  deleteEntityRequestToWire,
+  listBooksRequestToWire,
+  booksResponseFromWire,
+  createBookRequestToWire,
+  updateBookRequestToWire,
+  bookResponseFromWire,
+  deleteBookRequestToWire,
   deleteUserRequestToWire,
   deskResponseFromWire,
   listDesksRequestToWire,
@@ -126,6 +144,9 @@ import {
   getUserCapabilitiesRequestToWire,
   setUserCapabilitiesRequestToWire,
   userCapabilitiesFromWire,
+  getRoleCapabilitiesRequestToWire,
+  setRoleCapabilitiesRequestToWire,
+  roleCapabilitiesFromWire,
   loginRequestToWire,
   loginResultFromWire,
   logoutRequestToWire,
@@ -1346,6 +1367,27 @@ export class WsTransport implements CelnetTransport {
     return userCapabilitiesFromWire(reply);
   }
 
+  async getRoleCapabilities(role: UserRole): Promise<RoleCapabilities> {
+    const reply = await this.conn.request(
+      "get_role_capabilities",
+      getRoleCapabilitiesRequestToWire(role),
+      "role_capabilities",
+    );
+    return roleCapabilitiesFromWire(reply);
+  }
+
+  async setRoleCapabilities(
+    role: UserRole,
+    capabilities: readonly Capability[],
+  ): Promise<RoleCapabilities> {
+    const reply = await this.conn.request(
+      "set_role_capabilities",
+      setRoleCapabilitiesRequestToWire(role, capabilities),
+      "role_capabilities_set",
+    );
+    return roleCapabilitiesFromWire(reply);
+  }
+
   async listDesks(): Promise<DeskDesc[]> {
     const reply = await this.conn.request("list_desks", listDesksRequestToWire(), "desks");
     return listDesksResponseFromWire(reply);
@@ -1361,6 +1403,76 @@ export class WsTransport implements CelnetTransport {
       "delete_desk",
       deleteDeskRequestToWire(id),
       "desk_deleted",
+    );
+    return reply["removed"] === true;
+  }
+
+  // --- legal-entity / netting-book registry (entity/book admin) --------------
+
+  async listEntities(): Promise<EntityDesc[]> {
+    const reply = await this.conn.request(
+      "list_entities",
+      listEntitiesRequestToWire(),
+      "entities",
+    );
+    return entitiesResponseFromWire(reply);
+  }
+
+  async createEntity(input: EntityInput): Promise<EntityDesc> {
+    const reply = await this.conn.request(
+      "create_entity",
+      createEntityRequestToWire(input),
+      "entity_created",
+    );
+    return entityResponseFromWire(reply);
+  }
+
+  async updateEntity(key: number, input: EntityInput): Promise<EntityDesc> {
+    const reply = await this.conn.request(
+      "update_entity",
+      updateEntityRequestToWire(key, input),
+      "entity_updated",
+    );
+    return entityResponseFromWire(reply);
+  }
+
+  async deleteEntity(key: number): Promise<boolean> {
+    const reply = await this.conn.request(
+      "delete_entity",
+      deleteEntityRequestToWire(key),
+      "entity_deleted",
+    );
+    return reply["removed"] === true;
+  }
+
+  async listBooks(): Promise<BookDesc[]> {
+    const reply = await this.conn.request("list_books", listBooksRequestToWire(), "books");
+    return booksResponseFromWire(reply);
+  }
+
+  async createBook(input: BookInput): Promise<BookDesc> {
+    const reply = await this.conn.request(
+      "create_book",
+      createBookRequestToWire(input),
+      "book_created",
+    );
+    return bookResponseFromWire(reply);
+  }
+
+  async updateBook(key: number, input: BookInput): Promise<BookDesc> {
+    const reply = await this.conn.request(
+      "update_book",
+      updateBookRequestToWire(key, input),
+      "book_updated",
+    );
+    return bookResponseFromWire(reply);
+  }
+
+  async deleteBook(key: number): Promise<boolean> {
+    const reply = await this.conn.request(
+      "delete_book",
+      deleteBookRequestToWire(key),
+      "book_deleted",
     );
     return reply["removed"] === true;
   }

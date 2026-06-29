@@ -15,8 +15,8 @@
  * the active underlier breathes, and each panel line's last-look ring drains.
  */
 
-import { Connection } from "../transport/connection";
-import { browserWebSocketFactory } from "../transport/socket";
+import { getConnection, getSession } from "../functions/runtime";
+import type { EntryPointId } from "../contract/access";
 import { DEFAULT_CONVENTIONS } from "../functions/shaping";
 import { getStaged, stageMark, markCommitted, markRejected } from "../functions/markStaging";
 import { brokerQuoteSetToWire, ccyPairToWire, conventionsToWire } from "../contract/wsCodec";
@@ -56,8 +56,6 @@ import {
 } from "./dealerPanel";
 import type { TermsCell } from "../functions/instrumentSpec";
 import type { ProductKind } from "./capability";
-
-const DEFAULT_ENDPOINT = "ws://127.0.0.1:8081";
 
 /** Map the trader-facing arm name to the contract product-kind for `priceability()`. */
 const ARM_TO_KIND: Readonly<Record<string, ProductKind>> = {
@@ -124,13 +122,6 @@ const UNDERLIER_GROUPS: Readonly<Record<AssetClass, string>> = {
   CRYPTO: "und-crypto",
 };
 
-function endpoint(): string {
-  const g = globalThis as unknown as { CELNET_WS_ENDPOINT?: string };
-  return typeof g.CELNET_WS_ENDPOINT === "string" && g.CELNET_WS_ENDPOINT.length > 0
-    ? g.CELNET_WS_ENDPOINT
-    : DEFAULT_ENDPOINT;
-}
-
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const node = document.getElementById(id);
   if (!node) throw new Error(`missing element #${id}`);
@@ -175,7 +166,11 @@ function termsToText(terms: readonly TermsRow[]): string {
 }
 
 function boot(): void {
-  const conn = new Connection({ url: endpoint(), factory: browserWebSocketFactory() });
+  // The ONE shared-runtime connection + session (functions/runtime.ts): a sign-in
+  // here installs the bearer token on the SAME transport the CELNET.* cells use, so
+  // both surfaces authenticate as one identity (docs §3.2, single multiplexed session).
+  const conn = getConnection();
+  const session = getSession();
   const connPill = el("conn");
   const markSvg = document.querySelector<SVGElement>(".hdr .mark");
 
@@ -385,6 +380,10 @@ function boot(): void {
   const book = (line: DealerLine, side: "BUY" | "SELL"): void => {
     void (async () => {
       if (!panel) return;
+      if (!session.canEntry("book")) {
+        setState("trade-state", session.entryDenialReason("book"), "bad");
+        return;
+      }
       try {
         setState("trade-state", `accepting ${side} on ${line.lpId}…`, "warn");
         const exec = await accept(panel, line.lpId, side, conn);
@@ -413,6 +412,11 @@ function boot(): void {
   const tickRings = (): void => {
     if (!panel) return;
     const nowNanos = BigInt(Date.now()) * 1_000_000n;
+    // The execute (book) capability gates every side button — a denied/anonymous
+    // caller sees the rows but cannot click-to-trade (disabled + explained), never
+    // a silent no-op. Re-read each tick so a sign-in/out flips the rows live.
+    const canBook = session.canEntry("book");
+    const bookReason = session.entryDenialReason("book");
     let anyLive = false;
     for (const line of panel.lines) {
       const frac = lastLookRemaining(line, nowNanos, DEFAULT_WINDOW_SECONDS);
@@ -427,7 +431,8 @@ function boot(): void {
       const expired = frac <= 0;
       row.classList.toggle("expired", expired);
       for (const btn of row.querySelectorAll<HTMLButtonElement>(".side-btn")) {
-        btn.disabled = expired || !connected;
+        btn.disabled = expired || !connected || !canBook;
+        btn.title = canBook ? "" : bookReason;
       }
       if (!expired) anyLive = true;
     }
@@ -441,6 +446,10 @@ function boot(): void {
   // ---- request the ranked multi-dealer panel ------------------------------
   el("rfq-go").addEventListener("click", () => {
     void (async () => {
+      if (!session.canEntry("rfq")) {
+        setState("rfq-state", session.entryDenialReason("rfq"), "bad");
+        return;
+      }
       const built = buildInstrument(state);
       if (!built.ok) {
         // A trader mistake the client can name first (a missing term, an FX-only
@@ -506,6 +515,10 @@ function boot(): void {
   // ---- contribute-mark flow (unchanged two-phase stage → confirm) ---------
   el("mk-stage").addEventListener("click", () => {
     void (async () => {
+      if (!session.canEntry("contribute")) {
+        setState("mk-state", session.entryDenialReason("contribute"), "bad");
+        return;
+      }
       try {
         const status = await stageMark(conn, {
           pair: val("mk-pair"),
@@ -528,6 +541,10 @@ function boot(): void {
   el("mk-commit").addEventListener("click", () => {
     void (async () => {
       if (!canCommitMark(mark)) return;
+      if (!session.canEntry("contribute")) {
+        setState("mk-state", session.entryDenialReason("contribute"), "bad");
+        return;
+      }
       try {
         setState("mk-state", "contributing…", "warn");
         // The commit: a single broker-quote-set mark for the (pair, tenor), with
@@ -569,6 +586,94 @@ function boot(): void {
       }
     })();
   });
+
+  // ---- sign-in / capability gating ----------------------------------------
+  // Interactive AuthService.Login over the shared transport; the captured
+  // effective capabilities DISABLE-gate the dealing affordances by action × asset.
+  // Anonymous keeps the price-preview workflow; the dealing controls require a
+  // signed-in identity (the "sign in to deal" posture). The server still enforces.
+  const authEmail = el<HTMLInputElement>("auth-email");
+  const authPassword = el<HTMLInputElement>("auth-password");
+  const signInBtn = el<HTMLButtonElement>("auth-signin");
+  const signOutBtn = el<HTMLButtonElement>("auth-signout");
+
+  /** Disable + EXPLAIN one button by its entry-point capability (never hide, never silent). */
+  const gateButton = (id: EntryPointId, btnId: string, alsoDisabled = false): void => {
+    const btn = el<HTMLButtonElement>(btnId);
+    const allowed = session.canEntry(id);
+    btn.disabled = alsoDisabled || !allowed;
+    btn.title = allowed ? "" : session.entryDenialReason(id);
+  };
+
+  const applyGating = (): void => {
+    gateButton("rfq", "rfq-go");
+    gateButton("contribute", "mk-stage");
+    gateButton("contribute", "mk-commit", !canCommitMark(mark));
+    // The book (execute) buttons live in the dynamic panel rows; tickRings re-applies
+    // their gating on its clock (and immediately here on a sign-in/out).
+    tickRings();
+  };
+
+  const renderAuth = (): void => {
+    const user = session.currentUser();
+    el("auth-signedout").hidden = user !== null;
+    el("auth-signedin").hidden = user === null;
+    if (user) {
+      const expired = session.isExpired();
+      el("auth-who").textContent = expired
+        ? `${user.displayName} — session expired, sign in again`
+        : `${user.displayName} · ${user.role}`;
+      const caps = el<HTMLUListElement>("auth-caps");
+      caps.replaceChildren();
+      for (const cap of session.effectiveCapabilities()) {
+        const li = document.createElement("li");
+        li.textContent = `${cap.action} · ${cap.asset}`;
+        caps.append(li);
+      }
+    }
+    applyGating();
+  };
+
+  signInBtn.addEventListener("click", () => {
+    void (async () => {
+      const email = authEmail.value.trim();
+      const password = authPassword.value;
+      if (email.length === 0 || password.length === 0) {
+        setState("auth-state", "enter your email and password", "warn");
+        return;
+      }
+      signInBtn.disabled = true;
+      setState("auth-state", "signing in…", "warn");
+      try {
+        const result = await conn.login(email, password);
+        session.signIn(result);
+        authPassword.value = ""; // never retain the secret in the field
+        setState("auth-state", "", "");
+      } catch (err) {
+        // Bad credentials / disabled account / transport error — named, never silent.
+        setState("auth-state", message(err), "bad");
+      } finally {
+        signInBtn.disabled = false;
+      }
+    })();
+  });
+
+  signOutBtn.addEventListener("click", () => {
+    void (async () => {
+      signOutBtn.disabled = true;
+      try {
+        await conn.logout().catch(() => false); // best-effort server invalidation
+      } finally {
+        session.signOut();
+        setState("auth-state", "signed out", "");
+        signOutBtn.disabled = false;
+      }
+    })();
+  });
+
+  // Re-gate live whenever the identity changes (the session is shared with cells).
+  session.subscribe(() => renderAuth());
+  renderAuth();
 
   renderTicket();
   renderTouch(null);

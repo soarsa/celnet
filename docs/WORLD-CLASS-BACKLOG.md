@@ -409,7 +409,30 @@ independently-landable feature. Format matches this file: dedup-key, evidence, a
   trip); `excel/src/taskpane/capability.ts` is the product price-matrix, a different concept.
   Acceptance: an Excel sign-in flow that performs `Login`, captures `capabilities`, and
   disables/explains ribbon + task-pane affordances by action×asset (Excel's idiom for
-  "not permitted"); parity with the GUI's disable-+-tooltip discipline. **OPEN.**
+  "not permitted"); parity with the GUI's disable-+-tooltip discipline. **DONE** (`d15f122`,
+  2026-06-29): `excel/src/contract/access.ts` (can()/denial-title byte-identical to the GUI +
+  ENTRY_POINTS map), `transport/session.ts` (UserSession + bearer install), `connection.ts`
+  login()/logout(), task-pane sign-in card, `functions.ts` cell gating (#CELNET_DENIED!).
+  Posture: anonymous permissive, signed-in narrows, expired denies. 474 excel tests (+25).
+- **[P2/M] `role-bundle-editing celnet-proto+celnet-server+gui`** — make the per-ROLE capability
+  bundles (Admin ⇒ grant-all, Trader ⇒ all-but-`administer`, hardcoded in
+  `sessions.rs::capabilities`/`TRADER_ACTIONS`) admin-editable + persisted, so an admin can change
+  the baseline for ALL holders of a role at once (today only the per-user overlay is editable).
+  **SPECCED/DEFERRED** (2026-06-29): lowest-value of the program — the per-user overlay
+  (`caa7186`/`d1c440c`/`daeb5fd`) already lets an admin set any capability on any user, so this is
+  a bulk-convenience layer, not new power. Design: a persisted role-bundle store (Role → Vec<Capability>,
+  default = today's hardcoded values) snapshotted onto `AuthenticatedUser` at login exactly like the
+  per-user overlay (`from_user`); `capabilities()` uses the snapshot as the base instead of the
+  hardcoded match; admin-only `Get/SetRoleCapabilities` RPCs (proto + regen + WS codec + client) with
+  fail-fast label validation + session-revoke-on-change for all holders; a GUI "Roles" section reusing
+  the slice-4 matrix. Acceptance: e2e under Enforce — admin narrows the Trader bundle, every trader's
+  effective set narrows on next login. **DONE** (`4072beb`, 2026-06-29): `IdentityStore.role_bundles`
+  (serde-default, fail-fast label validation); `AuthenticatedUser.role_caps` snapshotted at login via
+  `from_user_with_role_base`; `capabilities()` uses it as the non-admin base (Admin stays grant-all,
+  immutable — Admin Set ⇒ `failed_precondition`). `Get/SetRoleCapabilities` RPCs (admin-only; Set
+  revokes all holders' sessions) + WS codec/dispatch; GUI `RoleCapabilityEditor` panel. 318 server +
+  842 gui tests; live e2e under Enforce (admin removes `book·fixed_income` from Trader → re-logged
+  trader's Book-position control disabled).
 - **[P3/S] `gui-a11y-book-view-domain-nav gui/e2e`** — `e2e/a11y.e2e.ts` "Book view" times out:
   `gotoWorkspace(page,"book")` clicks the Book rail button **without switching to the
   `fixed-income` domain**, where Book lives (`gui/src/lib/commands.ts`); the test starts in FX
@@ -417,7 +440,10 @@ independently-landable feature. Format matches this file: dedup-key, evidence, a
   defect; the other 8 a11y views + the slice-4/5 e2e specs pass).
   Evidence: `gui/e2e/a11y.e2e.ts` "Book view"; `gui/e2e/helpers.ts` `gotoWorkspace`;
   `gui/src/lib/commands.ts` (Book ∈ fixed-income domain). Acceptance: `gotoWorkspace` switches
-  domain before clicking the rail; the "Book view" a11y case passes. **OPEN.**
+  domain before clicking the rail; the "Book view" a11y case passes. **DONE** (resolved-by-merge,
+  2026-06-29): `gui/e2e/helpers.ts` now has a `RAIL_DOMAIN` map (`book`→"Fixed Income") and
+  `gotoWorkspace` selects that tab before clicking the rail — the concurrent fixed-income
+  session added it. No code change needed; confirm in the batched e2e run.
 - **[P2/L] `fi-fix-quoting-wiring`** — wire the FIX transport for FI / dealer-quoting (the live
   counterparty venue is a deploy-tier dependency). Original integration item.
   Evidence: FI dealer-quoting desk shipped (`25293f8`, see memory `fi-dealer-quoting-shipped`)
@@ -442,7 +468,11 @@ independently-landable feature. Format matches this file: dedup-key, evidence, a
   Evidence: the rates curve bootstrap (FRA slice 1 `89b0588`); `docs/CONVENTIONS.md` day-count
   spec. Acceptance: 30/360 selectable per leg and matched to a QuantLib reference; STIR
   convexity adjustment in the short end validated against published/QuantLib prices (tolerances
-  never silently loosened). **OPEN.**
+  never silently loosened). **DONE** (`175d1e9`, 2026-06-29): `celnet-calendar`
+  `thirty_360_bond_basis_*` (ISDA 2006 §4.16(f), QuantLib `Thirty360(BondBasis)` integer-exact
+  across 11 edge cases); `celnet-rates` `AccrualBasis` threaded into FRA + OIS schedule;
+  `bootstrap_futures_strip` debiases by ½·σ²·T₁·T₂ (matches Hull worked example to 1e-9). 97+65
+  tests; kept in quant crates (did not extend wire-facing `celnet_types::DayCount`).
 
 ## Deliverables (operator-facing artifacts)
 

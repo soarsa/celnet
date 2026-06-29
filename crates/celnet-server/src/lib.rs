@@ -504,10 +504,10 @@ impl Edge {
         let identity_path = IdentityStore::config_path();
         let mut identity_store = IdentityStore::load(&identity_path)
             .map_err(|e| std::io::Error::new(e.kind(), format!("identity config: {e}")))?;
-        if identity_store
+        let admin_seeded = identity_store
             .ensure_seed_admin()
-            .map_err(std::io::Error::other)?
-        {
+            .map_err(std::io::Error::other)?;
+        if admin_seeded {
             // The seeded admin uses a well-known default password — make its
             // presence loud so an operator rotates it before any network exposure.
             tracing::warn!(
@@ -516,6 +516,13 @@ impl Edge {
                 "SECURITY: default admin seeded with a well-known password — rotate it \
                  via AuthService.ResetPassword before exposing the edge to any network"
             );
+        }
+        // Seed a small, realistic entity/book registry on a fresh store so the rates
+        // booking form has named legal-entities/accounts + books from first boot (the
+        // wire keys stay numeric; this only names them). Idempotent — a no-op once any
+        // entity exists.
+        let registry_seeded = identity_store.ensure_seed_registry();
+        if admin_seeded || registry_seeded {
             identity_store
                 .save(&identity_path)
                 .map_err(|e| std::io::Error::new(e.kind(), format!("seed identity: {e}")))?;
@@ -700,6 +707,10 @@ impl Edge {
             counterparty,
             Arc::clone(&self.fix_monitor),
             LEGACY_FIX_CONNECTION_ID.to_owned(),
+            // The legacy attach path serves the FX-options dialect (and still
+            // content-detects an OIS request) — dedicated FI venues are stood up
+            // through the managed `FixAdminService` registry, with their own kind.
+            crate::config::fix_connections::AcceptorKind::Options,
         );
         let acceptor = FixAcceptor::start(addr, ctx).await?;
         let bound = acceptor.local_addr();

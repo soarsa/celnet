@@ -756,7 +756,7 @@ use celnet_client::{
     Margining, MarketContext, Quantity, Side, StrikeSpec, Symbol, Underlying,
 };
 use celnet_engine::testing::make_state;
-use celnet_server::{Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
+use celnet_server::{AccessMode, Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
 use celnet_types::{CcyPair, OptionType, Tenor, VanillaInputs};
 
 /// Boot a ready in-process edge on an ephemeral port over the EURUSD fixture.
@@ -1145,6 +1145,12 @@ async fn start_panel_edge(synthetic_lps: u32) -> (Edge, SocketAddr) {
     .await
     .expect("edge binds on ephemeral ports");
     edge.gate().mark_ready();
+    // Panel parity is a pricing/panel test, not an authz test: the CLI `rfq
+    // --accept` path exercises QuoteService/AcceptQuote, which is gated on
+    // `execute·fx_options` under Enforce, and the CLI client carries no login.
+    // Run this harness permissive (race-free per-edge setter, no process-global
+    // env) so the CLI and SDK panels compare on equal footing.
+    edge.store().set_access_mode(AccessMode::Permissive);
     let addr = edge.grpc_addr();
     (edge, addr)
 }

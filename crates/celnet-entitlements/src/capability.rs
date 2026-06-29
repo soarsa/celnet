@@ -61,6 +61,12 @@ pub enum Action {
     Execute,
     /// Book a resulting position to a desk book.
     Book,
+    /// Run the **client-side counterparty sandbox** — generate mock RFQ/IOI/order
+    /// items and sample quotes purely in the GUI. This action gates a UI affordance
+    /// only; it has **no** server RPC and never injects into the live priced desk
+    /// flow (the simulator is a pure client sandbox). Part of the default trader
+    /// bundle (on by default, admin-disable-able).
+    Simulate,
     /// User / desk / connection / permission **administration**.
     Administer,
 }
@@ -68,7 +74,7 @@ pub enum Action {
 impl Action {
     /// Every action, in discriminant order — the canonical iteration set for
     /// building bundles and exhaustiveness tests.
-    pub const ALL: [Action; 9] = [
+    pub const ALL: [Action; 10] = [
         Action::View,
         Action::Price,
         Action::QuoteRespond,
@@ -77,6 +83,7 @@ impl Action {
         Action::Stream,
         Action::Execute,
         Action::Book,
+        Action::Simulate,
         Action::Administer,
     ];
 
@@ -92,6 +99,7 @@ impl Action {
             Action::Stream => "stream",
             Action::Execute => "execute",
             Action::Book => "book",
+            Action::Simulate => "simulate",
             Action::Administer => "administer",
         }
     }

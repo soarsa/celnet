@@ -10,6 +10,7 @@
 //! The roll and day-count primitives are reused from `celnet-calendar` (the shared, independently
 //! tested date engine) — not re-derived here.
 
+use crate::daycount::AccrualBasis;
 use crate::ois::{FixedPeriod, OisSchedule, ScheduleError};
 use celnet_calendar::{BusinessCalendar, CentreId, RollRule, add_months, year_fraction};
 use celnet_types::{DayCount, Time};
@@ -42,6 +43,27 @@ pub(crate) fn period_end_dates(cal: &BusinessCalendar, start: Date, years: u32) 
 ///
 /// Returns [`ScheduleError::Empty`] if `years` is zero.
 pub fn usd_sofr_ois_schedule(reference: Date, years: u32) -> Result<OisSchedule, ScheduleError> {
+    usd_ois_schedule_with_basis(reference, years, AccrualBasis::Act360)
+}
+
+/// Build a spot-starting USD OIS fixed-leg schedule whose fixed-leg accrual uses
+/// a caller-selected [`AccrualBasis`] (e.g. ACT/360 or 30/360 Bond Basis).
+///
+/// Identical to [`usd_sofr_ois_schedule`] except the per-period accrual fraction
+/// is measured under `accrual_basis`; the payment discount-time coordinate stays
+/// ACT/365F from the spot date (the curve time axis), and the roll calendar is
+/// unchanged. This is the seam that makes the day-count convention selectable in
+/// the curve bootstrap: an [`crate::bootstrap::OisQuote`] built from this
+/// schedule reprices on whatever fixed-leg basis the instrument quotes.
+///
+/// # Errors
+///
+/// Returns [`ScheduleError::Empty`] if `years` is zero.
+pub fn usd_ois_schedule_with_basis(
+    reference: Date,
+    years: u32,
+    accrual_basis: AccrualBasis,
+) -> Result<OisSchedule, ScheduleError> {
     let cal = us_settlement_calendar();
     let start = RollRule::Following.adjust(&cal, reference);
     let ends = period_end_dates(&cal, start, years);
@@ -49,7 +71,7 @@ pub fn usd_sofr_ois_schedule(reference: Date, years: u32) -> Result<OisSchedule,
     let mut periods = Vec::with_capacity(ends.len());
     let mut prev = start;
     for end in ends {
-        let accrual = year_fraction(DayCount::Act360, prev, end);
+        let accrual = accrual_basis.year_fraction(prev, end);
         let pay = year_fraction(DayCount::Act365Fixed, start, end);
         periods.push(FixedPeriod { pay, accrual });
         prev = end;
@@ -102,6 +124,56 @@ mod tests {
                 p.accrual.0 > 1.0 && p.accrual.0 < 1.05,
                 "accrual {}",
                 p.accrual.0
+            );
+        }
+    }
+
+    #[test]
+    fn thirty_360_basis_is_selectable_and_distinct_from_act360() {
+        let s360 = usd_sofr_ois_schedule(spot(), 5).expect("act360 schedule");
+        let s3360 = usd_ois_schedule_with_basis(spot(), 5, AccrualBasis::Thirty360BondBasis)
+            .expect("30/360");
+        assert_eq!(s360.periods().len(), s3360.periods().len());
+        for (a, b) in s360.periods().iter().zip(s3360.periods()) {
+            // The payment discount-time coordinate (curve axis) is basis-independent.
+            assert_eq!(a.pay, b.pay);
+            // A 30/360 annual accrual sits ~1.0; ACT/360 sits ~365/360 ⇒ strictly larger.
+            assert!(
+                (b.accrual.0 - 1.0).abs() < 0.05,
+                "30/360 accrual {}",
+                b.accrual.0
+            );
+            assert!(
+                a.accrual.0 > b.accrual.0,
+                "act360 {} should exceed 30/360 {}",
+                a.accrual.0,
+                b.accrual.0
+            );
+        }
+    }
+
+    #[test]
+    fn thirty_360_schedules_bootstrap_and_reprice_to_par() {
+        // The selectable-basis schedule plugs into the bootstrap end-to-end.
+        let quotes: Vec<OisQuote> = [(1u32, 0.0432), (2, 0.0418), (5, 0.0405)]
+            .into_iter()
+            .map(|(years, par)| OisQuote {
+                schedule: usd_ois_schedule_with_basis(
+                    spot(),
+                    years,
+                    AccrualBasis::Thirty360BondBasis,
+                )
+                .expect("schedule"),
+                par_rate: Rate(par),
+            })
+            .collect();
+        let curve = bootstrap_ois(&quotes).expect("bootstraps from 30/360 schedules");
+        for q in &quotes {
+            let repriced = ois_par_rate(&curve, &q.schedule).0;
+            assert!(
+                (repriced - q.par_rate.0).abs() < 1e-9,
+                "repriced {repriced} vs {}",
+                q.par_rate.0
             );
         }
     }

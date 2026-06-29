@@ -67,6 +67,10 @@ import type {
   Execution,
   CreateUserInput,
   DeskDesc,
+  EntityDesc,
+  EntityInput,
+  BookDesc,
+  BookInput,
   FixConnection,
   FixConnectionKind,
   FixConnectionSpec,
@@ -124,6 +128,7 @@ import type {
   TwoWayPrice,
   Underlying,
   Update,
+  RoleCapabilities,
   UserCapabilities,
   VanillaInputs,
   VegaBucket,
@@ -2021,17 +2026,33 @@ export type { StrategyKind };
 // fix-admin: manage the inbound FIX acceptor connections
 // ---------------------------------------------------------------------------
 
-/** The wire enum tag for the FX-options dialect (`FixAcceptorKind.OPTIONS`). */
+/** The wire enum tags for the FIX acceptor dialects (`FixAcceptorKind`). */
 const FIX_KIND_OPTIONS = 0;
+const FIX_KIND_FIXED_INCOME_QUOTE = 1;
+const FIX_KIND_FIXED_INCOME_STREAM = 2;
 
-/** Domain kind → wire enum tag. Only `OPTIONS` exists today (phase-2 adds spot). */
-export function fixConnectionKindToWire(_kind: FixConnectionKind): number {
-  return FIX_KIND_OPTIONS;
+/** Domain kind → wire enum tag. */
+export function fixConnectionKindToWire(kind: FixConnectionKind): number {
+  switch (kind) {
+    case "FIXED_INCOME_QUOTE":
+      return FIX_KIND_FIXED_INCOME_QUOTE;
+    case "FIXED_INCOME_STREAM":
+      return FIX_KIND_FIXED_INCOME_STREAM;
+    case "OPTIONS":
+      return FIX_KIND_OPTIONS;
+  }
 }
 
-/** Wire enum tag → domain kind (every value maps to `OPTIONS` until phase 2). */
-export function fixConnectionKindFromWire(_tag: number): FixConnectionKind {
-  return "OPTIONS";
+/** Wire enum tag → domain kind (an unknown tag falls back to `OPTIONS`). */
+export function fixConnectionKindFromWire(tag: number): FixConnectionKind {
+  switch (tag) {
+    case FIX_KIND_FIXED_INCOME_QUOTE:
+      return "FIXED_INCOME_QUOTE";
+    case FIX_KIND_FIXED_INCOME_STREAM:
+      return "FIXED_INCOME_STREAM";
+    default:
+      return "OPTIONS";
+  }
 }
 
 /** A managed connection descriptor from its wire form. */
@@ -2311,6 +2332,31 @@ export function userCapabilitiesFromWire(o: WireObject): UserCapabilities {
   };
 }
 
+// per-role capability bundle -------------------------------------------------
+//
+// `get_role_capabilities` reads a role's base bundle; `set_role_capabilities`
+// replaces a non-admin role's bundle wholesale. The codec auto-injects the bearer
+// `session_token`. The role rides as its proto enum tag (TRADER = 0, ADMIN = 1).
+
+export function getRoleCapabilitiesRequestToWire(role: UserRole): WireObject {
+  return { role: userRoleToWire(role) };
+}
+
+export function setRoleCapabilitiesRequestToWire(
+  role: UserRole,
+  capabilities: readonly Capability[],
+): WireObject {
+  return {
+    role: userRoleToWire(role),
+    capabilities: capabilities.map(capabilityToWire),
+  };
+}
+
+/** Decode a `role_capabilities` / `role_capabilities_set` frame. */
+export function roleCapabilitiesFromWire(o: WireObject): RoleCapabilities {
+  return { capabilities: capabilityListFromWire(o, "capabilities") };
+}
+
 // desk CRUD ------------------------------------------------------------------
 
 export function listDesksRequestToWire(): WireObject {
@@ -2334,4 +2380,79 @@ export function deskResponseFromWire(o: WireObject): DeskDesc {
 
 export function deleteDeskRequestToWire(id: string): WireObject {
   return { id };
+}
+
+// --- legal-entity / netting-book registry (entity/book admin) ---------------
+//
+// The WS mirror of `AuthService.{List,Create,Update,Delete}{Entity,Book}`. The
+// wire JSON carries snake_case `entity_key`; these codecs map it to the GUI's
+// camelCase `entityKey` (the only snake↔camel rename on this surface). The
+// `session_token` + framing `correlation_id` are auto-injected by
+// `WsConnection.request`, so the request encoders carry only the business body.
+// A create with `key: 0` asks the server to auto-assign the lowest free key.
+
+/** A legal entity from its wire form. */
+export function entityDescFromWire(o: WireObject): EntityDesc {
+  return { key: num(o, "key"), name: str(o, "name"), code: str(o, "code") };
+}
+
+/** A netting book from its wire form (maps `entity_key` → `entityKey`). */
+export function bookDescFromWire(o: WireObject): BookDesc {
+  return { key: num(o, "key"), name: str(o, "name"), entityKey: num(o, "entity_key") };
+}
+
+export function listEntitiesRequestToWire(): WireObject {
+  return {};
+}
+
+export function entitiesResponseFromWire(o: WireObject): EntityDesc[] {
+  const arr = o["entities"];
+  return Array.isArray(arr) ? (arr as WireObject[]).map(entityDescFromWire) : [];
+}
+
+export function createEntityRequestToWire(input: EntityInput): WireObject {
+  // `key: 0` ⇒ the server auto-assigns the lowest free key.
+  return { name: input.name, code: input.code, key: 0 };
+}
+
+export function updateEntityRequestToWire(key: number, input: EntityInput): WireObject {
+  return { key, name: input.name, code: input.code };
+}
+
+/** A single-entity response (`{ entity: {...} }`) from create / update. */
+export function entityResponseFromWire(o: WireObject): EntityDesc {
+  const e = o["entity"];
+  return entityDescFromWire(e && typeof e === "object" ? (e as WireObject) : {});
+}
+
+export function deleteEntityRequestToWire(key: number): WireObject {
+  return { key };
+}
+
+export function listBooksRequestToWire(): WireObject {
+  return {};
+}
+
+export function booksResponseFromWire(o: WireObject): BookDesc[] {
+  const arr = o["books"];
+  return Array.isArray(arr) ? (arr as WireObject[]).map(bookDescFromWire) : [];
+}
+
+export function createBookRequestToWire(input: BookInput): WireObject {
+  // `key: 0` ⇒ the server auto-assigns the lowest free key.
+  return { name: input.name, entity_key: input.entityKey, key: 0 };
+}
+
+export function updateBookRequestToWire(key: number, input: BookInput): WireObject {
+  return { key, name: input.name, entity_key: input.entityKey };
+}
+
+/** A single-book response (`{ book: {...} }`) from create / update. */
+export function bookResponseFromWire(o: WireObject): BookDesc {
+  const b = o["book"];
+  return bookDescFromWire(b && typeof b === "object" ? (b as WireObject) : {});
+}
+
+export function deleteBookRequestToWire(key: number): WireObject {
+  return { key };
 }

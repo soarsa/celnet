@@ -1216,6 +1216,7 @@ mod tests {
                 display_name: user_id.to_owned(),
                 role: Role::Trader,
                 desk_id: Some("g10".to_owned()),
+                role_caps: crate::config::identity::default_trader_bundle(),
                 cap_grants: Vec::new(),
                 cap_denies: Vec::new(),
             })

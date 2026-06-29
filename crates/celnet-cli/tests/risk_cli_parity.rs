@@ -430,6 +430,10 @@ async fn cli_limits_reports_server_breach() {
 async fn cli_stream_prints_sequenced_ticks_and_exits() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let (edge, addr) = start_ready_edge().await;
+        // This exercises the streaming PRICE path, not authz: the CLI `stream`
+        // client carries no login, and Subscribe is gated on `stream·fx_options`
+        // under Enforce. Run this edge permissive so the demo stream flows.
+        edge.store().set_access_mode(AccessMode::Permissive);
         let endpoint = format!("http://{addr}");
         // The stream is capability-gated (`Stream·FxOptions`); authenticate with a
         // real Login session token (the `risk`-read subcommands above stay token-less).

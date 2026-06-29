@@ -32,7 +32,14 @@ import styles from "./ConnectionsWorkspace.module.css";
 
 /** The display label for a connection's dialect. */
 function kindLabel(c: FixConnection): string {
-  return c.kind === "OPTIONS" ? "Options" : c.kind;
+  switch (c.kind) {
+    case "OPTIONS":
+      return "Options";
+    case "FIXED_INCOME_QUOTE":
+      return "Fixed Income — Quote (RFQ)";
+    case "FIXED_INCOME_STREAM":
+      return "Fixed Income — Streaming (RFS)";
+  }
 }
 
 export function ConnectionsWorkspace(): React.ReactElement {
@@ -219,6 +226,7 @@ export function ConnectionsWorkspace(): React.ReactElement {
         onCreate={fix.create}
         existing={fix.connections}
         desks={desks}
+        can={app.auth.can}
       />
 
       <FixSpecModal open={specOpen} onClose={() => setSpecOpen(false)} />

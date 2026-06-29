@@ -34,19 +34,25 @@ use std::sync::{Arc, Mutex, OnceLock};
 use celnet_entitlements::{Action, AssetClass, Capability};
 use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
-    CapabilityDesc, CreateDeskRequest, CreateDeskResponse, CreateUserRequest, CreateUserResponse,
-    DeleteDeskRequest, DeleteDeskResponse, DeleteUserRequest, DeleteUserResponse, DeskDesc,
-    GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, ListDesksRequest, ListDesksResponse,
-    ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest,
-    LogoutResponse, ResetPasswordRequest, ResetPasswordResponse, SetUserCapabilitiesRequest,
-    SetUserCapabilitiesResponse, UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
+    BookDesc, CapabilityDesc, CreateBookRequest, CreateBookResponse, CreateDeskRequest,
+    CreateDeskResponse, CreateEntityRequest, CreateEntityResponse, CreateUserRequest,
+    CreateUserResponse, DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest,
+    DeleteDeskResponse, DeleteEntityRequest, DeleteEntityResponse, DeleteUserRequest,
+    DeleteUserResponse, DeskDesc, EntityDesc, GetRoleCapabilitiesRequest,
+    GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest, GetUserCapabilitiesResponse,
+    ListBooksRequest, ListBooksResponse, ListDesksRequest, ListDesksResponse, ListEntitiesRequest,
+    ListEntitiesResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
+    LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
+    SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
+    SetUserCapabilitiesResponse, UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest,
+    UpdateEntityResponse, UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
 };
 use tonic::{Request, Response, Status};
 
 use crate::clock::Clock;
 use crate::config::identity::{
-    DeskDef, IdentityStore, PermissionGrant, Role, UserDef, hash_password, mint_desk_id,
-    mint_user_id, verify_password,
+    BookDef, DeskDef, EntityDef, IdentityStore, PermissionGrant, Role, UserDef, hash_password,
+    mint_desk_id, mint_user_id, verify_password,
 };
 use crate::readiness::ReadinessGate;
 use crate::services::sessions::{AuthenticatedUser, SessionRegistry};
@@ -249,9 +255,15 @@ impl AuthService for AuthEdge {
         };
         self.throttle.record_success(&email_key);
 
+        // Snapshot the user's resolved role base (the admin-editable per-role bundle)
+        // into the session, so a narrowed/widened bundle is reflected from this login.
+        let role_base = self.lock().role_base(user.role);
         let issued = self
             .sessions
-            .issue(AuthenticatedUser::from_user(&user))
+            .issue(AuthenticatedUser::from_user_with_role_base(
+                &user,
+                role_base.clone(),
+            ))
             .map_err(|e| Status::internal(format!("issue session: {e}")))?;
         Ok(Response::new(LoginResponse {
             session_token: issued.token,
@@ -259,7 +271,7 @@ impl AuthService for AuthEdge {
             expires_nanos: issued.expires_nanos,
             // The caller's own resolved set, so a client can gate its own
             // affordances without an admin-only capabilities round-trip.
-            capabilities: effective_caps(&user),
+            capabilities: effective_caps(&user, &role_base),
             correlation_id: req.correlation_id,
         }))
     }
@@ -501,15 +513,19 @@ impl AuthService for AuthEdge {
         let req = request.into_inner();
         self.require_admin(&req.session_token)?;
 
-        let user = self
-            .lock()
-            .user(&req.id)
-            .cloned()
-            .ok_or_else(|| Status::not_found(format!("no user with id `{}`", req.id)))?;
+        let (user, role_base) = {
+            let guard = self.lock();
+            let user = guard
+                .user(&req.id)
+                .cloned()
+                .ok_or_else(|| Status::not_found(format!("no user with id `{}`", req.id)))?;
+            let role_base = guard.role_base(user.role);
+            (user, role_base)
+        };
         Ok(Response::new(GetUserCapabilitiesResponse {
             grants: overlay_to_wire(&user.capability_grants),
             denies: overlay_to_wire(&user.capability_denies),
-            effective: effective_caps(&user),
+            effective: effective_caps(&user, &role_base),
             correlation_id: req.correlation_id,
         }))
     }
@@ -547,6 +563,9 @@ impl AuthService for AuthEdge {
             capability_denies: denies.iter().copied().map(PermissionGrant::of).collect(),
         };
 
+        // The per-user RPC never edits the role bundle, so the user's role base is
+        // unchanged; resolve it for the read-back before committing.
+        let role_base = guard.role_base(updated.role);
         let mut next = guard.clone();
         if let Some(slot) = next.users.iter_mut().find(|u| u.id == updated.id) {
             *slot = updated.clone();
@@ -561,7 +580,84 @@ impl AuthService for AuthEdge {
         Ok(Response::new(SetUserCapabilitiesResponse {
             grants: overlay_to_wire(&updated.capability_grants),
             denies: overlay_to_wire(&updated.capability_denies),
-            effective: effective_caps(&updated),
+            effective: effective_caps(&updated, &role_base),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn get_role_capabilities(
+        &self,
+        request: Request<GetRoleCapabilitiesRequest>,
+    ) -> Result<Response<GetRoleCapabilitiesResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let role = role_from_wire(req.role)?;
+        // Admin is grant-all and immutable — report the full surface, never a stored
+        // bundle (the Admin role never has one).
+        let caps = if role.is_admin() {
+            grant_all_wire()
+        } else {
+            self.lock()
+                .role_base(role)
+                .iter()
+                .copied()
+                .map(cap_to_wire)
+                .collect()
+        };
+        Ok(Response::new(GetRoleCapabilitiesResponse {
+            capabilities: caps,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn set_role_capabilities(
+        &self,
+        request: Request<SetRoleCapabilitiesRequest>,
+    ) -> Result<Response<SetRoleCapabilitiesResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let role = role_from_wire(req.role)?;
+        // The Admin role is grant-all and can never be narrowed — narrowing it would
+        // risk an unadministrable edge, so the bundle is immutable.
+        if role.is_admin() {
+            return Err(Status::failed_precondition(
+                "the Admin role is grant-all and cannot be narrowed",
+            ));
+        }
+        // Parse + validate the whole bundle up front: an unknown action/asset label is
+        // rejected (`invalid_argument`), never silently dropped — the bundle that lands
+        // is exactly the one the admin sent or no change at all.
+        let caps = caps_from_wire(&req.capabilities)?;
+
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        next.role_bundles.insert(
+            role,
+            caps.iter().copied().map(PermissionGrant::of).collect(),
+        );
+        // Identify every holder of this role BEFORE committing, so the change can be
+        // forced to take effect by revoking their live sessions (next login re-derives
+        // the new base).
+        let holders: Vec<String> = guard
+            .users
+            .iter()
+            .filter(|u| u.role == role)
+            .map(|u| u.id.clone())
+            .collect();
+        self.persist_and_commit(&mut guard, next)?;
+        drop(guard);
+
+        for id in holders {
+            self.sessions.revoke_user(&id);
+        }
+        Ok(Response::new(SetRoleCapabilitiesResponse {
+            capabilities: caps.iter().copied().map(cap_to_wire).collect(),
             correlation_id: req.correlation_id,
         }))
     }
@@ -662,6 +758,317 @@ impl AuthService for AuthEdge {
             correlation_id: req.correlation_id,
         }))
     }
+
+    async fn list_entities(
+        &self,
+        request: Request<ListEntitiesRequest>,
+    ) -> Result<Response<ListEntitiesResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Read-only roster: any authenticated caller may read it (the booking form
+        // populates its entity dropdown from this), so it is NOT admin-gated.
+        self.authenticate(&req.session_token)?;
+        let entities = self.lock().entities.iter().map(entity_to_wire).collect();
+        Ok(Response::new(ListEntitiesResponse {
+            entities,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn create_entity(
+        &self,
+        request: Request<CreateEntityRequest>,
+    ) -> Result<Response<CreateEntityResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let name = req.name.trim().to_string();
+        let code = req.code.trim().to_string();
+        if name.is_empty() {
+            return Err(Status::invalid_argument("entity name is required"));
+        }
+        if code.is_empty() {
+            return Err(Status::invalid_argument("entity code is required"));
+        }
+
+        let mut guard = self.lock();
+        if guard
+            .entities
+            .iter()
+            .any(|e| e.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(Status::already_exists(format!(
+                "an entity named `{name}` already exists"
+            )));
+        }
+        if guard
+            .entities
+            .iter()
+            .any(|e| e.code.eq_ignore_ascii_case(&code))
+        {
+            return Err(Status::already_exists(format!(
+                "an entity with code `{code}` already exists"
+            )));
+        }
+        let key = if req.key == 0 {
+            guard.next_entity_key()
+        } else {
+            if guard.entity_by_key(req.key).is_some() {
+                return Err(Status::already_exists(format!(
+                    "entity key {} is already in use",
+                    req.key
+                )));
+            }
+            req.key
+        };
+        let entity = EntityDef { key, name, code };
+        let mut next = guard.clone();
+        next.entities.push(entity.clone());
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(CreateEntityResponse {
+            entity: Some(entity_to_wire(&entity)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_entity(
+        &self,
+        request: Request<UpdateEntityRequest>,
+    ) -> Result<Response<UpdateEntityResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let name = req.name.trim().to_string();
+        let code = req.code.trim().to_string();
+        if name.is_empty() {
+            return Err(Status::invalid_argument("entity name is required"));
+        }
+        if code.is_empty() {
+            return Err(Status::invalid_argument("entity code is required"));
+        }
+
+        let mut guard = self.lock();
+        if guard.entity_by_key(req.key).is_none() {
+            return Err(Status::not_found(format!("no entity with key {}", req.key)));
+        }
+        // Uniqueness is checked against every OTHER entity (the edited one may keep
+        // its own name/code).
+        if guard
+            .entities
+            .iter()
+            .any(|e| e.key != req.key && e.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(Status::already_exists(format!(
+                "an entity named `{name}` already exists"
+            )));
+        }
+        if guard
+            .entities
+            .iter()
+            .any(|e| e.key != req.key && e.code.eq_ignore_ascii_case(&code))
+        {
+            return Err(Status::already_exists(format!(
+                "an entity with code `{code}` already exists"
+            )));
+        }
+        let entity = EntityDef {
+            key: req.key,
+            name,
+            code,
+        };
+        let mut next = guard.clone();
+        if let Some(slot) = next.entities.iter_mut().find(|e| e.key == req.key) {
+            *slot = entity.clone();
+        }
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(UpdateEntityResponse {
+            entity: Some(entity_to_wire(&entity)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn delete_entity(
+        &self,
+        request: Request<DeleteEntityRequest>,
+    ) -> Result<Response<DeleteEntityResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let mut guard = self.lock();
+        if guard.entity_by_key(req.key).is_none() {
+            return Ok(Response::new(DeleteEntityResponse {
+                removed: false,
+                correlation_id: req.correlation_id,
+            }));
+        }
+        // Referential integrity: a book maps to its entity by `entity_key`; deleting
+        // an entity that still has books would orphan them, so it is rejected.
+        if guard.books.iter().any(|b| b.entity_key == req.key) {
+            return Err(Status::failed_precondition(
+                "cannot delete an entity while books still reference it",
+            ));
+        }
+        let mut next = guard.clone();
+        next.entities.retain(|e| e.key != req.key);
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(DeleteEntityResponse {
+            removed: true,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn list_books(
+        &self,
+        request: Request<ListBooksRequest>,
+    ) -> Result<Response<ListBooksResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Read-only roster: any authenticated caller may read it (the booking form
+        // populates its book dropdown from this), so it is NOT admin-gated.
+        self.authenticate(&req.session_token)?;
+        let books = self.lock().books.iter().map(book_to_wire).collect();
+        Ok(Response::new(ListBooksResponse {
+            books,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn create_book(
+        &self,
+        request: Request<CreateBookRequest>,
+    ) -> Result<Response<CreateBookResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let name = req.name.trim().to_string();
+        if name.is_empty() {
+            return Err(Status::invalid_argument("book name is required"));
+        }
+
+        let mut guard = self.lock();
+        if guard.entity_by_key(req.entity_key).is_none() {
+            return Err(Status::failed_precondition(format!(
+                "no entity with key {}",
+                req.entity_key
+            )));
+        }
+        if guard
+            .books
+            .iter()
+            .any(|b| b.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(Status::already_exists(format!(
+                "a book named `{name}` already exists"
+            )));
+        }
+        let key = if req.key == 0 {
+            guard.next_book_key()
+        } else {
+            if guard.book_by_key(req.key).is_some() {
+                return Err(Status::already_exists(format!(
+                    "book key {} is already in use",
+                    req.key
+                )));
+            }
+            req.key
+        };
+        let book = BookDef {
+            key,
+            name,
+            entity_key: req.entity_key,
+        };
+        let mut next = guard.clone();
+        next.books.push(book.clone());
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(CreateBookResponse {
+            book: Some(book_to_wire(&book)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_book(
+        &self,
+        request: Request<UpdateBookRequest>,
+    ) -> Result<Response<UpdateBookResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let name = req.name.trim().to_string();
+        if name.is_empty() {
+            return Err(Status::invalid_argument("book name is required"));
+        }
+
+        let mut guard = self.lock();
+        if guard.book_by_key(req.key).is_none() {
+            return Err(Status::not_found(format!("no book with key {}", req.key)));
+        }
+        if guard.entity_by_key(req.entity_key).is_none() {
+            return Err(Status::failed_precondition(format!(
+                "no entity with key {}",
+                req.entity_key
+            )));
+        }
+        if guard
+            .books
+            .iter()
+            .any(|b| b.key != req.key && b.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(Status::already_exists(format!(
+                "a book named `{name}` already exists"
+            )));
+        }
+        let book = BookDef {
+            key: req.key,
+            name,
+            entity_key: req.entity_key,
+        };
+        let mut next = guard.clone();
+        if let Some(slot) = next.books.iter_mut().find(|b| b.key == req.key) {
+            *slot = book.clone();
+        }
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(UpdateBookResponse {
+            book: Some(book_to_wire(&book)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn delete_book(
+        &self,
+        request: Request<DeleteBookRequest>,
+    ) -> Result<Response<DeleteBookResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let mut guard = self.lock();
+        if guard.book_by_key(req.key).is_none() {
+            return Ok(Response::new(DeleteBookResponse {
+                removed: false,
+                correlation_id: req.correlation_id,
+            }));
+        }
+        let mut next = guard.clone();
+        next.books.retain(|b| b.key != req.key);
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(DeleteBookResponse {
+            removed: true,
+            correlation_id: req.correlation_id,
+        }))
+    }
 }
 
 // --- wire ⇄ domain mapping -------------------------------------------------
@@ -717,8 +1124,8 @@ fn caps_from_wire(descs: &[CapabilityDesc]) -> Result<Vec<Capability>, Status> {
 /// enumerated over every action × asset. Built through the *same* resolution the
 /// access boundary uses ([`AuthenticatedUser::capabilities`]), so the read-back can
 /// never diverge from the live decision.
-fn effective_caps(user: &UserDef) -> Vec<CapabilityDesc> {
-    let set = AuthenticatedUser::from_user(user).capabilities();
+fn effective_caps(user: &UserDef, role_base: &[Capability]) -> Vec<CapabilityDesc> {
+    let set = AuthenticatedUser::from_user_with_role_base(user, role_base.to_vec()).capabilities();
     let mut out = Vec::new();
     for action in Action::ALL {
         for asset in AssetClass::ALL {
@@ -731,11 +1138,42 @@ fn effective_caps(user: &UserDef) -> Vec<CapabilityDesc> {
     out
 }
 
+/// The full action × asset surface as wire capabilities — the grant-all set the
+/// immutable [`Role::Admin`] role confers. Used to report the Admin role bundle
+/// (which is never stored and never narrowable).
+fn grant_all_wire() -> Vec<CapabilityDesc> {
+    let mut out = Vec::new();
+    for action in Action::ALL {
+        for asset in AssetClass::ALL {
+            out.push(cap_to_wire(Capability::new(action, asset)));
+        }
+    }
+    out
+}
+
 /// Map a stored [`DeskDef`] onto its wire [`DeskDesc`].
 fn desk_to_wire(d: &DeskDef) -> DeskDesc {
     DeskDesc {
         id: d.id.clone(),
         name: d.name.clone(),
+    }
+}
+
+/// Map a stored [`EntityDef`] onto its wire [`EntityDesc`].
+fn entity_to_wire(e: &EntityDef) -> EntityDesc {
+    EntityDesc {
+        key: e.key,
+        name: e.name.clone(),
+        code: e.code.clone(),
+    }
+}
+
+/// Map a stored [`BookDef`] onto its wire [`BookDesc`].
+fn book_to_wire(b: &BookDef) -> BookDesc {
+    BookDesc {
+        key: b.key,
+        name: b.name.clone(),
+        entity_key: b.entity_key,
     }
 }
 
@@ -1128,14 +1566,14 @@ mod tests {
     #[tokio::test]
     async fn login_returns_caller_effective_capabilities() {
         let (edge, path, _s) = edge("login-caps");
-        // The seed admin resolves to grant-all: every action × asset (9 × 2 = 18).
+        // The seed admin resolves to grant-all: every action × asset (10 × 2 = 20).
         let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
         assert_eq!(
             admin.capabilities.len(),
             Action::ALL.len() * AssetClass::ALL.len()
         );
 
-        // A fresh trader holds the role bundle: all actions but `administer` (8 × 2).
+        // A fresh trader holds the role bundle: all actions but `administer` (9 × 2).
         let (trader_id, _t) = make_trader(&edge, &admin.session_token, "lc@celnet.com").await;
         let trader = login(&edge, "lc@celnet.com", "trader-pw-123")
             .await
@@ -1223,6 +1661,139 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(missing.code(), tonic::Code::NotFound);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn set_role_capabilities_narrows_trader_base_persists_and_revokes() {
+        let (edge, path, sessions) = edge("set-role-caps");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let (_trader_id, trader_token) =
+            make_trader(&edge, &admin.session_token, "rb@celnet.com").await;
+
+        // Baseline: the default trader role bundle includes book·fixed_income.
+        let base = edge
+            .get_role_capabilities(Request::new(GetRoleCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                role: UserRole::Trader as i32,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(has_cap(&base.capabilities, "book", "fixed_income"));
+        assert!(has_cap(&base.capabilities, "execute", "fx_options"));
+
+        // Narrow the bundle: drop book·fixed_income. The trader has a live session —
+        // setting the role bundle must revoke it (next login re-derives the new base).
+        assert!(sessions.validate(&trader_token).is_some());
+        let narrowed: Vec<CapabilityDesc> = base
+            .capabilities
+            .iter()
+            .filter(|c| !(c.action == "book" && c.asset == "fixed_income"))
+            .cloned()
+            .collect();
+        let set = edge
+            .set_role_capabilities(Request::new(SetRoleCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                role: UserRole::Trader as i32,
+                capabilities: narrowed,
+                correlation_id: Some(9),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(set.correlation_id, Some(9));
+        assert!(!has_cap(&set.capabilities, "book", "fixed_income"));
+        assert!(sessions.validate(&trader_token).is_none());
+
+        // A trader re-logging in now lacks book·fixed_income in their effective set.
+        let relogged = login(&edge, "rb@celnet.com", "trader-pw-123")
+            .await
+            .unwrap();
+        assert!(!has_cap(&relogged.capabilities, "book", "fixed_income"));
+        assert!(has_cap(&relogged.capabilities, "execute", "fx_options"));
+
+        // Persisted: the narrowed bundle survives a reload from disk.
+        let reloaded = IdentityStore::load(&path).unwrap();
+        let stored = reloaded.role_base(Role::Trader);
+        assert!(!stored.contains(&Capability::new(Action::Book, AssetClass::FixedIncome)));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn admin_role_bundle_is_grant_all_and_set_is_rejected() {
+        let (edge, path, _s) = edge("admin-role-caps");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+
+        // Get for Admin reports the full grant-all surface.
+        let got = edge
+            .get_role_capabilities(Request::new(GetRoleCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                role: UserRole::Admin as i32,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            got.capabilities.len(),
+            Action::ALL.len() * AssetClass::ALL.len()
+        );
+
+        // Set for Admin is rejected — the role is immutable, never narrowable.
+        let err = edge
+            .set_role_capabilities(Request::new(SetRoleCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                role: UserRole::Admin as i32,
+                capabilities: vec![cap("view", "fx_options")],
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn role_capability_rpcs_require_admin_and_reject_unknown_label() {
+        let (edge, path, _s) = edge("role-caps-authz");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let (_id, trader_token) =
+            make_trader(&edge, &admin.session_token, "rauthz@celnet.com").await;
+
+        // A trader's token cannot read or write a role bundle.
+        let get_denied = edge
+            .get_role_capabilities(Request::new(GetRoleCapabilitiesRequest {
+                session_token: trader_token.clone(),
+                role: UserRole::Trader as i32,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(get_denied.code(), tonic::Code::PermissionDenied);
+        let set_denied = edge
+            .set_role_capabilities(Request::new(SetRoleCapabilitiesRequest {
+                session_token: trader_token,
+                role: UserRole::Trader as i32,
+                capabilities: vec![],
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(set_denied.code(), tonic::Code::PermissionDenied);
+
+        // An admin sending an unknown label is rejected (invalid_argument).
+        let bad = edge
+            .set_role_capabilities(Request::new(SetRoleCapabilitiesRequest {
+                session_token: admin.session_token,
+                role: UserRole::Trader as i32,
+                capabilities: vec![cap("teleport", "fx_options")],
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(bad.code(), tonic::Code::InvalidArgument);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1344,6 +1915,151 @@ mod tests {
             jane_after.desk_id, None,
             "deleting a desk unassigns its members"
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn entity_book_registry_crud_and_trader_can_list() {
+        let (edge, path, _s) = edge("registry");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let tok = admin.session_token.clone();
+        let (_tid, trader_token) = make_trader(&edge, &tok, "reg@celnet.com").await;
+
+        // Admin creates an entity (auto-assigned key) and a book under it.
+        let ent = edge
+            .create_entity(Request::new(CreateEntityRequest {
+                session_token: tok.clone(),
+                name: "ACME Capital".into(),
+                code: "ACME".into(),
+                key: 0,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .entity
+            .unwrap();
+        assert!(ent.key >= 1);
+        let book = edge
+            .create_book(Request::new(CreateBookRequest {
+                session_token: tok.clone(),
+                name: "Rates Trading".into(),
+                entity_key: ent.key,
+                key: 0,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .book
+            .unwrap();
+        assert_eq!(book.entity_key, ent.key);
+
+        // A non-admin trader CAN list entities and books (the booking form needs them).
+        let ents = edge
+            .list_entities(Request::new(ListEntitiesRequest {
+                session_token: trader_token.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .entities;
+        assert!(ents.iter().any(|e| e.name == "ACME Capital"));
+        let books = edge
+            .list_books(Request::new(ListBooksRequest {
+                session_token: trader_token.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .books;
+        assert!(books.iter().any(|b| b.name == "Rates Trading"));
+
+        // A trader CANNOT create an entity (admin only).
+        let denied = edge
+            .create_entity(Request::new(CreateEntityRequest {
+                session_token: trader_token.clone(),
+                name: "Nope".into(),
+                code: "NO".into(),
+                key: 0,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+
+        // Deleting the entity while a book references it is rejected.
+        let pre = edge
+            .delete_entity(Request::new(DeleteEntityRequest {
+                session_token: tok.clone(),
+                key: ent.key,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(pre.code(), tonic::Code::FailedPrecondition);
+
+        // Delete the book, then the entity succeeds; survives reload from disk.
+        edge.delete_book(Request::new(DeleteBookRequest {
+            session_token: tok.clone(),
+            key: book.key,
+            correlation_id: None,
+        }))
+        .await
+        .unwrap();
+        let removed = edge
+            .delete_entity(Request::new(DeleteEntityRequest {
+                session_token: tok.clone(),
+                key: ent.key,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .removed;
+        assert!(removed);
+        let reloaded = IdentityStore::load(&path).unwrap();
+        assert!(reloaded.entity_by_key(ent.key).is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn create_entity_rejects_duplicate_name_and_unauthenticated_list() {
+        let (edge, path, _s) = edge("registry-dup");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let tok = admin.session_token.clone();
+        edge.create_entity(Request::new(CreateEntityRequest {
+            session_token: tok.clone(),
+            name: "ACME Capital".into(),
+            code: "ACME".into(),
+            key: 0,
+            correlation_id: None,
+        }))
+        .await
+        .unwrap();
+        // Duplicate name (case-insensitive) is rejected.
+        let dup = edge
+            .create_entity(Request::new(CreateEntityRequest {
+                session_token: tok.clone(),
+                name: "acme capital".into(),
+                code: "ACME2".into(),
+                key: 0,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(dup.code(), tonic::Code::AlreadyExists);
+        // An unauthenticated list is rejected.
+        let anon = edge
+            .list_entities(Request::new(ListEntitiesRequest {
+                session_token: "not-a-token".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(anon.code(), tonic::Code::Unauthenticated);
         let _ = std::fs::remove_file(&path);
     }
 }

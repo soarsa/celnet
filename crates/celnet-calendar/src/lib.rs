@@ -46,7 +46,9 @@ mod weekday;
 
 // Curated re-exports: the names a downstream convention layer reaches for.
 pub use calendar::{BusinessCalendar, MAX_CENTRES};
-pub use daycount::{actual_days, year_fraction};
+pub use daycount::{
+    actual_days, thirty_360_bond_basis_days, thirty_360_bond_basis_year_fraction, year_fraction,
+};
 pub use fx::{
     FxSchedule, TenorError, calendar_for, centre_for, delivery_date, expiry_for_tenor, imm_date,
     is_business_day_civil, is_t_plus_one_pair, schedule, spot_date, spot_date_civil, spot_lag_days,

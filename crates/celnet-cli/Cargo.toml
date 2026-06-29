@@ -25,6 +25,9 @@ celnet-exotics.workspace = true
 celnet-commodity-vanilla.workspace = true
 celnet-linear.workspace = true
 celnet-client.workspace = true
+# The `fix` subcommand drives the celnet-fix FIX initiator against the quoting
+# gateway over a real socket (the same engine the gateway's loopback tests use).
+celnet-fix.workspace = true
 clap.workspace = true
 # Today's civil date: the horizon `stream`/`rfq` anchor tenor→expiry resolution at.
 time.workspace = true

@@ -12,7 +12,8 @@
  * analytics) are URL-encoded + localStorage-persisted (`SavedViewsMenu`).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
 import { useApp } from "./AppContext";
 import { CommandPalette } from "../components/CommandPalette";
 import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
@@ -39,7 +40,9 @@ import { ScopeSwitcher } from "../components/ScopeSwitcher";
 import { SavedViewsMenu } from "../components/SavedViewsMenu";
 import { AuthMenu } from "../components/AuthMenu";
 import { NotificationCenter } from "../components/NotificationCenter";
+import { SimulatorPanel } from "../components/SimulatorPanel";
 import { SignInDialog } from "../components/SignInDialog";
+import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import {
   buildCommands,
   domainAccessible,
@@ -53,6 +56,7 @@ import {
   type WorkspaceId,
 } from "../lib/commands";
 import { isTerminal } from "../lib/scope";
+import type { CelnetTransport } from "../data/transport";
 import styles from "./Shell.module.css";
 
 /** The workspace components, keyed by id, for the persistent-mount canvas. */
@@ -290,6 +294,14 @@ export function Shell(): React.ReactElement {
 
 function TitleBar(): React.ReactElement {
   const app = useApp();
+  // The counterparty simulator is a top-bar TOOL (not a domain tab), gated on
+  // `simulate·fixed_income`: a lacking user sees it DISABLED with the denial
+  // tooltip (affordance discipline — disable + explain, never silently hide).
+  // Opening it pops out a SEPARATE OS window (so the main desk stays visible) into
+  // which the panel is portalled — keeping it inside this React tree, so it shares
+  // the SAME authenticated transport (no second auth path, no second connection).
+  const [simOpen, setSimOpen] = useState(false);
+  const canSimulate = app.auth.can("simulate", "fixed_income");
   return (
     <header className={styles.titleBar}>
       <CelnetWordmark className={styles.wordmark} />
@@ -307,8 +319,104 @@ function TitleBar(): React.ReactElement {
         <kbd className={styles.kbd}>⌘K</kbd>
         <span>Search / command…</span>
       </button>
+      <button
+        type="button"
+        className={styles.simBtn}
+        onClick={() => setSimOpen(true)}
+        disabled={!canSimulate}
+        title={canSimulate ? "Open the counterparty simulator" : capabilityDenialTitle("simulate", "fixed_income")}
+        aria-label="open counterparty simulator"
+      >
+        <span className={styles.simGlyph} aria-hidden>
+          ⚗
+        </span>
+        <span>Simulator</span>
+      </button>
       <NotificationCenter />
       <AuthMenu />
+      {simOpen && <SimulatorPopout transport={app.transport} onClose={() => setSimOpen(false)} />}
     </header>
   );
+}
+
+/**
+ * SimulatorPopout — opens a real separate OS window via `window.open` and mounts a
+ * dedicated React root inside it hosting the {@link SimulatorPanel}. A separate
+ * root (not a portal) is required so the panel's DOM events bind to the popout
+ * document; the panel is handed the opener's LIVE `transport` BY REFERENCE, so it
+ * injects over the SAME authenticated connection the main desk uses — no second
+ * auth path, no second connection bootstrap. The window is same-origin, so cloning
+ * the opener's stylesheets + cascade attributes into it renders the live theme.
+ *
+ * This component renders nothing into the opener tree; it manages the child window
+ * imperatively and tears it down on unmount (close button, Esc, or sign-out).
+ */
+function SimulatorPopout({
+  transport,
+  onClose,
+}: {
+  transport: CelnetTransport;
+  onClose: () => void;
+}): null {
+  // The latest onClose, read through a ref so the open-effect runs exactly ONCE
+  // (a fresh inline onClose each render must not reopen the window).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    const win = window.open(
+      "",
+      "celnet-simulator",
+      "width=760,height=860,menubar=no,toolbar=no,location=no,status=no",
+    );
+    if (!win) {
+      // Popup blocked — surface honestly via the opener and bail (no silent fail).
+      window.alert("The simulator window was blocked. Allow pop-ups for this site and retry.");
+      onCloseRef.current();
+      return;
+    }
+
+    const doc = win.document;
+    doc.title = "Celnet — Simulator";
+    // The popout document is created blank — give its root a lang for a11y, and
+    // mirror the opener's when it has one.
+    doc.documentElement.lang = document.documentElement.lang || "en";
+    // Carry the live theme: every cascade attribute (appearance / density /
+    // contrast — all `data-*` on the root) drives the design tokens, and the
+    // opener's stylesheets (CSS-module <style> in dev, <link> in prod) render it.
+    // Copied generically so no one cascade axis is named in JS here.
+    for (const attr of Array.from(document.documentElement.attributes)) {
+      if (attr.name.startsWith("data-")) {
+        doc.documentElement.setAttribute(attr.name, attr.value);
+      }
+    }
+    for (const node of document.querySelectorAll('style, link[rel="stylesheet"]')) {
+      doc.head.appendChild(node.cloneNode(true));
+    }
+    doc.body.style.margin = "0";
+
+    // A dedicated root in the popout document so the panel's events are live there.
+    const root = createRoot(doc.body);
+    root.render(<SimulatorPanel transport={transport} onClose={() => onCloseRef.current()} />);
+
+    // Closing the window (OS chrome) is equivalent to closing the simulator; and
+    // closing the opener tab must take its child window with it.
+    const handleUnload = (): void => onCloseRef.current();
+    win.addEventListener("pagehide", handleUnload);
+    const closeChild = (): void => win.close();
+    window.addEventListener("pagehide", closeChild);
+
+    win.focus();
+
+    return () => {
+      win.removeEventListener("pagehide", handleUnload);
+      window.removeEventListener("pagehide", closeChild);
+      root.unmount();
+      if (!win.closed) win.close();
+    };
+    // Mount-once: transport is stable from app context; onClose is read via ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return null;
 }

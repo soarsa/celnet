@@ -75,6 +75,12 @@ import {
   type EntitlementPrincipal,
 } from "../contract/riskCodec";
 import type { MarketContext } from "../contract/contract";
+import {
+  loginRequestToWire,
+  loginResultFromWire,
+  logoutRequestToWire,
+} from "../contract/authCodec";
+import type { LoginResult } from "../contract/access";
 import { WS_OPEN, type WebSocketFactory, type WebSocketLike } from "./socket";
 
 /** A monotonic clock seam (injectable so the staleness logic is unit-testable). */
@@ -1001,6 +1007,30 @@ export class Connection {
   /** `RiskService.LimitStatus` — per-limit utilization/RAG for a scope node. */
   async limitStatus(body: WireObject): Promise<WireObject> {
     return this.request("limit_status", body, "limit_status_response");
+  }
+
+  // --- AuthService (interactive sign-in) ------------------------------------
+  //
+  // `login` is the one call made while anonymous (no token to present); on success
+  // the auth flow installs the returned bearer token via `setSessionToken` so every
+  // subsequent gated request authenticates server-side from the next (re)dial.
+  // Unlike the GUI's connection, the Excel `request` helper does not auto-inject the
+  // token, so `logout` carries it explicitly to identify the session to invalidate.
+
+  /** `AuthService.Login` — exchange email + password for a session (token + caller capabilities). */
+  async login(email: string, password: string): Promise<LoginResult> {
+    const reply = await this.request("login", loginRequestToWire(email, password), "login_result");
+    return loginResultFromWire(reply);
+  }
+
+  /** `AuthService.Logout` — best-effort server-side invalidation of the current session. */
+  async logout(): Promise<boolean> {
+    const body = logoutRequestToWire();
+    // The Excel `request` does not auto-inject the bearer token; ride it explicitly
+    // so the server invalidates THIS session (absent ⇒ a no-op the server tolerates).
+    if (this.sessionToken !== null) body["session_token"] = this.sessionToken;
+    const reply = await this.request("logout", body, "logout_result");
+    return reply["ended"] === true;
   }
 }
 

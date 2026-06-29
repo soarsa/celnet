@@ -86,7 +86,8 @@ import {
   type RiskScope,
 } from "../contract/riskCodec";
 import { stageMark } from "./markStaging";
-import { getConnection, getRegistry, getSeriesRegistry } from "./runtime";
+import { getConnection, getRegistry, getSeriesRegistry, getSession } from "./runtime";
+import type { EntryPointId } from "../contract/access";
 import { brokerQuoteSetToWire, ccyPairToWire, conventionsToWire, smileFromWire, type WireObject } from "../contract/wsCodec";
 import { smileModel } from "../contract/enums";
 import type { Instrument, Quote } from "../contract/contract";
@@ -96,9 +97,31 @@ import type { MarketSeriesRequest } from "../transport/connection";
 
 /** Map any error to a custom-function error value with a readable message. */
 function toCfError(err: unknown): CustomFunctions.Error {
+  // A capability-denial (or any pre-built CF error) passes through verbatim so its
+  // honest `#CELNET_DENIED!` message is not re-wrapped with a generic code.
+  if (err instanceof CustomFunctions.Error) return err;
   const message = err instanceof Error ? err.message : String(err);
   const code = err instanceof ShapingError ? "#CELNET_ARG!" : "#CELNET_ERR!";
   return new CustomFunctions.Error(CustomFunctions.ErrorCode.invalidValue, `${code} ${message}`);
+}
+
+/**
+ * Cell-side capability gate: when the caller is SIGNED IN but lacks the capability
+ * the entry point requires (or their session has expired), throw a denied
+ * custom-function error carrying the SAME honest denial sentence the GUI/task pane
+ * show — never a wrong number, never a silent value (docs §5, "no #N/A storm").
+ * Anonymous callers keep the existing price-preview behaviour (the server enforces
+ * every request). The session is the shared-runtime singleton the task pane signs
+ * into, so a sign-in there immediately gates the cells too.
+ */
+function denyIfUngated(id: EntryPointId): void {
+  const session = getSession();
+  if (!session.isSignedIn()) return; // anonymous: permissive (server enforces)
+  if (session.canEntry(id)) return;
+  throw new CustomFunctions.Error(
+    CustomFunctions.ErrorCode.invalidValue,
+    `#CELNET_DENIED! ${session.entryDenialReason(id)}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +293,7 @@ export async function PRICE(
   notional?: number,
 ): Promise<number | SpillMatrix> {
   try {
+    denyIfUngated("price");
     if (isInstrumentToken(pairOrInstrument)) {
       rejectPositionalTail("PRICE", [tenor, strikeOrDelta, callPut, notional]);
       const instrument = decodeInstrumentToken(pairOrInstrument);
@@ -318,6 +342,7 @@ export async function GREEKS(
   notional?: number,
 ): Promise<SpillMatrix> {
   try {
+    denyIfUngated("greeks");
     let instrument: Instrument;
     let key: string;
     if (isInstrumentToken(pairOrInstrument)) {
@@ -383,6 +408,7 @@ export async function RATES(
   currency?: string,
 ): Promise<SpillMatrix> {
   try {
+    denyIfUngated("rates");
     const curveSet = shapeRatesCurve({ curve, referenceDate, currency });
     const instrument = shapeOisInstrument({ tenor, fixedRate, direction, notional });
     const result = await getConnection().priceRates(curveSet, instrument);
@@ -423,6 +449,7 @@ export async function RFQ(
   panel?: boolean | string,
 ): Promise<SpillMatrix> {
   try {
+    denyIfUngated("rfq_cell");
     const wantPanel = parseRfqPanelFlag(panel);
     let instrument: Instrument;
     let key: string;
@@ -505,6 +532,7 @@ export function SUBSCRIBE(
   let instrument: Instrument;
   let label: string;
   try {
+    denyIfUngated("subscribe");
     if (isInstrumentToken(pairOrInstrument)) {
       rejectPositionalTail("SUBSCRIBE", [tenor, strikeOrDelta, callPut, notional]);
       instrument = decodeInstrumentToken(pairOrInstrument);
@@ -620,6 +648,7 @@ export async function MARKSURFACE(
   bf10?: number,
 ): Promise<SpillMatrix> {
   try {
+    denyIfUngated("marksurface");
     const shaped = shapeCalibration({ pair, tenor, model, atmVol, rr25, bf25, rr10, bf10 });
     const reply: WireObject = await getConnection().markSurface({
       pair: ccyPairToWire(shaped.pair),
@@ -769,6 +798,7 @@ export async function MARK(
   comment?: string,
 ): Promise<SpillMatrix> {
   try {
+    denyIfUngated("mark");
     const status = await stageMark(getConnection(), {
       pair,
       tenor,

@@ -571,6 +571,64 @@ impl<'a> ExecReportView<'a> {
     }
 }
 
+/// Build a `QuoteRequestReject(AG)` declining an RFQ that could not be priced —
+/// the desk declined, the request expired/withdrew, or the gateway could not
+/// reach the desk. Carries the echoed `QuoteReqID(131)`, the `Symbol(55)`, a
+/// `QuoteRequestRejectReason(658)` code, and a free-text `Text(58)` reason.
+#[must_use]
+pub fn build_quote_request_reject(
+    hdr: &Header<'_>,
+    quote_req_id: &[u8],
+    symbol: &[u8],
+    reason_code: i64,
+    text: &[u8],
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
+    enc.clear();
+    hdr.encode(MsgType::QuoteRequestReject, enc);
+    enc.push(131, quote_req_id);
+    if !symbol.is_empty() {
+        enc.push(55, symbol);
+    }
+    enc.push_int(658, reason_code);
+    if !text.is_empty() {
+        enc.push(58, text);
+    }
+    enc.finish()
+}
+
+/// A borrowed view over a `QuoteRequestReject(AG)` frame.
+#[derive(Debug, Clone, Copy)]
+pub struct QuoteRequestRejectView<'a> {
+    frame: FrameCursor<'a>,
+}
+
+impl<'a> QuoteRequestRejectView<'a> {
+    /// Wrap a frame confirmed to be a `QuoteRequestReject`.
+    #[must_use]
+    pub fn new(frame: FrameCursor<'a>) -> Self {
+        Self { frame }
+    }
+
+    /// Echoed `QuoteReqID(131)`.
+    #[must_use]
+    pub fn quote_req_id(&self) -> Option<&'a [u8]> {
+        self.frame.get(131)
+    }
+
+    /// `QuoteRequestRejectReason(658)` as bytes.
+    #[must_use]
+    pub fn reject_reason(&self) -> Option<&'a [u8]> {
+        self.frame.get(658)
+    }
+
+    /// `Text(58)` free-text reason.
+    #[must_use]
+    pub fn text(&self) -> Option<&'a [u8]> {
+        self.frame.get(58)
+    }
+}
+
 /// Build a `QuoteCancel(Z)` cancelling all quotes under a `QuoteID(117)`.
 #[must_use]
 pub fn build_quote_cancel(hdr: &Header<'_>, quote_id: &[u8], enc: &mut FrameEncoder) -> Vec<u8> {

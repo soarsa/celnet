@@ -1012,6 +1012,22 @@ async fn handle_unary(
                 codec::set_user_capabilities_response_to_json
             )
         }
+        "get_role_capabilities" => {
+            let req = decode!(codec::get_role_capabilities_request_from_json(o));
+            call!(
+                services.auth.get_role_capabilities(Request::new(req)),
+                "role_capabilities",
+                codec::get_role_capabilities_response_to_json
+            )
+        }
+        "set_role_capabilities" => {
+            let req = decode!(codec::set_role_capabilities_request_from_json(o));
+            call!(
+                services.auth.set_role_capabilities(Request::new(req)),
+                "role_capabilities_set",
+                codec::set_role_capabilities_response_to_json
+            )
+        }
         "list_desks" => {
             let req = decode!(codec::list_desks_request_from_json(o));
             call!(
@@ -1034,6 +1050,70 @@ async fn handle_unary(
                 services.auth.delete_desk(Request::new(req)),
                 "desk_deleted",
                 codec::delete_desk_response_to_json
+            )
+        }
+        "list_entities" => {
+            let req = decode!(codec::list_entities_request_from_json(o));
+            call!(
+                services.auth.list_entities(Request::new(req)),
+                "entities",
+                codec::list_entities_response_to_json
+            )
+        }
+        "create_entity" => {
+            let req = decode!(codec::create_entity_request_from_json(o));
+            call!(
+                services.auth.create_entity(Request::new(req)),
+                "entity_created",
+                codec::create_entity_response_to_json
+            )
+        }
+        "update_entity" => {
+            let req = decode!(codec::update_entity_request_from_json(o));
+            call!(
+                services.auth.update_entity(Request::new(req)),
+                "entity_updated",
+                codec::update_entity_response_to_json
+            )
+        }
+        "delete_entity" => {
+            let req = decode!(codec::delete_entity_request_from_json(o));
+            call!(
+                services.auth.delete_entity(Request::new(req)),
+                "entity_deleted",
+                codec::delete_entity_response_to_json
+            )
+        }
+        "list_books" => {
+            let req = decode!(codec::list_books_request_from_json(o));
+            call!(
+                services.auth.list_books(Request::new(req)),
+                "books",
+                codec::list_books_response_to_json
+            )
+        }
+        "create_book" => {
+            let req = decode!(codec::create_book_request_from_json(o));
+            call!(
+                services.auth.create_book(Request::new(req)),
+                "book_created",
+                codec::create_book_response_to_json
+            )
+        }
+        "update_book" => {
+            let req = decode!(codec::update_book_request_from_json(o));
+            call!(
+                services.auth.update_book(Request::new(req)),
+                "book_updated",
+                codec::update_book_response_to_json
+            )
+        }
+        "delete_book" => {
+            let req = decode!(codec::delete_book_request_from_json(o));
+            call!(
+                services.auth.delete_book(Request::new(req)),
+                "book_deleted",
+                codec::delete_book_response_to_json
             )
         }
         other => codec::error_frame(&format!("unknown request type `{other}`"), correlation_id),

@@ -1,0 +1,234 @@
+/* SimulatorPanel — the counterparty injector, filling its own popout window. */
+
+.panel {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-base, var(--bg-overlay));
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+.head {
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  border-bottom: var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.headRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.title {
+  font-family: var(--font-brand);
+  font-size: var(--type-headline);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  margin: 0;
+}
+.liveTag {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  /* High-contrast label text (the accent alone fails 4.5:1 at this small size);
+     the accent stays as the border + a faint fill so the "live" cue survives. */
+  color: var(--text-primary);
+  border: 1px solid var(--accent);
+  background: color-mix(in oklch, var(--accent) 18%, transparent);
+  border-radius: var(--r-sm);
+  padding: 1px var(--space-2);
+}
+.headRow > :last-child {
+  margin-left: auto;
+}
+.note {
+  margin: 0;
+  font-size: var(--type-caption);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: var(--space-3);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 0;
+  overflow: hidden;
+}
+@media (max-width: 640px) {
+  .body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.generator {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border-right: var(--hairline);
+  overflow-y: auto;
+}
+@media (max-width: 640px) {
+  .generator {
+    border-right: none;
+    border-bottom: var(--hairline);
+  }
+}
+.row {
+  display: flex;
+  gap: var(--space-3);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+}
+.fieldLabel {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+.input,
+.select {
+  padding: var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font-size: var(--type-body);
+  font-family: var(--font-mono, monospace);
+  width: 100%;
+}
+.input:focus,
+.select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.error {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--danger, oklch(62% 0.2 25));
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  overflow-y: auto;
+}
+.listHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.listTitle {
+  margin: 0;
+  font-size: var(--type-body);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+.count {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, monospace);
+}
+.empty {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+.itemList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.item {
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.itemTop {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.kindBadge {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.04em;
+  border-radius: var(--r-sm);
+  padding: 1px var(--space-2);
+  color: var(--text-primary);
+  border: var(--hairline);
+}
+.kindRFQ {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.kindIOI {
+  color: var(--info, oklch(70% 0.13 230));
+  border-color: var(--info, oklch(70% 0.13 230));
+}
+.cpty {
+  font-size: var(--type-body);
+  color: var(--text-primary);
+  font-weight: var(--weight-header);
+}
+.terms {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  margin-left: auto;
+}
+.quote {
+  display: flex;
+  gap: var(--space-4);
+  margin: 0;
+}
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.metricLabel {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+.metricValue {
+  font-size: var(--type-body);
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+}
+.metricValueEmphatic {
+  font-size: var(--type-body);
+  color: var(--accent);
+  font-weight: var(--weight-header);
+  font-family: var(--font-mono, monospace);
+}

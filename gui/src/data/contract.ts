@@ -1720,10 +1720,13 @@ export interface LimitStatusResponse {
 
 /**
  * The dialect an inbound FIX acceptor speaks (`celnet.wire.FixAcceptorKind`).
- * Kind-generic: `"OPTIONS"` is the FX-options dialect served today; the spot
- * dialect adds a member in phase 2 without reshaping the contract or the UI.
+ * `"OPTIONS"` is the FX-options dialect; `"FIXED_INCOME_QUOTE"` is the rates/OIS
+ * one-shot RFQ dialect and `"FIXED_INCOME_STREAM"` the rates/OIS streaming RFS
+ * dialect — standing either FI venue up requires the matching FI capability
+ * (`quote_respond` / `stream` on `fixed_income`). Kind-generic: the spot dialect
+ * adds a member in a later phase without reshaping the contract or the UI.
  */
-export type FixConnectionKind = "OPTIONS";
+export type FixConnectionKind = "OPTIONS" | "FIXED_INCOME_QUOTE" | "FIXED_INCOME_STREAM";
 
 /**
  * A managed inbound FIX-acceptor connection: the persisted definition plus its
@@ -1856,6 +1859,50 @@ export interface DeskDesc {
   name: string;
 }
 
+// --- legal-entity / netting-book registry (`AuthService` entity/book admin) ---
+//
+// The admin-managed registry that names the `(entity, book)` `uint32` partition
+// keys a `RatesPosition` books into (`celnet.wire.EntityDesc`/`BookDesc`). A
+// position still carries opaque `uint32` keys on the wire; this registry is the
+// display-name ↔ key map the booking form resolves a named selection through and
+// the Book/blotter views resolve a key back to a name with. Listing is open to
+// any authenticated user (it populates the booking form); create/update/delete
+// are admin-only (server-enforced). The wire JSON carries snake_case
+// `entity_key`; the codec layer maps it to this camelCase `entityKey`.
+
+/** A named legal entity / account a position books into (`celnet.wire.EntityDesc`). */
+export interface EntityDesc {
+  /** The `uint32` partition key carried on `RatesPosition.entity` (immutable identity). */
+  key: number;
+  /** Human-friendly legal-entity name, e.g. "Celnet Global Markets". */
+  name: string;
+  /** Short code, e.g. "CGM" (unique). */
+  code: string;
+}
+
+/** A named netting book under an entity (`celnet.wire.BookDesc`). */
+export interface BookDesc {
+  /** The `uint32` partition key carried on `RatesPosition.book` (immutable identity). */
+  key: number;
+  /** Human-friendly book name, e.g. "Rates Trading". */
+  name: string;
+  /** The owning entity's `EntityDesc.key`. */
+  entityKey: number;
+}
+
+/** The create/update-an-entity payload (`AuthService.{Create,Update}Entity`). */
+export interface EntityInput {
+  name: string;
+  code: string;
+}
+
+/** The create/update-a-book payload (`AuthService.{Create,Update}Book`). */
+export interface BookInput {
+  name: string;
+  /** The owning entity's `EntityDesc.key`. */
+  entityKey: number;
+}
+
 /** The issued session on a successful login (`celnet.wire.LoginResponse`). */
 export interface LoginResult {
   /** The opaque bearer token to present on subsequent RPCs (a secret). */
@@ -1918,6 +1965,7 @@ export type CapabilityAction =
   | "stream"
   | "execute"
   | "book"
+  | "simulate"
   | "administer";
 
 /** The asset class a capability applies to (`celnet.wire.CapabilityDesc.asset`). */
@@ -1942,6 +1990,7 @@ export const CAPABILITY_ACTIONS: readonly CapabilityAction[] = [
   "stream",
   "execute",
   "book",
+  "simulate",
   "administer",
 ];
 
@@ -1964,6 +2013,20 @@ export interface UserCapabilities {
   denies: Capability[];
   /** The fully-resolved set the server admits. Server-computed, read-only. */
   effective: Capability[];
+}
+
+/**
+ * A role's capability **bundle** — the base authority the role confers before any
+ * per-user overlay (`AuthService.{Get,Set}RoleCapabilities` response). For `ADMIN`
+ * this is the full action × asset surface (grant-all, immutable — a Set is
+ * rejected server-side); for a non-admin role it is the admin-editable bundle,
+ * defaulting to every action but `administer` on both asset classes when none has
+ * been stored. A successful Set replaces the bundle wholesale and revokes the live
+ * sessions of every user holding the role, so it takes effect on their next login.
+ */
+export interface RoleCapabilities {
+  /** The capabilities the role confers as its base. */
+  capabilities: Capability[];
 }
 
 // ---------------------------------------------------------------------------

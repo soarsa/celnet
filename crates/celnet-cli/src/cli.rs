@@ -19,7 +19,7 @@ use crate::risk::{
     self, AggregateReq, CliDimension, DrillReq, LimitsReq, PositionsReq, RiskCommon, StreamReq,
 };
 use crate::tenor::parse_tenor;
-use crate::{convention, exotic, future_option, linear, perpetual, price, rfq, surface};
+use crate::{convention, exotic, fix, future_option, linear, perpetual, price, rfq, surface};
 
 use celnet_client::{OrgDimension, Scope, StrikeSpec};
 
@@ -84,6 +84,12 @@ pub(crate) enum Command {
     /// In-repo panels are the native maker plus labeled deterministic synthetic
     /// demo/test dealers — live LP connectivity is an environment concern.
     Rfq(RfqArgs),
+    /// Drive the FIX quoting gateway as a price-taker (initiator): connect to the
+    /// gateway's FIX 4.4 acceptor, log on, send a USD-SOFR OIS `QuoteRequest`,
+    /// print the returned `Quote`, lift it, and print the `ExecutionReport` — the
+    /// `celnet-fix` engine's real session + rates dialect, against a local or UAT
+    /// gateway (a live counterparty venue is a deploy concern, never required).
+    Fix(FixArgs),
 }
 
 /// Arguments to `risk` — the edge endpoint, the entitlement scope flags, and one
@@ -261,6 +267,44 @@ pub(crate) struct RfqArgs {
     /// commands).
     #[arg(long = "session-token")]
     pub(crate) session_token: Option<String>,
+}
+
+/// Arguments to `fix` — the gateway FIX-listener target, the session CompIDs, and
+/// the rates RFQ economics.
+#[derive(Debug, Args)]
+pub(crate) struct FixArgs {
+    /// The gateway FIX-listener host (locally `127.0.0.1`; on UAT the gateway's
+    /// host, which bridges to the edge).
+    #[arg(long, default_value = "127.0.0.1")]
+    pub(crate) host: String,
+    /// The gateway FIX-listener port.
+    #[arg(long, default_value_t = 9880)]
+    pub(crate) port: u16,
+    /// Our `SenderCompID` (the initiator identity the gateway expects as its target).
+    #[arg(long = "sender-comp-id", default_value = "CPARTY")]
+    pub(crate) sender_comp_id: String,
+    /// The gateway's `SenderCompID` (our `TargetCompID`).
+    #[arg(long = "target-comp-id", default_value = "CELNET-FIX")]
+    pub(crate) target_comp_id: String,
+    /// The OIS curve symbol (`Symbol(55)`).
+    #[arg(long, default_value = "USDSOFR")]
+    pub(crate) symbol: String,
+    /// The OIS tenor in whole years (`>= 1`).
+    #[arg(long = "tenor-years", default_value_t = 5)]
+    pub(crate) tenor_years: u32,
+    /// The notional in the curve currency (`> 0`).
+    #[arg(long, default_value_t = 100_000_000.0)]
+    pub(crate) notional: f64,
+    /// The directional intent of the RFQ.
+    #[arg(long, value_enum, default_value = "pay-fixed")]
+    pub(crate) side: fix::CliRatesSide,
+    /// How to react to the returned quote: lift the offer, hit the bid, or just
+    /// observe (indicative).
+    #[arg(long, value_enum, default_value = "offer")]
+    pub(crate) lift: fix::CliLift,
+    /// The session heartbeat interval (seconds).
+    #[arg(long, default_value_t = 30)]
+    pub(crate) heartbeat: u32,
 }
 
 /// Shared Garman-Kohlhagen market inputs accepted by `price` and `exotic`.
@@ -1000,6 +1044,8 @@ pub(crate) enum DispatchError {
     },
     /// An argument was out of its valid domain.
     Invalid(String),
+    /// A `fix` gateway-client failure (connect, protocol, timeout, bad argument).
+    Fix(fix::FixError),
 }
 
 impl core::fmt::Display for DispatchError {
@@ -1017,6 +1063,7 @@ impl core::fmt::Display for DispatchError {
                  level and has no default"
             ),
             DispatchError::Invalid(s) => write!(f, "invalid argument: {s}"),
+            DispatchError::Fix(e) => write!(f, "{e}"),
         }
     }
 }
@@ -1833,6 +1880,22 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                 session_token: a.session_token,
             };
             rfq::run(&req, out).map_err(DispatchError::Risk)?;
+            Ok(())
+        }
+        Command::Fix(a) => {
+            let req = fix::FixRequest {
+                host: a.host,
+                port: a.port,
+                sender_comp_id: a.sender_comp_id,
+                target_comp_id: a.target_comp_id,
+                symbol: a.symbol,
+                tenor_years: a.tenor_years,
+                notional: a.notional,
+                side: a.side,
+                lift: a.lift,
+                heartbeat: a.heartbeat,
+            };
+            fix::run(&req, out).map_err(DispatchError::Fix)?;
             Ok(())
         }
     }

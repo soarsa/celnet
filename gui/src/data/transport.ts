@@ -30,7 +30,13 @@ import type {
   Conventions,
   CreateUserInput,
   DeskDesc,
+  EntityDesc,
+  EntityInput,
+  BookDesc,
+  BookInput,
   UserCapabilities,
+  RoleCapabilities,
+  UserRole,
   DrillRiskRequest,
   DrillRiskResponse,
   Executed,
@@ -428,6 +434,24 @@ export interface CelnetTransport {
     denies: readonly Capability[],
   ): Promise<UserCapabilities>;
 
+  /**
+   * AuthService.GetRoleCapabilities (admin) — read a role's capability bundle (its
+   * base authority before any per-user overlay). `ADMIN` resolves to the full
+   * grant-all surface; a non-admin role to its admin-editable bundle.
+   */
+  getRoleCapabilities(role: UserRole): Promise<RoleCapabilities>;
+
+  /**
+   * AuthService.SetRoleCapabilities (admin) — replace a non-admin role's bundle
+   * wholesale (the full new set, not a delta) and return the freshly-stored bundle.
+   * A successful set revokes the live sessions of every user holding the role. The
+   * `ADMIN` role is grant-all and immutable — setting it is rejected server-side.
+   */
+  setRoleCapabilities(
+    role: UserRole,
+    capabilities: readonly Capability[],
+  ): Promise<RoleCapabilities>;
+
   /** AuthService.ListDesks (admin) — the full desk roster. */
   listDesks(): Promise<DeskDesc[]>;
 
@@ -436,4 +460,35 @@ export interface CelnetTransport {
 
   /** AuthService.DeleteDesk (admin) — remove a desk (its members become unassigned). */
   deleteDesk(id: string): Promise<boolean>;
+
+  // --- legal-entity / netting-book registry (entity/book admin) --------------
+  //
+  // ListEntities/ListBooks are callable by ANY authenticated user (they populate
+  // the rates booking form's named dropdowns); Create/Update/Delete are admin-only
+  // (server-enforced). DeleteEntity is rejected (FailedPrecondition) while any book
+  // still references the entity.
+
+  /** AuthService.ListEntities — the legal-entity registry (any authenticated user). */
+  listEntities(): Promise<EntityDesc[]>;
+
+  /** AuthService.CreateEntity (admin) — create an entity; resolves to the created entity. */
+  createEntity(input: EntityInput): Promise<EntityDesc>;
+
+  /** AuthService.UpdateEntity (admin) — rename / recode an entity (the key is immutable). */
+  updateEntity(key: number, input: EntityInput): Promise<EntityDesc>;
+
+  /** AuthService.DeleteEntity (admin) — remove an entity (rejected if a book references it). */
+  deleteEntity(key: number): Promise<boolean>;
+
+  /** AuthService.ListBooks — the netting-book registry (any authenticated user). */
+  listBooks(): Promise<BookDesc[]>;
+
+  /** AuthService.CreateBook (admin) — create a book under an entity. */
+  createBook(input: BookInput): Promise<BookDesc>;
+
+  /** AuthService.UpdateBook (admin) — rename / re-home a book (the key is immutable). */
+  updateBook(key: number, input: BookInput): Promise<BookDesc>;
+
+  /** AuthService.DeleteBook (admin) — remove a book. */
+  deleteBook(key: number): Promise<boolean>;
 }

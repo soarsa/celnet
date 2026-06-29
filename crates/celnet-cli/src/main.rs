@@ -19,6 +19,7 @@ mod basket;
 mod cli;
 mod convention;
 mod exotic;
+mod fix;
 mod future_option;
 mod linear;
 mod perpetual;

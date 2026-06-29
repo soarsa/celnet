@@ -21,16 +21,23 @@
 #![forbid(unsafe_code)]
 
 pub mod acceptor;
+pub mod backend;
 pub mod dialect_fx;
 pub mod dialect_rates;
 pub mod dictionary;
 pub mod framing;
+pub mod gateway;
 pub mod initiator;
 pub mod messages;
 pub mod session;
 pub mod transport;
 
+pub use backend::{
+    BackendError, DeskBackend, DeskFill, DeskQuoteOut, DeskRfq, DeskSide, GrpcDeskBackend,
+    RequestKind, ResponseOutcome, usd_sofr_curve,
+};
 pub use dictionary::MsgType;
 pub use framing::{FrameCursor, FrameEncoder, FrameError};
+pub use gateway::{DeskGateway, GatewayConfig, GatewayError};
 pub use session::{Role, Session, SessionConfig, SessionState};
 pub use transport::MAX_FIX_MESSAGE_BYTES;

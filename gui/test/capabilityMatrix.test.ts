@@ -100,14 +100,14 @@ describe("resolveEffective — full enumeration matches the server algebra", () 
   it("trader with no overlay = every action except administer, both assets", () => {
     const effective = resolveEffective("TRADER", new Map());
     const keys = new Set(effective.map((c) => capKey(c.action, c.asset)));
-    // 8 non-admin actions × 2 assets = 16.
-    expect(effective.length).toBe(16);
+    // 9 non-admin actions × 2 assets = 18.
+    expect(effective.length).toBe(18);
     expect(keys.has(capKey("administer", "fx_options"))).toBe(false);
     expect(keys.has(capKey("administer", "fixed_income"))).toBe(false);
     expect(keys.has(capKey("execute", "fx_options"))).toBe(true);
   });
 
-  it("admin with no overlay = the full 9 × 2 grid", () => {
+  it("admin with no overlay = the full 10 × 2 grid", () => {
     const effective = resolveEffective("ADMIN", new Map());
     expect(effective.length).toBe(CAPABILITY_ACTIONS.length * CAPABILITY_ASSETS.length);
   });
