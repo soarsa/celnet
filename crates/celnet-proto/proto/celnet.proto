@@ -4203,14 +4203,40 @@ service AuthService {
 // number, never renumbering, and no arm appears on the wire before it can be
 // priced end-to-end (no placeholder arms).
 
+// The maturity point of a curve pillar, measured from the `CurveSet` reference
+// (spot-anchor) date. Exactly one arm is set:
+//   * `years`         — a regular whole-year tenor (e.g. 1, 2, 5, 10), the
+//                       canonical liquid grid; must be >= 1.
+//   * `months`        — a month tenor (e.g. 3, 18, 30) for sub-year or broken
+//                       (non-integer-year) pillars; must be >= 1.
+//   * `maturity_date` — an explicit odd-dated ("broken date") maturity, the
+//                       civil YYYY-MM-DD the final period rolls to (e.g. an IMM
+//                       or turn date that no whole tenor names).
+// The server resolves the arm to a roll-adjusted maturity date and rebuilds the
+// pillar's USD-SOFR fixed-leg schedule from it, so only the economic locator
+// travels on the wire. A whole-year `years = n` and the equivalent dated arm
+// resolve to byte-identical schedules.
+message PillarTenor {
+  // The maturity locator: exactly one arm is set.
+  oneof point {
+    // A regular whole-year tenor from spot (e.g. 1, 2, 5, 10); must be >= 1.
+    uint32 years = 1;
+    // A month tenor from spot (e.g. 3, 18, 30) for sub-/broken-year pillars; >= 1.
+    uint32 months = 2;
+    // An explicit odd-dated ("broken date") maturity the final period rolls to.
+    BrokenDate maturity_date = 3;
+  }
+}
+
 // One calibrating pillar of a self-discounting OIS curve: the observed par (fair
-// fixed) rate of the spot-starting USD-SOFR OIS of the given whole-year tenor.
-// The pillar's schedule (modified-following US calendar, ACT/360 accrual,
+// fixed) rate of the spot-starting USD-SOFR OIS maturing at the given pillar
+// point. The pillar's schedule (modified-following US calendar, ACT/360 accrual,
 // ACT/365F discount time) is reconstructed server-side from the `CurveSet`
 // reference date and this tenor, so only the economic quote travels on the wire.
 message OisPillar {
-  // The OIS tenor in whole years from spot (e.g. 1, 2, 5, 10). Must be >= 1.
-  uint32 tenor_years = 1;
+  // Where this pillar matures — a whole-year tenor, a month tenor, or an
+  // explicit broken-date maturity. See `PillarTenor`.
+  PillarTenor tenor = 1;
   // The observed par (fair fixed) rate as a decimal (0.0405 = 4.05%).
   double par_rate = 2;
 }

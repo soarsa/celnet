@@ -56,7 +56,10 @@ pub use futures_strip::{
 };
 pub use ois::{FixedPeriod, OisSchedule, ScheduleError, ois_annuity, ois_par_rate, ois_pv};
 pub use risk::{OisRisk, ois_risk, pv01};
-pub use schedule::{us_settlement_calendar, usd_ois_schedule_with_basis, usd_sofr_ois_schedule};
+pub use schedule::{
+    us_settlement_calendar, usd_ois_schedule_for_months, usd_ois_schedule_to_maturity,
+    usd_ois_schedule_with_basis, usd_sofr_ois_schedule,
+};
 pub use solver::{SolverError, brent_root};
 pub use turns::{TurnError, TurnJump, turn_discount_factor, with_turns};
 pub use vanilla_swap::{

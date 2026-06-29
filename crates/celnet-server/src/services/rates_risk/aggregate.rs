@@ -177,24 +177,13 @@ mod tests {
                 month: 6,
                 day: 15,
             }),
-            ois_pillars: vec![
-                OisPillar {
-                    tenor_years: 1,
-                    par_rate: 0.0405,
-                },
-                OisPillar {
-                    tenor_years: 2,
-                    par_rate: 0.0410,
-                },
-                OisPillar {
-                    tenor_years: 5,
-                    par_rate: 0.0420,
-                },
-                OisPillar {
-                    tenor_years: 10,
-                    par_rate: 0.0430,
-                },
-            ],
+            ois_pillars: [(1, 0.0405), (2, 0.0410), (5, 0.0420), (10, 0.0430)]
+                .into_iter()
+                .map(|(years, par_rate)| OisPillar {
+                    tenor: Some(crate::rates_pricing::years_pillar(years)),
+                    par_rate,
+                })
+                .collect(),
         }
     }
 

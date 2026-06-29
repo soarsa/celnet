@@ -1241,11 +1241,30 @@ fn u32_field(o: &Map<String, Value>, key: &str) -> Result<u32> {
     u32::try_from(u64_field(o, key)?).map_err(|_| err(format!("field `{key}` out of u32 range")))
 }
 
-/// Decode one OIS curve pillar `{ tenor_years, par_rate }`.
+/// Decode a `PillarTenor` `{ years | months | maturity_date }` — exactly one arm.
+/// `years`/`months` are whole counts; `maturity_date` is a `BrokenDate`.
+fn pillar_tenor_from_json(v: &Value) -> Result<celnet_proto::PillarTenor> {
+    use celnet_proto::pillar_tenor::Point;
+    let o = obj(v, "tenor")?;
+    let point = if o.contains_key("years") {
+        Point::Years(u32_field(o, "years")?)
+    } else if o.contains_key("months") {
+        Point::Months(u32_field(o, "months")?)
+    } else if o.contains_key("maturity_date") {
+        Point::MaturityDate(nested(o, "maturity_date", broken_date_from_json)?)
+    } else {
+        return Err(err(
+            "pillar `tenor` oneof: expected a `years`, `months`, or `maturity_date` arm",
+        ));
+    };
+    Ok(celnet_proto::PillarTenor { point: Some(point) })
+}
+
+/// Decode one OIS curve pillar `{ tenor: {...}, par_rate }`.
 fn ois_pillar_from_json(v: &Value) -> Result<OisPillar> {
     let o = obj(v, "ois_pillar")?;
     Ok(OisPillar {
-        tenor_years: u32_field(o, "tenor_years")?,
+        tenor: Some(nested(o, "tenor", pillar_tenor_from_json)?),
         par_rate: f64_field(o, "par_rate")?,
     })
 }
@@ -2130,6 +2149,17 @@ fn broken_date_to_json(d: &celnet_proto::BrokenDate) -> Value {
     json!({ "year": d.year, "month": d.month, "day": d.day })
 }
 
+/// Encode a `PillarTenor` to its single-arm object `{ years | months | maturity_date }`.
+fn pillar_tenor_to_json(t: &celnet_proto::PillarTenor) -> Value {
+    use celnet_proto::pillar_tenor::Point;
+    match &t.point {
+        Some(Point::Years(years)) => json!({ "years": years }),
+        Some(Point::Months(months)) => json!({ "months": months }),
+        Some(Point::MaturityDate(d)) => json!({ "maturity_date": broken_date_to_json(d) }),
+        None => json!({}),
+    }
+}
+
 /// Encode a `CurveSet` `{ currency, reference_date, ois_pillars[] }`.
 fn curve_set_to_json(c: &CurveSet) -> Value {
     json!({
@@ -2138,7 +2168,10 @@ fn curve_set_to_json(c: &CurveSet) -> Value {
         "ois_pillars": Value::Array(
             c.ois_pillars
                 .iter()
-                .map(|p| json!({ "tenor_years": p.tenor_years, "par_rate": p.par_rate }))
+                .map(|p| json!({
+                    "tenor": p.tenor.as_ref().map(pillar_tenor_to_json),
+                    "par_rate": p.par_rate,
+                }))
                 .collect(),
         ),
     })
@@ -4318,9 +4351,9 @@ mod tests {
                 "currency": "USD",
                 "reference_date": { "year": 2026, "month": 6, "day": 25 },
                 "ois_pillars": [
-                    { "tenor_years": 1, "par_rate": 0.0432 },
-                    { "tenor_years": 2, "par_rate": 0.0418 },
-                    { "tenor_years": 5, "par_rate": 0.0405 }
+                    { "tenor": { "years": 1 }, "par_rate": 0.0432 },
+                    { "tenor": { "years": 2 }, "par_rate": 0.0418 },
+                    { "tenor": { "years": 5 }, "par_rate": 0.0405 }
                 ]
             },
             "instrument": {
@@ -4335,7 +4368,16 @@ mod tests {
         let curve = req.curve_set.as_ref().unwrap();
         assert_eq!(curve.currency, "USD");
         assert_eq!(curve.ois_pillars.len(), 3);
-        assert_eq!(curve.ois_pillars[2].tenor_years, 5);
+        // Each whole-year pillar decoded into the `Years` arm.
+        use celnet_proto::pillar_tenor::Point;
+        assert_eq!(
+            curve.ois_pillars[0].tenor.as_ref().unwrap().point,
+            Some(Point::Years(1))
+        );
+        assert_eq!(
+            curve.ois_pillars[2].tenor.as_ref().unwrap().point,
+            Some(Point::Years(5))
+        );
 
         // The decoded request prices through the engine: a 5y receive-fixed swap
         // (side=1=SELL) at the 5y par rate is ~par, so PV ~ 0.
@@ -4361,6 +4403,60 @@ mod tests {
         assert_eq!(v["result"]["key_rate_ladder"].as_array().unwrap().len(), 3);
     }
 
+    /// A curve mixing all three `PillarTenor` arms — a whole-year `years`, a
+    /// `months` tenor, and an explicit `maturity_date` broken date — decodes into
+    /// the matching oneof variants, then re-encodes to the same JSON shape
+    /// (round-trip of the new wire form), and prices without error.
+    #[test]
+    fn rates_price_request_decodes_mixed_pillar_arms() {
+        use celnet_proto::pillar_tenor::Point;
+        let body = json!({
+            "request_id": 11,
+            "curve_set": {
+                "currency": "USD",
+                "reference_date": { "year": 2026, "month": 6, "day": 25 },
+                "ois_pillars": [
+                    { "tenor": { "years": 1 }, "par_rate": 0.0432 },
+                    { "tenor": { "months": 18 }, "par_rate": 0.0418 },
+                    { "tenor": { "maturity_date": { "year": 2031, "month": 6, "day": 30 } }, "par_rate": 0.0405 }
+                ]
+            },
+            "instrument": {
+                "ois": { "tenor_years": 2, "fixed_rate": 0.041, "notional": 100000000.0, "side": 1 }
+            }
+        });
+        let req = rates_price_request_from_json(body.as_object().unwrap()).expect("decodes");
+        let pillars = &req.curve_set.as_ref().unwrap().ois_pillars;
+        assert_eq!(
+            pillars[0].tenor.as_ref().unwrap().point,
+            Some(Point::Years(1))
+        );
+        assert_eq!(
+            pillars[1].tenor.as_ref().unwrap().point,
+            Some(Point::Months(18))
+        );
+        assert_eq!(
+            pillars[2].tenor.as_ref().unwrap().point,
+            Some(Point::MaturityDate(celnet_proto::BrokenDate {
+                year: 2031,
+                month: 6,
+                day: 30,
+            }))
+        );
+
+        // The curve re-encodes to the same arm shapes (encode/decode symmetry).
+        let back = curve_set_to_json(req.curve_set.as_ref().unwrap());
+        assert_eq!(back["ois_pillars"][1]["tenor"]["months"], json!(18));
+        assert_eq!(
+            back["ois_pillars"][2]["tenor"]["maturity_date"]["year"],
+            json!(2031)
+        );
+
+        // And it prices to a finite par rate end to end.
+        let priced = crate::rates_pricing::price_rates(&req).expect("prices");
+        assert!(priced.par_rate.is_finite() && priced.par_rate > 0.0);
+    }
+
     /// An `aggregate_rates_risk` request decodes from the browser JSON shape into
     /// the proto `AggregateRatesRiskRequest`: the shared curve/instrument codecs
     /// rebuild the market + economics, positions carry their `(entity, book)` cell,
@@ -4373,8 +4469,8 @@ mod tests {
                 "currency": "USD",
                 "reference_date": { "year": 2026, "month": 6, "day": 25 },
                 "ois_pillars": [
-                    { "tenor_years": 1, "par_rate": 0.0432 },
-                    { "tenor_years": 5, "par_rate": 0.0405 }
+                    { "tenor": { "years": 1 }, "par_rate": 0.0432 },
+                    { "tenor": { "years": 5 }, "par_rate": 0.0405 }
                 ]
             },
             "positions": [
@@ -4439,7 +4535,7 @@ mod tests {
         json!({
             "currency": "USD",
             "reference_date": { "year": 2026, "month": 6, "day": 25 },
-            "ois_pillars": [ { "tenor_years": 1, "par_rate": 0.0432 }, { "tenor_years": 5, "par_rate": 0.0405 } ]
+            "ois_pillars": [ { "tenor": { "years": 1 }, "par_rate": 0.0432 }, { "tenor": { "years": 5 }, "par_rate": 0.0405 } ]
         })
     }
 

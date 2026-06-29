@@ -39,6 +39,18 @@ fn price_error_status(e: &RatesPriceError) -> Status {
     }
 }
 
+/// The whole-year tenor a pillar labels, or `None` if it uses the month /
+/// broken-date arm. The per-tenor key-rate ladder is whole-year-labelled today;
+/// generalising it to month/dated buckets is a deferred follow-on, so the
+/// federation rejects those pillars rather than mislabel a bucket.
+fn whole_year_pillar(pillar: &celnet_proto::OisPillar) -> Option<u32> {
+    use celnet_proto::pillar_tenor::Point;
+    match pillar.tenor.as_ref()?.point.as_ref()? {
+        Point::Years(years) => Some(*years),
+        Point::Months(_) | Point::MaturityDate(_) => None,
+    }
+}
+
 /// Price one [`RatesPosition`] against `curve_set` and build its additive
 /// [`RatesRiskFact`]: the `(entity, ccy, book)` cell plus the side-signed
 /// PV / PV01 / DV01 and the per-tenor key-rate DV01 ladder.
@@ -87,11 +99,17 @@ pub fn fact_from_position(
         .ois_pillars
         .iter()
         .zip(priced.key_rate_ladder.iter())
-        .map(|(pillar, &dv01)| KeyRateBucket {
-            tenor_years: pillar.tenor_years,
-            dv01,
+        .map(|(pillar, &dv01)| {
+            let tenor_years = whole_year_pillar(pillar).ok_or_else(|| {
+                Status::invalid_argument(
+                    "AggregateRatesRisk: per-tenor key-rate risk currently requires whole-year \
+                     curve pillars; month and broken-date pillars price correctly but are not \
+                     yet labelled in the key-rate ladder",
+                )
+            })?;
+            Ok(KeyRateBucket { tenor_years, dv01 })
         })
-        .collect();
+        .collect::<Result<_, Status>>()?;
 
     Ok(RatesRiskFact {
         key: RatesFactKey {

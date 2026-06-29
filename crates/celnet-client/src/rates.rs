@@ -8,8 +8,8 @@
 //! The returned [`RatesPriced`] is already side-signed in the curve currency.
 
 use celnet_proto::{
-    BrokenDate, CurveSet, OisInstrument, OisPillar, RatesInstrument, RatesPricingResult, Side,
-    rates_instrument,
+    BrokenDate, CurveSet, OisInstrument, OisPillar, PillarTenor, RatesInstrument,
+    RatesPricingResult, Side, pillar_tenor, rates_instrument,
 };
 
 /// A civil (calendar) date: `year`, `month` 1..=12, `day` 1..=31.
@@ -39,13 +39,36 @@ impl CivilDate {
     }
 }
 
+/// Where a curve pillar matures: a whole-year tenor, a month tenor, or an explicit
+/// broken-date maturity. Mirrors the wire [`celnet_proto::PillarTenor`] oneof.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PillarPoint {
+    /// Whole-year tenor from spot (e.g. 1, 2, 5, 10).
+    Years(u32),
+    /// Month tenor from spot (e.g. 3, 18, 30) — sub-/broken-year pillars.
+    Months(u32),
+    /// Explicit odd-dated ("broken date") maturity.
+    Maturity(CivilDate),
+}
+
+impl PillarPoint {
+    fn to_wire(self) -> PillarTenor {
+        let point = match self {
+            PillarPoint::Years(years) => pillar_tenor::Point::Years(years),
+            PillarPoint::Months(months) => pillar_tenor::Point::Months(months),
+            PillarPoint::Maturity(date) => pillar_tenor::Point::MaturityDate(date.to_wire()),
+        };
+        PillarTenor { point: Some(point) }
+    }
+}
+
 /// Fluent builder for a self-discounting USD-SOFR curve, from its dated par-OIS
 /// pillars. Add pillars in increasing tenor order; the server bootstraps the
 /// discount/forward term structure from them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UsdSofrCurve {
     reference: CivilDate,
-    pillars: Vec<(u32, f64)>,
+    pillars: Vec<(PillarPoint, f64)>,
 }
 
 impl UsdSofrCurve {
@@ -62,8 +85,27 @@ impl UsdSofrCurve {
     /// Add one calibrating pillar: the observed par rate (decimal, `0.0405` =
     /// 4.05%) of the spot-starting OIS of `tenor_years` whole years.
     #[must_use]
-    pub fn pillar(mut self, tenor_years: u32, par_rate: f64) -> Self {
-        self.pillars.push((tenor_years, par_rate));
+    pub fn pillar(self, tenor_years: u32, par_rate: f64) -> Self {
+        self.pillar_at(PillarPoint::Years(tenor_years), par_rate)
+    }
+
+    /// Add a pillar at a month tenor (e.g. 3, 18, 30) — a sub-year or broken-year
+    /// point the whole-year grid cannot name.
+    #[must_use]
+    pub fn pillar_months(self, tenor_months: u32, par_rate: f64) -> Self {
+        self.pillar_at(PillarPoint::Months(tenor_months), par_rate)
+    }
+
+    /// Add a pillar at an explicit broken-date `maturity` (e.g. an IMM or turn date).
+    #[must_use]
+    pub fn pillar_on(self, maturity: CivilDate, par_rate: f64) -> Self {
+        self.pillar_at(PillarPoint::Maturity(maturity), par_rate)
+    }
+
+    /// Add one calibrating pillar at an arbitrary [`PillarPoint`].
+    #[must_use]
+    pub fn pillar_at(mut self, point: PillarPoint, par_rate: f64) -> Self {
+        self.pillars.push((point, par_rate));
         self
     }
 
@@ -74,8 +116,8 @@ impl UsdSofrCurve {
             ois_pillars: self
                 .pillars
                 .iter()
-                .map(|&(tenor_years, par_rate)| OisPillar {
-                    tenor_years,
+                .map(|&(point, par_rate)| OisPillar {
+                    tenor: Some(point.to_wire()),
                     par_rate,
                 })
                 .collect(),
@@ -189,18 +231,31 @@ mod tests {
     fn curve() -> UsdSofrCurve {
         UsdSofrCurve::new(CivilDate::new(2026, 6, 25))
             .pillar(1, 0.0432)
-            .pillar(2, 0.0418)
-            .pillar(5, 0.0405)
+            .pillar_months(18, 0.0418)
+            .pillar_on(CivilDate::new(2031, 6, 30), 0.0405)
     }
 
     #[test]
     fn curve_builds_wire_curve_set() {
+        use pillar_tenor::Point;
         let wire = curve().to_wire();
         assert_eq!(wire.currency, "USD");
         let rd = wire.reference_date.unwrap();
         assert_eq!((rd.year, rd.month, rd.day), (2026, 6, 25));
         assert_eq!(wire.ois_pillars.len(), 3);
-        assert_eq!(wire.ois_pillars[2].tenor_years, 5);
+        // Each builder method routes to the matching wire arm.
+        assert_eq!(
+            wire.ois_pillars[0].tenor.as_ref().unwrap().point,
+            Some(Point::Years(1))
+        );
+        assert_eq!(
+            wire.ois_pillars[1].tenor.as_ref().unwrap().point,
+            Some(Point::Months(18))
+        );
+        assert!(matches!(
+            wire.ois_pillars[2].tenor.as_ref().unwrap().point,
+            Some(Point::MaturityDate(_))
+        ));
         assert_eq!(wire.ois_pillars[2].par_rate, 0.0405);
     }
 
