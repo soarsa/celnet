@@ -410,6 +410,157 @@ async fn ws_click_to_trade_books_then_rejects_stale_token() {
     .expect("test must not hang");
 }
 
+/// Under the PRODUCTION `Enforce` posture, a WS stream `subscribe` is admitted ONLY
+/// when the session presents a valid login `session_token` — and the WS mirror's
+/// `StreamEdge` MUST validate that token against the SAME session registry the WS
+/// `login` mints into. (A regression guard: the WS `StreamEdge` once defaulted to a
+/// fresh empty registry, so every login-tokened stream auth was rejected
+/// "invalid or expired session token" and the `Stream·FxOptions` capability gate —
+/// finding #3, caps come only from a session — could never be satisfied over WS.)
+///
+/// This proves both halves of the contract on the live WS edge:
+///  - a tokenless (anonymous, grant-all-principal) `authenticate` → `subscribe` is
+///    DENIED `unauthenticated` (the gate is intact — a body principal cannot
+///    self-grant a capability);
+///  - logging in over WS for the seeded-admin `session_token`, re-authenticating
+///    with it, then `subscribe` is ADMITTED and yields a baseline `snapshot`.
+#[tokio::test]
+async fn ws_stream_subscribe_under_enforce_needs_a_login_session_token() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, _grpc) = start_ready_edge().await;
+        // Flip to the production deny-by-default posture (the demo edge runs this way
+        // via CELNET_ACCESS_MODE=enforce; `start_ready_edge` defaults Permissive).
+        edge.store()
+            .set_access_mode(celnet_entitlements::AccessMode::Enforce);
+        let url = format!("ws://{}", edge.ws_addr());
+
+        // --- (a) anonymous: a grant-all principal alone cannot stream under Enforce.
+        let (mut anon, _r) = tokio::time::timeout(STEP, connect_async(url.clone()))
+            .await
+            .expect("WS connects in time")
+            .expect("WS connects");
+        send_json(
+            &mut anon,
+            json!({
+                "type": "authenticate",
+                "principal": { "grant_all": true, "grants": [], "denies": [] }
+            }),
+        )
+        .await;
+        send_json(
+            &mut anon,
+            json!({
+                "type": "subscribe",
+                "subscription": { "value": 21 },
+                "instrument": vanilla_call_json(1.10),
+                "conventions": conventions_json()
+            }),
+        )
+        .await;
+        let denied = next_json(&mut anon).await;
+        assert_eq!(
+            denied["type"],
+            json!("error"),
+            "a tokenless stream subscribe is refused under Enforce (gate intact)"
+        );
+        // The stream-path error frame carries the `authorize_caller` Enforce message
+        // (no authenticated session presented) — the refusal is the capability gate,
+        // proving a body principal alone cannot self-grant Stream·FxOptions.
+        let msg = denied["message"].as_str().unwrap_or_default();
+        assert!(
+            msg.contains("no authenticated session"),
+            "the refusal is the no-session capability gate, got: {msg}"
+        );
+        close_ws(anon).await;
+
+        // --- (b) authenticated: login over WS, re-authenticate, then subscribe.
+        let (mut ws, _r) = tokio::time::timeout(STEP, connect_async(url))
+            .await
+            .expect("WS connects in time")
+            .expect("WS connects");
+        // The opening (anonymous) authenticate the GUI/Excel send before login lands.
+        send_json(
+            &mut ws,
+            json!({
+                "type": "authenticate",
+                "principal": { "grant_all": true, "grants": [], "denies": [] }
+            }),
+        )
+        .await;
+        // Login over the SAME WS connection (the seeded admin holds grant_all caps,
+        // including Stream·FxOptions). The token is minted into the edge-wide session
+        // registry the WS `login` and the WS `StreamEdge` now SHARE.
+        send_json(
+            &mut ws,
+            json!({
+                "type": "login",
+                "email": celnet_server::config::identity::SEED_ADMIN_EMAIL,
+                "password": celnet_server::config::identity::SEED_ADMIN_PASSWORD,
+                "correlation_id": 1
+            }),
+        )
+        .await;
+        let mut token = None;
+        for _ in 0..8 {
+            let m = next_json(&mut ws).await;
+            if m["type"] == json!("login_result") {
+                token = m["session_token"].as_str().map(str::to_owned);
+                break;
+            }
+        }
+        let token = token.expect("WS login returns a session token");
+        assert!(!token.is_empty(), "the session token is non-empty");
+
+        // Re-authenticate the (already-open) stream WITH the token — the GUI/Excel
+        // client fix for the open-before-login ordering. The server re-pins the
+        // caller and can now resolve the user's Stream·FxOptions capability.
+        send_json(
+            &mut ws,
+            json!({
+                "type": "authenticate",
+                "principal": { "grant_all": true, "grants": [], "denies": [] },
+                "session_token": token
+            }),
+        )
+        .await;
+        send_json(
+            &mut ws,
+            json!({
+                "type": "subscribe",
+                "subscription": { "value": 22 },
+                "instrument": vanilla_call_json(1.10),
+                "conventions": conventions_json()
+            }),
+        )
+        .await;
+        // The authenticated subscribe is ADMITTED → a baseline snapshot lands (never
+        // an `error`). Scan a bounded number of frames for the snapshot.
+        let mut got_snapshot = false;
+        for _ in 0..8 {
+            let m = next_json(&mut ws).await;
+            assert_ne!(
+                m["type"],
+                json!("error"),
+                "an authenticated subscribe must not be refused: {m}"
+            );
+            if m["type"] == json!("snapshot") {
+                assert_eq!(m["subscription"]["value"].as_i64(), Some(22));
+                got_snapshot = true;
+                break;
+            }
+        }
+        assert!(
+            got_snapshot,
+            "a login-authenticated WS stream receives its baseline snapshot under Enforce"
+        );
+
+        close_ws(ws).await;
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
 /// A browser-style client opens a market-series (TrendMode) feed over the WS
 /// mirror and receives the same real observed series the gRPC client gets — proving
 /// API-first parity: the GUI/WS, SDK/gRPC, and Excel all consume the one contract.

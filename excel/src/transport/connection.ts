@@ -259,12 +259,56 @@ export class Connection {
   /**
    * Set (or clear, with `null`) the bearer session token sent on the opening
    * `Authenticate` frame. Called by the auth flow after a `AuthService.Login`
-   * (or a deployment gateway). The new token takes effect on the NEXT stream open
-   * / reconnect — the contract pins the caller at session open, so a mid-session
-   * token swap re-authenticates on the next (re)dial, exactly like the SDK/GUI.
+   * (or a deployment gateway).
+   *
+   * The persistent connection opens (and sends its `Authenticate` frame) BEFORE
+   * any login round-trip completes — `login` rides this open socket — so at first
+   * open the server pins an anonymous (capability-less) caller. The token is what
+   * lets the server resolve the signed-in user's CAPABILITIES (a body principal
+   * cannot self-grant them — finding #3 — so under `Enforce` a tokenless stream is
+   * refused `Stream·FxOptions` / `Execute·FxOptions`). When the token changes on
+   * an ALREADY-OPEN socket, RE-AUTHENTICATE immediately so the server re-pins the
+   * caller WITH the session before any further subscribe/execute; otherwise the
+   * live RFS session stays anonymous and its frames are denied. (A drop/reconnect
+   * re-sends the frame anyway via `open`; this covers the steady-state login.)
    */
   setSessionToken(token: string | null): void {
     this.sessionToken = token;
+    if (this.isOpen() && this.ws) {
+      // Re-pin the server-side caller with the new credential. Written straight to
+      // the socket (not via the outbox) so the live session's pinned identity is
+      // updated promptly, before any further subscribe/execute on this connection.
+      this.ws.send(serializeFrame(this.authenticateFrame()));
+      // Re-issue every live subscription under the NOW-authenticated caller, exactly
+      // as a reconnect does. Any subscription opened on the connection BEFORE the
+      // token arrived went out anonymously and was DENIED under `Enforce`
+      // (`Stream·FxOptions`; finding #3 — a body principal cannot self-grant caps);
+      // replaying them here re-baselines each line now that the server can resolve
+      // the user's capabilities. A no-op when no lines are live.
+      this.onReconnect();
+    }
+  }
+
+  /**
+   * `AuthService.Login` over the WS mirror: exchange email + password for a
+   * server-minted bearer `session_token`, INSTALL it on this connection (which
+   * re-authenticates the already-open stream — see {@link setSessionToken}), and
+   * return it. This is the Excel mirror of the GUI's `WsTransport.login`: a
+   * deployment gateway / a future task-pane sign-in calls it to obtain a
+   * capability-complete session so the production `Enforce` edge admits the gated
+   * trading frames (`accept_quote` ⇒ `Execute·FxOptions`; the stream `Subscribe`/
+   * `Execute` ⇒ `Stream`/`Execute·FxOptions`) — a body principal alone cannot
+   * self-grant those capabilities (finding #3). The token is a secret — returned
+   * for the caller to hold in memory, never persisted or logged here.
+   */
+  async login(email: string, password: string): Promise<string> {
+    const reply = await this.request("login", { email, password }, "login_result");
+    const token = reply["session_token"];
+    if (typeof token !== "string" || token.length === 0) {
+      throw new TransportError("login returned an empty session token");
+    }
+    this.setSessionToken(token);
+    return token;
   }
 
   /**
