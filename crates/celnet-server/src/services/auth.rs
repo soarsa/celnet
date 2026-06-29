@@ -35,17 +35,20 @@ use celnet_entitlements::{Action, AssetClass, Capability};
 use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
     BookDesc, CapabilityDesc, CreateBookRequest, CreateBookResponse, CreateDeskRequest,
-    CreateDeskResponse, CreateEntityRequest, CreateEntityResponse, CreateUserRequest,
-    CreateUserResponse, DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest,
-    DeleteDeskResponse, DeleteEntityRequest, DeleteEntityResponse, DeleteUserRequest,
-    DeleteUserResponse, DeskDesc, EntityDesc, GetRoleCapabilitiesRequest,
-    GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest, GetUserCapabilitiesResponse,
-    ListBooksRequest, ListBooksResponse, ListDesksRequest, ListDesksResponse, ListEntitiesRequest,
-    ListEntitiesResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
+    CreateDeskResponse, CreateEntityRequest, CreateEntityResponse, CreateInstrumentRequest,
+    CreateInstrumentResponse, CreateUserRequest, CreateUserResponse, DeleteBookRequest,
+    DeleteBookResponse, DeleteDeskRequest, DeleteDeskResponse, DeleteEntityRequest,
+    DeleteEntityResponse, DeleteInstrumentRequest, DeleteInstrumentResponse, DeleteUserRequest,
+    DeleteUserResponse, DeskDesc, EntityDesc, GetInstrumentRequest, GetInstrumentResponse,
+    GetRoleCapabilitiesRequest, GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest,
+    GetUserCapabilitiesResponse, ListBooksRequest, ListBooksResponse, ListDesksRequest,
+    ListDesksResponse, ListEntitiesRequest, ListEntitiesResponse, ListInstrumentsRequest,
+    ListInstrumentsResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
     LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
     SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
     SetUserCapabilitiesResponse, UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest,
-    UpdateEntityResponse, UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
+    UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest,
+    UpdateUserResponse, UserDesc, UserRole,
 };
 use tonic::{Request, Response, Status};
 
@@ -54,7 +57,9 @@ use crate::config::identity::{
     BookDef, DeskDef, EntityDef, IdentityStore, PermissionGrant, Role, UserDef, hash_password,
     mint_desk_id, mint_user_id, verify_password,
 };
+use crate::config::reference_data::{mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
+use crate::services::instrument_wire::{instrument_from_wire, instrument_to_wire};
 use crate::services::sessions::{AuthenticatedUser, SessionRegistry};
 
 /// The minimum acceptable password length for a created or reset password. A
@@ -1069,6 +1074,153 @@ impl AuthService for AuthEdge {
             correlation_id: req.correlation_id,
         }))
     }
+
+    // --- instrument reference data ---------------------------------------------
+
+    async fn list_instruments(
+        &self,
+        request: Request<ListInstrumentsRequest>,
+    ) -> Result<Response<ListInstrumentsResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Read-only roster: any authenticated caller may read it (curve-building and
+        // pricing resolve against it), so it is NOT admin-gated.
+        self.authenticate(&req.session_token)?;
+        let instruments = self
+            .lock()
+            .instruments
+            .iter()
+            .map(instrument_to_wire)
+            .collect();
+        Ok(Response::new(ListInstrumentsResponse {
+            instruments,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn get_instrument(
+        &self,
+        request: Request<GetInstrumentRequest>,
+    ) -> Result<Response<GetInstrumentResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.authenticate(&req.session_token)?;
+        let instrument = self
+            .lock()
+            .instrument_by_id(req.instrument_id.trim())
+            .map(instrument_to_wire);
+        Ok(Response::new(GetInstrumentResponse {
+            instrument,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn create_instrument(
+        &self,
+        request: Request<CreateInstrumentRequest>,
+    ) -> Result<Response<CreateInstrumentResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let wire = req
+            .instrument
+            .ok_or_else(|| Status::invalid_argument("instrument is required"))?;
+        let mut def = instrument_from_wire(&wire)?;
+
+        let mut guard = self.lock();
+        // Mint the id from the name when blank; a provided id must be free.
+        if def.instrument_id.is_empty() {
+            def.instrument_id = mint_instrument_id(&def.name, &guard.instruments);
+        } else if guard.instrument_by_id(&def.instrument_id).is_some() {
+            return Err(Status::already_exists(format!(
+                "an instrument with id `{}` already exists",
+                def.instrument_id
+            )));
+        }
+
+        let mut next = guard.clone();
+        next.instruments.push(def.clone());
+        // Validate the whole candidate registry (id/external-id uniqueness + labels +
+        // required fields) before committing, so a bad write never persists.
+        validate_instruments(&next.instruments).map_err(Status::invalid_argument)?;
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(CreateInstrumentResponse {
+            instrument: Some(instrument_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_instrument(
+        &self,
+        request: Request<UpdateInstrumentRequest>,
+    ) -> Result<Response<UpdateInstrumentResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let wire = req
+            .instrument
+            .ok_or_else(|| Status::invalid_argument("instrument is required"))?;
+        let def = instrument_from_wire(&wire)?;
+        if def.instrument_id.is_empty() {
+            return Err(Status::invalid_argument(
+                "instrument_id is required to update an instrument",
+            ));
+        }
+
+        let mut guard = self.lock();
+        if guard.instrument_by_id(&def.instrument_id).is_none() {
+            return Err(Status::not_found(format!(
+                "no instrument with id `{}`",
+                def.instrument_id
+            )));
+        }
+        let mut next = guard.clone();
+        if let Some(slot) = next
+            .instruments
+            .iter_mut()
+            .find(|i| i.instrument_id == def.instrument_id)
+        {
+            *slot = def.clone();
+        }
+        validate_instruments(&next.instruments).map_err(Status::invalid_argument)?;
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(UpdateInstrumentResponse {
+            instrument: Some(instrument_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn delete_instrument(
+        &self,
+        request: Request<DeleteInstrumentRequest>,
+    ) -> Result<Response<DeleteInstrumentResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let id = req.instrument_id.trim();
+        let mut guard = self.lock();
+        if guard.instrument_by_id(id).is_none() {
+            return Ok(Response::new(DeleteInstrumentResponse {
+                removed: false,
+                correlation_id: req.correlation_id,
+            }));
+        }
+        let mut next = guard.clone();
+        next.instruments.retain(|i| i.instrument_id != id);
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(DeleteInstrumentResponse {
+            removed: true,
+            correlation_id: req.correlation_id,
+        }))
+    }
 }
 
 // --- wire ⇄ domain mapping -------------------------------------------------
@@ -2022,6 +2174,115 @@ mod tests {
         assert!(removed);
         let reloaded = IdentityStore::load(&path).unwrap();
         assert!(reloaded.entity_by_key(ent.key).is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn instrument_registry_crud_capability_model_and_persistence() {
+        use celnet_proto::{InstrumentDefDesc, OisDef, instrument_def_desc::Definition};
+
+        let (edge, path, _s) = edge("instruments");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let tok = admin.session_token.clone();
+        let (_tid, trader_token) = make_trader(&edge, &tok, "inst@celnet.com").await;
+
+        let ois_desc = |id: &str, ticker: &str| InstrumentDefDesc {
+            instrument_id: id.to_string(),
+            name: format!("Test OIS {id}"),
+            description: "test".into(),
+            currency: "USD".into(),
+            external_ids: vec![celnet_proto::ExternalId {
+                scheme: "ticker".into(),
+                value: ticker.into(),
+            }],
+            definition: Some(Definition::Ois(OisDef {
+                tenor: "3Y".into(),
+                index: "sofr".into(),
+                fixed_frequency: "annual".into(),
+                fixed_day_count: "act_360".into(),
+                float_day_count: "act_360".into(),
+                business_day_convention: "modified_following".into(),
+                calendars: vec!["united_states".into()],
+                spot_lag_days: 2,
+            })),
+        };
+
+        // Admin creates an instrument (explicit id).
+        let created = edge
+            .create_instrument(Request::new(CreateInstrumentRequest {
+                session_token: tok.clone(),
+                instrument: Some(ois_desc("test-ois-3y", "TEST-OIS-3Y")),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .instrument
+            .unwrap();
+        assert_eq!(created.instrument_id, "test-ois-3y");
+
+        // A trader CAN list (curve-building needs it) and includes the seeded set.
+        let listed = edge
+            .list_instruments(Request::new(ListInstrumentsRequest {
+                session_token: trader_token.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .instruments;
+        assert!(listed.iter().any(|i| i.instrument_id == "test-ois-3y"));
+
+        // A trader CANNOT create (admin only).
+        let denied = edge
+            .create_instrument(Request::new(CreateInstrumentRequest {
+                session_token: trader_token.clone(),
+                instrument: Some(ois_desc("nope", "NOPE")),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+
+        // A duplicate external id is rejected (registry-wide uniqueness).
+        let dup = edge
+            .create_instrument(Request::new(CreateInstrumentRequest {
+                session_token: tok.clone(),
+                instrument: Some(ois_desc("test-ois-other", "TEST-OIS-3Y")),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(dup.code(), tonic::Code::InvalidArgument);
+
+        // Get resolves by id (trader-readable).
+        let got = edge
+            .get_instrument(Request::new(GetInstrumentRequest {
+                session_token: trader_token.clone(),
+                instrument_id: "test-ois-3y".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .instrument
+            .unwrap();
+        assert_eq!(got.name, "Test OIS test-ois-3y");
+
+        // Delete (admin), and confirm it survives a reload from disk.
+        let removed = edge
+            .delete_instrument(Request::new(DeleteInstrumentRequest {
+                session_token: tok.clone(),
+                instrument_id: "test-ois-3y".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .removed;
+        assert!(removed);
+        let reloaded = IdentityStore::load(&path).unwrap();
+        assert!(reloaded.instrument_by_id("test-ois-3y").is_none());
         let _ = std::fs::remove_file(&path);
     }
 

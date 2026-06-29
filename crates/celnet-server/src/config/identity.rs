@@ -32,6 +32,10 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use celnet_entitlements::{Action, AssetClass, Capability};
 use serde::{Deserialize, Serialize};
 
+use super::reference_data::{
+    self, ExternalScheme, InstrumentDef, ensure_seed_instruments, validate_instruments,
+};
+
 /// Env var naming the identity JSON file. Absent ⇒ [`DEFAULT_CONFIG_PATH`].
 pub const CONFIG_ENV: &str = "CELNET_IDENTITY_CONFIG";
 /// Default identity path (repo-/cwd-local) when the env is unset.
@@ -249,7 +253,12 @@ pub struct BookDef {
 }
 
 /// The persisted document: the users and desks of the edge.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Eq` is intentionally **not** derived: the instrument reference-data registry
+/// carries `f64` convention fields (bond coupon/redemption, futures size/vol), so
+/// the document is only `PartialEq` (sufficient for the `assert_eq!`-based tests
+/// and the persist-before-commit comparison).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct IdentityStore {
     /// The user accounts, in creation order.
     #[serde(default)]
@@ -279,6 +288,15 @@ pub struct IdentityStore {
     /// snake_case labels so the file stays human-editable and round-trips exactly.
     #[serde(default)]
     pub role_bundles: BTreeMap<Role, Vec<PermissionGrant>>,
+    /// The instrument **reference-data** registry: instrument definitions keyed by
+    /// an internal id with external-id cross-refs, persisted in this same document
+    /// so it auto-loads on boot (`super::reference_data`). Curve-building and
+    /// pricing resolve a ref → definition against it
+    /// (`docs/CURVES-AND-INSTRUMENT-REFERENCE-DATA-REVIEW.md` §C). An additive
+    /// serde-default field, so an existing `identity.json` (which carries no
+    /// `instruments`) loads unchanged.
+    #[serde(default)]
+    pub instruments: Vec<InstrumentDef>,
 }
 
 impl IdentityStore {
@@ -312,6 +330,11 @@ impl IdentityStore {
                 // always sound before any booking form resolves against it.
                 store
                     .validate_registry()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                // A corrupt instrument reference-data registry (duplicate ids/external
+                // ids, an unknown convention label, or a missing required field) is
+                // rejected at load too, so a ref always resolves to a sound definition.
+                validate_instruments(&store.instruments)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
                 Ok(store)
             }
@@ -463,6 +486,40 @@ impl IdentityStore {
     #[must_use]
     pub fn book_name(&self, key: u32) -> Option<&str> {
         self.book_by_key(key).map(|b| b.name.as_str())
+    }
+
+    /// Seed a small, realistic default **instrument reference-data** registry on a
+    /// store that has no instruments; report `true` (the caller should persist). A
+    /// store that already has any instrument is left untouched and reports `false`
+    /// (idempotent, mirroring [`ensure_seed_registry`](Self::ensure_seed_registry)).
+    pub fn ensure_seed_instruments(&mut self) -> bool {
+        ensure_seed_instruments(&mut self.instruments)
+    }
+
+    /// Resolve an instrument definition by its internal `instrument_id` — the
+    /// primary reference-data lookup curve-building/pricing will consume.
+    #[must_use]
+    pub fn instrument_by_id(&self, instrument_id: &str) -> Option<&InstrumentDef> {
+        self.instruments
+            .iter()
+            .find(|i| i.instrument_id == instrument_id)
+    }
+
+    /// Resolve an instrument definition by an external `(scheme, value)` cross-ref
+    /// (case-insensitive on both), e.g. `(Isin, "US91282CKM23")`.
+    #[must_use]
+    pub fn instrument_by_external_id(
+        &self,
+        scheme: ExternalScheme,
+        value: &str,
+    ) -> Option<&InstrumentDef> {
+        let want = value.trim();
+        self.instruments.iter().find(|i| {
+            i.external_ids.iter().any(|x| {
+                reference_data::ExternalScheme::from_label(&x.scheme) == Some(scheme)
+                    && x.value.eq_ignore_ascii_case(want)
+            })
+        })
     }
 
     /// The lowest `uint32` key not already used by an entity (for auto-assignment

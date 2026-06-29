@@ -34,6 +34,7 @@ export type WorkspaceId =
   | "quoting"
   | "deals"
   | "ratesbook"
+  | "refdata"
   | "stream"
   | "surface"
   | "risk"
@@ -113,6 +114,7 @@ export const RAIL: readonly {
   { id: "connections", glyph: "⇄", label: "Connections", domain: "administration" },
   { id: "admin", glyph: "⚇", label: "Admin", domain: "administration" },
   { id: "permissions", glyph: "⚷", label: "Permissions", domain: "administration" },
+  { id: "refdata", glyph: "❏", label: "Reference Data", domain: "administration" },
 ] as const;
 
 /** The product domain (tab) a workspace belongs to — looked up via {@link RAIL}. */
@@ -148,15 +150,17 @@ export interface NavAuth {
 }
 
 /**
- * Workspaces only an administrator may open — the admin-only members of the
- * Administration domain. (Excel also lives under Administration but is NOT admin-
- * only, so it is deliberately absent.) This is the per-workspace backstop the
- * Shell hides and the AppContext redirect bounces.
+ * Workspaces only an administrator may open — the members of the Administration
+ * domain. Reference Data is admin-managed and lives here too: the registry is
+ * cross-asset and server-resolvable by any caller (pricing/curve-building), but
+ * its management UI is admin-only. This is the per-workspace backstop the Shell
+ * hides and the AppContext redirect bounces.
  */
 export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
   "connections",
   "admin",
   "permissions",
+  "refdata",
 ]);
 
 /**

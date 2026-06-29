@@ -32,6 +32,8 @@ import type {
   EntityInput,
   BookDesc,
   BookInput,
+  InstrumentDef,
+  InstrumentInput,
   Deal,
   DealerQuote,
   DeskDesc,
@@ -712,6 +714,56 @@ export class MockTransport implements CelnetTransport {
     { key: 2, name: "Rates Relative Value", entityKey: 1 },
     { key: 3, name: "Government Bonds", entityKey: 2 },
     { key: 4, name: "Swaps", entityKey: 2 },
+  ];
+  /**
+   * The offline instrument reference-data registry (a GENUINE in-memory store,
+   * not a stub): seeded with one OIS and one bond definition so the Reference
+   * Data workspace is exercisable end-to-end with no server. Each carries a
+   * server-style minted `instrumentId` and real external identifiers.
+   */
+  private readonly mockInstruments: InstrumentDef[] = [
+    {
+      instrumentId: "usd-sofr-ois-5y",
+      name: "USD SOFR OIS 5Y",
+      description: "USD overnight-indexed swap vs SOFR, 5Y",
+      currency: "USD",
+      externalIds: [{ scheme: "ticker", value: "USOSFR5" }],
+      family: "ois",
+      ois: {
+        tenor: "5Y",
+        index: "SOFR",
+        fixedFrequency: "annual",
+        fixedDayCount: "act_360",
+        floatDayCount: "act_360",
+        businessDayConvention: "modified_following",
+        calendars: ["united_states"],
+        spotLagDays: 2,
+      },
+    },
+    {
+      instrumentId: "us-treasury-4-25-2035",
+      name: "US Treasury 4.25% 2035",
+      description: "US Treasury note, 4.25% semi-annual coupon, maturing 2035",
+      currency: "USD",
+      externalIds: [
+        { scheme: "isin", value: "US91282CHK24" },
+        { scheme: "cusip", value: "91282CHK2" },
+      ],
+      family: "bond",
+      bond: {
+        issuer: "US Treasury",
+        couponRate: 4.25,
+        couponType: "fixed",
+        couponFrequency: "semi_annual",
+        dayCount: "act_act",
+        issueDate: { year: 2025, month: 2, day: 15 },
+        datedDate: { year: 2025, month: 2, day: 15 },
+        firstCouponDate: { year: 2025, month: 8, day: 15 },
+        maturityDate: { year: 2035, month: 2, day: 15 },
+        redemption: 100,
+        calendars: ["united_states"],
+      },
+    },
   ];
   /**
    * The admin-editable per-role capability bundles (the role's base authority).
@@ -1639,6 +1691,70 @@ export class MockTransport implements CelnetTransport {
     const idx = this.mockBooks.findIndex((b) => b.key === key);
     if (idx < 0) return false;
     this.mockBooks.splice(idx, 1);
+    return true;
+  }
+
+  // --- instrument reference-data registry (offline) --------------------------
+
+  /** Mint a stable instrument id from a name (mirrors the server's slugify). */
+  private static slugifyInstrumentId(name: string): string {
+    return name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  async listInstruments(): Promise<InstrumentDef[]> {
+    return this.mockInstruments.map((d) => structuredClone(d));
+  }
+
+  async getInstrument(id: string): Promise<InstrumentDef | null> {
+    const found = this.mockInstruments.find((d) => d.instrumentId === id);
+    return found ? structuredClone(found) : null;
+  }
+
+  async createInstrument(input: InstrumentInput): Promise<InstrumentDef> {
+    const name = input.name.trim();
+    if (name.length === 0) throw new Error("instrument name is required");
+    if (this.mockInstruments.some((d) => d.name === name)) {
+      throw new Error(`an instrument named \`${name}\` already exists`);
+    }
+    const requested = input.instrumentId.trim();
+    const id = requested.length > 0 ? requested : MockTransport.slugifyInstrumentId(name);
+    if (id.length === 0) {
+      throw new Error("could not derive an instrument id from the name");
+    }
+    if (this.mockInstruments.some((d) => d.instrumentId === id)) {
+      throw new Error(`an instrument with id \`${id}\` already exists`);
+    }
+    const created = structuredClone(input);
+    created.instrumentId = id;
+    created.name = name;
+    this.mockInstruments.push(created);
+    return structuredClone(created);
+  }
+
+  async updateInstrument(input: InstrumentInput): Promise<InstrumentDef> {
+    const id = input.instrumentId.trim();
+    if (id.length === 0) throw new Error("instrument id is required");
+    const idx = this.mockInstruments.findIndex((d) => d.instrumentId === id);
+    if (idx < 0) throw new Error(`no instrument with id \`${id}\``);
+    const name = input.name.trim();
+    if (name.length === 0) throw new Error("instrument name is required");
+    if (this.mockInstruments.some((d) => d.instrumentId !== id && d.name === name)) {
+      throw new Error(`an instrument named \`${name}\` already exists`);
+    }
+    const updated = structuredClone(input);
+    updated.instrumentId = id;
+    updated.name = name;
+    this.mockInstruments[idx] = updated;
+    return structuredClone(updated);
+  }
+
+  async deleteInstrument(id: string): Promise<boolean> {
+    const idx = this.mockInstruments.findIndex((d) => d.instrumentId === id);
+    if (idx < 0) return false;
+    this.mockInstruments.splice(idx, 1);
     return true;
   }
 

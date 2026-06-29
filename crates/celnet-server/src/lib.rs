@@ -522,7 +522,12 @@ impl Edge {
         // wire keys stay numeric; this only names them). Idempotent — a no-op once any
         // entity exists.
         let registry_seeded = identity_store.ensure_seed_registry();
-        if admin_seeded || registry_seeded {
+        // Seed a small, realistic instrument reference-data registry (a USD-SOFR
+        // rates strip + sample bonds) on a fresh store so curve-building/pricing have
+        // resolvable instrument definitions from first boot. Idempotent — a no-op once
+        // any instrument exists.
+        let instruments_seeded = identity_store.ensure_seed_instruments();
+        if admin_seeded || registry_seeded || instruments_seeded {
             identity_store
                 .save(&identity_path)
                 .map_err(|e| std::io::Error::new(e.kind(), format!("seed identity: {e}")))?;

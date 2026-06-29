@@ -37,6 +37,8 @@ import type {
   EntityInput,
   BookDesc,
   BookInput,
+  InstrumentDef,
+  InstrumentInput,
   DrillRiskRequest,
   DrillRiskResponse,
   Execution,
@@ -135,6 +137,14 @@ import {
   updateBookRequestToWire,
   bookResponseFromWire,
   deleteBookRequestToWire,
+  listInstrumentsRequestToWire,
+  instrumentsResponseFromWire,
+  getInstrumentRequestToWire,
+  instrumentResponseFromWire,
+  createInstrumentRequestToWire,
+  updateInstrumentRequestToWire,
+  deleteInstrumentRequestToWire,
+  deleteInstrumentResponseFromWire,
   deleteUserRequestToWire,
   deskResponseFromWire,
   listDesksRequestToWire,
@@ -1439,6 +1449,53 @@ export class WsTransport implements CelnetTransport {
       "book_deleted",
     );
     return reply["removed"] === true;
+  }
+
+  // --- instrument reference-data registry (instrument admin) -----------------
+
+  async listInstruments(): Promise<InstrumentDef[]> {
+    const reply = await this.conn.request(
+      "list_instruments",
+      listInstrumentsRequestToWire(),
+      "instruments",
+    );
+    return instrumentsResponseFromWire(reply);
+  }
+
+  async getInstrument(id: string): Promise<InstrumentDef | null> {
+    const reply = await this.conn.request(
+      "get_instrument",
+      getInstrumentRequestToWire(id),
+      "instrument",
+    );
+    return instrumentResponseFromWire(reply);
+  }
+
+  async createInstrument(input: InstrumentInput): Promise<InstrumentDef> {
+    const reply = await this.conn.request(
+      "create_instrument",
+      createInstrumentRequestToWire(input),
+      "instrument_created",
+    );
+    return instrumentResponseFromWire(reply) ?? input;
+  }
+
+  async updateInstrument(input: InstrumentInput): Promise<InstrumentDef> {
+    const reply = await this.conn.request(
+      "update_instrument",
+      updateInstrumentRequestToWire(input),
+      "instrument_updated",
+    );
+    return instrumentResponseFromWire(reply) ?? input;
+  }
+
+  async deleteInstrument(id: string): Promise<boolean> {
+    const reply = await this.conn.request(
+      "delete_instrument",
+      deleteInstrumentRequestToWire(id),
+      "instrument_deleted",
+    );
+    return deleteInstrumentResponseFromWire(reply);
   }
 
   /** Permanently close the underlying connection (call on app teardown). */

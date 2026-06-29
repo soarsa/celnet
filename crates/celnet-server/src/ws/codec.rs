@@ -56,6 +56,13 @@ use celnet_proto::{
     SetUserCapabilitiesResponse, UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest,
     UpdateEntityResponse, UpdateUserRequest, UpdateUserResponse, UserDesc,
 };
+// AuthService — instrument reference-data registry (WS mirror of the instrument RPCs).
+use celnet_proto::{
+    CreateInstrumentRequest, CreateInstrumentResponse, DeleteInstrumentRequest,
+    DeleteInstrumentResponse, GetInstrumentRequest, GetInstrumentResponse, InstrumentDefDesc,
+    ListInstrumentsRequest, ListInstrumentsResponse, UpdateInstrumentRequest,
+    UpdateInstrumentResponse, instrument_def_desc::Definition as InstrumentDefinition,
+};
 // Linear-rates (fixed-income) contract — the WS mirror of PricingService::PriceRates.
 use celnet_proto::{
     CurveSet, OisInstrument, OisPillar, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
@@ -3069,6 +3076,342 @@ pub(super) fn delete_book_response_to_json(r: &DeleteBookResponse) -> Value {
     json!({ "removed": r.removed, "correlation_id": r.correlation_id })
 }
 
+// --- instrument reference data (AuthService instrument RPCs) ----------------
+//
+// The WS mirror of the instrument registry. The `InstrumentDefDesc.definition`
+// oneof is carried as a single family-keyed sub-object (`{ "ois": { … } }`); the
+// keys are the proto oneof variant tokens. Every field is snake_case on the wire
+// (the GUI codec maps camelCase ⇄ snake_case in lockstep with this file).
+
+/// Read a `Vec<String>` array field, defaulting to empty when absent/non-array.
+fn string_array(o: &Map<String, Value>, key: &str) -> Vec<String> {
+    o.get(key)
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn external_id_to_json(x: &celnet_proto::ExternalId) -> Value {
+    json!({ "scheme": x.scheme, "value": x.value })
+}
+
+fn external_id_from_json(v: &Value) -> Result<celnet_proto::ExternalId> {
+    let o = obj(v, "external_id")?;
+    Ok(celnet_proto::ExternalId {
+        scheme: string_field(o, "scheme")?,
+        value: string_field(o, "value")?,
+    })
+}
+
+/// Encode the family-specific block as `(variant_token, fields_object)`.
+fn family_to_json(def: &InstrumentDefinition) -> (&'static str, Value) {
+    match def {
+        InstrumentDefinition::Deposit(d) => (
+            "deposit",
+            json!({
+                "index": d.index, "tenor": d.tenor, "day_count": d.day_count,
+                "business_day_convention": d.business_day_convention,
+                "calendars": d.calendars, "spot_lag_days": d.spot_lag_days,
+            }),
+        ),
+        InstrumentDefinition::Fra(f) => (
+            "fra",
+            json!({
+                "float_index": f.float_index, "start_tenor": f.start_tenor,
+                "end_tenor": f.end_tenor, "accrual_day_count": f.accrual_day_count,
+                "business_day_convention": f.business_day_convention,
+                "calendars": f.calendars, "spot_lag_days": f.spot_lag_days,
+            }),
+        ),
+        InstrumentDefinition::StirFuture(s) => (
+            "stir_future",
+            json!({
+                "contract_code": s.contract_code, "reference_start": s.reference_start,
+                "reference_end": s.reference_end, "day_count": s.day_count,
+                "calendars": s.calendars, "convexity_vol": s.convexity_vol,
+                "contract_size": s.contract_size,
+            }),
+        ),
+        InstrumentDefinition::VanillaIrs(v) => (
+            "vanilla_irs",
+            json!({
+                "tenor": v.tenor, "fixed_frequency": v.fixed_frequency,
+                "fixed_day_count": v.fixed_day_count, "float_index": v.float_index,
+                "float_frequency": v.float_frequency, "float_day_count": v.float_day_count,
+                "business_day_convention": v.business_day_convention,
+                "calendars": v.calendars, "roll_convention": v.roll_convention,
+                "spot_lag_days": v.spot_lag_days,
+            }),
+        ),
+        InstrumentDefinition::Ois(o) => (
+            "ois",
+            json!({
+                "tenor": o.tenor, "index": o.index, "fixed_frequency": o.fixed_frequency,
+                "fixed_day_count": o.fixed_day_count, "float_day_count": o.float_day_count,
+                "business_day_convention": o.business_day_convention,
+                "calendars": o.calendars, "spot_lag_days": o.spot_lag_days,
+            }),
+        ),
+        InstrumentDefinition::Bond(b) => (
+            "bond",
+            json!({
+                "issuer": b.issuer, "coupon_rate": b.coupon_rate,
+                "coupon_type": b.coupon_type, "coupon_frequency": b.coupon_frequency,
+                "day_count": b.day_count,
+                "issue_date": b.issue_date.as_ref().map(broken_date_to_json),
+                "dated_date": b.dated_date.as_ref().map(broken_date_to_json),
+                "first_coupon_date": b.first_coupon_date.as_ref().map(broken_date_to_json),
+                "maturity_date": b.maturity_date.as_ref().map(broken_date_to_json),
+                "redemption": b.redemption, "calendars": b.calendars,
+            }),
+        ),
+    }
+}
+
+fn deposit_from_json(v: &Value) -> Result<celnet_proto::DepositDef> {
+    let o = obj(v, "deposit")?;
+    Ok(celnet_proto::DepositDef {
+        index: string_field(o, "index")?,
+        tenor: string_field(o, "tenor")?,
+        day_count: string_field(o, "day_count")?,
+        business_day_convention: string_field(o, "business_day_convention")?,
+        calendars: string_array(o, "calendars"),
+        spot_lag_days: opt_u32(o, "spot_lag_days").unwrap_or(0),
+    })
+}
+
+fn fra_from_json(v: &Value) -> Result<celnet_proto::FraDef> {
+    let o = obj(v, "fra")?;
+    Ok(celnet_proto::FraDef {
+        float_index: string_field(o, "float_index")?,
+        start_tenor: string_field(o, "start_tenor")?,
+        end_tenor: string_field(o, "end_tenor")?,
+        accrual_day_count: string_field(o, "accrual_day_count")?,
+        business_day_convention: string_field(o, "business_day_convention")?,
+        calendars: string_array(o, "calendars"),
+        spot_lag_days: opt_u32(o, "spot_lag_days").unwrap_or(0),
+    })
+}
+
+fn stir_future_from_json(v: &Value) -> Result<celnet_proto::StirFutureDef> {
+    let o = obj(v, "stir_future")?;
+    Ok(celnet_proto::StirFutureDef {
+        contract_code: string_field(o, "contract_code")?,
+        reference_start: string_field(o, "reference_start")?,
+        reference_end: string_field(o, "reference_end")?,
+        day_count: string_field(o, "day_count")?,
+        calendars: string_array(o, "calendars"),
+        convexity_vol: opt_f64(o, "convexity_vol").unwrap_or(0.0),
+        contract_size: opt_f64(o, "contract_size").unwrap_or(0.0),
+    })
+}
+
+fn vanilla_irs_from_json(v: &Value) -> Result<celnet_proto::VanillaIrsDef> {
+    let o = obj(v, "vanilla_irs")?;
+    Ok(celnet_proto::VanillaIrsDef {
+        tenor: string_field(o, "tenor")?,
+        fixed_frequency: string_field(o, "fixed_frequency")?,
+        fixed_day_count: string_field(o, "fixed_day_count")?,
+        float_index: string_field(o, "float_index")?,
+        float_frequency: string_field(o, "float_frequency")?,
+        float_day_count: string_field(o, "float_day_count")?,
+        business_day_convention: string_field(o, "business_day_convention")?,
+        calendars: string_array(o, "calendars"),
+        roll_convention: opt_string(o, "roll_convention").unwrap_or_default(),
+        spot_lag_days: opt_u32(o, "spot_lag_days").unwrap_or(0),
+    })
+}
+
+fn ois_def_from_json(v: &Value) -> Result<celnet_proto::OisDef> {
+    let o = obj(v, "ois")?;
+    Ok(celnet_proto::OisDef {
+        tenor: string_field(o, "tenor")?,
+        index: string_field(o, "index")?,
+        fixed_frequency: string_field(o, "fixed_frequency")?,
+        fixed_day_count: string_field(o, "fixed_day_count")?,
+        float_day_count: string_field(o, "float_day_count")?,
+        business_day_convention: string_field(o, "business_day_convention")?,
+        calendars: string_array(o, "calendars"),
+        spot_lag_days: opt_u32(o, "spot_lag_days").unwrap_or(0),
+    })
+}
+
+fn opt_broken_date(o: &Map<String, Value>, key: &str) -> Result<Option<celnet_proto::BrokenDate>> {
+    match o.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => Ok(Some(broken_date_from_json(v)?)),
+    }
+}
+
+fn bond_from_json(v: &Value) -> Result<celnet_proto::BondDef> {
+    let o = obj(v, "bond")?;
+    Ok(celnet_proto::BondDef {
+        issuer: string_field(o, "issuer")?,
+        coupon_rate: opt_f64(o, "coupon_rate").unwrap_or(0.0),
+        coupon_type: string_field(o, "coupon_type")?,
+        coupon_frequency: opt_string(o, "coupon_frequency").unwrap_or_default(),
+        day_count: string_field(o, "day_count")?,
+        issue_date: opt_broken_date(o, "issue_date")?,
+        dated_date: opt_broken_date(o, "dated_date")?,
+        first_coupon_date: opt_broken_date(o, "first_coupon_date")?,
+        maturity_date: opt_broken_date(o, "maturity_date")?,
+        redemption: opt_f64(o, "redemption").unwrap_or(0.0),
+        calendars: string_array(o, "calendars"),
+    })
+}
+
+/// Detect and decode the family sub-object; `None` ⇒ no family set (the service
+/// rejects it with `invalid_argument`).
+fn family_from_json(o: &Map<String, Value>) -> Result<Option<InstrumentDefinition>> {
+    if o.contains_key("deposit") {
+        Ok(Some(InstrumentDefinition::Deposit(deposit_from_json(
+            &o["deposit"],
+        )?)))
+    } else if o.contains_key("fra") {
+        Ok(Some(InstrumentDefinition::Fra(fra_from_json(&o["fra"])?)))
+    } else if o.contains_key("stir_future") {
+        Ok(Some(InstrumentDefinition::StirFuture(
+            stir_future_from_json(&o["stir_future"])?,
+        )))
+    } else if o.contains_key("vanilla_irs") {
+        Ok(Some(InstrumentDefinition::VanillaIrs(
+            vanilla_irs_from_json(&o["vanilla_irs"])?,
+        )))
+    } else if o.contains_key("ois") {
+        Ok(Some(InstrumentDefinition::Ois(ois_def_from_json(
+            &o["ois"],
+        )?)))
+    } else if o.contains_key("bond") {
+        Ok(Some(InstrumentDefinition::Bond(bond_from_json(
+            &o["bond"],
+        )?)))
+    } else {
+        Ok(None)
+    }
+}
+
+fn instrument_def_to_json(d: &InstrumentDefDesc) -> Value {
+    let mut v = json!({
+        "instrument_id": d.instrument_id,
+        "name": d.name,
+        "description": d.description,
+        "currency": d.currency,
+        "external_ids": Value::Array(d.external_ids.iter().map(external_id_to_json).collect()),
+    });
+    if let (Some(map), Some(def)) = (v.as_object_mut(), d.definition.as_ref()) {
+        let (key, val) = family_to_json(def);
+        map.insert(key.to_string(), val);
+    }
+    v
+}
+
+fn instrument_def_from_json(v: &Value) -> Result<InstrumentDefDesc> {
+    let o = obj(v, "instrument")?;
+    let external_ids = o
+        .get("external_ids")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(external_id_from_json)
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(InstrumentDefDesc {
+        instrument_id: opt_string(o, "instrument_id").unwrap_or_default(),
+        name: string_field(o, "name")?,
+        description: opt_string(o, "description").unwrap_or_default(),
+        currency: string_field(o, "currency")?,
+        external_ids,
+        definition: family_from_json(o)?,
+    })
+}
+
+pub(super) fn list_instruments_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListInstrumentsRequest> {
+    Ok(ListInstrumentsRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_instruments_response_to_json(r: &ListInstrumentsResponse) -> Value {
+    json!({
+        "instruments": Value::Array(r.instruments.iter().map(instrument_def_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn get_instrument_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<GetInstrumentRequest> {
+    Ok(GetInstrumentRequest {
+        session_token: string_field(o, "session_token")?,
+        instrument_id: string_field(o, "instrument_id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn get_instrument_response_to_json(r: &GetInstrumentResponse) -> Value {
+    json!({
+        "instrument": r.instrument.as_ref().map(instrument_def_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn create_instrument_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<CreateInstrumentRequest> {
+    Ok(CreateInstrumentRequest {
+        session_token: string_field(o, "session_token")?,
+        instrument: Some(nested(o, "instrument", instrument_def_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn create_instrument_response_to_json(r: &CreateInstrumentResponse) -> Value {
+    json!({
+        "instrument": r.instrument.as_ref().map(instrument_def_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_instrument_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdateInstrumentRequest> {
+    Ok(UpdateInstrumentRequest {
+        session_token: string_field(o, "session_token")?,
+        instrument: Some(nested(o, "instrument", instrument_def_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_instrument_response_to_json(r: &UpdateInstrumentResponse) -> Value {
+    json!({
+        "instrument": r.instrument.as_ref().map(instrument_def_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn delete_instrument_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<DeleteInstrumentRequest> {
+    Ok(DeleteInstrumentRequest {
+        session_token: string_field(o, "session_token")?,
+        instrument_id: string_field(o, "instrument_id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn delete_instrument_response_to_json(r: &DeleteInstrumentResponse) -> Value {
+    json!({ "removed": r.removed, "correlation_id": r.correlation_id })
+}
+
 // ---------------------------------------------------------------------------
 // frame helpers
 // ---------------------------------------------------------------------------
@@ -4374,5 +4717,74 @@ mod tests {
             let v = fix_connection_desc_to_json(&desc);
             assert_eq!(v["kind"], json!(tag), "the descriptor re-emits the tag");
         }
+    }
+
+    /// Each instrument family round-trips byte-identically through the WS codec
+    /// (`InstrumentDefDesc` → JSON → `InstrumentDefDesc`), and the family oneof is
+    /// carried under its variant-token key.
+    #[test]
+    fn instrument_families_round_trip_through_codec() {
+        let families = vec![
+            InstrumentDefinition::Ois(celnet_proto::OisDef {
+                tenor: "2Y".into(),
+                index: "sofr".into(),
+                fixed_frequency: "annual".into(),
+                fixed_day_count: "act_360".into(),
+                float_day_count: "act_360".into(),
+                business_day_convention: "modified_following".into(),
+                calendars: vec!["united_states".into()],
+                spot_lag_days: 2,
+            }),
+            InstrumentDefinition::Bond(celnet_proto::BondDef {
+                issuer: "US Treasury".into(),
+                coupon_rate: 0.045,
+                coupon_type: "fixed".into(),
+                coupon_frequency: "semi_annual".into(),
+                day_count: "act_act".into(),
+                issue_date: Some(celnet_proto::BrokenDate {
+                    year: 2026,
+                    month: 1,
+                    day: 31,
+                }),
+                dated_date: None,
+                first_coupon_date: None,
+                maturity_date: Some(celnet_proto::BrokenDate {
+                    year: 2028,
+                    month: 1,
+                    day: 31,
+                }),
+                redemption: 100.0,
+                calendars: vec!["united_states".into()],
+            }),
+        ];
+        for (i, fam) in families.into_iter().enumerate() {
+            let desc = InstrumentDefDesc {
+                instrument_id: format!("x-{i}"),
+                name: format!("X {i}"),
+                description: "round-trip".into(),
+                currency: "USD".into(),
+                external_ids: vec![celnet_proto::ExternalId {
+                    scheme: "ticker".into(),
+                    value: format!("X{i}"),
+                }],
+                definition: Some(fam),
+            };
+            let v = instrument_def_to_json(&desc);
+            let back = instrument_def_from_json(&v).expect("decodes");
+            assert_eq!(desc, back, "family at index {i}");
+        }
+    }
+
+    /// A `create_instrument` request with no family sub-object decodes with an
+    /// unset `definition` (the service then rejects it with `invalid_argument`).
+    #[test]
+    fn instrument_without_family_decodes_unset() {
+        let req = json!({
+            "session_token": "t",
+            "instrument": { "name": "X", "currency": "USD" },
+        });
+        let o = req.as_object().unwrap();
+        let decoded = create_instrument_request_from_json(o).expect("decodes");
+        assert!(decoded.instrument.unwrap().definition.is_none());
     }
 }

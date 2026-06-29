@@ -1903,6 +1903,262 @@ export interface BookInput {
   entityKey: number;
 }
 
+// --- instrument reference-data registry (`AuthService` instrument admin) ------
+//
+// The admin-managed registry of instrument DEFINITIONS (`celnet.wire`
+// `InstrumentDefDesc`) — the canonical static terms of a tradable rates/credit
+// instrument (its conventions, schedule terms, identifiers). Listing
+// (`list_instruments`/`get_instrument`) is open to any authenticated user (it
+// populates pickers and reference views); create/update/delete are admin-only
+// (server-enforced). A definition carries exactly ONE family sub-object keyed by
+// its family token; the GUI keeps that as a `family` discriminant plus a single
+// per-family field bag (camelCase). The codec layer maps every field to the
+// snake_case wire form (`day_count`, `external_ids`, the family key itself).
+
+/** A vendor/identifier scheme an instrument may be tagged with (wire labels). */
+export type ExternalIdScheme = "isin" | "cusip" | "sedol" | "figi" | "ticker" | "internal";
+
+/** The full set of {@link ExternalIdScheme} labels, in canonical order. */
+export const EXTERNAL_ID_SCHEMES: readonly ExternalIdScheme[] = [
+  "isin",
+  "cusip",
+  "sedol",
+  "figi",
+  "ticker",
+  "internal",
+];
+
+/** One external identifier on an instrument (`celnet.wire.ExternalId`). */
+export interface ExternalIdEntry {
+  scheme: ExternalIdScheme;
+  value: string;
+}
+
+/**
+ * A day-count basis. `act_act` is bond-only (it is rejected by the server on the
+ * money-market / swap families); the others are valid everywhere.
+ */
+export type RatesDayCount = "act_360" | "act_365_fixed" | "thirty_360_bond_basis" | "act_act";
+
+/** Day-count labels valid on the money-market / swap families (no `act_act`). */
+export const RATES_DAY_COUNTS: readonly RatesDayCount[] = [
+  "act_360",
+  "act_365_fixed",
+  "thirty_360_bond_basis",
+];
+
+/** Day-count labels valid on the bond family (adds `act_act`). */
+export const BOND_DAY_COUNTS: readonly RatesDayCount[] = [
+  "act_360",
+  "act_365_fixed",
+  "thirty_360_bond_basis",
+  "act_act",
+];
+
+/** A schedule date-roll/business-day adjustment convention (wire labels). */
+export type BusinessDayConvention =
+  | "unadjusted"
+  | "following"
+  | "preceding"
+  | "modified_following";
+
+/** The full set of {@link BusinessDayConvention} labels, in canonical order. */
+export const BUSINESS_DAY_CONVENTIONS: readonly BusinessDayConvention[] = [
+  "unadjusted",
+  "following",
+  "preceding",
+  "modified_following",
+];
+
+/** A holiday calendar a schedule is adjusted against (wire labels). */
+export type Calendar =
+  | "united_states"
+  | "target2"
+  | "united_kingdom"
+  | "japan"
+  | "switzerland"
+  | "australia"
+  | "canada"
+  | "new_zealand"
+  | "mexico"
+  | "south_africa"
+  | "norway"
+  | "sweden";
+
+/** The full set of {@link Calendar} labels, in canonical order. */
+export const CALENDARS: readonly Calendar[] = [
+  "united_states",
+  "target2",
+  "united_kingdom",
+  "japan",
+  "switzerland",
+  "australia",
+  "canada",
+  "new_zealand",
+  "mexico",
+  "south_africa",
+  "norway",
+  "sweden",
+];
+
+/** A coupon/leg payment frequency (wire labels). */
+export type Frequency = "annual" | "semi_annual" | "quarterly";
+
+/** The full set of {@link Frequency} labels, in canonical order. */
+export const FREQUENCIES: readonly Frequency[] = ["annual", "semi_annual", "quarterly"];
+
+/** A schedule roll convention (wire labels). */
+export type RollConvention = "none" | "eom" | "imm";
+
+/** The full set of {@link RollConvention} labels, in canonical order. */
+export const ROLL_CONVENTIONS: readonly RollConvention[] = ["none", "eom", "imm"];
+
+/** A bond coupon type (wire labels). `zero` ⇒ no coupon schedule. */
+export type CouponType = "fixed" | "frn" | "zero";
+
+/** The full set of {@link CouponType} labels, in canonical order. */
+export const COUPON_TYPES: readonly CouponType[] = ["fixed", "frn", "zero"];
+
+/** The family discriminant of an {@link InstrumentDef} (the wire family token). */
+export type InstrumentFamily =
+  | "deposit"
+  | "fra"
+  | "stir_future"
+  | "vanilla_irs"
+  | "ois"
+  | "bond";
+
+/** The full set of {@link InstrumentFamily} tokens, in canonical order. */
+export const INSTRUMENT_FAMILIES: readonly InstrumentFamily[] = [
+  "deposit",
+  "fra",
+  "stir_future",
+  "vanilla_irs",
+  "ois",
+  "bond",
+];
+
+/** Human-friendly labels for each family (UI display only; never on the wire). */
+export const INSTRUMENT_FAMILY_LABELS: Readonly<Record<InstrumentFamily, string>> = {
+  deposit: "Deposit",
+  fra: "FRA",
+  stir_future: "STIR future",
+  vanilla_irs: "Vanilla IRS",
+  ois: "OIS",
+  bond: "Bond",
+};
+
+/** A money-market deposit's terms. */
+export interface DepositDef {
+  index: string;
+  tenor: string;
+  dayCount: RatesDayCount;
+  businessDayConvention: BusinessDayConvention;
+  calendars: Calendar[];
+  spotLagDays: number;
+}
+
+/** A forward-rate-agreement's terms. */
+export interface FraDef {
+  floatIndex: string;
+  startTenor: string;
+  endTenor: string;
+  accrualDayCount: RatesDayCount;
+  businessDayConvention: BusinessDayConvention;
+  calendars: Calendar[];
+  spotLagDays: number;
+}
+
+/** A short-term-interest-rate future's terms. */
+export interface StirFutureDef {
+  contractCode: string;
+  referenceStart: string;
+  referenceEnd: string;
+  dayCount: RatesDayCount;
+  calendars: Calendar[];
+  convexityVol: number;
+  contractSize: number;
+}
+
+/** A vanilla fixed-vs-float interest-rate swap's terms. */
+export interface VanillaIrsDef {
+  tenor: string;
+  fixedFrequency: Frequency;
+  fixedDayCount: RatesDayCount;
+  floatIndex: string;
+  floatFrequency: Frequency;
+  floatDayCount: RatesDayCount;
+  businessDayConvention: BusinessDayConvention;
+  calendars: Calendar[];
+  rollConvention: RollConvention;
+  spotLagDays: number;
+}
+
+/** An overnight-indexed swap's terms. */
+export interface OisDef {
+  tenor: string;
+  index: string;
+  fixedFrequency: Frequency;
+  fixedDayCount: RatesDayCount;
+  floatDayCount: RatesDayCount;
+  businessDayConvention: BusinessDayConvention;
+  calendars: Calendar[];
+  spotLagDays: number;
+}
+
+/**
+ * A bond's terms. For a zero-coupon bond (`couponType === "zero"`) the
+ * `couponFrequency` MUST be blank and `couponRate` is `0`. `maturityDate` is
+ * required; the other dates are optional (omitted on the wire when absent).
+ */
+export interface BondDef {
+  issuer: string;
+  couponRate: number;
+  couponType: CouponType;
+  /** Blank for a zero-coupon bond; a {@link Frequency} otherwise. */
+  couponFrequency: Frequency | "";
+  dayCount: RatesDayCount;
+  issueDate?: BrokenDate;
+  datedDate?: BrokenDate;
+  firstCouponDate?: BrokenDate;
+  maturityDate: BrokenDate;
+  redemption: number;
+  calendars: Calendar[];
+}
+
+/** The fields every instrument definition carries, regardless of family. */
+interface InstrumentDefBase {
+  /** Stable id; blank on create ⇒ the server mints one from the name. */
+  instrumentId: string;
+  name: string;
+  description: string;
+  /** ISO 4217 currency, e.g. "USD". */
+  currency: string;
+  externalIds: ExternalIdEntry[];
+}
+
+/**
+ * An instrument definition (`celnet.wire.InstrumentDefDesc`): the base fields plus
+ * exactly one family sub-object, modelled as a discriminated union on `family`.
+ * The discriminant value is the wire family token; the matching field bag is held
+ * under a camelCase key (`stirFuture`, `vanillaIrs`) the codec maps to/from the
+ * snake_case wire key.
+ */
+export type InstrumentDef =
+  | (InstrumentDefBase & { family: "deposit"; deposit: DepositDef })
+  | (InstrumentDefBase & { family: "fra"; fra: FraDef })
+  | (InstrumentDefBase & { family: "stir_future"; stirFuture: StirFutureDef })
+  | (InstrumentDefBase & { family: "vanilla_irs"; vanillaIrs: VanillaIrsDef })
+  | (InstrumentDefBase & { family: "ois"; ois: OisDef })
+  | (InstrumentDefBase & { family: "bond"; bond: BondDef });
+
+/**
+ * The create/update payload (`AuthService.{Create,Update}Instrument`). It is the
+ * full definition; on create the `instrumentId` is blank (server-minted), on
+ * update it identifies the record being replaced.
+ */
+export type InstrumentInput = InstrumentDef;
+
 /** The issued session on a successful login (`celnet.wire.LoginResponse`). */
 export interface LoginResult {
   /** The opaque bearer token to present on subsequent RPCs (a secret). */

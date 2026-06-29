@@ -25,6 +25,7 @@ import { RatesRiskWorkspace } from "../workspaces/RatesRiskWorkspace";
 import { QuotingWorkspace } from "../workspaces/QuotingWorkspace";
 import { DealsBlotterWorkspace } from "../workspaces/DealsBlotterWorkspace";
 import { RatesBookWorkspace } from "../workspaces/RatesBookWorkspace";
+import { ReferenceDataWorkspace } from "../workspaces/ReferenceDataWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { SurfaceWorkspace } from "../workspaces/SurfaceWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
@@ -68,6 +69,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   quoting: QuotingWorkspace,
   deals: DealsBlotterWorkspace,
   ratesbook: RatesBookWorkspace,
+  refdata: ReferenceDataWorkspace,
   stream: StreamWorkspace,
   surface: SurfaceWorkspace,
   risk: RiskWorkspace,

@@ -71,6 +71,23 @@ import type {
   EntityInput,
   BookDesc,
   BookInput,
+  InstrumentDef,
+  InstrumentInput,
+  ExternalIdEntry,
+  ExternalIdScheme,
+  BrokenDate,
+  Calendar,
+  RatesDayCount,
+  BusinessDayConvention,
+  Frequency,
+  RollConvention,
+  CouponType,
+  DepositDef,
+  FraDef,
+  StirFutureDef,
+  VanillaIrsDef,
+  OisDef,
+  BondDef,
   FixConnection,
   FixConnectionKind,
   FixConnectionSpec,
@@ -2455,4 +2472,317 @@ export function bookResponseFromWire(o: WireObject): BookDesc {
 
 export function deleteBookRequestToWire(key: number): WireObject {
   return { key };
+}
+
+// --- instrument reference-data registry (instrument admin) -----------------
+//
+// The WS mirror of `AuthService.{List,Get,Create,Update,Delete}Instrument`. A
+// definition carries exactly ONE family sub-object keyed by its family token;
+// the wire key is snake_case (`stir_future`, `vanilla_irs`) while the GUI holds
+// it under a camelCase key (`stirFuture`, `vanillaIrs`). Every scalar field is
+// snake_case on the wire (`day_count`, `spot_lag_days`, `external_ids`). Bond
+// dates are `{ year, month, day }`; the optional ones are omitted on the wire
+// when absent. `session_token` is auto-injected by `WsConnection.request`, so
+// these encoders carry only the business body.
+
+function strArray(o: WireObject, key: string): string[] {
+  const v = o[key];
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+function externalIdsToWire(ids: ExternalIdEntry[]): WireObject[] {
+  return ids.map((id) => ({ scheme: id.scheme, value: id.value }));
+}
+
+function externalIdsFromWire(o: WireObject): ExternalIdEntry[] {
+  const arr = o["external_ids"];
+  if (!Array.isArray(arr)) return [];
+  return (arr as WireObject[]).map((entry) => ({
+    scheme: str(entry, "scheme") as ExternalIdScheme,
+    value: str(entry, "value"),
+  }));
+}
+
+function brokenDateToWire(d: BrokenDate): WireObject {
+  return { year: d.year, month: d.month, day: d.day };
+}
+
+function brokenDateFromWire(o: WireObject): BrokenDate {
+  return { year: num(o, "year"), month: num(o, "month"), day: num(o, "day") };
+}
+
+/** An optional bond date: present ⇒ decoded, `null`/absent ⇒ undefined. */
+function optBrokenDate(o: WireObject, key: string): BrokenDate | undefined {
+  const v = o[key];
+  if (!v || typeof v !== "object") return undefined;
+  return brokenDateFromWire(v as WireObject);
+}
+
+function depositToWire(d: DepositDef): WireObject {
+  return {
+    index: d.index,
+    tenor: d.tenor,
+    day_count: d.dayCount,
+    business_day_convention: d.businessDayConvention,
+    calendars: d.calendars,
+    spot_lag_days: d.spotLagDays,
+  };
+}
+
+function depositFromWire(o: WireObject): DepositDef {
+  return {
+    index: str(o, "index"),
+    tenor: str(o, "tenor"),
+    dayCount: str(o, "day_count") as RatesDayCount,
+    businessDayConvention: str(o, "business_day_convention") as BusinessDayConvention,
+    calendars: strArray(o, "calendars") as Calendar[],
+    spotLagDays: num(o, "spot_lag_days"),
+  };
+}
+
+function fraToWire(d: FraDef): WireObject {
+  return {
+    float_index: d.floatIndex,
+    start_tenor: d.startTenor,
+    end_tenor: d.endTenor,
+    accrual_day_count: d.accrualDayCount,
+    business_day_convention: d.businessDayConvention,
+    calendars: d.calendars,
+    spot_lag_days: d.spotLagDays,
+  };
+}
+
+function fraFromWire(o: WireObject): FraDef {
+  return {
+    floatIndex: str(o, "float_index"),
+    startTenor: str(o, "start_tenor"),
+    endTenor: str(o, "end_tenor"),
+    accrualDayCount: str(o, "accrual_day_count") as RatesDayCount,
+    businessDayConvention: str(o, "business_day_convention") as BusinessDayConvention,
+    calendars: strArray(o, "calendars") as Calendar[],
+    spotLagDays: num(o, "spot_lag_days"),
+  };
+}
+
+function stirFutureToWire(d: StirFutureDef): WireObject {
+  return {
+    contract_code: d.contractCode,
+    reference_start: d.referenceStart,
+    reference_end: d.referenceEnd,
+    day_count: d.dayCount,
+    calendars: d.calendars,
+    convexity_vol: d.convexityVol,
+    contract_size: d.contractSize,
+  };
+}
+
+function stirFutureFromWire(o: WireObject): StirFutureDef {
+  return {
+    contractCode: str(o, "contract_code"),
+    referenceStart: str(o, "reference_start"),
+    referenceEnd: str(o, "reference_end"),
+    dayCount: str(o, "day_count") as RatesDayCount,
+    calendars: strArray(o, "calendars") as Calendar[],
+    convexityVol: num(o, "convexity_vol"),
+    contractSize: num(o, "contract_size"),
+  };
+}
+
+function vanillaIrsToWire(d: VanillaIrsDef): WireObject {
+  return {
+    tenor: d.tenor,
+    fixed_frequency: d.fixedFrequency,
+    fixed_day_count: d.fixedDayCount,
+    float_index: d.floatIndex,
+    float_frequency: d.floatFrequency,
+    float_day_count: d.floatDayCount,
+    business_day_convention: d.businessDayConvention,
+    calendars: d.calendars,
+    roll_convention: d.rollConvention,
+    spot_lag_days: d.spotLagDays,
+  };
+}
+
+function vanillaIrsFromWire(o: WireObject): VanillaIrsDef {
+  return {
+    tenor: str(o, "tenor"),
+    fixedFrequency: str(o, "fixed_frequency") as Frequency,
+    fixedDayCount: str(o, "fixed_day_count") as RatesDayCount,
+    floatIndex: str(o, "float_index"),
+    floatFrequency: str(o, "float_frequency") as Frequency,
+    floatDayCount: str(o, "float_day_count") as RatesDayCount,
+    businessDayConvention: str(o, "business_day_convention") as BusinessDayConvention,
+    calendars: strArray(o, "calendars") as Calendar[],
+    rollConvention: str(o, "roll_convention") as RollConvention,
+    spotLagDays: num(o, "spot_lag_days"),
+  };
+}
+
+function oisToWire(d: OisDef): WireObject {
+  return {
+    tenor: d.tenor,
+    index: d.index,
+    fixed_frequency: d.fixedFrequency,
+    fixed_day_count: d.fixedDayCount,
+    float_day_count: d.floatDayCount,
+    business_day_convention: d.businessDayConvention,
+    calendars: d.calendars,
+    spot_lag_days: d.spotLagDays,
+  };
+}
+
+function oisFromWire(o: WireObject): OisDef {
+  return {
+    tenor: str(o, "tenor"),
+    index: str(o, "index"),
+    fixedFrequency: str(o, "fixed_frequency") as Frequency,
+    fixedDayCount: str(o, "fixed_day_count") as RatesDayCount,
+    floatDayCount: str(o, "float_day_count") as RatesDayCount,
+    businessDayConvention: str(o, "business_day_convention") as BusinessDayConvention,
+    calendars: strArray(o, "calendars") as Calendar[],
+    spotLagDays: num(o, "spot_lag_days"),
+  };
+}
+
+function bondToWire(b: BondDef): WireObject {
+  const w: WireObject = {
+    issuer: b.issuer,
+    coupon_rate: b.couponRate,
+    coupon_type: b.couponType,
+    coupon_frequency: b.couponFrequency,
+    day_count: b.dayCount,
+    maturity_date: brokenDateToWire(b.maturityDate),
+    redemption: b.redemption,
+    calendars: b.calendars,
+  };
+  if (b.issueDate) w.issue_date = brokenDateToWire(b.issueDate);
+  if (b.datedDate) w.dated_date = brokenDateToWire(b.datedDate);
+  if (b.firstCouponDate) w.first_coupon_date = brokenDateToWire(b.firstCouponDate);
+  return w;
+}
+
+function bondFromWire(o: WireObject): BondDef {
+  const def: BondDef = {
+    issuer: str(o, "issuer"),
+    couponRate: num(o, "coupon_rate"),
+    couponType: str(o, "coupon_type") as CouponType,
+    couponFrequency: str(o, "coupon_frequency") as Frequency | "",
+    dayCount: str(o, "day_count") as RatesDayCount,
+    maturityDate: brokenDateFromWire(child(o, "maturity_date")),
+    redemption: num(o, "redemption"),
+    calendars: strArray(o, "calendars") as Calendar[],
+  };
+  const issue = optBrokenDate(o, "issue_date");
+  const dated = optBrokenDate(o, "dated_date");
+  const firstCoupon = optBrokenDate(o, "first_coupon_date");
+  if (issue) def.issueDate = issue;
+  if (dated) def.datedDate = dated;
+  if (firstCoupon) def.firstCouponDate = firstCoupon;
+  return def;
+}
+
+/** An instrument definition → its wire form (single family sub-object). */
+export function instrumentDefToWire(def: InstrumentDef): WireObject {
+  const wire: WireObject = {
+    instrument_id: def.instrumentId,
+    name: def.name,
+    description: def.description,
+    currency: def.currency,
+    external_ids: externalIdsToWire(def.externalIds),
+  };
+  switch (def.family) {
+    case "deposit":
+      wire.deposit = depositToWire(def.deposit);
+      break;
+    case "fra":
+      wire.fra = fraToWire(def.fra);
+      break;
+    case "stir_future":
+      wire.stir_future = stirFutureToWire(def.stirFuture);
+      break;
+    case "vanilla_irs":
+      wire.vanilla_irs = vanillaIrsToWire(def.vanillaIrs);
+      break;
+    case "ois":
+      wire.ois = oisToWire(def.ois);
+      break;
+    case "bond":
+      wire.bond = bondToWire(def.bond);
+      break;
+  }
+  return wire;
+}
+
+/** An instrument definition from its wire form (detects the family sub-object). */
+export function instrumentDefFromWire(o: WireObject): InstrumentDef {
+  const base = {
+    instrumentId: str(o, "instrument_id"),
+    name: str(o, "name"),
+    description: str(o, "description"),
+    currency: str(o, "currency"),
+    externalIds: externalIdsFromWire(o),
+  };
+  const has = (key: string): boolean => Boolean(o[key]) && typeof o[key] === "object";
+  if (has("deposit")) {
+    return { ...base, family: "deposit", deposit: depositFromWire(child(o, "deposit")) };
+  }
+  if (has("fra")) {
+    return { ...base, family: "fra", fra: fraFromWire(child(o, "fra")) };
+  }
+  if (has("stir_future")) {
+    return {
+      ...base,
+      family: "stir_future",
+      stirFuture: stirFutureFromWire(child(o, "stir_future")),
+    };
+  }
+  if (has("vanilla_irs")) {
+    return {
+      ...base,
+      family: "vanilla_irs",
+      vanillaIrs: vanillaIrsFromWire(child(o, "vanilla_irs")),
+    };
+  }
+  if (has("ois")) {
+    return { ...base, family: "ois", ois: oisFromWire(child(o, "ois")) };
+  }
+  // Exactly one family is always present; bond is the remaining case.
+  return { ...base, family: "bond", bond: bondFromWire(child(o, "bond")) };
+}
+
+export function listInstrumentsRequestToWire(): WireObject {
+  return {};
+}
+
+export function instrumentsResponseFromWire(o: WireObject): InstrumentDef[] {
+  const arr = o["instruments"];
+  return Array.isArray(arr) ? (arr as WireObject[]).map(instrumentDefFromWire) : [];
+}
+
+export function getInstrumentRequestToWire(id: string): WireObject {
+  return { instrument_id: id };
+}
+
+/** A single-instrument response (`{ instrument: {...} | null }`). */
+export function instrumentResponseFromWire(o: WireObject): InstrumentDef | null {
+  const v = o["instrument"];
+  if (!v || typeof v !== "object") return null;
+  return instrumentDefFromWire(v as WireObject);
+}
+
+export function createInstrumentRequestToWire(input: InstrumentInput): WireObject {
+  return { instrument: instrumentDefToWire(input) };
+}
+
+export function updateInstrumentRequestToWire(input: InstrumentInput): WireObject {
+  return { instrument: instrumentDefToWire(input) };
+}
+
+export function deleteInstrumentRequestToWire(id: string): WireObject {
+  return { instrument_id: id };
+}
+
+/** A delete response (`{ removed: boolean }`). */
+export function deleteInstrumentResponseFromWire(o: WireObject): boolean {
+  return o["removed"] === true;
 }

@@ -73,6 +73,7 @@ export type WorkspaceId =
   | "quoting"
   | "deals"
   | "ratesbook"
+  | "refdata"
   | "stream"
   | "surface"
   | "risk"

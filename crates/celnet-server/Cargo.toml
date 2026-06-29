@@ -24,6 +24,10 @@ celnet-surface.workspace = true
 celnet-exotics.workspace = true
 celnet-linear.workspace = true
 celnet-rates.workspace = true
+# Instrument reference-data convention labels (config/reference_data.rs) reuse the
+# shared calendar vocabularies (RollRule business-day convention, CentreId
+# settlement centres) so the registry can never drift from what the engine resolves.
+celnet-calendar.workspace = true
 celnet-equity-vanilla.workspace = true
 celnet-commodity-vanilla.workspace = true
 celnet-crypto-vanilla.workspace = true

@@ -3732,6 +3732,292 @@ message DeleteBookResponse {
   optional uint64 correlation_id = 2;
 }
 
+// ===========================================================================
+// instrument reference data — the persisted, admin-managed registry of
+// instrument DEFINITIONS (static / reference data) that curve-building and
+// pricing later resolve against
+// (`docs/CURVES-AND-INSTRUMENT-REFERENCE-DATA-REVIEW.md` §C). Each definition is
+// keyed by a stable internal `instrument_id` slug, carries external-identifier
+// cross-refs, and exactly one family-specific convention block. This phase is
+// the REGISTRY + CRUD only — no curve/pricing rewiring (that is the next,
+// separate task). Convention labels reuse the engine vocabularies so the
+// registry can never drift from what the engine can resolve: `day_count` is a
+// `celnet_rates::AccrualBasis` label (`act_360` / `act_365_fixed` /
+// `thirty_360_bond_basis`, plus `act_act` for bonds), `business_day_convention`
+// a `celnet_calendar::RollRule` label (`unadjusted` / `following` / `preceding`
+// / `modified_following`), each `calendars` entry a `celnet_calendar::CentreId`
+// label (e.g. `united_states`, `target2`), and a leg `*_frequency` a
+// `celnet_rates::PaymentFrequency` label (`annual` / `semi_annual` /
+// `quarterly`). Market quotes are NOT static and are never stored here.
+// ===========================================================================
+
+// One external-identifier cross-reference for an instrument: a `(scheme, value)`
+// pair, e.g. `(isin, "US912828YL83")`. `scheme` is one of the canonical
+// snake_case tokens `isin`, `cusip`, `sedol`, `figi`, `ticker`, `internal`; an
+// unknown token is rejected at the boundary, never silently dropped. The
+// `(scheme, value)` pair is unique across the whole registry.
+message ExternalId {
+  // The identifier scheme token (`isin`/`cusip`/`sedol`/`figi`/`ticker`/`internal`).
+  string scheme = 1;
+  // The identifier value under that scheme (verbatim).
+  string value = 2;
+}
+
+// Rates — a cash money-market DEPOSIT definition (the conventional front pillar
+// of a curve build). The market deposit rate is a quote, not static, so it is
+// not carried here.
+message DepositDef {
+  // The reference overnight/term index token (e.g. `sofr`); required.
+  string index = 1;
+  // The deposit tenor token (e.g. `ON`, `TN`, `1W`, `1M`, `3M`), or an explicit
+  // broken-date maturity expressed as a token; required.
+  string tenor = 2;
+  // Accrual day-count label (`act_360` typical for USD money market); required.
+  string day_count = 3;
+  // Business-day convention label (`modified_following` typical); required.
+  string business_day_convention = 4;
+  // Settlement calendar centre labels (at least one; e.g. `united_states`).
+  repeated string calendars = 5;
+  // Spot/settlement lag in business days (T+2 typical; T+0 for SOFR-style).
+  uint32 spot_lag_days = 6;
+}
+
+// Rates — a forward rate agreement (FRA) definition: a single-period `[T1,T2]`
+// forward window on a projected float index. The contractual/market FRA rate is
+// a quote and is not stored here.
+message FraDef {
+  // The projected float index token (e.g. `sofr`, `term_sofr_3m`); required.
+  string float_index = 1;
+  // The window start / fixing tenor token (e.g. `3M`) or broken-date token; required.
+  string start_tenor = 2;
+  // The window end / maturity tenor token (e.g. `6M`) or broken-date token; required.
+  string end_tenor = 3;
+  // Accrual day-count label for the `tau` basis (`act_360` typical); required.
+  string accrual_day_count = 4;
+  // Business-day convention label; required.
+  string business_day_convention = 5;
+  // Settlement calendar centre labels (at least one).
+  repeated string calendars = 6;
+  // Spot/settlement lag in business days.
+  uint32 spot_lag_days = 7;
+}
+
+// Rates — a short-term-interest-rate (STIR) futures contract definition. The
+// price/futures-rate is a quote and is not stored here; the convexity vol is a
+// debias parameter (0 ⇒ no adjustment).
+message StirFutureDef {
+  // The listed contract code (e.g. `SR3H6`); required.
+  string contract_code = 1;
+  // The fixing-window start tenor/date token; required.
+  string reference_start = 2;
+  // The fixing-window end tenor/date token; required.
+  string reference_end = 3;
+  // Accrual day-count label (`act_360` typical); required.
+  string day_count = 4;
+  // Settlement calendar centre labels (at least one).
+  repeated string calendars = 5;
+  // The convexity-adjustment volatility (σ) used to debias the futures rate; 0 ⇒
+  // no adjustment. Carried with the definition for the future hedge/curve phase.
+  double convexity_vol = 6;
+  // The contract notional/size in the currency (0 ⇒ unspecified); for the future
+  // DV01→hedge-count math. Optional.
+  double contract_size = 7;
+}
+
+// Rates — a vanilla fixed-vs-float interest-rate swap (IRS) definition with its
+// full per-leg convention block. The par/fixed rate is a quote, not stored here.
+message VanillaIrsDef {
+  // The swap tenor token (e.g. `5Y`) or broken-date maturity token; required.
+  string tenor = 1;
+  // Fixed-leg payment frequency label (`annual`/`semi_annual`/`quarterly`); required.
+  string fixed_frequency = 2;
+  // Fixed-leg accrual day-count label (`thirty_360_bond_basis` for USD); required.
+  string fixed_day_count = 3;
+  // The float-leg projected index token (e.g. `sofr`, `term_sofr_3m`); required.
+  string float_index = 4;
+  // Float-leg payment frequency label; required.
+  string float_frequency = 5;
+  // Float-leg accrual day-count label (`act_360` typical); required.
+  string float_day_count = 6;
+  // Business-day convention label; required.
+  string business_day_convention = 7;
+  // Settlement calendar centre labels (at least one).
+  repeated string calendars = 8;
+  // Period-generation roll convention token (`eom`/`imm`/`none`); optional, blank ⇒ `none`.
+  string roll_convention = 9;
+  // Spot/settlement lag in business days.
+  uint32 spot_lag_days = 10;
+}
+
+// Rates — an overnight-indexed swap (OIS) definition: fixed vs compounded
+// overnight float on a single self-discounting curve. The par fixed rate is a
+// quote, not stored here.
+message OisDef {
+  // The swap tenor token (e.g. `2Y`) or broken-date maturity token; required.
+  string tenor = 1;
+  // The overnight index token (e.g. `sofr`); required.
+  string index = 2;
+  // Fixed-leg payment frequency label (`annual` typical for USD-SOFR); required.
+  string fixed_frequency = 3;
+  // Fixed-leg accrual day-count label (`act_360` for USD-SOFR); required.
+  string fixed_day_count = 4;
+  // Float (compounded-ON) leg accrual day-count label (`act_360`); required.
+  string float_day_count = 5;
+  // Business-day convention label; required.
+  string business_day_convention = 6;
+  // Settlement calendar centre labels (at least one).
+  repeated string calendars = 7;
+  // Spot/settlement lag in business days.
+  uint32 spot_lag_days = 8;
+}
+
+// A cash-bond DEFINITION (no bond pricer yet — this feeds the future bond
+// pricing path and the FI deal blotter, `docs/FI-BOND-DEAL-CAPTURE-GAP-ANALYSIS.md`).
+// ISIN/CUSIP live in the instrument's `external_ids`; the redemption/face and
+// dates live here. `coupon_frequency` is blank for a zero-coupon bond.
+message BondDef {
+  // The issuer name (or LEI), e.g. `US Treasury`; required.
+  string issuer = 1;
+  // The annual coupon rate as a decimal (0.05 = 5%); 0 for zeros/FRNs.
+  double coupon_rate = 2;
+  // The coupon type token (`fixed`/`frn`/`zero`); required.
+  string coupon_type = 3;
+  // Coupon payment frequency label (`annual`/`semi_annual`/`quarterly`); blank for `zero`.
+  string coupon_frequency = 4;
+  // Accrual day-count label (`act_act`/`thirty_360_bond_basis`/`act_365_fixed`); required.
+  string day_count = 5;
+  // The issue date; optional.
+  optional BrokenDate issue_date = 6;
+  // The dated (interest-accrual-start) date; optional.
+  optional BrokenDate dated_date = 7;
+  // The first-coupon date (drives a short/long stub); optional.
+  optional BrokenDate first_coupon_date = 8;
+  // The maturity (final-redemption) date; required.
+  BrokenDate maturity_date = 9;
+  // The par redemption / face value (e.g. 100); required, strictly positive.
+  double redemption = 10;
+  // Settlement calendar centre labels (at least one).
+  repeated string calendars = 11;
+}
+
+// One instrument definition in the reference-data registry: the common header
+// (`instrument_id` key, human `name`/`description`, `currency`, external-id
+// cross-refs) plus exactly one family-specific convention block.
+message InstrumentDefDesc {
+  // The stable internal id (a slug); the registry key. Unique across the registry.
+  string instrument_id = 1;
+  // Human-friendly label for blotters/GUI.
+  string name = 2;
+  // Optional longer human description.
+  string description = 3;
+  // ISO 4217 pricing/settlement currency.
+  string currency = 4;
+  // External-identifier cross-refs (ISIN/CUSIP/SEDOL/FIGI/ticker/internal); each
+  // `(scheme, value)` pair is unique across the whole registry.
+  repeated ExternalId external_ids = 5;
+  // The family-specific convention block: exactly one variant is set.
+  oneof definition {
+    // A cash money-market deposit.
+    DepositDef deposit = 6;
+    // A forward rate agreement.
+    FraDef fra = 7;
+    // A STIR futures contract.
+    StirFutureDef stir_future = 8;
+    // A vanilla fixed-vs-float IRS.
+    VanillaIrsDef vanilla_irs = 9;
+    // An overnight-indexed swap.
+    OisDef ois = 10;
+    // A cash bond.
+    BondDef bond = 11;
+  }
+}
+
+// List the instrument definitions in the registry (any authenticated caller —
+// curve-building and pricing read this, so it is NOT admin-only).
+message ListInstrumentsRequest {
+  // The caller's bearer token (must resolve to an authenticated user).
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The instrument definitions, in creation order.
+message ListInstrumentsResponse {
+  // Every registered instrument definition.
+  repeated InstrumentDefDesc instruments = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Resolve a single instrument definition by its internal id (any authenticated
+// caller).
+message GetInstrumentRequest {
+  // The caller's bearer token (must resolve to an authenticated user).
+  string session_token = 1;
+  // The internal `instrument_id` to resolve.
+  string instrument_id = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The resolved instrument definition.
+message GetInstrumentResponse {
+  // The resolved definition (absent ⇒ no instrument with that id).
+  InstrumentDefDesc instrument = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Create an instrument definition (admin only). A blank `instrument_id` is minted
+// from the `name`; a provided id must be unique.
+message CreateInstrumentRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The definition to create (its `instrument_id` may be blank to auto-mint).
+  InstrumentDefDesc instrument = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The created definition (with its minted/validated id).
+message CreateInstrumentResponse {
+  // The stored definition.
+  InstrumentDefDesc instrument = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Replace an existing instrument definition by its id (admin only).
+message UpdateInstrumentRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The definition to store; its `instrument_id` selects the existing record.
+  InstrumentDefDesc instrument = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The updated definition.
+message UpdateInstrumentResponse {
+  // The stored definition.
+  InstrumentDefDesc instrument = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Delete an instrument definition by its id (admin only).
+message DeleteInstrumentRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The internal `instrument_id` to delete.
+  string instrument_id = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// Delete acknowledgement.
+message DeleteInstrumentResponse {
+  // Whether an instrument was removed.
+  bool removed = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
 // One capability on the wire: an action label crossed with an asset-class label.
 // The labels are the entitlement kernel's canonical snake_case tokens (e.g.
 // `execute` × `fixed_income`); they round-trip exactly and an unknown token is
@@ -3890,6 +4176,17 @@ service AuthService {
   rpc UpdateBook(UpdateBookRequest) returns (UpdateBookResponse);
   // Delete a named netting book (admin only).
   rpc DeleteBook(DeleteBookRequest) returns (DeleteBookResponse);
+  // List the instrument reference-data definitions (any authenticated caller —
+  // curve-building and pricing resolve against this, so it is NOT admin-only).
+  rpc ListInstruments(ListInstrumentsRequest) returns (ListInstrumentsResponse);
+  // Resolve one instrument definition by its internal id (any authenticated caller).
+  rpc GetInstrument(GetInstrumentRequest) returns (GetInstrumentResponse);
+  // Create an instrument definition (admin only).
+  rpc CreateInstrument(CreateInstrumentRequest) returns (CreateInstrumentResponse);
+  // Replace an instrument definition (admin only).
+  rpc UpdateInstrument(UpdateInstrumentRequest) returns (UpdateInstrumentResponse);
+  // Delete an instrument definition (admin only).
+  rpc DeleteInstrument(DeleteInstrumentRequest) returns (DeleteInstrumentResponse);
 }
 
 // ===========================================================================

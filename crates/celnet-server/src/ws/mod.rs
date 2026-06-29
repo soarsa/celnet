@@ -1102,6 +1102,46 @@ async fn handle_unary(
                 codec::delete_book_response_to_json
             )
         }
+        "list_instruments" => {
+            let req = decode!(codec::list_instruments_request_from_json(o));
+            call!(
+                services.auth.list_instruments(Request::new(req)),
+                "instruments",
+                codec::list_instruments_response_to_json
+            )
+        }
+        "get_instrument" => {
+            let req = decode!(codec::get_instrument_request_from_json(o));
+            call!(
+                services.auth.get_instrument(Request::new(req)),
+                "instrument",
+                codec::get_instrument_response_to_json
+            )
+        }
+        "create_instrument" => {
+            let req = decode!(codec::create_instrument_request_from_json(o));
+            call!(
+                services.auth.create_instrument(Request::new(req)),
+                "instrument_created",
+                codec::create_instrument_response_to_json
+            )
+        }
+        "update_instrument" => {
+            let req = decode!(codec::update_instrument_request_from_json(o));
+            call!(
+                services.auth.update_instrument(Request::new(req)),
+                "instrument_updated",
+                codec::update_instrument_response_to_json
+            )
+        }
+        "delete_instrument" => {
+            let req = decode!(codec::delete_instrument_request_from_json(o));
+            call!(
+                services.auth.delete_instrument(Request::new(req)),
+                "instrument_deleted",
+                codec::delete_instrument_response_to_json
+            )
+        }
         other => codec::error_frame(&format!("unknown request type `{other}`"), correlation_id),
     }
 }

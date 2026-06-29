@@ -34,6 +34,8 @@ import type {
   EntityInput,
   BookDesc,
   BookInput,
+  InstrumentDef,
+  InstrumentInput,
   UserCapabilities,
   RoleCapabilities,
   UserRole,
@@ -491,4 +493,21 @@ export interface CelnetTransport {
 
   /** AuthService.DeleteBook (admin) — remove a book. */
   deleteBook(key: number): Promise<boolean>;
+
+  // --- instrument reference-data registry ------------------------------------
+
+  /** AuthService.ListInstruments (any authenticated) — all instrument defs. */
+  listInstruments(): Promise<InstrumentDef[]>;
+
+  /** AuthService.GetInstrument (any authenticated) — one def, or null. */
+  getInstrument(id: string): Promise<InstrumentDef | null>;
+
+  /** AuthService.CreateInstrument (admin) — blank id ⇒ server mints from name. */
+  createInstrument(input: InstrumentInput): Promise<InstrumentDef>;
+
+  /** AuthService.UpdateInstrument (admin) — replace the identified def. */
+  updateInstrument(input: InstrumentInput): Promise<InstrumentDef>;
+
+  /** AuthService.DeleteInstrument (admin) — remove a def; true if it existed. */
+  deleteInstrument(id: string): Promise<boolean>;
 }
