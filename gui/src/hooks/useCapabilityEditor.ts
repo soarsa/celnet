@@ -18,10 +18,12 @@ import type { Capability, UserDesc } from "../data/contract";
 import type { CelnetTransport } from "../data/transport";
 import {
   type OverlayMap,
+  type OverlayState,
   overlayFromCapabilities,
   overlaysDiffer,
   overlayToCapabilities,
   nextOverlay,
+  setOverlayFor,
 } from "../lib/capabilityMatrix";
 
 /** Narrow an unknown thrown value to a display string. */
@@ -50,6 +52,12 @@ export interface CapabilityEditor {
   isDirty: boolean;
   /** Cycle one cell inherit → grant → deny → inherit. */
   cycle: (key: string) => void;
+  /**
+   * Set a SET of capabilities to one overlay state in a single immutable update —
+   * the primitive behind the Permissions grid's Read/Write toggles, which project
+   * a component's whole capability set to `grant` / `deny` / `inherit` at once.
+   */
+  setCaps: (caps: readonly Capability[], state: OverlayState) => void;
   /** Discard unsaved edits back to the last-loaded overlay. */
   reset: () => void;
   /** Persist the overlay wholesale; refresh from the returned effective set. */
@@ -113,6 +121,14 @@ export function useCapabilityEditor(
     });
   }, []);
 
+  const setCaps = useCallback(
+    (caps: readonly Capability[], state: OverlayState): void => {
+      setSavedNote(null);
+      setOverlay((prev) => setOverlayFor(prev, caps, state));
+    },
+    [],
+  );
+
   const reset = useCallback((): void => {
     setSavedNote(null);
     setError(null);
@@ -148,6 +164,7 @@ export function useCapabilityEditor(
     effective,
     isDirty: overlaysDiffer(overlay, loadedOverlay),
     cycle,
+    setCaps,
     reset,
     save,
     reload,

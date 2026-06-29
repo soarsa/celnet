@@ -65,7 +65,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use celnet_entitlements::AccessMode;
+use celnet_entitlements::{AccessMode, Action, AssetClass};
 use celnet_fanout::Consumer;
 use celnet_observability::LatencyRecorder;
 use celnet_proto::stream_service_server::StreamService;
@@ -972,20 +972,34 @@ impl Session {
         // `Heartbeat` / `Unsubscribe` / `MarketSeriesUnsubscribe` / `Authenticate`
         // carry no dealable intent (and `Authenticate` is HOW a caller authorizes)
         // and stay exempt.
-        let gated = matches!(
-            &message,
+        //
+        // Each dealable frame requires the capability for ITS action. The
+        // StreamService deals vanilla FX (it parses the underlying as FX and books
+        // vanilla FX lines), so the asset class is always `FxOptions`. `Execute`
+        // (click-to-trade) needs `Execute·FxOptions`; the live-price frames need
+        // `Stream·FxOptions`. A capability gate resolves an authenticated session —
+        // a body principal cannot self-grant it (finding #3) — so under Enforce an
+        // un-capable or anonymous session is refused; under Permissive it is a
+        // no-op.
+        let required = match &message {
+            client_stream_message::Message::Execute(_) => Some(RequiredAuthority::Capability(
+                Action::Execute,
+                AssetClass::FxOptions,
+            )),
             client_stream_message::Message::Subscribe(_)
-                | client_stream_message::Message::Modify(_)
-                | client_stream_message::Message::Execute(_)
-                | client_stream_message::Message::Resync(_)
-                | client_stream_message::Message::MarketSeriesSubscribe(_)
-        );
-        if gated
+            | client_stream_message::Message::Modify(_)
+            | client_stream_message::Message::Resync(_)
+            | client_stream_message::Message::MarketSeriesSubscribe(_) => Some(
+                RequiredAuthority::Capability(Action::Stream, AssetClass::FxOptions),
+            ),
+            _ => None,
+        };
+        if let Some(required) = required
             && let Err(status) = authorize_caller(
                 self.access_mode,
                 &self.caller,
                 "StreamService",
-                RequiredAuthority::ReadAny,
+                required,
                 None,
             )
         {

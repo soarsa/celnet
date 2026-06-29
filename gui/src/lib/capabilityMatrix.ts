@@ -210,3 +210,260 @@ export function overlaysDiffer(a: OverlayMap, b: OverlayMap): boolean {
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// Component → capability mapping (the Permissions page's primary model)
+//
+// The capability algebra above is action × asset (the wire contract). A TRADER,
+// however, thinks in COMPONENTS — "can this user use the Ticket / the Rates Book
+// / Administration". This table is the pure, testable bridge: each UI component
+// declares the capability ACTIONS that constitute its Read and its Write access,
+// on its asset class. Read = `view` on the component's asset (the right to SEE
+// it); Write = the component's own action(s) on that asset (an empty list ⇒ a
+// read-only component, no write affordance). The two grid toggles are PROJECTIONS
+// over these capability sets, and every edit still round-trips through the same
+// deny-wins overlay algebra the server enforces — the component view is sugar
+// over the one contract, never a parallel model.
+// ---------------------------------------------------------------------------
+
+/** The grid section a component is grouped under (mirrors the product domains). */
+export type ComponentSection = "fx_options" | "fixed_income" | "administration";
+
+/**
+ * One trader-facing component and the capabilities that constitute its Read and
+ * Write access. The Administration row is the cross-asset exception: it governs
+ * `administer` on BOTH asset classes as a single toggle (Read == Write).
+ */
+export interface ComponentAccess {
+  /** Stable id (the workspace id it surfaces; the cross-asset row is `administration`). */
+  id: string;
+  /** Human label for the grid row. */
+  label: string;
+  /** The grid section the component lives under. */
+  section: ComponentSection;
+  /** The asset class(es) the component's capabilities apply to (both for Administration). */
+  assets: readonly CapabilityAsset[];
+  /** The action(s) constituting READ access (`view`, except the cross-asset admin row). */
+  readActions: readonly CapabilityAction[];
+  /** The action(s) constituting WRITE access (empty ⇒ read-only component). */
+  writeActions: readonly CapabilityAction[];
+}
+
+/**
+ * THE component → capability spec. Read is `view` for the component's asset;
+ * Write is the component's action(s) for that asset; read-only components have an
+ * empty write set. Administration is cross-asset `administer` (one toggle, both
+ * assets, Read == Write).
+ */
+export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
+  // FX Options (asset `fx_options`).
+  {
+    id: "ticket",
+    label: "Ticket",
+    section: "fx_options",
+    assets: ["fx_options"],
+    readActions: ["view"],
+    writeActions: ["price", "execute"],
+  },
+  {
+    id: "stream",
+    label: "Stream",
+    section: "fx_options",
+    assets: ["fx_options"],
+    readActions: ["view"],
+    writeActions: ["stream", "execute"],
+  },
+  {
+    id: "surface",
+    label: "Surface",
+    section: "fx_options",
+    assets: ["fx_options"],
+    readActions: ["view"],
+    writeActions: [],
+  },
+  {
+    id: "risk",
+    label: "Risk",
+    section: "fx_options",
+    assets: ["fx_options"],
+    readActions: ["view"],
+    writeActions: [],
+  },
+  // Fixed Income (asset `fixed_income`).
+  {
+    id: "rates",
+    label: "Rates",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: ["price"],
+  },
+  {
+    id: "curve",
+    label: "Curve",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: [],
+  },
+  {
+    id: "ratesrisk",
+    label: "Rates Risk",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: [],
+  },
+  {
+    id: "quoting",
+    label: "Quoting",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: ["quote_respond", "rfq_respond", "ioi_respond", "execute"],
+  },
+  {
+    id: "deals",
+    label: "Deals",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: [],
+  },
+  {
+    id: "ratesbook",
+    label: "Rates Book",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: ["book"],
+  },
+  {
+    id: "book",
+    label: "Book",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: [],
+  },
+  // Administration — a single cross-asset toggle governing `administer` on BOTH
+  // assets together. Read == Write (the same capability).
+  {
+    id: "administration",
+    label: "Administration",
+    section: "administration",
+    assets: CAPABILITY_ASSETS,
+    readActions: ["administer"],
+    writeActions: ["administer"],
+  },
+];
+
+/** The grid sections in display order (each maps to a product domain). */
+export const COMPONENT_SECTIONS: readonly { id: ComponentSection; label: string }[] = [
+  { id: "fx_options", label: "FX Options" },
+  { id: "fixed_income", label: "Fixed Income" },
+  { id: "administration", label: "Administration" },
+];
+
+/** Expand `actions × assets` into the flat capability list (canonical order). */
+function capsFor(
+  actions: readonly CapabilityAction[],
+  assets: readonly CapabilityAsset[],
+): Capability[] {
+  const out: Capability[] = [];
+  for (const action of actions) {
+    for (const asset of assets) out.push({ action, asset });
+  }
+  return out;
+}
+
+/** The component's READ capability set (`readActions × assets`). */
+export function componentReadCaps(c: ComponentAccess): Capability[] {
+  return capsFor(c.readActions, c.assets);
+}
+
+/** The component's WRITE capability set (`writeActions × assets`); empty ⇒ read-only. */
+export function componentWriteCaps(c: ComponentAccess): Capability[] {
+  return capsFor(c.writeActions, c.assets);
+}
+
+/**
+ * The distinct capabilities the component's advanced view edits — its read set
+ * unioned with its write set, de-duplicated, in canonical order.
+ */
+export function componentAdvancedCaps(c: ComponentAccess): Capability[] {
+  const seen = new Set<string>();
+  const out: Capability[] = [];
+  for (const cap of [...componentReadCaps(c), ...componentWriteCaps(c)]) {
+    const k = capKey(cap.action, cap.asset);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(cap);
+  }
+  return out;
+}
+
+/** Whether the component has no write actions (its Write toggle is disabled). */
+export function isReadOnlyComponent(c: ComponentAccess): boolean {
+  return c.writeActions.length === 0;
+}
+
+/** A projection toggle's resolved state over a capability set. */
+export type ToggleState = "on" | "off" | "mixed";
+
+/**
+ * Resolve a toggle that PROJECTS over `caps` under the deny-wins algebra: `on`
+ * when every capability is effective, `off` when none is, `mixed` when some are
+ * and some are not. An empty set (a read-only component's write set) resolves to
+ * `off` — the disabled affordance. Mirrors the server's effective resolution per
+ * cell, so the toggle reflects exactly what the user can do.
+ */
+export function toggleState(
+  role: UserRole,
+  overlay: OverlayMap,
+  caps: readonly Capability[],
+): ToggleState {
+  if (caps.length === 0) return "off";
+  let anyOn = false;
+  let anyOff = false;
+  for (const c of caps) {
+    const allowed = resolveCell(
+      role,
+      c.action,
+      c.asset,
+      overlayStateAt(overlay, c.action, c.asset),
+    ).allowed;
+    if (allowed) anyOn = true;
+    else anyOff = true;
+  }
+  if (anyOn && anyOff) return "mixed";
+  return anyOn ? "on" : "off";
+}
+
+/**
+ * The overlay state a toggle CLICK projects across its whole capability set: an
+ * `on` toggle turns OFF (deny all — deny-wins, visually obvious); an `off` OR
+ * `mixed` toggle turns ON (grant all — a mixed toggle resolves to all-on first).
+ */
+export function toggleTarget(state: ToggleState): OverlayState {
+  return state === "on" ? "deny" : "grant";
+}
+
+/**
+ * Immutably set every capability in `caps` to `state` in a copy of `map`
+ * (`inherit` ⇒ remove the cell so it falls back to the role default). The single
+ * projection primitive both grid toggles and tests drive.
+ */
+export function setOverlayFor(
+  map: OverlayMap,
+  caps: readonly Capability[],
+  state: OverlayState,
+): OverlayMap {
+  const next = new Map(map);
+  for (const c of caps) {
+    const key = capKey(c.action, c.asset);
+    if (state === "inherit") next.delete(key);
+    else next.set(key, state);
+  }
+  return next;
+}

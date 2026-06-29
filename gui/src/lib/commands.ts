@@ -22,6 +22,7 @@
  *                       runnable `Command[]` the palette + Shell dispatch.
  */
 
+import type { CapabilityAction, CapabilityAsset } from "../data/contract";
 import type { Command } from "../components/CommandPalette";
 
 /** Workspace ids the rail exposes (kept in sync with `AppContext.WorkspaceId`). */
@@ -39,6 +40,7 @@ export type WorkspaceId =
   | "book"
   | "connections"
   | "admin"
+  | "permissions"
   | "excel";
 
 /**
@@ -109,6 +111,7 @@ export const RAIL: readonly {
   // Administration.
   { id: "connections", glyph: "⇄", label: "Connections", domain: "administration" },
   { id: "admin", glyph: "⚇", label: "Admin", domain: "administration" },
+  { id: "permissions", glyph: "⚷", label: "Permissions", domain: "administration" },
   { id: "excel", glyph: "▦", label: "Excel", domain: "administration" },
 ] as const;
 
@@ -119,6 +122,86 @@ export function domainOf(id: WorkspaceId): Domain {
     throw new Error(`domainOf: unknown workspace id \`${id}\` (not in RAIL)`);
   }
   return entry.domain;
+}
+
+// ---------------------------------------------------------------------------
+// Navigation gating (slice 5c) — HIDE whole domain tabs/workspaces a signed-in
+// user has no access to, exactly as the Administration tab is hidden for non-
+// admins. Slice 5b gated individual CONTROLS (disable + tooltip); this layer
+// gates NAVIGATION: a user with no `view` on an asset class never sees that
+// domain's tab or its rail workspaces. The predicates are PURE (no React, no
+// transport) so the Shell + AppContext share one source of truth and the rules
+// are unit-tested in isolation. UX-only: the server still enforces every RPC.
+// ---------------------------------------------------------------------------
+
+/**
+ * The auth surface the nav-gating predicates need — a subset of `AuthApi`
+ * (`hooks/useAuth`). `can` is the base capability test, which is PERMISSIVE when
+ * signed out (returns `true`), so pre-login every domain stays visible; gating
+ * only ever NARROWS a real signed-in identity.
+ */
+export interface NavAuth {
+  /** Whether the identity is an administrator (governs the Administration tab). */
+  isAdmin: boolean;
+  /** Whether the identity holds `action` on `asset` (permissive when signed out). */
+  can: (action: CapabilityAction, asset: CapabilityAsset) => boolean;
+}
+
+/**
+ * Workspaces only an administrator may open — the admin-only members of the
+ * Administration domain. (Excel also lives under Administration but is NOT admin-
+ * only, so it is deliberately absent.) This is the per-workspace backstop the
+ * Shell hides and the AppContext redirect bounces.
+ */
+export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
+  "connections",
+  "admin",
+  "permissions",
+]);
+
+/**
+ * Whether a top-level DOMAIN tab is accessible to this identity. The base read
+ * capability `view` on the domain's asset class is the right gate for "can see
+ * this asset class at all" (write controls remain individually gated by 5b):
+ *   - `fx-options`     → `view` on `fx_options`
+ *   - `fixed-income`   → `view` on `fixed_income`
+ *   - `administration` → `isAdmin` (unchanged)
+ * Signed out, `can` is permissive ⇒ both asset domains stay visible.
+ */
+export function domainAccessible(domain: Domain, auth: NavAuth): boolean {
+  switch (domain) {
+    case "fx-options":
+      return auth.can("view", "fx_options");
+    case "fixed-income":
+      return auth.can("view", "fixed_income");
+    case "administration":
+      return auth.isAdmin;
+  }
+}
+
+/**
+ * Whether a single WORKSPACE is reachable by this identity. Admin-only
+ * workspaces require `isAdmin`; every other Administration-domain workspace (i.e.
+ * Excel) is always reachable; FX/FI workspaces follow their domain's
+ * accessibility. Used by the rail filter, the palette/⌘N command filter, and the
+ * AppContext redirect so no path can strand a user on a hidden workspace.
+ */
+export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
+  if (ADMIN_ONLY_WORKSPACES.has(id)) return auth.isAdmin;
+  const domain = domainOf(id);
+  if (domain === "administration") return true; // non-admin-only admin domain (Excel).
+  return domainAccessible(domain, auth);
+}
+
+/**
+ * The first workspace (in {@link RAIL} order) this identity can reach, or `null`
+ * if none — the redirect target when the active workspace's domain becomes
+ * inaccessible. Excel is always reachable, so a signed-in identity always has at
+ * least one accessible workspace; `null` is a defensive degenerate only.
+ */
+export function firstAccessibleWorkspace(auth: NavAuth): WorkspaceId | null {
+  const entry = RAIL.find((r) => workspaceAccessible(r.id, auth));
+  return entry ? entry.id : null;
 }
 
 /**

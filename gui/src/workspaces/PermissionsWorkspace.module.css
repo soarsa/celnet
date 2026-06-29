@@ -1,0 +1,146 @@
+/* PermissionsWorkspace — the Administration permissions page. */
+
+.root {
+  height: 100%;
+  overflow: auto;
+  padding: var(--space-5);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pickerPanel {
+  position: sticky;
+  top: var(--space-5);
+}
+.gridPanel {
+  min-width: 0;
+}
+
+.banner {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: color-mix(in oklch, var(--danger) 12%, transparent);
+  color: var(--text-primary);
+  font-size: var(--type-caption);
+}
+.empty,
+.placeholder {
+  margin: 0;
+  padding: var(--space-5) var(--space-4);
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  line-height: 1.5;
+}
+
+.userList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.userBtn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease;
+}
+.userBtn:hover {
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+}
+.userBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.userActive {
+  border-color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 12%, var(--bg-inset));
+}
+.userMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.userEmail {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.userName {
+  font-size: var(--type-micro, 0.7rem);
+  color: var(--text-tertiary);
+}
+
+.chip {
+  flex-shrink: 0;
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--r-pill, 999px);
+  font-size: var(--type-micro, 0.7rem);
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.chipAdmin {
+  background: color-mix(in oklch, var(--accent) 20%, transparent);
+  color: var(--text-primary);
+}
+.chipTrader {
+  background: var(--bg-surface, var(--bg-inset));
+  border: var(--hairline);
+  color: var(--text-secondary);
+}
+.chipDisabled {
+  background: color-mix(in oklch, var(--text-tertiary) 20%, transparent);
+  color: var(--text-tertiary);
+}
+
+/* The sign-in / insufficient-role gate (mirrors AdminWorkspace). */
+.gate {
+  max-width: 32rem;
+  margin: var(--space-6) auto;
+  padding: var(--space-6);
+  border-radius: var(--r-md);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  text-align: left;
+}
+.gateTitle {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-brand);
+  font-size: var(--type-title);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+.gateHint {
+  margin: 0 0 var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--type-body);
+  line-height: 1.6;
+}
