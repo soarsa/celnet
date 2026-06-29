@@ -148,10 +148,10 @@ describe("MockTransport auth (offline parity)", () => {
 
   it("returns the caller's effective capability set on login (offline gating)", async () => {
     const t = new MockTransport();
-    // The seeded admin's role bundle is grant-all (9 actions × 2 assets = 18),
+    // The seeded admin's role bundle is grant-all (10 actions × 2 assets = 20),
     // so offline affordance gating is coherent real behaviour, not a stub.
     const result = await t.login("admin@celnet.com", "password");
-    expect(result.capabilities.length).toBe(18);
+    expect(result.capabilities.length).toBe(20);
     expect(
       result.capabilities.some((c) => c.action === "execute" && c.asset === "fixed_income"),
     ).toBe(true);
@@ -167,7 +167,7 @@ describe("MockTransport auth (offline parity)", () => {
       password: "traderpass12",
     });
     const trader = await t.login("trader@celnet.com", "traderpass12");
-    expect(trader.capabilities.length).toBe(16);
+    expect(trader.capabilities.length).toBe(18);
     expect(trader.capabilities.some((c) => c.action === "administer")).toBe(false);
   });
 

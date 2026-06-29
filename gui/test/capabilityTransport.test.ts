@@ -27,7 +27,7 @@ describe("MockTransport capability overlay", () => {
     const caps = await t.getUserCapabilities(id);
     expect(caps.grants).toEqual([]);
     expect(caps.denies).toEqual([]);
-    expect(caps.effective.length).toBe(16);
+    expect(caps.effective.length).toBe(18);
     const keys = new Set(caps.effective.map((c) => capKey(c.action, c.asset)));
     expect(keys.has(capKey("administer", "fx_options"))).toBe(false);
     expect(keys.has(capKey("execute", "fixed_income"))).toBe(true);
@@ -87,8 +87,8 @@ describe("MockTransport role bundles", () => {
   it("the default Trader bundle is every action except administer on both assets", async () => {
     const t = new MockTransport();
     const bundle = await t.getRoleCapabilities("TRADER");
-    // 8 non-admin actions x 2 assets.
-    expect(bundle.capabilities.length).toBe(16);
+    // 9 non-admin actions x 2 assets.
+    expect(bundle.capabilities.length).toBe(18);
     const keys = new Set(bundle.capabilities.map((c) => capKey(c.action, c.asset)));
     expect(keys.has(capKey("book", "fixed_income"))).toBe(true);
     expect(keys.has(capKey("administer", "fx_options"))).toBe(false);
@@ -97,8 +97,8 @@ describe("MockTransport role bundles", () => {
   it("the Admin role reports grant-all and rejects a Set", async () => {
     const t = new MockTransport();
     const bundle = await t.getRoleCapabilities("ADMIN");
-    // 9 actions x 2 assets.
-    expect(bundle.capabilities.length).toBe(18);
+    // 10 actions x 2 assets.
+    expect(bundle.capabilities.length).toBe(20);
     await expect(
       t.setRoleCapabilities("ADMIN", [{ action: "view", asset: "fx_options" }]),
     ).rejects.toThrow(/cannot be narrowed/);

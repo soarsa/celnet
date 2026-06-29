@@ -39,7 +39,9 @@ import { ScopeSwitcher } from "../components/ScopeSwitcher";
 import { SavedViewsMenu } from "../components/SavedViewsMenu";
 import { AuthMenu } from "../components/AuthMenu";
 import { NotificationCenter } from "../components/NotificationCenter";
+import { SimulatorPanel } from "../components/SimulatorPanel";
 import { SignInDialog } from "../components/SignInDialog";
+import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import {
   buildCommands,
   domainAccessible,
@@ -290,6 +292,11 @@ export function Shell(): React.ReactElement {
 
 function TitleBar(): React.ReactElement {
   const app = useApp();
+  // The counterparty simulator is a top-bar TOOL (not a domain tab), gated on
+  // `simulate·fixed_income`: a lacking user sees it DISABLED with the denial
+  // tooltip (affordance discipline — disable + explain, never silently hide).
+  const [simOpen, setSimOpen] = useState(false);
+  const canSimulate = app.auth.can("simulate", "fixed_income");
   return (
     <header className={styles.titleBar}>
       <CelnetWordmark className={styles.wordmark} />
@@ -307,8 +314,22 @@ function TitleBar(): React.ReactElement {
         <kbd className={styles.kbd}>⌘K</kbd>
         <span>Search / command…</span>
       </button>
+      <button
+        type="button"
+        className={styles.simBtn}
+        onClick={() => setSimOpen(true)}
+        disabled={!canSimulate}
+        title={canSimulate ? "Open the counterparty simulator" : capabilityDenialTitle("simulate", "fixed_income")}
+        aria-label="open counterparty simulator"
+      >
+        <span className={styles.simGlyph} aria-hidden>
+          ⚗
+        </span>
+        <span>Simulator</span>
+      </button>
       <NotificationCenter />
       <AuthMenu />
+      <SimulatorPanel open={simOpen} onClose={() => setSimOpen(false)} />
     </header>
   );
 }

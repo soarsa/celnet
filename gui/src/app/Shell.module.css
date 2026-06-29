@@ -183,6 +183,36 @@
   background: oklch(0 0 0 / 0.2);
 }
 
+.simBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  color: var(--text-secondary);
+  font-size: var(--type-callout);
+  cursor: pointer;
+}
+.simBtn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.simBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.simBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.simGlyph {
+  font-size: var(--type-body);
+  line-height: 1;
+}
+
 /*
  * P0-11: the canvas is a stacking container. Every workspace pane stays MOUNTED
  * and occupies the same cell; only the active pane is displayed. Switching toggles

@@ -38,6 +38,7 @@ export const ACTION_LABELS: Record<CapabilityAction, string> = {
   stream: "Stream",
   execute: "Execute (deal)",
   book: "Book",
+  simulate: "Simulate",
   administer: "Administer",
 };
 
@@ -186,6 +187,7 @@ const ACTION_PHRASE: Record<CapabilityAction, (asset: string) => string> = {
   stream: (a) => `streaming live ${a} prices`,
   execute: (a) => `executing ${a} trades`,
   book: (a) => `booking ${a} positions`,
+  simulate: (a) => `using the ${a} counterparty simulator`,
   administer: () => `administering Celnet`,
 };
 
@@ -345,6 +347,14 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     assets: ["fixed_income"],
     readActions: ["view"],
     writeActions: [],
+  },
+  {
+    id: "simulator",
+    label: "Simulator",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: ["simulate"],
   },
   // Administration — a single cross-asset toggle governing `administer` on BOTH
   // assets together. Read == Write (the same capability).

@@ -1918,6 +1918,7 @@ export type CapabilityAction =
   | "stream"
   | "execute"
   | "book"
+  | "simulate"
   | "administer";
 
 /** The asset class a capability applies to (`celnet.wire.CapabilityDesc.asset`). */
@@ -1942,6 +1943,7 @@ export const CAPABILITY_ACTIONS: readonly CapabilityAction[] = [
   "stream",
   "execute",
   "book",
+  "simulate",
   "administer",
 ];
 
