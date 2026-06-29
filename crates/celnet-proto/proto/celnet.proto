@@ -3084,6 +3084,16 @@ service SurfaceService {
 enum FixAcceptorKind {
   // The FX-options dialect served by the existing acceptor.
   FIX_ACCEPTOR_KIND_OPTIONS = 0;
+  // The fixed-income (linear-rates / OIS) one-shot RFQ dialect: an inbound
+  // QuoteRequest(R) with SubscriptionRequestType(263)=0 is priced to a one-shot
+  // Quote(S). Standing one up requires the QuoteRespond capability on the
+  // FixedIncome asset class (in addition to connection administration).
+  FIX_ACCEPTOR_KIND_FIXED_INCOME_QUOTE = 1;
+  // The fixed-income (linear-rates / OIS) streaming RFS dialect: an inbound
+  // QuoteRequest(R) with SubscriptionRequestType(263)=1 subscribes to a streamed
+  // request-for-stream. Standing one up requires the Stream capability on the
+  // FixedIncome asset class (in addition to connection administration).
+  FIX_ACCEPTOR_KIND_FIXED_INCOME_STREAM = 2;
 }
 
 // A managed inbound FIX-acceptor connection: the persisted definition plus its

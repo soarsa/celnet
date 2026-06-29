@@ -4335,4 +4335,44 @@ mod tests {
         assert_eq!(v["grants"][0]["asset"], json!("fixed_income"));
         assert_eq!(v["effective"][0]["action"], json!("book"));
     }
+
+    /// The fixed-income acceptor kinds round-trip through the FIX-connection codec:
+    /// the spec decoder reads the integer enum tag (1 = FI-quote, 2 = FI-stream) and
+    /// the descriptor encoder emits it, so the decoder/router stay in lockstep with
+    /// the proto enum's new variants.
+    #[test]
+    fn fix_acceptor_fi_kinds_round_trip_through_the_codec() {
+        for tag in [
+            celnet_proto::FixAcceptorKind::Options as i32,
+            celnet_proto::FixAcceptorKind::FixedIncomeQuote as i32,
+            celnet_proto::FixAcceptorKind::FixedIncomeStream as i32,
+        ] {
+            let spec_json = json!({
+                "name": "Bank A — FI",
+                "kind": tag,
+                "bind_addr": "127.0.0.1:9099",
+                "sender_comp_id": "CELNET",
+                "target_comp_id": "CELNET-CPTY",
+                "enabled": true,
+                "desk": "g10",
+            });
+            let spec = fix_connection_spec_from_json(&spec_json).expect("spec decodes");
+            assert_eq!(spec.kind, tag, "the wire enum tag survives the decode");
+
+            let desc = FixConnectionDesc {
+                id: "fi-1".into(),
+                name: spec.name.clone(),
+                kind: tag,
+                bind_addr: spec.bind_addr.clone(),
+                sender_comp_id: spec.sender_comp_id.clone(),
+                target_comp_id: spec.target_comp_id.clone(),
+                enabled: true,
+                running: false,
+                bound_addr: String::new(),
+                desk: spec.desk.clone(),
+            };
+            let v = fix_connection_desc_to_json(&desc);
+            assert_eq!(v["kind"], json!(tag), "the descriptor re-emits the tag");
+        }
+    }
 }

@@ -27,6 +27,15 @@ pub const DEFAULT_CONFIG_PATH: &str = "fix-connections.json";
 pub enum AcceptorKind {
     /// The FX-options dialect served by the existing `celnet-fix` acceptor.
     Options,
+    /// The fixed-income (linear-rates / OIS) one-shot RFQ dialect: an inbound
+    /// `QuoteRequest(R)` carrying `SubscriptionRequestType(263)=0` is priced to a
+    /// one-shot `Quote(S)` through the shared rates path
+    /// ([`crate::services::fix`] dispatches it to `celnet_fix::dialect_rates`).
+    FixedIncomeQuote,
+    /// The fixed-income (linear-rates / OIS) streaming RFS dialect: an inbound
+    /// `QuoteRequest(R)` carrying `SubscriptionRequestType(263)=1` subscribes to a
+    /// streamed request-for-stream, served by the same rates dialect.
+    FixedIncomeStream,
     // Phase 2: `SpotFx` — a strike/expiry-less spot two-way dialect.
 }
 
@@ -36,6 +45,8 @@ impl AcceptorKind {
     pub fn as_str(self) -> &'static str {
         match self {
             AcceptorKind::Options => "options",
+            AcceptorKind::FixedIncomeQuote => "fixed_income_quote",
+            AcceptorKind::FixedIncomeStream => "fixed_income_stream",
         }
     }
 
@@ -44,6 +55,8 @@ impl AcceptorKind {
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "options" => Some(AcceptorKind::Options),
+            "fixed_income_quote" => Some(AcceptorKind::FixedIncomeQuote),
+            "fixed_income_stream" => Some(AcceptorKind::FixedIncomeStream),
             _ => None,
         }
     }
@@ -295,5 +308,22 @@ mod tests {
         assert_eq!(AcceptorKind::parse("OPTIONS"), Some(AcceptorKind::Options));
         assert_eq!(AcceptorKind::Options.as_str(), "options");
         assert_eq!(AcceptorKind::parse("spot"), None);
+        // The two fixed-income dialects round-trip through their stable tokens.
+        assert_eq!(
+            AcceptorKind::parse("Fixed_Income_Quote"),
+            Some(AcceptorKind::FixedIncomeQuote)
+        );
+        assert_eq!(
+            AcceptorKind::FixedIncomeQuote.as_str(),
+            "fixed_income_quote"
+        );
+        assert_eq!(
+            AcceptorKind::parse("fixed_income_stream"),
+            Some(AcceptorKind::FixedIncomeStream)
+        );
+        assert_eq!(
+            AcceptorKind::FixedIncomeStream.as_str(),
+            "fixed_income_stream"
+        );
     }
 }

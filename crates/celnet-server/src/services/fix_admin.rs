@@ -18,6 +18,7 @@
 
 use std::sync::Arc;
 
+use celnet_entitlements::{Action, AssetClass};
 use celnet_proto::fix_admin_service_server::FixAdminService;
 use celnet_proto::{
     CreateFixConnectionRequest, CreateFixConnectionResponse, DeleteFixConnectionRequest,
@@ -184,6 +185,18 @@ impl FixAdminService for FixAdminEdge {
             .spec
             .ok_or_else(|| Status::invalid_argument("create: missing connection spec"))?;
         let def = def_from_spec(&spec, None)?;
+        // Dialect-specific capability gate, in ADDITION to the administration gate
+        // above: standing up a fixed-income venue requires the matching FI action
+        // capability, so an admin denied that capability cannot create it.
+        if let Some((action, asset)) = required_dialect_capability(def.kind) {
+            authorize_caller(
+                self.store.access_mode(),
+                &caller,
+                "FixAdminService/CreateConnection",
+                RequiredAuthority::Capability(action, asset),
+                req.correlation_id,
+            )?;
+        }
         let status = self.registry.create(def).await.map_err(registry_status)?;
         Ok(Response::new(CreateFixConnectionResponse {
             connection: Some(status_to_wire(&status)),
@@ -283,6 +296,27 @@ impl FixAdminService for FixAdminEdge {
             return Err(Status::invalid_argument(
                 "set_enabled: missing connection id",
             ));
+        }
+        // Dialect-specific capability gate, in ADDITION to the administration gate:
+        // (re)binding a fixed-income venue requires the matching FI action
+        // capability. The connection's kind is read from the live set; an unknown id
+        // falls through to the registry's typed `not_found`.
+        if let Some(kind) = self
+            .registry
+            .list()
+            .await
+            .into_iter()
+            .find(|s| s.def.id == req.id)
+            .map(|s| s.def.kind)
+            && let Some((action, asset)) = required_dialect_capability(kind)
+        {
+            authorize_caller(
+                self.store.access_mode(),
+                &caller,
+                "FixAdminService/SetEnabled",
+                RequiredAuthority::Capability(action, asset),
+                req.correlation_id,
+            )?;
         }
         let status = self
             .registry
@@ -423,6 +457,8 @@ fn def_from_spec(
 fn kind_to_wire(kind: AcceptorKind) -> i32 {
     match kind {
         AcceptorKind::Options => FixAcceptorKind::Options as i32,
+        AcceptorKind::FixedIncomeQuote => FixAcceptorKind::FixedIncomeQuote as i32,
+        AcceptorKind::FixedIncomeStream => FixAcceptorKind::FixedIncomeStream as i32,
     }
 }
 
@@ -433,9 +469,30 @@ fn kind_to_wire(kind: AcceptorKind) -> i32 {
 fn kind_from_wire(kind: i32) -> Result<AcceptorKind, Status> {
     match FixAcceptorKind::try_from(kind) {
         Ok(FixAcceptorKind::Options) => Ok(AcceptorKind::Options),
+        Ok(FixAcceptorKind::FixedIncomeQuote) => Ok(AcceptorKind::FixedIncomeQuote),
+        Ok(FixAcceptorKind::FixedIncomeStream) => Ok(AcceptorKind::FixedIncomeStream),
         Err(_) => Err(Status::invalid_argument(format!(
             "unrecognised FIX acceptor kind `{kind}`"
         ))),
+    }
+}
+
+/// The action capability that standing up a connection of `kind` requires **in
+/// addition to** connection administration ([`RequiredAuthority::Admin`]):
+///
+/// * a fixed-income **quote** (one-shot RFQ) venue needs `QuoteRespond` on
+///   [`AssetClass::FixedIncome`];
+/// * a fixed-income **stream** (RFS) venue needs `Stream` on the same asset class;
+/// * an FX-**options** venue needs nothing beyond administration (returns `None`).
+///
+/// So an administrator who is explicitly denied the relevant FI capability cannot
+/// stand up that FI venue, even though they may administer connections generally —
+/// the dialect-specific gate is enforced on create and on enable.
+fn required_dialect_capability(kind: AcceptorKind) -> Option<(Action, AssetClass)> {
+    match kind {
+        AcceptorKind::Options => None,
+        AcceptorKind::FixedIncomeQuote => Some((Action::QuoteRespond, AssetClass::FixedIncome)),
+        AcceptorKind::FixedIncomeStream => Some((Action::Stream, AssetClass::FixedIncome)),
     }
 }
 
@@ -549,5 +606,217 @@ mod tests {
     fn slugify_handles_unusable_names() {
         assert_eq!(slugify("  !!! "), None);
         assert_eq!(slugify("EUR/USD Bank"), Some("eur-usd-bank".to_string()));
+    }
+
+    #[test]
+    fn fi_kinds_round_trip_through_the_wire_mapper() {
+        for kind in [
+            AcceptorKind::Options,
+            AcceptorKind::FixedIncomeQuote,
+            AcceptorKind::FixedIncomeStream,
+        ] {
+            assert_eq!(kind_from_wire(kind_to_wire(kind)).unwrap(), kind);
+        }
+    }
+
+    #[test]
+    fn dialect_capability_matches_the_kind() {
+        assert_eq!(required_dialect_capability(AcceptorKind::Options), None);
+        assert_eq!(
+            required_dialect_capability(AcceptorKind::FixedIncomeQuote),
+            Some((Action::QuoteRespond, AssetClass::FixedIncome))
+        );
+        assert_eq!(
+            required_dialect_capability(AcceptorKind::FixedIncomeStream),
+            Some((Action::Stream, AssetClass::FixedIncome))
+        );
+    }
+
+    // --- capability gate on create / set-enabled (behavioral) ---------------
+
+    use crate::config::identity::{Role, default_trader_bundle};
+    use crate::services::sessions::AuthenticatedUser;
+    use crate::spread::SpreadModel;
+    use crate::surface_book::SurfaceBook;
+    use celnet_entitlements::{AccessMode, Capability};
+
+    /// A ready in-process admin edge under [`AccessMode::Enforce`] backed by a real
+    /// (but unbound) acceptor registry, returning the edge + the shared session
+    /// registry (to mint users) so the capability gate is exercised end-to-end.
+    fn edge_under_enforce() -> (FixAdminEdge, Arc<SessionRegistry>) {
+        let clock = Clock::system();
+        let link = {
+            let initial = celnet_engine::testing::make_state(
+                1.10,
+                celnet_conventions::resolve(
+                    celnet_types::CcyPair::parse("EURUSD").unwrap(),
+                    celnet_types::Tenor::Years(1),
+                )
+                .record,
+            );
+            crate::core_link::CoreLink::start(initial, None)
+        };
+        let monitor = Arc::new(FixMonitor::new());
+        // A unique, per-process config path keeps the persistence isolated.
+        let cfg = std::env::temp_dir().join(format!(
+            "celnet-fixadmin-caps-{}-{:p}.json",
+            std::process::id(),
+            &link
+        ));
+        let _ = std::fs::remove_file(&cfg);
+        let registry = Arc::new(
+            FixAcceptorRegistry::load(
+                link,
+                SpreadModel::default(),
+                clock.clone(),
+                Arc::new(SurfaceBook::new()),
+                Arc::clone(&monitor),
+                cfg,
+            )
+            .unwrap(),
+        );
+        let gate = Arc::new(ReadinessGate::new());
+        gate.mark_ready();
+        let store = Arc::new(PositionStore::new());
+        store.set_access_mode(AccessMode::Enforce);
+        let sessions = Arc::new(SessionRegistry::new(clock));
+        let edge =
+            FixAdminEdge::new(registry, gate, store, monitor).with_sessions(Arc::clone(&sessions));
+        (edge, sessions)
+    }
+
+    /// Mint a session token for a user with the given role and explicit capability
+    /// denies (the role bundle is the base; denies win).
+    fn token_for(sessions: &SessionRegistry, role: Role, cap_denies: Vec<Capability>) -> String {
+        sessions
+            .issue(AuthenticatedUser {
+                user_id: "u-1".into(),
+                email: "u-1@celnet.com".into(),
+                display_name: "U".into(),
+                role,
+                desk_id: Some("g10".into()),
+                role_caps: default_trader_bundle(),
+                cap_grants: Vec::new(),
+                cap_denies,
+            })
+            .unwrap()
+            .token
+    }
+
+    /// A create request for a connection of `kind` (saved, not bound).
+    fn create_req(token: &str, kind: FixAcceptorKind) -> CreateFixConnectionRequest {
+        CreateFixConnectionRequest {
+            spec: Some(FixConnectionSpec {
+                id: "fi-1".into(),
+                name: "Bank A — FI".into(),
+                kind: kind as i32,
+                bind_addr: "127.0.0.1:0".into(),
+                sender_comp_id: "CELNET".into(),
+                target_comp_id: "CELNET-CPTY".into(),
+                enabled: false,
+                desk: "g10".into(),
+            }),
+            principal: None,
+            correlation_id: Some(1),
+            session_token: Some(token.to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn admin_with_fi_quote_capability_creates_fi_quote_venue() {
+        let (edge, sessions) = edge_under_enforce();
+        let token = token_for(&sessions, Role::Admin, Vec::new());
+        let resp = edge
+            .create_connection(Request::new(create_req(
+                &token,
+                FixAcceptorKind::FixedIncomeQuote,
+            )))
+            .await
+            .expect("an admin with QuoteRespond·FixedIncome may create the FI-quote venue");
+        assert_eq!(
+            resp.into_inner().connection.unwrap().kind,
+            FixAcceptorKind::FixedIncomeQuote as i32
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_without_fi_quote_capability_is_denied() {
+        let (edge, sessions) = edge_under_enforce();
+        // An administrator explicitly denied QuoteRespond·FixedIncome: the
+        // administration gate passes, but the dialect capability gate refuses.
+        let token = token_for(
+            &sessions,
+            Role::Admin,
+            vec![Capability::new(
+                Action::QuoteRespond,
+                AssetClass::FixedIncome,
+            )],
+        );
+        let err = edge
+            .create_connection(Request::new(create_req(
+                &token,
+                FixAcceptorKind::FixedIncomeQuote,
+            )))
+            .await
+            .expect_err("an admin denied the FI-quote capability cannot stand it up");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        assert!(
+            err.message().contains("quote_respond"),
+            "names the missing capability: {}",
+            err.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_without_fi_stream_capability_is_denied() {
+        let (edge, sessions) = edge_under_enforce();
+        let token = token_for(
+            &sessions,
+            Role::Admin,
+            vec![Capability::new(Action::Stream, AssetClass::FixedIncome)],
+        );
+        let err = edge
+            .create_connection(Request::new(create_req(
+                &token,
+                FixAcceptorKind::FixedIncomeStream,
+            )))
+            .await
+            .expect_err("an admin denied the FI-stream capability cannot stand it up");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        assert!(err.message().contains("stream"));
+    }
+
+    #[tokio::test]
+    async fn non_admin_is_denied_by_the_administration_gate() {
+        let (edge, sessions) = edge_under_enforce();
+        // A trader (non-admin) is refused by the existing Administer gate, before the
+        // dialect capability gate is ever consulted.
+        let token = token_for(&sessions, Role::Trader, Vec::new());
+        let err = edge
+            .create_connection(Request::new(create_req(
+                &token,
+                FixAcceptorKind::FixedIncomeQuote,
+            )))
+            .await
+            .expect_err("a non-admin cannot administer connections at all");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        assert!(err.message().contains("administrator"));
+    }
+
+    #[tokio::test]
+    async fn admin_with_grant_all_creates_options_venue_without_fi_capability() {
+        // The FX-options kind imposes no FI capability beyond administration.
+        let (edge, sessions) = edge_under_enforce();
+        let token = token_for(
+            &sessions,
+            Role::Admin,
+            vec![
+                Capability::new(Action::QuoteRespond, AssetClass::FixedIncome),
+                Capability::new(Action::Stream, AssetClass::FixedIncome),
+            ],
+        );
+        edge.create_connection(Request::new(create_req(&token, FixAcceptorKind::Options)))
+            .await
+            .expect("an FX-options venue needs no FI capability");
     }
 }

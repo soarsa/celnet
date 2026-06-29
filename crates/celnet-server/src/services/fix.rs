@@ -68,6 +68,7 @@ use celnet_proto::{instrument, strike_or_delta};
 use celnet_types::{OptionType, Tenor};
 
 use crate::clock::Clock;
+use crate::config::fix_connections::AcceptorKind;
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::services::clicktrade::{
@@ -127,6 +128,13 @@ pub(crate) struct FixContext {
     /// The managing connection's id used to tag captured frames (a synthetic id for
     /// the legacy env-seeded acceptor).
     connection_id: String,
+    /// The dialect this acceptor serves. A fixed-income kind routes inbound
+    /// `QuoteRequest(R)` frames to the shared rates dialect and constrains the
+    /// inbound `SubscriptionRequestType(263)` to the connection's intent (a
+    /// quote/RFQ venue serves snapshots; a stream/RFS venue serves subscribes); the
+    /// FX-options kind prices the FX block and still content-detects an OIS request
+    /// for the legacy/demo venue.
+    kind: AcceptorKind,
 }
 
 impl FixContext {
@@ -156,11 +164,16 @@ impl FixContext {
             counterparty,
             monitor,
             connection_id,
+            // The legacy env-seeded acceptor serves the FX-options dialect (and still
+            // content-detects an OIS request, as it did before connection kinds).
+            kind: AcceptorKind::Options,
         }
     }
 
     /// Build a context with explicit CompIDs (the race-free path for tests, which bind
-    /// ephemeral ports and must not mutate process-global env).
+    /// ephemeral ports and must not mutate process-global env) and an explicit dialect
+    /// `kind` (the managed-registry path passes the connection's kind; the legacy
+    /// attach path passes [`AcceptorKind::Options`]).
     #[allow(clippy::too_many_arguments)] // the shared component set + this acceptor's identity.
     pub(crate) fn with_comp_ids(
         link: Arc<CoreLink>,
@@ -171,6 +184,7 @@ impl FixContext {
         counterparty: Vec<u8>,
         monitor: Arc<FixMonitor>,
         connection_id: String,
+        kind: AcceptorKind,
     ) -> Self {
         Self {
             link,
@@ -181,6 +195,7 @@ impl FixContext {
             counterparty,
             monitor,
             connection_id,
+            kind,
         }
     }
 
@@ -530,11 +545,23 @@ impl FixSession {
     /// SHARED engine/surface path, returning the maker two-way (the SAME numbers the
     /// gRPC `QuoteService` would return for this instrument and market).
     async fn price_request(&self, frame: &FrameCursor<'_>) -> Result<PricedLine, ()> {
-        // Fixed-income (OIS) RFQs route to the rates pricing path, detected by
-        // SecurityType(167). The rate-valued two-way line then flows through the
-        // SAME token / Quote / lift / fill machinery as an FX option line.
+        // Dialect dispatch keyed on the connection's kind:
+        //
+        // * a fixed-income venue routes EVERY inbound `QuoteRequest(R)` to the shared
+        //   rates dialect and enforces that the inbound `SubscriptionRequestType(263)`
+        //   matches the venue's intent — a quote/RFQ venue serves a one-shot snapshot,
+        //   a stream/RFS venue serves a subscribe/unsubscribe;
+        // * an FX-options venue prices the FX block, and (as before connection kinds)
+        //   still content-detects an OIS request by `SecurityType(167)` so the
+        //   legacy/demo mixed acceptor keeps working.
+        //
+        // Either way the rate-valued two-way line flows through the SAME token / Quote
+        // / lift / fill machinery as an FX option line.
+        if let Some(intent) = rates_intent_for_kind(self.ctx.kind) {
+            return rates_line(frame, Some(intent));
+        }
         if frame.get(167) == Some(dialect_rates::SEC_TYPE_OIS) {
-            return rates_line(frame);
+            return rates_line(frame, None);
         }
 
         // The vol-time in years carried by the dialect (fully wire-specified, no date
@@ -604,6 +631,42 @@ struct PricedLine {
 /// until a rates-specific spread model lands.
 const RATES_HALF_SPREAD: f64 = 0.000_05;
 
+/// The rates request intent a fixed-income acceptor serves: a one-shot RFQ vs a
+/// streaming RFS. Derived from the connection's [`AcceptorKind`] and matched
+/// against the inbound `SubscriptionRequestType(263)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RatesIntent {
+    /// A one-shot quote venue: `SubscriptionRequestType(263)=0` (snapshot).
+    Rfq,
+    /// A streaming venue: `SubscriptionRequestType(263)=1`/`2` (subscribe/unsubscribe).
+    Rfs,
+}
+
+/// The rates intent a fixed-income acceptor kind serves, or `None` for the
+/// FX-options kind (which is not a rates venue).
+fn rates_intent_for_kind(kind: AcceptorKind) -> Option<RatesIntent> {
+    match kind {
+        AcceptorKind::Options => None,
+        AcceptorKind::FixedIncomeQuote => Some(RatesIntent::Rfq),
+        AcceptorKind::FixedIncomeStream => Some(RatesIntent::Rfs),
+    }
+}
+
+/// Whether an inbound `SubscriptionRequestType(263)` matches the venue's intent: a
+/// quote/RFQ venue admits only a snapshot; a stream/RFS venue admits a
+/// subscribe/unsubscribe. A mismatch (e.g. a streaming subscribe sent to a
+/// one-shot quote venue) is refused upstream as an unquotable line.
+fn subscription_matches_intent(
+    intent: RatesIntent,
+    subscription: dialect_rates::SubscriptionRequest,
+) -> bool {
+    use dialect_rates::SubscriptionRequest::{Snapshot, Subscribe, Unsubscribe};
+    match intent {
+        RatesIntent::Rfq => matches!(subscription, Snapshot),
+        RatesIntent::Rfs => matches!(subscription, Subscribe | Unsubscribe),
+    }
+}
+
 /// Price an inbound OIS RFQ to a two-way **rate** line: the par rate of the
 /// requested tenor on the P0 static USD-SOFR curve, split [`RATES_HALF_SPREAD`]
 /// either side, with the RFQ notional as the quote size. The rate-valued
@@ -611,8 +674,18 @@ const RATES_HALF_SPREAD: f64 = 0.000_05;
 /// token-minted, lifted and filled exactly like an FX line — that reuse is what
 /// makes "the FIX API supports fixed income" true end-to-end without a parallel
 /// quote/order path.
-fn rates_line(frame: &FrameCursor<'_>) -> Result<PricedLine, ()> {
+///
+/// `expected` is the venue's rates intent when this is a dedicated fixed-income
+/// connection (`Some`), or `None` for the legacy/demo FX-options acceptor's
+/// content-detected OIS path (which imposes no `263` constraint). When set, an
+/// inbound subscription type that does not match the intent is refused.
+fn rates_line(frame: &FrameCursor<'_>, expected: Option<RatesIntent>) -> Result<PricedLine, ()> {
     let rfq = dialect_rates::decode_rates_rfq(frame).map_err(|_| ())?;
+    if let Some(intent) = expected
+        && !subscription_matches_intent(intent, rfq.subscription)
+    {
+        return Err(());
+    }
     let curve = crate::rates_pricing::default_usd_sofr_curve_set();
     let par = crate::rates_pricing::par_rate_for(&curve, rfq.tenor_years).map_err(|_| ())?;
     let (bid, offer) = dialect_rates::two_way_rates(par, RATES_HALF_SPREAD);
@@ -731,5 +804,98 @@ mod tests {
         assert_eq!(s.len(), "YYYYMMDD-HH:MM:SS.sss".len());
         assert_eq!(&s[8..9], "-");
         assert!(s.starts_with("2026"));
+    }
+
+    // --- fixed-income dialect dispatch --------------------------------------
+
+    use celnet_fix::dialect_rates::{
+        RatesQuoteRequestParams, RatesSide, SubscriptionRequest, build_rates_quote_request,
+    };
+    use celnet_fix::framing::FrameEncoder;
+    use celnet_fix::messages::Header;
+
+    /// The FX-options kind is not a rates venue; the two FI kinds each map to their
+    /// intent.
+    #[test]
+    fn rates_intent_follows_the_connection_kind() {
+        assert_eq!(rates_intent_for_kind(AcceptorKind::Options), None);
+        assert_eq!(
+            rates_intent_for_kind(AcceptorKind::FixedIncomeQuote),
+            Some(RatesIntent::Rfq)
+        );
+        assert_eq!(
+            rates_intent_for_kind(AcceptorKind::FixedIncomeStream),
+            Some(RatesIntent::Rfs)
+        );
+    }
+
+    /// A quote venue admits only a one-shot snapshot; a stream venue admits only a
+    /// subscribe/unsubscribe — the `SubscriptionRequestType(263)` must match.
+    #[test]
+    fn subscription_must_match_the_venue_intent() {
+        assert!(subscription_matches_intent(
+            RatesIntent::Rfq,
+            SubscriptionRequest::Snapshot
+        ));
+        assert!(!subscription_matches_intent(
+            RatesIntent::Rfq,
+            SubscriptionRequest::Subscribe
+        ));
+        assert!(subscription_matches_intent(
+            RatesIntent::Rfs,
+            SubscriptionRequest::Subscribe
+        ));
+        assert!(subscription_matches_intent(
+            RatesIntent::Rfs,
+            SubscriptionRequest::Unsubscribe
+        ));
+        assert!(!subscription_matches_intent(
+            RatesIntent::Rfs,
+            SubscriptionRequest::Snapshot
+        ));
+    }
+
+    /// Build an OIS `QuoteRequest(R)` frame carrying `subscription` for the tests.
+    fn ois_rfq_frame(subscription: SubscriptionRequest) -> Vec<u8> {
+        let hdr = Header {
+            sender: b"CELNET",
+            target: b"CELNET-CPTY",
+            seq_num: 7,
+            sending_time: b"20260625-12:00:00.000",
+        };
+        let p = RatesQuoteRequestParams {
+            quote_req_id: b"RFQ-1",
+            symbol: b"USD-OIS",
+            tenor_years: 5,
+            notional: 100_000_000.0,
+            side: RatesSide::TwoWay,
+            subscription,
+        };
+        let mut enc = FrameEncoder::new();
+        build_rates_quote_request(&hdr, &p, &mut enc)
+    }
+
+    /// A quote (RFQ) venue prices a snapshot request and refuses a streaming
+    /// subscribe; a stream (RFS) venue does the mirror — the dispatch enforces the
+    /// dialect's intent on the wire, reusing the shared rates decode/price path.
+    #[test]
+    fn rates_line_enforces_the_venue_intent() {
+        let snapshot = ois_rfq_frame(SubscriptionRequest::Snapshot);
+        let subscribe = ois_rfq_frame(SubscriptionRequest::Subscribe);
+
+        let snap = FrameCursor::parse(&snapshot).unwrap();
+        let sub = FrameCursor::parse(&subscribe).unwrap();
+
+        // A quote venue: snapshot prices, subscribe is refused.
+        assert!(rates_line(&snap, Some(RatesIntent::Rfq)).is_ok());
+        assert!(rates_line(&sub, Some(RatesIntent::Rfq)).is_err());
+
+        // A stream venue: subscribe prices, snapshot is refused.
+        assert!(rates_line(&sub, Some(RatesIntent::Rfs)).is_ok());
+        assert!(rates_line(&snap, Some(RatesIntent::Rfs)).is_err());
+
+        // The legacy/demo content-detect path (no intent) prices either.
+        assert!(rates_line(&snap, None).is_ok());
+        assert!(rates_line(&sub, None).is_ok());
     }
 }

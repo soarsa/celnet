@@ -267,6 +267,7 @@ impl FixAcceptorRegistry {
             def.target_comp_id.clone().into_bytes(),
             Arc::clone(&self.monitor),
             def.id.clone(),
+            def.kind,
         );
         FixAcceptor::start(addr, ctx)
             .await

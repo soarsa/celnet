@@ -707,6 +707,10 @@ impl Edge {
             counterparty,
             Arc::clone(&self.fix_monitor),
             LEGACY_FIX_CONNECTION_ID.to_owned(),
+            // The legacy attach path serves the FX-options dialect (and still
+            // content-detects an OIS request) — dedicated FI venues are stood up
+            // through the managed `FixAdminService` registry, with their own kind.
+            crate::config::fix_connections::AcceptorKind::Options,
         );
         let acceptor = FixAcceptor::start(addr, ctx).await?;
         let bound = acceptor.local_addr();

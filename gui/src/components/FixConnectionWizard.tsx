@@ -19,6 +19,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import type {
+  CapabilityAction,
+  CapabilityAsset,
   DeskDesc,
   FixConnection,
   FixConnectionKind,
@@ -26,6 +28,46 @@ import type {
 } from "../data/contract";
 import { Button } from "./Button";
 import styles from "./FixConnectionWizard.module.css";
+
+/** A selectable dialect card; FI dialects gate on a capability the caller holds. */
+interface KindOption {
+  readonly kind: FixConnectionKind;
+  readonly name: string;
+  readonly desc: string;
+  /** The capability required to stand this dialect up, if any (FX-options needs none). */
+  readonly cap?: { readonly action: CapabilityAction; readonly asset: CapabilityAsset };
+}
+
+/**
+ * The dialects offered in the wizard's first step. FX-options needs only
+ * connection administration; each fixed-income dialect additionally requires the
+ * matching FI capability (`quote_respond` / `stream` on `fixed_income`) — the
+ * card is disabled (never hidden) when the caller lacks it.
+ */
+const KIND_OPTIONS: readonly KindOption[] = [
+  {
+    kind: "OPTIONS",
+    name: "Options",
+    desc: "The FX-options RFQ dialect — QuoteRequest → Quote → lift → ExecutionReport, priced through the live engine.",
+  },
+  {
+    kind: "FIXED_INCOME_QUOTE",
+    name: "Fixed Income — Quote (RFQ)",
+    desc: "The rates/OIS one-shot RFQ dialect — a QuoteRequest(263=0) is priced to a single two-way rate Quote, lifted and filled through the shared path.",
+    cap: { action: "quote_respond", asset: "fixed_income" },
+  },
+  {
+    kind: "FIXED_INCOME_STREAM",
+    name: "Fixed Income — Streaming (RFS)",
+    desc: "The rates/OIS streaming RFS dialect — a subscribe (263=1) opens a streamed two-way rate quote, priced through the same engine path.",
+    cap: { action: "stream", asset: "fixed_income" },
+  },
+];
+
+/** The display label for a connection dialect kind. */
+function kindDisplayLabel(kind: FixConnectionKind): string {
+  return KIND_OPTIONS.find((o) => o.kind === kind)?.name ?? kind;
+}
 
 /** The demo venue/counterparty identities prefilled on the CompIDs step. */
 const DEFAULT_SENDER = "CELNET";
@@ -69,6 +111,12 @@ export interface FixConnectionWizardProps {
    * selecting one of these; an empty roster blocks creation until a desk exists.
    */
   desks: readonly DeskDesc[];
+  /**
+   * Whether the caller holds `action` on `asset` — gates the fixed-income dialect
+   * cards (the server enforces the same capability on create). Anonymous callers
+   * run the permissive path, so this returns `true` when signed out.
+   */
+  can: (action: CapabilityAction, asset: CapabilityAsset) => boolean;
 }
 
 export function FixConnectionWizard({
@@ -77,6 +125,7 @@ export function FixConnectionWizard({
   onCreate,
   existing,
   desks,
+  can,
 }: FixConnectionWizardProps): React.ReactElement | null {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -151,10 +200,22 @@ export function FixConnectionWizard({
     return null;
   }, [senderCompId, targetCompId]);
 
+  // Whether the caller may select a given dialect (FX-options always; an FI
+  // dialect only when the caller holds its capability).
+  const kindEnabled = useCallback(
+    (opt: KindOption): boolean => opt.cap === undefined || can(opt.cap.action, opt.cap.asset),
+    [can],
+  );
+
+  const selectedKindEnabled = useMemo(
+    (): boolean => KIND_OPTIONS.some((o) => o.kind === kind && kindEnabled(o)),
+    [kind, kindEnabled],
+  );
+
   const stepValid = useMemo((): boolean => {
     switch (STEPS[step]?.key) {
       case "kind":
-        return kind === "OPTIONS";
+        return selectedKindEnabled;
       case "identity":
         return identityError === null;
       case "compids":
@@ -162,7 +223,7 @@ export function FixConnectionWizard({
       default:
         return true;
     }
-  }, [step, kind, identityError, compIdError]);
+  }, [step, selectedKindEnabled, identityError, compIdError]);
 
   const isLast = step === STEPS.length - 1;
 
@@ -275,20 +336,42 @@ export function FixConnectionWizard({
             <fieldset className={styles.fieldset}>
               <legend className={styles.legend}>Which dialect does this acceptor speak?</legend>
               <div className={styles.kindGrid}>
-                <button
-                  type="button"
-                  className={[styles.kindCard, kind === "OPTIONS" ? styles.kindCardOn : ""]
-                    .filter(Boolean)
-                    .join(" ")}
-                  aria-pressed={kind === "OPTIONS"}
-                  onClick={() => setKind("OPTIONS")}
-                >
-                  <span className={styles.kindName}>Options</span>
-                  <span className={styles.kindDesc}>
-                    The FX-options RFQ dialect — QuoteRequest → Quote → lift →
-                    ExecutionReport, priced through the live engine.
-                  </span>
-                </button>
+                {KIND_OPTIONS.map((opt) => {
+                  const enabled = kindEnabled(opt);
+                  const selected = kind === opt.kind;
+                  const tip = enabled
+                    ? undefined
+                    : `Requires the ${opt.cap?.action.replace("_", " ")} capability on fixed income`;
+                  return (
+                    <button
+                      key={opt.kind}
+                      type="button"
+                      className={[
+                        styles.kindCard,
+                        selected ? styles.kindCardOn : "",
+                        enabled ? "" : styles.kindCardDisabled,
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      aria-pressed={selected}
+                      disabled={!enabled}
+                      aria-disabled={enabled ? undefined : "true"}
+                      title={tip}
+                      onClick={() => {
+                        if (enabled) setKind(opt.kind);
+                      }}
+                    >
+                      <span className={styles.kindName}>{opt.name}</span>
+                      <span className={styles.kindDesc}>{opt.desc}</span>
+                      {!enabled && (
+                        <span className={styles.kindDesc}>
+                          You lack the {opt.cap?.action.replace("_", " ")} capability for
+                          fixed income — ask an administrator to grant it.
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
                 <button
                   type="button"
                   className={`${styles.kindCard} ${styles.kindCardDisabled}`}
@@ -407,7 +490,7 @@ export function FixConnectionWizard({
               <dl className={styles.summary}>
                 <div className={styles.summaryRow}>
                   <dt>Dialect</dt>
-                  <dd>Options</dd>
+                  <dd>{kindDisplayLabel(kind)}</dd>
                 </div>
                 <div className={styles.summaryRow}>
                   <dt>Name</dt>

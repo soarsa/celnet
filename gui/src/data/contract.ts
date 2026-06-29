@@ -1720,10 +1720,13 @@ export interface LimitStatusResponse {
 
 /**
  * The dialect an inbound FIX acceptor speaks (`celnet.wire.FixAcceptorKind`).
- * Kind-generic: `"OPTIONS"` is the FX-options dialect served today; the spot
- * dialect adds a member in phase 2 without reshaping the contract or the UI.
+ * `"OPTIONS"` is the FX-options dialect; `"FIXED_INCOME_QUOTE"` is the rates/OIS
+ * one-shot RFQ dialect and `"FIXED_INCOME_STREAM"` the rates/OIS streaming RFS
+ * dialect — standing either FI venue up requires the matching FI capability
+ * (`quote_respond` / `stream` on `fixed_income`). Kind-generic: the spot dialect
+ * adds a member in a later phase without reshaping the contract or the UI.
  */
-export type FixConnectionKind = "OPTIONS";
+export type FixConnectionKind = "OPTIONS" | "FIXED_INCOME_QUOTE" | "FIXED_INCOME_STREAM";
 
 /**
  * A managed inbound FIX-acceptor connection: the persisted definition plus its

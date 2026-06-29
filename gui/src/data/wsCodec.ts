@@ -2026,17 +2026,33 @@ export type { StrategyKind };
 // fix-admin: manage the inbound FIX acceptor connections
 // ---------------------------------------------------------------------------
 
-/** The wire enum tag for the FX-options dialect (`FixAcceptorKind.OPTIONS`). */
+/** The wire enum tags for the FIX acceptor dialects (`FixAcceptorKind`). */
 const FIX_KIND_OPTIONS = 0;
+const FIX_KIND_FIXED_INCOME_QUOTE = 1;
+const FIX_KIND_FIXED_INCOME_STREAM = 2;
 
-/** Domain kind → wire enum tag. Only `OPTIONS` exists today (phase-2 adds spot). */
-export function fixConnectionKindToWire(_kind: FixConnectionKind): number {
-  return FIX_KIND_OPTIONS;
+/** Domain kind → wire enum tag. */
+export function fixConnectionKindToWire(kind: FixConnectionKind): number {
+  switch (kind) {
+    case "FIXED_INCOME_QUOTE":
+      return FIX_KIND_FIXED_INCOME_QUOTE;
+    case "FIXED_INCOME_STREAM":
+      return FIX_KIND_FIXED_INCOME_STREAM;
+    case "OPTIONS":
+      return FIX_KIND_OPTIONS;
+  }
 }
 
-/** Wire enum tag → domain kind (every value maps to `OPTIONS` until phase 2). */
-export function fixConnectionKindFromWire(_tag: number): FixConnectionKind {
-  return "OPTIONS";
+/** Wire enum tag → domain kind (an unknown tag falls back to `OPTIONS`). */
+export function fixConnectionKindFromWire(tag: number): FixConnectionKind {
+  switch (tag) {
+    case FIX_KIND_FIXED_INCOME_QUOTE:
+      return "FIXED_INCOME_QUOTE";
+    case FIX_KIND_FIXED_INCOME_STREAM:
+      return "FIXED_INCOME_STREAM";
+    default:
+      return "OPTIONS";
+  }
 }
 
 /** A managed connection descriptor from its wire form. */
