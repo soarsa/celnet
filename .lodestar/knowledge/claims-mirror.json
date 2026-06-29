@@ -98,7 +98,7 @@
    "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.federate.Fleet.connect_with_membership",
    "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.federate.fan_out"
   ],
-  "text": "FINDING: real cross-process risk federation IS built and tested (Fleet.connect_with_membership + federate.fan_out over loopback gRPC with failover/hot-standby), exceeding the docs which call the fleet transport 'designed-only'. The shard boundary (HRW by pair/tenant) and the additive/non-additive merge algebra (NodeAggregate::merge_additive for sums; bump-and-revalue for VaR/ES) are the correct, bit-identically-proven scale-out boundary. RISK: risk facts are vanilla-only (services::risk::store), so the federated cube does not yet cover the exotic/cross-asset book the platform prices. Reconcile INTERFACES.md/ARCHITECTURE.md to built reality and extend risk-fact coverage to exotics/cross-asset."
+  "text": "FINDING: real cross-process risk federation IS built and tested (Fleet.connect_with_membership + federate.fan_out over loopback gRPC with failover/hot-standby), exceeding the docs which call the fleet transport 'designed-only'. The shard boundary (HRW by pair/tenant) and the additive/non-additive merge algebra (NodeAggregate::merge_additive for sums; bump-and-revalue for VaR/ES) are the correct, bit-identically-proven scale-out boundary. RECONCILED (2026-06-28): the cube/fleet aggregation is NOT vanilla-only — FactMeasure carries exotic: Option<ExoticLeg> keyed on a cross-asset Underlying, so exotic + cross-asset legs roll up (PositionStore::upsert_exotic; proven by exotic_only_fan_out_reconciles). The remaining gap is AUTOMATIC INGESTION only: the RFS auto-book (record_booked_position) and the wire position_to_fact (exotic:None) auto-record vanilla FX fills, so an exotic/cross-asset leg must be staged via upsert_exotic (no production RPC/RFS path wires it yet). See claim cl_cdd244793f440942 for the fully-anchored coverage statement. Docs reconciled in INTERFACES.md/ARCHITECTURE.md."
  },
  {
   "kind": "adr",
@@ -13452,5 +13452,37 @@
    "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry"
   ],
   "text": "INVARIANT TO PRESERVE under ADR-0010 (FI-rates→carry-seam convergence): FX byte-identity must survive the carry→DiscountCurve-trait generalization. After Carry/CarryInputs are generalized from a flat rate to a curve-backed term-structure context, the flat-carry FX path (Carry::FxRates → CarryInputs::discount_df / forward → VanillaInputs) must remain BIT-IDENTICAL (to_bits equality) to the pre-generalization flat-rate result. The flat curve is the single-point degenerate of a term structure, so the generalization must not perturb the FX two-rate discount/forward by even one ULP. CarryInputs::discount_df() is a pure read (self.carry.discount_df(self.t), no writes) and must stay so. This continues the existing carry-seam byte-identity contract (ADR-0008, deliverable carry-seam) across the curve-trait hoist; it is the no-regression gate on the convergence."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-integration.src.vendor.VendorSmileMessage",
+   "github.com-soarsa-celnet.crates.celnet-integration.src.subscriber.ResilientSubscriber",
+   "github.com-soarsa-celnet.crates.celnet-server.src.lib.Edge.attach_vendor_feed"
+  ],
+  "text": "ADR-0011 (Celer-estate ingress): external vendor FX-options market-data ingress is a SOURCE-AGNOSTIC, normalizing, resilient adapter, not a vendor-named core path. A vendor feed enters via the FeedTransport trait -> ResilientSubscriber (strict-monotone per-key sequencing; on a gap it resyncs from a fresh snapshot, never fabricates) -> vendor::normalize / VendorSmileMessage (+ WireDeltaConvention/WireAtmConvention round-trips) onto the ONE canonical celnet-surface object, bound to the server via Edge::attach_vendor_feed. The vendor name lives only in integration/docs context (guardrail #8); a second source is a second FeedTransport impl, not a fork. Verified: vendor_feed_with_gap_resyncs_and_surface_matches_direct_pipeline."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-integration.src.deployment.DeploymentMode",
+   "github.com-soarsa-celnet.crates.celnet-integration.src.egress.EgressGovernor",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.deploy.DeployMode.binds_vendor_feed"
+  ],
+  "text": "ADR-0011 (Celer-estate ingress): integration into the Celer trade-lifecycle estate is DEPLOYMENT-MODE gated, additive and non-disruptive, with egress bounded+conflating to respect the distributor. DeploymentMode {CelerIntegrated, Hybrid, Standalone, ExternalFeedOnly} selects which feeds attach (uses_celer_feed/uses_external_feed; binds_vendor_feed at the server); all estate publication flows through EgressGovernor (bounded, conflating, rate-limited) so a high-frequency pricer cannot overflow the skip-while-full JVM-distributor mailbox and silently drop prices. HONEST SCOPE: the concrete live Celer trade-lifecycle transport adapter is deploy/estate-gated, NOT an in-repo type — the graph shows no CALLS path from celnet-server into a named Celer order/position adapter; the four lifecycle hops (orderrouting->risk->destination->clearing->positionmanager) are inferred, not runtime-traced."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.fan_out_aggregate",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.federate.fan_out",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.dimension.FactMeasure",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.upsert_exotic",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.exotic_risk_cube.exotic_only_fan_out_reconciles"
+  ],
+  "text": "RISK ROLL-UP COVERAGE (reconciled to built reality): the risk-cube/fleet aggregation algebra DOES include exotic AND cross-asset positions — it is NOT vanilla-only. celnet_risk_cube::FactMeasure carries exotic: Option<ExoticLeg> and is keyed on a cross-asset Underlying, so an exotic leg (PositionStore::upsert_exotic -> ExoticLeg::canonical_leaf as the additive carrier + exotic bump-and-revalue for non-additive VaR/curvature) and a cross-asset vanilla leg both roll up in the firm node and through celnet-risk-fleet::fan_out_aggregate. Proven exotic-only by celnet-parity/tests/exotic_risk_cube::exotic_only_fan_out_reconciles (3 exotic-only RiskFacts, firm.positions empty, firm.exotic_legs.len()==3, VaR+curvature reconcile to single-node). The REMAINING GAP is automatic ingestion: the RFS auto-book (record_booked_position) and the wire RiskPosition conversion (position_to_fact, exotic:None) auto-record VANILLA FX fills only — an exotic/cross-asset leg must be staged explicitly via upsert_exotic (no production RPC/RFS path wires it yet). server::services::risk::federate::fan_out is the generic concurrent gRPC fan-out helper over backends, distinct from the fleet aggregation algebra."
  }
 ]

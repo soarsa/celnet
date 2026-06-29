@@ -85,11 +85,12 @@ pinned centrally via `[workspace.dependencies]` and `[workspace.lints]`; a singl
 Crates are **layered by domain function, not by technical tier**. New transports (a new
 gRPC service, an admin CLI) are added as *thin new crates*, not by bloating existing ones.
 
-The **implemented** workspace is **34 crates** (flat under `crates/`; verified by
-`ls crates | wc -l`). The early design sketched a finer ~40-crate split; closely-coupled
-domains were **consolidated** into cohesive crates, while the scale-out, risk-hierarchy,
-durability and verification waves added new disjoint leaf crates. This block reflects the
-real tree (`ls crates`):
+The **implemented** workspace is **40 crates** (flat under `crates/`; verified by
+`ls crates | wc -l`). The early design sketched a finer split that was then partly
+**consolidated** into cohesive crates (so the early provenance-named draft crates do not
+exist), while the scale-out, risk-hierarchy, durability, cross-asset/linear, RFQ-to-many,
+fixed-income/rates and verification waves added new disjoint leaf crates. This block
+reflects the real tree (`ls crates`):
 
 ```
 celnet/
@@ -103,10 +104,14 @@ celnet/
     ├── celnet-core            # math (libm-routed exp/ln/sqrt, norm_cdf/pdf), is_close/assert_close, Smile trait; ZERO IO
     ├── celnet-proto           # single current wire contract (prost 0.13 / tonic 0.12); NO version field
     ├── celnet-plugin-api      # SDK: PricingModel/PricingBackend traits + WIT world
-    # ── Layer 1: conventions, calendar, vanilla ──
+    # ── Layer 1: conventions, calendar, vanilla (FX + cross-asset + linear) ──
     ├── celnet-conventions     # per-(pair,tenor) convention registry: delta/ATM/premium/cut/day-count/spot-lag
     ├── celnet-calendar        # holiday calendars, spot lag, delivery, modified-following, EOM
     ├── celnet-vanilla         # Garman-Kohlhagen + full 13-Greek set + branch-safe strike↔delta solver
+    ├── celnet-equity-vanilla  # generalized-BSM vanilla on the agnostic carry seam (dividend-yield carry); over celnet-core/-types only
+    ├── celnet-commodity-vanilla # Black-76 / undiscounted-forward vanilla on the carry seam; over celnet-core/-types only
+    ├── celnet-crypto-vanilla  # linear funding-carry vanilla + inverse coin-margined 1/S_T payoff on the carry seam; over celnet-core/-types only
+    ├── celnet-linear          # linear (non-option) FX/metal book leaf: outright forward / FX swap / NDF over the carry seam; over celnet-core/-types only
     # ── Layer 2: surface (VV/SABR/SVI/SSVI/eSSVI consolidated here) ──
     ├── celnet-surface         # delta-space smile, broker→smile fly calibration, VV/SABR/SVI/SSVI/eSSVI, Dupire local vol,
     │                          #   arbitrage gates (butterfly/calendar/vertical), term-structure interpolation
@@ -136,11 +141,14 @@ celnet/
     ├── celnet-xva             # XVA engine — EPE/ENE exposure profiles + CVA/DVA/FVA over a hazard-rate survival curve (synthetic netting sets)
     # ── Layer 7: plugin host ──
     ├── celnet-plugin-host     # tiered host: Tier-0 native registry + Tier-2 wasmi fuel-metered sandbox + deterministic replay harness
-    # ── Layer 8: integration ──
-    ├── celnet-integration     # Celer estate + vendor FX-options MD adapters; multi-source aggregation + divergence detection; egress governor
+    # ── Layer 6b: fixed-income / rates (multi-curve term-structure subsystem) ──
+    ├── celnet-rates           # FI rates leaf: OIS/SOFR multi-curve bootstrap (log-linear-DF Curve) + FRA/IRS(vanilla-swap)/STIR-futures/cash-bond PV + par-rate/PV01/DV01 + key-rate ladder + Brent solver; over celnet-types/-calendar only (no IO)
+    # ── Layer 8: integration + RFQ ──
+    ├── celnet-integration     # Celer estate + vendor FX-options MD adapters; multi-source aggregation + divergence detection; egress governor; DeploymentMode {CelerIntegrated/Hybrid/Standalone/ExternalFeedOnly}
     ├── celnet-fix             # FIX engine — zero-copy framing, FIXT/4.4 session, FX-options dialect, acceptor + initiator
+    ├── celnet-rfq             # multi-dealer RFQ-to-many engine: concurrent fan-out, best-bid/offer ranking, deterministic tie-break, last-look; over celnet-proto/-fix/-types
     # ── Layer 9: edge & clients ──
-    ├── celnet-server          # tokio async edge: tonic gRPC (Pricing/Quote/Stream/Surface/Risk); FIX acceptor; fleet federation; control plane
+    ├── celnet-server          # tokio async edge: tonic gRPC (Pricing/Quote/Stream/Surface/Risk/Rates/RFQ-desk/Notification/Auth); FIX acceptor; vendor-feed attach + fleet federation; capability-gated control plane
     ├── celnet-cli             # operator/quant CLI: price, surface, exotic, convention, risk, stream
     ├── celnet-client          # typed async Rust SDK over the wire contract (RFQ/RFS/surface/scenario/risk + exotic vocab builders)
     # ── Observability & validation ──
