@@ -1,51 +1,60 @@
 /**
- * SimulatorPanel — the standalone, permission-gated counterparty SANDBOX.
+ * SimulatorPanel — the permission-gated counterparty INJECTOR.
  *
- * A pure client-side sandbox for exercising the dealer-quoting shapes (RFQ / IOI
- * / order) WITHOUT touching the live desk: generated items never call
- * `SubmitDeskRequest` (or any server/desk/pricing RPC) and so never enter the
- * real RFQ/IOI inbox or the priced flow. Each generated item is shaped like the
- * desk's display types and is paired with a sample quote computed DETERMINISTICALLY
- * in-browser via {@link priceRatesOffline} — the very same local rates math the
- * offline edge prices against — so the numbers are realistic, not stubbed.
+ * The trader's flow-simulation surface: it generates dealer requests (RFQ / IOI)
+ * and SENDS them into the LIVE desk via the canonical `submitDeskRequest` seam, so
+ * each generated request enters the real RFQ/IOI inbox (PENDING) and the desk
+ * prices/quotes it exactly as a counterparty request would. This is the opposite
+ * of a sandbox: there is no offline pricer and no sandbox disclaimer — every
+ * Generate is a real injection on the same authenticated transport the rest of
+ * the app uses.
+ *
+ * Window model: this panel is rendered into a SEPARATE OS window opened with
+ * `window.open` (see Shell's `SimulatorPopout`), so the main desk stays visible
+ * alongside it. The popout hosts its own React root — required so the panel's DOM
+ * events bind to the popout document — but it is handed the LIVE `transport` from
+ * the opener's `AppProvider` BY REFERENCE, already carrying the signed-in session
+ * token, so the popout injects over the existing connection with no second auth
+ * path and no second connection bootstrap.
  *
  * Gating: the trigger lives in the app header and is gated on
  * `can('simulate', 'fixed_income')` (disabled + denial tooltip, never hidden).
  *
- * Accessibility: `role="dialog"` + `aria-modal`, labelled title, Esc to close, a
- * Tab focus trap, and initial focus on the first control.
+ * Accessibility: a labelled `<section>` titled "Simulator", Esc to close (bound to
+ * the POPOUT window via the panel's `ownerDocument`), a Tab focus trap, and
+ * initial focus on the first control.
  */
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
-import type { OisInstrument, Side } from "../data/contract";
-import { DEFAULT_USD_SOFR_CURVE, priceRatesOffline } from "../data/ratesPricing";
-import { fmtPnlAdaptive, fmtRate } from "../lib/format";
+import type { DeskRequestKind, DeskRequestState, OisInstrument, Side } from "../data/contract";
+import type { CelnetTransport } from "../data/transport";
+import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import { Button } from "./Button";
 import styles from "./SimulatorPanel.module.css";
 
 const MM = 1_000_000;
+/** The calibrating curve set every injected request prices against (live desk). */
 const CURVE = DEFAULT_USD_SOFR_CURVE;
+/** The rates desk injected requests route to (the canonical G10 rates desk). */
+const DESK = "g10-rates";
+/** The fixed leg the desk re-prices to par against `CURVE` when it quotes. */
+const FIXED_RATE = 0.04;
+/** The injected request's time-to-live before it expires in the inbox. */
+const TTL_MS = 120_000;
 
-/** The sandbox item kinds — the desk's RFQ/IOI plus a working order. */
-type SimKind = "RFQ" | "IOI" | "ORDER";
-
-/** A locally-generated sandbox item paired with its deterministic sample quote. */
-interface SimItem {
-  /** Deterministic per-session id (`sim-1`, `sim-2`, …). */
-  id: string;
-  kind: SimKind;
+/** A record of one injected request paired with the desk's server-minted id. */
+interface InjectedItem {
+  /** The server-minted `DeskRequest.requestId` returned by the injection. */
+  requestId: string;
+  kind: DeskRequestKind;
   counterparty: string;
   tenorYears: number;
   /** Notional in the curve currency (positive; direction carried by `side`). */
   notional: number;
   side: Side;
-  /** The sample quoted rate (the fair par rate on the offline curve), a decimal. */
-  quoteRate: number;
-  /** Sample PV at the par rate (curve ccy). */
-  pv: number;
-  /** Sample DV01 (curve ccy / bp). */
-  dv01: number;
+  /** The lifecycle state the desk assigned on receipt (PENDING). */
+  state: DeskRequestState;
 }
 
 /** Pay-fixed (BUY) / receive-fixed (SELL) label for an OIS direction. */
@@ -59,33 +68,41 @@ function fmtMm(notional: number): string {
 }
 
 export interface SimulatorPanelProps {
-  open: boolean;
+  /**
+   * The LIVE transport from the opener's app context, passed by reference so the
+   * injection runs over the SAME authenticated connection — only the desk-submit
+   * seam is needed here.
+   */
+  transport: Pick<CelnetTransport, "submitDeskRequest">;
+  /** Close the simulator (closes the popout window). */
   onClose: () => void;
 }
 
-export function SimulatorPanel({ open, onClose }: SimulatorPanelProps): React.ReactElement | null {
+export function SimulatorPanel({ transport, onClose }: SimulatorPanelProps): React.ReactElement {
   const titleId = useId();
-  const bannerId = useId();
-  const panelRef = useRef<HTMLDivElement | null>(null);
+  const noteId = useId();
+  const panelRef = useRef<HTMLElement | null>(null);
   const firstRef = useRef<HTMLSelectElement | null>(null);
 
-  const [kind, setKind] = useState<SimKind>("RFQ");
-  const [counterparty, setCounterparty] = useState("Sandbox Counterparty");
+  const [kind, setKind] = useState<DeskRequestKind>("RFQ");
+  const [counterparty, setCounterparty] = useState("Acme Capital");
   const [tenorYears, setTenorYears] = useState(5);
   const [notionalMm, setNotionalMm] = useState(50);
   const [side, setSide] = useState<Side>("BUY");
-  const [items, setItems] = useState<SimItem[]>([]);
-  const [seq, setSeq] = useState(0);
+  const [items, setItems] = useState<InjectedItem[]>([]);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Initial focus on the first control whenever the dialog opens.
+  // Initial focus on the first control once the panel mounts in the popout.
   useEffect(() => {
-    if (open) firstRef.current?.focus();
-  }, [open]);
+    firstRef.current?.focus();
+  }, []);
 
-  // Esc to close + a Tab focus trap that keeps focus inside the panel.
+  // Esc to close + a Tab focus trap. The key listener binds to the panel's OWN
+  // window (the popout), not the opener — events in the popout DOM never reach the
+  // opener's window, so we resolve the realm via the mounted node's ownerDocument.
   useEffect(() => {
-    if (!open) return;
+    const win = panelRef.current?.ownerDocument?.defaultView ?? window;
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -101,7 +118,7 @@ export function SimulatorPanel({ open, onClose }: SimulatorPanelProps): React.Re
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (!first || !last) return;
-      const active = document.activeElement as HTMLElement | null;
+      const active = root.ownerDocument.activeElement as HTMLElement | null;
       if (e.shiftKey && active === first) {
         e.preventDefault();
         last.focus();
@@ -110,203 +127,197 @@ export function SimulatorPanel({ open, onClose }: SimulatorPanelProps): React.Re
         first.focus();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    win.addEventListener("keydown", onKey);
+    return () => win.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
-  const generate = (): void => {
+  const generate = async (): Promise<void> => {
+    if (busy) return;
     const name = counterparty.trim() || "Counterparty";
     const notional = notionalMm * MM;
     const instrument: OisInstrument = {
       tenorYears,
-      fixedRate: 0.04,
+      fixedRate: FIXED_RATE,
       notional,
       direction: side === "BUY" ? "PAY_FIXED" : "RECEIVE_FIXED",
     };
+    setBusy(true);
+    setError(null);
     try {
-      // Deterministic, client-only sample quote — NO transport / server / desk call.
-      const priced = priceRatesOffline(CURVE, instrument);
-      const nextSeq = seq + 1;
-      const item: SimItem = {
-        id: `sim-${nextSeq}`,
+      // Real injection into the live desk over the shared authenticated transport
+      // — the request enters the RFQ/IOI inbox PENDING and the desk prices it.
+      const res = await transport.submitDeskRequest({
         kind,
         counterparty: name,
-        tenorYears,
-        notional,
+        desk: DESK,
+        instrument,
+        curveSet: CURVE,
         side,
-        quoteRate: priced.parRate,
-        pv: priced.pv,
-        dv01: priced.dv01,
+        notional,
+        ttlMs: TTL_MS,
+      });
+      const r = res.request;
+      const item: InjectedItem = {
+        requestId: r.requestId,
+        kind: r.kind,
+        counterparty: r.counterparty,
+        tenorYears: r.instrument.tenorYears,
+        notional: r.notional,
+        side: r.side,
+        state: r.state,
       };
-      setSeq(nextSeq);
       setItems((cur) => [item, ...cur]);
-      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "could not generate a sample quote");
+      setError(err instanceof Error ? err.message : "could not inject the request");
+    } finally {
+      setBusy(false);
     }
   };
 
   const summary = useMemo(
-    () => `${items.length} simulated item${items.length === 1 ? "" : "s"}`,
+    () => `${items.length} injected request${items.length === 1 ? "" : "s"}`,
     [items.length],
   );
 
-  if (!open) return null;
-
   return (
-    <div
-      className={styles.scrim}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <section
+      ref={panelRef}
+      className={styles.panel}
+      aria-labelledby={titleId}
+      aria-describedby={noteId}
     >
-      <div
-        ref={panelRef}
-        className={styles.panel}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={bannerId}
-      >
-        <header className={styles.head}>
-          <div className={styles.headRow}>
-            <h2 id={titleId} className={styles.title}>
-              Simulator
-            </h2>
-            <span className={styles.sandboxTag}>Sandbox</span>
-            <Button variant="ghost" onClick={onClose} aria-label="close simulator">
-              Close
+      <header className={styles.head}>
+        <div className={styles.headRow}>
+          <h1 id={titleId} className={styles.title}>
+            Simulator
+          </h1>
+          <span className={styles.liveTag}>Live desk</span>
+          <Button variant="ghost" onClick={onClose} aria-label="close simulator">
+            Close
+          </Button>
+        </div>
+        <p id={noteId} className={styles.note} role="note">
+          Injects into the live desk for pricing. Each generated RFQ/IOI is sent to the{" "}
+          <strong>{DESK}</strong> desk and enters the real RFQ/IOI inbox, where the desk prices and
+          quotes it.
+        </p>
+      </header>
+
+      <div className={styles.body}>
+        <section className={styles.generator} aria-label="generate a desk request">
+          <div className={styles.row}>
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Kind</span>
+              <select
+                ref={firstRef}
+                className={styles.select}
+                value={kind}
+                aria-label="request kind"
+                onChange={(e) => setKind(e.target.value as DeskRequestKind)}
+              >
+                <option value="RFQ">RFQ</option>
+                <option value="IOI">IOI</option>
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Counterparty</span>
+              <input
+                className={styles.input}
+                type="text"
+                value={counterparty}
+                aria-label="counterparty name"
+                onChange={(e) => setCounterparty(e.target.value)}
+              />
+            </label>
+          </div>
+          <div className={styles.row}>
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Tenor (y)</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={1}
+                step={1}
+                value={tenorYears}
+                aria-label="tenor in years"
+                onChange={(e) => setTenorYears(Math.max(1, Math.trunc(Number(e.target.value))))}
+              />
+            </label>
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Notional (mm)</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={1}
+                step={5}
+                value={notionalMm}
+                aria-label="notional in millions"
+                onChange={(e) => setNotionalMm(Math.max(1, Number(e.target.value)))}
+              />
+            </label>
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Side</span>
+              <select
+                className={styles.select}
+                value={side}
+                aria-label="request side"
+                onChange={(e) => setSide(e.target.value as Side)}
+              >
+                <option value="BUY">Pay</option>
+                <option value="SELL">Receive</option>
+              </select>
+            </label>
+          </div>
+          <div className={styles.actions}>
+            <Button variant="primary" onClick={() => void generate()} disabled={busy}>
+              {busy ? "Injecting…" : "Generate"}
             </Button>
           </div>
-          <p id={bannerId} className={styles.banner} role="note">
-            Simulated — not sent to the desk. Generated items stay in this sandbox and never
-            enter the live RFQ/IOI inbox or the priced flow.
-          </p>
-        </header>
+          {error && (
+            <p className={styles.error} role="alert">
+              {error}
+            </p>
+          )}
+        </section>
 
-        <div className={styles.body}>
-          <section className={styles.generator} aria-label="generate a sandbox item">
-            <div className={styles.row}>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Kind</span>
-                <select
-                  ref={firstRef}
-                  className={styles.select}
-                  value={kind}
-                  aria-label="item kind"
-                  onChange={(e) => setKind(e.target.value as SimKind)}
-                >
-                  <option value="RFQ">RFQ</option>
-                  <option value="IOI">IOI</option>
-                  <option value="ORDER">Order</option>
-                </select>
-              </label>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Counterparty</span>
-                <input
-                  className={styles.input}
-                  type="text"
-                  value={counterparty}
-                  aria-label="counterparty name"
-                  onChange={(e) => setCounterparty(e.target.value)}
-                />
-              </label>
-            </div>
-            <div className={styles.row}>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Tenor (y)</span>
-                <input
-                  className={styles.input}
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={tenorYears}
-                  aria-label="tenor in years"
-                  onChange={(e) => setTenorYears(Math.max(1, Math.trunc(Number(e.target.value))))}
-                />
-              </label>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Notional (mm)</span>
-                <input
-                  className={styles.input}
-                  type="number"
-                  min={1}
-                  step={5}
-                  value={notionalMm}
-                  aria-label="notional in millions"
-                  onChange={(e) => setNotionalMm(Math.max(1, Number(e.target.value)))}
-                />
-              </label>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Side</span>
-                <select
-                  className={styles.select}
-                  value={side}
-                  aria-label="item side"
-                  onChange={(e) => setSide(e.target.value as Side)}
-                >
-                  <option value="BUY">Pay</option>
-                  <option value="SELL">Receive</option>
-                </select>
-              </label>
-            </div>
-            <div className={styles.actions}>
-              <Button variant="primary" onClick={generate}>
-                Generate
-              </Button>
-            </div>
-            {error && (
-              <p className={styles.error} role="alert">
-                {error}
-              </p>
-            )}
-          </section>
-
-          <section className={styles.list} aria-label="simulated items">
-            <div className={styles.listHead}>
-              <h3 className={styles.listTitle}>Generated (sandbox)</h3>
-              <span className={styles.count}>{summary}</span>
-            </div>
-            {items.length === 0 ? (
-              <p className={styles.empty}>
-                No simulated items yet — generate an RFQ, IOI, or order above.
-              </p>
-            ) : (
-              <ul className={styles.itemList}>
-                {items.map((it) => (
-                  <li key={it.id} className={styles.item}>
-                    <div className={styles.itemTop}>
-                      <span className={`${styles.kindBadge} ${styles[`kind${it.kind}`] ?? ""}`}>
-                        {it.kind}
-                      </span>
-                      <span className={styles.cpty}>{it.counterparty}</span>
-                      <span className={styles.terms}>
-                        {it.tenorYears}y OIS · {fmtMm(it.notional)} · {sideLabel(it.side)}
-                      </span>
+        <section className={styles.list} aria-label="injected requests">
+          <div className={styles.listHead}>
+            <h2 className={styles.listTitle}>Injected (live desk)</h2>
+            <span className={styles.count}>{summary}</span>
+          </div>
+          {items.length === 0 ? (
+            <p className={styles.empty}>
+              No requests injected yet — generate an RFQ or IOI above to send one to the desk.
+            </p>
+          ) : (
+            <ul className={styles.itemList}>
+              {items.map((it) => (
+                <li key={it.requestId} className={styles.item}>
+                  <div className={styles.itemTop}>
+                    <span className={`${styles.kindBadge} ${styles[`kind${it.kind}`] ?? ""}`}>
+                      {it.kind}
+                    </span>
+                    <span className={styles.cpty}>{it.counterparty}</span>
+                    <span className={styles.terms}>
+                      {it.tenorYears}y OIS · {fmtMm(it.notional)} · {sideLabel(it.side)}
+                    </span>
+                  </div>
+                  <dl className={styles.quote}>
+                    <div className={styles.metric}>
+                      <dt className={styles.metricLabel}>Request id</dt>
+                      <dd className={styles.metricValueEmphatic}>{it.requestId}</dd>
                     </div>
-                    <dl className={styles.quote}>
-                      <div className={styles.metric}>
-                        <dt className={styles.metricLabel}>
-                          {it.kind === "ORDER" ? "Working level" : "Sample quote"}
-                        </dt>
-                        <dd className={styles.metricValueEmphatic}>{fmtRate(it.quoteRate)}</dd>
-                      </div>
-                      <div className={styles.metric}>
-                        <dt className={styles.metricLabel}>PV ({CURVE.currency})</dt>
-                        <dd className={styles.metricValue}>{fmtPnlAdaptive(it.pv)}</dd>
-                      </div>
-                      <div className={styles.metric}>
-                        <dt className={styles.metricLabel}>DV01</dt>
-                        <dd className={styles.metricValue}>{fmtPnlAdaptive(it.dv01)}/bp</dd>
-                      </div>
-                    </dl>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </div>
+                    <div className={styles.metric}>
+                      <dt className={styles.metricLabel}>State</dt>
+                      <dd className={styles.metricValue}>{it.state}</dd>
+                    </div>
+                  </dl>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
-    </div>
+    </section>
   );
 }

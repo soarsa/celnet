@@ -1,43 +1,13 @@
-/* SimulatorPanel — the standalone counterparty sandbox dialog (float material). */
-
-.scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 96;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 9vh;
-  background: oklch(0 0 0 / 0.42);
-  -webkit-backdrop-filter: blur(2px);
-  backdrop-filter: blur(2px);
-  animation: sim-scrim-in 120ms var(--ease-out);
-}
-@keyframes sim-scrim-in {
-  from {
-    opacity: 0;
-  }
-}
+/* SimulatorPanel — the counterparty injector, filling its own popout window. */
 
 .panel {
-  width: min(680px, 94vw);
-  max-height: 86vh;
+  width: 100%;
+  height: 100vh;
   display: flex;
   flex-direction: column;
-  border-radius: var(--r-md);
-  background: var(--bg-overlay);
-  -webkit-backdrop-filter: blur(var(--blur-float));
-  backdrop-filter: blur(var(--blur-float));
-  border: var(--hairline);
-  box-shadow: var(--shadow-float);
+  background: var(--bg-base, var(--bg-overlay));
+  color: var(--text-primary);
   overflow: hidden;
-  animation: sim-panel-in 140ms var(--ease-out);
-}
-@keyframes sim-panel-in {
-  from {
-    opacity: 0;
-    transform: translateY(-8px) scale(0.99);
-  }
 }
 
 .head {
@@ -60,31 +30,36 @@
   color: var(--text-primary);
   margin: 0;
 }
-.sandboxTag {
+.liveTag {
   font-size: var(--type-caption);
   font-weight: var(--weight-header);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--warn, oklch(76% 0.15 80));
-  border: 1px solid var(--warn, oklch(76% 0.15 80));
+  /* High-contrast label text (the accent alone fails 4.5:1 at this small size);
+     the accent stays as the border + a faint fill so the "live" cue survives. */
+  color: var(--text-primary);
+  border: 1px solid var(--accent);
+  background: color-mix(in oklch, var(--accent) 18%, transparent);
   border-radius: var(--r-sm);
   padding: 1px var(--space-2);
 }
 .headRow > :last-child {
   margin-left: auto;
 }
-.banner {
+.note {
   margin: 0;
   font-size: var(--type-caption);
   line-height: 1.5;
   color: var(--text-secondary);
-  background: color-mix(in oklch, var(--warn, oklch(76% 0.15 80)) 12%, transparent);
-  border-left: 3px solid var(--warn, oklch(76% 0.15 80));
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+  border-left: 3px solid var(--accent);
   border-radius: var(--r-sm);
   padding: var(--space-3);
 }
 
 .body {
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
   gap: 0;
@@ -220,10 +195,6 @@
 .kindIOI {
   color: var(--info, oklch(70% 0.13 230));
   border-color: var(--info, oklch(70% 0.13 230));
-}
-.kindORDER {
-  color: var(--success, oklch(70% 0.16 150));
-  border-color: var(--success, oklch(70% 0.16 150));
 }
 .cpty {
   font-size: var(--type-body);

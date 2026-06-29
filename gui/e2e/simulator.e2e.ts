@@ -1,20 +1,19 @@
 /**
- * Counterparty Simulator (sandbox) — LIVE e2e against the real demo edge under
- * Enforce. Proves the refactor's two guarantees end-to-end through the production
- * bundle + live WS mirror:
+ * Counterparty Simulator (live-desk injector) — LIVE e2e against the real demo
+ * edge under Enforce. Proves the rework's two guarantees end-to-end through the
+ * production bundle + live WS mirror:
  *
- *   A. The standalone, permission-gated Simulator popup is a PURE CLIENT SANDBOX:
- *      the admin opens it, generates an RFQ and an IOI, each gets a sample quote
- *      in the popup's sandbox list — and the LIVE RFQ/IOI inbox still shows 0
- *      requests (nothing was injected into the priced desk flow). Screenshot the
- *      popup at 1440 + an axe pass (0 serious/critical).
+ *   A. The permission-gated Simulator opens a SEPARATE OS WINDOW (so the main desk
+ *      stays visible), and generating an RFQ in that popout INJECTS it into the
+ *      live desk: back in the MAIN window, Fixed Income ▸ Quoting's RFQ/IOI inbox
+ *      now shows the injected request (count > 0). Screenshot the popout + the
+ *      main-window inbox at 1440 + an axe pass on the popout (0 serious/critical).
  *
  *   B. The top-bar Simulator button is gated on `simulate·fixed_income`: the admin
  *      DENIES a fresh trader that capability and saves; the admin's OWN button
  *      stays enabled (per-identity), and signing in AS the trader leaves the
  *      Simulator button DISABLED + carrying the denial tooltip — VISIBLE, never
- *      hidden (top-bar affordance discipline). Screenshot the disabled button at
- *      1440.
+ *      hidden (top-bar affordance discipline). Screenshot the disabled button.
  */
 import { test, expect, type Page } from "@playwright/test";
 
@@ -38,47 +37,57 @@ async function railClick(page: Page, label: string | RegExp): Promise<void> {
     .click();
 }
 
-test("admin sandbox: generate RFQ + IOI without injecting into the live inbox", async ({
+test("admin: a popout window injects an RFQ into the live RFQ/IOI inbox", async ({
   page,
+  context,
 }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await openLive(page);
 
   // The top-bar Simulator button is enabled for the admin (holds simulate·FI).
   const simBtn = page.getByRole("button", { name: "open counterparty simulator" });
   await expect(simBtn).toBeVisible();
   await expect(simBtn).toBeEnabled();
-  await simBtn.click();
 
-  const dialog = page.getByRole("dialog", { name: "Simulator" });
-  await expect(dialog).toBeVisible();
-  // The not-live banner is explicit.
-  await expect(dialog.getByText(/not sent to the desk/i)).toBeVisible();
+  // Clicking it opens a SEPARATE window (a new page in this browser context).
+  const [popout] = await Promise.all([context.waitForEvent("page"), simBtn.click()]);
+  await popout.waitForLoadState("domcontentloaded");
 
-  // Generate an RFQ (default kind), then an IOI.
-  await dialog.getByRole("button", { name: "Generate" }).click();
-  await dialog.getByLabel("item kind").selectOption("IOI");
-  await dialog.getByRole("button", { name: "Generate" }).click();
+  // The popout is the simulator surface — live-desk note, NOT a sandbox banner.
+  const panel = popout.getByRole("region", { name: "Simulator" });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText(/injects into the live desk/i)).toBeVisible();
 
-  // Both items appear in the popup's sandbox list, each with a sample quote.
-  const items = dialog.getByRole("listitem");
-  await expect(items).toHaveCount(2);
-  await expect(items.filter({ hasText: "RFQ" })).toHaveCount(1);
-  await expect(items.filter({ hasText: "IOI" })).toHaveCount(1);
-  await expect(dialog.getByText(/sample quote/i).first()).toBeVisible();
+  // Generate an RFQ (default kind) in the popout → real injection into the desk.
+  await panel.getByRole("button", { name: "Generate" }).click();
 
-  // Screenshot the popup at 1440 + an axe pass with the dialog open.
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: "e2e-artifacts/simulator-popup-admin-1440.png", fullPage: true });
-  await expectNoSeriousA11y(page, "simulator popup (admin)");
+  // The popout confirms the injection with the server-minted request id.
+  const injected = panel.getByRole("listitem");
+  await expect(injected).toHaveCount(1);
+  await expect(injected.filter({ hasText: "RFQ" })).toHaveCount(1);
+  await expect(panel.getByText("PENDING")).toBeVisible();
 
-  // Close the popup and confirm the LIVE RFQ/IOI inbox still shows 0 requests —
-  // the sandbox never injected anything into the priced flow.
-  await page.keyboard.press("Escape");
-  await expect(dialog).toBeHidden();
+  // Screenshot the popout at 1440 + an axe pass on it.
+  await popout.setViewportSize({ width: 1440, height: 900 });
+  await popout.screenshot({ path: "e2e-artifacts/simulator-popout-admin-1440.png" });
+  await expectNoSeriousA11y(popout, "simulator popout (admin)");
+
+  // Back in the MAIN window: Fixed Income ▸ Quoting now shows the injected request.
+  await page.bringToFront();
   await selectDomain(page, "Fixed Income");
   await railClick(page, "Quoting");
-  await expect(page.getByText("No inbound requests.")).toBeVisible();
-  await expect(page.getByText(/^0 requests$/)).toBeVisible();
+
+  // The inbox is live (it refreshes on the *_RECEIVED push) — count > 0, the
+  // PENDING request is listed, and the empty-state is gone.
+  await expect(page.getByText("No inbound requests.")).toBeHidden();
+  const inbox = page.getByRole("list", { name: "inbound requests" });
+  await expect(inbox.getByRole("listitem").first()).toBeVisible();
+  await expect(page.getByText(/^0 requests$/)).toBeHidden();
+
+  // Screenshot the main-window inbox showing the injected request at 1440.
+  await page.screenshot({ path: "e2e-artifacts/simulator-main-inbox-1440.png" });
+
+  await popout.close();
 });
 
 test("a denied simulate capability disables the trader's Simulator button", async ({ page }) => {
