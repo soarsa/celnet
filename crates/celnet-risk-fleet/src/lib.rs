@@ -96,6 +96,7 @@ pub use rates::{
     rates_partition_key_of,
 };
 
+use celnet_core::ExoticLegPricer;
 use celnet_risk_cube::{
     Cube, DimensionId, NodeAggregate, RiskFact, Scenario, VarEs, VegaPillarMap,
 };
@@ -368,11 +369,12 @@ impl FleetReducer {
     pub fn firm_var_es<P: VegaPillarMap>(
         &self,
         pillars: &P,
+        exotic_pricer: &dyn ExoticLegPricer,
         scenarios: &[Scenario],
         alpha: f64,
     ) -> VarEs {
         let firm = self.gather_firm_node(pillars);
-        Cube::node_var_es(&AssetPricer, &firm, scenarios, alpha)
+        Cube::node_var_es(&AssetPricer, exotic_pricer, &firm, scenarios, alpha)
     }
 
     /// Firm-level **VaR / ES** by the AAD sensitivity scale path, re-gathered over
@@ -381,19 +383,25 @@ impl FleetReducer {
     pub fn firm_var_es_sensitivity<P: VegaPillarMap>(
         &self,
         pillars: &P,
+        exotic_pricer: &dyn ExoticLegPricer,
         scenarios: &[Scenario],
         alpha: f64,
     ) -> VarEs {
         let firm = self.gather_firm_node(pillars);
-        Cube::node_var_es_sensitivity(&AssetPricer, &firm, scenarios, alpha)
+        Cube::node_var_es_sensitivity(&AssetPricer, exotic_pricer, &firm, scenarios, alpha)
     }
 
     /// Firm-level **FRTB-SbM spot curvature** by the §3.4 re-gather: re-derive once
     /// over the union of all shards' constituents. Exact — never a sum of shard
     /// curvatures (curvature is a non-linear `max`).
-    pub fn firm_curvature_spot<P: VegaPillarMap>(&self, pillars: &P, rw: f64) -> f64 {
+    pub fn firm_curvature_spot<P: VegaPillarMap>(
+        &self,
+        pillars: &P,
+        exotic_pricer: &dyn ExoticLegPricer,
+        rw: f64,
+    ) -> f64 {
         let firm = self.gather_firm_node(pillars);
-        Cube::node_curvature_spot(&AssetPricer, &firm, rw)
+        Cube::node_curvature_spot(&AssetPricer, exotic_pricer, &firm, rw)
     }
 }
 
@@ -493,14 +501,16 @@ pub fn fan_out_aggregate<P: VegaPillarMap>(
     facts: &[RiskFact],
     replicas: &ReplicaSet,
     pillars: &P,
+    exotic_pricer: &dyn ExoticLegPricer,
     scenarios: &[Scenario],
     alpha: f64,
     curvature_rw: f64,
 ) -> Result<FleetAggregate, RouteError> {
     let reducer = partition_facts(facts, replicas)?;
     let firm = reducer.gather_firm_node(pillars);
-    let var_es = Cube::node_var_es(&AssetPricer, &firm, scenarios, alpha);
-    let curvature_spot = Cube::node_curvature_spot(&AssetPricer, &firm, curvature_rw);
+    let var_es = Cube::node_var_es(&AssetPricer, exotic_pricer, &firm, scenarios, alpha);
+    let curvature_spot =
+        Cube::node_curvature_spot(&AssetPricer, exotic_pricer, &firm, curvature_rw);
     Ok(FleetAggregate {
         firm,
         var_es,
@@ -768,14 +778,16 @@ pub fn gather_firm_node_over(src: &dyn ShardRiskSource) -> Result<NodeAggregate,
 /// [`FleetError`] if a shard is unavailable or routing failed upstream.
 pub fn fan_out_aggregate_over(
     src: &dyn ShardRiskSource,
+    exotic_pricer: &dyn ExoticLegPricer,
     scenarios: &[Scenario],
     alpha: f64,
     curvature_rw: f64,
 ) -> Result<FleetAggregate, FleetError> {
     let additive = fan_in_additive_over(src)?;
     let firm = gather_firm_node_over(src)?;
-    let var_es = Cube::node_var_es(&AssetPricer, &firm, scenarios, alpha);
-    let curvature_spot = Cube::node_curvature_spot(&AssetPricer, &firm, curvature_rw);
+    let var_es = Cube::node_var_es(&AssetPricer, exotic_pricer, &firm, scenarios, alpha);
+    let curvature_spot =
+        Cube::node_curvature_spot(&AssetPricer, exotic_pricer, &firm, curvature_rw);
     let shard_count = src.shard_ids().len();
     Ok(FleetAggregate {
         firm: NodeAggregate {
@@ -800,7 +812,7 @@ mod tests {
     use celnet_core::is_close;
     use celnet_risk_cube::{
         BookId as CubeBookId, DeskId, EntityId, FactKey, FactMeasure, LocationId, PositionId,
-        TraderId, VegaPillar,
+        TraderId, VegaPillar, test_support::DigitalTestPricer,
     };
     use celnet_risk_normalize::{AssetPricer, CanonicalLeaf, PositionRisk, canonicalize};
     use celnet_router::{Replica, RouteReason};
@@ -1097,11 +1109,17 @@ mod tests {
         let scen = ladder();
 
         let single_node_node = single_node(&facts).firm_aggregate(&DaysPillar);
-        let single = Cube::node_var_es(&AssetPricer, &single_node_node, &scen, 0.99);
+        let single = Cube::node_var_es(
+            &AssetPricer,
+            &DigitalTestPricer,
+            &single_node_node,
+            &scen,
+            0.99,
+        );
 
         let reducer = partition_facts(&facts, &set).unwrap();
         let fleet_node = reducer.gather_firm_node(&DaysPillar);
-        let fleet = Cube::node_var_es(&AssetPricer, &fleet_node, &scen, 0.99);
+        let fleet = Cube::node_var_es(&AssetPricer, &DigitalTestPricer, &fleet_node, &scen, 0.99);
 
         assert!(single.var > 0.0, "reference must see a tail loss");
         // (1) Identical constituent multiset (algebra exactness): same positions,
@@ -1146,10 +1164,13 @@ mod tests {
         let rw = 0.18;
 
         let single_node_node = single_node(&facts).firm_aggregate(&DaysPillar);
-        let single = Cube::node_curvature_spot(&AssetPricer, &single_node_node, rw);
-        let fleet = partition_facts(&facts, &set)
-            .unwrap()
-            .firm_curvature_spot(&DaysPillar, rw);
+        let single =
+            Cube::node_curvature_spot(&AssetPricer, &DigitalTestPricer, &single_node_node, rw);
+        let fleet = partition_facts(&facts, &set).unwrap().firm_curvature_spot(
+            &DaysPillar,
+            &DigitalTestPricer,
+            rw,
+        );
 
         assert!(
             is_close(fleet, single, 1e-12, 1e-3),
@@ -1195,11 +1216,12 @@ mod tests {
 
         let single = Cube::node_var_es(
             &AssetPricer,
+            &DigitalTestPricer,
             &single_node(&facts).firm_aggregate(&DaysPillar),
             &scen,
             0.99,
         );
-        let fleet = reducer.firm_var_es(&DaysPillar, &scen, 0.99);
+        let fleet = reducer.firm_var_es(&DaysPillar, &DigitalTestPricer, &scen, 0.99);
         assert_eq!(
             fleet.var.to_bits(),
             single.var.to_bits(),
@@ -1222,10 +1244,19 @@ mod tests {
         let rw = 0.18;
 
         let single = single_node(&facts).firm_aggregate(&DaysPillar);
-        let single_var = Cube::node_var_es(&AssetPricer, &single, &scen, 0.99);
-        let single_cvr = Cube::node_curvature_spot(&AssetPricer, &single, rw);
+        let single_var = Cube::node_var_es(&AssetPricer, &DigitalTestPricer, &single, &scen, 0.99);
+        let single_cvr = Cube::node_curvature_spot(&AssetPricer, &DigitalTestPricer, &single, rw);
 
-        let agg = fan_out_aggregate(&facts, &set, &DaysPillar, &scen, 0.99, rw).unwrap();
+        let agg = fan_out_aggregate(
+            &facts,
+            &set,
+            &DaysPillar,
+            &DigitalTestPricer,
+            &scen,
+            0.99,
+            rw,
+        )
+        .unwrap();
 
         assert!(agg.shard_count >= 3);
         assert!(is_close(
@@ -1257,7 +1288,9 @@ mod tests {
         let reducer = partition_facts(&facts, &set).unwrap();
 
         // The correct (re-gathered) firm VaR.
-        let firm_var = reducer.firm_var_es(&DaysPillar, &scen, 0.99).var;
+        let firm_var = reducer
+            .firm_var_es(&DaysPillar, &DigitalTestPricer, &scen, 0.99)
+            .var;
 
         // The WRONG naive answer: sum each shard's standalone VaR.
         let naive_sum: f64 = reducer
@@ -1265,7 +1298,7 @@ mod tests {
             .iter()
             .map(|s| {
                 let node = s.local_aggregate(&DaysPillar);
-                Cube::node_var_es(&AssetPricer, &node, &scen, 0.99).var
+                Cube::node_var_es(&AssetPricer, &DigitalTestPricer, &node, &scen, 0.99).var
             })
             .sum();
 
@@ -1439,8 +1472,8 @@ mod tests {
             a2.vega_ladder.total().to_bits()
         );
 
-        let v1 = r1.firm_var_es(&DaysPillar, &scen, 0.99);
-        let v2 = r2.firm_var_es(&DaysPillar, &scen, 0.99);
+        let v1 = r1.firm_var_es(&DaysPillar, &DigitalTestPricer, &scen, 0.99);
+        let v2 = r2.firm_var_es(&DaysPillar, &DigitalTestPricer, &scen, 0.99);
         assert_eq!(v1.var.to_bits(), v2.var.to_bits());
         assert_eq!(v1.es.to_bits(), v2.es.to_bits());
     }
@@ -1533,11 +1566,20 @@ mod tests {
         let scen = ladder();
         let rw = 0.18;
 
-        let free = fan_out_aggregate(&facts, &set, &DaysPillar, &scen, 0.99, rw).unwrap();
+        let free = fan_out_aggregate(
+            &facts,
+            &set,
+            &DaysPillar,
+            &DigitalTestPricer,
+            &scen,
+            0.99,
+            rw,
+        )
+        .unwrap();
 
         let reducer = partition_facts(&facts, &set).unwrap();
         let src = InProcessShards::new(&reducer, &DaysPillar);
-        let seam = fan_out_aggregate_over(&src, &scen, 0.99, rw).unwrap();
+        let seam = fan_out_aggregate_over(&src, &DigitalTestPricer, &scen, 0.99, rw).unwrap();
 
         assert_eq!(seam.shard_count, free.shard_count);
         assert!(seam.shard_count >= 3);
@@ -1623,7 +1665,7 @@ mod tests {
         // Drive the generic reducers through the `dyn` reference.
         let add = fan_in_additive_over(s).unwrap();
         let gathered = gather_firm_node_over(s).unwrap();
-        let agg = fan_out_aggregate_over(s, &scen, 0.99, 0.18).unwrap();
+        let agg = fan_out_aggregate_over(s, &DigitalTestPricer, &scen, 0.99, 0.18).unwrap();
         assert_eq!(gathered.positions.len(), facts.len());
         assert!(is_close(
             agg.firm.net_greeks.vega,
@@ -1654,7 +1696,7 @@ mod tests {
         let add = fan_in_additive_over(s).unwrap();
         assert_eq!(add.net_greeks.delta_base, 0.0);
         assert!(add.positions.is_empty());
-        let agg = fan_out_aggregate_over(s, &scen, 0.99, 0.18).unwrap();
+        let agg = fan_out_aggregate_over(s, &DigitalTestPricer, &scen, 0.99, 0.18).unwrap();
         assert_eq!(agg.shard_count, 0);
         assert!(agg.firm.positions.is_empty());
     }
@@ -1734,8 +1776,10 @@ mod tests {
         /// Build the single-node oracle over the whole book.
         fn new(facts: &'a [RiskFact], scen: &'a [Scenario], alpha: f64, rw: f64) -> Self {
             let single = single_node(facts).firm_aggregate(&DaysPillar);
-            let single_var = Cube::node_var_es(&AssetPricer, &single, scen, alpha);
-            let single_cvr = Cube::node_curvature_spot(&AssetPricer, &single, rw);
+            let single_var =
+                Cube::node_var_es(&AssetPricer, &DigitalTestPricer, &single, scen, alpha);
+            let single_cvr =
+                Cube::node_curvature_spot(&AssetPricer, &DigitalTestPricer, &single, rw);
             assert!(single_var.var > 0.0, "oracle must see a firm tail loss");
             Self {
                 facts,
@@ -1813,7 +1857,7 @@ mod tests {
         assert_eq!(fleet.positions.len(), facts.len());
 
         // (2) NON-ADDITIVE (full reval): firm VaR/ES + curvature to summation order.
-        let fleet_var = reducer.firm_var_es(&DaysPillar, scen, alpha);
+        let fleet_var = reducer.firm_var_es(&DaysPillar, &DigitalTestPricer, scen, alpha);
         assert!(
             is_close(fleet_var.var, single_var.var, 1e-12, 1e-3),
             "firm VaR at this membership: fleet {} vs single {}",
@@ -1826,7 +1870,7 @@ mod tests {
             fleet_var.es,
             single_var.es
         );
-        let fleet_cvr = reducer.firm_curvature_spot(&DaysPillar, rw);
+        let fleet_cvr = reducer.firm_curvature_spot(&DaysPillar, &DigitalTestPricer, rw);
         assert!(
             is_close(fleet_cvr, single_cvr, 1e-12, 1e-3),
             "firm curvature at this membership: fleet {fleet_cvr} vs single {single_cvr}"
@@ -1836,7 +1880,8 @@ mod tests {
         // (re-gathered over the identical union) and sits within the documented 8%
         // Taylor envelope of the full-reval firm VaR for the ±5%/±2pt `ladder()`
         // regime. This proves node count never moves either lens of the firm answer.
-        let fleet_sens = reducer.firm_var_es_sensitivity(&DaysPillar, scen, alpha);
+        let fleet_sens =
+            reducer.firm_var_es_sensitivity(&DaysPillar, &DigitalTestPricer, scen, alpha);
         assert!(
             fleet_sens.var > 0.0,
             "sensitivity lens must see a tail loss"

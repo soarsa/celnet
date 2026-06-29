@@ -64,6 +64,7 @@
 //! the MAR paragraph numbers live in doc comments only. Every constant accessor is
 //! `const` so a misuse is a compile-time, not a runtime, surprise.
 
+use celnet_core::ExoticLegPricer;
 use celnet_core::carry::CarryPricer;
 use celnet_core::math::{exp, sqrt};
 
@@ -244,6 +245,7 @@ pub fn standard_delta_buckets(node: &NodeAggregate, rw: &StandardFrtbParams) -> 
 #[must_use]
 pub fn standard_vega_buckets<P: CarryPricer>(
     pricer: &P,
+    exotic_pricer: &dyn ExoticLegPricer,
     node: &NodeAggregate,
     rw: &StandardFrtbParams,
 ) -> (Vec<RiskBucket>, Vec<Vec<f64>>) {
@@ -279,7 +281,7 @@ pub fn standard_vega_buckets<P: CarryPricer>(
     }
     // Exotic legs: vega from the exotic's canonical leaf, maturity from its inputs.
     for leg in &node.exotic_legs {
-        let leaf = leg.canonical_leaf();
+        let leaf = leg.canonical_leaf(exotic_pricer);
         push(
             ccy_id(leg.quote_ccy()),
             leg.inputs.t,

@@ -17,7 +17,10 @@
 //! [`fx_carry_inputs_byte_identical`] here and by the full-grid `to_bits` gate in
 //! `celnet-vanilla`).
 
-use celnet_types::{Carry, Greeks, OptionType, RateSensitivities, Underlying, VanillaInputs};
+use celnet_types::{
+    Carry, DigitalKind, ExoticKind, Greeks, OptionType, RateSensitivities, Underlying,
+    VanillaInputs,
+};
 
 /// Generalized, carry-tagged pricing input.
 ///
@@ -246,6 +249,35 @@ pub fn fx_carry_greeks(g: &Greeks) -> CarryGreeks {
         zomma: g.zomma,
         color: g.color,
     }
+}
+
+/// The repricing seam for a closed-form **exotic leg** under the risk cube.
+///
+/// The risk cube ([`celnet-risk-cube`]) names a booked exotic by
+/// [`celnet_types::ExoticKind`] and re-prices it under scenario shocks, but must
+/// not depend on the heavy `celnet-exotics` pricing crate (arch-program item E,
+/// `docs/INTERFACES.md` one-way edges). This trait inverts that dependency: the
+/// cube takes a `&dyn ExoticLegPricer` and the **server** implements it over the
+/// concrete `celnet-exotics` engines, injecting the pricer at construction /
+/// repricing time. The cube's finite-difference Greek machinery and scenario
+/// reprice call only these two methods, so the exact same `celnet-exotics`
+/// arithmetic runs with the exact same inputs and call order — byte-identical risk
+/// output.
+///
+/// All methods price **one unit** of payout (per unit base for a barrier, per
+/// payout unit for a digital); the leg's notional scaling is applied by the cube.
+pub trait ExoticLegPricer {
+    /// Price one **unit** of the closed-form exotic `kind` under the FX market
+    /// state `inputs` (spot, strike, vol, time, and the two FX rates). For a
+    /// [`ExoticKind::SingleBarrier`] this is the Reiner-Rubinstein barrier price;
+    /// for a [`ExoticKind::Digital`] the cash-/asset-or-nothing digital price.
+    fn unit_price(&self, kind: ExoticKind, inputs: &VanillaInputs) -> f64;
+
+    /// The digital's **closed-form** `(delta, gamma, vega)` per unit payout under
+    /// `inputs` — the exact published first/second-order spot Greeks + vega the cube
+    /// prefers over a finite difference for a digital leg (no FD round-off). `delta`
+    /// and `gamma` are `∂V/∂S`, `∂²V/∂S²`; `vega` is `∂V/∂σ` (per 1.0 absolute vol).
+    fn digital_greeks(&self, kind: DigitalKind, inputs: &VanillaInputs) -> (f64, f64, f64);
 }
 
 #[cfg(test)]

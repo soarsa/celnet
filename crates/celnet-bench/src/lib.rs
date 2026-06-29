@@ -59,6 +59,7 @@
 pub mod core_load;
 pub mod fleet_slo;
 pub mod gpu_load;
+pub mod scenario_grid;
 pub mod sched;
 pub mod surface_rebuild;
 pub mod wire;

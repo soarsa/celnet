@@ -44,11 +44,9 @@
 //! resulting Greeks. They are deliberately **not** added here so this module's legs
 //! stay exact; the [`ExoticKind`] enum is the seam they extend.
 
-use celnet_exotics::{
-    DigitalKind, SingleBarrier, digital_greeks, digital_price, single_barrier_price,
-};
+use celnet_core::ExoticLegPricer;
 use celnet_risk_normalize::{CanonicalGreeks, CanonicalLeaf};
-use celnet_types::{Ccy, CcyPair, Underlying, VanillaInputs};
+use celnet_types::{Ccy, CcyPair, ExoticKind, Underlying, VanillaInputs};
 
 use crate::nonadditive::Scenario;
 
@@ -69,35 +67,10 @@ fn apply_fx(scenario: Scenario, i: &VanillaInputs) -> VanillaInputs {
     )
 }
 
-/// Which closed-form exotic an [`ExoticLeg`] prices.
-///
-/// Each variant carries the **exotic-specific** payoff parameters; the shared
-/// market inputs (spot, vol, time, the two rates) live on the [`ExoticLeg`]'s
-/// [`VanillaInputs`], so a scenario shocks one consistent input set across the leg.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ExoticKind {
-    /// A single-barrier option (Reiner-Rubinstein closed form). The strike on the
-    /// spec is the barrier-option strike; the barrier level and knock direction /
-    /// style live on the spec.
-    SingleBarrier(SingleBarrier),
-    /// A European digital (cash- or asset-or-nothing). Priced **per one payout
-    /// unit** (one unit of domestic cash, or one unit of the foreign asset), so the
-    /// leg's `notional` is in payout units; the strike comes from the leg's inputs.
-    Digital(DigitalKind),
-}
-
-impl ExoticKind {
-    /// Price this exotic for one **unit** of payout (per unit base for a barrier,
-    /// per payout unit for a digital), under the supplied market inputs.
-    #[must_use]
-    fn unit_price(self, inputs: &VanillaInputs) -> f64 {
-        let i: celnet_exotics::ExoticInputs = inputs.into();
-        match self {
-            ExoticKind::SingleBarrier(spec) => single_barrier_price(&i, spec),
-            ExoticKind::Digital(kind) => digital_price(kind, &i),
-        }
-    }
-}
+// [`ExoticKind`] (and its `SingleBarrier` / `DigitalKind` payload types) now live in
+// `celnet-types` so the cube names a closed-form exotic family without depending on
+// the `celnet-exotics` pricing crate; the pricing itself is performed by the
+// injected [`ExoticLegPricer`] (`celnet-core`). See `celnet_types::ExoticKind`.
 
 /// A booked exotic position as a cube risk leg: its closed-form kind, the market
 /// inputs it is marked under, its signed notional, its currency pair, and the
@@ -140,16 +113,17 @@ impl ExoticLeg {
     }
 
     /// The leg's value (notional-scaled premium) in the **quote** (domestic)
-    /// currency, under the supplied market inputs.
+    /// currency, under the supplied market inputs, priced through the injected seam.
     #[must_use]
-    fn value(&self, inputs: &VanillaInputs) -> f64 {
-        self.kind.unit_price(inputs) * self.notional
+    fn value(&self, pricer: &dyn ExoticLegPricer, inputs: &VanillaInputs) -> f64 {
+        pricer.unit_price(self.kind, inputs) * self.notional
     }
 
-    /// The leg's base value under its own (unshocked) inputs.
+    /// The leg's base value under its own (unshocked) inputs, priced through the
+    /// injected seam.
     #[must_use]
-    pub fn base_value(&self) -> f64 {
-        self.value(&self.inputs)
+    pub fn base_value(&self, pricer: &dyn ExoticLegPricer) -> f64 {
+        self.value(pricer, &self.inputs)
     }
 
     /// Re-price the leg under a [`Scenario`] and return its **P&L** vs base in the
@@ -163,9 +137,9 @@ impl ExoticLeg {
     /// applies to the [`celnet_types::Carry::FxRates`] arm, keeping a mixed
     /// vanilla+exotic node's scenario consistent.
     #[must_use]
-    pub fn pnl(&self, scenario: Scenario) -> f64 {
+    pub fn pnl(&self, pricer: &dyn ExoticLegPricer, scenario: Scenario) -> f64 {
         let shocked = apply_fx(scenario, &self.inputs);
-        self.value(&shocked) - self.base_value()
+        self.value(pricer, &shocked) - self.base_value(pricer)
     }
 
     /// The exotic's **spot delta** `∂V/∂S` per unit payout, by central finite
@@ -173,14 +147,10 @@ impl ExoticLeg {
     /// delta, but a single FD path keeps the curvature linear term consistent
     /// across both kinds). Deterministic and `libm`-routed.
     #[must_use]
-    fn unit_delta_spot(&self) -> f64 {
+    fn unit_delta_spot(&self, pricer: &dyn ExoticLegPricer) -> f64 {
         let h = spot_bump(self.inputs.spot);
-        let up = self
-            .kind
-            .unit_price(&with_spot(&self.inputs, self.inputs.spot + h));
-        let down = self
-            .kind
-            .unit_price(&with_spot(&self.inputs, self.inputs.spot - h));
+        let up = pricer.unit_price(self.kind, &with_spot(&self.inputs, self.inputs.spot + h));
+        let down = pricer.unit_price(self.kind, &with_spot(&self.inputs, self.inputs.spot - h));
         (up - down) / (2.0 * h)
     }
 
@@ -190,12 +160,18 @@ impl ExoticLeg {
     /// (`docs/RISK-HIERARCHY.md` §2.5, MAR21). Returned per leg so a node sums the
     /// vanilla and exotic legs into one `(up, down)` pair before the `max`.
     #[must_use]
-    pub fn curvature_legs(&self, rw: f64) -> (f64, f64) {
-        let base = self.base_value();
-        let up = self.value(&with_spot(&self.inputs, self.inputs.spot * (1.0 + rw)));
-        let down = self.value(&with_spot(&self.inputs, self.inputs.spot * (1.0 - rw)));
+    pub fn curvature_legs(&self, pricer: &dyn ExoticLegPricer, rw: f64) -> (f64, f64) {
+        let base = self.base_value(pricer);
+        let up = self.value(
+            pricer,
+            &with_spot(&self.inputs, self.inputs.spot * (1.0 + rw)),
+        );
+        let down = self.value(
+            pricer,
+            &with_spot(&self.inputs, self.inputs.spot * (1.0 - rw)),
+        );
         // Linear term: ∂V/∂S · notional · rw · S (the exact absolute spot move).
-        let linear = self.unit_delta_spot() * self.notional * rw * self.inputs.spot;
+        let linear = self.unit_delta_spot(pricer) * self.notional * rw * self.inputs.spot;
         let cvr_up = -((up - base) - linear);
         let cvr_down = -((down - base) + linear);
         (cvr_up, cvr_down)
@@ -213,13 +189,13 @@ impl ExoticLeg {
     /// zero (which would understate the roll-up) — the leaf carries the full set the
     /// additive ladder sums.
     #[must_use]
-    pub fn canonical_leaf(&self) -> CanonicalLeaf {
-        let g = self.canonical_greeks();
+    pub fn canonical_leaf(&self, pricer: &dyn ExoticLegPricer) -> CanonicalLeaf {
+        let g = self.canonical_greeks(pricer);
         CanonicalLeaf {
             underlying: Underlying::Fx(self.pair),
             spot: self.inputs.spot,
             greeks: g,
-            premium_quote: self.kind.unit_price(&self.inputs) * self.notional,
+            premium_quote: pricer.unit_price(self.kind, &self.inputs) * self.notional,
             // Vega P&L is in premium-currency terms; the exotic premium line is the
             // quote currency, so vega is in the quote currency too (mirrors the
             // vanilla canonical leaf).
@@ -235,7 +211,7 @@ impl ExoticLeg {
     /// exists; the remainder are central finite differences of the closed-form
     /// price — every value is the **exotic**'s sensitivity, never a vanilla proxy.
     #[must_use]
-    fn canonical_greeks(&self) -> CanonicalGreeks {
+    fn canonical_greeks(&self, pricer: &dyn ExoticLegPricer) -> CanonicalGreeks {
         let n = self.notional;
         let i = &self.inputs;
         // Spot bumps for FD (relative to spot scale); vol bump in absolute vol;
@@ -245,11 +221,12 @@ impl ExoticLeg {
         let dv = 1e-4_f64;
         let dt = (i.t * 1e-4).max(1e-6).min(i.t * 0.5);
 
-        // Helper: unit price under (spot, vol, t) perturbations.
+        // Helper: unit price under (spot, vol, t) perturbations, through the seam.
         let p = |spot: f64, vol: f64, t: f64| -> f64 {
-            self.kind.unit_price(&VanillaInputs::new(
-                spot, i.strike, vol, t, i.r_dom, i.r_for,
-            ))
+            pricer.unit_price(
+                self.kind,
+                &VanillaInputs::new(spot, i.strike, vol, t, i.r_dom, i.r_for),
+            )
         };
         let s = i.spot;
         let v = i.vol;
@@ -298,10 +275,7 @@ impl ExoticLeg {
         // For a digital we PREFER the published closed-form first/second order spot
         // + vega (exact, no FD round-off); FD supplies only the remainder.
         let (delta_base_unit, gamma_final, vega_final) = match self.kind {
-            ExoticKind::Digital(kind) => {
-                let dg = digital_greeks(kind, &i.into());
-                (dg.delta, dg.gamma, dg.vega)
-            }
+            ExoticKind::Digital(kind) => pricer.digital_greeks(kind, i),
             ExoticKind::SingleBarrier(_) => (delta_unit, gamma_unit, vega_unit),
         };
 
@@ -331,19 +305,28 @@ impl ExoticLeg {
 
 /// The total exotic-leg P&L of a node under one scenario, in the common premium
 /// currency assumption (mirrors [`crate::nonadditive::node_pnl`] for vanilla legs).
+/// Each leg re-prices the real exotic through the injected [`ExoticLegPricer`] seam.
 #[must_use]
-pub fn exotic_node_pnl(legs: &[ExoticLeg], scenario: Scenario) -> f64 {
-    legs.iter().map(|l| l.pnl(scenario)).sum()
+pub fn exotic_node_pnl(
+    pricer: &dyn ExoticLegPricer,
+    legs: &[ExoticLeg],
+    scenario: Scenario,
+) -> f64 {
+    legs.iter().map(|l| l.pnl(pricer, scenario)).sum()
 }
 
 /// The summed FRTB-SbM curvature legs `(Σ CVR_up, Σ CVR_down)` of a set of exotic
 /// legs — added to the vanilla legs' `(up, down)` before the node `max`.
 #[must_use]
-pub fn exotic_curvature_legs(legs: &[ExoticLeg], rw: f64) -> (f64, f64) {
+pub fn exotic_curvature_legs(
+    pricer: &dyn ExoticLegPricer,
+    legs: &[ExoticLeg],
+    rw: f64,
+) -> (f64, f64) {
     let mut up = 0.0;
     let mut down = 0.0;
     for l in legs {
-        let (u, d) = l.curvature_legs(rw);
+        let (u, d) = l.curvature_legs(pricer, rw);
         up += u;
         down += d;
     }
@@ -366,420 +349,22 @@ fn spot_bump(spot: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celnet_core::is_close;
-    use celnet_exotics::{BarrierKind, BarrierStyle};
-    use celnet_types::{Ccy, OptionType};
-
-    fn eurusd() -> CcyPair {
-        CcyPair::new(Ccy::EUR, Ccy::USD)
-    }
-
-    fn up_out_call() -> SingleBarrier {
-        SingleBarrier {
-            kind: BarrierKind {
-                up: true,
-                style: BarrierStyle::KnockOut,
-                option: OptionType::Call,
-            },
-            strike: 1.10,
-            barrier: 1.25,
-            rebate: 0.0,
-        }
-    }
-
-    /// The leaf's premium line equals the closed-form barrier price × notional.
-    #[test]
-    fn barrier_leaf_premium_matches_closed_form() {
-        let inputs = VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.04, 0.02);
-        let leg = ExoticLeg::new(
-            eurusd(),
-            ExoticKind::SingleBarrier(up_out_call()),
-            10_000_000.0,
-            inputs,
-        );
-        let leaf = leg.canonical_leaf();
-        let want = single_barrier_price(&(&inputs).into(), up_out_call()) * 10_000_000.0;
-        assert!(is_close(leaf.premium_quote, want, 1e-12, 1e-6));
-    }
-
-    /// A digital leg's leaf delta/gamma/vega equal the closed-form digital Greeks ×
-    /// notional (the published exact values, not FD).
-    #[test]
-    fn digital_leaf_uses_closed_form_greeks() {
-        let kind = DigitalKind::cash(OptionType::Call);
-        let inputs = VanillaInputs::new(1.30, 1.32, 0.12, 0.75, 0.03, 0.01);
-        let n = 5_000_000.0;
-        let leg = ExoticLeg::new(
-            CcyPair::new(Ccy::GBP, Ccy::USD),
-            ExoticKind::Digital(kind),
-            n,
-            inputs,
-        );
-        let leaf = leg.canonical_leaf();
-        let dg = digital_greeks(kind, &(&inputs).into());
-        assert!(is_close(leaf.greeks.delta_base, dg.delta * n, 1e-12, 1e-3));
-        assert!(is_close(leaf.greeks.gamma, dg.gamma * n, 1e-12, 1e-3));
-        assert!(is_close(leaf.greeks.vega, dg.vega * n, 1e-12, 1e-3));
-    }
-
-    /// The exotic P&L is the real exotic reprice difference (not a vanilla proxy):
-    /// shocking spot up toward the knock-out barrier of an up-and-out call DESTROYS
-    /// value (the option approaches extinction), so the long leg's P&L is negative —
-    /// the opposite sign a long *vanilla* call would show for the same up-shock.
-    #[test]
-    fn knock_out_pnl_is_exotic_not_vanilla() {
-        let inputs = VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.04, 0.02);
-        let leg = ExoticLeg::new(
-            eurusd(),
-            ExoticKind::SingleBarrier(up_out_call()),
-            10_000_000.0,
-            inputs,
-        );
-        // A +5% spot move pushes toward the 1.25 up-and-out barrier.
-        let up = Scenario::spot(0.05);
-        let exotic_pnl = leg.pnl(up);
-        // Independent: real barrier reprice difference (FX projection of the shock).
-        // Merge: W5-A's `apply_fx` (yields a VanillaInputs shock, used by the vanilla
-        // sanity check below) + ADR-0008's `ExoticInputs` barrier signature (`.into()`).
-        let shocked = apply_fx(up, &inputs);
-        let want = (single_barrier_price(&(&shocked).into(), up_out_call())
-            - single_barrier_price(&(&inputs).into(), up_out_call()))
-            * 10_000_000.0;
-        assert!(is_close(exotic_pnl, want, 1e-9, 1e-3));
-        // A long up-and-out call LOSES value as spot rises toward the barrier.
-        assert!(
-            exotic_pnl < 0.0,
-            "up-and-out call should lose value on an up-move toward the barrier, got {exotic_pnl}"
-        );
-        // Sanity: a long vanilla call would GAIN on the same up-move — proving the
-        // exotic path is genuinely different from a vanilla proxy.
-        let vanilla_up = celnet_vanilla::price(OptionType::Call, &shocked)
-            - celnet_vanilla::price(OptionType::Call, &inputs);
-        assert!(vanilla_up > 0.0);
-    }
-
-    /// **Rate shocks map back to the FX two-rate basis** (the `apply_fx` inverse
-    /// packing): an exotic leg's P&L under a combined spot/vol/discount/carry
-    /// scenario equals the closed-form reprice at `(spot·(1+s), vol+v,
-    /// r_dom+Δr_dom, r_for+Δr_for)` with the rates re-derived BY HAND from the
-    /// carry shocks (`Δr_dom = discount_abs`, `Δr_for = discount_abs − carry_abs`).
-    #[test]
-    fn exotic_rate_shock_maps_to_fx_two_rate_basis() {
-        let inputs = VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.04, 0.02);
-        let n = 10_000_000.0;
-        let leg = ExoticLeg::new(
-            eurusd(),
-            ExoticKind::SingleBarrier(up_out_call()),
-            n,
-            inputs,
-        );
-        // Dyadic shocks; built via the FX-rates constructor so the hand mapping
-        // below is the published two-rate contract, not the carry packing.
-        let (s, v, dr_dom, dr_for) = (0.03125, 0.0078125, 0.015625, -0.001953125);
-        let sc = crate::nonadditive::Scenario::fx_rates(s, v, dr_dom, dr_for);
-        let shocked = VanillaInputs::new(
-            inputs.spot * (1.0 + s),
-            inputs.strike,
-            inputs.vol + v,
-            inputs.t,
-            inputs.r_dom + dr_dom,
-            inputs.r_for + dr_for,
-        );
-        let want = (single_barrier_price(&(&shocked).into(), up_out_call())
-            - single_barrier_price(&(&inputs).into(), up_out_call()))
-            * n;
-        assert!(is_close(leg.pnl(sc), want, 1e-12, 1e-6));
-        // The rate legs genuinely matter (vacuity guard): zeroing them changes P&L.
-        let spot_vol_only = crate::nonadditive::Scenario::fx_rates(s, v, 0.0, 0.0);
-        assert!((leg.pnl(sc) - leg.pnl(spot_vol_only)).abs() > 1.0);
-
-        // base_value and quote_ccy bookkeeping.
-        assert!(is_close(
-            leg.base_value(),
-            single_barrier_price(&(&inputs).into(), up_out_call()) * n,
-            1e-15,
-            1e-9
-        ));
-        assert_eq!(leg.quote_ccy(), Ccy::USD);
-    }
-
-    /// **Curvature legs = two revaluations net of the leg's own FD delta**,
-    /// re-derived longhand from the closed form (the MAR21 CVR± arithmetic), and
-    /// `exotic_curvature_legs` sums leg pairs element-wise.
-    ///
-    /// The barrier sits at 1.50 so the +15% shock (1.10 → 1.265) keeps the option
-    /// ALIVE with a materially nonzero up price — a mutant that corrupts the
-    /// up-shocked spot (e.g. `spot·(1.0·rw)`) then moves the up leg by orders of
-    /// magnitude instead of comparing knocked-out ≈ 0 against deep-OTM ≈ 0 (the
-    /// gap the first mutation run exposed). A digital leg is pinned the same way:
-    /// its value moves in BOTH shock directions.
-    #[test]
-    fn exotic_curvature_legs_match_independent_reprice() {
-        let inputs = VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.04, 0.02);
-        let n = 10_000_000.0;
-        let rw = 0.15;
-        let spec = SingleBarrier {
-            kind: BarrierKind {
-                up: true,
-                style: BarrierStyle::KnockOut,
-                option: OptionType::Call,
-            },
-            strike: 1.10,
-            barrier: 1.50, // alive at the +15% shocked spot 1.265
-            rebate: 0.0,
-        };
-        let leg = ExoticLeg::new(eurusd(), ExoticKind::SingleBarrier(spec), n, inputs);
-
-        let pr = |spot: f64| {
-            single_barrier_price(
-                &(&VanillaInputs::new(
-                    spot,
-                    inputs.strike,
-                    inputs.vol,
-                    inputs.t,
-                    inputs.r_dom,
-                    inputs.r_for,
-                ))
-                    .into(),
-                spec,
-            )
-        };
-        let base = pr(inputs.spot) * n;
-        let up = pr(inputs.spot * (1.0 + rw)) * n;
-        let down = pr(inputs.spot * (1.0 - rw)) * n;
-        assert!(up > 1e-3 * n, "the up-shocked barrier price must be alive");
-        // The leg's linear term uses its own central-FD delta; re-derive it with
-        // the same documented bump (relative 1e-4, absolute floor 1e-7).
-        let h = (inputs.spot.abs() * 1e-4).max(1e-7);
-        let fd_delta = (pr(inputs.spot + h) - pr(inputs.spot - h)) / (2.0 * h);
-        let linear = fd_delta * n * rw * inputs.spot;
-        let want_up = -((up - base) - linear);
-        let want_down = -((down - base) + linear);
-
-        let (got_up, got_down) = leg.curvature_legs(rw);
-        assert!(
-            is_close(got_up, want_up, 1e-9, 1e-3),
-            "CVR+ {got_up} vs {want_up}"
-        );
-        assert!(is_close(got_down, want_down, 1e-9, 1e-3));
-
-        // The digital's curvature legs, pinned the same longhand way (its price
-        // moves in both directions, so each shocked-spot expression is pinned).
-        let dk = DigitalKind::cash(OptionType::Put);
-        let d_inputs = VanillaInputs::new(1.10, 1.09, 0.11, 0.5, 0.03, 0.01);
-        let dn = -4_000_000.0;
-        let dleg = ExoticLeg::new(eurusd(), ExoticKind::Digital(dk), dn, d_inputs);
-        let dpr = |spot: f64| {
-            digital_price(
-                dk,
-                &(&VanillaInputs::new(
-                    spot,
-                    d_inputs.strike,
-                    d_inputs.vol,
-                    d_inputs.t,
-                    d_inputs.r_dom,
-                    d_inputs.r_for,
-                ))
-                    .into(),
-            )
-        };
-        let d_base = dpr(d_inputs.spot) * dn;
-        let d_up = dpr(d_inputs.spot * (1.0 + rw)) * dn;
-        let d_down = dpr(d_inputs.spot * (1.0 - rw)) * dn;
-        let dh = (d_inputs.spot.abs() * 1e-4).max(1e-7);
-        let d_fd = (dpr(d_inputs.spot + dh) - dpr(d_inputs.spot - dh)) / (2.0 * dh);
-        let d_linear = d_fd * dn * rw * d_inputs.spot;
-        let d_want_up = -((d_up - d_base) - d_linear);
-        let d_want_down = -((d_down - d_base) + d_linear);
-        let (d_got_up, d_got_down) = dleg.curvature_legs(rw);
-        assert!(
-            is_close(d_got_up, d_want_up, 1e-9, 1e-3),
-            "digital CVR+ {d_got_up} vs {d_want_up}"
-        );
-        assert!(is_close(d_got_down, d_want_down, 1e-9, 1e-3));
-        // Vacuity guards: both shocked digital values genuinely differ from base.
-        assert!((d_up - d_base).abs() > 1.0 && (d_down - d_base).abs() > 1.0);
-
-        // The summed pair is element-wise across legs.
-        let leg2 = ExoticLeg::new(
-            eurusd(),
-            ExoticKind::Digital(DigitalKind::cash(OptionType::Put)),
-            -4_000_000.0,
-            VanillaInputs::new(1.10, 1.09, 0.11, 0.5, 0.03, 0.01),
-        );
-        let (u1, d1) = leg.curvature_legs(rw);
-        let (u2, d2) = leg2.curvature_legs(rw);
-        let (su, sd) = exotic_curvature_legs(&[leg, leg2], rw);
-        assert!(is_close(su, u1 + u2, 1e-12, 1e-9));
-        assert!(is_close(sd, d1 + d2, 1e-12, 1e-9));
-        // And the empty set is exactly (0, 0).
-        let (zu, zd) = exotic_curvature_legs(&[], rw);
-        assert_eq!(zu.to_bits(), 0.0_f64.to_bits());
-        assert_eq!(zd.to_bits(), 0.0_f64.to_bits());
-    }
-
-    /// **Independent analytic oracle for the FULL FD Greek set**: a barrier so far
-    /// from spot it can never knock (≈15σ) prices as the vanilla, so every
-    /// higher-order FD Greek on the leaf must match `celnet_vanilla::greeks`'
-    /// closed-form set — a fully code-disjoint oracle for theta / vanna / volga /
-    /// charm / speed / zomma / color (a stencil-coefficient or sign mutant moves
-    /// these by orders of magnitude, far beyond the FD truncation tolerance).
-    #[test]
-    fn far_barrier_leaf_greeks_match_vanilla_analytic() {
-        let inputs = VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02);
-        let n = 5_000_000.0;
-        let far = SingleBarrier {
-            kind: BarrierKind {
-                up: true,
-                style: BarrierStyle::KnockOut,
-                option: OptionType::Call,
-            },
-            strike: 1.12,
-            barrier: 5.0, // ln(5/1.1)/(σ√t) ≈ 15σ: knock probability ≈ 0
-            rebate: 0.0,
-        };
-        let leg = ExoticLeg::new(eurusd(), ExoticKind::SingleBarrier(far), n, inputs);
-        let leaf = leg.canonical_leaf();
-        let g = celnet_vanilla::greeks(OptionType::Call, &inputs);
-        let checks = [
-            ("delta", leaf.greeks.delta_base, g.delta_spot * n),
-            ("gamma", leaf.greeks.gamma, g.gamma * n),
-            ("vega", leaf.greeks.vega, g.vega * n),
-            ("theta", leaf.greeks.theta, g.theta * n),
-            ("vanna", leaf.greeks.vanna, g.vanna * n),
-            ("volga", leaf.greeks.volga, g.volga * n),
-            ("charm", leaf.greeks.charm, g.charm * n),
-            ("speed", leaf.greeks.speed, g.speed * n),
-            ("zomma", leaf.greeks.zomma, g.zomma * n),
-            ("color", leaf.greeks.color, g.color * n),
-        ];
-        for (name, got, want) in checks {
-            assert!(
-                is_close(got, want, 5e-4, 1e-9 * n),
-                "{name}: FD {got} vs analytic {want}"
-            );
-            assert!(want.abs() > 0.0, "{name} oracle must not be vacuous");
-        }
-        assert!(is_close(leaf.premium_quote, g.price * n, 1e-9, 1e-9 * n));
-        // Leaf bookkeeping: the exotic leaf carries its pair/spot/premium-ccy and
-        // is never premium-adjusted.
-        assert_eq!(leaf.underlying, celnet_types::Underlying::Fx(eurusd()));
-        assert_eq!(leaf.spot.to_bits(), inputs.spot.to_bits());
-        assert_eq!(leaf.vega_premium_ccy, Ccy::USD);
-        assert!(!leaf.quoted_was_premium_adjusted);
-    }
-
-    /// The FD time bump stays strictly inside the tenor: `canonical_greeks` caps
-    /// `dt` at `t/2`, so even an ultra-short-dated leg (here `t = 4e-7`y ≈ 12.6 s,
-    /// below the `1e-6` absolute floor, so the `t/2` cap BINDS at `dt = 2e-7`)
-    /// reprices every `t − dt` leg at a strictly positive time. Breaking the cap
-    /// arithmetic (`t·0.5` → `t + 0.5` or `t / 0.5`) drives `t − dt` negative and
-    /// `√t` poisons the time-direction Greeks (theta/charm/color) with NaN —
-    /// pinned by finiteness of the FULL Greek set plus the far-barrier
-    /// vanilla-limit analytic oracle on the two non-degenerate time Greeks of a
-    /// saturated deep-ITM call (at `d₁ ≈ 3.3e3`, `N(d₁) = 1` and `n(d₁) = 0` to
-    /// double precision, so per unit `θ → ±(r_f·S·e^{−r_f t} − r_d·K·e^{−r_d t})`
-    /// ≈ ∓0.0188 and charm → `−r_f·e^{−r_f t}` ≈ −0.02 — both nonzero).
-    #[test]
-    fn ultra_short_tenor_time_bump_stays_inside_the_tenor() {
-        let inputs = VanillaInputs::new(1.30, 1.12, 0.10, 4e-7, 0.04, 0.02);
-        let n = 5_000_000.0;
-        let far = SingleBarrier {
-            kind: BarrierKind {
-                up: true,
-                style: BarrierStyle::KnockOut,
-                option: OptionType::Call,
-            },
-            strike: 1.12,
-            barrier: 5.0, // knock probability ≈ 0 ⇒ the vanilla limit
-            rebate: 0.0,
-        };
-        let leg = ExoticLeg::new(eurusd(), ExoticKind::SingleBarrier(far), n, inputs);
-        let g = leg.canonical_leaf().greeks;
-        // Kill core: a broken dt cap reprices at t − dt < 0, and the closed
-        // forms' √t turns theta/charm/color into NaN. Every Greek must be finite.
-        for (name, v) in [
-            ("delta", g.delta_base),
-            ("gamma", g.gamma),
-            ("vega", g.vega),
-            ("theta", g.theta),
-            ("vanna", g.vanna),
-            ("volga", g.volga),
-            ("charm", g.charm),
-            ("speed", g.speed),
-            ("zomma", g.zomma),
-            ("color", g.color),
-        ] {
-            assert!(v.is_finite(), "{name} must be finite, got {v}");
-        }
-        let a = celnet_vanilla::greeks(OptionType::Call, &inputs);
-        assert!(a.theta.abs() > 1e-3, "theta oracle must not be vacuous");
-        assert!(a.charm.abs() > 1e-3, "charm oracle must not be vacuous");
-        // Theta: the FD signal `V(t+dt) − V(t−dt)` ≈ 7.5e-9 against ~1e-16 of
-        // f64 rounding in the ~0.18-scale prices ⇒ expected FD error ~1e-8 rel.
-        assert!(
-            is_close(g.theta, a.theta * n, 5e-4, 1e-9 * n),
-            "theta: FD {} vs analytic {}",
-            g.theta,
-            a.theta * n
-        );
-        // Charm carries the documented cross-difference cancellation budget: the
-        // outer signal is ~2.1e-12 against ~2e-16 absolute rounding noise in the
-        // ~2.6e-4-scale inner spot differences ⇒ ~1e-4 expected relative error;
-        // 1e-3 keeps an order of magnitude of margin and can never pass a NaN.
-        assert!(
-            is_close(g.charm, a.charm * n, 1e-3, 1e-9 * n),
-            "charm: FD {} vs analytic {}",
-            g.charm,
-            a.charm * n
-        );
-        // Delta saturates at e^{−r_f·t}·N(d₁) ≈ 1 — pinned so the leg provably
-        // sits in the vanilla limit the time-Greek oracle above relies on.
-        assert!(is_close(g.delta_base, a.delta_spot * n, 5e-4, 1e-9 * n));
-    }
-
-    /// `exotic_node_pnl` is the plain sum of the legs' P&L (two-leg pin + empty
-    /// set exactly zero), and a digital leg's value line is the closed-form digital
-    /// price × notional.
-    #[test]
-    fn exotic_node_pnl_sums_legs_exactly() {
-        let l1 = ExoticLeg::new(
-            eurusd(),
-            ExoticKind::SingleBarrier(up_out_call()),
-            10_000_000.0,
-            VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.04, 0.02),
-        );
-        let kind = DigitalKind::cash(OptionType::Call);
-        let l2 = ExoticLeg::new(
-            CcyPair::new(Ccy::GBP, Ccy::USD),
-            ExoticKind::Digital(kind),
-            -5_000_000.0,
-            VanillaInputs::new(1.30, 1.32, 0.12, 0.75, 0.03, 0.01),
-        );
-        let sc = Scenario::spot(0.02);
-        let want = l1.pnl(sc) + l2.pnl(sc);
-        assert_eq!(exotic_node_pnl(&[l1, l2], sc).to_bits(), want.to_bits());
-        // Empty set: numerically zero (the iterator-sum identity is −0.0 on this
-        // toolchain; the zero's sign is not contractual).
-        assert_eq!(exotic_node_pnl(&[], sc), 0.0);
-        // Digital value line == closed form × notional (the unit_price digital arm).
-        let vi = VanillaInputs::new(1.30, 1.32, 0.12, 0.75, 0.03, 0.01);
-        assert!(is_close(
-            l2.base_value(),
-            digital_price(kind, &(&vi).into()) * -5_000_000.0,
-            1e-15,
-            1e-9
-        ));
-    }
 
     /// The FD spot bump is the documented `max(|S|·1e-4, 1e-7)`: relative on a
-    /// normal spot, floored absolutely for a tiny spot (exact dyadic pins).
+    /// normal spot, floored absolutely for a tiny spot (exact dyadic pins), and
+    /// `with_spot` replaces ONLY the spot.
+    ///
+    /// `spot_bump` / `with_spot` are crate-private FD helpers that need no exotic
+    /// pricer, so they stay in-crate. The price / Greek / curvature / PnL oracle
+    /// tests that DO need a concrete closed-form exotic pricer (barriers have no
+    /// closed form without `celnet-exotics`, which the cube deliberately does not
+    /// depend on) were moved verbatim to `celnet-parity/tests/exotic_leg_pricing.rs`,
+    /// where the real `celnet-exotics` engines back an injected [`ExoticLegPricer`].
     #[test]
     fn spot_bump_is_relative_with_absolute_floor() {
         assert_eq!(spot_bump(2.0).to_bits(), 2e-4_f64.to_bits());
         assert_eq!(spot_bump(-2.0).to_bits(), 2e-4_f64.to_bits(), "uses |S|");
         assert_eq!(spot_bump(1e-9).to_bits(), 1e-7_f64.to_bits(), "floor binds");
-        // with_spot replaces ONLY the spot.
         let vi = VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02);
         let w = with_spot(&vi, 9.0);
         assert_eq!(w.spot.to_bits(), 9.0_f64.to_bits());
@@ -788,36 +373,5 @@ mod tests {
         assert_eq!(w.t.to_bits(), vi.t.to_bits());
         assert_eq!(w.r_dom.to_bits(), vi.r_dom.to_bits());
         assert_eq!(w.r_for.to_bits(), vi.r_for.to_bits());
-    }
-
-    /// FD Greeks of a barrier leg match an independent in-test central FD of the
-    /// closed-form price (the canonical leaf does not silently zero higher orders).
-    #[test]
-    fn barrier_fd_greeks_match_independent_fd() {
-        let inputs = VanillaInputs::new(1.10, 1.08, 0.11, 0.5, 0.03, 0.01);
-        let spec = up_out_call();
-        let n = 7_000_000.0;
-        let leg = ExoticLeg::new(eurusd(), ExoticKind::SingleBarrier(spec), n, inputs);
-        let leaf = leg.canonical_leaf();
-
-        // Independent central FD of the closed-form price for delta/gamma/vega.
-        let pr = |s: f64, vol: f64| {
-            single_barrier_price(
-                &(&VanillaInputs::new(s, inputs.strike, vol, inputs.t, inputs.r_dom, inputs.r_for))
-                    .into(),
-                spec,
-            )
-        };
-        let ds = (inputs.spot * 1e-4).max(1e-7);
-        let dv = 1e-4;
-        let s = inputs.spot;
-        let v = inputs.vol;
-        let base = pr(s, v);
-        let ref_delta = (pr(s + ds, v) - pr(s - ds, v)) / (2.0 * ds) * n;
-        let ref_gamma = (pr(s + ds, v) - 2.0 * base + pr(s - ds, v)) / (ds * ds) * n;
-        let ref_vega = (pr(s, v + dv) - pr(s, v - dv)) / (2.0 * dv) * n;
-        assert!(is_close(leaf.greeks.delta_base, ref_delta, 1e-9, 1e-2));
-        assert!(is_close(leaf.greeks.gamma, ref_gamma, 1e-9, 1e-2));
-        assert!(is_close(leaf.greeks.vega, ref_vega, 1e-9, 1e-2));
     }
 }

@@ -40,46 +40,17 @@
 
 use celnet_core::math::{exp, norm_cdf, sqrt};
 use celnet_types::OptionType;
+// The barrier payoff discriminants are defined at the base of the dependency
+// graph (`celnet-types`) so the risk cube can name a barrier without depending on
+// this pricing crate (arch-program item E); re-exported here so every
+// `celnet_exotics::{BarrierKind, BarrierStyle, SingleBarrier}` reference is
+// byte-identical.
+pub use celnet_types::{BarrierKind, BarrierStyle, SingleBarrier};
 use celnet_vanilla::price as vanilla_price;
 
 use crate::inputs::ExoticInputs;
 use crate::touch::RebateTiming;
 use crate::{Lognormal, dlog, one_touch_price};
-
-/// In/out knock style of a barrier option.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BarrierStyle {
-    /// Knock-in: the option activates only after the barrier is touched.
-    KnockIn,
-    /// Knock-out: the option extinguishes when the barrier is touched.
-    KnockOut,
-}
-
-/// The full kind of a single barrier: direction (up/down), knock style, and the
-/// underlying option type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BarrierKind {
-    /// `true` if the barrier sits **above** spot (an *up* barrier), else *down*.
-    pub up: bool,
-    /// Knock-in or knock-out.
-    pub style: BarrierStyle,
-    /// Call or put underlying.
-    pub option: OptionType,
-}
-
-/// A single-barrier option specification.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SingleBarrier {
-    /// What kind of barrier.
-    pub kind: BarrierKind,
-    /// Strike `K`.
-    pub strike: f64,
-    /// Barrier level `H`.
-    pub barrier: f64,
-    /// Rebate `R` paid if the option fails to pay out (at hit for knock-out, at
-    /// expiry for knock-in). Set to `0.0` for a plain barrier.
-    pub rebate: f64,
-}
 
 /// Internal building blocks of the Reiner-Rubinstein single-barrier formula.
 ///
