@@ -368,7 +368,11 @@ async fn drill_risk_confines_a_desk_trader_to_its_own_node() {
         .as_ref()
         .and_then(|a| a.held_by.as_ref())
         .map(|b| b.book.as_str());
-    assert_eq!(book, Some("EM-VOL-1"), "the EM trader sees only its own book");
+    assert_eq!(
+        book,
+        Some("EM-VOL-1"),
+        "the EM trader sees only its own book"
+    );
 
     // The EM trader drilling the G10 desk node → narrowed to Desk=em-vol, the node
     // scope is Desk=g10, the intersection is empty: no children, no positions — and it
@@ -437,7 +441,10 @@ async fn cross_desk_assertion_intersects_to_empty_not_an_error() {
     // desks), NOT a `permission_denied` — the `.expect` below proves it is not an error.
     let resp = RiskService::list_positions(
         &fx.edge,
-        Request::new(list_request(&fx.em_token, Some(desk_principal(u64::from(fx.g10_desk))))),
+        Request::new(list_request(
+            &fx.em_token,
+            Some(desk_principal(u64::from(fx.g10_desk))),
+        )),
     )
     .await
     .expect("a cross-desk assertion is an empty intersection, never a permission error")

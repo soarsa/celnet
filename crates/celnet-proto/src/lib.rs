@@ -1545,7 +1545,10 @@ mod wire_contract_tests {
             "market_series_unsubscribe",
         ];
         want.sort_unstable();
-        assert_eq!(got, want, "STREAM_CONTROL_VERBS must equal the ClientStreamMessage oneof arms");
+        assert_eq!(
+            got, want,
+            "STREAM_CONTROL_VERBS must equal the ClientStreamMessage oneof arms"
+        );
     }
 
     /// Every unary RPC verb is present, with the request/response message names the
@@ -1553,7 +1556,11 @@ mod wire_contract_tests {
     /// service families (the full set is descriptor-exhaustive by construction).
     #[test]
     fn wire_rpcs_cover_the_service_surface() {
-        assert!(WIRE_RPCS.len() >= 50, "all service methods present, got {}", WIRE_RPCS.len());
+        assert!(
+            WIRE_RPCS.len() >= 50,
+            "all service methods present, got {}",
+            WIRE_RPCS.len()
+        );
         let has = |service: &str, method: &str, request: &str, response: &str| {
             WIRE_RPCS.iter().any(|r| {
                 r.service == service
@@ -1562,11 +1569,31 @@ mod wire_contract_tests {
                     && r.response == response
             })
         };
-        assert!(has("PricingService", "Price", "PriceRequest", "PriceResponse"));
-        assert!(has("PricingService", "PriceRates", "RatesPriceRequest", "RatesPriceResponse"));
+        assert!(has(
+            "PricingService",
+            "Price",
+            "PriceRequest",
+            "PriceResponse"
+        ));
+        assert!(has(
+            "PricingService",
+            "PriceRates",
+            "RatesPriceRequest",
+            "RatesPriceResponse"
+        ));
         assert!(has("QuoteService", "RequestQuote", "QuoteRequest", "Quote"));
-        assert!(has("QuoteService", "AcceptQuote", "QuoteAccept", "Execution"));
-        assert!(has("SurfaceService", "GetSmile", "GetSmileRequest", "Smile"));
+        assert!(has(
+            "QuoteService",
+            "AcceptQuote",
+            "QuoteAccept",
+            "Execution"
+        ));
+        assert!(has(
+            "SurfaceService",
+            "GetSmile",
+            "GetSmileRequest",
+            "Smile"
+        ));
         // FixAdminService: the method name (ListConnections) and the WS verb
         // (list_fix_connections) diverge — only the descriptor knows the
         // request-message name the verb is actually derived from.
@@ -1582,10 +1609,20 @@ mod wire_contract_tests {
     /// vocabulary the WS codec depends on.
     #[test]
     fn message_and_enum_surface_is_generated() {
-        assert!(MESSAGES.contains(&"Instrument"), "Instrument message present");
+        assert!(
+            MESSAGES.contains(&"Instrument"),
+            "Instrument message present"
+        );
         assert!(MESSAGES.contains(&"Quote"), "Quote message present");
-        assert!(MESSAGES.contains(&"ClientStreamMessage"), "ClientStreamMessage present");
+        assert!(
+            MESSAGES.contains(&"ClientStreamMessage"),
+            "ClientStreamMessage present"
+        );
         assert!(ENUMS.contains(&"OptionType"), "OptionType enum present");
-        assert!(MESSAGES.len() >= 200, "full message surface present, got {}", MESSAGES.len());
+        assert!(
+            MESSAGES.len() >= 200,
+            "full message surface present, got {}",
+            MESSAGES.len()
+        );
     }
 }

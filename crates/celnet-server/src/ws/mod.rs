@@ -1188,8 +1188,7 @@ mod tests {
     /// from this frozen list, the wire-routing contract changed and this fails.
     #[test]
     fn is_stream_control_matches_generated_contract() {
-        let mut generated: Vec<&str> =
-            celnet_proto::wire_contract::STREAM_CONTROL_VERBS.to_vec();
+        let mut generated: Vec<&str> = celnet_proto::wire_contract::STREAM_CONTROL_VERBS.to_vec();
         generated.sort_unstable();
         let mut frozen = [
             "authenticate",
@@ -1221,7 +1220,9 @@ mod tests {
         // The descriptor-derived control verbs (every one must be decoder-recognized:
         // a proto oneof arm added without its `decode_stream_control` arm fails here),
         // plus request/response RPCs and a nonsense verb that must NOT be control.
-        let control = celnet_proto::wire_contract::STREAM_CONTROL_VERBS.iter().copied();
+        let control = celnet_proto::wire_contract::STREAM_CONTROL_VERBS
+            .iter()
+            .copied();
         let non_control = [
             "price",
             "request_quote",
