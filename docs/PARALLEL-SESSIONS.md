@@ -139,6 +139,12 @@ at their tier.
 
 ## 5. Live lane board
 
+> **SUPERSEDED (2026-06-30) by the orchestration manifest — see `docs/ORCHESTRATION.md`.** The
+> live lock + board is now `.celnet/tasks.jsonl`, claimed via `tools/celnet-task` (git-push-as-CAS
+> on `coord/board`) with lease-expiry reclaim and a SessionStart selector. Do **not** hand-edit
+> the table below to claim work — use `tools/celnet-task claim <id>`. The table is retained as the
+> historical record of the wave program; the §6 narrative and §1–4 rules remain in force.
+
 > Status: `OPEN` (claimable now) · `BLOCKED:<dep>` (opens when the dep lands) · `CLAIMED` ·
 > `READY-FOR-MERGE` · `DONE`. **Claim by editing your row, commit-only-this-file, push.**
 

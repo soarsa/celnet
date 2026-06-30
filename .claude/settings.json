@@ -53,6 +53,10 @@
           {
             "type": "command",
             "command": "nohup sh -c 'lodestar index \"$PWD\" >> .lodestar/index.log 2>&1' >/dev/null 2>&1 & exit 0"
+          },
+          {
+            "type": "command",
+            "command": "bash tools/celnet-task heartbeat --session \"$CLAUDE_SESSION_ID\""
           }
         ]
       }
@@ -68,6 +72,27 @@
           {
             "type": "command",
             "command": "nohup sh -c 'sh tools/lodestar/sync-knowledge.sh >> .lodestar/knowledge-sync.log 2>&1' >/dev/null 2>&1 & exit 0"
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash tools/celnet-task selector --session \"$CLAUDE_SESSION_ID\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "auto|manual",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash tools/celnet-task checkpoint --session \"$CLAUDE_SESSION_ID\""
           }
         ]
       }
