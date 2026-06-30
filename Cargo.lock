@@ -725,7 +725,6 @@ dependencies = [
 name = "celnet-proto"
 version = "0.0.0"
 dependencies = [
- "celnet-core",
  "celnet-types",
  "prost",
  "protox",
@@ -871,7 +870,6 @@ version = "0.0.0"
 dependencies = [
  "celnet-conventions",
  "celnet-core",
- "celnet-crypto-vanilla",
  "celnet-testkit",
  "celnet-types",
  "celnet-vanilla",

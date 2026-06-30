@@ -590,10 +590,21 @@ mod tests {
     use super::*;
     use celnet_conventions::resolve;
     use celnet_core::math::exp;
-    use celnet_crypto_vanilla::funding_carry;
     use celnet_types::{CcyPair, Tenor};
 
     use crate::quotes::MarketContext;
+
+    /// Crypto funding-carry assembly `b = r − funding`, re-typed inline from
+    /// the published ADR-0008 §Decision-2 identity (funding is NOT a new `Carry`
+    /// variant — it is just how the net carry `b` is formed before the seam's
+    /// `F = S·e^{b·t}`). Inlined here (depending only on `celnet_types::Carry`,
+    /// an existing runtime dep) so the surface crate keeps the one-way layer
+    /// rule (`docs/INTERFACES.md`): leaves are siblings, never a dev-dep
+    /// back-edge from the surface onto the `celnet-crypto-vanilla` leaf. This is
+    /// the byte-identical closed form `funding_carry` itself computes.
+    fn funding_carry(r: f64, funding: f64) -> Carry {
+        Carry::CostOfCarry { r, b: r - funding }
+    }
 
     /// Raw-SVI total variance, re-typed from the published equation (Gatheral
     /// 2004; Gatheral & Jacquier 2014 eq. 3.1) — NOT a call into

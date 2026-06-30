@@ -971,7 +971,50 @@ impl From<WireGreeks> for Greeks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celnet_core::assert_close;
+
+    // Local closeness primitive for the wire round-trip tests. Inlined here
+    // (depending only on std) so the proto crate keeps the documented
+    // "proto → types only" waist (`docs/INTERFACES.md`) — no dev-dep back-edge
+    // onto `celnet-core`. This mirrors `celnet_core::is_close`/`assert_close!`
+    // exactly: an absolute tolerance (near zero) OR a relative tolerance
+    // (relative to the larger magnitude), with NaN never close and infinities
+    // close only when identical. Tolerances here are the celnet-core defaults
+    // (DEFAULT_REL = 1e-9, DEFAULT_ABS = 1e-12); the round-trips are encode →
+    // decode of the SAME f64 bits, so closeness holds with margin.
+    const DEFAULT_REL: f64 = 1e-9;
+    const DEFAULT_ABS: f64 = 1e-12;
+
+    #[allow(clippy::float_cmp)] // exact-equality fast path is intentional and correct here
+    fn is_close(a: f64, b: f64, rel: f64, abs: f64) -> bool {
+        if a.is_nan() || b.is_nan() {
+            return false;
+        }
+        if a == b {
+            return true; // covers exact equality, equal infinities, and ±0.0
+        }
+        if a.is_infinite() || b.is_infinite() {
+            return false;
+        }
+        let diff = (a - b).abs();
+        diff <= abs || diff <= rel * a.abs().max(b.abs())
+    }
+
+    macro_rules! assert_close {
+        ($a:expr, $b:expr) => {
+            assert_close!($a, $b, DEFAULT_REL, DEFAULT_ABS)
+        };
+        ($a:expr, $b:expr, $rel:expr, $abs:expr) => {{
+            let a: f64 = $a;
+            let b: f64 = $b;
+            assert!(
+                is_close(a, b, $rel, $abs),
+                "assert_close failed: {a} vs {b} (rel={}, abs={}, |diff|={})",
+                $rel,
+                $abs,
+                (a - b).abs()
+            );
+        }};
+    }
 
     #[test]
     fn option_type_round_trips() {

@@ -20,10 +20,10 @@ celnet-conventions.workspace = true
 [dev-dependencies]
 celnet-testkit.workspace = true
 proptest.workspace = true
-# The crypto vanilla leaf — used ONLY by tests as (1) the funding-carry assembler
-# exercised through the seam and (2) the published venue-convention pins
-# (the `deribit` identity constants). NOT a runtime dependency: leaves are siblings.
-celnet-crypto-vanilla.workspace = true
 # Independent libm access for the carry-seam byte-identity oracle (the test
 # recomputes S·e^{(r−funding)t} without the seam accessors or celnet-core wrappers).
+# NOTE: the funding-carry assembler (`b = r − funding`) and the Deribit venue
+# identity pins are re-typed inline in the tests from their published sources —
+# no dev-dep back-edge onto the `celnet-crypto-vanilla` leaf (leaves are
+# siblings; one-way layer rule, `docs/INTERFACES.md`).
 libm.workspace = true
