@@ -15,6 +15,7 @@ const RAIL_LABEL: Record<string, string> = {
   surface: "Surface",
   risk: "Risk",
   book: "Book",
+  curve: "Curve",
 };
 
 /**
@@ -71,6 +72,7 @@ const RAIL_DOMAIN: Record<keyof typeof RAIL_LABEL, string> = {
   surface: "FX Options",
   risk: "FX Options",
   book: "Fixed Income",
+  curve: "Fixed Income",
 };
 
 /**

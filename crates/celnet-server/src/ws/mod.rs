@@ -1142,6 +1142,14 @@ async fn handle_unary(
                 codec::delete_instrument_response_to_json
             )
         }
+        "build_curve" => {
+            let req = decode!(codec::build_curve_request_from_json(o));
+            call!(
+                services.auth.build_curve(Request::new(req)),
+                "calibrated_curve",
+                codec::calibrated_curve_to_json
+            )
+        }
         other => codec::error_frame(&format!("unknown request type `{other}`"), correlation_id),
     }
 }

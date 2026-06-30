@@ -39,6 +39,8 @@ import type {
   BookInput,
   InstrumentDef,
   InstrumentInput,
+  BuildCurveRequest,
+  CalibratedCurve,
   DrillRiskRequest,
   DrillRiskResponse,
   Execution,
@@ -145,6 +147,8 @@ import {
   updateInstrumentRequestToWire,
   deleteInstrumentRequestToWire,
   deleteInstrumentResponseFromWire,
+  buildCurveRequestToWire,
+  calibratedCurveFromWire,
   deleteUserRequestToWire,
   deskResponseFromWire,
   listDesksRequestToWire,
@@ -1496,6 +1500,17 @@ export class WsTransport implements CelnetTransport {
       "instrument_deleted",
     );
     return deleteInstrumentResponseFromWire(reply);
+  }
+
+  // --- curve bootstrap from registry-referenced instruments ------------------
+
+  async buildCurve(request: BuildCurveRequest): Promise<CalibratedCurve> {
+    const reply = await this.conn.request(
+      "build_curve",
+      buildCurveRequestToWire(request),
+      "calibrated_curve",
+    );
+    return calibratedCurveFromWire(reply);
   }
 
   /** Permanently close the underlying connection (call on app teardown). */

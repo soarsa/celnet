@@ -36,6 +36,8 @@ import type {
   BookInput,
   InstrumentDef,
   InstrumentInput,
+  BuildCurveRequest,
+  CalibratedCurve,
   UserCapabilities,
   RoleCapabilities,
   UserRole,
@@ -510,4 +512,14 @@ export interface CelnetTransport {
 
   /** AuthService.DeleteInstrument (admin) — remove a def; true if it existed. */
   deleteInstrument(id: string): Promise<boolean>;
+
+  // --- curve bootstrap from registry-referenced instruments ------------------
+
+  /**
+   * AuthService.BuildCurve (any authenticated) — bootstrap a discount curve from
+   * registry-referenced instruments + their calibrating quotes. The server
+   * resolves each pillar id against the reference-data registry and returns the
+   * per-instrument calibrated points (short→long by resolved maturity).
+   */
+  buildCurve(request: BuildCurveRequest): Promise<CalibratedCurve>;
 }

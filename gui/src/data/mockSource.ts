@@ -73,6 +73,10 @@ import type {
   OisInstrument,
   Quote,
   RatesCurveSet,
+  BrokenDate,
+  PillarTenor,
+  BuildCurveRequest,
+  CalibratedCurve,
   RatesPosition,
   RatesPricingResult,
   RatesRiskNode,
@@ -102,7 +106,14 @@ import type {
 } from "./contract";
 import { CAPABILITY_ACTIONS, CAPABILITY_ASSETS, pillarYears } from "./contract";
 import { forward, priceInstrument, strikeFromDelta } from "./pricing";
-import { DEFAULT_USD_SOFR_CURVE, priceRatesOffline } from "./ratesPricing";
+import {
+  DEFAULT_USD_SOFR_CURVE,
+  priceRatesOffline,
+  bootstrapCurveFromSet,
+  discountFactorAt,
+  zeroRateAt,
+  pillarMaturityYears,
+} from "./ratesPricing";
 import { Rng } from "./rng";
 import {
   brokerLadder,
@@ -1920,6 +1931,127 @@ export class MockTransport implements CelnetTransport {
     if (idx < 0) return false;
     this.mockInstruments.splice(idx, 1);
     return true;
+  }
+
+  // --- curve bootstrap from registry-referenced instruments (offline) --------
+
+  /**
+   * Resolve every pillar against the registry, derive each instrument's maturity
+   * arm, order short→long, and bootstrap the SAME in-browser discount curve the
+   * OIS pricer uses — the offline mirror of the server's `BuildCurve`. The numbers
+   * are real (no fabricated curve): an unresolved id, a currency mismatch, or a
+   * degenerate pillar set surfaces the genuine error.
+   */
+  async buildCurve(request: BuildCurveRequest): Promise<CalibratedCurve> {
+    if (request.pillars.length === 0) {
+      throw new Error("a curve needs at least one calibrating pillar");
+    }
+    const resolved = request.pillars.map((p) => {
+      const def = this.mockInstruments.find(
+        (d) => d.instrumentId === p.instrumentId,
+      );
+      if (!def) throw new Error(`no instrument with id \`${p.instrumentId}\``);
+      if (def.currency !== request.currency) {
+        throw new Error(
+          `instrument \`${p.instrumentId}\` is ${def.currency}, not the curve currency ${request.currency}`,
+        );
+      }
+      const tenor = MockTransport.instrumentPillarTenor(
+        def,
+        request.referenceDate,
+      );
+      return {
+        instrumentId: p.instrumentId,
+        tenor,
+        parRate: p.quote,
+        timeYears: pillarMaturityYears(tenor, request.referenceDate),
+      };
+    });
+
+    // Order short→long by resolved maturity (the bootstrap is sequential/acyclic).
+    const sorted = [...resolved].sort((a, b) => a.timeYears - b.timeYears);
+    const curveSet: RatesCurveSet = {
+      currency: request.currency,
+      referenceDate: request.referenceDate,
+      pillars: sorted.map((r) => ({ tenor: r.tenor, parRate: r.parRate })),
+    };
+    const discount = bootstrapCurveFromSet(curveSet);
+    return {
+      requestId: request.requestId,
+      currency: request.currency,
+      referenceDate: request.referenceDate,
+      points: sorted.map((r) => ({
+        instrumentId: r.instrumentId,
+        timeYears: r.timeYears,
+        discountFactor: discountFactorAt(discount, r.timeYears),
+        zeroRate: zeroRateAt(discount, r.timeYears),
+      })),
+    };
+  }
+
+  /** Derive the curve-pillar maturity arm for one registry instrument. */
+  private static instrumentPillarTenor(
+    def: InstrumentDef,
+    referenceDate: BrokenDate,
+  ): PillarTenor {
+    switch (def.family) {
+      case "deposit":
+        return MockTransport.tenorToPillar(def.deposit.tenor, referenceDate);
+      case "fra":
+        return MockTransport.tenorToPillar(def.fra.endTenor, referenceDate);
+      case "stir_future":
+        return MockTransport.tenorToPillar(
+          def.stirFuture.referenceEnd,
+          referenceDate,
+        );
+      case "vanilla_irs":
+        return MockTransport.tenorToPillar(def.vanillaIrs.tenor, referenceDate);
+      case "ois":
+        return MockTransport.tenorToPillar(def.ois.tenor, referenceDate);
+      case "bond":
+        return { kind: "date", maturityDate: def.bond.maturityDate };
+    }
+  }
+
+  /** Parse a `"<n><D|W|M|Y>"` tenor token to a {@link PillarTenor}. */
+  private static tenorToPillar(
+    tenor: string,
+    referenceDate: BrokenDate,
+  ): PillarTenor {
+    const m = /^(\d+)\s*([DWMY])$/i.exec(tenor.trim());
+    if (!m || m[1] === undefined || m[2] === undefined) {
+      throw new Error(`unsupported pillar tenor \`${tenor}\``);
+    }
+    const count = Number(m[1]);
+    switch (m[2].toUpperCase()) {
+      case "Y":
+        return { kind: "years", years: count };
+      case "M":
+        return { kind: "months", months: count };
+      case "W":
+        return {
+          kind: "date",
+          maturityDate: MockTransport.addDays(referenceDate, count * 7),
+        };
+      case "D":
+        return {
+          kind: "date",
+          maturityDate: MockTransport.addDays(referenceDate, count),
+        };
+      default:
+        throw new Error(`unsupported pillar tenor unit in \`${tenor}\``);
+    }
+  }
+
+  /** Add `days` calendar days to a civil date (UTC arithmetic, no clamping). */
+  private static addDays(ref: BrokenDate, days: number): BrokenDate {
+    const d = new Date(Date.UTC(ref.year, ref.month - 1, ref.day));
+    d.setUTCDate(d.getUTCDate() + days);
+    return {
+      year: d.getUTCFullYear(),
+      month: d.getUTCMonth() + 1,
+      day: d.getUTCDate(),
+    };
   }
 
   // --- RfqDeskService (offline) ----------------------------------------------

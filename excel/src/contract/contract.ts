@@ -1365,6 +1365,57 @@ export interface RatesCurveSet {
   pillars: readonly OisCurvePillar[];
 }
 
+// --- curve bootstrap from registry-referenced instruments (`BuildCurve`) ------
+// Mirrors the GUI client (`gui/src/data/contract.ts`) field-for-field: pick
+// reference-data registry instruments + a calibrating quote each, the server
+// resolves every id, bootstraps, and returns per-instrument calibrated points.
+
+/**
+ * One calibrating quote for a {@link BuildCurveRequest} (`celnet.wire
+ * .InstrumentQuote`): a registry instrument id + its observed market quote as a
+ * decimal (0.0405 = 4.05%).
+ */
+export interface InstrumentQuote {
+  instrumentId: string;
+  quote: number;
+}
+
+/**
+ * A request to bootstrap a single-currency discount curve from registry-referenced
+ * instruments (`celnet.wire.BuildCurveRequest`). Pillars may arrive in any order;
+ * at least one is required.
+ */
+export interface BuildCurveRequest {
+  requestId: string;
+  currency: string;
+  referenceDate: BrokenDate;
+  pillars: readonly InstrumentQuote[];
+}
+
+/**
+ * One bootstrapped pillar of a {@link CalibratedCurve} (`celnet.wire
+ * .CalibratedCurvePoint`).
+ */
+export interface CalibratedCurvePoint {
+  instrumentId: string;
+  /** Pillar maturity on the ACT/365F curve year-fraction axis. */
+  timeYears: number;
+  discountFactor: number;
+  /** Continuously-compounded zero rate (decimal). */
+  zeroRate: number;
+}
+
+/**
+ * A bootstrapped discount curve (`celnet.wire.CalibratedCurve`): the calibrated
+ * pillar points (short→long by maturity) plus the echoed request header.
+ */
+export interface CalibratedCurve {
+  requestId: string;
+  currency: string;
+  referenceDate: BrokenDate;
+  points: readonly CalibratedCurvePoint[];
+}
+
 /**
  * The fixed-leg direction of an OIS from the client's perspective. The wire
  * `Side` carries this: SIDE_BUY pays fixed (payer), SIDE_SELL receives fixed.

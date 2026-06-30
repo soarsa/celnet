@@ -2395,6 +2395,77 @@ export interface RatesPricingResult {
 }
 
 // ---------------------------------------------------------------------------
+// curve bootstrap from registry-referenced instruments (`AuthService.BuildCurve`).
+// Distinct from the slice-A par-OIS-pillar authoring above: here the trader picks
+// reference-data instruments (the `ListInstruments` roster) and supplies one
+// calibrating quote each; the SERVER resolves every id against the registry,
+// rebuilds each schedule from the reference date, runs the sequential bootstrap,
+// and returns per-instrument calibrated points (short→long by resolved maturity).
+// ---------------------------------------------------------------------------
+
+/**
+ * One calibrating quote for a {@link BuildCurveRequest} (`celnet.wire
+ * .InstrumentQuote`): a reference-data instrument id paired with its observed
+ * market quote. The id resolves against the instrument registry; the quote is the
+ * instrument's calibration observable as a decimal (a deposit/FRA/par-swap fixed
+ * rate, or a STIR future's `(100 − price) / 100` futures rate).
+ */
+export interface InstrumentQuote {
+  /** The registry instrument id to resolve (e.g. `usd-irs-10y`). */
+  instrumentId: string;
+  /** The observed calibrating quote as a decimal (0.0405 = 4.05%). */
+  quote: number;
+}
+
+/**
+ * A request to bootstrap a single-currency discount curve from registry-referenced
+ * instruments (`celnet.wire.BuildCurveRequest`). Pillars may arrive in any order —
+ * the server orders them by resolved maturity. At least one pillar is required.
+ */
+export interface BuildCurveRequest {
+  /** Caller-supplied correlation token, echoed back on the result. */
+  requestId: string;
+  /** ISO-4217 currency of the curve (the pillar set must be single-currency). */
+  currency: string;
+  /** The curve reference (spot-anchor) civil date the pillar schedules roll from. */
+  referenceDate: BrokenDate;
+  /** The calibrating instrument quotes; at least one, maturity order not required. */
+  pillars: readonly InstrumentQuote[];
+}
+
+/**
+ * One bootstrapped pillar of a {@link CalibratedCurve} (`celnet.wire
+ * .CalibratedCurvePoint`): the resolved curve coordinate and discount factor at one
+ * calibrating instrument's maturity.
+ */
+export interface CalibratedCurvePoint {
+  /** The input instrument id this pillar calibrates. */
+  instrumentId: string;
+  /** The pillar maturity on the ACT/365F curve year-fraction axis. */
+  timeYears: number;
+  /** The bootstrapped discount factor at `timeYears`. */
+  discountFactor: number;
+  /** The continuously-compounded zero rate at `timeYears` (decimal). */
+  zeroRate: number;
+}
+
+/**
+ * A bootstrapped discount curve (`celnet.wire.CalibratedCurve`): the calibrated
+ * pillar points (one per input instrument, ordered short→long by maturity) plus the
+ * echoed request header.
+ */
+export interface CalibratedCurve {
+  /** Echoed {@link BuildCurveRequest.requestId}. */
+  requestId: string;
+  /** ISO-4217 currency of the curve. */
+  currency: string;
+  /** The curve reference (spot-anchor) date, echoed from the request. */
+  referenceDate: BrokenDate;
+  /** The bootstrapped pillars, ordered short→long by maturity. */
+  points: readonly CalibratedCurvePoint[];
+}
+
+// ---------------------------------------------------------------------------
 // fixed-income (rates) portfolio risk — the additive book-level risk rollup
 // (`RiskService.AggregateRatesRisk`). Mirrors the `celnet.wire` rates-risk
 // messages one-to-one: a `CurveSet` + signed `RatesPosition`s roll up additively

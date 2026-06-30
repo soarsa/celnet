@@ -63,6 +63,10 @@ use celnet_proto::{
     ListInstrumentsRequest, ListInstrumentsResponse, UpdateInstrumentRequest,
     UpdateInstrumentResponse, instrument_def_desc::Definition as InstrumentDefinition,
 };
+// AuthService — discount-curve bootstrap from registry-referenced instruments
+// (WS mirror of the `BuildCurve` RPC: resolve each pillar id against the
+// reference-data registry, bootstrap, return per-instrument calibrated points).
+use celnet_proto::{BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, InstrumentQuote};
 // Linear-rates (fixed-income) contract — the WS mirror of PricingService::PriceRates.
 use celnet_proto::{
     CurveSet, OisInstrument, OisPillar, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
@@ -1283,6 +1287,57 @@ fn curve_set_from_json(v: &Value) -> Result<CurveSet> {
         currency: string_field(o, "currency")?,
         reference_date: Some(nested(o, "reference_date", broken_date_from_json)?),
         ois_pillars: pillars,
+    })
+}
+
+/// Decode one `InstrumentQuote` `{ instrument_id, quote }` — a registry pillar id
+/// paired with its observed calibrating quote.
+fn instrument_quote_from_json(v: &Value) -> Result<InstrumentQuote> {
+    let o = obj(v, "pillar")?;
+    Ok(InstrumentQuote {
+        instrument_id: string_field(o, "instrument_id")?,
+        quote: f64_field(o, "quote")?,
+    })
+}
+
+/// Decode a `BuildCurveRequest` `{ request_id, currency, reference_date, pillars[],
+/// session_token }`. The bearer `session_token` is injected by the connection.
+pub(super) fn build_curve_request_from_json(o: &Map<String, Value>) -> Result<BuildCurveRequest> {
+    let pillars = o
+        .get("pillars")
+        .and_then(Value::as_array)
+        .ok_or_else(|| err("`build_curve.pillars` must be an array"))?
+        .iter()
+        .map(instrument_quote_from_json)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(BuildCurveRequest {
+        request_id: string_field(o, "request_id")?,
+        currency: string_field(o, "currency")?,
+        reference_date: Some(nested(o, "reference_date", broken_date_from_json)?),
+        pillars,
+        session_token: string_field(o, "session_token")?,
+    })
+}
+
+/// Encode one bootstrapped `CalibratedCurvePoint`.
+fn calibrated_curve_point_to_json(p: &CalibratedCurvePoint) -> Value {
+    json!({
+        "instrument_id": p.instrument_id,
+        "time_years": p.time_years,
+        "discount_factor": p.discount_factor,
+        "zero_rate": p.zero_rate,
+    })
+}
+
+/// Encode a `CalibratedCurve` `{ request_id, currency, reference_date, points[] }`.
+pub(super) fn calibrated_curve_to_json(c: &CalibratedCurve) -> Value {
+    json!({
+        "request_id": c.request_id,
+        "currency": c.currency,
+        "reference_date": c.reference_date.as_ref().map(broken_date_to_json),
+        "points": Value::Array(
+            c.points.iter().map(calibrated_curve_point_to_json).collect(),
+        ),
     })
 }
 
@@ -4401,6 +4456,75 @@ mod tests {
         assert_eq!(v["correlation_id"], json!(7));
         assert!(v["result"]["par_rate"].as_f64().unwrap() > 0.0);
         assert_eq!(v["result"]["key_rate_ladder"].as_array().unwrap().len(), 3);
+    }
+
+    /// The `build_curve` frame decodes the registry-referenced pillar set the GUI /
+    /// Excel client sends, and a `CalibratedCurve` re-encodes to the browser shape —
+    /// the WS mirror of `AuthService::BuildCurve`, field-for-field with the GUI codec.
+    #[test]
+    fn build_curve_request_decodes_and_calibrated_curve_encodes() {
+        let body = json!({
+            "request_id": "curve-001",
+            "currency": "USD",
+            "reference_date": { "year": 2026, "month": 6, "day": 25 },
+            "pillars": [
+                { "instrument_id": "usd-depo-3m", "quote": 0.0431 },
+                { "instrument_id": "usd-irs-10y", "quote": 0.0418 }
+            ],
+            "session_token": "tok-123"
+        });
+        let req = build_curve_request_from_json(body.as_object().unwrap()).expect("decodes");
+        assert_eq!(req.request_id, "curve-001");
+        assert_eq!(req.currency, "USD");
+        assert_eq!(req.session_token, "tok-123");
+        let ref_date = req.reference_date.as_ref().unwrap();
+        assert_eq!((ref_date.year, ref_date.month, ref_date.day), (2026, 6, 25));
+        assert_eq!(req.pillars.len(), 2);
+        assert_eq!(req.pillars[0].instrument_id, "usd-depo-3m");
+        assert!((req.pillars[1].quote - 0.0418).abs() < 1e-12);
+
+        // A bootstrapped result re-encodes to the snake_case `calibrated_curve` frame.
+        let curve = CalibratedCurve {
+            request_id: req.request_id.clone(),
+            currency: req.currency.clone(),
+            reference_date: req.reference_date,
+            points: vec![
+                CalibratedCurvePoint {
+                    instrument_id: "usd-depo-3m".to_owned(),
+                    time_years: 0.2521,
+                    discount_factor: 0.98912,
+                    zero_rate: 0.04318,
+                },
+                CalibratedCurvePoint {
+                    instrument_id: "usd-irs-10y".to_owned(),
+                    time_years: 10.0,
+                    discount_factor: 0.6612,
+                    zero_rate: 0.04134,
+                },
+            ],
+        };
+        let v = calibrated_curve_to_json(&curve);
+        assert_eq!(v["request_id"], json!("curve-001"));
+        assert_eq!(v["currency"], json!("USD"));
+        assert_eq!(v["reference_date"]["year"], json!(2026));
+        assert_eq!(v["points"].as_array().unwrap().len(), 2);
+        assert_eq!(v["points"][0]["instrument_id"], json!("usd-depo-3m"));
+        assert!((v["points"][1]["discount_factor"].as_f64().unwrap() - 0.6612).abs() < 1e-12);
+        assert!((v["points"][1]["time_years"].as_f64().unwrap() - 10.0).abs() < 1e-12);
+    }
+
+    /// A `build_curve` body without a `pillars` array is a contract error, not a panic.
+    #[test]
+    fn build_curve_request_rejects_missing_pillars() {
+        let body = json!({
+            "request_id": "curve-002",
+            "currency": "USD",
+            "reference_date": { "year": 2026, "month": 6, "day": 25 },
+            "session_token": "tok-123"
+        });
+        let err = build_curve_request_from_json(body.as_object().unwrap())
+            .expect_err("missing pillars must error");
+        assert!(err.to_string().contains("pillars"));
     }
 
     /// A curve mixing all three `PillarTenor` arms — a whole-year `years`, a

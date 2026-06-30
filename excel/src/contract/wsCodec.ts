@@ -51,6 +51,8 @@ import type {
   Pivot,
   RatesCurveSet,
   RatesPricingResult,
+  BuildCurveRequest,
+  CalibratedCurve,
   SingleBarrier,
   Touch,
   Vanilla,
@@ -1230,6 +1232,47 @@ export function ratesPricingResultFromWire(o: WireObject): RatesPricingResult {
     pv01: num(result, "pv01"),
     dv01: num(result, "dv01"),
     keyRateLadder,
+  };
+}
+
+/**
+ * Encode a {@link BuildCurveRequest} to the wire `build_curve` request body. The
+ * bearer `session_token` + framing `correlation_id` are injected by the connection
+ * (mirrors the GUI client + the server's `ws/codec.rs` field-for-field).
+ */
+export function buildCurveRequestToWire(req: BuildCurveRequest): WireObject {
+  return {
+    request_id: req.requestId,
+    currency: req.currency,
+    reference_date: {
+      year: req.referenceDate.year,
+      month: req.referenceDate.month,
+      day: req.referenceDate.day,
+    },
+    pillars: req.pillars.map((p) => ({
+      instrument_id: p.instrumentId,
+      quote: p.quote,
+    })),
+  };
+}
+
+/** Decode a wire `calibrated_curve` frame into a {@link CalibratedCurve}. */
+export function calibratedCurveFromWire(o: WireObject): CalibratedCurve {
+  const ref = child(o, "reference_date");
+  return {
+    requestId: str(o, "request_id"),
+    currency: str(o, "currency"),
+    referenceDate: {
+      year: num(ref, "year"),
+      month: num(ref, "month"),
+      day: num(ref, "day"),
+    },
+    points: array(o, "points").map((p) => ({
+      instrumentId: str(p, "instrument_id"),
+      timeYears: num(p, "time_years"),
+      discountFactor: num(p, "discount_factor"),
+      zeroRate: num(p, "zero_rate"),
+    })),
   };
 }
 

@@ -26,8 +26,16 @@ import { DataGrid } from "../components/DataGrid";
 import { Sparkline } from "../components/Sparkline";
 import { CurveChart, type CurveSeries } from "../viz/CurveChart";
 import type { ColumnDef } from "../lib/grid";
-import type { BrokenDate, PillarTenor, RatesCurveSet } from "../data/contract";
-import { pillarTenorLabel } from "../data/contract";
+import type {
+  BrokenDate,
+  CalibratedCurve,
+  InstrumentDef,
+  PillarTenor,
+  RatesCurveSet,
+} from "../data/contract";
+import { INSTRUMENT_FAMILY_LABELS, pillarTenorLabel } from "../data/contract";
+import { useApp } from "../app/AppContext";
+import { useReferenceData } from "../hooks/useReferenceData";
 import {
   bootstrapCurveFromSet,
   discountFactorAt,
@@ -39,6 +47,9 @@ import {
   type CurveSamplePoint,
 } from "../data/ratesPricing";
 import styles from "./CurveWorkspace.module.css";
+
+/** The two curve-authoring modes the workspace offers. */
+type AuthoringMode = "pillars" | "instruments";
 
 /** Number of points sampled across the span for the term-structure plots. */
 const SAMPLE_COUNT = 96;
@@ -171,7 +182,49 @@ const LADDER_COLUMNS: readonly ColumnDef<LadderRow>[] = [
   },
 ];
 
+/**
+ * The rates CURVE surface. Two coherent authoring modes share the same bootstrap
+ * and the same discount/zero readout: the slice-A **pillar editor** (author the
+ * par-OIS pillars directly across the years / months / broken-date arms) and the
+ * **build-by-instrument-reference** mode (pick reference-data registry instruments
+ * and supply a calibrating quote each — the SERVER resolves every id, bootstraps,
+ * and returns the calibrated points). A tab switches between them.
+ */
 export function CurveWorkspace(): React.ReactElement {
+  const [mode, setMode] = useState<AuthoringMode>("pillars");
+
+  return (
+    <div className={styles.page}>
+      <div
+        className={styles.modeTabs}
+        role="tablist"
+        aria-label="curve authoring mode"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "pillars"}
+          className={`${styles.modeTab} ${mode === "pillars" ? styles.modeTabActive : ""}`}
+          onClick={() => setMode("pillars")}
+        >
+          Pillar editor
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "instruments"}
+          className={`${styles.modeTab} ${mode === "instruments" ? styles.modeTabActive : ""}`}
+          onClick={() => setMode("instruments")}
+        >
+          By instrument reference
+        </button>
+      </div>
+      {mode === "pillars" ? <PillarEditorMode /> : <InstrumentReferenceMode />}
+    </div>
+  );
+}
+
+function PillarEditorMode(): React.ReactElement {
   const [pillars, setPillars] =
     useState<readonly EditablePillar[]>(INITIAL_PILLARS);
   const [horizonYears, setHorizonYears] = useState(5);
@@ -513,6 +566,388 @@ export function CurveWorkspace(): React.ReactElement {
             {error
               ? "Adjust the pillars to a valid set to bootstrap and inspect the curve."
               : "Bootstrapping the curve…"}
+          </p>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+/** One added calibrating pillar in the instrument-reference builder. */
+interface InstrumentPick {
+  readonly instrumentId: string;
+  readonly quotePct: number;
+}
+
+/** One row of the calibrated-curve readout (a returned bootstrapped point). */
+interface PointRow {
+  readonly label: string;
+  readonly timeYears: number;
+  readonly df: number;
+  readonly zero: number;
+}
+
+const POINT_COLUMNS: readonly ColumnDef<PointRow>[] = [
+  {
+    key: "instrument",
+    header: "Instrument",
+    width: 168,
+    align: "left",
+    accessor: (r) => r.label,
+  },
+  {
+    key: "t",
+    header: "Maturity",
+    unit: "y",
+    width: 96,
+    accessor: (r) => r.timeYears.toFixed(2),
+  },
+  {
+    key: "zero",
+    header: "Zero (cc)",
+    unit: "%",
+    width: 120,
+    accessor: (r) => fmtRatePct(r.zero),
+  },
+  {
+    key: "df",
+    header: "DF",
+    width: 120,
+    accessor: (r) => fmtDf(r.df),
+  },
+];
+
+/**
+ * Build-by-instrument-reference mode: pick reference-data registry instruments,
+ * enter a calibrating quote per pillar, and call the server's `BuildCurve` — the
+ * returned calibrated curve (discount-factor / zero-rate points) renders here. The
+ * curve math is the SERVER's (no in-browser bootstrap on this path); the GUI only
+ * assembles the request and renders the response.
+ */
+function InstrumentReferenceMode(): React.ReactElement {
+  const app = useApp();
+  const isAuthed = app.auth.user !== null;
+  const refData = useReferenceData(app.transport, isAuthed);
+
+  const [currency, setCurrency] = useState("USD");
+  const [refInput, setRefInput] = useState(brokenToInput(REFERENCE_DATE));
+  const [picks, setPicks] = useState<readonly InstrumentPick[]>([]);
+  const [addId, setAddId] = useState("");
+  const [result, setResult] = useState<CalibratedCurve | null>(null);
+  const [building, setBuilding] = useState(false);
+  const [buildError, setBuildError] = useState<string | null>(null);
+
+  const byId = useMemo(() => {
+    const m = new Map<string, InstrumentDef>();
+    for (const d of refData.instruments) m.set(d.instrumentId, d);
+    return m;
+  }, [refData.instruments]);
+
+  // Only instruments in the chosen curve currency can calibrate it.
+  const addable = useMemo(
+    () =>
+      refData.instruments.filter(
+        (d) =>
+          d.currency === currency &&
+          !picks.some((p) => p.instrumentId === d.instrumentId),
+      ),
+    [refData.instruments, currency, picks],
+  );
+
+  const instrumentLabel = useCallback(
+    (id: string): string => {
+      const def = byId.get(id);
+      if (!def) return id;
+      return `${def.name} · ${INSTRUMENT_FAMILY_LABELS[def.family]}`;
+    },
+    [byId],
+  );
+
+  const addPick = useCallback(() => {
+    if (!addId) return;
+    setPicks((prev) =>
+      prev.some((p) => p.instrumentId === addId)
+        ? prev
+        : [...prev, { instrumentId: addId, quotePct: 4 }],
+    );
+    setAddId("");
+    setResult(null);
+  }, [addId]);
+
+  const removePick = useCallback((id: string) => {
+    setPicks((prev) => prev.filter((p) => p.instrumentId !== id));
+    setResult(null);
+  }, []);
+
+  const setQuote = useCallback((id: string, pct: number) => {
+    setPicks((prev) =>
+      prev.map((p) => (p.instrumentId === id ? { ...p, quotePct: pct } : p)),
+    );
+  }, []);
+
+  const build = useCallback(async (): Promise<void> => {
+    const referenceDate = inputToBroken(refInput);
+    if (!referenceDate) {
+      setBuildError("reference date must be a valid YYYY-MM-DD date");
+      return;
+    }
+    if (picks.length === 0) {
+      setBuildError("add at least one calibrating instrument");
+      return;
+    }
+    setBuilding(true);
+    setBuildError(null);
+    try {
+      const curve = await app.transport.buildCurve({
+        requestId: `curve-${Date.now()}`,
+        currency,
+        referenceDate,
+        pillars: picks.map((p) => ({
+          instrumentId: p.instrumentId,
+          quote: p.quotePct / 100,
+        })),
+      });
+      setResult(curve);
+    } catch (e: unknown) {
+      setResult(null);
+      setBuildError(e instanceof Error ? e.message : "curve build failed");
+    } finally {
+      setBuilding(false);
+    }
+  }, [app.transport, currency, refInput, picks]);
+
+  const pointRows = useMemo<PointRow[]>(() => {
+    if (!result) return [];
+    return result.points.map((p) => ({
+      label: instrumentLabel(p.instrumentId),
+      timeYears: p.timeYears,
+      df: p.discountFactor,
+      zero: p.zeroRate,
+    }));
+  }, [result, instrumentLabel]);
+
+  const pointGroups = useMemo(
+    () => [
+      {
+        key: "",
+        label: "",
+        rows: pointRows.map((r, i) => ({ key: `${r.label}-${i}`, datum: r })),
+      },
+    ],
+    [pointRows],
+  );
+
+  const dfSeries = useMemo<CurveSeries[]>(() => {
+    if (!result) return [];
+    return [
+      {
+        label: "DF(t)",
+        tone: "offer",
+        points: result.points.map((p) => ({ x: p.timeYears, y: p.discountFactor })),
+      },
+    ];
+  }, [result]);
+
+  const zeroSeries = useMemo<CurveSeries[]>(() => {
+    if (!result) return [];
+    return [
+      {
+        label: "zero z(t)",
+        tone: "accent",
+        points: result.points.map((p) => ({ x: p.timeYears, y: p.zeroRate })),
+      },
+    ];
+  }, [result]);
+
+  return (
+    <div className={styles.wrap}>
+      <Panel
+        material="float"
+        className={styles.builder}
+        title="Reference instruments"
+      >
+        <p className={styles.hint}>
+          Pick calibrating instruments from the reference-data registry and enter
+          each observed quote. The server resolves every id, bootstraps, and
+          returns the calibrated discount curve.
+        </p>
+
+        <div className={styles.curveRow}>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Currency</span>
+            <input
+              className={styles.ccyInput}
+              type="text"
+              value={currency}
+              aria-label="curve currency"
+              maxLength={3}
+              onChange={(e) => {
+                setCurrency(e.target.value.toUpperCase().slice(0, 3));
+                setPicks([]);
+                setResult(null);
+              }}
+            />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Reference date</span>
+            <input
+              type="date"
+              value={refInput}
+              aria-label="curve reference date"
+              onChange={(e) => {
+                setRefInput(e.target.value);
+                setResult(null);
+              }}
+            />
+          </label>
+        </div>
+
+        {!isAuthed && (
+          <p className={styles.notice} role="status">
+            Sign in to load the instrument registry and build curves.
+          </p>
+        )}
+
+        <div className={styles.pillarHead}>
+          <span className={styles.fieldLabel}>Calibrating instruments</span>
+        </div>
+
+        <div className={styles.picker}>
+          <select
+            className={styles.pickerSelect}
+            value={addId}
+            aria-label="instrument to add"
+            disabled={addable.length === 0}
+            onChange={(e) => setAddId(e.target.value)}
+          >
+            <option value="">
+              {addable.length === 0
+                ? `No more ${currency} instruments`
+                : `Select a ${currency} instrument…`}
+            </option>
+            {addable.map((d) => (
+              <option key={d.instrumentId} value={d.instrumentId}>
+                {d.name} · {INSTRUMENT_FAMILY_LABELS[d.family]}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="ghost"
+            onClick={addPick}
+            disabled={!addId}
+            title="add this instrument as a calibrating pillar"
+          >
+            + Add
+          </Button>
+        </div>
+
+        {picks.length > 0 && (
+          <ul className={styles.pillarList}>
+            {picks.map((p) => (
+              <li key={p.instrumentId} className={styles.pickItem}>
+                <span className={styles.pickLabel}>
+                  {instrumentLabel(p.instrumentId)}
+                </span>
+                <label className={styles.inlineInput}>
+                  <input
+                    type="number"
+                    step={0.01}
+                    value={p.quotePct}
+                    aria-label={`${p.instrumentId} calibrating quote in percent`}
+                    onChange={(e) =>
+                      setQuote(p.instrumentId, Number(e.target.value))
+                    }
+                  />
+                  <span className={styles.inputUnit}>%</span>
+                </label>
+                <button
+                  type="button"
+                  className={styles.pillarRemove}
+                  aria-label={`remove ${p.instrumentId}`}
+                  title="remove this pillar"
+                  onClick={() => removePick(p.instrumentId)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className={styles.buildRow}>
+          <Button
+            variant="primary"
+            onClick={() => void build()}
+            disabled={building || picks.length === 0 || !isAuthed}
+            title="bootstrap the curve from the selected instruments"
+          >
+            {building ? "Building…" : "Build curve"}
+          </Button>
+        </div>
+
+        {refData.error && (
+          <p className={styles.error} role="alert">
+            {refData.error}
+          </p>
+        )}
+        {buildError && (
+          <p className={styles.error} role="alert">
+            {buildError}
+          </p>
+        )}
+      </Panel>
+
+      <Panel className={styles.results} title="Calibrated curve">
+        {result && result.points.length > 0 ? (
+          <>
+            <div className={styles.curveRow}>
+              <span className={styles.curveLabel}>Curve</span>
+              <span className={styles.curveName}>
+                {result.currency} discount
+              </span>
+              <span className={styles.curveMeta}>
+                {result.points.length} pillars · ref{" "}
+                {result.referenceDate.year}-
+                {String(result.referenceDate.month).padStart(2, "0")}-
+                {String(result.referenceDate.day).padStart(2, "0")} · server
+                bootstrap
+              </span>
+            </div>
+
+            <div className={styles.chart}>
+              <h3 className={styles.chartTitle}>Discount factor</h3>
+              <CurveChart
+                series={dfSeries}
+                xLabel="tenor (years)"
+                formatX={fmtTenorAxis}
+                formatY={(v) => v.toFixed(3)}
+              />
+            </div>
+
+            <div className={styles.chart}>
+              <h3 className={styles.chartTitle}>Zero rate · %</h3>
+              <CurveChart
+                series={zeroSeries}
+                xLabel="tenor (years)"
+                formatX={fmtTenorAxis}
+                formatY={fmtRateAxis}
+              />
+            </div>
+
+            <div className={styles.ladder}>
+              <h3 className={styles.chartTitle}>Calibrated points</h3>
+              <DataGrid
+                label="calibrated curve points"
+                columns={POINT_COLUMNS}
+                groups={pointGroups}
+              />
+            </div>
+          </>
+        ) : (
+          <p className={styles.empty}>
+            {isAuthed
+              ? "Add calibrating instruments and build to bootstrap the discount curve."
+              : "Sign in to build a curve from registry instruments."}
           </p>
         )}
       </Panel>
