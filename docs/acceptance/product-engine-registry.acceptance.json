@@ -1,0 +1,42 @@
+{
+  "deliverable": "product-engine-registry",
+  "title": "ProductEngine registry — decode → guard → dispatch (arch item C)",
+  "decision": "ADR-0008-multi-asset-carry-architecture",
+  "description": "celnet-server::price_instrument is refactored from an inline product match into decode → guard → dispatch over a per-family ProductEngine registry (crates/celnet-server/src/pricer/engines.rs). Each of the 24 product arms is a distinct ProductEngine impl, and pricing is byte-identical to the celnet-parity price corpus. This is the frozen-contract acceptance for the deliverable 'product-engine-registry'.",
+  "assertions": [
+    {
+      "id": "dispatch-over-product-engine-registry",
+      "kind": "edge",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch",
+      "statement": "engines::dispatch matches on instrument::Product and routes each of the 24 product arms (Vanilla … ListedFutureOption) to a distinct ProductEngine impl — the dispatch function has exactly 24 callees, one per family, with no pricing logic inline in the match.",
+      "decidable": true
+    },
+    {
+      "id": "product-engine-seam-present",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.ProductEngine.price",
+      "statement": "ProductEngine::price is the single per-family seam every product engine implements; a new product family plugs in by adding a ProductEngine impl plus one dispatch arm, never by editing price_instrument.",
+      "decidable": true
+    },
+    {
+      "id": "price-instrument-decode-guard-dispatch",
+      "kind": "invariant",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument",
+      "statement": "price_instrument is decode → guard → dispatch: after the term-shape, asset-class-routing and FX carry guards it delegates the FX/analytic product path to engines::dispatch (a single static call into the registry) with no product match inline.",
+      "decidable": true
+    },
+    {
+      "id": "pricing-byte-identical-to-parity-corpus",
+      "kind": "invariant",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument",
+      "statement": "The registry dispatch is byte-identical (to_bits equality) to the former inline product match across the celnet-parity price corpus — the refactor changes structure, not numbers.",
+      "decidable": false
+    }
+  ],
+  "anchors": [
+    "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument",
+    "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch",
+    "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.ProductEngine",
+    "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.ProductEngine.price"
+  ]
+}

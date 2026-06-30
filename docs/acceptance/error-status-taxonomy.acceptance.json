@@ -1,0 +1,41 @@
+{
+  "deliverable": "error-status-taxonomy",
+  "title": "Canonical error → tonic::Status taxonomy (arch item H)",
+  "decision": "ADR-0007-one-unversioned-contract",
+  "description": "There is one canonical error → tonic::Status mapping for the gRPC surface, living in celnet-server::services::error_status (price_error_to_status, link_error_to_status, rates_price_error_to_status). Every RPC boundary reuses these; the resulting codes and messages are byte-identical to the pre-consolidation per-service mappings. This is the frozen-contract acceptance for the deliverable 'error-status-taxonomy'.",
+  "assertions": [
+    {
+      "id": "price-error-canonical-mapping",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.price_error_to_status",
+      "statement": "price_error_to_status(&PriceError) -> tonic::Status is the single canonical PriceError→Status mapping used at every pricing RPC boundary; callers reuse it rather than re-mapping inline.",
+      "decidable": true
+    },
+    {
+      "id": "link-error-canonical-mapping",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.link_error_to_status",
+      "statement": "link_error_to_status(&LinkError) -> tonic::Status is the single canonical link/session error→Status mapping in the same error_status module.",
+      "decidable": true
+    },
+    {
+      "id": "rates-error-canonical-mapping",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.rates_price_error_to_status",
+      "statement": "rates_price_error_to_status(&RatesPriceError) -> tonic::Status is the single canonical rates-pricing error→Status mapping in the same error_status module.",
+      "decidable": true
+    },
+    {
+      "id": "codes-and-messages-byte-identical",
+      "kind": "invariant",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.price_error_to_status",
+      "statement": "The consolidated taxonomy is byte-identical to the former per-service mappings: every error variant yields the same tonic::Code and the same message string (the verbatim e.to_string()), so no client observes a changed code or message.",
+      "decidable": false
+    }
+  ],
+  "anchors": [
+    "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.price_error_to_status",
+    "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.link_error_to_status",
+    "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.rates_price_error_to_status"
+  ]
+}
