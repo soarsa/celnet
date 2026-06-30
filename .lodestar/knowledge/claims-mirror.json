@@ -13567,5 +13567,40 @@
    "github.com-soarsa-celnet.crates.celnet-proto.src.lib"
   ],
   "text": "Deliverable typecheck-and-dep-gates (arch item L): the gui+excel typecheck:e2e/typecheck:test scripts are wired into the t2 gate and the two dev-dep back-edges are removed — celnet-surface has zero edges into celnet-crypto-vanilla, and celnet-proto carries no dev-dependency cycle into celnet-core (cargo tree / cargo-machete). Acceptance target docs/acceptance/typecheck-and-dep-gates.acceptance.json. (t2-wiring and dev-cycle assertions DEFER to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/dormant-crate-activation.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch_live",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.PluginModelEngine",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.EngineCtx.plugin_models",
+   "github.com-soarsa-celnet.crates.celnet-plugin-host.src.registry.ModelRegistry.active_pricing_model"
+  ],
+  "text": "Deliverable dormant-crate-activation (arch item D): a registered plugin-host model prices through the same ProductEngine registry as native products — engines::dispatch_live routes the vanilla arm through EngineCtx.plugin_models (Option<&ModelRegistry>) to celnet_plugin_host::registry::ModelRegistry::active_pricing_model via the PluginModelEngine, while with no plugin model installed every product arm prices bit-for-bit as before the seam existed. celnet-xva and celnet-replog remain explicitly deferred (recorded in docs/INTERFACES.md), not silently dormant. Acceptance target docs/acceptance/dormant-crate-activation.acceptance.json. (Behavioral/byte-identity assertions DEFER to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/ws-codec-from-proto.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-proto.build.emit_wire_contract",
+   "github.com-soarsa-celnet.crates.celnet-server.src.ws.mod.is_stream_control",
+   "github.com-soarsa-celnet.crates.celnet-server.src.ws.mod.is_stream_control_matches_generated_contract"
+  ],
+  "text": "Deliverable ws-codec-from-proto (arch item G): celnet-proto's build.rs emit_wire_contract derives the wire verb manifest (including STREAM_CONTROL_VERBS) from the proto FileDescriptorSet — byte-identical on every build — and celnet-server::ws::is_stream_control routes stream-control verbs off that generated contract, with is_stream_control_matches_generated_contract asserting the server decoder stays in lockstep with the generated verb set. The full unary JSON codec swap (hand codec to fully build.rs-generated) is a documented forward deferral; the routing/manifest increment is what is satisfied here. Acceptance target docs/acceptance/ws-codec-from-proto.acceptance.json. (Generated-codec and wire-byte-identity assertions DEFER to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/desk-session-risk-scoping.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.narrow_to_desk",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.mod.RiskEdge.effective_principal",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.desk.mod.effective_desk_filter",
+   "github.com-soarsa-celnet.crates.celnet-server.tests.desk_session_boundary.aggregate_risk_narrows_a_desk_trader_to_their_own_desk"
+  ],
+  "text": "Deliverable desk-session-risk-scoping (arch item J): a desk-bound trader session resolves RiskEdge::effective_principal and narrows it to its desk via narrow_to_desk (grant-all base becomes one Desk-dimension grant; a scoped base has every grant ANDed with the desk rule; denies preserved), and effective_desk_filter derives the desk-visibility filter, so under the Enforce posture the session sees strictly fewer positions than a grant-all principal — exercised by the desk_session_boundary suite (aggregate_risk_narrows_a_desk_trader_to_their_own_desk). The structural narrowing seam is landed; the wire-client e2e is the deferred tail. Acceptance target docs/acceptance/desk-session-risk-scoping.acceptance.json. (Behavioral/Enforce-posture assertion DEFERS to draft until execute-to-verify is enabled.)"
  }
 ]
