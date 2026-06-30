@@ -174,6 +174,16 @@ else
   step "Structural graph + verified knowledge"; ok "skipped (--no-knowledge)"
 fi
 
+# ── Git hooks: auto-index on bulk git ops (reproducible via core.hooksPath) ──
+step "Git auto-index hooks"
+if [ -d "$REPO/tools/git-hooks" ]; then
+  chmod +x "$REPO/tools/git-hooks/"* 2>/dev/null || true
+  git -C "$REPO" config core.hooksPath tools/git-hooks
+  ok "core.hooksPath → tools/git-hooks (post-commit/merge/checkout/rewrite reindex)"
+else
+  warn "tools/git-hooks absent — skipping git-hook wiring."
+fi
+
 # ── 4. Done ────────────────────────────────────────────────────────────────────────
 step "Setup complete"
 cat <<EOF
