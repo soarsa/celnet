@@ -21,6 +21,7 @@ use celnet_entitlements::AccessMode;
 use celnet_risk_fleet::FleetTopology;
 use celnet_server::{Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
 use celnet_types::{CcyPair, Tenor};
+use tempfile::TempDir;
 
 /// The hard wall-clock ceiling for any single edge integration test. A correctness
 /// failure must surface as a *fast* failure, never an infinite hang.
@@ -36,59 +37,32 @@ pub fn eurusd_conv() -> celnet_conventions::ConventionRecord {
 }
 
 /// Start a ready edge on an ephemeral port over the EURUSD fixture with a system
-/// clock, returning the edge and its bound gRPC address.
-pub async fn start_ready_edge() -> (Edge, SocketAddr) {
+/// clock, returning the edge, its bound gRPC address, and the [`TempDir`] rooting
+/// its isolated persisted config (`identity.json` / `fix-connections.json`).
+///
+/// The `TempDir` MUST be held for the test's full lifetime — dropping it deletes the
+/// directory mid-test. Bind it (e.g. `let (edge, addr, _tmp) = …`), never `_`.
+pub async fn start_ready_edge() -> (Edge, SocketAddr, TempDir) {
     start_edge_with(true, Clock::system()).await
 }
 
 /// Start an edge with an explicit ready flag and clock (so a test can drive
 /// last-look expiry with a manual clock or assert not-ready rejection).
-pub async fn start_edge_with(ready: bool, clock: Clock) -> (Edge, SocketAddr) {
+///
+/// Each edge gets its OWN [`TempDir`]-rooted persisted config so parallel test edges
+/// never race the one shared `identity.json` / `fix-connections.json` path. The
+/// `TempDir` is returned so the caller owns it for the edge's full lifetime.
+pub async fn start_edge_with(ready: bool, clock: Clock) -> (Edge, SocketAddr, TempDir) {
     let initial = make_state(1.10, eurusd_conv());
     let link = CoreLink::start(initial, None);
     let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let edge = Edge::start(grpc, Arc::clone(&link), SpreadModel::default(), clock)
-        .await
-        .expect("edge binds on an ephemeral port");
-    if ready {
-        edge.gate().mark_ready();
-    }
-    // The generic mechanics harness runs under the Permissive posture: these tests
-    // exercise stream/surface/RFQ behaviour, not the caller-auth gate (Enforce is
-    // covered by the dedicated stream-auth unit test + the live e2e). Auth/entitlement
-    // tests build their own edge and assert the Enforce default explicitly.
-    edge.store().set_access_mode(AccessMode::Permissive);
-    let addr = edge.grpc_addr();
-    (edge, addr)
-}
-
-/// Start a ready edge whose multi-dealer RFQ panel carries `synthetic_lps`
-/// deterministic synthetic demo dealers beside the native maker, with a system
-/// clock. Explicit config — race-free, no process-global env mutation.
-pub async fn start_ready_panel_edge(synthetic_lps: u32) -> (Edge, SocketAddr) {
-    start_panel_edge_with(true, Clock::system(), synthetic_lps).await
-}
-
-/// Start an edge with an explicit ready flag, clock, and synthetic LP-panel
-/// breadth (so a test can drive a panel row past its last-look deadline with a
-/// manual clock). Uses the explicit-topology/panel boot path — no env mutation.
-pub async fn start_panel_edge_with(
-    ready: bool,
-    clock: Clock,
-    synthetic_lps: u32,
-) -> (Edge, SocketAddr) {
-    let initial = make_state(1.10, eurusd_conv());
-    let link = CoreLink::start(initial, None);
-    let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let ws: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let edge = Edge::start_on_with_topology(
+    let data_dir = tempfile::tempdir().expect("temp data dir for the edge's persisted config");
+    let edge = Edge::start(
         grpc,
-        ws,
         Arc::clone(&link),
         SpreadModel::default(),
         clock,
-        FleetTopology::InProcess,
-        LpPanelConfig { synthetic_lps },
+        Some(data_dir.path()),
     )
     .await
     .expect("edge binds on an ephemeral port");
@@ -101,7 +75,97 @@ pub async fn start_panel_edge_with(
     // tests build their own edge and assert the Enforce default explicitly.
     edge.store().set_access_mode(AccessMode::Permissive);
     let addr = edge.grpc_addr();
-    (edge, addr)
+    (edge, addr, data_dir)
+}
+
+/// Start a ready edge whose multi-dealer RFQ panel carries `synthetic_lps`
+/// deterministic synthetic demo dealers beside the native maker, with a system
+/// clock. Explicit config — race-free, no process-global env mutation.
+///
+/// Returns the edge, its bound gRPC address, and the [`TempDir`] rooting its
+/// isolated persisted config — hold the `TempDir` for the test's full lifetime.
+pub async fn start_ready_panel_edge(synthetic_lps: u32) -> (Edge, SocketAddr, TempDir) {
+    start_panel_edge_with(true, Clock::system(), synthetic_lps).await
+}
+
+/// Start an edge with an explicit ready flag, clock, and synthetic LP-panel
+/// breadth (so a test can drive a panel row past its last-look deadline with a
+/// manual clock). Uses the explicit-topology/panel boot path — no env mutation.
+///
+/// Each edge gets its OWN [`TempDir`]-rooted persisted config so parallel test edges
+/// never race the one shared config path; the `TempDir` is returned for the caller
+/// to own.
+pub async fn start_panel_edge_with(
+    ready: bool,
+    clock: Clock,
+    synthetic_lps: u32,
+) -> (Edge, SocketAddr, TempDir) {
+    let initial = make_state(1.10, eurusd_conv());
+    let link = CoreLink::start(initial, None);
+    let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let ws: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let data_dir = tempfile::tempdir().expect("temp data dir for the edge's persisted config");
+    let edge = Edge::start_on_with_topology(
+        grpc,
+        ws,
+        Arc::clone(&link),
+        SpreadModel::default(),
+        clock,
+        FleetTopology::InProcess,
+        LpPanelConfig { synthetic_lps },
+        Some(data_dir.path()),
+    )
+    .await
+    .expect("edge binds on an ephemeral port");
+    if ready {
+        edge.gate().mark_ready();
+    }
+    // The generic mechanics harness runs under the Permissive posture: these tests
+    // exercise stream/surface/RFQ behaviour, not the caller-auth gate (Enforce is
+    // covered by the dedicated stream-auth unit test + the live e2e). Auth/entitlement
+    // tests build their own edge and assert the Enforce default explicitly.
+    edge.store().set_access_mode(AccessMode::Permissive);
+    let addr = edge.grpc_addr();
+    (edge, addr, data_dir)
+}
+
+/// Log in as the default administrator over the edge's real `AuthService.Login` RPC
+/// (at the gRPC `base_url`, e.g. `http://127.0.0.1:NNNN`) and return the issued
+/// session token — the exact bearer a deployment threads onto a gated request.
+///
+/// The seed admin ([`SEED_ADMIN_EMAIL`] / [`SEED_ADMIN_PASSWORD`]) is always present:
+/// every [`Edge::start`] ensures it. The returned token validates against THIS edge's
+/// OWN session registry, so a request to this edge carrying it is admitted as that
+/// (grant-all) user under [`AccessMode::Enforce`].
+pub async fn login_seed_admin(base_url: &str) -> String {
+    use celnet_proto::LoginRequest;
+    use celnet_proto::auth_service_client::AuthServiceClient;
+    use celnet_server::config::identity::{SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD};
+
+    let mut auth = tokio::time::timeout(
+        STEP_DEADLINE,
+        AuthServiceClient::connect(base_url.to_owned()),
+    )
+    .await
+    .expect("auth client connects in time")
+    .expect("auth client connects");
+    let resp = tokio::time::timeout(
+        STEP_DEADLINE,
+        auth.login(LoginRequest {
+            email: SEED_ADMIN_EMAIL.to_owned(),
+            password: SEED_ADMIN_PASSWORD.to_owned(),
+            correlation_id: Some(1),
+        }),
+    )
+    .await
+    .expect("login resolves in time")
+    .expect("seed admin logs in")
+    .into_inner();
+    assert!(
+        !resp.session_token.is_empty(),
+        "Login mints a non-empty session token"
+    );
+    resp.session_token
 }
 
 /// The wire conventions used across the tests (EURUSD spot-premium-adjusted /

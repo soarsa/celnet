@@ -98,7 +98,7 @@ fn reference_price() -> f64 {
 async fn standalone_no_feed_is_byte_identical_to_today() {
     tokio::time::timeout(TEST_DEADLINE, async {
         // The default edge: no CELNET_DEPLOY / CELNET_VENDOR_WS in this test process.
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
 
         // No vendor feed and no governor are bound in the byte-identical default.
         assert!(
@@ -178,7 +178,7 @@ async fn vendor_feed_with_gap_resyncs_and_surface_matches_direct_pipeline() {
         let vendor_ws = server.local_addr();
 
         // ---- Attach the vendor feed against this edge's shared SurfaceBook --------
-        let (mut edge, _addr) = start_ready_edge().await;
+        let (mut edge, _addr, _data_dir) = start_ready_edge().await;
         let source = VendorReplaySource::new(vendor_ws, 6);
         let sink = StandaloneSink::new();
         edge.attach_vendor_feed(

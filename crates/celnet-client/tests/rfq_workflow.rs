@@ -54,7 +54,7 @@ fn dnt(lower: f64, upper: f64, rebate: f64) -> InstrumentSpec {
 #[tokio::test]
 async fn taker_rfqs_dnt_accepts_and_books() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
 
         let lower = 1.00;
         let upper = 1.20;
@@ -118,7 +118,7 @@ async fn taker_rfqs_dnt_accepts_and_books() {
 #[tokio::test]
 async fn vanilla_rfq_mid_equals_direct_garman_kohlhagen() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
 
         let strike = 1.12;
         let rfq = client.request_quote(vanilla_call(strike), conventions());
@@ -170,7 +170,7 @@ async fn vanilla_rfq_mid_equals_direct_garman_kohlhagen() {
 #[tokio::test]
 async fn idempotent_quote_retry_never_double_books() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
 
         let rfq = client.request_quote(vanilla_call(1.10), conventions());
         // The handle owns one stable key reused on every call.
@@ -230,7 +230,7 @@ async fn idempotent_quote_retry_never_double_books() {
 async fn accept_after_last_look_is_rejected() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let clock = Clock::manual(1_000_000_000);
-        let (edge, client) = start_edge_and_client_with(clock.clone()).await;
+        let (edge, client, _data_dir) = start_edge_and_client_with(clock.clone()).await;
 
         let rfq = client.request_quote(vanilla_call(1.10), conventions());
         let quote = tokio::time::timeout(STEP_DEADLINE, rfq.request())
@@ -263,7 +263,7 @@ async fn accept_after_last_look_is_rejected() {
 #[tokio::test]
 async fn distinct_rfqs_have_distinct_keys() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let a = client.request_quote(vanilla_call(1.10), Conventions::major_default());
         let b = client.request_quote(vanilla_call(1.12), Conventions::major_default());
         assert_ne!(
@@ -301,7 +301,7 @@ const _: fn() = || {
 #[tokio::test]
 async fn reject_returns_typed_ack_and_quote_cannot_be_accepted() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
 
         let rfq = client.request_quote(vanilla_call(1.10), conventions());
         let quote = tokio::time::timeout(STEP_DEADLINE, rfq.request())
@@ -354,7 +354,7 @@ async fn reject_returns_typed_ack_and_quote_cannot_be_accepted() {
 #[tokio::test]
 async fn sdk_ctors_price_barriers_digital_touch_equal_exotics_reference() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
 
         let m = live_market();
         // The headline `greeks.price` is per 1 unit of base notional — the same raw

@@ -92,7 +92,8 @@ fn native_row(rows: &[DealerQuote]) -> &DealerQuote {
 async fn panel_ranks_per_engine_law_rechecked_from_raw_rows() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let clock = Clock::manual(1_000_000_000);
-        let (edge, client) = start_panel_edge_and_client(clock.clone(), SYNTHETIC_LPS).await;
+        let (edge, client, _data_dir) =
+            start_panel_edge_and_client(clock.clone(), SYNTHETIC_LPS).await;
 
         let md = client.request_multi_dealer_quote(vanilla_call(1.12), conventions());
         let panel = tokio::time::timeout(STEP_DEADLINE, md.request())
@@ -184,7 +185,8 @@ async fn panel_ranks_per_engine_law_rechecked_from_raw_rows() {
 async fn booking_best_offer_winner_books_that_rows_offer_bit_for_bit() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let clock = Clock::manual(1_000_000_000);
-        let (edge, client) = start_panel_edge_and_client(clock.clone(), SYNTHETIC_LPS).await;
+        let (edge, client, _data_dir) =
+            start_panel_edge_and_client(clock.clone(), SYNTHETIC_LPS).await;
 
         let md = client.request_multi_dealer_quote(vanilla_call(1.12), conventions());
         let panel = tokio::time::timeout(STEP_DEADLINE, md.request())
@@ -254,7 +256,8 @@ async fn booking_best_offer_winner_books_that_rows_offer_bit_for_bit() {
 async fn default_accept_is_single_dealer_path_byte_identical() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let clock = Clock::manual(1_000_000_000);
-        let (edge, client) = start_panel_edge_and_client(clock.clone(), SYNTHETIC_LPS).await;
+        let (edge, client, _data_dir) =
+            start_panel_edge_and_client(clock.clone(), SYNTHETIC_LPS).await;
 
         // The single-dealer reference: a plain RFQ on the same instrument at the
         // same frozen instant — the maker's deterministic pricing makes its line
@@ -327,7 +330,8 @@ async fn default_accept_is_single_dealer_path_byte_identical() {
 async fn accept_after_panel_row_last_look_is_refused() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let clock = Clock::manual(1_000_000_000);
-        let (edge, client) = start_panel_edge_and_client(clock.clone(), SYNTHETIC_LPS).await;
+        let (edge, client, _data_dir) =
+            start_panel_edge_and_client(clock.clone(), SYNTHETIC_LPS).await;
 
         let md = client.request_multi_dealer_quote(vanilla_call(1.12), conventions());
         let panel = tokio::time::timeout(STEP_DEADLINE, md.request())

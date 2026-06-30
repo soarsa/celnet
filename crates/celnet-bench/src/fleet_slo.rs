@@ -391,7 +391,7 @@ async fn boot_backend() -> std::io::Result<Edge> {
     let initial = make_state(1.10, eurusd_conv());
     let link = CoreLink::start(initial, None);
     let grpc = "127.0.0.1:0".parse().expect("loopback addr");
-    let edge = Edge::start(grpc, link, SpreadModel::default(), Clock::system()).await?;
+    let edge = Edge::start(grpc, link, SpreadModel::default(), Clock::system(), None).await?;
     edge.gate().mark_ready();
     seed(edge.store());
     Ok(edge)
@@ -417,6 +417,7 @@ async fn boot_federating_edge(backend_url: &str) -> std::io::Result<Edge> {
         Clock::system(),
         topology,
         LpPanelConfig::default(),
+        None,
     )
     .await?;
     edge.gate().mark_ready();

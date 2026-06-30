@@ -189,14 +189,28 @@ impl WsServices {
             // coherent policy (the caller rides in the unary body — no router change).
             .with_session_access(Arc::clone(&sessions), Arc::clone(&store)),
         );
-        let stream = Arc::new(StreamEdge::with_store(
-            Arc::clone(&link),
-            Arc::clone(&gate),
-            spread,
-            clock.clone(),
-            Arc::clone(&surface_book),
-            Arc::clone(&store),
-        ));
+        let stream = Arc::new(
+            StreamEdge::with_store(
+                Arc::clone(&link),
+                Arc::clone(&gate),
+                spread,
+                clock.clone(),
+                Arc::clone(&surface_book),
+                Arc::clone(&store),
+            )
+            // Install the SAME edge-wide session registry the `auth` edge mints
+            // login sessions into (and the WS quote/risk gates resolve against), so
+            // a WS `StreamAuth` frame's `session_token` validates against the
+            // sessions actually issued by `AuthService.Login`. Without this the WS
+            // `StreamEdge` defaulted to a fresh EMPTY registry (`default_sessions`),
+            // so under `Enforce` every tokened stream auth was rejected
+            // "invalid or expired session token" — closing the connection — and the
+            // capability gate (`Stream`/`Execute·FxOptions`, finding #3: caps come
+            // only from an authenticated session) could never be satisfied over WS.
+            // The gRPC `StreamEdge` was already wired this way (lib.rs); this brings
+            // the WS mirror to the same one coherent session policy.
+            .with_sessions(Arc::clone(&sessions)),
+        );
         let surface = Arc::new(SurfaceEdge::with_fleet(
             Arc::clone(&link),
             Arc::clone(&gate),

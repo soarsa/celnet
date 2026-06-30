@@ -117,7 +117,7 @@ async fn drive_ticks(sub: &mut Subscription, n: usize, mut last_seq: u64) -> Str
 #[tokio::test]
 async fn market_maker_streams_many_instruments_over_one_session() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge(Clock::system()).await;
+        let (edge, addr, _data_dir) = start_ready_edge(Clock::system()).await;
         let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
             .await
             .expect("client connects in time")
@@ -211,7 +211,7 @@ async fn market_maker_streams_many_instruments_over_one_session() {
 #[tokio::test]
 async fn taker_click_trades_a_streamed_line_within_the_window() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge(Clock::system()).await;
+        let (edge, addr, _data_dir) = start_ready_edge(Clock::system()).await;
         let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
             .await
             .expect("client connects in time")
@@ -313,7 +313,7 @@ async fn stale_click_token_is_rejected_not_booked() {
     tokio::time::timeout(TEST_DEADLINE, async {
         // A manual clock we keep a handle to, so we can age the token past its window.
         let clock = Clock::manual(1_000_000_000);
-        let (edge, client) = start_edge_and_client_with(clock.clone()).await;
+        let (edge, client, _data_dir) = start_edge_and_client_with(clock.clone()).await;
 
         let session = tokio::time::timeout(STEP_DEADLINE, client.open_session())
             .await
@@ -371,7 +371,7 @@ async fn stale_click_token_is_rejected_not_booked() {
 #[tokio::test]
 async fn risk_manager_pulls_book_shaped_risk_equals_direct_fd() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client_with(Clock::system()).await;
+        let (edge, client, _data_dir) = start_edge_and_client_with(Clock::system()).await;
 
         let strike = 1.12;
         let expiry = 1.0;
@@ -507,7 +507,7 @@ async fn stream_authenticates_under_enforce_with_login_token_and_grant_all_defau
         // default credential regardless of any prior run's rotated password. Safe
         // under the gate's serial (`--test-threads 1`) execution.
         let _ = std::fs::remove_file("identity.json");
-        let (edge, addr) = start_ready_edge(Clock::system()).await;
+        let (edge, addr, _data_dir) = start_ready_edge(Clock::system()).await;
 
         // ---- (a) a real Login-issued session token authenticates the stream -------
         let token = login_seed_admin(addr).await;

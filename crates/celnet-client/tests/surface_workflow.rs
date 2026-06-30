@@ -33,7 +33,7 @@ use common::{
 #[tokio::test]
 async fn quant_marks_surface_reads_smile_and_arb_report() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
 
         let broker = BrokerQuoteSet::three_point(1.0, 0.105, -0.0040, 0.0020);
         let marked = tokio::time::timeout(
@@ -111,7 +111,7 @@ async fn quant_marks_surface_under_extended_surface_family() {
     use celnet_client::Calibration;
 
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
 
         let broker = BrokerQuoteSet::three_point(1.0, 0.105, -0.0040, 0.0020);
 
@@ -219,7 +219,7 @@ async fn quant_marks_surface_under_extended_surface_family() {
 #[tokio::test]
 async fn risk_manager_runs_spot_vol_shock_grid() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
 
         let strike = 1.12;
         let base = live_market();
@@ -290,7 +290,7 @@ async fn risk_manager_runs_spot_vol_shock_grid() {
 #[tokio::test]
 async fn one_shot_price_equals_direct() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
 
         let strike = 1.08;
         let market = live_market();
@@ -337,7 +337,7 @@ async fn wave1_swaps_and_asian_price_through_sdk() {
     };
 
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let market = live_market();
         let template = VanillaInputs::new(
             market.spot,
@@ -474,7 +474,7 @@ async fn wave2_forward_start_cliquet_quanto_price_through_sdk() {
     };
 
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let market = live_market();
         let inputs = VanillaInputs::new(
             market.spot,
@@ -750,7 +750,7 @@ async fn wave3_tarf_accumulator_lookback_price_through_sdk() {
     };
 
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let market = live_market();
         let inputs = VanillaInputs::new(
             market.spot,
@@ -1018,7 +1018,7 @@ async fn basket_prices_through_sdk_with_std_error() {
     };
 
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let market = live_market();
 
         // A genuine 2-asset worst-of call. Per-leg market data travels in the

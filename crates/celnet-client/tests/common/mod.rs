@@ -25,6 +25,7 @@ use celnet_client::{
 use celnet_engine::testing::make_state;
 use celnet_server::{AccessMode, Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
 use celnet_types::{CcyPair, OptionType, Tenor};
+use tempfile::TempDir;
 
 /// The hard wall-clock ceiling for any single client integration test. A
 /// correctness failure must surface as a *fast* failure, never an infinite hang.
@@ -49,33 +50,46 @@ pub fn eurusd() -> CcyPair {
 }
 
 /// Start a ready edge on an ephemeral port over the EURUSD fixture with a system
-/// clock, returning the edge and a connected typed [`Client`].
-pub async fn start_edge_and_client() -> (Edge, Client) {
+/// clock, returning the edge, a connected typed [`Client`], and the [`TempDir`]
+/// rooting the edge's isolated persisted config — hold it for the test's lifetime.
+pub async fn start_edge_and_client() -> (Edge, Client, TempDir) {
     start_edge_and_client_with(Clock::system()).await
 }
 
 /// Start a ready edge with an explicit clock (so a test can drive last-look expiry
-/// deterministically), returning the edge and a connected typed [`Client`].
-pub async fn start_edge_and_client_with(clock: Clock) -> (Edge, Client) {
-    let (edge, addr) = start_ready_edge(clock).await;
+/// deterministically), returning the edge, a connected typed [`Client`], and the
+/// [`TempDir`] rooting the edge's isolated persisted config.
+pub async fn start_edge_and_client_with(clock: Clock) -> (Edge, Client, TempDir) {
+    let (edge, addr, data_dir) = start_ready_edge(clock).await;
     let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
         .await
         .expect("client connects in time")
         .expect("client connects");
-    (edge, client)
+    (edge, client, data_dir)
 }
 
 /// Start a ready edge on an ephemeral port over the EURUSD fixture.
-pub async fn start_ready_edge(clock: Clock) -> (Edge, SocketAddr) {
+///
+/// Each edge roots its persisted config (`identity.json` / `fix-connections.json`)
+/// in its OWN [`TempDir`] so parallel test edges never race the one shared path; the
+/// `TempDir` is returned for the caller to own for the edge's full lifetime.
+pub async fn start_ready_edge(clock: Clock) -> (Edge, SocketAddr, TempDir) {
     let initial = make_state(FIXTURE_SPOT, eurusd_conv());
     let link = CoreLink::start(initial, None);
     let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let edge = Edge::start(grpc, Arc::clone(&link), SpreadModel::default(), clock)
-        .await
-        .expect("edge binds on an ephemeral port");
+    let data_dir = tempfile::tempdir().expect("temp data dir for the edge's persisted config");
+    let edge = Edge::start(
+        grpc,
+        Arc::clone(&link),
+        SpreadModel::default(),
+        clock,
+        Some(data_dir.path()),
+    )
+    .await
+    .expect("edge binds on an ephemeral port");
     mark_ready_enforcing(&edge);
     let addr = edge.grpc_addr();
-    (edge, addr)
+    (edge, addr, data_dir)
 }
 
 /// Mark a freshly-bound in-process test edge ready under the **production
@@ -100,11 +114,15 @@ fn mark_ready_enforcing(edge: &Edge) {
 /// returning the edge and a connected typed [`Client`]. Uses the explicit-panel
 /// boot path ([`Edge::start_on_with_panel`]) so the multi-dealer tests never
 /// mutate process-global env, matching the server's own panel-test harness.
-pub async fn start_panel_edge_and_client(clock: Clock, synthetic_lps: u32) -> (Edge, Client) {
+pub async fn start_panel_edge_and_client(
+    clock: Clock,
+    synthetic_lps: u32,
+) -> (Edge, Client, TempDir) {
     let initial = make_state(FIXTURE_SPOT, eurusd_conv());
     let link = CoreLink::start(initial, None);
     let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let ws: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let data_dir = tempfile::tempdir().expect("temp data dir for the edge's persisted config");
     let edge = Edge::start_on_with_panel(
         grpc,
         ws,
@@ -112,6 +130,7 @@ pub async fn start_panel_edge_and_client(clock: Clock, synthetic_lps: u32) -> (E
         SpreadModel::default(),
         clock,
         LpPanelConfig { synthetic_lps },
+        Some(data_dir.path()),
     )
     .await
     .expect("edge binds on an ephemeral port");
@@ -121,7 +140,7 @@ pub async fn start_panel_edge_and_client(clock: Clock, synthetic_lps: u32) -> (E
         .await
         .expect("client connects in time")
         .expect("client connects");
-    (edge, client)
+    (edge, client, data_dir)
 }
 
 /// Log in as the default administrator over the edge's real `AuthService.Login` RPC

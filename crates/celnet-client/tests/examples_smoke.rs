@@ -62,7 +62,7 @@ fn example_market() -> MarketContext {
 #[tokio::test]
 async fn example_quote_and_trade_path_quotes_and_books() {
     tokio::time::timeout(SMOKE_TEST, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
 
         let instrument = InstrumentSpec::vanilla(
             eurusd(),
@@ -111,7 +111,7 @@ async fn example_multi_dealer_trade_path_ranks_and_books_best_lp() {
     tokio::time::timeout(SMOKE_TEST, async {
         // The same panel breadth `demo_edge` boots with, on an in-process edge
         // (explicit panel — no env mutation).
-        let (edge, client) = start_panel_edge_and_client(Clock::system(), 3).await;
+        let (edge, client, _data_dir) = start_panel_edge_and_client(Clock::system(), 3).await;
 
         let instrument = InstrumentSpec::vanilla(
             eurusd(),
@@ -165,7 +165,7 @@ async fn example_multi_dealer_trade_path_ranks_and_books_best_lp() {
 #[tokio::test]
 async fn example_stream_blotter_path_streams_moving_lines() {
     tokio::time::timeout(SMOKE_TEST, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
 
         let strikes = [1.08_f64, 1.12, 1.16];
         let session = tokio::time::timeout(SMOKE_STEP, client.open_session())
@@ -239,7 +239,7 @@ async fn example_stream_blotter_path_streams_moving_lines() {
 #[tokio::test]
 async fn example_price_exotic_path_prices_asian_and_american() {
     tokio::time::timeout(SMOKE_TEST, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let market = example_market();
         let conv = Conventions::major_default();
 
@@ -317,7 +317,7 @@ async fn example_price_exotic_path_prices_asian_and_american() {
 #[tokio::test]
 async fn example_price_linear_path_prices_forward_swap_ndf() {
     tokio::time::timeout(SMOKE_TEST, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let conv = Conventions::major_default();
 
         // Forward struck at the fair forward ⇒ PV ≈ 0, exact (no std-error).

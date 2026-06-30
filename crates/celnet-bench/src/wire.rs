@@ -251,6 +251,7 @@ pub async fn start_ready_edge() -> std::io::Result<(Edge, SocketAddr)> {
         Arc::clone(&link),
         SpreadModel::default(),
         Clock::system(),
+        None,
     )
     .await?;
     edge.gate().mark_ready();

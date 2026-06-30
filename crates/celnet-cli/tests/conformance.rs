@@ -760,23 +760,29 @@ use celnet_server::{AccessMode, Clock, CoreLink, Edge, LpPanelConfig, SpreadMode
 use celnet_types::{CcyPair, OptionType, Tenor, VanillaInputs};
 
 /// Boot a ready in-process edge on an ephemeral port over the EURUSD fixture.
-async fn start_ready_edge() -> (Edge, SocketAddr) {
+///
+/// Each edge roots its persisted config in its OWN [`tempfile::TempDir`], returned
+/// so the caller owns it for the edge's full lifetime — parallel test edges never
+/// race the one shared `identity.json` / `fix-connections.json` path.
+async fn start_ready_edge() -> (Edge, SocketAddr, tempfile::TempDir) {
     let eurusd = CcyPair::parse("EURUSD").unwrap();
     let conv = celnet_conventions::resolve(eurusd, Tenor::Years(1)).record;
     let initial = make_state(1.10, conv);
     let link = CoreLink::start(initial, None);
     let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let data_dir = tempfile::tempdir().expect("temp data dir for the edge config");
     let edge = Edge::start(
         grpc,
         Arc::clone(&link),
         SpreadModel::default(),
         Clock::system(),
+        Some(data_dir.path()),
     )
     .await
     .expect("edge binds on an ephemeral port");
     edge.gate().mark_ready();
     let addr = edge.grpc_addr();
-    (edge, addr)
+    (edge, addr, data_dir)
 }
 
 #[tokio::test]
@@ -791,7 +797,7 @@ async fn cli_cross_asset_vanilla_equals_server_equals_oracle() {
     )
     .price;
 
-    let (edge, addr) = start_ready_edge().await;
+    let (edge, addr, _data_dir) = start_ready_edge().await;
     let client = Client::connect(format!("http://{addr}"))
         .await
         .expect("SDK connects to the edge");
@@ -1009,7 +1015,7 @@ async fn cli_new_payoff_shapes_equal_server_equal_golden() {
         );
     }
 
-    let (edge, addr) = start_ready_edge().await;
+    let (edge, addr, _data_dir) = start_ready_edge().await;
     let client = Client::connect(format!("http://{addr}"))
         .await
         .expect("SDK connects to the edge");
@@ -1127,13 +1133,14 @@ fn parse_panel_rows(stdout: &str) -> Vec<CliPanelRow> {
 /// synthetic LP panel (native maker + `synthetic_lps` labeled demo/test dealers)
 /// over the EURUSD fixture, using the explicit-panel boot path so no
 /// process-global env is mutated.
-async fn start_panel_edge(synthetic_lps: u32) -> (Edge, SocketAddr) {
+async fn start_panel_edge(synthetic_lps: u32) -> (Edge, SocketAddr, tempfile::TempDir) {
     let eurusd = CcyPair::parse("EURUSD").unwrap();
     let conv = celnet_conventions::resolve(eurusd, Tenor::Years(1)).record;
     let initial = make_state(1.10, conv);
     let link = CoreLink::start(initial, None);
     let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let ws: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let data_dir = tempfile::tempdir().expect("temp data dir for the edge config");
     let edge = Edge::start_on_with_panel(
         grpc,
         ws,
@@ -1141,6 +1148,7 @@ async fn start_panel_edge(synthetic_lps: u32) -> (Edge, SocketAddr) {
         SpreadModel::default(),
         Clock::system(),
         LpPanelConfig { synthetic_lps },
+        Some(data_dir.path()),
     )
     .await
     .expect("edge binds on ephemeral ports");
@@ -1152,13 +1160,13 @@ async fn start_panel_edge(synthetic_lps: u32) -> (Edge, SocketAddr) {
     // env) so the CLI and SDK panels compare on equal footing.
     edge.store().set_access_mode(AccessMode::Permissive);
     let addr = edge.grpc_addr();
-    (edge, addr)
+    (edge, addr, data_dir)
 }
 
 #[tokio::test]
 async fn cli_rfq_panel_matches_the_sdk_panel_bit_for_bit() {
     const SYNTHETIC_LPS: u32 = 3;
-    let (edge, addr) = start_panel_edge(SYNTHETIC_LPS).await;
+    let (edge, addr, _data_dir) = start_panel_edge(SYNTHETIC_LPS).await;
 
     // (1) The SDK reference panel from the edge — the same instrument the CLI
     // requests below (1Y EURUSD vanilla call @ 1.12, 1mm EUR, two-way).
