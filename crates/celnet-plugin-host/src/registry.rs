@@ -13,7 +13,8 @@
 //! same map, so routing is tier-blind.
 
 use celnet_plugin_api::{
-    ModelDescriptor, ModelId, ModelRegistry as DiscoveryRegistry, PluginError, PricingModel,
+    ModelDescriptor, ModelId, ModelKind, ModelRegistry as DiscoveryRegistry, PluginError,
+    PricingModel,
 };
 
 use crate::error::{HostError, HostResult};
@@ -106,6 +107,25 @@ impl ModelRegistry {
             .position(|d| d.id == id)
             .map(|i| self.entries[i].as_ref())
             .ok_or(HostError::Model(PluginError::NotFound("model id")))
+    }
+
+    /// The active house pricing model — the first registered
+    /// [`ModelKind::Pricing`] handle in stable insertion order, or `None` if no
+    /// pricing model is registered.
+    ///
+    /// The non-allocating hot-path resolver an engine consults to serve an
+    /// analytic arm through a registered model: a linear scan returning a borrowed
+    /// `&dyn HostModel` with **no `Vec`**, unlike the discovery-trait
+    /// [`celnet_plugin_api::ModelRegistry::of_kind`] (which allocates). A server
+    /// registers the single house pricer it wants on the analytic arm; if several
+    /// pricing models are registered the first registered is authoritative, so the
+    /// resolution is deterministic.
+    #[must_use]
+    pub fn active_pricing_model(&self) -> Option<&dyn HostModel> {
+        self.descriptors
+            .iter()
+            .position(|d| d.kind == ModelKind::Pricing)
+            .map(|i| self.entries[i].as_ref())
     }
 
     /// Number of registered models across all tiers.

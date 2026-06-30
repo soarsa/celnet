@@ -47,6 +47,14 @@ use celnet_equity_vanilla::EquityInputs;
 
 mod engines;
 
+/// Activate user-extensible analytics on this pricing worker (architecture item D
+/// — dormant-crate activation): install the worker's house-model
+/// [`celnet_plugin_host::ModelRegistry`] so the analytic vanilla dispatch prices a
+/// registered model through the same `ProductEngine` seam as a native arm.
+/// Per-worker (the registry is `!Sync`); a server calls this from the tokio
+/// runtime's `on_thread_start` hook so every worker thread carries the registry.
+pub use engines::install_house_models;
+
 /// A failure pricing a wire instrument: a malformed / unsupported message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PriceError {
@@ -577,16 +585,13 @@ pub fn price_instrument(
 
     // Decode → guard → DISPATCH (architecture item C): the FX/analytic product
     // path is a single static dispatch into the per-family `ProductEngine`
-    // registry (`engines.rs`), byte-identical to the former product `match`.
-    engines::dispatch(
-        product,
-        &engines::EngineCtx {
-            instrument,
-            market,
-            expiry,
-            conv,
-        },
-    )
+    // registry (`engines.rs`). `dispatch_live` threads the calling worker's
+    // installed house-model registry onto the engine context (architecture item D
+    // — dormant-crate activation): when a pricing model is registered the analytic
+    // vanilla arm prices through the plugin-host registry, otherwise every arm is
+    // the verbatim native static dispatch, byte-identical to the former product
+    // `match`.
+    engines::dispatch_live(product, instrument, market, expiry, conv)
 }
 
 // ===========================================================================
