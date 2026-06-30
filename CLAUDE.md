@@ -22,10 +22,19 @@ Greenfield, started 30 May 2026.
    only for non-code text. The graph **auto-indexes** (lodestar's native filesystem watcher
    + `SessionStart`/`Stop` `lodestar index` hooks in `.claude/settings.json`), so its scope
    always covers new files. The stable project key is **`github.com-soarsa-celnet`** (pinned
-   in `.lodestar/project-id`, git-remote-derived → identical on every clone). **Health probe
-   before trusting it:** `lodestar doctor --json` must report `ok:true`/`problems:0` and the
-   hot symbol `price_instrument` must resolve (graph ≈18k nodes); a sharp drop ⇒
-   `lodestar index --full .` (~2s, deterministic & byte-identical). Use `detect_changes` to
+   in `.lodestar/project-id`, git-remote-derived → identical on every clone — **but a `git
+   worktree` does NOT inherit the pin: every parallel-session worktree must carry its own
+   `.lodestar/project-id`=`github.com-soarsa-celnet` or it fragments into an empty per-path
+   project and shares no knowledge**). **Health probe before trusting it:** `lodestar doctor
+   --json` must report `ok:true`/`problems:0` and the hot symbol `price_instrument` must
+   resolve (graph ≈23k nodes on lodestar 0.9.0); a sharp drop ⇒ `lodestar index --full
+   <ABSOLUTE-repo-path>` (~5s, deterministic & byte-identical — **never `.`: that records
+   `root_path="."` and auto-deletes the db**). **CAUTION: `--full` WIPES the verified-knowledge
+   projection** (lodestar#18) — it keeps only already-active claims and drops drafts, or
+   leaves the store empty if the projection was already lost. **After any `--full`, run
+   `python3 tools/lodestar/replay-knowledge.py`** to rebuild the live "why" from the committed
+   `claims-mirror.json`; prefer incremental `lodestar index <ABSOLUTE-path>` (preserves
+   knowledge). Use `detect_changes` to
    scope builds/tests; keep ADRs current via `manage_adr`. The structural graph
    (`~/.cache/lodestar/`) is machine-local & regenerable; the verified-knowledge log
    (`.lodestar/knowledge/`) is git-committed and shared across machines. Saves tokens, stays
