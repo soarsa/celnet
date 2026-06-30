@@ -259,7 +259,7 @@ describe("Excel real-edge conformance (frozen golden corpus over a REAL WebSocke
       // The quote_id row carries its label + id; `rectangular()` then pads every
       // row to the table width (an Excel dynamic-array spill must be rectangular),
       // so the row trails empties out to the header width.
-      const width = spill[0].length;
+      const width = spill[0]!.length;
       expect(spill[5]).toEqual(["quote_id", md.quoteId.toString(), ...Array(width - 2).fill("")]);
     });
 
