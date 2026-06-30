@@ -34,7 +34,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use celnet_entitlements::{Action, AssetClass, Capability};
 use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
-    BookDesc, CapabilityDesc, CreateBookRequest, CreateBookResponse, CreateDeskRequest,
+    BookDesc, BrokenDate, BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
+    CreateBookRequest, CreateBookResponse, CreateDeskRequest,
     CreateDeskResponse, CreateEntityRequest, CreateEntityResponse, CreateInstrumentRequest,
     CreateInstrumentResponse, CreateUserRequest, CreateUserResponse, DeleteBookRequest,
     DeleteBookResponse, DeleteDeskRequest, DeleteDeskResponse, DeleteEntityRequest,
@@ -50,6 +51,7 @@ use celnet_proto::{
     UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest,
     UpdateUserResponse, UserDesc, UserRole,
 };
+use celnet_rates::bootstrap_curve;
 use tonic::{Request, Response, Status};
 
 use crate::clock::Clock;
@@ -57,7 +59,8 @@ use crate::config::identity::{
     BookDef, DeskDef, EntityDef, IdentityStore, PermissionGrant, Role, UserDef, hash_password,
     mint_desk_id, mint_user_id, verify_password,
 };
-use crate::config::reference_data::{mint_instrument_id, validate_instruments};
+use crate::config::curve_calibration::{CurveCalibrationError, calibration_set};
+use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
 use crate::services::instrument_wire::{instrument_from_wire, instrument_to_wire};
 use crate::services::sessions::{AuthenticatedUser, SessionRegistry};
@@ -1117,6 +1120,87 @@ impl AuthService for AuthEdge {
         }))
     }
 
+    async fn build_curve(
+        &self,
+        request: Request<BuildCurveRequest>,
+    ) -> Result<Response<CalibratedCurve>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Read-only against the reference-data registry, so — like `list_instruments`
+        // / `get_instrument` — any authenticated caller may build, but unauthenticated
+        // callers are rejected.
+        self.authenticate(&req.session_token)?;
+
+        if req.pillars.is_empty() {
+            return Err(Status::invalid_argument(
+                "build_curve requires at least one pillar",
+            ));
+        }
+        // The curve reference (spot-anchor / value) date the pillar schedules roll from.
+        let reference = req
+            .reference_date
+            .as_ref()
+            .ok_or_else(|| Status::invalid_argument("missing `reference_date`"))?;
+        let value_date = decode_broken_date(reference).ok_or_else(|| {
+            Status::invalid_argument("`reference_date` is not a real calendar date")
+        })?;
+
+        // Resolve every pillar id against the reference-data registry under a single
+        // store read, then release the lock before the (root-finding) bootstrap so the
+        // numeric solve never serializes other identity operations.
+        let resolved: Vec<(String, InstrumentDef, f64)> = {
+            let guard = self.lock();
+            let mut rows = Vec::with_capacity(req.pillars.len());
+            for pillar in &req.pillars {
+                let id = pillar.instrument_id.trim();
+                let def = guard
+                    .instrument_by_id(id)
+                    .ok_or_else(|| Status::not_found(format!("unknown instrument id `{id}`")))?;
+                rows.push((id.to_string(), def.clone(), pillar.quote));
+            }
+            rows
+        };
+
+        // Map each resolved definition + quote onto an engine calibration instrument.
+        // `calibration_set` preserves input order, so `instruments[i]` pairs with
+        // `resolved[i]`. Every `CurveCalibrationError` is a static input-shape failure
+        // (uncalibratable family, unknown convention label, currency mismatch, …).
+        let defs: Vec<(&InstrumentDef, f64)> =
+            resolved.iter().map(|(_, def, q)| (def, *q)).collect();
+        let instruments =
+            calibration_set(&defs, value_date).map_err(curve_calibration_status)?;
+
+        // Bootstrap the self-discounting curve. A failure here is a numeric fault on
+        // otherwise-valid input (mirrors the `price_rates` edge mapping it to internal).
+        let curve = bootstrap_curve(&instruments)
+            .map_err(|e| Status::internal(format!("curve bootstrap failed: {e}")))?;
+
+        // Sample each input instrument at its own pillar maturity, ordered short → long
+        // by maturity (the documented, deterministic point order).
+        let mut points: Vec<CalibratedCurvePoint> = resolved
+            .iter()
+            .zip(&instruments)
+            .map(|((id, _, _), inst)| {
+                let t = inst.maturity();
+                CalibratedCurvePoint {
+                    instrument_id: id.clone(),
+                    time_years: t.0,
+                    discount_factor: curve.discount_factor(t).0,
+                    zero_rate: curve.zero_rate(t).0,
+                }
+            })
+            .collect();
+        points.sort_by(|a, b| a.time_years.total_cmp(&b.time_years));
+
+        Ok(Response::new(CalibratedCurve {
+            request_id: req.request_id,
+            currency: req.currency,
+            reference_date: req.reference_date,
+            points,
+        }))
+    }
+
     async fn create_instrument(
         &self,
         request: Request<CreateInstrumentRequest>,
@@ -1403,6 +1487,25 @@ fn dummy_hash() -> &'static str {
 }
 
 /// Run an Argon2 verification off the async worker (the hash is memory-hard).
+/// Decode a wire [`BrokenDate`] to a real [`time::Date`], or `None` if the triple
+/// is not a real civil date (the caller maps `None` to `invalid_argument`).
+fn decode_broken_date(d: &BrokenDate) -> Option<time::Date> {
+    let month = u8::try_from(d.month)
+        .ok()
+        .and_then(|m| time::Month::try_from(m).ok())?;
+    let day = u8::try_from(d.day).ok()?;
+    time::Date::from_calendar_date(d.year, month, day).ok()
+}
+
+/// Map a [`CurveCalibrationError`] to a `tonic::Status`. Every variant is a static
+/// (input-shape) failure — an uncalibratable family, an unresolvable tenor/label, a
+/// currency mismatch, or a rejected schedule coordinate — so all map to
+/// `invalid_argument`. Numeric (bootstrap) faults are handled separately as
+/// `internal`.
+fn curve_calibration_status(e: CurveCalibrationError) -> Status {
+    Status::invalid_argument(e.to_string())
+}
+
 async fn verify_async(stored_hash: String, candidate: String) -> bool {
     tokio::task::spawn_blocking(move || verify_password(&stored_hash, &candidate))
         .await
@@ -1528,6 +1631,385 @@ mod tests {
             path,
             sessions,
         )
+    }
+
+    // --- build_curve (Curves Part B inc.2): reference-data → bootstrapped curve ------
+
+    use crate::config::curve_calibration::calibration_instrument;
+    use crate::config::reference_data::{
+        BondDef, CivilDate, DepositDef, FraDef, InstrumentFamily, OisDef, StirFutureDef,
+        VanillaIrsDef,
+    };
+    use celnet_proto::InstrumentQuote;
+    use celnet_rates::{
+        CalibrationInstrument, Curve, deposit_par_rate, fixed_annuity, float_leg_value,
+        fra_par_rate, implied_forward_rate, ois_par_rate,
+    };
+    use celnet_types::{Df, Time};
+
+    /// The US business day used as the curve trade/value date (Monday 16 Jun 2025).
+    fn curve_value_date() -> time::Date {
+        time::Date::from_calendar_date(2025, time::Month::June, 16).expect("valid date")
+    }
+
+    /// The same value date as a wire `BrokenDate`.
+    fn curve_reference() -> BrokenDate {
+        BrokenDate {
+            year: 2025,
+            month: 6,
+            day: 16,
+        }
+    }
+
+    /// A USD instrument-definition header wrapping a family block.
+    fn cv_usd(id: &str, family: InstrumentFamily) -> InstrumentDef {
+        InstrumentDef {
+            instrument_id: id.to_string(),
+            name: id.to_string(),
+            description: String::new(),
+            currency: "USD".to_string(),
+            external_ids: Vec::new(),
+            definition: family,
+        }
+    }
+
+    fn cv_dep(id: &str, tenor: &str) -> InstrumentDef {
+        cv_usd(
+            id,
+            InstrumentFamily::Deposit(DepositDef {
+                index: "USD-SOFR".to_string(),
+                tenor: tenor.to_string(),
+                day_count: "act_360".to_string(),
+                business_day_convention: "modified_following".to_string(),
+                calendars: vec!["united_states".to_string()],
+                spot_lag_days: 2,
+            }),
+        )
+    }
+
+    fn cv_fra(id: &str, start: &str, end: &str) -> InstrumentDef {
+        cv_usd(
+            id,
+            InstrumentFamily::Fra(FraDef {
+                float_index: "USD-SOFR".to_string(),
+                start_tenor: start.to_string(),
+                end_tenor: end.to_string(),
+                accrual_day_count: "act_360".to_string(),
+                business_day_convention: "modified_following".to_string(),
+                calendars: vec!["united_states".to_string()],
+                spot_lag_days: 2,
+            }),
+        )
+    }
+
+    fn cv_stir(id: &str, ref_start: &str, ref_end: &str) -> InstrumentDef {
+        cv_usd(
+            id,
+            InstrumentFamily::StirFuture(StirFutureDef {
+                contract_code: "SR3".to_string(),
+                reference_start: ref_start.to_string(),
+                reference_end: ref_end.to_string(),
+                day_count: "act_360".to_string(),
+                calendars: vec!["united_states".to_string()],
+                convexity_vol: 0.005,
+                contract_size: 1_000_000.0,
+            }),
+        )
+    }
+
+    fn cv_ois(id: &str, tenor: &str) -> InstrumentDef {
+        cv_usd(
+            id,
+            InstrumentFamily::Ois(OisDef {
+                tenor: tenor.to_string(),
+                index: "USD-SOFR".to_string(),
+                fixed_frequency: "annual".to_string(),
+                fixed_day_count: "act_360".to_string(),
+                float_day_count: "act_360".to_string(),
+                business_day_convention: "modified_following".to_string(),
+                calendars: vec!["united_states".to_string()],
+                spot_lag_days: 2,
+            }),
+        )
+    }
+
+    fn cv_irs(id: &str, tenor: &str) -> InstrumentDef {
+        cv_usd(
+            id,
+            InstrumentFamily::VanillaIrs(VanillaIrsDef {
+                tenor: tenor.to_string(),
+                fixed_frequency: "annual".to_string(),
+                fixed_day_count: "thirty_360_bond_basis".to_string(),
+                float_index: "USD-SOFR".to_string(),
+                float_frequency: "quarterly".to_string(),
+                float_day_count: "act_360".to_string(),
+                business_day_convention: "modified_following".to_string(),
+                calendars: vec!["united_states".to_string()],
+                roll_convention: "none".to_string(),
+                spot_lag_days: 2,
+            }),
+        )
+    }
+
+    /// Build an edge over a temp identity file seeded with the default admin plus the
+    /// supplied instrument reference-data definitions.
+    fn curve_edge(tag: &str, instruments: Vec<InstrumentDef>) -> (AuthEdge, PathBuf) {
+        let dir = std::env::temp_dir().join("celnet-auth-edge");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("identity-curve-{}-{}.json", std::process::id(), tag));
+        let _ = std::fs::remove_file(&path);
+        let mut store = IdentityStore::default();
+        store.ensure_seed_admin().unwrap();
+        store.instruments = instruments;
+        store.save(&path).unwrap();
+        let identity = Arc::new(Mutex::new(store));
+        let clock = Clock::system();
+        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
+        let gate = Arc::new(ReadinessGate::new());
+        gate.mark_ready();
+        (
+            AuthEdge::new(identity, path.clone(), sessions, gate, clock),
+            path,
+        )
+    }
+
+    /// Reprice a calibration instrument on `curve`, returning its model par rate
+    /// (or futures rate) — the quantity the bootstrap drove to the input quote.
+    fn model_quote(curve: &Curve, inst: &CalibrationInstrument) -> f64 {
+        match inst {
+            CalibrationInstrument::Deposit(d) => deposit_par_rate(curve, d).0,
+            CalibrationInstrument::Fra(f) => fra_par_rate(curve, f).0,
+            CalibrationInstrument::StirFuture(q) => {
+                // The futures quote is the curve's simple forward over the fixing window
+                // plus the (quote-implied) convexity bias the bootstrap debiased out.
+                let t1 = q.future.fixing_start();
+                let t2 = q.future.fixing_end();
+                let fwd = (curve.discount_factor(t1).0 / curve.discount_factor(t2).0 - 1.0)
+                    / (t2.0 - t1.0);
+                let convexity = q.futures_rate.0 - implied_forward_rate(q).0;
+                fwd + convexity
+            }
+            CalibrationInstrument::Ois(q) => ois_par_rate(curve, &q.schedule).0,
+            CalibrationInstrument::VanillaIrs(q) => {
+                float_leg_value(curve, &q.float_leg) / fixed_annuity(curve, &q.fixed_leg)
+            }
+        }
+    }
+
+    /// End-to-end oracle gate: a USD curve built from a registry-referenced ladder
+    /// (deposits + FRA + STIR future + OIS + vanilla IRS) reprices every calibrating
+    /// instrument back to its quote. The curve is reconstructed *purely* from the wire
+    /// `(time_years, discount_factor)` points and each instrument repriced via the
+    /// engine's par-rate identities — never by re-running `build_curve` as its own check.
+    #[tokio::test]
+    async fn build_curve_reprices_every_pillar_to_par() {
+        // Maturities are strictly increasing: 1M, 3M, 6M(FRA), 9M(STIR), 1Y, 2Y, 5Y, 10Y.
+        let set: Vec<(InstrumentDef, f64)> = vec![
+            (cv_dep("usd-depo-1m", "1M"), 0.0433),
+            (cv_dep("usd-depo-3m", "3M"), 0.0431),
+            (cv_fra("usd-fra-3x6", "3M", "6M"), 0.0429),
+            (cv_stir("usd-stir-6x9", "6M", "9M"), 0.0427),
+            (cv_ois("usd-ois-1y", "1Y"), 0.0425),
+            (cv_ois("usd-ois-2y", "2Y"), 0.0418),
+            (cv_irs("usd-irs-5y", "5Y"), 0.0410),
+            (cv_irs("usd-irs-10y", "10Y"), 0.0415),
+        ];
+
+        let instruments: Vec<InstrumentDef> = set.iter().map(|(d, _)| d.clone()).collect();
+        let (edge, path) = curve_edge("reprice", instruments);
+        let token = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+
+        // Submit the pillars out of maturity order to prove the server orders them.
+        let pillars: Vec<InstrumentQuote> = set
+            .iter()
+            .rev()
+            .map(|(d, q)| InstrumentQuote {
+                instrument_id: d.instrument_id.clone(),
+                quote: *q,
+            })
+            .collect();
+
+        let resp = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "curve-req-1".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars,
+                session_token: token,
+            }))
+            .await
+            .expect("build_curve should succeed")
+            .into_inner();
+
+        // Header echoed; one point per input; points strictly increasing in maturity.
+        assert_eq!(resp.request_id, "curve-req-1");
+        assert_eq!(resp.currency, "USD");
+        assert_eq!(resp.reference_date, Some(curve_reference()));
+        assert_eq!(resp.points.len(), set.len());
+        for w in resp.points.windows(2) {
+            assert!(
+                w[0].time_years < w[1].time_years,
+                "points not strictly increasing by maturity"
+            );
+        }
+
+        // Reconstruct the curve from the wire points, prepended with the definitional
+        // origin (DF = 1 at t = 0 — a curve invariant, not engine output).
+        let mut td: Vec<(Time, Df)> = vec![(Time(0.0), Df(1.0))];
+        td.extend(
+            resp.points
+                .iter()
+                .map(|p| (Time(p.time_years), Df(p.discount_factor))),
+        );
+        let curve = Curve::from_log_linear_dfs(&td).expect("curve reconstructs from wire points");
+
+        // The wire points are self-consistent log-linear pillars (DF gate, 1e-10).
+        for p in &resp.points {
+            let df = curve.discount_factor(Time(p.time_years)).0;
+            assert!(
+                (df - p.discount_factor).abs() < 1e-10,
+                "{}: DF {df} vs wire {} (resid {})",
+                p.instrument_id,
+                p.discount_factor,
+                (df - p.discount_factor).abs()
+            );
+        }
+
+        // Reprice-to-par gate (rate, 1e-8): every input instrument reprices to its quote.
+        let value_date = curve_value_date();
+        let mut worst = 0.0_f64;
+        for (def, quote) in &set {
+            let inst = calibration_instrument(def, *quote, value_date)
+                .expect("definition resolves to a calibration instrument");
+            let model = model_quote(&curve, &inst);
+            let resid = (model - quote).abs();
+            worst = worst.max(resid);
+            assert!(
+                resid < 1e-8,
+                "{}: repriced {model} vs quote {quote} (resid {resid})",
+                def.instrument_id
+            );
+        }
+        assert!(worst < 1e-8, "worst reprice-to-par residual {worst}");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An unknown pillar instrument id is rejected with `NOT_FOUND`.
+    #[tokio::test]
+    async fn build_curve_rejects_unknown_instrument_id() {
+        let (edge, path) = curve_edge("notfound", vec![cv_ois("usd-ois-1y", "1Y")]);
+        let token = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let err = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "x".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars: vec![InstrumentQuote {
+                    instrument_id: "ghost".to_string(),
+                    quote: 0.04,
+                }],
+                session_token: token,
+            }))
+            .await
+            .expect_err("unknown id must be rejected");
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A non-calibratable family (a cash bond) is rejected with `INVALID_ARGUMENT`.
+    #[tokio::test]
+    async fn build_curve_rejects_non_calibratable_bond() {
+        let bond = cv_usd(
+            "usd-bond-5y",
+            InstrumentFamily::Bond(BondDef {
+                issuer: "US Treasury".to_string(),
+                coupon_rate: 0.04,
+                coupon_type: "fixed".to_string(),
+                coupon_frequency: "semi_annual".to_string(),
+                day_count: "act_365_fixed".to_string(),
+                issue_date: None,
+                dated_date: None,
+                first_coupon_date: None,
+                maturity_date: CivilDate {
+                    year: 2030,
+                    month: 6,
+                    day: 16,
+                },
+                redemption: 100.0,
+                calendars: vec!["united_states".to_string()],
+            }),
+        );
+        let (edge, path) = curve_edge("bond", vec![bond]);
+        let token = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let err = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "b".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars: vec![InstrumentQuote {
+                    instrument_id: "usd-bond-5y".to_string(),
+                    quote: 0.04,
+                }],
+                session_token: token,
+            }))
+            .await
+            .expect_err("a bond is not a curve pillar");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An empty pillar set is rejected with `INVALID_ARGUMENT`.
+    #[tokio::test]
+    async fn build_curve_rejects_empty_pillars() {
+        let (edge, path) = curve_edge("empty", vec![cv_ois("usd-ois-1y", "1Y")]);
+        let token = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let err = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "e".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars: Vec::new(),
+                session_token: token,
+            }))
+            .await
+            .expect_err("empty pillar set must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An absent/invalid session token is rejected with `UNAUTHENTICATED` before any
+    /// registry read — mirroring the `list_instruments` / `get_instrument` read RPCs.
+    #[tokio::test]
+    async fn build_curve_rejects_unauthenticated() {
+        let (edge, path) = curve_edge("unauth", vec![cv_ois("usd-ois-1y", "1Y")]);
+        let err = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "u".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars: vec![InstrumentQuote {
+                    instrument_id: "usd-ois-1y".to_string(),
+                    quote: 0.04,
+                }],
+                session_token: "not-a-token".to_string(),
+            }))
+            .await
+            .expect_err("an invalid token must be rejected");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+        let _ = std::fs::remove_file(&path);
     }
 
     async fn login(edge: &AuthEdge, email: &str, password: &str) -> Result<LoginResponse, Status> {

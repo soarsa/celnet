@@ -4124,6 +4124,62 @@ message SetRoleCapabilitiesResponse {
   optional uint64 correlation_id = 2;
 }
 
+// One calibrating quote for a `BuildCurve` request: a reference-data instrument id
+// paired with its observed market quote. The id resolves against the instrument
+// registry (the same roster `ListInstruments` serves); the quote is the
+// instrument's calibration observable in decimal terms — a deposit/FRA/par-swap
+// fixed rate, or a STIR future's `(100 - price) / 100` futures rate per its def.
+message InstrumentQuote {
+  // The registry instrument id to resolve (e.g. `usd-irs-10y`).
+  string instrument_id = 1;
+  // The observed calibrating quote as a decimal (0.0405 = 4.05%).
+  double quote = 2;
+}
+
+// A request to bootstrap a single-currency discount curve from registry-referenced
+// instruments. The server resolves each pillar id against the reference-data
+// registry, rebuilds its schedule from the reference date, and runs the sequential
+// (acyclic) bootstrap. Pillars may arrive in any order — the server orders them by
+// resolved maturity. At least one pillar is required.
+message BuildCurveRequest {
+  // Caller-supplied correlation token, echoed back on the result.
+  string request_id = 1;
+  // ISO 4217 currency of the curve (the set must be single-currency).
+  string currency = 2;
+  // The curve reference (spot-anchor / value) date the pillar schedules roll from.
+  BrokenDate reference_date = 3;
+  // The calibrating instrument quotes; at least one, maturity order not required.
+  repeated InstrumentQuote pillars = 4;
+  // Session token of the authenticated caller (any authenticated caller may build).
+  string session_token = 5;
+}
+
+// One bootstrapped pillar of a `CalibratedCurve`: the resolved curve coordinate and
+// discount factor at one calibrating instrument's maturity.
+message CalibratedCurvePoint {
+  // The input instrument id this pillar calibrates.
+  string instrument_id = 1;
+  // The pillar maturity on the ACT/365F curve year-fraction axis.
+  double time_years = 2;
+  // The bootstrapped discount factor at `time_years`.
+  double discount_factor = 3;
+  // The continuously-compounded zero rate at `time_years` (decimal).
+  double zero_rate = 4;
+}
+
+// A bootstrapped discount curve: the calibrated pillar points (one per input
+// instrument, ordered short to long by maturity) plus the echoed request header.
+message CalibratedCurve {
+  // Echoed `BuildCurveRequest.request_id`.
+  string request_id = 1;
+  // ISO 4217 currency of the curve.
+  string currency = 2;
+  // The curve reference (spot-anchor) date, echoed from the request.
+  BrokenDate reference_date = 3;
+  // The bootstrapped pillars, ordered short to long by maturity.
+  repeated CalibratedCurvePoint points = 4;
+}
+
 // Server-enforced authentication + user/desk administration. Login mints a bearer
 // token the server validates on every subsequent RPC; administrative RPCs require
 // the resolved identity to be an admin. Accounts persist to disk and a default
@@ -4187,6 +4243,8 @@ service AuthService {
   rpc UpdateInstrument(UpdateInstrumentRequest) returns (UpdateInstrumentResponse);
   // Delete an instrument definition (admin only).
   rpc DeleteInstrument(DeleteInstrumentRequest) returns (DeleteInstrumentResponse);
+  // Bootstrap a single-currency discount curve from registry-referenced instruments.
+  rpc BuildCurve(BuildCurveRequest) returns (CalibratedCurve);
 }
 
 // ===========================================================================
