@@ -8,6 +8,11 @@
 //! `invalid_argument` (the deeper convention-label/uniqueness validation happens
 //! in [`validate_instruments`](crate::config::reference_data::validate_instruments)
 //! once the candidate store is assembled).
+//!
+//! `clippy::result_large_err` is allowed module-wide: `tonic::Status` is the
+//! framework-mandated error type for these wire mappers, so boxing it would
+//! only push the indirection into every gRPC handler without real benefit.
+#![allow(clippy::result_large_err)]
 
 use celnet_proto::{
     BondDef as WireBond, BrokenDate, DepositDef as WireDeposit, ExternalId as WireExternalId,

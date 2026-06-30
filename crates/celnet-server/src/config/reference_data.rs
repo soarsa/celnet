@@ -559,10 +559,10 @@ fn validate_family(id: &str, fam: &InstrumentFamily) -> Result<(), String> {
                 ("dated_date", b.dated_date),
                 ("first_coupon_date", b.first_coupon_date),
             ] {
-                if let Some(d) = opt {
-                    if !d.is_valid() {
-                        return Err(ctx(&format!("{field} is not a valid civil date")));
-                    }
+                if let Some(d) = opt
+                    && !d.is_valid()
+                {
+                    return Err(ctx(&format!("{field} is not a valid civil date")));
                 }
             }
             if !(b.redemption.is_finite() && b.redemption > 0.0) {

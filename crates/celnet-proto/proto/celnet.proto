@@ -4205,13 +4205,11 @@ service AuthService {
 
 // The maturity point of a curve pillar, measured from the `CurveSet` reference
 // (spot-anchor) date. Exactly one arm is set:
-//   * `years`         — a regular whole-year tenor (e.g. 1, 2, 5, 10), the
-//                       canonical liquid grid; must be >= 1.
-//   * `months`        — a month tenor (e.g. 3, 18, 30) for sub-year or broken
-//                       (non-integer-year) pillars; must be >= 1.
-//   * `maturity_date` — an explicit odd-dated ("broken date") maturity, the
-//                       civil YYYY-MM-DD the final period rolls to (e.g. an IMM
-//                       or turn date that no whole tenor names).
+//
+// * `years`: a regular whole-year tenor (e.g. 1, 2, 5, 10) on the canonical liquid grid; must be >= 1.
+// * `months`: a month tenor (e.g. 3, 18, 30) for sub-year or broken (non-integer-year) pillars; must be >= 1.
+// * `maturity_date`: an explicit odd-dated ("broken date") maturity — the civil YYYY-MM-DD the final period rolls to (e.g. an IMM or turn date that no whole tenor names).
+//
 // The server resolves the arm to a roll-adjusted maturity date and rebuilds the
 // pillar's USD-SOFR fixed-leg schedule from it, so only the economic locator
 // travels on the wire. A whole-year `years = n` and the equivalent dated arm
