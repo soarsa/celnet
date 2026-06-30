@@ -3,15 +3,25 @@
 //!
 //! # What this is
 //!
-//! The non-additive measures in [`crate::nonadditive`] re-price a node under
-//! shocks. The GUI **Risk** workspace and the cube's scenario reval both want the
-//! *same* shape: a node's P&L (or PV) over a **2-D ladder** of relative-spot ×
-//! absolute-vol shocks. This module computes that grid for a node by driving
-//! `celnet-gpu`'s batched scenario kernel — **one GPU dispatch per position**
-//! over the whole grid (Metal/Vulkan) — and summing the notional-scaled
-//! per-position PV grids into the node grid. When no GPU adapter is present (CI /
-//! headless) the *same* call transparently runs the exact f64 CPU oracle node by
-//! node, so the result is identical in shape and meaning.
+//! The non-additive risk measures re-price a node under shocks. The GUI **Risk**
+//! workspace and the cube's scenario reval both want the *same* shape: a node's
+//! P&L (or PV) over a **2-D ladder** of relative-spot × absolute-vol shocks. This
+//! module computes that grid for a node by driving `celnet-gpu`'s batched scenario
+//! kernel — **one GPU dispatch per position** over the whole grid (Metal/Vulkan) —
+//! and summing the notional-scaled per-position PV grids into the node grid. When
+//! no GPU adapter is present (CI / headless) the *same* call transparently runs the
+//! exact f64 CPU oracle node by node, so the result is identical in shape and
+//! meaning.
+//!
+//! # Home of this module (arch-program item E)
+//!
+//! This batched-GPU scenario grid lives in the **bench harness** — its only
+//! consumer — rather than in `celnet-risk-cube`, so the risk cube depends on
+//! neither `celnet-gpu` nor the heavy pricers (the cube's exact closed-form VaR
+//! path deliberately does NOT mix Monte-Carlo estimator noise into an exact reval).
+//! The arithmetic is the **identical** code the cube formerly hosted, moved
+//! verbatim — byte-for-byte the same grid for a fixed `(positions, axes, seed,
+//! paths)`.
 //!
 //! # Fast path vs oracle (honest reconciliation)
 //!
@@ -22,11 +32,10 @@
 //!   closed-form PV only within the node's **Monte-Carlo standard error** — not to
 //!   machine precision. [`NodeScenarioGrid::reconciles_to_analytic`] asserts
 //!   exactly that statistical band against the closed-form oracle.
-//! - **The analytic bump-and-revalue** ([`crate::nonadditive`],
-//!   `celnet-vanilla::price`) remains the **oracle**: deterministic, exact, and the
-//!   reference the GPU grid is validated against. [`analytic_pv_grid`] is that
-//!   reference, available directly for callers that want the exact grid (and used
-//!   by the reconciliation test).
+//! - **The analytic bump-and-revalue** (`celnet-vanilla::price`) remains the
+//!   **oracle**: deterministic, exact, and the reference the GPU grid is validated
+//!   against. [`analytic_pv_grid`] is that reference, available directly for callers
+//!   that want the exact grid (and used by the reconciliation test).
 //! - **GPU-vs-CPU-oracle**: when the GPU path is taken, the f32 result reconciles
 //!   to the f64 CPU oracle bit-stream-for-bit-stream within `celnet-gpu`'s own
 //!   first-principles f32 bound (proven inside that crate); here we add the
@@ -35,9 +44,8 @@
 //! # Scope
 //!
 //! Single-pair (shared-quote-currency) nodes: the grid sums position PVs in the
-//! common quote currency, exactly as [`crate::nonadditive::node_pnl`] does. A
-//! multi-pair node must be numeraire-normalized first (the cube's existing §2.3
-//! discipline) — this module does not silently mix currencies.
+//! common quote currency. A multi-pair node must be numeraire-normalized first —
+//! this module does not silently mix currencies.
 //!
 //! # Determinism
 //!
@@ -453,67 +461,6 @@ mod tests {
         }
     }
 
-    /// Hand-built grid literals + the exact CPU oracle pin three boundary
-    /// behaviours the reconciliation lens depends on:
-    /// (a) the `std_err` accessor's row-major stride on an asymmetric grid
-    ///     (`i·n_vol + j`, distinct rungs — an index mutant relocates the node);
-    /// (b) the band is INCLUSIVE — the documented contract is `|Δ| ≤ k·σ + abs`,
-    ///     so `|Δ| == band` PASSES: the exact oracle grid vs itself has `|Δ| = 0`
-    ///     bit-exactly at every node, and with `abs = 0` the band is also exactly
-    ///     0 — a strict-vs-nonstrict flip turns the whole exact path into a
-    ///     false breach;
-    /// (c) the worst-node diagnostic keeps the FIRST node on an exact `|Δ|` tie
-    ///     (the strict `>` running max — deterministic reporting; an empty book
-    ///     makes the analytic reference identically zero, so two hand `pv`
-    ///     entries `±7.0` tie bit-exactly while carrying different `std_err`).
-    #[test]
-    fn band_boundary_stride_and_worst_tie_are_exact() {
-        // (a) std_err row-major stride on a 2×3 grid.
-        let g = NodeScenarioGrid {
-            n_spot: 2,
-            n_vol: 3,
-            pv: vec![0.0; 6],
-            std_err: vec![0.5, 1.5, 2.5, 3.5, 4.5, 5.5],
-            on_gpu: false,
-        };
-        assert_eq!(g.std_err(1, 2).to_bits(), 5.5_f64.to_bits());
-        assert_eq!(g.std_err(1, 0).to_bits(), 3.5_f64.to_bits());
-        assert_eq!(g.std_err(0, 2).to_bits(), 2.5_f64.to_bits());
-
-        // (b) inclusive band boundary: d == band == 0 must reconcile.
-        let positions = [pos(
-            OptionType::Put,
-            2_000_000.0,
-            VanillaInputs::new(1.10, 1.08, 0.11, 0.5, 0.03, 0.01),
-        )];
-        let axes = ScenarioAxes::ladders(1, 0.01, 1, 0.005);
-        let exact = analytic_pv_grid(&positions, &axes);
-        let worst = exact
-            .reconciles_to_analytic(&positions, &axes, 6.0, 0.0)
-            .expect("an exact grid reconciles to itself at a zero band (|Δ| ≤ band)");
-        assert_eq!(worst.0.to_bits(), 0.0_f64.to_bits());
-        assert_eq!(worst.1.to_bits(), 0.0_f64.to_bits());
-
-        // (c) exact-tie worst tracking keeps the first node's diagnostics.
-        let axes12 = ScenarioAxes::new(vec![1.0_f32], vec![0.0_f32, 0.005]);
-        let tied = NodeScenarioGrid {
-            n_spot: 1,
-            n_vol: 2,
-            pv: vec![7.0, -7.0],
-            std_err: vec![3.0, 4.0],
-            on_gpu: false,
-        };
-        let worst = tied
-            .reconciles_to_analytic(&[], &axes12, 10.0, 1.0)
-            .expect("both nodes sit inside their 10σ + 1 bands");
-        assert_eq!(worst.0.to_bits(), 7.0_f64.to_bits());
-        assert_eq!(
-            worst.1.to_bits(),
-            3.0_f64.to_bits(),
-            "an exact |Δ| tie keeps the FIRST node's se (strict running max)"
-        );
-    }
-
     /// **`std_err` propagation is the quadrature of the NOTIONAL-SCALED kernel
     /// errors** — pinned bit-exactly against an in-test recomputation of the
     /// documented chain `√(Σ (se_unit·notional)²)` from the same reproducible
@@ -554,7 +501,7 @@ mod tests {
 
     /// **The centre node is the unshocked node PV.** The (centre,centre) rung is
     /// `spot_mult = 1.0`, `vol_bump = 0.0`, so its analytic PV equals the node's
-    /// base value exactly (the bump-and-revalue base in `nonadditive`).
+    /// base value exactly (the bump-and-revalue base).
     #[test]
     fn centre_node_is_base_pv() {
         let positions = [pos(

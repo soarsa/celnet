@@ -89,7 +89,7 @@ mod tests {
     use celnet_risk_cube::{
         BookId, Cube, DeskId, DimensionId, EntityId, FactKey, FactMeasure, Hierarchy, LocationId,
         NetGreeks, NodeAggregate, PositionId, RiskFact, Scenario, TraderId, VegaLadder, VegaPillar,
-        VegaPillarMap,
+        VegaPillarMap, test_support::DigitalTestPricer,
     };
     use celnet_risk_normalize::{AssetPricer, CanonicalLeaf, PositionRisk, canonicalize};
     use celnet_types::{
@@ -281,7 +281,13 @@ mod tests {
             .filter(|i| *i != 0)
             .map(|i| Scenario::spot(f64::from(i) * 0.005))
             .collect();
-        let na = NonAdditiveExposure::from_scenarios(&AssetPricer, &node, &scen, 0.99);
+        let na = NonAdditiveExposure::from_scenarios(
+            &AssetPricer,
+            &DigitalTestPricer,
+            &node,
+            &scen,
+            0.99,
+        );
         let var = exposure_of(&node, LimitMetric::Var, &na);
         assert!(var > 0.0);
         assert_eq!(var, na.var.unwrap());

@@ -22,10 +22,12 @@
 //! Every exotic here is a **deterministic closed form** (Reiner-Rubinstein barrier,
 //! European digital), so the comparison is machine-exact with no Monte-Carlo caveat.
 
+use celnet_core::ExoticLegPricer;
 use celnet_core::carry::CarryInputs;
 use celnet_core::is_close;
 use celnet_exotics::{
-    BarrierKind, BarrierStyle, DigitalKind, SingleBarrier, digital_greeks, single_barrier_price,
+    BarrierKind, BarrierStyle, DigitalKind, ExoticInputs, SingleBarrier, digital_greeks,
+    digital_price, single_barrier_price,
 };
 use celnet_risk_cube::{
     BookId, Cube, DeskId, EntityId, ExoticKind, ExoticLeg, FactKey, FactMeasure, LocationId,
@@ -37,6 +39,32 @@ use celnet_router::{Replica, ReplicaId, ReplicaSet};
 use celnet_types::{
     Carry, Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, Underlying, VanillaInputs,
 };
+
+/// The concrete exotic-leg pricer over the `celnet-exotics` closed forms — the SAME
+/// shape the server injects into the cube reducers (arch-program item E inverted the
+/// cube's dependency on `celnet-exotics`; the cube takes a `&dyn ExoticLegPricer`).
+/// Identical `VanillaInputs → ExoticInputs` projection and the identical
+/// `single_barrier_price` / `digital_price` / `digital_greeks` calls, so the cube
+/// reprices the real exotic byte-for-byte.
+#[derive(Debug, Clone, Copy, Default)]
+struct ExoticEngine;
+
+impl ExoticLegPricer for ExoticEngine {
+    #[inline]
+    fn unit_price(&self, kind: ExoticKind, inputs: &VanillaInputs) -> f64 {
+        let i: ExoticInputs = inputs.into();
+        match kind {
+            ExoticKind::SingleBarrier(spec) => single_barrier_price(&i, spec),
+            ExoticKind::Digital(k) => digital_price(k, &i),
+        }
+    }
+
+    #[inline]
+    fn digital_greeks(&self, kind: DigitalKind, inputs: &VanillaInputs) -> (f64, f64, f64) {
+        let dg = digital_greeks(kind, &inputs.into());
+        (dg.delta, dg.gamma, dg.vega)
+    }
+}
 
 fn eurusd() -> CcyPair {
     CcyPair::new(Ccy::EUR, Ccy::USD)
@@ -119,7 +147,7 @@ fn exotic_fact(id: u32, org: u32, option: OptionType, leg: ExoticLeg) -> RiskFac
         position_id: PositionId(id),
         key: org_key(org, leg.pair),
         measure: FactMeasure {
-            leaf: leg.canonical_leaf(),
+            leaf: leg.canonical_leaf(&ExoticEngine),
             position,
             exotic: Some(leg),
         },
@@ -282,8 +310,8 @@ fn fan_out_equals_single_node_including_exotics() {
     // Single-node reference.
     let cube = single_node(&facts);
     let firm = cube.firm_aggregate(&DaysPillar);
-    let s_var = Cube::node_var_es(&AssetPricer, &firm, &scen, alpha);
-    let s_cvr = Cube::node_curvature_spot(&AssetPricer, &firm, rw);
+    let s_var = Cube::node_var_es(&AssetPricer, &ExoticEngine, &firm, &scen, alpha);
+    let s_cvr = Cube::node_curvature_spot(&AssetPricer, &ExoticEngine, &firm, rw);
 
     // The book genuinely contains exotic legs (else the test would be vacuous).
     assert_eq!(
@@ -296,7 +324,8 @@ fn fan_out_equals_single_node_including_exotics() {
     // Distributed fan-out across a 3-replica HRW fleet (this id set provably spreads
     // the three (entity, pair) cells across multiple shards — see the assertion).
     let reps = replicas(&[11, 22, 33]);
-    let agg = fan_out_aggregate(&facts, &reps, &DaysPillar, &scen, alpha, rw).unwrap();
+    let agg =
+        fan_out_aggregate(&facts, &reps, &DaysPillar, &ExoticEngine, &scen, alpha, rw).unwrap();
     assert!(
         agg.shard_count >= 2,
         "facts must fan across multiple shards"
@@ -494,8 +523,9 @@ fn exotic_leg_strictly_changes_the_rollup() {
     );
 
     // And the non-additive tail changes too (the exotic legs carry real VaR).
-    let var_without = Cube::node_var_es(&AssetPricer, &firm_without, &scen, alpha).var;
-    let var_with = Cube::node_var_es(&AssetPricer, &firm_with, &scen, alpha).var;
+    let var_without =
+        Cube::node_var_es(&AssetPricer, &ExoticEngine, &firm_without, &scen, alpha).var;
+    let var_with = Cube::node_var_es(&AssetPricer, &ExoticEngine, &firm_with, &scen, alpha).var;
     assert!(var_without > 0.0 && var_with > 0.0);
     assert!(
         (var_with - var_without).abs() > 1e-6 * var_without,
@@ -530,7 +560,7 @@ fn knock_out_var_is_exotic_not_vanilla() {
         ExoticLeg::new(eurusd(), ExoticKind::SingleBarrier(spec), n, inputs),
     )];
     let firm_exotic = single_node(&exotic_only).firm_aggregate(&DaysPillar);
-    let var_exotic = Cube::node_var_es(&AssetPricer, &firm_exotic, &scen, 0.99).var;
+    let var_exotic = Cube::node_var_es(&AssetPricer, &ExoticEngine, &firm_exotic, &scen, 0.99).var;
 
     // Vanilla-only firm of the underlying call (same strike/inputs/notional).
     let vanilla_only = vec![vanilla_fact(
@@ -539,7 +569,8 @@ fn knock_out_var_is_exotic_not_vanilla() {
         vanilla(eurusd(), OptionType::Call, n, inputs),
     )];
     let firm_vanilla = single_node(&vanilla_only).firm_aggregate(&DaysPillar);
-    let var_vanilla = Cube::node_var_es(&AssetPricer, &firm_vanilla, &scen, 0.99).var;
+    let var_vanilla =
+        Cube::node_var_es(&AssetPricer, &ExoticEngine, &firm_vanilla, &scen, 0.99).var;
 
     assert!(var_exotic > 0.0 && var_vanilla > 0.0);
     // The two VaRs are materially different — the exotic payoff is not the vanilla's.
@@ -600,15 +631,16 @@ fn exotic_only_fan_out_reconciles() {
     let firm = single_node(&facts).firm_aggregate(&DaysPillar);
     assert!(firm.positions.is_empty(), "no vanilla legs in this book");
     assert_eq!(firm.exotic_legs.len(), 3);
-    let s_var = Cube::node_var_es(&AssetPricer, &firm, &scen, alpha);
-    let s_cvr = Cube::node_curvature_spot(&AssetPricer, &firm, rw);
+    let s_var = Cube::node_var_es(&AssetPricer, &ExoticEngine, &firm, &scen, alpha);
+    let s_cvr = Cube::node_curvature_spot(&AssetPricer, &ExoticEngine, &firm, rw);
 
     let reps = replicas(&[7, 14, 21]);
     // Sanity that partitioning routes all three.
     let reducer = partition_facts(&facts, &reps).unwrap();
     assert!(reducer.shard_count() >= 2);
 
-    let agg = fan_out_aggregate(&facts, &reps, &DaysPillar, &scen, alpha, rw).unwrap();
+    let agg =
+        fan_out_aggregate(&facts, &reps, &DaysPillar, &ExoticEngine, &scen, alpha, rw).unwrap();
     assert!(is_close(
         agg.firm.net_greeks.premium_quote,
         firm.net_greeks.premium_quote,

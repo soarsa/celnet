@@ -22,46 +22,11 @@
 use crate::inputs::ExoticInputs;
 use celnet_core::math::{ln, norm_cdf, norm_pdf, sqrt};
 use celnet_types::OptionType;
-
-/// What a digital pays when it finishes in the money.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DigitalStyle {
-    /// Cash-or-nothing: pays one unit of **domestic** cash if in the money.
-    CashOrNothing,
-    /// Asset-or-nothing: pays one unit of the **foreign asset** (worth `S_T`).
-    AssetOrNothing,
-}
-
-/// The direction of a digital (which side finishes in the money).
-///
-/// A digital *call* pays when `S_T > K`; a digital *put* pays when `S_T < K`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DigitalKind {
-    /// Cash- or asset-settled.
-    pub style: DigitalStyle,
-    /// Call (`S_T > K`) or put (`S_T < K`).
-    pub option: OptionType,
-}
-
-impl DigitalKind {
-    /// A cash-or-nothing digital of the given direction.
-    #[must_use]
-    pub const fn cash(option: OptionType) -> Self {
-        Self {
-            style: DigitalStyle::CashOrNothing,
-            option,
-        }
-    }
-
-    /// An asset-or-nothing digital of the given direction.
-    #[must_use]
-    pub const fn asset(option: OptionType) -> Self {
-        Self {
-            style: DigitalStyle::AssetOrNothing,
-            option,
-        }
-    }
-}
+// The digital payoff discriminants are defined at the base of the dependency
+// graph (`celnet-types`) so the risk cube can name a digital without depending on
+// this pricing crate (arch-program item E); re-exported here so every
+// `celnet_exotics::{DigitalKind, DigitalStyle}` reference is byte-identical.
+pub use celnet_types::{DigitalKind, DigitalStyle};
 
 /// `(d_1, d_2)` of the Garman-Kohlhagen model for the digital's strike.
 #[inline]

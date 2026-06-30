@@ -778,8 +778,6 @@ dependencies = [
  "celnet-commodity-vanilla",
  "celnet-core",
  "celnet-equity-vanilla",
- "celnet-exotics",
- "celnet-gpu",
  "celnet-risk-normalize",
  "celnet-types",
  "celnet-vanilla",

@@ -11,23 +11,30 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+# Exposes `celnet_risk_cube::test_support::DigitalTestPricer` — the hand-coded,
+# code-disjoint closed-form `ExoticLegPricer` the cube's own tests inject — so
+# downstream TEST crates that also cannot depend on `celnet-exotics`
+# (celnet-risk-fleet, celnet-limits) reuse the single definition instead of
+# duplicating the closed form. Enabled ONLY in those crates' [dev-dependencies];
+# never in a production build (the cube's runtime surface is unchanged).
+test-support = []
+
 [dependencies]
 celnet-types.workspace = true
 celnet-core.workspace = true
-celnet-vanilla.workspace = true
-# Closed-form exotic pricers (single barrier / European digital) backing the
-# exotic-leg risk measure: an exotic position contributes its REAL exotic Greeks
-# (additive) and re-prices under shocks (non-additive), so a booked exotic is no
-# longer silently excluded from firm/desk/book roll-ups. celnet-exotics depends
-# only on -types/-core/-vanilla, so this is a one-way edge (no cycle).
-celnet-exotics.workspace = true
-celnet-risk-normalize.workspace = true
-# Batched scenario revaluation: the spot×vol grid for a node is priced in ONE
-# GPU dispatch (Metal/Vulkan) with the f64 CPU oracle as the headless/CI fallback
-# — internal acceleration of the non-additive bump-and-revalue path, reconciled to
-# the analytic closed form. celnet-gpu depends only on -types/-core, so this is a
+# The closed-form vanilla leaf backs the cube's analytic VaR/curvature oracle and
+# the AAD adjoint sweep. It depends only on -types/-core/-conventions, so this is a
 # one-way edge (no cycle).
-celnet-gpu.workspace = true
+celnet-vanilla.workspace = true
+celnet-risk-normalize.workspace = true
+# NOTE: the cube depends on NEITHER celnet-exotics NOR celnet-gpu. The concrete
+# exotic closed forms are injected through the `celnet_core::ExoticLegPricer` seam
+# (implemented by the server over celnet-exotics), and the batched-GPU scenario grid
+# lives in the bench harness (its sole consumer). The dependency is inverted so the
+# cube depends only on the abstraction layer, not the heavy pricers (arch-program
+# item E; `docs/INTERFACES.md` one-way edges; gate: `cargo tree -p celnet-risk-cube`
+# lists no celnet-exotics / celnet-gpu).
 
 [dev-dependencies]
 # The cross-asset leaf crates are used ONLY by the longhand oracle test, which

@@ -13,7 +13,8 @@ pub mod math;
 
 mod compare;
 pub use carry::{
-    CarryGreeks, CarryInputs, CarryPriceError, CarryPricer, fx_carry_greeks, fx_vanilla_inputs,
+    CarryGreeks, CarryInputs, CarryPriceError, CarryPricer, ExoticLegPricer, fx_carry_greeks,
+    fx_vanilla_inputs,
 };
 pub use compare::{DEFAULT_ABS, DEFAULT_REL, is_close};
 

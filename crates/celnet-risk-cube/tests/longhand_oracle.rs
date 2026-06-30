@@ -22,9 +22,17 @@ use celnet_risk_cube::{
 };
 use celnet_risk_normalize::{AssetPricer, CanonicalLeaf, PositionRisk, canonicalize};
 use celnet_types::{
-    Carry, Ccy, CcyPair, CommodityRef, DeltaConvention, EquityRef, Metal, MetalPair, OptionType,
-    PremiumStyle, RateSensitivities, Symbol, Underlying, VanillaInputs,
+    Carry, Ccy, CcyPair, CommodityRef, DeltaConvention, DigitalKind, EquityRef, Metal, MetalPair,
+    OptionType, PremiumStyle, RateSensitivities, Symbol, Underlying, VanillaInputs,
 };
+
+// The hand-coded, code-disjoint closed-form exotic pricer the cube re-prices its
+// digital legs through (the cube does not depend on `celnet-exotics`). Single-homed
+// in the crate's `src/test_support.rs` and `#[path]`-included so there is exactly one
+// definition shared by the in-crate unit tests and these integration tests.
+#[path = "../src/test_support.rs"]
+pub mod test_support;
+use test_support::DigitalTestPricer;
 
 /// A trivial pillar map (single tenor/delta vertex) — the oracle exercises the Greek
 /// sums, not the pillar grid.
@@ -439,7 +447,7 @@ fn exotic_fact(id: u32, keys: (u32, u32, u32, u32, u32), leg: ExoticLeg) -> Risk
             entity: EntityId(entity),
         },
         measure: FactMeasure {
-            leaf: leg.canonical_leaf(),
+            leaf: leg.canonical_leaf(&DigitalTestPricer),
             position: meta,
             exotic: Some(leg),
         },
@@ -461,7 +469,7 @@ fn mixed_book() -> Vec<RiskFact> {
     );
     let leg = ExoticLeg::new(
         eurusd(),
-        ExoticKind::Digital(celnet_exotics::DigitalKind::cash(OptionType::Call)),
+        ExoticKind::Digital(DigitalKind::cash(OptionType::Call)),
         5_000_000.0,
         VanillaInputs::new(1.10, 1.11, 0.10, 0.25, 0.04, 0.02),
     );
@@ -729,9 +737,17 @@ fn var_es_quantile_boundary_is_exact() {
     for ve in [
         historical_var_es(&LinearPricer, std::slice::from_ref(&p), &empty, 0.99),
         sensitivity_var_es(&LinearPricer, std::slice::from_ref(&p), &empty, 0.99),
-        node_var_es_combined(&LinearPricer, std::slice::from_ref(&p), &[], &empty, 0.99),
+        node_var_es_combined(
+            &LinearPricer,
+            &DigitalTestPricer,
+            std::slice::from_ref(&p),
+            &[],
+            &empty,
+            0.99,
+        ),
         node_var_es_sensitivity_combined(
             &LinearPricer,
+            &DigitalTestPricer,
             std::slice::from_ref(&p),
             &[],
             &empty,
@@ -884,14 +900,19 @@ fn curvature_legs_match_two_revaluations() {
     // non-additivity the MAR21 reduction prescribes).
     let leg = ExoticLeg::new(
         eurusd(),
-        ExoticKind::Digital(celnet_exotics::DigitalKind::cash(OptionType::Call)),
+        ExoticKind::Digital(DigitalKind::cash(OptionType::Call)),
         -20_000_000.0,
         VanillaInputs::new(1.10, 1.11, 0.10, 0.25, 0.04, 0.02),
     );
-    let (e_up, e_down) = leg.curvature_legs(rw);
+    let (e_up, e_down) = leg.curvature_legs(&DigitalTestPricer, rw);
     let want_combined = (want_up + e_up).max(want_down + e_down).max(0.0);
-    let got_combined =
-        sbm_curvature_spot_combined(&AssetPricer, &positions, std::slice::from_ref(&leg), rw);
+    let got_combined = sbm_curvature_spot_combined(
+        &AssetPricer,
+        &DigitalTestPricer,
+        &positions,
+        std::slice::from_ref(&leg),
+        rw,
+    );
     assert!(is_close(got_combined, want_combined, 1e-9, 1e-3));
     // The exotic genuinely moves the node charge (vacuity guard) and the combined
     // charge is NOT the sum of two independent maxes when directions disagree.
@@ -907,11 +928,11 @@ fn curvature_legs_match_two_revaluations() {
     // the fixture cannot silently rot back into the down regime.
     let long_digital = ExoticLeg::new(
         eurusd(),
-        ExoticKind::Digital(celnet_exotics::DigitalKind::cash(OptionType::Call)),
+        ExoticKind::Digital(DigitalKind::cash(OptionType::Call)),
         50_000_000.0,
         VanillaInputs::new(1.10, 1.11, 0.10, 0.25, 0.04, 0.02),
     );
-    let (e2_up, e2_down) = long_digital.curvature_legs(rw);
+    let (e2_up, e2_down) = long_digital.curvature_legs(&DigitalTestPricer, rw);
     let up_sum = up + e2_up;
     let down_sum = down + e2_down;
     // Fixture-regime guards (vacuity): the exotic up contribution is material
@@ -924,6 +945,7 @@ fn curvature_legs_match_two_revaluations() {
     );
     let got_up = sbm_curvature_spot_combined(
         &AssetPricer,
+        &DigitalTestPricer,
         &positions,
         std::slice::from_ref(&long_digital),
         rw,
@@ -941,7 +963,7 @@ fn combined_var_es_includes_exotic_tail() {
     let p = fx_pos().0;
     let leg = ExoticLeg::new(
         eurusd(),
-        ExoticKind::Digital(celnet_exotics::DigitalKind::cash(OptionType::Put)),
+        ExoticKind::Digital(DigitalKind::cash(OptionType::Put)),
         25_000_000.0,
         VanillaInputs::new(1.10, 1.09, 0.10, 0.5, 0.04, 0.02),
     );
@@ -956,7 +978,11 @@ fn combined_var_es_includes_exotic_tail() {
         .iter()
         .map(|s| {
             celnet_risk_cube::position_pnl(&AssetPricer, &p, *s)
-                + celnet_risk_cube::exotic_node_pnl(std::slice::from_ref(&leg), *s)
+                + celnet_risk_cube::exotic_node_pnl(
+                    &DigitalTestPricer,
+                    std::slice::from_ref(&leg),
+                    *s,
+                )
         })
         .collect();
     pnl.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -966,6 +992,7 @@ fn combined_var_es_includes_exotic_tail() {
 
     let got = node_var_es_combined(
         &AssetPricer,
+        &DigitalTestPricer,
         std::slice::from_ref(&p),
         std::slice::from_ref(&leg),
         &scen,
@@ -974,8 +1001,14 @@ fn combined_var_es_includes_exotic_tail() {
     assert!(is_close(got.var, want_var, 1e-12, 1e-6));
     assert!(is_close(got.es, want_es, 1e-12, 1e-6));
     // Exotic contribution is real: dropping the legs changes the tail.
-    let vanilla_only =
-        node_var_es_combined(&AssetPricer, std::slice::from_ref(&p), &[], &scen, alpha);
+    let vanilla_only = node_var_es_combined(
+        &AssetPricer,
+        &DigitalTestPricer,
+        std::slice::from_ref(&p),
+        &[],
+        &scen,
+        alpha,
+    );
     assert!((got.var - vanilla_only.var).abs() > 1.0);
     // No-exotic reduction contract: combined([], legs=[]) == historical exactly.
     let hist = historical_var_es(&AssetPricer, std::slice::from_ref(&p), &scen, alpha);
@@ -989,13 +1022,18 @@ fn combined_var_es_includes_exotic_tail() {
         .iter()
         .map(|s| {
             sens.iter().map(|q| q.taylor_pnl(*s)).sum::<f64>()
-                + celnet_risk_cube::exotic_node_pnl(std::slice::from_ref(&leg), *s)
+                + celnet_risk_cube::exotic_node_pnl(
+                    &DigitalTestPricer,
+                    std::slice::from_ref(&leg),
+                    *s,
+                )
         })
         .collect();
     tpnl.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let want_tvar = (-tpnl[tail - 1]).max(0.0);
     let got_t = node_var_es_sensitivity_combined(
         &AssetPricer,
+        &DigitalTestPricer,
         std::slice::from_ref(&p),
         std::slice::from_ref(&leg),
         &scen,
@@ -1003,8 +1041,14 @@ fn combined_var_es_includes_exotic_tail() {
     );
     assert!(is_close(got_t.var, want_tvar, 1e-12, 1e-6));
     // And it reduces exactly to `sensitivity_var_es` with no exotic legs.
-    let sens_only =
-        node_var_es_sensitivity_combined(&AssetPricer, std::slice::from_ref(&p), &[], &scen, alpha);
+    let sens_only = node_var_es_sensitivity_combined(
+        &AssetPricer,
+        &DigitalTestPricer,
+        std::slice::from_ref(&p),
+        &[],
+        &scen,
+        alpha,
+    );
     let sens_free = sensitivity_var_es(&AssetPricer, std::slice::from_ref(&p), &scen, alpha);
     assert_eq!(sens_only.var.to_bits(), sens_free.var.to_bits());
     assert_eq!(sens_only.es.to_bits(), sens_free.es.to_bits());

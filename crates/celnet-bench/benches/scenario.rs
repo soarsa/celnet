@@ -6,7 +6,7 @@
 //! crossover is **measured honestly, not assumed**:
 //!
 //! - **`scenario_grid_gpu`** — the **batched** kernel
-//!   (`celnet_risk_cube::gpu_pv_grid`): ONE GPU dispatch per position over the
+//!   (`celnet_bench::scenario_grid::gpu_pv_grid`): ONE GPU dispatch per position over the
 //!   whole grid (Metal/Vulkan), under common random numbers. On a headless host it
 //!   transparently runs the f64 CPU oracle.
 //! - **`scenario_grid_gpu_unbatched`** — the same Monte-Carlo estimate but
@@ -15,7 +15,7 @@
 //!   `gpu / gpu_unbatched` is the genuine **batching win within the MC regime**
 //!   (one dispatch + readback vs `nodes × positions` of them).
 //! - **`scenario_grid_cpu_node_by_node`** — the exact closed-form
-//!   (`celnet_risk_cube::analytic_pv_grid`). For *vanilla* payoffs the closed form
+//!   (`celnet_bench::scenario_grid::analytic_pv_grid`). For *vanilla* payoffs the closed form
 //!   needs no paths, so it dominates both MC paths at this scale; it is the
 //!   honest datapoint that **MC/GPU is the scale path only for path-dependent
 //!   (no-closed-form) payoffs or grids large enough to amortize MC**, not for
@@ -24,10 +24,10 @@
 //! All three build the identical `node × grid` shape over one single-pair node.
 //! `divan` reports item throughput in grid-nodes/s via the input counter.
 
+use celnet_bench::scenario_grid::{analytic_pv_grid, gpu_pv_grid};
 use celnet_gpu::{
     GpuBackend, PathSpec, PayoffKernel, PricingBackend, ScenarioAxes, ScenarioPricer,
 };
-use celnet_risk_cube::{analytic_pv_grid, gpu_pv_grid};
 use celnet_risk_normalize::PositionRisk;
 use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
 use divan::{Bencher, black_box, counter::ItemsCount};

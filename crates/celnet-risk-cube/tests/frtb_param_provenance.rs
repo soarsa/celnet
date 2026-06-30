@@ -19,9 +19,16 @@ use celnet_risk_normalize::{
     AssetPricer, CanonicalGreeks, CanonicalLeaf, PositionRisk, canonicalize,
 };
 use celnet_types::{
-    Ccy, CcyPair, DeltaConvention, EquityRef, OptionType, PremiumStyle, Symbol, Underlying,
-    VanillaInputs,
+    Ccy, CcyPair, DeltaConvention, DigitalKind, EquityRef, OptionType, PremiumStyle, Symbol,
+    Underlying, VanillaInputs,
 };
+
+// The hand-coded, code-disjoint closed-form exotic pricer the cube re-prices its
+// digital legs through (the cube does not depend on `celnet-exotics`). Single-homed
+// in `src/test_support.rs` and `#[path]`-included (one definition across all tests).
+#[path = "../src/test_support.rs"]
+pub mod test_support;
+use test_support::DigitalTestPricer;
 
 fn eurusd() -> CcyPair {
     CcyPair::new(Ccy::EUR, Ccy::USD)
@@ -280,7 +287,7 @@ fn vega_buckets_match_hand_grouping_and_netting() {
     // An exotic digital (GBPUSD, t = 0.75) joins the USD bucket via its quote ccy.
     let leg = ExoticLeg::new(
         CcyPair::new(Ccy::GBP, Ccy::USD),
-        ExoticKind::Digital(celnet_exotics::DigitalKind::cash(OptionType::Call)),
+        ExoticKind::Digital(DigitalKind::cash(OptionType::Call)),
         5_000_000.0,
         VanillaInputs::new(1.30, 1.32, 0.12, 0.75, 0.03, 0.01),
     );
@@ -293,7 +300,7 @@ fn vega_buckets_match_hand_grouping_and_netting() {
         leaves: Vec::new(),
     };
     let rw = StandardFrtbParams::new();
-    let (buckets, mats) = standard_vega_buckets(&AssetPricer, &node, &rw);
+    let (buckets, mats) = standard_vega_buckets(&AssetPricer, &DigitalTestPricer, &node, &rw);
 
     // Hand expectation. RW_vega = 1.0 (MAR21.93/.94, gated above); vegas leaf-direct.
     let w: f64 = 1.0;
@@ -301,7 +308,7 @@ fn vega_buckets_match_hand_grouping_and_netting() {
         + w * celnet_vanilla::greeks(OptionType::Put, &vi_1y_b).vega * -4_000_000.0;
     let v_6m = w * celnet_vanilla::greeks(OptionType::Call, &vi_6m).vega * 6_000_000.0;
     let v_jpy = w * celnet_vanilla::greeks(OptionType::Put, &vi_jpy).vega * 8_000_000.0;
-    let v_dig = w * leg.canonical_leaf().greeks.vega;
+    let v_dig = w * leg.canonical_leaf(&DigitalTestPricer).greeks.vega;
 
     // Two buckets, first-seen order: USD (EURUSD premium ccy), then JPY.
     assert_eq!(buckets.len(), 2);
@@ -350,7 +357,12 @@ fn vega_vertex_netting_boundary_is_strict() {
         exotic_legs: Vec::new(),
         leaves: Vec::new(),
     };
-    let (buckets, mats) = standard_vega_buckets(&AssetPricer, &node, &StandardFrtbParams::new());
+    let (buckets, mats) = standard_vega_buckets(
+        &AssetPricer,
+        &DigitalTestPricer,
+        &node,
+        &StandardFrtbParams::new(),
+    );
     assert_eq!(buckets.len(), 1);
     assert_eq!(
         mats[0].len(),
@@ -366,7 +378,12 @@ fn vega_vertex_netting_boundary_is_strict() {
         exotic_legs: Vec::new(),
         leaves: Vec::new(),
     };
-    let (b2, m2) = standard_vega_buckets(&AssetPricer, &node2, &StandardFrtbParams::new());
+    let (b2, m2) = standard_vega_buckets(
+        &AssetPricer,
+        &DigitalTestPricer,
+        &node2,
+        &StandardFrtbParams::new(),
+    );
     assert_eq!(m2[0].len(), 1, "identical maturities must net");
     assert_eq!(b2[0].ws.len(), 1);
 }
