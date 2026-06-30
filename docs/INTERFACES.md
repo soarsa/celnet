@@ -907,6 +907,56 @@ The carry↔flat-rho bijection and the variant→arm selector are single-sourced
   one-edit change here. This collapsed the previously-duplicated server flatten/wrap sites; FX is
   byte-identical (parity cross-asset corpus).
 
+## WS codec from proto descriptor (item G) — `ws-codec-from-proto`
+
+**Goal (ADR-0009).** Drive the WebSocket JSON codec (`celnet-server::ws`) from the proto
+descriptor rather than hand-maintaining it, so it can no longer silently drift from
+`celnet.proto`, while staying **wire byte-identical** across the cross-client conformance corpus.
+
+**Landed (this lane, byte-identical, descriptor-derived).**
+- **`celnet-proto/build.rs` now emits a generated `wire_contract` module** from the **same**
+  `FileDescriptorSet` protox already produces for the message/service codegen (no second parse, no
+  new toolchain — `prost-types` walks the descriptor). Surfaced as `celnet_proto::wire_contract`:
+  - `STREAM_CONTROL_VERBS: &[&str]` — the `ClientStreamMessage` oneof arm names (the WS `type`
+    discriminators the router forwards to the RFS session driver).
+  - `WIRE_RPCS: &[WireRpc]` — every service method as `{service, method, request, response}`
+    (the descriptor-side source of truth for unary-verb coverage).
+  - `MESSAGES`/`ENUMS` — the full message (incl. nested) + enum name surface.
+  Generation is deterministic (descriptor declaration order) ⇒ the emitted file is byte-identical
+  on every build (determinism discipline).
+- **`celnet-server::ws::mod::is_stream_control` is now sourced from `STREAM_CONTROL_VERBS`** (was a
+  hand-maintained `matches!` literal). The router's stream-control classification — the routing in
+  `dispatch` — is therefore generated from the schema: a new `ClientStreamMessage` oneof arm is
+  classified automatically with no hand edit (the `authenticate`-omission class of bug is now
+  structurally impossible). A no-regression test asserts the generated set is **byte-identical** to
+  the frozen wire verb set; the lockstep test drives the generated set so the matching
+  `decode_stream_control` arm is forced to keep up (a proto arm added without its decoder arm fails
+  the gate).
+
+**Deferred (honest — NOT stubbed; CLAUDE.md §2).** The **unary encode/decode bodies** and the
+**unary verb-naming** are NOT yet generated. Reason: the WS JSON codec is a hand-curated *client*
+contract that intentionally diverges from a naive descriptor projection in ways the descriptor alone
+does not encode, so a mechanical regeneration would change bytes on the wire (a regression), not
+merely the source of the codec:
+1. **Verb naming differs per service.** `PricingService.PriceRates` → `"price_rates"` (method-name
+   snake_case) but `FixAdminService.ListConnections` → `"list_fix_connections"` (request-message
+   snake_case). No single descriptor rule reproduces both; a per-service mapping is required.
+2. **FX/legacy projections.** `Underlying` encodes to the legacy `{base,quote}` `pair` key (not the
+   `underlying` oneof); `MarketContext` encodes to `r_dom`/`r_for` accessors (not the generalized
+   `{discount_rate,carry}` fields); `Greeks` emits the flat `rho_dom`/`rho_for` projection beside
+   the `rate_sensitivities` oneof. These keep the unchanged GUI/Excel FX contract.
+3. **Non-uniform key casing.** A few keys are camelCase (`brokenDate`), not the proto snake_case.
+4. **Bespoke oneof tagging** (`tagged()`, `strike`/`delta`, the `underlying` arms).
+
+**Activation plan.** Extend `wire_contract` to emit per-message **field tables** (proto name → JSON
+key, type, label, oneof group) plus a curated **override table** capturing (1)–(4); generate the
+mechanical message codecs from the descriptor and keep the override arms as hand functions; gate with
+a **differential byte-identity harness** (`generated_encode(m) == hand_encode(m)` byte-for-byte over
+the cross-client corpus) before swapping `handle_unary` onto the generated path. The
+`ws-codec-from-proto` acceptance roll-up stays **non-active** (forward) until that swap lands and the
+differential harness is green; the descriptor-derived routing + manifest above are the first
+byte-identical increment of it.
+
 ---
 
 **Cross-check (re-verified 2026-06-10 against the working tree).** Every arm/enum/field in

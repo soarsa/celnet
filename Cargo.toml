@@ -60,6 +60,7 @@ time = { version = "0.3", default-features = false, features = ["std", "macros"]
 prost = "0.13"                                 # Apache-2.0 protobuf runtime (single current contract; no version negotiation)
 protox = "0.7"                                 # MIT/Apache-2.0 pure-Rust protobuf compiler (no system protoc needed)
 prost-build = "0.13"                           # Apache-2.0 codegen used with protox FileDescriptorSet
+prost-types = "0.13"                            # Apache-2.0 FileDescriptorSet descriptor types — walked in celnet-proto/build.rs to generate the WS wire-contract manifest
 divan = "0.1"                                  # MIT/Apache-2.0 micro-benchmark harness (latency/throughput proof)
 # GPU lane (vetted: deny advisories+licenses ok)
 wgpu = { version = "29", default-features = false, features = ["wgsl"] } # Apache-2.0/MIT cross-platform GPU (Metal/Vulkan/DX12)

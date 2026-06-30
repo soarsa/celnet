@@ -19,3 +19,4 @@ celnet-types.workspace = true
 [build-dependencies]
 protox.workspace = true
 tonic-build.workspace = true
+prost-types.workspace = true
