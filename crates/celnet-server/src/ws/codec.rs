@@ -66,7 +66,9 @@ use celnet_proto::{
 // AuthService — discount-curve bootstrap from registry-referenced instruments
 // (WS mirror of the `BuildCurve` RPC: resolve each pillar id against the
 // reference-data registry, bootstrap, return per-instrument calibrated points).
-use celnet_proto::{BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, InstrumentQuote};
+use celnet_proto::{
+    BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, DatePillar, InstrumentQuote,
+};
 // Linear-rates (fixed-income) contract — the WS mirror of PricingService::PriceRates.
 use celnet_proto::{
     CurveSet, OisInstrument, OisPillar, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
@@ -1300,22 +1302,44 @@ fn instrument_quote_from_json(v: &Value) -> Result<InstrumentQuote> {
     })
 }
 
+/// Decode one date-anchored `DatePillar` `{ maturity_date, quote }` — an explicit
+/// maturity date paired with its observed simple ACT/360 rate.
+fn date_pillar_from_json(v: &Value) -> Result<DatePillar> {
+    let o = obj(v, "date_pillar")?;
+    Ok(DatePillar {
+        maturity_date: Some(nested(o, "maturity_date", broken_date_from_json)?),
+        quote: f64_field(o, "quote")?,
+    })
+}
+
+/// Decode an optional `{ key: [...] }` pillar array (absent ⇒ empty), mapping each
+/// element through `decode`.
+fn optional_pillar_array<T>(
+    o: &Map<String, Value>,
+    key: &str,
+    decode: impl Fn(&Value) -> Result<T>,
+) -> Result<Vec<T>> {
+    match o.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(items)) => items.iter().map(decode).collect(),
+        Some(_) => Err(err(format!("`build_curve.{key}` must be an array"))),
+    }
+}
+
 /// Decode a `BuildCurveRequest` `{ request_id, currency, reference_date, pillars[],
-/// session_token }`. The bearer `session_token` is injected by the connection.
+/// date_pillars[], session_token }`. Both pillar arrays are optional (default empty);
+/// the handler rejects a request carrying neither. The bearer `session_token` is
+/// injected by the connection.
 pub(super) fn build_curve_request_from_json(o: &Map<String, Value>) -> Result<BuildCurveRequest> {
-    let pillars = o
-        .get("pillars")
-        .and_then(Value::as_array)
-        .ok_or_else(|| err("`build_curve.pillars` must be an array"))?
-        .iter()
-        .map(instrument_quote_from_json)
-        .collect::<Result<Vec<_>>>()?;
+    let pillars = optional_pillar_array(o, "pillars", instrument_quote_from_json)?;
+    let date_pillars = optional_pillar_array(o, "date_pillars", date_pillar_from_json)?;
     Ok(BuildCurveRequest {
         request_id: string_field(o, "request_id")?,
         currency: string_field(o, "currency")?,
         reference_date: Some(nested(o, "reference_date", broken_date_from_json)?),
         pillars,
         session_token: string_field(o, "session_token")?,
+        date_pillars,
     })
 }
 
@@ -1326,6 +1350,7 @@ fn calibrated_curve_point_to_json(p: &CalibratedCurvePoint) -> Value {
         "time_years": p.time_years,
         "discount_factor": p.discount_factor,
         "zero_rate": p.zero_rate,
+        "label": p.label,
     })
 }
 
@@ -4471,6 +4496,9 @@ mod tests {
                 { "instrument_id": "usd-depo-3m", "quote": 0.0431 },
                 { "instrument_id": "usd-irs-10y", "quote": 0.0418 }
             ],
+            "date_pillars": [
+                { "maturity_date": { "year": 2027, "month": 12, "day": 31 }, "quote": 0.0415 }
+            ],
             "session_token": "tok-123"
         });
         let req = build_curve_request_from_json(body.as_object().unwrap()).expect("decodes");
@@ -4482,6 +4510,11 @@ mod tests {
         assert_eq!(req.pillars.len(), 2);
         assert_eq!(req.pillars[0].instrument_id, "usd-depo-3m");
         assert!((req.pillars[1].quote - 0.0418).abs() < 1e-12);
+        // The date-anchored pillar decodes alongside the instrument pillars.
+        assert_eq!(req.date_pillars.len(), 1);
+        let dp_date = req.date_pillars[0].maturity_date.as_ref().unwrap();
+        assert_eq!((dp_date.year, dp_date.month, dp_date.day), (2027, 12, 31));
+        assert!((req.date_pillars[0].quote - 0.0415).abs() < 1e-12);
 
         // A bootstrapped result re-encodes to the snake_case `calibrated_curve` frame.
         let curve = CalibratedCurve {
@@ -4494,12 +4527,21 @@ mod tests {
                     time_years: 0.2521,
                     discount_factor: 0.98912,
                     zero_rate: 0.04318,
+                    label: String::new(),
+                },
+                CalibratedCurvePoint {
+                    instrument_id: String::new(),
+                    time_years: 1.5151,
+                    discount_factor: 0.93827,
+                    zero_rate: 0.04150,
+                    label: "Date 2027-12-31".to_owned(),
                 },
                 CalibratedCurvePoint {
                     instrument_id: "usd-irs-10y".to_owned(),
                     time_years: 10.0,
                     discount_factor: 0.6612,
                     zero_rate: 0.04134,
+                    label: String::new(),
                 },
             ],
         };
@@ -4507,23 +4549,39 @@ mod tests {
         assert_eq!(v["request_id"], json!("curve-001"));
         assert_eq!(v["currency"], json!("USD"));
         assert_eq!(v["reference_date"]["year"], json!(2026));
-        assert_eq!(v["points"].as_array().unwrap().len(), 2);
+        assert_eq!(v["points"].as_array().unwrap().len(), 3);
         assert_eq!(v["points"][0]["instrument_id"], json!("usd-depo-3m"));
-        assert!((v["points"][1]["discount_factor"].as_f64().unwrap() - 0.6612).abs() < 1e-12);
-        assert!((v["points"][1]["time_years"].as_f64().unwrap() - 10.0).abs() < 1e-12);
+        // The date pillar carries its display label and an empty instrument id.
+        assert_eq!(v["points"][1]["label"], json!("Date 2027-12-31"));
+        assert_eq!(v["points"][1]["instrument_id"], json!(""));
+        assert!((v["points"][2]["discount_factor"].as_f64().unwrap() - 0.6612).abs() < 1e-12);
+        assert!((v["points"][2]["time_years"].as_f64().unwrap() - 10.0).abs() < 1e-12);
     }
 
-    /// A `build_curve` body without a `pillars` array is a contract error, not a panic.
+    /// A `build_curve` body with neither pillar array decodes to two empty ladders
+    /// (the handler enforces non-empty); a non-array `pillars` is a contract error.
     #[test]
-    fn build_curve_request_rejects_missing_pillars() {
-        let body = json!({
+    fn build_curve_request_pillar_arrays_are_optional_but_typed() {
+        let empty = json!({
             "request_id": "curve-002",
             "currency": "USD",
             "reference_date": { "year": 2026, "month": 6, "day": 25 },
             "session_token": "tok-123"
         });
-        let err = build_curve_request_from_json(body.as_object().unwrap())
-            .expect_err("missing pillars must error");
+        let req = build_curve_request_from_json(empty.as_object().unwrap())
+            .expect("missing pillar arrays default to empty");
+        assert!(req.pillars.is_empty());
+        assert!(req.date_pillars.is_empty());
+
+        let malformed = json!({
+            "request_id": "curve-003",
+            "currency": "USD",
+            "reference_date": { "year": 2026, "month": 6, "day": 25 },
+            "pillars": "not-an-array",
+            "session_token": "tok-123"
+        });
+        let err = build_curve_request_from_json(malformed.as_object().unwrap())
+            .expect_err("a non-array pillars must error");
         assert!(err.to_string().contains("pillars"));
     }
 

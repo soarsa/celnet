@@ -35,31 +35,33 @@ use celnet_entitlements::{Action, AssetClass, Capability};
 use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
     BookDesc, BrokenDate, BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
-    CreateBookRequest, CreateBookResponse, CreateDeskRequest,
-    CreateDeskResponse, CreateEntityRequest, CreateEntityResponse, CreateInstrumentRequest,
-    CreateInstrumentResponse, CreateUserRequest, CreateUserResponse, DeleteBookRequest,
-    DeleteBookResponse, DeleteDeskRequest, DeleteDeskResponse, DeleteEntityRequest,
-    DeleteEntityResponse, DeleteInstrumentRequest, DeleteInstrumentResponse, DeleteUserRequest,
-    DeleteUserResponse, DeskDesc, EntityDesc, GetInstrumentRequest, GetInstrumentResponse,
-    GetRoleCapabilitiesRequest, GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest,
-    GetUserCapabilitiesResponse, ListBooksRequest, ListBooksResponse, ListDesksRequest,
-    ListDesksResponse, ListEntitiesRequest, ListEntitiesResponse, ListInstrumentsRequest,
-    ListInstrumentsResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
-    LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
-    SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
-    SetUserCapabilitiesResponse, UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest,
-    UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest,
-    UpdateUserResponse, UserDesc, UserRole,
+    CreateBookRequest, CreateBookResponse, CreateDeskRequest, CreateDeskResponse,
+    CreateEntityRequest, CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse,
+    CreateUserRequest, CreateUserResponse, DeleteBookRequest, DeleteBookResponse,
+    DeleteDeskRequest, DeleteDeskResponse, DeleteEntityRequest, DeleteEntityResponse,
+    DeleteInstrumentRequest, DeleteInstrumentResponse, DeleteUserRequest, DeleteUserResponse,
+    DeskDesc, EntityDesc, GetInstrumentRequest, GetInstrumentResponse, GetRoleCapabilitiesRequest,
+    GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest, GetUserCapabilitiesResponse,
+    ListBooksRequest, ListBooksResponse, ListDesksRequest, ListDesksResponse, ListEntitiesRequest,
+    ListEntitiesResponse, ListInstrumentsRequest, ListInstrumentsResponse, ListUsersRequest,
+    ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse,
+    ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
+    SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
+    UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest, UpdateEntityResponse,
+    UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest, UpdateUserResponse,
+    UserDesc, UserRole,
 };
-use celnet_rates::bootstrap_curve;
+use celnet_rates::{CalibrationInstrument, bootstrap_curve};
 use tonic::{Request, Response, Status};
 
 use crate::clock::Clock;
+use crate::config::curve_calibration::{
+    CurveCalibrationError, calibration_set, date_pillar_instrument,
+};
 use crate::config::identity::{
     BookDef, DeskDef, EntityDef, IdentityStore, PermissionGrant, Role, UserDef, hash_password,
     mint_desk_id, mint_user_id, verify_password,
 };
-use crate::config::curve_calibration::{CurveCalibrationError, calibration_set};
 use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
 use crate::services::instrument_wire::{instrument_from_wire, instrument_to_wire};
@@ -1132,7 +1134,7 @@ impl AuthService for AuthEdge {
         // callers are rejected.
         self.authenticate(&req.session_token)?;
 
-        if req.pillars.is_empty() {
+        if req.pillars.is_empty() && req.date_pillars.is_empty() {
             return Err(Status::invalid_argument(
                 "build_curve requires at least one pillar",
             ));
@@ -1163,13 +1165,39 @@ impl AuthService for AuthEdge {
         };
 
         // Map each resolved definition + quote onto an engine calibration instrument.
-        // `calibration_set` preserves input order, so `instruments[i]` pairs with
-        // `resolved[i]`. Every `CurveCalibrationError` is a static input-shape failure
+        // `calibration_set` preserves input order, so the resolved instrument pillars line
+        // up with `resolved`. Every `CurveCalibrationError` is a static input-shape failure
         // (uncalibratable family, unknown convention label, currency mismatch, …).
         let defs: Vec<(&InstrumentDef, f64)> =
             resolved.iter().map(|(_, def, q)| (def, *q)).collect();
-        let instruments =
+        let instrument_calibs =
             calibration_set(&defs, value_date).map_err(curve_calibration_status)?;
+
+        // Assemble the unified calibration ladder — registry-instrument pillars then
+        // standalone date-anchored pillars — keeping each pillar's display metadata
+        // (`(instrument_id, label)`) index-aligned with the engine instrument. Date
+        // pillars carry an empty instrument id (the client resolves names only by id) and
+        // a `Date YYYY-MM-DD` label; the bootstrap orders the ladder by maturity itself.
+        let pillar_count = resolved.len() + req.date_pillars.len();
+        let mut instruments: Vec<CalibrationInstrument> = Vec::with_capacity(pillar_count);
+        let mut meta: Vec<(String, String)> = Vec::with_capacity(pillar_count);
+        for ((id, _, _), inst) in resolved.iter().zip(instrument_calibs) {
+            meta.push((id.clone(), String::new()));
+            instruments.push(inst);
+        }
+        for dp in &req.date_pillars {
+            let md = dp.maturity_date.as_ref().ok_or_else(|| {
+                Status::invalid_argument("date pillar is missing `maturity_date`")
+            })?;
+            let maturity = decode_broken_date(md).ok_or_else(|| {
+                Status::invalid_argument("date pillar `maturity_date` is not a real calendar date")
+            })?;
+            let inst = date_pillar_instrument(value_date, maturity, dp.quote)
+                .map_err(curve_calibration_status)?;
+            let label = format!("Date {:04}-{:02}-{:02}", md.year, md.month, md.day);
+            meta.push((String::new(), label));
+            instruments.push(inst);
+        }
 
         // Bootstrap the self-discounting curve. A failure here is a numeric fault on
         // otherwise-valid input (mirrors the `price_rates` edge mapping it to internal).
@@ -1178,16 +1206,17 @@ impl AuthService for AuthEdge {
 
         // Sample each input instrument at its own pillar maturity, ordered short → long
         // by maturity (the documented, deterministic point order).
-        let mut points: Vec<CalibratedCurvePoint> = resolved
+        let mut points: Vec<CalibratedCurvePoint> = instruments
             .iter()
-            .zip(&instruments)
-            .map(|((id, _, _), inst)| {
+            .zip(&meta)
+            .map(|(inst, (id, label))| {
                 let t = inst.maturity();
                 CalibratedCurvePoint {
                     instrument_id: id.clone(),
                     time_years: t.0,
                     discount_factor: curve.discount_factor(t).0,
                     zero_rate: curve.zero_rate(t).0,
+                    label: label.clone(),
                 }
             })
             .collect();
@@ -1756,7 +1785,11 @@ mod tests {
     fn curve_edge(tag: &str, instruments: Vec<InstrumentDef>) -> (AuthEdge, PathBuf) {
         let dir = std::env::temp_dir().join("celnet-auth-edge");
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(format!("identity-curve-{}-{}.json", std::process::id(), tag));
+        let path = dir.join(format!(
+            "identity-curve-{}-{}.json",
+            std::process::id(),
+            tag
+        ));
         let _ = std::fs::remove_file(&path);
         let mut store = IdentityStore::default();
         store.ensure_seed_admin().unwrap();
@@ -1839,6 +1872,7 @@ mod tests {
                 reference_date: Some(curve_reference()),
                 pillars,
                 session_token: token,
+                date_pillars: Vec::new(),
             }))
             .await
             .expect("build_curve should succeed")
@@ -1898,6 +1932,87 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// A standalone date-anchored pillar calibrates alongside a registry instrument:
+    /// the response carries an empty-id, `Date YYYY-MM-DD`-labelled point, and the
+    /// synthetic deposit reprices to its quote on the wire-reconstructed curve.
+    #[tokio::test]
+    async fn build_curve_calibrates_a_standalone_date_pillar() {
+        let ois = (cv_ois("usd-ois-2y", "2Y"), 0.0418);
+        let (edge, path) = curve_edge("date-pillar", vec![ois.0.clone()]);
+        let token = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+
+        // A 2027-12-31 date pillar (a broken date no whole tenor names) at 4.15%.
+        let maturity = BrokenDate {
+            year: 2027,
+            month: 12,
+            day: 31,
+        };
+        let date_quote = 0.0415;
+
+        let resp = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "curve-date-1".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars: vec![InstrumentQuote {
+                    instrument_id: ois.0.instrument_id.clone(),
+                    quote: ois.1,
+                }],
+                session_token: token,
+                date_pillars: vec![celnet_proto::DatePillar {
+                    maturity_date: Some(maturity),
+                    quote: date_quote,
+                }],
+            }))
+            .await
+            .expect("build_curve should succeed")
+            .into_inner();
+
+        // Two pillars, ordered by maturity (the date pillar at ~1.5y precedes the 2Y OIS).
+        assert_eq!(resp.points.len(), 2);
+        for w in resp.points.windows(2) {
+            assert!(w[0].time_years < w[1].time_years);
+        }
+
+        // The date pillar carries an empty instrument id and its `Date …` display label.
+        let date_point = resp
+            .points
+            .iter()
+            .find(|p| p.instrument_id.is_empty())
+            .expect("a date-anchored point is present");
+        assert_eq!(date_point.label, "Date 2027-12-31");
+
+        // Reconstruct the curve from the wire points and reprice the synthetic deposit
+        // to its quote (1e-8) — the same oracle gate the registry ladder uses.
+        let mut td: Vec<(Time, Df)> = vec![(Time(0.0), Df(1.0))];
+        td.extend(
+            resp.points
+                .iter()
+                .map(|p| (Time(p.time_years), Df(p.discount_factor))),
+        );
+        let curve = Curve::from_log_linear_dfs(&td).expect("curve reconstructs from wire points");
+
+        let value_date = curve_value_date();
+        let date_maturity =
+            time::Date::from_calendar_date(2027, time::Month::December, 31).unwrap();
+        let deposit = crate::config::curve_calibration::date_pillar_instrument(
+            value_date,
+            date_maturity,
+            date_quote,
+        )
+        .expect("date pillar resolves to a calibration instrument");
+        let model = model_quote(&curve, &deposit);
+        assert!(
+            (model - date_quote).abs() < 1e-8,
+            "date pillar repriced {model} vs quote {date_quote}"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
     /// An unknown pillar instrument id is rejected with `NOT_FOUND`.
     #[tokio::test]
     async fn build_curve_rejects_unknown_instrument_id() {
@@ -1916,6 +2031,7 @@ mod tests {
                     quote: 0.04,
                 }],
                 session_token: token,
+                date_pillars: Vec::new(),
             }))
             .await
             .expect_err("unknown id must be rejected");
@@ -1961,6 +2077,7 @@ mod tests {
                     quote: 0.04,
                 }],
                 session_token: token,
+                date_pillars: Vec::new(),
             }))
             .await
             .expect_err("a bond is not a curve pillar");
@@ -1983,6 +2100,7 @@ mod tests {
                 reference_date: Some(curve_reference()),
                 pillars: Vec::new(),
                 session_token: token,
+                date_pillars: Vec::new(),
             }))
             .await
             .expect_err("empty pillar set must be rejected");
@@ -2005,6 +2123,7 @@ mod tests {
                     quote: 0.04,
                 }],
                 session_token: "not-a-token".to_string(),
+                date_pillars: Vec::new(),
             }))
             .await
             .expect_err("an invalid token must be rejected");

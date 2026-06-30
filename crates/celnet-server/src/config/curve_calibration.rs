@@ -39,7 +39,8 @@ use time::{Date, Duration, Month};
 
 use super::reference_data::{
     DepositDef, FraDef, InstrumentDef, InstrumentFamily, OisDef, StirFutureDef, VanillaIrsDef,
-    accrual_basis_from_label, centre_from_label, payment_frequency_from_label, roll_rule_from_label,
+    accrual_basis_from_label, centre_from_label, payment_frequency_from_label,
+    roll_rule_from_label,
 };
 
 /// A typed failure of reference-data → calibration-instrument resolution.
@@ -113,7 +114,10 @@ impl core::fmt::Display for CurveCalibrationError {
                 "period-generation roll convention `{r}` is not supported (use `none`)"
             ),
             Self::NoCalendars { instrument_id } => {
-                write!(f, "instrument `{instrument_id}` lists no settlement calendars")
+                write!(
+                    f,
+                    "instrument `{instrument_id}` lists no settlement calendars"
+                )
             }
             Self::UnknownCalendar(c) => write!(f, "unknown settlement-calendar centre `{c}`"),
             Self::CurrencyMismatch { expected, found } => write!(
@@ -174,7 +178,9 @@ pub fn calibration_instrument(
     value_date: Date,
 ) -> Result<CalibrationInstrument, CurveCalibrationError> {
     match &def.definition {
-        InstrumentFamily::Deposit(d) => deposit_instrument(d, quote, value_date, &def.instrument_id),
+        InstrumentFamily::Deposit(d) => {
+            deposit_instrument(d, quote, value_date, &def.instrument_id)
+        }
         InstrumentFamily::Fra(d) => fra_instrument(d, quote, value_date, &def.instrument_id),
         InstrumentFamily::StirFuture(d) => {
             stir_future_instrument(d, quote, value_date, &def.instrument_id)
@@ -221,6 +227,32 @@ pub fn calibration_set(
     defs.iter()
         .map(|(def, quote)| calibration_instrument(def, *quote, value_date))
         .collect()
+}
+
+/// Resolve a standalone date-anchored pillar into a synthetic money-market cash deposit.
+///
+/// The deposit runs from the curve's `reference_date` (Time 0) to `maturity_date`, pinning the
+/// closed-form pillar `DF = 1/(1 + r·τ)` with ACT/360 accrual (the USD money-market default) and
+/// `quote` as its simple rate. This is the same front-pillar the bootstrap places for a registry
+/// deposit, so a curve can be pinned to an arbitrary date (a turn, an IMM, a meeting date) without
+/// a registry instrument maturing there. Calibration is scale-invariant, so the notional is implicit.
+///
+/// # Errors
+///
+/// Returns [`CurveCalibrationError::Deposit`] if `maturity_date <= reference_date` (a non-positive
+/// curve maturity the deposit constructor rejects).
+pub fn date_pillar_instrument(
+    reference_date: Date,
+    maturity_date: Date,
+    quote: f64,
+) -> Result<CalibrationInstrument, CurveCalibrationError> {
+    let deposit = Deposit::from_dates(
+        reference_date,
+        maturity_date,
+        AccrualBasis::Act360,
+        Rate(quote),
+    )?;
+    Ok(CalibrationInstrument::Deposit(deposit))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -393,7 +425,10 @@ fn stir_future_instrument(
     let roll = RollRule::ModifiedFollowing;
     let start = tenor_to_date(&def.reference_start, value_date, 0, roll, &cal)?;
     let end = tenor_to_date(&def.reference_end, value_date, 0, roll, &cal)?;
-    let future = StirFuture::new(date_to_time(value_date, start), date_to_time(value_date, end))?;
+    let future = StirFuture::new(
+        date_to_time(value_date, start),
+        date_to_time(value_date, end),
+    )?;
     Ok(CalibrationInstrument::StirFuture(StirFuturesQuote {
         future,
         futures_rate: Rate(quote),
@@ -704,7 +739,10 @@ mod tests {
             }
         }
 
-        assert!(worst_rate < 1e-8, "worst reprice-to-par residual {worst_rate:e}");
+        assert!(
+            worst_rate < 1e-8,
+            "worst reprice-to-par residual {worst_rate:e}"
+        );
         assert!(worst_df < 1e-10, "worst deposit DF residual {worst_df:e}");
     }
 
@@ -782,5 +820,37 @@ mod tests {
             tenor_to_date("wibble", vd, 0, roll, &cal),
             Err(CurveCalibrationError::UnresolvableTenor(_))
         ));
+    }
+
+    #[test]
+    fn date_pillar_resolves_to_a_deposit_that_reprices_to_par() {
+        let vd = value_date(); // 2025-06-16
+        let maturity = Date::from_calendar_date(2026, Month::December, 31).expect("date");
+        let quote = 0.0415;
+        let inst = date_pillar_instrument(vd, maturity, quote).expect("resolves");
+        let curve: Curve =
+            bootstrap_curve(core::slice::from_ref(&inst)).expect("single-pillar bootstrap");
+        match &inst {
+            CalibrationInstrument::Deposit(d) => {
+                assert!(
+                    (deposit_par_rate(&curve, d).0 - quote).abs() < 1e-8,
+                    "date pillar deposit must reprice to its quote"
+                );
+                assert!(
+                    (curve.discount_factor(d.maturity).0 - deposit_discount_factor(d).0).abs()
+                        < 1e-10
+                );
+            }
+            _ => panic!("a date pillar must resolve to a deposit"),
+        }
+    }
+
+    #[test]
+    fn date_pillar_with_non_positive_maturity_is_rejected() {
+        let vd = value_date();
+        // A maturity on (or before) the reference date is a non-positive curve maturity.
+        let err =
+            date_pillar_instrument(vd, vd, 0.04).expect_err("non-positive maturity is rejected");
+        assert!(matches!(err, CurveCalibrationError::Deposit(_)));
     }
 }

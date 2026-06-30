@@ -4136,6 +4136,19 @@ message InstrumentQuote {
   double quote = 2;
 }
 
+// A standalone date-anchored calibration pillar: a synthetic money-market cash
+// deposit running from the curve's reference (spot) date to an explicit maturity
+// date, quoted as its simple ACT/360 rate. Lets a trader pin the curve to an
+// arbitrary date (a turn, an IMM, a central-bank meeting) without a registry
+// instrument that happens to mature there. The server resolves it to the same
+// closed-form deposit pillar (DF = 1/(1 + r*tau)) the bootstrap already consumes.
+message DatePillar {
+  // The pillar maturity date the synthetic deposit runs to (after the reference date).
+  BrokenDate maturity_date = 1;
+  // The observed simple ACT/360 rate to that date as a decimal (0.0415 = 4.15%).
+  double quote = 2;
+}
+
 // A request to bootstrap a single-currency discount curve from registry-referenced
 // instruments. The server resolves each pillar id against the reference-data
 // registry, rebuilds its schedule from the reference date, and runs the sequential
@@ -4148,16 +4161,19 @@ message BuildCurveRequest {
   string currency = 2;
   // The curve reference (spot-anchor / value) date the pillar schedules roll from.
   BrokenDate reference_date = 3;
-  // The calibrating instrument quotes; at least one, maturity order not required.
+  // The calibrating instrument quotes; maturity order not required. At least one
+  // calibrating pillar (instrument-referenced or date-anchored) must be supplied.
   repeated InstrumentQuote pillars = 4;
   // Session token of the authenticated caller (any authenticated caller may build).
   string session_token = 5;
+  // Standalone date-anchored pillars, calibrated alongside the instrument pillars.
+  repeated DatePillar date_pillars = 6;
 }
 
 // One bootstrapped pillar of a `CalibratedCurve`: the resolved curve coordinate and
 // discount factor at one calibrating instrument's maturity.
 message CalibratedCurvePoint {
-  // The input instrument id this pillar calibrates.
+  // The input instrument id this pillar calibrates; empty for a date-anchored pillar.
   string instrument_id = 1;
   // The pillar maturity on the ACT/365F curve year-fraction axis.
   double time_years = 2;
@@ -4165,6 +4181,9 @@ message CalibratedCurvePoint {
   double discount_factor = 3;
   // The continuously-compounded zero rate at `time_years` (decimal).
   double zero_rate = 4;
+  // A display label for the pillar: the date-anchored pillar's `Date YYYY-MM-DD`,
+  // or empty for an instrument pillar (the client resolves its name by id).
+  string label = 5;
 }
 
 // A bootstrapped discount curve: the calibrated pillar points (one per input
