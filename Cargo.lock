@@ -839,6 +839,8 @@ dependencies = [
  "celnet-limits",
  "celnet-linear",
  "celnet-observability",
+ "celnet-plugin-api",
+ "celnet-plugin-host",
  "celnet-proto",
  "celnet-rates",
  "celnet-rfq",
