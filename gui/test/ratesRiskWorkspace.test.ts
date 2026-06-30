@@ -134,8 +134,9 @@ describe("aggregateRatesRisk via MockTransport — scope narrows the rollup", ()
     const e1 = row({ id: "e1", entity: 1, tenorYears: 5, notionalMm: 100 });
     const e2 = row({ id: "e2", entity: 2, tenorYears: 7, notionalMm: 80 });
 
+    const entityScope = buildScope({ entity: "1", book: "", ccy: "" });
     const scoped = await t.aggregateRatesRisk(
-      buildRatesRiskRequest([e1, e2], { scope: buildScope({ entity: "1", book: "", ccy: "" }) }),
+      buildRatesRiskRequest([e1, e2], { ...(entityScope ? { scope: entityScope } : {}) }),
       DEFAULT_CONVENTIONS,
     );
     const onlyE1 = await t.aggregateRatesRisk(
@@ -151,8 +152,9 @@ describe("aggregateRatesRisk via MockTransport — scope narrows the rollup", ()
   it("a non-matching currency filter yields an empty rollup (no nodes)", async () => {
     const t = createMockTransport();
     const rows = [row({ id: "a" }), row({ id: "b", entity: 2 })];
+    const eurScope = buildScope({ entity: "", book: "", ccy: "EUR" });
     const none = await t.aggregateRatesRisk(
-      buildRatesRiskRequest(rows, { scope: buildScope({ entity: "", book: "", ccy: "EUR" }) }),
+      buildRatesRiskRequest(rows, { ...(eurScope ? { scope: eurScope } : {}) }),
       DEFAULT_CONVENTIONS,
     );
     expect(none.nodes).toHaveLength(0);
