@@ -234,6 +234,45 @@ describe("Connection stream authentication (Enforce-admitted)", () => {
     conn.close();
   });
 
+  it("re-authenticates the already-open stream when the token is installed after open", () => {
+    // The persistent connection opens (and authenticates anonymously) BEFORE the
+    // login round-trip completes — `login` rides this open socket — so the server
+    // initially pins a capability-less caller. Installing the token on the open
+    // socket MUST re-pin the caller WITH the session, or the live RFS session
+    // stays anonymous and its Subscribe/Execute are denied under Enforce
+    // (Capability gate; finding #3 — a body principal cannot self-grant caps).
+    const { conn, sock } = makeConn();
+    sock.open();
+    // First open authenticates anonymously (no token yet).
+    expect(sock.sentOfType("authenticate").length).toBe(1);
+    expect("session_token" in sock.sentOfType("authenticate")[0]!).toBe(false);
+
+    // The auth flow installs the Login bearer on the already-open connection.
+    conn.setSessionToken("login-bearer-after-open");
+
+    // A SECOND authenticate frame is emitted, carrying the token (the server
+    // re-resolves the user's capabilities), with the grant-all principal intact.
+    const auths = sock.sentOfType("authenticate");
+    expect(auths.length).toBe(2);
+    expect(auths[1]!["session_token"]).toBe("login-bearer-after-open");
+    expect((auths[1]!["principal"] as Record<string, unknown>)["grant_all"]).toBe(true);
+    conn.close();
+  });
+
+  it("does not re-authenticate on setSessionToken while the socket is down (sent on next open)", () => {
+    const { conn, sock, time } = makeConn();
+    // Never opened: installing a token must NOT push a frame (nothing on the wire).
+    conn.setSessionToken("token-while-down");
+    expect(sock.sent.length).toBe(0);
+    // The token then rides the FIRST authenticate frame once the socket opens.
+    sock.open();
+    time.advance(0);
+    const auths = sock.sentOfType("authenticate");
+    expect(auths.length).toBe(1);
+    expect(auths[0]!["session_token"]).toBe("token-while-down");
+    conn.close();
+  });
+
   it("re-sends the Authenticate frame FIRST on reconnect (re-dialed stream is anonymous)", () => {
     const { conn, sock, time } = makeConn();
     sock.open();

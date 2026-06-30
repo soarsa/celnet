@@ -41,8 +41,7 @@ use tonic::Request;
 use tonic::transport::Channel;
 
 use common::{
-    STEP_DEADLINE, TEST_DEADLINE, eurusd_conv, live_market, login_seed_admin, vanilla_call,
-    wire_conventions,
+    STEP_DEADLINE, TEST_DEADLINE, eurusd_conv, live_market, vanilla_call, wire_conventions,
 };
 
 // ---------------------------------------------------------------------------
@@ -172,6 +171,30 @@ async fn dial(url: &str) -> Channel {
         .connect()
         .await
         .expect("dial backend")
+}
+
+/// Log in as the always-seeded admin (`admin@celnet.com` / `password`) at the edge
+/// dialed at `url` and return its session token. `AcceptQuote` is capability-gated
+/// (`Execute·FxOptions`) and resolves the capability ONLY from a session validated
+/// against THAT edge's own registry — a body-asserted grant-all principal cannot
+/// self-grant it (finding #3). The token must therefore come from the edge that
+/// HANDLES the accept (here, the quote-issuing backend the front edge routes to), not
+/// the front edge.
+async fn login_admin(url: &str) -> String {
+    use celnet_proto::LoginRequest;
+    use celnet_proto::auth_service_client::AuthServiceClient;
+    let mut auth = AuthServiceClient::new(dial(url).await);
+    let resp = auth
+        .login(LoginRequest {
+            email: "admin@celnet.com".to_owned(),
+            password: "password".to_owned(),
+            correlation_id: None,
+        })
+        .await
+        .expect("seed admin logs in")
+        .into_inner();
+    assert!(!resp.session_token.is_empty(), "Login mints a token");
+    resp.session_token
 }
 
 // ---------------------------------------------------------------------------
@@ -449,7 +472,7 @@ async fn quote_request_then_accept_routes_to_issuer() {
         // satisfiable by a body grant-all principal at both edges, so it keeps the
         // token-less grant-all through the front.)
         let issuer = owner(&backends, &replicas, pair);
-        let accept_token = login_seed_admin(&issuer.url).await;
+        let accept_token = login_admin(&issuer.url).await;
         let front_url = format!("http://{}", front.grpc_addr());
         let mut front_q = QuoteServiceClient::new(dial(&front_url).await);
         let mut issuer_q = QuoteServiceClient::new(dial(&issuer.url).await);

@@ -68,6 +68,37 @@ pub async fn start_edge_and_client_with(clock: Clock) -> (Edge, Client, TempDir)
     (edge, client, data_dir)
 }
 
+/// Start a ready edge and return it plus a typed [`Client`] **authenticated as the
+/// seed admin** (via the edge's real `AuthService.Login`), carrying a
+/// capability-complete session token.
+///
+/// The capability gates — `AcceptQuote` (`Execute·FxOptions`), the stream
+/// `Subscribe`/`Modify`/`Resync`/`MarketSeriesSubscribe`/`Execute` frames, and the
+/// FI desk respond/accept — resolve a capability ONLY from an authenticated session;
+/// a body-asserted grant-all principal cannot self-grant one (finding #3). So a test
+/// that invokes any of those under the production `Enforce` posture must log in. The
+/// token only AUTHORIZES — the SDK still sends the grant-all principal and the price
+/// is unchanged. Pure principal-gated tests (`request_quote` / panel DISPLAY / reject
+/// / risk with `ReadAny`) keep the token-less [`start_edge_and_client`] helpers.
+pub async fn start_edge_and_authed_client() -> (Edge, Client, TempDir) {
+    start_edge_and_authed_client_with(Clock::system()).await
+}
+
+/// [`start_edge_and_authed_client`] with an explicit clock (so a gated test can also
+/// drive last-look expiry deterministically). Returns the [`TempDir`] rooting the
+/// edge's isolated persisted config — hold it for the test's lifetime so parallel
+/// edges never race the shared `identity.json` / `fix-connections.json` path.
+pub async fn start_edge_and_authed_client_with(clock: Clock) -> (Edge, Client, TempDir) {
+    let (edge, addr, data_dir) = start_ready_edge(clock).await;
+    let token = login_seed_admin(addr).await;
+    let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
+        .await
+        .expect("client connects in time")
+        .expect("client connects")
+        .with_session_token(token);
+    (edge, client, data_dir)
+}
+
 /// Start a ready edge on an ephemeral port over the EURUSD fixture.
 ///
 /// Each edge roots its persisted config (`identity.json` / `fix-connections.json`)
@@ -97,13 +128,25 @@ pub async fn start_ready_edge(clock: Clock) -> (Edge, SocketAddr, TempDir) {
 /// edit can't silently re-mask the boundary with Permissive).
 ///
 /// These tests deliberately run against `Enforce` — the real production edge — so
-/// they verify the trader-facing default end-to-end: the typed SDK sends an
-/// **explicit grant-all** principal when a query asserts none, so the headline
-/// risk workflow is served, while a *genuinely* absent principal would be denied
-/// (covered server-side by `absent_principal_denied_on_every_entitlement_gated_service`).
-/// A scoped principal is honored, so the entitlement-pruning workflow exercises
-/// real pruning. (The dev demo edge runs Permissive for raw/un-principalled
-/// clients; the SDK never needs it.)
+/// they verify the trader-facing default end-to-end. Two authorization tiers apply:
+///
+/// * **Principal-gated (`ReadAny`)** — `RequestQuote` / `RejectQuote` / the panel
+///   DISPLAY / risk aggregation: the typed SDK sends an **explicit grant-all**
+///   principal when a query asserts none, so the headline read workflow is served by
+///   the token-less [`start_edge_and_client`] helpers (a *genuinely* absent principal
+///   is denied — covered server-side by
+///   `absent_principal_denied_on_every_entitlement_gated_service`); a scoped principal
+///   is honored, so the entitlement-pruning workflow exercises real pruning.
+/// * **Capability-gated** — `AcceptQuote` (`Execute·FxOptions`), the stream frames
+///   (`Stream`/`Execute·FxOptions`), and the FI desk respond/accept: a capability
+///   resolves ONLY from an authenticated session — a grant-all body principal cannot
+///   self-grant one (finding #3) — so a test invoking these must log in
+///   ([`start_edge_and_authed_client`] / [`start_panel_edge_and_authed_client`]). The
+///   token only authorizes; the SDK still sends the grant-all principal and the price
+///   is unchanged.
+///
+/// (The dev demo edge runs Permissive for raw/un-principalled clients; the SDK never
+/// needs it.)
 fn mark_ready_enforcing(edge: &Edge) {
     edge.store().set_access_mode(AccessMode::Enforce);
     edge.gate().mark_ready();
@@ -140,6 +183,42 @@ pub async fn start_panel_edge_and_client(
         .await
         .expect("client connects in time")
         .expect("client connects");
+    (edge, client, data_dir)
+}
+
+/// [`start_panel_edge_and_client`] but with the returned [`Client`] **authenticated as
+/// the seed admin**, for multi-dealer tests that book a panel row via the
+/// capability-gated `AcceptQuote` (`Execute·FxOptions`). The panel DISPLAY
+/// (`request_multi_dealer_quote`) is only principal-gated, so it is unaffected; the
+/// token only authorizes the accept and does not change the booked price.
+pub async fn start_panel_edge_and_authed_client(
+    clock: Clock,
+    synthetic_lps: u32,
+) -> (Edge, Client, TempDir) {
+    let initial = make_state(FIXTURE_SPOT, eurusd_conv());
+    let link = CoreLink::start(initial, None);
+    let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let ws: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let data_dir = tempfile::tempdir().expect("temp data dir for the edge's persisted config");
+    let edge = Edge::start_on_with_panel(
+        grpc,
+        ws,
+        Arc::clone(&link),
+        SpreadModel::default(),
+        clock,
+        LpPanelConfig { synthetic_lps },
+        Some(data_dir.path()),
+    )
+    .await
+    .expect("edge binds on an ephemeral port");
+    mark_ready_enforcing(&edge);
+    let addr = edge.grpc_addr();
+    let token = login_seed_admin(addr).await;
+    let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
+        .await
+        .expect("client connects in time")
+        .expect("client connects")
+        .with_session_token(token);
     (edge, client, data_dir)
 }
 
