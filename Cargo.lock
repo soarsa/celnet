@@ -727,6 +727,7 @@ version = "0.0.0"
 dependencies = [
  "celnet-types",
  "prost",
+ "prost-types",
  "protox",
  "tonic",
  "tonic-build",
