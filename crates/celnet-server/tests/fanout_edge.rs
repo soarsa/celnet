@@ -165,7 +165,7 @@ async fn open_subscription(
 #[tokio::test]
 async fn per_subscription_updates_match_producer_ticks_in_order() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let strike = 1.10;
         let base_spot = live_market().spot;
         let (tx, mut inbound) = open_subscription(addr, 7, strike).await;
@@ -230,7 +230,7 @@ async fn per_subscription_updates_match_producer_ticks_in_order() {
 #[tokio::test]
 async fn two_subscribers_same_pair_share_one_broadcast_value() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let strike = 1.12;
         let base_spot = live_market().spot;
         let (tx_a, mut in_a) = open_subscription(addr, 101, strike).await;
@@ -311,7 +311,7 @@ async fn two_subscribers_same_pair_share_one_broadcast_value() {
 #[tokio::test]
 async fn lagged_subscriber_recovers_via_resync_over_the_ring() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let strike = 1.10;
         let (tx, mut inbound) = open_subscription(addr, 77, strike).await;
 
@@ -370,7 +370,7 @@ async fn lagged_subscriber_recovers_via_resync_over_the_ring() {
 #[tokio::test]
 async fn click_to_trade_and_resync_still_work_over_the_ring() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let strike = 1.10;
         let (tx, mut inbound) = open_subscription(addr, 33, strike).await;
 

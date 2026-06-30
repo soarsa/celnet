@@ -13343,31 +13343,6 @@
   "text": "GreeksStrip is the inline option-risk readout: a primary row of GreekCell tiles (delta/gamma/vega/theta) plus a disclosure button (aria-expanded + aria-label=\"toggle full Greeks\") that reveals the secondary Greeks. It is asset-class-aware — rhoGreeksFor(assetClass) relabels the rate-rho Greeks per the active underlier's class (FX default) — so the same strip serves FX/equity/commodity/crypto tickets. Numerics render through GreekCell on the mono token face; the strip itself carries no raw color literals."
  },
  {
-  "kind": "decision",
-  "state": "draft",
-  "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve",
-   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.discount_df",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.discount_factor",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.zero_rate",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.forward_rate_continuous"
-  ],
-  "text": "DESIGN DIRECTION (ADR-0010, proposed/accepted, NOT yet implemented): converge celnet-rates onto the carry seam by recognizing celnet-types::Carry as the DEGENERATE flat (single-rate, single-expiry) term structure and celnet-rates::curve::Curve as the GENERAL bootstrapped term structure. The plan hoists a DiscountCurve/TermStructure trait into celnet-core that BOTH Carry (flat) and Curve (nodes + interpolation; discount_factor/zero_rate/forward_rate_continuous) implement, and generalizes the flat-rate carry context to a curve-backed one; the multi-curve CurveSet (OIS discount + per-index projection) is the container, with FX two-rate Carry::FxRates{r_dom,r_for} as the 2-curve special case (two flat discount curves producing a forward). Convergence is principled, not forced: FX carry is already a 2-curve special case of multi-curve. Payoff engines stay asset-class-agnostic over forward(t)/discount(t) and are NOT modified. Aligns with master-plan items A (carry-seam-to-edge) and F (shared carry→sensitivity mapper). This is a not-yet-built direction; the flat-carry path remains authoritative until the trait lands."
- },
- {
-  "kind": "decision",
-  "state": "draft",
-  "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-types.src.lib.RateSensitivities",
-   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.AggregateRatesRisk",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.risk.ladder",
-   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.CurveSet",
-   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.RatesInstrument"
-  ],
-  "text": "DESIGN DIRECTION (ADR-0010, proposed/accepted, NOT yet implemented): rates risk unifies into the ONE firm-wide risk cube rather than a silo. The plan extends celnet-types::RateSensitivities to carry a curve-bucketed key-rate-DV01 ladder and admits a rates underlying/dimension so rates positions roll up alongside FX/equity/crypto in the same cube; the RiskService.AggregateRatesRisk endpoint becomes a TYPED PROJECTION of that one cube, not a separate engine. The curve-risk primitive is the existing key-rate-DV01 ladder (celnet-rates::risk::ladder; KeyRateDv01/KeyRateBucket buckets) — preserved as the per-tenor sensitivity, now bucketed into the shared cube. Aligns with master-plan item E (risk-cube RepriceFn) and API-first parity. NOT yet built: AggregateRatesRisk today is computed by a dedicated rates-risk aggregate path; this direction makes it a projection of the unified cube."
- },
- {
   "kind": "invariant",
   "state": "draft",
   "anchors": [
@@ -13381,33 +13356,11 @@
   "kind": "decision",
   "state": "draft",
   "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-integration.src.vendor.VendorSmileMessage",
-   "github.com-soarsa-celnet.crates.celnet-integration.src.subscriber.ResilientSubscriber",
-   "github.com-soarsa-celnet.crates.celnet-server.src.lib.Edge.attach_vendor_feed"
-  ],
-  "text": "ADR-0011 (Celer-estate ingress): external vendor FX-options market-data ingress is a SOURCE-AGNOSTIC, normalizing, resilient adapter, not a vendor-named core path. A vendor feed enters via the FeedTransport trait -> ResilientSubscriber (strict-monotone per-key sequencing; on a gap it resyncs from a fresh snapshot, never fabricates) -> vendor::normalize / VendorSmileMessage (+ WireDeltaConvention/WireAtmConvention round-trips) onto the ONE canonical celnet-surface object, bound to the server via Edge::attach_vendor_feed. The vendor name lives only in integration/docs context (guardrail #8); a second source is a second FeedTransport impl, not a fork. Verified: vendor_feed_with_gap_resyncs_and_surface_matches_direct_pipeline."
- },
- {
-  "kind": "decision",
-  "state": "draft",
-  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-integration.src.deployment.DeploymentMode",
    "github.com-soarsa-celnet.crates.celnet-integration.src.egress.EgressGovernor",
    "github.com-soarsa-celnet.crates.celnet-server.src.services.deploy.DeployMode.binds_vendor_feed"
   ],
   "text": "ADR-0011 (Celer-estate ingress): integration into the Celer trade-lifecycle estate is DEPLOYMENT-MODE gated, additive and non-disruptive, with egress bounded+conflating to respect the distributor. DeploymentMode {CelerIntegrated, Hybrid, Standalone, ExternalFeedOnly} selects which feeds attach (uses_celer_feed/uses_external_feed; binds_vendor_feed at the server); all estate publication flows through EgressGovernor (bounded, conflating, rate-limited) so a high-frequency pricer cannot overflow the skip-while-full JVM-distributor mailbox and silently drop prices. HONEST SCOPE: the concrete live Celer trade-lifecycle transport adapter is deploy/estate-gated, NOT an in-repo type — the graph shows no CALLS path from celnet-server into a named Celer order/position adapter; the four lifecycle hops (orderrouting->risk->destination->clearing->positionmanager) are inferred, not runtime-traced."
- },
- {
-  "kind": "invariant",
-  "state": "draft",
-  "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.fan_out_aggregate",
-   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.federate.fan_out",
-   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.dimension.FactMeasure",
-   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.upsert_exotic",
-   "github.com-soarsa-celnet.crates.celnet-parity.tests.exotic_risk_cube.exotic_only_fan_out_reconciles"
-  ],
-  "text": "RISK ROLL-UP COVERAGE (reconciled to built reality): the risk-cube/fleet aggregation algebra DOES include exotic AND cross-asset positions — it is NOT vanilla-only. celnet_risk_cube::FactMeasure carries exotic: Option<ExoticLeg> and is keyed on a cross-asset Underlying, so an exotic leg (PositionStore::upsert_exotic -> ExoticLeg::canonical_leaf as the additive carrier + exotic bump-and-revalue for non-additive VaR/curvature) and a cross-asset vanilla leg both roll up in the firm node and through celnet-risk-fleet::fan_out_aggregate. Proven exotic-only by celnet-parity/tests/exotic_risk_cube::exotic_only_fan_out_reconciles (3 exotic-only RiskFacts, firm.positions empty, firm.exotic_legs.len()==3, VaR+curvature reconcile to single-node). The REMAINING GAP is automatic ingestion: the RFS auto-book (record_booked_position) and the wire RiskPosition conversion (position_to_fact, exotic:None) auto-record VANILLA FX fills only — an exotic/cross-asset leg must be staged explicitly via upsert_exotic (no production RPC/RFS path wires it yet). server::services::risk::federate::fan_out is the generic concurrent gRPC fan-out helper over backends, distinct from the fleet aggregation algebra."
  },
  {
   "kind": "invariant:pure",
@@ -13507,5 +13460,70 @@
    "github.com-soarsa-celnet.crates.celnet-heston.src.lib.psi_coeff"
   ],
   "text": "chi(w,c,d,lo) and psi_coeff(w,c,d,lo) are the two closed-form basis-coefficient integrals of the Fang–Oosterlee (2008) COS method used by `cos`. chi = ∫_c^d e^y cos(w(y−lo)) dy evaluated analytically as (cos(w(d−lo))e^d − cos(w(c−lo))e^c + w·sin(w(d−lo))e^d − w·sin(w(c−lo))e^c)/(1+w²); psi_coeff = ∫_c^d cos(w(y−lo)) dy = (sin(w(d−lo)) − sin(w(c−lo)))/w with the exact w=0 limit (d−c) handled as a special case to avoid 0/0. Both are pure: they read only their scalar f64 arguments, allocate nothing, and have no WRITES — total functions of (w,c,d,lo)."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.ExoticLegPricer",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.exotic_pricer.ExoticEngine"
+  ],
+  "text": "Item E dependency inversion: celnet-risk-cube depends ONLY on the celnet-core `ExoticLegPricer` trait (unit_price + digital_greeks over the carry seam), NOT on the concrete celnet-exotics/celnet-gpu pricers — `cargo tree -p celnet-risk-cube` lists neither after the refactor. The server's `ExoticEngine` (services/risk/exotic_pricer.rs) implements the trait over the real engines and is injected into the cube at construction/reprice; celnet-risk-fleet and celnet-limits thread the same `&dyn ExoticLegPricer` seam. Risk output is byte-identical (the named risk/cross-asset parity rows). Adding a pricer = a new trait impl injected from the server, not a new cube dependency."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-integration.src.subscriber.ResilientSubscriber",
+   "github.com-soarsa-celnet.crates.celnet-integration.src.vendor.VendorSmileMessage",
+   "github.com-soarsa-celnet.crates.celnet-server.src.lib.Edge.attach_vendor_feed"
+  ],
+  "text": "ADR-0011 (Celer-estate ingress): external vendor FX-options market-data ingress is a SOURCE-AGNOSTIC, normalizing, resilient adapter, not a vendor-named core path. A vendor feed enters via the FeedTransport trait -> ResilientSubscriber (strict-monotone per-key sequencing; on a gap it resyncs from a fresh snapshot, never fabricates) -> vendor::normalize / VendorSmileMessage (+ WireDeltaConvention/WireAtmConvention round-trips) onto the ONE canonical celnet-surface object, bound to the server via Edge::attach_vendor_feed. The vendor name lives only in integration/docs context (guardrail #8); a second source is a second FeedTransport impl, not a fork. Verified: vendor_feed_with_gap_resyncs_and_surface_matches_direct_pipeline."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.AggregateRatesRisk",
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.CurveSet",
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.RatesInstrument",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.risk.ladder",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.RateSensitivities"
+  ],
+  "text": "DESIGN DIRECTION (ADR-0010, proposed/accepted, NOT yet implemented): rates risk unifies into the ONE firm-wide risk cube rather than a silo. The plan extends celnet-types::RateSensitivities to carry a curve-bucketed key-rate-DV01 ladder and admits a rates underlying/dimension so rates positions roll up alongside FX/equity/crypto in the same cube; the RiskService.AggregateRatesRisk endpoint becomes a TYPED PROJECTION of that one cube, not a separate engine. The curve-risk primitive is the existing key-rate-DV01 ladder (celnet-rates::risk::ladder; KeyRateDv01/KeyRateBucket buckets) — preserved as the per-tenor sensitivity, now bucketed into the shared cube. Aligns with master-plan item E (risk-cube RepriceFn) and API-first parity. NOT yet built: AggregateRatesRisk today is computed by a dedicated rates-risk aggregate path; this direction makes it a projection of the unified cube."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.discount_factor",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.forward_rate_continuous",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.zero_rate",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.discount_df"
+  ],
+  "text": "DESIGN DIRECTION (ADR-0010, proposed/accepted, NOT yet implemented): converge celnet-rates onto the carry seam by recognizing celnet-types::Carry as the DEGENERATE flat (single-rate, single-expiry) term structure and celnet-rates::curve::Curve as the GENERAL bootstrapped term structure. The plan hoists a DiscountCurve/TermStructure trait into celnet-core that BOTH Carry (flat) and Curve (nodes + interpolation; discount_factor/zero_rate/forward_rate_continuous) implement, and generalizes the flat-rate carry context to a curve-backed one; the multi-curve CurveSet (OIS discount + per-index projection) is the container, with FX two-rate Carry::FxRates{r_dom,r_for} as the 2-curve special case (two flat discount curves producing a forward). Convergence is principled, not forced: FX carry is already a 2-curve special case of multi-curve. Payoff engines stay asset-class-agnostic over forward(t)/discount(t) and are NOT modified. Aligns with master-plan items A (carry-seam-to-edge) and F (shared carry→sensitivity mapper). This is a not-yet-built direction; the flat-carry path remains authoritative until the trait lands."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.price_error_to_status",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.rates_price_error_to_status"
+  ],
+  "text": "Item H single-source error→Status taxonomy: `services/error_status.rs` is the ONE place mapping domain errors to `tonic::Status` — `price_error_to_status(&PriceError)`→INVALID_ARGUMENT, `link_error_to_status(&CoreLinkError)`→UNAVAILABLE, `rates_price_error_to_status(&RatesPriceError)`: Bootstrap→INTERNAL else INVALID_ARGUMENT. The message is always the error's Display rendering verbatim; the variant only selects the code. Replaced the scattered inline `Status::*(e.to_string())` callsites in services/{stream,quote}.rs; services/auth.rs intentionally deferred (teammate's active authz lane). Byte-identical status codes + messages (the lsv_workflow/cross_asset_ws/readiness assertions)."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.exotic_risk_cube.exotic_only_fan_out_reconciles",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.dimension.FactMeasure",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.fan_out_aggregate",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.federate.fan_out",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.upsert_exotic"
+  ],
+  "text": "RISK ROLL-UP COVERAGE (reconciled to built reality): the risk-cube/fleet aggregation algebra DOES include exotic AND cross-asset positions — it is NOT vanilla-only. celnet_risk_cube::FactMeasure carries exotic: Option<ExoticLeg> and is keyed on a cross-asset Underlying, so an exotic leg (PositionStore::upsert_exotic -> ExoticLeg::canonical_leaf as the additive carrier + exotic bump-and-revalue for non-additive VaR/curvature) and a cross-asset vanilla leg both roll up in the firm node and through celnet-risk-fleet::fan_out_aggregate. Proven exotic-only by celnet-parity/tests/exotic_risk_cube::exotic_only_fan_out_reconciles (3 exotic-only RiskFacts, firm.positions empty, firm.exotic_legs.len()==3, VaR+curvature reconcile to single-node). The REMAINING GAP is automatic ingestion: the RFS auto-book (record_booked_position) and the wire RiskPosition conversion (position_to_fact, exotic:None) auto-record VANILLA FX fills only — an exotic/cross-asset leg must be staged explicitly via upsert_exotic (no production RPC/RFS path wires it yet). server::services::risk::federate::fan_out is the generic concurrent gRPC fan-out helper over backends, distinct from the fleet aggregation algebra."
  }
 ]

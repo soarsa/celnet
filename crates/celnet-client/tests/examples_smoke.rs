@@ -34,7 +34,10 @@ use celnet_types::{CcyPair, OptionType, Tenor};
 
 use celnet_server::Clock;
 
-use common::{conventions, eurusd, start_edge_and_client, start_panel_edge_and_client};
+use common::{
+    conventions, eurusd, start_edge_and_authed_client, start_edge_and_client,
+    start_panel_edge_and_authed_client,
+};
 
 // These smoke tests each boot a fresh REAL edge AND price compute-heavy products
 // (e.g. the American PSOR free-boundary FD). Under full-suite parallel-nextest
@@ -62,7 +65,10 @@ fn example_market() -> MarketContext {
 #[tokio::test]
 async fn example_quote_and_trade_path_quotes_and_books() {
     tokio::time::timeout(SMOKE_TEST, async {
-        let (edge, client) = start_edge_and_client().await;
+        // Authenticated: this path books via the capability-gated `AcceptQuote`
+        // (`Execute·FxOptions`), which needs a real session under Enforce. Own the
+        // `TempDir` so parallel test edges never race the shared persisted-config path.
+        let (edge, client, _data_dir) = start_edge_and_authed_client().await;
 
         let instrument = InstrumentSpec::vanilla(
             eurusd(),
@@ -110,8 +116,11 @@ async fn example_quote_and_trade_path_quotes_and_books() {
 async fn example_multi_dealer_trade_path_ranks_and_books_best_lp() {
     tokio::time::timeout(SMOKE_TEST, async {
         // The same panel breadth `demo_edge` boots with, on an in-process edge
-        // (explicit panel — no env mutation).
-        let (edge, client) = start_panel_edge_and_client(Clock::system(), 3).await;
+        // (explicit panel — no env mutation). Authenticated: the best-LP booking goes
+        // through the capability-gated `AcceptQuote` (`Execute·FxOptions`). Own the
+        // `TempDir` so parallel test edges never race the shared persisted-config path.
+        let (edge, client, _data_dir) =
+            start_panel_edge_and_authed_client(Clock::system(), 3).await;
 
         let instrument = InstrumentSpec::vanilla(
             eurusd(),
@@ -165,7 +174,10 @@ async fn example_multi_dealer_trade_path_ranks_and_books_best_lp() {
 #[tokio::test]
 async fn example_stream_blotter_path_streams_moving_lines() {
     tokio::time::timeout(SMOKE_TEST, async {
-        let (edge, client) = start_edge_and_client().await;
+        // Authenticated: the stream `Subscribe` frames need `Stream·FxOptions`, a
+        // capability only an authenticated session carries under Enforce. Own the
+        // `TempDir` so parallel test edges never race the shared persisted-config path.
+        let (edge, client, _data_dir) = start_edge_and_authed_client().await;
 
         let strikes = [1.08_f64, 1.12, 1.16];
         let session = tokio::time::timeout(SMOKE_STEP, client.open_session())
@@ -239,7 +251,7 @@ async fn example_stream_blotter_path_streams_moving_lines() {
 #[tokio::test]
 async fn example_price_exotic_path_prices_asian_and_american() {
     tokio::time::timeout(SMOKE_TEST, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let market = example_market();
         let conv = Conventions::major_default();
 
@@ -317,7 +329,7 @@ async fn example_price_exotic_path_prices_asian_and_american() {
 #[tokio::test]
 async fn example_price_linear_path_prices_forward_swap_ndf() {
     tokio::time::timeout(SMOKE_TEST, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let conv = Conventions::major_default();
 
         // Forward struck at the fair forward ⇒ PV ≈ 0, exact (no std-error).

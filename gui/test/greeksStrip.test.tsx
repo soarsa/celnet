@@ -9,6 +9,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { GreeksStrip } from "../src/components/GreeksStrip";
 import type { Greeks } from "../src/data/contract";
+import type { AssetClass } from "../src/products/types";
 
 afterEach(cleanup);
 
@@ -19,7 +20,7 @@ const G: Greeks = {
 };
 
 /** Expand the strip so the secondary (rho) Greeks render. */
-function renderExpanded(assetClass: Parameters<typeof GreeksStrip>[0]["assetClass"]) {
+function renderExpanded(assetClass: AssetClass) {
   render(<GreeksStrip greeks={G} assetClass={assetClass} />);
   fireEvent.click(screen.getByRole("button", { name: /toggle full greeks/i }));
 }

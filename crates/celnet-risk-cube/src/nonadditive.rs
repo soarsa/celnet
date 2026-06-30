@@ -58,6 +58,7 @@
 //! [`VanillaInputs`]; both repricing and the AAD sweep are deterministic (`libm`),
 //! so every measure here is bit-reproducible for a fixed scenario set.
 
+use celnet_core::ExoticLegPricer;
 use celnet_core::carry::{CarryInputs, CarryPricer};
 use celnet_core::math::sqrt;
 use celnet_risk_normalize::PositionRisk;
@@ -572,6 +573,7 @@ pub fn vanilla_curvature_legs<P: CarryPricer>(
 #[must_use]
 pub fn node_var_es_combined<P: CarryPricer>(
     pricer: &P,
+    exotic_pricer: &dyn ExoticLegPricer,
     positions: &[PositionRisk],
     exotic_legs: &[crate::exotic::ExoticLeg],
     scenarios: &[Scenario],
@@ -582,7 +584,10 @@ pub fn node_var_es_combined<P: CarryPricer>(
     }
     let mut pnl: Vec<f64> = scenarios
         .iter()
-        .map(|s| node_pnl(pricer, positions, *s) + crate::exotic::exotic_node_pnl(exotic_legs, *s))
+        .map(|s| {
+            node_pnl(pricer, positions, *s)
+                + crate::exotic::exotic_node_pnl(exotic_pricer, exotic_legs, *s)
+        })
         .collect();
     quantile_var_es(&mut pnl, alpha)
 }
@@ -597,6 +602,7 @@ pub fn node_var_es_combined<P: CarryPricer>(
 #[must_use]
 pub fn node_var_es_sensitivity_combined<P: CarryPricer>(
     pricer: &P,
+    exotic_pricer: &dyn ExoticLegPricer,
     positions: &[PositionRisk],
     exotic_legs: &[crate::exotic::ExoticLeg],
     scenarios: &[Scenario],
@@ -610,7 +616,7 @@ pub fn node_var_es_sensitivity_combined<P: CarryPricer>(
         .iter()
         .map(|s| {
             let vanilla: f64 = sens.iter().map(|p| p.taylor_pnl(*s)).sum();
-            vanilla + crate::exotic::exotic_node_pnl(exotic_legs, *s)
+            vanilla + crate::exotic::exotic_node_pnl(exotic_pricer, exotic_legs, *s)
         })
         .collect();
     quantile_var_es(&mut pnl, alpha)
@@ -625,12 +631,13 @@ pub fn node_var_es_sensitivity_combined<P: CarryPricer>(
 #[must_use]
 pub fn sbm_curvature_spot_combined<P: CarryPricer>(
     pricer: &P,
+    exotic_pricer: &dyn ExoticLegPricer,
     positions: &[PositionRisk],
     exotic_legs: &[crate::exotic::ExoticLeg],
     rw: f64,
 ) -> f64 {
     let (v_up, v_down) = vanilla_curvature_legs(pricer, positions, rw);
-    let (e_up, e_down) = crate::exotic::exotic_curvature_legs(exotic_legs, rw);
+    let (e_up, e_down) = crate::exotic::exotic_curvature_legs(exotic_pricer, exotic_legs, rw);
     (v_up + e_up).max(v_down + e_down).max(0.0)
 }
 

@@ -126,24 +126,33 @@ export function PermissionsWorkspace(): React.ReactElement {
           )}
         </Panel>
 
-        <Panel title="Component access" glyph="⚷" className={styles.gridPanel}>
-          {selected ? (
-            <ComponentAccessGrid
-              key={selected.id}
-              user={selected}
-              transport={app.transport}
-              signedInUserId={auth.user?.id}
-            />
-          ) : (
-            <p className={styles.placeholder}>
-              Select a user on the left to view and edit their access to each component.
-            </p>
-          )}
-        </Panel>
+        {/*
+         * Both editor panels live in a single right-hand column so the sticky user
+         * picker (column 1) has NOTHING beneath it to overlap. Previously the
+         * Role-bundles panel auto-placed into column 1 / row 2, directly under the
+         * sticky picker; when the page scrolled, the role grid's cells painted over
+         * the picker's user buttons and intercepted clicks on them.
+         */}
+        <div className={styles.content}>
+          <Panel title="Component access" glyph="⚷" className={styles.gridPanel}>
+            {selected ? (
+              <ComponentAccessGrid
+                key={selected.id}
+                user={selected}
+                transport={app.transport}
+                signedInUserId={auth.user?.id}
+              />
+            ) : (
+              <p className={styles.placeholder}>
+                Select a user on the left to view and edit their access to each component.
+              </p>
+            )}
+          </Panel>
 
-        <Panel title="Role bundles" glyph="⚷" className={styles.gridPanel}>
-          <RoleCapabilityEditor transport={app.transport} />
-        </Panel>
+          <Panel title="Role bundles" glyph="⚷" className={styles.gridPanel}>
+            <RoleCapabilityEditor transport={app.transport} />
+          </Panel>
+        </div>
       </div>
     </div>
   );

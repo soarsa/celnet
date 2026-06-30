@@ -251,6 +251,7 @@ pub async fn start_ready_edge() -> std::io::Result<(Edge, SocketAddr)> {
         Arc::clone(&link),
         SpreadModel::default(),
         Clock::system(),
+        None,
     )
     .await?;
     edge.gate().mark_ready();
@@ -296,6 +297,32 @@ pub async fn run_load(addr: SocketAddr, config: LoadConfig) -> Result<WireReport
         .await
         .map_err(|e| format!("channel connect failed: {e}"))?;
 
+    // Log in as the seed admin (always present — every `Edge::start` ensures it) to
+    // obtain a capability-complete session token. The StreamService frame gate
+    // requires the `Stream·FxOptions` capability, and capabilities are resolved ONLY
+    // from an authenticated session — a body-asserted principal cannot self-grant
+    // them (finding #3) — so the streaming load must authenticate with a real session
+    // token, not merely the audited grant-all principal. (The RFQ path below stays
+    // principal-gated, so it keeps the asserted grant-all without a token.)
+    let session_token = {
+        use celnet_proto::LoginRequest;
+        use celnet_proto::auth_service_client::AuthServiceClient;
+        let mut auth = AuthServiceClient::new(channel.clone());
+        let resp = auth
+            .login(LoginRequest {
+                email: "admin@celnet.com".to_owned(),
+                password: "password".to_owned(),
+                correlation_id: None,
+            })
+            .await
+            .map_err(|e| format!("seed-admin login failed: {e}"))?
+            .into_inner();
+        if resp.session_token.is_empty() {
+            return Err("seed-admin login returned an empty session token".to_owned());
+        }
+        resp.session_token
+    };
+
     // --- Background streaming load ----------------------------------------
     // Open `stream_subscriptions` RFS sessions; each drains server messages in a
     // spawned task until the stop flag flips. The drained-message counter is
@@ -318,7 +345,7 @@ pub async fn run_load(addr: SocketAddr, config: LoadConfig) -> Result<WireReport
         tx.send(celnet_proto::ClientStreamMessage {
             message: Some(client_stream_message::Message::Authenticate(
                 celnet_proto::StreamAuth {
-                    session_token: None,
+                    session_token: Some(session_token.clone()),
                     principal: Some(celnet_proto::EntitlementPrincipal {
                         grant_all: true,
                         grants: vec![],

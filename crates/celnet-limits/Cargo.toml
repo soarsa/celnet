@@ -19,3 +19,10 @@ celnet-risk-normalize.workspace = true
 # threads through (the cube reducers are generic over it). One-way edge:
 # limits -> core.
 celnet-core.workspace = true
+
+[dev-dependencies]
+# Enable the cube's test-only `test_support::DigitalTestPricer` for the limits
+# non-additive VaR test (the injected `ExoticLegPricer`), reusing the single
+# code-disjoint closed form instead of duplicating it. Test-only; the production
+# build of celnet-risk-cube above has the feature off.
+celnet-risk-cube = { workspace = true, features = ["test-support"] }

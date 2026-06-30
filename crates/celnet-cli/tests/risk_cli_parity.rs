@@ -113,16 +113,22 @@ fn seed_two_book_desk(store: &PositionStore) -> u32 {
 }
 
 /// Start a ready edge on an ephemeral gRPC port over the EURUSD fixture.
-async fn start_ready_edge() -> (Edge, SocketAddr) {
+///
+/// The edge roots its persisted config in its OWN [`tempfile::TempDir`], returned so
+/// the caller owns it for the edge's lifetime — parallel test edges never race the
+/// one shared `identity.json` / `fix-connections.json` path.
+async fn start_ready_edge() -> (Edge, SocketAddr, tempfile::TempDir) {
     let conv = celnet_conventions::resolve(eurusd(), Tenor::Years(1)).record;
     let initial = make_state(1.10, conv);
     let link = CoreLink::start(initial, None);
     let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let data_dir = tempfile::tempdir().expect("temp data dir for the edge config");
     let edge = Edge::start(
         grpc,
         Arc::clone(&link),
         SpreadModel::default(),
         Clock::system(),
+        Some(data_dir.path()),
     )
     .await
     .expect("edge binds on an ephemeral port");
@@ -136,7 +142,7 @@ async fn start_ready_edge() -> (Edge, SocketAddr) {
     edge.store().set_access_mode(AccessMode::Enforce);
     edge.gate().mark_ready();
     let addr = edge.grpc_addr();
-    (edge, addr)
+    (edge, addr, data_dir)
 }
 
 /// Parse the `delta_USD  <value>` line out of the CLI's `risk aggregate` report.
@@ -166,7 +172,7 @@ fn parse_nodes(stdout: &str) -> Option<usize> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_aggregate_equals_sdk_equals_server_aggregate() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         seed_two_book_desk(edge.store());
         let endpoint = format!("http://{addr}");
 
@@ -298,7 +304,7 @@ async fn cli_aggregate_equals_sdk_equals_server_aggregate() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_positions_equals_sdk_positions() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         seed_two_book_desk(edge.store());
         let endpoint = format!("http://{addr}");
 
@@ -352,7 +358,7 @@ async fn cli_positions_equals_sdk_positions() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_limits_reports_server_breach() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let desk_h = seed_two_book_desk(edge.store());
         let endpoint = format!("http://{addr}");
 
@@ -401,7 +407,7 @@ async fn cli_limits_reports_server_breach() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_stream_prints_sequenced_ticks_and_exits() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         // This exercises the streaming PRICE path, not authz: the CLI `stream`
         // client carries no login, and Subscribe is gated on `stream·fx_options`
         // under Enforce. Run this edge permissive so the demo stream flows.

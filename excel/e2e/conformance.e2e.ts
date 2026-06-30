@@ -68,6 +68,17 @@ beforeAll(async () => {
     if (Date.now() > deadline) throw new Error(`e2e: socket to ${url} never opened`);
     await new Promise((r) => setTimeout(r, 25));
   }
+  // Authenticate as the always-seeded admin (`AuthService.Login`) for a
+  // capability-complete session token, and install it on the connection (which
+  // re-authenticates the open stream). The demo edge runs under the PRODUCTION
+  // `Enforce` posture (demoEdge.ts), where the click-to-trade `accept_quote` is
+  // gated on `Execute·FxOptions` — a capability resolved ONLY from an authenticated
+  // session, never a body-asserted principal (finding #3). The read-side `price`
+  // and `request_multi_dealer_quote` are admitted by the grant-all principal alone,
+  // but booking a panel line needs the real session. This mirrors the bench/SDK fix
+  // (the Rust wire-load logs in as the seed admin) and the GUI's login flow.
+  const login = await conn.login("admin@celnet.com", "password");
+  conn.setSessionToken(login.token);
 });
 
 afterAll(() => {
@@ -259,7 +270,7 @@ describe("Excel real-edge conformance (frozen golden corpus over a REAL WebSocke
       // The quote_id row carries its label + id; `rectangular()` then pads every
       // row to the table width (an Excel dynamic-array spill must be rectangular),
       // so the row trails empties out to the header width.
-      const width = spill[0].length;
+      const width = spill[0]!.length;
       expect(spill[5]).toEqual(["quote_id", md.quoteId.toString(), ...Array(width - 2).fill("")]);
     });
 

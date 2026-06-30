@@ -41,3 +41,6 @@ celnet-limits.workspace = true
 celnet-proto.workspace = true
 # The frozen golden-vector corpus is the cross-client conformance oracle.
 celnet-golden.workspace = true
+# Per-test isolated config dir so parallel test edges never race the one shared
+# identity.json / fix-connections.json path.
+tempfile.workspace = true

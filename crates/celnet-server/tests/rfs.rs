@@ -57,7 +57,7 @@ async fn next_msg(
 #[tokio::test]
 async fn rfs_snapshot_then_sequenced_deltas() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             StreamServiceClient::connect(format!("http://{addr}")),
@@ -158,7 +158,7 @@ async fn rfs_snapshot_then_sequenced_deltas() {
 #[tokio::test]
 async fn rfs_resync_replays_missing_sequence() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             StreamServiceClient::connect(format!("http://{addr}")),
@@ -258,7 +258,7 @@ async fn rfs_resync_replays_missing_sequence() {
 #[tokio::test]
 async fn rfs_market_series_emits_real_observed_points() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             StreamServiceClient::connect(format!("http://{addr}")),
@@ -342,7 +342,7 @@ async fn rfs_market_series_emits_real_observed_points() {
 #[tokio::test]
 async fn rfs_snapshot_carries_maker_auto_pricer_attribution() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             StreamServiceClient::connect(format!("http://{addr}")),

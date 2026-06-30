@@ -109,7 +109,7 @@ fn seed_two_book_desk(store: &PositionStore) -> (u32, u32, u32) {
 #[tokio::test]
 async fn list_positions_returns_the_entitled_open_book() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         seed_two_book_desk(edge.store());
 
         let listed = step(client.list_positions(&PositionQuery::new())).await;
@@ -148,7 +148,7 @@ async fn list_positions_returns_the_entitled_open_book() {
 #[tokio::test]
 async fn firm_aggregate_equals_sum_of_book_aggregates() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         seed_two_book_desk(edge.store());
 
         let by_book =
@@ -223,7 +223,7 @@ async fn firm_aggregate_equals_sum_of_book_aggregates() {
 #[tokio::test]
 async fn value_at_risk_is_presence_tracked_and_diversifies() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         seed_two_book_desk(edge.store());
 
         // No shocks ⇒ the non-additive block is absent (never a spurious zero).
@@ -281,7 +281,7 @@ async fn value_at_risk_is_presence_tracked_and_diversifies() {
 #[tokio::test]
 async fn entitlement_principal_prunes_before_aggregation() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let (book_a, book_b, _desk) = seed_two_book_desk(edge.store());
 
         // Grant-all firm view sees all three positions.
@@ -357,7 +357,7 @@ async fn entitlement_principal_prunes_before_aggregation() {
 #[tokio::test]
 async fn drill_firm_into_books_and_positions() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let (book_a, _book_b, _desk) = seed_two_book_desk(edge.store());
 
         // Drill the firm apex into its book children + all contributing positions.
@@ -429,7 +429,7 @@ async fn drill_firm_into_books_and_positions() {
 #[tokio::test]
 async fn limit_status_reports_breach_and_headroom() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let (_book_a, _book_b, desk_h) = seed_two_book_desk(edge.store());
         let desk_scope = Scope::at(OrgDimension::Desk, u64::from(desk_h));
 
@@ -490,7 +490,7 @@ async fn limit_status_reports_breach_and_headroom() {
 #[tokio::test]
 async fn correlation_id_round_trips() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         seed_two_book_desk(edge.store());
 
         let listed = step(client.list_positions(&PositionQuery::new().correlation_id(7))).await;

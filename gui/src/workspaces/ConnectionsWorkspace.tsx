@@ -87,6 +87,12 @@ export function ConnectionsWorkspace(): React.ReactElement {
     }
   };
 
+  // When the acceptor list is empty (and settled), the empty-state card below owns
+  // the primary "New connection" call-to-action, so the header omits its own to
+  // keep EXACTLY ONE "New connection" affordance on screen (a second identically
+  // named button is both an a11y ambiguity and a strict-locator hazard).
+  const showEmpty = fix.connections.length === 0 && !fix.isLoading;
+
   const actions = (
     <div className={styles.headActions}>
       <a
@@ -108,9 +114,11 @@ export function ConnectionsWorkspace(): React.ReactElement {
       <Button variant="ghost" onClick={() => void fix.refetch()} disabled={fix.isLoading}>
         Refresh
       </Button>
-      <Button variant="primary" onClick={() => setWizardOpen(true)}>
-        New connection
-      </Button>
+      {!showEmpty && (
+        <Button variant="primary" onClick={() => setWizardOpen(true)}>
+          New connection
+        </Button>
+      )}
     </div>
   );
 
@@ -125,7 +133,7 @@ export function ConnectionsWorkspace(): React.ReactElement {
         {fix.error && <p className={styles.banner}>{fix.error}</p>}
         {actionError && <p className={styles.banner}>{actionError}</p>}
 
-        {fix.connections.length === 0 && !fix.isLoading ? (
+        {showEmpty ? (
           <div className={styles.empty}>
             <p className={styles.emptyTitle}>No inbound acceptors defined</p>
             <p className={styles.emptyHint}>

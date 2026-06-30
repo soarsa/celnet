@@ -25,7 +25,14 @@ celnet-types.workspace = true
 # The canonical leaf + the AssetPricer carry seam the non-additive firm
 # reducers re-derive measures through. One-way edge: fleet -> risk-normalize.
 celnet-risk-normalize.workspace = true
+# The `ExoticLegPricer` seam injected into the firm-tier non-additive reducers so
+# a booked exotic re-prices through the real engines without the fleet depending on
+# the heavy `celnet-exotics` pricing crate (arch-program item E).
+celnet-core.workspace = true
 
 [dev-dependencies]
-celnet-core.workspace = true
+# The hand-coded, code-disjoint `ExoticLegPricer` the cube's own tests inject —
+# reused here (single-homed, no formula duplication) for the fleet's firm-tier
+# non-additive reducer tests. Test-only feature; never in a production build.
+celnet-risk-cube = { workspace = true, features = ["test-support"] }
 proptest.workspace = true

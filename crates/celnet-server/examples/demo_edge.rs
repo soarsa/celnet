@@ -97,6 +97,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         SpreadModel::default(),
         Clock::system(),
         panel,
+        // The demo edge uses the production default config locations (the
+        // env-var-or-CWD identity.json / fix-connections.json) — no isolated dir.
+        None,
     )
     .await?;
 

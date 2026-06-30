@@ -406,8 +406,9 @@ impl PositionStore {
             position_id: PositionId(handle),
             key,
             measure: FactMeasure {
-                // The REAL exotic Greek set (additive roll-up carrier).
-                leaf: leg.canonical_leaf(),
+                // The REAL exotic Greek set (additive roll-up carrier), priced
+                // through the injected `celnet-exotics` seam.
+                leaf: leg.canonical_leaf(&super::exotic_pricer::ExoticEngine),
                 position,
                 exotic: Some(leg),
             },

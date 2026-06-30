@@ -64,8 +64,8 @@ describe("aggregateRatesRisk — additive rollup identities", () => {
 
     expect(one.nodes).toHaveLength(1);
     expect(five.nodes).toHaveLength(1);
-    const a = one.nodes[0];
-    const b = five.nodes[0];
+    const a = one.nodes[0]!;
+    const b = five.nodes[0]!;
     expect(b.ccy).toBe(a.ccy);
     expect(b.netPv).toBeCloseTo(5 * a.netPv, 6);
     expect(b.netPv01).toBeCloseTo(5 * a.netPv01, 6);
@@ -74,8 +74,8 @@ describe("aggregateRatesRisk — additive rollup identities", () => {
     // The ladder scales bucket-for-bucket and stays tenor-aligned + ascending.
     expect(b.keyRateLadder).toHaveLength(a.keyRateLadder.length);
     b.keyRateLadder.forEach((bucket, i) => {
-      expect(bucket.tenorYears).toBe(a.keyRateLadder[i].tenorYears);
-      expect(bucket.dv01).toBeCloseTo(5 * a.keyRateLadder[i].dv01, 6);
+      expect(bucket.tenorYears).toBe(a.keyRateLadder[i]!.tenorYears);
+      expect(bucket.dv01).toBeCloseTo(5 * a.keyRateLadder[i]!.dv01, 6);
     });
     const tenors = b.keyRateLadder.map((k) => k.tenorYears);
     expect(tenors).toEqual([...tenors].sort((x, y) => x - y));
@@ -91,7 +91,7 @@ describe("aggregateRatesRisk — additive rollup identities", () => {
       DEFAULT_CONVENTIONS,
     );
     expect(out.nodes).toHaveLength(1);
-    const node = out.nodes[0];
+    const node = out.nodes[0]!;
     // A receiver and an identical payer are exact mirrors, so the additive book
     // nets to ~zero PV / PV01 / DV01 and a flat ladder.
     expect(Math.abs(node.netPv)).toBeLessThan(1e-2);
@@ -123,8 +123,8 @@ describe("aggregateRatesRisk — additive rollup identities", () => {
 
     // Book 100 holds 2 of 3 identical positions, so its netted DV01 is exactly
     // two-thirds of the unscoped three-position book (purely additive netting).
-    expect(book100.nodes[0].netDv01).toBeCloseTo((2 / 3) * all.nodes[0].netDv01, 6);
-    expect(book100.nodes[0].netPv).toBeCloseTo((2 / 3) * all.nodes[0].netPv, 6);
+    expect(book100.nodes[0]!.netDv01).toBeCloseTo((2 / 3) * all.nodes[0]!.netDv01, 6);
+    expect(book100.nodes[0]!.netPv).toBeCloseTo((2 / 3) * all.nodes[0]!.netPv, 6);
   });
 
   it("narrows the contributing positions by the entity scope filter", async () => {
@@ -143,7 +143,7 @@ describe("aggregateRatesRisk — additive rollup identities", () => {
     );
     // Scoping to entity 1 keeps exactly one of the two positions, matching a
     // single-position book of the same instrument.
-    expect(entity1.nodes[0].netDv01).toBeCloseTo(single.nodes[0].netDv01, 6);
+    expect(entity1.nodes[0]!.netDv01).toBeCloseTo(single.nodes[0]!.netDv01, 6);
   });
 
   it("yields an empty rollup when the scope excludes every position", async () => {
@@ -164,7 +164,7 @@ describe("aggregateRatesRisk — additive rollup identities", () => {
       ]),
       DEFAULT_CONVENTIONS,
     );
-    const node = out.nodes[0];
+    const node = out.nodes[0]!;
     // The sum of the independent per-pillar 1bp bumps equals the single parallel
     // 1bp bump to first order (same identity as ratesPricing.test.ts), preserved
     // under additive aggregation — reconcile on a tight relative tolerance.

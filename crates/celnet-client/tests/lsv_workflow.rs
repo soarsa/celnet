@@ -88,7 +88,7 @@ fn oracle_price_grid() -> AdiGrid {
 #[tokio::test]
 async fn lsv_single_barrier_prices_through_the_wire() {
     tokio::time::timeout(LSV_TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let m = live_market();
 
         let strike = 1.10;
@@ -149,7 +149,7 @@ async fn lsv_single_barrier_prices_through_the_wire() {
 #[tokio::test]
 async fn lsv_window_barrier_prices_through_the_wire() {
     tokio::time::timeout(LSV_TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let m = live_market();
 
         let strike = 1.10;
@@ -208,7 +208,7 @@ async fn lsv_window_barrier_prices_through_the_wire() {
 #[tokio::test]
 async fn lsv_on_unsupported_product_is_invalid_argument() {
     tokio::time::timeout(LSV_TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        let (edge, client, _data_dir) = start_edge_and_client().await;
         let m = live_market();
 
         // A vanilla spec routed through LSV is supported; but selecting LSV on a

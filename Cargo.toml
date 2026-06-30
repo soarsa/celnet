@@ -81,6 +81,7 @@ tonic = "0.12"                                 # MIT gRPC over the wire contract
 tonic-build = "0.12"                           # MIT tonic service codegen (build dep)
 tokio-tungstenite = "0.24"                     # MIT WebSocket RFS streaming
 futures-util = "0.3"                           # MIT/Apache-2.0 stream combinators
+tempfile = "3"                                 # MIT/Apache-2.0 per-test isolated config dirs (dev-dep only; parallel-edge identity/fix-connection store isolation)
 clap = { version = "4", features = ["derive"] } # MIT/Apache-2.0 admin CLI
 # Observability lane (vetted: deny advisories+licenses ok) — async edge only, never the hot core
 tracing = "0.1"                                # MIT structured tracing facade

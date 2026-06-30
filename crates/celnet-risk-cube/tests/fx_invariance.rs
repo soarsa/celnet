@@ -17,6 +17,15 @@ use celnet_types::{
     Symbol, Underlying, VanillaInputs,
 };
 
+// The hand-coded, code-disjoint closed-form exotic pricer the cube re-prices its
+// digital legs through (the cube does not depend on `celnet-exotics`). Single-homed
+// in `src/test_support.rs` and `#[path]`-included (one definition across all tests).
+// These nodes carry no exotic legs, so the pricer is never invoked — but the cube's
+// `node_var_es` seam now requires a genuine `ExoticLegPricer` argument.
+#[path = "../src/test_support.rs"]
+pub mod test_support;
+use test_support::DigitalTestPricer;
+
 struct OnePillar;
 impl VegaPillarMap for OnePillar {
     fn pillar_of(&self, _leaf: &CanonicalLeaf, pos: &PositionRisk) -> VegaPillar {
@@ -268,8 +277,8 @@ fn firm_aggregate_equals_single_node() {
         .filter(|i| *i != 0)
         .map(|i| Scenario::spot(f64::from(i) * 0.004))
         .collect();
-    let firm_ve = Cube::node_var_es(&AssetPricer, &firm, &scen, 0.99);
-    let node_ve = Cube::node_var_es(&AssetPricer, &node, &scen, 0.99);
+    let firm_ve = Cube::node_var_es(&AssetPricer, &DigitalTestPricer, &firm, &scen, 0.99);
+    let node_ve = Cube::node_var_es(&AssetPricer, &DigitalTestPricer, &node, &scen, 0.99);
     assert!(is_close(firm_ve.var, node_ve.var, 1e-12, 1e-6));
     assert!(is_close(firm_ve.es, node_ve.es, 1e-12, 1e-6));
 }

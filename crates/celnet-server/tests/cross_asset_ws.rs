@@ -249,7 +249,7 @@ async fn ws_prices_cross_asset_vectors_to_their_independent_oracles() {
             "the cross-asset corpus must not be empty"
         );
 
-        let (edge, _grpc) = start_ready_edge().await;
+        let (edge, _grpc, _data_dir) = start_ready_edge().await;
         let url = format!("ws://{}", edge.ws_addr());
         let (mut ws, _resp) = tokio::time::timeout(STEP, connect_async(url))
             .await
@@ -324,7 +324,7 @@ async fn ws_routes_every_cross_asset_arm_to_the_cross_asset_path() {
     tokio::time::timeout(SUITE_DEADLINE, async {
         let vectors = load_cross_asset_vectors().expect("the cross-asset corpus loads");
 
-        let (edge, _grpc) = start_ready_edge().await;
+        let (edge, _grpc, _data_dir) = start_ready_edge().await;
         let url = format!("ws://{}", edge.ws_addr());
         let (mut ws, _resp) = tokio::time::timeout(STEP, connect_async(url))
             .await
@@ -422,7 +422,7 @@ async fn ws_underlying_precedence_routes_client_shaped_frames_to_the_cross_asset
             "the corpus inverse/linear calls share a market"
         );
 
-        let (edge, _grpc) = start_ready_edge().await;
+        let (edge, _grpc, _data_dir) = start_ready_edge().await;
         let url = format!("ws://{}", edge.ws_addr());
         let (mut ws, _resp) = tokio::time::timeout(STEP, connect_async(url))
             .await

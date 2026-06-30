@@ -69,7 +69,7 @@ fn subscribe(sub_id: SubscriptionId, strike: f64) -> ClientStreamMessage {
 #[tokio::test]
 async fn rfs_click_to_trade_books_streamed_line_and_rejects_forged_token() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             StreamServiceClient::connect(format!("http://{addr}")),
@@ -179,7 +179,7 @@ async fn rfs_click_to_trade_books_streamed_line_and_rejects_forged_token() {
 #[tokio::test]
 async fn rfs_double_click_on_consumed_token_is_rejected() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             StreamServiceClient::connect(format!("http://{addr}")),
@@ -265,7 +265,7 @@ async fn rfs_double_click_on_consumed_token_is_rejected() {
 #[tokio::test]
 async fn rfs_modify_rebaselines_in_place_on_multiplexed_session() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             StreamServiceClient::connect(format!("http://{addr}")),
