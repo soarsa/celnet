@@ -56,7 +56,7 @@
           },
           {
             "type": "command",
-            "command": "bash tools/celnet-task heartbeat --session \"$CLAUDE_SESSION_ID\""
+            "command": "nohup sh -c 'bash tools/celnet-task heartbeat --session \"$CLAUDE_SESSION_ID\"' >/dev/null 2>&1 & exit 0"
           }
         ]
       }
@@ -81,7 +81,7 @@
           {
             "type": "command",
             "command": "bash tools/celnet-task selector --session \"$CLAUDE_SESSION_ID\"",
-            "timeout": 60
+            "timeout": 25
           }
         ]
       }
