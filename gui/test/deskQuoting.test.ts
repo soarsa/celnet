@@ -37,10 +37,18 @@ import {
 const CURVE: RatesCurveSet = DEFAULT_USD_SOFR_CURVE;
 
 function ois(overrides: Partial<OisInstrument> = {}): OisInstrument {
-  return { tenorYears: 5, fixedRate: 0.04, notional: 50_000_000, direction: "PAY_FIXED", ...overrides };
+  return {
+    tenorYears: 5,
+    fixedRate: 0.04,
+    notional: 50_000_000,
+    direction: "PAY_FIXED",
+    ...overrides,
+  };
 }
 
-function submitReq(overrides: Partial<SubmitDeskRequestRequest> = {}): SubmitDeskRequestRequest {
+function submitReq(
+  overrides: Partial<SubmitDeskRequestRequest> = {},
+): SubmitDeskRequestRequest {
   return {
     kind: "RFQ",
     counterparty: "Acme Capital",
@@ -80,7 +88,15 @@ describe("desk quoting — offline lifecycle", () => {
 
     const quoted = await t.respondDeskRequest({
       requestId: request.requestId,
-      response: { kind: "quote", quote: { price: 0.0415, notional: 50_000_000, validForMs: 30_000, trader: "Robin" } },
+      response: {
+        kind: "quote",
+        quote: {
+          price: 0.0415,
+          notional: 50_000_000,
+          validForMs: 30_000,
+          trader: "Robin",
+        },
+      },
     });
     expect(quoted.request.state).toBe("QUOTED");
     expect(quoted.request.quote?.price).toBeCloseTo(0.0415, 10);
@@ -93,13 +109,23 @@ describe("desk quoting — offline lifecycle", () => {
 
     // The deal lands in the blotter and the booked position in the rates book.
     const deals = await t.listDeals({});
-    expect(deals.deals.some((d) => d.dealId === accepted.deal.dealId)).toBe(true);
+    expect(deals.deals.some((d) => d.dealId === accepted.deal.dealId)).toBe(
+      true,
+    );
     const positions = await t.listRatesPositions({});
     expect(positions.positions.length).toBe(positionsBefore + 1);
-    expect(positions.positions.some((p) => p.positionId === accepted.deal.positionId)).toBe(true);
+    expect(
+      positions.positions.some(
+        (p) => p.positionId === accepted.deal.positionId,
+      ),
+    ).toBe(true);
 
     // Accept pushed a QUOTE_ACCEPTED notification.
-    expect(seen.some((n) => n.kind === "QUOTE_ACCEPTED" && n.requestId === request.requestId)).toBe(true);
+    expect(
+      seen.some(
+        (n) => n.kind === "QUOTE_ACCEPTED" && n.requestId === request.requestId,
+      ),
+    ).toBe(true);
   });
 
   it("rejects a request (→ REJECTED), pushes QUOTE_REJECTED, and blocks accept", async () => {
@@ -113,9 +139,15 @@ describe("desk quoting — offline lifecycle", () => {
       response: { kind: "reject", reject: { reason: "axe filled" } },
     });
     expect(rejected.request.state).toBe("REJECTED");
-    expect(seen.some((n) => n.kind === "QUOTE_REJECTED" && n.requestId === request.requestId)).toBe(true);
+    expect(
+      seen.some(
+        (n) => n.kind === "QUOTE_REJECTED" && n.requestId === request.requestId,
+      ),
+    ).toBe(true);
 
-    await expect(t.acceptDeskQuote({ requestId: request.requestId })).rejects.toThrow();
+    await expect(
+      t.acceptDeskQuote({ requestId: request.requestId }),
+    ).rejects.toThrow();
   });
 
   it("filters the inbox by the request-state scope", async () => {
@@ -123,9 +155,19 @@ describe("desk quoting — offline lifecycle", () => {
     const { request } = await t.submitDeskRequest(submitReq());
     await t.respondDeskRequest({
       requestId: request.requestId,
-      response: { kind: "quote", quote: { price: 0.04, notional: 10_000_000, validForMs: 1000, trader: "T" } },
+      response: {
+        kind: "quote",
+        quote: {
+          price: 0.04,
+          notional: 10_000_000,
+          validForMs: 1000,
+          trader: "T",
+        },
+      },
     });
-    const quotedOnly = await t.listDeskRequests({ scope: { states: ["QUOTED"] } });
+    const quotedOnly = await t.listDeskRequests({
+      scope: { states: ["QUOTED"] },
+    });
     expect(quotedOnly.requests.length).toBeGreaterThan(0);
     expect(quotedOnly.requests.every((r) => r.state === "QUOTED")).toBe(true);
   });
@@ -144,17 +186,26 @@ describe("rates Book — offline", () => {
     const t = createMockTransport();
     const before = (await t.listRatesPositions({})).positions.length;
     const booked = await t.bookRatesPosition({
-      position: { positionId: 0n, entity: 7, book: 70, instrument: ois({ tenorYears: 3 }) },
+      position: {
+        positionId: 0n,
+        entity: 7,
+        book: 70,
+        instrument: ois({ tenorYears: 3 }),
+      },
     });
     expect(booked.position.positionId).toBeGreaterThan(0n);
     const after = await t.listRatesPositions({});
     expect(after.positions.length).toBe(before + 1);
-    expect(after.positions.some((p) => p.positionId === booked.position.positionId)).toBe(true);
+    expect(
+      after.positions.some((p) => p.positionId === booked.position.positionId),
+    ).toBe(true);
   });
 
   it("narrows the listed positions by the book scope", async () => {
     const t = createMockTransport();
-    await t.bookRatesPosition({ position: { positionId: 0n, entity: 9, book: 91, instrument: ois() } });
+    await t.bookRatesPosition({
+      position: { positionId: 0n, entity: 9, book: 91, instrument: ois() },
+    });
     const scoped = await t.listRatesPositions({ scope: { book: 91 } });
     expect(scoped.positions.length).toBeGreaterThan(0);
     expect(scoped.positions.every((p) => p.book === 91)).toBe(true);
@@ -176,7 +227,10 @@ describe("desk quoting — codec round-trips (wire shape)", () => {
   it("encodes the respond quote / reject oneof arms exactly", () => {
     const quoteW = respondDeskRequestToWire({
       requestId: "req-1",
-      response: { kind: "quote", quote: { price: 0.04, notional: 1e6, validForMs: 5000, trader: "T" } },
+      response: {
+        kind: "quote",
+        quote: { price: 0.04, notional: 1e6, validForMs: 5000, trader: "T" },
+      },
     });
     expect(quoteW["request_id"]).toBe("req-1");
     expect((quoteW["quote"] as WireObject)["valid_for_ms"]).toBe(5000);
@@ -191,8 +245,12 @@ describe("desk quoting — codec round-trips (wire shape)", () => {
   });
 
   it("encodes accept / list / book / subscribe bodies", () => {
-    expect(acceptDeskQuoteToWire({ requestId: "req-9" })["request_id"]).toBe("req-9");
-    const listW = listDeskRequestsToWire({ scope: { states: ["PENDING", "QUOTED"] } });
+    expect(acceptDeskQuoteToWire({ requestId: "req-9" })["request_id"]).toBe(
+      "req-9",
+    );
+    const listW = listDeskRequestsToWire({
+      scope: { states: ["PENDING", "QUOTED"] },
+    });
     expect((listW["scope"] as WireObject)["states"]).toEqual([
       e.deskRequestState.toWire("PENDING"),
       e.deskRequestState.toWire("QUOTED"),
@@ -211,18 +269,25 @@ describe("desk quoting — codec round-trips (wire shape)", () => {
       kind: 1, // RFQ
       counterparty: "Globex",
       desk: "g10-rates",
-      instrument: { ois: { tenor_years: 5, fixed_rate: 0.04, notional: 5e7, side: 1 } },
+      instrument: {
+        ois: { tenor_years: 5, fixed_rate: 0.04, notional: 5e7, side: 1 },
+      },
       curve_set: {
         currency: "USD",
         reference_date: { year: 2026, month: 6, day: 26 },
-        ois_pillars: [{ tenor_years: 5, par_rate: 0.041 }],
+        ois_pillars: [{ tenor: { years: 5 }, par_rate: 0.041 }],
       },
       side: 0, // BUY
       notional: 5e7,
       received_at_nanos: 1_700_000_000_000_000_000n,
       expires_at_nanos: 1_700_000_060_000_000_000n,
       state: 2, // QUOTED
-      quote: { price: 0.0415, notional: 5e7, valid_for_ms: 30_000, trader: "Robin" },
+      quote: {
+        price: 0.0415,
+        notional: 5e7,
+        valid_for_ms: 30_000,
+        trader: "Robin",
+      },
     };
     const r: DeskRequest = deskRequestFromWire(wire);
     expect(r.requestId).toBe("req-7");
@@ -242,8 +307,14 @@ describe("desk quoting — codec round-trips (wire shape)", () => {
       kind: 2, // IOI
       counterparty: "Initech",
       desk: "g10-rates",
-      instrument: { ois: { tenor_years: 2, fixed_rate: 0.04, notional: 1e7, side: 0 } },
-      curve_set: { currency: "USD", reference_date: { year: 2026, month: 6, day: 26 }, ois_pillars: [] },
+      instrument: {
+        ois: { tenor_years: 2, fixed_rate: 0.04, notional: 1e7, side: 0 },
+      },
+      curve_set: {
+        currency: "USD",
+        reference_date: { year: 2026, month: 6, day: 26 },
+        ois_pillars: [],
+      },
       side: 1,
       notional: 1e7,
       price: 0.0405,
@@ -259,7 +330,9 @@ describe("desk quoting — codec round-trips (wire shape)", () => {
       position_id: 99,
       entity: 1,
       book: 10,
-      instrument: { ois: { tenor_years: 10, fixed_rate: 0.042, notional: 2.5e7, side: 1 } },
+      instrument: {
+        ois: { tenor_years: 10, fixed_rate: 0.042, notional: 2.5e7, side: 1 },
+      },
     });
     expect(pos.positionId).toBe(99n);
     expect(pos.instrument.direction).toBe("RECEIVE_FIXED");

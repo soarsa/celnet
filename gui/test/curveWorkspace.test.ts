@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import type { RatesCurveSet } from "../src/data/contract";
+import { yearsPillarTenor } from "../src/data/contract";
 import {
   bootstrapCurveFromSet,
   DEFAULT_USD_SOFR_CURVE,
   discountFactorAt,
   instantaneousForwardAt,
+  pillarMaturityYears,
   RatesPricingError,
   sampleCurve,
   zeroRateAt,
 } from "../src/data/ratesPricing";
+
+/** The reference (spot) date the DEFAULT curve's pillar schedules roll from. */
+const REF = DEFAULT_USD_SOFR_CURVE.referenceDate;
 
 /**
  * Curve-inspection identities for the Curve workspace (FI-ARCHITECTURE §4.2). We
@@ -22,7 +27,9 @@ import {
  * that inspects cleanly is the curve that prices.
  */
 
-const PILLAR_TENORS = DEFAULT_USD_SOFR_CURVE.pillars.map((p) => p.tenorYears);
+const PILLAR_TENORS = DEFAULT_USD_SOFR_CURVE.pillars.map((p) =>
+  pillarMaturityYears(p.tenor, REF),
+);
 
 describe("sampleCurve — discount-curve identities", () => {
   it("anchors the discount factor to exactly 1 at the reference date", () => {
@@ -65,8 +72,8 @@ describe("sampleCurve — discount-curve identities", () => {
     // near-flat curve. We reconcile on a 20 bp tolerance.
     const curve = bootstrapCurveFromSet(DEFAULT_USD_SOFR_CURVE);
     for (const pillar of DEFAULT_USD_SOFR_CURVE.pillars) {
-      const zero = zeroRateAt(curve, pillar.tenorYears);
-      expect(Math.abs(zero - pillar.parRate)).toBeLessThan(0.0020);
+      const zero = zeroRateAt(curve, pillarMaturityYears(pillar.tenor, REF));
+      expect(Math.abs(zero - pillar.parRate)).toBeLessThan(0.002);
     }
   });
 
@@ -77,7 +84,7 @@ describe("sampleCurve — discount-curve identities", () => {
     for (const tenor of PILLAR_TENORS) {
       const zero = zeroRateAt(curve, tenor);
       const forward = instantaneousForwardAt(curve, tenor);
-      expect(Math.abs(forward - zero)).toBeLessThan(0.0060);
+      expect(Math.abs(forward - zero)).toBeLessThan(0.006);
     }
   });
 
@@ -93,7 +100,10 @@ describe("sampleCurve — discount-curve identities", () => {
   });
 
   it("samples to an explicit shorter horizon when asked", () => {
-    const points = sampleCurve(DEFAULT_USD_SOFR_CURVE, { samples: 12, maxTenor: 5 });
+    const points = sampleCurve(DEFAULT_USD_SOFR_CURVE, {
+      samples: 12,
+      maxTenor: 5,
+    });
     expect(points[points.length - 1]!.t).toBeCloseTo(5, 12);
   });
 });
@@ -111,19 +121,23 @@ describe("bootstrapCurveFromSet — rejects a malformed curve exactly as the pri
   const reject = (curve: RatesCurveSet) => () => bootstrapCurveFromSet(curve);
 
   it("rejects an unsupported currency", () => {
-    expect(reject({ ...DEFAULT_USD_SOFR_CURVE, currency: "EUR" })).toThrow(RatesPricingError);
+    expect(reject({ ...DEFAULT_USD_SOFR_CURVE, currency: "EUR" })).toThrow(
+      RatesPricingError,
+    );
   });
 
   it("rejects an empty pillar set", () => {
-    expect(reject({ ...DEFAULT_USD_SOFR_CURVE, pillars: [] })).toThrow(RatesPricingError);
+    expect(reject({ ...DEFAULT_USD_SOFR_CURVE, pillars: [] })).toThrow(
+      RatesPricingError,
+    );
   });
 
   it("rejects non-strictly-increasing pillar tenors", () => {
     const curve: RatesCurveSet = {
       ...DEFAULT_USD_SOFR_CURVE,
       pillars: [
-        { tenorYears: 3, parRate: 0.04 },
-        { tenorYears: 3, parRate: 0.041 },
+        { tenor: yearsPillarTenor(3), parRate: 0.04 },
+        { tenor: yearsPillarTenor(3), parRate: 0.041 },
       ],
     };
     expect(reject(curve)).toThrow(RatesPricingError);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { OisInstrument, RatesCurveSet } from "../src/data/contract";
+import { yearsPillarTenor } from "../src/data/contract";
 import {
   DEFAULT_USD_SOFR_CURVE,
   priceRatesOffline,
@@ -33,25 +34,42 @@ describe("priceRatesOffline — arbitrage-free identities", () => {
   it("prices a swap struck at its own par rate to ~zero PV", () => {
     // Discover the fair fixed rate, then re-strike at it: PV must vanish.
     const par = priceRatesOffline(DEFAULT_USD_SOFR_CURVE, ois()).parRate;
-    const atPar = priceRatesOffline(DEFAULT_USD_SOFR_CURVE, ois({ fixedRate: par }));
+    const atPar = priceRatesOffline(
+      DEFAULT_USD_SOFR_CURVE,
+      ois({ fixedRate: par }),
+    );
     // ~1e-9 relative on a 10mm notional.
     expect(Math.abs(atPar.pv)).toBeLessThan(1e-2);
   });
 
   it("reports a par rate independent of pay/receive direction", () => {
-    const recv = priceRatesOffline(DEFAULT_USD_SOFR_CURVE, ois({ direction: "RECEIVE_FIXED" }));
-    const pay = priceRatesOffline(DEFAULT_USD_SOFR_CURVE, ois({ direction: "PAY_FIXED" }));
+    const recv = priceRatesOffline(
+      DEFAULT_USD_SOFR_CURVE,
+      ois({ direction: "RECEIVE_FIXED" }),
+    );
+    const pay = priceRatesOffline(
+      DEFAULT_USD_SOFR_CURVE,
+      ois({ direction: "PAY_FIXED" }),
+    );
     expect(pay.parRate).toBeCloseTo(recv.parRate, 12);
   });
 
   it("makes payer and receiver exact mirrors across every measure", () => {
-    const recv = priceRatesOffline(DEFAULT_USD_SOFR_CURVE, ois({ direction: "RECEIVE_FIXED" }));
-    const pay = priceRatesOffline(DEFAULT_USD_SOFR_CURVE, ois({ direction: "PAY_FIXED" }));
+    const recv = priceRatesOffline(
+      DEFAULT_USD_SOFR_CURVE,
+      ois({ direction: "RECEIVE_FIXED" }),
+    );
+    const pay = priceRatesOffline(
+      DEFAULT_USD_SOFR_CURVE,
+      ois({ direction: "PAY_FIXED" }),
+    );
     expect(pay.pv).toBeCloseTo(-recv.pv, 6);
     expect(pay.pv01).toBeCloseTo(-recv.pv01, 6);
     expect(pay.dv01).toBeCloseTo(-recv.dv01, 6);
     expect(pay.keyRateLadder.length).toBe(recv.keyRateLadder.length);
-    pay.keyRateLadder.forEach((k, i) => expect(k).toBeCloseTo(-recv.keyRateLadder[i], 6));
+    pay.keyRateLadder.forEach((k, i) =>
+      expect(k).toBeCloseTo(-recv.keyRateLadder[i], 6),
+    );
   });
 
   it("reconciles the key-rate ladder to the parallel DV01", () => {
@@ -64,7 +82,10 @@ describe("priceRatesOffline — arbitrage-free identities", () => {
   });
 
   it("scales PV / PV01 / DV01 linearly in notional", () => {
-    const base = priceRatesOffline(DEFAULT_USD_SOFR_CURVE, ois({ fixedRate: 0.05 }));
+    const base = priceRatesOffline(
+      DEFAULT_USD_SOFR_CURVE,
+      ois({ fixedRate: 0.05 }),
+    );
     const dbl = priceRatesOffline(
       DEFAULT_USD_SOFR_CURVE,
       ois({ fixedRate: 0.05, notional: 2 * NOTIONAL }),
@@ -76,9 +97,18 @@ describe("priceRatesOffline — arbitrage-free identities", () => {
 
   it("moves the receiver PV monotonically up with the fixed rate received", () => {
     // Receiving a richer fixed coupon is worth strictly more.
-    const lo = priceRatesOffline(DEFAULT_USD_SOFR_CURVE, ois({ fixedRate: 0.03 }));
-    const mid = priceRatesOffline(DEFAULT_USD_SOFR_CURVE, ois({ fixedRate: 0.04 }));
-    const hi = priceRatesOffline(DEFAULT_USD_SOFR_CURVE, ois({ fixedRate: 0.05 }));
+    const lo = priceRatesOffline(
+      DEFAULT_USD_SOFR_CURVE,
+      ois({ fixedRate: 0.03 }),
+    );
+    const mid = priceRatesOffline(
+      DEFAULT_USD_SOFR_CURVE,
+      ois({ fixedRate: 0.04 }),
+    );
+    const hi = priceRatesOffline(
+      DEFAULT_USD_SOFR_CURVE,
+      ois({ fixedRate: 0.05 }),
+    );
     expect(lo.pv).toBeLessThan(mid.pv);
     expect(mid.pv).toBeLessThan(hi.pv);
   });
@@ -93,7 +123,8 @@ describe("priceRatesOffline — arbitrage-free identities", () => {
 });
 
 describe("priceRatesOffline — input validation (rejects exactly as the server does)", () => {
-  const bad = (curve: RatesCurveSet, inst: OisInstrument) => () => priceRatesOffline(curve, inst);
+  const bad = (curve: RatesCurveSet, inst: OisInstrument) => () =>
+    priceRatesOffline(curve, inst);
 
   it("rejects an unsupported currency", () => {
     const curve: RatesCurveSet = { ...DEFAULT_USD_SOFR_CURVE, currency: "EUR" };
@@ -109,15 +140,19 @@ describe("priceRatesOffline — input validation (rejects exactly as the server 
     const curve: RatesCurveSet = {
       ...DEFAULT_USD_SOFR_CURVE,
       pillars: [
-        { tenorYears: 2, parRate: 0.04 },
-        { tenorYears: 2, parRate: 0.041 },
+        { tenor: yearsPillarTenor(2), parRate: 0.04 },
+        { tenor: yearsPillarTenor(2), parRate: 0.041 },
       ],
     };
     expect(bad(curve, ois())).toThrow(RatesPricingError);
   });
 
   it("rejects a sub-1Y instrument tenor and a non-positive notional", () => {
-    expect(bad(DEFAULT_USD_SOFR_CURVE, ois({ tenorYears: 0 }))).toThrow(RatesPricingError);
-    expect(bad(DEFAULT_USD_SOFR_CURVE, ois({ notional: 0 }))).toThrow(RatesPricingError);
+    expect(bad(DEFAULT_USD_SOFR_CURVE, ois({ tenorYears: 0 }))).toThrow(
+      RatesPricingError,
+    );
+    expect(bad(DEFAULT_USD_SOFR_CURVE, ois({ notional: 0 }))).toThrow(
+      RatesPricingError,
+    );
   });
 });

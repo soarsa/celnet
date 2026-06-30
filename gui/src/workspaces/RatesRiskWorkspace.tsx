@@ -36,6 +36,7 @@ import type {
   RatesRiskNode,
   RatesRiskScope,
 } from "../data/contract";
+import { pillarYears } from "../data/contract";
 import styles from "./RatesRiskWorkspace.module.css";
 
 /** One million — the notional input is denominated in millions of the curve ccy. */
@@ -88,10 +89,38 @@ interface SeedTemplate {
  * are editable INPUTS derived from the curve pillars — never baked-in results.
  */
 const SEED_TEMPLATES: readonly SeedTemplate[] = [
-  { tenorYears: 2, entity: 1, book: 10, notionalMm: 50, direction: "RECEIVE_FIXED", couponOffsetBp: -8 },
-  { tenorYears: 5, entity: 1, book: 10, notionalMm: 100, direction: "PAY_FIXED", couponOffsetBp: -5 },
-  { tenorYears: 10, entity: 1, book: 20, notionalMm: 75, direction: "RECEIVE_FIXED", couponOffsetBp: 10 },
-  { tenorYears: 30, entity: 2, book: 30, notionalMm: 25, direction: "PAY_FIXED", couponOffsetBp: 0 },
+  {
+    tenorYears: 2,
+    entity: 1,
+    book: 10,
+    notionalMm: 50,
+    direction: "RECEIVE_FIXED",
+    couponOffsetBp: -8,
+  },
+  {
+    tenorYears: 5,
+    entity: 1,
+    book: 10,
+    notionalMm: 100,
+    direction: "PAY_FIXED",
+    couponOffsetBp: -5,
+  },
+  {
+    tenorYears: 10,
+    entity: 1,
+    book: 20,
+    notionalMm: 75,
+    direction: "RECEIVE_FIXED",
+    couponOffsetBp: 10,
+  },
+  {
+    tenorYears: 30,
+    entity: 2,
+    book: 30,
+    notionalMm: 25,
+    direction: "PAY_FIXED",
+    couponOffsetBp: 0,
+  },
 ];
 
 /** Round a percent figure to bp precision (4 decimal places of a percent). */
@@ -108,7 +137,9 @@ export function defaultRatesRiskRows(
   curve: RatesCurveSet = DEFAULT_USD_SOFR_CURVE,
 ): RatesRiskRow[] {
   return SEED_TEMPLATES.map((t, i) => {
-    const pillar = curve.pillars.find((p) => p.tenorYears === t.tenorYears);
+    const pillar = curve.pillars.find(
+      (p) => pillarYears(p.tenor) === t.tenorYears,
+    );
     const parPct = (pillar ? pillar.parRate : 0.04) * 100;
     return {
       id: `seed-${t.tenorYears}y-${i}`,
@@ -147,10 +178,13 @@ export function rowToPosition(row: RatesRiskRow, index: number): RatesPosition {
  * / non-numeric entity-or-book field and each blank ccy field is omitted, so an
  * empty filter returns `undefined` (the whole portfolio contributes).
  */
-export function buildScope(input: RatesRiskScopeInput): RatesRiskScope | undefined {
+export function buildScope(
+  input: RatesRiskScopeInput,
+): RatesRiskScope | undefined {
   const scope: RatesRiskScope = {};
   const entity = Number.parseInt(input.entity, 10);
-  if (input.entity.trim() !== "" && Number.isFinite(entity)) scope.entity = entity;
+  if (input.entity.trim() !== "" && Number.isFinite(entity))
+    scope.entity = entity;
   const book = Number.parseInt(input.book, 10);
   if (input.book.trim() !== "" && Number.isFinite(book)) scope.book = book;
   const ccy = input.ccy.trim();
@@ -186,13 +220,17 @@ export function buildRatesRiskRequest(
   };
   if (opts.scope !== undefined) request.scope = opts.scope;
   if (opts.principal !== undefined) request.principal = opts.principal;
-  if (opts.correlationId !== undefined) request.correlationId = opts.correlationId;
+  if (opts.correlationId !== undefined)
+    request.correlationId = opts.correlationId;
   return request;
 }
 
 /** The largest absolute bucket DV01 of a node's ladder (floored, for bar scaling). */
 export function ladderMaxAbs(node: RatesRiskNode): number {
-  return node.keyRateLadder.reduce((m, k) => Math.max(m, Math.abs(k.dv01)), 1e-9);
+  return node.keyRateLadder.reduce(
+    (m, k) => Math.max(m, Math.abs(k.dv01)),
+    1e-9,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +244,9 @@ export function RatesRiskWorkspace(): React.ReactElement {
   const app = useApp();
   const curve = DEFAULT_USD_SOFR_CURVE;
 
-  const [rows, setRows] = useState<RatesRiskRow[]>(() => defaultRatesRiskRows(curve));
+  const [rows, setRows] = useState<RatesRiskRow[]>(() =>
+    defaultRatesRiskRows(curve),
+  );
   const [scopeInput, setScopeInput] = useState<RatesRiskScopeInput>({
     entity: "",
     book: "",
@@ -257,7 +297,11 @@ export function RatesRiskWorkspace(): React.ReactElement {
         .catch((err) => {
           if (!live) return;
           setNodes(null);
-          setError(err instanceof Error ? err.message : "rates risk aggregation failed");
+          setError(
+            err instanceof Error
+              ? err.message
+              : "rates risk aggregation failed",
+          );
           setBusy(false);
         });
     }, REPRICE_DEBOUNCE_MS);
@@ -279,7 +323,9 @@ export function RatesRiskWorkspace(): React.ReactElement {
         entity: 1,
         book: 10,
         tenorYears: 5,
-        fixedRatePct: roundPct(curve.pillars[3]?.parRate ? curve.pillars[3].parRate * 100 : 4.05),
+        fixedRatePct: roundPct(
+          curve.pillars[3]?.parRate ? curve.pillars[3].parRate * 100 : 4.05,
+        ),
         notionalMm: 25,
         direction: "RECEIVE_FIXED",
       },
@@ -306,9 +352,12 @@ export function RatesRiskWorkspace(): React.ReactElement {
           <span className={styles.curveMeta}>
             {curve.pillars.length} pillars · ref {curve.referenceDate.year}-
             {String(curve.referenceDate.month).padStart(2, "0")}-
-            {String(curve.referenceDate.day).padStart(2, "0")} · self-discounting
+            {String(curve.referenceDate.day).padStart(2, "0")} ·
+            self-discounting
           </span>
-          <span className={styles.engine}>{isOffline ? "in-app rollup" : "live edge"}</span>
+          <span className={styles.engine}>
+            {isOffline ? "in-app rollup" : "live edge"}
+          </span>
         </div>
 
         <div className={styles.tableWrap}>
@@ -335,7 +384,11 @@ export function RatesRiskWorkspace(): React.ReactElement {
                       step={1}
                       value={row.entity}
                       aria-label="position entity id"
-                      onChange={(e) => updateRow(row.id, { entity: Math.trunc(Number(e.target.value)) })}
+                      onChange={(e) =>
+                        updateRow(row.id, {
+                          entity: Math.trunc(Number(e.target.value)),
+                        })
+                      }
                     />
                   </td>
                   <td>
@@ -346,7 +399,11 @@ export function RatesRiskWorkspace(): React.ReactElement {
                       step={1}
                       value={row.book}
                       aria-label="position book id"
-                      onChange={(e) => updateRow(row.id, { book: Math.trunc(Number(e.target.value)) })}
+                      onChange={(e) =>
+                        updateRow(row.id, {
+                          book: Math.trunc(Number(e.target.value)),
+                        })
+                      }
                     />
                   </td>
                   <td>
@@ -357,7 +414,11 @@ export function RatesRiskWorkspace(): React.ReactElement {
                       step={1}
                       value={row.tenorYears}
                       aria-label="swap tenor in years"
-                      onChange={(e) => updateRow(row.id, { tenorYears: Math.trunc(Number(e.target.value)) })}
+                      onChange={(e) =>
+                        updateRow(row.id, {
+                          tenorYears: Math.trunc(Number(e.target.value)),
+                        })
+                      }
                     />
                   </td>
                   <td>
@@ -367,7 +428,11 @@ export function RatesRiskWorkspace(): React.ReactElement {
                       step={0.01}
                       value={row.fixedRatePct}
                       aria-label="fixed rate in percent"
-                      onChange={(e) => updateRow(row.id, { fixedRatePct: Number(e.target.value) })}
+                      onChange={(e) =>
+                        updateRow(row.id, {
+                          fixedRatePct: Number(e.target.value),
+                        })
+                      }
                     />
                   </td>
                   <td>
@@ -378,7 +443,11 @@ export function RatesRiskWorkspace(): React.ReactElement {
                       step={5}
                       value={row.notionalMm}
                       aria-label="notional in millions"
-                      onChange={(e) => updateRow(row.id, { notionalMm: Number(e.target.value) })}
+                      onChange={(e) =>
+                        updateRow(row.id, {
+                          notionalMm: Number(e.target.value),
+                        })
+                      }
                     />
                   </td>
                   <td>
@@ -386,7 +455,11 @@ export function RatesRiskWorkspace(): React.ReactElement {
                       className={styles.cellSelect}
                       value={row.direction}
                       aria-label="swap direction"
-                      onChange={(e) => updateRow(row.id, { direction: e.target.value as OisDirection })}
+                      onChange={(e) =>
+                        updateRow(row.id, {
+                          direction: e.target.value as OisDirection,
+                        })
+                      }
                     >
                       <option value="RECEIVE_FIXED">Receive</option>
                       <option value="PAY_FIXED">Pay</option>
@@ -423,7 +496,11 @@ export function RatesRiskWorkspace(): React.ReactElement {
           <legend className={styles.scopeLegend}>
             Scope filter
             {scopeActive && (
-              <button type="button" className={styles.scopeClear} onClick={clearScope}>
+              <button
+                type="button"
+                className={styles.scopeClear}
+                onClick={clearScope}
+              >
                 clear
               </button>
             )}
@@ -438,7 +515,9 @@ export function RatesRiskWorkspace(): React.ReactElement {
               placeholder="all"
               value={scopeInput.entity}
               aria-label="filter by entity"
-              onChange={(e) => setScopeInput((s) => ({ ...s, entity: e.target.value }))}
+              onChange={(e) =>
+                setScopeInput((s) => ({ ...s, entity: e.target.value }))
+              }
             />
           </label>
           <label className={styles.scopeField}>
@@ -451,7 +530,9 @@ export function RatesRiskWorkspace(): React.ReactElement {
               placeholder="all"
               value={scopeInput.book}
               aria-label="filter by book"
-              onChange={(e) => setScopeInput((s) => ({ ...s, book: e.target.value }))}
+              onChange={(e) =>
+                setScopeInput((s) => ({ ...s, book: e.target.value }))
+              }
             />
           </label>
           <label className={styles.scopeField}>
@@ -463,7 +544,12 @@ export function RatesRiskWorkspace(): React.ReactElement {
               maxLength={3}
               value={scopeInput.ccy}
               aria-label="filter by settlement currency"
-              onChange={(e) => setScopeInput((s) => ({ ...s, ccy: e.target.value.toUpperCase() }))}
+              onChange={(e) =>
+                setScopeInput((s) => ({
+                  ...s,
+                  ccy: e.target.value.toUpperCase(),
+                }))
+              }
             />
           </label>
         </fieldset>
@@ -476,7 +562,12 @@ export function RatesRiskWorkspace(): React.ReactElement {
       </Panel>
 
       <Panel className={styles.results} title="Netted rates risk">
-        <ResultsBody nodes={nodes} busy={busy} curve={curve} scopeActive={scopeActive} />
+        <ResultsBody
+          nodes={nodes}
+          busy={busy}
+          curve={curve}
+          scopeActive={scopeActive}
+        />
       </Panel>
     </div>
   );
@@ -536,15 +627,31 @@ function NodeCard({
       </header>
 
       <dl className={styles.metrics}>
-        <Metric label="Net PV" value={fmtPnlAdaptive(node.netPv)} unit={node.ccy} emphatic />
-        <Metric label="Net PV01" value={fmtPnlAdaptive(node.netPv01)} unit={`${node.ccy}/bp`} />
-        <Metric label="Net DV01" value={fmtPnlAdaptive(node.netDv01)} unit={`${node.ccy}/bp`} />
+        <Metric
+          label="Net PV"
+          value={fmtPnlAdaptive(node.netPv)}
+          unit={node.ccy}
+          emphatic
+        />
+        <Metric
+          label="Net PV01"
+          value={fmtPnlAdaptive(node.netPv01)}
+          unit={`${node.ccy}/bp`}
+        />
+        <Metric
+          label="Net DV01"
+          value={fmtPnlAdaptive(node.netDv01)}
+          unit={`${node.ccy}/bp`}
+        />
       </dl>
 
       <div className={styles.ladder}>
         <div className={styles.ladderHead}>
           <span className={styles.ladderTitle}>Key-rate DV01 ladder</span>
-          <span className={styles.ladderRecon} title="ladder buckets sum to the net DV01 to first order">
+          <span
+            className={styles.ladderRecon}
+            title="ladder buckets sum to the net DV01 to first order"
+          >
             Σ {fmtPnlAdaptive(ladderSum)}
           </span>
         </div>
@@ -564,7 +671,9 @@ function NodeCard({
                   style={{ width: `${frac * 50}%`, background: rampColor(t) }}
                 />
               </span>
-              <span className={styles.bucketVal}>{fmtPnlAdaptive(bucket.dv01)}</span>
+              <span className={styles.bucketVal}>
+                {fmtPnlAdaptive(bucket.dv01)}
+              </span>
             </div>
           );
         })}
@@ -586,7 +695,9 @@ function Metric({
   emphatic?: boolean;
 }): React.ReactElement {
   return (
-    <div className={`${styles.metric} ${emphatic ? styles.metricEmphatic : ""}`}>
+    <div
+      className={`${styles.metric} ${emphatic ? styles.metricEmphatic : ""}`}
+    >
       <dt className={styles.metricLabel}>{label}</dt>
       <dd className={styles.metricValue}>
         {value}
