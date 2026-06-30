@@ -25,6 +25,9 @@ const REQUEST: BuildCurveRequest = {
     { instrumentId: "usd-sofr-depo-3m", quote: 0.0431 },
     { instrumentId: "usd-sofr-irs-10y", quote: 0.0418 },
   ],
+  datePillars: [
+    { maturityDate: { year: 2027, month: 12, day: 31 }, quote: 0.0415 },
+  ],
 };
 
 describe("Excel wsCodec — BuildCurve", () => {
@@ -37,6 +40,9 @@ describe("Excel wsCodec — BuildCurve", () => {
       pillars: [
         { instrument_id: "usd-sofr-depo-3m", quote: 0.0431 },
         { instrument_id: "usd-sofr-irs-10y", quote: 0.0418 },
+      ],
+      date_pillars: [
+        { maturity_date: { year: 2027, month: 12, day: 31 }, quote: 0.0415 },
       ],
     });
     expect("session_token" in wire).toBe(false);
@@ -53,12 +59,21 @@ describe("Excel wsCodec — BuildCurve", () => {
           time_years: 0.2521,
           discount_factor: 0.98912,
           zero_rate: 0.04318,
+          label: "",
+        },
+        {
+          instrument_id: "",
+          time_years: 1.5151,
+          discount_factor: 0.93827,
+          zero_rate: 0.0415,
+          label: "Date 2027-12-31",
         },
         {
           instrument_id: "usd-sofr-irs-10y",
           time_years: 10.0,
           discount_factor: 0.6612,
           zero_rate: 0.04134,
+          label: "",
         },
       ],
     };
@@ -73,12 +88,21 @@ describe("Excel wsCodec — BuildCurve", () => {
           timeYears: 0.2521,
           discountFactor: 0.98912,
           zeroRate: 0.04318,
+          label: "",
+        },
+        {
+          instrumentId: "",
+          timeYears: 1.5151,
+          discountFactor: 0.93827,
+          zeroRate: 0.0415,
+          label: "Date 2027-12-31",
         },
         {
           instrumentId: "usd-sofr-irs-10y",
           timeYears: 10.0,
           discountFactor: 0.6612,
           zeroRate: 0.04134,
+          label: "",
         },
       ],
     });

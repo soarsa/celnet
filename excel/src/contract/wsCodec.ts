@@ -1253,6 +1253,14 @@ export function buildCurveRequestToWire(req: BuildCurveRequest): WireObject {
       instrument_id: p.instrumentId,
       quote: p.quote,
     })),
+    date_pillars: req.datePillars.map((p) => ({
+      maturity_date: {
+        year: p.maturityDate.year,
+        month: p.maturityDate.month,
+        day: p.maturityDate.day,
+      },
+      quote: p.quote,
+    })),
   };
 }
 
@@ -1272,6 +1280,7 @@ export function calibratedCurveFromWire(o: WireObject): CalibratedCurve {
       timeYears: num(p, "time_years"),
       discountFactor: num(p, "discount_factor"),
       zeroRate: num(p, "zero_rate"),
+      label: str(p, "label"),
     })),
   };
 }

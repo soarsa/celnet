@@ -77,6 +77,8 @@ import type {
   PillarTenor,
   BuildCurveRequest,
   CalibratedCurve,
+  CalibratedCurvePoint,
+  DatePillar,
   RatesPosition,
   RatesPricingResult,
   RatesRiskNode,
@@ -1943,50 +1945,98 @@ export class MockTransport implements CelnetTransport {
    * degenerate pillar set surfaces the genuine error.
    */
   async buildCurve(request: BuildCurveRequest): Promise<CalibratedCurve> {
-    if (request.pillars.length === 0) {
+    if (request.pillars.length === 0 && request.datePillars.length === 0) {
       throw new Error("a curve needs at least one calibrating pillar");
     }
-    const resolved = request.pillars.map((p) => {
-      const def = this.mockInstruments.find(
-        (d) => d.instrumentId === p.instrumentId,
-      );
-      if (!def) throw new Error(`no instrument with id \`${p.instrumentId}\``);
-      if (def.currency !== request.currency) {
-        throw new Error(
-          `instrument \`${p.instrumentId}\` is ${def.currency}, not the curve currency ${request.currency}`,
-        );
-      }
-      const tenor = MockTransport.instrumentPillarTenor(
-        def,
-        request.referenceDate,
-      );
-      return {
-        instrumentId: p.instrumentId,
-        tenor,
-        parRate: p.quote,
-        timeYears: pillarMaturityYears(tenor, request.referenceDate),
-      };
-    });
 
-    // Order short→long by resolved maturity (the bootstrap is sequential/acyclic).
-    const sorted = [...resolved].sort((a, b) => a.timeYears - b.timeYears);
-    const curveSet: RatesCurveSet = {
-      currency: request.currency,
-      referenceDate: request.referenceDate,
-      pillars: sorted.map((r) => ({ tenor: r.tenor, parRate: r.parRate })),
-    };
-    const discount = bootstrapCurveFromSet(curveSet);
+    // Registry-instrument pillars: resolve, order short→long, and bootstrap the SAME
+    // in-browser discount curve the OIS pricer uses (the offline mirror of the server).
+    const instrumentPoints: CalibratedCurvePoint[] = [];
+    if (request.pillars.length > 0) {
+      const resolved = request.pillars.map((p) => {
+        const def = this.mockInstruments.find(
+          (d) => d.instrumentId === p.instrumentId,
+        );
+        if (!def) throw new Error(`no instrument with id \`${p.instrumentId}\``);
+        if (def.currency !== request.currency) {
+          throw new Error(
+            `instrument \`${p.instrumentId}\` is ${def.currency}, not the curve currency ${request.currency}`,
+          );
+        }
+        const tenor = MockTransport.instrumentPillarTenor(
+          def,
+          request.referenceDate,
+        );
+        return {
+          instrumentId: p.instrumentId,
+          tenor,
+          parRate: p.quote,
+          timeYears: pillarMaturityYears(tenor, request.referenceDate),
+        };
+      });
+      const sorted = [...resolved].sort((a, b) => a.timeYears - b.timeYears);
+      const curveSet: RatesCurveSet = {
+        currency: request.currency,
+        referenceDate: request.referenceDate,
+        pillars: sorted.map((r) => ({ tenor: r.tenor, parRate: r.parRate })),
+      };
+      const discount = bootstrapCurveFromSet(curveSet);
+      for (const r of sorted) {
+        instrumentPoints.push({
+          instrumentId: r.instrumentId,
+          timeYears: r.timeYears,
+          discountFactor: discountFactorAt(discount, r.timeYears),
+          zeroRate: zeroRateAt(discount, r.timeYears),
+          label: "",
+        });
+      }
+    }
+
+    // Date-anchored pillars: each is a synthetic money-market cash deposit from the
+    // reference date to the chosen date, so its discount factor is the closed-form
+    // `DF = 1/(1 + r·τ)` (τ = ACT/360 fraction) — the SAME value the server's deposit
+    // pillar carries, independent of the other pillars. (The offline mirror omits the
+    // second-order coupling of a longer swap pillar onto a shorter date pillar; the
+    // live server bootstrap calibrates the mixed ladder jointly.)
+    const datePoints = request.datePillars.map((dp) =>
+      MockTransport.datePillarPoint(dp, request.referenceDate),
+    );
+
+    const points = [...instrumentPoints, ...datePoints].sort(
+      (a, b) => a.timeYears - b.timeYears,
+    );
     return {
       requestId: request.requestId,
       currency: request.currency,
       referenceDate: request.referenceDate,
-      points: sorted.map((r) => ({
-        instrumentId: r.instrumentId,
-        timeYears: r.timeYears,
-        discountFactor: discountFactorAt(discount, r.timeYears),
-        zeroRate: zeroRateAt(discount, r.timeYears),
-      })),
+      points,
     };
+  }
+
+  /**
+   * Resolve one date-anchored pillar to its calibrated point: a closed-form cash
+   * deposit `DF = 1/(1 + r·τ)` with ACT/360 accrual from the reference date, placed on
+   * the ACT/365F curve-time axis, labelled `Date YYYY-MM-DD`.
+   */
+  private static datePillarPoint(
+    dp: DatePillar,
+    referenceDate: BrokenDate,
+  ): CalibratedCurvePoint {
+    const t = pillarMaturityYears(
+      { kind: "date", maturityDate: dp.maturityDate },
+      referenceDate,
+    );
+    if (!(t > 0)) {
+      throw new Error("a date pillar maturity must be after the reference date");
+    }
+    // ACT/360 fraction from the ACT/365F time: both count actual days, so the ratio is
+    // exact (days = t·365 ⇒ τ_360 = t·365/360).
+    const tauAct360 = (t * 365) / 360;
+    const discountFactor = 1 / (1 + dp.quote * tauAct360);
+    const zeroRate = -Math.log(discountFactor) / t;
+    const { year, month, day } = dp.maturityDate;
+    const label = `Date ${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return { instrumentId: "", timeYears: t, discountFactor, zeroRate, label };
   }
 
   /** Derive the curve-pillar maturity arm for one registry instrument. */

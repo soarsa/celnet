@@ -31,6 +31,7 @@ const REQUEST: BuildCurveRequest = {
     { instrumentId: "usd-irs-2y", quote: 0.0405 },
     { instrumentId: "usd-irs-10y", quote: 0.0418 },
   ],
+  datePillars: [],
 };
 
 /** A USD deposit/IRS roster to calibrate against in the offline path. */
@@ -88,6 +89,7 @@ describe("wsCodec — buildCurveRequestToWire", () => {
         { instrument_id: "usd-irs-2y", quote: 0.0405 },
         { instrument_id: "usd-irs-10y", quote: 0.0418 },
       ],
+      date_pillars: [],
     });
     // The bearer token + correlation id are injected by WsConnection.request.
     expect("session_token" in wire).toBe(false);
@@ -107,12 +109,21 @@ describe("wsCodec — calibratedCurveFromWire", () => {
           time_years: 0.2521,
           discount_factor: 0.98912,
           zero_rate: 0.04318,
+          label: "",
+        },
+        {
+          instrument_id: "",
+          time_years: 1.5151,
+          discount_factor: 0.93827,
+          zero_rate: 0.0415,
+          label: "Date 2027-12-31",
         },
         {
           instrument_id: "usd-irs-10y",
           time_years: 10.0,
           discount_factor: 0.6612,
           zero_rate: 0.04134,
+          label: "",
         },
       ],
     };
@@ -126,12 +137,21 @@ describe("wsCodec — calibratedCurveFromWire", () => {
         timeYears: 0.2521,
         discountFactor: 0.98912,
         zeroRate: 0.04318,
+        label: "",
+      },
+      {
+        instrumentId: "",
+        timeYears: 1.5151,
+        discountFactor: 0.93827,
+        zeroRate: 0.0415,
+        label: "Date 2027-12-31",
       },
       {
         instrumentId: "usd-irs-10y",
         timeYears: 10.0,
         discountFactor: 0.6612,
         zeroRate: 0.04134,
+        label: "",
       },
     ]);
   });
@@ -213,7 +233,47 @@ describe("MockTransport.buildCurve — offline bootstrap from registry instrumen
   it("rejects an empty pillar set", async () => {
     const t = await seeded();
     await expect(
-      t.buildCurve({ ...REQUEST, pillars: [] }),
+      t.buildCurve({ ...REQUEST, pillars: [], datePillars: [] }),
     ).rejects.toThrow(/at least one/);
+  });
+
+  it("calibrates a standalone date-anchored pillar to a closed-form deposit", async () => {
+    const t = await seeded();
+    const curve = await t.buildCurve({
+      ...REQUEST,
+      pillars: [],
+      datePillars: [
+        { maturityDate: { year: 2027, month: 12, day: 31 }, quote: 0.0415 },
+      ],
+    });
+
+    expect(curve.points).toHaveLength(1);
+    const p = curve.points[0]!;
+    // A date pillar has no instrument id and a `Date YYYY-MM-DD` label.
+    expect(p.instrumentId).toBe("");
+    expect(p.label).toBe("Date 2027-12-31");
+    // DF = 1/(1 + r·τ) with ACT/360 accrual ⇒ within (0, 1); zero rate finite.
+    const tau360 = (p.timeYears * 365) / 360;
+    expect(p.discountFactor).toBeCloseTo(1 / (1 + 0.0415 * tau360), 12);
+    expect(p.discountFactor).toBeGreaterThan(0);
+    expect(p.discountFactor).toBeLessThan(1);
+    expect(Number.isFinite(p.zeroRate)).toBe(true);
+  });
+
+  it("merges instrument and date pillars, ordered by maturity", async () => {
+    const t = await seeded();
+    const curve = await t.buildCurve({
+      ...REQUEST,
+      datePillars: [
+        { maturityDate: { year: 2027, month: 12, day: 31 }, quote: 0.0415 },
+      ],
+    });
+
+    // Three instrument pillars + one date pillar, sorted short→long by maturity.
+    expect(curve.points).toHaveLength(4);
+    const times = curve.points.map((pt) => pt.timeYears);
+    expect([...times]).toEqual([...times].sort((a, b) => a - b));
+    const datePoint = curve.points.find((pt) => pt.instrumentId === "");
+    expect(datePoint?.label).toBe("Date 2027-12-31");
   });
 });

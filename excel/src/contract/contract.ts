@@ -1381,15 +1381,28 @@ export interface InstrumentQuote {
 }
 
 /**
- * A request to bootstrap a single-currency discount curve from registry-referenced
- * instruments (`celnet.wire.BuildCurveRequest`). Pillars may arrive in any order;
- * at least one is required.
+ * A standalone date-anchored calibration pillar (`celnet.wire.DatePillar`): an
+ * explicit maturity date + its observed simple ACT/360 rate (decimal). The server
+ * resolves it to a synthetic cash deposit (`DF = 1/(1 + r·τ)`) from the curve
+ * reference date, pinning the curve where no registry instrument matures.
+ */
+export interface DatePillar {
+  maturityDate: BrokenDate;
+  quote: number;
+}
+
+/**
+ * A request to bootstrap a single-currency discount curve (`celnet.wire
+ * .BuildCurveRequest`). Pillars may arrive in any order. Calibrating pillars are
+ * registry instruments ({@link pillars}) or standalone date-anchored pillars
+ * ({@link datePillars}); at least one across both is required.
  */
 export interface BuildCurveRequest {
   requestId: string;
   currency: string;
   referenceDate: BrokenDate;
   pillars: readonly InstrumentQuote[];
+  datePillars: readonly DatePillar[];
 }
 
 /**
@@ -1397,12 +1410,15 @@ export interface BuildCurveRequest {
  * .CalibratedCurvePoint`).
  */
 export interface CalibratedCurvePoint {
+  /** The input instrument id; empty for a date-anchored pillar. */
   instrumentId: string;
   /** Pillar maturity on the ACT/365F curve year-fraction axis. */
   timeYears: number;
   discountFactor: number;
   /** Continuously-compounded zero rate (decimal). */
   zeroRate: number;
+  /** Display label: `Date YYYY-MM-DD` for a date pillar, else empty. */
+  label: string;
 }
 
 /**

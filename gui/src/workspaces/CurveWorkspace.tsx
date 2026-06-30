@@ -19,7 +19,7 @@
  * than a fabricated curve.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
 import { DataGrid } from "../components/DataGrid";
@@ -29,6 +29,7 @@ import type { ColumnDef } from "../lib/grid";
 import type {
   BrokenDate,
   CalibratedCurve,
+  DatePillar,
   InstrumentDef,
   PillarTenor,
   RatesCurveSet,
@@ -579,6 +580,16 @@ interface InstrumentPick {
   readonly quotePct: number;
 }
 
+/**
+ * One added standalone date-anchored pillar: a maturity date (`<input type="date">`
+ * value) + its simple rate in percent, with a stable React list key.
+ */
+interface DatePick {
+  readonly key: number;
+  readonly dateInput: string;
+  readonly quotePct: number;
+}
+
 /** One row of the calibrated-curve readout (a returned bootstrapped point). */
 interface PointRow {
   readonly label: string;
@@ -633,6 +644,8 @@ function InstrumentReferenceMode(): React.ReactElement {
   const [refInput, setRefInput] = useState(brokenToInput(REFERENCE_DATE));
   const [picks, setPicks] = useState<readonly InstrumentPick[]>([]);
   const [addId, setAddId] = useState("");
+  const [datePicks, setDatePicks] = useState<readonly DatePick[]>([]);
+  const dateKey = useRef(0);
   const [result, setResult] = useState<CalibratedCurve | null>(null);
   const [building, setBuilding] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
@@ -685,15 +698,54 @@ function InstrumentReferenceMode(): React.ReactElement {
     );
   }, []);
 
+  const addDatePick = useCallback(() => {
+    setDatePicks((prev) => [
+      ...prev,
+      {
+        key: (dateKey.current += 1),
+        dateInput: brokenToInput(REFERENCE_DATE),
+        quotePct: 4,
+      },
+    ]);
+    setResult(null);
+  }, []);
+
+  const removeDatePick = useCallback((key: number) => {
+    setDatePicks((prev) => prev.filter((p) => p.key !== key));
+    setResult(null);
+  }, []);
+
+  const setDatePickDate = useCallback((key: number, dateInput: string) => {
+    setDatePicks((prev) =>
+      prev.map((p) => (p.key === key ? { ...p, dateInput } : p)),
+    );
+    setResult(null);
+  }, []);
+
+  const setDatePickQuote = useCallback((key: number, pct: number) => {
+    setDatePicks((prev) =>
+      prev.map((p) => (p.key === key ? { ...p, quotePct: pct } : p)),
+    );
+  }, []);
+
   const build = useCallback(async (): Promise<void> => {
     const referenceDate = inputToBroken(refInput);
     if (!referenceDate) {
       setBuildError("reference date must be a valid YYYY-MM-DD date");
       return;
     }
-    if (picks.length === 0) {
-      setBuildError("add at least one calibrating instrument");
+    if (picks.length === 0 && datePicks.length === 0) {
+      setBuildError("add at least one calibrating instrument or date pillar");
       return;
+    }
+    const datePillars: DatePillar[] = [];
+    for (const dp of datePicks) {
+      const maturityDate = inputToBroken(dp.dateInput);
+      if (!maturityDate) {
+        setBuildError("each date pillar needs a valid YYYY-MM-DD maturity date");
+        return;
+      }
+      datePillars.push({ maturityDate, quote: dp.quotePct / 100 });
     }
     setBuilding(true);
     setBuildError(null);
@@ -706,6 +758,7 @@ function InstrumentReferenceMode(): React.ReactElement {
           instrumentId: p.instrumentId,
           quote: p.quotePct / 100,
         })),
+        datePillars,
       });
       setResult(curve);
     } catch (e: unknown) {
@@ -714,12 +767,14 @@ function InstrumentReferenceMode(): React.ReactElement {
     } finally {
       setBuilding(false);
     }
-  }, [app.transport, currency, refInput, picks]);
+  }, [app.transport, currency, refInput, picks, datePicks]);
 
   const pointRows = useMemo<PointRow[]>(() => {
     if (!result) return [];
+    // Instrument pillars carry an id the registry resolves to a name; date-anchored
+    // pillars carry an empty id and a server-supplied `Date YYYY-MM-DD` label.
     return result.points.map((p) => ({
-      label: instrumentLabel(p.instrumentId),
+      label: p.instrumentId ? instrumentLabel(p.instrumentId) : p.label,
       timeYears: p.timeYears,
       df: p.discountFactor,
       zero: p.zeroRate,
@@ -874,12 +929,70 @@ function InstrumentReferenceMode(): React.ReactElement {
           </ul>
         )}
 
+        <div className={styles.pillarHead}>
+          <span className={styles.fieldLabel}>Date pillars</span>
+          <Button
+            variant="ghost"
+            onClick={addDatePick}
+            title="pin the curve to an explicit maturity date"
+          >
+            + Date pillar
+          </Button>
+        </div>
+
+        <p className={styles.hint}>
+          Pin the curve to an explicit date (a turn, an IMM, a meeting) with its simple
+          rate. The server calibrates a synthetic cash deposit to that date.
+        </p>
+
+        {datePicks.length > 0 && (
+          <ul className={styles.pillarList}>
+            {datePicks.map((dp) => (
+              <li key={dp.key} className={styles.pickItem}>
+                <label className={styles.inlineInput}>
+                  <input
+                    type="date"
+                    value={dp.dateInput}
+                    aria-label={`date pillar ${dp.key} maturity date`}
+                    onChange={(e) => setDatePickDate(dp.key, e.target.value)}
+                  />
+                </label>
+                <label className={styles.inlineInput}>
+                  <input
+                    type="number"
+                    step={0.01}
+                    value={dp.quotePct}
+                    aria-label={`date pillar ${dp.key} rate in percent`}
+                    onChange={(e) =>
+                      setDatePickQuote(dp.key, Number(e.target.value))
+                    }
+                  />
+                  <span className={styles.inputUnit}>%</span>
+                </label>
+                <button
+                  type="button"
+                  className={styles.pillarRemove}
+                  aria-label={`remove date pillar ${dp.key}`}
+                  title="remove this date pillar"
+                  onClick={() => removeDatePick(dp.key)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
         <div className={styles.buildRow}>
           <Button
             variant="primary"
             onClick={() => void build()}
-            disabled={building || picks.length === 0 || !isAuthed}
-            title="bootstrap the curve from the selected instruments"
+            disabled={
+              building ||
+              (picks.length === 0 && datePicks.length === 0) ||
+              !isAuthed
+            }
+            title="bootstrap the curve from the selected pillars"
           >
             {building ? "Building…" : "Build curve"}
           </Button>
