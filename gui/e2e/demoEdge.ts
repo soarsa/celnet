@@ -11,7 +11,9 @@
  * through the user's env exactly as CLAUDE.md prescribes (rustup is not on PATH).
  */
 import { type ChildProcess, spawn } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** A running demo edge: its WebSocket-mirror URL and the child to tear down. */
@@ -40,6 +42,19 @@ export function startDemoEdge(opts?: {
   const grpcAddr = opts?.grpcAddr ?? "127.0.0.1:50597";
   const timeoutMs = opts?.timeoutMs ?? 180_000;
 
+  // Hermetic per-run persistence. The edge persists its operator config — users +
+  // desks + role bundles (identity.json) and inbound FIX acceptors
+  // (fix-connections.json) — and reloads it on boot. The production default writes
+  // these CWD-relative (here, the repo root), so a SHARED store leaks state across
+  // runs and makes mutating specs non-idempotent: a re-run would inherit a prior
+  // run's narrowed Trader role bundle (roleBundleEditing's precondition gone) or an
+  // already-running connection bound to the wizard's default address (fixDialects'
+  // "Next" stuck disabled on an address clash). Point the store at a fresh temp dir
+  // per boot via the documented `CELNET_IDENTITY_CONFIG` / `CELNET_FIX_CONFIG`
+  // knobs, so every run starts from the SEEDED defaults and never persists into the
+  // repo. The dir is removed on teardown.
+  const storeDir = mkdtempSync(join(tmpdir(), "celnet-e2e-edge-"));
+
   const cmd = `source "$HOME/.cargo/env" && exec cargo run -q -p celnet-server --example demo_edge`;
   const child: ChildProcess = spawn("/bin/sh", ["-c", cmd], {
     cwd: REPO_ROOT,
@@ -47,6 +62,8 @@ export function startDemoEdge(opts?: {
       ...process.env,
       CELNET_WS_ADDR: wsAddr,
       CELNET_GRPC_ADDR: grpcAddr,
+      CELNET_IDENTITY_CONFIG: join(storeDir, "identity.json"),
+      CELNET_FIX_CONFIG: join(storeDir, "fix-connections.json"),
       // Run the demo edge under the PRODUCTION deny-by-default posture, not its
       // friendly Permissive dev default — so this live suite verifies the GUI's
       // entitlement default end-to-end: the Book/Risk views send an explicit
@@ -59,8 +76,17 @@ export function startDemoEdge(opts?: {
 
   const stop = (): Promise<void> =>
     new Promise<void>((res) => {
-      if (child.exitCode !== null || child.signalCode !== null) return res();
-      child.once("exit", () => res());
+      const done = (): void => {
+        // Drop the throwaway per-run store (best-effort; tmp is reclaimed anyway).
+        try {
+          rmSync(storeDir, { recursive: true, force: true });
+        } catch {
+          /* ignore — the OS reclaims tmp */
+        }
+        res();
+      };
+      if (child.exitCode !== null || child.signalCode !== null) return done();
+      child.once("exit", () => done());
       child.kill("SIGTERM");
       // Hard-stop if it lingers (the edge holds sockets/threads).
       setTimeout(() => {

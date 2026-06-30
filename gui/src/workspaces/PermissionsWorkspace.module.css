@@ -16,11 +16,25 @@
   .layout {
     grid-template-columns: 1fr;
   }
+  /* Single column: the picker has content below it, so a sticky picker would
+     overlap (and intercept clicks on) the editors — pin it to normal flow. */
+  .pickerPanel {
+    position: static;
+  }
 }
 
 .pickerPanel {
   position: sticky;
   top: var(--space-5);
+}
+
+/* The right-hand editor column: the per-user access grid stacked above the
+   role-bundle editor. Kept in column 2 so the sticky picker never overlaps it. */
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
 }
 .gridPanel {
   min-width: 0;
