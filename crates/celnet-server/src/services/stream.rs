@@ -94,6 +94,7 @@ use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
 
 use super::access::{RequiredAuthority, ResolvedCaller, authorize_caller, resolve_caller};
+use super::error_status::{link_error_to_status, price_error_to_status};
 use super::sessions::SessionRegistry;
 use super::stream_rx::ReceiverStream;
 
@@ -362,7 +363,7 @@ impl Subscription {
         spread: &SpreadModel,
     ) -> Result<(Priced, TwoWayPrice), Status> {
         let priced = price_instrument(&self.instrument, market, &self.conv)
-            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+            .map_err(|e| price_error_to_status(&e))?;
         let two_way = spread.two_way(priced.greeks.price, &priced.greeks);
         Ok((priced, two_way))
     }
@@ -391,7 +392,7 @@ fn conv_to_wire(c: &ConventionSet) -> Conventions {
 
 /// Decode the wire conventions, mapping a decode error to `invalid_argument`.
 fn decode_conv(w: &Conventions) -> Result<ConventionSet, Status> {
-    ConventionSet::decode(w).map_err(|e| Status::invalid_argument(e.to_string()))
+    ConventionSet::decode(w).map_err(|e| price_error_to_status(&e))
 }
 
 /// Decode a wire [`MarketObservable`] tag plus its optional delta into the
@@ -945,7 +946,7 @@ impl Session {
             .link
             .market_snapshot()
             .await
-            .map_err(|e| Status::unavailable(e.to_string()))?;
+            .map_err(|e| link_error_to_status(&e))?;
         let market = MarketContext::fx(snap.spot, snap.atm_vol, snap.r_dom, snap.r_for);
         resolve_pinned_vol(&self.surface_book, surface_version, instrument, &market)
     }
@@ -1502,7 +1503,7 @@ impl Session {
                 return true;
             }
             Err(e) => {
-                let _ = out_tx.send(Err(Status::unavailable(e.to_string()))).await;
+                let _ = out_tx.send(Err(link_error_to_status(&e))).await;
                 return true;
             }
         };

@@ -24,6 +24,7 @@
 
 pub mod access;
 pub mod desk;
+pub mod error_status;
 pub mod pricing;
 pub mod quote;
 pub mod rates_book;
