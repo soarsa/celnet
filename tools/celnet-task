@@ -1,0 +1,705 @@
+#!/usr/bin/env bash
+# tools/celnet-task — cross-session task-orchestration CLI for the celnet repo.
+#
+# WHY: any Claude session on this repo, on SessionStart or after /clear, must autonomously
+# continue TRACKED tail tasks shared across sessions, with claim-locking so there is NO
+# duplicated/conflicting/wasted effort. The durable source of truth is a git-committed
+# JSONL manifest (.celnet/tasks.jsonl); claims are taken with git-push-as-CAS on a dedicated
+# claims branch so manifest churn never races code merges on main. See docs/ORCHESTRATION.md.
+#
+# DESIGN (the contract — docs/ORCHESTRATION.md, auto-memory cross-session-orchestration):
+#   * Manifest: ONE JSON object per line. Task lines carry `id`; two singleton control
+#     records carry `kind` (cargo_lane = the single-M4 cargo mutex; batch_window = the
+#     coordinator's merge window). Line-wise edits keep diffs minimal + merge-friendly.
+#   * Claim = git-CAS: read the manifest off the claims branch, rewrite ONE line, build a
+#     commit with the fetched tip as its parent, and `git push` (NO --force). A fast-forward
+#     push succeeds = lock acquired; a non-FF rejection = someone else claimed first = we
+#     re-fetch, re-check, re-select (bounded retries). The manifest is mutated entirely via
+#     git plumbing (hash-object / read-tree / write-tree / commit-tree) so the caller's
+#     working tree and current branch are NEVER touched — a SessionStart hook is invisible.
+#   * Leases: LEASE 90m, HEARTBEAT bumps the lease, GRACE 30m before an expired lease is
+#     reclaimable (reclaim is itself a CAS).
+#   * Single authority / serial cargo: gate_tier:T2 tasks are coordinator-only; a
+#     requires_cargo task needs the cargo_lane singleton (selector offers a non-cargo task
+#     if the lane is held by another). Coordinator = `CELNET_ROLE=coordinator`.
+#   * done = lodestar-verified: query the deliverable roll-up via the lodestar CLI; flip to
+#     done/in_review ONLY when the roll-up is `active`. See cmd_done for the env caveat
+#     (LODESTAR_EXECUTE_VERIFY=off / judge=none keeps roll-ups draft → strict refuse, with a
+#     documented coordinator `--attest` override).
+#   * FAIL-SAFE: the hook-invoked subcommands (selector/heartbeat/checkpoint) NEVER block a
+#     session — any internal error prints a short note to stderr and exits 0.
+set -Eeuo pipefail
+
+# ---------------------------------------------------------------------------- config
+BOARD_BRANCH="${CELNET_BOARD_BRANCH:-coord/board}"  # dedicated claims branch (NOT main)
+REMOTE="${CELNET_BOARD_REMOTE:-origin}"             # the one sanctioned remote
+MANIFEST_PATH=".celnet/tasks.jsonl"                  # path of the manifest within the branch
+LEASE_MIN="${CELNET_LEASE_MIN:-90}"                  # claim lease lifetime (minutes)
+GRACE_MIN="${CELNET_GRACE_MIN:-30}"                  # grace past expiry before reclaim (minutes)
+MAX_RETRIES="${CELNET_CAS_RETRIES:-5}"              # bounded CAS push retries on contention
+DRY_RUN="${CELNET_TASK_DRY_RUN:-0}"                # 1 = compute + report, never push to remote
+ROLE="${CELNET_ROLE:-worker}"                        # worker | coordinator
+PROG="celnet-task"
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+PROJECT_KEY="$(cat "$REPO_ROOT/.lodestar/project-id" 2>/dev/null || echo "github.com-soarsa-celnet")"
+
+# Default ERR trap: report the failing line + propagate the real exit code (manual commands).
+# The hook subcommands replace this with hook_failsafe (exit 0).
+trap 'rc=$?; echo "'"$PROG"': error (line $LINENO, exit $rc)" >&2; exit $rc' ERR
+
+hook_failsafe() {
+    # Hook-invoked subcommands must never block the session: swallow any failure → exit 0.
+    trap 'echo "'"$PROG"': non-fatal error (line $LINENO); not blocking the session" >&2; exit 0' ERR
+}
+
+note() { echo "$PROG: $*" >&2; }
+die()  { echo "$PROG: $*" >&2; exit 1; }
+
+# ------------------------------------------------------------------------- time helpers
+# ISO-8601 UTC (Zulu) strings sort lexicographically == chronologically, but lease math
+# needs arithmetic, so convert to epoch. BSD (macOS) date first, GNU date as the fallback.
+now_epoch() { date -u +%s; }
+
+epoch_to_ts() {
+    local e=$1
+    date -u -r "$e" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$e" +%Y-%m-%dT%H:%M:%SZ
+}
+
+ts_to_epoch() {
+    local ts=$1
+    [ -z "$ts" ] || [ "$ts" = "null" ] && { echo 0; return 0; }
+    date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null \
+        || date -u -d "$ts" +%s 2>/dev/null \
+        || echo 0
+}
+
+ts_now()       { epoch_to_ts "$(now_epoch)"; }
+ts_lease_end() { epoch_to_ts "$(( $(now_epoch) + LEASE_MIN * 60 ))"; }
+
+# A lease is reclaimable if it is unset OR now is past (expiry + grace).
+lease_reclaimable() {
+    local expiry=$1
+    [ -z "$expiry" ] || [ "$expiry" = "null" ] && return 0
+    [ "$(now_epoch)" -gt "$(( $(ts_to_epoch "$expiry") + GRACE_MIN * 60 ))" ]
+}
+
+# ------------------------------------------------------------------------- session tag
+# Stable per-session lock tag: ${USER}-<short-host>-<session8>. Same string every call so a
+# session recognises its own claims across SessionStart/heartbeat/done.
+session_tag() {
+    local sid=${1:-${CLAUDE_SESSION_ID:-}}
+    local host user
+    host=$(hostname -s 2>/dev/null || echo host)
+    user=${USER:-$(id -un 2>/dev/null || echo user)}
+    [ -n "$sid" ] || sid="nosession$$"
+    printf '%s-%s-%s' "$user" "$host" "${sid:0:8}"
+}
+
+# ----------------------------------------------------------------- manifest read helpers
+# The manifest's source of truth is the claims branch on the remote. Order of preference:
+# remote-tracking ref → local branch → working-tree file (bootstrap before the branch exists).
+board_ref() {
+    if git -C "$REPO_ROOT" rev-parse --verify -q "$REMOTE/$BOARD_BRANCH" >/dev/null 2>&1; then
+        echo "$REMOTE/$BOARD_BRANCH"
+    elif git -C "$REPO_ROOT" rev-parse --verify -q "$BOARD_BRANCH" >/dev/null 2>&1; then
+        echo "$BOARD_BRANCH"
+    else
+        echo ""
+    fi
+}
+
+board_manifest() {
+    local ref
+    ref=$(board_ref)
+    if [ -n "$ref" ]; then
+        git -C "$REPO_ROOT" show "$ref:$MANIFEST_PATH" 2>/dev/null || cat "$REPO_ROOT/$MANIFEST_PATH"
+    else
+        cat "$REPO_ROOT/$MANIFEST_PATH"
+    fi
+}
+
+# Best-effort fetch of the claims branch. Returns non-zero only on a hard transport failure
+# (used by the selector to detect "offline"). A missing remote branch is NOT a failure.
+fetch_board() {
+    git -C "$REPO_ROOT" fetch --quiet "$REMOTE" "$BOARD_BRANCH" 2>/dev/null && return 0
+    # Distinguish "branch absent" (ok) from "remote unreachable" (offline).
+    git -C "$REPO_ROOT" ls-remote --exit-code "$REMOTE" >/dev/null 2>&1
+}
+
+# ------------------------------------------------------------------------ jq line rewrite
+# Rewrite the matching JSONL line(s) in-place. Lines that do not match pass through VERBATIM
+# (byte-identical) so the git diff is a single changed line — merge-friendly per the contract.
+#   $1 manifest content  $2 jq boolean (match)  $3 jq transform (-c) applied to matches
+rewrite_lines() {
+    local content=$1 match=$2 transform=$3 line
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        if [ "$(printf '%s' "$line" | jq "$match")" = "true" ]; then
+            printf '%s' "$line" | jq -c "$transform"
+        else
+            printf '%s\n' "$line"
+        fi
+    done <<<"$content"
+}
+
+# ------------------------------------------------------------------------- the git-CAS core
+# cas_update <commit-msg> <new-manifest>: commit the new manifest onto the claims branch tip
+# and fast-forward push it. Returns 0 on a successful push (or a successful dry-run), 1 on a
+# non-FF rejection (caller should re-fetch + re-evaluate), 2 on any other failure.
+# Never touches the working tree / current branch: pure plumbing + a ref push.
+cas_update() {
+    local msg=$1 new=$2 base blob tree commit idx
+    base=$(board_ref)
+    base=$([ -n "$base" ] && git -C "$REPO_ROOT" rev-parse "$base" || echo "")
+
+    blob=$(printf '%s' "$new" | git -C "$REPO_ROOT" hash-object -w --stdin)
+    idx=$(mktemp "${TMPDIR:-/tmp}/celnet-task-idx.XXXXXX")
+    if [ -n "$base" ]; then
+        GIT_INDEX_FILE="$idx" git -C "$REPO_ROOT" read-tree "$base"
+    else
+        GIT_INDEX_FILE="$idx" git -C "$REPO_ROOT" read-tree --empty
+    fi
+    GIT_INDEX_FILE="$idx" git -C "$REPO_ROOT" update-index --add --cacheinfo "100644,$blob,$MANIFEST_PATH"
+    tree=$(GIT_INDEX_FILE="$idx" git -C "$REPO_ROOT" write-tree)
+    rm -f "$idx"
+
+    if [ -n "$base" ]; then
+        commit=$(git -C "$REPO_ROOT" commit-tree "$tree" -p "$base" -m "$msg")
+    else
+        commit=$(git -C "$REPO_ROOT" commit-tree "$tree" -m "$msg")  # seed the orphan claims branch
+    fi
+
+    if [ "$DRY_RUN" = "1" ]; then
+        note "[dry-run] would push $commit -> $REMOTE/$BOARD_BRANCH (no network)"
+        # Move the LOCAL claims ref so chained dry-run commands observe the change.
+        git -C "$REPO_ROOT" update-ref "refs/heads/$BOARD_BRANCH" "$commit"
+        return 0
+    fi
+
+    if git -C "$REPO_ROOT" push --quiet "$REMOTE" "$commit:refs/heads/$BOARD_BRANCH" 2>/dev/null; then
+        git -C "$REPO_ROOT" update-ref "refs/heads/$BOARD_BRANCH" "$commit"
+        git -C "$REPO_ROOT" fetch --quiet "$REMOTE" "$BOARD_BRANCH" 2>/dev/null || true
+        return 0
+    fi
+    return 1  # non-FF (lost the race) or push refused
+}
+
+# Run a CAS transaction with bounded retries. $1 = a callback name that, given the current
+# manifest on stdin, EITHER prints the new manifest (proceed) OR exits non-zero to abort the
+# whole transaction with that code (e.g. 3 = nothing-to-do, 4 = precondition failed). The
+# callback is re-run on every retry against a freshly fetched manifest (re-check, re-select).
+cas_txn() {
+    local cb=$1 msg=$2 attempt=1 cur new rc
+    while [ "$attempt" -le "$MAX_RETRIES" ]; do
+        fetch_board || { note "offline — cannot reach $REMOTE"; return 9; }
+        cur=$(board_manifest)
+        set +e
+        new=$("$cb" <<<"$cur")
+        rc=$?
+        set -e
+        [ "$rc" -ne 0 ] && return "$rc"   # callback decided to abort (e.g. lost/precondition)
+        if cas_update "$msg" "$new"; then
+            return 0
+        fi
+        note "CAS contention (attempt $attempt/$MAX_RETRIES) — re-fetching + re-evaluating"
+        attempt=$((attempt + 1))
+    done
+    note "CAS exhausted $MAX_RETRIES retries under contention"
+    return 8
+}
+
+# ------------------------------------------------------------------------ task accessors
+task_field() { # <manifest> <id> <jq-path>
+    awk_get_task "$1" "$2" | jq -r "$3 // \"\""
+}
+awk_get_task() { # <manifest> <id> -> the single matching task line (or empty)
+    local line
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        [ "$(printf '%s' "$line" | jq -r '.id // empty')" = "$2" ] && { printf '%s' "$line"; return 0; }
+    done <<<"$1"
+}
+singleton() { # <manifest> <kind>
+    local line
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        [ "$(printf '%s' "$line" | jq -r '.kind // empty')" = "$2" ] && { printf '%s' "$line"; return 0; }
+    done <<<"$1"
+}
+
+# Reclaim every expired lease (status claimed/in_progress, lease past grace) back to open.
+# Pure transform over a manifest on stdin → manifest on stdout.
+reclaim_expired_filter() {
+    local content line id status expiry
+    content=$(cat)
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        id=$(printf '%s' "$line" | jq -r '.id // empty')
+        if [ -z "$id" ]; then printf '%s\n' "$line"; continue; fi
+        status=$(printf '%s' "$line" | jq -r '.status // empty')
+        expiry=$(printf '%s' "$line" | jq -r '.lease_expiry // empty')
+        if { [ "$status" = "claimed" ] || [ "$status" = "in_progress" ]; } && lease_reclaimable "$expiry"; then
+            printf '%s' "$line" | jq -c --arg t "$(ts_now)" \
+                '.status="open"|.owner_session=null|.lease_expiry=null|.heartbeat_at=null|.updated_at=$t|.notes=((.notes // "")+" [auto-reclaimed expired lease "+$t+"]")'
+        else
+            printf '%s\n' "$line"
+        fi
+    done <<<"$content"
+}
+
+# ------------------------------------------------------------------------------- claim
+# Claim a specific task by id for this session tag (CAS). Used by `claim` and the selector.
+TAG=""   # set per command
+do_claim_cb() {
+    local content line status owner expiry
+    content=$(cat)
+    line=$(awk_get_task "$content" "$CLAIM_ID") || true
+    [ -n "$line" ] || { note "task $CLAIM_ID not found"; return 4; }
+    status=$(printf '%s' "$line" | jq -r '.status // empty')
+    owner=$(printf '%s'  "$line" | jq -r '.owner_session // empty')
+    expiry=$(printf '%s' "$line" | jq -r '.lease_expiry // empty')
+    # Claimable iff open, OR already ours, OR an expired lease past grace.
+    if [ "$status" = "open" ] || [ "$owner" = "$TAG" ] || lease_reclaimable "$expiry"; then
+        : # ok
+    else
+        note "task $CLAIM_ID is $status (held by ${owner:-?}, lease $expiry) — not claimable by $TAG"
+        return 5
+    fi
+    rewrite_lines "$content" ".id==\"$CLAIM_ID\"" \
+        ".status=\"claimed\"|.owner_session=\"$TAG\"|.lease_expiry=\"$(ts_lease_end)\"|.heartbeat_at=\"$(ts_now)\"|.updated_at=\"$(ts_now)\""
+}
+
+cmd_claim() {
+    local id=${1:-}; [ -n "$id" ] || die "usage: $PROG claim <id>"
+    TAG=$(session_tag); CLAIM_ID=$id
+    if cas_txn do_claim_cb "celnet-task: claim $id by $TAG"; then
+        note "claimed $id as $TAG (lease $(ts_lease_end))"
+    else
+        case $? in 4) die "no such task: $id";; 5) die "could not claim $id (held by another live lease)";; *) die "claim failed";; esac
+    fi
+}
+
+# ------------------------------------------------------------------------------- release
+cmd_release() {
+    local id=${1:-} force=0; shift || true
+    [ -n "$id" ] || die "usage: $PROG release <id> [--force]"
+    [ "${1:-}" = "--force" ] && force=1
+    TAG=$(session_tag); CLAIM_ID=$id; FORCE=$force
+    _release_cb() {
+        local content line owner; content=$(cat)
+        line=$(awk_get_task "$content" "$CLAIM_ID") || true
+        [ -n "$line" ] || { note "task $CLAIM_ID not found"; return 4; }
+        owner=$(printf '%s' "$line" | jq -r '.owner_session // empty')
+        if [ "$FORCE" != "1" ] && [ "$owner" != "$TAG" ]; then
+            note "task $CLAIM_ID owned by ${owner:-nobody}, not $TAG (use --force)"; return 5
+        fi
+        rewrite_lines "$content" ".id==\"$CLAIM_ID\"" \
+            ".status=\"open\"|.owner_session=null|.lease_expiry=null|.heartbeat_at=null|.updated_at=\"$(ts_now)\""
+    }
+    if cas_txn _release_cb "celnet-task: release $id"; then note "released $id"; else die "release failed"; fi
+}
+
+# ------------------------------------------------------------------------------- progress
+cmd_progress() {
+    local id=${1:-}; [ -n "$id" ] || die "usage: $PROG progress <id>"
+    TAG=$(session_tag); CLAIM_ID=$id
+    _progress_cb() {
+        local content line owner; content=$(cat)
+        line=$(awk_get_task "$content" "$CLAIM_ID") || true
+        [ -n "$line" ] || { note "task $CLAIM_ID not found"; return 4; }
+        owner=$(printf '%s' "$line" | jq -r '.owner_session // empty')
+        [ "$owner" = "$TAG" ] || { note "task $CLAIM_ID not held by $TAG"; return 5; }
+        rewrite_lines "$content" ".id==\"$CLAIM_ID\"" \
+            ".status=\"in_progress\"|.lease_expiry=\"$(ts_lease_end)\"|.heartbeat_at=\"$(ts_now)\"|.updated_at=\"$(ts_now)\""
+    }
+    if cas_txn _progress_cb "celnet-task: progress $id by $TAG"; then note "$id -> in_progress"; else die "progress failed"; fi
+}
+
+# ------------------------------------------------------------------------------- heartbeat
+# Bump the lease on every task this tag actively holds. Fail-safe (Stop hook). Skips all
+# network work when this tag owns nothing locally (the common case = zero overhead).
+cmd_heartbeat() {
+    hook_failsafe
+    local sid="" ; [ "${1:-}" = "--session" ] && { sid=${2:-}; }
+    TAG=$(session_tag "$sid")
+    local localmf owned
+    localmf=$(board_manifest)
+    owned=$(printf '%s\n' "$localmf" | jq -rc "select(.owner_session==\"$TAG\" and (.status==\"claimed\" or .status==\"in_progress\")) | .id" 2>/dev/null || true)
+    if [ -z "$owned" ]; then note "no active claims for $TAG — heartbeat is a no-op"; exit 0; fi
+    # shellcheck disable=SC2329  # invoked indirectly by cas_txn
+    _heartbeat_cb() {
+        local content; content=$(cat)
+        rewrite_lines "$content" ".owner_session==\"$TAG\" and (.status==\"claimed\" or .status==\"in_progress\")" \
+            ".lease_expiry=\"$(ts_lease_end)\"|.heartbeat_at=\"$(ts_now)\""
+    }
+    cas_txn _heartbeat_cb "celnet-task: heartbeat $TAG" && note "heartbeat bumped lease for: $(echo "$owned" | tr '\n' ' ')"
+    exit 0
+}
+
+# ------------------------------------------------------------------------------- checkpoint
+# PreCompact hook: durable state already lives in git, so checkpoint just refreshes the lease
+# so a long compaction does not expire the claim, then records a breadcrumb. Fail-safe.
+cmd_checkpoint() {
+    hook_failsafe
+    local sid="" ; [ "${1:-}" = "--session" ] && { sid=${2:-}; }
+    TAG=$(session_tag "$sid")
+    local localmf owned
+    localmf=$(board_manifest)
+    owned=$(printf '%s\n' "$localmf" | jq -rc "select(.owner_session==\"$TAG\" and (.status==\"claimed\" or .status==\"in_progress\")) | .id" 2>/dev/null || true)
+    if [ -z "$owned" ]; then note "checkpoint: no active claims for $TAG"; exit 0; fi
+    # shellcheck disable=SC2329  # invoked indirectly by cas_txn
+    _checkpoint_cb() {
+        local content; content=$(cat)
+        rewrite_lines "$content" ".owner_session==\"$TAG\" and (.status==\"claimed\" or .status==\"in_progress\")" \
+            ".lease_expiry=\"$(ts_lease_end)\"|.heartbeat_at=\"$(ts_now)\"|.notes=((.notes // \"\")+\" [checkpoint $(ts_now)]\")"
+    }
+    cas_txn _checkpoint_cb "celnet-task: checkpoint $TAG" && note "checkpointed + lease-bumped: $(echo "$owned" | tr '\n' ' ')"
+    exit 0
+}
+
+# ------------------------------------------------------------------------------- block / unblock
+cmd_block() {
+    local id=${1:-}; shift || true
+    local reason=""
+    while [ $# -gt 0 ]; do case $1 in --reason) reason=${2:-}; shift 2;; *) shift;; esac; done
+    [ -n "$id" ] || die "usage: $PROG block <id> --reason <text>"
+    [ -n "$reason" ] || die "block requires --reason"
+    CLAIM_ID=$id; REASON=$reason
+    _block_cb() {
+        local content line; content=$(cat)
+        line=$(awk_get_task "$content" "$CLAIM_ID") || true
+        [ -n "$line" ] || { note "task $CLAIM_ID not found"; return 4; }
+        rewrite_lines "$content" ".id==\"$CLAIM_ID\"" \
+            ".status=\"blocked\"|.updated_at=\"$(ts_now)\"|.notes=((.notes // \"\")+\" [blocked $(ts_now): $REASON]\")"
+    }
+    if cas_txn _block_cb "celnet-task: block $id"; then note "$id -> blocked"; else die "block failed"; fi
+}
+
+cmd_unblock() {
+    local id=${1:-}; [ -n "$id" ] || die "usage: $PROG unblock <id>"
+    CLAIM_ID=$id
+    _unblock_cb() {
+        local content line status; content=$(cat)
+        line=$(awk_get_task "$content" "$CLAIM_ID") || true
+        [ -n "$line" ] || { note "task $CLAIM_ID not found"; return 4; }
+        status=$(printf '%s' "$line" | jq -r '.status // empty')
+        [ "$status" = "blocked" ] || { note "task $CLAIM_ID is $status, not blocked"; return 5; }
+        rewrite_lines "$content" ".id==\"$CLAIM_ID\"" \
+            ".status=\"open\"|.owner_session=null|.lease_expiry=null|.heartbeat_at=null|.updated_at=\"$(ts_now)\"|.notes=((.notes // \"\")+\" [unblocked $(ts_now)]\")"
+    }
+    if cas_txn _unblock_cb "celnet-task: unblock $id"; then note "$id -> open"; else die "unblock failed"; fi
+}
+
+# ------------------------------------------------------------------------------- cargo-lane
+cmd_cargo_lane() {
+    local action=${1:-}; shift || true
+    local purpose=""
+    while [ $# -gt 0 ]; do case $1 in --purpose) purpose=${2:-}; shift 2;; *) shift;; esac; done
+    [ "$action" = "acquire" ] || [ "$action" = "release" ] || die "usage: $PROG cargo-lane <acquire|release> [--purpose <text>]"
+    TAG=$(session_tag); ACTION=$action; PURPOSE=$purpose
+    _lane_cb() {
+        local content line holder expiry; content=$(cat)
+        line=$(singleton "$content" cargo_lane) || true
+        [ -n "$line" ] || { note "cargo_lane singleton missing from manifest"; return 4; }
+        holder=$(printf '%s' "$line" | jq -r '.holder // empty')
+        expiry=$(printf '%s' "$line" | jq -r '.lease_expiry // empty')
+        if [ "$ACTION" = "acquire" ]; then
+            if [ -n "$holder" ] && [ "$holder" != "$TAG" ] && ! lease_reclaimable "$expiry"; then
+                note "cargo_lane held by $holder (lease $expiry)"; return 5
+            fi
+            rewrite_lines "$content" '.kind=="cargo_lane"' \
+                ".holder=\"$TAG\"|.lease_expiry=\"$(ts_lease_end)\"|.purpose=\"$PURPOSE\""
+        else
+            if [ -n "$holder" ] && [ "$holder" != "$TAG" ] && ! lease_reclaimable "$expiry"; then
+                note "cargo_lane held by $holder, not $TAG"; return 5
+            fi
+            rewrite_lines "$content" '.kind=="cargo_lane"' '.holder=null|.lease_expiry=null|.purpose=null'
+        fi
+    }
+    if cas_txn _lane_cb "celnet-task: cargo-lane $action by $TAG"; then
+        note "cargo-lane $action ok${purpose:+ ($purpose)}"
+    else die "cargo-lane $action failed (held by another)"; fi
+}
+
+# ------------------------------------------------------------------------------- window
+cmd_window() {
+    local action=${1:-}; shift || true
+    local ledger=""
+    while [ $# -gt 0 ]; do case $1 in --ledger) ledger=${2:-}; shift 2;; *) shift;; esac; done
+    [ "$action" = "open" ] || [ "$action" = "close" ] || die "usage: $PROG window <open|close> [--ledger <ref>]"
+    [ "$ROLE" = "coordinator" ] || die "window is coordinator-only (set CELNET_ROLE=coordinator)"
+    ACTION=$action; LEDGER=$ledger
+    _window_cb() {
+        local content; content=$(cat)
+        if [ "$ACTION" = "open" ]; then
+            rewrite_lines "$content" '.kind=="batch_window"' \
+                ".open=true|.since=\"$(ts_now)\"|.gate_ledger_ref=\"$LEDGER\""
+        else
+            rewrite_lines "$content" '.kind=="batch_window"' \
+                ".open=false${LEDGER:+|.gate_ledger_ref=\"$LEDGER\"}"
+        fi
+    }
+    if cas_txn _window_cb "celnet-task: window $action"; then note "batch_window $action${ledger:+ (ledger $ledger)}"; else die "window $action failed"; fi
+}
+
+# ------------------------------------------------------------------------------- done
+# Verify a task's deliverable via the lodestar roll-up CLI, then advance its status:
+#   active roll-up  -> in_review (worker) / done (coordinator)
+#   not active      -> REFUSE + print the roll-up (failing children) + the env caveat
+#   null/unknown    -> coordinator --attest fallback only
+cmd_done() {
+    local id=${1:-}; shift || true
+    local attest=0
+    while [ $# -gt 0 ]; do case $1 in --attest) attest=1; shift;; *) shift;; esac; done
+    [ -n "$id" ] || die "usage: $PROG done <id> [--attest]"
+    TAG=$(session_tag)
+
+    fetch_board || note "offline — using local manifest view"
+    local content line owner deliverable
+    content=$(board_manifest)
+    line=$(awk_get_task "$content" "$id") || true
+    [ -n "$line" ] || die "no such task: $id"
+    owner=$(printf '%s' "$line" | jq -r '.owner_session // empty')
+    deliverable=$(printf '%s' "$line" | jq -r '.deliverable // empty')
+
+    # Authority: worker may only advance a task it holds to in_review; coordinator may finalise.
+    local target
+    if [ "$ROLE" = "coordinator" ]; then target="done"; else
+        [ "$owner" = "$TAG" ] || die "task $id not held by $TAG (workers can only complete their own claims)"
+        target="in_review"
+    fi
+
+    # ---- deliverable null/unknown → coordinator-attested fallback only ----
+    if [ -z "$deliverable" ] || [ "$deliverable" = "null" ]; then
+        if [ "$attest" = "1" ] && [ "$ROLE" = "coordinator" ]; then
+            note "WARNING: task $id has no deliverable — lodestar-verified done is unavailable; recording COORDINATOR-ATTESTED done."
+            _finish "$id" "$target" "coordinator-attested (no deliverable)"; return 0
+        fi
+        die "task $id has no deliverable slug → cannot lodestar-verify. Coordinator may override with --attest."
+    fi
+
+    # ---- lodestar roll-up gate ----
+    local rollup state children
+    rollup=$(lodestar cli knowledge_get "{\"deliverable\":\"$deliverable\",\"project\":\"$PROJECT_KEY\"}" 2>/dev/null | grep -v '^level=' || true)
+    state=$(printf '%s' "$rollup" | jq -r '.deliverable_rollup.state // "unavailable"' 2>/dev/null || echo unavailable)
+
+    if [ "$state" = "active" ]; then
+        note "lodestar roll-up for '$deliverable' is ACTIVE — advancing $id -> $target"
+        _finish "$id" "$target" "lodestar-verified ($deliverable active)"; return 0
+    fi
+
+    # Not active: show the evidence.
+    note "REFUSED: deliverable '$deliverable' roll-up is '$state' (not active)."
+    children=$(printf '%s' "$rollup" | jq -rc '.deliverable_rollup | {state,children_count,unreadable_targets,children}' 2>/dev/null || echo "$rollup")
+    note "roll-up: ${children:-<no roll-up returned>}"
+    note "NOTE: in this env LODESTAR_EXECUTE_VERIFY=off / judge=none keeps roll-ups DRAFT even"
+    note "      when child claims exist — lodestar-verified done is effectively unavailable here."
+    note "      (docs/ORCHESTRATION.md §done). The honest default is to REFUSE."
+    if [ "$attest" = "1" ] && [ "$ROLE" = "coordinator" ]; then
+        note "!! COORDINATOR --attest OVERRIDE: recording done for $id despite a non-active ('$state') roll-up."
+        note "!! This bypasses lodestar verification — only do this when you have INDEPENDENTLY confirmed the deliverable."
+        _finish "$id" "$target" "coordinator-attested override (roll-up $state)"; return 0
+    fi
+    exit 1  # honest refusal — clean exit code, not an unexpected-error path
+}
+
+_finish() { # <id> <target-status> <evidence>
+    local id=$1 target=$2 evidence=$3
+    CLAIM_ID=$id; TARGET=$target; EVIDENCE=$evidence
+    _finish_cb() {
+        local content; content=$(cat)
+        rewrite_lines "$content" ".id==\"$CLAIM_ID\"" \
+            ".status=\"$TARGET\"|.updated_at=\"$(ts_now)\"|.notes=((.notes // \"\")+\" [$TARGET $(ts_now): $EVIDENCE]\")"
+    }
+    if cas_txn _finish_cb "celnet-task: $TARGET $id ($EVIDENCE)"; then note "$id -> $TARGET ($EVIDENCE)"; else die "could not record $TARGET for $id"; fi
+}
+
+# ------------------------------------------------------------------------------- digest
+cmd_digest() {
+    fetch_board || note "offline — showing local manifest view"
+    local content; content=$(board_manifest)
+    echo "=== celnet task board ($REMOTE/$BOARD_BRANCH) ==="
+    printf '%s\n' "$content" | jq -r 'select(.id) | "\(.priority|tostring|(" "*(3-length))+.)  [\(.status)]\t\(.id)\t\(.gate_tier) cargo=\(.requires_cargo)\towner=\(.owner_session // "-")\tlease=\(.lease_expiry // "-")\t\(.title)"' 2>/dev/null \
+        | sort -rn || true
+    echo "--- singletons ---"
+    printf '%s\n' "$content" | jq -r 'select(.kind) | "\(.kind): \(.)"' 2>/dev/null || true
+}
+
+# ------------------------------------------------------------------------------- selector
+# THE SessionStart entrypoint. Reclaim → resume-our-own → else pick the best open task,
+# claim it (CAS), and emit the directive as hookSpecificOutput.additionalContext on stdout.
+# All diagnostics go to stderr; ONLY the JSON goes to stdout. Always exits 0.
+emit_context() { # <additionalContext string>
+    jq -nc --arg ctx "$1" \
+        '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}'
+}
+
+cmd_selector() {
+    hook_failsafe
+    local sid="" ; while [ $# -gt 0 ]; do case $1 in --session) sid=${2:-}; shift 2;; *) shift;; esac; done
+    TAG=$(session_tag "$sid")
+
+    if ! fetch_board; then
+        note "offline: cannot reach $REMOTE"
+        emit_context "CELNET ORCHESTRATION: the claims remote ($REMOTE) is unreachable. Do NOT start tracked work (claims cannot be locked → risk of duplicated effort). Proceed only with operator-directed, untracked work, or retry once back online with: tools/celnet-task selector."
+        exit 0
+    fi
+
+    # 1) Reclaim expired leases (CAS; best-effort — never block on contention here).
+    # shellcheck disable=SC2329  # invoked indirectly by cas_txn
+    RECLAIM_CB() { reclaim_expired_filter; }
+    cas_txn RECLAIM_CB "celnet-task: reclaim expired leases" >/dev/null 2>&1 || true
+
+    local content; content=$(board_manifest)
+
+    # 2) Already holding a task? → resume it, do not grab another.
+    local mine
+    mine=$(printf '%s\n' "$content" | jq -rc "select(.owner_session==\"$TAG\" and (.status==\"claimed\" or .status==\"in_progress\")) | .id" 2>/dev/null | head -n1 || true)
+    if [ -n "$mine" ]; then
+        emit_context "$(directive_for "$content" "$mine" RESUME)"
+        note "resume: $TAG already holds $mine"
+        exit 0
+    fi
+
+    # 3) Scope reserved by OTHER live (claimed/in_progress) tasks — for disjointness.
+    local reserved
+    reserved=$(printf '%s\n' "$content" | jq -rc \
+        "select(.id and .owner_session!=\"$TAG\" and (.status==\"claimed\" or .status==\"in_progress\")) | .scope[]?" 2>/dev/null | sort -u || true)
+
+    # 4) Is the cargo lane held by someone else?
+    local lane_line lane_holder lane_expiry cargo_blocked=0
+    lane_line=$(singleton "$content" cargo_lane) || true
+    lane_holder=$(printf '%s' "$lane_line" | jq -r '.holder // empty')
+    lane_expiry=$(printf '%s' "$lane_line" | jq -r '.lease_expiry // empty')
+    if [ -n "$lane_holder" ] && [ "$lane_holder" != "$TAG" ] && ! lease_reclaimable "$lane_expiry"; then
+        cargo_blocked=1
+    fi
+
+    # 5) Candidate ranking: open, deps all done, scope disjoint, T2⇒coordinator,
+    #    requires_cargo respected vs the lane. Highest priority first, id as tie-break.
+    local candidates id
+    candidates=$(printf '%s\n' "$content" \
+        | jq -rc 'select(.id and .status=="open") | [.priority, .id] | @tsv' 2>/dev/null \
+        | sort -rn -k1,1 -k2,2 || true)
+
+    local chosen=""
+    while IFS=$'\t' read -r _ id; do
+        [ -n "$id" ] || continue
+        local tline gate cargo depok disjoint dep s
+        tline=$(awk_get_task "$content" "$id")
+        gate=$(printf  '%s' "$tline" | jq -r '.gate_tier // "T1"')
+        cargo=$(printf '%s' "$tline" | jq -r '.requires_cargo // false')
+        # gate_tier T2 ⇒ coordinator only
+        if [ "$gate" = "T2" ] && [ "$ROLE" != "coordinator" ]; then continue; fi
+        # requires_cargo ⇒ the cargo lane must be free (or ours)
+        if [ "$cargo" = "true" ] && [ "$cargo_blocked" = "1" ]; then continue; fi
+        # deps: every dep id must be a task in status done
+        depok=1
+        for dep in $(printf '%s' "$tline" | jq -r '.deps[]? // empty'); do
+            [ "$(task_field "$content" "$dep" '.status')" = "done" ] || { depok=0; break; }
+        done
+        [ "$depok" = "1" ] || continue
+        # scope disjoint from reserved scope
+        disjoint=1
+        for s in $(printf '%s' "$tline" | jq -r '.scope[]? // empty'); do
+            if printf '%s\n' "$reserved" | grep -qxF "$s"; then disjoint=0; break; fi
+        done
+        [ "$disjoint" = "1" ] || continue
+        chosen=$id; break
+    done <<<"$candidates"
+
+    if [ -z "$chosen" ]; then
+        local why="no claimable task"
+        [ "$cargo_blocked" = "1" ] && why="$why (cargo lane held by $lane_holder; no non-cargo task available)"
+        emit_context "CELNET ORCHESTRATION: $why for $TAG right now (role=$ROLE). All tracked tail tasks are claimed, blocked, T2-coordinator-only, or have unmet deps. Proceed with operator-directed work; run 'tools/celnet-task digest' to see the board, or re-run the selector later."
+        note "$why"
+        exit 0
+    fi
+
+    # 6) Claim it (CAS), then emit the directive.
+    CLAIM_ID=$chosen
+    if cas_txn do_claim_cb "celnet-task: claim $chosen by $TAG (selector)"; then
+        content=$(board_manifest)
+        emit_context "$(directive_for "$content" "$chosen" CLAIMED)"
+        note "selector claimed $chosen for $TAG"
+        exit 0
+    fi
+    # Lost the race after selection → tell the session to re-run, do not start.
+    emit_context "CELNET ORCHESTRATION: selected task $chosen but lost the claim race to another session. Do not start it. Re-run 'tools/celnet-task selector' to pick the next available task."
+    note "lost claim race for $chosen"
+    exit 0
+}
+
+# Build the human directive string injected into the session.
+directive_for() { # <manifest> <id> <RESUME|CLAIMED>
+    local content=$1 id=$2 verb=$3 t
+    t=$(awk_get_task "$content" "$id")
+    printf 'CELNET ORCHESTRATION — task %s for this session (%s).\n' "$id" "$verb"
+    printf 'Title: %s\n'        "$(printf '%s' "$t" | jq -r '.title')"
+    printf 'Deliverable: %s | gate_tier: %s | requires_cargo: %s | branch: %s\n' \
+        "$(printf '%s' "$t" | jq -r '.deliverable // "-"')" \
+        "$(printf '%s' "$t" | jq -r '.gate_tier // "-"')" \
+        "$(printf '%s' "$t" | jq -r '.requires_cargo // false')" \
+        "$(printf '%s' "$t" | jq -r '.branch // "-"')"
+    printf 'Scope (disjoint ownership — touch ONLY these): %s\n' \
+        "$(printf '%s' "$t" | jq -r '.scope | join(", ")')"
+    printf 'Lease until %s (heartbeat to extend).\n' "$(printf '%s' "$t" | jq -r '.lease_expiry // "-"')"
+    printf 'Notes: %s\n' "$(printf '%s' "$t" | jq -r '.notes // "-"')"
+    # shellcheck disable=SC2016  # the backticks are intentional literal markup in the directive text
+    printf 'ACT NOW: continue %s on branch %s. Run `tools/celnet-task progress %s` when you start real work; the Stop/PreCompact hooks heartbeat + checkpoint automatically; run `tools/celnet-task done %s` (lodestar roll-up gate) when the acceptance target verifies. Read docs/acceptance/%s.acceptance.json for the done-criteria.\n' \
+        "$id" "$(printf '%s' "$t" | jq -r '.branch // "-"')" "$id" "$id" \
+        "$(printf '%s' "$t" | jq -r '.deliverable // "unknown"')"
+    if [ "$(printf '%s' "$t" | jq -r '.requires_cargo // false')" = "true" ]; then
+        # shellcheck disable=SC2016  # intentional literal backticks in the directive text
+        printf 'CARGO DISCIPLINE: this is a requires_cargo task — hold the cargo lane (`tools/celnet-task cargo-lane acquire --purpose %s`) before heavy builds; one T1 per batch, T2 only at landing; respect any open batch_window.\n' "$id"
+    fi
+}
+
+# ------------------------------------------------------------------------------- usage
+usage() {
+    cat >&2 <<USAGE
+$PROG — cross-session task orchestration (see docs/ORCHESTRATION.md)
+
+  selector [--session ID]      pick+claim the best task, emit the SessionStart directive (fail-safe)
+  claim <id>                   claim a specific task (git-CAS)
+  release <id> [--force]       release a claim back to open
+  progress <id>                claimed -> in_progress (+ lease bump)
+  heartbeat [--session ID]     bump the lease on this session's active claims (fail-safe; Stop hook)
+  checkpoint [--session ID]    PreCompact: lease bump + breadcrumb (fail-safe)
+  done <id> [--attest]         lodestar-verified completion: in_review (worker) / done (coordinator)
+  block <id> --reason <text>   mark a task blocked
+  unblock <id>                 return a blocked task to open
+  cargo-lane <acquire|release> [--purpose <text>]   the single-M4 cargo mutex
+  window <open|close> [--ledger <ref>]              coordinator batch window
+  digest                       print the board
+
+env: CELNET_ROLE=worker|coordinator  CELNET_BOARD_BRANCH ($BOARD_BRANCH)
+     CELNET_BOARD_REMOTE ($REMOTE)   CELNET_TASK_DRY_RUN=1 (never push)
+     CELNET_LEASE_MIN ($LEASE_MIN)   CELNET_GRACE_MIN ($GRACE_MIN)
+USAGE
+    exit 2
+}
+
+# ------------------------------------------------------------------------------- dispatch
+main() {
+    local sub=${1:-}; shift || true
+    case "$sub" in
+        selector)   cmd_selector "$@" ;;
+        claim)      cmd_claim "$@" ;;
+        release)    cmd_release "$@" ;;
+        progress)   cmd_progress "$@" ;;
+        heartbeat)  cmd_heartbeat "$@" ;;
+        checkpoint) cmd_checkpoint "$@" ;;
+        done)       cmd_done "$@" ;;
+        block)      cmd_block "$@" ;;
+        unblock)    cmd_unblock "$@" ;;
+        cargo-lane) cmd_cargo_lane "$@" ;;
+        window)     cmd_window "$@" ;;
+        digest)     cmd_digest "$@" ;;
+        ""|-h|--help) usage ;;
+        *) note "unknown subcommand: $sub"; usage ;;
+    esac
+}
+
+main "$@"
