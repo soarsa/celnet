@@ -13,6 +13,7 @@
 //!   resolve against it
 //!   (`docs/CURVES-AND-INSTRUMENT-REFERENCE-DATA-REVIEW.md`).
 
+pub mod curve_calibration;
 pub mod fix_connections;
 pub mod identity;
 pub mod reference_data;
