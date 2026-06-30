@@ -13525,5 +13525,47 @@
    "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.upsert_exotic"
   ],
   "text": "RISK ROLL-UP COVERAGE (reconciled to built reality): the risk-cube/fleet aggregation algebra DOES include exotic AND cross-asset positions — it is NOT vanilla-only. celnet_risk_cube::FactMeasure carries exotic: Option<ExoticLeg> and is keyed on a cross-asset Underlying, so an exotic leg (PositionStore::upsert_exotic -> ExoticLeg::canonical_leaf as the additive carrier + exotic bump-and-revalue for non-additive VaR/curvature) and a cross-asset vanilla leg both roll up in the firm node and through celnet-risk-fleet::fan_out_aggregate. Proven exotic-only by celnet-parity/tests/exotic_risk_cube::exotic_only_fan_out_reconciles (3 exotic-only RiskFacts, firm.positions empty, firm.exotic_legs.len()==3, VaR+curvature reconcile to single-node). The REMAINING GAP is automatic ingestion: the RFS auto-book (record_booked_position) and the wire RiskPosition conversion (position_to_fact, exotic:None) auto-record VANILLA FX fills only — an exotic/cross-asset leg must be staged explicitly via upsert_exotic (no production RPC/RFS path wires it yet). server::services::risk::federate::fan_out is the generic concurrent gRPC fan-out helper over backends, distinct from the fleet aggregation algebra."
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/product-engine-registry.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.ProductEngine.price"
+  ],
+  "text": "Deliverable product-engine-registry (arch item C): celnet-server::price_instrument is decode → guard → dispatch over the per-family ProductEngine registry (engines.rs) — engines::dispatch routes each of the 24 product arms to a distinct ProductEngine impl with no inline pricing, and the FX/analytic path is byte-identical to the celnet-parity corpus. Acceptance target docs/acceptance/product-engine-registry.acceptance.json. (Byte-identity assertion DEFERS to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/risk-cube-repricer-seam.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.exotic_pricer.ExoticEngine",
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.ExoticLegPricer"
+  ],
+  "text": "Deliverable risk-cube-repricer-seam (arch item E): celnet-risk-cube reprices exotic legs only through the celnet_core::carry::ExoticLegPricer abstraction (USAGE edges from exotic_curvature_legs/exotic_node_pnl), the server's ExoticEngine IMPLEMENTS that trait as the injected concrete pricer, and the cube's Cargo manifest links neither celnet-exotics nor celnet-gpu (gate: cargo tree -p celnet-risk-cube). Acceptance target docs/acceptance/risk-cube-repricer-seam.acceptance.json. (cargo-tree and byte-identity assertions DEFER to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/error-status-taxonomy.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.price_error_to_status",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.link_error_to_status",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.rates_price_error_to_status"
+  ],
+  "text": "Deliverable error-status-taxonomy (arch item H): there is one canonical error → tonic::Status mapping in celnet-server::services::error_status — price_error_to_status, link_error_to_status and rates_price_error_to_status — reused at every RPC boundary, with codes and messages byte-identical to the former per-service mappings. Acceptance target docs/acceptance/error-status-taxonomy.acceptance.json. (Byte-identity assertion DEFERS to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/typecheck-and-dep-gates.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-surface.src.lib",
+   "github.com-soarsa-celnet.crates.celnet-proto.src.lib"
+  ],
+  "text": "Deliverable typecheck-and-dep-gates (arch item L): the gui+excel typecheck:e2e/typecheck:test scripts are wired into the t2 gate and the two dev-dep back-edges are removed — celnet-surface has zero edges into celnet-crypto-vanilla, and celnet-proto carries no dev-dependency cycle into celnet-core (cargo tree / cargo-machete). Acceptance target docs/acceptance/typecheck-and-dep-gates.acceptance.json. (t2-wiring and dev-cycle assertions DEFER to draft until execute-to-verify is enabled.)"
  }
 ]

@@ -1,0 +1,33 @@
+{
+  "deliverable": "ws-codec-from-proto",
+  "title": "WS JSON codec generated from the proto descriptor (arch item G)",
+  "decision": "ADR-0009-edge-wire-codec",
+  "description": "FORWARD SPEC (tail — not yet landed). The WebSocket JSON codec is generated from the proto descriptor set by celnet-proto's build.rs rather than hand-maintained in celnet-server::ws, so a new proto verb needs no hand-written WS arm; the generated codec is wire byte-identical to the current hand codec across the cross-client conformance corpus. The roll-up stays non-active until G ships. This is the frozen-contract acceptance for the deliverable 'ws-codec-from-proto'.",
+  "assertions": [
+    {
+      "id": "ws-codec-generated-by-build-rs",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-proto.build.main",
+      "statement": "celnet-proto's build.rs generates the WS JSON codec from the proto descriptor set (a generated codec module is emitted at build time), so the WS verb encode/decode is no longer hand-maintained. (Forward target — build.rs does not yet emit a WS codec module.)",
+      "decidable": false
+    },
+    {
+      "id": "ws-dispatch-no-longer-hand-maintained",
+      "kind": "invariant",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.ws.mod.dispatch",
+      "statement": "The hand-maintained WS dispatch/codec in celnet-server::ws::mod is driven from the build.rs-generated codec, so adding a proto verb requires no hand-written WS arm. (Forward target — ws::mod::dispatch is still hand-maintained on main.)",
+      "decidable": false
+    },
+    {
+      "id": "wire-byte-identical-across-conformance",
+      "kind": "invariant",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-proto.build.main",
+      "statement": "The generated codec is wire byte-identical to the current hand codec across the cross-client conformance corpus — generation changes the source of the codec, not the bytes on the wire.",
+      "decidable": false
+    }
+  ],
+  "anchors": [
+    "github.com-soarsa-celnet.crates.celnet-proto.build.main",
+    "github.com-soarsa-celnet.crates.celnet-server.src.ws.mod.dispatch"
+  ]
+}

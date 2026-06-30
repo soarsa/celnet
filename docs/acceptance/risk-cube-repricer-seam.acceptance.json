@@ -1,0 +1,42 @@
+{
+  "deliverable": "risk-cube-repricer-seam",
+  "title": "Risk-cube reprice seam — dependency inverted through ExoticLegPricer (arch item E)",
+  "decision": "ADR-0008-multi-asset-carry-architecture",
+  "description": "celnet-risk-cube no longer links the heavy pricers: it depends only on the celnet-core::carry::ExoticLegPricer abstraction (NOT celnet-exotics / celnet-gpu). The concrete exotic closed forms are injected into the cube as the server's ExoticEngine, which implements ExoticLegPricer, and the risk values are byte-identical across the inversion. This is the frozen-contract acceptance for the deliverable 'risk-cube-repricer-seam'.",
+  "assertions": [
+    {
+      "id": "server-exotic-engine-implements-seam",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.exotic_pricer.ExoticEngine",
+      "statement": "The server's ExoticEngine implements celnet_core::carry::ExoticLegPricer (unit_price + digital_greeks) — the concrete exotic closed forms (over celnet-exotics) are the injected reprice impl, satisfied via an IMPLEMENTS edge to the trait.",
+      "decidable": true
+    },
+    {
+      "id": "cube-reprices-through-core-trait",
+      "kind": "edge",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-core.src.carry.ExoticLegPricer",
+      "statement": "celnet-risk-cube's exotic reprice/curvature paths (exotic_curvature_legs, exotic_node_pnl, node_var_es_combined) depend on the celnet_core::carry::ExoticLegPricer abstraction via USAGE edges, never on a concrete pricer — the cube reprices a leg only through the injected trait object.",
+      "decidable": true
+    },
+    {
+      "id": "cube-depends-only-on-abstraction",
+      "kind": "edge",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-core.src.carry.ExoticLegPricer",
+      "statement": "celnet-risk-cube's Cargo manifest lists NEITHER celnet-exotics NOR celnet-gpu (production or dev); the heavy pricers reach the cube only via the injected ExoticLegPricer. Gate: `cargo tree -p celnet-risk-cube` shows no celnet-exotics / celnet-gpu (manifest-level, not the symbol graph, which carries name-collision USAGE noise).",
+      "decidable": false
+    },
+    {
+      "id": "risk-byte-identical",
+      "kind": "invariant",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.exotic_pricer.ExoticEngine.unit_price",
+      "statement": "Risk-cube values (FRTB / VaR roll-ups) are byte-identical (to_bits) before and after the dependency inversion — the seam injects the same closed form, so the numbers are unchanged.",
+      "decidable": false
+    }
+  ],
+  "anchors": [
+    "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.exotic_pricer.ExoticEngine",
+    "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.exotic_pricer.ExoticEngine.unit_price",
+    "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.exotic_pricer.ExoticEngine.digital_greeks",
+    "github.com-soarsa-celnet.crates.celnet-core.src.carry.ExoticLegPricer"
+  ]
+}

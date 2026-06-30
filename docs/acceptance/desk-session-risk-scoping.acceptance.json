@@ -1,0 +1,42 @@
+{
+  "deliverable": "desk-session-risk-scoping",
+  "title": "Desk-bound session risk scoping under Enforce (arch item J)",
+  "decision": "ADR-0011-celer-estate-ingress",
+  "description": "A desk-bound trader session resolves its effective_principal and narrows it to its desk (narrow_to_desk), so under the Enforce posture it sees ONLY its desk's risk: an out-of-desk query returns strictly fewer positions than a grant-all principal. The structural narrowing seam is landed; the end-to-end exercise through a wire client is the deferred tail. This is the frozen-contract acceptance for the deliverable 'desk-session-risk-scoping'.",
+  "assertions": [
+    {
+      "id": "narrow-to-desk-seam-present",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.narrow_to_desk",
+      "statement": "narrow_to_desk(base: Principal, desk_value: u64) -> Principal is the single desk-narrowing transform applied to a desk-bound session: a grant-all base becomes one Desk-dimension grant, a scoped base has every grant ANDed with the desk rule, and denies are preserved.",
+      "decidable": true
+    },
+    {
+      "id": "effective-principal-resolved",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.mod.RiskEdge.effective_principal",
+      "statement": "RiskEdge::effective_principal resolves the caller's effective Principal — the base that narrow_to_desk is applied to — from the session / grant context.",
+      "decidable": true
+    },
+    {
+      "id": "desk-filter-seam-present",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.services.desk.mod.effective_desk_filter",
+      "statement": "effective_desk_filter derives the desk-visibility filter from the effective desk so a desk-bound risk query is narrowed to that desk's positions.",
+      "decidable": true
+    },
+    {
+      "id": "out-of-desk-returns-fewer-under-enforce",
+      "kind": "invariant",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.services.access.desk_scope_no_session_sees_all",
+      "statement": "Under the Enforce posture a desk-bound session sees strictly fewer positions than a grant-all principal, and an out-of-desk query returns fewer positions than grant-all — exercised end-to-end through a wire client. (Forward target — the wire-client e2e is the deferred tail.)",
+      "decidable": false
+    }
+  ],
+  "anchors": [
+    "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.narrow_to_desk",
+    "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.mod.RiskEdge.effective_principal",
+    "github.com-soarsa-celnet.crates.celnet-server.src.services.desk.mod.effective_desk_filter",
+    "github.com-soarsa-celnet.crates.celnet-server.src.services.access.desk_scope_no_session_sees_all"
+  ]
+}

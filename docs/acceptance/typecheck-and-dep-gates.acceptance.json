@@ -1,0 +1,34 @@
+{
+  "deliverable": "typecheck-and-dep-gates",
+  "title": "Client typecheck gates + crate dep-edge hygiene (arch item L)",
+  "decision": "ADR-0007-one-unversioned-contract",
+  "description": "The gui and excel `typecheck:e2e` and `typecheck:test` scripts are wired into the t2 landing gate so a client type error fails the gate, and the two dev-dependency back-edges (celnet-proto → celnet-core, celnet-surface → celnet-crypto-vanilla) are removed so the crate graph stays strictly one-way. This is the frozen-contract acceptance for the deliverable 'typecheck-and-dep-gates'.",
+  "assertions": [
+    {
+      "id": "surface-no-back-edge-to-crypto-vanilla",
+      "kind": "edge",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-surface.src.lib",
+      "statement": "celnet-surface has no dependency/USAGE edge into celnet-crypto-vanilla — the crypto-vanilla leaf depends on surface, never the reverse; the dev-dep back-edge is removed (the graph shows zero celnet-surface → celnet-crypto-vanilla edges).",
+      "decidable": true
+    },
+    {
+      "id": "proto-no-dev-cycle-into-core",
+      "kind": "edge",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-proto.src.lib",
+      "statement": "celnet-proto carries no dev-dependency cycle back into celnet-core; proto's only celnet-core coupling is the one-way production conversion (celnet_core::compare tolerances), verified by `cargo tree` / cargo-machete rather than a test-only back-edge.",
+      "decidable": false
+    },
+    {
+      "id": "typecheck-e2e-and-test-in-t2",
+      "kind": "invariant",
+      "anchor": "github.com-soarsa-celnet.gui.e2e.edgeClient.EdgeClient.dispatch",
+      "statement": "The gui + excel `typecheck:e2e` and `typecheck:test` scripts (tsc over the e2e and unit TypeScript, e.g. the EdgeClient wire client) are wired into the t2 landing gate, so a client-side type error fails t2.",
+      "decidable": false
+    }
+  ],
+  "anchors": [
+    "github.com-soarsa-celnet.crates.celnet-surface.src.lib",
+    "github.com-soarsa-celnet.crates.celnet-proto.src.lib",
+    "github.com-soarsa-celnet.gui.e2e.edgeClient.EdgeClient.dispatch"
+  ]
+}
