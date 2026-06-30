@@ -51,7 +51,7 @@ describe("priceRatesOffline — arbitrage-free identities", () => {
     expect(pay.pv01).toBeCloseTo(-recv.pv01, 6);
     expect(pay.dv01).toBeCloseTo(-recv.dv01, 6);
     expect(pay.keyRateLadder.length).toBe(recv.keyRateLadder.length);
-    pay.keyRateLadder.forEach((k, i) => expect(k).toBeCloseTo(-recv.keyRateLadder[i], 6));
+    pay.keyRateLadder.forEach((k, i) => expect(k).toBeCloseTo(-recv.keyRateLadder[i]!, 6));
   });
 
   it("reconciles the key-rate ladder to the parallel DV01", () => {
