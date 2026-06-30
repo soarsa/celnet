@@ -89,6 +89,19 @@ mod generated {
 
 pub use generated::*;
 
+/// The WS wire-codec contract surface, generated at build time from the proto
+/// `FileDescriptorSet` (see `build.rs`). The single descriptor-derived source of
+/// truth for the WebSocket mirror's verb vocabulary — the request/response RPCs
+/// ([`wire_contract::WIRE_RPCS`]) and the RFS stream-control oneof arms
+/// ([`wire_contract::STREAM_CONTROL_VERBS`]) — plus the message/enum surface
+/// ([`wire_contract::MESSAGES`] / [`wire_contract::ENUMS`]). The WS mirror is a
+/// second *encoding* of this one contract (rule 9), so its routing vocabulary is
+/// sourced from the schema rather than a hand-maintained literal that could
+/// silently drift from the proto (arch item G — `ws-codec-from-proto`).
+pub mod wire_contract {
+    include!(concat!(env!("OUT_DIR"), "/wire_contract.rs"));
+}
+
 pub mod convert;
 pub mod helpers;
 
@@ -1502,5 +1515,114 @@ mod tests {
         round_trip(&ServerStreamMessage {
             message: Some(server_stream_message::Message::MarketSeriesPoint(point)),
         });
+    }
+}
+
+/// The descriptor-derived WS wire-contract manifest (arch item G). These tests
+/// pin the generated surface to the proto so a schema change that would alter the
+/// WS verb vocabulary is caught at the source, not after it drifts on the wire.
+#[cfg(test)]
+mod wire_contract_tests {
+    use super::wire_contract::{ENUMS, MESSAGES, STREAM_CONTROL_VERBS, WIRE_RPCS};
+
+    /// The stream-control verbs are exactly the `ClientStreamMessage` oneof arms.
+    /// This is the byte-identical contract the WS router classifies as
+    /// stream-control; the set is compared order-independently (the wire `type`
+    /// strings, not their declaration order, are what matter).
+    #[test]
+    fn stream_control_verbs_are_the_client_stream_oneof_arms() {
+        let mut got: Vec<&str> = STREAM_CONTROL_VERBS.to_vec();
+        got.sort_unstable();
+        let mut want = [
+            "authenticate",
+            "subscribe",
+            "modify",
+            "unsubscribe",
+            "resync",
+            "execute",
+            "heartbeat",
+            "market_series_subscribe",
+            "market_series_unsubscribe",
+        ];
+        want.sort_unstable();
+        assert_eq!(
+            got, want,
+            "STREAM_CONTROL_VERBS must equal the ClientStreamMessage oneof arms"
+        );
+    }
+
+    /// Every unary RPC verb is present, with the request/response message names the
+    /// WS unary edge encodes/decodes. Spot-check the load-bearing verbs across the
+    /// service families (the full set is descriptor-exhaustive by construction).
+    #[test]
+    fn wire_rpcs_cover_the_service_surface() {
+        assert!(
+            WIRE_RPCS.len() >= 50,
+            "all service methods present, got {}",
+            WIRE_RPCS.len()
+        );
+        let has = |service: &str, method: &str, request: &str, response: &str| {
+            WIRE_RPCS.iter().any(|r| {
+                r.service == service
+                    && r.method == method
+                    && r.request == request
+                    && r.response == response
+            })
+        };
+        assert!(has(
+            "PricingService",
+            "Price",
+            "PriceRequest",
+            "PriceResponse"
+        ));
+        assert!(has(
+            "PricingService",
+            "PriceRates",
+            "RatesPriceRequest",
+            "RatesPriceResponse"
+        ));
+        assert!(has("QuoteService", "RequestQuote", "QuoteRequest", "Quote"));
+        assert!(has(
+            "QuoteService",
+            "AcceptQuote",
+            "QuoteAccept",
+            "Execution"
+        ));
+        assert!(has(
+            "SurfaceService",
+            "GetSmile",
+            "GetSmileRequest",
+            "Smile"
+        ));
+        // FixAdminService: the method name (ListConnections) and the WS verb
+        // (list_fix_connections) diverge — only the descriptor knows the
+        // request-message name the verb is actually derived from.
+        assert!(has(
+            "FixAdminService",
+            "ListConnections",
+            "ListFixConnectionsRequest",
+            "ListFixConnectionsResponse",
+        ));
+    }
+
+    /// The message / enum surface is generated and non-trivial, and includes the
+    /// vocabulary the WS codec depends on.
+    #[test]
+    fn message_and_enum_surface_is_generated() {
+        assert!(
+            MESSAGES.contains(&"Instrument"),
+            "Instrument message present"
+        );
+        assert!(MESSAGES.contains(&"Quote"), "Quote message present");
+        assert!(
+            MESSAGES.contains(&"ClientStreamMessage"),
+            "ClientStreamMessage present"
+        );
+        assert!(ENUMS.contains(&"OptionType"), "OptionType enum present");
+        assert!(
+            MESSAGES.len() >= 200,
+            "full message surface present, got {}",
+            MESSAGES.len()
+        );
     }
 }

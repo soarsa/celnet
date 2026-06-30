@@ -907,6 +907,122 @@ The carry↔flat-rho bijection and the variant→arm selector are single-sourced
   one-edit change here. This collapsed the previously-duplicated server flatten/wrap sites; FX is
   byte-identical (parity cross-asset corpus).
 
+## Dormant-crate activation (item D) — plugin-host into the engine path; xva/replog deferred
+
+The arch program's three remaining built-but-unreachable leaves are resolved here: the plugin host
+is **wired into the live pricing path**, and `celnet-xva` / `celnet-replog` are **explicitly deferred**
+with a dated activation plan (no crate is left silently dormant). `celnet-rates` was already wired
+(see the "Fixed-income / rates subsystem" section above) and is untouched.
+
+### `celnet-plugin-host` → `ProductEngine` dispatch — ACTIVE (2026-06-30)
+
+Now that architecture item C landed the `ProductEngine` registry, the plugin host's
+`celnet_plugin_host::registry::ModelRegistry` is reachable from the server's analytic dispatch, so a
+**registered house pricing model serves the vanilla arm through the same decode → guard → dispatch
+seam as a native arm** — the dispatch→`ModelRegistry` edge the deliverable targets.
+
+- **The seam (`celnet-server::pricer::engines`).** `EngineCtx` carries
+  `plugin_models: Option<&ModelRegistry>`. `engines::dispatch`'s `Vanilla` arm consults it: a
+  registered model is resolved by the non-allocating hot-path resolver
+  `ModelRegistry::active_pricing_model()` (the first `ModelKind::Pricing` handle, insertion-order
+  authoritative — added to `celnet-plugin-host` so the engine never calls the allocating
+  discovery-trait `of_kind`), then priced by `PluginModelEngine` (a `ProductEngine`). It builds the
+  generalized carry-tagged `celnet_core::CarryInputs` for the **FX two-rate arm** — exactly the
+  `(spot, strike, vol, t, r_dom, r_for)` the native `VanillaEngine` prices off — calls
+  `HostModel::price_and_greeks`, and maps the carry-tagged `CarryGreeks` back through the single
+  source of the carry↔flat-rho bijection (`pricer::carry_greeks_to_greeks`).
+- **Byte-identity preserved.** Only the `Vanilla` arm consults the registry, and only when a model
+  is registered AND the instrument carries a decodable FX/metal underlying; the other arms stay pure
+  static dispatch, and absent any installed model every arm is the verbatim native path. The native
+  FX/analytic corpus is unchanged bit-for-bit (the parity/determinism gate). The reference
+  `FlatSmilePricer` (whose FX arm reproduces Garman-Kohlhagen) is proven to agree with the native
+  strip through the seam — Tier-0 interchangeability — by the `engines` `plugin_dispatch_tests`.
+- **Live wiring (per-worker).** The registry is **per-worker** by design (`ModelRegistry` is `!Sync`
+  — a model handle, especially a sandboxed Tier-2 one, is owned by one worker), so it is threaded
+  through thread-local worker state, not a shared global. `pricer::price_instrument` dispatches via
+  `engines::dispatch_live`, which reads the calling worker's installed registry. A server activates
+  house models by calling the public `celnet_server::pricer::install_house_models(registry)` once per
+  pricing worker — for the async edge, from the tokio runtime's `on_thread_start` hook. With no
+  models installed (the default), the path is the verbatim native dispatch.
+- **Hot path.** The native fast path stays allocation/lock/log-free: when no registry is installed,
+  dispatch is the static `match` and the only added work is a thread-local read + a `None` check. The
+  plugin route's input clone (decoding the underlying) happens only on the opt-in, model-registered
+  path, never on the native FX hot path.
+
+### `celnet-xva` and `celnet-replog` — DEFERRED (2026-06-30), no silent dormancy
+
+Neither has a clean RPC seam to activate without contract work **outside** item D's disjoint scope
+(`celnet-proto` is owned by other lanes), so per the plan's honest-deferral allowance (and CLAUDE.md
+§2 forbidding mocks/`todo!()`) they are recorded deferred here rather than stubbed:
+
+- **`celnet-xva`** (`compute_xva(&XvaInputs) -> XvaResult` — CVA/DVA/FVA over a survival-curve grid,
+  `cva.rs`). Activation requires a new `XvaService` proto (request/response messages for the
+  hazard/LGD/EPE-ENE/funding inputs), a `handle_unary` `"xva"` arm + WS-mirror codec, and the
+  `celnet-xva` server dep. It is a **portfolio-level post-trade analytic over an exposure profile**,
+  not a per-instrument price arm, so it does not belong on the `ProductEngine` dispatch seam.
+  *Activation plan:* open the proto window with the XVA-service lane, add the message arms +
+  service, wire the server edge over the existing unary/WS codec, and gate against the crate's
+  closed-form CVA/DVA oracle rows.
+- **`celnet-replog`** (`RaftNode` — a deterministic replicated log over `std::net`, `election.rs`).
+  Activation is a **resilience/HA cross-cut**, not a pricing or wire-contract change: it backs the
+  durable book/journal replication path and needs a server-lifecycle owner (boot/propose/compact/
+  shutdown wired into the book-store commit path and the node-lifecycle supervisor), which spans the
+  server bootstrap and `celnet-journal` integration outside item D's scope. *Activation plan:* land
+  it with the HA/replication workstream — boot a `RaftNode` per server instance, route
+  `RatesPositionStore` / book commits through `RaftNode::propose`, and gate with the crate's
+  partition/election proptests under a multi-node harness.
+
+||||||| 7878048
+## WS codec from proto descriptor (item G) — `ws-codec-from-proto`
+
+**Goal (ADR-0009).** Drive the WebSocket JSON codec (`celnet-server::ws`) from the proto
+descriptor rather than hand-maintaining it, so it can no longer silently drift from
+`celnet.proto`, while staying **wire byte-identical** across the cross-client conformance corpus.
+
+**Landed (this lane, byte-identical, descriptor-derived).**
+- **`celnet-proto/build.rs` now emits a generated `wire_contract` module** from the **same**
+  `FileDescriptorSet` protox already produces for the message/service codegen (no second parse, no
+  new toolchain — `prost-types` walks the descriptor). Surfaced as `celnet_proto::wire_contract`:
+  - `STREAM_CONTROL_VERBS: &[&str]` — the `ClientStreamMessage` oneof arm names (the WS `type`
+    discriminators the router forwards to the RFS session driver).
+  - `WIRE_RPCS: &[WireRpc]` — every service method as `{service, method, request, response}`
+    (the descriptor-side source of truth for unary-verb coverage).
+  - `MESSAGES`/`ENUMS` — the full message (incl. nested) + enum name surface.
+  Generation is deterministic (descriptor declaration order) ⇒ the emitted file is byte-identical
+  on every build (determinism discipline).
+- **`celnet-server::ws::mod::is_stream_control` is now sourced from `STREAM_CONTROL_VERBS`** (was a
+  hand-maintained `matches!` literal). The router's stream-control classification — the routing in
+  `dispatch` — is therefore generated from the schema: a new `ClientStreamMessage` oneof arm is
+  classified automatically with no hand edit (the `authenticate`-omission class of bug is now
+  structurally impossible). A no-regression test asserts the generated set is **byte-identical** to
+  the frozen wire verb set; the lockstep test drives the generated set so the matching
+  `decode_stream_control` arm is forced to keep up (a proto arm added without its decoder arm fails
+  the gate).
+
+**Deferred (honest — NOT stubbed; CLAUDE.md §2).** The **unary encode/decode bodies** and the
+**unary verb-naming** are NOT yet generated. Reason: the WS JSON codec is a hand-curated *client*
+contract that intentionally diverges from a naive descriptor projection in ways the descriptor alone
+does not encode, so a mechanical regeneration would change bytes on the wire (a regression), not
+merely the source of the codec:
+1. **Verb naming differs per service.** `PricingService.PriceRates` → `"price_rates"` (method-name
+   snake_case) but `FixAdminService.ListConnections` → `"list_fix_connections"` (request-message
+   snake_case). No single descriptor rule reproduces both; a per-service mapping is required.
+2. **FX/legacy projections.** `Underlying` encodes to the legacy `{base,quote}` `pair` key (not the
+   `underlying` oneof); `MarketContext` encodes to `r_dom`/`r_for` accessors (not the generalized
+   `{discount_rate,carry}` fields); `Greeks` emits the flat `rho_dom`/`rho_for` projection beside
+   the `rate_sensitivities` oneof. These keep the unchanged GUI/Excel FX contract.
+3. **Non-uniform key casing.** A few keys are camelCase (`brokenDate`), not the proto snake_case.
+4. **Bespoke oneof tagging** (`tagged()`, `strike`/`delta`, the `underlying` arms).
+
+**Activation plan.** Extend `wire_contract` to emit per-message **field tables** (proto name → JSON
+key, type, label, oneof group) plus a curated **override table** capturing (1)–(4); generate the
+mechanical message codecs from the descriptor and keep the override arms as hand functions; gate with
+a **differential byte-identity harness** (`generated_encode(m) == hand_encode(m)` byte-for-byte over
+the cross-client corpus) before swapping `handle_unary` onto the generated path. The
+`ws-codec-from-proto` acceptance roll-up stays **non-active** (forward) until that swap lands and the
+differential harness is green; the descriptor-derived routing + manifest above are the first
+byte-identical increment of it.
+
 ---
 
 **Cross-check (re-verified 2026-06-10 against the working tree).** Every arm/enum/field in
