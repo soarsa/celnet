@@ -50,9 +50,21 @@ base + one rationed accent, sharp grotesque type, density via a tight elevation 
 - **Blotter** — virtualized (AG-Grid-class, 100k+ rows), tabular mono, per-cell value-flash,
   conditional heat shading, inline sparklines.
 
-## 6. Library targets (for the real gui/ build; mockups approximate in SVG)
-Lightweight Charts v5 (streaming 2D) · three.js / Plotly (3D surfaces) · deck.gl / regl (point clouds)
-· ECharts 6 (heatmaps/big-data) · visx / D3 (bespoke payoff/XVA) · AG Grid (blotter).
+## 6. Charting libraries — DECISION (operator, 2026-07-01)
+**Adopt open-source SOTA chart libraries** for the real `gui/` chart components, **overturning the gui
+house rule 7 ("no chart library")** for viz specifically. Rationale: the operator chose richer, genuinely
+interactive SOTA charts (rotate/zoom/brush/3D) over hand-rolled SVG. All chosen libs are
+**OSS (MIT/Apache-2.0/BSD)** → compliant with the no-commercial-products guardrail; only the internal
+rule-7 house rule is superseded (formal ADR to file in `docs/adr/`). Bundle/perf: lazy-load the heavy
+3D/point-cloud libs per-surface; keep the zero-alloc hot core untouched (charts are client-only).
+- **three.js** — the true interactive 3D vol surface (WebGL; the one place 3D earns it).
+- **visx / D3** — bespoke 2D: payoff, XVA exposure fan, key-rate ladder, smile, curve.
+- **ECharts** — heatmaps / scenario surface / big-data grids.
+- **Lightweight Charts** — streaming 2D price/series.
+- **AG-Grid (community, MIT)** — the virtualized blotter (or keep the existing WAI-ARIA `DataGrid` if it
+  meets the density bar — evaluate before adding).
+Every chart consumes the `--seq-*`/`--div-*` dataviz palette (NOT brand hues), stays deterministic/
+testable (seeded data in stories), and honors `prefers-reduced-motion`.
 
 ## 7. Delivery
 Mockups become **interactive/clickable** prototypes approximating these; validated components are then

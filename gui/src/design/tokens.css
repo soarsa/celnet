@@ -48,8 +48,11 @@
    * NEVER use this; they stay on --font-mono. Anaheim loads via the Google Fonts
    * <link> in index.html; --font-ui is the immediate fallback (no layout shift). */
   --font-brand: "Anaheim", var(--font-ui);
-  --font-mono: ui-monospace, "SF Mono", "IBM Plex Mono", "Menlo", "Consolas",
-    monospace;
+  /* Modern grotesque for section headings/labels (July-2026 SOTA design language).
+   * Anaheim stays wordmark-only; numerics NEVER use display, they stay --font-mono. */
+  --font-display: "Space Grotesk", var(--font-ui);
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "IBM Plex Mono", "Menlo",
+    "Consolas", monospace;
 
   --weight-regular: 400;
   --weight-emphasis: 500;
@@ -142,6 +145,15 @@
   --ramp-mid: oklch(0.8 0.01 264);
   --ramp-pos-1: oklch(0.74 0.1 145);
   --ramp-pos-2: oklch(0.62 0.16 150);
+
+  /* Dataviz color contract — NOT brand hues (SOTA design language: brand hues must not
+   * encode quantitative scales; this is the fix for the loud brand-hued heatmap).
+   * Sequential = Viridis-family; diverging = blue↔orange centered at 0. Colorblind-safe.
+   * Consumed by surface/heatmap/key-rate-ladder/XVA charts, never by chrome. */
+  --seq-1: oklch(0.32 0.10 285); --seq-2: oklch(0.44 0.11 262); --seq-3: oklch(0.55 0.09 210);
+  --seq-4: oklch(0.66 0.11 168); --seq-5: oklch(0.79 0.15 135); --seq-6: oklch(0.90 0.17 108);
+  --div-neg2: oklch(0.58 0.13 248); --div-neg1: oklch(0.70 0.07 240); --div-mid: oklch(0.5 0.006 264);
+  --div-pos1: oklch(0.72 0.11 62); --div-pos2: oklch(0.68 0.16 45);
 
   --grid-line: oklch(1 0 0 / 0.06);
   --highlight-top: oklch(1 0 0 / 0.06);
