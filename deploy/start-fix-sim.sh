@@ -167,25 +167,30 @@ PAIRS=(EURUSD GBPUSD USDJPY USDCHF AUDUSD EURGBP EURJPY)
 SIDES=(observe buy sell)   # FX: observe = RFQ only; buy = lift the offer; sell = hit the bid
 TYPES=(call put)
 RATES_SIDES=(pay receive two-way)  # FI: pay fixed / receive fixed / two-way request
-# To exercise BOTH desk paths, rotate the FI tenor/notional so some RFQs are
-# auto-quoted by the venue (small + on-the-run: notional <= 25mm AND tenor in
-# {1,2,3,5,7,10}) and others are routed to a human desk (over the cap or off-the-run:
-# 30y, or 50mm). Set FIXSIM_VARY=0 to pin the fixed FIXSIM_TENOR/FIXSIM_NOTIONAL.
-RATES_TENORS=(2 5 10 30)               # 30y is off-the-run ⇒ routed to a human desk
-RATES_NOTIONALS=(10000000 50000000)    # 50mm is over the auto-quote cap ⇒ routed
+# Deterministic desk scenario: send several auto-priceable RFQs, then one that requires
+# a human. The venue auto-quotes on-the-run tenors ({1,2,3,5,7,10}); any OTHER tenor
+# ("one that doesn't exist" in the auto set) routes to the rates desk as a PENDING
+# ticket. Notional is held small (always under the auto-quote cap) so the ONLY thing
+# that forces a manual price is the tenor — exactly the trigger to demonstrate.
+RATES_AUTO_TENORS=(2 3 5 7 10)                 # on-the-run ⇒ auto-quoted (35=S)
+RATES_MANUAL_TENOR="${FIXSIM_MANUAL_TENOR:-15}"  # non-standard ⇒ routed to a human desk
+FIXSIM_MANUAL_EVERY="${FIXSIM_MANUAL_EVERY:-4}"  # every Nth RFQ is a manual one
 
 run_once() {
   local req="RFQ-$(date +%s)-$RANDOM"
   if [ "$FIXSIM_ASSET" = "fi" ]; then
-    # Fixed-income OIS RFQ — auto-quoted when small + on-the-run, else routed to the
-    # rates desk (a human prices it in the GUI). The inbox shows both.
+    # Fixed-income OIS RFQ — auto-quoted on an on-the-run tenor, else routed to the
+    # rates desk (a human prices it in the GUI). The inbox shows both; the client does
+    # NOT block on a routed (no-quote) RFQ, so the sim keeps sending.
     local rside="${RATES_SIDES[$((RANDOM % ${#RATES_SIDES[@]}))]}"
-    local tenor="$FIXSIM_TENOR" notional="$FIXSIM_NOTIONAL"
-    if [ "${FIXSIM_VARY:-1}" != "0" ]; then
-      tenor="${RATES_TENORS[$((RANDOM % ${#RATES_TENORS[@]}))]}"
-      notional="${RATES_NOTIONALS[$((RANDOM % ${#RATES_NOTIONALS[@]}))]}"
+    local n="${RUN_N:-0}" tenor notional="$FIXSIM_NOTIONAL" mode
+    if [ "${FIXSIM_VARY:-1}" != "0" ] && [ "$FIXSIM_MANUAL_EVERY" -gt 0 ] \
+       && [ $(( (n + 1) % FIXSIM_MANUAL_EVERY )) -eq 0 ]; then
+      tenor="$RATES_MANUAL_TENOR"; mode="MANUAL(desk)"
+    else
+      tenor="${RATES_AUTO_TENORS[$(( n % ${#RATES_AUTO_TENORS[@]} ))]}"; mode="AUTO"
     fi
-    log ">>> FI RFQ curve=$FIXSIM_CURVE tenor=${tenor}y side=$rside notional=$notional req=$req"
+    log ">>> FI RFQ [$mode] curve=$FIXSIM_CURVE tenor=${tenor}y side=$rside notional=$notional req=$req"
     if "${RUNNER[@]}" --asset fi --addr "$FIXSIM_HOST:$FIXSIM_PORT" \
         --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" \
         --curve "$FIXSIM_CURVE" --tenor "$tenor" --notional "$notional" \
@@ -218,8 +223,11 @@ if [ "$FIXSIM_ONESHOT" = "1" ]; then
 fi
 
 log "looping RFQs every ${FIXSIM_PERIOD}s +/-${FIXSIM_JITTER}s (Ctrl-C to stop)."
+RUN_N=0
 while true; do
+  export RUN_N
   run_once || true
+  RUN_N=$(( RUN_N + 1 ))
   span=$(( FIXSIM_PERIOD + (RANDOM % (2 * FIXSIM_JITTER + 1)) - FIXSIM_JITTER ))
   [ "$span" -lt 5 ] && span=5
   log "sleeping ${span}s"

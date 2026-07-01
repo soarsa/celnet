@@ -610,19 +610,28 @@ impl FixSession {
         }
         let side = rates_side_to_side(rfq.side);
         let curve = crate::rates_pricing::default_usd_sofr_curve_set();
-        if self.ctx.auto_quote.admits(rfq.notional, rfq.tenor_years) {
-            // Auto-quote: the SAME shared rates line + `Quote(S)` as before, plus a
-            // QUOTED history row at the two-way mid.
-            let Ok(priced) = rates_line(frame, Some(intent)) else {
-                return;
-            };
-            // A rates line carries no FX pre-trade template (no canonical-vanilla leaf).
-            self.emit_two_way_quote(st, req_id, symbol, &priced, None, out);
-            let mid = 0.5 * (priced.bid + priced.offer);
-            self.record_rates_rfq(&rfq, side, &curve, Some(mid));
+        // Auto-quote only a policy-admitted RFQ that the venue can actually price; a
+        // request the policy declines (over the cap / off-the-run) OR a tenor the venue
+        // cannot price (e.g. one that doesn't exist for this curve) routes to a human
+        // desk as PENDING — never dropped — so it always surfaces in the desk inbox.
+        let priced = if self.ctx.auto_quote.admits(rfq.notional, rfq.tenor_years) {
+            rates_line(frame, Some(intent)).ok()
         } else {
-            // Route to a human desk: PENDING, no auto `Quote(S)` (the desk prices it).
-            self.record_rates_rfq(&rfq, side, &curve, None);
+            None
+        };
+        match priced {
+            Some(priced) => {
+                // Auto-quote: the SAME shared rates line + `Quote(S)` as before, plus a
+                // QUOTED history row at the two-way mid. A rates line carries no FX
+                // pre-trade template (no canonical-vanilla leaf).
+                self.emit_two_way_quote(st, req_id, symbol, &priced, None, out);
+                let mid = 0.5 * (priced.bid + priced.offer);
+                self.record_rates_rfq(&rfq, side, &curve, Some(mid));
+            }
+            None => {
+                // Route to a human desk: PENDING, no auto `Quote(S)` (the desk prices it).
+                self.record_rates_rfq(&rfq, side, &curve, None);
+            }
         }
     }
 
