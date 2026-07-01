@@ -314,8 +314,20 @@ a { color: var(--accent); text-decoration: none; }
 .greeks .g .sub { font-size: var(--type-micro); color: var(--text-tertiary); font-family: var(--font-mono); }
 .q .conv { font-size: var(--type-micro); color: var(--text-secondary); font-family: var(--font-mono); }
 
-/* scroll fix: CSS-grid children must have min-height/width:0 to allow their own overflow to scroll */
-.rail, .main, .ctx { min-height: 0; min-width: 0; overflow-y: auto; }
+/* scroll + resize robustness
+ * - the app owns a full-viewport grid; each region scrolls its own overflow.
+ * - CSS-grid children need min-height/min-width:0 or their overflow won't scroll.
+ * - below a sane min-width the whole page scrolls horizontally (never a broken/clipped layout). */
+html { overflow: hidden; }
+body { overflow-x: auto; overflow-y: hidden; }
+.app { min-width: 1160px; }
+.rail, .main, .ctx { min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+/* visible, usable scrollbars (were effectively hidden) */
+* { scrollbar-width: thin; scrollbar-color: oklch(1 0 0 / 0.2) transparent; }
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb { background: oklch(1 0 0 / 0.18); border-radius: 7px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: oklch(1 0 0 / 0.32); }
+::-webkit-scrollbar-track { background: transparent; }
 
 /* charts */
 .chart { display: block; width: 100%; }

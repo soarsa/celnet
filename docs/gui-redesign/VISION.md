@@ -105,6 +105,26 @@ agent walks flows) — build → critique → fix until clean.
   redesign; run as a **/loop** with the adversarial critique gate (verify against real competitor
   visuals). Charts are the bar.
 
+## 0.9 FULL FIXED-INCOME/RATES + SINGLE FRONT-END (operator, 2026-07-01)
+
+- **ONE single front-end for Celnet.** FI/rates is NOT a separate app or a siloed stack — it is a
+  first-class **PEER asset class** in the one integrated experience (the asset-class selector treats
+  Rates/FI as a peer everywhere).
+- **Cover the FULL FI/rates capabilities** — curve construction / multi-curve bootstrap (OIS/SOFR),
+  FRA · IRS/vanilla-swap · STIR futures · cash bonds, PV · DV01/PV01 · key-rate risk, rates quoting /
+  booking — NOT the OIS-only slice currently wired (badge the wire gap; design the full target).
+- **FI is being REARCHITECTED + INTEGRATED into the CORE** (parallel session, ADR-0010: "Carry =
+  degenerate curve" → one term-structure-unified core). The front-end reflects that integrated target:
+  FI flows through the SAME shared surfaces as FX (pricing/model/contribute/risk/books), **plus** the
+  FI-specific surfaces FX lacks — a **CURVE construction workbench** + a **rates-instrument ticket**.
+- Review what's there via lodestar first; then add FI coverage to the flow (peer selector + Curve +
+  rates-pricing surfaces), integrated, not distinct.
+
+## 0.10 Loop verification criteria (add to every critique round)
+Every screen must: **resize** without breaking (page scrolls horizontally below the min-width, never
+clips) and **scroll** correctly (each region shows usable scrollbars; grid children have min-height:0).
+Verify by rendering at multiple viewport sizes.
+
 ## 1. Core thesis — one evolved API, thin parametric clients
 
 The defect today is **replication born of asset-class silos**: two parallel FX-vs-FI stacks sharing
