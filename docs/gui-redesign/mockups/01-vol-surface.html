@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Vol Surface (mockup 01)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+  /* ===== screen-specific: Vol Surface (not in shared celer.css) ===== */
+
+  /* FIX-1 (BAR-failing): .main is a FIXED-HEIGHT flex column (overflow-y:auto). Flex items
+     default to min-height:auto but .panel{overflow:hidden} collapses that to 0, so when the
+     stacked content exceeds the viewport every panel is squeezed and the tall surface panel
+     is crushed to a sliver. Pinning flex-shrink:0 makes each child keep its natural height,
+     restoring the full mesh and letting .main actually scroll. */
+  .main > * { flex-shrink: 0; }
+  .surfstage { min-height: 384px; }
+
+  /* publish-gate spine (mark → calibrate → arb-gate → publish) */
+  .gate { display:flex; align-items:center; gap:var(--space-4); padding:var(--space-3) var(--space-5);
+    border-radius:var(--r-md); background:var(--bg-inset); border:var(--hairline); flex-wrap:wrap; }
+  .steps { display:flex; align-items:center; gap:var(--space-2); }
+  .steps .step { display:inline-flex; align-items:center; gap:7px; padding:5px 12px; border-radius:var(--r-full);
+    font-size:var(--type-callout); color:var(--text-tertiary); cursor:pointer; border:1px solid transparent; white-space:nowrap; }
+  .steps .step .no { font-family:var(--font-mono); font-size:10px; width:16px; height:16px; border-radius:var(--r-full);
+    display:grid; place-items:center; background:oklch(1 0 0 / 0.08); color:var(--text-tertiary); }
+  .steps .step.done { color:var(--text-secondary); }
+  .steps .step.done .no { background:var(--bid); color:oklch(0.2 0.02 160); }
+  .steps .step.on { background:var(--bg-raised); color:var(--text-primary); font-weight:600; box-shadow:var(--shadow-panel); border-color:var(--grid-line); }
+  .steps .step.on .no { background:var(--accent); color:#fff; }
+  .steps .step.blocked.on { border-color:var(--danger); }
+  .steps .step.blocked.on .no { background:var(--danger); }
+  .steps .sep { color:var(--text-tertiary); opacity:0.4; }
+  .gatever { font-family:var(--font-mono); font-size:var(--type-caption); }
+  .invariant { font-size:var(--type-caption); color:var(--text-tertiary); display:inline-flex; align-items:center; gap:5px; }
+  .invariant .lk { color:var(--accent); }
+
+  /* FIX-5: the arb-gate veto must read up-front — the publish button carries the blocked state,
+     not just a buried callout revealed on click. */
+  .btn.blocked { background:var(--danger); border-color:var(--danger); color:#fff; cursor:not-allowed; font-weight:600; }
+  .btn.blocked:hover { filter:brightness(1.06); }
+  .btn.blocked .lk { font-weight:700; }
+
+  /* 5-smile model picker */
+  .model { flex-wrap:wrap; row-gap:var(--space-3); }
+  .modelseg { display:inline-flex; background:var(--bg-base); border-radius:var(--r-full); padding:2px; gap:2px; border:var(--hairline); }
+  .modelseg button { border:0; background:transparent; color:var(--text-tertiary); font-family:var(--font-display);
+    font-size:var(--type-caption); font-weight:600; padding:5px 12px; border-radius:var(--r-full); cursor:pointer; letter-spacing:0.01em; }
+  .modelseg button .tag { display:block; font-family:var(--font-mono); font-size:8px; font-weight:400; opacity:0.7; letter-spacing:0; }
+  .modelseg button.on { background:var(--accent); color:#fff; }
+  .modelseg button.on .tag { opacity:0.85; }
+
+  /* signature surface stage */
+  .surfstage { display:grid; grid-template-columns:1fr 150px; gap:var(--space-4); align-items:stretch; }
+  .surfwrap { position:relative; }
+  .surfwrap svg { display:block; width:100%; }
+  .cell { stroke:oklch(0 0 0 / 0.34); stroke-width:0.5; opacity:0.92; }
+  .cell.arb { stroke:var(--danger); stroke-width:1.6; opacity:1; }
+  .wire { fill:none; stroke:oklch(1 0 0 / 0.16); stroke-width:0.7; }
+  body[data-surf="wire"] .cell { opacity:0.14; }
+  body[data-surf="wire"] .cell.arb { opacity:1; }
+  body[data-surf="wire"] .wire { stroke:oklch(1 0 0 / 0.42); }
+  body[data-surf="points"] .cell { opacity:0.06; }
+  body[data-surf="points"] .cell.arb { opacity:1; }
+  body[data-surf="points"] .wire { opacity:0.12; }
+  body[data-surf="points"] .vtx { opacity:1; }
+  .vtx { fill:var(--seq-6); opacity:0; }
+  .tslice { fill:none; stroke:var(--accent); stroke-width:2; stroke-dasharray:4 3; }
+  .tvx { fill:var(--accent); }
+  .sslice { fill:none; stroke:var(--brand); stroke-width:2.6; filter:drop-shadow(0 0 4px var(--brand-soft)); }
+  .svx { fill:var(--brand); }
+  .axguide { fill:var(--text-secondary); font-size:9px; font-family:var(--font-display); letter-spacing:0.08em; text-transform:uppercase; }
+
+  /* FIX-5: on-surface arb DANGER badge + leader line to the flagged wing (not an 8px tertiary whisper) */
+  .arblead { stroke:var(--danger); stroke-width:1; stroke-dasharray:3 2; opacity:0.85; }
+  .arbdot  { fill:var(--danger); }
+  .arbbadge-bg { fill:oklch(0.65 0.21 25 / 0.16); stroke:var(--danger); stroke-width:1; }
+  .arbbadge { fill:var(--danger); font-size:11px; font-weight:700; font-family:var(--font-display); }
+
+  /* viridis legend */
+  .vlegend { display:flex; flex-direction:column; gap:6px; padding:var(--space-3); border-radius:var(--r-md);
+    background:var(--bg-inset); border:var(--hairline); align-self:start; }
+  .vlegend .ttl { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.06em; color:var(--text-tertiary); font-weight:600; }
+  .vlegend .ramp { display:grid; grid-template-columns:14px 1fr; gap:6px; align-items:stretch; }
+  .vlegend .bar { width:14px; border-radius:3px; background:linear-gradient(to top,
+      var(--seq-1),var(--seq-2),var(--seq-3),var(--seq-4),var(--seq-5),var(--seq-6)); }
+  .vlegend .scale { display:flex; flex-direction:column; justify-content:space-between; font-family:var(--font-mono); font-size:9px; color:var(--text-tertiary); }
+  .vlegend .lk { margin-top:6px; padding-top:6px; border-top:1px solid var(--grid-line); font-size:var(--type-micro); color:var(--text-tertiary); }
+  .vlegend .lk b { color:var(--brand); } .vlegend .lk i { color:var(--accent); font-style:normal; }
+
+  /* slice tenor picker (linked-view brushing) */
+  .slicepick { display:inline-flex; gap:3px; }
+  .slicepick button { border:var(--hairline); background:oklch(1 0 0 / 0.04); color:var(--text-tertiary);
+    font-family:var(--font-mono); font-size:var(--type-caption); padding:2px 8px; border-radius:var(--r-sm); cursor:pointer; }
+  .slicepick button.on { background:var(--brand-soft); color:var(--brand); border-color:oklch(0.72 0.17 35 / 0.4); font-weight:600; }
+
+  /* chart local styling */
+  .smband { fill:var(--accent-soft); stroke:none; }
+  .smfit { fill:none; stroke:var(--accent); stroke-width:2; stroke-linejoin:round; }
+  .smdot { fill:var(--brand); }
+  .smerr { stroke:var(--text-tertiary); stroke-width:1; opacity:0.55; }
+  .marker { font-family:var(--font-mono); font-size:9px; fill:var(--text-secondary); }
+
+  /* implied-vs-model diff heatmap (FIX-3: a genuine linked slice — every cell valued, brushable, model-reactive) */
+  .diff { width:100%; border-collapse:collapse; }
+  .diff th { font-size:8px; color:var(--text-tertiary); font-weight:600; padding-bottom:3px; text-align:center; }
+  .diff td { text-align:center; font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:8px;
+    height:22px; color:oklch(0.98 0.01 264); border:1px solid var(--bg-raised); }
+  .diff td.lab { background:transparent!important; color:var(--text-secondary); font-weight:600; text-align:right; padding-right:6px; border:0; }
+  .diff td[data-arb] { outline:1.5px solid var(--danger); outline-offset:-1.5px; font-weight:700; }
+  .diff tbody tr.on td { border-top-color:var(--accent); border-bottom-color:var(--accent); }
+  .diff tbody tr.on td.lab { color:var(--accent); }
+
+  /* per-tenor calibration table extras */
+  .caltbl .st { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.04em; padding:1px 6px; border-radius:var(--r-sm); }
+  .caltbl .st.live { background:oklch(0.78 0.16 155 / 0.16); color:var(--bid); }
+  .caltbl .st.draft { background:oklch(1 0 0 / 0.06); color:var(--text-tertiary); }
+  .caltbl tr.flag td { background:oklch(0.65 0.21 25 / 0.07); }
+  .segbtn { display:inline-flex; gap:3px; }
+  .segbtn button { border:var(--hairline); background:oklch(1 0 0 / 0.04); color:var(--text-tertiary);
+    font-size:var(--type-caption); padding:3px 10px; border-radius:var(--r-sm); cursor:pointer; font-weight:600; }
+  .segbtn button.on { background:var(--bg-raised); color:var(--text-primary); box-shadow:var(--shadow-panel); }
+  .legdot { width:18px; height:0; border-top:2px solid; display:inline-block; vertical-align:middle; margin-right:4px; }
+</style>
+</head>
+<body data-surf="shaded">
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR (verbatim from shell) ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL (verbatim; Vol Surface = on) ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a class="on"><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — VOL SURFACE ============ -->
+  <main class="main" style="gap:var(--space-4)">
+
+    <!-- surface context line -->
+    <div class="ticketline">
+      <span class="field"><span class="lbl">pair</span> EUR/USD <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">class</span> FX · G10 <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">spot</span> 1.0842</span>
+      <span class="field"><span class="lbl">fwd 1M</span> +11.4p</span>
+      <span class="field"><span class="lbl">r_d / r_f</span> 5.31 / 3.86</span>
+      <span class="selctl"><span class="lbl">Δ conv</span> spot · prem-adj <span class="car">▾</span></span>
+      <span class="selctl"><span class="lbl">tenors</span> 7 · 1W–2Y <span class="car">▾</span></span>
+      <span style="flex:1"></span>
+      <span class="pill"><span class="dot live"></span> broker composite · as-of <span class="num">12:04:07</span></span>
+    </div>
+
+    <!-- model-hero: the 5-smile picker -->
+    <div class="model">
+      <span class="label" style="margin-right:2px">Smile model</span>
+      <div class="modelseg" id="modelseg" role="tablist" aria-label="Smile model family">
+        <button role="tab"><span>VV</span><span class="tag">market-hedge</span></button>
+        <button role="tab"><span>SABR</span><span class="tag">stochastic-vol</span></button>
+        <button role="tab"><span>SVI</span><span class="tag">parametric</span></button>
+        <button role="tab" class="on" aria-selected="true"><span>SSVI</span><span class="tag">parametric-surface</span></button>
+        <button role="tab"><span>eSSVI</span><span class="tag">extended-surface</span></button>
+      </div>
+      <span class="meta" id="modelmeta">calibrated 2m ago · <span class="num">build_model_smile</span> · fit RMSE <span class="num">0.030v</span></span>
+      <span style="flex:1"></span>
+      <span class="selctl"><span class="lbl">weights</span> vega <span class="car">▾</span></span>
+      <button class="btn">Recalibrate</button>
+      <button class="btn ghost">Diff vs market ◷</button>
+    </div>
+
+    <!-- publish gate: mark → calibrate → arb-gate → publish -->
+    <div class="gate">
+      <div class="steps" id="steps">
+        <span class="step done" data-i="0"><span class="no">1</span> Mark</span><span class="sep">→</span>
+        <span class="step done" data-i="1"><span class="no">2</span> Calibrate</span><span class="sep">→</span>
+        <span class="step blocked on" data-i="2"><span class="no">3</span> Arb-gate</span><span class="sep">→</span>
+        <span class="step" data-i="3"><span class="no">4</span> Publish</span>
+      </div>
+      <span class="invariant" title="Every marked version is stamped and immutable; live prices/streams may only reference a published version — never an in-flight edit.">
+        <span class="lk">⛭</span> no-unmarked-edits invariant</span>
+      <span style="flex:1"></span>
+      <span class="gatever">draft <b class="num">v129</b> <span class="dim">· prev live</span> <b class="num" style="color:var(--bid)">v128</b> <span class="dim">· sentinel v0=unmarked</span></span>
+      <span class="pill" title="One versioned SurfaceBook is visible to pricing, streaming and FIX at once — a publish pins across all three (LIVE).">
+        <span class="dot live"></span> SurfaceBook ▸ price · stream · FIX</span>
+      <button class="btn blocked" id="publishBtn" title="Publish is VETOED by the arb-gate — the 1W wing butterfly is negative (implied risk-neutral density &lt; 0). Re-mark the 1W 10ΔP/25ΔP wings or apply a wing override, then re-run the gate.">
+        <span class="lk">⊘</span> blocked · 1W butterfly</button>
+    </div>
+
+    <!-- SIGNATURE: 3D vol-surface mesh -->
+    <section class="panel">
+      <header>
+        <span class="headline">Vol surface · EUR/USD <span class="dim" style="font-size:11px">— tenor × delta, height &amp; Viridis = implied vol</span></span>
+        <span style="display:flex; gap:var(--space-4); align-items:center">
+          <span class="slicepick" id="slicepick" title="Pick the tenor slice — brushes the surface, the smile panel and the residual heatmap">
+            <button data-t="0">1W</button><button data-t="1">2W</button><button data-t="2" class="on">1M</button><button data-t="3">3M</button><button data-t="4">6M</button><button data-t="5">1Y</button><button data-t="6">2Y</button>
+          </span>
+          <span class="segbtn" id="surfmode">
+            <button class="on" data-m="shaded">Shaded</button><button data-m="wire">Wire</button><button data-m="points">Points</button>
+          </span>
+        </span>
+      </header>
+      <div class="body">
+        <div class="surfstage">
+          <div class="surfwrap">
+            <!-- Mesh, wireframe, vertices, term/smile slices, arb badge and axes are ALL rendered from the
+                 ONE shared smile generator below (fix-4) — the surface's visual relief is a display gain on
+                 the z(vol) term in isoRaw(), never inflated smile curvature. -->
+            <svg class="chart" viewBox="0 0 582 400" height="384" aria-label="3D implied-volatility surface, tenor by delta, coloured by Viridis">
+              <g id="surfMesh"></g>
+              <g id="surfWire"></g>
+              <g id="surfVtx"></g>
+              <polyline id="surfTerm" class="tslice" points=""/>
+              <g id="surfTermDots"></g>
+              <polyline id="surfSlice" class="sslice" points=""/>
+              <g id="surfSliceDots"></g>
+              <g id="surfAxis"></g>
+              <g id="surfArb"></g>
+            </svg>
+          </div>
+          <div class="vlegend">
+            <span class="ttl">Implied vol %</span>
+            <div class="ramp">
+              <div class="bar"></div>
+              <div class="scale" id="vlegScale"><span>9.9</span><span>9.2</span><span>8.6</span><span>7.9</span><span>7.2</span></div>
+            </div>
+            <div class="lk"><span class="legdot" style="border-color:var(--brand)"></span><b>smile slice</b> · <span id="legTenor">1M</span></div>
+            <div class="lk"><span class="legdot" style="border-color:var(--accent); border-top-style:dashed"></span><i>term ATM</i></div>
+            <div class="lk" style="color:var(--danger)">▧ arb-flagged cell · 1W wing</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- LINKED SLICES: smile · term · implied-vs-model diff -->
+    <div class="cols c3">
+      <!-- 2D SMILE slice -->
+      <section class="panel">
+        <header>
+          <span class="headline" id="smTitle">Smile · 1M</span>
+          <span class="muted" style="font-size:11px">IV vs Δ · market ● &nbsp; fit —</span>
+        </header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg id="smileSvg" class="chart" viewBox="0 0 360 196" height="196" aria-label="Volatility smile slice">
+            <g id="smY"></g>
+            <line class="mk" x1="189" y1="26" x2="189" y2="172"/>
+            <g id="smDyn"></g>
+            <text class="axlbl" x="46.0" y="184" text-anchor="middle">10ΔP</text>
+            <text class="axlbl" x="93.7" y="184" text-anchor="middle">25ΔP</text>
+            <text class="axlbl" x="141.3" y="184" text-anchor="middle">35ΔP</text>
+            <text class="axlbl b" x="189.0" y="184" text-anchor="middle">ATM</text>
+            <text class="axlbl" x="236.7" y="184" text-anchor="middle">35ΔC</text>
+            <text class="axlbl" x="284.3" y="184" text-anchor="middle">25ΔC</text>
+            <text class="axlbl" x="332.0" y="184" text-anchor="middle">10ΔC</text>
+          </svg>
+          <div class="kv" style="margin-top:4px"><span class="k">RR25 / BF25</span><span class="v num" id="rrbf25">−0.56v / 0.49v</span></div>
+          <div class="kv"><span class="k">RR10 / BF10</span><span class="v num" id="rrbf10">−0.84v / 1.10v</span></div>
+          <div class="kv"><span class="k">ATM · fit RMSE</span><span class="v num" id="atmfit">7.85v · 0.031v</span></div>
+        </div>
+      </section>
+
+      <!-- TERM structure -->
+      <section class="panel">
+        <header><span class="headline">Term structure · ATM</span><span class="muted" style="font-size:11px">forward-vol consistent</span></header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg class="chart" viewBox="0 0 360 196" height="196" aria-label="ATM term structure">
+            <line class="gl" x1="46" y1="162.5" x2="332" y2="162.5"/><text class="axlbl" x="40" y="165.5" text-anchor="end">7.0</text>
+            <line class="gl" x1="46" y1="135.2" x2="332" y2="135.2"/><text class="axlbl" x="40" y="138.2" text-anchor="end">7.5</text>
+            <line class="gl" x1="46" y1="107.9" x2="332" y2="107.9"/><text class="axlbl" x="40" y="110.9" text-anchor="end">8.0</text>
+            <line class="gl" x1="46" y1="80.6" x2="332" y2="80.6"/><text class="axlbl" x="40" y="83.6" text-anchor="end">8.5</text>
+            <line class="gl" x1="46" y1="53.3" x2="332" y2="53.3"/><text class="axlbl" x="40" y="56.3" text-anchor="end">9.0</text>
+            <line class="gl" x1="46" y1="26.0" x2="332" y2="26.0"/><text class="axlbl" x="40" y="29.0" text-anchor="end">9.5</text>
+            <path class="smband" d="M46.0,140.7 C53.9,139.0 77.8,135.7 93.7,130.3 C109.6,124.9 125.4,116.0 141.3,108.5 C157.2,100.9 173.1,92.1 189.0,85.0 C204.9,77.9 220.8,72.2 236.7,65.9 C252.6,59.5 268.4,52.5 284.3,46.8 C300.2,41.0 324.1,34.0 332.0,31.5 L332.0,44.6 C324.1,46.8 300.2,52.1 284.3,57.7 C268.4,63.2 252.6,71.1 236.7,77.9 C220.8,84.6 204.9,90.4 189.0,98.1 C173.1,105.7 157.2,115.3 141.3,123.8 C125.4,132.2 109.6,142.4 93.7,148.9 C77.8,155.3 53.9,160.3 46.0,162.5 Z"/>
+            <path class="smfit" d="M46.0,151.6 C53.9,149.6 77.8,145.5 93.7,139.6 C109.6,133.7 125.4,124.1 141.3,116.1 C157.2,108.1 173.1,98.9 189.0,91.5 C204.9,84.2 220.8,78.4 236.7,71.9 C252.6,65.3 268.4,57.9 284.3,52.2 C300.2,46.6 324.1,40.4 332.0,38.0"/>
+            <circle class="smdot" cx="46.0" cy="151.6" r="2.8"/><circle class="smdot" cx="93.7" cy="139.6" r="2.8"/><circle class="smdot" cx="141.3" cy="116.1" r="2.8"/><circle class="smdot" cx="189.0" cy="91.5" r="2.8"/><circle class="smdot" cx="236.7" cy="71.9" r="2.8"/><circle class="smdot" cx="284.3" cy="52.2" r="2.8"/><circle class="smdot" cx="332.0" cy="38.0" r="2.8"/>
+            <text class="axlbl" x="46.0" y="192" text-anchor="middle">1W</text><text class="axlbl" x="93.7" y="192" text-anchor="middle">2W</text><text class="axlbl b" x="141.3" y="192" text-anchor="middle">1M</text><text class="axlbl" x="189.0" y="192" text-anchor="middle">3M</text><text class="axlbl" x="236.7" y="192" text-anchor="middle">6M</text><text class="axlbl" x="284.3" y="192" text-anchor="middle">1Y</text><text class="axlbl" x="332.0" y="192" text-anchor="middle">2Y</text>
+          </svg>
+          <div class="kv" style="margin-top:4px"><span class="k">calendar no-arb</span><span class="v"><span class="rag g"></span><span class="num">Σvar ↑ monotone</span></span></div>
+          <div class="kv"><span class="k">fwd-vol 1M→3M</span><span class="v num">8.71v</span></div>
+        </div>
+      </section>
+
+      <!-- IMPLIED − MODEL DIFF + arbitrage-flagged cells (fix-3: data-driven linked heatmap) -->
+      <section class="panel">
+        <header><span class="headline">Implied − model</span><span class="muted" style="font-size:11px">vol pts · ⊘ arb-flag · brushed</span></header>
+        <div class="body">
+          <table class="diff" aria-label="Implied minus model residual heatmap, diverging centred at zero">
+            <thead><tr><th></th><th>10ΔP</th><th>25ΔP</th><th>35ΔP</th><th>ATM</th><th>35ΔC</th><th>25ΔC</th><th>10ΔC</th></tr></thead>
+            <tbody id="diffBody"></tbody>
+          </table>
+          <div style="display:flex; align-items:center; gap:10px; margin-top:10px; font-size:var(--type-micro); color:var(--text-tertiary)">
+            <span class="num">−0.20</span>
+            <span style="flex:1; height:8px; border-radius:var(--r-full); background:linear-gradient(to right,var(--div-neg2),var(--div-neg1),var(--div-mid),var(--div-pos1),var(--div-pos2))"></span>
+            <span class="num">+0.20</span>
+          </div>
+          <div class="kv" style="margin-top:6px"><span class="k">worst residual</span><span class="v num neg" id="worstResid">+.19v · 1W 10ΔP</span></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- PER-TENOR calibration + arb gate detail -->
+    <section class="panel">
+      <header>
+        <span class="headline">Calibration &amp; arbitrage gate · per tenor</span>
+        <span class="segbtn" id="gatefilter">
+          <button class="on" data-f="all">All 7</button><button data-f="flag">Flagged 1</button>
+        </span>
+      </header>
+      <div class="body" style="padding:0; overflow-x:auto">
+        <table class="grid caltbl" style="min-width:940px">
+          <thead>
+            <tr><th>Tenor</th><th>ATM</th><th>RR25</th><th>BF25</th><th>RR10</th><th>BF10</th><th>fwd</th><th>model</th><th>fit RMSE</th><th>butterfly</th><th>vertical</th><th>calendar</th><th>arb</th><th>version</th></tr>
+          </thead>
+          <tbody>
+            <tr class="flag">
+              <td>1W</td><td class="n">7.20</td><td class="n">−0.96</td><td class="n">0.84</td><td class="n">−1.44</td><td class="n">1.90</td><td class="n">1.0839</td><td>SSVI</td><td class="n">0.061</td>
+              <td class="n neg">−0.004</td><td class="n">+0.000</td><td class="n">ok</td><td><span class="rag r"></span>fail</td><td><span class="st draft">draft v129</span></td>
+            </tr>
+            <tr><td>2W</td><td class="n">7.42</td><td class="n">−0.73</td><td class="n">0.62</td><td class="n">−1.10</td><td class="n">1.40</td><td class="n">1.0841</td><td>SSVI</td><td class="n">0.038</td><td class="n">+0.002</td><td class="n">+0.000</td><td class="n">ok</td><td><span class="rag g"></span>pass</td><td><span class="st live">live v128</span></td></tr>
+            <tr><td>1M</td><td class="n">7.85</td><td class="n">−0.56</td><td class="n">0.49</td><td class="n">−0.84</td><td class="n">1.10</td><td class="n">1.0853</td><td>SSVI</td><td class="n">0.031</td><td class="n">+0.006</td><td class="n">+0.000</td><td class="n">ok</td><td><span class="rag g"></span>pass</td><td><span class="st live">live v128</span></td></tr>
+            <tr><td>3M</td><td class="n">8.30</td><td class="n">−0.44</td><td class="n">0.38</td><td class="n">−0.66</td><td class="n">0.85</td><td class="n">1.0878</td><td>SSVI</td><td class="n">0.026</td><td class="n">+0.011</td><td class="n">+0.000</td><td class="n">ok</td><td><span class="rag g"></span>pass</td><td><span class="st live">live v128</span></td></tr>
+            <tr><td>6M</td><td class="n">8.66</td><td class="n">−0.36</td><td class="n">0.30</td><td class="n">−0.54</td><td class="n">0.68</td><td class="n">1.0912</td><td>SSVI</td><td class="n">0.022</td><td class="n">+0.014</td><td class="n">+0.000</td><td class="n">ok</td><td><span class="rag g"></span>pass</td><td><span class="st live">live v128</span></td></tr>
+            <tr><td>1Y</td><td class="n">9.02</td><td class="n">−0.29</td><td class="n">0.24</td><td class="n">−0.44</td><td class="n">0.55</td><td class="n">1.0981</td><td>SSVI</td><td class="n">0.019</td><td class="n">+0.018</td><td class="n">+0.000</td><td class="n">ok</td><td><span class="rag g"></span>pass</td><td><span class="st live">live v128</span></td></tr>
+            <tr><td>2Y</td><td class="n">9.28</td><td class="n">−0.25</td><td class="n">0.20</td><td class="n">−0.38</td><td class="n">0.46</td><td class="n">1.1123</td><td>SSVI</td><td class="n">0.017</td><td class="n">+0.021</td><td class="n">+0.000</td><td class="n">ok</td><td><span class="rag g"></span>pass</td><td><span class="st live">live v128</span></td></tr>
+          </tbody>
+        </table>
+        <div style="display:flex; gap:var(--space-5); padding:var(--space-3) var(--space-5); border-top:var(--hairline); font-size:var(--type-caption); color:var(--text-tertiary); flex-wrap:wrap">
+          <span><b style="color:var(--text-secondary)">Arb gate</b> = butterfly (density ≥ 0) · vertical-spread (C(K) monotone ↓) · calendar (Σvar ↑ in T)</span>
+          <span style="flex:1"></span>
+          <span class="neg">1 tenor fails butterfly → publish of v129 blocked until re-mark or wing override</span>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ============ CONTEXT RAIL (verbatim from shell) ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (verbatim from shell) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  var TEN = ["1W","2W","1M","3M","6M","1Y","2Y"];
+  var DLT = ["10ΔP","25ΔP","35ΔP","ATM","35ΔC","25ΔC","10ΔC"];
+  var ND  = 7;                 // 7 delta pillars
+  var curTenor = 2;           // 1M selected
+
+  /* ===== ONE shared smile generator — drives BOTH the 3D surface AND the 2D smile (fix-4).
+     atm/curv/skew are the single source of smile shape; the surface only exaggerates HEIGHT
+     via SURF_GAIN in the projection, never the curvature. ===== */
+  var atm  = [7.20,7.42,7.85,8.30,8.66,9.02,9.28];
+  var curv = [1.90,1.40,1.10,0.85,0.68,0.55,0.46];
+  var skew = [0.72,0.55,0.42,0.33,0.27,0.22,0.19];
+  var rmse = [0.061,0.038,0.031,0.026,0.022,0.019,0.017];   // per-tenor fit RMSE (matches cal table @ SSVI)
+  var hs   = [0.16,0.12,0.10,0.09,0.10,0.12,0.17];          // market half-spread band
+  function kk(j){ return -1 + 2*j/(ND-1); }
+  function smileVol(t,j){ return atm[t] + curv[t]*kk(j)*kk(j) - skew[t]*kk(j); }
+
+  /* residuals implied − model (vol pts), per tenor × delta — SSVI baseline.
+     Ground truth: the 1W wings (10ΔP,25ΔP) carry the biggest positive residual → butterfly<0. */
+  var residBase = [
+    /* 10ΔP  25ΔP  35ΔP   ATM  35ΔC  25ΔC  10ΔC */
+    [ 0.19, 0.11, 0.04,-0.03, 0.02, 0.03,-0.05], // 1W  ← arb wing
+    [ 0.08,-0.04, 0.02,-0.02,-0.03, 0.02, 0.06], // 2W
+    [-0.05,-0.04, 0.01, 0.05, 0.01,-0.02, 0.05], // 1M
+    [-0.05, 0.04,-0.01,-0.03,-0.04, 0.02, 0.05], // 3M
+    [-0.04,-0.01, 0.01, 0.00, 0.01,-0.03,-0.04], // 6M
+    [-0.03, 0.01, 0.01, 0.00, 0.01, 0.00,-0.01], // 1Y
+    [ 0.04, 0.01,-0.03, 0.00, 0.01, 0.03,-0.02]  // 2Y
+  ];
+  // per-model fit gain — eSSVI fits tightest, VV (3-point re-anchor) loosest
+  var MODELGAIN = {'VV':1.45,'SABR':1.18,'SVI':1.06,'SSVI':1.00,'eSSVI':0.80};
+  var ARB = {'0,0':1,'0,1':1};   // 1W 10ΔP + 1W 25ΔP — the single flagged wing
+  var curModel = 'SSVI', gain = 1.0;
+  var residCur = [], rmseCur = [];
+  function recomputeModel(){
+    gain = MODELGAIN[curModel] || 1.0;
+    residCur = residBase.map(function(row){ return row.map(function(v){ return Math.round(v*gain*100)/100; }); });
+    rmseCur  = rmse.map(function(v){ return v*gain; });
+  }
+
+  function s2(x){ return (x>=0?"+":"−")+Math.abs(x).toFixed(2); }
+  function d2(x){ var s=(x>=0?"+":"−"), a=Math.abs(x).toFixed(2); if(a.charAt(0)==='0') a=a.substring(1); return s+a; }
+
+  /* ============ FIX-3: linked residual heatmap (every cell valued, diverging, brushed, model-reactive) ============ */
+  function divFill(v){
+    var t=v/0.20;
+    if(t<=-0.6) return 'var(--div-neg2)';
+    if(t<=-0.2) return 'var(--div-neg1)';
+    if(t<  0.2) return 'var(--div-mid)';
+    if(t<  0.6) return 'var(--div-pos1)';
+    return 'var(--div-pos2)';
+  }
+  function renderDiff(){
+    var html='', worst=0, wt=0, wd=0;
+    for(var t=0;t<7;t++){
+      html+='<tr data-t="'+t+'"><td class="lab">'+TEN[t]+'</td>';
+      for(var d=0;d<7;d++){
+        var v=residCur[t][d];
+        if(Math.abs(v)>Math.abs(worst)){ worst=v; wt=t; wd=d; }
+        var arb=ARB[t+','+d]?' data-arb="1"':'';
+        html+='<td style="background:'+divFill(v)+'"'+arb+'>'+d2(v)+'</td>';
+      }
+      html+='</tr>';
+    }
+    document.getElementById('diffBody').innerHTML=html;
+    document.getElementById('worstResid').textContent=d2(worst)+'v · '+TEN[wt]+' '+DLT[wd];
+    highlightDiffRow(curTenor);
+  }
+  function highlightDiffRow(t){
+    [].forEach.call(document.querySelectorAll('#diffBody tr'), function(tr){
+      tr.classList.toggle('on', +tr.dataset.t===t);
+    });
+  }
+
+  /* ============ 2D smile slice (shares smileVol + residCur with the surface & heatmap) ============ */
+  var xL=46,xR=332,yT=26,yB=168;
+  function SX(j){ return xL+(xR-xL)*j/(ND-1); }
+  function mkY(lo,hi){ return function(v){ return yB-(yB-yT)*(v-lo)/(hi-lo); }; }
+  function smooth(pts){
+    var d="M"+pts[0][0].toFixed(1)+","+pts[0][1].toFixed(1);
+    for(var i=0;i<pts.length-1;i++){
+      var p0=i>0?pts[i-1]:pts[0], p1=pts[i], p2=pts[i+1], p3=(i+2<pts.length)?pts[i+2]:pts[pts.length-1];
+      var c1=[p1[0]+(p2[0]-p0[0])/6, p1[1]+(p2[1]-p0[1])/6];
+      var c2=[p2[0]-(p3[0]-p1[0])/6, p2[1]-(p3[1]-p1[1])/6];
+      d+=" C"+c1[0].toFixed(1)+","+c1[1].toFixed(1)+" "+c2[0].toFixed(1)+","+c2[1].toFixed(1)+" "+p2[0].toFixed(1)+","+p2[1].toFixed(1);
+    }
+    return d;
+  }
+  function drawSmile(t){
+    var mv=[],qv=[]; for(var j=0;j<ND;j++){ mv.push(smileVol(t,j)); qv.push(smileVol(t,j)+residCur[t][j]); }
+    var lo=1e9,hi=-1e9;
+    for(var j2=0;j2<ND;j2++){ lo=Math.min(lo, mv[j2]-hs[j2], qv[j2]-hs[j2]); hi=Math.max(hi, mv[j2]+hs[j2], qv[j2]+hs[j2]); }
+    lo=Math.floor((lo-0.05)*4)/4; hi=Math.ceil((hi+0.05)*4)/4;
+    var Y=mkY(lo,hi);
+    var gy=""; var nT=5;
+    for(var k=0;k<nT;k++){ var v=lo+(hi-lo)*k/(nT-1);
+      gy+='<line class="gl" x1="'+xL+'" y1="'+Y(v).toFixed(1)+'" x2="'+xR+'" y2="'+Y(v).toFixed(1)+'"/>'+
+          '<text class="axlbl" x="'+(xL-6)+'" y="'+(Y(v)+3).toFixed(1)+'" text-anchor="end">'+v.toFixed(2)+'</text>';
+    }
+    document.getElementById("smY").innerHTML=gy;
+    var top=[],bot=[],fit=[];
+    for(var j3=0;j3<ND;j3++){ fit.push([SX(j3),Y(mv[j3])]); top.push([SX(j3),Y(mv[j3]+hs[j3])]); bot.push([SX(j3),Y(mv[j3]-hs[j3])]); }
+    var bandD=smooth(top)+" L"+smooth(bot.slice().reverse()).substring(1)+" Z";
+    var dyn='<path class="smband" d="'+bandD+'"/><path class="smfit" d="'+smooth(fit)+'"/>';
+    for(var j4=0;j4<ND;j4++){ var x=SX(j4);
+      dyn+='<line class="smerr" x1="'+x.toFixed(1)+'" y1="'+Y(qv[j4]-hs[j4]).toFixed(1)+'" x2="'+x.toFixed(1)+'" y2="'+Y(qv[j4]+hs[j4]).toFixed(1)+'"/>';
+      dyn+='<circle class="smdot" cx="'+x.toFixed(1)+'" cy="'+Y(qv[j4]).toFixed(1)+'" r="2.8"/>';
+    }
+    document.getElementById("smDyn").innerHTML=dyn;
+    var rr25=mv[5]-mv[1], bf25=(mv[1]+mv[5])/2-mv[3], rr10=mv[6]-mv[0], bf10=(mv[0]+mv[6])/2-mv[3];
+    document.getElementById("smTitle").textContent="Smile · "+TEN[t];
+    document.getElementById("rrbf25").textContent=s2(rr25)+"v / "+bf25.toFixed(2)+"v";
+    document.getElementById("rrbf10").textContent=s2(rr10)+"v / "+bf10.toFixed(2)+"v";
+    document.getElementById("atmfit").textContent=mv[3].toFixed(2)+"v · "+rmseCur[t].toFixed(3)+"v";
+  }
+
+  /* ============ FIX-4: 3D surface — data-driven from smileVol, height gain in the projection ============ */
+  var SNX=7,SNZ=7;                 // tenors × deltas
+  var SURF_GAIN=1.7;              // display-only z(vol) exaggeration — NOT a curvature change
+  function isoRaw(i,j){ var u=i/(SNX-1), v=j/(SNZ-1); return [u-v, 0.52*(u+v) - SURF_GAIN*smileVol(i,j)]; }
+  var SXS=[],SYS=[];
+  for(var _i=0;_i<SNX;_i++) for(var _j=0;_j<SNZ;_j++){ var _p=isoRaw(_i,_j); SXS.push(_p[0]); SYS.push(_p[1]); }
+  var sminx=Math.min.apply(0,SXS), smaxx=Math.max.apply(0,SXS), sminy=Math.min.apply(0,SYS), smaxy=Math.max.apply(0,SYS);
+  var SVBW=560,SVBH=400,smL=58,smR=44,smT=34,smB=54;
+  function SP(i,j){ var p=isoRaw(i,j);
+    return [ smL+(p[0]-sminx)/(smaxx-sminx)*(SVBW-smL-smR),
+             smT+(p[1]-sminy)/(smaxy-sminy)*(SVBH-smT-smB) ]; }
+  // Viridis colour = TRUE implied vol (height uses the gain, colour uses raw vol)
+  var VMIN=Infinity,VMAX=-Infinity;
+  for(var a0=0;a0<SNX;a0++) for(var b0=0;b0<SNZ;b0++){ var vv0=smileVol(a0,b0); if(vv0<VMIN)VMIN=vv0; if(vv0>VMAX)VMAX=vv0; }
+  var SEQ=['--seq-1','--seq-2','--seq-3','--seq-4','--seq-5','--seq-6'];
+  function seqFill(v){ var f=(v-VMIN)/(VMAX-VMIN); var b=Math.floor(f*5.999); if(b<0)b=0; if(b>5)b=5; return 'var('+SEQ[b]+')'; }
+
+  function buildSurface(){
+    // painter-ordered Viridis quads (back-to-front by mean projected y)
+    var quads=[];
+    for(var i=0;i<SNX-1;i++) for(var j=0;j<SNZ-1;j++){
+      var A=SP(i,j),B=SP(i+1,j),C=SP(i+1,j+1),D=SP(i,j+1);
+      var vavg=(smileVol(i,j)+smileVol(i+1,j)+smileVol(i+1,j+1)+smileVol(i,j+1))/4;
+      quads.push({pp:[A,B,C,D], f:seqFill(vavg), y:(A[1]+B[1]+C[1]+D[1])/4, i:i, j:j});
+    }
+    quads.sort(function(m,n){ return m.y-n.y; });
+    var mesh='';
+    quads.forEach(function(q){
+      var pts=q.pp.map(function(p){ return p[0].toFixed(1)+','+p[1].toFixed(1); }).join(' ');
+      var cls='cell'+((q.i===0 && (q.j===0||q.j===1))?' arb':'');
+      mesh+='<polygon class="'+cls+'" points="'+pts+'" fill="'+q.f+'"/>';
+    });
+    document.getElementById('surfMesh').innerHTML=mesh;
+    // wireframe: constant-i smiles + constant-j term lines
+    var wire='';
+    for(var i2=0;i2<SNX;i2++){ var pl=''; for(var j2=0;j2<SNZ;j2++){ var q2=SP(i2,j2); pl+=q2[0].toFixed(1)+','+q2[1].toFixed(1)+' '; } wire+='<polyline class="wire" points="'+pl.trim()+'"/>'; }
+    for(var j5=0;j5<SNZ;j5++){ var pl2=''; for(var i3=0;i3<SNX;i3++){ var q3=SP(i3,j5); pl2+=q3[0].toFixed(1)+','+q3[1].toFixed(1)+' '; } wire+='<polyline class="wire" points="'+pl2.trim()+'"/>'; }
+    document.getElementById('surfWire').innerHTML=wire;
+    // vertices (points mode)
+    var vtx=''; for(var i4=0;i4<SNX;i4++) for(var j6=0;j6<SNZ;j6++){ var q4=SP(i4,j6); vtx+='<circle class="vtx" cx="'+q4[0].toFixed(1)+'" cy="'+q4[1].toFixed(1)+'" r="1.8"/>'; }
+    document.getElementById('surfVtx').innerHTML=vtx;
+    // term-structure ATM slice (delta index 3)
+    var tp='',tdd=''; for(var it=0;it<SNX;it++){ var qt=SP(it,3); tp+=qt[0].toFixed(1)+','+qt[1].toFixed(1)+' '; tdd+='<circle class="tvx" cx="'+qt[0].toFixed(1)+'" cy="'+qt[1].toFixed(1)+'" r="2.4"/>'; }
+    document.getElementById('surfTerm').setAttribute('points', tp.trim());
+    document.getElementById('surfTermDots').innerHTML=tdd;
+    // axes — tenors along the 10ΔC front edge, deltas along the 2Y edge
+    var ax='';
+    for(var ia=0;ia<SNX;ia++){ var qa=SP(ia,SNZ-1); ax+='<text class="axlbl b" x="'+(qa[0]-7).toFixed(1)+'" y="'+(qa[1]+11).toFixed(1)+'" text-anchor="end">'+TEN[ia]+'</text>'; }
+    for(var ja=0;ja<SNZ;ja++){ var qb=SP(SNX-1,ja); ax+='<text class="axlbl" x="'+(qb[0]+8).toFixed(1)+'" y="'+(qb[1]+4).toFixed(1)+'" text-anchor="start">'+DLT[ja]+'</text>'; }
+    var g1=SP(4,SNZ-1), g2=SP(SNX-1,4);
+    ax+='<text class="axguide" x="'+(g1[0]-24).toFixed(1)+'" y="'+(g1[1]+22).toFixed(1)+'" text-anchor="middle">◤ tenor</text>';
+    ax+='<text class="axguide" x="'+(g2[0]+28).toFixed(1)+'" y="'+(g2[1]+18).toFixed(1)+'" text-anchor="middle">delta ◥</text>';
+    document.getElementById('surfAxis').innerHTML=ax;
+    buildArbBadge();
+  }
+  function moveSurfSlice(t){
+    var pts='',dots='';
+    for(var j=0;j<SNZ;j++){ var q=SP(t,j); pts+=q[0].toFixed(1)+','+q[1].toFixed(1)+' ';
+      dots+='<circle class="svx" cx="'+q[0].toFixed(1)+'" cy="'+q[1].toFixed(1)+'" r="2.4"/>'; }
+    document.getElementById('surfSlice').setAttribute('points', pts.trim());
+    document.getElementById('surfSliceDots').innerHTML=dots;
+  }
+  /* FIX-5: real danger badge with a leader line to the flagged 1W wing */
+  function buildArbBadge(){
+    var wing=SP(0,0);                               // 1W 10ΔP wing apex
+    var label='⚠ butterfly &lt; 0 · 1W 10ΔP/25ΔP';
+    var w=190,h=18,padX=8;
+    var bx=Math.min(wing[0]+24, SVBW+22-w), by=Math.max(wing[1]-32, 6);
+    var g='';
+    g+='<line class="arblead" x1="'+(bx+12).toFixed(1)+'" y1="'+(by+h).toFixed(1)+'" x2="'+wing[0].toFixed(1)+'" y2="'+wing[1].toFixed(1)+'"/>';
+    g+='<circle class="arbdot" cx="'+wing[0].toFixed(1)+'" cy="'+wing[1].toFixed(1)+'" r="3"/>';
+    g+='<rect class="arbbadge-bg" x="'+bx.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+w+'" height="'+h+'" rx="4"/>';
+    g+='<text class="arbbadge" x="'+(bx+padX).toFixed(1)+'" y="'+(by+13).toFixed(1)+'">'+label+'</text>';
+    document.getElementById('surfArb').innerHTML=g;
+  }
+
+  /* ============ model meta ============ */
+  function refreshMeta(prefix){
+    var rms=rmseCur.reduce(function(x,y){return x+y;},0)/rmseCur.length;
+    document.getElementById('modelmeta').innerHTML=prefix+' · <span class="num">build_model_smile('+curModel+')</span> · fit RMSE <span class="num">'+rms.toFixed(3)+'v</span> · <span class="neg">⚠ 1W slice fails butterfly</span>';
+  }
+
+  /* ============ interactions ============ */
+  function selectTenor(t){
+    curTenor=t;
+    drawSmile(t); moveSurfSlice(t); highlightDiffRow(t);
+    var lt=document.getElementById('legTenor'); if(lt) lt.textContent=TEN[t];
+    [].forEach.call(document.querySelectorAll('#slicepick button'), function(b){ b.classList.toggle('on', +b.dataset.t===t); });
+  }
+  [].forEach.call(document.querySelectorAll('#slicepick button'), function(b){
+    b.addEventListener('click', function(){ selectTenor(+b.dataset.t); });
+  });
+
+  // surface display mode
+  [].forEach.call(document.querySelectorAll('#surfmode button'), function(b){
+    b.addEventListener('click', function(){
+      [].forEach.call(document.querySelectorAll('#surfmode button'), function(x){ x.classList.remove('on'); });
+      b.classList.add('on'); document.body.setAttribute('data-surf', b.dataset.m);
+    });
+  });
+
+  // model picker — re-fit residuals/RMSE so the heatmap AND smile move with the model (fix-3)
+  var MODELDESC={
+    'VV':'Vanna–Volga market-hedge · 3-point RR/BF/ATM re-anchor',
+    'SABR':'stochastic-vol · β/ρ/ν fit · Hagan implied-vol',
+    'SVI':'parametric raw-SVI slice · a,b,ρ,m,σ · no-arb box',
+    'SSVI':'parametric-surface · ATM-θ + φ(θ) · surface no-arb',
+    'eSSVI':'extended-surface · ρ(θ) skew term · calendar-consistent'
+  };
+  function setModel(name){
+    curModel=name; recomputeModel();
+    renderDiff(); drawSmile(curTenor);
+    refreshMeta('refit');
+    document.getElementById('modelmeta').setAttribute('title', MODELDESC[name]||'');
+  }
+  [].forEach.call(document.querySelectorAll('#modelseg button'), function(b){
+    b.addEventListener('click', function(){
+      [].forEach.call(document.querySelectorAll('#modelseg button'), function(x){ x.classList.remove('on'); x.removeAttribute('aria-selected'); });
+      b.classList.add('on'); b.setAttribute('aria-selected','true');
+      setModel(b.querySelector('span').textContent);
+    });
+  });
+
+  // publish-gate stepper (Publish stays blocked while the 1W butterfly fails)
+  [].forEach.call(document.querySelectorAll('#steps .step'), function(b){
+    b.addEventListener('click', function(){
+      var i=+b.dataset.i;
+      [].forEach.call(document.querySelectorAll('#steps .step'), function(x,xi){
+        x.classList.toggle('on', xi===i); x.classList.toggle('done', xi<i);
+      });
+    });
+  });
+
+  // publish action — vetoed; clicking re-states why and pulses the flagged wing
+  document.getElementById('publishBtn').addEventListener('click', function(){
+    var badge=document.querySelector('#surfArb .arbbadge-bg');
+    if(badge){ badge.style.transition='none'; badge.setAttribute('stroke-width','2.4');
+      setTimeout(function(){ badge.setAttribute('stroke-width','1'); }, 700); }
+    this.innerHTML='<span class="lk">⊘</span> re-mark 1W wings first';
+    var s=this; setTimeout(function(){ s.innerHTML='<span class="lk">⊘</span> blocked · 1W butterfly'; }, 1600);
+  });
+
+  // gate filter
+  [].forEach.call(document.querySelectorAll('#gatefilter button'), function(b){
+    b.addEventListener('click', function(){
+      [].forEach.call(document.querySelectorAll('#gatefilter button'), function(x){ x.classList.remove('on'); });
+      b.classList.add('on');
+      var flagOnly=b.dataset.f==='flag';
+      [].forEach.call(document.querySelectorAll('.caltbl tbody tr'), function(tr){
+        tr.style.display=(flagOnly && !tr.classList.contains('flag'))?'none':'';
+      });
+    });
+  });
+
+  // legend scale from the true vol range
+  (function(){ var el=document.getElementById('vlegScale'); if(el){ var s=''; for(var k=0;k<5;k++){ var v=VMAX-(VMAX-VMIN)*k/4; s+='<span>'+v.toFixed(1)+'</span>'; } el.innerHTML=s; } })();
+
+  // init
+  recomputeModel();
+  buildSurface();
+  renderDiff();
+  refreshMeta('calibrated 2m ago');
+  document.getElementById('modelmeta').setAttribute('title', MODELDESC[curModel]);
+  selectTenor(2);
+})();
+</script>
+</body>
+</html>

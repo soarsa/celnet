@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Contribute (mockup 03)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+/* ============ screen-specific: Contribute (sell-side LP making) ============ */
+
+/* honest LIVE / TARGET flow tags (coral=live per brand ration, indigo=structural target) */
+.flag { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;
+  padding: 2px 6px; border-radius: 4px; line-height: 1; white-space: nowrap; }
+.flag.live { background: var(--brand-soft); color: var(--brand); }
+.flag.target { background: oklch(0.62 0.19 280 / 0.16); color: var(--accent); }
+
+/* segmented control (metric / tier lens) */
+.sseg { display: inline-flex; background: var(--bg-inset); border-radius: var(--r-full); padding: 2px; gap: 2px; }
+.sseg button { border: 0; background: transparent; color: var(--text-tertiary); font-size: var(--type-micro);
+  padding: 3px 9px; border-radius: var(--r-full); cursor: pointer; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.sseg button.on { background: var(--accent); color: #fff; }
+.sseg.brandsel button.on { background: var(--brand); color: oklch(0.18 0.02 40); }
+
+/* two-band layout — min-width:0 on grid children prevents min-content blowout starving the book */
+.cx-top { display: grid; grid-template-columns: 1.7fr 1fr; gap: var(--space-4); align-items: start; }
+.cx-side { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.cx-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.cx-top > *, .cx-bottom > * { min-width: 0; }
+.cx-side > .panel { min-width: 0; }
+
+/* ---- spread-model hero params ---- */
+.smrow { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+.formula { font-family: var(--font-mono); font-size: var(--type-caption); color: var(--text-secondary); }
+.formula b { color: var(--text-primary); }
+
+/* ---- contribution book grid ---- */
+.bookwrap { overflow-x: auto; }
+table.book { width: 100%; border-collapse: separate; border-spacing: 2px; }
+table.book th { font-size: var(--type-micro); text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-tertiary); font-weight: 700; padding: 0 6px 4px; text-align: right; white-space: nowrap; }
+table.book th.pairh { text-align: left; padding-left: 4px; }
+.prcell { display: flex; align-items: center; gap: 7px; padding: 0 4px; white-space: nowrap; }
+.prcell .pdot { width: 8px; height: 8px; border-radius: var(--r-full); flex: none; cursor: pointer;
+  background: var(--bid); box-shadow: 0 0 7px var(--bid); }
+.prcell.pulled .pdot { background: var(--text-tertiary); box-shadow: none; }
+.prcell .pname { font-weight: 600; font-size: var(--type-callout); }
+.prcell .ptier { font-size: 8px; font-weight: 700; letter-spacing: 0.04em; color: var(--accent);
+  background: var(--accent-soft); padding: 1px 4px; border-radius: 3px; }
+.prcell .pstreams { font-family: var(--font-mono); font-size: 9px; color: var(--text-tertiary); margin-left: auto; }
+.prcell.pulled .pname, .prcell.pulled .pstreams { color: var(--text-tertiary); }
+
+td.cell { position: relative; height: 34px; padding: 2px 7px 2px 4px; text-align: right;
+  border-radius: var(--r-sm); overflow: hidden; cursor: default; }
+td.cell .cval { position: relative; z-index: 2; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--type-callout); letter-spacing: -0.01em; }
+td.cell .cunit { font-size: 8px; color: var(--text-tertiary); margin-left: 1px; }
+/* per-cell drift spark is progressive-disclosure: hidden in the dense grid, revealed only on
+   the HOVERED cell — so it reads as signal, not the old always-on random-walk static */
+td.cell .spark { position: absolute; left: 5px; right: 6px; bottom: 3px; height: 13px; width: auto;
+  z-index: 1; opacity: 0; pointer-events: none; transition: opacity 0.12s var(--ease-out); }
+td.cell:hover .spark { opacity: 0.9; }
+td.cell:hover { outline: 1px solid var(--grid-line); outline-offset: -1px; }
+td.cell .spark polyline { fill: none; stroke: var(--seq-3); stroke-width: 1.1; vector-effect: non-scaling-stroke; }
+.row-pulled td.cell { opacity: 0.32; }
+.row-pulled td.cell .spark { display: none; }
+/* calm Viridis-sequential heat (cool low-spread -> warm high-spread), low-alpha so the grid stays legible */
+.q1 { background: oklch(0.55 0.09 240 / 0.10); }
+.q2 { background: oklch(0.58 0.10 210 / 0.12); }
+.q3 { background: oklch(0.64 0.11 178 / 0.14); }
+.q4 { background: oklch(0.72 0.13 150 / 0.17); }
+.q5 { background: oklch(0.80 0.15 130 / 0.20); }
+.q6 { background: oklch(0.87 0.16 112 / 0.26); }
+/* value-flash: teal(up) <-> coral(dn), per design language (never red/green) */
+@keyframes flUp { from { box-shadow: inset 0 0 0 40px oklch(0.80 0.13 175 / 0.42); } to { box-shadow: inset 0 0 0 40px transparent; } }
+@keyframes flDn { from { box-shadow: inset 0 0 0 40px oklch(0.72 0.17 35 / 0.34); } to { box-shadow: inset 0 0 0 40px transparent; } }
+.fl-up { animation: flUp 0.6s var(--ease-out); }
+.fl-dn { animation: flDn 0.6s var(--ease-out); }
+
+/* ---- tier control ---- */
+.tier { display: grid; grid-template-columns: auto 1fr; gap: var(--space-3) var(--space-4);
+  padding: var(--space-3) 0; border-bottom: 1px solid var(--grid-line); align-items: center; }
+.tier:last-child { border-bottom: 0; }
+.tier .tid { display: flex; flex-direction: column; gap: 3px; min-width: 66px; }
+.tier .tbadge { font-size: var(--type-micro); font-weight: 700; letter-spacing: 0.05em; color: var(--brand);
+  background: var(--brand-soft); padding: 2px 7px; border-radius: var(--r-sm); text-align: center; }
+.tier .tmeta { font-size: 9px; color: var(--text-tertiary); font-family: var(--font-mono); text-align: center; }
+.tier .ctrls { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 14px; min-width: 0; }
+.ctl { display: grid; grid-template-columns: auto 1fr auto; gap: 7px; align-items: center; min-width: 0; }
+.ctl input[type=range] { width: 100%; min-width: 0; }
+.ctl .cl { font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); }
+.ctl output { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--type-caption);
+  color: var(--text-primary); min-width: 46px; text-align: right; }
+input[type=range] { -webkit-appearance: none; appearance: none; height: 4px; border-radius: var(--r-full);
+  background: var(--bg-inset); outline: none; margin: 0; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 13px; height: 13px;
+  border-radius: 50%; background: var(--accent); cursor: pointer; box-shadow: 0 0 0 3px var(--accent-soft); }
+input[type=range].skewsl::-webkit-slider-thumb { background: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+
+/* diverging skew fill halves */
+.sk-bid { fill: oklch(0.58 0.13 248 / 0.16); }
+.sk-off { fill: oklch(0.68 0.16 45 / 0.16); }
+/* applied tier-lean curve is a DATA series -> --accent, never coral; coral (--brand) is kept
+   for the point markers + live/master chrome only (00 convention: accent curves, brand dots) */
+.sk-applied { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.sk-ghost { fill: none; stroke: var(--text-tertiary); stroke-width: 1; opacity: 0.4; stroke-linejoin: round; }
+#skewChart .zbase { stroke: var(--text-secondary); stroke-width: 1; opacity: 0.45; }
+
+/* analytics bars */
+.bar-w { fill: var(--seq-4); } .bar-l { fill: oklch(1 0 0 / 0.06); }
+.el-curve { fill: none; stroke: var(--accent); stroke-width: 2; }
+.el-band { fill: oklch(0.62 0.16 150 / 0.10); }
+
+.legend { display: flex; gap: var(--space-4); flex-wrap: wrap; font-size: 9px; color: var(--text-tertiary); }
+.legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+.subhead { font-size: 11px; color: var(--text-tertiary); }
+
+/* ctx-rail Contribution mirror — reflects the live master gate instead of a frozen state */
+.kill.pulled { background: var(--bg-inset); border-color: var(--grid-line); }
+.kill.pulled .dot.live { background: var(--text-tertiary); box-shadow: none; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a class="on"><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — CONTRIBUTE ============ -->
+  <main class="main">
+
+    <!-- contribution scope line -->
+    <div class="ticketline">
+      <span class="field"><span class="lbl">book</span> G10-A <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">pairs</span> 8 · G10 <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">tenors</span> ON – 1Y <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">size</span> T1 25 · T2 10 · T3 5 mm</span>
+      <span class="field"><span class="lbl">model</span> LSV <span class="car">▾</span></span>
+      <span class="selctl"><span class="lbl">Δ conv</span> spot <span class="car">▾</span></span>
+      <span style="flex:1"></span>
+      <span class="state live" id="masterState">● PUBLISHING ▸ <span class="num" id="mStreams">42</span> streams</span>
+      <span class="selctl" id="masterToggle" title="Master publish gate — symmetric to the surface mark-publish gate"><span class="lbl">gate</span> pull all</span>
+    </div>
+
+    <!-- spread-model hero (LIVE) -->
+    <div class="model">
+      <span class="title" style="font-size:15px">Spread model · floor + vega + gamma <span class="flag live" title="celnet-server SpreadModel — one model prices streaming + RFQ + FIX">LIVE</span></span>
+      <span class="formula">½-spread = <b>max(</b> floor , c<sub>v</sub>·|vega| + c<sub>γ</sub>·|Γ| <b>)</b></span>
+      <span style="flex:1"></span>
+      <span class="field"><span class="lbl">floor</span> 0.060v</span>
+      <span class="field"><span class="lbl">c·vega</span> 0.42</span>
+      <span class="field"><span class="lbl">c·gamma</span> 0.18</span>
+      <span class="meta ok">✓ arb-free · calibrated 2m ago</span>
+      <button class="btn ghost">Recompute ◷</button>
+    </div>
+
+    <!-- ==== band 1: book + tier/skew controls ==== -->
+    <div class="cx-top">
+
+      <!-- CONTRIBUTION BOOK -->
+      <section class="panel">
+        <header>
+          <span class="headline">Contribution book · G10-A <span class="flag live" title="PriceFanout streaming — celnet-server services/pricefanout.rs">LIVE</span></span>
+          <span style="display:flex; gap:10px; align-items:center">
+            <span class="sseg" id="metricSeg" role="tablist" aria-label="Cell metric">
+              <button class="on" data-metric="spread">½-spread</button>
+              <button data-metric="mid">Mid vol</button>
+              <button data-metric="skew">25Δ RR</button>
+            </span>
+            <span class="sseg brandsel" id="lensSeg" role="tablist" aria-label="Tier lens" title="View spreads as streamed to a client tier">
+              <button class="on" data-lens="All">All</button>
+              <button data-lens="T1">T1</button>
+              <button data-lens="T2">T2</button>
+              <button data-lens="T3">T3</button>
+            </span>
+          </span>
+        </header>
+        <div class="body" style="padding-top:var(--space-3)">
+          <div class="bookwrap"><table class="book" id="bookTable"><thead></thead><tbody></tbody></table></div>
+          <div class="legend" style="margin-top:10px">
+            <span><i style="background:linear-gradient(90deg,oklch(0.55 0.09 240),oklch(0.64 0.11 178),oklch(0.87 0.16 112))"></i>tight → wide ½-spread (Viridis)</span>
+            <span><span class="pdot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bid);box-shadow:0 0 7px var(--bid);margin-right:4px"></span>live stream — click the dot to pull a pair</span>
+            <span class="dim">cells flash teal↑ / coral↓ on each price refresh</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="cx-side">
+        <!-- TIER CONTROL -->
+        <section class="panel">
+          <header>
+            <span class="headline">Client tiers · spread &amp; skew</span>
+            <span class="flag target" title="Tier-differentiated spread multiplier + skew steering — SpreadModel has no tier/exposure input yet (flow-links GAP #2)">TARGET</span>
+          </header>
+          <div class="body" id="tierBody" style="padding-top:var(--space-2)"></div>
+        </section>
+
+        <!-- SKEW CURVE -->
+        <section class="panel">
+          <header>
+            <span class="headline">Tier skew lean · <span id="skewTier">T1</span></span>
+            <span class="subhead">applied − model · +offer / −bid (vol)</span>
+          </header>
+          <div class="body" style="padding-bottom:var(--space-3)">
+            <svg class="chart" id="skewChart" viewBox="0 0 340 178" height="176" aria-label="Applied tier lean vs the model smile">
+              <line class="gl" x1="40" y1="51" x2="320" y2="51"/>
+              <line class="gl" x1="40" y1="141" x2="320" y2="141"/>
+              <line class="zbase" x1="40" y1="96" x2="320" y2="96"/>
+              <line class="mk" x1="184" y1="40" x2="184" y2="150"/>
+              <g id="skewDyn"></g>
+              <text class="axlbl" x="4" y="54">+.10</text>
+              <text class="axlbl" x="16" y="99">0</text>
+              <text class="axlbl" x="2" y="144">−.10</text>
+              <text class="axlbl" x="52" y="166" text-anchor="middle">10ΔP</text>
+              <text class="axlbl" x="118" y="166" text-anchor="middle">25ΔP</text>
+              <text class="axlbl b" x="184" y="166" text-anchor="middle">ATM</text>
+              <text class="axlbl" x="250" y="166" text-anchor="middle">25ΔC</text>
+              <text class="axlbl" x="308" y="166" text-anchor="middle">10ΔC</text>
+            </svg>
+            <div class="legend" style="margin-top:4px">
+              <span><i style="background:var(--accent)"></i>applied lean</span>
+              <span><i style="background:var(--text-tertiary)"></i>other tiers</span>
+              <span><i class="sk-bid" style="background:oklch(0.58 0.13 248 / 0.5)"></i>bid-lean · puts</span>
+              <span><i class="sk-off" style="background:oklch(0.68 0.16 45 / 0.5)"></i>offer-lean · calls</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ==== band 2: client analytics ==== -->
+    <div class="cx-bottom">
+      <!-- HIT RATIO -->
+      <section class="panel">
+        <header>
+          <span class="headline">Hit ratio by tier <span class="flag live" title="Derived from booked fills — attribution::resolve → record_booked_position">LIVE</span></span>
+          <span class="subhead">won / quoted · rolling 30d</span>
+        </header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg class="chart" viewBox="0 0 340 176" height="168" aria-label="Hit ratio by tier">
+            <line class="gl" x1="40" y1="30" x2="326" y2="30"/>
+            <line class="gl" x1="40" y1="70" x2="326" y2="70"/>
+            <line class="gl" x1="40" y1="110" x2="326" y2="110"/>
+            <line class="gl" x1="40" y1="150" x2="326" y2="150"/>
+            <text class="axlbl" x="34" y="33" text-anchor="end">75</text>
+            <text class="axlbl" x="34" y="73" text-anchor="end">50</text>
+            <text class="axlbl" x="34" y="113" text-anchor="end">25</text>
+            <text class="axlbl" x="34" y="153" text-anchor="end">0</text>
+            <!-- T1 -->
+            <rect class="bar-l" x="70"  y="30"  width="52" height="120" rx="3"/>
+            <rect class="bar-w" x="70"  y="51"  width="52" height="99"  rx="3" style="fill:var(--seq-5)"/>
+            <text class="num" x="96"  y="46"  text-anchor="middle" fill="var(--text-primary)" font-size="12">62%</text>
+            <text class="axlbl b" x="96" y="166" text-anchor="middle">T1 · 14</text>
+            <!-- T2 -->
+            <rect class="bar-l" x="146" y="30"  width="52" height="120" rx="3"/>
+            <rect class="bar-w" x="146" y="84"  width="52" height="66"  rx="3" style="fill:var(--seq-4)"/>
+            <text class="num" x="172" y="79"  text-anchor="middle" fill="var(--text-primary)" font-size="12">41%</text>
+            <text class="axlbl b" x="172" y="166" text-anchor="middle">T2 · 38</text>
+            <!-- T3 -->
+            <rect class="bar-l" x="222" y="30"  width="52" height="120" rx="3"/>
+            <rect class="bar-w" x="222" y="112" width="52" height="38"  rx="3" style="fill:var(--seq-3)"/>
+            <text class="num" x="248" y="107" text-anchor="middle" fill="var(--text-primary)" font-size="12">24%</text>
+            <text class="axlbl b" x="248" y="166" text-anchor="middle">T3 · 57</text>
+            <!-- desk target line -->
+            <line x1="40" y1="62" x2="326" y2="62" stroke="var(--accent)" stroke-width="1" stroke-dasharray="4 3" opacity="0.8"/>
+            <text class="axlbl" x="326" y="59" text-anchor="end" fill="var(--accent)">desk target 55%</text>
+          </svg>
+        </div>
+      </section>
+
+      <!-- PRICE ELASTICITY -->
+      <section class="panel">
+        <header>
+          <span class="headline">Price elasticity <span class="flag target" title="Modeled hit-probability vs spread — no elasticity estimator wired yet">TARGET</span></span>
+          <span class="subhead">P(win) vs ½-spread · tier op-points</span>
+        </header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg class="chart" id="elastChart" viewBox="0 0 340 176" height="168" aria-label="Price elasticity curve">
+            <line class="gl" x1="44" y1="24"  x2="324" y2="24"/>
+            <line class="gl" x1="44" y1="62"  x2="324" y2="62"/>
+            <line class="gl" x1="44" y1="100" x2="324" y2="100"/>
+            <line class="gl" x1="44" y1="138" x2="324" y2="138"/>
+            <text class="axlbl" x="40" y="27"  text-anchor="end">.8</text>
+            <text class="axlbl" x="40" y="103" text-anchor="end">.4</text>
+            <text class="axlbl" x="40" y="141" text-anchor="end">0</text>
+            <g id="elastDyn"></g>
+            <text class="axlbl" x="44"  y="152" text-anchor="middle">.06</text>
+            <text class="axlbl" x="184" y="152" text-anchor="middle">.18</text>
+            <text class="axlbl" x="324" y="152" text-anchor="middle">.30v</text>
+            <text class="axlbl b" x="184" y="167" text-anchor="middle">½-spread (vol)</text>
+          </svg>
+          <div class="legend" style="margin-top:2px">
+            <span><i style="background:var(--accent)"></i>P(win) curve</span>
+            <span><i style="background:var(--seq-5)"></i>T1</span>
+            <span><i style="background:var(--seq-4)"></i>T2</span>
+            <span><i style="background:var(--seq-3)"></i>T3</span>
+            <span class="dim">op-points track the tier sliders →</span>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- ============ CONTEXT RAIL ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill" id="ctxKill"><span><span class="dot live"></span> <span id="ctxKillLbl">Live · <span class="num">42</span> streaming</span></span><span class="pull" id="ctxPull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i id="axe-T1"></i></span><span class="num" id="axev-T1">0.11v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i id="axe-T2"></i></span><span class="num" id="axev-T2">0.17v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i id="axe-T3"></i></span><span class="num" id="axev-T3">0.25v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (ops only) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ---- model ----------------------------------------------------------------
+  const tenors = ["ON","1W","1M","2M","3M","6M","1Y"];
+  const midTerm    = [0.90,0.94,1.00,1.02,1.03,1.05,1.07]; // vol term structure
+  const spreadTerm = [1.70,1.30,1.00,0.92,0.86,0.80,0.76]; // short tenors quoted wider (vol)
+  const skewTerm   = [0.60,0.80,1.00,1.05,1.10,1.15,1.20];
+
+  const pairs = [
+    { p:"EUR/USD", atm:7.9,  rr:-0.42, streams:42, tier:"T1" },
+    { p:"USD/JPY", atm:9.6,  rr:-1.10, streams:38, tier:"T1" },
+    { p:"GBP/USD", atm:8.8,  rr:-0.58, streams:31, tier:"T2" },
+    { p:"AUD/USD", atm:10.2, rr:-0.92, streams:22, tier:"T2" },
+    { p:"USD/CHF", atm:8.1,  rr: 0.31, streams:18, tier:"T2" },
+    { p:"USD/CAD", atm:7.4,  rr: 0.22, streams:15, tier:"T3" },
+    { p:"EUR/JPY", atm:9.1,  rr:-0.80, streams:12, tier:"T2" },
+    { p:"EUR/GBP", atm:6.7,  rr:-0.24, streams: 9, tier:"T3" },
+  ];
+
+  const tiers = {
+    T1: { clients:14, mult:1.00, skew:0.00 },
+    T2: { clients:38, mult:1.55, skew:0.03 },
+    T3: { clients:57, mult:2.30, skew:0.06 },
+  };
+  const FLOOR = 0.06, BASE_REF = 0.11, SPREAD_HI = 0.16; // floor / T1 ref / realized top of the ½-spread range
+
+  let metric = "spread";
+  let lens   = "All";
+  const pulled = pairs.map(() => false);
+
+  // per-cell base values + a small live series for the sparkline
+  const cells = pairs.map((pr) => tenors.map((_, j) => {
+    const base = FLOOR + 0.045 * (pr.atm / 8) * spreadTerm[j]; // SpreadModel-shaped ½-spread
+    const mid  = pr.atm * midTerm[j];
+    const skew = pr.rr * skewTerm[j];
+    // continuous drift walk (not independent noise) so the hover spark reads as a plausible
+    // per-cell price history; tick() keeps pushing the live base onto the tail
+    const series = []; let sv = base;
+    for (let k = 0; k < 16; k++) { sv = Math.max(FLOOR, Math.min(0.4, sv + (Math.random() - 0.5) * 0.006)); series.push(sv); }
+    return { base, mid, skew, series };
+  }));
+
+  // ---- helpers --------------------------------------------------------------
+  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+  const bucket = (v, lo, hi) => "q" + clamp(1 + Math.round((v - lo) / (hi - lo) * 5), 1, 6);
+
+  function cellValue(i, j) {
+    const c = cells[i][j];
+    if (metric === "mid")  return { txt: c.mid.toFixed(2), heat: bucket(c.mid, 6, 11), unit:"" };
+    if (metric === "skew") { const s = c.skew + (lens !== "All" ? tiers[lens].skew : 0);
+      return { txt: (s >= 0 ? "+" : "") + s.toFixed(2), heat: bucket(Math.abs(s), 0, 1.4), unit:"" }; }
+    const m = lens !== "All" ? tiers[lens].mult : 1;
+    const eff = c.base * m;
+    // heat domain: FLOOR is the tier-invariant cool anchor; the warm anchor scales with the tier
+    // multiplier — so the default 'All' book lights the FULL Viridis ramp (realized ½-spreads are
+    // ~0.09–0.16v, not the dead old 0.06–0.42 domain) AND wider tiers T2/T3 still saturate warm.
+    return { txt: eff.toFixed(2), heat: bucket(eff, FLOOR, SPREAD_HI * m), unit:"v" };
+  }
+
+  function sparkPoints(series) {
+    const lo = Math.min(...series), hi = Math.max(...series), span = (hi - lo) || 1;
+    return series.map((v, k) =>
+      (k / (series.length - 1) * 40).toFixed(1) + "," +
+      (12 - (v - lo) / span * 11).toFixed(1)).join(" ");
+  }
+
+  // ---- render the contribution book ----------------------------------------
+  const table = document.getElementById("bookTable");
+  const thead = table.querySelector("thead");
+  const tbody = table.querySelector("tbody");
+
+  function buildBook() {
+    let h = "<tr><th class='pairh'>Pair</th>";
+    for (const t of tenors) h += "<th>" + t + "</th>";
+    thead.innerHTML = h + "</tr>";
+
+    let rows = "";
+    pairs.forEach((pr, i) => {
+      rows += "<tr data-row='" + i + "' class='" + (pulled[i] ? "row-pulled" : "") + "'>";
+      rows += "<td><div class='prcell" + (pulled[i] ? " pulled" : "") + "' data-row='" + i + "'>" +
+              "<span class='pdot' data-toggle='" + i + "' title='pull / publish this pair'></span>" +
+              "<span class='pname'>" + pr.p + "</span>" +
+              "<span class='ptier'>" + pr.tier + "</span>" +
+              "<span class='pstreams'>" + (pulled[i] ? "pulled" : pr.streams + "▸") + "</span></div></td>";
+      tenors.forEach((_, j) => {
+        const cv = cellValue(i, j);
+        rows += "<td class='cell " + cv.heat + "' data-r='" + i + "' data-c='" + j + "'>" +
+                "<svg class='spark' viewBox='0 0 40 12' preserveAspectRatio='none'><polyline points='" +
+                sparkPoints(cells[i][j].series) + "'/></svg>" +
+                "<span class='cval'>" + cv.txt + "<span class='cunit'>" + cv.unit + "</span></span></td>";
+      });
+      rows += "</tr>";
+    });
+    tbody.innerHTML = rows;
+  }
+
+  function repaintValues() {
+    pairs.forEach((_, i) => tenors.forEach((_, j) => {
+      const td = tbody.querySelector("td.cell[data-r='" + i + "'][data-c='" + j + "']");
+      if (!td) return;
+      const cv = cellValue(i, j);
+      td.className = "cell " + cv.heat;
+      td.querySelector(".cval").innerHTML = cv.txt + "<span class='cunit'>" + cv.unit + "</span>";
+    }));
+  }
+
+  // ---- live value-flash -----------------------------------------------------
+  function tick() {
+    const live = pairs.map((_, i) => i).filter((i) => !pulled[i]);
+    const n = 4 + Math.floor(Math.random() * 4);
+    for (let k = 0; k < n; k++) {
+      const i = live[Math.floor(Math.random() * live.length)];
+      const j = Math.floor(Math.random() * tenors.length);
+      if (i === undefined) continue;
+      const c = cells[i][j];
+      const drift = (Math.random() - 0.5) * 0.012;
+      const up = drift >= 0;
+      c.base = clamp(c.base + drift, FLOOR, 0.4);
+      c.series.push(c.base); c.series.shift();
+      const td = tbody.querySelector("td.cell[data-r='" + i + "'][data-c='" + j + "']");
+      if (!td) continue;
+      const cv = cellValue(i, j);
+      td.className = "cell " + cv.heat;
+      td.querySelector(".cval").innerHTML = cv.txt + "<span class='cunit'>" + cv.unit + "</span>";
+      td.querySelector(".spark polyline").setAttribute("points", sparkPoints(c.series));
+      if (!reduceMotion) {
+        td.classList.remove("fl-up", "fl-dn");
+        void td.offsetWidth;
+        td.classList.add(up ? "fl-up" : "fl-dn");
+      }
+    }
+  }
+
+  // ---- tier control panel ---------------------------------------------------
+  const tierBody = document.getElementById("tierBody");
+  function buildTiers() {
+    let html = "";
+    Object.entries(tiers).forEach(([k, t]) => {
+      html +=
+        "<div class='tier'>" +
+          "<div class='tid'><span class='tbadge'>" + k + "</span>" +
+            "<span class='tmeta'>" + t.clients + " clients</span></div>" +
+          "<div class='ctrls'>" +
+            "<div class='ctl'><span class='cl'>spread ×</span>" +
+              "<input type='range' data-tier='" + k + "' data-k='mult' min='0.8' max='2.6' step='0.05' value='" + t.mult + "'/>" +
+              "<output id='out-" + k + "-mult'>×" + t.mult.toFixed(2) + "</output></div>" +
+            "<div class='ctl'><span class='cl'>skew</span>" +
+              "<input type='range' class='skewsl' data-tier='" + k + "' data-k='skew' min='-0.10' max='0.10' step='0.01' value='" + t.skew + "'/>" +
+              "<output id='out-" + k + "-skew'>" + fmtSkew(t.skew) + "</output></div>" +
+          "</div>" +
+        "</div>";
+    });
+    tierBody.innerHTML = html;
+  }
+  function fmtSkew(s) {
+    if (Math.abs(s) < 0.005) return "flat";
+    return (s > 0 ? "+" : "") + s.toFixed(2) + "v " + (s > 0 ? "off" : "bid");
+  }
+
+  // ---- applied tier-lean (the steering vs the model smile) ------------------
+  const SKX = [52, 118, 184, 250, 308];         // 10ΔP · 25ΔP · ATM · 25ΔC · 10ΔC
+  const skewTilt = [-1.0, -0.55, 0, 0.55, 1.0]; // lean shape across the delta wing
+  const skewDyn = document.getElementById("skewDyn");
+  const LEAN_Y0 = 96, LEAN_K = 450;             // zero-lean baseline; px per vol (±0.10v -> ±45px)
+  const leanY = (v) => LEAN_Y0 - Math.max(-0.11, Math.min(0.11, v)) * LEAN_K;
+
+  function smooth(pts) {
+    if (pts.length < 2) return "";
+    let d = "M" + pts[0][0] + "," + pts[0][1].toFixed(1);
+    for (let k = 0; k < pts.length - 1; k++) {
+      const mx = (pts[k][0] + pts[k + 1][0]) / 2;
+      d += " Q" + pts[k][0] + "," + pts[k][1].toFixed(1) + " " + mx + "," + ((pts[k][1] + pts[k + 1][1]) / 2).toFixed(1);
+    }
+    const last = pts[pts.length - 1];
+    d += " T" + last[0] + "," + last[1].toFixed(1);
+    return d;
+  }
+
+  function drawSkew(tk) {
+    // plot the APPLIED − MODEL lean (diverging around ATM), NOT the raw smile: this panel now
+    // visualizes the tier steering it is titled for and no longer duplicates the 00 vol-smile.
+    const lean = skewTilt.map((s) => tiers[tk].skew * s);
+    const pts  = lean.map((v, k) => [SKX[k], leanY(v)]);
+    // diverging fill to the zero baseline: put-wing = bid-lean, call-wing = offer-lean
+    const leftFill  = "M52,96 " + pts.slice(0, 3).map((p) => "L" + p[0] + "," + p[1].toFixed(1)).join(" ") + " L184,96 Z";
+    const rightFill = "M184,96 " + pts.slice(2).map((p) => "L" + p[0] + "," + p[1].toFixed(1)).join(" ") + " L308,96 Z";
+    let g = "<path class='sk-bid' d='" + leftFill + "'/><path class='sk-off' d='" + rightFill + "'/>";
+    // faint ghost leans for the OTHER tiers -> the panel stays informative even when this tier is flat
+    Object.entries(tiers).forEach(([k, tt]) => {
+      if (k === tk) return;
+      const gp = skewTilt.map((s, i) => [SKX[i], leanY(tt.skew * s)]);
+      g += "<path class='sk-ghost' d='" + smooth(gp) + "'/>";
+    });
+    g += "<path class='sk-applied' d='" + smooth(pts) + "'/>";
+    pts.forEach((p) => { g += "<circle cx='" + p[0] + "' cy='" + p[1].toFixed(1) + "' r='2.6' fill='var(--brand)'/>"; });
+    skewDyn.innerHTML = g;
+    document.getElementById("skewTier").textContent = tk;
+  }
+
+  // ---- price elasticity -----------------------------------------------------
+  const elastDyn = document.getElementById("elastDyn");
+  const EX0 = 44, EX1 = 324, EY0 = 138, EY1 = 24; // .06v->x0, .30v->x1 ; 0->y0, .8->y1
+  const ex = (spread) => EX0 + clamp((spread - 0.06) / (0.30 - 0.06), 0, 1) * (EX1 - EX0);
+  const ey = (p) => EY0 - clamp(p / 0.8, 0, 1) * (EY0 - EY1);
+  const pWin = (spread) => 0.80 * Math.exp(-6.0 * (spread - 0.06)); // modeled hit-probability
+  const tierColor = { T1: "var(--seq-5)", T2: "var(--seq-4)", T3: "var(--seq-3)" };
+
+  function drawElast() {
+    // curve
+    let pts = [];
+    for (let s = 0.06; s <= 0.301; s += 0.02) pts.push(ex(s).toFixed(1) + "," + ey(pWin(s)).toFixed(1));
+    // revenue = spread * P(win) shaded band (illustrative optimum region)
+    let g = "<path class='el-band' d='M" + ex(0.09).toFixed(1) + ",138 " +
+            "L" + ex(0.09).toFixed(1) + "," + ey(pWin(0.09)).toFixed(1) +
+            " L" + ex(0.17).toFixed(1) + "," + ey(pWin(0.17)).toFixed(1) +
+            " L" + ex(0.17).toFixed(1) + ",138 Z'/>";
+    g += "<polyline class='el-curve' points='" + pts.join(" ") + "'/>";
+    // tier operating points
+    Object.entries(tiers).forEach(([k, t]) => {
+      const s = BASE_REF * t.mult, p = pWin(s), x = ex(s), y = ey(p);
+      g += "<line x1='" + x.toFixed(1) + "' y1='138' x2='" + x.toFixed(1) + "' y2='" + y.toFixed(1) +
+           "' stroke='" + tierColor[k] + "' stroke-width='1' stroke-dasharray='2 2' opacity='0.6'/>";
+      g += "<circle cx='" + x.toFixed(1) + "' cy='" + y.toFixed(1) + "' r='4' fill='" + tierColor[k] + "'/>";
+      g += "<text x='" + x.toFixed(1) + "' y='" + (y - 8).toFixed(1) + "' text-anchor='middle' class='axlbl b' font-size='9'>" +
+           k + " " + Math.round(p * 100) + "%</text>";
+    });
+    elastDyn.innerHTML = g;
+  }
+
+  // ---- interactions ---------------------------------------------------------
+  document.getElementById("metricSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-metric]"); if (!b) return;
+    metric = b.dataset.metric;
+    document.querySelectorAll("#metricSeg button").forEach((x) => x.classList.toggle("on", x === b));
+    repaintValues();
+  });
+
+  document.getElementById("lensSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-lens]"); if (!b) return;
+    lens = b.dataset.lens;
+    document.querySelectorAll("#lensSeg button").forEach((x) => x.classList.toggle("on", x === b));
+    repaintValues();
+    drawSkew(lens === "All" ? "T1" : lens);
+  });
+
+  tbody.addEventListener("click", (e) => {
+    const dot = e.target.closest("[data-toggle]"); if (!dot) return;
+    const i = +dot.dataset.toggle;
+    pulled[i] = !pulled[i];
+    buildBook();
+    updateMaster();
+  });
+
+  tierBody.addEventListener("input", (e) => {
+    const inp = e.target.closest("input[type=range]"); if (!inp) return;
+    const tk = inp.dataset.tier, key = inp.dataset.k, val = parseFloat(inp.value);
+    tiers[tk][key] = val;
+    document.getElementById("out-" + tk + "-" + key).textContent =
+      key === "mult" ? "×" + val.toFixed(2) : fmtSkew(val);
+    if (lens === tk || (lens === "All" && key === "skew")) repaintValues();
+    if (lens !== "All" && lens === tk) repaintValues();
+    if (key === "mult") updateAxes(); // keep the ctx-rail axe bars in lockstep with the spread ×
+    drawSkew(lens === "All" ? "T1" : lens);
+    drawElast();
+  });
+
+  const masterToggle = document.getElementById("masterToggle");
+  function toggleMaster() {
+    const anyLive = pulled.some((p) => !p); // anything live -> pull all; else publish all
+    pulled.forEach((_, i) => { pulled[i] = anyLive; });
+    buildBook();
+    updateMaster();
+  }
+  masterToggle.addEventListener("click", toggleMaster);
+  document.getElementById("ctxPull").addEventListener("click", toggleMaster); // rail = same gate
+
+  function updateMaster() {
+    const liveStreams = pairs.reduce((s, pr, i) => s + (pulled[i] ? 0 : pr.streams), 0);
+    const anyLive = liveStreams > 0;
+    const st = document.getElementById("masterState");
+    if (!anyLive) {
+      st.classList.remove("live"); st.classList.add("draft");
+      st.innerHTML = "○ PULLED ▸ 0 streams";
+      masterToggle.innerHTML = "<span class='lbl'>gate</span> publish all";
+    } else {
+      st.classList.add("live"); st.classList.remove("draft");
+      st.innerHTML = "● PUBLISHING ▸ <span class='num'>" + liveStreams + "</span> streams";
+      masterToggle.innerHTML = "<span class='lbl'>gate</span> pull all";
+    }
+    // ctx-rail Contribution mirror — one shared live state, never a second disagreeing pull-all
+    document.getElementById("ctxKill").classList.toggle("pulled", !anyLive);
+    document.getElementById("ctxKillLbl").innerHTML =
+      (anyLive ? "Live · " : "Pulled · ") + "<span class='num'>" + liveStreams + "</span> streaming";
+    document.getElementById("ctxPull").textContent = anyLive ? "Pull all" : "Publish all";
+  }
+
+  // ctx-rail tier axe bars = live tier ½-spread (BASE_REF × tier multiplier), locked to the Tier
+  // panel sliders instead of the old frozen 0.10/0.18/0.26 placeholders
+  function updateAxes() {
+    const AXE_MAX = BASE_REF * 2.6; // widest possible spread-× slider setting
+    Object.entries(tiers).forEach(([k, t]) => {
+      const v = BASE_REF * t.mult;
+      const bar = document.getElementById("axe-" + k);
+      const val = document.getElementById("axev-" + k);
+      if (bar) bar.style.width = Math.round(v / AXE_MAX * 100) + "%";
+      if (val) val.textContent = v.toFixed(2) + "v";
+    });
+  }
+
+  // ---- boot -----------------------------------------------------------------
+  buildBook();
+  buildTiers();
+  drawSkew("T1");
+  drawElast();
+  updateAxes();
+  updateMaster();
+  if (!reduceMotion) setInterval(tick, 900);
+})();
+</script>
+</body>
+</html>

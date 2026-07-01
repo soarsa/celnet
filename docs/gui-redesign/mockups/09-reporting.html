@@ -1,0 +1,943 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Reporting (mockup 09, v1)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+/* ============================================================================
+ * Reporting screen (09) — screen-scoped styles only. celer.css is untouched.
+ * ========================================================================== */
+.rp-head { display:flex; align-items:center; gap:var(--space-4); flex-wrap:wrap; }
+.rp-badge { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-caption); font-weight:700;
+  padding:3px 10px; border-radius:var(--r-full); background:var(--brand-soft); color:var(--brand);
+  letter-spacing:.05em; text-transform:uppercase; }
+.rp-note { display:flex; align-items:center; gap:var(--space-3); padding:8px 12px; border-radius:var(--r-md);
+  background:oklch(0.82 0.16 75 / 0.09); border:1px solid oklch(0.82 0.16 75 / 0.26);
+  font-size:var(--type-caption); color:var(--text-secondary); }
+.rp-tag { font-size:8px; font-weight:800; letter-spacing:.06em; padding:1px 5px; border-radius:3px; text-transform:uppercase; }
+.rp-tag.live { background:oklch(0.78 0.16 155 / 0.16); color:var(--bid); }
+.rp-tag.target { background:var(--accent-soft); color:var(--accent); }
+
+.rp-grid { display:grid; grid-template-columns:352px minmax(0,1fr); gap:var(--space-5); align-items:start; }
+@media (max-width:1200px){ .rp-grid{ grid-template-columns:1fr; } }
+
+/* builder — section list */
+.rp-secslabel { display:flex; justify-content:space-between; align-items:center; margin:var(--space-4) 0 var(--space-3); }
+.rp-sec { display:grid; grid-template-columns:auto auto 1fr auto; gap:var(--space-3); align-items:center;
+  padding:7px 9px; border-radius:var(--r-sm); border:1px solid var(--grid-line); background:var(--bg-base); margin-bottom:6px; }
+.rp-sec:hover { border-color:oklch(1 0 0 / 0.14); }
+.rp-sec.off { opacity:0.44; }
+.rp-sec .drag { color:var(--text-tertiary); cursor:grab; font-size:13px; letter-spacing:-3px; padding-right:2px; }
+.rp-sec .si { width:23px; height:23px; border-radius:6px; display:grid; place-items:center; background:var(--accent-soft); color:var(--accent); font-size:12px; }
+.rp-sec.off .si { background:oklch(1 0 0 / 0.05); color:var(--text-tertiary); }
+.rp-sec .nm { font-size:var(--type-callout); font-weight:600; line-height:1.25; }
+.rp-sec .sub { font-size:var(--type-micro); color:var(--text-tertiary); }
+.rp-sec .cf { display:inline-block; font-size:8px; color:var(--brand); font-weight:800; letter-spacing:.04em; margin-left:6px; vertical-align:1px; }
+.rp-add { width:100%; text-align:left; margin-top:2px; color:var(--text-tertiary); border-style:dashed; }
+
+/* toggle switch */
+.sw { width:34px; height:19px; border-radius:999px; background:oklch(1 0 0 / 0.12); border:var(--hairline);
+  position:relative; cursor:pointer; transition:background .15s; flex:none; }
+.sw::after { content:""; position:absolute; top:2px; left:2px; width:13px; height:13px; border-radius:50%;
+  background:var(--text-secondary); transition:transform .15s, background .15s; }
+.sw.on { background:var(--accent); }
+.sw.on::after { transform:translateX(15px); background:#fff; }
+
+/* preview paper */
+.rp-paper { background:var(--bg-base); border:var(--hairline); border-radius:var(--r-sm); padding:var(--space-5); }
+.rp-doc-h { display:flex; justify-content:space-between; align-items:flex-start; gap:var(--space-4);
+  padding-bottom:var(--space-4); border-bottom:2px solid var(--grid-line); margin-bottom:var(--space-4); }
+.rp-doc-h .org { display:flex; align-items:center; gap:8px; color:var(--brand); }
+.rp-doc-h .org .wm2 { font-family:var(--font-brand); font-size:15px; font-weight:600; color:var(--text-primary); }
+.rp-doc-h .rt { font-family:var(--font-display); font-size:17px; font-weight:600; margin-top:6px; letter-spacing:.005em; }
+.rp-kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:var(--space-3); margin:var(--space-4) 0; }
+.rp-kpi { padding:8px 10px; border-radius:var(--r-sm); background:var(--bg-inset); border:1px solid var(--grid-line); }
+.rp-kpi .kl { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:.05em; color:var(--text-tertiary); }
+.rp-kpi .kn { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:18px; font-weight:600; line-height:1.3; }
+.rp-cap { font-size:var(--type-micro); color:var(--text-tertiary); margin:2px 0 10px; }
+
+/* format tabs */
+.rp-tabs { display:inline-flex; gap:2px; background:var(--bg-inset); padding:2px; border-radius:var(--r-sm); }
+.rp-tabs button { border:0; background:transparent; color:var(--text-tertiary); font-size:var(--type-caption); font-weight:600;
+  padding:3px 10px; border-radius:4px; cursor:pointer; font-family:var(--font-mono); }
+.rp-tabs button.on { background:var(--bg-raised); color:var(--text-primary); box-shadow:var(--shadow-panel); }
+
+/* chart legend */
+.rp-leg { display:flex; gap:var(--space-5); flex-wrap:wrap; font-size:var(--type-caption); color:var(--text-secondary); margin-top:8px; }
+.rp-leg span { display:inline-flex; align-items:center; }
+.rp-leg i { display:inline-block; width:11px; height:11px; border-radius:2px; margin-right:6px; }
+.rp-leg i.ln { height:0; border-radius:0; border-top:2px solid; width:14px; }
+
+/* schedule controls */
+.rp-sched { display:grid; grid-template-columns:1fr 1fr; gap:var(--space-4) var(--space-5); }
+@media (max-width:640px){ .rp-sched{ grid-template-columns:1fr; } }
+.rp-fld { display:flex; flex-direction:column; gap:5px; }
+.rp-row { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; }
+.chipbtn { font-size:var(--type-caption); padding:4px 11px; border-radius:var(--r-full); border:var(--hairline);
+  background:oklch(1 0 0 / 0.04); color:var(--text-secondary); cursor:pointer; }
+.chipbtn.on { background:var(--accent-soft); color:var(--accent); border-color:transparent; font-weight:600; }
+.chipbtn.on::before { content:"✓ "; }
+
+.rp-hidden { display:none !important; }
+.rp-mini { width:100%; border-collapse:collapse; font-size:var(--type-caption); margin-top:4px; }
+.rp-mini th { text-align:right; font-size:var(--type-micro); text-transform:uppercase; letter-spacing:.05em;
+  color:var(--text-tertiary); font-weight:600; padding:3px 8px; border-bottom:var(--hairline); }
+.rp-mini th:first-child, .rp-mini td:first-child { text-align:left; }
+.rp-mini td { padding:4px 8px; border-bottom:1px solid var(--grid-line); }
+.rp-mini td.n { text-align:right; font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+
+/* preview sub-blocks — WYSIWYG section wiring (builder toggle → preview node) */
+.rp-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(84px,1fr)); gap:6px; margin:4px 0 6px; }
+.rp-metrics > div { padding:6px 9px; border-radius:var(--r-sm); background:var(--bg-inset); border:1px solid var(--grid-line); }
+.rp-metrics .gk { display:block; font-size:var(--type-micro); text-transform:uppercase; letter-spacing:.04em; color:var(--text-tertiary); }
+.rp-metrics .gv { font-size:14px; font-weight:600; line-height:1.35; }
+.rp-metrics .gv i { font-style:normal; font-size:9px; color:var(--text-tertiary); margin-left:2px; }
+.rp-util { display:flex; flex-direction:column; gap:5px; margin-top:2px; }
+.rp-util .ub { display:grid; grid-template-columns:78px 1fr 46px; gap:var(--space-3); align-items:center; font-size:var(--type-caption); }
+.rp-util .ubar { height:8px; border-radius:4px; background:var(--bg-inset); overflow:hidden; }
+.rp-util .ubar i { display:block; height:100%; background:var(--seq-4); border-radius:4px; }
+.rp-util .ub.warn .ubar i { background:var(--warn); }
+.rp-util .ub .num { text-align:right; }
+.rp-provln { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; margin-top:10px; font-size:var(--type-caption); }
+
+/* raw / tabular export surface (non-PDF formats) */
+.rp-raw { background:var(--bg-base); border:var(--hairline); border-radius:var(--r-sm); padding:var(--space-4); }
+.rp-rawhd { font-size:var(--type-caption); margin-bottom:8px; }
+.rp-rawpre { margin:0; padding:12px; background:var(--bg-inset); border:1px solid var(--grid-line); border-radius:var(--r-sm);
+  font-family:var(--font-mono); font-size:11px; line-height:1.65; color:var(--text-secondary); overflow:auto; max-height:440px; white-space:pre; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a class="on"><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — REPORTING ============ -->
+  <main class="main" id="rp-main" style="gap:var(--space-5)">
+
+    <!-- page header -->
+    <div class="rp-head">
+      <span class="title">Reporting</span>
+      <span class="rp-badge" title="No reporting backend exists yet — greenfield capability">◆ New · to build</span>
+      <div class="seg" id="rp-tplseg" role="tablist" aria-label="Report template">
+        <button class="on" data-tpl="valuation">Valuation</button>
+        <button data-tpl="risk">Risk &amp; Capital</button>
+        <button data-tpl="activity">Activity</button>
+        <button data-tpl="regulatory">Regulatory</button>
+        <button data-tpl="xva">XVA</button>
+      </div>
+      <span style="flex:1"></span>
+      <button class="btn ghost">Duplicate</button>
+      <button class="btn primary">New report</button>
+    </div>
+
+    <div class="rp-note">
+      <span class="rp-badge" style="background:var(--accent-soft); color:var(--accent)">Greenfield</span>
+      <span>No report engine, scheduler or delivery bus is wired yet — every figure below is <b>illustrative sample data</b>. Underlying analytics already exist
+        (<span class="num">valuation</span>, <span class="num">FRTB SBM capital</span>, <span class="num">XVA</span>, <span class="num">journal / audit log</span>);
+        report assembly &amp; distribution are the build. Data-source links are tagged <span class="rp-tag target">target</span>.</span>
+    </div>
+
+    <div class="rp-grid">
+
+      <!-- ================= LEFT — REPORT BUILDER ================= -->
+      <section class="panel">
+        <header>
+          <span class="headline">Report builder</span>
+          <span class="selctl"><span class="lbl">from</span> Template <span class="car">▾</span></span>
+        </header>
+        <div class="body">
+          <div class="ticketline" style="margin-bottom:var(--space-3)">
+            <span class="field" style="min-width:150px"><span class="lbl">name</span> Daily G10-A Valuation</span>
+            <span class="field"><span class="lbl">as-of</span> 01 Jul 26 · EOD <span class="car">▾</span></span>
+          </div>
+          <div class="ticketline">
+            <span class="field"><span class="lbl">scope</span> Desk FX Vol ▸ G10-A <span class="car">▾</span></span>
+            <span class="field"><span class="lbl">ccy</span> USD <span class="car">▾</span></span>
+            <span class="field"><span class="lbl">granularity</span> position <span class="car">▾</span></span>
+          </div>
+
+          <div class="rp-secslabel">
+            <span class="label">Sections · drag to order · toggle to include</span>
+            <span class="num dim" id="rp-count" style="font-size:11px">6 of 6 sections</span>
+          </div>
+
+          <!-- ---- Valuation sections ---- -->
+          <div class="rp-secs" data-tpl="valuation">
+            <div class="rp-sec" data-section="cover"><span class="drag">⠿</span><span class="si">▤</span><div><div class="nm">Cover &amp; scope</div><div class="sub">desk · book · as-of · sign-off block</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="nav"><span class="drag">⠿</span><span class="si">◱</span><div><div class="nm">Portfolio NAV summary</div><div class="sub">present value · unrealised · funding <span class="rp-tag target">target</span></div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="pnl"><span class="drag">⠿</span><span class="si">◔</span><div><div class="nm">P&amp;L bridge<span class="cf">▟ chart</span></div><div class="sub">open → market → new trades → xva → close</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="pos"><span class="drag">⠿</span><span class="si">▦</span><div><div class="nm">Position valuation table</div><div class="sub">per-trade PV · mid · marks <span class="rp-tag target">target</span></div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="greeks"><span class="drag">⠿</span><span class="si">Δ</span><div><div class="nm">Greeks &amp; sensitivities</div><div class="sub">Δ Γ Vega Θ Vanna ρ, aggregated</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec off" data-section="prov"><span class="drag">⠿</span><span class="si">◇</span><div><div class="nm">Model &amp; marks provenance</div><div class="sub">surface version · calibration RMSE</div></div><span class="sw" role="switch" aria-checked="false"></span></div>
+          </div>
+
+          <!-- ---- Risk sections ---- -->
+          <div class="rp-secs rp-hidden" data-tpl="risk">
+            <div class="rp-sec" data-section="var"><span class="drag">⠿</span><span class="si">◱</span><div><div class="nm">VaR / ES summary</div><div class="sub">1d 99% historical · expected shortfall</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="ladder"><span class="drag">⠿</span><span class="si">▥</span><div><div class="nm">Sensitivity ladder</div><div class="sub">bucketed Δ / Vega / DV01</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="frtb"><span class="drag">⠿</span><span class="si">◔</span><div><div class="nm">FRTB SBM capital<span class="cf">▟ chart</span></div><div class="sub">Δ · Vega · Curvature by risk class</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="limit"><span class="drag">⠿</span><span class="si">▤</span><div><div class="nm">Limit utilisation</div><div class="sub">notional · vega · VaR vs desk limits</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec off" data-section="stress"><span class="drag">⠿</span><span class="si">▦</span><div><div class="nm">Stress &amp; scenario grid</div><div class="sub">spot × vol shock matrix</div></div><span class="sw" role="switch" aria-checked="false"></span></div>
+          </div>
+
+          <!-- ---- Activity sections ---- -->
+          <div class="rp-secs rp-hidden" data-tpl="activity">
+            <div class="rp-sec" data-section="vol"><span class="drag">⠿</span><span class="si">◔</span><div><div class="nm">Quote &amp; RFQ volume<span class="cf">▟ chart</span></div><div class="sub">contributed updates + RFQ count, daily</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="hit"><span class="drag">⠿</span><span class="si">◱</span><div><div class="nm">Hit ratio &amp; response times</div><div class="sub">quote → trade · quote latency</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="cpty"><span class="drag">⠿</span><span class="si">▦</span><div><div class="nm">Top counterparties</div><div class="sub">by volume · by RFQ hit <span class="rp-tag target">target</span></div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="slo"><span class="drag">⠿</span><span class="si">▤</span><div><div class="nm">Streaming SLO</div><div class="sub">p50 / p99 / p99.9 · uptime</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+          </div>
+
+          <!-- ---- Regulatory sections ---- -->
+          <div class="rp-secs rp-hidden" data-tpl="regulatory">
+            <div class="rp-sec" data-section="frtb"><span class="drag">⠿</span><span class="si">◔</span><div><div class="nm">FRTB SBM capital<span class="cf">▟ chart</span></div><div class="sub">3-scenario correlation · max = charge</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="saccr"><span class="drag">⠿</span><span class="si">◱</span><div><div class="nm">SA-CCR EAD</div><div class="sub">exposure at default by netting set <span class="rp-tag target">target</span></div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="recon"><span class="drag">⠿</span><span class="si">▦</span><div><div class="nm">Trade &amp; valuation recon</div><div class="sub">books vs journal · break list</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec off" data-section="attest"><span class="drag">⠿</span><span class="si">✎</span><div><div class="nm">Attestations &amp; sign-off</div><div class="sub">desk head · risk · audit trail</div></div><span class="sw" role="switch" aria-checked="false"></span></div>
+          </div>
+
+          <!-- ---- XVA sections ---- -->
+          <div class="rp-secs rp-hidden" data-tpl="xva">
+            <div class="rp-sec" data-section="xsum"><span class="drag">⠿</span><span class="si">◱</span><div><div class="nm">XVA summary</div><div class="sub">CVA · DVA · FVA · MVA · net</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="prof"><span class="drag">⠿</span><span class="si">◔</span><div><div class="nm">EPE / PFE(95%) profile<span class="cf">▟ chart</span></div><div class="sub">exposure fan + mirrored ENE</div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec" data-section="net"><span class="drag">⠿</span><span class="si">▦</span><div><div class="nm">Netting-set breakdown</div><div class="sub">CSA · threshold · collateral <span class="rp-tag target">target</span></div></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+            <div class="rp-sec off" data-section="wwr"><span class="drag">⠿</span><span class="si">⚠</span><div><div class="nm">Wrong-way risk</div><div class="sub">exposure ↔ credit correlation</div></div><span class="sw" role="switch" aria-checked="false"></span></div>
+          </div>
+
+          <button class="btn ghost rp-add">+ Add section from library</button>
+
+          <div style="display:flex; align-items:center; gap:var(--space-3); margin-top:var(--space-4)">
+            <span class="label">Output</span>
+            <div class="rp-tabs" id="rp-fmt">
+              <button class="on" data-fmt="PDF">PDF</button><button data-fmt="XLSX">XLSX</button><button data-fmt="CSV">CSV</button><button data-fmt="JSON">JSON</button>
+            </div>
+            <span style="flex:1"></span>
+            <span class="dim" style="font-size:11px">A4 · landscape</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= RIGHT — PREVIEW + SCHEDULE ================= -->
+      <section class="panel">
+        <header>
+          <span class="headline">Preview · <span class="rp-tplname">Valuation</span></span>
+          <span style="display:flex; align-items:center; gap:var(--space-3)">
+            <span class="rp-tag target">sample data</span>
+            <span class="dim" style="font-size:11px">surface <span class="num" id="rp-surface">PDF layout</span></span>
+            <button class="btn ghost">Refresh ◷</button>
+          </span>
+        </header>
+        <div class="body">
+
+          <div class="rp-paper">
+
+            <!-- =========== VALUATION preview =========== -->
+            <div class="rp-tpl" data-tpl="valuation">
+              <div class="rp-doc-h" data-section="cover">
+                <div>
+                  <div class="org"><svg class="pinwheel" viewBox="0 0 501 500" style="width:16px;height:16px" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg><span class="wm2">Celnet</span> <span class="dim">· FX Vol Desk — G10-A</span></div>
+                  <div class="rt">Daily Portfolio Valuation</div>
+                </div>
+                <div style="text-align:right; font-size:11px" class="num dim">
+                  <div>ref CN-VAL-2026-0701-018</div>
+                  <div>as-of 01 Jul 2026 · EOD (NY 17:00)</div>
+                  <div>base USD · generated 17:04:11</div>
+                </div>
+              </div>
+
+              <div class="rp-kpis" data-section="nav">
+                <div class="rp-kpi"><div class="kl">Net asset value</div><div class="kn">$4.507<span class="dim" style="font-size:12px">mm</span></div></div>
+                <div class="rp-kpi"><div class="kl">Day P&amp;L</div><div class="kn pos">+$307<span class="dim" style="font-size:12px">k</span></div></div>
+                <div class="rp-kpi"><div class="kl">Unrealised</div><div class="kn">+$1.12<span class="dim" style="font-size:12px">mm</span></div></div>
+                <div class="rp-kpi"><div class="kl">Live positions</div><div class="kn">1,284</div></div>
+              </div>
+
+              <div data-section="pnl">
+              <div class="label" style="margin-bottom:2px">P&amp;L bridge · open → close (USD mm)</div>
+              <svg class="chart" viewBox="0 0 580 244" height="228" role="img" aria-label="Profit and loss bridge waterfall">
+                <!-- gridlines + y labels (broken axis from 4.00mm) -->
+                <line class="gl" x1="56" y1="40"  x2="560" y2="40"/>
+                <line class="gl" x1="56" y1="88.6" x2="560" y2="88.6"/>
+                <line class="gl" x1="56" y1="137.1" x2="560" y2="137.1"/>
+                <line class="gl" x1="56" y1="185.7" x2="560" y2="185.7"/>
+                <line x1="56" y1="210" x2="560" y2="210" stroke="var(--text-tertiary)" stroke-width="1"/>
+                <text class="axlbl" x="50" y="43"  text-anchor="end">4.70</text>
+                <text class="axlbl" x="50" y="91.6" text-anchor="end">4.50</text>
+                <text class="axlbl" x="50" y="140" text-anchor="end">4.30</text>
+                <text class="axlbl" x="50" y="188" text-anchor="end">4.10</text>
+                <text class="axlbl" x="50" y="213" text-anchor="end">≈4.00</text>
+                <!-- connectors -->
+                <g stroke="var(--text-tertiary)" stroke-dasharray="2 3" stroke-width="1" opacity="0.7">
+                  <line x1="115" y1="161.4" x2="141" y2="161.4"/>
+                  <line x1="187" y1="117.7" x2="213" y2="117.7"/>
+                  <line x1="259" y1="94.6"  x2="285" y2="94.6"/>
+                  <line x1="331" y1="109.2" x2="357" y2="109.2"/>
+                  <line x1="403" y1="75.2"  x2="429" y2="75.2"/>
+                  <line x1="475" y1="86.8"  x2="501" y2="86.8"/>
+                </g>
+                <!-- bars: totals=seq-3, increases=div-pos2, decreases=div-neg2 -->
+                <rect x="69"  y="161.4" width="46" height="48.6"  fill="var(--seq-3)"/>
+                <rect x="141" y="117.7" width="46" height="43.7"  fill="var(--div-pos2)"/>
+                <rect x="213" y="94.6"  width="46" height="23.1"  fill="var(--div-pos2)"/>
+                <rect x="285" y="94.6"  width="46" height="14.6"  fill="var(--div-neg2)"/>
+                <rect x="357" y="75.2"  width="46" height="34.0"  fill="var(--div-pos2)"/>
+                <rect x="429" y="75.2"  width="46" height="11.6"  fill="var(--div-neg2)"/>
+                <rect x="501" y="86.8"  width="46" height="123.2" fill="var(--seq-3)"/>
+                <!-- value labels -->
+                <g class="axlbl b" text-anchor="middle" font-size="9">
+                  <text x="92"  y="156">4.200</text>
+                  <text x="164" y="112" fill="var(--div-pos2)">+180</text>
+                  <text x="236" y="89"  fill="var(--div-pos2)">+95</text>
+                  <text x="308" y="89"  fill="var(--div-neg2)">−60</text>
+                  <text x="380" y="70"  fill="var(--div-pos2)">+140</text>
+                  <text x="452" y="70"  fill="var(--div-neg2)">−48</text>
+                  <text x="524" y="82">4.507</text>
+                </g>
+                <!-- x labels -->
+                <g class="axlbl" text-anchor="middle">
+                  <text x="92"  y="224">Open NAV</text>
+                  <text x="164" y="224">Δ P&amp;L</text>
+                  <text x="236" y="224">Vega</text>
+                  <text x="308" y="224">Θ decay</text>
+                  <text x="380" y="224">New trades</text>
+                  <text x="452" y="224">XVA</text>
+                  <text x="524" y="224">Close NAV</text>
+                </g>
+              </svg>
+              <div class="rp-leg">
+                <span><i style="background:var(--seq-3)"></i>NAV level</span>
+                <span><i style="background:var(--div-pos2)"></i>gain</span>
+                <span><i style="background:var(--div-neg2)"></i>reduction</span>
+              </div>
+              </div><!-- /pnl -->
+
+              <div data-section="greeks">
+                <div class="label" style="margin:10px 0 2px">Aggregate Greeks · desk G10-A</div>
+                <div class="rp-metrics">
+                  <div><span class="gk">Δ delta</span><span class="gv num">+1.28<i>mm</i></span></div>
+                  <div><span class="gk">Γ gamma</span><span class="gv num">+0.42<i>mm/%</i></span></div>
+                  <div><span class="gk">Vega</span><span class="gv num">+184<i>k/vol</i></span></div>
+                  <div><span class="gk">Θ theta</span><span class="gv num">−22<i>k/day</i></span></div>
+                  <div><span class="gk">Vanna</span><span class="gv num">+14<i>k</i></span></div>
+                  <div><span class="gk">ρ rho</span><span class="gv num">+8<i>k/bp</i></span></div>
+                </div>
+              </div>
+
+              <table class="rp-mini" style="margin-top:14px" data-section="pos">
+                <thead><tr><th>Top movers</th><th>PV (USD)</th><th>Day P&amp;L</th><th>Vega</th></tr></thead>
+                <tbody>
+                  <tr><td>EUR/USD 1M 25Δ call strip</td><td class="n">1.284mm</td><td class="n pos">+118k</td><td class="n">42k</td></tr>
+                  <tr><td>USD/JPY 3M risk reversal</td><td class="n">0.902mm</td><td class="n pos">+74k</td><td class="n">31k</td></tr>
+                  <tr><td>GBP/USD 2W straddle</td><td class="n">0.540mm</td><td class="n neg">−22k</td><td class="n">18k</td></tr>
+                  <tr><td>XAU/USD 6M butterfly</td><td class="n">0.311mm</td><td class="n pos">+16k</td><td class="n">9k</td></tr>
+                </tbody>
+              </table>
+              <div data-section="prov" class="rp-provln rp-hidden">
+                <span class="rp-tag target">target</span>
+                <span class="dim">Surface <span class="num">FXVOL-G10-2026.0701.3</span> · calib RMSE <span class="num">0.14 vol</span> · marks <span class="num">EOD NY 17:00</span> · model <span class="num">SABR-XVA</span></span>
+              </div>
+            </div>
+
+            <!-- =========== RISK preview =========== -->
+            <div class="rp-tpl rp-hidden" data-tpl="risk">
+              <div class="rp-doc-h" data-section="cover">
+                <div>
+                  <div class="org"><svg class="pinwheel" viewBox="0 0 501 500" style="width:16px;height:16px" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg><span class="wm2">Celnet</span> <span class="dim">· FX Vol Desk — G10-A</span></div>
+                  <div class="rt">Market Risk &amp; Capital</div>
+                </div>
+                <div style="text-align:right; font-size:11px" class="num dim">
+                  <div>ref CN-RSK-2026-0701-041</div>
+                  <div>as-of 01 Jul 2026 · EOD</div>
+                  <div>SBM · FRTB-SA</div>
+                </div>
+              </div>
+
+              <div class="rp-kpis" data-section="var">
+                <div class="rp-kpi"><div class="kl">1d VaR 99%</div><div class="kn neg">−$312<span class="dim" style="font-size:12px">k</span></div></div>
+                <div class="rp-kpi"><div class="kl">Expected shortfall</div><div class="kn neg">−$438<span class="dim" style="font-size:12px">k</span></div></div>
+                <div class="rp-kpi"><div class="kl">SBM capital</div><div class="kn">$4.75<span class="dim" style="font-size:12px">mm</span></div></div>
+                <div class="rp-kpi"><div class="kl">Limit util.</div><div class="kn">62<span class="dim" style="font-size:12px">%</span></div></div>
+              </div>
+
+              <div data-section="frtb">
+              <div class="label" style="margin-bottom:2px">FRTB SBM capital by risk class · component stack (USD mm)</div>
+              <svg class="chart" viewBox="0 0 580 244" height="228" role="img" aria-label="FRTB SBM capital by risk class">
+                <line class="gl" x1="64" y1="40"  x2="560" y2="40"/>
+                <line class="gl" x1="64" y1="96.7" x2="560" y2="96.7"/>
+                <line class="gl" x1="64" y1="153.4" x2="560" y2="153.4"/>
+                <line x1="64" y1="210" x2="560" y2="210" stroke="var(--text-tertiary)" stroke-width="1"/>
+                <g class="axlbl" text-anchor="end">
+                  <text x="58" y="43">1.80</text><text x="58" y="99.7">1.20</text><text x="58" y="156.4">0.60</text><text x="58" y="213">0</text>
+                </g>
+                <!-- GIRR -->
+                <rect x="92"  y="96.7"  width="56" height="113.3" fill="var(--seq-2)"/>
+                <rect x="92"  y="68.4"  width="56" height="28.3"  fill="var(--seq-4)"/>
+                <rect x="92"  y="54.2"  width="56" height="14.2"  fill="var(--seq-6)"/>
+                <!-- FX -->
+                <rect x="212" y="125.0" width="56" height="85.0"  fill="var(--seq-2)"/>
+                <rect x="212" y="79.7"  width="56" height="45.3"  fill="var(--seq-4)"/>
+                <rect x="212" y="59.9"  width="56" height="19.8"  fill="var(--seq-6)"/>
+                <!-- Metals -->
+                <rect x="332" y="149.6" width="56" height="60.4"  fill="var(--seq-2)"/>
+                <rect x="332" y="128.8" width="56" height="20.8"  fill="var(--seq-4)"/>
+                <rect x="332" y="117.5" width="56" height="11.3"  fill="var(--seq-6)"/>
+                <!-- CSR -->
+                <rect x="452" y="174.1" width="56" height="35.9"  fill="var(--seq-2)"/>
+                <rect x="452" y="165.6" width="56" height="8.5"   fill="var(--seq-4)"/>
+                <rect x="452" y="159.9" width="56" height="5.7"   fill="var(--seq-6)"/>
+                <g class="axlbl b" text-anchor="middle" font-size="9">
+                  <text x="120" y="50">1.65</text><text x="240" y="55">1.59</text><text x="360" y="113">0.98</text><text x="480" y="155">0.53</text>
+                </g>
+                <g class="axlbl" text-anchor="middle">
+                  <text x="120" y="224">GIRR</text><text x="240" y="224">FX</text><text x="360" y="224">Metals</text><text x="480" y="224">CSR</text>
+                </g>
+              </svg>
+              <div class="rp-leg">
+                <span><i style="background:var(--seq-2)"></i>Delta</span>
+                <span><i style="background:var(--seq-4)"></i>Vega</span>
+                <span><i style="background:var(--seq-6)"></i>Curvature</span>
+              </div>
+              </div><!-- /frtb -->
+
+              <table class="rp-mini" style="margin-top:14px" data-section="ladder">
+                <thead><tr><th>Sensitivity ladder</th><th>Δ (USD/bp)</th><th>Vega (/vol)</th><th>Cap. (mm)</th></tr></thead>
+                <tbody>
+                  <tr><td>GIRR — USD OIS</td><td class="n">+1.28k</td><td class="n">—</td><td class="n">1.65</td></tr>
+                  <tr><td>FX — EUR/USD, USD/JPY</td><td class="n">+2.51k</td><td class="n">+184k</td><td class="n">1.59</td></tr>
+                  <tr><td>Metals — XAU, XAG</td><td class="n">+0.64k</td><td class="n">+52k</td><td class="n">0.98</td></tr>
+                  <tr><td>CSR — non-sec</td><td class="n">+0.38k</td><td class="n">—</td><td class="n">0.53</td></tr>
+                </tbody>
+              </table>
+              <div data-section="limit">
+                <div class="label" style="margin:10px 0 2px">Limit utilisation vs desk caps</div>
+                <div class="rp-util">
+                  <div class="ub"><span>Notional</span><span class="ubar"><i style="width:54%"></i></span><span class="num">54%</span></div>
+                  <div class="ub"><span>Vega</span><span class="ubar"><i style="width:71%"></i></span><span class="num">71%</span></div>
+                  <div class="ub"><span>1d VaR</span><span class="ubar"><i style="width:62%"></i></span><span class="num">62%</span></div>
+                  <div class="ub warn"><span>Curvature</span><span class="ubar"><i style="width:88%"></i></span><span class="num">88%</span></div>
+                </div>
+              </div>
+              <div data-section="stress" class="rp-provln rp-hidden">
+                <span class="rp-tag target">target</span>
+                <span class="dim">Spot×Vol shock grid — <span class="num">−10%…+10%</span> spot × <span class="num">−5v…+5v</span> vol · worst cell <span class="num neg">−$0.91mm</span></span>
+              </div>
+            </div>
+
+            <!-- =========== ACTIVITY preview =========== -->
+            <div class="rp-tpl rp-hidden" data-tpl="activity">
+              <div class="rp-doc-h" data-section="cover">
+                <div>
+                  <div class="org"><svg class="pinwheel" viewBox="0 0 501 500" style="width:16px;height:16px" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg><span class="wm2">Celnet</span> <span class="dim">· FX Vol Desk — G10-A</span></div>
+                  <div class="rt">Distribution &amp; Desk Activity</div>
+                </div>
+                <div style="text-align:right; font-size:11px" class="num dim">
+                  <div>ref CN-ACT-2026-0701-007</div>
+                  <div>period 02 Jun – 01 Jul 2026</div>
+                  <div>22 business days</div>
+                </div>
+              </div>
+
+              <div class="rp-kpis" data-section="hit">
+                <div class="rp-kpi"><div class="kl">Peak quote rate</div><div class="kn">8,412<span class="dim" style="font-size:12px">/s</span></div></div>
+                <div class="rp-kpi"><div class="kl">RFQs handled</div><div class="kn">214</div></div>
+                <div class="rp-kpi"><div class="kl">Hit ratio</div><div class="kn">61<span class="dim" style="font-size:12px">%</span></div></div>
+                <div class="rp-kpi"><div class="kl">p99 quote</div><div class="kn">180<span class="dim" style="font-size:12px">µs</span></div></div>
+              </div>
+
+              <div data-section="vol">
+              <div class="label" style="margin-bottom:2px">Daily contributed-quote volume (k) &amp; RFQ count</div>
+              <svg class="chart" viewBox="0 0 580 226" height="212" role="img" aria-label="Daily quote volume and RFQ count">
+                <defs>
+                  <linearGradient id="rpVol" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="var(--seq-5)" stop-opacity="0.38"/>
+                    <stop offset="1" stop-color="var(--seq-5)" stop-opacity="0.02"/>
+                  </linearGradient>
+                </defs>
+                <line class="gl" x1="56" y1="30"  x2="560" y2="30"/>
+                <line class="gl" x1="56" y1="115" x2="560" y2="115"/>
+                <line x1="56" y1="200" x2="560" y2="200" stroke="var(--text-tertiary)" stroke-width="1"/>
+                <g class="axlbl" text-anchor="end"><text x="50" y="33">10k</text><text x="50" y="118">5k</text><text x="50" y="203">0</text></g>
+                <g class="axlbl" text-anchor="start" fill="var(--text-tertiary)"><text x="566" y="33">50</text><text x="566" y="118">25</text><text x="566" y="203">0 RFQ</text></g>
+                <!-- volume area -->
+                <path fill="url(#rpVol)" stroke="none" d="M56,200 L56,77.6 79.6,84.4 103.2,72.5 126.8,62.3 150.4,65.7 174,53.8 197.6,45.3 221.2,57.2 244.8,67.4 268.4,60.6 292,48.7 315.6,40.2 339.2,52.1 362.8,62.3 386.4,70.8 410,58.9 433.6,47 457.2,36.8 480.8,50.4 504.4,60.6 528,55.5 551.6,43.6 L551.6,200 Z"/>
+                <polyline fill="none" stroke="var(--seq-5)" stroke-width="2" stroke-linejoin="round" points="56,77.6 79.6,84.4 103.2,72.5 126.8,62.3 150.4,65.7 174,53.8 197.6,45.3 221.2,57.2 244.8,67.4 268.4,60.6 292,48.7 315.6,40.2 339.2,52.1 362.8,62.3 386.4,70.8 410,58.9 433.6,47 457.2,36.8 480.8,50.4 504.4,60.6 528,55.5 551.6,43.6"/>
+                <!-- RFQ dashed line (secondary axis) -->
+                <polyline fill="none" stroke="var(--div-pos2)" stroke-width="1.5" stroke-dasharray="4 3" points="56,138.8 79.6,149 103.2,125.2 126.8,104.8 150.4,132 174,94.6 197.6,81 221.2,118.4 244.8,135.4 268.4,111.6 292,87.8 315.6,70.8 339.2,101.4 362.8,128.6 386.4,142.2 410,108.2 433.6,84.4 457.2,64 480.8,98 504.4,121.8 528,115 551.6,77.6"/>
+                <g class="axlbl" text-anchor="middle">
+                  <text x="56" y="216">Jun 2</text><text x="174" y="216">Jun 9</text><text x="292" y="216">Jun 16</text><text x="410" y="216">Jun 23</text><text x="551.6" y="216">Jul 1</text>
+                </g>
+              </svg>
+              <div class="rp-leg">
+                <span><i style="background:var(--seq-5)"></i>quote volume (k, left)</span>
+                <span><i class="ln" style="border-color:var(--div-pos2)"></i>RFQ count (right)</span>
+              </div>
+              </div><!-- /vol -->
+
+              <table class="rp-mini" style="margin-top:14px" data-section="cpty">
+                <thead><tr><th>Top counterparties <span class="rp-tag target">target</span></th><th>Quotes</th><th>RFQ</th><th>Hit %</th></tr></thead>
+                <tbody>
+                  <tr><td>Celer Trader — internal desks</td><td class="n">1.82m</td><td class="n">96</td><td class="n">68</td></tr>
+                  <tr><td>CPTY-A (bank)</td><td class="n">0.94m</td><td class="n">54</td><td class="n">57</td></tr>
+                  <tr><td>CPTY-B (fund)</td><td class="n">0.61m</td><td class="n">41</td><td class="n">52</td></tr>
+                  <tr><td>CPTY-C (corporate)</td><td class="n">0.28m</td><td class="n">23</td><td class="n">61</td></tr>
+                </tbody>
+              </table>
+              <div data-section="slo">
+                <div class="label" style="margin:10px 0 2px">Streaming SLO · quote latency &amp; uptime</div>
+                <div class="rp-metrics">
+                  <div><span class="gk">p50</span><span class="gv num">42<i>µs</i></span></div>
+                  <div><span class="gk">p99</span><span class="gv num">180<i>µs</i></span></div>
+                  <div><span class="gk">p99.9</span><span class="gv num">410<i>µs</i></span></div>
+                  <div><span class="gk">uptime</span><span class="gv num">99.98<i>%</i></span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- =========== REGULATORY preview =========== -->
+            <div class="rp-tpl rp-hidden" data-tpl="regulatory">
+              <div class="rp-doc-h" data-section="cover">
+                <div>
+                  <div class="org"><svg class="pinwheel" viewBox="0 0 501 500" style="width:16px;height:16px" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg><span class="wm2">Celnet</span> <span class="dim">· FX Vol Desk — G10-A</span></div>
+                  <div class="rt">Regulatory Capital — FRTB SBM</div>
+                </div>
+                <div style="text-align:right; font-size:11px" class="num dim">
+                  <div>ref CN-REG-2026-0701-002</div>
+                  <div>as-of 01 Jul 2026 · EOD</div>
+                  <div>3-scenario correlation set</div>
+                </div>
+              </div>
+
+              <div class="rp-kpis">
+                <div class="rp-kpi" data-section="frtb"><div class="kl">SBM capital charge</div><div class="kn">$4.75<span class="dim" style="font-size:12px">mm</span></div></div>
+                <div class="rp-kpi" data-section="saccr"><div class="kl">SA-CCR EAD <span class="rp-tag target" style="font-size:7px">tgt</span></div><div class="kn">$9.8<span class="dim" style="font-size:12px">mm</span></div></div>
+                <div class="rp-kpi" data-section="recon"><div class="kl">Recon breaks</div><div class="kn pos">0</div></div>
+                <div class="rp-kpi rp-hidden" data-section="attest"><div class="kl">Sign-off</div><div class="kn" style="font-size:14px; color:var(--warn)">pending</div></div>
+              </div>
+
+              <div data-section="frtb">
+              <div class="label" style="margin-bottom:2px">SBM three-scenario correlation · max sets the charge (USD mm)</div>
+              <svg class="chart" viewBox="0 0 580 244" height="228" role="img" aria-label="FRTB SBM three-scenario capital by risk class">
+                <line class="gl" x1="64" y1="40"  x2="560" y2="40"/>
+                <line class="gl" x1="64" y1="96.7" x2="560" y2="96.7"/>
+                <line class="gl" x1="64" y1="153.4" x2="560" y2="153.4"/>
+                <line x1="64" y1="210" x2="560" y2="210" stroke="var(--text-tertiary)" stroke-width="1"/>
+                <g class="axlbl" text-anchor="end">
+                  <text x="58" y="43">1.80</text><text x="58" y="99.7">1.20</text><text x="58" y="156.4">0.60</text><text x="58" y="213">0</text>
+                </g>
+                <!-- GIRR: Low/Med(max)/High -->
+                <rect x="87"  y="70.3"  width="18" height="139.7" fill="var(--seq-3)"/>
+                <rect x="111" y="54.2"  width="18" height="155.8" fill="var(--seq-5)" stroke="var(--accent)" stroke-width="1.5"/>
+                <rect x="135" y="59.9"  width="18" height="150.1" fill="var(--seq-4)"/>
+                <!-- FX -->
+                <rect x="207" y="75.9"  width="18" height="134.1" fill="var(--seq-3)"/>
+                <rect x="231" y="59.9"  width="18" height="150.1" fill="var(--seq-5)" stroke="var(--accent)" stroke-width="1.5"/>
+                <rect x="255" y="62.7"  width="18" height="147.3" fill="var(--seq-4)"/>
+                <!-- Metals -->
+                <rect x="327" y="126.9" width="18" height="83.1"  fill="var(--seq-3)"/>
+                <rect x="351" y="117.5" width="18" height="92.5"  fill="var(--seq-5)" stroke="var(--accent)" stroke-width="1.5"/>
+                <rect x="375" y="120.3" width="18" height="89.7"  fill="var(--seq-4)"/>
+                <!-- CSR -->
+                <rect x="447" y="165.6" width="18" height="44.4"  fill="var(--seq-3)"/>
+                <rect x="471" y="160.0" width="18" height="50.0"  fill="var(--seq-5)" stroke="var(--accent)" stroke-width="1.5"/>
+                <rect x="495" y="160.9" width="18" height="49.1"  fill="var(--seq-4)"/>
+                <!-- max markers -->
+                <g fill="var(--accent)" font-size="8" text-anchor="middle" font-family="var(--font-mono)">
+                  <text x="120" y="49">▲ max</text><text x="240" y="55">▲</text><text x="360" y="112">▲</text><text x="480" y="155">▲</text>
+                </g>
+                <g class="axlbl" text-anchor="middle">
+                  <text x="120" y="224">GIRR</text><text x="240" y="224">FX</text><text x="360" y="224">Metals</text><text x="480" y="224">CSR</text>
+                </g>
+              </svg>
+              <div class="rp-leg">
+                <span><i style="background:var(--seq-3)"></i>low corr.</span>
+                <span><i style="background:var(--seq-5); outline:1.5px solid var(--accent); outline-offset:-1.5px"></i>medium (binding)</span>
+                <span><i style="background:var(--seq-4)"></i>high corr.</span>
+              </div>
+              </div><!-- /frtb -->
+
+              <table class="rp-mini" style="margin-top:14px" data-section="frtb">
+                <thead><tr><th>Risk class</th><th>Low</th><th>Medium</th><th>High</th><th>Charge</th></tr></thead>
+                <tbody>
+                  <tr><td>GIRR</td><td class="n">1.48</td><td class="n" style="color:var(--accent)">1.65</td><td class="n">1.59</td><td class="n">1.65</td></tr>
+                  <tr><td>FX</td><td class="n">1.42</td><td class="n" style="color:var(--accent)">1.59</td><td class="n">1.56</td><td class="n">1.59</td></tr>
+                  <tr><td>Metals</td><td class="n">0.88</td><td class="n" style="color:var(--accent)">0.98</td><td class="n">0.95</td><td class="n">0.98</td></tr>
+                  <tr><td>CSR</td><td class="n">0.47</td><td class="n" style="color:var(--accent)">0.53</td><td class="n">0.52</td><td class="n">0.53</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- =========== XVA preview =========== -->
+            <div class="rp-tpl rp-hidden" data-tpl="xva">
+              <div class="rp-doc-h" data-section="cover">
+                <div>
+                  <div class="org"><svg class="pinwheel" viewBox="0 0 501 500" style="width:16px;height:16px" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg><span class="wm2">Celnet</span> <span class="dim">· FX Vol Desk — G10-A</span></div>
+                  <div class="rt">Valuation Adjustments — XVA</div>
+                </div>
+                <div style="text-align:right; font-size:11px" class="num dim">
+                  <div>ref CN-XVA-2026-0701-011</div>
+                  <div>as-of 01 Jul 2026 · EOD</div>
+                  <div>CSA-netted · scaffold engine</div>
+                </div>
+              </div>
+
+              <div class="rp-kpis" data-section="xsum">
+                <div class="rp-kpi"><div class="kl">CVA</div><div class="kn neg">−$182<span class="dim" style="font-size:12px">k</span></div></div>
+                <div class="rp-kpi"><div class="kl">DVA</div><div class="kn pos">+$96<span class="dim" style="font-size:12px">k</span></div></div>
+                <div class="rp-kpi"><div class="kl">FVA</div><div class="kn neg">−$54<span class="dim" style="font-size:12px">k</span></div></div>
+                <div class="rp-kpi"><div class="kl">Net XVA</div><div class="kn neg">−$140<span class="dim" style="font-size:12px">k</span></div></div>
+              </div>
+
+              <div data-section="prof">
+              <div class="label" style="margin-bottom:2px">Exposure profile · PFE(95%) / EPE / ENE (USD k)</div>
+              <svg class="chart" viewBox="0 0 580 244" height="228" role="img" aria-label="Expected and potential future exposure profile">
+                <!-- zero line + up/down labels -->
+                <line class="gl" x1="56" y1="30"  x2="560" y2="30"/>
+                <line class="gl" x1="56" y1="85"  x2="560" y2="85"/>
+                <line x1="56" y1="140" x2="560" y2="140" stroke="var(--text-tertiary)" stroke-width="1"/>
+                <line class="gl" x1="56" y1="182.3" x2="560" y2="182.3"/>
+                <!-- uniform 5.9 k/px both sides of zero: +325 -> 55px, so -250 -> 42.3px below zero -->
+                <g class="axlbl" text-anchor="end">
+                  <text x="50" y="33">+650</text><text x="50" y="88">+325</text><text x="50" y="143">0</text><text x="50" y="185.5">−250</text>
+                </g>
+                <!-- PFE fan fill (between EPE and PFE) -->
+                <path fill="var(--seq-3)" opacity="0.22" stroke="none" d="M56,140 128,68.9 200,45.2 272,36.8 344,40.2 416,52 488,70.6 560,96 560,124.8 488,114.6 416,105.3 344,99.4 272,96.8 200,99.4 128,109.5 56,140 Z"/>
+                <!-- ENE mirrored fill -->
+                <path fill="var(--div-neg2)" opacity="0.18" stroke="none" d="M56,140 128,170.5 200,180.6 272,183.2 344,180.6 416,174.7 488,165.4 560,155.2 560,140 Z"/>
+                <!-- PFE line -->
+                <polyline fill="none" stroke="var(--seq-3)" stroke-width="1.5" stroke-dasharray="4 3" points="56,140 128,68.9 200,45.2 272,36.8 344,40.2 416,52 488,70.6 560,96"/>
+                <!-- EPE bold line -->
+                <polyline fill="none" stroke="var(--seq-5)" stroke-width="2.4" stroke-linejoin="round" points="56,140 128,109.5 200,99.4 272,96.8 344,99.4 416,105.3 488,114.6 560,124.8"/>
+                <!-- ENE line -->
+                <polyline fill="none" stroke="var(--div-neg2)" stroke-width="1.5" points="56,140 128,170.5 200,180.6 272,183.2 344,180.6 416,174.7 488,165.4 560,155.2"/>
+                <!-- peak marker -->
+                <circle cx="272" cy="36.8" r="3" fill="var(--seq-3)"/>
+                <text class="axlbl b" x="272" y="30" text-anchor="middle">peak PFE 610k</text>
+                <g class="axlbl" text-anchor="middle">
+                  <text x="56" y="236">spot</text><text x="128" y="236">1M</text><text x="200" y="236">3M</text><text x="272" y="236">6M</text><text x="344" y="236">1Y</text><text x="416" y="236">2Y</text><text x="488" y="236">3Y</text><text x="560" y="236">5Y</text>
+                </g>
+              </svg>
+              <div class="rp-leg">
+                <span><i class="ln" style="border-top-style:dashed; border-color:var(--seq-3)"></i>PFE(95%)</span>
+                <span><i class="ln" style="border-color:var(--seq-5); border-top-width:3px"></i>EPE</span>
+                <span><i class="ln" style="border-color:var(--div-neg2)"></i>ENE (own)</span>
+              </div>
+              </div><!-- /prof -->
+
+              <table class="rp-mini" style="margin-top:14px" data-section="net">
+                <thead><tr><th>Netting set <span class="rp-tag target">target</span></th><th>EPE (k)</th><th>PFE95 (k)</th><th>CVA (k)</th></tr></thead>
+                <tbody>
+                  <tr><td>CPTY-A · CSA thr 0</td><td class="n">255</td><td class="n">610</td><td class="n neg">−92</td></tr>
+                  <tr><td>CPTY-B · CSA thr 5mm</td><td class="n">148</td><td class="n">340</td><td class="n neg">−58</td></tr>
+                  <tr><td>CPTY-C · uncollateralised</td><td class="n">96</td><td class="n">228</td><td class="n neg">−32</td></tr>
+                </tbody>
+              </table>
+              <div data-section="wwr" class="rp-provln rp-hidden">
+                <span class="rp-tag target">target</span>
+                <span class="dim">Wrong-way risk — exposure↔credit corr <span class="num">+0.32</span> · CVA add-on <span class="num neg">−$11k</span></span>
+              </div>
+            </div>
+
+          </div><!-- /rp-paper -->
+
+          <!-- raw / tabular export surface — shown for non-PDF output formats -->
+          <div class="rp-raw rp-hidden" id="rp-raw">
+            <div class="rp-rawhd"><span class="num" id="rp-rawfmt">CSV</span> <span class="dim">— machine-readable export · tabular sections · sample</span></div>
+            <pre class="rp-rawpre" id="rp-rawpre"></pre>
+          </div>
+
+        </div>
+      </section>
+    </div><!-- /rp-grid -->
+
+    <!-- ================= SCHEDULE & DELIVERY (own full-width panel) ================= -->
+    <section class="panel" style="margin-top:var(--space-2)">
+      <header>
+        <span class="headline">Schedule &amp; delivery <span class="rp-tag target">target</span></span>
+        <span class="dim" style="font-size:11px">next run <span class="num" id="rp-next">on demand</span></span>
+      </header>
+      <div class="body">
+
+          <div class="rp-sched">
+            <div class="rp-fld">
+              <span class="label">Frequency</span>
+              <div class="seg" id="rp-freq">
+                <button class="on" data-next="on demand">Ad-hoc</button>
+                <button data-next="02 Jul · 17:15 NY">Daily</button>
+                <button data-next="Fri 04 Jul · 17:15">Weekly</button>
+                <button data-next="31 Jul · 17:15">Monthly</button>
+                <button data-next="30 Sep · 18:00">Quarter-end</button>
+              </div>
+            </div>
+            <div class="rp-fld">
+              <span class="label">Run window</span>
+              <div class="rp-row">
+                <span class="field"><span class="lbl">at</span> 17:15 <span class="car">▾</span></span>
+                <span class="field"><span class="lbl">tz</span> America/New_York <span class="car">▾</span></span>
+                <span class="field"><span class="lbl">on</span> EOD marks <span class="car">▾</span></span>
+              </div>
+            </div>
+            <div class="rp-fld">
+              <span class="label">Delivery channels</span>
+              <div class="rp-row">
+                <button class="chipbtn on">Email</button>
+                <button class="chipbtn on">Celer Trader inbox</button>
+                <button class="chipbtn">SFTP</button>
+                <button class="chipbtn">Object store</button>
+                <button class="chipbtn">Webhook</button>
+              </div>
+            </div>
+            <div class="rp-fld">
+              <span class="label">Recipients</span>
+              <div class="rp-row">
+                <span class="pill">desk-head@celer</span>
+                <span class="pill">risk-control@celer</span>
+                <span class="pill">+ add</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:var(--space-3); margin-top:var(--space-5)">
+            <button class="btn primary">Generate now</button>
+            <button class="btn ghost">Save schedule</button>
+            <button class="btn ghost">Save as template</button>
+            <span style="flex:1"></span>
+            <span class="dim" style="font-size:11px; align-self:center">est. build ~2.4s · 1,284 positions</span>
+          </div>
+
+      </div>
+    </section>
+
+    <!-- ================= BOTTOM — LIBRARY + SCHEDULED ================= -->
+    <div class="cols c2" style="margin-top:var(--space-2)">
+      <section class="panel">
+        <header>
+          <span class="headline">Recent runs</span>
+          <span class="dim" style="font-size:11px">sample history · <span class="rp-tag target">target</span> once the engine ships</span>
+        </header>
+        <div class="body" style="padding-top:var(--space-2)">
+          <table class="grid">
+            <thead><tr><th>Report</th><th>Template</th><th>As-of</th><th>Fmt</th><th>Size</th><th>Status</th><th>Delivered</th></tr></thead>
+            <tbody>
+              <tr><td>Daily G10-A Valuation</td><td>Valuation</td><td class="n">01 Jul</td><td>PDF</td><td class="n">2.1 MB</td><td><span class="rag g"></span>ready</td><td class="n">17:04</td></tr>
+              <tr><td>Market Risk &amp; Capital</td><td>Risk</td><td class="n">01 Jul</td><td>XLSX</td><td class="n">0.9 MB</td><td><span class="rag g"></span>ready</td><td class="n">17:06</td></tr>
+              <tr><td>FRTB SBM Capital</td><td>Regulatory</td><td class="n">01 Jul</td><td>PDF</td><td class="n">1.4 MB</td><td><span class="rag a"></span>sign-off</td><td class="n">—</td></tr>
+              <tr><td>Distribution &amp; Activity</td><td>Activity</td><td class="n">30 Jun</td><td>CSV</td><td class="n">3.6 MB</td><td><span class="rag g"></span>ready</td><td class="n">17:12</td></tr>
+              <tr><td>XVA Adjustments</td><td>XVA</td><td class="n">30 Jun</td><td>PDF</td><td class="n">1.1 MB</td><td><span class="rag r"></span>failed</td><td class="n">retry</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header>
+          <span class="headline">Scheduled reports</span>
+          <button class="btn ghost">Manage</button>
+        </header>
+        <div class="body">
+          <div class="kv"><span class="k"><span class="rag g"></span>Daily G10-A Valuation</span><span class="v num">daily 17:15 · next 02 Jul</span></div>
+          <div class="kv"><span class="k"><span class="rag g"></span>Weekly Risk &amp; Capital</span><span class="v num">Fri 17:15 · next 04 Jul</span></div>
+          <div class="kv"><span class="k"><span class="rag a"></span>Month-end Regulatory</span><span class="v num">31 Jul · sign-off req</span></div>
+          <div class="kv"><span class="k"><span class="rag g"></span>Quarter-end XVA</span><span class="v num">30 Sep 18:00</span></div>
+          <div class="kv"><span class="k">Desk activity digest</span><span class="v num">Mon 08:00 → Celer inbox</span></div>
+
+          <div class="rp-secslabel"><span class="label">Delivery health <span class="rp-tag target">target</span></span></div>
+          <div class="kv"><span class="k">Email gateway</span><span class="v"><span class="rag g"></span>ok</span></div>
+          <div class="kv"><span class="k">Celer Trader inbox</span><span class="v"><span class="rag g"></span>ok</span></div>
+          <div class="kv"><span class="k">SFTP archive</span><span class="v num warn">not configured</span></div>
+        </div>
+      </section>
+    </div>
+
+  </main>
+
+  <!-- ============ CONTEXT RAIL ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (ops only) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  var rp = document.getElementById('rp-main');
+  var NAMES = { valuation:'Valuation', risk:'Risk & Capital', activity:'Activity', regulatory:'Regulatory', xva:'XVA' };
+
+  function activeTpl(){ return rp.querySelector('.rp-tpl:not(.rp-hidden)'); }
+  function activeSecs(){ return rp.querySelector('.rp-secs:not(.rp-hidden)'); }
+
+  function updateCount(){
+    var secs = activeSecs();
+    if(!secs) return;
+    var all = secs.querySelectorAll('.rp-sec').length;
+    var on  = secs.querySelectorAll('.rp-sec:not(.off)').length;
+    document.getElementById('rp-count').textContent = on + ' of ' + all + ' sections';
+  }
+
+  // Builder -> Preview: each .rp-sec drives the preview node(s) carrying the same data-section.
+  function syncSections(){
+    var secs = activeSecs(), tpl = activeTpl();
+    if(!secs || !tpl) return;
+    secs.querySelectorAll('.rp-sec').forEach(function(sec){
+      var id = sec.dataset.section; if(!id) return;
+      var on = !sec.classList.contains('off');
+      tpl.querySelectorAll('[data-section="' + id + '"]').forEach(function(n){ n.classList.toggle('rp-hidden', !on); });
+    });
+  }
+
+  // Raw/tabular export preview — serialised from the active template's tabular section.
+  function buildRaw(fmt){
+    var tpl = activeTpl(), tbl = tpl && tpl.querySelector('.rp-mini');
+    if(!tbl) return '(no tabular section in this template)';
+    var heads = [].map.call(tbl.querySelectorAll('thead th'), function(th){ return th.textContent.replace(/\s*target\s*$/i,'').trim(); });
+    var rows = [].map.call(tbl.querySelectorAll('tbody tr'), function(tr){
+      return [].map.call(tr.querySelectorAll('td'), function(td){ return td.textContent.trim(); });
+    });
+    if(fmt === 'JSON'){
+      return JSON.stringify(rows.map(function(r){ var o = {}; heads.forEach(function(h,i){ o[h] = r[i]; }); return o; }), null, 2);
+    }
+    var esc = function(s){ return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; };
+    return heads.map(esc).join(',') + '\n' + rows.map(function(r){ return r.map(esc).join(','); }).join('\n');
+  }
+
+  function currentFmt(){ var b = document.querySelector('#rp-fmt button.on'); return b ? b.dataset.fmt : 'PDF'; }
+
+  // Single canonical output-format control -> switches the preview SURFACE (PDF layout vs raw export).
+  function setFormat(fmt){
+    document.querySelectorAll('#rp-fmt button').forEach(function(b){ b.classList.toggle('on', b.dataset.fmt === fmt); });
+    var isPdf = fmt === 'PDF';
+    document.querySelector('.rp-paper').classList.toggle('rp-hidden', !isPdf);
+    document.getElementById('rp-raw').classList.toggle('rp-hidden', isPdf);
+    document.getElementById('rp-surface').textContent = isPdf ? 'PDF layout' : (fmt + ' export');
+    if(!isPdf){
+      document.getElementById('rp-rawfmt').textContent = fmt;
+      document.getElementById('rp-rawpre').textContent = buildRaw(fmt);
+    }
+  }
+
+  function setTpl(t){
+    rp.querySelectorAll('.rp-secs').forEach(function(el){ el.classList.toggle('rp-hidden', el.dataset.tpl !== t); });
+    rp.querySelectorAll('.rp-tpl').forEach(function(el){ el.classList.toggle('rp-hidden', el.dataset.tpl !== t); });
+    rp.querySelectorAll('#rp-tplseg button').forEach(function(b){ b.classList.toggle('on', b.dataset.tpl === t); });
+    document.querySelectorAll('.rp-tplname').forEach(function(n){ n.textContent = NAMES[t]; });
+    updateCount();
+    syncSections();
+    if(!document.getElementById('rp-raw').classList.contains('rp-hidden')){
+      document.getElementById('rp-rawpre').textContent = buildRaw(currentFmt());
+    }
+  }
+
+  rp.addEventListener('click', function(e){
+    var sw = e.target.closest('.sw');
+    if(sw){
+      sw.classList.toggle('on');
+      var on = sw.classList.contains('on');
+      sw.setAttribute('aria-checked', on ? 'true' : 'false');
+      sw.closest('.rp-sec').classList.toggle('off', !on);
+      updateCount();
+      syncSections();
+      return;
+    }
+    var seg = e.target.closest('#rp-tplseg button');
+    if(seg){ setTpl(seg.dataset.tpl); return; }
+
+    var freq = e.target.closest('#rp-freq button');
+    if(freq){
+      freq.parentElement.querySelectorAll('button').forEach(function(b){ b.classList.remove('on'); });
+      freq.classList.add('on');
+      document.getElementById('rp-next').textContent = freq.dataset.next;
+      return;
+    }
+    var fmt = e.target.closest('#rp-fmt button');
+    if(fmt){ setFormat(fmt.dataset.fmt); return; }
+
+    var chip = e.target.closest('.chipbtn');
+    if(chip){ chip.classList.toggle('on'); return; }
+  });
+
+  setTpl('valuation');
+  setFormat('PDF');
+})();
+</script>
+</body>
+</html>

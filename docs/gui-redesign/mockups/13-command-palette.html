@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Command Palette (mockup 13)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+/* ============================================================================
+ * 13 · Command Palette — the PRIMARY navigation grammar (entity × verb).
+ * The 00 shell stays fully rendered behind a dimmed scrim; the ⌘K palette is
+ * the ONE surface allowed disciplined Liquid-Glass (backdrop-filter blur).
+ * All screen-specific CSS is scoped here so the shared celer.css is untouched.
+ * ========================================================================= */
+
+/* dim the shell behind the overlay (so 00 stays legible, just recessed) */
+.app.recess { }
+.scrim {
+  position: fixed; inset: 0; z-index: 50;
+  background: oklch(0.12 0.02 264 / 0.5);
+  backdrop-filter: blur(2px) saturate(0.85);
+  -webkit-backdrop-filter: blur(2px) saturate(0.85);
+}
+.palette-wrap {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: start center;
+  padding: 9vh 24px 24px; pointer-events: none;
+}
+.scrim, .palette-wrap { animation: palIn 160ms var(--ease-out); }
+@keyframes palIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* the floating glass panel — the one sanctioned vibrancy surface */
+.palette {
+  pointer-events: auto;
+  width: 780px; max-width: 94vw; max-height: 78vh;
+  display: flex; flex-direction: column;
+  background: oklch(0.255 0.022 264 / 0.72);
+  backdrop-filter: blur(var(--blur-hud)) saturate(1.7);
+  -webkit-backdrop-filter: blur(var(--blur-hud)) saturate(1.7);
+  border: 1px solid oklch(1 0 0 / 0.1);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-hud), inset 0 1px 0 oklch(1 0 0 / 0.08);
+  overflow: hidden;
+  animation: palPop 200ms var(--ease-spring);
+}
+@keyframes palPop { from { transform: translateY(-8px) scale(0.985); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-transparency: reduce) { .palette { background: var(--bg-overlay-solid); backdrop-filter: none; -webkit-backdrop-filter: none; } .scrim { backdrop-filter: none; -webkit-backdrop-filter: none; } }
+
+/* search header */
+.pal-search { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: var(--hairline); }
+.pal-search .glyph { font-family: var(--font-mono); font-size: 13px; color: var(--text-tertiary);
+  border: var(--hairline); border-radius: var(--r-sm); padding: 3px 7px; background: oklch(1 0 0 / 0.05); }
+.pal-search input { flex: 1; background: transparent; border: 0; outline: 0; color: var(--text-primary);
+  font-family: var(--font-ui); font-size: 16px; line-height: 22px; letter-spacing: 0.01em; }
+.pal-search input::placeholder { color: var(--text-tertiary); }
+.pal-search .scopepin { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono);
+  font-size: var(--type-micro); color: var(--text-secondary); background: oklch(1 0 0 / 0.05);
+  border: var(--hairline); padding: 4px 9px; border-radius: var(--r-full); white-space: nowrap; }
+.pal-search .scopepin .dot { width: 6px; height: 6px; }
+
+/* mode segmented control */
+.pal-modes { margin: 10px 14px 2px; align-self: flex-start; }
+.pal-modes button { font-size: 11px; padding: 4px 11px; }
+
+/* two-pane body: results | live preview */
+.pal-body { display: grid; grid-template-columns: 1fr 288px; min-height: 0; flex: 1; }
+.pal-results { overflow-y: auto; padding: 6px 8px 10px; min-height: 0; }
+.pal-results::-webkit-scrollbar { width: 9px; }
+
+/* group headers */
+.grp-h { display: flex; align-items: baseline; justify-content: space-between; padding: 12px 10px 4px; }
+.grp-h:first-child { padding-top: 6px; }
+.grp-h .gtag { font-size: var(--type-micro); color: var(--text-tertiary); font-family: var(--font-mono); letter-spacing: 0.02em; }
+
+/* result rows */
+.res { display: grid; grid-template-columns: 22px 1fr auto auto; gap: 11px; align-items: center;
+  width: 100%; text-align: left; background: transparent; border: 0; color: var(--text-secondary);
+  padding: 8px 10px; border-radius: var(--r-sm); cursor: pointer; font-size: var(--type-callout);
+  font-family: var(--font-ui); }
+.res:hover { background: oklch(1 0 0 / 0.05); color: var(--text-primary); }
+.res.act { background: var(--accent-soft); color: var(--text-primary); box-shadow: inset 2px 0 0 var(--accent); }
+.res .vic { text-align: center; color: var(--accent); opacity: 0.9; font-size: 13px; }
+.res.act .vic { opacity: 1; }
+.res .rtxt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.res .rtxt b { color: var(--text-primary); font-weight: 600; }
+.res .rtxt .ent { color: var(--text-secondary); }
+.res .rdest { font-size: var(--type-micro); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+.res .rkbd { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary);
+  border: var(--hairline); background: oklch(1 0 0 / 0.05); border-radius: var(--r-sm); padding: 1px 6px; min-width: 22px; text-align: center; }
+.res[aria-disabled="true"] { opacity: 0.42; cursor: not-allowed; }
+.res[aria-disabled="true"]:hover { background: transparent; color: var(--text-secondary); }
+.res .cls { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; }
+
+/* honest LIVE / TARGET link tags (per KNOWLEDGE-flow-links) */
+.tag { font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 2px 6px; border-radius: var(--r-sm); white-space: nowrap; }
+.tag.live { background: var(--brand-soft); color: var(--brand); }
+.tag.target { border: 1px solid var(--grid-line); color: var(--text-tertiary); }
+.tag.lock { border: 1px solid var(--grid-line); color: var(--text-tertiary); }
+
+.nohits { padding: 34px 16px; text-align: center; color: var(--text-tertiary); font-size: var(--type-callout); display: none; }
+
+/* ---- live preview pane ---- */
+.pal-preview { border-left: var(--hairline); background: oklch(0 0 0 / 0.14); padding: 16px;
+  display: flex; flex-direction: column; gap: 12px; overflow-y: auto; min-height: 0; }
+.pv-head { display: flex; align-items: center; gap: 10px; }
+.pv-ic { width: 30px; height: 30px; border-radius: var(--r-sm); display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent); font-size: 15px; }
+.pv-ic.brandbg { background: var(--brand-soft); color: var(--brand); }
+.pv-ttl { font-family: var(--font-display); font-size: 15px; font-weight: 600; letter-spacing: 0.005em; line-height: 1.15; }
+.pv-sub { font-size: var(--type-caption); color: var(--text-tertiary); }
+.pv-big { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 26px; font-weight: 600; line-height: 1; }
+.pv-chg { font-family: var(--font-mono); font-size: var(--type-caption); }
+.pv-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pv-desc { font-size: var(--type-caption); line-height: 16px; color: var(--text-secondary); }
+.pv-kv { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--grid-line); font-size: var(--type-caption); }
+.pv-kv .k { color: var(--text-tertiary); } .pv-kv .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pv-dest { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding-top: 10px; border-top: var(--hairline); font-size: var(--type-caption); color: var(--text-tertiary); }
+.pv-dest b { color: var(--accent); font-weight: 600; }
+.pv-flow { font-size: var(--type-micro); color: var(--text-tertiary); font-family: var(--font-mono); }
+
+/* mini sparkline (Viridis sequential — NOT a brand hue; live tip = coral) */
+.spk { display: block; width: 100%; height: 84px; }
+.spk .fill { fill: url(#spkGrad); }
+.spk .lstop0 { stop-color: var(--seq-5); stop-opacity: 0.34; }
+.spk .lstop1 { stop-color: var(--seq-5); stop-opacity: 0; }
+.spk .ln { fill: none; stroke: var(--seq-5); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.spk .dot { fill: var(--brand); }
+.spk .gl2 { stroke: var(--grid-line); stroke-width: 1; }
+.spk .lbl { fill: var(--text-tertiary); font-family: var(--font-mono); font-size: 8px; }
+.spk .ref  { stroke: var(--text-tertiary); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.5; }
+.spk .tick { stroke: var(--brand); stroke-width: 1.5; }
+.spk .now  { fill: var(--brand); font-family: var(--font-mono); font-size: 8px; font-weight: 600; }
+
+/* recency timestamp in the curated 'Recent' rows */
+.res .rt { font-family: var(--font-mono); font-size: 9px; color: var(--text-tertiary); text-align: right; white-space: nowrap; }
+
+/* mini greeks strip in preview */
+.pv-greeks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.pv-greeks .g { text-align: right; }
+.pv-greeks .g .k { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); }
+.pv-greeks .g .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--type-callout); }
+
+/* footer keyboard hints */
+.pal-foot { display: flex; align-items: center; gap: 16px; padding: 9px 16px; border-top: var(--hairline);
+  font-size: var(--type-caption); color: var(--text-tertiary); }
+.pal-foot .grp { display: inline-flex; align-items: center; gap: 5px; }
+.pal-foot b { color: var(--text-secondary); font-weight: 600; }
+.pal-foot .grammar b { color: var(--accent); }
+
+/* closed-state hint (when palette dismissed) */
+.reopen { position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%); z-index: 40;
+  display: none; align-items: center; gap: 8px; padding: 8px 14px; border-radius: var(--r-full);
+  background: var(--bg-overlay); backdrop-filter: blur(var(--blur-float)); -webkit-backdrop-filter: blur(var(--blur-float));
+  border: var(--hairline); box-shadow: var(--shadow-float); font-size: var(--type-caption); color: var(--text-secondary); cursor: pointer; }
+body.closed .reopen { display: inline-flex; }
+body.closed .scrim, body.closed .palette-wrap { display: none; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input id="shellCmd" placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a class="on"><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — PRICE & MODEL (shell backdrop, recessed) ============ -->
+  <main class="main" style="gap:var(--space-4)">
+    <div class="ticketline">
+      <span class="field"><span class="lbl">pair</span> EUR/USD <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">type</span> Call <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">expiry</span> 1M · 28 Jul <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">Δ / K</span> 25Δ ⇄ 1.0965</span>
+      <span class="field"><span class="lbl">notional</span> 10.00mm EUR <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">prem</span> USD <span class="car">▾</span></span>
+      <span class="selctl"><span class="lbl">solve</span> Δ→K <span class="car">▾</span></span>
+    </div>
+
+    <div class="model">
+      <span class="title" style="font-size:15px">Pricing model · LSV <span class="car" style="font-size:11px">▾</span></span>
+      <span class="meta">calibrated 2m ago · RMSE <span class="num">0.03v</span> <span class="ok">✓ arb-free</span></span>
+      <span class="selctl"><span class="lbl">Δ conv</span> spot <span class="car">▾</span></span>
+      <span style="flex:1"></span>
+      <button class="btn">Recalibrate</button>
+      <button class="btn ghost">Diff vs market ◷</button>
+    </div>
+
+    <div class="grid2">
+      <section class="panel" style="grid-row: span 2">
+        <header>
+          <span class="headline">Price · EUR/USD 1M 25Δ Call</span>
+          <span class="state live">● LIVE ▸ T1–3 <span class="car">▾</span></span>
+        </header>
+        <div class="body">
+          <div class="quote2">
+            <div class="q buy"><div class="side">Your bid</div><div class="val">7.88</div><div class="conv">0.00402 USD · 10.0mm · size 25</div></div>
+            <div class="q sell"><div class="side">Your offer</div><div class="val">8.12</div><div class="conv">0.00415 USD · 10.0mm · size 25</div></div>
+          </div>
+          <div class="kv"><span class="k">Mid</span><span class="v num">8.00v <span class="dim">· 25ΔC smile · as-of 12:04:07 ● tick</span></span></div>
+          <div class="kv"><span class="k">Spread</span><span class="v num">0.24v · 2.1 pips · 18 bps</span></div>
+          <div class="kv"><span class="k">½-spread</span><span class="v num">0.12v <span class="selctl" style="height:20px">risk-based <span class="car">▾</span></span></span></div>
+          <div class="kv"><span class="k">Skew</span><span class="v num">+0.03v · <span class="offer">offer-lean</span> <span class="selctl" style="height:20px">nudge − +</span></span></div>
+
+          <div style="margin:12px 0 6px" class="label">Greeks · USD / per-1v / per-day</div>
+          <div class="greeks">
+            <div class="g"><div class="k">Δ</div><div class="v">0.251</div><div class="sub">+2.51mm</div></div>
+            <div class="g"><div class="k">Γ</div><div class="v">0.043</div><div class="sub">0.43/%</div></div>
+            <div class="g"><div class="k">Vega</div><div class="v">0.118</div><div class="sub">$11.8k</div></div>
+            <div class="g"><div class="k">Θ</div><div class="v neg">−0.021</div><div class="sub">−$2.1k/d</div></div>
+            <div class="g"><div class="k">Vanna</div><div class="v">0.009</div><div class="sub">$0.9k</div></div>
+            <div class="g"><div class="k">ρd</div><div class="v">0.061</div><div class="sub">$6.1k</div></div>
+            <div class="g"><div class="k">ρf</div><div class="v neg">−0.058</div><div class="sub">−$5.8k</div></div>
+          </div>
+
+          <div style="display:flex; gap:6px; margin-top:16px">
+            <button class="btn primary">Update live ▸ T1–3</button>
+            <button class="btn sell">Pull</button>
+            <button class="btn ghost">Send to RFQ desk</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header><span class="headline">Payoff at expiry</span><span class="muted" style="font-size:11px">premium-adjusted · USD/EUR</span></header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg class="chart" viewBox="0 0 340 172" height="168" aria-label="Payoff diagram">
+            <line class="gl" x1="34" y1="60" x2="326" y2="60"/>
+            <line class="gl" x1="34" y1="100" x2="326" y2="100"/>
+            <path class="pfill-pos" d="M211,100 L326,21 L326,100 Z"/>
+            <path class="pfill-neg" d="M34,100 L34,110 L196,110 L211,100 Z"/>
+            <line class="mk" x1="196" y1="18" x2="196" y2="148"/>
+            <line class="mk" x1="151" y1="18" x2="151" y2="148"/>
+            <path class="cline" d="M34,110 L196,110 L326,21"/>
+            <circle class="cdot" cx="211" cy="100" r="2.6"/>
+            <circle cx="151" cy="100" r="2.6" fill="var(--accent)"/>
+            <text class="axlbl b" x="196" y="14" text-anchor="middle">K 1.0965</text>
+            <text class="axlbl" x="151" y="162" text-anchor="middle">spot 1.0842</text>
+            <text class="axlbl" x="216" y="97" fill="var(--brand)">B/E 1.1006</text>
+            <text class="axlbl" x="4" y="24">+.031</text><text class="axlbl" x="4" y="103">0</text><text class="axlbl" x="2" y="113">−.004</text>
+            <text class="axlbl" x="63" y="162" text-anchor="middle">1.06</text><text class="axlbl" x="136" y="162" text-anchor="middle">1.08</text><text class="axlbl" x="209" y="162" text-anchor="middle">1.10</text><text class="axlbl" x="282" y="162" text-anchor="middle">1.12</text>
+          </svg>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header><span class="headline">Vol smile · EUR/USD</span><span class="muted" style="font-size:11px">1M ● &nbsp; 3M – –</span></header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg class="chart" viewBox="0 0 340 158" height="150" aria-label="Vol smile">
+            <line class="gl" x1="40" y1="24" x2="320" y2="24"/><line class="gl" x1="40" y1="64" x2="320" y2="64"/><line class="gl" x1="40" y1="104" x2="320" y2="104"/>
+            <line class="mk" x1="184" y1="20" x2="184" y2="128"/>
+            <path class="cline2" d="M52,20 Q85,42 118,64 Q151,72 184,80 Q217,82 250,84 Q279,68 308,52"/>
+            <path class="cline" d="M52,40 Q85,62 118,84 Q151,95 184,102 Q217,104 250,104 Q279,88 308,72"/>
+            <circle class="cdot" cx="52" cy="40" r="2.6"/><circle class="cdot" cx="118" cy="84" r="2.6"/><circle class="cdot" cx="184" cy="102" r="2.6"/><circle class="cdot" cx="250" cy="104" r="2.6"/><circle class="cdot" cx="308" cy="72" r="2.6"/>
+            <text class="axlbl" x="6" y="27">10</text><text class="axlbl" x="10" y="67">9</text><text class="axlbl" x="10" y="107">8</text>
+            <text class="axlbl" x="52" y="140" text-anchor="middle">10ΔP</text><text class="axlbl" x="118" y="140" text-anchor="middle">25ΔP</text><text class="axlbl b" x="184" y="140" text-anchor="middle">ATM</text><text class="axlbl" x="250" y="140" text-anchor="middle">25ΔC</text><text class="axlbl" x="308" y="140" text-anchor="middle">10ΔC</text>
+            <text class="axlbl b" x="318" y="18" text-anchor="end">RR −0.42 · BF 0.21 · eSSVI</text>
+          </svg>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- ============ CONTEXT RAIL ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (ops only) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<!-- ============ ⌘K COMMAND PALETTE OVERLAY ============ -->
+<div class="scrim" id="scrim"></div>
+<div class="palette-wrap" id="palWrap">
+  <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+
+    <div class="pal-search">
+      <span class="glyph">⌘K</span>
+      <input id="palInput" type="text" autocomplete="off" spellcheck="false" aria-label="Search commands"
+             placeholder="Search a verb, an underlier, a surface, a book…   try  @eurusd   ·   >mark   ·   #g10-a" />
+      <span class="scopepin"><span class="dot live"></span>FX Vol · G10-A</span>
+    </div>
+
+    <div class="pal-modes seg" role="tablist" aria-label="Search scope">
+      <button class="on" data-mode="all" role="tab">All</button>
+      <button data-mode="action" role="tab">Actions</button>
+      <button data-mode="underlier" role="tab">Underliers</button>
+      <button data-mode="surface" role="tab">Surfaces</button>
+      <button data-mode="book" role="tab">Books &amp; desks</button>
+      <button data-mode="cap" role="tab">Go to</button>
+    </div>
+
+    <div class="pal-body">
+      <div class="pal-results" id="palResults" role="listbox" aria-label="Results">
+
+        <!-- curated landing: shown only when the query is empty (⌘K just opened);
+             the full grouped catalog below is revealed on the first keystroke -->
+        <div class="grp-h curated" data-grp="curated"><span class="label">Recent · this session</span><span class="gtag">last touched</span></div>
+        <button class="res" role="option" data-curated="1" data-cat="action" data-arch="action" data-verb="price"
+          data-title="Price" data-entity="EUR/USD 1M 25Δ Call" data-dest="Price &amp; Model" data-state="live"
+          data-desc="Two-way price + full 14-Greek strip from the LSV-calibrated smile. One SpreadModel prices streaming, RFQ and FIX alike."
+          data-spark="eurusd">
+          <span class="vic">◆</span><span class="rtxt"><b>Price</b> <span class="ent">· EUR/USD 1M 25Δ Call</span></span><span class="rdest">Price &amp; Model</span><span class="rt">12:04</span>
+        </button>
+        <button class="res" role="option" data-curated="1" data-cat="action" data-arch="action" data-verb="mark"
+          data-title="Mark surface" data-entity="EUR/USD" data-dest="Vol Surface" data-state="live"
+          data-desc="Calibrate & publish an immutable MarkedSurface under a fresh version. VV / SABR / SVI / SSVI / eSSVI, arb-gated."
+          data-spark="eurusd">
+          <span class="vic">◫</span><span class="rtxt"><b>Mark surface</b> <span class="ent">· EUR/USD · eSSVI</span></span><span class="rdest">Vol Surface</span><span class="rt">11:58</span>
+        </button>
+        <button class="res" role="option" data-curated="1" data-cat="underlier" data-arch="spark"
+          data-title="USD/JPY" data-cls="FX" data-dest="Price &amp; Model" data-state="live" data-lic="1"
+          data-spot="157.24" data-chg="−0.41  −0.26%" data-chgpos="0" data-tiers="T1 · T2 streaming"
+          data-spark="usdjpy" data-desc="G10 major · full exotics + 5-family surface.">
+          <span class="vic">↳</span><span class="rtxt"><b>USD/JPY</b> <span class="ent cls">spot 157.24</span></span><span class="cls">FX</span><span class="rt">11:52</span>
+        </button>
+
+        <div class="grp-h curated" data-grp="curated"><span class="label">Suggested for EUR/USD 1M</span><span class="gtag">desk-scoped</span></div>
+        <button class="res" role="option" data-curated="1" data-cat="action" data-arch="action" data-verb="contribute"
+          data-title="Contribute" data-entity="EUR/USD ▸ T1–T3" data-dest="Contribute" data-state="live"
+          data-desc="Publish the two-way to the SPMC fan-out ring across contribution tiers. Conflated by the egress governor."
+          data-spark="eurusd">
+          <span class="vic">⇈</span><span class="rtxt"><b>Contribute</b> <span class="ent">· EUR/USD ▸ T1–T3</span></span><span class="rdest">Contribute</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-curated="1" data-cat="surface" data-arch="cap"
+          data-title="EUR/USD vol surface" data-dest="Vol Surface" data-state="live"
+          data-desc="Current official surface · eSSVI · arb-free · versioned SurfaceBook visible to pricing / streaming / FIX at once."
+          data-flow="mark pins across all consumers · LIVE">
+          <span class="vic">◫</span><span class="rtxt"><b>EUR/USD vol surface</b> <span class="ent">· eSSVI · arb-free</span></span><span class="rdest">Vol Surface</span><span class="rkbd">/</span>
+        </button>
+        <button class="res" role="option" data-curated="1" data-cat="action" data-arch="action" data-verb="risk"
+          data-title="Risk" data-entity="EUR/USD slice of G10-A" data-dest="Risk &amp; Scenario" data-state="live"
+          data-desc="Drill the risk cube to the EUR/USD slice of book G10-A: bucketed vega tenor×delta, cross-gamma, theta-roll.">
+          <span class="vic">◈</span><span class="rtxt"><b>Risk</b> <span class="ent">· EUR/USD slice of G10-A</span></span><span class="rdest">Risk &amp; Scenario</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-curated="1" data-cat="book" data-arch="cap"
+          data-title="Book G10-A" data-dest="Books &amp; Positions" data-state="live"
+          data-desc="Desk FX Vol · net Δ +1.28mm · vega +184k · 1d VaR99 −312k · within limits. Scopes every capability."
+          data-flow="RiskDimension hierarchy · LIVE">
+          <span class="vic">▦</span><span class="rtxt"><b>Book G10-A</b> <span class="ent">· Desk FX Vol</span></span><span class="rdest">Books &amp; Positions</span><span class="rkbd">#</span>
+        </button>
+
+        <!-- entity × verb: actions on the currently-scoped ticket -->
+        <div class="grp-h" data-grp="action"><span class="label">Actions on EUR/USD 1M 25Δ Call</span><span class="gtag">entity × verb</span></div>
+        <button class="res" role="option" data-cat="action" data-arch="action" data-verb="price"
+          data-title="Price" data-entity="EUR/USD 1M 25Δ Call" data-dest="Price &amp; Model" data-state="live"
+          data-desc="Two-way price + full 14-Greek strip from the LSV-calibrated smile. One SpreadModel prices streaming, RFQ and FIX alike."
+          data-spark="eurusd">
+          <span class="vic">◆</span><span class="rtxt"><b>Price</b> <span class="ent">· EUR/USD 1M 25Δ Call</span></span><span class="rdest">Price &amp; Model</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-cat="action" data-arch="action" data-verb="mark"
+          data-title="Mark surface" data-entity="EUR/USD" data-dest="Vol Surface" data-state="live"
+          data-desc="Calibrate & publish an immutable MarkedSurface under a fresh version. VV / SABR / SVI / SSVI / eSSVI, arb-gated."
+          data-spark="eurusd">
+          <span class="vic">◫</span><span class="rtxt"><b>Mark surface</b> <span class="ent">· EUR/USD · eSSVI</span></span><span class="rdest">Vol Surface</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-cat="action" data-arch="action" data-verb="contribute"
+          data-title="Contribute" data-entity="EUR/USD ▸ T1–T3" data-dest="Contribute" data-state="live"
+          data-desc="Publish the two-way to the SPMC fan-out ring across contribution tiers. Conflated by the egress governor."
+          data-spark="eurusd">
+          <span class="vic">⇈</span><span class="rtxt"><b>Contribute</b> <span class="ent">· EUR/USD ▸ T1–T3</span></span><span class="rdest">Contribute</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-cat="action" data-arch="action" data-verb="rfq"
+          data-title="Send to RFQ desk" data-entity="EUR/USD 1M" data-dest="RFQ Desk" data-state="live"
+          data-desc="Route the structure to the maker RFQ/quote desk to respond to inbound counterparty flow (last-look ring).">
+          <span class="vic">⇄</span><span class="rtxt"><b>Send to RFQ desk</b> <span class="ent">· EUR/USD 1M</span></span><span class="rdest">RFQ Desk</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-cat="action" data-arch="action" data-verb="risk"
+          data-title="Risk" data-entity="EUR/USD slice of G10-A" data-dest="Risk &amp; Scenario" data-state="live"
+          data-desc="Drill the risk cube to the EUR/USD slice of book G10-A: bucketed vega tenor×delta, cross-gamma, theta-roll.">
+          <span class="vic">◈</span><span class="rtxt"><b>Risk</b> <span class="ent">· EUR/USD slice of G10-A</span></span><span class="rdest">Risk &amp; Scenario</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-cat="action" data-arch="action" data-verb="scenario"
+          data-title="Simulate scenario" data-entity="spot × vol grid" data-dest="Risk &amp; Scenario" data-state="live"
+          data-desc="Live what-if over a spot×vol grid, diverging blue↔orange centred at 0, click-to-drill to contributing trades.">
+          <span class="vic">⊞</span><span class="rtxt"><b>Simulate scenario</b> <span class="ent">· spot × vol grid</span></span><span class="rdest">Risk &amp; Scenario</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-cat="action" data-arch="action" data-verb="xva"
+          data-title="XVA" data-entity="EUR/USD vs CPTY-014" data-dest="XVA" data-state="target"
+          data-desc="EE / EPE / PFE(95) fan + CVA/DVA/FVA breakdown. Engine built; wire path is a TARGET (D-xva lane), not yet LIVE.">
+          <span class="vic">∮</span><span class="rtxt"><b>XVA</b> <span class="ent">· EUR/USD vs CPTY-014</span></span><span class="rdest">XVA</span><span class="tag target">◇ Target</span>
+        </button>
+        <button class="res" role="option" data-cat="action" data-arch="action" data-verb="report"
+          data-title="Add to report" data-entity="valuation pack" data-dest="Reporting" data-state="target"
+          data-desc="Append this valuation to a report pack. Reporting is greenfield — the backend is a TARGET to build.">
+          <span class="vic">▤</span><span class="rtxt"><b>Add to report</b> <span class="ent">· valuation pack</span></span><span class="rdest">Reporting</span><span class="tag target">◇ Target</span>
+        </button>
+
+        <!-- jump-to underliers -->
+        <div class="grp-h" data-grp="underlier"><span class="label">Jump to underlier</span><span class="gtag">@ prefix</span></div>
+        <button class="res" role="option" data-cat="underlier" data-arch="spark"
+          data-title="EUR/USD" data-cls="FX" data-dest="Price &amp; Model" data-state="live" data-lic="1"
+          data-spot="1.0842" data-chg="+0.0031  +0.29%" data-chgpos="1" data-tiers="T1 · T2 · T3 streaming"
+          data-spark="eurusd" data-desc="G10 major · full exotics + 5-family surface · 42 lines streaming.">
+          <span class="vic">↳</span><span class="rtxt"><b>EUR/USD</b> <span class="ent cls">spot 1.0842</span></span><span class="cls">FX</span><span class="rkbd">@</span>
+        </button>
+        <button class="res" role="option" data-cat="underlier" data-arch="spark"
+          data-title="USD/JPY" data-cls="FX" data-dest="Price &amp; Model" data-state="live" data-lic="1"
+          data-spot="157.24" data-chg="−0.41  −0.26%" data-chgpos="0" data-tiers="T1 · T2 streaming"
+          data-spark="usdjpy" data-desc="G10 major · full exotics + 5-family surface.">
+          <span class="vic">↳</span><span class="rtxt"><b>USD/JPY</b> <span class="ent cls">spot 157.24</span></span><span class="cls">FX</span><span class="rkbd">@</span>
+        </button>
+        <button class="res" role="option" data-cat="underlier" data-arch="spark"
+          data-title="GBP/USD" data-cls="FX" data-dest="Price &amp; Model" data-state="live" data-lic="1"
+          data-spot="1.2731" data-chg="+0.0008  +0.06%" data-chgpos="1" data-tiers="T1 streaming"
+          data-spark="gbpusd" data-desc="G10 major · full exotics + 5-family surface.">
+          <span class="vic">↳</span><span class="rtxt"><b>GBP/USD</b> <span class="ent cls">spot 1.2731</span></span><span class="cls">FX</span><span class="rkbd">@</span>
+        </button>
+        <button class="res" role="option" data-cat="underlier" data-arch="spark"
+          data-title="XAU/USD" data-cls="METAL" data-dest="Price &amp; Model" data-state="live" data-lic="1"
+          data-spot="2,344.10" data-chg="+11.60  +0.50%" data-chgpos="1" data-tiers="T1 · T2 streaming"
+          data-spark="xauusd" data-desc="Precious metal · rides the full FX convention/surface stack (lease-rate as foreign leg).">
+          <span class="vic">↳</span><span class="rtxt"><b>XAU/USD</b> <span class="ent cls">spot 2,344.10</span></span><span class="cls">Metal</span><span class="rkbd">@</span>
+        </button>
+        <button class="res" role="option" data-cat="underlier" data-arch="cap" aria-disabled="true"
+          data-title="AAPL" data-cls="EQUITY" data-dest="Request access" data-state="lock"
+          data-desc="Equity is not licensed for the FX Vol desk. The engine hard-rejects out-of-tier products — request access to enable.">
+          <span class="vic">↳</span><span class="rtxt"><b>AAPL</b> <span class="ent cls">Equity — not licensed</span></span><span class="tag lock">⊘ locked</span><span class="rkbd"></span>
+        </button>
+
+        <!-- surfaces -->
+        <div class="grp-h" data-grp="surface"><span class="label">Surfaces</span><span class="gtag">/ prefix</span></div>
+        <button class="res" role="option" data-cat="surface" data-arch="cap"
+          data-title="EUR/USD vol surface" data-dest="Vol Surface" data-state="live"
+          data-desc="Current official surface · eSSVI · arb-free · versioned SurfaceBook visible to pricing / streaming / FIX at once."
+          data-flow="mark pins across all consumers · LIVE">
+          <span class="vic">◫</span><span class="rtxt"><b>EUR/USD vol surface</b> <span class="ent">· eSSVI · arb-free</span></span><span class="rdest">Vol Surface</span><span class="rkbd">/</span>
+        </button>
+        <button class="res" role="option" data-cat="surface" data-arch="cap"
+          data-title="USD/JPY vol surface" data-dest="Vol Surface" data-state="live"
+          data-desc="Current official surface · SABR calibrated · arb-free · versioned SurfaceBook."
+          data-flow="one versioned surface · LIVE">
+          <span class="vic">◫</span><span class="rtxt"><b>USD/JPY vol surface</b> <span class="ent">· SABR</span></span><span class="rdest">Vol Surface</span><span class="rkbd">/</span>
+        </button>
+
+        <!-- books & desks -->
+        <div class="grp-h" data-grp="book"><span class="label">Books &amp; desks</span><span class="gtag"># prefix</span></div>
+        <button class="res" role="option" data-cat="book" data-arch="cap"
+          data-title="Book G10-A" data-dest="Books &amp; Positions" data-state="live"
+          data-desc="Desk FX Vol · net Δ +1.28mm · vega +184k · 1d VaR99 −312k · within limits. Scopes every capability."
+          data-flow="RiskDimension hierarchy · LIVE">
+          <span class="vic">▦</span><span class="rtxt"><b>Book G10-A</b> <span class="ent">· Desk FX Vol</span></span><span class="rdest">Books &amp; Positions</span><span class="rkbd">#</span>
+        </button>
+        <button class="res" role="option" data-cat="book" data-arch="cap"
+          data-title="Desk FX Vol" data-dest="Books &amp; Positions" data-state="live"
+          data-desc="Set the desk scope for the whole session. Desk-scoped fan-out, risk roll-up and limits follow the scope."
+          data-flow="desk-scope threads read-side · LIVE">
+          <span class="vic">▦</span><span class="rtxt"><b>Desk FX Vol</b> <span class="ent">· G10-A · G10-B · EM-1</span></span><span class="rdest">Set scope</span><span class="rkbd">#</span>
+        </button>
+
+        <!-- go to capability -->
+        <div class="grp-h" data-grp="cap"><span class="label">Go to capability</span><span class="gtag">⌘1–9</span></div>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Price &amp; Model" data-dest="workspace" data-state="live" data-hint="⌘1"
+          data-desc="Vanilla + full exotics + LSV. GK / gen-BSM / Black-76 / crypto / plugin models via the one dispatch path.">
+          <span class="vic">◆</span><span class="rtxt"><b>Price &amp; Model</b></span><span class="rdest">workspace</span><span class="rkbd">⌘1</span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Structure" data-dest="workspace" data-state="live" data-hint="⌘2"
+          data-desc="Multi-leg strategy & structured-product builder off the capability-gated product gallery (24 families).">
+          <span class="vic">◆</span><span class="rtxt"><b>Structure</b></span><span class="rdest">workspace</span><span class="rkbd">⌘2</span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Vol Surface" data-dest="workspace" data-state="live" data-hint="⌘3"
+          data-desc="Mark / calibrate / version / publish. VV·SABR·SVI·SSVI·eSSVI + Dupire, arb gates on every publish.">
+          <span class="vic">◫</span><span class="rtxt"><b>Vol Surface</b></span><span class="rdest">workspace</span><span class="rkbd">⌘3</span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Feed Manage" data-dest="workspace" data-state="live" data-hint="⌘4"
+          data-desc="Multi-source aggregation, staleness & divergence report, symbology/compositing. Live vendor values deploy-gated.">
+          <span class="vic">◉</span><span class="rtxt"><b>Feed Manage</b></span><span class="rdest">workspace</span><span class="rkbd">⌘4</span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Contribute" data-dest="workspace" data-state="live" data-hint="⌘5"
+          data-desc="SPMC fan-out ring, RFS multiplex, conflating egress governor, attribution chain (quoted_by / held_by).">
+          <span class="vic">⇈</span><span class="rtxt"><b>Contribute</b></span><span class="rdest">workspace</span><span class="rkbd">⌘5</span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="RFQ Desk" data-dest="workspace" data-state="live" data-hint="⌘6"
+          data-desc="Two-way RFQ, multi-dealer RFQ-to-many (ranked, last-look), maker auto-quote desk. FIX in/out.">
+          <span class="vic">⇄</span><span class="rtxt"><b>RFQ Desk</b></span><span class="rdest">workspace</span><span class="rkbd">⌘6</span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Risk &amp; Scenario" data-dest="workspace" data-state="live" data-hint="⌘7"
+          data-desc="Risk-cube OLAP roll-up + vega ladder, VaR/ES + FRTB-SbM curvature, spot×vol scenario grid, drill.">
+          <span class="vic">◈</span><span class="rtxt"><b>Risk &amp; Scenario</b></span><span class="rdest">workspace</span><span class="rkbd">⌘7</span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="XVA" data-dest="workspace" data-state="target" data-hint="⌘8"
+          data-desc="CVA/DVA/FVA, EPE/ENE, PFE(95). Engine built + gated; no wire path yet — surfaced as a TARGET.">
+          <span class="vic">∮</span><span class="rtxt"><b>XVA</b></span><span class="rkbd">⌘8</span><span class="tag target">◇ Target</span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Books &amp; Positions" data-dest="workspace" data-state="live" data-hint="⌘9"
+          data-desc="Trader→Book→Desk→Location→Entity hierarchy, auto-booked positions, deal blotter.">
+          <span class="vic">▦</span><span class="rtxt"><b>Books &amp; Positions</b></span><span class="rdest">workspace</span><span class="rkbd">⌘9</span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Reporting" data-dest="workspace" data-state="target"
+          data-desc="Valuation / risk / activity / regulatory packs. Greenfield — flagged as a to-build backend (TARGET).">
+          <span class="vic">▤</span><span class="rtxt"><b>Reporting</b></span><span class="rdest">workspace</span><span class="tag target">◇ Target</span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Admin &amp; License" data-dest="workspace" data-state="live"
+          data-desc="Action×AssetClass×Desk capability kernel, per-user overlay, persona presets, license tiers.">
+          <span class="vic">⚙</span><span class="rtxt"><b>Admin &amp; License</b></span><span class="rdest">workspace</span><span class="rkbd"></span>
+        </button>
+
+        <!-- switch persona lens -->
+        <div class="grp-h" data-grp="cap"><span class="label">Switch lens · persona</span><span class="gtag">capability-overlay preset</span></div>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Trader / Market-maker lens" data-dest="preset" data-state="live"
+          data-desc="Stream · Ticket · Risk · Surface · Book, desk-scoped. Full action set on one asset class.">
+          <span class="vic">◒</span><span class="rtxt"><b>Trader / Market-maker</b> <span class="ent">lens</span></span><span class="rdest">preset</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Quant lens" data-dest="preset" data-state="live"
+          data-desc="Model / surface inspector, read/calibrate-only, golden-oracle diff, plugin registry. View+Price, no dealing.">
+          <span class="vic">◒</span><span class="rtxt"><b>Quant</b> <span class="ent">lens · model inspector</span></span><span class="rdest">preset</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Sales-Trader lens" data-dest="preset" data-state="live"
+          data-desc="RFQ / IOI inbox + price-show ticket. RfqRespond + IoiRespond only — relays, never books the desk.">
+          <span class="vic">◒</span><span class="rtxt"><b>Sales-Trader</b> <span class="ent">lens · RFQ inbox</span></span><span class="rdest">preset</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Risk Manager lens" data-dest="preset" data-state="live"
+          data-desc="Firm-wide risk + book explorer, breadcrumb group-by. View-only, DeskScope::All — sees all, acts on none.">
+          <span class="vic">◒</span><span class="rtxt"><b>Risk Manager</b> <span class="ent">lens · firm-wide</span></span><span class="rdest">preset</span><span class="rkbd"></span>
+        </button>
+        <button class="res" role="option" data-cat="cap" data-arch="cap" data-title="Desk Head lens" data-dest="preset" data-state="live"
+          data-desc="Desk aggregate Book home + desk-scoped limit dashboard; full trader reach across every book under the desk.">
+          <span class="vic">◒</span><span class="rtxt"><b>Desk Head</b> <span class="ent">lens · desk roll-up</span></span><span class="rdest">preset</span><span class="rkbd"></span>
+        </button>
+
+        <div class="nohits" id="noHits">No match — try a verb (<b>price</b>, <b>mark</b>, <b>risk</b>), an <b>@underlier</b>, or a <b>#book</b>.</div>
+      </div>
+
+      <aside class="pal-preview" id="palPreview" aria-live="polite"><!-- rendered by script --></aside>
+    </div>
+
+    <div class="pal-foot">
+      <span class="grp"><kbd class="kbd">↑</kbd><kbd class="kbd">↓</kbd> navigate</span>
+      <span class="grp"><kbd class="kbd">↵</kbd> open</span>
+      <span class="grp"><kbd class="kbd">⇥</kbd> scope</span>
+      <span class="grp grammar"><kbd class="kbd">@</kbd> underlier <kbd class="kbd">&gt;</kbd> action <kbd class="kbd">#</kbd> book <kbd class="kbd">/</kbd> surface</span>
+      <span style="flex:1"></span>
+      <span class="grp grammar" id="footNote">grammar <b>entity × verb</b> · <kbd class="kbd">esc</kbd> close</span>
+    </div>
+
+  </div>
+</div>
+
+<div class="reopen" id="reopen"><span class="glyph num" style="font-size:12px">⌘K</span> Open command palette</div>
+
+<script>
+(function () {
+  var input    = document.getElementById('palInput');
+  var results  = document.getElementById('palResults');
+  var preview  = document.getElementById('palPreview');
+  var noHits   = document.getElementById('noHits');
+  var footNote = document.getElementById('footNote');
+  var modeBtns = Array.prototype.slice.call(document.querySelectorAll('.pal-modes button'));
+  var rows     = Array.prototype.slice.call(document.querySelectorAll('.res'));
+  var groups   = Array.prototype.slice.call(document.querySelectorAll('.grp-h'));
+  var active   = null;
+  var mode     = 'all';
+
+  // intraday spot sparkline point sets (x 10..250 / y 12..70; baseline 80)
+  var SPARKS = {
+    eurusd: '10,62 30,58 50,60 71,52 92,50 113,46 134,48 155,40 176,42 197,34 218,30 250,26',
+    usdjpy: '10,30 30,34 50,28 71,38 92,36 113,44 134,40 155,48 176,52 197,50 218,58 250,62',
+    gbpusd: '10,34 34,44 58,54 82,60 106,58 130,50 154,52 178,44 202,40 226,34 250,30',
+    xauusd: '10,66 34,60 58,58 82,50 106,52 130,44 154,38 178,40 202,30 226,24 250,18'
+  };
+
+  // Real mini price chart: aspect preserved (no 'none' → the 'now' dot stays a
+  // circle, stroke stays 2px via non-scaling-stroke), a faint dashed prior-close
+  // reference line, and a last-price y-tick on the right axis.
+  function sparkSVG(key) {
+    var pts = SPARKS[key]; if (!pts) return '';
+    var arr = pts.trim().split(/\s+/);
+    var first = arr[0].split(','), last = arr[arr.length - 1].split(',');
+    var base = 84;
+    var lastX = Number(last[0]), lastY = Number(last[1]), openY = Number(first[1]);
+    var area = 'M' + first[0] + ',' + base + ' L' + arr.join(' L') + ' L' + last[0] + ',' + base + ' Z';
+    var line = 'M' + arr.join(' L');
+    return '<svg class="spk" viewBox="0 0 292 96" aria-hidden="true">'
+      + '<defs><linearGradient id="spkGrad" x1="0" y1="0" x2="0" y2="1">'
+      + '<stop class="lstop0" offset="0"/><stop class="lstop1" offset="1"/></linearGradient></defs>'
+      + '<line class="gl2" x1="10" y1="28" x2="250" y2="28"/><line class="gl2" x1="10" y1="56" x2="250" y2="56"/>'
+      + '<line class="ref" x1="10" y1="' + openY + '" x2="250" y2="' + openY + '"/>'
+      + '<text class="lbl" x="10" y="' + (openY - 3) + '">prev close</text>'
+      + '<path class="fill" d="' + area + '"/>'
+      + '<path class="ln" d="' + line + '" vector-effect="non-scaling-stroke"/>'
+      + '<line class="tick" x1="250" y1="' + lastY + '" x2="258" y2="' + lastY + '"/>'
+      + '<circle class="dot" cx="' + lastX + '" cy="' + lastY + '" r="3"/>'
+      + '<text class="now" x="262" y="' + (lastY + 3) + '" text-anchor="start">now</text>'
+      + '</svg>';
+  }
+
+  function stateTag(s) {
+    if (s === 'live')   return '<span class="tag live">● Live</span>';
+    if (s === 'target') return '<span class="tag target">◇ Target</span>';
+    if (s === 'lock')   return '<span class="tag lock">⊘ Locked</span>';
+    return '';
+  }
+
+  function renderPreview(el) {
+    if (!el) { preview.innerHTML = ''; return; }
+    var d = el.dataset;
+    var arch = d.arch, html = '';
+    var brandIc = (d.state === 'live') ? '' : '';
+    var iconGlyph = el.querySelector('.vic') ? el.querySelector('.vic').textContent : '◆';
+
+    if (arch === 'spark') {
+      var pos = d.chgpos === '1';
+      html += '<div class="pv-head"><div class="pv-ic brandbg">↳</div><div>'
+            + '<div class="pv-ttl">' + d.title + '</div>'
+            + '<div class="pv-sub">' + d.cls + ' · jump to underlier</div></div></div>';
+      html += '<div class="pv-row" style="align-items:baseline; gap:10px">'
+            + '<span class="pv-big">' + d.spot + '</span>'
+            + '<span class="pv-chg" style="color:' + (pos ? 'var(--bid)' : 'var(--danger)') + '">' + d.chg + '</span></div>';
+      html += sparkSVG(d.spark);
+      html += '<div class="pv-desc">' + (d.desc || '') + '</div>';
+      html += '<div class="pv-kv"><span class="k">Asset class</span><span class="v">' + d.cls + '</span></div>';
+      html += '<div class="pv-kv"><span class="k">Contribution</span><span class="v">' + (d.tiers || '—') + '</span></div>';
+      html += '<div class="pv-kv"><span class="k">Licensed</span><span class="v" style="color:var(--bid)">✓ this desk</span></div>';
+      html += '<div class="pv-dest"><span>enter → <b>' + d.dest + '</b></span>' + stateTag(d.state) + '</div>';
+    } else if (arch === 'action') {
+      var bg = (d.state === 'live') ? 'pv-ic brandbg' : 'pv-ic';
+      html += '<div class="pv-head"><div class="' + bg + '">' + iconGlyph + '</div><div>'
+            + '<div class="pv-ttl">' + d.title + '</div>'
+            + '<div class="pv-sub">' + (d.entity || '') + '</div></div></div>';
+      html += '<div class="pv-row">' + stateTag(d.state) + '<span class="pv-flow">entity × verb</span></div>';
+      html += '<div class="pv-desc">' + (d.desc || '') + '</div>';
+      if (d.verb === 'price') {
+        html += '<div class="label" style="margin-top:2px">Greeks preview · USD</div>'
+             + '<div class="pv-greeks">'
+             + '<div class="g"><div class="k">Δ</div><div class="v">0.251</div></div>'
+             + '<div class="g"><div class="k">Γ</div><div class="v">0.043</div></div>'
+             + '<div class="g"><div class="k">Vega</div><div class="v">0.118</div></div>'
+             + '<div class="g"><div class="k">Θ</div><div class="v neg">−0.021</div></div>'
+             + '</div>';
+      } else if (d.verb === 'mark') {
+        html += '<div class="pv-kv"><span class="k">Model</span><span class="v">eSSVI</span></div>'
+             + '<div class="pv-kv"><span class="k">RR / BF (25Δ)</span><span class="v">−0.42 / 0.21</span></div>'
+             + '<div class="pv-kv"><span class="k">Arb gate</span><span class="v" style="color:var(--bid)">✓ arb-free</span></div>';
+      } else if (d.verb === 'contribute') {
+        html += '<div class="pv-kv"><span class="k">Tiers</span><span class="v">T1 · T2 · T3</span></div>'
+             + '<div class="pv-kv"><span class="k">½-spread</span><span class="v">0.12v</span></div>'
+             + '<div class="pv-kv"><span class="k">Transport</span><span class="v">SPMC fan-out</span></div>';
+      }
+      if (d.spark) html += sparkSVG(d.spark);
+      html += '<div class="pv-dest"><span>enter → <b>' + d.dest + '</b></span>' + stateTag(d.state) + '</div>';
+    } else { /* cap / surface / book / locked */
+      var lockBg = (d.state === 'lock') ? 'pv-ic' : ((d.state === 'live') ? 'pv-ic' : 'pv-ic');
+      html += '<div class="pv-head"><div class="' + lockBg + '">' + iconGlyph + '</div><div>'
+            + '<div class="pv-ttl">' + d.title + '</div>'
+            + '<div class="pv-sub">' + (d.dest || '') + '</div></div></div>';
+      html += '<div class="pv-row">' + stateTag(d.state) + (d.hint ? '<span class="pv-flow">' + d.hint + '</span>' : '') + '</div>';
+      html += '<div class="pv-desc">' + (d.desc || '') + '</div>';
+      if (d.flow) html += '<div class="pv-kv"><span class="k">Integration</span><span class="v" style="font-size:10px">' + d.flow + '</span></div>';
+      var verb = (d.state === 'lock') ? 'request →' : 'enter →';
+      html += '<div class="pv-dest"><span>' + verb + ' <b>' + d.dest + '</b></span>' + stateTag(d.state) + '</div>';
+    }
+    preview.innerHTML = html;
+  }
+
+  function setActive(el, scroll) {
+    if (!el) return;
+    if (active) { active.classList.remove('act'); active.setAttribute('aria-selected', 'false'); }
+    active = el;
+    active.classList.add('act');
+    active.setAttribute('aria-selected', 'true');
+    renderPreview(el);
+    if (scroll) {
+      var r = el.getBoundingClientRect(), pr = results.getBoundingClientRect();
+      if (r.bottom > pr.bottom) results.scrollTop += (r.bottom - pr.bottom) + 8;
+      else if (r.top < pr.top) results.scrollTop -= (pr.top - r.top) + 26;
+    }
+  }
+
+  function visibleRows() { return rows.filter(function (r) { return r.style.display !== 'none'; }); }
+
+  function matchMode(cat) {
+    if (mode === 'all') return true;
+    if (mode === 'cap') return cat === 'cap';
+    return cat === mode;
+  }
+
+  function apply() {
+    var raw = input.value.trim();
+    var prefixMode = null;
+    if (raw[0] === '@') { prefixMode = 'underlier'; raw = raw.slice(1); }
+    else if (raw[0] === '>') { prefixMode = 'action'; raw = raw.slice(1); }
+    else if (raw[0] === '#') { prefixMode = 'book'; raw = raw.slice(1); }
+    else if (raw[0] === '/') { prefixMode = 'surface'; raw = raw.slice(1); }
+    var q = raw.trim().toLowerCase();
+    var effMode = prefixMode || mode;
+    // ⌘K lands on a curated Recent/Suggested set; the full grouped catalog is
+    // revealed lazily on the first keystroke (or when a scope segment is chosen).
+    var emptyAll = (q === '' && !prefixMode && mode === 'all');
+
+    var anyVisible = false;
+    rows.forEach(function (r) {
+      var curated = r.dataset.curated === '1';
+      var show;
+      if (emptyAll) {
+        show = curated;
+      } else if (curated) {
+        show = false;
+      } else {
+        var cat = r.dataset.cat;
+        var modeOk = (effMode === 'all') ? true : (effMode === 'cap' ? cat === 'cap' : cat === effMode);
+        var text = (r.textContent + ' ' + (r.dataset.title || '') + ' ' + (r.dataset.entity || '') + ' ' + (r.dataset.cls || '') + ' ' + (r.dataset.dest || '')).toLowerCase();
+        var textOk = q === '' || text.indexOf(q) !== -1;
+        show = modeOk && textOk;
+      }
+      r.style.display = show ? '' : 'none';
+      if (show) anyVisible = true;
+    });
+
+    // curated headers show only on the landing state; catalog headers only off it.
+    // Either way a header hides when every row beneath it is hidden.
+    groups.forEach(function (g) {
+      var isCur = g.classList.contains('curated');
+      if (emptyAll !== isCur) { g.style.display = 'none'; return; }
+      var n = g, vis = false;
+      while ((n = n.nextElementSibling) && !n.classList.contains('grp-h')) {
+        if (n.classList.contains('res') && n.style.display !== 'none') { vis = true; break; }
+      }
+      g.style.display = vis ? '' : 'none';
+    });
+
+    noHits.style.display = anyVisible ? 'none' : 'block';
+
+    // sync the segmented control to a prefix override (visual only)
+    if (prefixMode) {
+      modeBtns.forEach(function (b) { b.classList.toggle('on', b.dataset.mode === prefixMode); });
+    }
+
+    var vis = visibleRows();
+    if (vis.length) { if (!active || active.style.display === 'none') setActive(vis[0], true); else renderPreview(active); }
+    else { if (active) { active.classList.remove('act'); active.setAttribute('aria-selected', 'false'); } active = null; preview.innerHTML = ''; }
+  }
+
+  function move(dir) {
+    var vis = visibleRows(); if (!vis.length) return;
+    var i = vis.indexOf(active);
+    i = (i + dir + vis.length) % vis.length;
+    setActive(vis[i], true);
+  }
+
+  // ---- events ----
+  input.addEventListener('input', apply);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+    else if (e.key === 'Enter') { e.preventDefault(); openActive(); }
+    else if (e.key === 'Tab') { e.preventDefault(); cycleMode(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape') { closePalette(); }
+  });
+
+  rows.forEach(function (r) {
+    r.addEventListener('mouseenter', function () { if (r.style.display !== 'none') setActive(r, false); });
+    r.addEventListener('click', function () { setActive(r, false); openActive(); });
+  });
+
+  modeBtns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      modeBtns.forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on'); mode = b.dataset.mode;
+      // strip any prefix so the segment wins
+      if (/^[@>#/]/.test(input.value)) input.value = input.value.replace(/^[@>#/]\s*/, '');
+      apply(); input.focus();
+    });
+  });
+
+  function cycleMode(dir) {
+    var i = modeBtns.findIndex(function (b) { return b.classList.contains('on'); });
+    i = (i + dir + modeBtns.length) % modeBtns.length;
+    modeBtns[i].click();
+  }
+
+  function openActive() {
+    if (!active) return;
+    if (active.getAttribute('aria-disabled') === 'true') {
+      footNote.innerHTML = '<b style="color:var(--warn)">' + active.dataset.title + '</b> not licensed — request access';
+      return;
+    }
+    var d = active.dataset;
+    footNote.innerHTML = 'opening <b>' + (d.dest || d.title) + '</b> · <span class="dim">' + d.title + '</span>';
+    active.animate ? active.animate(
+      [{ background: 'var(--accent)' }, { background: 'var(--accent-soft)' }],
+      { duration: 260, easing: 'ease-out' }
+    ) : null;
+  }
+
+  // ⌘1–9 jump straight to the matching capability (only capability rows carry a
+  // ⌘-chord; entity actions are reached with ↵ on the active row).
+  function openCapability(n) {
+    var target = null;
+    rows.forEach(function (r) {
+      if (r.dataset.curated !== '1' && r.dataset.cat === 'cap' && r.dataset.hint === '⌘' + n) target = r;
+    });
+    if (!target) return;
+    document.body.classList.remove('closed');
+    modeBtns.forEach(function (b) { b.classList.toggle('on', b.dataset.mode === 'cap'); });
+    mode = 'cap'; input.value = '';
+    apply();                       // reveal the capability list off the landing state
+    setActive(target, true);
+    openActive();
+  }
+
+  // ---- open / close the overlay ----
+  function openPalette()  { document.body.classList.remove('closed'); input.focus(); input.select(); }
+  function closePalette() { document.body.classList.add('closed'); }
+
+  document.getElementById('scrim').addEventListener('click', closePalette);
+  document.getElementById('reopen').addEventListener('click', openPalette);
+  document.getElementById('shellCmd').addEventListener('focus', function (e) { e.target.blur(); openPalette(); });
+  document.getElementById('shellCmd').addEventListener('click', openPalette);
+
+  document.addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); openPalette(); }
+    else if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key) && !document.body.classList.contains('closed')) { e.preventDefault(); openCapability(e.key); }
+    else if (e.key === 'Escape' && !document.body.classList.contains('closed')) { closePalette(); }
+  });
+
+  // init
+  apply();
+  setTimeout(function () { input.focus(); }, 60);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Books &amp; Positions (mockup 08)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+/* ===== 08 Books & Positions — screen-scoped only (shared tokens live in celer.css) ===== */
+
+/* lens strip — book-as-home consolidation header */
+.bp-lens { display:flex; align-items:center; gap:var(--space-4); flex-wrap:wrap; }
+.bp-lens .title { font-size:19px; }
+.bp-lens .spacer { flex:1; }
+.rollup { display:inline-flex; background:var(--bg-inset); border-radius:var(--r-full); padding:2px; gap:2px; border:var(--hairline); }
+.rollup button { border:0; background:transparent; color:var(--text-tertiary); font-size:var(--type-caption); padding:4px 11px; border-radius:var(--r-full); cursor:pointer; font-weight:600; font-family:var(--font-ui); }
+.rollup button.on { background:var(--accent); color:#fff; }
+.badge-target { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.05em; font-weight:700;
+  padding:3px 9px; border-radius:var(--r-full); background:oklch(0.62 0.19 280 / 0.12); color:var(--accent); border:1px dashed oklch(0.62 0.19 280 / 0.5); }
+.badge-target .mono { font-family:var(--font-mono); text-transform:none; letter-spacing:0; color:var(--text-secondary); font-weight:500; }
+.badge-live { display:inline-flex; align-items:center; gap:5px; font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.05em; font-weight:700;
+  padding:3px 8px; border-radius:var(--r-full); background:oklch(0.78 0.16 155 / 0.14); color:var(--bid); }
+
+/* KPI tiles */
+.bp-kpis { display:grid; grid-template-columns:repeat(6,1fr); gap:var(--space-4); }
+.kpi { background:var(--bg-raised); border:var(--hairline); border-radius:var(--r-md); box-shadow:var(--shadow-panel); padding:var(--space-4) var(--space-4) var(--space-3); position:relative; overflow:hidden; }
+.kpi .k { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.05em; color:var(--text-tertiary); font-weight:600; display:flex; align-items:center; gap:5px; }
+.kpi .v { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:22px; font-weight:600; line-height:1.15; margin-top:3px; letter-spacing:-0.02em; }
+.kpi .d { font-family:var(--font-mono); font-size:var(--type-micro); margin-top:1px; }
+.kpi .spk { position:absolute; right:8px; bottom:6px; width:62px; height:22px; opacity:0.9; }
+.kpi .tgt { font-size:8px; color:var(--accent); border:1px dashed oklch(0.62 0.19 280 / 0.5); border-radius:3px; padding:0 3px; letter-spacing:0.04em; }
+
+/* main split: tree | blotter */
+.bp-grid { display:grid; grid-template-columns:288px 1fr; gap:var(--space-4); align-items:start; }
+.bp-grid2 { display:grid; grid-template-columns:1.55fr 1fr; gap:var(--space-4); align-items:start; }
+
+/* book / desk tree */
+.tree { font-size:var(--type-caption); }
+.tnode { display:grid; grid-template-columns:14px 1fr 46px auto; gap:6px; align-items:center; height:27px; padding:0 8px; border-radius:var(--r-sm); cursor:pointer; }
+.tnode:hover { background:oklch(1 0 0 / 0.04); }
+.tnode.sel { background:var(--accent-soft); box-shadow:inset 2px 0 0 var(--accent); }
+.tnode .car { color:var(--text-tertiary); font-size:9px; width:14px; text-align:center; user-select:none; }
+.tnode .car.leaf { opacity:0; }
+.tnode .nm { display:flex; align-items:center; gap:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tnode .nm .lv { font-size:8px; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-tertiary); font-weight:700; }
+.tnode .mtm { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:var(--type-caption); text-align:right; }
+.tbar { height:6px; border-radius:var(--r-full); background:var(--bg-inset); position:relative; overflow:hidden; }
+.tbar > i { position:absolute; top:0; bottom:0; display:block; border-radius:var(--r-full); }
+.tbar > i.pos { left:50%; background:var(--div-pos2); } .tbar > i.neg { right:50%; background:var(--div-neg2); }
+.tbar::before { content:""; position:absolute; left:50%; top:-1px; bottom:-1px; width:1px; background:var(--grid-line); }
+.tgt-dot { width:6px; height:6px; border-radius:2px; background:transparent; border:1px dashed var(--accent); display:inline-block; }
+.lvl-firm { padding-left:0; } .lvl-entity { padding-left:16px; } .lvl-desk { padding-left:32px; } .lvl-book { padding-left:52px; }
+
+/* blotter */
+.blot-wrap { position:relative; }
+.blot-scroll { max-height:392px; overflow:auto; border-radius:0 0 var(--r-md) var(--r-md); }
+table.blot { width:100%; border-collapse:collapse; font-size:var(--type-caption); }
+table.blot thead th { position:sticky; top:0; z-index:2; background:var(--bg-raised); text-align:right; font-size:8px; text-transform:uppercase;
+  letter-spacing:0.05em; color:var(--text-tertiary); font-weight:700; padding:6px var(--space-4) 6px 6px; border-bottom:var(--hairline); white-space:nowrap; cursor:default; user-select:none; }
+table.blot thead th:first-child, table.blot thead th:nth-child(2) { text-align:left; }
+table.blot thead th.srt { cursor:pointer; }
+table.blot thead th.srt:hover { color:var(--text-secondary); }
+table.blot thead th .ar { opacity:0.35; font-size:8px; }
+table.blot thead th.srt.act .ar { opacity:1; color:var(--accent); }
+table.blot td { padding:0 var(--space-4) 0 6px; height:30px; border-bottom:1px solid var(--grid-line); white-space:nowrap; }
+table.blot td.n { text-align:right; font-family:var(--font-mono); font-variant-numeric:tabular-nums; letter-spacing:-0.01em; }
+table.blot tbody tr:hover td { background:oklch(1 0 0 / 0.028); }
+table.blot td.dim { color:var(--text-tertiary); }
+.ac { font-size:8px; text-transform:uppercase; letter-spacing:0.04em; font-weight:700; padding:1px 5px; border-radius:3px; margin-right:7px; }
+.ac.fx { background:var(--accent-soft); color:var(--accent); }
+.ac.metal { background:oklch(0.82 0.16 75 / 0.16); color:var(--warn); }
+.ac.rates { background:oklch(0.66 0.11 168 / 0.18); color:var(--seq-4); }
+.inst { display:inline-flex; align-items:baseline; }
+.inst .sym { font-family:var(--font-mono); font-weight:600; }
+.inst .st { color:var(--text-tertiary); font-size:var(--type-micro); margin-left:6px; }
+.srcdot { margin-left:6px; font-size:8px; }
+.srcdot.tgt { color:var(--accent); }
+.spk-cell { width:64px; }
+.spk-cell svg { display:block; width:60px; height:18px; }
+/* diverging Day-P&L heat (blue↔orange, centered 0) */
+td.pnl.d-p2 { background:color-mix(in oklab, var(--div-pos2) 34%, transparent); }
+td.pnl.d-p1 { background:color-mix(in oklab, var(--div-pos1) 24%, transparent); }
+td.pnl.d-z  { background:transparent; }
+td.pnl.d-n1 { background:color-mix(in oklab, var(--div-neg1) 24%, transparent); }
+td.pnl.d-n2 { background:color-mix(in oklab, var(--div-neg2) 34%, transparent); }
+@keyframes bpUp { from { background:var(--flash-up); } }
+@keyframes bpDn { from { background:var(--flash-dn); } }
+td.bp-up { animation:bpUp var(--flash-decay) var(--ease-out); }
+td.bp-dn { animation:bpDn var(--flash-decay) var(--ease-out); }
+.livedot { width:7px; height:7px; border-radius:var(--r-full); display:inline-block; background:var(--bid); box-shadow:0 0 6px var(--bid); }
+.livedot.tgt { background:transparent; border:1px dashed var(--accent); box-shadow:none; }
+
+/* footer summary row inside blotter */
+tfoot.blot-foot td { position:sticky; bottom:0; background:var(--bg-inset); border-top:var(--hairline); height:30px; font-weight:600; color:var(--text-secondary); }
+tfoot.blot-foot td.n { font-family:var(--font-mono); font-variant-numeric:tabular-nums; text-align:right; }
+
+/* waterfall + book-breakdown */
+.wf-pos { fill:var(--div-pos2); } .wf-pos2 { fill:var(--div-pos1); }
+.wf-neg { fill:var(--div-neg2); } .wf-neg2 { fill:var(--div-neg1); }
+.wf-tot { fill:var(--accent); }
+.wf-con { stroke:var(--text-tertiary); stroke-width:1; stroke-dasharray:2 2; opacity:0.55; }
+.wf-lab { fill:var(--text-secondary); font-size:8px; font-family:var(--font-mono); }
+.wf-cat { fill:var(--text-tertiary); font-size:8px; }
+.dbar { display:grid; grid-template-columns:96px 1fr 74px; gap:8px; align-items:center; padding:5px 0; }
+.dbar .nm { font-size:var(--type-caption); display:flex; align-items:center; gap:6px; }
+.dbar .track { height:16px; position:relative; background:var(--bg-inset); border-radius:var(--r-sm); overflow:hidden; }
+.dbar .track::before { content:""; position:absolute; left:50%; top:0; bottom:0; width:1px; background:var(--grid-line); }
+.dbar .track > i { position:absolute; top:2px; bottom:2px; display:block; border-radius:2px; }
+.dbar .track > i.pos { left:50%; background:var(--div-pos2); } .dbar .track > i.neg { right:50%; background:var(--div-neg2); }
+.dbar .amt { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:var(--type-caption); text-align:right; }
+.legend { display:flex; gap:12px; font-size:var(--type-micro); color:var(--text-tertiary); }
+.legend span { display:inline-flex; align-items:center; gap:5px; }
+.legend i { width:9px; height:9px; border-radius:2px; display:inline-block; }
+.xlink { font-size:var(--type-micro); color:var(--accent); cursor:pointer; }
+.note { font-size:var(--type-micro); color:var(--text-tertiary); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR (verbatim from 00-shell) ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL (verbatim; 'on' moved to Books & Positions) ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a class="on"><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — BOOKS & POSITIONS ============ -->
+  <main class="main" style="gap:var(--space-4)">
+
+    <!-- lens strip: book-as-home consolidation -->
+    <div class="bp-lens">
+      <span class="title">Books &amp; Positions</span>
+      <span class="rollup" id="rollup" role="tablist" aria-label="Consolidation level">
+        <button data-lvl="trader">Trader</button>
+        <button data-lvl="book">Book</button>
+        <button data-lvl="desk" class="on">Desk</button>
+        <button data-lvl="entity">Entity</button>
+        <button data-lvl="firm">Firm</button>
+      </span>
+      <span class="seg" id="acfilter" role="tablist" aria-label="Asset class">
+        <button data-cls="all" class="on">All</button>
+        <button data-cls="fx">FX</button>
+        <button data-cls="metal">Metal</button>
+        <button data-cls="rates">Rates</button>
+      </span>
+      <span class="badge-target" title="PositionStore (FX) and RatesPositionStore (rates) are disjoint types today — this cross-asset view is the unifying target, not a wired store.">Unified book · TARGET <span class="mono">PositionStore ⊕ RatesPositionStore</span></span>
+      <span class="spacer"></span>
+      <span class="pill"><span class="dot live"></span> as-of 12:04:07 · streaming</span>
+    </div>
+
+    <!-- KPI tiles (Desk · FX Vol consolidated) -->
+    <div class="bp-kpis">
+      <div class="kpi"><div class="k">Net MTM · USD</div><div class="v pos" id="kpi-mtm">+1.86mm</div><div class="d dim">book value · mark 12:04</div><svg class="spk" data-seed="7" data-trend="up" viewBox="0 0 62 22"></svg></div>
+      <div class="kpi"><div class="k">Day P&amp;L</div><div class="v pos" id="kpi-pnl">+148.0k</div><div class="d pos" id="kpi-pnld">▲ +0.83% NAV</div><svg class="spk" data-seed="3" data-trend="up" viewBox="0 0 62 22"></svg></div>
+      <div class="kpi"><div class="k">Net Δ · USD</div><div class="v" id="kpi-delta">+8.42mm</div><div class="d dim">spot-equiv delta</div><svg class="spk" data-seed="11" data-trend="flat" viewBox="0 0 62 22"></svg></div>
+      <div class="kpi"><div class="k">Net Vega · /vol</div><div class="v" id="kpi-vega">+184k</div><div class="d dim">σ · +1v parallel</div><svg class="spk" data-seed="5" data-trend="up" viewBox="0 0 62 22"></svg></div>
+      <div class="kpi"><div class="k">DV01 · /bp <span class="tgt">TGT</span></div><div class="v neg" id="kpi-dv01">−86.0k</div><div class="d dim">federated · rates store</div><svg class="spk" data-seed="9" data-trend="dn" viewBox="0 0 62 22"></svg></div>
+      <div class="kpi"><div class="k">1d VaR 99%</div><div class="v neg" id="kpi-var">−412k</div><div class="d"><span class="rag g" style="margin:0 5px 0 0"></span><span class="dim">within limit</span></div><svg class="spk" data-seed="14" data-trend="dn" viewBox="0 0 62 22"></svg></div>
+    </div>
+
+    <!-- tree | blotter -->
+    <div class="bp-grid">
+
+      <!-- book / desk tree -->
+      <section class="panel">
+        <header>
+          <span class="headline">Book &amp; desk tree</span>
+          <span class="note">Firm ▸ Entity ▸ Desk ▸ Book</span>
+        </header>
+        <div class="body" style="padding:var(--space-3)">
+          <div class="tree" id="tree">
+            <div class="tnode lvl-firm" data-kids="e-lon,e-ny"><span class="car" data-car>▾</span><span class="nm"><span class="lv">Firm</span> Celer Markets</span><span class="tbar"><i class="pos" style="width:46px"></i></span><span class="mtm pos">+4.82mm</span></div>
+
+            <div class="tnode lvl-entity" data-id="e-lon" data-kids="d-fxv,d-fxf,d-rts"><span class="car" data-car>▾</span><span class="nm"><span class="lv">Ent</span> Celer Bank London</span><span class="tbar"><i class="pos" style="width:38px"></i></span><span class="mtm pos">+3.14mm</span></div>
+
+            <div class="tnode lvl-desk sel" data-id="d-fxv" data-kids="b-g10a,b-g10b,b-em1"><span class="car" data-car>▾</span><span class="nm"><span class="lv">Desk</span> FX Vol <span class="badge-live" style="padding:1px 6px">LIVE</span></span><span class="tbar"><i class="pos" style="width:30px"></i></span><span class="mtm pos">+1.86mm</span></div>
+            <div class="tnode lvl-book" data-parent="d-fxv" data-id="b-g10a"><span class="car leaf">◆</span><span class="nm">G10-A</span><span class="tbar"><i class="pos" style="width:22px"></i></span><span class="mtm pos">+0.92mm</span></div>
+            <div class="tnode lvl-book" data-parent="d-fxv" data-id="b-g10b"><span class="car leaf">◆</span><span class="nm">G10-B</span><span class="tbar"><i class="pos" style="width:16px"></i></span><span class="mtm pos">+0.44mm</span></div>
+            <div class="tnode lvl-book" data-parent="d-fxv" data-id="b-em1"><span class="car leaf">◆</span><span class="nm">EM-1 &nbsp;<span class="dim">+ Metals</span></span><span class="tbar"><i class="pos" style="width:12px"></i></span><span class="mtm pos">+0.50mm</span></div>
+
+            <div class="tnode lvl-desk" data-id="d-fxf" data-kids="b-fwd"><span class="car" data-car>▾</span><span class="nm"><span class="lv">Desk</span> FX Fwds <span class="badge-live" style="padding:1px 6px">LIVE</span></span><span class="tbar"><i class="pos" style="width:14px"></i></span><span class="mtm pos">+0.48mm</span></div>
+            <div class="tnode lvl-book" data-parent="d-fxf" data-id="b-fwd"><span class="car leaf">◆</span><span class="nm">Fwd-G10</span><span class="tbar"><i class="pos" style="width:14px"></i></span><span class="mtm pos">+0.48mm</span></div>
+
+            <div class="tnode lvl-desk" data-id="d-rts" data-kids="b-rt1"><span class="car" data-car>▸</span><span class="nm"><span class="lv">Desk</span> Rates <span class="badge-target" style="padding:1px 6px"><span class="tgt-dot"></span> TARGET</span></span><span class="tbar"><i class="pos" style="width:20px"></i></span><span class="mtm pos">+0.80mm</span></div>
+            <div class="tnode lvl-book hidden" data-parent="d-rts" data-id="b-rt1"><span class="car leaf">◆</span><span class="nm">IRS-EUR <span class="dim">RatesPositionStore</span></span><span class="tbar"><i class="pos" style="width:20px"></i></span><span class="mtm pos">+0.80mm</span></div>
+
+            <div class="tnode lvl-entity" data-id="e-ny" data-kids="d-ny1"><span class="car" data-car>▸</span><span class="nm"><span class="lv">Ent</span> Celer Bank NY</span><span class="tbar"><i class="pos" style="width:24px"></i></span><span class="mtm pos">+1.68mm</span></div>
+            <div class="tnode lvl-desk hidden" data-parent="e-ny" data-id="d-ny1"><span class="car leaf">◆</span><span class="nm"><span class="lv">Desk</span> FX Vol NY</span><span class="tbar"><i class="pos" style="width:24px"></i></span><span class="mtm pos">+1.68mm</span></div>
+          </div>
+          <div style="margin-top:var(--space-3); padding-top:var(--space-3); border-top:var(--hairline)" class="note">
+            Roll-up resolves via <span class="num">book_to_desk</span> / <span class="num">location_to_entity</span> parent pointers (risk-cube Hierarchy). Rates leg federated from a <span style="color:var(--accent)">separate store</span> — <span class="xlink">wire unification →</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- cross-asset blotter -->
+      <section class="panel blot-wrap">
+        <header>
+          <span class="headline">Position blotter · <span id="scopelbl">Desk · FX Vol</span></span>
+          <span class="note">virtualized window · <span class="num">12,480</span> positions · showing <span class="num" id="shown">19</span> · per-cell live flash</span>
+        </header>
+        <div class="blot-scroll">
+        <table class="blot" id="blot">
+          <thead>
+            <tr>
+              <th>Instrument</th>
+              <th>Book</th>
+              <th class="srt" data-k="notional">Position <span class="ar">↕</span></th>
+              <th class="srt" data-k="delta">Net Δ <span class="ar">↕</span></th>
+              <th class="srt" data-k="gamma">Γ <span class="ar">↕</span></th>
+              <th class="srt" data-k="vega">Vega <span class="ar">↕</span></th>
+              <th class="srt" data-k="theta">Θ/d <span class="ar">↕</span></th>
+              <th class="srt" data-k="dv01">DV01 <span class="ar">↕</span></th>
+              <th>Level</th>
+              <th class="srt" data-k="mtm">MTM <span class="ar">↕</span></th>
+              <th class="srt act" data-k="pnl">Day P&amp;L <span class="ar">↓</span></th>
+              <th>7d</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="blotbody">
+            <!-- FX Vol · G10-A -->
+            <tr data-cls="fx" data-notional="10.0" data-delta="2.51" data-vega="11.8" data-dv01="" data-mtm="182" data-pnl="18.2">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">EUR/USD</span><span class="st">1M 25Δ Call</span></span></td>
+              <td class="dim">G10-A</td><td class="n">+10.0mm</td><td class="n">+2.51mm</td><td class="n">0.043</td><td class="n">+11.8k</td><td class="n neg">−2.1k</td><td class="n dim">—</td><td class="n">1.0842</td><td class="n pos">+182k</td><td class="n pnl">+18.2k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <tr data-cls="fx" data-notional="25.0" data-delta="0.40" data-vega="42.0" data-dv01="" data-mtm="410" data-pnl="-12.8">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">EUR/USD</span><span class="st">3M ATM Straddle</span></span></td>
+              <td class="dim">G10-A</td><td class="n">+25.0mm</td><td class="n">+0.40mm</td><td class="n">0.061</td><td class="n">+42.0k</td><td class="n neg">−5.4k</td><td class="n dim">—</td><td class="n">1.0851</td><td class="n pos">+410k</td><td class="n pnl">−12.8k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <tr data-cls="fx" data-notional="15.0" data-delta="-1.20" data-vega="6.4" data-dv01="" data-mtm="-64" data-pnl="6.4">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">GBP/USD</span><span class="st">2W 25Δ Risk-Rev</span></span></td>
+              <td class="dim">G10-A</td><td class="n">+15.0mm</td><td class="n neg">−1.20mm</td><td class="n">0.028</td><td class="n">+6.4k</td><td class="n neg">−1.1k</td><td class="n dim">—</td><td class="n">1.2710</td><td class="n neg">−64k</td><td class="n pnl">+6.4k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <tr data-cls="fx" data-notional="-20.0" data-delta="1.80" data-vega="-18.2" data-dv01="" data-mtm="228" data-pnl="21.0">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">USD/JPY</span><span class="st">3M 25Δ Put</span></span></td>
+              <td class="dim">G10-A</td><td class="n">−20.0mm</td><td class="n">+1.80mm</td><td class="n">0.037</td><td class="n neg">−18.2k</td><td class="n">+2.2k</td><td class="n dim">—</td><td class="n">156.32</td><td class="n pos">+228k</td><td class="n pnl">+21.0k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <!-- FX Vol · G10-B -->
+            <tr data-cls="fx" data-notional="12.0" data-delta="0.10" data-vega="9.1" data-dv01="" data-mtm="-38" data-pnl="-9.6">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">AUD/USD</span><span class="st">1M Strangle</span></span></td>
+              <td class="dim">G10-B</td><td class="n">+12.0mm</td><td class="n">+0.10mm</td><td class="n">0.052</td><td class="n">+9.1k</td><td class="n neg">−1.8k</td><td class="n dim">—</td><td class="n">0.6642</td><td class="n neg">−38k</td><td class="n pnl">−9.6k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <tr data-cls="fx" data-notional="18.0" data-delta="-0.30" data-vega="14.7" data-dv01="" data-mtm="96" data-pnl="3.1">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">EUR/GBP</span><span class="st">6M Butterfly</span></span></td>
+              <td class="dim">G10-B</td><td class="n">+18.0mm</td><td class="n neg">−0.30mm</td><td class="n">0.019</td><td class="n">+14.7k</td><td class="n neg">−0.9k</td><td class="n dim">—</td><td class="n">0.8531</td><td class="n pos">+96k</td><td class="n pnl">+3.1k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <tr data-cls="fx" data-notional="8.0" data-delta="1.10" data-vega="5.2" data-dv01="" data-mtm="52" data-pnl="-2.4">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">USD/CHF</span><span class="st">1M 25Δ Call</span></span></td>
+              <td class="dim">G10-B</td><td class="n">+8.0mm</td><td class="n">+1.10mm</td><td class="n">0.031</td><td class="n">+5.2k</td><td class="n neg">−0.7k</td><td class="n dim">—</td><td class="n">0.8912</td><td class="n pos">+52k</td><td class="n pnl">−2.4k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <!-- FX Vol · EM-1 -->
+            <tr data-cls="fx" data-notional="10.0" data-delta="0.90" data-vega="7.8" data-dv01="" data-mtm="142" data-pnl="11.7">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">USD/MXN</span><span class="st">3M 25Δ Call</span></span></td>
+              <td class="dim">EM-1</td><td class="n">+10.0mm</td><td class="n">+0.90mm</td><td class="n">0.024</td><td class="n">+7.8k</td><td class="n neg">−1.4k</td><td class="n dim">—</td><td class="n">18.612</td><td class="n pos">+142k</td><td class="n pnl">+11.7k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <tr data-cls="fx" data-notional="7.0" data-delta="0.50" data-vega="5.9" data-dv01="" data-mtm="-72" data-pnl="-14.2">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">USD/BRL</span><span class="st">2M ATM</span></span></td>
+              <td class="dim">EM-1</td><td class="n">+7.0mm</td><td class="n">+0.50mm</td><td class="n">0.018</td><td class="n">+5.9k</td><td class="n neg">−1.0k</td><td class="n dim">—</td><td class="n">5.4210</td><td class="n neg">−72k</td><td class="n pnl">−14.2k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <tr data-cls="fx" data-notional="9.0" data-delta="-0.60" data-vega="4.3" data-dv01="" data-mtm="31" data-pnl="2.8">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">USD/ZAR</span><span class="st">1M Risk-Rev</span></span></td>
+              <td class="dim">EM-1</td><td class="n">+9.0mm</td><td class="n neg">−0.60mm</td><td class="n">0.021</td><td class="n">+4.3k</td><td class="n neg">−0.6k</td><td class="n dim">—</td><td class="n">18.021</td><td class="n pos">+31k</td><td class="n pnl">+2.8k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <!-- Metals (EM-1 book) -->
+            <tr data-cls="metal" data-notional="50.0" data-delta="2.20" data-vega="22.4" data-dv01="" data-mtm="318" data-pnl="42.6">
+              <td><span class="ac metal">MTL</span><span class="inst"><span class="sym">XAU/USD</span><span class="st">3M 25Δ Call</span></span></td>
+              <td class="dim">EM-1</td><td class="n">+50.0mm</td><td class="n">+2.20mm</td><td class="n">0.015</td><td class="n">+22.4k</td><td class="n neg">−3.1k</td><td class="n dim">—</td><td class="n">2,412.5</td><td class="n pos">+318k</td><td class="n pnl">+42.6k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <tr data-cls="metal" data-notional="20.0" data-delta="0.20" data-vega="8.7" data-dv01="" data-mtm="-44" data-pnl="-6.8">
+              <td><span class="ac metal">MTL</span><span class="inst"><span class="sym">XAG/USD</span><span class="st">1M ATM</span></span></td>
+              <td class="dim">EM-1</td><td class="n">+20.0mm</td><td class="n">+0.20mm</td><td class="n">0.033</td><td class="n">+8.7k</td><td class="n neg">−1.2k</td><td class="n dim">—</td><td class="n">30.84</td><td class="n neg">−44k</td><td class="n pnl">−6.8k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <!-- Rates desk — federated from RatesPositionStore (TARGET) -->
+            <tr data-cls="rates" data-notional="100.0" data-delta="" data-vega="18.6" data-dv01="-42.0" data-mtm="214" data-pnl="16.4">
+              <td><span class="ac rates">RTS</span><span class="inst"><span class="sym">EUR 5Y</span><span class="st">Payer Swaption</span></span><span class="srcdot tgt" title="Federated from RatesPositionStore — unification is TARGET">⊕</span></td>
+              <td class="dim">IRS-EUR</td><td class="n">+100.0mm</td><td class="n dim">—</td><td class="n dim">—</td><td class="n">+18.6k</td><td class="n neg">−2.4k</td><td class="n neg">−42.0k</td><td class="n">2.842%</td><td class="n pos">+214k</td><td class="n pnl">+16.4k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot tgt" title="TARGET — federated leg"></span></td>
+            </tr>
+            <tr data-cls="rates" data-notional="250.0" data-delta="" data-vega="" data-dv01="-48.0" data-mtm="-128" data-pnl="-22.4">
+              <td><span class="ac rates">RTS</span><span class="inst"><span class="sym">USD 2Y</span><span class="st">IRS · pay fix</span></span><span class="srcdot tgt" title="Federated from RatesPositionStore — unification is TARGET">⊕</span></td>
+              <td class="dim">IRS-EUR</td><td class="n">+250.0mm</td><td class="n dim">—</td><td class="n dim">—</td><td class="n dim">—</td><td class="n dim">—</td><td class="n neg">−48.0k</td><td class="n">4.612%</td><td class="n neg">−128k</td><td class="n pnl">−22.4k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot tgt"></span></td>
+            </tr>
+            <tr data-cls="rates" data-notional="150.0" data-delta="" data-vega="" data-dv01="138.0" data-mtm="386" data-pnl="31.2">
+              <td><span class="ac rates">RTS</span><span class="inst"><span class="sym">GBP 10Y</span><span class="st">IRS · rec fix</span></span><span class="srcdot tgt" title="Federated from RatesPositionStore — unification is TARGET">⊕</span></td>
+              <td class="dim">IRS-EUR</td><td class="n">+150.0mm</td><td class="n dim">—</td><td class="n dim">—</td><td class="n dim">—</td><td class="n dim">—</td><td class="n pos">+138.0k</td><td class="n">4.021%</td><td class="n pos">+386k</td><td class="n pnl">+31.2k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot tgt"></span></td>
+            </tr>
+            <tr data-cls="rates" data-notional="80.0" data-delta="" data-vega="12.1" data-dv01="-22.0" data-mtm="92" data-pnl="-8.4">
+              <td><span class="ac rates">RTS</span><span class="inst"><span class="sym">USD 5Y5Y</span><span class="st">Payer Swaption</span></span><span class="srcdot tgt" title="Federated from RatesPositionStore — unification is TARGET">⊕</span></td>
+              <td class="dim">IRS-EUR</td><td class="n">+80.0mm</td><td class="n dim">—</td><td class="n dim">—</td><td class="n">+12.1k</td><td class="n neg">−1.6k</td><td class="n neg">−22.0k</td><td class="n">4.184%</td><td class="n pos">+92k</td><td class="n pnl">−8.4k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot tgt"></span></td>
+            </tr>
+            <tr data-cls="rates" data-notional="120.0" data-delta="" data-vega="9.4" data-dv01="19.0" data-mtm="58" data-pnl="4.9">
+              <td><span class="ac rates">RTS</span><span class="inst"><span class="sym">EUR 2Y</span><span class="st">Receiver Swaption</span></span><span class="srcdot tgt" title="Federated from RatesPositionStore — unification is TARGET">⊕</span></td>
+              <td class="dim">IRS-EUR</td><td class="n">+120.0mm</td><td class="n dim">—</td><td class="n dim">—</td><td class="n">+9.4k</td><td class="n neg">−1.1k</td><td class="n pos">+19.0k</td><td class="n">2.611%</td><td class="n pos">+58k</td><td class="n pnl">+4.9k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot tgt"></span></td>
+            </tr>
+            <!-- FX Fwds desk -->
+            <tr data-cls="fx" data-notional="40.0" data-delta="4.00" data-vega="" data-dv01="-6.0" data-mtm="88" data-pnl="47.0">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">EUR/USD</span><span class="st">3M Fwd Outright</span></span></td>
+              <td class="dim">Fwd-G10</td><td class="n">+40.0mm</td><td class="n">+4.00mm</td><td class="n dim">—</td><td class="n dim">—</td><td class="n dim">—</td><td class="n neg">−6.0k</td><td class="n">1.0869</td><td class="n pos">+88k</td><td class="n pnl">+47.0k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+            <tr data-cls="fx" data-notional="30.0" data-delta="-3.00" data-vega="" data-dv01="4.2" data-mtm="41" data-pnl="18.0">
+              <td><span class="ac fx">FX</span><span class="inst"><span class="sym">USD/JPY</span><span class="st">6M FX Swap</span></span></td>
+              <td class="dim">Fwd-G10</td><td class="n">+30.0mm</td><td class="n neg">−3.00mm</td><td class="n dim">—</td><td class="n dim">—</td><td class="n dim">—</td><td class="n">+4.2k</td><td class="n">156.88</td><td class="n pos">+41k</td><td class="n pnl">+18.0k</td><td class="n spk-cell"><svg viewBox="0 0 60 18"></svg></td><td><span class="livedot"></span></td>
+            </tr>
+          </tbody>
+          <tfoot class="blot-foot">
+            <tr>
+              <td colspan="2">Consolidated · <span id="footcount">19</span> lines <span class="dim">· sums the visible lens</span></td>
+              <td class="n dim">—</td><td class="n" id="foot-delta">+8.61mm</td><td class="n dim">—</td><td class="n" id="foot-vega">+160.2k</td><td class="n neg" id="foot-theta">−22.2k</td><td class="n" id="foot-dv01">+43.2k</td><td class="n dim">—</td><td class="n pos" id="foot-mtm">+1.99mm</td><td class="n pos" id="foot-pnl">+146.7k</td><td></td><td></td>
+            </tr>
+          </tfoot>
+        </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- P&L attribution waterfall  |  day P&L by book -->
+    <div class="bp-grid2">
+      <section class="panel">
+        <header>
+          <span class="headline">Day P&amp;L attribution · <span id="wflbl">Desk · FX Vol</span></span>
+          <span class="note">Taylor decomposition · <span class="num">taylor_pnl</span> risk-cube</span>
+        </header>
+        <div class="body">
+          <svg class="chart" viewBox="0 0 620 232" height="216" aria-label="P&L attribution waterfall">
+            <!-- gridlines + y labels (USD k) -->
+            <line class="gl" x1="46" y1="20.1" x2="600" y2="20.1"/>
+            <line class="gl" x1="46" y1="51.9" x2="600" y2="51.9"/>
+            <line class="gl" x1="46" y1="120.9" x2="600" y2="120.9"/>
+            <line class="gl" x1="46" y1="190" x2="600" y2="190" style="stroke:var(--text-tertiary);opacity:0.5"/>
+            <text class="axlbl" x="42" y="54" text-anchor="end">200</text>
+            <text class="axlbl" x="42" y="124" text-anchor="end">100</text>
+            <text class="axlbl" x="42" y="193" text-anchor="end">0</text>
+            <text class="axlbl" x="14" y="108" text-anchor="middle" transform="rotate(-90 14 108)">USD k</text>
+
+            <!-- connectors (cumulative levels) -->
+            <line class="wf-con" x1="88"  y1="64.3"  x2="104" y2="64.3"/>
+            <line class="wf-con" x1="138" y1="20.1"  x2="154" y2="20.1"/>
+            <line class="wf-con" x1="188" y1="108.5" x2="204" y2="108.5"/>
+            <line class="wf-con" x1="238" y1="94.0"  x2="254" y2="94.0"/>
+            <line class="wf-con" x1="288" y1="117.5" x2="304" y2="117.5"/>
+            <line class="wf-con" x1="338" y1="109.2" x2="354" y2="109.2"/>
+            <line class="wf-con" x1="388" y1="114.7" x2="404" y2="114.7"/>
+            <line class="wf-con" x1="438" y1="147.2" x2="454" y2="147.2"/>
+            <line class="wf-con" x1="488" y1="81.6"  x2="504" y2="81.6"/>
+            <line class="wf-con" x1="538" y1="87.8"  x2="554" y2="87.8"/>
+
+            <!-- bars: positive=orange (div-pos), negative=blue (div-neg), total=accent -->
+            <rect class="wf-pos"  x="54"  y="64.3"  width="34" height="125.7" rx="1.5"/>
+            <rect class="wf-pos"  x="104" y="20.1"  width="34" height="44.2"  rx="1.5"/>
+            <rect class="wf-neg"  x="154" y="20.1"  width="34" height="88.4"  rx="1.5"/>
+            <rect class="wf-pos2" x="204" y="94.0"  width="34" height="14.5"  rx="1.5"/>
+            <rect class="wf-neg"  x="254" y="94.0"  width="34" height="23.5"  rx="1.5"/>
+            <rect class="wf-pos2" x="304" y="109.2" width="34" height="8.3"   rx="1.5"/>
+            <rect class="wf-neg2" x="354" y="109.2" width="34" height="5.5"   rx="1.5"/>
+            <rect class="wf-neg"  x="404" y="114.7" width="34" height="32.5"  rx="1.5"/>
+            <rect class="wf-pos"  x="454" y="81.6"  width="34" height="65.6"  rx="1.5"/>
+            <rect class="wf-neg2" x="504" y="81.6"  width="34" height="6.2"   rx="1.5"/>
+            <rect class="wf-tot"  x="554" y="87.8"  width="34" height="102.2" rx="1.5"/>
+
+            <!-- value labels -->
+            <text class="wf-lab" x="71"  y="60"  text-anchor="middle">+182</text>
+            <text class="wf-lab" x="121" y="16"  text-anchor="middle">+64</text>
+            <text class="wf-lab" x="171" y="120" text-anchor="middle" fill="var(--div-neg2)">−128</text>
+            <text class="wf-lab" x="221" y="90"  text-anchor="middle">+21</text>
+            <text class="wf-lab" x="271" y="129" text-anchor="middle" fill="var(--div-neg2)">−34</text>
+            <text class="wf-lab" x="321" y="105" text-anchor="middle">+12</text>
+            <text class="wf-lab" x="371" y="126" text-anchor="middle" fill="var(--div-neg1)">−8</text>
+            <text class="wf-lab" x="421" y="159" text-anchor="middle" fill="var(--div-neg2)">−47</text>
+            <text class="wf-lab" x="471" y="77"  text-anchor="middle">+95</text>
+            <text class="wf-lab" x="521" y="99"  text-anchor="middle" fill="var(--div-neg1)">−9</text>
+            <text class="wf-lab" x="571" y="83"  text-anchor="middle" fill="var(--accent)">+148</text>
+
+            <!-- category labels -->
+            <text class="wf-cat" x="71"  y="204" text-anchor="middle">Δ·dS</text>
+            <text class="wf-cat" x="121" y="204" text-anchor="middle">Γ·dS²</text>
+            <text class="wf-cat" x="171" y="204" text-anchor="middle">Vega</text>
+            <text class="wf-cat" x="221" y="204" text-anchor="middle">Volga</text>
+            <text class="wf-cat" x="271" y="204" text-anchor="middle">Vanna</text>
+            <text class="wf-cat" x="321" y="204" text-anchor="middle">ρ-disc</text>
+            <text class="wf-cat" x="371" y="204" text-anchor="middle">ρ-carry</text>
+            <text class="wf-cat" x="421" y="204" text-anchor="middle">Θ/roll</text>
+            <text class="wf-cat" x="471" y="204" text-anchor="middle">New</text>
+            <text class="wf-cat" x="521" y="204" text-anchor="middle">Resid</text>
+            <text class="wf-cat" x="571" y="204" text-anchor="middle" style="fill:var(--text-secondary);font-weight:600">Day</text>
+          </svg>
+          <div class="legend" style="margin-top:8px">
+            <span><i style="background:var(--div-pos2)"></i> gain</span>
+            <span><i style="background:var(--div-neg2)"></i> loss</span>
+            <span><i style="background:var(--accent)"></i> net day P&amp;L</span>
+            <span class="note">first 7 buckets = <span class="num">taylor_pnl</span> sensitivities · Θ/roll · new-trades · unexplained residual close to MTM</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header>
+          <span class="headline">Day P&amp;L by book</span>
+          <span class="xlink" title="Read-side desk-scope thread is LIVE">drill to Risk &amp; Scenario →</span>
+        </header>
+        <div class="body">
+          <svg id="bookbars" class="chart" viewBox="0 0 460 200" aria-label="Day P&amp;L by book — diverging USD-k bars"></svg>
+          <div class="legend" style="margin-top:6px">
+            <span><i style="background:var(--div-pos2)"></i> gain</span>
+            <span><i style="background:var(--div-neg2)"></i> loss</span>
+            <span><span class="tgt-dot"></span> federated · TARGET</span>
+          </div>
+          <div style="margin-top:8px; padding-top:8px; border-top:var(--hairline); display:flex; justify-content:space-between; align-items:baseline">
+            <span class="label">Desk total · day P&amp;L</span><span class="num pos" style="font-size:16px">+148.0k</span>
+          </div>
+          <div class="note" style="margin-top:8px; line-height:1.5">
+            Shared USD-k x-scale · 0-axis · min/max ticks. Rates book <span style="color:var(--accent)">federated</span> — value/greeks read from <span class="num">RatesPositionStore</span> aggregate, not the FX <span class="num">PositionStore</span>. One net cross-asset book is the <b style="color:var(--accent)">TARGET</b> (flow-links gap #4).
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- ============ CONTEXT RAIL (verbatim from 00-shell) ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (verbatim from 00-shell) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+
+  /* ---- sparkline renderer ----
+   * Coherence fixes (critique 08):
+   *  (a) gains use the SAME diverging scale as the P&L heat / waterfall / by-book bars —
+   *      stroke var(--div-pos2), dot var(--div-pos1); losses var(--div-neg1)/(--div-neg2).
+   *      No more teal var(--seq-4)/(--seq-5) that re-introduced a 3rd P&L colour per row.
+   *  (b) every spark carries a faint ENTRY baseline (var(--grid-line)) and is drawn on a
+   *      SHARED vertical scale — values are signed fractions of full-scale deviation from
+   *      entry, so a small mover hugs the baseline and a big mover spans the box; magnitude
+   *      and direction are legible instead of each series autoscaling to fill (DESIGN §5). */
+  function seededRand(seed) { var x = Math.sin(seed) * 10000; return x - Math.floor(x); }
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+  function renderSpark(svg, arr, w, h) {
+    w = w || 60; h = h || 18;
+    var pad = 2, mid = h / 2, half = mid - pad;
+    var n = arr.length, step = w / (n - 1), pts = [];
+    for (var i = 0; i < n; i++) {
+      pts.push((i * step).toFixed(1) + "," + (mid - clamp(arr[i], -1, 1) * half).toFixed(1));
+    }
+    var last = pts[pts.length - 1].split(",");
+    var up = arr[n - 1] >= 0;                         // gain vs the entry baseline
+    svg.innerHTML =
+      '<line x1="0" y1="' + mid.toFixed(1) + '" x2="' + w + '" y2="' + mid.toFixed(1) +
+        '" stroke="var(--grid-line)" stroke-width="1"/>' +
+      '<polyline points="' + pts.join(" ") + '" fill="none" stroke="' +
+        (up ? "var(--div-pos2)" : "var(--div-neg1)") +
+        '" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>' +
+      '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="1.7" fill="' +
+        (up ? "var(--div-pos1)" : "var(--div-neg2)") + '"/>';
+  }
+  // random walk in shared fraction space: pinned at 0 (entry) → endFrac (true close deviation)
+  function sparkFrac(seed, n, endFrac, vol) {
+    var arr = [];
+    for (var i = 0; i < n; i++) {
+      arr.push(endFrac * (i / (n - 1)) + (seededRand(seed + i * 1.7) - 0.5) * vol);
+    }
+    arr[0] = 0; arr[n - 1] = endFrac;
+    return arr;
+  }
+
+  // KPI sparklines — trend picks the full-scale close; flat hugs the baseline
+  $$(".kpi .spk").forEach(function (svg) {
+    var seed = +svg.getAttribute("data-seed"), t = svg.getAttribute("data-trend");
+    var end = t === "up" ? 0.66 : t === "dn" ? -0.66 : 0.04;
+    renderSpark(svg, sparkFrac(seed, 12, end, 0.22), 62, 22);
+  });
+
+  // blotter row sparklines — amplitude ∝ |day P&L| so a +2k and a +40k row read differently
+  var SPARK_REF = 34; // k of day P&L that reaches full scale
+  $$("#blotbody tr").forEach(function (tr, idx) {
+    var pnl = parseFloat(tr.getAttribute("data-pnl")) || 0;
+    tr._spk = sparkFrac(idx * 3 + 2, 12, clamp(pnl / SPARK_REF, -1, 1), 0.18);
+    renderSpark($(".spk-cell svg", tr), tr._spk, 60, 18);
+  });
+
+  /* ---- derive Γ / Θ sort keys straight from the rendered cells (makes both columns
+         sortable without duplicating the numbers in markup) ---- */
+  function numify(s) {
+    s = String(s).replace(/−/g, "-").replace(/[+,]/g, "").replace(/[k%]/g, "").replace(/mm/g, "").trim();
+    if (s === "" || s === "—" || s === "-") return NaN;
+    return parseFloat(s);
+  }
+  $$("#blotbody tr").forEach(function (tr) {
+    var g = numify(tr.children[4].textContent), t = numify(tr.children[6].textContent);
+    tr.dataset.gamma = isNaN(g) ? "" : g;
+    tr.dataset.theta = isNaN(t) ? "" : t;
+  });
+
+  /* ---- footer that always re-sums the VISIBLE rows (tracks the asset-class lens);
+         non-additive columns — notional / Γ / level — stay em-dash ---- */
+  function sgn(v) { return v >= 0 ? "+" : "−"; }
+  function fmtMM(v) { return sgn(v) + Math.abs(v).toFixed(2) + "mm"; }
+  function fmtKM(v) { return Math.abs(v) >= 1000 ? fmtMM(v / 1000) : fmtK(v); }
+  function visRows() { return $$("#blotbody tr").filter(function (r) { return r.style.display !== "none"; }); }
+  function sumCol(rows, attr) {
+    var sum = 0, has = false;
+    rows.forEach(function (tr) { var v = parseFloat(tr.getAttribute("data-" + attr)); if (!isNaN(v)) { sum += v; has = true; } });
+    return has ? sum : null;
+  }
+  function setFoot(id, val, fmt, isPnl) {
+    var el = $("#" + id); if (!el) return;
+    if (val === null) { el.textContent = "—"; el.className = "n dim"; return; }
+    el.textContent = fmt(val);
+    el.className = "n " + (isPnl ? (val >= 0 ? "pos" : "neg") : (val < 0 ? "neg" : ""));
+  }
+  function recomputeFooter() {
+    var rows = visRows();
+    setFoot("foot-delta", sumCol(rows, "delta"), fmtMM, false);
+    setFoot("foot-vega",  sumCol(rows, "vega"),  fmtK,  false);
+    setFoot("foot-theta", sumCol(rows, "theta"), fmtK,  false);
+    setFoot("foot-dv01",  sumCol(rows, "dv01"),  fmtK,  false);
+    setFoot("foot-mtm",   sumCol(rows, "mtm"),   fmtKM, true);
+    setFoot("foot-pnl",   sumCol(rows, "pnl"),   fmtK,  true);
+    var c = rows.length, fc = $("#footcount"), sh = $("#shown");
+    if (fc) fc.textContent = c; if (sh) sh.textContent = c;
+  }
+
+  /* ---- Day-P&L-by-book: real diverging SVG bar chart — shared USD-k x-scale, 0-axis,
+         min/max ticks + value labels (replaces the untethered hand-pixel div-bars) ---- */
+  function renderBookBars() {
+    var host = document.getElementById("bookbars"); if (!host) return;
+    var data = [
+      { nm: "G10-A", v: 52.4 }, { nm: "G10-B", v: -8.9 }, { nm: "EM-1", v: 0.3 },
+      { nm: "Metals", v: 35.8, tag: "MTL", tagcol: "var(--warn)" }, { nm: "IRS-EUR", v: 68.4, tag: "TGT", tagcol: "var(--accent)", tgt: true }
+    ];
+    var x0 = 112, x1 = 444, top = 14, rowH = 30, barH = 15, dmin = -20, dmax = 80;
+    var ticks = [-20, 0, 20, 40, 60, 80];
+    function sx(v) { return x0 + (v - dmin) / (dmax - dmin) * (x1 - x0); }
+    var zero = sx(0), bottom = top + data.length * rowH, s = "";
+    ticks.forEach(function (t) {
+      var x = sx(t);
+      s += '<line x1="' + x.toFixed(1) + '" y1="' + top + '" x2="' + x.toFixed(1) + '" y2="' + bottom + '" ' +
+           (t === 0 ? 'style="stroke:var(--text-tertiary);opacity:0.55"' : 'class="gl"') + '/>';
+      s += '<text class="axlbl" x="' + x.toFixed(1) + '" y="' + (bottom + 13) + '" text-anchor="middle">' +
+           (t > 0 ? "+" + t : t) + '</text>';
+    });
+    s += '<text class="axlbl" x="' + x1 + '" y="' + (bottom + 27) + '" text-anchor="end">USD k · day P&amp;L</text>';
+    data.forEach(function (d, i) {
+      var cy = top + i * rowH + rowH / 2, barY = cy - barH / 2;
+      var pos = d.v >= 0, ex = sx(d.v), bx = pos ? zero : ex, bw = Math.max(Math.abs(ex - zero), 1.2);
+      var col = pos ? "var(--div-pos2)" : "var(--div-neg2)";
+      s += '<text x="6" y="' + (cy + 3).toFixed(1) + '" style="fill:var(--text-secondary);font-size:10px;font-family:var(--font-mono)">' + d.nm + '</text>';
+      if (d.tag) s += '<text x="' + (6 + d.nm.length * 6.4 + 6).toFixed(1) + '" y="' + (cy + 3).toFixed(1) + '" style="fill:' + d.tagcol + ';font-size:7px;font-weight:700;letter-spacing:0.04em">' + d.tag + '</text>';
+      s += '<rect x="' + bx.toFixed(1) + '" y="' + barY.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + barH + '" rx="1.5" fill="' + col + '"' +
+           (d.tgt ? ' opacity="0.6" stroke="var(--accent)" stroke-dasharray="2 2" stroke-width="1"' : '') + '/>';
+      var vx = pos ? ex + 4 : ex - 4;
+      s += '<text class="wf-lab" x="' + vx.toFixed(1) + '" y="' + (cy + 3).toFixed(1) + '" text-anchor="' + (pos ? "start" : "end") + '" style="fill:' + col + '">' +
+           (pos ? "+" : "−") + Math.abs(d.v).toFixed(1) + 'k</text>';
+    });
+    host.innerHTML = s;
+  }
+
+  /* ---- diverging Day-P&L heat class ---- */
+  function heatClass(v) {
+    if (v >= 25) return "d-p2"; if (v >= 5) return "d-p1";
+    if (v <= -18) return "d-n2"; if (v <= -4) return "d-n1"; return "d-z";
+  }
+  function fmtK(v) { return (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + "k"; }
+  function applyHeat(tr) {
+    var cell = $("td.pnl", tr), v = parseFloat(tr.getAttribute("data-pnl")) || 0;
+    cell.className = "n pnl " + heatClass(v);
+    cell.textContent = fmtK(v);
+  }
+  $$("#blotbody tr").forEach(applyHeat);
+  recomputeFooter();
+  renderBookBars();
+
+  /* ---- per-cell live value flash (Day P&L + MTM) ---- */
+  function flashCell(cell, up) {
+    cell.classList.remove("bp-up", "bp-dn");
+    void cell.offsetWidth;               // reflow to restart animation
+    cell.classList.add(up ? "bp-up" : "bp-dn");
+  }
+  setInterval(function () {
+    var rows = $$("#blotbody tr").filter(function (r) { return r.style.display !== "none"; });
+    if (!rows.length) return;
+    var tr = rows[Math.floor(Math.random() * rows.length)];
+    var pnl = parseFloat(tr.getAttribute("data-pnl")) || 0;
+    var d = (Math.random() - 0.46) * 3.2;
+    var np = Math.round((pnl + d) * 10) / 10;
+    tr.setAttribute("data-pnl", np);
+    applyHeat(tr);
+    flashCell($("td.pnl", tr), np >= pnl);
+    // MTM drifts with the day P&L tick
+    var mtmCell = tr.children[9], m = parseFloat(tr.getAttribute("data-mtm")) || 0;
+    var nm = Math.round(m + d);
+    tr.setAttribute("data-mtm", nm);
+    mtmCell.textContent = (nm >= 0 ? "+" : "−") + Math.abs(nm) + "k";
+    mtmCell.className = "n " + (nm >= 0 ? "pos" : "neg");
+    flashCell(mtmCell, nm >= m);
+    // nudge the sparkline on the shared fraction scale, then re-sum the visible footer
+    tr._spk.shift();
+    tr._spk.push(clamp(tr._spk[tr._spk.length - 1] + (np - pnl) * 0.04, -1, 1));
+    renderSpark($(".spk-cell svg", tr), tr._spk, 60, 18);
+    recomputeFooter();
+  }, 1100);
+
+  /* ---- asset-class filter — toggles rows, then the footer re-sums the visible lens ---- */
+  $("#acfilter").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    $$("#acfilter button").forEach(function (x) { x.classList.remove("on"); });
+    b.classList.add("on");
+    var cls = b.getAttribute("data-cls");
+    $$("#blotbody tr").forEach(function (tr) {
+      tr.style.display = (cls === "all" || tr.getAttribute("data-cls") === cls) ? "" : "none";
+    });
+    recomputeFooter();
+  });
+
+  /* ---- consolidation-level lens — rescopes the scope label AND the KPI roll-up
+         (Net MTM / Day P&L / Δ / Vega / DV01 / VaR) so the summary tracks the tree:
+         e.g. Firm shows +4.82mm, not the desk's +1.86mm ---- */
+  var scopeKpi = {
+    trader: { label: "Trader · A. Marchetti",      mtm: "+1.36mm", pnl: "+112.0k", pnld: "▲ +0.71% NAV", delta: "+6.10mm",  vega: "+142k", dv01: "—",       var: "−286k" },
+    book:   { label: "Book · G10-A",               mtm: "+0.92mm", pnl: "+52.4k",  pnld: "▲ +0.44% NAV", delta: "+4.20mm",  vega: "+96k",  dv01: "—",       var: "−198k" },
+    desk:   { label: "Desk · FX Vol",              mtm: "+1.86mm", pnl: "+148.0k", pnld: "▲ +0.83% NAV", delta: "+8.42mm",  vega: "+184k", dv01: "−86.0k",  var: "−412k" },
+    entity: { label: "Entity · Celer Bank London", mtm: "+3.14mm", pnl: "+226.0k", pnld: "▲ +0.74% NAV", delta: "+12.80mm", vega: "+214k", dv01: "−128.0k", var: "−642k" },
+    firm:   { label: "Firm · Celer Markets",       mtm: "+4.82mm", pnl: "+318.0k", pnld: "▲ +0.69% NAV", delta: "+18.40mm", vega: "+268k", dv01: "−214.0k", var: "−884k" }
+  };
+  function setV(id, txt, cls) { var el = $("#" + id); if (el) { el.textContent = txt; el.className = "v " + cls; } }
+  $("#rollup").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    $$("#rollup button").forEach(function (x) { x.classList.remove("on"); });
+    b.classList.add("on");
+    var s = scopeKpi[b.getAttribute("data-lvl")]; if (!s) return;
+    $("#scopelbl").textContent = s.label;
+    setV("kpi-mtm", s.mtm, "pos");
+    setV("kpi-pnl", s.pnl, "pos");
+    $("#kpi-pnld").textContent = s.pnld;
+    setV("kpi-delta", s.delta, "");
+    setV("kpi-vega", s.vega, "");
+    setV("kpi-dv01", s.dv01, s.dv01 === "—" ? "dim" : "neg");
+    setV("kpi-var", s.var, "neg");
+  });
+
+  /* ---- column sort ---- */
+  var sortState = { k: "pnl", dir: -1 };
+  $$("#blot thead th.srt").forEach(function (th) {
+    th.addEventListener("click", function () {
+      var k = th.getAttribute("data-k");
+      sortState.dir = (sortState.k === k) ? -sortState.dir : -1;
+      sortState.k = k;
+      $$("#blot thead th.srt").forEach(function (x) {
+        x.classList.remove("act");
+        var ar = $(".ar", x); if (ar) ar.textContent = "↕";
+      });
+      th.classList.add("act");
+      $(".ar", th).textContent = sortState.dir < 0 ? "↓" : "↑";
+      var body = $("#blotbody");
+      var rows = $$("#blotbody tr");
+      rows.sort(function (a, b) {
+        var av = parseFloat(a.getAttribute("data-" + k)), bv = parseFloat(b.getAttribute("data-" + k));
+        var an = isNaN(av), bn = isNaN(bv);
+        if (an && bn) return 0;
+        if (an) return 1;             // blank cells are a stable always-last group…
+        if (bn) return -1;            // …in BOTH directions (no signed-∞ flip)
+        return (av - bv) * sortState.dir;
+      });
+      rows.forEach(function (r) { body.appendChild(r); });
+    });
+  });
+
+  /* ---- book/desk tree collapse + select ---- */
+  function setKidsVisible(id, vis) {
+    $$('#tree .tnode[data-parent="' + id + '"]').forEach(function (n) {
+      n.classList.toggle("hidden", !vis);
+      // collapse deeper levels when hiding
+      var cid = n.getAttribute("data-id");
+      if (cid && (!vis || n.querySelector("[data-car]") && n.querySelector("[data-car]").textContent === "▸")) {
+        if (!vis) setKidsVisible(cid, false);
+      }
+    });
+  }
+  $("#tree").addEventListener("click", function (e) {
+    var car = e.target.closest("[data-car]");
+    var node = e.target.closest(".tnode");
+    if (car && node) {
+      var id = node.getAttribute("data-id") || (node.classList.contains("lvl-firm") ? "e-lon,e-ny" : null);
+      var open = car.textContent === "▾";
+      car.textContent = open ? "▸" : "▾";
+      var kids = (node.getAttribute("data-kids") || "").split(",").filter(Boolean);
+      if (node.classList.contains("lvl-firm")) {
+        // firm toggles its entity children only
+        kids.forEach(function (k) { var el = $('#tree .tnode[data-id="' + k + '"]'); if (el) el.classList.toggle("hidden", open); });
+      } else if (id) {
+        setKidsVisible(id, !open);
+      }
+      e.stopPropagation();
+      return;
+    }
+    if (node) {
+      $$("#tree .tnode").forEach(function (n) { n.classList.remove("sel"); });
+      node.classList.add("sel");
+    }
+  });
+  // hidden helper
+  var st = document.createElement("style");
+  st.textContent = ".tnode.hidden{display:none}";
+  document.head.appendChild(st);
+})();
+</script>
+</body>
+</html>

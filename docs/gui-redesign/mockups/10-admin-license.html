@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Admin &amp; License (mockup 10)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+  /* ============ Admin & License — screen-specific only (celer.css shared, untouched) ============ */
+  /* CRITICAL: .main is a flex column; .panel has overflow:hidden which zeroes its flex min-height
+     and lets every child shrink to a sliver so the pane never overflows. Pin natural height so it scrolls. */
+  .main > *{flex:0 0 auto;}
+
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:var(--type-caption);font-weight:700;padding:3px 9px;border-radius:var(--r-full);white-space:nowrap;}
+  .badge.live{background:oklch(0.78 0.16 155/.16);color:var(--bid);}
+  .badge.target{background:var(--accent-soft);color:var(--accent);}
+  .badge.gate{background:oklch(1 0 0/.05);color:var(--text-tertiary);border:1px solid var(--grid-line);}
+  .badge.warn{background:oklch(0.82 0.16 75/.16);color:var(--warn);}
+  .badge.live::before{content:"●";font-size:8px;}
+  .badge.target::before{content:"◇";font-size:9px;}
+  .badge.gate::before{content:"⊘";opacity:.8;}
+  .badge.warn::before{content:"◑";}
+
+  /* persona segmented control (extends celer .seg, wider labels) */
+  .pseg{display:inline-flex;background:var(--bg-inset);border-radius:var(--r-full);padding:2px;gap:2px;flex-wrap:wrap;}
+  .pseg button{border:0;background:transparent;color:var(--text-tertiary);font-size:var(--type-caption);padding:5px 12px;border-radius:var(--r-full);cursor:pointer;font-weight:600;}
+  .pseg button.on{background:var(--accent);color:#fff;}
+
+  /* capability matrix svg */
+  #capMtx .mtx-col{fill:var(--text-secondary);font-family:var(--font-display);font-size:11px;font-weight:600;}
+  #capMtx .mtx-col.dim{fill:var(--text-tertiary);}
+  #capMtx .mtx-sub{fill:var(--text-tertiary);font-size:7.5px;font-family:var(--font-mono);}
+  #capMtx .mtx-row{fill:var(--text-secondary);font-size:10px;font-family:var(--font-display);font-weight:500;}
+  #capMtx .mtx-tok{fill:var(--text-tertiary);font-size:7px;font-family:var(--font-mono);}
+  #capMtx .cell{cursor:pointer;transition:filter .12s;}
+  #capMtx .cell:hover{filter:brightness(1.25);}
+  #capMtx .c-grant   rect{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1;}
+  #capMtx .c-grantov rect{fill:var(--accent);stroke:var(--accent);stroke-width:1;}
+  #capMtx .c-deny    rect{fill:url(#denyHatch);stroke:var(--danger);stroke-width:1.2;}
+  #capMtx .c-none    rect{fill:oklch(1 0 0/.025);stroke:var(--grid-line);stroke-width:1;}
+  #capMtx .c-gated   rect{fill:url(#gateHatch);stroke:var(--grid-line);stroke-width:1;}
+  #capMtx .c-admingap rect{fill:oklch(0.82 0.16 75/.16);stroke:var(--warn);stroke-width:1.2;}
+  #capMtx .g-grant{fill:var(--accent);}
+  #capMtx .g-grantov{fill:#fff;}
+  #capMtx .g-deny{fill:var(--danger);}
+  #capMtx .g-none{fill:var(--text-tertiary);opacity:.6;}
+  #capMtx .g-gated{fill:var(--text-tertiary);opacity:.5;}
+  #capMtx .g-admingap{fill:var(--warn);}
+  #capMtx .glyph{font-family:var(--font-mono);font-size:12px;font-weight:600;text-anchor:middle;pointer-events:none;}
+  #capMtx .ov-plus{font-family:var(--font-mono);font-size:8px;fill:#fff;text-anchor:middle;pointer-events:none;}
+  #capMtx .colsep{stroke:var(--grid-line);stroke-width:1;}
+
+  /* legend rows */
+  .mleg{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:10px;}
+  .mleg .lg{display:inline-flex;align-items:center;gap:6px;font-size:var(--type-caption);color:var(--text-secondary);}
+  .mleg .sw{width:18px;height:14px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:10px;font-weight:600;flex:none;}
+  .sw.grant{background:var(--accent-soft);border:1px solid var(--accent);color:var(--accent);}
+  .sw.grantov{background:var(--accent);border:1px solid var(--accent);color:#fff;}
+  .sw.deny{background:oklch(0.65 0.21 25/.16);border:1px solid var(--danger);color:var(--danger);}
+  .sw.none{background:oklch(1 0 0/.03);border:1px solid var(--grid-line);color:var(--text-tertiary);}
+  .sw.gated{background:oklch(1 0 0/.03);border:1px solid var(--grid-line);color:var(--text-tertiary);}
+  .sw.admingap{background:oklch(0.82 0.16 75/.16);border:1px solid var(--warn);color:var(--warn);}
+
+  /* deny-wins formula block */
+  .formula{font-family:var(--font-mono);font-size:12px;background:var(--bg-inset);border:var(--hairline);border-radius:var(--r-sm);padding:9px 11px;line-height:1.7;color:var(--text-secondary);}
+  .formula b{color:var(--accent);font-weight:600;} .formula .d{color:var(--danger);} .formula .cite{color:var(--text-tertiary);font-size:10px;}
+
+  /* stat readouts */
+  .statrow{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3);margin:10px 0;}
+  .stat{background:var(--bg-inset);border:var(--hairline);border-radius:var(--r-sm);padding:8px 10px;}
+  .stat .n{font-family:var(--font-mono);font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;}
+  .stat .k{font-size:var(--type-micro);text-transform:uppercase;letter-spacing:.05em;color:var(--text-tertiary);}
+  .stat.gr .n{color:var(--accent);} .stat.dn .n{color:var(--danger);} .stat.gt .n{color:var(--text-tertiary);}
+
+  /* license tiers */
+  .tiers{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-4);}
+  .tier{background:var(--bg-inset);border:var(--hairline);border-radius:var(--r-md);padding:var(--space-4);display:flex;flex-direction:column;gap:8px;}
+  .tier.present{box-shadow:inset 3px 0 0 var(--bid);}
+  .tier.landing{box-shadow:inset 3px 0 0 var(--accent);}
+  .tier.upsell{box-shadow:inset 3px 0 0 var(--text-tertiary);opacity:.94;}
+  .tier h4{margin:0;font-family:var(--font-display);font-size:14px;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .tier .cls{font-size:var(--type-micro);text-transform:uppercase;letter-spacing:.05em;color:var(--text-tertiary);}
+  .tier ul{margin:2px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;}
+  .tier li{font-size:var(--type-caption);color:var(--text-secondary);display:flex;gap:7px;align-items:baseline;}
+  .tier li::before{content:"›";color:var(--accent);flex:none;}
+  .tier li.gap::before{content:"◇";color:var(--warn);font-size:8px;}
+  .tier .foot{margin-top:auto;display:flex;gap:6px;align-items:center;padding-top:6px;}
+
+  /* persona editor cards */
+  .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:var(--space-4);}
+  .pcard{background:var(--bg-inset);border:var(--hairline);border-radius:var(--r-md);padding:var(--space-4);cursor:pointer;transition:border-color .12s,box-shadow .12s;display:flex;flex-direction:column;gap:8px;}
+  .pcard:hover{border-color:var(--accent);}
+  .pcard.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft),inset 3px 0 0 var(--accent);}
+  .pcard .ph{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .pcard .pn{font-family:var(--font-display);font-size:14px;font-weight:600;}
+  .pcard .meta{font-size:var(--type-caption);color:var(--text-secondary);}
+  .pcard .meta b{color:var(--text-primary);font-weight:600;}
+  .acap{display:flex;flex-wrap:wrap;gap:3px;}
+  .acap .a{font-size:9px;font-family:var(--font-mono);padding:1px 5px;border-radius:var(--r-sm);background:var(--accent-soft);color:var(--accent);font-weight:600;}
+  .acap .a.no{background:oklch(0.65 0.21 25/.12);color:var(--danger);text-decoration:line-through;text-decoration-thickness:1px;}
+  .pfoot{display:inline-flex;gap:2px;align-items:center;}
+  .fcell{width:13px;height:13px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:9px;font-weight:600;}
+  .fcell.grant{background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent);}
+  .fcell.grantov{background:var(--accent);color:#fff;}
+  .fcell.deny{background:oklch(0.65 0.21 25/.14);color:var(--danger);}
+  .fcell.none{background:oklch(1 0 0/.03);color:var(--text-tertiary);}
+  .fcell.admingap{background:oklch(0.82 0.16 75/.16);color:var(--warn);}
+
+  /* coverage chart — stacked product-kind reach (Viridis sequential ramp, not flat seq-6) */
+  #covChart .bar-lab{fill:var(--text-secondary);font-family:var(--font-display);font-size:10px;font-weight:500;}
+  #covChart .bar-lab.dim{fill:var(--text-tertiary);}
+  #covChart .bar-val{fill:var(--text-primary);font-family:var(--font-mono);font-size:9px;font-weight:600;}
+  #covChart .seg{transition:filter .12s;cursor:default;}
+  #covChart .seg:hover{filter:brightness(1.18);}
+  #covChart .seg-lab{fill:var(--text-secondary);font-family:var(--font-mono);font-size:8px;}
+  .covleg{display:flex;flex-wrap:wrap;gap:5px 12px;margin-top:8px;align-items:center;}
+  .covleg .lg{display:inline-flex;align-items:center;gap:5px;font-size:var(--type-micro);color:var(--text-secondary);}
+  .covleg .sw{width:14px;height:10px;border-radius:3px;flex:none;}
+
+  /* capability matrix — collapsed unlicensed summary column */
+  #capMtx .unlic-band rect{fill:url(#gateHatch);stroke:var(--grid-line);stroke-width:1;}
+  #capMtx .unlic-lab{fill:var(--text-tertiary);font-family:var(--font-display);font-size:10px;font-weight:600;}
+  #capMtx .unlic-sub{fill:var(--text-tertiary);font-size:7px;font-family:var(--font-mono);}
+  #capMtx .unlic-glyph{fill:var(--text-tertiary);opacity:.5;font-family:var(--font-mono);font-size:11px;text-anchor:middle;}
+
+  .pmeta{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:var(--type-caption);}
+  .pmeta dt{color:var(--text-tertiary);} .pmeta dd{margin:0;color:var(--text-secondary);}
+  .cardnote{font-size:var(--type-micro);color:var(--text-tertiary);line-height:1.5;}
+  /* persona cards: push the note to the bottom behind a divider so the card never shows a dead band */
+  .pcard .cardnote{margin-top:auto;padding-top:8px;border-top:1px solid var(--grid-line);}
+  .scopelist{display:flex;flex-direction:column;gap:2px;margin-top:6px;}
+  .scopelist .r{display:flex;justify-content:space-between;font-size:var(--type-caption);padding:3px 0;border-bottom:1px solid var(--grid-line);}
+  .scopelist .r .k{color:var(--text-secondary);} .scopelist .r .v{font-family:var(--font-mono);color:var(--text-tertiary);}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR (verbatim from 00-shell) ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL (verbatim; 'on' moved to Admin & License) ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a class="on"><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — ADMIN & LICENSE ============ -->
+  <main class="main" style="gap:var(--space-4)">
+
+    <!-- subject / principal scope line -->
+    <div class="ticketline">
+      <span class="field"><span class="lbl">principal</span> J. Kwan · jkwan <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">role</span> <span id="tkRole">Trader</span> <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">desk scope</span> <span id="tkDesk">Desk · FX Vol</span> <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">preset</span> <span id="tkPreset">Trader / MM</span> <span class="car">▾</span></span>
+      <span style="flex:1"></span>
+      <span class="badge live" title="celnet-entitlements capability kernel — Action × AssetClass, deny-wins, per-user overlay; resolved per session (ResolvedCaller.desk_scope)">Entitlements kernel · LIVE</span>
+      <span class="badge warn" title="Server posture is Enforce (deny-by-default); Permissive is a dev-only edge — gate against Enforce">Posture · Enforce</span>
+    </div>
+
+    <!-- deny-wins resolution hero row (.model) -->
+    <div class="model">
+      <span class="title" style="font-size:15px">Entitlement resolution · deny-wins <span class="car" style="font-size:11px">▾</span></span>
+      <span class="meta">role bundle ⊕ per-user overlay · pruned <b>pre-aggregation</b> so a parent total never leaks an invisible subtree</span>
+      <span class="selctl"><span class="lbl">apply preset</span>
+        <span class="pseg" id="pseg">
+          <button data-p="quant">Quant</button>
+          <button class="on" data-p="trader">Trader / MM</button>
+          <button data-p="sales">Sales-Trader</button>
+          <button data-p="risk">Risk Mgr</button>
+          <button data-p="deskhead">Desk Head</button>
+        </span>
+      </span>
+      <span style="flex:1"></span>
+      <span class="meta">effective caps <b class="num" id="heroEff" style="color:var(--accent)">—</b></span>
+      <button class="btn primary" id="btnSave">Save overlay ▸</button>
+    </div>
+
+    <!-- ROW 1 — SIGNATURE: capability matrix + resolution/scope companion -->
+    <div class="grid2" style="grid-template-columns:1.58fr 1fr">
+
+      <!-- Capability MATRIX (Action × AssetClass, deny-wins cells) -->
+      <section class="panel">
+        <header>
+          <span class="headline">Capability matrix · Action × AssetClass <span class="muted" style="font-weight:400;font-size:12px">— scoped by Desk · <span id="mtxPersona">Trader / MM</span></span></span>
+          <span class="muted" style="font-size:11px">click a cell to edit the overlay</span>
+        </header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg id="capMtx" class="chart" viewBox="0 0 600 360" height="356" aria-label="Capability matrix: 10 actions by 3 licensed asset classes plus a collapsed unlicensed summary, deny-wins cells">
+            <defs>
+              <pattern id="denyHatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <rect width="6" height="6" fill="oklch(0.65 0.21 25 / 0.14)"/>
+                <line x1="0" y1="0" x2="0" y2="6" stroke="var(--danger)" stroke-width="1.3" opacity="0.55"/>
+              </pattern>
+              <pattern id="gateHatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <rect width="5" height="5" fill="oklch(1 0 0 / 0.02)"/>
+                <line x1="0" y1="0" x2="0" y2="5" stroke="var(--text-tertiary)" stroke-width="0.9" opacity="0.35"/>
+              </pattern>
+            </defs>
+            <g id="mtxBody"></g>
+          </svg>
+          <div class="mleg">
+            <span class="lg"><span class="sw grant">✓</span> granted · role/preset</span>
+            <span class="lg"><span class="sw grantov">✓</span> overlay-grant · widen</span>
+            <span class="lg"><span class="sw deny">⊘</span> denied · <b style="color:var(--danger)">deny wins</b></span>
+            <span class="lg"><span class="sw admingap">◑</span> Administer · desk-scoped (gap)</span>
+            <span class="lg"><span class="sw none">·</span> not granted</span>
+            <span class="lg"><span class="sw gated">▨</span> class not licensed</span>
+          </div>
+          <div class="cardnote" style="margin-top:6px"><b>FX Opt</b> + <b>Rates/FI</b> are the two engine-enforced <span class="num">AssetClass</span> arms (<span class="num">FxOptions</span> / <span class="num">FixedIncome</span>); <b>Metal</b> rides the <span class="num">FxOptions</span> arm; <b>Equity / Cmdty / Crypto</b> are gated in the client capability kernel pending a server AssetClass arm.</div>
+        </div>
+      </section>
+
+      <!-- Resolution + desk scope companion -->
+      <section class="panel">
+        <header><span class="headline">Deny-wins resolution</span><span class="badge live">allows()</span></header>
+        <div class="body" style="padding-top:var(--space-3)">
+          <div class="formula">
+            <div>allows(<b>cap</b>) =</div>
+            <div>&nbsp;&nbsp;<span class="d">¬</span> denies<span class="d">∋</span>cap</div>
+            <div>&nbsp;&nbsp;<b>∧</b> ( grant_all <b>∨</b> grants∋cap )</div>
+            <div class="cite">celnet-entitlements · capability.rs:226 — deny always wins</div>
+          </div>
+
+          <div class="statrow">
+            <div class="stat gr"><div class="n" id="cntGrant">—</div><div class="k">granted</div></div>
+            <div class="stat dn"><div class="n" id="cntDeny">—</div><div class="k">denied</div></div>
+            <div class="stat gt"><div class="n" id="cntGated">—</div><div class="k">gated</div></div>
+          </div>
+
+          <div class="label" style="margin:12px 0 4px">Desk scope · <span class="num">DeskScope</span></div>
+          <div class="seg" id="deskSeg" style="width:100%">
+            <button data-d="All" style="flex:1">All</button>
+            <button class="on" data-d="Desk" style="flex:1">Desk(FX&nbsp;Vol)</button>
+            <button data-d="Deskless" style="flex:1">Deskless</button>
+          </div>
+          <div class="scopelist" id="scopeList">
+            <div class="r"><span class="k">FX Vol · G10-A/B/C</span><span class="v">in scope</span></div>
+            <div class="r"><span class="k">FX Vol · EM-A</span><span class="v">in scope</span></div>
+            <div class="r"><span class="k">Rates · STIR-1</span><span class="v" id="rowRates">pruned</span></div>
+            <div class="r"><span class="k">Credit · IG-flow</span><span class="v">pruned</span></div>
+          </div>
+          <div class="cardnote" style="margin-top:8px">Scope resolves per session — <span class="num">ResolvedCaller.desk_scope</span> (services/access.rs:318) — and prunes fan-out <b>before</b> the risk-cube reduction, so a Risk-Mgr <span class="num">View</span>-only firm-wide grant can never leak a magnitude it can't drill into.</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ROW 2 — SIGNATURE: per-asset-class license tier management -->
+    <section class="panel">
+      <header>
+        <span class="headline">License tiers · per-asset-class commercial primitive</span>
+        <span style="display:flex;gap:8px;align-items:center">
+          <span class="cardnote">engine hard-rejects out-of-tier products · pricer.rs:697</span>
+          <span class="badge live">engine-enforced</span>
+        </span>
+      </header>
+      <div class="body">
+        <div class="tiers">
+          <div class="tier present">
+            <h4>FX + Metals <span class="badge live">Licensed</span></h4>
+            <div class="cls">full class · reference-complete</div>
+            <ul>
+              <li>Vanilla · GK 13-Greek</li>
+              <li>18 exotics · barriers / digitals / Asian / TARF / accumulator …</li>
+              <li>LSV 5-family surface · VV / SABR / SVI / SSVI / eSSVI</li>
+              <li>Linear · fwd / swap / NDF</li>
+            </ul>
+            <div class="foot"><span class="badge live" title="all 24 Product arms priceable; Metal rides the FX path via InstrumentClass::PreciousMetal">24 / 24 products</span><span class="cardnote">present</span></div>
+          </div>
+
+          <div class="tier present">
+            <h4>Rates / FI <span class="badge live">Licensed</span></h4>
+            <div class="cls">curve suite · own leaf</div>
+            <ul>
+              <li>OIS deposits · bootstrap curve</li>
+              <li class="gap">FRA · IRS · STIR strip · bonds <span class="dim">— built in-engine</span></li>
+              <li>z / g / asset-swap spread</li>
+              <li>own <span class="num">RatesService</span> · <span class="num">FixedIncome</span> arm</li>
+            </ul>
+            <div class="foot"><span class="badge warn" title="celnet-rates FRA/swap/bond/STIR math is built + tested but the RatesInstrument wire oneof exposes only the OIS arm today (ws/codec.rs:1275)">wire = OIS-only</span><span class="cardnote">present · fast-follow</span></div>
+          </div>
+
+          <div class="tier upsell">
+            <h4>Equity · Cmdty · Crypto <span class="badge gate">Not licensed</span></h4>
+            <div class="cls">vanilla + landing · modular tier</div>
+            <ul>
+              <li>Equity · generalized-BSM + dividend</li>
+              <li>Commodity · Black-76 + margining axis</li>
+              <li>Crypto · linear + inverse 1/S<sub>T</sub> · funding carry</li>
+              <li class="gap">Perpetual · listed-future-option <span class="dim">— LANDING</span></li>
+            </ul>
+            <div class="foot"><button class="btn" id="btnReq">Request access ▸</button><span class="badge target">Perp/Future LANDING</span></div>
+          </div>
+        </div>
+
+        <!-- product-kind reach — stacked Viridis breakdown of the 24 Product arms per class -->
+        <div class="label" style="margin:16px 0 6px">Product-kind reach · which of the 24 <span class="num">Product</span> arms each class prices <span class="dim">— depth = Viridis family ramp</span></div>
+        <svg id="covChart" class="chart" viewBox="0 0 480 196" height="190" aria-label="Stacked product-kind reach per asset class, Viridis sequential depth">
+          <defs>
+            <pattern id="covGate" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="5" height="5" fill="oklch(1 0 0 / 0.02)"/>
+              <line x1="0" y1="0" x2="0" y2="5" stroke="var(--text-tertiary)" stroke-width="0.9" opacity="0.32"/>
+            </pattern>
+            <pattern id="covLand" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="5" height="5" fill="var(--accent-soft)"/>
+              <line x1="0" y1="0" x2="0" y2="5" stroke="var(--accent)" stroke-width="1" opacity="0.6"/>
+            </pattern>
+          </defs>
+          <g id="covBody"></g>
+        </svg>
+        <div class="covleg" id="covLeg"></div>
+        <div class="cardnote" style="margin-top:6px"><b>FX / Metal</b> reach every family (Metal rides the <span class="num">FxOptions</span> arm); <b>Equity / Cmdty / Crypto</b> price the <span class="num">Vanilla</span> family only — the engine hard-rejects cross-asset exotics (<span class="num">cross_asset_non_vanilla_product_is_rejected</span>, pricer.rs). <span class="num">Perpetual</span> / <span class="num">ListedFutureOption</span> are LANDING across all classes. Rates/FI is a separate curve leaf, not one of the 24 option arms.</div>
+      </div>
+    </section>
+
+    <!-- ROW 3 — SIGNATURE: persona-preset editor -->
+    <section class="panel">
+      <header>
+        <span class="headline">Persona presets · capability overlays</span>
+        <span style="display:flex;gap:8px;align-items:center">
+          <span class="cardnote">presets over the Trader base (or Admin) via set_role_capabilities — not server role variants</span>
+          <span class="badge warn" title="Server Role is binary Admin|Trader today; the 5 personas ship as curated per-user overlay presets, not new role enum arms">Role = Admin | Trader</span>
+        </span>
+      </header>
+      <div class="body">
+        <div class="pgrid" id="pgrid">
+
+          <div class="pcard" data-p="quant">
+            <div class="ph"><span class="pn">Quant</span><span class="pfoot" data-foot="quant"></span></div>
+            <div class="acap">
+              <span class="a">view</span><span class="a">price</span><span class="a">simulate</span>
+              <span class="a no">execute</span><span class="a no">book</span><span class="a no">quote</span>
+            </div>
+            <dl class="pmeta">
+              <dt>Asset</dt><dd>FxOptions + FixedIncome</dd>
+              <dt>Scope</dt><dd>All (cross-desk)</dd>
+              <dt>Home</dt><dd>Surface model/calibrate (read-only) + golden-oracle diff</dd>
+            </dl>
+            <div class="cardnote"><span class="num">price_without_execute</span> — validates every model, never deals.</div>
+          </div>
+
+          <div class="pcard on" data-p="trader">
+            <div class="ph"><span class="pn">Trader / MM</span><span class="pfoot" data-foot="trader"></span></div>
+            <div class="acap">
+              <span class="a">view</span><span class="a">price</span><span class="a">quote</span><span class="a">rfq</span><span class="a">ioi</span><span class="a">stream</span><span class="a">execute</span><span class="a">book</span>
+            </div>
+            <dl class="pmeta">
+              <dt>Asset</dt><dd>one class · FxOptions (FI denied)</dd>
+              <dt>Scope</dt><dd>Desk(self)</dd>
+              <dt>Home</dt><dd>Stream ⇄ Ticket ⇄ Risk ⇄ Surface ⇄ Book</dd>
+            </dl>
+            <div class="cardnote">FX-only narrowing overlay denies the FixedIncome action set — <b style="color:var(--danger)">deny wins</b>.</div>
+          </div>
+
+          <div class="pcard" data-p="sales">
+            <div class="ph"><span class="pn">Sales-Trader</span><span class="pfoot" data-foot="sales"></span></div>
+            <div class="acap">
+              <span class="a">view</span><span class="a">rfq</span><span class="a">ioi</span>
+              <span class="a no">execute</span><span class="a no">book</span><span class="a no">stream</span>
+            </div>
+            <dl class="pmeta">
+              <dt>Asset</dt><dd>FxOptions + FixedIncome</dd>
+              <dt>Scope</dt><dd>Desk(self)</dd>
+              <dt>Home</dt><dd>RFQ/IOI inbox (filtered Stream) + Ticket price-show</dd>
+            </dl>
+            <div class="cardnote">Relays client RFQ/IOI; never commits the desk's balance sheet.</div>
+          </div>
+
+          <div class="pcard" data-p="risk">
+            <div class="ph"><span class="pn">Risk Manager</span><span class="pfoot" data-foot="risk"></span></div>
+            <div class="acap">
+              <span class="a">view</span>
+              <span class="a no">price</span><span class="a no">execute</span><span class="a no">book</span><span class="a no">stream</span>
+            </div>
+            <dl class="pmeta">
+              <dt>Asset</dt><dd>FxOptions + FixedIncome</dd>
+              <dt>Scope</dt><dd>All (firm-wide)</dd>
+              <dt>Home</dt><dd>Risk + Book · breadcrumb group-by</dd>
+            </dl>
+            <div class="cardnote">The only persona reading across every desk, forbidden from acting on any — separation of duties.</div>
+          </div>
+
+          <div class="pcard" data-p="deskhead">
+            <div class="ph"><span class="pn">Desk Head</span><span class="pfoot" data-foot="deskhead"></span></div>
+            <div class="acap">
+              <span class="a">view</span><span class="a">price</span><span class="a">quote</span><span class="a">stream</span><span class="a">execute</span><span class="a">book</span><span class="a" style="background:oklch(0.82 0.16 75/.16);color:var(--warn)">administer*</span>
+            </div>
+            <dl class="pmeta">
+              <dt>Asset</dt><dd>desk's class · FxOptions</dd>
+              <dt>Scope</dt><dd>Desk(self) · every book under desk</dd>
+              <dt>Home</dt><dd>Book (desk aggregate) + Risk (desk limits)</dd>
+            </dl>
+            <div class="cardnote"><span style="color:var(--warn)">*</span> desk-level limit admin has no dedicated <span class="num">Action</span> arm — rides <span class="num">Administer</span> scoped to the desk (entitlement gap flagged).</div>
+          </div>
+
+        </div>
+        <div class="cardnote" style="margin-top:12px">Overlay edits are audited both ways — <span class="num">audit_records_emitted_for_allow_and_deny</span> — and persist through <span class="num">set_role_capabilities</span> (services/auth.rs:1668). Widen with a grant, narrow with a deny; deny always wins on resolve.</div>
+      </div>
+    </section>
+
+    <!-- ROW 4 — per-user overlay & audit -->
+    <section class="panel">
+      <header><span class="headline">Per-user overlay &amp; audit</span><span class="badge live">journaled</span></header>
+      <div class="body" style="padding-top:var(--space-2)">
+        <table class="grid">
+          <thead><tr><th style="text-align:left">When</th><th style="text-align:left">Actor</th><th style="text-align:left">Principal</th><th style="text-align:left">Δ overlay</th><th style="text-align:left">Capability</th><th style="text-align:left">Effect</th></tr></thead>
+          <tbody>
+            <tr><td class="n" style="text-align:left">12:01:44</td><td>A. Marchetti</td><td>jkwan</td><td><span class="badge live" style="padding:1px 7px">grant</span></td><td class="n" style="text-align:left;font-size:11px">Simulate · FxOptions</td><td class="dim">widened base</td></tr>
+            <tr><td class="n" style="text-align:left">11:58:10</td><td>A. Marchetti</td><td>jkwan</td><td><span class="badge gate" style="padding:1px 7px;color:var(--danger);border-color:oklch(0.65 0.21 25/.4)">deny</span></td><td class="n" style="text-align:left;font-size:11px">Book · FixedIncome</td><td style="color:var(--danger)">deny wins · narrowed</td></tr>
+            <tr><td class="n" style="text-align:left">11:52:03</td><td>system</td><td>msingh</td><td><span class="badge warn" style="padding:1px 7px">preset</span></td><td class="n" style="text-align:left;font-size:11px">Risk Manager → View-only · All</td><td class="dim">applied firm-wide read</td></tr>
+            <tr><td class="n" style="text-align:left">11:40:27</td><td>A. Marchetti</td><td>lweiss</td><td><span class="badge target" style="padding:1px 7px">scope</span></td><td class="n" style="text-align:left;font-size:11px">DeskScope All → Desk(FX Vol)</td><td class="dim">narrowed to desk</td></tr>
+          </tbody>
+        </table>
+        <div style="margin-top:12px;display:flex;gap:6px">
+          <button class="btn" id="btnAdd">Add principal ＋</button>
+          <button class="btn ghost" id="btnExport">Export policy ◷</button>
+          <span style="flex:1"></span>
+          <span class="cardnote" style="align-self:center">Admin (<span class="num">grant_all</span>) is immutable — the Admin role cannot be narrowed.</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ CONTEXT RAIL (verbatim from 00-shell) ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (verbatim from 00-shell) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const el = (t, a, txt) => { const e = document.createElementNS(SVGNS, t); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; return e; };
+
+  // ---- capability model (grounded in celnet-entitlements) ----
+  const ACTIONS = [
+    ['view','View','view'], ['price','Price','price'], ['quote','Quote-Respond','quote_respond'],
+    ['rfq','RFQ-Respond','rfq_respond'], ['ioi','IOI-Respond','ioi_respond'], ['stream','Stream','stream'],
+    ['execute','Execute','execute'], ['book','Book','book'], ['simulate','Simulate','simulate'],
+    ['administer','Administer','administer']
+  ];
+  const CLASSES = [
+    ['fx','FX Opt','FxOptions', true], ['metal','Metal','↳ FxOptions', true], ['rates','Rates / FI','FixedIncome', true],
+    ['equity','Equity','client-gated', false], ['cmdty','Cmdty','client-gated', false], ['crypto','Crypto','client-gated', false]
+  ];
+  // licensed classes for the current desk (mirrors topbar .lic — FX/Metal/Rates on)
+  const LICENSED = { fx:1, metal:1, rates:1, equity:0, cmdty:0, crypto:0 };
+  const LICCLASSES = CLASSES.filter(c => LICENSED[c[0]]);   // widened, interactive columns
+  const UNLIC      = CLASSES.filter(c => !LICENSED[c[0]]);  // collapsed into one summary band
+
+  const PERSONAS = {
+    quant:    { name:'Quant',        grants:['view','price','simulate'], classes:['fx','metal','rates'], role:'Trader', desk:'All (cross-desk)' },
+    trader:   { name:'Trader / MM',  grants:['view','price','quote','rfq','ioi','stream','execute','book','simulate'], classes:['fx','metal'], role:'Trader', desk:'Desk · FX Vol' },
+    sales:    { name:'Sales-Trader', grants:['view','rfq','ioi'], classes:['fx','metal','rates'], role:'Trader', desk:'Desk · FX Vol' },
+    risk:     { name:'Risk Manager', grants:['view'], classes:['fx','metal','rates'], role:'Trader', desk:'All (firm-wide)' },
+    deskhead: { name:'Desk Head',    grants:['view','price','quote','rfq','ioi','stream','execute','book','simulate','administer'], classes:['fx','metal'], role:'Trader', desk:'Desk · FX Vol (all books)', adminGap:true }
+  };
+
+  const GLYPH = { grant:'✓', grantov:'✓', deny:'⊘', none:'·', gated:'▨', admingap:'◑' };
+  let current = 'trader';
+  let overrides = {}; // per-cell overlay edits, cleared on persona change
+
+  // allows()-style resolution: deny wins, else grant; with per-cell overlay override
+  function stateFor(pid, act, cls) {
+    if (!LICENSED[cls]) return 'gated';
+    const key = act + '|' + cls;
+    if (key in overrides) return overrides[key];
+    const p = PERSONAS[pid];
+    const here = p.grants.includes(act) && p.classes.includes(cls);
+    const base = act !== 'administer'; // Trader base grants every Action except Administer
+    if (here) { if (act === 'administer') return p.adminGap ? 'admingap' : 'grant'; return base ? 'grant' : 'grantov'; }
+    return base ? 'deny' : 'none';
+  }
+
+  // ---- geometry (3 wide licensed columns + one narrow collapsed unlicensed band) ----
+  const GX = 150, GY0 = 52, COLW = 112, ROWH = 30;
+  const ULX = GX + COLW * LICCLASSES.length + 14, ULW = 62;
+  const WORD = { grant:'grant', grantov:'+overlay', deny:'deny', none:'—', gated:'gated', admingap:'desk' };
+
+  function buildMatrix() {
+    const body = document.getElementById('mtxBody');
+    body.textContent = '';
+    const gridBottom = GY0 + ROWH * ACTIONS.length;
+
+    // ---- licensed column headers (widened, interactive) ----
+    LICCLASSES.forEach((c, i) => {
+      const cx = GX + i * COLW + COLW / 2;
+      body.appendChild(el('text', { x: cx, y: 30, 'text-anchor': 'middle', class: 'mtx-col' }, c[1]));
+      body.appendChild(el('text', { x: cx, y: 42, 'text-anchor': 'middle', class: 'mtx-sub' }, c[2]));
+      body.appendChild(el('circle', { cx: cx - 36, cy: 26, r: 2.6, fill: 'var(--accent)' }));
+      if (i > 0) body.appendChild(el('line', { x1: GX + i * COLW, y1: 46, x2: GX + i * COLW, y2: gridBottom, class: 'colsep' }));
+    });
+    body.appendChild(el('line', { x1: 6, y1: 46, x2: ULX + ULW, y2: 46, class: 'colsep' }));
+
+    // ---- collapsed unlicensed summary band (3 classes → one narrow column) ----
+    body.appendChild(el('text', { x: ULX + ULW / 2, y: 30, 'text-anchor': 'middle', class: 'unlic-lab' }, 'Unlicensed'));
+    body.appendChild(el('text', { x: ULX + ULW / 2, y: 42, 'text-anchor': 'middle', class: 'unlic-sub' }, '→ request'));
+    const bandG = el('g', { class: 'unlic-band' });
+    bandG.appendChild(el('rect', { x: ULX, y: GY0 + 3, width: ULW, height: gridBottom - GY0 - 6, rx: 6 }));
+    body.appendChild(bandG);
+    const ucx = ULX + ULW / 2;
+    UNLIC.forEach((c, k) => body.appendChild(el('text', { x: ucx, y: GY0 + 46 + k * 20, 'text-anchor': 'middle', class: 'unlic-lab' }, c[1])));
+    body.appendChild(el('text', { x: ucx, y: GY0 + 128, 'text-anchor': 'middle', class: 'unlic-glyph' }, '▨'));
+    body.appendChild(el('text', { x: ucx, y: GY0 + 152, 'text-anchor': 'middle', class: 'unlic-sub' }, 'client-gated'));
+    body.appendChild(el('text', { x: ucx, y: GY0 + 172, 'text-anchor': 'middle', class: 'unlic-sub' }, 'no server'));
+    body.appendChild(el('text', { x: ucx, y: GY0 + 184, 'text-anchor': 'middle', class: 'unlic-sub' }, 'AssetClass arm'));
+    body.appendChild(el('line', { x1: ULX - 7, y1: 46, x2: ULX - 7, y2: gridBottom, class: 'colsep' }));
+
+    // ---- rows × licensed cells (glyph + state word → denser signature panel) ----
+    ACTIONS.forEach((a, r) => {
+      const yt = GY0 + r * ROWH;
+      body.appendChild(el('text', { x: GX - 12, y: yt + 14, 'text-anchor': 'end', class: 'mtx-row' }, a[1]));
+      body.appendChild(el('text', { x: GX - 12, y: yt + 24, 'text-anchor': 'end', class: 'mtx-tok' }, a[2]));
+
+      LICCLASSES.forEach((c, i) => {
+        const xl = GX + i * COLW;
+        const st = stateFor(current, a[0], c[0]);
+        const g = el('g', { class: 'cell c-' + st, 'data-act': a[0], 'data-cls': c[0] });
+        g.appendChild(el('rect', { x: xl + 4, y: yt + 3, width: COLW - 8, height: ROWH - 8, rx: 5 }));
+        g.appendChild(el('text', { x: xl + COLW / 2, y: yt + 19, class: 'glyph g-' + st, style: 'font-size:11px' }, GLYPH[st] + '  ' + WORD[st]));
+        const title = el('title', {}, a[1] + ' · ' + c[1] + ' → ' + st.replace('grantov', 'overlay-grant').replace('admingap', 'desk-scoped administer (gap)'));
+        g.appendChild(title);
+        body.appendChild(g);
+      });
+    });
+    updateCounts();
+  }
+
+  function updateCounts() {
+    let gr = 0, dn = 0, gt = 0;
+    ACTIONS.forEach(a => CLASSES.forEach(c => {
+      const s = stateFor(current, a[0], c[0]);
+      if (s === 'grant' || s === 'grantov' || s === 'admingap') gr++;
+      else if (s === 'deny') dn++;
+      else if (s === 'gated') gt++;
+    }));
+    document.getElementById('cntGrant').textContent = gr;
+    document.getElementById('cntDeny').textContent = dn;
+    document.getElementById('cntGated').textContent = gt;
+    // ratio over GRANTABLE (licensed) cells only — unlicensed classes can never be granted for this desk
+    const grantable = ACTIONS.length * LICCLASSES.length;
+    document.getElementById('heroEff').innerHTML =
+      gr + ' / ' + grantable + ' <span style="color:var(--text-tertiary);font-weight:500">granted · ' + dn + ' denied · ' + gt + ' unlicensed</span>';
+  }
+
+  // ---- persona footprint mini-strips (FX enforced class) ----
+  function buildFootprints() {
+    document.querySelectorAll('.pfoot').forEach(f => {
+      const pid = f.dataset.foot; f.textContent = '';
+      ACTIONS.forEach(a => {
+        const p = PERSONAS[pid];
+        const here = p.grants.includes(a[0]) && p.classes.includes('fx');
+        const base = a[0] !== 'administer';
+        let st = here ? (a[0] === 'administer' ? (p.adminGap ? 'admingap' : 'grant') : (base ? 'grant' : 'grantov')) : (base ? 'deny' : 'none');
+        const s = document.createElement('span');
+        s.className = 'fcell ' + st;
+        s.textContent = { grant:'✓', grantov:'✓', deny:'⊘', none:'·', admingap:'◑' }[st];
+        s.title = a[1] + ' → ' + st;
+        f.appendChild(s);
+      });
+    });
+  }
+
+  // ---- set persona everywhere ----
+  function setPersona(pid) {
+    if (!PERSONAS[pid]) return;
+    current = pid; overrides = {};
+    const p = PERSONAS[pid];
+    document.getElementById('tkPreset').textContent = p.name;
+    document.getElementById('tkDesk').textContent = p.desk;
+    document.getElementById('tkRole').textContent = p.role;
+    document.getElementById('mtxPersona').textContent = p.name;
+    document.querySelectorAll('#pseg button').forEach(b => b.classList.toggle('on', b.dataset.p === pid));
+    document.querySelectorAll('.pcard').forEach(c => c.classList.toggle('on', c.dataset.p === pid));
+    // desk-scope segment follows the persona
+    const bucket = p.desk.indexOf('All') === 0 ? 'All' : 'Desk';
+    document.querySelectorAll('#deskSeg button').forEach(b => b.classList.toggle('on', b.dataset.d === bucket));
+    document.getElementById('rowRates').textContent = (pid === 'quant' || pid === 'sales' || pid === 'risk') ? 'in scope' : 'pruned';
+    buildMatrix();
+  }
+
+  // ---- wire persona controls ----
+  document.getElementById('pseg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setPersona(b.dataset.p); });
+  document.getElementById('pgrid').addEventListener('click', e => { const c = e.target.closest('.pcard'); if (c) setPersona(c.dataset.p); });
+
+  // ---- desk-scope segment (cosmetic scope readout) ----
+  document.getElementById('deskSeg').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    document.querySelectorAll('#deskSeg button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    const rows = document.querySelectorAll('#scopeList .r .v');
+    if (b.dataset.d === 'All') rows.forEach(v => v.textContent = 'in scope');
+    else if (b.dataset.d === 'Deskless') rows.forEach(v => v.textContent = 'pruned');
+    else { rows[0].textContent = 'in scope'; rows[1].textContent = 'in scope'; rows[2].textContent = 'pruned'; rows[3].textContent = 'pruned'; }
+  });
+
+  // ---- cell click edits the overlay (grant → deny → none) ----
+  document.getElementById('capMtx').addEventListener('click', e => {
+    const g = e.target.closest('.cell'); if (!g) return;
+    const act = g.dataset.act, cls = g.dataset.cls;
+    if (!LICENSED[cls]) return; // can't grant on an unlicensed class
+    const key = act + '|' + cls;
+    const cur = stateFor(current, act, cls);
+    const nextMap = { grant: 'deny', grantov: 'deny', admingap: 'deny', deny: 'none', none: 'grant' };
+    overrides[key] = nextMap[cur] || 'grant';
+    buildMatrix();
+  });
+
+  // ---- illustrative admin-button feedback (no trading affordance) ----
+  function flash(btn, msg) { const o = btn.textContent; btn.textContent = msg; setTimeout(() => btn.textContent = o, 1300); }
+  document.getElementById('btnSave').addEventListener('click', e => flash(e.target, 'overlay saved ✓'));
+  document.getElementById('btnReq').addEventListener('click', e => flash(e.target, 'access requested ✓'));
+  document.getElementById('btnAdd').addEventListener('click', e => flash(e.target, 'principal drafted ✓'));
+  document.getElementById('btnExport').addEventListener('click', e => flash(e.target, 'policy exported ✓'));
+
+  // ---- product-kind reach chart (stacked Viridis families over the 24 Product arms) ----
+  // Families group the real pricer.rs Product arms; 2+3+2+5+7+3 = 22 wired + 2 LANDING = 24.
+  const FAMILIES = [
+    ['Vanilla', 2, 'var(--seq-1)'], ['Barrier', 3, 'var(--seq-2)'], ['Digital', 2, 'var(--seq-3)'],
+    ['Path', 5, 'var(--seq-4)'], ['Structured', 7, 'var(--seq-5)'], ['Linear', 3, 'var(--seq-6)']
+  ];
+  const LANDING_ARMS = 2, ARMS_TOTAL = 24;
+  const COVROWS = [
+    ['FX', 'FxOptions', 'full'], ['Metal', '↳ FxOptions', 'full'],
+    ['Equity', 'gen-BSM', 'vanilla'], ['Cmdty', 'Black-76', 'vanilla'], ['Crypto', 'lin + inv', 'vanilla']
+  ];
+
+  function buildCoverage() {
+    const body = document.getElementById('covBody');
+    body.textContent = '';
+    const X0 = 80, X1 = 402, unit = (X1 - X0) / ARMS_TOTAL;
+    const y0 = 34, rowH = 26, barH = 15;
+    const gridBottom = y0 + rowH * COVROWS.length;
+
+    body.appendChild(el('line', { x1: X1, y1: y0 - 10, x2: X1, y2: gridBottom, class: 'mk' }));
+    body.appendChild(el('text', { x: X1, y: y0 - 14, 'text-anchor': 'end', class: 'axlbl b' }, 'full book 24'));
+
+    COVROWS.forEach((row, r) => {
+      const yt = y0 + r * rowH, yc = yt + barH / 2;
+      body.appendChild(el('text', { x: X0 - 8, y: yc + 1, 'text-anchor': 'end', class: 'bar-lab' + (row[2] === 'vanilla' ? ' dim' : '') }, row[0]));
+      body.appendChild(el('text', { x: X0 - 8, y: yc + 11, 'text-anchor': 'end', class: 'bar-lab dim', style: 'font-size:7.5px' }, row[1]));
+
+      let cx = X0, wired = 0;
+      FAMILIES.forEach(f => {
+        const w = f[1] * unit;
+        const reachable = row[2] === 'full' || f[0] === 'Vanilla';
+        if (reachable) {
+          const g = el('g', { class: 'seg' });
+          g.appendChild(el('rect', { x: cx, y: yt, width: w - 1.2, height: barH, rx: 2, fill: f[2] }));
+          g.appendChild(el('title', {}, row[0] + ' · ' + f[0] + ' family · ' + f[1] + ' arm' + (f[1] > 1 ? 's' : '')));
+          body.appendChild(g);
+          wired += f[1];
+        } else {
+          body.appendChild(el('rect', { x: cx, y: yt, width: w - 1.2, height: barH, rx: 2, fill: 'url(#covGate)', stroke: 'var(--grid-line)', 'stroke-width': 0.6 }));
+        }
+        cx += w;
+      });
+      // landing (perpetual_option / listed_future_option) — LANDING across every class
+      const lg = el('g', { class: 'seg' });
+      lg.appendChild(el('rect', { x: cx, y: yt, width: LANDING_ARMS * unit - 1.2, height: barH, rx: 2, fill: 'url(#covLand)', stroke: 'var(--accent)', 'stroke-width': 0.7 }));
+      lg.appendChild(el('title', {}, row[0] + ' · Landing: perpetual + listed-future option (2 arms)'));
+      body.appendChild(lg);
+
+      body.appendChild(el('text', { x: X1 + 6, y: yc + 3, class: 'seg-lab' }, wired + ' +' + LANDING_ARMS + '◇'));
+    });
+
+    body.appendChild(el('line', { x1: X0, y1: gridBottom + 2, x2: X1, y2: gridBottom + 2, class: 'gl' }));
+    [0, 6, 12, 18, 24].forEach(t => body.appendChild(el('text', { x: X0 + t * unit, y: gridBottom + 14, 'text-anchor': 'middle', class: 'axlbl' + (t === 24 ? ' b' : '') }, String(t))));
+    body.appendChild(el('text', { x: X0, y: gridBottom + 26, class: 'axlbl' }, 'Product arms priced (of 24) · solid = wired · hatched = LANDING (perpetual / future)'));
+
+    // family legend (HTML)
+    const leg = document.getElementById('covLeg'); leg.textContent = '';
+    const item = (bg, border, label) => {
+      const s = document.createElement('span'); s.className = 'lg';
+      const sw = document.createElement('span'); sw.className = 'sw'; sw.style.background = bg; if (border) sw.style.border = border;
+      const tx = document.createElement('span'); tx.textContent = label;
+      s.appendChild(sw); s.appendChild(tx); return s;
+    };
+    FAMILIES.forEach(f => leg.appendChild(item(f[2], null, f[0] + ' ' + f[1])));
+    leg.appendChild(item('var(--accent-soft)', '1px solid var(--accent)', 'Landing 2 ◇'));
+  }
+
+  // ---- init ----
+  buildFootprints();
+  buildCoverage();
+  setPersona('trader');
+</script>
+</body>
+</html>

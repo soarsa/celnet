@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Feed Manage (mockup 05)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+  /* ============ Feed Manage — screen-specific only (celer.css is shared, untouched) ============ */
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:var(--type-caption);font-weight:700;padding:3px 9px;border-radius:var(--r-full);white-space:nowrap;}
+  .badge.live{background:oklch(0.78 0.16 155/.16);color:var(--bid);}
+  .badge.target{background:var(--accent-soft);color:var(--accent);}
+  .badge.live::before{content:"●";font-size:8px;}
+  .badge.target::before{content:"◇";font-size:9px;}
+
+  .legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;}
+  .legend .lg{display:inline-flex;align-items:center;gap:6px;font-size:var(--type-caption);color:var(--text-secondary);}
+  .legend .sw{width:16px;height:3px;border-radius:2px;display:inline-block;flex:none;}
+  .legend .sw.dash{height:0;border-top:2px dashed var(--text-secondary);border-radius:0;}
+
+  .fresh{display:inline-flex;gap:2px;}
+  .fresh i{width:5px;height:13px;border-radius:1px;display:inline-block;}
+
+  .tog{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--type-caption);color:var(--text-secondary);user-select:none;}
+  .tog .sw2{width:26px;height:15px;border-radius:var(--r-full);background:var(--accent);position:relative;transition:background .15s;flex:none;}
+  .tog .sw2::after{content:"";position:absolute;top:2px;left:13px;width:11px;height:11px;border-radius:50%;background:#fff;transition:left .15s;}
+  .tog.off .sw2{background:oklch(1 0 0/.14);}
+  .tog.off .sw2::after{left:2px;}
+  .tog.lock{opacity:.55;cursor:not-allowed;}
+
+  .wrow{display:grid;grid-template-columns:112px 1fr 46px;gap:10px;align-items:center;padding:5px 0;}
+  .wrow .wbar{height:7px;border-radius:var(--r-full);background:var(--accent-soft);position:relative;overflow:hidden;}
+  .wrow .wbar>i{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:var(--r-full);display:block;}
+  .wrow.ex .wbar>i{background:var(--text-tertiary);}
+  .wrow .src{display:flex;align-items:center;gap:7px;font-size:var(--type-callout);}
+  .wrow .wv{font-family:var(--font-mono);font-size:var(--type-caption);text-align:right;font-variant-numeric:tabular-nums;}
+  .srcdot{width:10px;height:3px;border-radius:2px;display:inline-block;flex:none;}
+
+  .stepper{display:inline-flex;align-items:center;border:var(--hairline);border-radius:var(--r-sm);overflow:hidden;background:oklch(1 0 0/.05);}
+  .stepper button{border:0;background:transparent;color:var(--text-secondary);width:22px;height:22px;cursor:pointer;font-size:14px;line-height:1;}
+  .stepper button:hover{background:oklch(1 0 0/.08);color:var(--text-primary);}
+  .stepper .val{padding:0 6px;font-family:var(--font-mono);font-size:var(--type-caption);min-width:46px;text-align:center;}
+
+  .map{width:100%;border-collapse:collapse;font-size:var(--type-callout);}
+  .map th{text-align:left;font-size:var(--type-micro);text-transform:uppercase;letter-spacing:.05em;color:var(--text-tertiary);font-weight:600;padding:0 8px 4px;border-bottom:var(--hairline);}
+  .map td{padding:6px 8px;border-bottom:1px solid var(--grid-line);}
+  .map .canon{font-family:var(--font-mono);font-weight:600;}
+  .map .vend{font-family:var(--font-mono);color:var(--text-secondary);}
+  .arrow{color:var(--text-tertiary);padding:0 4px;}
+
+  .actbtn{height:21px;padding:0 8px;border-radius:var(--r-sm);border:var(--hairline);background:oklch(1 0 0/.05);color:var(--text-secondary);font-size:var(--type-micro);font-weight:600;cursor:pointer;text-transform:uppercase;letter-spacing:.03em;}
+  .actbtn:hover{color:var(--text-primary);border-color:var(--accent);}
+  .st{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:var(--type-caption);}
+  .st.on{color:var(--bid);} .st.pend{color:var(--warn);} .st.dn{color:var(--danger);}
+  .cfgrow{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--grid-line);}
+  .cfgrow .k{font-size:var(--type-caption);color:var(--text-secondary);}
+  .plotwarn{fill:var(--warn);font-size:8px;}
+  .cardnote{font-size:var(--type-micro);color:var(--text-tertiary);}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR (verbatim from 00-shell) ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL (verbatim; 'on' moved to Feed Manage) ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a class="on"><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — FEED MANAGE ============ -->
+  <main class="main" style="gap:var(--space-4)">
+
+    <!-- feed-slice scope line -->
+    <div class="ticketline">
+      <span class="field"><span class="lbl">pair</span> EUR/USD <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">tenor</span> 1M · 28 Jul <span class="car">▾</span></span>
+      <span class="seg" id="charSeg" title="Characteristic vol compared across sources">
+        <button class="on" data-char="ATM vol">ATM</button>
+        <button data-char="25Δ risk-reversal">25Δ RR</button>
+        <button data-char="25Δ butterfly">25Δ BF</button>
+        <button data-char="10Δ wings">10Δ wings</button>
+      </span>
+      <span class="field"><span class="lbl">sources</span> <span id="srcCount">4 active · 3 contributing</span></span>
+      <span style="flex:1"></span>
+      <span class="badge live" title="celnet-fix session admin is wired &amp; running">FIX session admin · LIVE</span>
+      <span class="badge target" title="celnet-integration blend/divergence_report has no runtime callers; live ticks are the maker synthetic walk — surface marks are manual">Feed → Pricing · TARGET</span>
+    </div>
+
+    <!-- compositing model-hero row -->
+    <div class="model">
+      <span class="title" style="font-size:15px">Compositing · staleness-weighted blend <span class="car" style="font-size:11px">▾</span></span>
+      <span class="meta">median consensus · MAD-gated outlier exclusion · <span class="num" id="flagCount">1</span> flagged this slice</span>
+      <span class="selctl"><span class="lbl">half-life</span> <span class="num">12.0s</span> <span class="car">▾</span></span>
+      <span class="selctl"><span class="lbl">tolerance</span> <span class="stepper" id="tolStep"><button data-d="-0.01" aria-label="decrease">−</button><span class="val" id="tolVal">0.12v</span><button data-d="0.01" aria-label="increase">+</button></span></span>
+      <span class="selctl"><span class="lbl">min-src gate</span> <span class="num">3</span></span>
+      <span style="flex:1"></span>
+      <button class="btn ghost" title="Runs blend() over the live slice without publishing — celnet-integration::aggregate::blend">Preview blend ◷</button>
+    </div>
+
+    <!-- ROW 1 — signature charts: multi-source overlay + divergence band -->
+    <div class="grid2" style="grid-template-columns:1.32fr 1fr">
+
+      <!-- Multi-source price OVERLAY time-series -->
+      <section class="panel">
+        <header>
+          <span class="headline">Source overlay · EUR/USD 1M <span id="charLbl" class="muted" style="font-weight:400;font-size:12px">ATM vol</span></span>
+          <span class="badge target" title="raw ticks arrive per source; the dashed median consensus + tolerance band are the celnet-integration composite (unwired at runtime)">consensus = TARGET</span>
+        </header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <div class="legend" style="margin-bottom:8px">
+            <span class="lg"><span class="sw" style="background:var(--seq-2)"></span>EBS</span>
+            <span class="lg"><span class="sw" style="background:var(--seq-3)"></span>Reuters</span>
+            <span class="lg"><span class="sw" style="background:var(--seq-4)"></span>Celer-Internal</span>
+            <span class="lg"><span class="sw" style="background:var(--seq-6)"></span>Vendor-C <span class="dim">stale</span></span>
+            <span class="lg"><span class="sw dash"></span>median consensus ± tol</span>
+          </div>
+          <svg class="chart" viewBox="0 0 460 208" height="212" id="ovSvg" aria-label="Multi-source vol-characteristic overlay time-series">
+            <!-- diverging backdrop (signed characteristics only: RR/BF/wings 0-centered) -->
+            <rect id="ovPos" x="44" y="16" width="404" height="0" fill="var(--div-pos2)" opacity="0.06"/>
+            <rect id="ovNeg" x="44" y="16" width="404" height="0" fill="var(--div-neg2)" opacity="0.06"/>
+            <!-- horizontal grid + y labels (rebuilt per characteristic) -->
+            <g id="ovYaxis"></g>
+            <!-- vertical time guides -->
+            <line class="gl" x1="147" y1="16" x2="147" y2="188"/><line class="gl" x1="246" y1="16" x2="246" y2="188"/><line class="gl" x1="345" y1="16" x2="345" y2="188"/>
+            <!-- zero baseline (signed characteristics only) -->
+            <line id="ovZero" x1="44" x2="448" y1="0" y2="0" style="stroke:var(--text-secondary);stroke-width:1.4;display:none"/>
+            <!-- tolerance band around consensus (rebuilt) -->
+            <path id="ovBand" d="" fill="oklch(1 0 0 / 0.05)"/>
+            <!-- source lines — categorical Viridis per source (JS sets points) -->
+            <polyline id="ln-EBS" points="" style="fill:none;stroke:var(--seq-2);stroke-width:1.6;stroke-linejoin:round"/>
+            <polyline id="ln-Reuters" points="" style="fill:none;stroke:var(--seq-3);stroke-width:1.6;stroke-linejoin:round"/>
+            <polyline id="ln-Celer" points="" style="fill:none;stroke:var(--seq-4);stroke-width:1.6;stroke-linejoin:round"/>
+            <polyline id="ln-VendorC" points="" style="fill:none;stroke:var(--seq-6);stroke-width:1.9;stroke-linejoin:round"/>
+            <polyline id="ln-consensus" points="" style="fill:none;stroke:var(--text-secondary);stroke-width:2;stroke-dasharray:5 3;stroke-linejoin:round"/>
+            <!-- latest-tick markers (JS) -->
+            <g id="ovMarks"></g>
+            <!-- freeze marker + stale annotation (JS; right-anchored to the now-edge so it never clips) -->
+            <g id="ovAnn"></g>
+            <!-- 'now' edge -->
+            <line class="mk" x1="444" y1="16" x2="444" y2="188"/>
+            <!-- x labels (seconds ago) -->
+            <text class="axlbl" x="48" y="202" text-anchor="middle">−60s</text><text class="axlbl" x="147" y="202" text-anchor="middle">−45s</text><text class="axlbl" x="246" y="202" text-anchor="middle">−30s</text><text class="axlbl" x="345" y="202" text-anchor="middle">−15s</text><text class="axlbl b" x="444" y="202" text-anchor="middle">now</text>
+          </svg>
+        </div>
+      </section>
+
+      <!-- Per-source inter-arrival LATENCY & update-rate (liveness — complements the ±dev in the table) -->
+      <section class="panel">
+        <header>
+          <span class="headline">Inbound latency &amp; update-rate</span>
+          <span class="muted" style="font-size:11px">inter-arrival · HdrHistogram p50/p99 · per SubscriptionKey</span>
+        </header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <div class="legend" style="margin-bottom:8px">
+            <span class="lg"><span class="sw" style="width:8px;height:8px;border-radius:50%;background:var(--text-secondary)"></span>p50</span>
+            <span class="lg"><span class="sw" style="background:var(--text-secondary)"></span>p50–p99</span>
+            <span class="lg"><span class="sw dash" style="border-top:2px dashed var(--warn)"></span>stale cutoff 2.0s</span>
+            <span class="lg" style="color:var(--text-tertiary)">colour = source (Viridis)</span>
+          </div>
+          <svg class="chart" viewBox="0 0 360 208" height="212" aria-label="Per-source inter-arrival latency, log time axis with p50 marker and p99 whisker per source">
+            <!-- log-time x gridlines + labels (1ms · 10 · 100 · 1s) -->
+            <line class="gl" x1="58" y1="34" x2="58" y2="172"/><line class="gl" x1="133.7" y1="34" x2="133.7" y2="172"/>
+            <line class="gl" x1="209.4" y1="34" x2="209.4" y2="172"/><line class="gl" x1="285.1" y1="34" x2="285.1" y2="172"/>
+            <text class="axlbl" x="58" y="186" text-anchor="middle">1ms</text><text class="axlbl" x="133.7" y="186" text-anchor="middle">10</text>
+            <text class="axlbl" x="209.4" y="186" text-anchor="middle">100</text><text class="axlbl" x="285.1" y="186" text-anchor="middle">1s</text>
+            <!-- staleness cutoff: semantic warn threshold (NOT indigo — accent stays reserved for controls) -->
+            <rect x="308" y="34" width="46" height="138" fill="var(--warn)" opacity="0.05"/>
+            <line x1="308" y1="30" x2="308" y2="176" style="stroke:var(--warn);stroke-width:1.2;stroke-dasharray:3 3;opacity:.85"/>
+            <text class="axlbl" x="308" y="27" text-anchor="middle" fill="var(--warn)">stale cutoff 2.0s</text>
+
+            <!-- Celer-Internal · in-proc bus · p50 3ms / p99 9ms -->
+            <text class="axlbl b" x="58" y="49" fill="var(--seq-4)">Celer-Internal</text>
+            <text class="axlbl" x="352" y="49" text-anchor="end" fill="var(--text-tertiary)">p50 3 · p99 9 ms · 312/s</text>
+            <line x1="94.1" y1="61" x2="130.2" y2="61" style="stroke:var(--seq-4);stroke-width:2.4;opacity:.9"/>
+            <line x1="130.2" y1="57" x2="130.2" y2="65" style="stroke:var(--seq-4);stroke-width:1.6"/>
+            <circle cx="94.1" cy="61" r="3.4" fill="var(--seq-4)"/>
+
+            <!-- EBS · SBE/UDP mcast · p50 12ms / p99 40ms -->
+            <text class="axlbl b" x="58" y="85" fill="var(--seq-2)">EBS</text>
+            <text class="axlbl" x="352" y="85" text-anchor="end" fill="var(--text-tertiary)">p50 12 · p99 40 ms · 82/s</text>
+            <line x1="139.7" y1="97" x2="179.3" y2="97" style="stroke:var(--seq-2);stroke-width:2.4;opacity:.9"/>
+            <line x1="179.3" y1="93" x2="179.3" y2="101" style="stroke:var(--seq-2);stroke-width:1.6"/>
+            <circle cx="139.7" cy="97" r="3.4" fill="var(--seq-2)"/>
+
+            <!-- Reuters · FIX 4.4 MD · p50 40ms / p99 120ms -->
+            <text class="axlbl b" x="58" y="121" fill="var(--seq-3)">Reuters</text>
+            <text class="axlbl" x="352" y="121" text-anchor="end" fill="var(--text-tertiary)">p50 40 · p99 120 ms · 31/s</text>
+            <line x1="179.3" y1="133" x2="215.4" y2="133" style="stroke:var(--seq-3);stroke-width:2.4;opacity:.9"/>
+            <line x1="215.4" y1="129" x2="215.4" y2="137" style="stroke:var(--seq-3);stroke-width:1.6"/>
+            <circle cx="179.3" cy="133" r="3.4" fill="var(--seq-3)"/>
+
+            <!-- Vendor-C · FIX 4.4 MD · p50 0.9s / p99 4.2s — p99 breaches the stale cutoff -->
+            <text class="axlbl b" x="58" y="157" fill="var(--seq-6)">Vendor-C</text>
+            <text class="axlbl" x="352" y="157" text-anchor="end" fill="var(--warn)">p50 0.9 · p99 4.2 s · 1.1/s ⚠</text>
+            <line x1="281.6" y1="169" x2="308" y2="169" style="stroke:var(--seq-6);stroke-width:2.4;opacity:.9"/>
+            <line x1="308" y1="169" x2="332.3" y2="169" style="stroke:var(--warn);stroke-width:2.4"/>
+            <line x1="332.3" y1="165" x2="332.3" y2="173" style="stroke:var(--warn);stroke-width:1.6"/>
+            <circle cx="281.6" cy="169" r="3.4" fill="var(--seq-6)"/><circle cx="332.3" cy="169" r="2.6" fill="var(--warn)"/>
+          </svg>
+          <div class="cardnote" style="margin-top:6px">A p99 whisker past the 2.0s cutoff marks a stale source: Vendor-C's 4.2s inter-arrival collapses its staleness weight <span class="num">2^(−age/½-life)</span> and, with a smile-dev breach, drops it from the blend. Signed ±dev per source lives in the table below.</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ROW 2 — per-source freshness & health grid -->
+    <section class="panel">
+      <header>
+        <span class="headline">Inbound sources · freshness &amp; health</span>
+        <span class="muted" style="font-size:11px">SubscriptionKey EUR/USD·1M · valuation-anchored ages · staleness weight = 2^(−age / half-life)</span>
+      </header>
+      <div class="body" style="padding-top:var(--space-2)">
+        <table class="grid">
+          <thead>
+            <tr>
+              <th>Source</th><th>Vendor symbol</th><th>Transport</th><th>Last tick</th><th>Staleness wt</th><th>Max dev (v)</th><th>Blend wt</th><th style="text-align:left">Recent freshness</th><th style="text-align:left">State</th><th style="text-align:center">Include</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="srcdot" style="background:var(--seq-2)"></span> EBS</td>
+              <td class="n" style="text-align:left;font-family:var(--font-mono);color:var(--text-secondary)">EURUSD</td>
+              <td>SBE / UDP mcast</td>
+              <td class="n">0.4s</td><td class="n">0.97</td><td class="n">0.05</td><td class="n" id="bw-EBS">0.41</td>
+              <td><span class="fresh"><i class="h5"></i><i class="h6"></i><i class="h6"></i><i class="h5"></i><i class="h6"></i><i class="h6"></i><i class="h5"></i><i class="h6"></i></span></td>
+              <td><span class="st on" id="st-EBS"><span class="rag g"></span>Active</span></td>
+              <td style="text-align:center"><span class="tog" data-src="EBS" data-w="0.41"><span class="sw2"></span></span></td>
+            </tr>
+            <tr>
+              <td><span class="srcdot" style="background:var(--seq-3)"></span> Reuters</td>
+              <td style="font-family:var(--font-mono);color:var(--text-secondary)">EUR=</td>
+              <td>FIX 4.4 · market-data</td>
+              <td class="n">0.6s</td><td class="n">0.95</td><td class="n">0.06</td><td class="n" id="bw-Reuters">0.33</td>
+              <td><span class="fresh"><i class="h5"></i><i class="h5"></i><i class="h6"></i><i class="h5"></i><i class="h6"></i><i class="h5"></i><i class="h6"></i><i class="h5"></i></span></td>
+              <td><span class="st on" id="st-Reuters"><span class="rag g"></span>Active</span></td>
+              <td style="text-align:center"><span class="tog" data-src="Reuters" data-w="0.33"><span class="sw2"></span></span></td>
+            </tr>
+            <tr>
+              <td><span class="srcdot" style="background:var(--seq-6)"></span> Vendor-C</td>
+              <td style="font-family:var(--font-mono);color:var(--text-secondary)">EUR/USD.SPOT</td>
+              <td>FIX 4.4 · market-data</td>
+              <td class="n warn">4.2s</td><td class="n">0.71</td><td class="n neg">0.22</td><td class="n dim" id="bw-VendorC">0.00</td>
+              <td><span class="fresh"><i class="h5"></i><i class="h4"></i><i class="h3"></i><i class="h2"></i><i class="h2"></i><i class="h1"></i><i class="h1"></i><i class="h1"></i></span></td>
+              <td><span class="st pend" id="st-VendorC"><span class="rag a"></span>Diverging · excluded</span></td>
+              <td style="text-align:center"><span class="tog off lock" id="tog-VendorC" data-src="Vendor-C" data-w="0" title="auto-excluded by the divergence gate — re-included only if tolerance widens past its smile-dev">MAD</span></td>
+            </tr>
+            <tr>
+              <td><span class="srcdot" style="background:var(--seq-4)"></span> Celer-Internal</td>
+              <td style="font-family:var(--font-mono);color:var(--text-secondary)">EURUSD</td>
+              <td>in-proc bus</td>
+              <td class="n">0.2s</td><td class="n">0.99</td><td class="n">0.02</td><td class="n" id="bw-Celer">0.26</td>
+              <td><span class="fresh"><i class="h6"></i><i class="h6"></i><i class="h6"></i><i class="h6"></i><i class="h5"></i><i class="h6"></i><i class="h6"></i><i class="h6"></i></span></td>
+              <td><span class="st on" id="st-Celer"><span class="rag g"></span>Active</span></td>
+              <td style="text-align:center"><span class="tog" data-src="Celer-Internal" data-w="0.26"><span class="sw2"></span></span></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="cardnote" style="margin-top:8px">Gate needs ≥ 3 sources to discriminate an outlier (dual/single-feed ⇒ measured but never flagged). Consensus is the per-quantity <b>median</b> over ATM · 25ΔC/P · 10ΔC/P; a source is excluded only when its max smile deviation breaches <b>both</b> the absolute tolerance and the data-adaptive MAD bound.</div>
+      </div>
+    </section>
+
+    <!-- ROW 3 — symbology + compositing -->
+    <div class="grid2" style="grid-template-columns:1fr 1fr">
+
+      <!-- Symbology mapping -->
+      <section class="panel">
+        <header>
+          <span class="headline">Symbology &amp; normalization</span>
+          <span class="muted" style="font-size:11px">vendor tick → canonical NormalizedSlice</span>
+        </header>
+        <div class="body" style="padding-top:var(--space-2)">
+          <table class="map">
+            <thead><tr><th>Source</th><th>Vendor symbol</th><th></th><th>Canonical</th><th>Δ convention</th></tr></thead>
+            <tbody>
+              <tr><td>EBS</td><td class="vend">EURUSD</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">spot · pa</td></tr>
+              <tr><td>Reuters</td><td class="vend">EUR=</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">spot · pa</td></tr>
+              <tr><td>Vendor-C</td><td class="vend">EUR/USD.SPOT</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">fwd · <span class="warn">unadj ⚠</span></td></tr>
+              <tr><td>Celer-Internal</td><td class="vend">EURUSD</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">spot · pa</td></tr>
+            </tbody>
+          </table>
+          <div class="cardnote" style="margin-top:10px">Tenor pillars resolve to a common grid (1W·2W·1M·2M·3M·6M·1Y); wings arrive as 25Δ/10Δ RR·BF. Vendor-C publishes a <b>forward-delta, premium-unadjusted</b> convention — normalized on ingest before consensus, and a likely driver of its divergence.</div>
+          <div style="margin-top:12px;display:flex;gap:6px">
+            <button class="btn ghost">Add source ＋</button>
+            <button class="btn ghost">Edit mapping</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Compositing / blend weights -->
+      <section class="panel">
+        <header>
+          <span class="headline">Compositing · blend weights</span>
+          <span class="badge target" title="celnet-integration::aggregate::blend — no runtime callers yet">TARGET</span>
+        </header>
+        <div class="body" style="padding-top:var(--space-2)">
+          <div class="cfgrow"><span class="k">Scheme</span><span class="num" style="font-size:12px">staleness-weighted · exp half-life</span></div>
+          <div class="cfgrow"><span class="k">Staleness half-life</span><span class="num" style="font-size:12px">12.0s</span></div>
+          <div class="cfgrow"><span class="k">Divergence tolerance</span><span class="num" style="font-size:12px" id="tolVal2">0.12v</span></div>
+          <div class="cfgrow"><span class="k">Surviving weight Σ</span><span class="num" style="font-size:12px">1.000 · <span id="contribTxt">3 sources</span></span></div>
+
+          <div class="label" style="margin:14px 0 6px">Final normalized weights</div>
+          <div class="wrow" id="wr-EBS"><span class="src"><span class="srcdot" style="background:var(--seq-2)"></span>EBS</span><span class="wbar"><i id="wb-EBS" style="width:41%"></i></span><span class="wv" id="wv-EBS">0.41</span></div>
+          <div class="wrow" id="wr-Reuters"><span class="src"><span class="srcdot" style="background:var(--seq-3)"></span>Reuters</span><span class="wbar"><i id="wb-Reuters" style="width:33%"></i></span><span class="wv" id="wv-Reuters">0.33</span></div>
+          <div class="wrow" id="wr-Celer"><span class="src"><span class="srcdot" style="background:var(--seq-4)"></span>Celer-Internal</span><span class="wbar"><i id="wb-Celer" style="width:26%"></i></span><span class="wv" id="wv-Celer">0.26</span></div>
+          <div class="wrow ex" id="wr-VendorC"><span class="src"><span class="srcdot" style="background:var(--seq-6)"></span>Vendor-C</span><span class="wbar"><i id="wb-VendorC" style="width:0%"></i></span><span class="wv dim" id="wv-VendorC">excl</span></div>
+
+          <div class="cardnote" style="margin-top:10px">Excluded sources drop to a hard <span class="num">0.0</span>; the surviving staleness weights re-normalize to Σ 1. Outer 10Δ wing is re-normalized only over the sources that carry it, so a missing wing never biases the blend.</div>
+          <div style="margin-top:12px;display:flex;gap:6px;align-items:center">
+            <button class="btn primary" title="Wiring target — activates FEEDS → PRICING">Wire to surface ▸</button>
+            <span class="cardnote">blended slice → auto-calibrate marks <span class="badge target" style="padding:1px 7px">TARGET</span></span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ROW 4 — FIX session admin (LIVE) -->
+    <section class="panel">
+      <header>
+        <span class="headline">FIX session admin</span>
+        <span style="display:flex;gap:8px;align-items:center">
+          <span class="cardnote">initiator = outbound feed/quote · acceptor = inbound client</span>
+          <span class="badge live" title="celnet-fix Session state machine — wired &amp; running">LIVE</span>
+        </span>
+      </header>
+      <div class="body" style="padding-top:var(--space-2)">
+        <table class="grid">
+          <thead>
+            <tr>
+              <th style="text-align:left">Session · Sender → Target</th><th style="text-align:left">Role</th><th style="text-align:left">State</th><th>Seq out</th><th>Seq in (exp)</th><th>HB</th><th>Last HB</th><th>Resend</th><th style="text-align:left">Admin</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="font-family:var(--font-mono)">CELNET-FX → EBS-FIX44</td><td>Initiator</td>
+              <td><span class="st on" data-state><span class="rag g"></span>Active</span></td>
+              <td class="n">184,213</td><td class="n">92,006</td><td class="n">30s</td><td class="n">4s</td><td class="n">0</td>
+              <td><button class="actbtn" data-act="logout">Logout</button> <button class="actbtn" data-act="test">Test Req</button> <button class="actbtn" data-act="resend">Resend</button></td>
+            </tr>
+            <tr>
+              <td style="font-family:var(--font-mono)">CELNET-FX → RTRS-IDN</td><td>Initiator</td>
+              <td><span class="st on" data-state><span class="rag g"></span>Active</span></td>
+              <td class="n">55,120</td><td class="n">210,884</td><td class="n">30s</td><td class="n">2s</td><td class="n">0</td>
+              <td><button class="actbtn" data-act="logout">Logout</button> <button class="actbtn" data-act="test">Test Req</button> <button class="actbtn" data-act="resend">Resend</button></td>
+            </tr>
+            <tr>
+              <td style="font-family:var(--font-mono)">CELNET-FX → VENDORC-MD</td><td>Initiator</td>
+              <td><span class="st pend" data-state><span class="rag a"></span>LogonPending</span></td>
+              <td class="n">12</td><td class="n">0</td><td class="n">30s</td><td class="n dim">—</td><td class="n warn">1 · gap-fill</td>
+              <td><button class="actbtn" data-act="logon">Logon</button> <button class="actbtn" data-act="reset">Reset Seq</button></td>
+            </tr>
+            <tr>
+              <td style="font-family:var(--font-mono)">CLIENT-A → CELNET-FX</td><td>Acceptor</td>
+              <td><span class="st on" data-state><span class="rag g"></span>Active</span></td>
+              <td class="n">4,021</td><td class="n">3,998</td><td class="n">30s</td><td class="n">1s</td><td class="n">0</td>
+              <td><button class="actbtn" data-act="logout">Logout</button> <button class="actbtn" data-act="test">Test Req</button></td>
+            </tr>
+            <tr>
+              <td style="font-family:var(--font-mono)">CLIENT-B → CELNET-FX</td><td>Acceptor</td>
+              <td><span class="st pend" data-state><span class="rag a"></span>LogoutPending</span></td>
+              <td class="n">902</td><td class="n">902</td><td class="n">30s</td><td class="n">9s</td><td class="n">0</td>
+              <td><button class="actbtn" data-act="force">Force Disconnect</button></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="cardnote" style="margin-top:8px">State machine: Disconnected → LogonPending → Active → LogoutPending. Seq-number resync via ResendRequest / gap-fill is automatic; admin actions here are connectivity-only (no order or execution surface).</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ CONTEXT RAIL (verbatim from 00-shell) ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (verbatim from 00-shell) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+  // ============================================================================
+  //  Feed-Manage interactive model — ONE state → render() drives the overlay,
+  //  the blend weights, and the source table so no control lies (critique 1-3).
+  //  Grounded in celnet-integration::aggregate::blend + divergence_report:
+  //  per-quantity MEDIAN consensus, a source is excluded only when its max
+  //  smile-dev breaches BOTH the absolute tolerance AND the MAD-scaled bound,
+  //  survivors re-normalize to Σ1; gating needs >= MIN_SOURCES.
+  // ============================================================================
+  const XS = [48,81,114,147,180,213,246,279,312,345,378,411,444];
+  const GY = [37.5,80.5,123.5,166.5];        // the four horizontal gridlines
+  const YTOP = 37.5, YBOT = 166.5;
+  const FREEZE = 8;                           // Vendor-C freezes at this sample (x=312)
+  const MAD_FLOOR = 0.09;                     // MAD-scaled bound (vol pts)
+  const MIN_SOURCES = 3;                      // gating undecidable below this
+  const RAW = { EBS:0.41, Reuters:0.33, Celer:0.26, VendorC:0.18 }; // pre-norm staleness·tier
+  const GOODS = ['EBS','Reuters','Celer'];
+  // shared gentle common drift (the consensus core moves together), ~0-mean
+  const DRIFT = [-.05,-.03,.00,.01,.03,.04,.06,.05,.08,.09,.08,.11,.12];
+
+  // per-characteristic real data — signed quantities (RR/BF/wings) are 0-centered
+  const CHARS = {
+    'ATM vol':            { cap:'ATM vol',  ticks:[8.30,8.10,7.90,7.70], zero:null,
+                            base:{EBS:7.93,Reuters:8.01,Celer:7.97}, amp:1.0,
+                            vc:{from:8.00,to:8.24}, dev:0.22 },
+    '25Δ risk-reversal':  { cap:'25Δ RR',   ticks:[0.60,0.20,-0.20,-0.60], zero:0,
+                            base:{EBS:-0.45,Reuters:-0.39,Celer:-0.42}, amp:0.55,
+                            vc:{from:-0.42,to:-0.12}, dev:0.30 },
+    '25Δ butterfly':      { cap:'25Δ BF',   ticks:[0.40,0.20,0.00,-0.20], zero:0,
+                            base:{EBS:0.19,Reuters:0.23,Celer:0.21}, amp:0.45,
+                            vc:{from:0.22,to:0.41}, dev:0.19 },
+    '10Δ wings':          { cap:'10Δ wings',ticks:[1.20,0.60,0.00,-0.60], zero:0,
+                            base:{EBS:-0.76,Reuters:-0.68,Celer:-0.72}, amp:0.80,
+                            vc:{from:-0.72,to:-0.20}, dev:0.52 }
+  };
+
+  const state = { char:'ATM vol', tol:0.12, inc:{EBS:true,Reuters:true,Celer:true} };
+
+  const yFor = (v,t) => {
+    const y = YTOP + (v - t[0]) * (YBOT - YTOP) / (t[3] - t[0]);
+    return Math.max(14, Math.min(190, y));
+  };
+  const fmtTick = (v,zero) => zero === null ? v.toFixed(2)
+    : (v === 0 ? '0' : (v > 0 ? '+' : '−') + Math.abs(v).toFixed(2));
+  const median = a => { const s=[...a].sort((x,y)=>x-y), n=s.length;
+    return n===0?null : n%2 ? s[(n-1)/2] : (s[n/2-1]+s[n/2])/2; };
+  const pts = (arr,t) => XS.map((x,i)=>x+','+yFor(arr[i],t).toFixed(1)).join(' ');
+  const $ = id => document.getElementById(id);
+
+  function seriesGood(c,src){ return DRIFT.map(d => c.base[src] + c.amp*d); }
+  function seriesVC(c){ return XS.map((_,i)=> i<=FREEZE ? c.vc.from+(c.vc.to-c.vc.from)*i/FREEZE : c.vc.to ); }
+
+  function render(){
+    const c = CHARS[state.char], t = c.ticks, tol = state.tol;
+    $('charLbl').textContent = c.cap;
+
+    // ---- gating / inclusion (blend semantics) ----
+    const goodOn = GOODS.filter(s => state.inc[s]);
+    const nSources = goodOn.length + 1;                 // + Vendor-C feed (present, stale)
+    const decidable = nSources >= MIN_SOURCES;
+    const vcFlagged = decidable && c.dev > tol && c.dev > MAD_FLOOR;
+    const vcIn = !vcFlagged;
+    const included = goodOn.concat(vcIn ? ['VendorC'] : []);
+    const total = included.reduce((s,k)=>s+RAW[k],0) || 1;
+    const w = {}; ['EBS','Reuters','Celer','VendorC'].forEach(k=>{
+      w[k] = included.includes(k) ? RAW[k]/total : 0; });
+
+    // ---- overlay: y-axis, diverging backdrop, zero line ----
+    let yax='';
+    t.forEach((tv,i)=>{ yax += `<line class="gl" x1="44" y1="${GY[i]}" x2="448" y2="${GY[i]}"/>`
+      + `<text class="axlbl${i===0?' b':''}" x="6" y="${(GY[i]+2.5).toFixed(1)}">${fmtTick(tv,c.zero)}</text>`; });
+    $('ovYaxis').innerHTML = yax;
+    const zline = $('ovZero'), pos = $('ovPos'), neg = $('ovNeg');
+    if (c.zero === null){ zline.style.display='none'; pos.style.display='none'; neg.style.display='none'; }
+    else {
+      const zy = yFor(0,t);
+      zline.setAttribute('y1',zy); zline.setAttribute('y2',zy); zline.style.display='';
+      pos.style.display=''; neg.style.display='';
+      pos.setAttribute('y',16); pos.setAttribute('height',Math.max(0,zy-16).toFixed(1));
+      neg.setAttribute('y',zy.toFixed(1)); neg.setAttribute('height',Math.max(0,188-zy).toFixed(1));
+    }
+
+    // ---- source series ----
+    const arr = { EBS:seriesGood(c,'EBS'), Reuters:seriesGood(c,'Reuters'),
+                  Celer:seriesGood(c,'Celer'), VendorC:seriesVC(c) };
+    const cons = XS.map((_,i)=> median(goodOn.map(s=>arr[s][i])));      // consensus = median of the contributing core
+    const haveCons = goodOn.length > 0;
+
+    GOODS.forEach(s=>{ const ln=$('ln-'+s); ln.setAttribute('points',pts(arr[s],t));
+      ln.style.opacity = state.inc[s] ? '1' : '0.26'; });
+    const vcLn=$('ln-VendorC'); vcLn.setAttribute('points',pts(arr.VendorC,t)); vcLn.style.opacity = vcIn?'1':'0.85';
+    const consLn=$('ln-consensus');
+    if (haveCons){ consLn.setAttribute('points',pts(cons,t)); consLn.style.display=''; } else consLn.style.display='none';
+
+    // ---- tolerance band = consensus ± tol ----
+    const band=$('ovBand');
+    if (haveCons){
+      const up = XS.map((x,i)=>x+','+yFor(cons[i]+tol,t).toFixed(1));
+      const lo = XS.map((x,i)=>x+','+yFor(cons[i]-tol,t).toFixed(1)).reverse();
+      band.setAttribute('d','M'+up.join(' L')+' L'+lo.join(' L')+' Z'); band.style.display='';
+    } else band.style.display='none';
+
+    // ---- now-edge markers ----
+    let mk='';
+    GOODS.forEach(s=>{ if(!state.inc[s]) return;
+      mk += `<circle cx="444" cy="${yFor(arr[s][12],t).toFixed(1)}" r="2.6" fill="var(--seq-${s==='EBS'?2:s==='Reuters'?3:4})"/>`; });
+    const vcy = yFor(arr.VendorC[12],t).toFixed(1);
+    mk += `<circle cx="444" cy="${vcy}" r="${vcFlagged?3:2.6}" fill="var(--seq-6)"${vcFlagged?' stroke="var(--warn)" stroke-width="1.5"':''}/>`;
+    $('ovMarks').innerHTML = mk;
+
+    // ---- freeze marker + stale annotation (right-anchored → never clips) ----
+    const froze = `<line class="mk" x1="312" y1="${vcy}" x2="312" y2="16"/>`;
+    const ann = vcFlagged
+      ? froze + `<text class="plotwarn" x="444" y="26" text-anchor="end">Vendor-C froze 4.2s · +${c.dev.toFixed(2)}v dev ⚠</text>`
+      : (decidable
+          ? froze + `<text class="axlbl" x="444" y="26" text-anchor="end" fill="var(--text-tertiary)">Vendor-C within ±${tol.toFixed(2)}v · re-included</text>`
+          : froze + `<text class="axlbl" x="444" y="26" text-anchor="end" fill="var(--text-tertiary)">&lt; ${MIN_SOURCES} sources · gate undecidable</text>`);
+    $('ovAnn').innerHTML = ann;
+
+    // ---- weights panel + table (re-normalized to Σ1) ----
+    ['EBS','Reuters','Celer','VendorC'].forEach(k=>{
+      const on = included.includes(k), row=$('wr-'+k), bar=$('wb-'+k), val=$('wv-'+k);
+      row.classList.toggle('ex', !on);
+      bar.style.width = (w[k]*100).toFixed(0)+'%';
+      val.textContent = on ? w[k].toFixed(2) : (k==='VendorC' && vcFlagged ? 'excl' : 'off');
+      val.classList.toggle('dim', !on);
+    });
+    GOODS.forEach(s=>{ const bw=$('bw-'+s), st=$('st-'+s);
+      bw.textContent = w[s].toFixed(2); bw.classList.toggle('dim', !state.inc[s]);
+      if (state.inc[s]){ st.className='st on'; st.innerHTML='<span class="rag g"></span>Active'; }
+      else { st.className='st'; st.style.color='var(--text-tertiary)'; st.innerHTML='<span class="rag"></span>Excluded · manual'; }
+    });
+    const vbw=$('bw-VendorC'), vst=$('st-VendorC'), vtg=$('tog-VendorC');
+    if (vcIn){ vbw.textContent=w.VendorC.toFixed(2); vbw.className='n';
+      vst.className='st on'; vst.innerHTML='<span class="rag g"></span>Re-included · in tol';
+      vtg.classList.remove('off'); vtg.textContent='IN'; }
+    else { vbw.textContent='0.00'; vbw.className='n dim';
+      vst.className='st pend'; vst.innerHTML='<span class="rag a"></span>Diverging · excluded';
+      vtg.classList.add('off'); vtg.textContent='MAD'; }
+
+    // ---- scalar readouts ----
+    $('tolVal').textContent  = tol.toFixed(2)+'v';
+    $('tolVal2').textContent = tol.toFixed(2)+'v';
+    $('flagCount').textContent = vcFlagged ? '1' : '0';
+    $('contribTxt').textContent = included.length + ' source' + (included.length===1?'':'s');
+    $('srcCount').textContent = '4 active · ' + included.length + ' contributing';
+  }
+
+  // ---- wiring ----
+  const charSeg = document.getElementById('charSeg');
+  charSeg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    charSeg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on'); state.char = b.dataset.char; render();
+  });
+  document.getElementById('tolStep').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    state.tol = Math.min(0.40, Math.max(0.02, +(state.tol + parseFloat(b.dataset.d)).toFixed(2)));
+    render();
+  });
+  document.querySelectorAll('.grid .tog').forEach(tg => {
+    if (tg.classList.contains('lock')) return;                 // Vendor-C is auto-gated
+    tg.addEventListener('click', () => {
+      const key = tg.dataset.src === 'Celer-Internal' ? 'Celer' : tg.dataset.src;
+      tg.classList.toggle('off');
+      state.inc[key] = !tg.classList.contains('off');
+      render();
+    });
+  });
+  render();
+
+  // ---- FIX admin actions (illustrative state transitions, connectivity-only) ----
+  const transitions = {
+    logout: ['LogoutPending', 'pend'], logon: ['LogonPending', 'pend'],
+    force: ['Disconnected', 'dn'], reset: ['LogonPending', 'pend'],
+    test: null, resend: null
+  };
+  document.querySelectorAll('.actbtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const t = transitions[btn.dataset.act];
+      const cell = btn.closest('tr').querySelector('[data-state]');
+      if (t && cell) {
+        cell.className = 'st ' + t[1];
+        cell.innerHTML = '<span class="rag ' + (t[1] === 'on' ? 'g' : t[1] === 'dn' ? 'r' : 'a') + '"></span>' + t[0];
+      } else {
+        btn.textContent = btn.dataset.act === 'test' ? 'sent ✓' : 'req ✓';
+        setTimeout(() => { btn.textContent = btn.dataset.act === 'test' ? 'Test Req' : 'Resend'; }, 1400);
+      }
+    });
+  });
+</script>
+</body>
+</html>

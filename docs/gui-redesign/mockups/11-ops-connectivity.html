@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Ops &amp; Connectivity (mockup 11)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+/* ============ screen-specific: Ops & Connectivity (11) ============ */
+.ops-head { display:flex; align-items:center; gap:var(--space-4); flex-wrap:wrap; }
+.ops-head .htitle { display:flex; flex-direction:column; gap:1px; }
+.ops-head .sub { color:var(--text-tertiary); font-size:var(--type-caption); }
+.ops-head .sub .num { color:var(--text-secondary); }
+
+/* honest LIVE / TARGET provenance tags */
+.tag { display:inline-flex; align-items:center; gap:5px; font-size:var(--type-micro); text-transform:uppercase;
+  letter-spacing:0.05em; font-weight:700; padding:2px 8px; border-radius:var(--r-full); white-space:nowrap; }
+.tag.live { background:oklch(0.78 0.16 155 / 0.16); color:var(--bid); }
+.tag.target { background:var(--accent-soft); color:var(--accent); }
+.tag.live::before { content:"● "; }
+.tag.target::before { content:"◇ "; }
+
+/* KPI strip */
+.tiles { display:grid; grid-template-columns:repeat(5,1fr); gap:var(--space-4); }
+.tile { background:var(--bg-raised); border:var(--hairline); border-radius:var(--r-md); box-shadow:var(--shadow-panel);
+  padding:var(--space-4); display:flex; flex-direction:column; gap:7px; overflow:hidden; }
+.tile .klbl { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.05em; color:var(--text-tertiary); font-weight:600; }
+.tile .val { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:23px; font-weight:600; line-height:1; display:flex; align-items:baseline; gap:6px; }
+.tile .val .u { font-size:11px; color:var(--text-tertiary); font-weight:500; }
+.tile .tspark { width:100%; height:30px; display:block; }
+.tile .foot { font-size:var(--type-micro); color:var(--text-secondary); font-family:var(--font-mono); }
+.tile .foot .ok { color:var(--bid); }
+
+/* signature two-column region */
+.opsgrid { display:grid; grid-template-columns:1.42fr 1fr; gap:var(--space-4); grid-auto-rows:min-content; align-items:start; }
+
+/* latency histogram */
+.hist { display:block; width:100%; }
+.hist text { font-family:var(--font-mono); }
+.hist .plabel { font-size:9px; font-weight:600; }
+.histcap { display:flex; justify-content:space-between; align-items:baseline; margin-top:var(--space-2); font-size:var(--type-caption); color:var(--text-tertiary); }
+.histcap .num { color:var(--text-secondary); }
+.pctcards { display:grid; grid-template-columns:repeat(4,1fr); gap:var(--space-3); margin-top:var(--space-3); }
+.pctcard { background:var(--bg-inset); border:var(--hairline); border-radius:var(--r-sm); padding:8px 10px; }
+.pctcard .pk { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.05em; color:var(--text-tertiary); display:flex; align-items:center; gap:5px; }
+.pctcard .pk .sw { width:9px; height:9px; border-radius:2px; display:inline-block; }
+.pctcard .pv { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:17px; font-weight:600; margin-top:2px; }
+
+/* throughput panel */
+.trow { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:3px; }
+.trow .tlab { font-size:var(--type-caption); color:var(--text-secondary); }
+.trow .tval { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:15px; font-weight:600; }
+.trow .tval .u { font-size:10px; color:var(--text-tertiary); font-weight:500; margin-left:3px; }
+.thr-spark { width:100%; height:42px; display:block; margin-bottom:var(--space-4); }
+.qbar { height:7px; border-radius:var(--r-full); background:var(--bg-inset); overflow:hidden; position:relative; }
+.qbar > i { position:absolute; inset:0 auto 0 0; border-radius:var(--r-full); background:var(--seq-4); display:block; }
+.sesscount { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-3); margin-top:var(--space-3); }
+.sesscount .sc { text-align:center; background:var(--bg-inset); border:var(--hairline); border-radius:var(--r-sm); padding:7px 4px; }
+.sesscount .sc .v { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:16px; font-weight:600; }
+.sesscount .sc .k { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.04em; color:var(--text-tertiary); }
+
+/* FIX session grid */
+.dchip { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.04em; padding:1px 6px; border-radius:var(--r-sm);
+  background:oklch(1 0 0 / 0.05); border:var(--hairline); color:var(--text-secondary); cursor:help; }
+.sstate { display:inline-flex; align-items:center; gap:5px; font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.04em;
+  font-weight:700; padding:2px 8px; border-radius:var(--r-full); }
+.sstate.active { background:oklch(0.78 0.16 155 / 0.16); color:var(--bid); }
+.sstate.pending { background:oklch(0.82 0.16 75 / 0.16); color:var(--warn); }
+.sstate.down { background:oklch(0.65 0.21 25 / 0.16); color:var(--danger); }
+.grid td.cid { font-family:var(--font-mono); font-size:var(--type-micro); color:var(--text-secondary); }
+.grid tr.sel td { background:var(--accent-soft) !important; box-shadow:inset 2px 0 0 var(--accent); }
+#fixWrap { overflow-x:auto; }
+#fixGrid th, #fixGrid td { white-space:nowrap; padding-left:var(--space-3); padding-right:var(--space-3); }
+#fixGrid td.n { font-size:var(--type-micro); }
+
+/* Feeds & HA tiles */
+.hatiles { display:grid; grid-template-columns:repeat(4,1fr); gap:var(--space-4); }
+.hatile { background:var(--bg-raised); border:var(--hairline); border-radius:var(--r-md); box-shadow:var(--shadow-panel);
+  padding:var(--space-4); display:flex; flex-direction:column; gap:6px; }
+.hatile .ht { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.05em; color:var(--text-tertiary); font-weight:600;
+  display:flex; justify-content:space-between; align-items:center; }
+.hatile .hv { font-family:var(--font-display); font-size:17px; font-weight:600; line-height:1.15; }
+.hatile .hv .num { font-size:15px; }
+.hatile .hs { font-size:var(--type-caption); color:var(--text-secondary); font-family:var(--font-mono); }
+.hatile .barmini { height:5px; border-radius:var(--r-full); background:var(--bg-inset); overflow:hidden; margin-top:2px; }
+.hatile .barmini > i { display:block; height:100%; border-radius:var(--r-full); }
+
+.opsbar { display:flex; align-items:center; gap:var(--space-4); padding:var(--space-3) var(--space-5);
+  border-radius:var(--r-md); background:var(--bg-inset); border:var(--hairline); flex-wrap:wrap; }
+
+/* HA mini-gauge: normalized to % of own SLA/limit + a threshold tick (see title tooltip) */
+.hatile .barmini { position:relative; }
+.hatile .barmini .tick { position:absolute; top:-1px; bottom:-1px; width:2px; background:var(--text-primary);
+  opacity:0.5; border-radius:1px; }
+.hatile .barmini.breach > i { background:var(--warn) !important; }
+
+/* Dialect-mix stacked area + concurrency-headroom (right column) */
+.dlgd { display:flex; gap:var(--space-4); flex-wrap:wrap; margin:1px 0 5px; }
+.dlgd .di { display:flex; align-items:center; gap:5px; font-size:var(--type-micro); color:var(--text-secondary); }
+.dlgd .di .sw { width:9px; height:9px; border-radius:2px; display:inline-block; }
+.dlgd .di .num { color:var(--text-primary); font-weight:600; }
+.stk-area { width:100%; height:66px; display:block; }
+.stk-area text { font-family:var(--font-mono); }
+.cc-cap { display:flex; justify-content:space-between; align-items:baseline; font-size:var(--type-micro);
+  color:var(--text-tertiary); font-family:var(--font-mono); margin-top:3px; }
+.cc-cap .num { color:var(--text-secondary); }
+.cc-cap .ok { color:var(--bid); }
+
+/* FIX sequence-gap chip — lives in the Seq in/out cell, beside the numbers */
+#fixGrid td .gapchip { display:inline-flex; align-items:center; gap:4px; margin-left:6px; font-size:var(--type-micro);
+  text-transform:uppercase; letter-spacing:0.03em; font-weight:700; padding:1px 6px; border-radius:var(--r-sm);
+  background:oklch(0.65 0.21 25 / 0.15); color:var(--danger); white-space:nowrap; cursor:help; }
+
+/* FIX row-select → read-only detail console (FixAdminService/ListMessages) */
+#fixDetail { border-top:var(--hairline); background:var(--bg-inset); padding:var(--space-3) var(--cell-pad-x) var(--space-4); }
+#fixDetail[hidden] { display:none; }
+.fdhead { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; margin-bottom:var(--space-3); }
+.fdhead .fdid { font-family:var(--font-display); font-size:15px; font-weight:600; }
+.fdhead .fdmeta { font-family:var(--font-mono); font-size:var(--type-micro); color:var(--text-tertiary); }
+.fdhead .close { margin-left:auto; cursor:pointer; font-size:var(--type-caption); color:var(--text-tertiary);
+  border:var(--hairline); border-radius:var(--r-sm); padding:2px 9px; background:var(--bg-raised); }
+.fdhead .close:hover { color:var(--text-secondary); }
+.fdcols { display:grid; grid-template-columns:1.7fr 1fr; gap:var(--space-4); align-items:start; }
+.fdcols .fclab { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.04em; color:var(--text-tertiary);
+  font-weight:600; margin-bottom:5px; display:flex; align-items:center; gap:var(--space-2); }
+.msgtbl { width:100%; border-collapse:collapse; }
+.msgtbl th { text-align:left; font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.04em;
+  color:var(--text-tertiary); font-weight:600; padding:2px 10px 4px 0; }
+.msgtbl th:last-child, .msgtbl td:last-child { text-align:right; padding-right:0; }
+.msgtbl td { font-family:var(--font-mono); font-size:var(--type-micro); color:var(--text-secondary);
+  padding:3px 10px 3px 0; white-space:nowrap; border-top:var(--hairline); }
+.msgtbl td.dir { font-weight:700; }
+.msgtbl td.dir.in { color:var(--seq-4); }
+.msgtbl td.dir.out { color:var(--accent); }
+.msgtbl td.mt { color:var(--text-primary); }
+.msgtbl tr.mkr td { color:var(--danger); }
+.fdside { background:var(--bg-raised); border:var(--hairline); border-radius:var(--r-sm); padding:var(--space-3); }
+.fdside .fk { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.04em; color:var(--text-tertiary); }
+.fdside .fv { font-family:var(--font-mono); font-size:var(--type-caption); color:var(--text-secondary); margin:1px 0 9px; }
+.fdside .fv:last-child { margin-bottom:0; }
+.fdside .fv.warnv { color:var(--warn); }
+.fdside .fv.badv { color:var(--danger); }
+
+/* .main is a flex column; a direct .panel child has overflow:hidden which zeroes its
+   flex min-height and lets it shrink to nothing — pin direct children so they keep their size */
+.main > .panel, .main > .opsbar, .main > .tiles, .main > .opsgrid, .main > .hatiles, .main > .ops-head { flex-shrink:0; }
+
+@media (max-width:1240px){
+  .tiles { grid-template-columns:repeat(3,1fr); }
+  .hatiles { grid-template-columns:repeat(2,1fr); }
+  .opsgrid { grid-template-columns:1fr; }
+}
+@media (max-width:900px){
+  .fdcols { grid-template-columns:1fr; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR (shell, verbatim) ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL (shell, verbatim; "on" = Ops & Connectivity) ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a class="on"><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — OPS & CONNECTIVITY ============ -->
+  <main class="main" style="gap:var(--space-4)">
+
+    <!-- toolbar / provenance -->
+    <div class="opsbar">
+      <div class="ops-head" style="flex:1">
+        <div class="htitle">
+          <span class="headline">Ops &amp; Connectivity</span>
+          <span class="sub">latency &amp; throughput telemetry · <span class="num">celnet-observability</span> &nbsp;·&nbsp; FIX venues · <span class="num">ConnectionsWorkspace</span></span>
+        </div>
+      </div>
+      <span class="tag live" title="FixAdminService/ListConnections is a live gRPC/WS service">LIVE · FIX admin</span>
+      <span class="tag target" title="celnet-observability records p50/p99/p99.9 server-side; no client consumes it yet — this screen is the proposed client surface">TARGET · observability client</span>
+      <span style="width:1px;height:22px;background:var(--grid-line)"></span>
+      <div class="seg" id="winSeg" role="tablist" aria-label="Telemetry window">
+        <button class="on" data-win="live">Live ●</button>
+        <button data-win="1h">1h</button>
+        <button data-win="24h">24h</button>
+      </div>
+      <span class="pill" title="Active server node & region"><span class="dot live"></span> node&nbsp;<b>eu-w1a-3</b> · build&nbsp;<span class="num">2026.7.0</span></span>
+      <span class="pill" title="Hot-upgrade: drain-and-swap staged, zero-downtime"><span class="dot warn"></span> hot-upgrade&nbsp;<b>vN+1 staged</b></span>
+    </div>
+
+    <!-- KPI strip -->
+    <div class="tiles">
+      <div class="tile">
+        <span class="klbl">Quotes streamed</span>
+        <span class="val">8,412 <span class="u">upd/s</span></span>
+        <svg class="tspark" id="sp-thru" viewBox="0 0 170 30" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <span class="foot">peak 9,140 · 42 sessions</span>
+      </div>
+      <div class="tile">
+        <span class="klbl">In-flight ops</span>
+        <span class="val">58</span>
+        <svg class="tspark" id="sp-inflight" viewBox="0 0 170 30" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <span class="foot">cap 512 · bounded pool</span>
+      </div>
+      <div class="tile">
+        <span class="klbl">Hot-core p99</span>
+        <span class="val">180 <span class="u">µs</span></span>
+        <svg class="tspark" id="sp-p99" viewBox="0 0 170 30" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <span class="foot"><span class="ok">SLO 250µs ✓</span> · zero-alloc core</span>
+      </div>
+      <div class="tile">
+        <span class="klbl">Audit committed</span>
+        <span class="val">6.24 <span class="u">k rec/s</span></span>
+        <svg class="tspark" id="sp-audit" viewBox="0 0 170 30" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <span class="foot">journal fsync p99 0.9ms</span>
+      </div>
+      <div class="tile">
+        <span class="klbl">Telemetry queue</span>
+        <span class="val">3.1 <span class="u">%</span></span>
+        <svg class="tspark" id="sp-queue" viewBox="0 0 170 30" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <span class="foot"><span class="ok">0 dropped</span> · bounded offload</span>
+      </div>
+    </div>
+
+    <!-- signature: latency histogram + throughput -->
+    <div class="opsgrid">
+
+      <!-- LATENCY HISTOGRAM (HdrHistogram) -->
+      <section class="panel">
+        <header>
+          <span class="headline">Response-time distribution</span>
+          <span class="tag target">HdrHistogram · server-side</span>
+        </header>
+        <div class="body">
+          <div class="seg" id="opSeg" role="tablist" aria-label="Operation" style="margin-bottom:var(--space-3)">
+            <button class="on" data-op="price">Price · vanilla</button>
+            <button data-op="stream">Quote stream</button>
+            <button data-op="rfq">RFQ solve</button>
+            <button data-op="fix">FIX encode</button>
+            <button data-op="ws">WS encode</button>
+          </div>
+          <svg class="hist" id="histSvg" viewBox="0 0 660 276" aria-label="Latency histogram with percentile markers"></svg>
+          <div class="histcap">
+            <span>HdrHistogram · log-linear buckets · window <span class="num" id="winLabel">last 60 s</span> · <span class="num" id="winSamples">1.24 M</span> samples</span>
+            <span id="sloRatio"></span>
+          </div>
+          <div class="pctcards">
+            <div class="pctcard"><div class="pk"><span class="sw" style="background:var(--text-secondary)"></span>p50</div><div class="pv" id="pc50">—</div></div>
+            <div class="pctcard"><div class="pk"><span class="sw" style="background:var(--text-secondary)"></span>p99</div><div class="pv" id="pc99">—</div></div>
+            <div class="pctcard"><div class="pk"><span class="sw" style="background:var(--warn)"></span>p99.9</div><div class="pv" id="pc999">—</div></div>
+            <div class="pctcard"><div class="pk"><span class="sw" style="background:var(--danger)"></span>p99.99</div><div class="pv" id="pc9999">—</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- DIALECT MIX & CONCURRENCY HEADROOM (repurposed — signals the KPI strip lacks) -->
+      <section class="panel">
+        <header>
+          <span class="headline">Dialect mix &amp; concurrency</span>
+          <span class="tag target">observability client · TARGET</span>
+        </header>
+        <div class="body">
+          <div class="trow"><span class="tlab">Streamed quotes · dialect share over time</span><span class="tval">8,412<span class="u">upd/s</span></span></div>
+          <div class="dlgd">
+            <span class="di"><span class="sw" style="background:var(--seq-5)"></span>Options <span class="num">7,900</span></span>
+            <span class="di"><span class="sw" style="background:var(--seq-3)"></span>FI-Quote <span class="num">382</span></span>
+            <span class="di"><span class="sw" style="background:var(--seq-1)"></span>FI-Stream <span class="num">130</span></span>
+          </div>
+          <svg class="stk-area" id="tp-dialect" viewBox="0 0 320 66" preserveAspectRatio="none" aria-label="Stacked per-dialect quote throughput (Options / FI-Quote / FI-Stream)"></svg>
+
+          <div class="trow" style="margin-top:var(--space-3)"><span class="tlab">In-flight ops vs bounded-pool cap</span><span class="tval">58<span class="u">/ 512</span></span></div>
+          <svg class="thr-spark" id="cc-inflight" viewBox="0 0 320 42" preserveAspectRatio="none" aria-label="In-flight concurrency over time vs the 512 cap"></svg>
+          <div class="cc-cap"><span>peak <span class="num">71</span> · cap <span class="num">512</span> <span class="dim">(dashed)</span></span><span class="ok">88% headroom</span></div>
+
+          <div class="trow" style="margin-top:var(--space-3)"><span class="tlab">Telemetry offload queue <span class="dim">· bounded, back-pressured</span></span><span class="tval">3.1<span class="u">%</span></span></div>
+          <div class="qbar"><i style="width:3.1%"></i></div>
+          <div class="foot" style="font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); margin-top:4px">depth 2,048 · high-water 11% · 0 dropped (hot core stays log/alloc-free)</div>
+
+          <div class="sesscount">
+            <div class="sc"><div class="v num">42</div><div class="k">streaming</div></div>
+            <div class="sc"><div class="v num">7</div><div class="k">RFQ live</div></div>
+            <div class="sc"><div class="v num">128</div><div class="k">WS clients</div></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- FIX SESSION MONITOR (LIVE) -->
+    <section class="panel">
+      <header style="gap:var(--space-3)">
+        <span class="headline">FIX session monitor</span>
+        <span class="tag live">LIVE · FixAdminService/ListConnections</span>
+        <span style="flex:1"></span>
+        <div class="seg" id="fixSeg" role="tablist" aria-label="Dialect filter">
+          <button class="on" data-filter="all">All 7</button>
+          <button data-filter="Options">Options 5</button>
+          <button data-filter="FI-Quote">FI-Quote 1</button>
+          <button data-filter="FI-Stream">FI-Stream 1</button>
+        </div>
+        <span class="chip enforce" title="access_mode = Enforce · deny-by-default">ENFORCE</span>
+      </header>
+      <div class="body" style="padding:0">
+       <div id="fixWrap">
+        <table class="grid" id="fixGrid">
+          <thead>
+            <tr>
+              <th>Venue / acceptor</th>
+              <th>Dialect</th>
+              <th>Sender → Target</th>
+              <th>Endpoint</th>
+              <th>State</th>
+              <th>Seq in/out</th>
+              <th>Heartbeat</th>
+              <th>msg/s</th>
+              <th>Desk</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr data-kind="Options">
+              <td><span class="rag g"></span>CITI-FXO-1</td>
+              <td><span class="dchip" title="FX-options dialect (celnet-fix acceptor)">Options</span></td>
+              <td class="cid">CELNET-FXO → CITI-FXO</td>
+              <td><span class="num">10.4.2.11:9099</span></td>
+              <td><span class="sstate active">Active</span></td>
+              <td class="n">184,203 / 91,556</td>
+              <td class="n">30s · 1.2s ago</td>
+              <td class="n">42</td>
+              <td>FX-VOL</td>
+            </tr>
+            <tr data-kind="Options">
+              <td><span class="rag g"></span>JPM-FXO</td>
+              <td><span class="dchip" title="FX-options dialect">Options</span></td>
+              <td class="cid">CELNET-FXO → JPM-OPT</td>
+              <td><span class="num">10.4.2.11:9101</span></td>
+              <td><span class="sstate active">Active</span></td>
+              <td class="n">142,880 / 77,014</td>
+              <td class="n">30s · 4.0s ago</td>
+              <td class="n">31</td>
+              <td>FX-VOL</td>
+            </tr>
+            <tr data-kind="Options">
+              <td><span class="rag g"></span>GS-FXO</td>
+              <td><span class="dchip" title="FX-options dialect">Options</span></td>
+              <td class="cid">CELNET-FXO → GS-FXO</td>
+              <td><span class="num">10.4.2.11:9102</span></td>
+              <td><span class="sstate active">Active</span></td>
+              <td class="n">98,210 / 61,338</td>
+              <td class="n">30s · 0.7s ago</td>
+              <td class="n">27</td>
+              <td>FX-VOL</td>
+            </tr>
+            <tr data-kind="FI-Quote">
+              <td><span class="rag g"></span>BUYSIDE-A</td>
+              <td><span class="dchip" title="FixedIncomeQuote · one-shot QuoteRequest(R) 263=0 → Quote(S)">FI-Quote</span></td>
+              <td class="cid">CELNET-FI → BUYSIDE-A</td>
+              <td><span class="num">10.4.2.14:9110</span></td>
+              <td><span class="sstate active">Active</span></td>
+              <td class="n">12,004 / 12,004</td>
+              <td class="n">30s · 6.1s ago</td>
+              <td class="n">3</td>
+              <td>RATES</td>
+            </tr>
+            <tr data-kind="FI-Stream">
+              <td><span class="rag a"></span>BUYSIDE-B</td>
+              <td><span class="dchip" title="FixedIncomeStream · QuoteRequest(R) 263=1 → streamed RFS">FI-Stream</span></td>
+              <td class="cid">CELNET-FI → BUYSIDE-B</td>
+              <td><span class="num">10.4.2.14:9111</span></td>
+              <td><span class="sstate pending">LogonPending</span></td>
+              <td class="n">0 / 1</td>
+              <td class="n">30s · awaiting Logon</td>
+              <td class="n">0</td>
+              <td>RATES</td>
+            </tr>
+            <tr data-kind="Options">
+              <td><span class="rag r"></span>HFT-CP-7</td>
+              <td><span class="dchip" title="FX-options dialect">Options</span></td>
+              <td class="cid">CELNET-FXO → HFT7</td>
+              <td><span class="num">10.4.2.21:9120</span></td>
+              <td><span class="sstate down">Disconnected</span></td>
+              <td class="n">5,001 / 4,770 <span class="gapchip" title="Sequence gap detected on inbound — ResendRequest(35=2) sent: BeginSeqNo(7)=4,771 → EndSeqNo(16)=4,801">gap ▸ resend 4,771–4,801</span></td>
+              <td class="n">30s · no heartbeat</td>
+              <td class="n">0</td>
+              <td>FX-EM</td>
+            </tr>
+            <tr data-kind="Options">
+              <td><span class="rag g"></span>XAU-LP</td>
+              <td><span class="dchip" title="FX-options dialect (metals)">Options</span></td>
+              <td class="cid">CELNET-XAU → LP-METAL</td>
+              <td><span class="num">10.4.2.9:9130</span></td>
+              <td><span class="sstate active">Active</span></td>
+              <td class="n">44,120 / 22,067</td>
+              <td class="n">30s · 2.3s ago</td>
+              <td class="n">12</td>
+              <td>METALS</td>
+            </tr>
+          </tbody>
+        </table>
+       </div>
+        <!-- row-select opens this read-only console (FixAdminService/ListMessages) -->
+        <div id="fixDetail" hidden aria-live="polite"></div>
+        <div class="foot" style="font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); padding:8px var(--cell-pad-x)">
+          desk-scoped · admin sees all venues · a desk session sees only its own · FSM: Disconnected → LogonPending → Active → LogoutPending · click a row for the read-only message tail
+        </div>
+      </div>
+    </section>
+
+    <!-- FEEDS & HIGH-AVAILABILITY -->
+    <div class="ops-head" style="margin-top:var(--space-1)">
+      <span class="label">Feeds &amp; high-availability</span>
+      <span class="tag live">feed health LIVE</span>
+      <span class="tag target">Raft/replog HA · activation pending</span>
+      <span class="sub" style="margin-left:auto; display:inline-flex; align-items:center; gap:6px">gauge = % of each metric's own SLA/limit ·&nbsp;<span style="display:inline-block; width:2px; height:11px; background:var(--text-primary); opacity:0.5; border-radius:1px"></span>&nbsp;warn threshold · hover for detail</span>
+    </div>
+    <div class="hatiles">
+      <div class="hatile">
+        <div class="ht"><span>EBS · primary</span><span class="rag g"></span></div>
+        <div class="hv"><span class="num">12</span> ms</div>
+        <div class="hs">in-band · seq contiguous</div>
+        <div class="barmini" title="12 ms of the 100 ms feed-latency budget · 12% · warn threshold 80 ms"><i style="width:12%; background:var(--seq-4)"></i><span class="tick" style="left:80%"></span></div>
+      </div>
+      <div class="hatile">
+        <div class="ht"><span>Refinitiv · primary</span><span class="rag g"></span></div>
+        <div class="hv"><span class="num">40</span> ms</div>
+        <div class="hs">in-band · seq contiguous</div>
+        <div class="barmini" title="40 ms of the 100 ms feed-latency budget · 40% · warn threshold 80 ms"><i style="width:40%; background:var(--seq-4)"></i><span class="tick" style="left:80%"></span></div>
+      </div>
+      <div class="hatile">
+        <div class="ht"><span>Vendor-C · backup</span><span class="rag a"></span></div>
+        <div class="hv"><span class="num">stale 4.0</span> s</div>
+        <div class="hs" style="color:var(--warn)">gap detected · failed over to primary</div>
+        <div class="barmini breach" title="stale 4.0 s vs the 2.0 s staleness budget · 200% (breached) · failed over to primary"><i style="width:100%; background:var(--warn)"></i><span class="tick" style="left:80%"></span></div>
+      </div>
+      <div class="hatile">
+        <div class="ht"><span>Cross-feed divergence</span><span class="rag g"></span></div>
+        <div class="hv"><span class="num">0.02</span> vol</div>
+        <div class="hs">within band · 3 feeds arbitrated</div>
+        <div class="barmini" title="0.02 vol of the 0.10 vol arbitration band · 20% · warn threshold 0.08 vol"><i style="width:20%; background:var(--seq-3)"></i><span class="tick" style="left:80%"></span></div>
+      </div>
+
+      <div class="hatile">
+        <div class="ht"><span>Raft cluster · replog</span><span class="tag target" style="padding:1px 6px">TARGET</span></div>
+        <div class="hv">Leader <span class="num">eu-w1a-3</span></div>
+        <div class="hs">term 47 · quorum 3/3 · no committed loss</div>
+      </div>
+      <div class="hatile">
+        <div class="ht"><span>Standby replicas · router</span><span class="rag g"></span></div>
+        <div class="hv"><span class="num">2</span> hot</div>
+        <div class="hs">HRW map · standby-takes-owner armed</div>
+        <div class="barmini" title="2 of 2 target standby replicas hot · 100% · HA floor 1 replica (tick)"><i style="width:100%; background:var(--seq-4)"></i><span class="tick" style="left:50%"></span></div>
+      </div>
+      <div class="hatile">
+        <div class="ht"><span>Replication lag</span><span class="tag target" style="padding:1px 6px">TARGET</span></div>
+        <div class="hv"><span class="num">0</span> rec</div>
+        <div class="hs">follower apply p99 1.4ms</div>
+        <div class="barmini" title="0 records behind leader of the 500-rec alert threshold · 0% · warn threshold 400 rec"><i style="width:1%; background:var(--seq-3)"></i><span class="tick" style="left:80%"></span></div>
+      </div>
+      <div class="hatile">
+        <div class="ht"><span>Failover drill · last</span><span class="rag g"></span></div>
+        <div class="hv"><span class="num">06:12</span> · passed</div>
+        <div class="hs">leader kill → re-elect 118ms</div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ============ CONTEXT RAIL (shell, verbatim) ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (shell, verbatim) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* deterministic PRNG so the mockup renders identically every load */
+  function rng(seed){ return function(){ seed|=0; seed=seed+0x6D2B79F5|0; var t=Math.imul(seed^seed>>>15,1|seed);
+    t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+  function series(seed,n,base,amp,trend){ var r=rng(seed), v=base, out=[]; for(var i=0;i<n;i++){ v+=(r()-0.5)*amp+trend; out.push(Math.max(0,v)); } return out; }
+
+  /* generic sparkline into an <svg viewBox> — Viridis-family stroke, never brand hues */
+  function spark(id,data,opt){
+    var svg=document.getElementById(id); if(!svg) return; opt=opt||{};
+    var vb=svg.viewBox.baseVal, W=vb.width, H=vb.height, pad=2;
+    var min=Math.min.apply(null,data), max=Math.max.apply(null,data);
+    if(opt.threshold!=null){ min=Math.min(min,opt.threshold); max=Math.max(max,opt.threshold); }
+    var span=(max-min)||1;
+    var X=function(i){ return pad + i/(data.length-1)*(W-2*pad); };
+    var Y=function(v){ return H-pad - (v-min)/span*(H-2*pad); };
+    var line='', area='M'+X(0).toFixed(1)+' '+(H-pad);
+    data.forEach(function(v,i){ var x=X(i).toFixed(1), y=Y(v).toFixed(1); line+=(i?'L':'M')+x+' '+y; area+=' L'+x+' '+y; });
+    area+=' L'+X(data.length-1).toFixed(1)+' '+(H-pad)+' Z';
+    var col=opt.color||'var(--seq-5)', fill=opt.fill||'oklch(0.79 0.15 135 / 0.13)';
+    var out='<path d="'+area+'" fill="'+fill+'" stroke="none"/>';
+    if(opt.threshold!=null){ var ty=Y(opt.threshold).toFixed(1); out+='<line x1="'+pad+'" y1="'+ty+'" x2="'+(W-pad)+'" y2="'+ty+'" stroke="var(--warn)" stroke-width="1" stroke-dasharray="3 3" opacity="0.75"/>'; }
+    out+='<path d="'+line+'" fill="none" stroke="'+col+'" stroke-width="'+(opt.sw||1.5)+'" stroke-linejoin="round" stroke-linecap="round"/>';
+    if(opt.dot){ out+='<circle cx="'+X(data.length-1).toFixed(1)+'" cy="'+Y(data[data.length-1]).toFixed(1)+'" r="2.6" fill="'+col+'"/>'; }
+    svg.innerHTML=out;
+  }
+
+  /* 100%-share stacked area (Viridis bands, bottom→top) — per-dialect composition over
+     time. Normalized to share so all three bands stay legible even when Options dominates. */
+  function stackedArea(id,seriesList,colors){
+    var svg=document.getElementById(id); if(!svg) return;
+    var vb=svg.viewBox.baseVal, W=vb.width, H=vb.height, pad=2, n=seriesList[0].length, i, k;
+    var tot=[]; for(i=0;i<n;i++){ var t=0; for(k=0;k<seriesList.length;k++) t+=seriesList[k][i]; tot.push(t||1); }
+    var X=function(i){ return pad + i/(n-1)*(W-2*pad); };
+    var Y=function(sh){ return H-pad - sh*(H-2*pad); };   /* sh ∈ [0,1] share */
+    var out='';
+    /* faint share gridlines at 25/50/75/100% */
+    [0.25,0.5,0.75,1].forEach(function(g){ var y=Y(g).toFixed(1);
+      out+='<line x1="'+pad+'" y1="'+y+'" x2="'+(W-pad)+'" y2="'+y+'" stroke="var(--grid-line)" stroke-width="1" opacity="0.6"/>'; });
+    var cum=[]; for(i=0;i<n;i++) cum.push(0);
+    for(k=0;k<seriesList.length;k++){
+      var lower=cum.slice(), d='M'+X(0).toFixed(1)+' ';
+      for(i=0;i<n;i++) cum[i]+=seriesList[k][i]/tot[i];
+      d+=Y(cum[0]).toFixed(1);
+      for(i=1;i<n;i++) d+=' L'+X(i).toFixed(1)+' '+Y(cum[i]).toFixed(1);
+      for(i=n-1;i>=0;i--) d+=' L'+X(i).toFixed(1)+' '+Y(lower[i]).toFixed(1);
+      d+=' Z';
+      out+='<path d="'+d+'" fill="'+colors[k]+'" fill-opacity="0.88" stroke="'+colors[k]+'" stroke-width="1.1" stroke-linejoin="round"/>';
+    }
+    out+='<line x1="'+pad+'" y1="'+(H-pad)+'" x2="'+(W-pad)+'" y2="'+(H-pad)+'" stroke="var(--text-tertiary)" stroke-width="1" opacity="0.5"/>';
+    out+='<text x="'+(W-pad)+'" y="9" text-anchor="end" font-size="8" fill="var(--text-tertiary)">100%</text>';
+    out+='<text x="'+(W-pad)+'" y="'+(H-pad-1)+'" text-anchor="end" font-size="8" fill="var(--text-tertiary)">0%</text>';
+    svg.innerHTML=out;
+  }
+
+  function fmtUs(u){ if(u<1) return u.toFixed(2)+'µs'; if(u<10) return u.toFixed(1)+'µs'; if(u<1000) return Math.round(u)+'µs';
+    return (u/1000).toFixed(u<10000?2:1)+'ms'; }
+
+  /* per-operation latency profiles (µs). Percentiles are explicit (real tails are heavier
+     than lognormal); the histogram body is lognormal(p50,p99) + a power-law tail. */
+  var OPS = {
+    price:  {p50:42,  p99:180,  p999:410,  p9999:920,  budget:250},
+    stream: {p50:18,  p99:74,   p999:210,  p9999:520,  budget:120},
+    rfq:    {p50:340, p99:1180, p999:3100, p9999:6800, budget:2000},
+    fix:    {p50:3.2, p99:9.4,  p999:24,   p9999:61,   budget:25},
+    ws:     {p50:5.1, p99:14,   p999:38,   p9999:92,   budget:40}
+  };
+  /* Longer observation windows capture rarer tail events, so the OBSERVED extreme
+     percentiles widen (tail-latency / coordinated-omission behaviour) while the median
+     barely moves. Each window carries multipliers applied to p99/p99.9/p99.99 and to the
+     power-law tail mass of the histogram body — so Live/1h/24h render a genuinely
+     different distribution, not a re-captioned identical one. */
+  var WINDOWS = {
+    live:{lbl:'last 60 s', samples:'1.24 M', seed:11, p99k:1.00, p999k:1.00, p9999k:1.00, tailAmp:1.00},
+    '1h':{lbl:'last 1 h',  samples:'71.6 M', seed:37, p99k:1.05, p999k:1.35, p9999k:1.95, tailAmp:1.55},
+    '24h':{lbl:'last 24 h',samples:'1.68 B', seed:71, p99k:1.10, p999k:1.70, p9999k:3.10, tailAmp:2.20}
+  };
+  var curOp='price', curWin='live';
+
+  function renderHist(){
+    var base=OPS[curOp], w=WINDOWS[curWin], svg=document.getElementById('histSvg');
+    /* window-scaled effective percentiles — the distribution & tail respond to the window */
+    var o={ p50:base.p50, p99:base.p99*w.p99k, p999:base.p999*w.p999k, p9999:base.p9999*w.p9999k, budget:base.budget };
+    var x0=52, x1=636, yb=246, yt=30, pW=x1-x0, pH=yb-yt;
+    var N=46, lo=0, hi=4;                             /* log10 µs : 1µs … 10ms */
+    var mu=Math.log(o.p50), sigma=(Math.log(o.p99)-Math.log(o.p50))/2.326;
+    var Xlog=function(cl){ return x0+(cl-lo)/(hi-lo)*pW; };
+    var Xus=function(us){ return Xlog(Math.log10(us)); };
+    var clampX=function(x){ return Math.max(x0, Math.min(x1, x)); };
+    var counts=[], i;
+    for(i=0;i<N;i++){ var cl=lo+(i+0.5)/N*(hi-lo), us=Math.pow(10,cl), z=(Math.log(us)-mu)/sigma;
+      var body=Math.exp(-0.5*z*z), tail=z>0?(0.085*w.tailAmp)/(1+Math.pow(z,3)):0; counts.push(body+tail); }
+    var total=counts.reduce(function(a,b){return a+b;},0), maxC=Math.max.apply(null,counts);
+    var s='';
+    /* y gridlines */
+    [0.25,0.5,0.75,1].forEach(function(g){ var y=(yb-g*pH).toFixed(1); s+='<line x1="'+x0+'" y1="'+y+'" x2="'+x1+'" y2="'+y+'" stroke="var(--grid-line)" stroke-width="1"/>'; });
+    /* bars — Viridis sweep by cumulative percentile position */
+    var cum=0, bw=pW/N;
+    counts.forEach(function(c,i){ var cl=lo+(i+0.5)/N*(hi-lo), cx=Xlog(cl), h=c/maxC*pH, y=yb-h;
+      var mid=(cum+c/2)/total; cum+=c; var idx=Math.floor(mid*6)+1; if(idx<1)idx=1; if(idx>6)idx=6;
+      var uLo=Math.pow(10,lo+i/N*(hi-lo)), uHi=Math.pow(10,lo+(i+1)/N*(hi-lo));
+      s+='<rect x="'+(cx-bw*0.42).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+(bw*0.84).toFixed(1)+'" height="'+Math.max(0.5,h).toFixed(1)+'" rx="1" fill="var(--seq-'+idx+')"><title>'+fmtUs(uLo)+'–'+fmtUs(uHi)+'</title></rect>';
+    });
+    /* baseline + x ticks */
+    s+='<line x1="'+x0+'" y1="'+yb+'" x2="'+x1+'" y2="'+yb+'" stroke="var(--text-tertiary)" stroke-width="1" opacity="0.5"/>';
+    var ticks=['1µs','10µs','100µs','1ms','10ms'];
+    for(i=0;i<=4;i++){ var x=Xlog(i).toFixed(1); s+='<line x1="'+x+'" y1="'+yb+'" x2="'+x+'" y2="'+(yb+4)+'" stroke="var(--text-tertiary)" stroke-width="1" opacity="0.5"/>';
+      s+='<text class="axlbl" x="'+x+'" y="'+(yb+16)+'" text-anchor="middle">'+ticks[i]+'</text>'; }
+    /* ---- vertical markers: draw lines now, then place labels with collision-staggering
+       so the SLO label and a nearby percentile label never overprint (they were both
+       pinned to the top band on the default 'price' view). ---- */
+    var topLabels=[];
+    /* SLO / budget — solid indigo structural action line */
+    var bx=clampX(Xus(o.budget));
+    s+='<line x1="'+bx.toFixed(1)+'" y1="'+(yt-2)+'" x2="'+bx.toFixed(1)+'" y2="'+yb+'" stroke="var(--accent)" stroke-width="2"/>';
+    topLabels.push({x:bx, text:'SLO '+fmtUs(o.budget), color:'var(--accent)', slo:true});
+    /* percentile markers — dashed */
+    var mk=[['p50',o.p50,'var(--text-secondary)'],['p99',o.p99,'var(--text-secondary)'],
+            ['p99.9',o.p999,'var(--warn)'],['p99.99',o.p9999,'var(--danger)']];
+    mk.forEach(function(m){ var x=clampX(Xus(m[1]));
+      s+='<line x1="'+x.toFixed(1)+'" y1="'+yt+'" x2="'+x.toFixed(1)+'" y2="'+yb+'" stroke="'+m[2]+'" stroke-width="1.25" stroke-dasharray="3 3"/>';
+      topLabels.push({x:x, text:m[0], color:m[2], slo:false}); });
+    /* sort by x; drop each label into the lowest y-band whose previous occupant is >=
+       minGap away, so no two labels sit at the same height within a collision radius */
+    topLabels.sort(function(a,b){ return a.x-b.x; });
+    var bands=[11,21,28], lastX=[-1e9,-1e9,-1e9], minGap=44;
+    topLabels.forEach(function(l){
+      var band=0; while(band<bands.length-1 && (l.x-lastX[band])<minGap) band++;
+      lastX[band]=l.x; var ly=bands[band];
+      var anchor=l.x<x0+34?'start':(l.x>x1-34?'end':'middle');
+      if(l.slo){ var pw=l.text.length*5.1+10, px=anchor==='start'?l.x-3:anchor==='end'?l.x-pw+3:l.x-pw/2;
+        s+='<rect x="'+px.toFixed(1)+'" y="'+(ly-8.5)+'" width="'+pw.toFixed(1)+'" height="11.5" rx="2" fill="var(--accent-soft)"/>'; }
+      s+='<text class="plabel" x="'+l.x.toFixed(1)+'" y="'+ly+'" text-anchor="'+anchor+'" fill="'+l.color+'"'+(l.slo?' font-weight="700"':'')+'>'+l.text+'</text>';
+    });
+    /* y-axis caption (top-left, clear of the marker cluster) */
+    s+='<text class="axlbl" x="'+x0+'" y="'+(yt-4)+'" text-anchor="start" fill="var(--text-tertiary)">samples →</text>';
+    svg.innerHTML=s;
+
+    document.getElementById('pc50').textContent=fmtUs(o.p50);
+    document.getElementById('pc99').textContent=fmtUs(o.p99);
+    document.getElementById('pc999').textContent=fmtUs(o.p999);
+    document.getElementById('pc9999').textContent=fmtUs(o.p9999);
+    var within=o.p99<=o.budget;
+    document.getElementById('sloRatio').innerHTML='<span class="num" style="color:'+(within?'var(--bid)':'var(--danger)')+'">p99 '+fmtUs(o.p99)+' / SLO '+fmtUs(o.budget)+' '+(within?'✓':'✗')+'</span>';
+  }
+
+  function renderSparks(){
+    var s=WINDOWS[curWin].seed;
+    spark('sp-thru',     series(s+1,50,8300,180,1.2), {color:'var(--seq-5)'});
+    spark('sp-inflight', series(s+2,50,60,8,0),       {color:'var(--seq-4)'});
+    spark('sp-p99',      series(s+3,50,176,22,0),      {color:'var(--seq-4)', threshold:250});
+    spark('sp-audit',    series(s+4,50,6200,130,0),    {color:'var(--seq-5)'});
+    spark('sp-queue',    series(s+5,50,3,1.3,0),       {color:'var(--seq-3)', fill:'oklch(0.55 0.09 210 / 0.13)'});
+    /* right column: per-dialect stacked throughput (composition the KPI strip lacks) */
+    stackedArea('tp-dialect', [series(s+6,60,7900,150,0), series(s+7,60,382,26,0), series(s+8,60,130,14,0)],
+                ['var(--seq-5)','var(--seq-3)','var(--seq-1)']);
+    /* in-flight concurrency vs the 512 bounded-pool cap (headroom over time) */
+    spark('cc-inflight', series(s+9,60,58,9,0), {color:'var(--seq-4)', threshold:512, dot:true, sw:1.75, fill:'oklch(0.66 0.11 168 / 0.13)'});
+  }
+
+  function segWire(id, onPick){
+    var seg=document.getElementById(id);
+    seg.addEventListener('click', function(e){ var b=e.target.closest('button'); if(!b) return;
+      seg.querySelectorAll('button').forEach(function(x){ x.classList.remove('on'); }); b.classList.add('on'); onPick(b); });
+  }
+
+  segWire('opSeg', function(b){ curOp=b.getAttribute('data-op'); renderHist(); });
+  segWire('winSeg', function(b){ curWin=b.getAttribute('data-win');
+    document.getElementById('winLabel').textContent=WINDOWS[curWin].lbl;
+    document.getElementById('winSamples').textContent=WINDOWS[curWin].samples;
+    renderHist();      /* the window now drives the distribution & tail, not just the caption */
+    renderSparks(); });
+
+  /* FIX dialect filter */
+  segWire('fixSeg', function(b){ var f=b.getAttribute('data-filter'); closeDetail();
+    document.querySelectorAll('#fixGrid tbody tr').forEach(function(tr){
+      tr.style.display=(f==='all'||tr.getAttribute('data-kind')===f)?'':'none'; }); });
+
+  /* ---- FIX row-select → read-only detail console (FixAdminService/ListMessages) ---- */
+  function ci(n){ return (typeof n==='number') ? n.toLocaleString('en-US') : n; }
+
+  function parseRow(tr){
+    var td=tr.children, seqTxt=td[5].childNodes[0].textContent.trim(), p=seqTxt.split('/');
+    return {
+      venue:    td[0].textContent.trim(),
+      dialect:  td[1].textContent.trim(),
+      route:    td[2].textContent.trim(),
+      endpoint: td[3].textContent.trim(),
+      state:    td[4].textContent.trim(),
+      seqIn:    parseInt(p[0].replace(/[^0-9]/g,''),10)||0,
+      seqOut:   parseInt((p[1]||'').replace(/[^0-9]/g,''),10)||0,
+      desk:     td[8].textContent.trim(),
+      gap:      !!td[5].querySelector('.gapchip')
+    };
+  }
+
+  /* synthesize the last N admin/app messages the ListMessages capture would return —
+     real FIX MsgTypes per dialect + the ResendRequest recovery range for a gap. */
+  function recentMessages(r){
+    var m=[], io=r.seqIn, oo=r.seqOut;
+    function inb(mt,seq,note){ m.push({dir:'in', mt:mt, seq:seq, note:note||''}); }
+    function out(mt,seq,note){ m.push({dir:'out',mt:mt, seq:seq, note:note||''}); }
+    if(r.gap){
+      out('ResendRequest(35=2)', oo+1, '7=4,771 · 16=4,801');
+      m.push({dir:'gap', mt:'— inbound sequence gap —', seq:'exp 4,771 / got 4,802'});
+      inb('MarketDataSnapshot(35=W)', io, 'last in-sequence');
+      out('Heartbeat(35=0)', oo, '');
+      inb('Heartbeat(35=0)', io-1, '');
+      out('Logon(35=A)', 1, 'session since dropped');
+      return m;
+    }
+    if(r.state==='LogonPending'){
+      out('Logon(35=A)', 1, '98=0 · 108=30');
+      m.push({dir:'wait', mt:'awaiting inbound Logon(35=A)', seq:'—'});
+      return m;
+    }
+    if(r.dialect==='FI-Quote'){
+      out('Quote(35=S)', oo, 'two-way · answers R');
+      inb('QuoteRequest(35=R)', io, '263=0 · one-shot');
+      out('Heartbeat(35=0)', oo-1, '');
+      inb('Heartbeat(35=0)', io-1, '');
+      inb('Logon(35=A)', io-2, '108=30');
+      return m;
+    }
+    if(r.dialect==='FI-Stream'){
+      out('MassQuote(35=i)', oo, 'streamed RFS');
+      inb('QuoteRequest(35=R)', io, '263=1 · subscribe');
+      out('Quote(35=S)', oo-1, '');
+      inb('Heartbeat(35=0)', io-1, '');
+      return m;
+    }
+    /* Options (default) */
+    out('Quote(35=S)', oo, 'two-way vol');
+    inb('Heartbeat(35=0)', io, '');
+    out('MassQuote(35=i)', oo-1, 'strip refresh');
+    inb('TestRequest(35=1)', io-1, '');
+    out('Heartbeat(35=0)', oo-2, '112 echo');
+    inb('MarketDataRequest(35=V)', io-2, '');
+    return m;
+  }
+
+  function renderDetail(r){
+    var det=document.getElementById('fixDetail'), msgs=recentMessages(r);
+    var rows=msgs.map(function(x){
+      if(x.dir==='gap'||x.dir==='wait'){
+        return '<tr class="mkr"><td class="dir">'+(x.dir==='gap'?'⚠':'…')+'</td><td class="mt" colspan="2">'+x.mt+'</td><td>'+x.seq+'</td></tr>';
+      }
+      return '<tr><td class="dir '+x.dir+'">'+(x.dir==='in'?'◂ in':'▸ out')+'</td><td class="mt">'+x.mt+'</td><td>'+x.note+'</td><td>'+ci(x.seq)+'</td></tr>';
+    }).join('');
+    var side='<div class="fk">Route</div><div class="fv">'+r.route+'</div>'+
+             '<div class="fk">Endpoint</div><div class="fv">'+r.endpoint+'</div>'+
+             '<div class="fk">Seq in / out</div><div class="fv">'+ci(r.seqIn)+' / '+ci(r.seqOut)+'</div>'+
+             (r.gap
+               ? '<div class="fk">Recovery</div><div class="fv badv">ResendRequest 4,771–4,801 · 31 msgs in flight</div>'
+               : '<div class="fk">Desk scope</div><div class="fv">'+r.desk+'</div>');
+    var sc=r.state==='Active'?'active':(r.state==='Disconnected'?'down':'pending');
+    det.innerHTML=
+      '<div class="fdhead">'+
+        '<span class="fdid">'+r.venue+'</span>'+
+        '<span class="dchip">'+r.dialect+'</span>'+
+        '<span class="sstate '+sc+'">'+r.state+'</span>'+
+        '<span class="tag live">LIVE · FixAdminService/ListMessages</span>'+
+        '<span class="fdmeta">read-only · last '+msgs.length+' admin/app messages</span>'+
+        '<span class="close" id="fdClose">✕ close</span>'+
+      '</div>'+
+      '<div class="fdcols">'+
+        '<div><div class="fclab">Message tail <span class="dim">· newest first</span></div>'+
+          '<table class="msgtbl"><thead><tr><th>Dir</th><th>MsgType</th><th>Detail</th><th>Seq</th></tr></thead>'+
+          '<tbody>'+rows+'</tbody></table></div>'+
+        '<div><div class="fclab">Session</div><div class="fdside">'+side+'</div></div>'+
+      '</div>';
+    det.hidden=false;
+    document.getElementById('fdClose').addEventListener('click', function(e){ e.stopPropagation(); closeDetail(); });
+  }
+
+  function closeDetail(){
+    var det=document.getElementById('fixDetail'); det.hidden=true; det.innerHTML='';
+    document.querySelectorAll('#fixGrid tbody tr').forEach(function(x){ x.classList.remove('sel'); });
+  }
+
+  document.querySelectorAll('#fixGrid tbody tr').forEach(function(tr){
+    tr.addEventListener('click', function(){ var was=tr.classList.contains('sel');
+      document.querySelectorAll('#fixGrid tbody tr').forEach(function(x){ x.classList.remove('sel'); });
+      if(was){ closeDetail(); } else { tr.classList.add('sel'); renderDetail(parseRow(tr)); } }); });
+
+  renderHist();
+  renderSparks();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Risk &amp; Scenario (mockup 06)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+  /* ===== screen-specific (Risk & Scenario) — tokens & shared classes come from celer.css ===== */
+  /* honesty tags */
+  .tag { font-size:9px; text-transform:uppercase; letter-spacing:.05em; font-weight:700; padding:2px 7px; border-radius:var(--r-full); border:1px solid transparent; white-space:nowrap; }
+  .tag.live { background:oklch(0.78 0.16 155 / 0.16); color:var(--bid); }
+  .tag.tgt  { background:oklch(1 0 0 / 0.05); color:var(--text-tertiary); border-color:var(--grid-line); }
+  .tag.reg  { background:var(--accent-soft); color:var(--accent); }
+
+  /* risk lens / toolbar */
+  .rlens { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap;
+    padding:var(--space-3) var(--space-4); border-radius:var(--r-md); background:var(--bg-inset); border:var(--hairline); }
+  .lens { display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border-radius:var(--r-full);
+    background:var(--accent-soft); border:1px solid oklch(0.62 0.19 280 / 0.35); color:var(--text-primary); font-size:var(--type-caption); font-weight:600; }
+  .lens .eye { color:var(--accent); }
+  .crumb { display:inline-flex; align-items:center; gap:4px; }
+  .crumb .node { padding:3px 9px; border-radius:var(--r-sm); font-size:var(--type-caption); color:var(--text-secondary); cursor:pointer; border:1px solid transparent; }
+  .crumb .node:hover { background:oklch(1 0 0 / 0.04); color:var(--text-primary); }
+  .crumb .node.on { background:var(--bg-raised); color:var(--text-primary); font-weight:600; box-shadow:inset 0 0 0 1px var(--grid-line); }
+  .crumb .sep { color:var(--text-tertiary); opacity:.5; }
+  .addim { font-size:var(--type-micro); color:var(--text-tertiary); border:1px dashed var(--grid-line); border-radius:var(--r-sm); padding:2px 7px; cursor:pointer; }
+  .pull { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-caption); color:var(--text-tertiary); }
+
+  /* firm headline KPI band */
+  .kpiband { display:grid; grid-template-columns:2.5fr 2fr 1.15fr; gap:var(--space-4); }
+  .kpigrp { background:var(--bg-raised); border:var(--hairline); border-radius:var(--r-md); box-shadow:var(--shadow-panel); padding:var(--space-3) var(--space-4); }
+  .kpigrp > .hd { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-3); }
+  .kpirow { display:flex; gap:var(--space-5); }
+  .stat { flex:1; min-width:0; }
+  .stat .k { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:.05em; color:var(--text-tertiary); }
+  .stat .v { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:19px; font-weight:600; line-height:1.15; letter-spacing:-.01em; }
+  .stat .s { font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); }
+  .kpiband[data-focus="greeks"] .grp-greeks,
+  .kpiband[data-focus="var"] .grp-var,
+  .kpiband[data-focus="frtb"] .grp-var { box-shadow:var(--shadow-panel), inset 0 0 0 1px var(--accent); }
+
+  /* layout grids */
+  .rgrid  { display:grid; grid-template-columns:1.72fr 1fr; gap:var(--space-4); align-items:start; }
+  .rgrid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-4); }
+  .panel > header .htag { display:inline-flex; gap:6px; align-items:center; }
+
+  /* scenario heatmap */
+  .hm-cell { cursor:pointer; stroke:transparent; stroke-width:2; transition:none; }
+  .hm-cell:hover { stroke:var(--text-primary); }
+  .hm-cell.hmsel { stroke:var(--brand); stroke-width:2.5; }
+  .hm-val { font-family:var(--font-mono); font-size:8.5px; font-weight:600; fill:oklch(0.16 0.03 264); pointer-events:none; }
+  .hm-ax  { font-family:var(--font-mono); font-size:8px; fill:var(--text-tertiary); }
+  .hm-axt { font-family:var(--font-ui); font-size:8.5px; letter-spacing:.04em; text-transform:uppercase; fill:var(--text-tertiary); }
+  .dn2 { fill:var(--div-neg2); } .dn1 { fill:var(--div-neg1); } .dm { fill:var(--div-mid); }
+  .dp1 { fill:var(--div-pos1); } .dp2 { fill:var(--div-pos2); }
+  .hmlegend { display:flex; align-items:center; gap:0; margin-top:var(--space-2); font-size:var(--type-micro); color:var(--text-tertiary); }
+  .hmlegend .sw { width:34px; height:10px; } .hmlegend .lab { padding:0 6px; font-family:var(--font-mono); }
+  .preset { display:inline-flex; align-items:center; height:22px; padding:0 9px; border-radius:var(--r-full); font-size:var(--type-caption);
+    background:oklch(1 0 0 / 0.05); border:var(--hairline); color:var(--text-secondary); cursor:pointer; }
+  .preset.on { background:var(--brand-soft); border-color:oklch(0.72 0.17 35 / 0.4); color:var(--brand); font-weight:600; }
+
+  /* drill panel */
+  .drillhead { display:flex; align-items:baseline; justify-content:space-between; padding:var(--space-3) 0; border-bottom:1px solid var(--grid-line); }
+  .drillhead .sh { font-family:var(--font-mono); font-size:var(--type-callout); color:var(--text-primary); }
+  .drillhead .pl { font-family:var(--font-mono); font-size:20px; font-weight:600; }
+  .dbrk { display:grid; grid-template-columns:1fr auto auto; gap:var(--space-3); align-items:center; padding:var(--space-2) 0; border-bottom:1px solid var(--grid-line); font-size:var(--type-callout); }
+  .dbrk .bar { height:5px; border-radius:var(--r-full); background:oklch(1 0 0 / 0.06); position:relative; overflow:hidden; }
+  .dbrk .bar > i { position:absolute; inset:0 auto 0 0; border-radius:var(--r-full); display:block; }
+
+  /* tree grid */
+  .tree td.node { display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  .tcaret { width:12px; display:inline-block; text-align:center; color:var(--text-tertiary); font-size:9px; }
+  tr[data-rowid] { cursor:pointer; }
+  .cls-badge { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:.04em; color:var(--text-tertiary); border:1px solid var(--grid-line); border-radius:var(--r-sm); padding:0 5px; }
+  .grid td.nn { text-align:right; font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:var(--type-caption); }
+
+  /* limits dashboard */
+  .lim { display:grid; grid-template-columns:auto 1fr auto; gap:var(--space-3); align-items:center; padding:var(--space-3) 0; border-bottom:1px solid var(--grid-line); }
+  .lim .meta { min-width:0; } .lim .meta .t { font-size:var(--type-callout); }
+  .lim .meta .sc { font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); }
+  .limbar { height:7px; border-radius:var(--r-full); background:oklch(1 0 0 / 0.06); position:relative; overflow:hidden; }
+  .limbar > i { position:absolute; inset:0 auto 0 0; display:block; border-radius:var(--r-full); }
+  .limbar > .thr { position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--text-tertiary); opacity:.6; }
+  .util { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:var(--type-callout); text-align:right; min-width:42px; }
+  .softhard { font-size:8px; text-transform:uppercase; letter-spacing:.04em; font-weight:700; padding:1px 5px; border-radius:var(--r-sm); }
+  .softhard.soft { background:oklch(0.82 0.16 75 / 0.16); color:var(--warn); }
+  .softhard.hard { background:oklch(0.65 0.21 25 / 0.16); color:var(--danger); }
+  .chartcap { font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); margin-top:2px; }
+  .swleg { display:inline-flex; align-items:center; gap:5px; font-size:var(--type-micro); color:var(--text-tertiary); }
+  .swleg i { width:9px; height:9px; border-radius:2px; display:inline-block; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR (shell — verbatim) ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL (shell — verbatim; "on" moved to Risk & Scenario) ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a class="on"><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — RISK & SCENARIO ============ -->
+  <main class="main" style="gap:var(--space-4)">
+
+    <!-- lens / risk toolbar -->
+    <div class="rlens">
+      <span class="lens"><span class="eye">◎</span> Risk Manager · View-only · scope <b style="margin-left:2px">Firm roll-up</b> <span class="dim" style="font-weight:400; margin-left:2px">▸ entered from desk FX Vol / G10-A</span></span>
+      <span class="dim" style="font-size:var(--type-micro)">GROUP-BY</span>
+      <span class="crumb">
+        <span class="node on" data-gb>Firm</span><span class="sep">▸</span>
+        <span class="node" data-gb>Entity</span><span class="sep">▸</span>
+        <span class="node" data-gb>Desk</span><span class="sep">▸</span>
+        <span class="node" data-gb>Book</span><span class="sep">▸</span>
+        <span class="node" data-gb>CcyPair</span>
+        <span class="addim" title="add a cube dimension">＋ Location · Trader</span>
+      </span>
+      <span style="flex:1"></span>
+      <span class="selctl"><span class="lbl">numéraire</span> USD <span class="car">▾</span></span>
+      <span class="seg" id="measure" role="tablist" aria-label="Risk measure">
+        <button class="on" data-m="greeks">Additive Greeks</button>
+        <button data-m="var">VaR &amp; ES</button>
+        <button data-m="frtb">FRTB SbM</button>
+      </span>
+      <span class="pull" title="Risk is pull-on-read (bump-revalue), not pushed"><span class="dot live"></span> pull-on-read · <span class="num">12:04:07</span> · <span class="tag live">live</span></span>
+    </div>
+
+    <!-- firm headline KPI band -->
+    <div class="kpiband" id="kpiband" data-focus="greeks">
+      <div class="kpigrp grp-greeks">
+        <div class="hd"><span class="label">Additive roll-up · firm · USD</span><span class="tag live">cube · exact</span></div>
+        <div class="kpirow">
+          <div class="stat"><div class="k">Net Δ (spot)</div><div class="v pos">+$8.60mm</div><div class="s">Δfwd +$8.71mm</div></div>
+          <div class="stat"><div class="k">Net Vega /vol</div><div class="v pos">+$420k</div><div class="s">corr-wtd +$362k</div></div>
+          <div class="stat"><div class="k">Γ /%</div><div class="v pos">+$2.10mm</div><div class="s">speed +$0.14mm</div></div>
+          <div class="stat"><div class="k">Θ /day</div><div class="v neg">−$96k</div><div class="s">roll −$0.42mm/wk</div></div>
+        </div>
+      </div>
+      <div class="kpigrp grp-var">
+        <div class="hd"><span class="label">Non-additive · re-derived per node</span><span class="tag live">bump-revalue</span></div>
+        <div class="kpirow">
+          <div class="stat"><div class="k">1d VaR 99%</div><div class="v neg">−$3.28mm</div><div class="s">historical · 501d</div></div>
+          <div class="stat"><div class="k">ES 97.5%</div><div class="v neg">−$4.10mm</div><div class="s">expected shortfall</div></div>
+          <div class="stat"><div class="k">FRTB SbM</div><div class="v">$12.4mm</div><div class="s">max corr-scenario</div></div>
+          <div class="stat"><div class="k">Curvature (CVR)</div><div class="v">$2.2mm</div><div class="s">short-γ only</div></div>
+        </div>
+      </div>
+      <div class="kpigrp">
+        <div class="hd"><span class="label">Limits</span><a>open →</a></div>
+        <div class="kpirow" style="gap:var(--space-4)">
+          <div class="stat"><div class="k"><span class="rag g"></span>within</div><div class="v">18</div></div>
+          <div class="stat"><div class="k"><span class="rag a"></span>soft</div><div class="v" style="color:var(--warn)">2</div></div>
+          <div class="stat"><div class="k"><span class="rag r"></span>hard</div><div class="v" style="color:var(--danger)">1</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROW 1 — scenario heatmap + drill -->
+    <div class="rgrid">
+      <section class="panel">
+        <header>
+          <span class="headline">Scenario P&amp;L · spot × vol</span>
+          <span class="htag">
+            <span class="tag live">grid live</span>
+            <span class="tag tgt">excel: gap</span>
+          </span>
+        </header>
+        <div class="body">
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:var(--space-3)">
+            <span class="preset on" data-preset="Live spot × vol grid · ± shocks vs current mark">Live</span>
+            <span class="preset" data-preset="Risk-off · spot −5.0% / vol +4.0v joint shock">−5% risk-off</span>
+            <span class="preset" data-preset="Vol spike · ATM +6.0v parallel, skew steepen">+6v vol-spike</span>
+            <span class="preset" data-preset="2015-01-15 CHF de-peg replay · historical stress">2015 CHF de-peg</span>
+            <span class="preset" data-preset="Custom what-if · define spot / vol / skew shocks">Custom…</span>
+          </div>
+          <div id="hm-sub" class="chartcap" style="margin:0 0 var(--space-2)">Live spot × vol grid · ± shocks vs current mark · P&amp;L in $k · click a cell to drill</div>
+          <svg class="chart" viewBox="0 0 452 216" height="212" role="img" aria-label="Spot by vol P&L scenario heatmap, diverging colour centred at zero">
+            <!-- vol axis title -->
+            <text class="hm-axt" transform="translate(11,150) rotate(-90)" text-anchor="middle">vol shock (ATM v)</text>
+            <!-- row (vol) labels -->
+            <text class="hm-ax" x="38" y="45"  text-anchor="end">+4.0</text>
+            <text class="hm-ax" x="38" y="77"  text-anchor="end">+2.0</text>
+            <text class="hm-ax" x="38" y="109" text-anchor="end">0.0</text>
+            <text class="hm-ax" x="38" y="141" text-anchor="end">−2.0</text>
+            <text class="hm-ax" x="38" y="173" text-anchor="end">−4.0</text>
+
+            <!-- row j0 vol +4 -->
+            <rect class="hm-cell dn1" x="45"  y="27" width="54" height="30" data-spot="−3.0%" data-vol="+4.0v" data-pnl="-110"/>
+            <rect class="hm-cell dn1" x="101" y="27" width="54" height="30" data-spot="−2.0%" data-vol="+4.0v" data-pnl="-183"/>
+            <rect class="hm-cell dn2" x="157" y="27" width="54" height="30" data-spot="−1.0%" data-vol="+4.0v" data-pnl="-219"/>
+            <rect class="hm-cell dn2" x="213" y="27" width="54" height="30" data-spot="0.0%"  data-vol="+4.0v" data-pnl="-220"/>
+            <rect class="hm-cell dn2" x="269" y="27" width="54" height="30" data-spot="+1.0%" data-vol="+4.0v" data-pnl="-191"/>
+            <rect class="hm-cell dn1 hmsel" x="325" y="27" width="54" height="30" data-spot="+2.0%" data-vol="+4.0v" data-pnl="-121"/>
+            <rect class="hm-cell dm"  x="381" y="27" width="54" height="30" data-spot="+3.0%" data-vol="+4.0v" data-pnl="-12"/>
+            <text class="hm-val" x="72"  y="45" text-anchor="middle">−110</text>
+            <text class="hm-val" x="128" y="45" text-anchor="middle">−183</text>
+            <text class="hm-val" x="184" y="45" text-anchor="middle">−219</text>
+            <text class="hm-val" x="240" y="45" text-anchor="middle">−220</text>
+            <text class="hm-val" x="296" y="45" text-anchor="middle">−191</text>
+            <text class="hm-val" x="352" y="45" text-anchor="middle">−121</text>
+            <text class="hm-val" x="408" y="45" text-anchor="middle">−12</text>
+
+            <!-- row j1 vol +2 -->
+            <rect class="hm-cell dm"  x="45"  y="59" width="54" height="30" data-spot="−3.0%" data-vol="+2.0v" data-pnl="22"/>
+            <rect class="hm-cell dm"  x="101" y="59" width="54" height="30" data-spot="−2.0%" data-vol="+2.0v" data-pnl="-57"/>
+            <rect class="hm-cell dn1" x="157" y="59" width="54" height="30" data-spot="−1.0%" data-vol="+2.0v" data-pnl="-101"/>
+            <rect class="hm-cell dn1" x="213" y="59" width="54" height="30" data-spot="0.0%"  data-vol="+2.0v" data-pnl="-108"/>
+            <rect class="hm-cell dm"  x="269" y="59" width="54" height="30" data-spot="+1.0%" data-vol="+2.0v" data-pnl="-85"/>
+            <rect class="hm-cell dm"  x="325" y="59" width="54" height="30" data-spot="+2.0%" data-vol="+2.0v" data-pnl="-23"/>
+            <rect class="hm-cell dm"  x="381" y="59" width="54" height="30" data-spot="+3.0%" data-vol="+2.0v" data-pnl="80"/>
+            <text class="hm-val" x="72"  y="77" text-anchor="middle">+22</text>
+            <text class="hm-val" x="128" y="77" text-anchor="middle">−57</text>
+            <text class="hm-val" x="184" y="77" text-anchor="middle">−101</text>
+            <text class="hm-val" x="240" y="77" text-anchor="middle">−108</text>
+            <text class="hm-val" x="296" y="77" text-anchor="middle">−85</text>
+            <text class="hm-val" x="352" y="77" text-anchor="middle">−23</text>
+            <text class="hm-val" x="408" y="77" text-anchor="middle">+80</text>
+
+            <!-- row j2 vol 0 -->
+            <rect class="hm-cell dp1" x="45"  y="91" width="54" height="30" data-spot="−3.0%" data-vol="0.0v" data-pnl="150"/>
+            <rect class="hm-cell dm"  x="101" y="91" width="54" height="30" data-spot="−2.0%" data-vol="0.0v" data-pnl="64"/>
+            <rect class="hm-cell dm"  x="157" y="91" width="54" height="30" data-spot="−1.0%" data-vol="0.0v" data-pnl="14"/>
+            <rect class="hm-cell dm"  x="213" y="91" width="54" height="30" data-spot="0.0%"  data-vol="0.0v" data-pnl="0"/>
+            <rect class="hm-cell dm"  x="269" y="91" width="54" height="30" data-spot="+1.0%" data-vol="0.0v" data-pnl="16"/>
+            <rect class="hm-cell dm"  x="325" y="91" width="54" height="30" data-spot="+2.0%" data-vol="0.0v" data-pnl="72"/>
+            <rect class="hm-cell dp1" x="381" y="91" width="54" height="30" data-spot="+3.0%" data-vol="0.0v" data-pnl="168"/>
+            <text class="hm-val" x="72"  y="109" text-anchor="middle">+150</text>
+            <text class="hm-val" x="128" y="109" text-anchor="middle">+64</text>
+            <text class="hm-val" x="184" y="109" text-anchor="middle">+14</text>
+            <text class="hm-val" x="240" y="109" text-anchor="middle">0</text>
+            <text class="hm-val" x="296" y="109" text-anchor="middle">+16</text>
+            <text class="hm-val" x="352" y="109" text-anchor="middle">+72</text>
+            <text class="hm-val" x="408" y="109" text-anchor="middle">+168</text>
+
+            <!-- current book mark ('now') — spot 0 / vol 0; neutral target ring, distinct from the coral selection stroke -->
+            <rect x="214" y="92" width="52" height="28" fill="none" stroke="oklch(0.24 0.03 264)" stroke-width="1.4" stroke-dasharray="3 2" pointer-events="none"/>
+            <g pointer-events="none" stroke="oklch(0.24 0.03 264)" stroke-width="1.3" fill="none">
+              <circle cx="240" cy="99.5" r="4"/>
+              <line x1="240" y1="94.5" x2="240" y2="104.5"/>
+              <line x1="235" y1="99.5" x2="245" y2="99.5"/>
+            </g>
+            <text x="255" y="100" text-anchor="middle" font-family="var(--font-ui)" font-size="6.5" letter-spacing="0.04em" fill="oklch(0.30 0.03 264)" pointer-events="none">NOW</text>
+
+            <!-- row j3 vol −2 -->
+            <rect class="hm-cell dp2" x="45"  y="123" width="54" height="30" data-spot="−3.0%" data-vol="−2.0v" data-pnl="270"/>
+            <rect class="hm-cell dp1" x="101" y="123" width="54" height="30" data-spot="−2.0%" data-vol="−2.0v" data-pnl="177"/>
+            <rect class="hm-cell dp1" x="157" y="123" width="54" height="30" data-spot="−1.0%" data-vol="−2.0v" data-pnl="121"/>
+            <rect class="hm-cell dp1" x="213" y="123" width="54" height="30" data-spot="0.0%"  data-vol="−2.0v" data-pnl="100"/>
+            <rect class="hm-cell dp1" x="269" y="123" width="54" height="30" data-spot="+1.0%" data-vol="−2.0v" data-pnl="109"/>
+            <rect class="hm-cell dp1" x="325" y="123" width="54" height="30" data-spot="+2.0%" data-vol="−2.0v" data-pnl="159"/>
+            <rect class="hm-cell dp2" x="381" y="123" width="54" height="30" data-spot="+3.0%" data-vol="−2.0v" data-pnl="248"/>
+            <text class="hm-val" x="72"  y="141" text-anchor="middle">+270</text>
+            <text class="hm-val" x="128" y="141" text-anchor="middle">+177</text>
+            <text class="hm-val" x="184" y="141" text-anchor="middle">+121</text>
+            <text class="hm-val" x="240" y="141" text-anchor="middle">+100</text>
+            <text class="hm-val" x="296" y="141" text-anchor="middle">+109</text>
+            <text class="hm-val" x="352" y="141" text-anchor="middle">+159</text>
+            <text class="hm-val" x="408" y="141" text-anchor="middle">+248</text>
+
+            <!-- row j4 vol −4 -->
+            <rect class="hm-cell dp2" x="45"  y="155" width="54" height="30" data-spot="−3.0%" data-vol="−4.0v" data-pnl="376"/>
+            <rect class="hm-cell dp2" x="101" y="155" width="54" height="30" data-spot="−2.0%" data-vol="−4.0v" data-pnl="277"/>
+            <rect class="hm-cell dp2" x="157" y="155" width="54" height="30" data-spot="−1.0%" data-vol="−4.0v" data-pnl="213"/>
+            <rect class="hm-cell dp1" x="213" y="155" width="54" height="30" data-spot="0.0%"  data-vol="−4.0v" data-pnl="186"/>
+            <rect class="hm-cell dp2" x="269" y="155" width="54" height="30" data-spot="+1.0%" data-vol="−4.0v" data-pnl="189"/>
+            <rect class="hm-cell dp2" x="325" y="155" width="54" height="30" data-spot="+2.0%" data-vol="−4.0v" data-pnl="231"/>
+            <rect class="hm-cell dp2" x="381" y="155" width="54" height="30" data-spot="+3.0%" data-vol="−4.0v" data-pnl="314"/>
+            <text class="hm-val" x="72"  y="173" text-anchor="middle">+376</text>
+            <text class="hm-val" x="128" y="173" text-anchor="middle">+277</text>
+            <text class="hm-val" x="184" y="173" text-anchor="middle">+213</text>
+            <text class="hm-val" x="240" y="173" text-anchor="middle">+186</text>
+            <text class="hm-val" x="296" y="173" text-anchor="middle">+189</text>
+            <text class="hm-val" x="352" y="173" text-anchor="middle">+231</text>
+            <text class="hm-val" x="408" y="173" text-anchor="middle">+314</text>
+
+            <!-- spot (x) labels -->
+            <text class="hm-ax" x="72"  y="198" text-anchor="middle">−3%</text>
+            <text class="hm-ax" x="128" y="198" text-anchor="middle">−2%</text>
+            <text class="hm-ax" x="184" y="198" text-anchor="middle">−1%</text>
+            <text class="hm-ax" x="240" y="198" text-anchor="middle">spot</text>
+            <text class="hm-ax" x="296" y="198" text-anchor="middle">+1%</text>
+            <text class="hm-ax" x="352" y="198" text-anchor="middle">+2%</text>
+            <text class="hm-ax" x="408" y="198" text-anchor="middle">+3%</text>
+            <text class="hm-axt" x="240" y="212" text-anchor="middle">spot shock →</text>
+          </svg>
+          <div class="hmlegend">
+            <span class="lab">loss</span>
+            <span class="sw dn2"></span><span class="sw dn1"></span><span class="sw dm"></span><span class="sw dp1"></span><span class="sw dp2"></span>
+            <span class="lab">gain</span>
+            <span style="flex:1"></span>
+            <span class="lab">−$376k … 0 … +$376k · symmetric |max| domain · ±¼max / ±½max cuts · RdBu diverging, centred 0</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- drill panel -->
+      <section class="panel">
+        <header>
+          <span class="headline">Drill · contributing nodes</span>
+          <span class="tag live">DrillRisk → Books</span>
+        </header>
+        <div class="body" style="padding-top:var(--space-3)">
+          <div class="drillhead">
+            <div>
+              <div class="label" style="margin-bottom:3px">scenario cell</div>
+              <div class="sh" id="drill-shock">spot +2.0% · vol +4.0v</div>
+            </div>
+            <div style="text-align:right">
+              <div class="label" style="margin-bottom:3px">Δ P&amp;L (USD)</div>
+              <div class="pl neg" id="drill-pnl">−$121k</div>
+            </div>
+          </div>
+          <div style="margin:var(--space-3) 0 var(--space-2)" class="label">by desk / book · entitlement-pruned</div>
+          <div id="drill-list">
+            <div class="dbrk"><span>FX Vol G10 · London</span><span class="bar" style="width:70px"><i class="dn1" style="width:100%"></i></span><span class="num" data-share="0.48">−$58k</span></div>
+            <div class="dbrk"><span>FX Vol EM · London</span><span class="bar" style="width:70px"><i class="dn1" style="width:46%"></i></span><span class="num" data-share="0.22">−$27k</span></div>
+            <div class="dbrk"><span>Metals · London</span><span class="bar" style="width:70px"><i class="dn1" style="width:29%"></i></span><span class="num" data-share="0.14">−$17k</span></div>
+            <div class="dbrk"><span>Rates / FI · London</span><span class="bar" style="width:70px"><i class="dn1" style="width:19%"></i></span><span class="num" data-share="0.09">−$11k</span></div>
+            <div class="dbrk"><span>Other</span><span class="bar" style="width:70px"><i class="dn1" style="width:14%"></i></span><span class="num" data-share="0.07">−$8k</span></div>
+          </div>
+          <div class="kv" style="margin-top:var(--space-3)"><span class="k">worst-cell in grid</span><span class="v neg">−$220k <span class="dim">· spot 0% / vol +4v</span></span></div>
+          <div class="kv"><span class="k">best-cell</span><span class="v pos">+$376k <span class="dim">· spot −3% / vol −4v</span></span></div>
+          <div class="kv"><span class="k">grid convexity</span><span class="v">long Γ · short Vega</span></div>
+          <div style="margin-top:var(--space-3); font-size:var(--type-micro); color:var(--text-tertiary)">
+            A parent total never leaks the magnitude of an invisible subtree — pruning happens server-side, pre-reduction.
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ROW 2 — vega ladder | VaR waterfall | FRTB SbM -->
+    <div class="rgrid3">
+      <!-- vega ladder -->
+      <section class="panel">
+        <header><span class="headline">Vega ladder</span><span class="muted" style="font-size:11px">net /vol · by tenor</span></header>
+        <div class="body">
+          <svg class="chart" viewBox="0 0 372 182" height="176" role="img" aria-label="Net vega by tenor ladder">
+            <!-- gridlines -->
+            <line class="gl" x1="32" y1="38"  x2="360" y2="38"/>
+            <line class="gl" x1="32" y1="53"  x2="360" y2="53"/>
+            <line class="gl" x1="32" y1="83"  x2="360" y2="83"/>
+            <line class="gl" x1="32" y1="113" x2="360" y2="113"/>
+            <!-- limit envelope -->
+            <line class="mk" x1="32" y1="50" x2="360" y2="50"/>
+            <text class="hm-ax" x="358" y="47" text-anchor="end" fill="var(--brand)">vega limit +$160k</text>
+            <!-- zero baseline -->
+            <line x1="32" y1="98" x2="360" y2="98" stroke="var(--text-tertiary)" stroke-width="1.2"/>
+            <!-- y labels — full scale to a bounded +200 top tick; +150 (nearest the limit) tinted to the limit colour -->
+            <text class="hm-ax" x="28" y="41"  text-anchor="end">+200</text>
+            <text class="hm-ax" x="28" y="56"  text-anchor="end" fill="var(--brand)">+150</text>
+            <text class="hm-ax" x="28" y="86"  text-anchor="end">+50</text>
+            <text class="hm-ax" x="28" y="101" text-anchor="end">0</text>
+            <text class="hm-ax" x="28" y="116" text-anchor="end">−50</text>
+            <!-- bars (long=orange div-pos2, short=blue div-neg2) -->
+            <rect x="41.5"  y="90.8" width="22" height="7.2"  fill="var(--div-pos2)"/>
+            <rect x="82.5"  y="80.6" width="22" height="17.4" fill="var(--div-pos2)"/>
+            <rect x="123.5" y="58.4" width="22" height="39.6" fill="var(--div-pos2)"/>
+            <rect x="164.5" y="98"   width="22" height="21.6" fill="var(--div-neg2)"/>
+            <rect x="205.5" y="50"   width="22" height="48"   fill="var(--div-pos2)"/>
+            <!-- 3M over-limit portion (above the +$160k envelope, y=50) rendered in danger fill + breach cap marker -->
+            <rect x="205.5" y="42.2" width="22" height="7.8"  fill="var(--danger)"/>
+            <path d="M209,42.2 L224,42.2 L216.5,38.4 Z" fill="var(--danger)"/>
+            <rect x="246.5" y="62"   width="22" height="36"   fill="var(--div-pos2)"/>
+            <rect x="287.5" y="98"   width="22" height="28.8" fill="var(--div-neg2)"/>
+            <rect x="328.5" y="77.6" width="22" height="20.4" fill="var(--div-pos2)"/>
+            <!-- value labels -->
+            <text class="hm-val" x="52.5"  y="86"  text-anchor="middle" fill="var(--text-secondary)">+24</text>
+            <text class="hm-val" x="93.5"  y="76"  text-anchor="middle" fill="var(--text-secondary)">+58</text>
+            <text class="hm-val" x="134.5" y="53"  text-anchor="middle" fill="var(--text-secondary)">+132</text>
+            <text class="hm-val" x="175.5" y="131" text-anchor="middle" fill="var(--text-secondary)">−72</text>
+            <text class="hm-val" x="216.5" y="30"  text-anchor="middle" fill="var(--danger)" font-weight="700">+186 ▲</text>
+            <text class="hm-val" x="257.5" y="57"  text-anchor="middle" fill="var(--text-secondary)">+120</text>
+            <text class="hm-val" x="298.5" y="138" text-anchor="middle" fill="var(--text-secondary)">−96</text>
+            <text class="hm-val" x="339.5" y="73"  text-anchor="middle" fill="var(--text-secondary)">+68</text>
+            <!-- tenor labels -->
+            <text class="hm-ax" x="52.5"  y="170" text-anchor="middle">1W</text>
+            <text class="hm-ax" x="93.5"  y="170" text-anchor="middle">2W</text>
+            <text class="hm-ax" x="134.5" y="170" text-anchor="middle">1M</text>
+            <text class="hm-ax" x="175.5" y="170" text-anchor="middle">2M</text>
+            <text class="hm-ax" x="216.5" y="170" text-anchor="middle">3M</text>
+            <text class="hm-ax" x="257.5" y="170" text-anchor="middle">6M</text>
+            <text class="hm-ax" x="298.5" y="170" text-anchor="middle">1Y</text>
+            <text class="hm-ax" x="339.5" y="170" text-anchor="middle">2Y</text>
+          </svg>
+          <div class="chartcap">net vega +$420k · long belly (1M/3M) vs short wings (2M/1Y) · bucketed tenor × ATM-Δ</div>
+          <div style="display:flex; align-items:center; gap:7px; margin-top:6px; font-size:var(--type-micro)">
+            <span class="softhard hard">breach</span>
+            <span style="color:var(--danger)">3M bucket +$186k over the +$160k per-tenor vega limit · +$26k (116%)</span>
+            <span style="flex:1"></span>
+            <span class="swleg"><i style="background:var(--danger)"></i> over-limit</span>
+            <span class="swleg"><i style="background:var(--div-pos2)"></i> within</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- VaR contribution waterfall -->
+      <section class="panel">
+        <header><span class="headline">VaR contribution</span><span class="muted" style="font-size:11px">1d 99% · $mm</span></header>
+        <div class="body">
+          <svg class="chart" viewBox="0 0 372 196" height="188" role="img" aria-label="VaR contribution waterfall">
+            <!-- y grid -->
+            <line class="gl" x1="40" y1="41.5"  x2="362" y2="41.5"/>
+            <line class="gl" x1="40" y1="70.6"  x2="362" y2="70.6"/>
+            <line class="gl" x1="40" y1="99.7"  x2="362" y2="99.7"/>
+            <line class="gl" x1="40" y1="128.9" x2="362" y2="128.9"/>
+            <line x1="40" y1="158" x2="362" y2="158" stroke="var(--text-tertiary)" stroke-width="1.2"/>
+            <text class="hm-ax" x="36" y="44"  text-anchor="end">4</text>
+            <text class="hm-ax" x="36" y="102" text-anchor="end">2</text>
+            <text class="hm-ax" x="36" y="161" text-anchor="end">0</text>
+            <!-- connectors -->
+            <line class="mk" x1="53"  y1="110.8" x2="93"  y2="110.8"/>
+            <line class="mk" x1="93"  y1="82.3"  x2="133" y2="82.3"/>
+            <line class="mk" x1="133" y1="66.5"  x2="174" y2="66.5"/>
+            <line class="mk" x1="174" y1="53.1"  x2="214" y2="53.1"/>
+            <line class="mk" x1="214" y1="42.1"  x2="255" y2="42.1"/>
+            <line class="mk" x1="255" y1="32.7"  x2="295" y2="32.7"/>
+            <line class="mk" x1="295" y1="62.5"  x2="335" y2="62.5"/>
+            <!-- bars: contributions (blue, add loss), diversification (orange, benefit), total (deep blue) -->
+            <rect x="47"    y="110.8" width="26" height="47.2" fill="var(--div-neg1)"/>
+            <rect x="87.1"  y="82.3"  width="26" height="28.5" fill="var(--div-neg1)"/>
+            <rect x="127.3" y="66.5"  width="26" height="15.8" fill="var(--div-neg1)"/>
+            <rect x="167.5" y="53.1"  width="26" height="13.4" fill="var(--div-neg1)"/>
+            <rect x="207.6" y="42.1"  width="26" height="11.0" fill="var(--div-neg1)"/>
+            <rect x="247.8" y="32.7"  width="26" height="9.4"  fill="var(--div-neg1)"/>
+            <rect x="288"   y="32.7"  width="26" height="29.8" fill="var(--div-pos1)"/>
+            <rect x="328.1" y="62.5"  width="26" height="95.5" fill="var(--div-neg2)"/>
+            <!-- value labels -->
+            <text class="hm-val" x="60"    y="107" text-anchor="middle" fill="var(--text-secondary)">1.62</text>
+            <text class="hm-val" x="100.1" y="79"  text-anchor="middle" fill="var(--text-secondary)">0.98</text>
+            <text class="hm-val" x="140.3" y="63"  text-anchor="middle" fill="var(--text-secondary)">0.54</text>
+            <text class="hm-val" x="180.5" y="50"  text-anchor="middle" fill="var(--text-secondary)">0.46</text>
+            <text class="hm-val" x="220.6" y="39"  text-anchor="middle" fill="var(--text-secondary)">0.38</text>
+            <text class="hm-val" x="260.8" y="29"  text-anchor="middle" fill="var(--text-secondary)">0.32</text>
+            <text class="hm-val" x="301"   y="29"  text-anchor="middle" fill="var(--div-pos2)">−1.02</text>
+            <text class="hm-val" x="341.1" y="59"  text-anchor="middle" fill="var(--text-primary)">3.28</text>
+            <!-- x labels -->
+            <text class="hm-ax" x="60"    y="170" text-anchor="middle">EURUSD</text>
+            <text class="hm-ax" x="100.1" y="170" text-anchor="middle">USDJPY</text>
+            <text class="hm-ax" x="140.3" y="170" text-anchor="middle">GBPUSD</text>
+            <text class="hm-ax" x="180.5" y="170" text-anchor="middle">XAUUSD</text>
+            <text class="hm-ax" x="220.6" y="170" text-anchor="middle">Rates</text>
+            <text class="hm-ax" x="260.8" y="170" text-anchor="middle">Other</text>
+            <text class="hm-ax" x="301"   y="181" text-anchor="middle" fill="var(--div-pos2)">Divers.</text>
+            <text class="hm-ax" x="341.1" y="170" text-anchor="middle" fill="var(--text-secondary)">VaR99</text>
+          </svg>
+          <div class="chartcap">Σ standalone $4.30mm − diversification $1.02mm = portfolio 1d VaR 99% $3.28mm</div>
+        </div>
+      </section>
+
+      <!-- FRTB SbM -->
+      <section class="panel">
+        <header><span class="headline">FRTB SbM capital</span><span class="htag"><span class="tag reg">BCBS MAR21</span></span></header>
+        <div class="body">
+          <svg class="chart" viewBox="0 0 300 188" height="182" role="img" aria-label="FRTB standardised SbM capital by correlation scenario">
+            <line x1="40" y1="150" x2="286" y2="150" stroke="var(--text-tertiary)" stroke-width="1.2"/>
+            <line class="gl" x1="40" y1="98"  x2="286" y2="98"/>
+            <line class="gl" x1="40" y1="46"  x2="286" y2="46"/>
+            <text class="hm-ax" x="36" y="153" text-anchor="end">0</text>
+            <text class="hm-ax" x="36" y="101" text-anchor="end">5.4</text>
+            <text class="hm-ax" x="36" y="49"  text-anchor="end">10.9</text>
+
+            <!-- Low -->
+            <rect x="52" y="100.4" width="46" height="49.6" fill="var(--seq-2)"/>
+            <rect x="52" y="70.8"  width="46" height="29.6" fill="var(--seq-4)"/>
+            <rect x="52" y="51.7"  width="46" height="19.1" fill="var(--seq-6)"/>
+            <text class="hm-val" x="75" y="48" text-anchor="middle" fill="var(--text-secondary)">10.3</text>
+            <text class="hm-ax"  x="75" y="164" text-anchor="middle">Low ρ</text>
+
+            <!-- Medium (max — binding) -->
+            <rect x="127" y="88.9" width="46" height="61.1" fill="var(--seq-2)"/>
+            <rect x="127" y="52.6" width="46" height="36.3" fill="var(--seq-4)"/>
+            <rect x="127" y="31.6" width="46" height="21.0" fill="var(--seq-6)"/>
+            <rect x="125" y="30.0" width="50" height="121.6" fill="none" stroke="var(--brand)" stroke-width="2" stroke-dasharray="3 2" rx="2"/>
+            <text class="hm-val" x="150" y="27" text-anchor="middle" fill="var(--brand)">12.4 ▲</text>
+            <text class="hm-ax"  x="150" y="164" text-anchor="middle" fill="var(--text-secondary)">Med ρ · binding</text>
+
+            <!-- High -->
+            <rect x="202" y="91.8" width="46" height="58.2" fill="var(--seq-2)"/>
+            <rect x="202" y="57.5" width="46" height="34.3" fill="var(--seq-4)"/>
+            <rect x="202" y="37.5" width="46" height="20.0" fill="var(--seq-6)"/>
+            <text class="hm-val" x="225" y="34" text-anchor="middle" fill="var(--text-secondary)">11.8</text>
+            <text class="hm-ax"  x="225" y="164" text-anchor="middle">High ρ</text>
+
+            <text class="hm-axt" x="163" y="181" text-anchor="middle">SbM = max(scenario) = $12.4mm</text>
+          </svg>
+          <div style="display:flex; gap:var(--space-4); margin-top:var(--space-2)">
+            <span class="swleg"><i style="background:var(--seq-2)"></i> Delta</span>
+            <span class="swleg"><i style="background:var(--seq-4)"></i> Vega</span>
+            <span class="swleg"><i style="background:var(--seq-6)"></i> Curvature</span>
+            <span style="flex:1"></span>
+            <span class="chartcap" style="margin:0">curvature charges short-γ only</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ROW 3 — risk-cube drill grid + limits -->
+    <div class="rgrid">
+      <!-- hierarchical risk-cube drill grid -->
+      <section class="panel">
+        <header>
+          <span class="headline">Risk-cube · hierarchical drill</span>
+          <span class="htag">
+            <span class="dim" style="font-size:var(--type-micro)">Trader ▸ Book ▸ Desk ▸ CcyPair ▸ Location ▸ Entity ▸ Firm</span>
+            <span class="tag tgt">fleet: single-node</span>
+          </span>
+        </header>
+        <div class="body" style="padding:0">
+          <table class="grid tree">
+            <thead>
+              <tr>
+                <th style="width:34%">node</th>
+                <th>Δ USD</th><th>Vega /vol</th><th>Γ /%</th><th>Θ /day</th>
+                <th>1d VaR 99%</th><th>FRTB SbM</th><th style="text-align:center">lim</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="trow" data-rowid="firm" data-open="1">
+                <td class="node" style="padding-left:8px"><span class="tcaret">▾</span><b>Firm · all desks</b></td>
+                <td class="nn pos">+8.60mm</td><td class="nn pos">+420k</td><td class="nn">+2.10mm</td><td class="nn neg">−96k</td>
+                <td class="nn neg">−3.28mm</td><td class="nn">12.4mm</td><td style="text-align:center"><span class="rag g"></span></td>
+              </tr>
+
+              <tr class="trow" data-rowid="lon" data-parent="firm" data-open="1">
+                <td class="node" style="padding-left:22px"><span class="tcaret">▾</span>Celer London <span class="cls-badge">entity</span></td>
+                <td class="nn pos">+5.90mm</td><td class="nn pos">+286k</td><td class="nn">+1.40mm</td><td class="nn neg">−64k</td>
+                <td class="nn neg">−2.34mm</td><td class="nn">8.6mm</td><td style="text-align:center"><span class="rag g"></span></td>
+              </tr>
+
+              <tr class="trow" data-rowid="g10" data-parent="lon" data-open="0">
+                <td class="node" style="padding-left:36px"><span class="tcaret">▸</span>FX Vol G10 <span class="cls-badge">desk</span></td>
+                <td class="nn pos">+3.10mm</td><td class="nn pos">+188k</td><td class="nn">+0.90mm</td><td class="nn neg">−41k</td>
+                <td class="nn neg">−1.42mm</td><td class="nn">5.1mm</td><td style="text-align:center"><span class="rag a"></span></td>
+              </tr>
+              <tr data-parent="g10" style="display:none">
+                <td class="node" style="padding-left:50px">Book G10-A <span class="cls-badge">book</span></td>
+                <td class="nn pos">+1.28mm</td><td class="nn pos">+184k</td><td class="nn">+0.62mm</td><td class="nn neg">−28k</td>
+                <td class="nn neg">−0.31mm</td><td class="nn">1.9mm</td><td style="text-align:center"><span class="rag a"></span></td>
+              </tr>
+              <tr data-parent="g10" style="display:none">
+                <td class="node" style="padding-left:50px">Book G10-B <span class="cls-badge">book</span></td>
+                <td class="nn pos">+1.82mm</td><td class="nn pos">+4k</td><td class="nn">+0.28mm</td><td class="nn neg">−13k</td>
+                <td class="nn neg">−0.24mm</td><td class="nn">1.4mm</td><td style="text-align:center"><span class="rag r"></span></td>
+              </tr>
+
+              <tr class="trow" data-rowid="em" data-parent="lon" data-open="0">
+                <td class="node" style="padding-left:36px"><span class="tcaret">▸</span>FX Vol EM <span class="cls-badge">desk</span></td>
+                <td class="nn pos">+1.40mm</td><td class="nn pos">+72k</td><td class="nn">+0.34mm</td><td class="nn neg">−14k</td>
+                <td class="nn neg">−0.62mm</td><td class="nn">2.1mm</td><td style="text-align:center"><span class="rag g"></span></td>
+              </tr>
+              <tr data-parent="em" style="display:none">
+                <td class="node" style="padding-left:50px">Book EM-A <span class="cls-badge">book</span></td>
+                <td class="nn pos">+1.40mm</td><td class="nn pos">+72k</td><td class="nn">+0.34mm</td><td class="nn neg">−14k</td>
+                <td class="nn neg">−0.62mm</td><td class="nn">2.1mm</td><td style="text-align:center"><span class="rag g"></span></td>
+              </tr>
+
+              <tr class="trow" data-rowid="ny" data-parent="firm" data-open="0">
+                <td class="node" style="padding-left:22px"><span class="tcaret">▸</span>Celer New York <span class="cls-badge">entity</span></td>
+                <td class="nn pos">+2.10mm</td><td class="nn pos">+96k</td><td class="nn">+0.58mm</td><td class="nn neg">−26k</td>
+                <td class="nn neg">−0.98mm</td><td class="nn">3.1mm</td><td style="text-align:center"><span class="rag g"></span></td>
+              </tr>
+              <tr class="trow" data-rowid="nyfx" data-parent="ny" data-open="0" style="display:none">
+                <td class="node" style="padding-left:36px"><span class="tcaret">▸</span>FX Vol NY <span class="cls-badge">desk</span></td>
+                <td class="nn pos">+2.10mm</td><td class="nn pos">+96k</td><td class="nn">+0.58mm</td><td class="nn neg">−26k</td>
+                <td class="nn neg">−0.98mm</td><td class="nn">3.1mm</td><td style="text-align:center"><span class="rag g"></span></td>
+              </tr>
+              <tr data-parent="nyfx" style="display:none">
+                <td class="node" style="padding-left:50px">Book NY-A <span class="cls-badge">book</span></td>
+                <td class="nn pos">+2.10mm</td><td class="nn pos">+96k</td><td class="nn">+0.58mm</td><td class="nn neg">−26k</td>
+                <td class="nn neg">−0.98mm</td><td class="nn">3.1mm</td><td style="text-align:center"><span class="rag g"></span></td>
+              </tr>
+
+              <tr class="trow" data-rowid="fi" data-parent="firm" data-open="0">
+                <td class="node" style="padding-left:22px"><span class="tcaret">▸</span>Rates / FI <span class="cls-badge">desk</span></td>
+                <td class="nn pos">+0.60mm</td><td class="nn dim">n/a</td><td class="nn dim">n/a</td><td class="nn neg">−6k</td>
+                <td class="nn neg">−0.42mm</td><td class="nn">0.7mm</td><td style="text-align:center"><span class="rag g"></span></td>
+              </tr>
+              <tr data-parent="fi" style="display:none">
+                <td class="node" style="padding-left:50px">Book OIS-USD <span class="cls-badge">book</span></td>
+                <td class="nn pos">+0.60mm</td><td class="nn dim">n/a</td><td class="nn dim">n/a</td><td class="nn neg">−6k</td>
+                <td class="nn neg">−0.42mm</td><td class="nn">0.7mm</td><td style="text-align:center"><span class="rag g"></span></td>
+              </tr>
+            </tbody>
+          </table>
+          <div style="padding:var(--space-3) var(--space-4); font-size:var(--type-micro); color:var(--text-tertiary); border-top:var(--hairline)">
+            Additive Greeks roll up exactly (Σ children = parent). VaR / ES / SbM are non-additive — re-derived per node by bump-revalue, cross-pair collapsed into the USD numéraire view.
+          </div>
+        </div>
+      </section>
+
+      <!-- limits dashboard -->
+      <section class="panel">
+        <header>
+          <span class="headline">Limits · RAG</span>
+          <span class="htag"><span class="tag live">monitor</span><span class="tag tgt">cascade solver: gap</span></span>
+        </header>
+        <div class="body" style="padding-top:var(--space-3)">
+          <div class="lim">
+            <span class="rag g"></span>
+            <div class="meta"><div class="t">Net Δ · Greek</div><div class="sc">desk FX Vol G10 · soft 85% / hard 100%</div></div>
+            <div style="min-width:96px"><div class="limbar"><i class="dp1" style="width:62%"></i><span class="thr" style="left:85%"></span></div><div class="util">62%</div></div>
+          </div>
+          <div class="lim">
+            <span class="rag a"></span>
+            <div class="meta"><div class="t">Bucketed vega 1Y <span class="softhard soft">soft</span></div><div class="sc">book G10-A · early-warning breach</div></div>
+            <div style="min-width:96px"><div class="limbar"><i class="dp2" style="width:88%"></i><span class="thr" style="left:85%"></span></div><div class="util" style="color:var(--warn)">88%</div></div>
+          </div>
+          <div class="lim">
+            <span class="rag g"></span>
+            <div class="meta"><div class="t">Concentration · EUR/USD</div><div class="sc">desk FX Vol G10 · single-name</div></div>
+            <div style="min-width:96px"><div class="limbar"><i class="dp1" style="width:54%"></i><span class="thr" style="left:90%"></span></div><div class="util">54%</div></div>
+          </div>
+          <div class="lim">
+            <span class="rag g"></span>
+            <div class="meta"><div class="t">1d VaR 99% · VaR/ES</div><div class="sc">firm · board-cascaded</div></div>
+            <div style="min-width:96px"><div class="limbar"><i class="dp1" style="width:71%"></i><span class="thr" style="left:90%"></span></div><div class="util">71%</div></div>
+          </div>
+          <div class="lim">
+            <span class="rag a"></span>
+            <div class="meta"><div class="t">Scenario stress −5% / +4v <span class="softhard soft">soft</span></div><div class="sc">desk FX Vol G10 · joint-shock</div></div>
+            <div style="min-width:96px"><div class="limbar"><i class="dp2" style="width:94%"></i><span class="thr" style="left:90%"></span></div><div class="util" style="color:var(--warn)">94%</div></div>
+          </div>
+          <div class="lim" style="border-bottom:none">
+            <span class="rag r"></span>
+            <div class="meta"><div class="t">Stop-loss (D-1 MTD) <span class="softhard hard">hard</span></div><div class="sc">book G10-B · blocking · escalated ▸ desk head</div></div>
+            <div style="min-width:96px"><div class="limbar"><i class="dn2" style="width:100%"></i><span class="thr" style="left:100%"></span></div><div class="util" style="color:var(--danger)">103%</div></div>
+          </div>
+          <div style="margin-top:var(--space-3); font-size:var(--type-micro); color:var(--text-tertiary)">
+            Soft = early-warning · Hard = blocking. Limits cascade board → entity → desk → book → trader, pre-trade &amp; post-trade.
+          </div>
+        </div>
+      </section>
+    </div>
+
+  </main>
+
+  <!-- ============ CONTEXT RAIL (shell — verbatim) ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (shell — verbatim) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  var MINUS = '−';
+  function fk(v){ // v in $k → signed $Xk
+    var s = v > 0 ? '+' : (v < 0 ? MINUS : '');
+    return s + '$' + Math.abs(v).toLocaleString('en-US') + 'k';
+  }
+
+  /* ---- scenario heatmap: click-to-drill ---- */
+  var shares = [
+    {name:'FX Vol G10 · London', share:0.48},
+    {name:'FX Vol EM · London',  share:0.22},
+    {name:'Metals · London',     share:0.14},
+    {name:'Rates / FI · London', share:0.09},
+    {name:'Other',               share:0.07}
+  ];
+  var shockEl = document.getElementById('drill-shock');
+  var pnlEl   = document.getElementById('drill-pnl');
+  var listEl  = document.getElementById('drill-list');
+
+  function renderDrill(spot, vol, pnl){
+    shockEl.textContent = 'spot ' + spot + ' · vol ' + vol;
+    pnlEl.textContent = fk(pnl);
+    pnlEl.className = 'pl ' + (pnl < 0 ? 'neg' : (pnl > 0 ? 'pos' : ''));
+    var maxAbs = Math.max.apply(null, shares.map(function(s){ return Math.abs(pnl * s.share); })) || 1;
+    var hue = pnl < 0 ? 'dn1' : 'dp1';
+    listEl.innerHTML = shares.map(function(s){
+      var v = Math.round(pnl * s.share);
+      var w = Math.round(Math.abs(pnl * s.share) / maxAbs * 100);
+      return '<div class="dbrk"><span>' + s.name + '</span>' +
+             '<span class="bar" style="width:70px"><i class="' + hue + '" style="width:' + w + '%"></i></span>' +
+             '<span class="num ' + (v<0?'neg':(v>0?'pos':'')) + '">' + fk(v) + '</span></div>';
+    }).join('');
+  }
+
+  document.querySelectorAll('.hm-cell').forEach(function(c){
+    c.addEventListener('click', function(){
+      document.querySelectorAll('.hm-cell').forEach(function(x){ x.classList.remove('hmsel'); });
+      c.classList.add('hmsel');
+      renderDrill(c.dataset.spot, c.dataset.vol, parseFloat(c.dataset.pnl));
+    });
+  });
+
+  /* ---- scenario presets ---- */
+  var sub = document.getElementById('hm-sub');
+  document.querySelectorAll('.preset').forEach(function(p){
+    p.addEventListener('click', function(){
+      document.querySelectorAll('.preset').forEach(function(x){ x.classList.remove('on'); });
+      p.classList.add('on');
+      sub.textContent = p.dataset.preset + ' · P&L in $k · click a cell to drill';
+    });
+  });
+
+  /* ---- group-by breadcrumb ---- */
+  document.querySelectorAll('.crumb .node').forEach(function(n){
+    n.addEventListener('click', function(){
+      document.querySelectorAll('.crumb .node').forEach(function(x){ x.classList.remove('on'); });
+      n.classList.add('on');
+    });
+  });
+
+  /* ---- measure segment ---- */
+  var band = document.getElementById('kpiband');
+  document.querySelectorAll('#measure button').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('#measure button').forEach(function(x){ x.classList.remove('on'); });
+      b.classList.add('on');
+      band.dataset.focus = b.dataset.m;
+    });
+  });
+
+  /* ---- risk-cube tree expand/collapse ---- */
+  function kids(id){ return document.querySelectorAll('tr[data-parent="' + id + '"]'); }
+  function collapse(id){
+    kids(id).forEach(function(r){
+      r.style.display = 'none';
+      if (r.dataset.rowid){
+        r.dataset.open = '0';
+        var c = r.querySelector('.tcaret'); if (c) c.textContent = '▸';
+        collapse(r.dataset.rowid);
+      }
+    });
+  }
+  function expand(id){ kids(id).forEach(function(r){ r.style.display = ''; }); }
+  document.querySelectorAll('tr[data-rowid]').forEach(function(r){
+    var caret = r.querySelector('.tcaret');
+    if (!caret) return;
+    r.addEventListener('click', function(){
+      var id = r.dataset.rowid;
+      if (r.dataset.open === '1'){ r.dataset.open = '0'; caret.textContent = '▸'; collapse(id); }
+      else { r.dataset.open = '1'; caret.textContent = '▾'; expand(id); }
+    });
+  });
+})();
+</script>
+</body>
+</html>

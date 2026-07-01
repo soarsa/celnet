@@ -1,0 +1,982 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Structure (mockup 02, v2)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+  /* ===== Structure screen (02) — screen-scoped only; the shared system stays in celer.css ===== */
+  .sgrid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);grid-template-rows:auto auto auto;gap:var(--space-4);align-items:start;}
+  .payoff-panel{grid-column:1;grid-row:1;position:relative;}
+  .gallery-panel{grid-column:2;grid-row:1 / span 2;}
+  .ladder-panel{grid-column:1;grid-row:2;}
+  .netstrip-panel{grid-column:1 / -1;grid-row:3;}
+  @media (max-width:1180px){ .sgrid{grid-template-columns:1fr;} .payoff-panel,.gallery-panel,.ladder-panel,.netstrip-panel{grid-column:1;grid-row:auto;} }
+
+  /* asset-class segmented control (structure-line) — drives the engine-enforced gating */
+  .classseg{display:inline-flex;background:var(--bg-inset);border-radius:var(--r-full);padding:2px;gap:2px;}
+  .classseg button{border:0;background:transparent;color:var(--text-tertiary);font-size:var(--type-caption);padding:3px 9px;border-radius:var(--r-full);cursor:pointer;font-weight:600;font-family:var(--font-ui);}
+  .classseg button.on{background:var(--accent);color:#fff;}
+  .classseg button.lic-off::before{content:"⊘ ";opacity:.75;}
+
+  /* auto-name recognition strip */
+  .anwrap{padding:var(--space-3) var(--space-4);border-bottom:var(--hairline);background:var(--bg-inset);}
+  .an{display:none;flex-wrap:wrap;align-items:center;gap:var(--space-3) var(--space-5);}
+  .an.active{display:flex;}
+  .an .nm{font-family:var(--font-display);font-weight:600;font-size:15px;}
+  .an .kindchip{font-family:var(--font-mono);font-size:var(--type-micro);text-transform:uppercase;letter-spacing:.04em;padding:2px 7px;border-radius:var(--r-sm);background:var(--accent-soft);color:var(--accent);font-weight:700;}
+  .an .kindchip.custom{background:oklch(1 0 0 / .06);color:var(--text-tertiary);}
+  .an .desc{color:var(--text-secondary);font-size:var(--type-caption);}
+  .an .mm{display:flex;gap:var(--space-4);margin-left:auto;}
+  .an .mm span{white-space:nowrap;}
+  .an .mm b{color:var(--text-tertiary);font-weight:600;font-size:var(--type-micro);text-transform:uppercase;letter-spacing:.04em;margin-right:4px;}
+
+  /* overlay toggles */
+  .ovtog{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:var(--r-full);border:var(--hairline);background:transparent;color:var(--text-tertiary);font-size:var(--type-caption);cursor:pointer;font-weight:600;user-select:none;}
+  .ovtog .sw{width:8px;height:8px;border-radius:2px;background:currentColor;opacity:.3;}
+  .ovtog.on{color:var(--text-primary);}
+  .ovtog.on .sw{opacity:1;}
+  .ovtog.net.on{color:var(--accent);}
+
+  /* chart lines */
+  .struct{display:none;} .struct.active{display:block;}
+  .netline{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round;}
+  .legline{fill:none;stroke:var(--text-tertiary);stroke-width:1;stroke-dasharray:2 3;opacity:.5;}
+  .mtmline{fill:none;stroke:var(--text-secondary);stroke-width:1.5;stroke-dasharray:.5 3.6;stroke-linecap:round;opacity:.9;}
+  .zeroline{stroke:var(--text-secondary);stroke-width:1.1;opacity:.6;}
+  .kinkline{stroke:var(--text-tertiary);stroke-dasharray:2 3;stroke-width:1;opacity:.6;}
+  .kinkdot{fill:var(--bg-raised);stroke:var(--accent);stroke-width:1.5;}
+  .spotline{stroke:var(--brand);stroke-width:1;opacity:.55;stroke-dasharray:2 2;}
+  .spotdot{fill:var(--brand);}
+  .bedot{fill:var(--brand);}
+  .belab{fill:var(--brand);font-size:8px;}
+  .stk{fill:var(--text-secondary);font-size:8px;}
+  .sworkspace[data-net="off"] .netline{display:none;}
+  .sworkspace[data-legs="off"] .legs{display:none;}
+  .sworkspace[data-mtm="off"] .mtmline{display:none;}
+
+  /* leg ladder */
+  .ladblk{display:none;} .ladblk.active{display:block;}
+  .ladder{width:100%;border-collapse:collapse;font-size:var(--type-callout);}
+  .ladder th{text-align:right;font-size:var(--type-micro);text-transform:uppercase;letter-spacing:.05em;color:var(--text-tertiary);font-weight:600;padding:var(--space-2) var(--space-3);border-bottom:var(--hairline);}
+  .ladder th:nth-child(-n+3){text-align:left;}
+  .ladder td{padding:0 var(--space-3);height:34px;border-bottom:1px solid var(--grid-line);}
+  .ladder td.n{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums;}
+  .ladder tr:hover td{background:oklch(1 0 0 / .03);}
+  .ladder .ix{color:var(--text-tertiary);font-family:var(--font-mono);}
+  .ladder .dim{color:var(--text-tertiary);}
+  .dirtog{display:inline-flex;align-items:center;justify-content:center;min-width:52px;padding:2px 8px;border-radius:var(--r-sm);font-size:var(--type-micro);font-weight:700;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;border:1px solid transparent;}
+  .dirtog.long{background:var(--accent-soft);color:var(--accent);}
+  .dirtog.short{background:oklch(0.82 0.16 75 / .18);color:var(--warn);}
+  .otype{font-weight:600;}
+  .rmx{color:var(--text-tertiary);cursor:pointer;font-family:var(--font-mono);font-size:11px;}
+  .rmx:hover{color:var(--danger);}
+  .ladfoot{display:flex;align-items:center;gap:var(--space-5);margin-top:var(--space-4);}
+  .addleg{display:inline-flex;align-items:center;gap:6px;color:var(--accent);font-size:var(--type-callout);cursor:pointer;font-weight:600;}
+  .addleg:hover{text-decoration:underline;}
+
+  /* net-greek strip */
+  .nsblk{display:none;} .nsblk.active{display:grid;}
+  .nsblk{grid-template-columns:auto 1fr auto;gap:var(--space-6);align-items:center;}
+  .netprem{display:flex;flex-direction:column;gap:3px;}
+  .netprem .big{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:26px;font-weight:600;line-height:1;}
+  .netprem .cd{font-size:var(--type-micro);text-transform:uppercase;letter-spacing:.05em;font-weight:700;font-family:var(--font-mono);}
+  .cd.credit{color:var(--bid);} .cd.debit{color:var(--offer);}
+  .ngreeks{display:grid;grid-template-columns:repeat(6,1fr);gap:var(--space-4);}
+  .ngreeks .g{text-align:right;}
+  .ngreeks .g .k{font-size:var(--type-micro);text-transform:uppercase;letter-spacing:.05em;color:var(--text-tertiary);}
+  .ngreeks .g .v{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:15px;}
+  .ngreeks .g .sub{font-size:var(--type-micro);color:var(--text-tertiary);font-family:var(--font-mono);}
+  .nsright{display:flex;flex-direction:column;gap:5px;align-items:flex-end;text-align:right;}
+
+  /* structure library (gallery) */
+  .gallery-panel .body{padding:var(--space-3) var(--space-4) var(--space-4);}
+  .gsearch{width:100%;height:30px;border-radius:var(--r-sm);background:var(--bg-base);border:var(--hairline);color:var(--text-primary);padding:0 10px;outline:none;font-size:var(--type-callout);}
+  .gsearch:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft);}
+  .ggrp{margin:var(--space-4) 0 var(--space-2);}
+  .scard{display:grid;grid-template-columns:44px 1fr auto;gap:var(--space-3);align-items:center;padding:var(--space-2) var(--space-3);border-radius:var(--r-sm);cursor:pointer;border:1px solid transparent;}
+  .scard:hover{background:oklch(1 0 0 / .04);}
+  .scard.active{background:var(--accent-soft);border-color:oklch(0.62 0.19 280 / .5);}
+  .scard .glyph{background:var(--bg-inset);border-radius:var(--r-sm);}
+  .scard .nm{font-weight:600;font-size:var(--type-callout);}
+  .scard .leg-n{font-size:var(--type-micro);color:var(--text-tertiary);}
+  .scard .tag{font-size:8px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;padding:2px 5px;border-radius:var(--r-sm);white-space:nowrap;}
+  .tag.auto{background:var(--brand-soft);color:var(--brand);}
+  .tag.custom{background:oklch(1 0 0 / .06);color:var(--text-tertiary);}
+  .tag.any{background:oklch(0.78 0.16 155 / .16);color:var(--bid);}
+  .tplnote{margin-top:var(--space-3);padding:var(--space-3);border-radius:var(--r-sm);background:var(--bg-inset);border:var(--hairline);font-size:var(--type-caption);color:var(--text-secondary);line-height:1.5;}
+
+  /* engine-enforced class gating */
+  .gatebanner{display:none;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);border-radius:var(--r-md);background:oklch(0.65 0.21 25 / .1);border:1px solid oklch(0.65 0.21 25 / .35);font-size:var(--type-callout);margin-bottom:var(--space-4);}
+  .gatebanner .rj{font-family:var(--font-mono);font-size:10px;color:var(--danger);}
+  .gatebanner .prod{font-family:var(--font-mono);font-size:var(--type-caption);padding:2px 7px;border-radius:var(--r-sm);background:oklch(0.78 0.16 155 / .16);color:var(--bid);font-weight:600;white-space:nowrap;}
+  .gatebanner .req{margin-left:auto;white-space:nowrap;}
+  .sworkspace.gated .gatebanner{display:flex;}
+  .sworkspace.gated .multileg{opacity:.3;pointer-events:none;filter:saturate(.35);}
+  .sworkspace.gated .ladder-panel,.sworkspace.gated .netstrip-panel{opacity:.4;pointer-events:none;filter:saturate(.35);}
+  .gatemask{display:none;}
+  .sworkspace.gated .payoff-panel .gatemask{display:flex;position:absolute;inset:0;align-items:center;justify-content:center;background:oklch(0.165 0.013 264 / .62);border-radius:var(--r-md);z-index:3;font-size:var(--type-caption);color:var(--text-secondary);text-align:center;padding:var(--space-7);line-height:1.6;}
+
+  /* cross-capability flow tags — honest LIVE / TARGET wiring state */
+  .flowtag{font-size:8px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;padding:1px 4px;border-radius:3px;margin-left:5px;}
+  .flowtag.live{background:var(--brand-soft);color:var(--brand);}
+  .flowtag.target{background:oklch(1 0 0 / .07);color:var(--text-tertiary);border:1px solid var(--grid-line);}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a class="on"><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — STRUCTURE (multi-leg strategy builder) ============ -->
+  <main class="main" style="gap:var(--space-4)">
+
+    <!-- structure line -->
+    <div class="ticketline">
+      <span class="field"><span class="lbl">pair</span> EUR/USD <span class="car">▾</span></span>
+      <span class="classseg" role="tablist" aria-label="Asset class">
+        <button class="on" data-full="1">FX</button>
+        <button data-full="1">Metal</button>
+        <button data-full="1">Rates</button>
+        <button class="lic-off" data-full="0">Eq</button>
+        <button class="lic-off" data-full="0">Cmdty</button>
+        <button class="lic-off" data-full="0">Crypto</button>
+      </span>
+      <span class="field"><span class="lbl">expiry</span> 1M · 28 Jul <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">notional</span> 10.00mm EUR <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">prem</span> USD <span class="car">▾</span></span>
+      <span class="selctl"><span class="lbl">solve</span> Δ→K <span class="car">▾</span></span>
+      <span style="flex:1"></span>
+      <span class="state live">● LIVE preview</span>
+    </div>
+
+    <!-- model / booking row -->
+    <div class="model">
+      <span class="title" style="font-size:15px">Pricing model · LSV <span class="car" style="font-size:11px">▾</span></span>
+      <span class="meta">calibrated 3m ago · RMSE <span class="num">0.03v</span> <span class="ok">✓ arb-free</span></span>
+      <span class="selctl"><span class="lbl">Δ conv</span> spot <span class="car">▾</span></span>
+      <span class="meta">structure priced as a <b style="color:var(--text-secondary)">signed leg sum</b> → the leg set books as <b style="color:var(--text-secondary)">one desk contract</b></span>
+      <span style="flex:1"></span>
+      <button class="btn ghost">Recalibrate</button>
+    </div>
+
+    <!-- gated strategy workspace -->
+    <div class="sworkspace" data-net="on" data-legs="on" data-mtm="on">
+
+      <!-- entitlement gate banner (shown only for the unlicensed Eq/Cmdty/Crypto classes) -->
+      <div class="gatebanner">
+        <span style="font-size:16px">⊘</span>
+        <span><b id="gate-class">Equity</b> is <b>not licensed</b> for desk <b>FX Vol</b>. Under <b>Entitlements · Enforce</b> the request is denied — <span class="rj">capability_denied</span>. Even once granted, a cross-asset class prices <b>single-leg only</b> (<span class="rj">cross_asset_non_vanilla_product_is_rejected</span>) — multi-leg structures stay on the FX / Metal path. Allowed single-leg products:</span>
+        <span class="prod">Vanilla</span><span class="prod">PerpetualOption</span><span class="prod">ListedFutureOption</span>
+        <button class="btn ghost req">Request access →</button>
+      </div>
+
+      <div class="sgrid">
+
+        <!-- ===================== PAYOFF HERO ===================== -->
+        <section class="panel payoff-panel">
+          <div class="gatemask"><b id="gate-class-mask">Equity</b> is not licensed for this desk.<br>Request access in Admin &amp; License to price single-leg<br>vanilla / perpetual / listed-future on cross-asset classes.</div>
+          <header>
+            <span class="headline" id="ptitle">Payoff · Seagull</span>
+            <span style="display:flex;gap:6px;align-items:center">
+              <span class="ovtog net on" data-k="net"><span class="sw"></span>Net</span>
+              <span class="ovtog on" data-k="legs"><span class="sw"></span>Per-leg</span>
+              <span class="ovtog on" data-k="mtm"><span class="sw"></span>MTM today</span>
+            </span>
+          </header>
+
+          <!-- auto-name recognition strip -->
+          <div class="anwrap">
+            <div class="an active" data-strat="seagull">
+              <span class="nm">Seagull</span><span class="kindchip">kind · SEAGULL</span>
+              <span class="desc">3-leg collar-with-wing — long 1.1000/1.1250 call spread + short 1.0700 put</span>
+              <span class="mm"><span><b>net</b><span class="num pos">+0.15%</span></span><span><b>b/e</b><span class="num">1.0685</span></span><span><b>max&nbsp;+</b><span class="num pos">+2.65%</span></span><span><b>max&nbsp;−</b><span class="num neg">−2.85%</span></span></span>
+            </div>
+            <div class="an" data-strat="rr">
+              <span class="nm">Risk Reversal</span><span class="kindchip">kind · RISK_REVERSAL</span>
+              <span class="desc">long 1.1050 call vs short 1.0700 put — directional skew position</span>
+              <span class="mm"><span><b>net</b><span class="num">−0.05%</span></span><span><b>b/e</b><span class="num">1.0705 · 1.1055</span></span><span><b>bias</b><span class="num">long skew</span></span></span>
+            </div>
+            <div class="an" data-strat="straddle">
+              <span class="nm">Straddle</span><span class="kindchip">kind · STRADDLE</span>
+              <span class="desc">long 1.0850 call + put at ATM — pure long-vol / long-gamma</span>
+              <span class="mm"><span><b>net</b><span class="num neg">−1.75%</span></span><span><b>b/e</b><span class="num">1.0675 · 1.1025</span></span><span><b>max&nbsp;−</b><span class="num neg">−1.75%</span></span></span>
+            </div>
+            <div class="an" data-strat="strangle">
+              <span class="nm">Strangle</span><span class="kindchip">kind · STRANGLE</span>
+              <span class="desc">long 1.0650 put + 1.1050 call OTM wings — cheaper long-vol</span>
+              <span class="mm"><span><b>net</b><span class="num neg">−1.25%</span></span><span><b>b/e</b><span class="num">1.0525 · 1.1175</span></span><span><b>max&nbsp;−</b><span class="num neg">−1.25%</span></span></span>
+            </div>
+            <div class="an" data-strat="callspread">
+              <span class="nm">Call Spread</span><span class="kindchip custom">custom · leg sum</span>
+              <span class="desc">long 1.0900 call vs short 1.1100 call — debit vertical, capped bull</span>
+              <span class="mm"><span><b>net</b><span class="num neg">−0.85%</span></span><span><b>b/e</b><span class="num">1.0993</span></span><span><b>max&nbsp;+</b><span class="num pos">+1.00%</span></span><span><b>max&nbsp;−</b><span class="num neg">−0.85%</span></span></span>
+            </div>
+            <div class="an" data-strat="putspread">
+              <span class="nm">Put Spread</span><span class="kindchip custom">custom · leg sum</span>
+              <span class="desc">long 1.0800 put vs short 1.0600 put — debit vertical, capped bear</span>
+              <span class="mm"><span><b>net</b><span class="num neg">−0.80%</span></span><span><b>b/e</b><span class="num">1.0716</span></span><span><b>max&nbsp;+</b><span class="num pos">+1.05%</span></span><span><b>max&nbsp;−</b><span class="num neg">−0.80%</span></span></span>
+            </div>
+            <div class="an" data-strat="butterfly">
+              <span class="nm">Butterfly</span><span class="kindchip custom">custom · leg sum</span>
+              <span class="desc">long 1.0700 / short 2×1.0850 / long 1.1000 call fly — pinned wings, short vol</span>
+              <span class="mm"><span><b>net</b><span class="num neg">−0.45%</span></span><span><b>b/e</b><span class="num">1.0749 · 1.0951</span></span><span><b>max&nbsp;+</b><span class="num pos">+0.90%</span></span><span><b>max&nbsp;−</b><span class="num neg">−0.45%</span></span></span>
+            </div>
+            <div class="an" data-strat="ironcondor">
+              <span class="nm">Iron Condor</span><span class="kindchip custom">custom · leg sum</span>
+              <span class="desc">short 1.0750/1.1050 inner + long 1.0600/1.1200 wings — range-bound, net credit</span>
+              <span class="mm"><span><b>net</b><span class="num pos">+0.55%</span></span><span><b>b/e</b><span class="num">1.0691 · 1.1110</span></span><span><b>max&nbsp;+</b><span class="num pos">+0.55%</span></span><span><b>max&nbsp;−</b><span class="num neg">−0.83%</span></span></span>
+            </div>
+            <div class="an" data-strat="collar">
+              <span class="nm">Collar</span><span class="kindchip custom">custom · leg sum</span>
+              <span class="desc">long 1.0700 put + short 1.1050 call over long spot — fenced range</span>
+              <span class="mm"><span><b>net</b><span class="num pos">+0.05%</span></span><span><b>b/e</b><span class="num">1.0876</span></span><span><b>max&nbsp;+</b><span class="num pos">+1.50%</span></span><span><b>max&nbsp;−</b><span class="num neg">−1.50%</span></span></span>
+            </div>
+          </div>
+
+          <div class="body" style="padding-bottom:var(--space-3)">
+            <svg class="chart" viewBox="0 0 620 292" height="322" aria-label="Combined strategy payoff diagram">
+              <!-- shared coordinate frame: x = EUR/USD spot at expiry, y = P&L (% notional, premium-adjusted) -->
+              <!-- y-scale 30px per 1% about zero@140 — labeled ±3.0% band with padding so every extreme reads against an axis value -->
+              <line class="gl" x1="56" y1="50" x2="600" y2="50"/>
+              <line class="gl" x1="56" y1="80" x2="600" y2="80"/>
+              <line class="gl" x1="56" y1="110" x2="600" y2="110"/>
+              <line class="gl" x1="56" y1="170" x2="600" y2="170"/>
+              <line class="gl" x1="56" y1="200" x2="600" y2="200"/>
+              <line class="gl" x1="56" y1="230" x2="600" y2="230"/>
+              <line class="zeroline" x1="56" y1="140" x2="600" y2="140"/>
+              <text class="axlbl" x="50" y="53" text-anchor="end">+3.0%</text>
+              <text class="axlbl" x="50" y="83" text-anchor="end">+2.0%</text>
+              <text class="axlbl" x="50" y="113" text-anchor="end">+1.0%</text>
+              <text class="axlbl b" x="50" y="143" text-anchor="end">0</text>
+              <text class="axlbl" x="50" y="173" text-anchor="end">−1.0%</text>
+              <text class="axlbl" x="50" y="203" text-anchor="end">−2.0%</text>
+              <text class="axlbl" x="50" y="233" text-anchor="end">−3.0%</text>
+              <text class="axlbl" x="105" y="266" text-anchor="middle">1.05</text>
+              <text class="axlbl" x="204" y="266" text-anchor="middle">1.07</text>
+              <text class="axlbl" x="303" y="266" text-anchor="middle">1.09</text>
+              <text class="axlbl" x="402" y="266" text-anchor="middle">1.11</text>
+              <text class="axlbl" x="501" y="266" text-anchor="middle">1.13</text>
+              <text class="axlbl" x="600" y="266" text-anchor="middle">1.15</text>
+              <text class="axlbl" x="600" y="284" text-anchor="end">underlier at expiry · EUR/USD spot</text>
+              <text class="axlbl b" x="14" y="24">P&amp;L · % of notional (premium-adjusted)</text>
+              <!-- shared live spot marker -->
+              <line class="spotline" x1="278" y1="50" x2="278" y2="234"/>
+              <circle class="spotdot" cx="278" cy="234" r="2.6"/>
+              <text class="belab" x="284" y="246">● spot 1.0850</text>
+
+              <!-- ===== SEAGULL ===== -->
+              <g class="struct active" data-strat="seagull">
+                <path class="pfill-neg" d="M56,140 L56,225 L197,140 Z"/>
+                <path class="pfill-pos" d="M197,140 L204,136 L353,136 L476,60 L600,60 L600,140 Z"/>
+                <line class="kinkline" x1="204" y1="50" x2="204" y2="234"/>
+                <line class="kinkline" x1="353" y1="50" x2="353" y2="234"/>
+                <line class="kinkline" x1="476" y1="50" x2="476" y2="234"/>
+                <g class="legs">
+                  <path class="legline" d="M56,201 L204,131 L600,131"/>
+                  <path class="legline" d="M56,150 L353,150 L520,50"/>
+                  <path class="legline" d="M56,130 L476,130 L600,205"/>
+                </g>
+                <path class="mtmline" d="M56,214 C150,190 210,150 278,138 C360,110 440,78 600,70"/>
+                <path class="netline" d="M56,225 L204,136 L353,136 L476,60 L600,60"/>
+                <circle class="kinkdot" cx="204" cy="136" r="2.8"/>
+                <circle class="kinkdot" cx="353" cy="136" r="2.8"/>
+                <circle class="kinkdot" cx="476" cy="60" r="2.8"/>
+                <circle class="bedot" cx="197" cy="140" r="2.4"/>
+                <text class="stk" x="204" y="44" text-anchor="middle">−P 1.0700</text>
+                <text class="stk" x="353" y="44" text-anchor="middle">+C 1.1000</text>
+                <text class="stk" x="476" y="44" text-anchor="middle">−C 1.1250</text>
+                <text class="belab" x="180" y="154" text-anchor="middle">b/e 1.0685</text>
+              </g>
+
+              <!-- ===== RISK REVERSAL ===== -->
+              <g class="struct" data-strat="rr">
+                <path class="pfill-neg" d="M56,140 L56,230 L205,140 Z"/>
+                <path class="pfill-pos" d="M380,140 L600,50 L600,140 Z"/>
+                <line class="kinkline" x1="204" y1="50" x2="204" y2="234"/>
+                <line class="kinkline" x1="378" y1="50" x2="378" y2="234"/>
+                <g class="legs">
+                  <path class="legline" d="M56,208 L204,132 L600,132"/>
+                  <path class="legline" d="M56,150 L378,150 L560,52"/>
+                </g>
+                <path class="mtmline" d="M56,220 C170,190 250,158 320,142 C410,120 490,86 580,58"/>
+                <path class="netline" d="M56,230 L204,141 L378,141 L600,50"/>
+                <circle class="kinkdot" cx="204" cy="141" r="2.8"/>
+                <circle class="kinkdot" cx="378" cy="141" r="2.8"/>
+                <circle class="bedot" cx="205" cy="140" r="2.4"/>
+                <circle class="bedot" cx="380" cy="140" r="2.4"/>
+                <text class="stk" x="204" y="44" text-anchor="middle">−P 1.0700</text>
+                <text class="stk" x="378" y="44" text-anchor="middle">+C 1.1050</text>
+                <text class="belab" x="196" y="156" text-anchor="middle">b/e 1.0705</text>
+                <text class="belab" x="396" y="156" text-anchor="middle">b/e 1.1055</text>
+              </g>
+
+              <!-- ===== STRADDLE ===== -->
+              <g class="struct" data-strat="straddle">
+                <path class="pfill-neg" d="M192,140 L278,193 L365,140 Z"/>
+                <path class="pfill-pos" d="M56,140 L56,56 L192,140 Z"/>
+                <path class="pfill-pos" d="M365,140 L513,50 L600,50 L600,140 Z"/>
+                <g class="legs">
+                  <path class="legline" d="M56,170 L278,170 L500,50"/>
+                  <path class="legline" d="M56,58 L278,170 L600,170"/>
+                </g>
+                <path class="mtmline" d="M56,62 C150,120 220,168 278,178 C336,168 430,116 513,58"/>
+                <path class="netline" d="M56,56 L278,193 L513,50"/>
+                <circle class="kinkdot" cx="278" cy="193" r="2.8"/>
+                <circle class="bedot" cx="192" cy="140" r="2.4"/>
+                <circle class="bedot" cx="365" cy="140" r="2.4"/>
+                <text class="stk" x="278" y="44" text-anchor="middle">±ATM 1.0850</text>
+                <text class="belab" x="182" y="156" text-anchor="middle">b/e 1.0675</text>
+                <text class="belab" x="375" y="156" text-anchor="middle">b/e 1.1025</text>
+              </g>
+
+              <!-- ===== STRANGLE ===== -->
+              <g class="struct" data-strat="strangle">
+                <path class="pfill-neg" d="M117,140 L180,178 L378,178 L444,140 Z"/>
+                <path class="pfill-pos" d="M56,140 L56,103 L117,140 Z"/>
+                <path class="pfill-pos" d="M444,140 L600,50 L600,140 Z"/>
+                <line class="kinkline" x1="180" y1="50" x2="180" y2="234"/>
+                <line class="kinkline" x1="378" y1="50" x2="378" y2="234"/>
+                <g class="legs">
+                  <path class="legline" d="M56,103 L180,168 L600,168"/>
+                  <path class="legline" d="M56,166 L378,166 L580,52"/>
+                </g>
+                <path class="mtmline" d="M56,110 C150,160 240,182 300,182 C360,182 480,120 583,52"/>
+                <path class="netline" d="M56,103 L180,178 L378,178 L600,50"/>
+                <circle class="kinkdot" cx="180" cy="178" r="2.8"/>
+                <circle class="kinkdot" cx="378" cy="178" r="2.8"/>
+                <circle class="bedot" cx="117" cy="140" r="2.4"/>
+                <circle class="bedot" cx="444" cy="140" r="2.4"/>
+                <text class="stk" x="180" y="44" text-anchor="middle">+P 1.0650</text>
+                <text class="stk" x="378" y="44" text-anchor="middle">+C 1.1050</text>
+                <text class="belab" x="108" y="156" text-anchor="middle">b/e 1.0525</text>
+                <text class="belab" x="453" y="156" text-anchor="middle">b/e 1.1175</text>
+              </g>
+
+              <!-- ===== CALL SPREAD (custom) ===== -->
+              <g class="struct" data-strat="callspread">
+                <path class="pfill-neg" d="M56,140 L56,166 L303,166 L349,140 Z"/>
+                <path class="pfill-pos" d="M349,140 L402,110 L600,110 L600,140 Z"/>
+                <line class="kinkline" x1="303" y1="50" x2="303" y2="234"/>
+                <line class="kinkline" x1="402" y1="50" x2="402" y2="234"/>
+                <g class="legs">
+                  <path class="legline" d="M56,160 L303,160 L500,50"/>
+                  <path class="legline" d="M56,150 L402,150 L580,210"/>
+                </g>
+                <path class="mtmline" d="M56,164 C180,158 280,150 349,142 C430,126 510,116 600,112"/>
+                <path class="netline" d="M56,166 L303,166 L402,110 L600,110"/>
+                <circle class="kinkdot" cx="303" cy="166" r="2.8"/>
+                <circle class="kinkdot" cx="402" cy="110" r="2.8"/>
+                <circle class="bedot" cx="349" cy="140" r="2.4"/>
+                <text class="stk" x="303" y="44" text-anchor="middle">+C 1.0900</text>
+                <text class="stk" x="402" y="44" text-anchor="middle">−C 1.1100</text>
+                <text class="belab" x="352" y="156" text-anchor="middle">b/e 1.0993</text>
+              </g>
+
+              <!-- ===== PUT SPREAD (custom) ===== -->
+              <g class="struct" data-strat="putspread">
+                <path class="pfill-pos" d="M56,140 L56,109 L155,109 L211,140 Z"/>
+                <path class="pfill-neg" d="M211,140 L254,164 L600,164 L600,140 Z"/>
+                <line class="kinkline" x1="155" y1="50" x2="155" y2="234"/>
+                <line class="kinkline" x1="254" y1="50" x2="254" y2="234"/>
+                <g class="legs">
+                  <path class="legline" d="M56,52 L254,160 L600,160"/>
+                  <path class="legline" d="M56,214 L155,150 L600,150"/>
+                </g>
+                <path class="mtmline" d="M56,114 C160,120 210,132 254,150 C360,160 460,162 600,162"/>
+                <path class="netline" d="M56,109 L155,109 L254,164 L600,164"/>
+                <circle class="kinkdot" cx="155" cy="109" r="2.8"/>
+                <circle class="kinkdot" cx="254" cy="164" r="2.8"/>
+                <circle class="bedot" cx="211" cy="140" r="2.4"/>
+                <text class="stk" x="155" y="44" text-anchor="middle">−P 1.0600</text>
+                <text class="stk" x="254" y="44" text-anchor="middle">+P 1.0800</text>
+                <text class="belab" x="214" y="156" text-anchor="middle">b/e 1.0716</text>
+              </g>
+
+              <!-- ===== BUTTERFLY (custom) ===== -->
+              <g class="struct" data-strat="butterfly">
+                <path class="pfill-neg" d="M56,140 L56,154 L204,154 L229,140 Z"/>
+                <path class="pfill-neg" d="M327,140 L353,154 L600,154 L600,140 Z"/>
+                <path class="pfill-pos" d="M229,140 L278,113 L327,140 Z"/>
+                <line class="kinkline" x1="204" y1="50" x2="204" y2="234"/>
+                <line class="kinkline" x1="278" y1="50" x2="278" y2="234"/>
+                <line class="kinkline" x1="353" y1="50" x2="353" y2="234"/>
+                <g class="legs">
+                  <path class="legline" d="M56,150 L204,150 L440,72"/>
+                  <path class="legline" d="M56,132 L278,132 L470,214"/>
+                  <path class="legline" d="M56,150 L353,150 L560,90"/>
+                </g>
+                <path class="mtmline" d="M56,152 C160,150 235,132 278,126 C325,132 445,150 600,152"/>
+                <path class="netline" d="M56,154 L204,154 L278,113 L353,154 L600,154"/>
+                <circle class="kinkdot" cx="204" cy="154" r="2.8"/>
+                <circle class="kinkdot" cx="278" cy="113" r="2.8"/>
+                <circle class="kinkdot" cx="353" cy="154" r="2.8"/>
+                <circle class="bedot" cx="229" cy="140" r="2.4"/>
+                <circle class="bedot" cx="327" cy="140" r="2.4"/>
+                <text class="stk" x="204" y="44" text-anchor="middle">+C 1.0700</text>
+                <text class="stk" x="278" y="44" text-anchor="middle">−2C 1.0850</text>
+                <text class="stk" x="353" y="44" text-anchor="middle">+C 1.1000</text>
+                <text class="belab" x="216" y="128" text-anchor="middle">b/e 1.0749</text>
+                <text class="belab" x="340" y="128" text-anchor="middle">b/e 1.0951</text>
+              </g>
+
+              <!-- ===== IRON CONDOR (custom) ===== -->
+              <g class="struct" data-strat="ironcondor">
+                <path class="pfill-pos" d="M200,140 L228,124 L378,124 L407,140 Z"/>
+                <path class="pfill-neg" d="M56,140 L56,165 L155,165 L200,140 Z"/>
+                <path class="pfill-neg" d="M407,140 L452,165 L600,165 L600,140 Z"/>
+                <line class="kinkline" x1="155" y1="50" x2="155" y2="234"/>
+                <line class="kinkline" x1="228" y1="50" x2="228" y2="234"/>
+                <line class="kinkline" x1="378" y1="50" x2="378" y2="234"/>
+                <line class="kinkline" x1="452" y1="50" x2="452" y2="234"/>
+                <g class="legs">
+                  <path class="legline" d="M56,122 L155,158 L600,158"/>
+                  <path class="legline" d="M56,205 L228,146 L600,146"/>
+                  <path class="legline" d="M56,138 L378,138 L560,200"/>
+                  <path class="legline" d="M56,158 L452,158 L560,120"/>
+                </g>
+                <path class="mtmline" d="M56,160 C150,150 210,132 300,130 C400,130 470,150 600,160"/>
+                <path class="netline" d="M56,165 L155,165 L228,124 L378,124 L452,165 L600,165"/>
+                <circle class="kinkdot" cx="155" cy="165" r="2.8"/>
+                <circle class="kinkdot" cx="228" cy="124" r="2.8"/>
+                <circle class="kinkdot" cx="378" cy="124" r="2.8"/>
+                <circle class="kinkdot" cx="452" cy="165" r="2.8"/>
+                <circle class="bedot" cx="200" cy="140" r="2.4"/>
+                <circle class="bedot" cx="407" cy="140" r="2.4"/>
+                <text class="stk" x="155" y="44" text-anchor="middle">+P 1.0600</text>
+                <text class="stk" x="228" y="44" text-anchor="middle">−P 1.0750</text>
+                <text class="stk" x="378" y="44" text-anchor="middle">−C 1.1050</text>
+                <text class="stk" x="452" y="44" text-anchor="middle">+C 1.1200</text>
+                <text class="belab" x="192" y="156" text-anchor="middle">b/e 1.0691</text>
+                <text class="belab" x="415" y="156" text-anchor="middle">b/e 1.1110</text>
+              </g>
+
+              <!-- ===== COLLAR (custom) ===== -->
+              <g class="struct" data-strat="collar">
+                <path class="pfill-neg" d="M56,140 L56,185 L204,185 L291,140 Z"/>
+                <path class="pfill-pos" d="M291,140 L378,95 L600,95 L600,140 Z"/>
+                <line class="kinkline" x1="204" y1="50" x2="204" y2="234"/>
+                <line class="kinkline" x1="378" y1="50" x2="378" y2="234"/>
+                <g class="legs">
+                  <path class="legline" d="M56,105 L204,160 L600,160"/>
+                  <path class="legline" d="M56,120 L378,120 L560,200"/>
+                  <path class="legline" d="M56,205 L600,60"/>
+                </g>
+                <path class="mtmline" d="M56,182 C150,180 240,160 291,148 C360,130 470,102 600,98"/>
+                <path class="netline" d="M56,185 L204,185 L378,95 L600,95"/>
+                <circle class="kinkdot" cx="204" cy="185" r="2.8"/>
+                <circle class="kinkdot" cx="378" cy="95" r="2.8"/>
+                <circle class="bedot" cx="291" cy="140" r="2.4"/>
+                <text class="stk" x="204" y="44" text-anchor="middle">+P 1.0700</text>
+                <text class="stk" x="378" y="44" text-anchor="middle">−C 1.1050</text>
+                <text class="stk" x="120" y="200" text-anchor="middle">long spot</text>
+                <text class="belab" x="302" y="156" text-anchor="middle">b/e 1.0876</text>
+              </g>
+            </svg>
+            <div style="display:flex;gap:var(--space-5);flex-wrap:wrap;padding:0 2px;font-size:var(--type-caption);color:var(--text-tertiary)">
+              <span><span style="display:inline-block;width:9px;height:9px;background:oklch(0.62 0.16 150 / .18);vertical-align:middle"></span> profit</span>
+              <span><span style="display:inline-block;width:9px;height:9px;background:oklch(0.64 0.226 23 / .16);vertical-align:middle"></span> loss</span>
+              <span><span style="color:var(--brand)">●</span> spot / break-even</span>
+              <span><span style="color:var(--accent)">◦</span> strike kink</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===================== STRUCTURE LIBRARY (gallery) ===================== -->
+        <aside class="panel gallery-panel">
+          <header><span class="headline">Structure library</span><span class="muted" style="font-size:11px">grouped · searchable</span></header>
+          <div class="body">
+            <input class="gsearch" id="gsearch" placeholder="Filter structures…  straddle · seagull · butterfly" />
+
+            <div class="ggrp label multileg">Recognized · engine auto-names</div>
+            <div class="scard multileg" data-strat="rr" data-name="risk reversal">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,20 14,12 30,12 41,4" fill="none" stroke="var(--seq-4)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Risk Reversal</span><br><span class="leg-n">2 legs · long call / short put</span></span>
+              <span class="tag auto">auto</span>
+            </div>
+            <div class="scard multileg" data-strat="strangle" data-name="strangle">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,5 13,19 31,19 41,5" fill="none" stroke="var(--seq-4)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Strangle</span><br><span class="leg-n">2 legs · OTM put + OTM call</span></span>
+              <span class="tag auto">auto</span>
+            </div>
+            <div class="scard multileg" data-strat="straddle" data-name="straddle">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,5 22,20 41,5" fill="none" stroke="var(--seq-4)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Straddle</span><br><span class="leg-n">2 legs · ATM call + put</span></span>
+              <span class="tag auto">auto</span>
+            </div>
+            <div class="scard multileg active" data-strat="seagull" data-name="seagull">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,20 13,13 24,13 34,5 41,5" fill="none" stroke="var(--seq-4)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Seagull</span><br><span class="leg-n">3 legs · call spread + short put</span></span>
+              <span class="tag auto">auto</span>
+            </div>
+
+            <div class="ggrp label multileg">Custom multi-leg · signed leg sum</div>
+            <div class="scard multileg" data-strat="callspread" data-name="call spread">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 22,17 34,6 41,6" fill="none" stroke="var(--seq-3)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Call Spread</span><br><span class="leg-n">2 legs · capped upside</span></span>
+              <span class="tag custom">custom</span>
+            </div>
+            <div class="scard multileg" data-strat="putspread" data-name="put spread">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,6 10,6 22,17 41,17" fill="none" stroke="var(--seq-3)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Put Spread</span><br><span class="leg-n">2 legs · capped downside</span></span>
+              <span class="tag custom">custom</span>
+            </div>
+            <div class="scard multileg" data-strat="butterfly" data-name="butterfly">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,18 15,18 22,5 29,18 41,18" fill="none" stroke="var(--seq-3)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Butterfly</span><br><span class="leg-n">4 legs · pinned wings</span></span>
+              <span class="tag custom">custom</span>
+            </div>
+            <div class="scard multileg" data-strat="ironcondor" data-name="iron condor">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,18 11,18 17,7 27,7 33,18 41,18" fill="none" stroke="var(--seq-3)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Iron Condor</span><br><span class="leg-n">4 legs · range-bound</span></span>
+              <span class="tag custom">custom</span>
+            </div>
+            <div class="scard multileg" data-strat="collar" data-name="collar">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,19 13,13 31,13 41,6" fill="none" stroke="var(--seq-3)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Collar</span><br><span class="leg-n">3 legs · fenced range</span></span>
+              <span class="tag custom">custom</span>
+            </div>
+            <div class="scard multileg" data-tpl data-name="calendar spread" data-legs="2">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,16 13,8 22,6 31,8 41,16" fill="none" stroke="var(--seq-3)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Calendar Spread</span><br><span class="leg-n">2 legs · two expiries</span></span>
+              <span class="tag custom">custom</span>
+            </div>
+
+            <div class="ggrp label">Single-leg · every licensed class</div>
+            <div class="scard" data-tpl data-name="vanilla call" data-legs="1">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 22,17 41,4" fill="none" stroke="var(--seq-5)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Vanilla Call</span><br><span class="leg-n">1 leg · GK / genBSM / Black-76</span></span>
+              <span class="tag any">all</span>
+            </div>
+            <div class="scard" data-tpl data-name="vanilla put" data-legs="1">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,4 22,17 41,17" fill="none" stroke="var(--seq-5)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Vanilla Put</span><br><span class="leg-n">1 leg · GK / genBSM / Black-76</span></span>
+              <span class="tag any">all</span>
+            </div>
+            <div class="scard" data-tpl data-name="perpetual option" data-legs="1">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 20,17 41,7" fill="none" stroke="var(--seq-5)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Perpetual Option</span><br><span class="leg-n">1 leg · no expiry (arm 30)</span></span>
+              <span class="tag any">all</span>
+            </div>
+            <div class="scard" data-tpl data-name="listed future option" data-legs="1">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 21,17 41,5" fill="none" stroke="var(--seq-5)" stroke-width="1.6"/></svg>
+              <span><span class="nm">Listed Future Option</span><br><span class="leg-n">1 leg · option on a future (arm 31)</span></span>
+              <span class="tag any">all</span>
+            </div>
+
+            <div class="tplnote" id="tplnote" style="display:none"></div>
+          </div>
+        </aside>
+
+        <!-- ===================== LEG LADDER ===================== -->
+        <section class="panel ladder-panel multileg">
+          <header><span class="headline">Leg ladder</span><span class="muted" style="font-size:11px">editable · dir = leg direction (structural sign)</span></header>
+          <div class="body" style="padding-top:var(--space-3)">
+
+            <div class="ladblk active" data-strat="seagull">
+              <table class="ladder">
+                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td class="ix">1</td><td><span class="dirtog short">Short</span></td><td class="otype">Put</td><td class="n">1.0700 <span class="dim">25ΔP</span></td><td class="n">1.00</td><td class="n">8.42</td><td class="n pos">+0.85</td><td class="n">+0.26</td><td class="n neg">−0.061</td><td class="n">0.031</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">2</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.1000 <span class="dim">20ΔC</span></td><td class="n">1.00</td><td class="n">7.95</td><td class="n neg">−0.80</td><td class="n">+0.19</td><td class="n">+0.058</td><td class="n">0.028</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">3</td><td><span class="dirtog short">Short</span></td><td class="otype">Call</td><td class="n">1.1250 <span class="dim">10ΔC</span></td><td class="n">1.00</td><td class="n">8.20</td><td class="n pos">+0.10</td><td class="n">−0.07</td><td class="n neg">−0.015</td><td class="n">0.008</td><td><span class="rmx">✕</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="ladblk" data-strat="rr">
+              <table class="ladder">
+                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td class="ix">1</td><td><span class="dirtog short">Short</span></td><td class="otype">Put</td><td class="n">1.0700 <span class="dim">25ΔP</span></td><td class="n">1.00</td><td class="n">8.42</td><td class="n pos">+0.80</td><td class="n">+0.25</td><td class="n neg">−0.060</td><td class="n">0.030</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">2</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.1050 <span class="dim">25ΔC</span></td><td class="n">1.00</td><td class="n">8.05</td><td class="n neg">−0.85</td><td class="n">+0.24</td><td class="n">+0.062</td><td class="n">0.031</td><td><span class="rmx">✕</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="ladblk" data-strat="straddle">
+              <table class="ladder">
+                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.0850 <span class="dim">ATM</span></td><td class="n">1.00</td><td class="n">8.00</td><td class="n neg">−0.90</td><td class="n">+0.51</td><td class="n">+0.118</td><td class="n">0.044</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">2</td><td><span class="dirtog long">Long</span></td><td class="otype">Put</td><td class="n">1.0850 <span class="dim">ATM</span></td><td class="n">1.00</td><td class="n">8.00</td><td class="n neg">−0.85</td><td class="n">−0.49</td><td class="n">+0.118</td><td class="n">0.044</td><td><span class="rmx">✕</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="ladblk" data-strat="strangle">
+              <table class="ladder">
+                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Put</td><td class="n">1.0650 <span class="dim">15ΔP</span></td><td class="n">1.00</td><td class="n">8.55</td><td class="n neg">−0.60</td><td class="n">−0.16</td><td class="n">+0.092</td><td class="n">0.030</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">2</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.1050 <span class="dim">20ΔC</span></td><td class="n">1.00</td><td class="n">8.05</td><td class="n neg">−0.65</td><td class="n">+0.18</td><td class="n">+0.096</td><td class="n">0.031</td><td><span class="rmx">✕</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="ladblk" data-strat="callspread">
+              <table class="ladder">
+                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.0900 <span class="dim">20ΔC</span></td><td class="n">1.00</td><td class="n">7.90</td><td class="n neg">−0.95</td><td class="n">+0.22</td><td class="n">+0.061</td><td class="n">0.030</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">2</td><td><span class="dirtog short">Short</span></td><td class="otype">Call</td><td class="n">1.1100 <span class="dim">12ΔC</span></td><td class="n">1.00</td><td class="n">8.10</td><td class="n pos">+0.10</td><td class="n">−0.09</td><td class="n neg">−0.040</td><td class="n">0.018</td><td><span class="rmx">✕</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="ladblk" data-strat="putspread">
+              <table class="ladder">
+                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Put</td><td class="n">1.0800 <span class="dim">30ΔP</span></td><td class="n">1.00</td><td class="n">8.20</td><td class="n neg">−0.98</td><td class="n">−0.30</td><td class="n">+0.064</td><td class="n">0.031</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">2</td><td><span class="dirtog short">Short</span></td><td class="otype">Put</td><td class="n">1.0600 <span class="dim">15ΔP</span></td><td class="n">1.00</td><td class="n">8.60</td><td class="n pos">+0.18</td><td class="n">+0.10</td><td class="n neg">−0.045</td><td class="n">0.020</td><td><span class="rmx">✕</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="ladblk" data-strat="butterfly">
+              <table class="ladder">
+                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.0700 <span class="dim">30ΔC</span></td><td class="n">1.00</td><td class="n">8.05</td><td class="n neg">−1.35</td><td class="n">+0.30</td><td class="n">+0.070</td><td class="n">0.033</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">2</td><td><span class="dirtog short">Short</span></td><td class="otype">Call</td><td class="n">1.0850 <span class="dim">ATM</span></td><td class="n">2.00</td><td class="n">8.00</td><td class="n pos">+1.70</td><td class="n">−1.00</td><td class="n neg">−0.148</td><td class="n">0.088</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">3</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.1000 <span class="dim">22ΔC</span></td><td class="n">1.00</td><td class="n">7.95</td><td class="n neg">−0.80</td><td class="n">+0.19</td><td class="n">+0.058</td><td class="n">0.028</td><td><span class="rmx">✕</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="ladblk" data-strat="ironcondor">
+              <table class="ladder">
+                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Put</td><td class="n">1.0600 <span class="dim">15ΔP</span></td><td class="n">1.00</td><td class="n">8.60</td><td class="n neg">−0.42</td><td class="n">−0.14</td><td class="n">+0.050</td><td class="n">0.022</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">2</td><td><span class="dirtog short">Short</span></td><td class="otype">Put</td><td class="n">1.0750 <span class="dim">25ΔP</span></td><td class="n">1.00</td><td class="n">8.30</td><td class="n pos">+0.78</td><td class="n">+0.24</td><td class="n neg">−0.062</td><td class="n">0.030</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">3</td><td><span class="dirtog short">Short</span></td><td class="otype">Call</td><td class="n">1.1050 <span class="dim">20ΔC</span></td><td class="n">1.00</td><td class="n">8.05</td><td class="n pos">+0.72</td><td class="n">−0.19</td><td class="n neg">−0.058</td><td class="n">0.029</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">4</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.1200 <span class="dim">10ΔC</span></td><td class="n">1.00</td><td class="n">8.25</td><td class="n neg">−0.53</td><td class="n">+0.09</td><td class="n">+0.038</td><td class="n">0.015</td><td><span class="rmx">✕</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="ladblk" data-strat="collar">
+              <table class="ladder">
+                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Put</td><td class="n">1.0700 <span class="dim">25ΔP</span></td><td class="n">1.00</td><td class="n">8.42</td><td class="n neg">−0.82</td><td class="n">−0.26</td><td class="n">+0.061</td><td class="n">0.031</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">2</td><td><span class="dirtog short">Short</span></td><td class="otype">Call</td><td class="n">1.1050 <span class="dim">20ΔC</span></td><td class="n">1.00</td><td class="n">8.05</td><td class="n pos">+0.87</td><td class="n">−0.19</td><td class="n neg">−0.058</td><td class="n">0.029</td><td><span class="rmx">✕</span></td></tr>
+                  <tr><td class="ix">3</td><td><span class="dirtog long">Long</span></td><td class="otype">Spot</td><td class="n dim">—</td><td class="n">1.00</td><td class="n dim">—</td><td class="n dim">0.00</td><td class="n">+1.00</td><td class="n dim">0.000</td><td class="n dim">0.000</td><td><span class="rmx">✕</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="ladfoot">
+              <span class="addleg">＋ add leg</span>
+              <span class="addleg" style="color:var(--text-secondary)">⧉ duplicate structure</span>
+              <span style="flex:1"></span>
+              <span class="muted" style="font-size:11px">ratios scale each leg vs the 10.00mm base notional</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===================== NET-GREEK STRIP ===================== -->
+        <section class="panel netstrip-panel">
+          <header>
+            <span class="headline">Net structure — Greeks &amp; premium</span>
+            <span style="display:flex;gap:6px;align-items:center">
+              <span class="muted" style="font-size:11px">signed leg sum · books as one contract</span>
+              <button class="btn ghost">Open in Price &amp; Model <span class="flowtag live">live</span></button>
+              <button class="btn ghost">Send to RFQ desk <span class="flowtag target">target</span></button>
+            </span>
+          </header>
+          <div class="body">
+            <div class="nsblk active" data-strat="seagull">
+              <div class="netprem"><span class="label">Net premium</span><span class="big pos">+0.15%</span><span class="cd credit">▲ credit · +$15,000 on 10.00mm</span></div>
+              <div class="ngreeks">
+                <div class="g"><div class="k">Δ net</div><div class="v">+0.38</div><div class="sub">+3.8mm</div></div>
+                <div class="g"><div class="k">Γ</div><div class="v">+0.021</div><div class="sub">0.21/%</div></div>
+                <div class="g"><div class="k">Vega</div><div class="v neg">−0.018</div><div class="sub">−$1.8k/v</div></div>
+                <div class="g"><div class="k">Θ</div><div class="v pos">+0.006</div><div class="sub">+$0.6k/d</div></div>
+                <div class="g"><div class="k">Vanna</div><div class="v">+0.004</div><div class="sub">$0.4k</div></div>
+                <div class="g"><div class="k">Volga</div><div class="v">+0.010</div><div class="sub">$1.0k</div></div>
+              </div>
+              <div class="nsright"><span class="state live">✓ valid · arb-free</span><span class="muted" style="font-size:11px">3 legs · net short vega</span></div>
+            </div>
+
+            <div class="nsblk" data-strat="rr">
+              <div class="netprem"><span class="label">Net premium</span><span class="big">−0.05%</span><span class="cd debit">▼ debit · −$5,000 on 10.00mm</span></div>
+              <div class="ngreeks">
+                <div class="g"><div class="k">Δ net</div><div class="v">+0.47</div><div class="sub">+4.7mm</div></div>
+                <div class="g"><div class="k">Γ</div><div class="v">+0.004</div><div class="sub">0.04/%</div></div>
+                <div class="g"><div class="k">Vega</div><div class="v">+0.006</div><div class="sub">+$0.6k/v</div></div>
+                <div class="g"><div class="k">Θ</div><div class="v neg">−0.002</div><div class="sub">−$0.2k/d</div></div>
+                <div class="g"><div class="k">Vanna</div><div class="v">+0.031</div><div class="sub">$3.1k</div></div>
+                <div class="g"><div class="k">Volga</div><div class="v neg">−0.002</div><div class="sub">−$0.2k</div></div>
+              </div>
+              <div class="nsright"><span class="state live">✓ valid · arb-free</span><span class="muted" style="font-size:11px">2 legs · long skew / directional</span></div>
+            </div>
+
+            <div class="nsblk" data-strat="straddle">
+              <div class="netprem"><span class="label">Net premium</span><span class="big neg">−1.75%</span><span class="cd debit">▼ debit · −$175,000 on 10.00mm</span></div>
+              <div class="ngreeks">
+                <div class="g"><div class="k">Δ net</div><div class="v">+0.02</div><div class="sub">+0.2mm</div></div>
+                <div class="g"><div class="k">Γ</div><div class="v pos">+0.088</div><div class="sub">0.88/%</div></div>
+                <div class="g"><div class="k">Vega</div><div class="v pos">+0.236</div><div class="sub">+$23.6k/v</div></div>
+                <div class="g"><div class="k">Θ</div><div class="v neg">−0.042</div><div class="sub">−$4.2k/d</div></div>
+                <div class="g"><div class="k">Vanna</div><div class="v neg">−0.001</div><div class="sub">−$0.1k</div></div>
+                <div class="g"><div class="k">Volga</div><div class="v">+0.031</div><div class="sub">$3.1k</div></div>
+              </div>
+              <div class="nsright"><span class="state live">✓ valid · arb-free</span><span class="muted" style="font-size:11px">2 legs · long vol / delta-neutral</span></div>
+            </div>
+
+            <div class="nsblk" data-strat="strangle">
+              <div class="netprem"><span class="label">Net premium</span><span class="big neg">−1.25%</span><span class="cd debit">▼ debit · −$125,000 on 10.00mm</span></div>
+              <div class="ngreeks">
+                <div class="g"><div class="k">Δ net</div><div class="v">+0.02</div><div class="sub">+0.2mm</div></div>
+                <div class="g"><div class="k">Γ</div><div class="v pos">+0.061</div><div class="sub">0.61/%</div></div>
+                <div class="g"><div class="k">Vega</div><div class="v pos">+0.188</div><div class="sub">+$18.8k/v</div></div>
+                <div class="g"><div class="k">Θ</div><div class="v neg">−0.031</div><div class="sub">−$3.1k/d</div></div>
+                <div class="g"><div class="k">Vanna</div><div class="v">+0.006</div><div class="sub">$0.6k</div></div>
+                <div class="g"><div class="k">Volga</div><div class="v">+0.041</div><div class="sub">$4.1k</div></div>
+              </div>
+              <div class="nsright"><span class="state live">✓ valid · arb-free</span><span class="muted" style="font-size:11px">2 legs · long vol · cheaper wings</span></div>
+            </div>
+
+            <div class="nsblk" data-strat="callspread">
+              <div class="netprem"><span class="label">Net premium</span><span class="big neg">−0.85%</span><span class="cd debit">▼ debit · −$85,000 on 10.00mm</span></div>
+              <div class="ngreeks">
+                <div class="g"><div class="k">Δ net</div><div class="v">+0.31</div><div class="sub">+3.1mm</div></div>
+                <div class="g"><div class="k">Γ</div><div class="v">+0.012</div><div class="sub">0.12/%</div></div>
+                <div class="g"><div class="k">Vega</div><div class="v">+0.021</div><div class="sub">+$2.1k/v</div></div>
+                <div class="g"><div class="k">Θ</div><div class="v neg">−0.003</div><div class="sub">−$0.3k/d</div></div>
+                <div class="g"><div class="k">Vanna</div><div class="v neg">−0.002</div><div class="sub">−$0.2k</div></div>
+                <div class="g"><div class="k">Volga</div><div class="v neg">−0.004</div><div class="sub">−$0.4k</div></div>
+              </div>
+              <div class="nsright"><span class="state live">✓ valid · arb-free</span><span class="muted" style="font-size:11px">2 legs · debit call spread</span></div>
+            </div>
+
+            <div class="nsblk" data-strat="putspread">
+              <div class="netprem"><span class="label">Net premium</span><span class="big neg">−0.80%</span><span class="cd debit">▼ debit · −$80,000 on 10.00mm</span></div>
+              <div class="ngreeks">
+                <div class="g"><div class="k">Δ net</div><div class="v neg">−0.28</div><div class="sub">−2.8mm</div></div>
+                <div class="g"><div class="k">Γ</div><div class="v">+0.011</div><div class="sub">0.11/%</div></div>
+                <div class="g"><div class="k">Vega</div><div class="v">+0.019</div><div class="sub">+$1.9k/v</div></div>
+                <div class="g"><div class="k">Θ</div><div class="v neg">−0.003</div><div class="sub">−$0.3k/d</div></div>
+                <div class="g"><div class="k">Vanna</div><div class="v">+0.006</div><div class="sub">$0.6k</div></div>
+                <div class="g"><div class="k">Volga</div><div class="v neg">−0.003</div><div class="sub">−$0.3k</div></div>
+              </div>
+              <div class="nsright"><span class="state live">✓ valid · arb-free</span><span class="muted" style="font-size:11px">2 legs · debit put spread</span></div>
+            </div>
+
+            <div class="nsblk" data-strat="butterfly">
+              <div class="netprem"><span class="label">Net premium</span><span class="big neg">−0.45%</span><span class="cd debit">▼ debit · −$45,000 on 10.00mm</span></div>
+              <div class="ngreeks">
+                <div class="g"><div class="k">Δ net</div><div class="v">+0.03</div><div class="sub">+0.3mm</div></div>
+                <div class="g"><div class="k">Γ</div><div class="v neg">−0.018</div><div class="sub">−0.18/%</div></div>
+                <div class="g"><div class="k">Vega</div><div class="v neg">−0.024</div><div class="sub">−$2.4k/v</div></div>
+                <div class="g"><div class="k">Θ</div><div class="v pos">+0.004</div><div class="sub">+$0.4k/d</div></div>
+                <div class="g"><div class="k">Vanna</div><div class="v">+0.002</div><div class="sub">$0.2k</div></div>
+                <div class="g"><div class="k">Volga</div><div class="v neg">−0.012</div><div class="sub">−$1.2k</div></div>
+              </div>
+              <div class="nsright"><span class="state live">✓ valid · arb-free</span><span class="muted" style="font-size:11px">4 legs · short vol · pinned wings</span></div>
+            </div>
+
+            <div class="nsblk" data-strat="ironcondor">
+              <div class="netprem"><span class="label">Net premium</span><span class="big pos">+0.55%</span><span class="cd credit">▲ credit · +$55,000 on 10.00mm</span></div>
+              <div class="ngreeks">
+                <div class="g"><div class="k">Δ net</div><div class="v">+0.02</div><div class="sub">+0.2mm</div></div>
+                <div class="g"><div class="k">Γ</div><div class="v neg">−0.031</div><div class="sub">−0.31/%</div></div>
+                <div class="g"><div class="k">Vega</div><div class="v neg">−0.048</div><div class="sub">−$4.8k/v</div></div>
+                <div class="g"><div class="k">Θ</div><div class="v pos">+0.006</div><div class="sub">+$0.6k/d</div></div>
+                <div class="g"><div class="k">Vanna</div><div class="v">+0.003</div><div class="sub">$0.3k</div></div>
+                <div class="g"><div class="k">Volga</div><div class="v neg">−0.018</div><div class="sub">−$1.8k</div></div>
+              </div>
+              <div class="nsright"><span class="state live">✓ valid · arb-free</span><span class="muted" style="font-size:11px">4 legs · net short vega · credit</span></div>
+            </div>
+
+            <div class="nsblk" data-strat="collar">
+              <div class="netprem"><span class="label">Net premium</span><span class="big pos">+0.05%</span><span class="cd credit">▲ credit · +$5,000 on 10.00mm · near zero-cost</span></div>
+              <div class="ngreeks">
+                <div class="g"><div class="k">Δ net</div><div class="v">+0.55</div><div class="sub">+5.5mm</div></div>
+                <div class="g"><div class="k">Γ</div><div class="v">+0.006</div><div class="sub">0.06/%</div></div>
+                <div class="g"><div class="k">Vega</div><div class="v">+0.004</div><div class="sub">+$0.4k/v</div></div>
+                <div class="g"><div class="k">Θ</div><div class="v neg">−0.001</div><div class="sub">−$0.1k/d</div></div>
+                <div class="g"><div class="k">Vanna</div><div class="v">+0.021</div><div class="sub">$2.1k</div></div>
+                <div class="g"><div class="k">Volga</div><div class="v neg">−0.002</div><div class="sub">−$0.2k</div></div>
+              </div>
+              <div class="nsright"><span class="state live">✓ valid · arb-free</span><span class="muted" style="font-size:11px">3 legs · fenced range · directional long</span></div>
+            </div>
+          </div>
+        </section>
+
+      </div><!-- /sgrid -->
+    </div><!-- /sworkspace -->
+  </main>
+
+  <!-- ============ CONTEXT RAIL ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (ops only) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  const ws = document.querySelector('.sworkspace');
+  const titleMap = {
+    seagull:'Seagull', rr:'Risk Reversal', straddle:'Straddle', strangle:'Strangle',
+    callspread:'Call Spread', putspread:'Put Spread', butterfly:'Butterfly',
+    ironcondor:'Iron Condor', collar:'Collar'
+  };
+  // class code → full name so the entitlement gate never reads a code where prose expects a name
+  const classNames = { FX:'FX', Metal:'Metal', Rates:'Rates', Eq:'Equity', Cmdty:'Commodity', Crypto:'Crypto' };
+
+  // switch the working structure across payoff / auto-name / ladder / net-strip
+  function setStruct(name){
+    document.querySelectorAll('[data-strat]').forEach(el=>{
+      el.classList.toggle('active', el.getAttribute('data-strat') === name);
+    });
+    document.querySelectorAll('.scard[data-tpl]').forEach(c=>c.classList.remove('active'));
+    document.getElementById('ptitle').textContent = 'Payoff · ' + titleMap[name];
+    document.getElementById('tplnote').style.display = 'none';
+  }
+
+  // auto-named AND custom multi-leg families both re-render the canvas + ladder + net-strip
+  document.querySelectorAll('.scard[data-strat]').forEach(c=>{
+    c.addEventListener('click', ()=>{ if(ws.classList.contains('gated')) return; setStruct(c.getAttribute('data-strat')); });
+  });
+
+  // calendar (two-expiry) + single-leg templates: honest note only — no false single-expiry canvas
+  document.querySelectorAll('.scard[data-tpl]').forEach(c=>{
+    c.addEventListener('click', ()=>{
+      if(ws.classList.contains('gated') && c.classList.contains('multileg')) return;
+      document.querySelectorAll('.scard[data-tpl]').forEach(x=>x.classList.remove('active'));
+      c.classList.add('active');
+      const tn = document.getElementById('tplnote');
+      tn.style.display = 'block';
+      const single = !c.classList.contains('multileg');
+      tn.innerHTML = single
+        ? '<b>' + c.getAttribute('data-name') + '</b> · single-leg · priced directly by the class engine. Load replaces the ladder with one leg; single-leg vanilla / perpetual / listed-future price on every licensed class.'
+        : '<b>' + c.getAttribute('data-name') + '</b> · ' + c.getAttribute('data-legs') + '-leg custom across two expiries — priced as a <b>signed leg sum</b>. A single-expiry payoff diagram can\'t represent a time spread, so loading builds its legs into the ladder while the live preview stays on the single-expiry structures.';
+    });
+  });
+
+  // payoff overlay toggles
+  document.querySelectorAll('.ovtog[data-k]').forEach(t=>{
+    t.addEventListener('click', ()=>{
+      t.classList.toggle('on');
+      ws.setAttribute('data-' + t.getAttribute('data-k'), t.classList.contains('on') ? 'on' : 'off');
+    });
+  });
+
+  // asset-class entitlement gate — Eq/Cmdty/Crypto are not licensed for this desk (Enforce)
+  document.querySelectorAll('.classseg button').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      document.querySelectorAll('.classseg button').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');
+      ws.classList.toggle('gated', b.getAttribute('data-full') !== '1');
+      const code = b.textContent.replace('⊘','').trim();
+      const full = classNames[code] || code;
+      document.getElementById('gate-class').textContent = full;
+      document.getElementById('gate-class-mask').textContent = full;
+    });
+  });
+
+  // leg direction toggle — structural sign of the leg (not an execution affordance)
+  document.querySelectorAll('.dirtog').forEach(d=>{
+    d.addEventListener('click', ()=>{
+      const short = d.classList.toggle('short');
+      d.classList.toggle('long', !short);
+      d.textContent = short ? 'Short' : 'Long';
+    });
+  });
+
+  // structure-library search
+  const gs = document.getElementById('gsearch');
+  gs.addEventListener('input', e=>{
+    const q = e.target.value.toLowerCase();
+    document.querySelectorAll('.scard').forEach(c=>{
+      c.style.display = (c.getAttribute('data-name')||'').includes(q) ? '' : 'none';
+    });
+  });
+})();
+</script>
+</body>
+</html>
