@@ -13707,5 +13707,159 @@
    "github.com-soarsa-celnet.crates.celnet-replog.src.election.RaftNode.propose"
   ],
   "text": "INVARIANT (ADR-0015 §2.2/§4.3(3) — NOT an operator option): the regenerable market-data plane (surfaces/curves) is NEVER on the quorum-committed Raft log. Every shard already derives its own arb-free surface + curves locally and is therefore always available even with no peer (celnet-integration::divergence_report, divergence.rs:208, is per-node) — regenerable DERIVED data with no durable truth to diverge from — so it rides a light, monotonic SurfaceEpoch{epoch,curves,smile-params} broadcast applied to each node's arc-swap snapshot (a flat pre-interpolated slice; no Arc<Curve> in MarketState — the ADR-0016 embargo), NEVER through RaftNode::propose. The Raft log carries ONLY must-order state: the versioned membership changelog (always — replacing 'versioned+gossiped' with a log-derived map, single source of truth, the commit index IS the map version) and Strong-book writes. Folding surfaces into the quorum log would put a ms-scale commit on the market-data publish path and blow the surface publish→snapshot p99≤150µs budget — which is exactly why the decoupling is an invariant, not a choice. This holds even for a Strong book: only its state commit takes the quorum path; its pricing/greeks/streaming/surface distribution stay µs. Every quote/tick is tagged with its surface epoch (the deterministic-replay key). The 'two sources of truth' objection that keeps membership on the log does NOT apply to surfaces (no durable truth to diverge from)."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.book_from_attribution",
+   "github.com-soarsa-celnet.crates.celnet-server.src.spread.SpreadModel"
+  ],
+  "text": "Celnet's single sell-side front-end (GUI+Excel redesign, docs/gui-redesign/) is designed as persona lenses (quant/trader/sales-trader/risk-manager/desk-head) over ONE market-making loop: feeds -> pricing/model -> contribution(LP-make) <=> RFQ/LP-take + sales-trader -> books/positions -> risk/XVA -> ops, with risk feeding back into contribution skew. The streaming LP-maker leg is LIVE end-to-end (price_instrument -> SpreadModel spread -> PositionStore::book_from_attribution books the fill the risk cube aggregates); the feeds->pricing, risk->skew, unified-book and XVA legs are TARGET (named gaps). (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_cross_asset",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument"
+  ],
+  "text": "Mockup 00-shell (Price & Model): the pricing workbench — live-editable ticket, model choice/calibration, $-Greeks, payoff, two-way contributed price — realizes celnet-server price_instrument / price_cross_asset. Serves the quant + trader lens across FX/metal/equity/commodity/crypto. State: LIVE (pricing workbench wired via all clients). (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.surface_book.marked_smile",
+   "github.com-soarsa-celnet.crates.celnet-surface.src.calibrate.build_model_smile"
+  ],
+  "text": "Mockup 01-vol-surface: mark -> arb-gate -> version -> publish with 5-smile calibration and 3D surface / smile / term slices realizes celnet-surface build_model_smile plus the versioned SurfaceBook publish path (surface_book::marked_smile). Serves the quant lens (FX/metal). State: LIVE (the publish-gate is the reuse template for a symmetric contribution publish control). (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument"
+  ],
+  "text": "Mockup 02-structure: the registry-driven multi-leg structure builder (combined payoff, leg ladder, net-Greek strip) realizes the ProductEngine registry celnet-server engines::dispatch behind price_instrument; exotics are class-gated (offered only where licensed + priceable). Serves the structurer/trader lens (FX/metal full exotics). State: LIVE. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-integration.src.egress.EgressGovernor",
+   "github.com-soarsa-celnet.crates.celnet-server.src.spread.SpreadModel"
+  ],
+  "text": "Mockup 03-contribute: the outbound contribution/distribution console — per-client-tier spread/skew, publish on/off, client analytics. The pricing + distribution engine is LIVE (SpreadModel prices streaming/RFQ/FIX alike; EgressGovernor conflates the egress); the administrable tiering/skew console + per-instrument publish-on/off is TARGET (no admin surface exists today). Serves the trader/market-maker + desk-head lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.desk.mod.RfqDeskEdge.accept_desk_quote",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.quote.QuoteEdge.request_multi_dealer_quote"
+  ],
+  "text": "Mockup 04-rfq-desk: sales-trader inbound client-RFQ maker response (RfqDeskEdge::accept_desk_quote) and the LP-take multi-dealer aggregation/hedge panel (MultiDealerEngine + QuoteEdge::request_multi_dealer_quote) are LIVE; AUTO-QUOTE of inbound RFQ is TARGET, and the LP-take hedge-fill -> book leg is a GAP (accept_quote writes an ephemeral Execution, never a position store). Serves the sales-trader + trader lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-integration.src.aggregate.blend",
+   "github.com-soarsa-celnet.crates.celnet-integration.src.divergence.divergence_report"
+  ],
+  "text": "Mockup 05-feed-manage: the multi-source inbound feed console (source overlay, divergence band, per-source freshness health, symbology/compositing) realizes celnet-integration blend + divergence_report. State: TARGET — the blend/divergence math is built but has ZERO runtime callers (unwired); live ticks today are a synthetic random walk and surface marks are manual. Serves the feed-operator lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.cube.Cube.firm_aggregate",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.aggregate.numeraire_vega_ladder",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.mod.RiskEdge.drill_risk"
+  ],
+  "text": "Mockup 06-risk-scenario: the cross-asset risk cube (additive roll-up, VaR/ES/FRTB, vega ladder, drill-through, spot-vol scenario) realizes celnet-risk-cube Cube::firm_aggregate plus the server risk edge (numeraire_vega_ladder, RiskEdge::drill_risk). Serves the risk-manager + desk-head lens at IB scale. State: LIVE (single-node; cross-shard transport DEFERRED). (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.cva.compute_xva"
+  ],
+  "text": "Mockup 07-xva: the EE/EPE/PFE exposure fan + CVA/DVA/FVA stack + netting-set drill realizes celnet-xva compute_xva. State: TARGET — compute_xva is oracle-validated but has ZERO non-test callers (no proto message / handle_unary arm); it is the highest-value surface gap (coordinates with the D-xva cargo lane). Serves the risk-manager lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.rates_book.RatesPositionStore",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.book_from_attribution"
+  ],
+  "text": "Mockup 08-books-positions: one virtualized cross-asset blotter over the Firm->Desk->Book tree with P&L attribution. The FX PositionStore (book_from_attribution) and the rates RatesPositionStore are each LIVE but are DISJOINT types with no unifying view/trait; the unified cross-asset 'one net book' is TARGET. Serves every lens (the Desk/Book scoping spine). (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.surface.arb_report"
+  ],
+  "text": "Mockup 09-reporting: the valuation/risk/activity/regulatory report builder is GREENFIELD — no ReportingService exists. celnet-server surface::arb_report, the FIX execution report, and the celnet-cli format_report pretty-printers are NOT a reporting service. State: TARGET (design flags a new backend). Serves the desk-head + risk-manager + ops lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-entitlements.src.capability.Action",
+   "github.com-soarsa-celnet.crates.celnet-entitlements.src.capability.AssetClass",
+   "github.com-soarsa-celnet.crates.celnet-entitlements.src.capability.deny_wins_over_grant"
+  ],
+  "text": "Mockup 10-admin-license: the capability matrix (Action x AssetClass x Desk, deny-wins) + per-asset-class license tiers + persona presets realizes the celnet-entitlements capability kernel (deny_wins_over_grant over the Action and AssetClass axes). The per-class licensing primitive is engine-enforced (present/gated/upsell). Serves the admin/desk-head lens. State: LIVE. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-observability.src.channel.telemetry_channel",
+   "github.com-soarsa-celnet.crates.celnet-server.src.lib.Edge.attach_fix_acceptor"
+  ],
+  "text": "Mockup 11-ops-connectivity: FIX connectivity (acceptor/session CRUD + monitor via Edge::attach_fix_acceptor) is LIVE; the latency p50/p99/p99.9 histograms + stream/session stats are instrumented server-side (celnet-observability telemetry_channel) but have no operator dashboard surface -> the ops dashboard is TARGET; Raft/HA (celnet-replog) is DEFERRED. Serves the ops lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-plugin-host.src.registry.ModelRegistry",
+   "github.com-soarsa-celnet.crates.celnet-plugin-host.src.wasm.sandbox_config"
+  ],
+  "text": "Mockup 12-models-plugins: the model registry + calibration diagnostics + plugin sandbox (Tier-0 native + Tier-2 wasmi) view. The plugin host is LIVE-wired (celnet-plugin-host ModelRegistry + wasm sandbox_config on the dispatch path); the install/list/version/retire model-management UX is NO-SURFACE -> TARGET. Serves the quant + admin lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.gui.src.app.Shell.openPalette"
+  ],
+  "text": "Mockup 13-command-palette: the Cmd-K entity x verb command palette is the primary navigation grammar (glass overlay) of the redesigned IA. The gui Shell has a palette scaffold (Shell.openPalette); the full entity x verb + scope-bus + saved-perspective grammar that replaces the 15 hard-mounted workspaces is TARGET. Serves every persona lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rates.src.bootstrap.bootstrap_ois",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve"
+  ],
+  "text": "Mockup 14-curve-workbench: the FI curve construction workbench (par-pillar bootstrap, zero/fwd/DF curves, interpolation, key-rate Jacobian, publish gate) realizes celnet-rates bootstrap_ois over the Curve term-structure. State: OIS bootstrap + curve evaluation LIVE; the full multi-curve suite (SOFR projection, publish gate, key-rate Jacobian UI) is TARGET. FI is a peer asset class (ADR-0010). Serves the quant/rates lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rates.src.risk.ladder",
+   "github.com-soarsa-celnet.crates.celnet-server.src.rates_pricing.price_rates"
+  ],
+  "text": "Mockup 15-rates-ticket: the rates-instrument ticket (PV/DV01, key-rate ladder, cashflow schedule, RFR legs) realizes celnet-server rates_pricing::price_rates plus the celnet-rates key-rate ladder. State: FRA/IRS/OIS/bond PV + key-rate DV01 LIVE; the full rates ticket (STIR futures, rates quoting/booking breadth) is TARGET. Serves the trader/rates lens. (ADR-0013)"
  }
 ]
