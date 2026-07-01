@@ -108,7 +108,7 @@ a { color: var(--accent); text-decoration: none; }
 
 /* --- app shell grid --- */
 .app { display: grid; height: 100vh;
-  grid-template-columns: 300px 1fr 340px; grid-template-rows: 52px 1fr 28px;
+  grid-template-columns: 232px 1fr 320px; grid-template-rows: 52px 1fr 28px;
   grid-template-areas: "top top top" "nav main ctx" "status status status"; }
 .topbar { grid-area: top; }
 .nav { grid-area: nav; } .main { grid-area: main; } .ctx { grid-area: ctx; }
@@ -235,3 +235,35 @@ a { color: var(--accent); text-decoration: none; }
 .axeline { display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-3); align-items: center; padding: var(--space-2) 0; }
 .axeline .bar { height: 6px; border-radius: var(--r-full); background: var(--brand-soft); position: relative; }
 .axeline .bar > i { position: absolute; inset: 0 auto 0 0; background: var(--brand); border-radius: var(--r-full); display: block; }
+
+/* === sell-side shell additions === */
+/* capability rail (left nav) */
+.rail { grid-area: nav; background: var(--bg-inset); border-right: var(--hairline); padding: var(--space-4) var(--space-3); overflow-y: auto; }
+.rail .grp { margin: var(--space-5) var(--space-2) var(--space-2); }
+.rail a { display: grid; grid-template-columns: 18px 1fr auto; gap: var(--space-3); align-items: center; height: 32px; padding: 0 var(--space-3); border-radius: var(--r-sm); color: var(--text-secondary); cursor: pointer; font-size: var(--type-callout); }
+.rail a:hover { background: oklch(1 0 0 / 0.04); color: var(--text-primary); }
+.rail a.on { background: var(--accent-soft); color: var(--text-primary); box-shadow: inset 2px 0 0 var(--accent); font-weight: 600; }
+.rail a.gate { opacity: 0.5; }
+.rail a .ic { text-align: center; opacity: 0.85; font-size: 13px; }
+.rail .new { font-size: 8px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--brand); font-weight: 700; }
+.rail .lock { font-size: 11px; color: var(--text-tertiary); }
+
+/* desk/book scope selector (chrome) */
+.scope { display: inline-flex; align-items: center; gap: var(--space-2); height: 30px; padding: 0 var(--space-4); border-radius: var(--r-sm); background: oklch(1 0 0 / 0.05); border: var(--hairline); font-size: var(--type-callout); white-space: nowrap; }
+.scope b { color: var(--text-primary); } .scope .s { color: var(--text-tertiary); }
+.scope .car { color: var(--text-tertiary); margin-left: 2px; }
+
+/* license badges */
+.lic { display: inline-flex; gap: 3px; }
+.lic .t { font-size: var(--type-micro); text-transform: uppercase; letter-spacing: 0.03em; padding: 2px 6px; border-radius: var(--r-sm); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.lic .t.off { background: oklch(1 0 0 / 0.04); color: var(--text-tertiary); }
+
+/* model-hero row */
+.model { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-4) var(--space-5); border-radius: var(--r-md); background: var(--bg-inset); border: var(--hairline); }
+.model .sel { font-weight: 600; } .model .meta { color: var(--text-tertiary); font-size: var(--type-caption); }
+.model .ok { color: var(--bid); }
+
+/* contributable price (sell-side, not buy/sell) */
+.underlier-btn { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: var(--r-sm); background: oklch(1 0 0 / 0.05); border: var(--hairline); cursor: pointer; }
+.underlier-btn .tk { font-family: var(--font-mono); color: var(--text-tertiary); font-size: var(--type-caption); }
+.health .dot { margin-right: 6px; }

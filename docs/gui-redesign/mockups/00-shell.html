@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Celnet — Unified Cross-Asset Shell (mockup 00)</title>
+<title>Celnet — Sell-Side Shell (mockup 00, v2)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Anaheim&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="celer.css" />
@@ -11,77 +11,78 @@
 <body>
 <div class="app">
 
-  <!-- ============ TOP COMMAND BAR (chrome) ============ -->
+  <!-- ============ TOP COMMAND BAR ============ -->
   <header class="topbar">
     <div class="brandlockup">
       <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
       <span class="wm">Celnet</span>
     </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
     <div class="cmd">
       <span class="glyph num">⌘K</span>
-      <input placeholder="Price, structure, RFQ, risk, XVA…  or jump to  EURUSD · BTC-perp · XAUUSD · SOFR 5Y" />
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
     </div>
-    <span class="pill"><span class="dot live"></span> LIVE · 3 venues</span>
-    <span class="pill num">p50 42µs · p99 180µs</span>
-    <span class="chip enforce">Enforce</span>
-    <span class="pill">A. Trader · Vol Desk</span>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off">Eq</span><span class="t off">Cmdty</span><span class="t off">Crypto</span></span>
+    <span class="pill"><span class="dot live"></span> feeds ok · p50 42µs · p99 180µs</span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
   </header>
 
-  <!-- ============ UNIVERSAL UNDERLIER PICKER (entity spine) ============ -->
-  <nav class="nav" aria-label="Universal underlier picker">
-    <div class="seg" role="tablist" aria-label="Asset class filter">
-      <button class="on">All</button><button>FX</button><button>Crypto</button>
-      <button>Equity</button><button>Cmdty</button><button>Rates</button>
-    </div>
-    <input class="search" placeholder="Search any underlier…" />
-
-    <div class="grouphdr"><span class="label">FX</span><span class="chip axe">4 axes</span></div>
-    <div class="uline sel"><div><div class="sym">EUR/USD</div><div class="cls">FX · spot</div></div><div class="px num">1.08423</div><span class="chip axe" title="dealer axe live">AXE</span></div>
-    <div class="uline"><div><div class="sym">USD/JPY</div><div class="cls">FX · spot</div></div><div class="px num">156.312</div><span></span></div>
-    <div class="uline"><div><div class="sym">GBP/USD</div><div class="cls">FX · spot</div></div><div class="px num">1.26985</div><span class="chip axe">AXE</span></div>
-
-    <div class="grouphdr"><span class="label">Crypto</span><span class="chip axe">2 axes</span></div>
-    <div class="uline"><div><div class="sym">BTC-PERP</div><div class="cls">Crypto · inverse</div></div><div class="px num">67,412</div><span class="chip axe">AXE</span></div>
-    <div class="uline"><div><div class="sym">ETH · 28JUN</div><div class="cls">Crypto · linear</div></div><div class="px num">3,540.8</div><span></span></div>
-
-    <div class="grouphdr"><span class="label">Equity</span></div>
-    <div class="uline"><div><div class="sym">AAPL</div><div class="cls">Equity · div-yield</div></div><div class="px num">229.40</div><span></span></div>
-    <div class="uline"><div><div class="sym">SX5E</div><div class="cls">Equity · index</div></div><div class="px num">4,982.1</div><span></span></div>
-
-    <div class="grouphdr"><span class="label">Commodity</span></div>
-    <div class="uline"><div><div class="sym">XAU/USD</div><div class="cls">Cmdty · Black-76</div></div><div class="px num">2,398.5</div><span class="chip axe">AXE</span></div>
-
-    <div class="grouphdr"><span class="label">Rates / FI</span></div>
-    <div class="uline"><div><div class="sym">SOFR 5Y</div><div class="cls">Rates · OIS swap</div></div><div class="px num">3.921%</div><span></span></div>
-    <div class="uline"><div><div class="sym">UST 10Y</div><div class="cls">Rates · bond</div></div><div class="px num">4.284%</div><span></span></div>
+  <!-- ============ CAPABILITY RAIL ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a class="on"><span class="ic">◈</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">⋔</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◷</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">⇉</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">⇌</span><span>RFQ Desk</span><span></span></a>
+    <a><span class="ic">≡</span><span>Feed Manage</span><span class="new">new</span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">⊞</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">∮</span><span>XVA</span><span class="new">new</span></a>
+    <a><span class="ic">▤</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">▦</span><span>Reporting</span><span class="new">new</span></a>
+    <a><span class="ic">⚷</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">❈</span><span>Ops &amp; Connectivity</span><span class="new">new</span></a>
+    <a class="gate"><span class="ic">⚙</span><span>Models &amp; Plugins</span><span class="lock">licence</span></a>
   </nav>
 
-  <!-- ============ MAIN — DRILL-DOWN SPINE + ONE TICKET ============ -->
+  <!-- ============ MAIN — PRICE & MODEL WORKBENCH ============ -->
   <main class="main">
-    <div class="spine" aria-label="Workflow spine">
-      <span class="step">Underlier</span><span class="sep">▸</span>
-      <span class="step">Ticket</span><span class="sep">▸</span>
-      <span class="step">Structure</span><span class="sep">▸</span>
-      <span class="step on">Price</span><span class="sep">▸</span>
-      <span class="step">RFQ · Axes</span><span class="sep">▸</span>
-      <span class="step">Risk · XVA</span><span class="sep">▸</span>
-      <span class="step">Blotter</span>
+    <div class="spine" aria-label="Context">
+      <span class="step on">Price &amp; Model</span><span class="sep">·</span>
+      <span class="underlier-btn" title="Raw vendor ticker: EURUSD (EBS) — human-readable everywhere">EUR/USD <span class="tk">spot</span> <span class="car">▾</span></span>
+      <span class="muted">European Call · 1M (28 Jul) · 25Δ · 10.00mm EUR · premium USD</span>
+    </div>
+
+    <!-- model hero -->
+    <div class="model">
+      <span class="label" style="margin:0">Model</span>
+      <span class="sel">Local-Stoch-Vol <span class="car">▾</span></span>
+      <span class="meta">calibrated 2m ago · particle + Heston seed · RMSE <span class="num">0.03v</span> <span class="ok">✓ arb-free</span></span>
+      <span style="flex:1"></span>
+      <button class="btn">Recalibrate</button>
+      <button class="btn ghost">Diff vs market ◷</button>
     </div>
 
     <div class="cols c2">
-      <!-- Ticket / price -->
+      <!-- contributed price -->
       <section class="panel">
         <header>
-          <div><span class="headline">EUR/USD</span> <span class="muted">European Call · 1M · 25Δ · 1.0000mm EUR</span></div>
-          <span class="chip acc">FX · vanilla</span>
+          <span class="headline">Your contributed price</span>
+          <span class="chip acc">risk-based spread</span>
         </header>
         <div class="body">
           <div class="quote2">
-            <div class="q buy flash"><div class="side">You buy · premium</div><div class="val">0.00412</div><div class="dim num">USD pips · 41.2 / 1mm</div></div>
-            <div class="q sell"><div class="side">You sell · premium</div><div class="val">0.00418</div><div class="dim num">USD pips · 41.8 / 1mm</div></div>
+            <div class="q buy"><div class="side">Your bid</div><div class="val">7.94</div><div class="dim num">vol · 0.00408 prem</div></div>
+            <div class="q sell"><div class="side">Your offer</div><div class="val">8.18</div><div class="dim num">vol · 0.00421 prem</div></div>
           </div>
+          <div class="kv"><span class="k">Screen mid</span><span class="v num">8.06v</span></div>
+          <div class="kv"><span class="k">½-spread</span><span class="v num">0.12v <span class="dim">floor + vega + gamma charge</span></span></div>
+          <div class="kv"><span class="k">Skew applied · why</span><span class="v num">+0.03v <span class="dim">inventory</span> · +0.01v <span class="dim">funding</span></span></div>
 
-          <div style="margin:16px 0 8px" class="label">Greeks — class-appropriate</div>
+          <div style="margin:16px 0 8px" class="label">Greeks · class-appropriate</div>
           <div class="greeks">
             <div class="g"><div class="k">Δ spot</div><div class="v">0.251</div></div>
             <div class="g"><div class="k">Γ</div><div class="v">0.043</div></div>
@@ -92,77 +93,77 @@
             <div class="g"><div class="k">ρ for</div><div class="v neg">−0.058</div></div>
           </div>
 
-          <svg class="payoff" viewBox="0 0 400 120" preserveAspectRatio="none" style="margin-top:14px" aria-label="Payoff at expiry">
-            <line class="axis" x1="0" y1="90" x2="400" y2="90" /><line class="zero" x1="0" y1="70" x2="400" y2="70" />
-            <path class="curve" d="M0,70 L210,70 L400,10" />
+          <svg class="payoff" viewBox="0 0 400 110" preserveAspectRatio="none" style="margin-top:14px" aria-label="Payoff at expiry">
+            <line class="axis" x1="0" y1="82" x2="400" y2="82" /><line class="zero" x1="0" y1="64" x2="400" y2="64" />
+            <path class="curve" d="M0,64 L210,64 L400,8" />
           </svg>
-          <div style="display:flex; gap:8px; margin-top:14px">
-            <button class="btn buy">Buy</button><button class="btn sell">Sell</button>
-            <button class="btn">Add leg</button><button class="btn ghost">Send to RFQ · Axes →</button>
+          <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap">
+            <button class="btn primary">Contribute ▸ Tier 1</button>
+            <button class="btn">Publish to stream</button>
+            <button class="btn ghost">Send to RFQ desk</button>
+            <button class="btn ghost">Add to structure</button>
           </div>
         </div>
       </section>
 
-      <!-- Axes & multi-dealer teaser -->
+      <!-- vol surface signature + provenance -->
       <section class="panel">
-        <header><span class="headline">Axes &amp; multi-dealer</span><span class="chip brand">4 dealers axed</span></header>
+        <header><span class="headline">Vol surface · EUR/USD</span><span class="chip brand">v128 · live diff</span></header>
         <div class="body">
-          <p class="muted" style="margin-top:0; font-size:12px">Live dealer axes on EUR/USD 1M vol — inventory-aware skew, ranked. The same board spans every asset class.</p>
-          <div class="label" style="margin-bottom:6px">Execution protocol · same order, chosen per size/sensitivity</div>
-          <div class="seg" style="margin-bottom:12px">
-            <button class="on">Firm CLOB · no last-look</button><button>Indicative axe</button><button>Analytical RFQ</button>
-          </div>
-          <div class="axeline"><span class="chip brand">JPM</span><span class="bar"><i style="width:82%"></i></span><span class="num bid">+0.18v <span class="dim">firm</span></span></div>
-          <div class="axeline"><span class="chip brand">GS</span><span class="bar"><i style="width:64%"></i></span><span class="num bid">+0.12v <span class="dim">firm</span></span></div>
-          <div class="axeline"><span class="chip brand">CITI</span><span class="bar"><i style="width:40%"></i></span><span class="num offer">−0.07v <span class="dim">indic</span></span></div>
-          <div class="axeline"><span class="chip brand">UBS</span><span class="bar"><i style="width:22%"></i></span><span class="num offer">−0.11v <span class="dim">indic</span></span></div>
-          <button class="btn primary" style="margin-top:14px; width:100%">Lift best firm axe · JPM 7.94v</button>
-          <div class="kv"><span class="k">Best firm axe</span><span class="v bid">7.94v · JPM · no last-look</span></div>
-          <div class="kv"><span class="k">Screen mid</span><span class="v">8.06v</span></div>
-          <div class="kv"><span class="k">LP rank</span><span class="v dim">live + historic axe reliability</span></div>
+          <p class="muted" style="margin-top:0; font-size:12px">Marked surface pins pricing, RFQ, and the outbound stream. Live diff vs market; per-node provenance on hover.</p>
+          <table class="grid">
+            <thead><tr><th>Tenor</th><th>ATM</th><th>25Δ RR</th><th>25Δ BF</th><th>vs mkt</th></tr></thead>
+            <tbody>
+              <tr><td>1W</td><td class="n">7.42</td><td class="n neg">−0.35</td><td class="n">0.18</td><td class="n pos">+0.01</td></tr>
+              <tr><td>1M</td><td class="n">8.06</td><td class="n neg">−0.42</td><td class="n">0.21</td><td class="n">0.00</td></tr>
+              <tr><td>3M</td><td class="n">8.61</td><td class="n neg">−0.55</td><td class="n">0.27</td><td class="n neg">−0.02</td></tr>
+              <tr><td>1Y</td><td class="n">9.30</td><td class="n neg">−0.71</td><td class="n">0.39</td><td class="n pos">+0.03</td></tr>
+            </tbody>
+          </table>
+          <div class="kv"><span class="k">Model</span><span class="v">eSSVI · arb-gated</span></div>
+          <div class="kv"><span class="k">Status</span><span class="v"><span class="rag g"></span>published · <span class="dim">no unmarked edits</span></span></div>
+          <button class="btn" style="margin-top:12px; width:100%">Open surface · mark ▸ publish</button>
         </div>
       </section>
     </div>
   </main>
 
-  <!-- ============ CONTEXT RAIL — cross-asset blotter + risk/XVA ============ -->
-  <aside class="ctx" aria-label="Cross-asset context">
+  <!-- ============ CONTEXT RAIL — scope-aware sell-side ============ -->
+  <aside class="ctx" aria-label="Desk context">
     <section>
-      <div class="grouphdr"><span class="label">Cross-asset blotter</span><a>open →</a></div>
-      <table class="grid">
-        <thead><tr><th>Instrument</th><th>Class</th><th>P&amp;L</th></tr></thead>
-        <tbody>
-          <tr><td>EURUSD 1M call</td><td class="dim">FX</td><td class="n pos">+42.1k</td></tr>
-          <tr><td>BTC-perp put</td><td class="dim">Crypto</td><td class="n neg">−18.3k</td></tr>
-          <tr><td>XAU 3M RR</td><td class="dim">Cmdty</td><td class="n pos">+7.9k</td></tr>
-          <tr><td>SOFR 5Y payer</td><td class="dim">Rates</td><td class="n pos">+61.4k</td></tr>
-        </tbody>
-      </table>
+      <div class="grouphdr"><span class="label">Contribution</span><span class="pill"><span class="dot live"></span> live</span></div>
+      <div class="kv"><span class="k">Streaming</span><span class="v num">42 instruments</span></div>
+      <div class="kv"><span class="k">Audience</span><span class="v num">3 tiers · 128 clients</span></div>
+      <div class="kv"><span class="k">Spread profile</span><span class="v">Tier-1 tight</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
     </section>
 
     <section>
-      <div class="grouphdr"><span class="label">Portfolio risk · one book</span></div>
-      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v">+1.28mm</span></div>
-      <div class="kv"><span class="k">Vega (/vol)</span><span class="v">+184k</span></div>
-      <div class="kv"><span class="k">1d VaR 99%</span><span class="v neg">−312k</span></div>
+      <div class="grouphdr"><span class="label">Feed health</span><span class="pill"><span class="dot live"></span> composite fresh</span></div>
+      <div class="kv"><span class="k">EBS</span><span class="v num">12ms <span class="pos">●</span></span></div>
+      <div class="kv"><span class="k">Reuters</span><span class="v num">40ms <span class="pos">●</span></span></div>
+      <div class="kv"><span class="k">Vendor-C</span><span class="v num">stale 4s <span class="dim">●</span></span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">within band</span></span></div>
     </section>
 
     <section>
-      <div class="grouphdr"><span class="label">Portfolio XVA</span><span class="chip acc">new</span></div>
-      <div class="kv"><span class="k">CVA</span><span class="v neg">−86.2k</span></div>
-      <div class="kv"><span class="k">DVA</span><span class="v pos">+41.0k</span></div>
-      <div class="kv"><span class="k">FVA</span><span class="v neg">−22.7k</span></div>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
     </section>
   </aside>
 
   <!-- ============ STATUS BAR ============ -->
   <footer class="statusbar">
-    <span class="num">Perspective: Vol Desk — Cross-Asset</span>
-    <span class="dim">·</span><span>Entitlements: <b>Enforce</b> (deny-wins)</span>
-    <span class="dim">·</span><span class="num">12 dealer axes live</span>
+    <span class="num">Perspective: FX Vol Desk</span>
+    <span class="dim">·</span><span>Entitlements <b>Enforce</b></span>
+    <span class="dim">·</span><span class="num">Licensed: FX · Metals · Rates</span>
     <span style="flex:1"></span>
-    <span class="num">stream ▲ 8,412/s</span><span class="dim">·</span>
-    <span class="num">build celnet-gui · gui/experience-redesign</span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span>
   </footer>
 
 </div>
