@@ -13,9 +13,9 @@ pub mod math;
 
 mod compare;
 pub use carry::{
-    CarryGreeks, CarryInputs, CarryPriceError, CarryPricer, ExoticLegPricer,
-    carry_greeks_to_greeks, fx_carry_greeks, fx_vanilla_inputs, gbsm_carry_greeks,
-    gbsm_carry_price,
+    CarryGreeks, CarryInputs, CarryPriceError, CarryPricer, CurveCarry, ExoticLegPricer,
+    carry_greeks_to_greeks, curve_carry_price, fx_carry_greeks, fx_vanilla_inputs,
+    gbsm_carry_greeks, gbsm_carry_price,
 };
 pub use compare::{DEFAULT_ABS, DEFAULT_REL, is_close};
 
