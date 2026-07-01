@@ -21,6 +21,8 @@ new capability**:
 | Plugin dispatch — tiered native + wasmi host | ❌ only the vanilla-FX arm | `engines.rs:1442` |
 | Generated wire codec — descriptor manifest (G INC1) | ❌ field codec still hand-written | 9,293 hand lines vs 4,484-line proto |
 | FI risk / dealer-desk / notifications | ❌ GUI-only, no SDK/CLI | `celnet-client` gaps |
+| **Pre-trade limit engine** (`celnet-limits`) | ❌ **display-only, not on the execution path** | `pre_trade_check` 0 non-test callers; `clicktrade` no `celnet-limits` import — a hard-limit-blown lift still books |
+| FIX IOI dealer workflow | ❌ test fixture only | `services/fix.rs::handle_frame` has no `IOI(35=6)` handler |
 
 The core pricing kernel (ADR-0012, gBSM unified) and the contract shape are already right.
 The target is to **connect the islands, unify the substrates, and delete the duplication.**
@@ -87,6 +89,26 @@ The target is to **connect the islands, unify the substrates, and delete the dup
   `PlatformConfig` (celnet.toml) for GPU/MC-paths/plugin-wasm/fleet/feed; resolve CUDA (implement
   via CubeCL or drop the claim). → folded into **ADR-0013 (acceleration & extensibility wiring)**.
 
+### D6. Governance + connectivity — *sound kernel, unwired pre-trade risk, FX-centric breadth*
+- **Now:** the entitlement kernel is genuinely good — deny-by-default `Capability{Action, AssetClass}`,
+  deny-wins info-barrier `Principal`, a 7-variant audit taxonomy, session-aware `authorize_caller`,
+  **uniform across every client** (gRPC + WS same trait; `EntitlementPrincipal` in gui/excel/cli).
+  FIX is a **first-class ingress** that proves parity (same `price_instrument`, same last-look
+  `TokenLedger`). **But** three gaps: (a) **the pre-trade limit engine is display-only** —
+  `pre_trade_check` (`celnet-limits/src/check.rs:218`, full hard/soft/RAG/hierarchical) has **zero
+  execution-path callers**; `clicktrade`/FIX `on_new_order` never consult it, so a **hard Delta/VaR
+  breach still books** (`LimitStatus` RPC is view-only). (b) **Cross-asset breadth:** `AssetClass`
+  has only `FxOptions|FixedIncome`; FIX dialects cover FX+FI only (no equity/crypto/commodity);
+  limits are FX-centric (Vanna/Volga/CcyPair, no IR DV01/tenor). (c) FIX IOI is a test fixture, not
+  a live server path.
+- **Target:** **wire `pre_trade_check` into the deal-execution critical path** (`clicktrade::TokenLedger::
+  try_book` + FIX `on_new_order`; `Reject → BookOutcome::LimitBreached → ExecutionReport(ExecType=8)`)
+  — hard limits are **pre-trade, not post-trade** (Bloomberg SSEOMS / Murex / TriOptima canonical);
+  extend `AssetClass` + `AcceptorKind` per leaf (with the existing capability-deny test as the
+  template); add `LimitScope::Tenor` + `LimitMetric::Dv01` (additive); activate the IOI path; enforce
+  the per-connection FIX desk scope at quote-request time. → folded into **ADR-0016 (governance &
+  pre-trade risk wiring)** alongside the latency embargoes (both are "wire the guardrails" work).
+
 ## 2. Cross-asset as the opportunity multiplier
 
 The carry-seam (ADR-0008) + the unified kernel (ADR-0012) already route every asset class through
@@ -120,9 +142,11 @@ doc claim. No versioning/back-compat cruft exists (ADR-0007 already clean).
 Ordered by leverage × independence (so lanes parallelize across sessions without shared-crate churn):
 
 - **P1 — Wire the islands (highest ROI, mostly additive, low blast radius):**
-  (a) GPU into the live path (batch-size branch + risk-cube repricer) [ADR-0013];
-  (b) serve the built FI analytics (Fra/Swap/Bond) + FI risk/desk/notification SDK+CLI parity [ADR-0014 clients];
-  (c) generate the WS codec from the descriptor — complete G [ADR-0014 codec].
+  (a) **⚠ SAFETY-FIRST: wire `pre_trade_check` into the execution path** — the only *risk-control*
+  gap (a hard-limit-blown lift currently books); small, self-contained, should lead [ADR-0016];
+  (b) GPU into the live path (batch-size branch + risk-cube repricer) [ADR-0013];
+  (c) serve the built FI analytics (Fra/Swap/Bond) + FI risk/desk/notification SDK+CLI parity [ADR-0014 clients];
+  (d) generate the WS codec from the descriptor — complete G [ADR-0014 codec].
 - **P2 — Unify the substrate (shared interface crates — coordinator-gated):**
   the `DiscountCurve` trait + curve-backed carry (curve OFF the hot path) + `Underlying::InterestRate`
   + the risk-cube envelope [ADR-0010 → build]. FX byte-identity gate every step.
