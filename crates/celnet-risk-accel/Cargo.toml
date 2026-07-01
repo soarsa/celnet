@@ -1,0 +1,25 @@
+[package]
+name = "celnet-risk-accel"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet risk-cube reprice acceleration (ADR-0013 Lane 2): batched closed-form GPU/CPU backends behind the celnet-risk-cube `ScenarioReprice` seam. Keeps celnet-risk-cube lean (no wgpu/heavy-pricer dep, arch item E) by injecting the accelerator ONE layer up: risk-accel -> {risk-cube, gpu} is a one-way edge (no cycle). The exact VaR path stays CPU-f64 (≤1e-12); the f32 GPU closed-form batch serves an honestly-bounded screening lens."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+# The QuantLib-golden-gated FX closed form (the ≤1e-12 oracle the screening lens
+# reconciles against); one-way edge (-types/-core/-conventions only).
+celnet-vanilla.workspace = true
+celnet-risk-normalize.workspace = true
+# The lean OLAP crate that owns the `ScenarioReprice` seam + the exact oracle.
+celnet-risk-cube.workspace = true
+# The BUILT + oracle-validated GPU pipelines this crate WIRES (never replicates):
+# `BatchPricer` (closed-form batch) + its derived f32/A&S reconciliation bounds.
+celnet-gpu.workspace = true
