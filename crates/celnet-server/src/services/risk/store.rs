@@ -532,8 +532,15 @@ impl PositionStore {
         let decision = if g.limits.is_empty() {
             PreTradeDecision::Accept
         } else {
-            let result =
-                project_pre_trade(&g.facts, &g.limits, &g.hierarchy, &position, &leaf, key, handle);
+            let result = project_pre_trade(
+                &g.facts,
+                &g.limits,
+                &g.hierarchy,
+                &position,
+                &leaf,
+                key,
+                handle,
+            );
             if result.decision == PreTradeDecision::Reject {
                 return Err(limit_breached_status(&result));
             }
@@ -595,7 +602,13 @@ impl PositionStore {
         let (position, leaf, fact) = canonical_vanilla_fact(booked, key.clone())?;
         let handle = fact.position_id.0;
         Ok(project_pre_trade(
-            &g.facts, &g.limits, &g.hierarchy, &position, &leaf, key, handle,
+            &g.facts,
+            &g.limits,
+            &g.hierarchy,
+            &position,
+            &leaf,
+            key,
+            handle,
         ))
     }
 
@@ -1015,7 +1028,10 @@ mod tests {
     fn within_limit_book_succeeds() {
         let store = PositionStore::new();
         // A generous firm Delta cap no single 10mm line approaches.
-        store.set_limit(LimitScope::Firm, LimitSpec::hard(LimitMetric::Delta, 1.0e12));
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(LimitMetric::Delta, 1.0e12),
+        );
 
         let decision = store
             .book_from_attribution(booked(0, 10_000_000.0), &attribution("EM-VOL-1", "jdoe"))

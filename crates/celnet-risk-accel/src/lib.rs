@@ -82,7 +82,9 @@ impl Default for RepriceConfig {
         // GK closed form on a discrete GPU while still routing genuinely small
         // (single-desk / few-scenario) repices to the CPU. A tuned default, not a
         // hard rule — every field is overridable.
-        Self { gpu_min_batch: 1024 }
+        Self {
+            gpu_min_batch: 1024,
+        }
     }
 }
 
@@ -274,7 +276,9 @@ fn fx_batch_instrument(opt: OptionType, ci: &CarryInputs) -> Option<BatchInstrum
         OptionType::Call => {
             BatchInstrument::call(vi.spot, vi.strike, vi.vol, vi.t, vi.r_dom, vi.r_for)
         }
-        OptionType::Put => BatchInstrument::put(vi.spot, vi.strike, vi.vol, vi.t, vi.r_dom, vi.r_for),
+        OptionType::Put => {
+            BatchInstrument::put(vi.spot, vi.strike, vi.vol, vi.t, vi.r_dom, vi.r_for)
+        }
     })
 }
 
@@ -377,7 +381,9 @@ mod tests {
 
     /// The exact oracle's per-scenario node P&L vector (the ≤1e-12 ground truth).
     fn oracle_pnls(node: &[PositionRisk], scen: &[Scenario]) -> Vec<f64> {
-        scen.iter().map(|s| node_pnl(&AssetPricer, node, *s)).collect()
+        scen.iter()
+            .map(|s| node_pnl(&AssetPricer, node, *s))
+            .collect()
     }
 
     /// **Exact path ≤1e-12 (byte-identical).** The GPU-backed backend's exact
@@ -395,7 +401,11 @@ mod tests {
         let oracle = oracle_pnls(&node, &scen);
         assert_eq!(via.len(), oracle.len());
         for (x, y) in via.iter().zip(&oracle) {
-            assert_eq!(x.to_bits(), y.to_bits(), "exact reprice must be byte-identical");
+            assert_eq!(
+                x.to_bits(),
+                y.to_bits(),
+                "exact reprice must be byte-identical"
+            );
         }
         for alpha in [0.975, 0.99] {
             let exact = historical_var_es_via(&bp, &node, &scen, alpha);
@@ -483,7 +493,11 @@ mod tests {
         let oracle = oracle_pnls(&node, &scen);
         assert_eq!(cpu.len(), oracle.len());
         for (x, y) in cpu.iter().zip(&oracle) {
-            assert_eq!(x.to_bits(), y.to_bits(), "CPU fallback must be byte-identical");
+            assert_eq!(
+                x.to_bits(),
+                y.to_bits(),
+                "CPU fallback must be byte-identical"
+            );
         }
         // The screening VaR over the forced-CPU path is exactly the oracle VaR.
         let screen_var = bp.screening_var_es(&node, &scen, 0.99);

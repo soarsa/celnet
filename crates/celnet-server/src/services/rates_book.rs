@@ -400,7 +400,11 @@ mod tests {
             "the reject carries the uniform LimitBreached reason, got {:?}",
             err.message()
         );
-        assert_eq!(store.len(), 0, "a rejected rates book must not mutate the book");
+        assert_eq!(
+            store.len(),
+            0,
+            "a rejected rates book must not mutate the book"
+        );
     }
 
     /// A within-limit rates booking still succeeds and records the position.
@@ -411,7 +415,9 @@ mod tests {
             LimitScope::Firm,
             LimitSpec::hard(celnet_limits::LimitMetric::Delta, 1.0e12),
         );
-        let booked = store.book(position(0, 1, 10)).expect("within-limit rates book");
+        let booked = store
+            .book(position(0, 1, 10))
+            .expect("within-limit rates book");
         assert_eq!(booked.position_id, 1);
         assert_eq!(store.len(), 1);
     }

@@ -521,8 +521,9 @@ fn fx_pre_trade_template(
     let Some(Product::Vanilla(vanilla)) = instrument.product.as_ref() else {
         return None;
     };
-    let option =
-        celnet_types::OptionType::from(celnet_proto::OptionType::try_from(vanilla.option_type).ok()?);
+    let option = celnet_types::OptionType::from(
+        celnet_proto::OptionType::try_from(vanilla.option_type).ok()?,
+    );
     let wire_underlying = instrument.underlying.as_ref()?;
     let pair = celnet_proto::convert::validate_fx_underlying(wire_underlying)
         .ok()?

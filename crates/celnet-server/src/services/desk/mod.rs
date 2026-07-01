@@ -907,7 +907,11 @@ mod tests {
             "the reject carries the uniform LimitBreached reason, got {:?}",
             err.message()
         );
-        assert_eq!(rates.len(), 0, "a rejected desk accept books no rates position");
+        assert_eq!(
+            rates.len(),
+            0,
+            "a rejected desk accept books no rates position"
+        );
         assert_eq!(edge.deals.len(), 0, "a rejected desk accept books no deal");
     }
 
