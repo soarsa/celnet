@@ -1,13 +1,23 @@
 //! FX byte-identity gate for the ADR-0008 Wave-B/C/D carry-seam migration
 //! (spec §6).
 //!
-//! Every reference value below was captured from the **pre-migration** engines
-//! (the FX-only `VanillaInputs` two-rate forms) as raw `f64::to_bits`, on this
-//! exact grid, immediately before the engines were rewired onto the agnostic
-//! [`celnet_exotics::ExoticInputs`] / `Carry` seam. The gate asserts the migrated
-//! engines reproduce those prices **bit-for-bit** (`to_bits` equality — never an
-//! epsilon): the whole ADR-0008 claim is that `Carry::FxRates` reproduces the FX
-//! arithmetic exactly, so anything looser would hide a regression.
+//! Every reference value below was captured from the engines as raw `f64::to_bits`
+//! on this exact grid. The gate asserts each engine reproduces its frozen bits
+//! **bit-for-bit** (`to_bits` equality — never an epsilon): the ADR-0008 claim is
+//! that `Carry::FxRates` reproduces the FX arithmetic exactly, so anything looser
+//! would hide a regression.
+//!
+//! **ADR-0012 (unified gBSM kernel):** the engines whose vanilla component prices
+//! through `inputs::carry_vanilla_price` — the analytic/MC geometric Asian estimators,
+//! the forward-start / cliquet family, the quanto closed forms, and the
+//! variance/volatility-swap replication strips — were **re-baselined** here when that
+//! helper moved onto the one forward-space `gbsm_carry_price` kernel (a deliberate
+//! sub-1e-12 reassociation; per-value drift 2–9 ULP). The ADR-0008 byte-identity
+//! property is *preserved*, not weakened: `carry_vanilla_price` and the FX leaf now
+//! route through the **same** kernel, so for a genuine `Carry::FxRates` they remain
+//! bit-for-bit identical — just at the new kernel bits. Every other engine
+//! (MC barrier, accumulator, TARF, pivot, lookback, PDE, American, basket, LSV) prices
+//! off the `Carry` seam directly and is **byte-for-byte unchanged**.
 //!
 //! Engines covered: the Wave-B set — the Monte-Carlo path core (`mc::*`), the
 //! accumulator, the TARF, the lookback closed forms + MC, the forward-start /
@@ -51,13 +61,13 @@ fn fx_c() -> ExoticInputs {
     VanillaInputs::new(0.85, 0.90, 0.12, 2.5, -0.004, 0.031).into()
 }
 
-/// Assert a migrated price reproduces the frozen pre-migration bits exactly.
+/// Assert a migrated price reproduces the frozen bits exactly.
 #[track_caller]
 fn gate(label: &str, value: f64, frozen_bits: u64) {
     assert_eq!(
         value.to_bits(),
         frozen_bits,
-        "{label}: carry-seam price {value:?} (0x{:016x}) != pre-migration FX bits 0x{frozen_bits:016x}",
+        "{label}: carry-seam price {value:?} (0x{:016x}) != frozen bits 0x{frozen_bits:016x}",
         value.to_bits(),
     );
 }
@@ -108,12 +118,12 @@ fn mc_engine_byte_identical() {
             seed: 0xBEEF,
         },
     );
-    gate("mc_asian_price", asian.price, 0x401614ce9b409223);
+    gate("mc_asian_price", asian.price, 0x401614ce9b40922c);
     gate("mc_asian_se", asian.std_error, 0x3f64ad36253310a1);
     gate(
         "mc_geo_asian_b",
         geometric_asian_price(&b, asian_spec),
-        0x40154f921b1f9188,
+        0x40154f921b1f9190,
     );
     gate(
         "mc_geo_asian_a_put",
@@ -125,7 +135,7 @@ fn mc_engine_byte_identical() {
                 observations: 6,
             },
         ),
-        0x3f9fb740537fe600,
+        0x3f9fb740537fe606,
     );
 }
 
@@ -346,7 +356,7 @@ fn forward_start_and_cliquet_byte_identical() {
                 expiry: 1.0,
             },
         ),
-        0x3fabd57fa25a7aa5,
+        0x3fabd57fa25a7aae,
     );
     gate(
         "forward_start_put_a",
@@ -359,7 +369,7 @@ fn forward_start_and_cliquet_byte_identical() {
                 expiry: 1.0,
             },
         ),
-        0x3fb1620a0852136c,
+        0x3fb1620a08521372,
     );
     gate(
         "forward_start_call_c",
@@ -372,7 +382,7 @@ fn forward_start_and_cliquet_byte_identical() {
                 expiry: 2.5,
             },
         ),
-        0x3fa75d54ad18ba30,
+        0x3fa75d54ad18ba2c,
     );
 
     let cliquet = |floor: Option<f64>, cap: Option<f64>| Cliquet {
@@ -387,7 +397,7 @@ fn forward_start_and_cliquet_byte_identical() {
     gate(
         "cliquet_plain_a",
         cliquet_price_plain(&a, &cliquet(None, None)),
-        0x3fbdc00cd49eacf0,
+        0x3fbdc00cd49eaca9,
     );
     let cfg = CliquetMcConfig {
         pairs: 3_000,
@@ -446,12 +456,12 @@ fn analytic_asian_byte_identical() {
     gate(
         "asian_geo_discrete_b",
         geometric_average_price(&b, asian12),
-        0x40154f921b1f9188,
+        0x40154f921b1f9190,
     );
     gate(
         "asian_geo_continuous_b",
         geometric_average_price(&b, AnalyticAsian::fresh_continuous(OptionType::Call, 100.0)),
-        0x4013f16b062e5118,
+        0x4013f16b062e5120,
     );
     gate(
         "asian_tw_put_a",
@@ -870,10 +880,10 @@ fn var_vol_swap_byte_identical() {
     gate(
         "varswap_flat_fair_variance",
         fv.fair_variance,
-        0x3f847ae147ae1488,
+        0x3f847ae147ae1486,
     );
-    gate("varswap_flat_put_leg", fv.put_leg, 0x3f7506491bf3bc0e);
-    gate("varswap_flat_call_leg", fv.call_leg, 0x3f73ef7973686d01);
+    gate("varswap_flat_put_leg", fv.put_leg, 0x3f7506491bf3bc14);
+    gate("varswap_flat_call_leg", fv.call_leg, 0x3f73ef7973686cf9);
     let f = ctx.forward;
     let convex = MarketHedgeSmile::new([f / 1.10, f, f * 1.10], [0.115, 0.10, 0.115], f, ctx.t);
     gate(
@@ -883,21 +893,21 @@ fn var_vol_swap_byte_identical() {
     );
     let wings = MarketHedgeSmile::new([f / 1.10, f, f * 1.10], [0.13, 0.10, 0.13], f, ctx.t);
     let vs = fair_volatility(&wings, &ctx);
-    gate("volswap_convex_fair_vol", vs.fair_vol, 0x3fbf7be1698beda4);
+    gate("volswap_convex_fair_vol", vs.fair_vol, 0x3fbf7be1698beda2);
     gate(
         "volswap_convex_correction",
         vs.convexity_correction,
-        0x3f8ac9439c58b6cd,
+        0x3f8ac9439c58b6d4,
     );
     gate(
         "volswap_convex_vov",
         vs.variance_of_variance,
-        0x3f3145f0fd42b040,
+        0x3f3145f0fd42b042,
     );
     gate(
         "volswap_flat_fair_vol",
         fair_volatility(&FlatSmile::new(0.10), &ctx).fair_vol,
-        0x3fb99999999999a2,
+        0x3fb99999999999a1,
     );
 }
 
@@ -913,12 +923,12 @@ fn quanto_byte_identical() {
     gate(
         "quanto_vanilla_call",
         quanto_vanilla_price(OptionType::Call, &qi, qv),
-        0x3fb0ddf6d850f4c8,
+        0x3fb0ddf6d850f4d0,
     );
     gate(
         "quanto_vanilla_put",
         quanto_vanilla_price(OptionType::Put, &qi, qv),
-        0x3fac77c1fa051fd0,
+        0x3fac77c1fa051fc2,
     );
     let qd = QuantoParams::new(0.14, -0.30);
     gate(

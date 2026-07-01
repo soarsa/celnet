@@ -29,8 +29,8 @@
 //! coin-funding move is `−∂V/∂funding = ∂V/∂b`).
 
 use celnet_core::carry::CarryGreeks;
-use celnet_core::math::{ln, norm_cdf, norm_pdf, sqrt};
-use celnet_types::{Carry, OptionType, RateSensitivities};
+use celnet_core::{gbsm_carry_greeks, gbsm_carry_price};
+use celnet_types::{Carry, OptionType};
 
 /// Linear (USD-margined) crypto vanilla input.
 ///
@@ -92,170 +92,50 @@ impl LinearInputs {
     }
 }
 
-/// Intermediate quantities shared by price and Greeks.
-struct Aux {
-    /// Outright forward `F`.
-    f: f64,
-    /// Discount factor `e^{−r·t}`.
-    df: f64,
-    d1: f64,
-    d2: f64,
-    sqt: f64,
-    vsqt: f64,
-}
-
-/// Recover the FX-equivalent `(r_dom, r_for)` from the carry, so the spot-space
-/// arithmetic reproduces the Garman-Kohlhagen leaf BIT-FOR-BIT: `r_dom = r` is the
-/// discount rate, `r_for = r − b` is the effective foreign/funding yield. The linear
-/// crypto vanilla is the agnostic generalized-BSM, and FX is the SAME engine, so the
-/// price is `to_bits`-identical to the FX leaf called with this `(r_dom, r_for)`
-/// (gated in [`tests::funding_maps_to_fx_foreign_rate_bit_identical`]).
-#[inline]
-fn fx_equiv_rates(i: &LinearInputs) -> (f64, f64) {
-    let r_dom = i.carry.discount_rate();
-    let r_for = r_dom - i.carry.carry_rate(); // = r − b = funding
-    (r_dom, r_for)
-}
-
-#[inline]
-fn aux(i: &LinearInputs) -> Aux {
-    let sqt = sqrt(i.t);
-    let vsqt = i.vol * sqt;
-    let f = i.forward();
-    let df = i.discount_df();
-    let (r_dom, r_for) = fx_equiv_rates(i);
-    // SPOT-space generalized-BSM — the SAME operation order as the FX (Garman-
-    // Kohlhagen) leaf, so the linear crypto price is BIT-IDENTICAL (`to_bits`) to it.
-    let d1 = (ln(i.spot / i.strike) + (r_dom - r_for + 0.5 * i.vol * i.vol) * i.t) / vsqt;
-    let d2 = d1 - vsqt;
-    Aux {
-        f,
-        df,
-        d1,
-        d2,
-        sqt,
-        vsqt,
-    }
-}
-
 /// Present value (USD premium per 1 USD of notional), discounted.
 ///
-/// Computed in spot-space `S·e^{−r_for t}·Φ(d1) − K·e^{−r_dom t}·Φ(d2)` with the
-/// FX-equivalent rates — the identical operation order to the FX (Garman-Kohlhagen)
-/// leaf, so it is `to_bits`-identical to that leaf called with `r_dom = r`,
-/// `r_for = r − b`.
+/// Delegates to the unified generalized-BSM forward-space kernel
+/// ([`gbsm_carry_price`]) with the crypto carry `b = r − funding`, `r` the USD
+/// discount rate. This replaces the former FX-equivalent spot-space detour: the
+/// linear crypto vanilla is the SAME gBSM as every other cost-of-carry leaf, so it
+/// now shares the one canonical kernel (ADR-0012 — the sub-1e-12 forward-vs-spot
+/// rounding change is accepted; independent oracles hold at ≤1e-12).
 #[must_use]
 pub fn price(opt: OptionType, i: &LinearInputs) -> f64 {
-    let a = aux(i);
-    let (r_dom, r_for) = fx_equiv_rates(i);
-    let s_disc = i.spot * celnet_core::math::exp(-r_for * i.t);
-    let k_disc = i.strike * celnet_core::math::exp(-r_dom * i.t);
-    match opt {
-        OptionType::Call => s_disc * norm_cdf(a.d1) - k_disc * norm_cdf(a.d2),
-        OptionType::Put => k_disc * norm_cdf(-a.d2) - s_disc * norm_cdf(-a.d1),
-    }
+    gbsm_carry_price(
+        opt,
+        i.carry.carry_rate(),
+        i.carry.discount_rate(),
+        i.spot,
+        i.strike,
+        i.vol,
+        i.t,
+    )
 }
 
 /// Price and the full generalized Greek strip in a single pass.
 ///
-/// The rate sensitivities are reported as [`RateSensitivities::Carry`]: the
-/// `discount_rho = ∂V/∂r` and the `carry_rho = ∂V/∂b` (the crypto funding/carry
-/// sensitivity). See [`CarryGreeks`] for the precise definition and units of each
-/// carry-neutral sensitivity.
+/// Delegates to the unified generalized-BSM forward-space kernel
+/// ([`gbsm_carry_greeks`]); the rate sensitivities are reported as
+/// [`celnet_types::RateSensitivities::Carry`]: `discount_rho = ∂V/∂r` and
+/// `carry_rho = ∂V/∂b` (the crypto funding/carry sensitivity). `delta_forward` is
+/// rescaled from the kernel's driftless `Φ(±d1)` to the discounted `∂V/∂F =
+/// df·Φ(±d1)` this leaf's FD gate uses. See [`CarryGreeks`] for the precise
+/// definition and units of each carry-neutral sensitivity.
 #[must_use]
-#[allow(clippy::similar_names)] // d1/d2, nd1/nd2 are the canonical option-pricing names
 pub fn greeks(opt: OptionType, i: &LinearInputs) -> CarryGreeks {
-    let a = aux(i);
-    let (f, df, d1, d2, sqt, vsqt) = (a.f, a.df, a.d1, a.d2, a.sqt, a.vsqt);
-    let (s, k, t, vol) = (i.spot, i.strike, i.t, i.vol);
-    let r = i.carry.discount_rate();
-    let b = i.carry.carry_rate();
-
-    let pd1 = norm_pdf(d1);
-    let nd1 = norm_cdf(d1);
-    let nd2 = norm_cdf(d2);
-    let nmd1 = norm_cdf(-d1);
-    let nmd2 = norm_cdf(-d2);
-
-    // Price in the SAME spot-space arithmetic as `price()` so `greeks().price` is
-    // `to_bits`-identical to it (the documented reproducibility tie). `k_disc = k·df`
-    // with `df = e^{−r_dom t}`, matching `price()`'s `k * exp(-r_dom t)`.
-    let (_r_dom, r_for) = fx_equiv_rates(i);
-    let s_disc = s * celnet_core::math::exp(-r_for * t);
-    let k_disc = k * df;
-    let price = match opt {
-        OptionType::Call => s_disc * nd1 - k_disc * nd2,
-        OptionType::Put => k_disc * nmd2 - s_disc * nmd1,
-    };
-
-    // Spot delta ∂V/∂S. With F = S·e^{b t}, ∂F/∂S = e^{b t}, and V = df·BSM(F):
-    //   ∂V/∂S = e^{b t}·∂V/∂F = e^{(b−r) t}·Φ(±d1).
-    let fwd_factor = i.carry.forward_factor(t); // e^{b t}
-    let delta_spot = match opt {
-        OptionType::Call => fwd_factor * df * nd1,
-        OptionType::Put => fwd_factor * df * (nd1 - 1.0),
-    };
-    // Forward (driftless) delta ∂V/∂F = df·Φ(±d1).
-    let delta_forward = match opt {
-        OptionType::Call => df * nd1,
-        OptionType::Put => df * (nd1 - 1.0),
-    };
-
-    // Symmetric across call/put. gamma = e^{2 b t}·df·φ(d1)/(F·σ√t).
-    let gamma = fwd_factor * fwd_factor * df * pd1 / (f * vsqt);
-    let vega = df * f * sqt * pd1;
-    let vanna = -fwd_factor * df * pd1 * d2 / vol;
-    let volga = vega * d1 * d2 / vol;
-    let speed = -gamma / s * (d1 / vsqt + 1.0);
-    let zomma = gamma * (d1 * d2 - 1.0) / vol;
-
-    // theta = −∂V/∂T. Identical algebra to the commodity (Black-76) leaf: the
-    // cross-multiplied pdf identity F·φ(d1) = K·φ(d2) collapses the bracket to a
-    // POSITIVE pdf term e^{−rT}·F·φ(d1)·σ/(2√T):
-    //   theta_call = −[ e^{−rT}·F·φ(d1)·σ/(2√T) + (b−r)·S e^{(b−r)T}Φ(d1) + r·K e^{−rT}Φ(d2) ].
-    let theta_pdf = df * f * pd1 * vol / (2.0 * sqt);
-    let theta = match opt {
-        OptionType::Call => -(theta_pdf + (b - r) * s * fwd_factor * df * nd1 + r * k * df * nd2),
-        OptionType::Put => -(theta_pdf - (b - r) * s * fwd_factor * df * nmd1 - r * k * df * nmd2),
-    };
-
-    // Discount-rho ∂V/∂r at FIXED b. V = e^{−r t}·[F·Φ(d1) − K·Φ(d2)] with F = S e^{b t}
-    // independent of r ⇒ ∂V/∂r = −t·V.
-    let discount_rho = -t * price;
-    // Carry-rho ∂V/∂b at FIXED r (the funding/carry sensitivity). Only F = S e^{b t}
-    // depends on b: ∂F/∂b = t·F, ∂V/∂F = df·Φ(±d1) ⇒ ∂V/∂b = t·F·df·Φ(±d1).
-    let carry_rho = match opt {
-        OptionType::Call => t * f * df * nd1,
-        OptionType::Put => -t * f * df * nmd1,
-    };
-
-    // charm = ∂(delta_spot)/∂T. ln(F/K) = ln(S/K) + b·T ⇒ ∂d1/∂T = b/(σ√T) + ½σ/√T − d1/(2T).
-    let dd1_dt = b / vsqt + 0.5 * vol / sqt - d1 / (2.0 * t);
-    let charm = match opt {
-        OptionType::Call => (b - r) * fwd_factor * df * nd1 + fwd_factor * df * pd1 * dd1_dt,
-        OptionType::Put => (b - r) * fwd_factor * df * (nd1 - 1.0) + fwd_factor * df * pd1 * dd1_dt,
-    };
-
-    // color = ∂gamma/∂T = gamma·[ (b−r) − 1/(2T) − d1·∂d1/∂T ].
-    let color = gamma * ((b - r) - 1.0 / (2.0 * t) - d1 * dd1_dt);
-
+    let cg = gbsm_carry_greeks(
+        opt,
+        i.carry.carry_rate(),
+        i.carry.discount_rate(),
+        i.spot,
+        i.strike,
+        i.vol,
+        i.t,
+    );
     CarryGreeks {
-        price,
-        delta_spot,
-        delta_forward,
-        gamma,
-        vega,
-        theta,
-        rates: RateSensitivities::Carry {
-            discount_rho,
-            carry_rho,
-        },
-        vanna,
-        volga,
-        charm,
-        speed,
-        zomma,
-        color,
+        delta_forward: cg.delta_forward * i.discount_df(),
+        ..cg
     }
 }
 
@@ -263,21 +143,29 @@ pub fn greeks(opt: OptionType, i: &LinearInputs) -> CarryGreeks {
 mod tests {
     use super::*;
     use celnet_core::assert_close;
+    use celnet_types::RateSensitivities;
 
     fn cost_of_carry(r: f64, b: f64) -> Carry {
         Carry::CostOfCarry { r, b }
     }
 
     /// (oracle 1) The `funding → r_for` IDENTITY. A linear crypto vanilla with
-    /// `(r, b = r − funding)` is **bit-identical** (`to_bits`) to the FX
-    /// (Garman-Kohlhagen) leaf called with `r_dom = r, r_for = funding`: the FX leaf
-    /// already prices `b = r_dom − r_for` off `F = S·e^{(r_dom−r_for)t}` and discounts
-    /// `e^{−r_dom t}`, which is arithmetically the SAME forward-space BSM through a
-    /// DIFFERENT (already-QuantLib-golden) code path. This is the disjoint, frozen
+    /// `(r, b = r − funding)` agrees with the FX (Garman-Kohlhagen) leaf called with
+    /// `r_dom = r, r_for = funding`: both price the SAME forward-space generalized-BSM
+    /// through a DIFFERENT (already-QuantLib-golden) code path — the crypto leaf via
+    /// `b = carry_rate()`, the FX leaf via `b = r_dom − r_for`. This is the disjoint
     /// reference (W3 §6, MEDIUM circular-risk; routed through `celnet-vanilla`, not a
     /// re-derived GK here).
+    ///
+    /// ADR-0012 (unified gBSM kernel): both leaves now route through the ONE
+    /// `gbsm_carry_greeks` kernel, but the crypto leaf passes `b` directly while the
+    /// FX leaf reconstructs `b = r_dom − r_for` (which is `r − (r − b)`, not
+    /// bit-equal to `b`). The two therefore agree to a **1e-12** tolerance rather
+    /// than bit-for-bit; the residual is pure last-bit carry-reconstruction
+    /// rounding (~1e-15), far under the independent-oracle correctness bar. The bit
+    /// pin was a determinism/parity artefact, not a correctness statement.
     #[test]
-    fn funding_maps_to_fx_foreign_rate_bit_identical() {
+    fn funding_maps_to_fx_foreign_rate_within_1e12() {
         for &(s, k, vol, t, r, funding) in &[
             (30_000.0, 32_000.0, 0.65, 0.25, 0.05, 0.02),
             (2_000.0, 1_800.0, 0.80, 0.5, 0.04, 0.10),
@@ -286,18 +174,18 @@ mod tests {
         ] {
             let ci = LinearInputs::funded(s, k, vol, t, r, funding);
             // The FX leaf: r_dom = r (discount), r_for = r − b (the effective funding
-            // yield). Recover r_for from the SAME carry the leaf uses, so the bit-
-            // identity is exact regardless of any float round-off in b = r − funding.
+            // yield), recovered from the SAME carry the crypto leaf uses.
             let (r_dom, r_for) = (
                 ci.carry.discount_rate(),
                 ci.carry.discount_rate() - ci.carry.carry_rate(),
             );
             let vi = celnet_types::VanillaInputs::new(s, k, vol, t, r_dom, r_for);
             for opt in [OptionType::Call, OptionType::Put] {
-                assert_eq!(
-                    price(opt, &ci).to_bits(),
-                    celnet_vanilla::price(opt, &vi).to_bits(),
-                    "linear crypto must be bit-identical to the FX leaf with r_for=funding"
+                assert_close!(
+                    price(opt, &ci),
+                    celnet_vanilla::price(opt, &vi),
+                    1e-12,
+                    1e-12
                 );
             }
         }

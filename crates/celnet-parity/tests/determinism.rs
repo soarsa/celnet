@@ -244,39 +244,47 @@ static GOLDEN_VANILLA: &[GoldenRow] = &[
 // (call) is the long-standing Black-Scholes reference value gated elsewhere in
 // the suite, so the bit pattern below is anchored to a value validated against
 // QuantLib / the closed form — not an arbitrary capture.
-const GOLDEN_CALL_PRICE_BITS: u64 = 0x4024_e6b2_e3d5_4dc0;
-const GOLDEN_PUT_PRICE_BITS: u64 = 0x4016_4b4a_67d3_fea0;
+//
+// ADR-0012 (unified gBSM kernel): these bits were REGENERATED when the FX leaf's
+// core gBSM math moved from the in-crate spot-space Garman-Kohlhagen form to the
+// one canonical forward-space kernel. The change is a deliberate sub-1e-12
+// reassociation (each entry drifted by only a handful of ULP); the price VALUE is
+// unchanged to 1e-10 (still gated at 10.450583572… by `vanilla_reference_price`
+// and the QuantLib golden grid). The baseline is regenerated, not relaxed — it
+// still proves cross-run/cross-build ULP stability of the new deterministic output.
+const GOLDEN_CALL_PRICE_BITS: u64 = 0x4024_e6b2_e3d5_4dc8;
+const GOLDEN_PUT_PRICE_BITS: u64 = 0x4016_4b4a_67d3_fe9c;
 const GOLDEN_CALL_GREEKS_BITS: [u64; 14] = [
     GOLDEN_CALL_PRICE_BITS,
-    0x3fe4_60ea_ac7c_7829,
-    0x3fe4_60ea_ac7c_7829,
-    0x3f93_3659_aba1_2cb7,
+    0x3fe4_60ea_ac7c_782a,
+    0x3fe4_60ea_ac7c_782a,
+    0x3f93_3659_aba1_2cb6,
     0x4042_c313_919b_65ab,
     0xc019_a7f6_d64e_6176,
-    0x404a_9dc1_f48d_2850,
-    0xc04f_d76e_ad82_7bc0,
-    0xbfd2_02f4_10e7_19ec,
-    0x4023_b33a_f27c_c45b,
-    0x3fb0_cf8e_762d_0720,
-    0xbf40_e825_f331_ac78,
-    0xbfb6_c12b_cdac_7dc3,
-    0xbf85_90d9_2292_ffa2,
+    0x404a_9dc1_f48d_2851,
+    0xc04f_d76e_ad82_7bc3,
+    0xbfd2_02f4_10e7_19f7,
+    0x4023_b33a_f27c_c46d,
+    0x3fb0_cf8e_762d_071a,
+    0xbf40_e825_f331_ac7a,
+    0xbfb6_c12b_cdac_7dbf,
+    0xbf85_90d9_2292_ffa1,
 ];
 const GOLDEN_PUT_GREEKS_BITS: [u64; 14] = [
     GOLDEN_PUT_PRICE_BITS,
-    0xbfd7_3e2a_a707_0fae,
-    0xbfd7_3e2a_a707_0fae,
-    0x3f93_3659_aba1_2cb7,
+    0xbfd7_3e2a_a707_0fac,
+    0xbfd7_3e2a_a707_0fac,
+    0x3f93_3659_aba1_2cb6,
     0x4042_c313_919b_65ab,
-    0xbffa_86ad_9f97_a536,
-    0xc044_f1fa_9f78_0414,
-    0x4042_2891_527d_8440,
-    0xbfd2_02f4_10e7_19ec,
-    0x4023_b33a_f27c_c45b,
-    0x3fb0_cf8e_762d_0720,
-    0xbf40_e825_f331_ac78,
-    0xbfb6_c12b_cdac_7dc3,
-    0xbf85_90d9_2292_ffa2,
+    0xbffa_86ad_9f97_a53a,
+    0xc044_f1fa_9f78_0412,
+    0x4042_2891_527d_843f,
+    0xbfd2_02f4_10e7_19f7,
+    0x4023_b33a_f27c_c46d,
+    0x3fb0_cf8e_762d_071a,
+    0xbf40_e825_f331_ac7a,
+    0xbfb6_c12b_cdac_7dbf,
+    0xbf85_90d9_2292_ffa1,
 ];
 
 /// Row 15 (surface + exotics) — the broker→smile construction and the analytic

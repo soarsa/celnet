@@ -22,6 +22,8 @@ use celnet_types::{
     VanillaInputs,
 };
 
+use crate::math::{ln, norm_cdf, norm_pdf, sqrt};
+
 /// Generalized, carry-tagged pricing input.
 ///
 /// The market state (`spot`, `strike`, `vol`, `t`) shared by every asset class,
@@ -251,6 +253,233 @@ pub fn fx_carry_greeks(g: &Greeks) -> CarryGreeks {
     }
 }
 
+/// Project a generalized [`CarryGreeks`] back into the FX-shaped [`Greeks`] strip.
+///
+/// The carry-neutral fields are copied bit-for-bit; the two FX rate rhos are the
+/// documented lossless projection of the carry-tagged rate block
+/// ([`RateSensitivities::flat_rhos`]): for the [`RateSensitivities::Carry`] arm,
+/// `rho_dom = discount_rho + carry_rho`, `rho_for = −carry_rho` (the exact inverse
+/// of how the cross-asset leaves populate the carry arm — for FX `r = r_dom`,
+/// `b = r_dom − r_for`). This is the inverse companion of [`fx_carry_greeks`]: it
+/// lets the FX (Garman-Kohlhagen) leaf keep its two-rate `rho_dom`/`rho_for`
+/// **output basis** while its core gBSM math is produced by the unified
+/// [`gbsm_carry_greeks`] kernel (ADR-0012).
+#[must_use]
+pub fn carry_greeks_to_greeks(cg: &CarryGreeks) -> Greeks {
+    let (rho_dom, rho_for) = cg.rates.flat_rhos();
+    Greeks {
+        price: cg.price,
+        delta_spot: cg.delta_spot,
+        delta_forward: cg.delta_forward,
+        gamma: cg.gamma,
+        vega: cg.vega,
+        theta: cg.theta,
+        rho_dom,
+        rho_for,
+        vanna: cg.vanna,
+        volga: cg.volga,
+        charm: cg.charm,
+        speed: cg.speed,
+        zomma: cg.zomma,
+        color: cg.color,
+    }
+}
+
+// ===========================================================================
+// The unified generalized-Black-Scholes-Merton (gBSM) carry kernel
+// ===========================================================================
+//
+// ONE forward-space closed form for every cost-of-carry option leaf — equity
+// (`b = r − q − repo`), commodity / Black-76 (`b = r − convenience`, or `b = 0`
+// on a listed future), digital-asset "linear" (`b = r − funding`), and the FX
+// Garman-Kohlhagen *core* (`b = r_dom − r_for`, `r = r_dom`). Every leaf assembles
+// its own `b` from its asset-class carry parameters, then prices through this one
+// kernel; nothing here names an asset class.
+//
+// The model is the generalized-BSM in forward space (Haug, *The Complete Guide to
+// Option Pricing Formulas*, 2nd ed., the one-formula/`b`-table gBSM; QuantLib's
+// single `blackFormula` on the forward): with `F = S·e^{b·t}` and `df = e^{−r·t}`,
+//
+//   d1 = [ln(F/K) + ½σ²·t] / (σ·√t),   d2 = d1 − σ·√t
+//   Call = df·[F·Φ(d1) − K·Φ(d2)],     Put = df·[K·Φ(−d2) − F·Φ(−d1)]
+//
+// and the full desk Greek strip in a single pass. The rate sensitivities are the
+// carry-natural `(discount_rho = ∂V/∂r, carry_rho = ∂V/∂b)` pair
+// ([`RateSensitivities::Carry`]); the FX leaf projects them to its two-rate basis
+// via [`carry_greeks_to_greeks`]. All forward/discount arithmetic reads the carry
+// seam ([`Carry::forward_factor`] / [`Carry::discount_df`]) exactly as the
+// commodity leaf did, so the Black-76 leaf is byte-for-byte unchanged (ADR-0012).
+
+/// Intermediate quantities shared by the kernel's price and Greek passes.
+struct CarryAux {
+    /// Outright forward `F = S·e^{b·t}`.
+    f: f64,
+    /// Discount factor `e^{−r·t}`.
+    df: f64,
+    /// Forward factor `e^{b·t}`.
+    fwd_factor: f64,
+    d1: f64,
+    d2: f64,
+    sqt: f64,
+    vsqt: f64,
+}
+
+#[inline]
+fn carry_aux(b: f64, r: f64, spot: f64, strike: f64, vol: f64, t: f64) -> CarryAux {
+    // Read the forward/discount through the carry seam — the identical path the
+    // commodity (Black-76) leaf used, so its output is byte-for-byte unchanged.
+    let carry = Carry::CostOfCarry { r, b };
+    let sqt = sqrt(t);
+    let vsqt = vol * sqt;
+    let fwd_factor = carry.forward_factor(t); // e^{b t}
+    let f = spot * fwd_factor;
+    let df = carry.discount_df(t); // e^{−r t}
+    // Forward-space d1 = [ln(F/K) + ½σ²t]/(σ√t).
+    let d1 = (ln(f / strike) + 0.5 * vol * vol * t) / vsqt;
+    let d2 = d1 - vsqt;
+    CarryAux {
+        f,
+        df,
+        fwd_factor,
+        d1,
+        d2,
+        sqt,
+        vsqt,
+    }
+}
+
+/// Present value (premium per 1 unit of the underlying), discounted, under the
+/// unified generalized-BSM forward-space kernel. `b` is the net cost of carry and
+/// `r` the numeraire discount rate; the leaf assembles `b`/`r` from its asset-class
+/// carry parameters. Bit-identical to [`gbsm_carry_greeks`]`(…).price` (the two
+/// share [`carry_aux`] and the identical price expression).
+#[must_use]
+pub fn gbsm_carry_price(
+    opt: OptionType,
+    b: f64,
+    r: f64,
+    spot: f64,
+    strike: f64,
+    vol: f64,
+    t: f64,
+) -> f64 {
+    let a = carry_aux(b, r, spot, strike, vol, t);
+    match opt {
+        OptionType::Call => a.df * (a.f * norm_cdf(a.d1) - strike * norm_cdf(a.d2)),
+        OptionType::Put => a.df * (strike * norm_cdf(-a.d2) - a.f * norm_cdf(-a.d1)),
+    }
+}
+
+/// Price and the full generalized Greek strip in a single pass, under the unified
+/// forward-space generalized-BSM kernel.
+///
+/// `b` is the net cost of carry (`F = S·e^{b·t}`) and `r` the numeraire discount
+/// rate (`df = e^{−r·t}`). The rate sensitivities are the carry-natural pair
+/// [`RateSensitivities::Carry`] `{ discount_rho = ∂V/∂r, carry_rho = ∂V/∂b }`; a
+/// two-rate leaf (FX) projects them with [`carry_greeks_to_greeks`]. See
+/// [`CarryGreeks`] for the precise definition and units of each sensitivity.
+#[must_use]
+#[allow(clippy::similar_names)] // d1/d2, nd1/nd2 are the canonical option-pricing names
+pub fn gbsm_carry_greeks(
+    opt: OptionType,
+    b: f64,
+    r: f64,
+    spot: f64,
+    strike: f64,
+    vol: f64,
+    t: f64,
+) -> CarryGreeks {
+    let a = carry_aux(b, r, spot, strike, vol, t);
+    let (f, df, fwd_factor, d1, d2, sqt, vsqt) =
+        (a.f, a.df, a.fwd_factor, a.d1, a.d2, a.sqt, a.vsqt);
+    let (s, k) = (spot, strike);
+
+    let pd1 = norm_pdf(d1);
+    let nd1 = norm_cdf(d1);
+    let nd2 = norm_cdf(d2);
+    let nmd1 = norm_cdf(-d1);
+    let nmd2 = norm_cdf(-d2);
+
+    let price = match opt {
+        OptionType::Call => df * (f * nd1 - k * nd2),
+        OptionType::Put => df * (k * nmd2 - f * nmd1),
+    };
+
+    // Spot delta ∂V/∂S. With F = S·e^{b t}, ∂F/∂S = e^{b t}, and V = df·BS76(F):
+    //   ∂V/∂S = e^{b t}·∂V/∂F = e^{(b−r) t}·Φ(±d1).
+    let delta_spot = match opt {
+        OptionType::Call => fwd_factor * df * nd1,
+        OptionType::Put => fwd_factor * df * (nd1 - 1.0),
+    };
+    // Driftless forward delta ∂V_fwd/∂F = Φ(±d1), where V_fwd = V·e^{r t} is the
+    // undiscounted forward value (F·Φ(d1) − K·Φ(d2) for a call). This is the FX-desk
+    // "forward delta" convention the equity/FX leaves report verbatim; the
+    // commodity/crypto leaves scale it by df in their adapter to report the
+    // DISCOUNTED ∂V/∂F = df·Φ(±d1) their desks use (ADR-0012). The two are the same
+    // Greek of two value functions (undiscounted forward vs discounted premium).
+    let delta_forward = match opt {
+        OptionType::Call => nd1,
+        OptionType::Put => nd1 - 1.0,
+    };
+
+    // Symmetric across call/put. gamma = e^{2 b t}·df·φ(d1)/(F·σ√t).
+    let gamma = fwd_factor * fwd_factor * df * pd1 / (f * vsqt);
+    let vega = df * f * sqt * pd1;
+    let vanna = -fwd_factor * df * pd1 * d2 / vol;
+    let volga = vega * d1 * d2 / vol;
+    let speed = -gamma / s * (d1 / vsqt + 1.0);
+    let zomma = gamma * (d1 * d2 - 1.0) / vol;
+
+    // theta = −∂V/∂T. The cross-multiplied pdf identity F·φ(d1) = K·φ(d2) collapses
+    // the pdf bracket to a POSITIVE term e^{−rT}·F·φ(d1)·σ/(2√T):
+    //   theta_call = −[ e^{−rT}·F·φ(d1)·σ/(2√T) + (b−r)·S e^{(b−r)T}Φ(d1) + r·K e^{−rT}Φ(d2) ].
+    let theta_pdf = df * f * pd1 * vol / (2.0 * sqt);
+    let theta = match opt {
+        OptionType::Call => -(theta_pdf + (b - r) * s * fwd_factor * df * nd1 + r * k * df * nd2),
+        OptionType::Put => -(theta_pdf - (b - r) * s * fwd_factor * df * nmd1 - r * k * df * nmd2),
+    };
+
+    // Discount-rho ∂V/∂r at FIXED b. V = e^{−r t}·[F·Φ − K·Φ] with F = S e^{b t}
+    // independent of r ⇒ ∂V/∂r = −t·V.
+    let discount_rho = -t * price;
+    // Carry-rho ∂V/∂b at FIXED r. Only F = S e^{b t} depends on b: ∂F/∂b = t·F,
+    // ∂V/∂F = df·Φ(±d1) ⇒ ∂V/∂b = t·F·df·Φ(±d1).
+    let carry_rho = match opt {
+        OptionType::Call => t * f * df * nd1,
+        OptionType::Put => -t * f * df * nmd1,
+    };
+
+    // charm = ∂(delta_spot)/∂T. ln(F/K) = ln(S/K) + b·T ⇒
+    //   ∂d1/∂T = b/(σ√T) + ½σ/√T − d1/(2T).
+    let dd1_dt = b / vsqt + 0.5 * vol / sqt - d1 / (2.0 * t);
+    let charm = match opt {
+        OptionType::Call => (b - r) * fwd_factor * df * nd1 + fwd_factor * df * pd1 * dd1_dt,
+        OptionType::Put => (b - r) * fwd_factor * df * (nd1 - 1.0) + fwd_factor * df * pd1 * dd1_dt,
+    };
+
+    // color = ∂gamma/∂T = gamma·[ (b−r) − 1/(2T) − d1·∂d1/∂T ].
+    let color = gamma * ((b - r) - 1.0 / (2.0 * t) - d1 * dd1_dt);
+
+    CarryGreeks {
+        price,
+        delta_spot,
+        delta_forward,
+        gamma,
+        vega,
+        theta,
+        rates: RateSensitivities::Carry {
+            discount_rho,
+            carry_rho,
+        },
+        vanna,
+        volga,
+        charm,
+        speed,
+        zomma,
+        color,
+    }
+}
+
 /// The repricing seam for a closed-form **exotic leg** under the risk cube.
 ///
 /// The risk cube ([`celnet-risk-cube`]) names a booked exotic by
@@ -378,5 +607,88 @@ mod tests {
             }
             RateSensitivities::Carry { .. } => panic!("FX greeks must tag as Fx"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // The unified gBSM carry kernel.
+    // -----------------------------------------------------------------------
+
+    /// `gbsm_carry_price` is bit-identical to `gbsm_carry_greeks(…).price` — the two
+    /// public entry points share `carry_aux` and the identical price expression, so
+    /// a leaf that computes its price one way and its Greek strip the other stays
+    /// self-consistent to the last bit.
+    #[test]
+    fn kernel_price_is_bit_identical_to_greeks_price() {
+        for &(b, r, s, k, vol, t) in &[
+            (0.05, 0.08, 930.0, 900.0, 0.20, 1.0 / 6.0),
+            (0.0, 0.05, 100.0, 110.0, 0.25, 1.0),
+            (-0.01, -0.01, 50.0, 55.0, 0.45, 3.0),
+            (0.03, 0.05, 30_000.0, 30_000.0, 0.65, 0.5),
+        ] {
+            for opt in [OptionType::Call, OptionType::Put] {
+                assert_eq!(
+                    gbsm_carry_price(opt, b, r, s, k, vol, t).to_bits(),
+                    gbsm_carry_greeks(opt, b, r, s, k, vol, t).price.to_bits(),
+                    "kernel price/greeks price must match to the bit"
+                );
+            }
+        }
+    }
+
+    /// Model-free put-call parity on the forward: `C − P = df·(F − K)`, reached by a
+    /// route disjoint from the per-leg Φ-weighted price (a sign/weight bug surfaces).
+    #[test]
+    fn kernel_put_call_parity() {
+        for &(b, r, s, k, vol, t) in &[
+            (0.05, 0.08, 930.0, 900.0, 0.20, 1.0 / 6.0),
+            (-0.02, 0.03, 100.0, 95.0, 0.30, 2.0),
+            (0.10, 0.04, 2_000.0, 2_200.0, 0.80, 1.0),
+        ] {
+            let c = gbsm_carry_price(OptionType::Call, b, r, s, k, vol, t);
+            let p = gbsm_carry_price(OptionType::Put, b, r, s, k, vol, t);
+            let carry = Carry::CostOfCarry { r, b };
+            let df = carry.discount_df(t);
+            let f = s * carry.forward_factor(t);
+            assert!(crate::is_close(c - p, df * (f - k), 1e-12, 1e-12));
+        }
+    }
+
+    /// INDEPENDENT oracle: the Hull "European option on an index" worked example
+    /// (S=930, K=900, r=8%, q=3% ⇒ b=r−q=5%, σ=20%, T=2/12), whose full-precision
+    /// generalized-BSM call/put were re-derived externally (Python `math.erf`,
+    /// code-disjoint from this kernel) as 51.832_956_796_490_86 / 14.550_996_773_772_4.
+    /// The kernel reproduces them to 1e-9 (the sub-1e-12 forward/spot-space rounding
+    /// gap is far under this bar).
+    #[test]
+    fn kernel_matches_hull_index_reference() {
+        let (b, r, s, k, vol, t) = (0.05, 0.08, 930.0, 900.0, 0.20, 1.0 / 6.0);
+        assert!(crate::is_close(
+            gbsm_carry_price(OptionType::Call, b, r, s, k, vol, t),
+            51.832_956_796_490_86,
+            1e-9,
+            1e-9
+        ));
+        assert!(crate::is_close(
+            gbsm_carry_price(OptionType::Put, b, r, s, k, vol, t),
+            14.550_996_773_772_4,
+            1e-9,
+            1e-9
+        ));
+    }
+
+    /// `carry_greeks_to_greeks` copies every carry-neutral field verbatim and
+    /// projects the carry rate block to the FX two-rho basis via `flat_rhos`
+    /// (`rho_dom = discount_rho + carry_rho`, `rho_for = −carry_rho`).
+    #[test]
+    fn carry_greeks_to_greeks_projects_rhos() {
+        let cg = gbsm_carry_greeks(OptionType::Call, 0.01, 0.05, 1.10, 1.25, 0.09, 0.5);
+        let g = carry_greeks_to_greeks(&cg);
+        assert_eq!(g.price.to_bits(), cg.price.to_bits());
+        assert_eq!(g.delta_spot.to_bits(), cg.delta_spot.to_bits());
+        assert_eq!(g.vega.to_bits(), cg.vega.to_bits());
+        assert_eq!(g.color.to_bits(), cg.color.to_bits());
+        let (rho_dom, rho_for) = cg.rates.flat_rhos();
+        assert_eq!(g.rho_dom.to_bits(), rho_dom.to_bits());
+        assert_eq!(g.rho_for.to_bits(), rho_for.to_bits());
     }
 }

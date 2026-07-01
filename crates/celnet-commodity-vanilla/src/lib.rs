@@ -72,6 +72,7 @@
 
 use celnet_core::carry::CarryGreeks;
 use celnet_core::math::{exp, ln, norm_cdf, norm_pdf, sqrt};
+use celnet_core::{gbsm_carry_greeks, gbsm_carry_price};
 use celnet_types::{Carry, OptionType, RateSensitivities};
 
 /// Black-76 commodity-option input.
@@ -190,13 +191,21 @@ fn aux(i: &CommodityInputs) -> Aux {
 }
 
 /// Present value (premium per 1 unit of the underlying), discounted.
+///
+/// Delegates to the unified generalized-BSM forward-space kernel
+/// ([`gbsm_carry_price`]) with the commodity's already-canonical carry `(b, r)`;
+/// byte-for-byte identical to the former in-crate Black-76 form (ADR-0012).
 #[must_use]
 pub fn price(opt: OptionType, i: &CommodityInputs) -> f64 {
-    let a = aux(i);
-    match opt {
-        OptionType::Call => a.df * (a.f * norm_cdf(a.d1) - i.strike * norm_cdf(a.d2)),
-        OptionType::Put => a.df * (i.strike * norm_cdf(-a.d2) - a.f * norm_cdf(-a.d1)),
-    }
+    gbsm_carry_price(
+        opt,
+        i.carry.carry_rate(),
+        i.carry.discount_rate(),
+        i.spot,
+        i.strike,
+        i.vol,
+        i.t,
+    )
 }
 
 /// Price and the full generalized Greek strip in a single pass.
@@ -205,111 +214,27 @@ pub fn price(opt: OptionType, i: &CommodityInputs) -> f64 {
 /// `discount_rho = ∂V/∂r` and the `carry_rho = ∂V/∂b` (the commodity carry /
 /// convenience sensitivity). See [`CarryGreeks`] for the precise definition and
 /// units of each carry-neutral sensitivity.
+///
+/// Delegates to the unified generalized-BSM forward-space kernel
+/// ([`gbsm_carry_greeks`]) with the commodity's already-canonical carry `(b, r)`.
+/// Byte-for-byte identical to the former in-crate Black-76 strip: every field
+/// passes through, and `delta_forward` is rescaled from the kernel's driftless
+/// `Φ(±d1)` to the commodity desk's discounted `∂V/∂F = df·Φ(±d1)` — `Φ·df` is
+/// bit-identical to the former `df·Φ` (multiplication commutes), ADR-0012.
 #[must_use]
-#[allow(clippy::similar_names)] // d1/d2, nd1/nd2 are the canonical option-pricing names
 pub fn greeks(opt: OptionType, i: &CommodityInputs) -> CarryGreeks {
-    let a = aux(i);
-    let (f, df, d1, d2, sqt, vsqt) = (a.f, a.df, a.d1, a.d2, a.sqt, a.vsqt);
-    let (s, k, t, vol) = (i.spot, i.strike, i.t, i.vol);
-    let r = i.carry.discount_rate();
-    let b = i.carry.carry_rate();
-
-    let pd1 = norm_pdf(d1);
-    let nd1 = norm_cdf(d1);
-    let nd2 = norm_cdf(d2);
-    let nmd1 = norm_cdf(-d1);
-    let nmd2 = norm_cdf(-d2);
-
-    let price = match opt {
-        OptionType::Call => df * (f * nd1 - k * nd2),
-        OptionType::Put => df * (k * nmd2 - f * nmd1),
-    };
-
-    // Spot delta ∂V/∂S. With F = S·e^{b t}, ∂F/∂S = e^{b t}, and V = df·BS76(F):
-    //   ∂V/∂S = e^{b t}·∂V/∂F = e^{(b−r) t}·Φ(±d1).
-    // (∂d1/∂F·… cancels by the standard option identity, leaving the clean delta.)
-    let fwd_factor = i.carry.forward_factor(t); // e^{b t}
-    let delta_spot = match opt {
-        OptionType::Call => fwd_factor * df * nd1,
-        OptionType::Put => fwd_factor * df * (nd1 - 1.0),
-    };
-    // Forward (driftless) delta ∂V/∂F = df·Φ(±d1) — the undiscounted Black-76 delta.
-    let delta_forward = match opt {
-        OptionType::Call => df * nd1,
-        OptionType::Put => df * (nd1 - 1.0),
-    };
-
-    // Symmetric across call/put. Gamma is ∂²V/∂S²; with ∂²V/∂F² = df·φ(d1)/(F·σ√t)
-    // and ∂F/∂S = e^{b t}: gamma = e^{2 b t}·df·φ(d1)/(F·σ√t).
-    let gamma = fwd_factor * fwd_factor * df * pd1 / (f * vsqt);
-    let vega = df * f * sqt * pd1;
-    let vanna = -fwd_factor * df * pd1 * d2 / vol;
-    let volga = vega * d1 * d2 / vol;
-    // speed = ∂gamma/∂S, zomma = ∂gamma/∂σ — Black-76 forms scaled by the carry factor.
-    let speed = -gamma / s * (d1 / vsqt + 1.0);
-    let zomma = gamma * (d1 * d2 - 1.0) / vol;
-
-    // theta = ∂V/∂(calendar time) = −∂V/∂T (T = time to expiry). Differentiate the
-    // forward-space call V_T = S e^{(b−r)T}Φ(d1) − K e^{−rT}Φ(d2) w.r.t. T:
-    //   ∂V/∂T = (b−r)·S e^{(b−r)T}Φ(d1) + r·K e^{−rT}Φ(d2)
-    //           + [e^{−rT}F·φ(d1)(∂d1/∂T) − e^{−rT}K·φ(d2)(∂d2/∂T)].
-    // The cross-multiplied pdf identity F·φ(d1) = K·φ(d2) collapses the bracket to
-    //   e^{−rT}·K·φ(d2)·(∂d1/∂T − ∂d2/∂T) = e^{−rT}·F·φ(d1)·σ/(2√T)   (since d1−d2 = σ√T),
-    // a POSITIVE pdf term. So with the conventional sign theta = −∂V/∂T:
-    //   theta_call = −[ e^{−rT}·F·φ(d1)·σ/(2√T) + (b−r)·S e^{(b−r)T}Φ(d1) + r·K e^{−rT}Φ(d2) ].
-    // (Cross-validated against central FD in the test suite.)
-    let theta_pdf = df * f * pd1 * vol / (2.0 * sqt);
-    let theta = match opt {
-        OptionType::Call => -(theta_pdf + (b - r) * s * fwd_factor * df * nd1 + r * k * df * nd2),
-        OptionType::Put => -(theta_pdf - (b - r) * s * fwd_factor * df * nmd1 - r * k * df * nmd2),
-    };
-
-    // Discount-rho ∂V/∂r at FIXED b (the carry parameterization is (r, b)).
-    //   V = e^{−r t}·[F·Φ(d1) − K·Φ(d2)] with F = S e^{b t} independent of r ⇒
-    //   ∂V/∂r = −t·V.
-    let discount_rho = -t * price;
-    // Carry-rho ∂V/∂b at FIXED r (the convenience/carry sensitivity). Only F = S e^{b t}
-    // depends on b: ∂F/∂b = t·F, and ∂V/∂F = df·Φ(±d1) (forward delta), so
-    //   ∂V/∂b = (∂V/∂F)·(∂F/∂b) = t·F·df·Φ(±d1).
-    let carry_rho = match opt {
-        OptionType::Call => t * f * df * nd1,
-        OptionType::Put => -t * f * df * nmd1,
-    };
-
-    // charm = ∂(delta_spot)/∂T (delta decay per year of remaining maturity, matching
-    // the FX-leaf convention). delta_spot = e^{(b−r) T}·Φ(±d1) (Φ(d1) for a call,
-    // Φ(d1)−1 for a put), so
-    //   ∂(delta_spot)/∂T = (b−r)·e^{(b−r) T}·Φ(±d1) + e^{(b−r) T}·φ(d1)·∂d1/∂T.
-    // In forward space ln(F/K) = ln(S/K) + b·T, so
-    //   ∂d1/∂T = b/(σ√T) + ½σ/√T − d1/(2T).
-    let dd1_dt = b / vsqt + 0.5 * vol / sqt - d1 / (2.0 * t);
-    let charm = match opt {
-        OptionType::Call => (b - r) * fwd_factor * df * nd1 + fwd_factor * df * pd1 * dd1_dt,
-        OptionType::Put => (b - r) * fwd_factor * df * (nd1 - 1.0) + fwd_factor * df * pd1 * dd1_dt,
-    };
-
-    // color = ∂gamma/∂T. With gamma = e^{(b−r) T}·φ(d1)/(S·σ√T) (the ff²·df/F factor
-    // collapses to e^{(b−r) T}/S since F = S·e^{b T}), and φ'(d1) = −d1·φ(d1):
-    //   ∂gamma/∂T = gamma·[ (b−r) − 1/(2T) − d1·∂d1/∂T ].
-    let color = gamma * ((b - r) - 1.0 / (2.0 * t) - d1 * dd1_dt);
-
+    let cg = gbsm_carry_greeks(
+        opt,
+        i.carry.carry_rate(),
+        i.carry.discount_rate(),
+        i.spot,
+        i.strike,
+        i.vol,
+        i.t,
+    );
     CarryGreeks {
-        price,
-        delta_spot,
-        delta_forward,
-        gamma,
-        vega,
-        theta,
-        rates: RateSensitivities::Carry {
-            discount_rho,
-            carry_rho,
-        },
-        vanna,
-        volga,
-        charm,
-        speed,
-        zomma,
-        color,
+        delta_forward: cg.delta_forward * i.discount_df(),
+        ..cg
     }
 }
 
