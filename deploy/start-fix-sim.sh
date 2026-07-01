@@ -26,8 +26,10 @@
 #   tail -f deploy/fix-sim-run/log/fix-sim.log # watch requests in/out
 #
 # Env overrides (defaults match group_vars/all.yml celnet_env FIX settings):
-#   FIXSIM_HOST (127.0.0.1)  FIXSIM_PORT (56001)
-#   FIXSIM_SENDER (CELER_FXO)  FIXSIM_TARGET (CELNET)
+#   FIXSIM_ASSET (fi)        # fi = fixed income / OIS rates (default); fx = FX options
+#   FIXSIM_HOST (127.0.0.1)  FIXSIM_PORT (fi:56002 / fx:56001)
+#   FIXSIM_SENDER (fi:CELER_RATES / fx:CELER_FXO)  FIXSIM_TARGET (CELNET)
+#   FIXSIM_CURVE (USD-OIS) FIXSIM_TENOR (5) FIXSIM_NOTIONAL (10000000)   # FI RFQ shape
 #   FIXSIM_PERIOD (180) FIXSIM_JITTER (60)   # seconds between RFQs
 #   FIXSIM_BIN (target/release/fix-sim)      # preferred once the full bot is built
 #   FIXSIM_RFQ_BIN ()                        # prebuilt RFQ client (shipped by the release);
@@ -36,17 +38,36 @@
 #   FIXSIM_ONESHOT (0) FIXSIM_DAEMON (0)
 set -euo pipefail
 
-# Defaults match the live MANAGED FIX acceptor on the UAT host, from the runtime
-# registry /home/celnet/fix-connections.json: connection "CELER_FXO_CELNET", kind
-# options, bind_addr 127.0.0.1:56001, sender_comp_id=CELNET, target_comp_id=CELER_FXO.
-# The simulator is the CLIENT, so it presents the venue's counterparty CompID as its
-# SenderCompID (= venue target_comp_id = CELER_FXO) and addresses the venue's own
-# CompID as its TargetCompID (= venue sender_comp_id = CELNET). If the acceptor's
-# bind_addr/CompIDs change in the GUI FIX admin, update these to match.
+# Asset class the simulator drives: "fi" (fixed income / OIS rates RFQs, the DEFAULT)
+# or "fx" (FX-option RFQs). FI RFQs route to the rates desk (a human prices them in
+# the GUI); FX RFQs auto-quote off a surface snapshot. Each asset dials its own
+# managed acceptor and CompIDs (from the runtime registry /home/celnet/
+# fix-connections.json). The sim is the CLIENT, so its SenderCompID is the venue's
+# accepted counterparty (target_comp_id) and its TargetCompID is the venue's own
+# CompID (sender_comp_id). Port/CompIDs default per asset below; override any of them.
+FIXSIM_ASSET="${FIXSIM_ASSET:-fi}"
+case "$FIXSIM_ASSET" in
+  fi|rates|fixedincome|fixed_income) FIXSIM_ASSET="fi" ;;
+  fx|fxo|options)                    FIXSIM_ASSET="fx" ;;
+  *) echo "[fix-sim] ERROR: FIXSIM_ASSET must be fi|fx, got '$FIXSIM_ASSET'" >&2; exit 2 ;;
+esac
+
 FIXSIM_HOST="${FIXSIM_HOST:-127.0.0.1}"
-FIXSIM_PORT="${FIXSIM_PORT:-56001}"
-FIXSIM_SENDER="${FIXSIM_SENDER:-CELER_FXO}"
-FIXSIM_TARGET="${FIXSIM_TARGET:-CELNET}"
+if [ "$FIXSIM_ASSET" = "fi" ]; then
+  # Rates venue "CELER_RATES_CELNET" (kind fixed_income_quote) @127.0.0.1:56002.
+  FIXSIM_PORT="${FIXSIM_PORT:-56002}"
+  FIXSIM_SENDER="${FIXSIM_SENDER:-CELER_RATES}"
+  FIXSIM_TARGET="${FIXSIM_TARGET:-CELNET}"
+else
+  # FX-options venue "CELER_FXO_CELNET" (kind options) @127.0.0.1:56001.
+  FIXSIM_PORT="${FIXSIM_PORT:-56001}"
+  FIXSIM_SENDER="${FIXSIM_SENDER:-CELER_FXO}"
+  FIXSIM_TARGET="${FIXSIM_TARGET:-CELNET}"
+fi
+# Fixed-income RFQ shape (whole-year OIS tenor, notional in ccy units).
+FIXSIM_CURVE="${FIXSIM_CURVE:-USD-OIS}"
+FIXSIM_TENOR="${FIXSIM_TENOR:-5}"
+FIXSIM_NOTIONAL="${FIXSIM_NOTIONAL:-10000000}"
 FIXSIM_PERIOD="${FIXSIM_PERIOD:-180}"
 FIXSIM_JITTER="${FIXSIM_JITTER:-60}"
 FIXSIM_ONESHOT="${FIXSIM_ONESHOT:-0}"
@@ -90,7 +111,7 @@ if [ "${FIXSIM__CHILD:-0}" != "1" ]; then
 fi
 
 log "run dir $RUN_DIR ; log $LOG"
-log "acceptor $FIXSIM_HOST:$FIXSIM_PORT ; identity $FIXSIM_SENDER -> $FIXSIM_TARGET"
+log "asset $FIXSIM_ASSET ; acceptor $FIXSIM_HOST:$FIXSIM_PORT ; identity $FIXSIM_SENDER -> $FIXSIM_TARGET"
 
 # --- Resolve the runner up front so a build failure is LOUD, not hidden inside --
 # each RFQ iteration (the old `cargo run --quiet` swallowed both build and
@@ -143,23 +164,39 @@ else
 fi
 
 PAIRS=(EURUSD GBPUSD USDJPY USDCHF AUDUSD EURGBP EURJPY)
-SIDES=(observe buy sell)   # observe = RFQ only; buy = lift the offer; sell = hit the bid
+SIDES=(observe buy sell)   # FX: observe = RFQ only; buy = lift the offer; sell = hit the bid
 TYPES=(call put)
+RATES_SIDES=(pay receive two-way)  # FI: pay fixed / receive fixed / two-way request
 
 run_once() {
-  local pair="${PAIRS[$((RANDOM % ${#PAIRS[@]}))]}"
-  local side="${SIDES[$((RANDOM % ${#SIDES[@]}))]}"
-  local otype="${TYPES[$((RANDOM % ${#TYPES[@]}))]}"
-  local strike
-  strike="$(awk "BEGIN{printf \"%.4f\", 1.00 + (${RANDOM} % 40) / 100.0}")"
   local req="RFQ-$(date +%s)-$RANDOM"
-  log ">>> RFQ pair=$pair type=$otype side=$side strike=$strike req=$req"
-  if "${RUNNER[@]}" --addr "$FIXSIM_HOST:$FIXSIM_PORT" \
-      --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" \
-      --pair "$pair" --type "$otype" --side "$side" --strike "$strike" --req-id "$req"; then
-    log "<<< RFQ $req complete"
+  if [ "$FIXSIM_ASSET" = "fi" ]; then
+    # Fixed-income OIS RFQ — routed to the rates desk (a human prices it in the GUI).
+    local rside="${RATES_SIDES[$((RANDOM % ${#RATES_SIDES[@]}))]}"
+    log ">>> FI RFQ curve=$FIXSIM_CURVE tenor=${FIXSIM_TENOR}y side=$rside notional=$FIXSIM_NOTIONAL req=$req"
+    if "${RUNNER[@]}" --asset fi --addr "$FIXSIM_HOST:$FIXSIM_PORT" \
+        --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" \
+        --curve "$FIXSIM_CURVE" --tenor "$FIXSIM_TENOR" --notional "$FIXSIM_NOTIONAL" \
+        --side "$rside" --req-id "$req"; then
+      log "<<< FI RFQ $req complete"
+    else
+      log "<<< FI RFQ $req exited non-zero ($?) — see the client output above"
+    fi
   else
-    log "<<< RFQ $req exited non-zero ($?) — see the client output above"
+    # FX-option RFQ — auto-quoted off a surface snapshot (may be lifted).
+    local pair="${PAIRS[$((RANDOM % ${#PAIRS[@]}))]}"
+    local side="${SIDES[$((RANDOM % ${#SIDES[@]}))]}"
+    local otype="${TYPES[$((RANDOM % ${#TYPES[@]}))]}"
+    local strike
+    strike="$(awk "BEGIN{printf \"%.4f\", 1.00 + (${RANDOM} % 40) / 100.0}")"
+    log ">>> FX RFQ pair=$pair type=$otype side=$side strike=$strike req=$req"
+    if "${RUNNER[@]}" --asset fx --addr "$FIXSIM_HOST:$FIXSIM_PORT" \
+        --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" \
+        --pair "$pair" --type "$otype" --side "$side" --strike "$strike" --req-id "$req"; then
+      log "<<< FX RFQ $req complete"
+    else
+      log "<<< FX RFQ $req exited non-zero ($?) — see the client output above"
+    fi
   fi
 }
 
