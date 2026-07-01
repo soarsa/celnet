@@ -13861,5 +13861,67 @@
    "github.com-soarsa-celnet.crates.celnet-server.src.rates_pricing.price_rates"
   ],
   "text": "Mockup 15-rates-ticket: the rates-instrument ticket (PV/DV01, key-rate ladder, cashflow schedule, RFR legs) realizes celnet-server rates_pricing::price_rates plus the celnet-rates key-rate ladder. State: FRA/IRS/OIS/bond PV + key-rate DV01 LIVE; the full rates ticket (STIR futures, rates quoting/booking breadth) is TARGET. Serves the trader/rates lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-limits.src.check.pre_trade_check",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.book",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.rates_book.RatesPositionStore.book"
+  ],
+  "text": "Hard pre-trade limit enforcement is centralized at the TWO position sinks PositionStore::book and RatesPositionStore::book: each runs celnet-limits pre_trade_check and rejects a hard-limit-blown booking (typed LimitBreached -> gRPC failed_precondition / FIX ExecType=8) before the write. Gating at the sinks (not per front-end) makes ALL five booking paths (clicktrade / FIX / AcceptQuote / AcceptDeskQuote / BookRatesPosition) enforce identically, closing a real gap where AcceptQuote/AcceptDeskQuote/BookRatesPosition previously booked with no limit check. The projection runs off a READ snapshot taken before the write lock, so the check adds no hot-path lock contention; off-book paths gate at the firm + ccy-pair grain. (ADR-0016)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-accel.src.lib.GpuBatchReprice",
+   "github.com-soarsa-celnet.crates.celnet-gpu.src.batch.BatchPricer.price_batch",
+   "github.com-soarsa-celnet.crates.celnet-risk-accel.src.lib.screening_node_pnl_bound"
+  ],
+  "text": "The new celnet-risk-accel crate wires the celnet-gpu BatchPricer (BatchPricer::price_batch) into the risk-cube reprice loop as an f32 SCREENING lens only: GpuBatchReprice fast-filters which scenario nodes matter while exact revaluation stays CPU-f64 to <=1e-12. f32 is NEVER the byte-identity oracle (Metal has no f64), so every screened result is bounded and reconciled against the f64 truth (screening_node_pnl_bound) rather than asserted as the price. The dependency edge is one-way risk-accel -> {risk-cube, gpu}, keeping celnet-risk-cube lean and GPU-agnostic. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-replog.src.election.RaftNode.propose",
+   "github.com-soarsa-celnet.crates.celnet-server.src.config.consistency.ConsistencyLevel",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.consensus.ConsensusHandle.level_for_rates_book"
+  ],
+  "text": "The already-complete but dormant celnet-replog Raft is activated as ADR-0015's per-book/desk/tenant consistency tier via ConsistencyLevel{Strong,Local}: a Strong book routes PositionStore::book / RatesPositionStore::book through RaftNode::propose(BookUpdate) — quorum-committed before local apply — while Local (the default) keeps the fast fsync path byte-identical. ConsensusHandle::level_for_rates_book resolves the per-book grain and a RaftNode boots ONLY when a Strong book is configured, so the common deployment pays nothing. Only the un-regenerable position size is replicated (the regenerable mark is not logged). Pricing is bit-identical Strong-vs-Local — the hot pricing path is never gated on consistency — validated on a real 3-node cluster; NO new consensus code was written. (ADR-0015)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.DiscountCurve",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.forward_factor",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.discount_factor"
+  ],
+  "text": "DiscountCurve is homed in celnet-types so BOTH the flat Carry and celnet_rates::Curve implement it with NO new crate edge (dep-acyclic). impl DiscountCurve for Carry is the degenerate one-pillar curve — flat Carry is the degenerate limit of the general term-structure Curve — with byte-identical to_bits delegation and a forward_factor override carrying the FX e^{bt} carry sign. This trait is the term-structure-unification foundation (ADR-0010: Carry = degenerate curve), added with no behaviour change on any existing path."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.CurveCarry",
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.curve_carry_price",
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.forward_space_price"
+  ],
+  "text": "CurveCarry<'a>{dom, for_: &dyn DiscountCurve} in celnet-core discounts gBSM off a term structure: curve_carry_price computes forward = DF_for/DF_dom and PVs through the shared forward_space_price core (the same core as flat Carry), so the flat path stays byte-identical and the curve path is validated <=1e-12 vs an independent multi-curve QuantLib oracle. It is a borrowed, Copy value (no owned Arc) — chosen OVER a Carry::Curves variant, which would have cycled celnet-types -> celnet-rates and stripped Copy/Serialize from Carry. The curve is kept OFF the hot MarketState (ADR-0016 embargo). (P2 Phase-1)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-client.src.desk.DeskClient",
+   "github.com-soarsa-celnet.crates.celnet-client.src.lib.Client.stream_notifications",
+   "github.com-soarsa-celnet.crates.celnet-client.src.lib.Client.aggregate_rates_risk",
+   "github.com-soarsa-celnet.crates.celnet-client.src.lib.Client.book_rates_position",
+   "github.com-soarsa-celnet.crates.celnet-client.src.lib.Client.list_rates_positions"
+  ],
+  "text": "The Rust SDK+CLI reach client-parity over EXISTING RPCs (no proto change): DeskClient exposes the 5 RfqDeskService RPCs, Client::stream_notifications drives the NotificationStream, and Client::aggregate_rates_risk / book_rates_position / list_rates_positions cover RiskService FI-risk — each mirrored by a celnet-cli command. This closes the ADR-0014 api-first parity gap where these capabilities were GUI-only, restoring the invariant that every capability lives in the one canonical API and is consumed identically by GUI/SDK/CLI. (ADR-0014)"
  }
 ]
