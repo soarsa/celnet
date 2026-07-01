@@ -153,11 +153,15 @@ mod tests {
             .record,
         );
         let link = CoreLink::start(initial, None);
+        // Per-test isolated config dir so this in-crate test edge never races the one
+        // shared identity.json / fix-connections.json path with a parallel test edge.
+        let data_dir = tempfile::tempdir().expect("temp data dir for the backend edge");
         let backend = Edge::start(
             "127.0.0.1:0".parse().unwrap(),
             link,
             SpreadModel::default(),
             Clock::system(),
+            Some(data_dir.path()),
         )
         .await
         .expect("backend binds");

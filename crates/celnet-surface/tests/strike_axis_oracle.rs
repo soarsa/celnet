@@ -29,7 +29,6 @@
 
 use celnet_conventions::resolve;
 use celnet_core::math::norm_cdf;
-use celnet_crypto_vanilla::{deribit, funding_carry};
 use celnet_surface::{
     CalibratedSmile, MarketContext, MarketQuotes, ParametricSlice, SmileModel, StrikeQuote,
     StrikeQuoteSlice, StrikeSliceContext, build_model_smile, fit_strike_slice, strike_surface,
@@ -40,6 +39,33 @@ use celnet_types::{Carry, CcyPair, Tenor};
 // In-test reference formulas (re-typed from the published sources — NOT calls
 // into production code).
 // =========================================================================
+
+/// Crypto funding-carry assembly `b = r − funding`, re-typed inline from the
+/// published ADR-0008 §Decision-2 identity (funding is NOT a new `Carry`
+/// variant — it is just how the net carry `b` is formed before the seam's
+/// `F = S·e^{b·t}`). Inlined here (depending only on `celnet_types::Carry`)
+/// so the surface crate keeps the one-way layer rule (`docs/INTERFACES.md`):
+/// leaves are siblings, never a dev-dep back-edge from the surface onto the
+/// `celnet-crypto-vanilla` leaf. This is the byte-identical closed form
+/// `funding_carry` itself computes.
+fn funding_carry(r: f64, funding: f64) -> Carry {
+    Carry::CostOfCarry { r, b: r - funding }
+}
+
+/// Deribit venue-convention identities, re-typed from the published source
+/// (deribit.com/kb "Option specification" / "Expiration") — inlined here so the
+/// pin does not require a dev-dep onto the crypto leaf. Identity pins only; the
+/// quote/fixing VALUES remain deploy-validated ENV (W3 §9 honest boundary).
+mod deribit {
+    /// Contract style: **European**, cash-settled, exercised at expiry.
+    pub(super) const STYLE_EUROPEAN: &str = "European";
+    /// Settlement is **inverse / coin-margined** (denominated/settled in the
+    /// base coin, not USD). (Deribit KB "Option specification".)
+    pub(super) const SETTLEMENT_IS_INVERSE_COIN: bool = true;
+    /// Expiry cut: **08:00 UTC** = 28 800 seconds past midnight UTC.
+    /// (Deribit KB "Expiration".)
+    pub(super) const EXPIRY_CUT_UTC_SECONDS: u32 = 8 * 3_600;
+}
 
 /// Raw-SVI total variance, re-typed from Gatheral (2004) / Gatheral & Jacquier
 /// (2014) eq. 3.1.

@@ -111,6 +111,7 @@ use crate::readiness::ReadinessGate;
 use crate::services::access::{
     RequiredAuthority, ResolvedCaller, authorize_caller, resolve_caller,
 };
+use crate::services::error_status::{link_error_to_status, price_error_to_status};
 use crate::services::forward::{Serve, route_underlying, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::services::risk::federate::Fleet;
@@ -452,7 +453,7 @@ impl QuoteEdge {
             .link
             .market_snapshot()
             .await
-            .map_err(|e| Status::unavailable(e.to_string()))?;
+            .map_err(|e| link_error_to_status(&e))?;
         Ok(MarketContext::fx(
             snap.spot,
             snap.atm_vol,
@@ -673,8 +674,7 @@ impl QuoteService for QuoteEdge {
         let wire_conv = req
             .conventions
             .ok_or_else(|| Status::invalid_argument("missing `conventions`"))?;
-        let conv = ConventionSet::decode(&wire_conv)
-            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+        let conv = ConventionSet::decode(&wire_conv).map_err(|e| price_error_to_status(&e))?;
 
         let market = self.live_market().await?;
         // Resolve the optional pinned `surface_version`: an honoured pin prices the
@@ -699,7 +699,7 @@ impl QuoteService for QuoteEdge {
                     reason = %e,
                     "quote rejected"
                 );
-                return Err(Status::invalid_argument(e.to_string()));
+                return Err(price_error_to_status(&e));
             }
         };
 

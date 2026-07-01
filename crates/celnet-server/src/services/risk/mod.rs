@@ -26,6 +26,7 @@
 
 pub mod aggregate;
 pub mod convert;
+pub mod exotic_pricer;
 pub mod federate;
 pub mod store;
 
@@ -625,6 +626,7 @@ impl RiskEdge {
                 .collect();
             NonAdditiveExposure::from_scenarios(
                 &celnet_risk_normalize::AssetPricer,
+                &exotic_pricer::ExoticEngine,
                 &scaled_node,
                 &scenarios,
                 alpha,

@@ -356,12 +356,7 @@ class WsConnection {
       // GUI workflow is admitted under Enforce without relying on the server granting an
       // absent caller. Sent directly (not via the outbox) so it is the literal first
       // frame on every (re)connect — a re-dialed socket is anonymous server-side.
-      const authFrame: WireObject = {
-        type: "authenticate",
-        principal: principalOrGrantAllToWire(undefined),
-        ...(this.sessionToken ? { session_token: this.sessionToken } : {}),
-      };
-      ws.send(JSON.stringify(authFrame));
+      ws.send(JSON.stringify(this.authenticateFrame()));
       // Then flush anything queued while down, then let the bound session re-establish
       // its subscriptions (fresh subscribe + resync from last good sequence).
       for (const frame of this.outbox.splice(0)) ws.send(frame);
@@ -527,11 +522,52 @@ class WsConnection {
   }
 
   /**
+   * Build the opening `Authenticate` control frame: the bearer token (when held)
+   * plus the audited explicit grant-all entitlement principal. The token is what
+   * lets the server resolve the signed-in user's CAPABILITIES (a body principal
+   * cannot self-grant them — finding #3 — so under Enforce a tokenless stream is
+   * refused `Stream·FxOptions` / `Execute·FxOptions`); the grant-all principal
+   * keeps the risk plane admitted. Used on every (re)open AND re-sent by
+   * {@link setSessionToken} when the token changes mid-session.
+   */
+  private authenticateFrame(): WireObject {
+    return {
+      type: "authenticate",
+      principal: principalOrGrantAllToWire(undefined),
+      ...(this.sessionToken ? { session_token: this.sessionToken } : {}),
+    };
+  }
+
+  /**
    * Set (or clear, with `null`) the bearer session token injected into every
    * subsequent request envelope. Called by the auth flow after login/logout.
+   *
+   * The persistent connection opens (and sends its `Authenticate` frame) BEFORE
+   * the login round-trip completes — the very `login` call rides this open socket
+   * — so at first open the server pins an anonymous (capability-less) caller. When
+   * the token then arrives we must RE-AUTHENTICATE the already-open stream so the
+   * server re-pins the caller WITH the session and can resolve its capabilities;
+   * otherwise the live RFS session stays anonymous and its `Subscribe`/`Execute`
+   * frames are denied under Enforce. (A drop/reconnect re-sends the frame anyway
+   * via `open`; this covers the steady-state, no-reconnect login.)
    */
   setSessionToken(token: string | null): void {
     this.sessionToken = token;
+    if (this.isOpen() && this.ws) {
+      // Re-pin the server-side caller with the new credential. Sent directly (not
+      // via the outbox) so the live session's pinned identity is updated promptly,
+      // before any further subscribe/execute on this connection.
+      this.ws.send(JSON.stringify(this.authenticateFrame()));
+      // Re-issue every live subscription under the NOW-authenticated caller. The
+      // connection opens (and seeds the blotter's default watchlist) BEFORE login —
+      // the stream session is bound above the login gate — so those seed
+      // `Subscribe` frames went out anonymously and were DENIED under Enforce
+      // (`Stream·FxOptions`; finding #3). Re-subscribing here (exactly as a
+      // reconnect does) replays them now that the server can resolve the user's
+      // capabilities, so the seed watchlist materialises post-login. A no-op when
+      // no session is bound or no lines are live.
+      this.session?.onReconnect();
+    }
   }
 
   /**

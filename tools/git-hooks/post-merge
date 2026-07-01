@@ -1,0 +1,3 @@
+#!/bin/sh
+# Fires after `git merge` / `git pull` (incl. fast-forward) — bulk file changes.
+exec "$(dirname "$0")/_index.sh"

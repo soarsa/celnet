@@ -228,7 +228,7 @@ fn build_rates_lift<'a>(
 
 /// Attach a FIX acceptor to a freshly-booted edge and return its bound address.
 async fn boot_edge_with_fix(clock: Clock) -> (celnet_server::Edge, SocketAddr) {
-    let (mut edge, _grpc) = start_edge_with(true, clock.clone()).await;
+    let (mut edge, _grpc, _data_dir) = start_edge_with(true, clock.clone()).await;
     let fix_addr = edge
         .attach_fix_acceptor(
             "127.0.0.1:0".parse().unwrap(),

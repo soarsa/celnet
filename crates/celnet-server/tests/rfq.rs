@@ -28,7 +28,7 @@ use common::{
 #[tokio::test]
 async fn rfq_quote_accept_matches_direct_price() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             QuoteServiceClient::connect(format!("http://{addr}")),
@@ -122,7 +122,7 @@ async fn rfq_quote_accept_matches_direct_price() {
 #[tokio::test]
 async fn rfq_idempotent_retry_returns_same_quote_and_execution() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             QuoteServiceClient::connect(format!("http://{addr}")),
@@ -200,7 +200,7 @@ async fn rfq_accept_after_validity_is_rejected() {
     tokio::time::timeout(TEST_DEADLINE, async {
         // Start at t=1_000_000_000 ns; the quote validity is 5 s = 5e9 ns.
         let clock = Clock::manual(1_000_000_000);
-        let (edge, addr) = start_edge_with(true, clock.clone()).await;
+        let (edge, addr, _data_dir) = start_edge_with(true, clock.clone()).await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             QuoteServiceClient::connect(format!("http://{addr}")),
@@ -259,7 +259,7 @@ async fn rfq_accept_after_validity_is_rejected() {
 #[tokio::test]
 async fn rfq_idempotency_key_collision_is_rejected() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             QuoteServiceClient::connect(format!("http://{addr}")),
@@ -348,7 +348,7 @@ async fn rfq_idempotency_key_collision_is_rejected() {
 #[tokio::test]
 async fn rfq_accept_requires_originating_idempotency_key() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             QuoteServiceClient::connect(format!("http://{addr}")),
@@ -440,7 +440,7 @@ async fn rfq_accept_requires_originating_idempotency_key() {
 #[tokio::test]
 async fn rfq_accept_retry_side_flip_is_refused() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             QuoteServiceClient::connect(format!("http://{addr}")),
@@ -532,7 +532,7 @@ async fn rfq_accept_retry_side_flip_is_refused() {
 #[tokio::test]
 async fn rfq_quote_ids_are_unguessable() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             QuoteServiceClient::connect(format!("http://{addr}")),
@@ -584,7 +584,7 @@ async fn rfq_quote_ids_are_unguessable() {
 #[tokio::test]
 async fn rfq_reject_returns_typed_ack_and_blocks_accept() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             QuoteServiceClient::connect(format!("http://{addr}")),
@@ -678,7 +678,7 @@ async fn rfq_reject_returns_typed_ack_and_blocks_accept() {
 #[tokio::test]
 async fn rfq_lifecycle_carries_maker_and_holder_attribution() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge().await;
+        let (edge, addr, _data_dir) = start_ready_edge().await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             QuoteServiceClient::connect(format!("http://{addr}")),

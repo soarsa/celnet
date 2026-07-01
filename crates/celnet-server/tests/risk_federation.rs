@@ -221,6 +221,9 @@ struct Backend {
     edge: Edge,
     url: String,
     replica: ReplicaId,
+    /// The temp dir rooting this backend's isolated persisted config — kept alive for
+    /// the backend's full lifetime so parallel test edges never race one shared path.
+    _data_dir: tempfile::TempDir,
 }
 
 /// Boot one ready backend `Edge` on an ephemeral 127.0.0.1 port, seed its store with
@@ -231,13 +234,25 @@ async fn boot_backend(replica: ReplicaId, legs: Vec<Master>) -> Backend {
     let initial = celnet_engine::testing::make_state(1.10, common::eurusd_conv());
     let link = CoreLink::start(initial, None);
     let grpc = "127.0.0.1:0".parse().unwrap();
-    let edge = Edge::start(grpc, link, SpreadModel::default(), Clock::system())
-        .await
-        .expect("backend edge binds");
+    let data_dir = tempfile::tempdir().expect("temp data dir for the backend edge config");
+    let edge = Edge::start(
+        grpc,
+        link,
+        SpreadModel::default(),
+        Clock::system(),
+        Some(data_dir.path()),
+    )
+    .await
+    .expect("backend edge binds");
     edge.gate().mark_ready();
     seed(edge.store(), legs);
     let url = format!("http://{}", edge.grpc_addr());
-    Backend { edge, url, replica }
+    Backend {
+        edge,
+        url,
+        replica,
+        _data_dir: data_dir,
+    }
 }
 
 /// Partition the master book across `n` replicas (ids `1..=n`) by HRW natural owner,

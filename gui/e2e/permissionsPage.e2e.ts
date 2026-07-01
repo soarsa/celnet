@@ -88,9 +88,16 @@ test("admin edits a user's component access on the Permissions page end-to-end",
   await expect(ratesBookWrite).toHaveAttribute("aria-checked", "false");
   await expect(ratesBookWrite).toHaveAttribute("data-deny", "true");
 
-  // (c) The advanced view shows book·fixed_income DENIED.
-  await page.getByRole("button", { name: "Rates Book", exact: true }).click();
-  const bookCell = page.getByRole("button", { name: /^Book on Fixed Income:/ });
+  // (c) The advanced view shows book·fixed_income DENIED. Scope to the user's
+  // Component-access region ("Access — <email>") — the Role-bundles panel renders
+  // its OWN "Book on Fixed Income:" cell on the same page, so a page-wide match is
+  // ambiguous (strict-mode violation). The region is the named ComponentAccessGrid
+  // <section>, so this targets exactly the per-user advanced cell under test.
+  const accessGrid = page.getByRole("region", {
+    name: new RegExp(`Access — ${TRADER_EMAIL}`),
+  });
+  await accessGrid.getByRole("button", { name: "Rates Book", exact: true }).click();
+  const bookCell = accessGrid.getByRole("button", { name: /^Book on Fixed Income:/ });
   await expect(bookCell).toHaveAttribute("aria-label", /blocked, overlay Deny/);
   await expect(bookCell).toHaveAttribute("data-overlay", "deny");
 

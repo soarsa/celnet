@@ -24,7 +24,7 @@ use common::{
 async fn pricing_rejected_until_ready_then_succeeds() {
     tokio::time::timeout(TEST_DEADLINE, async {
         // Deliberately NOT ready.
-        let (edge, addr) = start_edge_with(false, Clock::system()).await;
+        let (edge, addr, _data_dir) = start_edge_with(false, Clock::system()).await;
         let mut client = tokio::time::timeout(
             STEP_DEADLINE,
             PricingServiceClient::connect(format!("http://{addr}")),
@@ -71,7 +71,7 @@ async fn pricing_rejected_until_ready_then_succeeds() {
 #[tokio::test]
 async fn readiness_gate_transitions() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, _addr) = start_edge_with(false, Clock::system()).await;
+        let (edge, _addr, _data_dir) = start_edge_with(false, Clock::system()).await;
         let gate = edge.gate();
 
         assert_eq!(gate.state(), ServiceState::Starting);
@@ -99,7 +99,7 @@ async fn readiness_gate_transitions() {
 #[tokio::test]
 async fn shutdown_drains_in_flight_to_zero() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, _addr) = start_ready_edge().await;
+        let (edge, _addr, _data_dir) = start_ready_edge().await;
         let gate = std::sync::Arc::clone(edge.gate());
 
         // Simulate an in-flight request spanning the drain window.

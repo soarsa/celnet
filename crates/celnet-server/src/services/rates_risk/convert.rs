@@ -27,17 +27,8 @@ use celnet_risk_fleet::{KeyRateBucket, RatesFactKey, RatesFirmRollup, RatesRiskF
 use celnet_types::Ccy;
 use tonic::Status;
 
-use crate::rates_pricing::{RatesPriceError, price_rates};
-
-/// Map a [`RatesPriceError`] to a gRPC [`Status`], mirroring the
-/// `PricingService.PriceRates` edge: a bootstrap failure on otherwise-valid input
-/// is an internal numeric fault; every other variant is a malformed request.
-fn price_error_status(e: &RatesPriceError) -> Status {
-    match e {
-        RatesPriceError::Bootstrap(_) => Status::internal(e.to_string()),
-        _ => Status::invalid_argument(e.to_string()),
-    }
-}
+use crate::rates_pricing::price_rates;
+use crate::services::error_status::rates_price_error_to_status;
 
 /// The whole-year tenor a pillar labels, or `None` if it uses the month /
 /// broken-date arm. The per-tenor key-rate ladder is whole-year-labelled today;
@@ -89,7 +80,7 @@ pub fn fact_from_position(
         instrument: Some(instrument),
         correlation_id: None,
     };
-    let priced = price_rates(&price_req).map_err(|e| price_error_status(&e))?;
+    let priced = price_rates(&price_req).map_err(|e| rates_price_error_to_status(&e))?;
 
     // Zip the per-pillar DV01 doubles back onto their `CurveSet` pillar tenors so
     // each ladder bucket carries the tradeable hedge tenor it bumps. `price_rates`

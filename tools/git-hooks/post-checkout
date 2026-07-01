@@ -1,0 +1,5 @@
+#!/bin/sh
+# $1=prev-HEAD $2=new-HEAD $3=flag (1=branch checkout, 0=file checkout).
+# Only reindex on branch switches; skip per-file checkouts (no graph impact worth a pass).
+[ "$3" = "1" ] || exit 0
+exec "$(dirname "$0")/_index.sh"

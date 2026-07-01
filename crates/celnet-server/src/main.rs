@@ -73,6 +73,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::clone(&link),
         SpreadModel::default(),
         Clock::system(),
+        // Production: the env-var-or-CWD default config locations (no per-process
+        // data dir override — tests pass `Some(tempdir)` for isolated stores).
+        None,
     )
     .await?;
     // The core is warm: open the `/readyz` gate.

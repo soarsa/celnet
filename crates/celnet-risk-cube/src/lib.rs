@@ -46,11 +46,15 @@
 //!   the exact reference the AAD lens is reconciled against (within a documented
 //!   Taylor tolerance over a moderate shock regime; the gap widens for large shocks
 //!   — the honest 2nd-order truncation regime). **The batched-GPU Monte-Carlo
-//!   `celnet_gpu::ScenarioPricer` is deliberately NOT wired into this closed-form
-//!   VaR path** (mixing MC estimator noise into an exact closed-form reval would be
-//!   a numerical regression); the right GPU lever here is a batched *closed-form*
-//!   vanilla kernel (`docs/GPU-AT-SCALE-PLAN.md` Workload A / G2), the distinct next
-//!   GPU increment.
+//!   scenario kernel is deliberately NOT wired into this closed-form VaR path**
+//!   (mixing MC estimator noise into an exact closed-form reval would be a numerical
+//!   regression); the right GPU lever here is a batched *closed-form* vanilla kernel
+//!   (`docs/GPU-AT-SCALE-PLAN.md` Workload A / G2), the distinct next GPU increment.
+//!   The cube itself depends only on `celnet-types`/`celnet-core`/`celnet-vanilla` —
+//!   the heavy GPU and exotic pricing crates are injected via the
+//!   [`celnet_core::ExoticLegPricer`] seam (exotics) and live behind the bench
+//!   harness (the batched scenario grid), so the cube never pulls them (arch-program
+//!   item E; `docs/INTERFACES.md` one-way edges).
 //! - **Single-node only.** This cube aggregates the facts it holds. Distributed
 //!   **cross-shard reduction** (§3.4) over the **designed-only** `celnet-router`
 //!   HRW partition map is out of scope. The **shard-merge seam** is
@@ -94,7 +98,15 @@ pub mod exotic;
 pub mod frtb;
 pub mod frtb_params;
 pub mod nonadditive;
-pub mod scenario_grid;
+
+// A hand-coded, code-disjoint closed-form [`ExoticLegPricer`] used ONLY by tests of
+// the cube and its downstream consumers (the cube does not depend on `celnet-exotics`;
+// the production seam injects the real engines). Single-homed in `test_support.rs`:
+// available to the cube's own `#[cfg(test)]` code, `#[path]`-included by the cube's
+// integration tests, and re-used by downstream **test** crates that enable the
+// `test-support` feature — exactly one definition (see `docs/INTERFACES.md`).
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 pub use additive::{NetGreeks, VegaLadder, VegaPillar};
 pub use cube::{Cube, NodeAggregate, VegaPillarMap};
@@ -102,7 +114,11 @@ pub use dimension::{
     BookId, DeskId, DimensionId, EntityId, FactKey, FactMeasure, Hierarchy, LocationId, PositionId,
     RiskFact, TraderId,
 };
-pub use exotic::{ExoticKind, ExoticLeg, exotic_curvature_legs, exotic_node_pnl};
+// `ExoticKind` (and its `SingleBarrier` / `DigitalKind` payloads) now live in
+// `celnet-types`; re-exported here so `celnet_risk_cube::ExoticKind` stays a valid
+// path for every existing consumer (server / parity / cli).
+pub use celnet_types::ExoticKind;
+pub use exotic::{ExoticLeg, exotic_curvature_legs, exotic_node_pnl};
 pub use frtb::{
     CorrelationScenario, CurvatureBucket, FrtbCapital, ResidualInstrument, ResidualKind,
     RiskBucket, SbmCharge, SbmParams, assemble_capital, curvature_class, curvature_legs,
@@ -118,11 +134,11 @@ pub use nonadditive::{
     sbm_curvature_spot, sbm_curvature_spot_combined, sensitivity_var_es, shift_carry,
     vanilla_curvature_legs,
 };
-pub use scenario_grid::{NodeScenarioGrid, analytic_pv_grid, gpu_pv_grid};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::DigitalTestPricer;
     use celnet_core::is_close;
     use celnet_risk_normalize::{AssetPricer, PositionRisk, StaticSpotResolver, canonicalize};
     use celnet_types::{
@@ -428,8 +444,9 @@ mod tests {
                 });
             }
         }
-        let oracle = Cube::node_var_es(&AssetPricer, &node, &scen, 0.99);
-        let fast = Cube::node_var_es_sensitivity(&AssetPricer, &node, &scen, 0.99);
+        let oracle = Cube::node_var_es(&AssetPricer, &DigitalTestPricer, &node, &scen, 0.99);
+        let fast =
+            Cube::node_var_es_sensitivity(&AssetPricer, &DigitalTestPricer, &node, &scen, 0.99);
         assert!(oracle.var > 0.0);
         assert!(
             is_close(fast.var, oracle.var, 8e-2, 1e-3),
@@ -519,7 +536,7 @@ mod tests {
             c.firm_aggregate(&DaysPillar)
         };
         assert_eq!(
-            Cube::node_curvature_spot(&AssetPricer, &long_node, rw),
+            Cube::node_curvature_spot(&AssetPricer, &DigitalTestPricer, &long_node, rw),
             0.0,
             "long-gamma book must have zero curvature charge"
         );
@@ -533,7 +550,7 @@ mod tests {
             c.upsert(fact(2, 1, 1, 1, 1, 1, &put));
             c.firm_aggregate(&DaysPillar)
         };
-        let cvr = Cube::node_curvature_spot(&AssetPricer, &short_node, rw);
+        let cvr = Cube::node_curvature_spot(&AssetPricer, &DigitalTestPricer, &short_node, rw);
         assert!(
             cvr > 0.0,
             "short straddle must have positive curvature charge, got {cvr}"

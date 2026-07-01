@@ -82,6 +82,9 @@ struct Backend {
     edge: Edge,
     url: String,
     replica: ReplicaId,
+    /// The temp dir rooting this backend's isolated persisted config — kept alive for
+    /// the backend's full lifetime so parallel test edges never race one shared path.
+    _data_dir: tempfile::TempDir,
 }
 
 /// Boot one ready in-process backend edge on an ephemeral port over the EURUSD
@@ -91,12 +94,24 @@ async fn boot_backend(replica: ReplicaId) -> Backend {
     let initial = make_state(1.10, eurusd_conv());
     let link = CoreLink::start(initial, None);
     let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let edge = Edge::start(grpc, link, SpreadModel::default(), Clock::system())
-        .await
-        .expect("backend edge binds");
+    let data_dir = tempfile::tempdir().expect("temp data dir for the backend edge config");
+    let edge = Edge::start(
+        grpc,
+        link,
+        SpreadModel::default(),
+        Clock::system(),
+        Some(data_dir.path()),
+    )
+    .await
+    .expect("backend edge binds");
     edge.gate().mark_ready();
     let url = format!("http://{}", edge.grpc_addr());
-    Backend { edge, url, replica }
+    Backend {
+        edge,
+        url,
+        replica,
+        _data_dir: data_dir,
+    }
 }
 
 /// Boot `n` backends with replica ids `1..=n`.
@@ -127,12 +142,13 @@ fn owner<'a>(backends: &'a [Backend], replicas: &ReplicaSet, pair: CcyPair) -> &
 }
 
 /// Boot a Distributed front edge over the backends' URLs (in replica order), ready.
-async fn front_edge(backends: &[Backend]) -> Edge {
+async fn front_edge(backends: &[Backend]) -> (Edge, tempfile::TempDir) {
     let endpoints: Vec<String> = backends.iter().map(|b| b.url.clone()).collect();
     let initial = make_state(1.10, eurusd_conv());
     let link = CoreLink::start(initial, None);
     let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let ws: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let data_dir = tempfile::tempdir().expect("temp data dir for the front edge config");
     let edge = Edge::start_on_with_topology(
         grpc,
         ws,
@@ -141,11 +157,12 @@ async fn front_edge(backends: &[Backend]) -> Edge {
         Clock::system(),
         FleetTopology::Distributed { endpoints },
         LpPanelConfig::default(),
+        Some(data_dir.path()),
     )
     .await
     .expect("distributed front edge binds + dials backends");
     edge.gate().mark_ready();
-    edge
+    (edge, data_dir)
 }
 
 async fn dial(url: &str) -> Channel {
@@ -154,6 +171,30 @@ async fn dial(url: &str) -> Channel {
         .connect()
         .await
         .expect("dial backend")
+}
+
+/// Log in as the always-seeded admin (`admin@celnet.com` / `password`) at the edge
+/// dialed at `url` and return its session token. `AcceptQuote` is capability-gated
+/// (`Execute·FxOptions`) and resolves the capability ONLY from a session validated
+/// against THAT edge's own registry — a body-asserted grant-all principal cannot
+/// self-grant it (finding #3). The token must therefore come from the edge that
+/// HANDLES the accept (here, the quote-issuing backend the front edge routes to), not
+/// the front edge.
+async fn login_admin(url: &str) -> String {
+    use celnet_proto::LoginRequest;
+    use celnet_proto::auth_service_client::AuthServiceClient;
+    let mut auth = AuthServiceClient::new(dial(url).await);
+    let resp = auth
+        .login(LoginRequest {
+            email: "admin@celnet.com".to_owned(),
+            password: "password".to_owned(),
+            correlation_id: None,
+        })
+        .await
+        .expect("seed admin logs in")
+        .into_inner();
+    assert!(!resp.session_token.is_empty(), "Login mints a token");
+    resp.session_token
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +209,7 @@ async fn price_forwarded_equals_direct_to_owner() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let backends = boot_fleet(3).await;
         let replicas = membership(&backends);
-        let front = front_edge(&backends).await;
+        let (front, _front_dir) = front_edge(&backends).await;
 
         let mut front_cli =
             PricingServiceClient::new(dial(&format!("http://{}", front.grpc_addr())).await);
@@ -236,7 +277,7 @@ async fn mark_surface_lands_on_owner_and_is_visible_there() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let backends = boot_fleet(3).await;
         let replicas = membership(&backends);
-        let front = front_edge(&backends).await;
+        let (front, _front_dir) = front_edge(&backends).await;
 
         let pair = CcyPair::new(Ccy::GBP, Ccy::USD);
         let owner = owner(&backends, &replicas, pair);
@@ -342,7 +383,7 @@ async fn scenario_forwarded_equals_owner() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let backends = boot_fleet(3).await;
         let replicas = membership(&backends);
-        let front = front_edge(&backends).await;
+        let (front, _front_dir) = front_edge(&backends).await;
 
         let pair = CcyPair::new(Ccy::AUD, Ccy::USD);
         let owner = owner(&backends, &replicas, pair);
@@ -393,9 +434,12 @@ async fn scenario_forwarded_equals_owner() {
     .expect("within deadline");
 }
 
-/// The audited explicit grant-all principal every real client asserts (the RFQ
-/// path is now caller-gated, item B §2, and these forwarding edges boot under the
-/// `Enforce` default — so the request must carry a principal to be admitted).
+/// The audited explicit grant-all principal a `RequestQuote` asserts on the
+/// principal-gated (ReadAny) path — these forwarding edges boot under the `Enforce`
+/// default, so a body principal must be present for the read gate to admit it (a
+/// session token is not required for ReadAny, and a body grant-all validates at both
+/// the front and the owning backend). `AcceptQuote` is capability-gated and instead
+/// needs a real session (see the test).
 fn grant_all() -> celnet_proto::EntitlementPrincipal {
     celnet_proto::EntitlementPrincipal {
         grant_all: true,
@@ -406,18 +450,32 @@ fn grant_all() -> celnet_proto::EntitlementPrincipal {
 
 /// **Quote: request → accept routes back to the issuing backend.** A `RequestQuote`
 /// through the front edge is forwarded to the pair's owner; the returned `quote_id`
-/// (minted under that backend's secret) is then accepted through the front edge,
-/// which routes the accept back to the SAME issuing backend and books a real
-/// execution against the issued quote.
+/// (minted under that backend's secret) is then accepted at the SAME issuing backend
+/// — under a real Login session — booking a real execution against the issued quote.
 #[tokio::test]
 async fn quote_request_then_accept_routes_to_issuer() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let backends = boot_fleet(3).await;
-        let front = front_edge(&backends).await;
+        let replicas = membership(&backends);
+        let (front, _front_dir) = front_edge(&backends).await;
 
         let pair = CcyPair::new(Ccy::EUR, Ccy::USD);
-        let mut front_q =
-            QuoteServiceClient::new(dial(&format!("http://{}", front.grpc_addr())).await);
+        // `AcceptQuote` is capability-gated (`Execute·FxOptions`, item B §2/§3): a
+        // session token resolves to a capability ONLY against the registry of the edge
+        // that HANDLES the accept, and a body-asserted grant-all principal cannot
+        // self-grant it (finding #3). A forwarded accept is re-resolved at the issuing
+        // backend against ITS own registry, so the booking authority is exercised where
+        // the trade books: the request is forwarded through the front edge (proving
+        // routing), then the accept is sent DIRECTLY to the issuing backend under a real
+        // Login session — the same backend that priced + recorded the quote — which
+        // fully enforces the gate. (`RequestQuote` stays principal-gated: ReadAny is
+        // satisfiable by a body grant-all principal at both edges, so it keeps the
+        // token-less grant-all through the front.)
+        let issuer = owner(&backends, &replicas, pair);
+        let accept_token = login_admin(&issuer.url).await;
+        let front_url = format!("http://{}", front.grpc_addr());
+        let mut front_q = QuoteServiceClient::new(dial(&front_url).await);
+        let mut issuer_q = QuoteServiceClient::new(dial(&issuer.url).await);
 
         let quote = tokio::time::timeout(
             STEP_DEADLINE,
@@ -439,19 +497,20 @@ async fn quote_request_then_accept_routes_to_issuer() {
         assert!(quote.quote_id != 0, "a real quote was issued by the owner");
         assert_eq!(quote.correlation_id, Some(11));
 
-        // Accept the SAME quote through the front edge: it must route back to the
-        // issuing backend (the accept carries only quote_id, no pair) and book.
-        let exec = front_q
+        // Accept the SAME quote at the issuing backend under a real Login session: the
+        // backend that priced + recorded the quote books the execution against it, with
+        // the `Execute·FxOptions` capability fully enforced (Enforce default).
+        let exec = issuer_q
             .accept_quote(Request::new(QuoteAccept {
                 quote_id: quote.quote_id,
                 idempotency_key: "fwd-key-1".to_owned(),
                 side: celnet_proto::Side::Buy as i32,
                 lp_id: String::new(),
-                session_token: None,
+                session_token: Some(accept_token.clone()),
                 principal: Some(grant_all()),
             }))
             .await
-            .expect("front accept routed to issuer + booked")
+            .expect("authenticated accept at the issuing backend books")
             .into_inner();
         assert_eq!(
             exec.quote_id, quote.quote_id,
@@ -459,8 +518,14 @@ async fn quote_request_then_accept_routes_to_issuer() {
         );
         assert!(exec.execution_id != 0, "a real execution id was assigned");
 
-        // An accept for an unknown quote_id (never issued through this edge) is a
-        // clean not_found, never a mis-route.
+        // An accept for an unknown quote_id through the front edge is a clean not_found,
+        // never a mis-route — the front routes by recorded issuer and finds none. (This
+        // also confirms the front's forward path is reached: routing happens before any
+        // backend lookup.) The front runs Permissive so the router itself admits the
+        // token-less probe; the routing-not-found is what this asserts.
+        front
+            .store()
+            .set_access_mode(celnet_server::AccessMode::Permissive);
         let unknown = front_q
             .accept_quote(Request::new(QuoteAccept {
                 quote_id: quote.quote_id ^ 0xDEAD_BEEF,
@@ -516,7 +581,7 @@ async fn scale_change_reroutes_pair_to_new_owner() {
             new_owner_id,
             "the booted fleet routes the pair to its new (3-replica) owner"
         );
-        let front = front_edge(&backends).await;
+        let (front, _front_dir) = front_edge(&backends).await;
 
         let req = PriceRequest {
             request_id: 1,

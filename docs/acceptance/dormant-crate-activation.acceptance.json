@@ -1,0 +1,34 @@
+{
+  "deliverable": "dormant-crate-activation",
+  "title": "Dormant-crate activation — plugin-host models + xva/replog seam (arch item D)",
+  "decision": "ADR-0008-multi-asset-carry-architecture",
+  "description": "FORWARD SPEC (tail — not yet landed). The plugin-host ModelRegistry is wired into the ProductEngine dispatch path so a registered plugin model prices through the same engine registry as native products, and celnet-xva + celnet-replog are either reached via an RPC seam or explicitly recorded as deferred in docs/INTERFACES.md (no silently dormant crate). The roll-up stays non-active until D ships. This is the frozen-contract acceptance for the deliverable 'dormant-crate-activation'.",
+  "assertions": [
+    {
+      "id": "model-registry-into-engine-path",
+      "kind": "edge",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch",
+      "statement": "The plugin-host ModelRegistry is wired into the ProductEngine dispatch path: a plugin-provided model resolves through celnet_plugin_host::registry::ModelRegistry and is priced as a ProductEngine, so a registered plugin model goes through the same engine registry as native products. (Forward target — the dispatch→ModelRegistry edge does not yet exist on main.)",
+      "decidable": true
+    },
+    {
+      "id": "model-registry-seam-present",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-plugin-host.src.registry.ModelRegistry",
+      "statement": "celnet_plugin_host::registry::ModelRegistry is the host-side registry that instantiates plugin models behind the celnet_plugin_api::registry::ModelRegistry abstraction for hot-path routing.",
+      "decidable": true
+    },
+    {
+      "id": "xva-replog-rpc-or-deferred",
+      "kind": "invariant",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch",
+      "statement": "celnet-xva and celnet-replog are either reachable from the server via an RPC seam, or their non-activation is explicitly recorded as deferred in docs/INTERFACES.md — no crate is left silently dormant.",
+      "decidable": false
+    }
+  ],
+  "anchors": [
+    "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch",
+    "github.com-soarsa-celnet.crates.celnet-plugin-host.src.registry.ModelRegistry",
+    "github.com-soarsa-celnet.crates.celnet-plugin-api.src.registry.ModelRegistry"
+  ]
+}

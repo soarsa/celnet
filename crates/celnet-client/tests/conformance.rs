@@ -584,7 +584,7 @@ async fn run_conformance(families: &[&str]) {
         .collect();
     assert!(!subset.is_empty(), "no vectors for families {families:?}");
 
-    let (edge, client) = common::start_edge_and_client().await;
+    let (edge, client, _data_dir) = common::start_edge_and_client().await;
     let conv = Conventions::major_default();
 
     let mut exercised: HashSet<String> = HashSet::new();
@@ -712,7 +712,7 @@ async fn sdk_conforms_cross_asset_vanilla() {
         &VanillaInputs::new(spot, strike, vol, t, r_dom, r_for),
     );
 
-    let (edge, client) = common::start_edge_and_client().await;
+    let (edge, client, _data_dir) = common::start_edge_and_client().await;
 
     // The three cross-asset underlyings, each a CALL struck at 105 on the same market.
     let specs: Vec<(&str, InstrumentSpec)> = vec![

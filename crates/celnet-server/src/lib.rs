@@ -230,6 +230,13 @@ impl Edge {
     /// [`CoreLink`] owns the running pricing core; the [`SpreadModel`] sets the
     /// maker two-way; the [`Clock`] sources edge message timestamps.
     ///
+    /// `data_dir` roots the persisted operator config files (`fix-connections.json`,
+    /// `identity.json`); pass `None` for the production default (the
+    /// `CELNET_FIX_CONFIG` / `CELNET_IDENTITY_CONFIG` env knob, or the CWD-relative
+    /// fallback — unchanged behaviour). Tests pass a per-edge temp dir so parallel
+    /// edges get isolated identity/connection stores instead of racing one shared
+    /// path.
+    ///
     /// The edge starts in [`ServiceState::Starting`]; call
     /// [`ReadinessGate::mark_ready`] once the core is warm to begin accepting
     /// traffic at the `/readyz` gate.
@@ -243,11 +250,12 @@ impl Edge {
         link: Arc<CoreLink>,
         spread: SpreadModel,
         clock: Clock,
+        data_dir: Option<&std::path::Path>,
     ) -> std::io::Result<Self> {
         // The WS mirror binds on the same host as the gRPC listener with an
         // OS-assigned ephemeral port (read back via [`Edge::ws_addr`]).
         let ws_addr = SocketAddr::new(grpc_addr.ip(), 0);
-        Self::start_on(grpc_addr, ws_addr, link, spread, clock).await
+        Self::start_on(grpc_addr, ws_addr, link, spread, clock, data_dir).await
     }
 
     /// Like [`Edge::start`], but binds the WebSocket mirror on an **explicit**
@@ -269,6 +277,7 @@ impl Edge {
         link: Arc<CoreLink>,
         spread: SpreadModel,
         clock: Clock,
+        data_dir: Option<&std::path::Path>,
     ) -> std::io::Result<Self> {
         // Resolve the deploy-time knobs from the environment, then delegate.
         // Reading the env (the only I/O) happens here, once, at boot: the
@@ -281,6 +290,7 @@ impl Edge {
             spread,
             clock,
             LpPanelConfig::from_env(),
+            data_dir,
         )
         .await
     }
@@ -303,9 +313,13 @@ impl Edge {
         spread: SpreadModel,
         clock: Clock,
         panel: LpPanelConfig,
+        data_dir: Option<&std::path::Path>,
     ) -> std::io::Result<Self> {
         let topology = fleet_topology_from_env();
-        Self::start_on_with_topology(grpc_addr, ws_addr, link, spread, clock, topology, panel).await
+        Self::start_on_with_topology(
+            grpc_addr, ws_addr, link, spread, clock, topology, panel, data_dir,
+        )
+        .await
     }
 
     /// Like [`Edge::start_on`], but binds the edge under an **explicit**
@@ -323,6 +337,12 @@ impl Edge {
     /// # Errors
     /// Returns an [`std::io::Error`] if either listener cannot bind, or if a
     /// distributed backend endpoint cannot be dialled.
+    // The fully-explicit boot path: every deploy-time knob the env-reading entry
+    // points resolve (grpc/ws addrs, spread, clock, fleet topology, LP panel, and the
+    // data-dir root for the persisted identity/fix-connection stores) is passed
+    // directly so a federation/multi-dealer test is race-free against process-global
+    // env. The argument count is intrinsic to that "no hidden env" contract.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start_on_with_topology(
         grpc_addr: SocketAddr,
         ws_addr: SocketAddr,
@@ -331,6 +351,7 @@ impl Edge {
         clock: Clock,
         topology: FleetTopology,
         panel: LpPanelConfig,
+        data_dir: Option<&std::path::Path>,
     ) -> std::io::Result<Self> {
         let gate = Arc::new(ReadinessGate::new());
         // The single versioned marked-surface registry every service shares: the
@@ -478,7 +499,9 @@ impl Edge {
                 // into (auto-quoted history + human-routed pending), so the GUI desk
                 // shows what a FIX venue received.
                 Some(Arc::clone(&rfq_desk_edge)),
-                FixConnectionStore::config_path(),
+                data_dir
+                    .map(|d| d.join("fix-connections.json"))
+                    .unwrap_or_else(FixConnectionStore::config_path),
             )
             .map_err(|e| std::io::Error::new(e.kind(), format!("FIX connection config: {e}")))?,
         );
@@ -505,7 +528,9 @@ impl Edge {
         // administrative call carries, against the SAME session registry (process-
         // local, emptied on restart). The registry stamps issue/expiry off the SAME
         // edge clock every other service uses.
-        let identity_path = IdentityStore::config_path();
+        let identity_path = data_dir
+            .map(|d| d.join("identity.json"))
+            .unwrap_or_else(IdentityStore::config_path);
         let mut identity_store = IdentityStore::load(&identity_path)
             .map_err(|e| std::io::Error::new(e.kind(), format!("identity config: {e}")))?;
         let admin_seeded = identity_store

@@ -71,3 +71,6 @@ celnet-testkit.workspace = true
 # (tests/cross_asset_ws.rs) reconciles the WS mirror against the vectors'
 # independent oracles.
 celnet-golden.workspace = true
+# Per-test isolated config dir so parallel test edges never race the one shared
+# identity.json / fix-connections.json path (each `start_*_edge` roots its own).
+tempfile.workspace = true

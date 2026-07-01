@@ -449,6 +449,7 @@ dependencies = [
  "celnet-types",
  "celnet-vanilla",
  "clap",
+ "tempfile",
  "time",
  "tokio",
 ]
@@ -470,6 +471,7 @@ dependencies = [
  "celnet-vanilla",
  "futures-util",
  "serde_json",
+ "tempfile",
  "tokio",
  "tonic",
 ]
@@ -733,7 +735,6 @@ dependencies = [
 name = "celnet-proto"
 version = "0.0.0"
 dependencies = [
- "celnet-core",
  "celnet-types",
  "prost",
  "protox",
@@ -786,8 +787,6 @@ dependencies = [
  "celnet-commodity-vanilla",
  "celnet-core",
  "celnet-equity-vanilla",
- "celnet-exotics",
- "celnet-gpu",
  "celnet-risk-normalize",
  "celnet-types",
  "celnet-vanilla",
@@ -868,6 +867,7 @@ dependencies = [
  "rtrb",
  "serde",
  "serde_json",
+ "tempfile",
  "time",
  "tokio",
  "tokio-tungstenite",
@@ -881,7 +881,6 @@ version = "0.0.0"
 dependencies = [
  "celnet-conventions",
  "celnet-core",
- "celnet-crypto-vanilla",
  "celnet-testkit",
  "celnet-types",
  "celnet-vanilla",

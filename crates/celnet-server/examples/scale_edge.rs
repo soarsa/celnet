@@ -63,6 +63,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::clone(&link),
         SpreadModel::default(),
         Clock::system(),
+        // Production default config locations (env-var-or-CWD).
+        None,
     )
     .await?;
     edge.gate().mark_ready();

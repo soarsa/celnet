@@ -156,16 +156,6 @@
   "kind": "adr",
   "state": "draft",
   "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.PricingModel",
-   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.PricingService",
-   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.Underlying"
-  ],
-  "text": "ADR-0007 — ONE UNVERSIONED WIRE CONTRACT (evolve in place, zero legacy). Celnet has no external users and one uniformly-upgraded deployment, so the wire contract (celnet-proto) carries NO schema_version, no template/version field, no schemaId negotiation, and no N/N-1 back-compat shims. Growth is additive + default-compatible (new oneof arms/fields default to the prior behavior — e.g. ADR-0008 Underlying/CarryModel default to FX), so existing call sites are unchanged with no version handshake. Where a byte stream needs a discriminator it is a fixed CONTENT tag (ADR-0009 CELNHND1), never a schema version. API-first parity is binding: SDK, WS mirror, CLI, Excel all consume this one contract and change in lockstep. Doc: docs/adr/ADR-0007-one-unversioned-contract.md; CLAUDE.md guardrail #9."
- },
- {
-  "kind": "adr",
-  "state": "draft",
-  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument",
    "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument_lsv"
   ],
@@ -6569,14 +6559,6 @@
   "kind": "invariant:pure",
   "state": "active",
   "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessReason.decision"
-  ],
-  "text": "DELIVERABLE entitlements-trust-boundary-audit = LANDED (backlog tracker docs/WORLD-CLASS-BACKLOG.md still lists it OPEN as the Round-2 P2/M finding \"entitlements trust boundary inverted — omitted principal ⇒ grant-all — and the documented per-decision audit is unimplemented\"; Round-4 fixed the client-default half at 87c6f77; reconciled against the live graph). `AccessReason::decision(self)` is the pure, total, const reason→decision mapping that makes every access outcome first-class and auditable: PrincipalAsserted / PermissiveAbsent / SessionAuthenticated → Allow, and PrincipalAbsent / MalformedPrincipal / SessionInsufficientRole → Deny. A genuinely-absent or malformed principal now resolves to Deny (deny-by-default at the boundary), and each AccessReason is the per-decision audit datum emitted via the celnet-observability AuditSink — closing both halves of the finding (the inverted boundary and the missing per-decision audit; pinned by reason_determines_decision + the server entitlements_boundary::decision_records test). SELF-INVALIDATES on any change to this decision mapping."
- },
- {
-  "kind": "invariant:pure",
-  "state": "active",
-  "anchors": [
    "github.com-soarsa-celnet.gui.src.lib.assetUniverse.searchUnderliers"
   ],
   "text": "searchUnderliers filters and ranks UnderlierRow entries with a two-stage fuzzy match: the query must subsequence-match row.haystack (miss → excluded), and highlight indices are taken from the match against row.label (if the label doesn't match, indices are []). Empty query returns all rows with score 0. Results are sorted descending by score then ascending by label.localeCompare."
@@ -7563,15 +7545,6 @@
   "kind": "invariant:pure",
   "state": "active",
   "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.instantaneous_forward",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.segment_forward"
-  ],
-  "text": "Curve::instantaneous_forward delegates to segment_forward, which returns the piecewise-constant forward rate of the bounding log-linear segment: -(b.ln_df - a.ln_df)/(b.t - a.t). The instantaneous forward is therefore constant within each inter-pillar interval and jumps at pillars."
- },
- {
-  "kind": "invariant:pure",
-  "state": "active",
-  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-parity.tests.frtb.longhand_k_b"
   ],
   "text": "`longhand_k_b` computes the FRTB SA-CVR bucket aggregation formula K_b = sqrt(max(0, Σ_k w_k² + Σ_{k≠l} ρ·w_k·w_l)) as a literal double loop with uniform intra-bucket correlation ρ. It serves as the code-disjoint oracle against the vectorised `celnet-risk` implementation; agreement proves the production formula is correct."
@@ -8527,14 +8500,6 @@
   "kind": "invariant:pure",
   "state": "active",
   "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-fix.src.dictionary.MsgType.from_bytes"
-  ],
-  "text": "MsgType::from_bytes is the exact inverse of MsgType::as_bytes: it maps the same 14 byte-string literals to the corresponding MsgType variant and returns None for any unrecognised value. The round-trip as_bytes(from_bytes(b)) == Some(b) holds for every recognised literal."
- },
- {
-  "kind": "invariant:pure",
-  "state": "active",
-  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-parity.tests.qmc.plain_mc_rmse"
   ],
   "text": "`plain_mc_rmse` computes the root-mean-square error (RMSE) of plain pseudo-random Monte Carlo pricing against an exact closed-form price. For each of `c.reps` independent repetitions it draws a fresh `PseudoNormals` PRNG seeded by `c.base_seed.wrapping_add(r.wrapping_mul(0x100_0001))` (ensuring per-rep seed independence without correlation), runs `c.budget` paths through the Brownian bridge `c.bb`, accumulates discounted payoffs via `discounted_payoff`, averages them to form an MC estimate `est`, then accumulates the squared error `(est - c.exact)²`. The final return value is `sqrt(sum_of_sq_err / reps)` — the population RMSE across all repetitions. This function serves as the reference baseline in the QMC variance-reduction test: it establishes the plain-MC RMSE floor against which the Quasi-MC path is compared."
@@ -9040,14 +9005,6 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
-  "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-fix.src.dictionary.MsgType.as_bytes"
-  ],
-  "text": "MsgType::as_bytes returns the exact FIX 4.4 wire byte sequence for each message-type discriminant: Heartbeat→b\"0\", TestRequest→b\"1\", ResendRequest→b\"2\", Reject→b\"3\", SequenceReset→b\"4\", Logout→b\"5\", Logon→b\"A\", QuoteRequest→b\"R\", Quote→b\"S\", MassQuote→b\"i\", QuoteCancel→b\"Z\", NewOrderSingle→b\"D\", NewOrderMultileg→b\"AB\", ExecutionReport→b\"8\". The mapping is a closed bijection with MsgType::from_bytes and is the sole source of tag-35 values written to the wire."
- },
- {
-  "kind": "invariant:pure",
   "state": "draft",
   "anchors": [
    "github.com-soarsa-celnet.gui.src.data.pricing.priceCliquet"
@@ -9314,15 +9271,6 @@
    "github.com-soarsa-celnet.crates.celnet-exotics.src.market_hedge_overlay.hedge_smile_cost"
   ],
   "text": "DELIVERABLE exotics/vanna-volga-overlay-magnitude-unvalidated = LANDED (backlog tracker still lists it OPEN as a Round-2 P2/M finding; reconciled against the live graph). `hedge_smile_cost` is the pure (side-effect-free) vanna-volga market-hedge smile-overlay cost: it reads ExoticSensitivities + the broker RR/BF marks and returns the overlay cost with no external writes. The Round-2 gap (only flat-smile/sign/scaling tests; the spec-mandated VV-vs-replication magnitude cross-validation unimplemented) is CLOSED: celnet-parity::vv_magnitude::engine_overlay_matches_replicating_portfolio_oracle_in_magnitude now pins the engine overlay against a CODE-DISJOINT replicating-portfolio oracle (oracle_cost) within a derived 20% magnitude band, with <=1% relative agreement on the cross-Greeks (vanna/volga) and a materiality floor + sign-agreement guard across the product set, backed by the golden oracle hedge_smile_overlay_cost. SELF-INVALIDATING: any edit to the overlay arithmetic shifts this anchor and flips the claim stale, re-opening the reconciliation; a write-introducing regression also flips it."
- },
- {
-  "kind": "invariant:pure",
-  "state": "active",
-  "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.discount_factor",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.ln_df"
-  ],
-  "text": "Curve::discount_factor returns Df(1.0) for t <= 0 (spot and past dates). For t > 0 it returns exp(ln_df(t)), where ln_df uses piecewise-linear log interpolation with constant extrapolation beyond the last pillar (both lo and hi clamp to [1, n-1])."
  },
  {
   "kind": "invariant:pure",
@@ -10704,7 +10652,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "draft",
   "anchors": [
    "github.com-soarsa-celnet.excel.e2e.corpus.specOf"
   ],
@@ -10912,14 +10860,6 @@
    "github.com-soarsa-celnet.crates.celnet-exotics.src.adi.apply_wall"
   ],
   "text": "apply_wall enforces the absorbing Dirichlet barrier condition on the 2-D option value grid after an ADI step: when the barrier is active (`wall_active=true`), it zeroes every grid cell on the knocked-out side. For an up-barrier at index `idx`, all cells with spot-index i ≥ idx are zeroed across all variance nodes j; for a down-barrier, all cells with i ≤ idx are zeroed. When `wall_active` is false the function returns immediately, adding zero overhead."
- },
- {
-  "kind": "invariant:pure",
-  "state": "active",
-  "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessReason.label"
-  ],
-  "text": "AccessReason::label maps each of six access-decision reasons to a distinct stable ASCII string token used in structured logs and wire output: PrincipalAsserted => \"principal_asserted\"; PermissiveAbsent => \"permissive_dev_mode_absent_principal\"; PrincipalAbsent => \"principal_absent\"; MalformedPrincipal => \"malformed_principal\"; SessionAuthenticated => \"session_authenticated\"; SessionInsufficientRole => \"session_insufficient_role\". The PermissiveAbsent label embeds 'dev_mode' to make permissive-mode grants visible in audit logs."
  },
  {
   "kind": "invariant:pure",
@@ -11577,14 +11517,6 @@
    "github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.floating_lookback_price"
   ],
   "text": "floating_lookback_price and fixed_lookback_price are pure Conze-Viswanathan closed-form lookback pricers over the carry seam: both read b = carry_rate(), df_dom = discount_df(), df_for = carry_df() — byte-identical for FX. floating_lookback_price prices the option on the running extremum ξ=S at inception: Call = S·df_for·Φ(a1) − S·df_dom·Φ(a2) + S·df_dom·(σ²/2b)·[Φ(−a1+2b√T/σ) − e^{bT}·Φ(−a1)]. fixed_lookback_price branches on K≷S to select between the standard Conze-Viswanathan form (K≥S) and the intrinsic-lock form (K<S), each with the corresponding reflection term σ²/(2b)·[±(S/K)^{−2b/σ²}·Φ(d1−2b√T/σ·…) ∓ e^{bT}·Φ(d1)]. Both are pure (no WRITES, no allocation)."
- },
- {
-  "kind": "invariant:pure",
-  "state": "active",
-  "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-server.src.services.fix_admin.kind_from_wire"
-  ],
-  "text": "kind_from_wire is a total, pure mapping: i32 wire value -> Result<AcceptorKind, Status>. It accepts exactly one valid discriminant (FixAcceptorKind::Options -> AcceptorKind::Options) and returns Status::invalid_argument for every other value. No silent fallback or default exists."
  },
  {
   "kind": "invariant:pure",
@@ -12758,14 +12690,6 @@
   "kind": "invariant:pure",
   "state": "active",
   "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-server.src.ws.mod.decode_stream_control"
-  ],
-  "text": "decode_stream_control maps a WebSocket stream-control JSON object to a ClientStreamMessage: it covers subscribe, modify, unsubscribe, resync, execute, market_series_subscribe, market_series_unsubscribe, and heartbeat (the heartbeat path synthesises a zero-value Heartbeat proto rather than decoding fields). An unrecognised type tag returns CodecError with the literal text \"unknown stream-control type `{other}`\"."
- },
- {
-  "kind": "invariant:pure",
-  "state": "active",
-  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.closed_form_gk"
   ],
   "text": "closed_form_gk is an independent reference implementation of the Garman-Kohlhagen closed-form FX option formula used as the parity oracle in the conventions test suite. It computes d₁ = (ln(S/K) + (r_dom − r_for + ½σ²)T) / (σ√T), d₂ = d₁ − σ√T, and prices: Call = S·e^{-r_for·T}·N(d₁) − K·e^{-r_dom·T}·N(d₂); Put = K·e^{-r_dom·T}·N(−d₂) − S·e^{-r_for·T}·N(−d₁). Uses only math:: primitives and no production pricer code, making it a genuine cross-implementation oracle."
@@ -13419,31 +13343,6 @@
   "text": "GreeksStrip is the inline option-risk readout: a primary row of GreekCell tiles (delta/gamma/vega/theta) plus a disclosure button (aria-expanded + aria-label=\"toggle full Greeks\") that reveals the secondary Greeks. It is asset-class-aware — rhoGreeksFor(assetClass) relabels the rate-rho Greeks per the active underlier's class (FX default) — so the same strip serves FX/equity/commodity/crypto tickets. Numerics render through GreekCell on the mono token face; the strip itself carries no raw color literals."
  },
  {
-  "kind": "decision",
-  "state": "draft",
-  "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve",
-   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.discount_df",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.discount_factor",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.zero_rate",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.forward_rate_continuous"
-  ],
-  "text": "DESIGN DIRECTION (ADR-0010, proposed/accepted, NOT yet implemented): converge celnet-rates onto the carry seam by recognizing celnet-types::Carry as the DEGENERATE flat (single-rate, single-expiry) term structure and celnet-rates::curve::Curve as the GENERAL bootstrapped term structure. The plan hoists a DiscountCurve/TermStructure trait into celnet-core that BOTH Carry (flat) and Curve (nodes + interpolation; discount_factor/zero_rate/forward_rate_continuous) implement, and generalizes the flat-rate carry context to a curve-backed one; the multi-curve CurveSet (OIS discount + per-index projection) is the container, with FX two-rate Carry::FxRates{r_dom,r_for} as the 2-curve special case (two flat discount curves producing a forward). Convergence is principled, not forced: FX carry is already a 2-curve special case of multi-curve. Payoff engines stay asset-class-agnostic over forward(t)/discount(t) and are NOT modified. Aligns with master-plan items A (carry-seam-to-edge) and F (shared carry→sensitivity mapper). This is a not-yet-built direction; the flat-carry path remains authoritative until the trait lands."
- },
- {
-  "kind": "decision",
-  "state": "draft",
-  "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-types.src.lib.RateSensitivities",
-   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.AggregateRatesRisk",
-   "github.com-soarsa-celnet.crates.celnet-rates.src.risk.ladder",
-   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.CurveSet",
-   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.RatesInstrument"
-  ],
-  "text": "DESIGN DIRECTION (ADR-0010, proposed/accepted, NOT yet implemented): rates risk unifies into the ONE firm-wide risk cube rather than a silo. The plan extends celnet-types::RateSensitivities to carry a curve-bucketed key-rate-DV01 ladder and admits a rates underlying/dimension so rates positions roll up alongside FX/equity/crypto in the same cube; the RiskService.AggregateRatesRisk endpoint becomes a TYPED PROJECTION of that one cube, not a separate engine. The curve-risk primitive is the existing key-rate-DV01 ladder (celnet-rates::risk::ladder; KeyRateDv01/KeyRateBucket buckets) — preserved as the per-tenor sensitivity, now bucketed into the shared cube. Aligns with master-plan item E (risk-cube RepriceFn) and API-first parity. NOT yet built: AggregateRatesRisk today is computed by a dedicated rates-risk aggregate path; this direction makes it a projection of the unified cube."
- },
- {
   "kind": "invariant",
   "state": "draft",
   "anchors": [
@@ -13457,8 +13356,126 @@
   "kind": "decision",
   "state": "draft",
   "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-integration.src.vendor.VendorSmileMessage",
+   "github.com-soarsa-celnet.crates.celnet-integration.src.deployment.DeploymentMode",
+   "github.com-soarsa-celnet.crates.celnet-integration.src.egress.EgressGovernor",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.deploy.DeployMode.binds_vendor_feed"
+  ],
+  "text": "ADR-0011 (Celer-estate ingress): integration into the Celer trade-lifecycle estate is DEPLOYMENT-MODE gated, additive and non-disruptive, with egress bounded+conflating to respect the distributor. DeploymentMode {CelerIntegrated, Hybrid, Standalone, ExternalFeedOnly} selects which feeds attach (uses_celer_feed/uses_external_feed; binds_vendor_feed at the server); all estate publication flows through EgressGovernor (bounded, conflating, rate-limited) so a high-frequency pricer cannot overflow the skip-while-full JVM-distributor mailbox and silently drop prices. HONEST SCOPE: the concrete live Celer trade-lifecycle transport adapter is deploy/estate-gated, NOT an in-repo type — the graph shows no CALLS path from celnet-server into a named Celer order/position adapter; the four lifecycle hops (orderrouting->risk->destination->clearing->positionmanager) are inferred, not runtime-traced."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessReason.decision"
+  ],
+  "text": "`AccessReason::decision(self)` is the pure, total, const reason→decision mapping making every access outcome first-class and auditable: PrincipalAsserted / PermissiveAbsent / SessionAuthenticated → Allow, and PrincipalAbsent / MalformedPrincipal / SessionInsufficientRole / SessionMissingCapability → Deny. A genuinely-absent or malformed principal, an insufficient role, or a missing action-capability all resolve to Deny (deny-by-default at the boundary), and each AccessReason is the per-decision audit datum emitted via the celnet-observability AuditSink. Pinned by reason_determines_decision + the server entitlements_boundary::decision_records test. SELF-INVALIDATES on any change to this decision mapping."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessReason.label"
+  ],
+  "text": "AccessReason::label maps each of seven access-decision reasons to a distinct stable ASCII string token used in structured logs and wire output: PrincipalAsserted => \"principal_asserted\"; PermissiveAbsent => \"permissive_dev_mode_absent_principal\"; PrincipalAbsent => \"principal_absent\"; MalformedPrincipal => \"malformed_principal\"; SessionAuthenticated => \"session_authenticated\"; SessionInsufficientRole => \"session_insufficient_role\"; SessionMissingCapability => \"session_missing_capability\". The PermissiveAbsent label embeds 'dev_mode' to make permissive-mode grants visible in audit logs."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-fix.src.dictionary.MsgType.from_bytes"
+  ],
+  "text": "MsgType::from_bytes is the exact inverse of MsgType::as_bytes: it maps the same 15 byte-string literals (the FIX 4.4 tag-35 set, including b\"AG\"→QuoteRequestReject) to the corresponding MsgType variant and returns None for any unrecognised value. The round-trip from_bytes(b).map(MsgType::as_bytes) == Some(b) holds for every recognised literal."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-fix.src.dictionary.MsgType.as_bytes"
+  ],
+  "text": "MsgType::as_bytes returns the exact FIX 4.4 wire byte sequence for each message-type discriminant: Heartbeat→b\"0\", TestRequest→b\"1\", ResendRequest→b\"2\", Reject→b\"3\", SequenceReset→b\"4\", Logout→b\"5\", Logon→b\"A\", QuoteRequest→b\"R\", Quote→b\"S\", MassQuote→b\"i\", QuoteCancel→b\"Z\", NewOrderSingle→b\"D\", NewOrderMultileg→b\"AB\", ExecutionReport→b\"8\", QuoteRequestReject→b\"AG\". The mapping is a closed bijection with MsgType::from_bytes and is the sole source of tag-35 values written to the wire."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.instantaneous_forward",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.segment_forward"
+  ],
+  "text": "Curve::instantaneous_forward dispatches on the curve's Interpolation scheme: for LogLinearDf it returns segment_forward(t) = -(b.ln_df - a.ln_df)/(b.t - a.t), the piecewise-constant forward of the bounding log-linear segment (constant within each inter-pillar interval, jumps at pillars); for MonotoneConvexForward it returns monotone_convex_forward(t), a continuous interpolated instantaneous forward."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.discount_factor",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.ln_df"
+  ],
+  "text": "Curve::discount_factor returns Df(1.0) for t <= 0 (spot and past dates); for t > 0 it returns exp(ln_df(t)). ln_df dispatches on the Interpolation scheme; the LogLinearDf branch (ln_df_log_linear) is piecewise-linear log interpolation with constant extrapolation beyond the last pillar, achieved by bracket(t).clamp(1, n-1) (so t below the first or above the last pillar clamps to the boundary segment)."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.fix_admin.kind_from_wire"
+  ],
+  "text": "kind_from_wire is a total, pure mapping: i32 wire value -> Result<AcceptorKind, Status>. It accepts three valid discriminants (FixAcceptorKind::Options -> AcceptorKind::Options, FixedIncomeQuote -> AcceptorKind::FixedIncomeQuote, FixedIncomeStream -> AcceptorKind::FixedIncomeStream) and returns Status::invalid_argument for every other value. No silent fallback or default exists."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.ws.mod.decode_stream_control"
+  ],
+  "text": "decode_stream_control maps a WebSocket stream-control JSON object to a ClientStreamMessage: it covers authenticate, subscribe, modify, unsubscribe, resync, execute, market_series_subscribe, market_series_unsubscribe, and heartbeat (the heartbeat path synthesises a zero-value Heartbeat proto rather than decoding fields). An unrecognised type tag returns CodecError with the literal text \"unknown stream-control type `{other}`\"."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.RateSensitivities.flat_rhos"
+  ],
+  "text": "Single-source bijection from the two `RateSensitivities` variants to the flat `(rho_dom, rho_for)` pair at the server flatten boundary. `Fx{rho_dom,rho_for}`→`(rho_dom,rho_for)` unchanged; `Carry{discount_rho,carry_rho}`→`(discount_rho+carry_rho, -carry_rho)`, recovering `r_dom=discount+carry`, `r_for=-carry`. Pure (reads only self)."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.rate_sensitivities"
+  ],
+  "text": "Arm-type selector: `Carry::FxRates`→`RateSensitivities::Fx{rho_dom:a,rho_for:b}`; `Carry::CostOfCarry`→`RateSensitivities::Carry{discount_rho:a,carry_rho:b}`. A third Carry arm = exactly one new match arm here. Pure."
+ },
+ {
+  "kind": "security:invariant",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.access.authorize_caller"
+  ],
+  "text": "Security invariant (finding #3): for `RequiredAuthority::Capability(..)` and `::Admin`, a caller with no authenticated session is NEVER granted under `AccessMode::Enforce` — the authenticated-session branch (`caller.user.is_some()`) is evaluated first and returns early; the no-session branch emits `AccessReason::PrincipalAbsent` and returns `Err(Status::unauthenticated)`. A body-asserted `caller.principal` cannot self-elevate Capability/Admin; only `ReadAny` delegates to the legacy principal path."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.chi",
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.psi_coeff"
+  ],
+  "text": "chi(w,c,d,lo) and psi_coeff(w,c,d,lo) are the two closed-form basis-coefficient integrals of the Fang–Oosterlee (2008) COS method used by `cos`. chi = ∫_c^d e^y cos(w(y−lo)) dy evaluated analytically as (cos(w(d−lo))e^d − cos(w(c−lo))e^c + w·sin(w(d−lo))e^d − w·sin(w(c−lo))e^c)/(1+w²); psi_coeff = ∫_c^d cos(w(y−lo)) dy = (sin(w(d−lo)) − sin(w(c−lo)))/w with the exact w=0 limit (d−c) handled as a special case to avoid 0/0. Both are pure: they read only their scalar f64 arguments, allocate nothing, and have no WRITES — total functions of (w,c,d,lo)."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.ExoticLegPricer",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.exotic_pricer.ExoticEngine"
+  ],
+  "text": "Item E dependency inversion: celnet-risk-cube depends ONLY on the celnet-core `ExoticLegPricer` trait (unit_price + digital_greeks over the carry seam), NOT on the concrete celnet-exotics/celnet-gpu pricers — `cargo tree -p celnet-risk-cube` lists neither after the refactor. The server's `ExoticEngine` (services/risk/exotic_pricer.rs) implements the trait over the real engines and is injected into the cube at construction/reprice; celnet-risk-fleet and celnet-limits thread the same `&dyn ExoticLegPricer` seam. Risk output is byte-identical (the named risk/cross-asset parity rows). Adding a pricer = a new trait impl injected from the server, not a new cube dependency."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-integration.src.subscriber.ResilientSubscriber",
+   "github.com-soarsa-celnet.crates.celnet-integration.src.vendor.VendorSmileMessage",
    "github.com-soarsa-celnet.crates.celnet-server.src.lib.Edge.attach_vendor_feed"
   ],
   "text": "ADR-0011 (Celer-estate ingress): external vendor FX-options market-data ingress is a SOURCE-AGNOSTIC, normalizing, resilient adapter, not a vendor-named core path. A vendor feed enters via the FeedTransport trait -> ResilientSubscriber (strict-monotone per-key sequencing; on a gap it resyncs from a fresh snapshot, never fabricates) -> vendor::normalize / VendorSmileMessage (+ WireDeltaConvention/WireAtmConvention round-trips) onto the ONE canonical celnet-surface object, bound to the server via Edge::attach_vendor_feed. The vendor name lives only in integration/docs context (guardrail #8); a second source is a second FeedTransport impl, not a fork. Verified: vendor_feed_with_gap_resyncs_and_surface_matches_direct_pipeline."
@@ -13467,22 +13484,88 @@
   "kind": "decision",
   "state": "draft",
   "anchors": [
-   "github.com-soarsa-celnet.crates.celnet-integration.src.deployment.DeploymentMode",
-   "github.com-soarsa-celnet.crates.celnet-integration.src.egress.EgressGovernor",
-   "github.com-soarsa-celnet.crates.celnet-server.src.services.deploy.DeployMode.binds_vendor_feed"
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.AggregateRatesRisk",
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.CurveSet",
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.RatesInstrument",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.risk.ladder",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.RateSensitivities"
   ],
-  "text": "ADR-0011 (Celer-estate ingress): integration into the Celer trade-lifecycle estate is DEPLOYMENT-MODE gated, additive and non-disruptive, with egress bounded+conflating to respect the distributor. DeploymentMode {CelerIntegrated, Hybrid, Standalone, ExternalFeedOnly} selects which feeds attach (uses_celer_feed/uses_external_feed; binds_vendor_feed at the server); all estate publication flows through EgressGovernor (bounded, conflating, rate-limited) so a high-frequency pricer cannot overflow the skip-while-full JVM-distributor mailbox and silently drop prices. HONEST SCOPE: the concrete live Celer trade-lifecycle transport adapter is deploy/estate-gated, NOT an in-repo type — the graph shows no CALLS path from celnet-server into a named Celer order/position adapter; the four lifecycle hops (orderrouting->risk->destination->clearing->positionmanager) are inferred, not runtime-traced."
+  "text": "DESIGN DIRECTION (ADR-0010, proposed/accepted, NOT yet implemented): rates risk unifies into the ONE firm-wide risk cube rather than a silo. The plan extends celnet-types::RateSensitivities to carry a curve-bucketed key-rate-DV01 ladder and admits a rates underlying/dimension so rates positions roll up alongside FX/equity/crypto in the same cube; the RiskService.AggregateRatesRisk endpoint becomes a TYPED PROJECTION of that one cube, not a separate engine. The curve-risk primitive is the existing key-rate-DV01 ladder (celnet-rates::risk::ladder; KeyRateDv01/KeyRateBucket buckets) — preserved as the per-tenor sensitivity, now bucketed into the shared cube. Aligns with master-plan item E (risk-cube RepriceFn) and API-first parity. NOT yet built: AggregateRatesRisk today is computed by a dedicated rates-risk aggregate path; this direction makes it a projection of the unified cube."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.discount_factor",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.forward_rate_continuous",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.zero_rate",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.discount_df"
+  ],
+  "text": "DESIGN DIRECTION (ADR-0010, proposed/accepted, NOT yet implemented): converge celnet-rates onto the carry seam by recognizing celnet-types::Carry as the DEGENERATE flat (single-rate, single-expiry) term structure and celnet-rates::curve::Curve as the GENERAL bootstrapped term structure. The plan hoists a DiscountCurve/TermStructure trait into celnet-core that BOTH Carry (flat) and Curve (nodes + interpolation; discount_factor/zero_rate/forward_rate_continuous) implement, and generalizes the flat-rate carry context to a curve-backed one; the multi-curve CurveSet (OIS discount + per-index projection) is the container, with FX two-rate Carry::FxRates{r_dom,r_for} as the 2-curve special case (two flat discount curves producing a forward). Convergence is principled, not forced: FX carry is already a 2-curve special case of multi-curve. Payoff engines stay asset-class-agnostic over forward(t)/discount(t) and are NOT modified. Aligns with master-plan items A (carry-seam-to-edge) and F (shared carry→sensitivity mapper). This is a not-yet-built direction; the flat-carry path remains authoritative until the trait lands."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.price_error_to_status",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.rates_price_error_to_status"
+  ],
+  "text": "Item H single-source error→Status taxonomy: `services/error_status.rs` is the ONE place mapping domain errors to `tonic::Status` — `price_error_to_status(&PriceError)`→INVALID_ARGUMENT, `link_error_to_status(&CoreLinkError)`→UNAVAILABLE, `rates_price_error_to_status(&RatesPriceError)`: Bootstrap→INTERNAL else INVALID_ARGUMENT. The message is always the error's Display rendering verbatim; the variant only selects the code. Replaced the scattered inline `Status::*(e.to_string())` callsites in services/{stream,quote}.rs; services/auth.rs intentionally deferred (teammate's active authz lane). Byte-identical status codes + messages (the lsv_workflow/cross_asset_ws/readiness assertions)."
  },
  {
   "kind": "invariant",
   "state": "draft",
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.exotic_risk_cube.exotic_only_fan_out_reconciles",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.dimension.FactMeasure",
    "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.fan_out_aggregate",
    "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.federate.fan_out",
-   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.dimension.FactMeasure",
-   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.upsert_exotic",
-   "github.com-soarsa-celnet.crates.celnet-parity.tests.exotic_risk_cube.exotic_only_fan_out_reconciles"
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.upsert_exotic"
   ],
   "text": "RISK ROLL-UP COVERAGE (reconciled to built reality): the risk-cube/fleet aggregation algebra DOES include exotic AND cross-asset positions — it is NOT vanilla-only. celnet_risk_cube::FactMeasure carries exotic: Option<ExoticLeg> and is keyed on a cross-asset Underlying, so an exotic leg (PositionStore::upsert_exotic -> ExoticLeg::canonical_leaf as the additive carrier + exotic bump-and-revalue for non-additive VaR/curvature) and a cross-asset vanilla leg both roll up in the firm node and through celnet-risk-fleet::fan_out_aggregate. Proven exotic-only by celnet-parity/tests/exotic_risk_cube::exotic_only_fan_out_reconciles (3 exotic-only RiskFacts, firm.positions empty, firm.exotic_legs.len()==3, VaR+curvature reconcile to single-node). The REMAINING GAP is automatic ingestion: the RFS auto-book (record_booked_position) and the wire RiskPosition conversion (position_to_fact, exotic:None) auto-record VANILLA FX fills only — an exotic/cross-asset leg must be staged explicitly via upsert_exotic (no production RPC/RFS path wires it yet). server::services::risk::federate::fan_out is the generic concurrent gRPC fan-out helper over backends, distinct from the fleet aggregation algebra."
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/product-engine-registry.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.ProductEngine.price"
+  ],
+  "text": "Deliverable product-engine-registry (arch item C): celnet-server::price_instrument is decode → guard → dispatch over the per-family ProductEngine registry (engines.rs) — engines::dispatch routes each of the 24 product arms to a distinct ProductEngine impl with no inline pricing, and the FX/analytic path is byte-identical to the celnet-parity corpus. Acceptance target docs/acceptance/product-engine-registry.acceptance.json. (Byte-identity assertion DEFERS to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/risk-cube-repricer-seam.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.exotic_pricer.ExoticEngine",
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.ExoticLegPricer"
+  ],
+  "text": "Deliverable risk-cube-repricer-seam (arch item E): celnet-risk-cube reprices exotic legs only through the celnet_core::carry::ExoticLegPricer abstraction (USAGE edges from exotic_curvature_legs/exotic_node_pnl), the server's ExoticEngine IMPLEMENTS that trait as the injected concrete pricer, and the cube's Cargo manifest links neither celnet-exotics nor celnet-gpu (gate: cargo tree -p celnet-risk-cube). Acceptance target docs/acceptance/risk-cube-repricer-seam.acceptance.json. (cargo-tree and byte-identity assertions DEFER to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/error-status-taxonomy.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.price_error_to_status",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.link_error_to_status",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.error_status.rates_price_error_to_status"
+  ],
+  "text": "Deliverable error-status-taxonomy (arch item H): there is one canonical error → tonic::Status mapping in celnet-server::services::error_status — price_error_to_status, link_error_to_status and rates_price_error_to_status — reused at every RPC boundary, with codes and messages byte-identical to the former per-service mappings. Acceptance target docs/acceptance/error-status-taxonomy.acceptance.json. (Byte-identity assertion DEFERS to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/typecheck-and-dep-gates.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-surface.src.lib",
+   "github.com-soarsa-celnet.crates.celnet-proto.src.lib"
+  ],
+  "text": "Deliverable typecheck-and-dep-gates (arch item L): the gui+excel typecheck:e2e/typecheck:test scripts are wired into the t2 gate and the two dev-dep back-edges are removed — celnet-surface has zero edges into celnet-crypto-vanilla, and celnet-proto carries no dev-dependency cycle into celnet-core (cargo tree / cargo-machete). Acceptance target docs/acceptance/typecheck-and-dep-gates.acceptance.json. (t2-wiring and dev-cycle assertions DEFER to draft until execute-to-verify is enabled.)"
  }
 ]

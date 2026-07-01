@@ -1132,6 +1132,115 @@ impl RateSensitivities {
     }
 }
 
+// ===========================================================================
+// Closed-form exotic payoff discriminants
+// ===========================================================================
+//
+// Pure payoff-shape data (no pricing math): the single-barrier and European
+// digital specifications, plus the [`ExoticKind`] union the risk cube matches a
+// booked exotic on. These live at the base of the dependency graph so a crate
+// that only needs to *name* a closed-form exotic family (the risk cube, the
+// wire layer, clients) does so without depending on the heavy `celnet-exotics`
+// pricing crate — the pricing seam itself is the `ExoticLegPricer` trait in
+// `celnet-core`, implemented over `celnet-exotics` by the server. `celnet-exotics`
+// re-exports these names verbatim, so every `celnet_exotics::SingleBarrier`-style
+// reference is byte-identical. (ADR-0008 carry seam; arch-program item E.)
+
+/// In/out knock style of a barrier option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BarrierStyle {
+    /// Knock-in: the option activates only after the barrier is touched.
+    KnockIn,
+    /// Knock-out: the option extinguishes when the barrier is touched.
+    KnockOut,
+}
+
+/// The full kind of a single barrier: direction (up/down), knock style, and the
+/// underlying option type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BarrierKind {
+    /// `true` if the barrier sits **above** spot (an *up* barrier), else *down*.
+    pub up: bool,
+    /// Knock-in or knock-out.
+    pub style: BarrierStyle,
+    /// Call or put underlying.
+    pub option: OptionType,
+}
+
+/// A single-barrier option specification.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SingleBarrier {
+    /// What kind of barrier.
+    pub kind: BarrierKind,
+    /// Strike `K`.
+    pub strike: f64,
+    /// Barrier level `H`.
+    pub barrier: f64,
+    /// Rebate `R` paid if the option fails to pay out (at hit for knock-out, at
+    /// expiry for knock-in). Set to `0.0` for a plain barrier.
+    pub rebate: f64,
+}
+
+/// What a digital pays when it finishes in the money.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DigitalStyle {
+    /// Cash-or-nothing: pays one unit of **domestic** cash if in the money.
+    CashOrNothing,
+    /// Asset-or-nothing: pays one unit of the **foreign asset** (worth `S_T`).
+    AssetOrNothing,
+}
+
+/// The direction of a digital (which side finishes in the money).
+///
+/// A digital *call* pays when `S_T > K`; a digital *put* pays when `S_T < K`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DigitalKind {
+    /// Cash- or asset-settled.
+    pub style: DigitalStyle,
+    /// Call (`S_T > K`) or put (`S_T < K`).
+    pub option: OptionType,
+}
+
+impl DigitalKind {
+    /// A cash-or-nothing digital of the given direction.
+    #[must_use]
+    pub const fn cash(option: OptionType) -> Self {
+        Self {
+            style: DigitalStyle::CashOrNothing,
+            option,
+        }
+    }
+
+    /// An asset-or-nothing digital of the given direction.
+    #[must_use]
+    pub const fn asset(option: OptionType) -> Self {
+        Self {
+            style: DigitalStyle::AssetOrNothing,
+            option,
+        }
+    }
+}
+
+/// Which closed-form exotic a risk-cube exotic leg prices.
+///
+/// Each variant carries the **exotic-specific** payoff parameters; the shared
+/// market inputs (spot, vol, time, the two rates) live alongside on the leg, so a
+/// scenario shocks one consistent input set across the leg. This is a pure
+/// discriminant — the actual pricing is performed by an
+/// [`ExoticLegPricer`](../celnet_core/carry/trait.ExoticLegPricer.html)
+/// implementation injected by the server.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExoticKind {
+    /// A single-barrier option (Reiner-Rubinstein closed form). The strike on the
+    /// spec is the barrier-option strike; the barrier level and knock direction /
+    /// style live on the spec.
+    SingleBarrier(SingleBarrier),
+    /// A European digital (cash- or asset-or-nothing). Priced **per one payout
+    /// unit** (one unit of domestic cash, or one unit of the foreign asset), so the
+    /// leg's `notional` is in payout units; the strike comes from the leg's inputs.
+    Digital(DigitalKind),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

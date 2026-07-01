@@ -139,6 +139,12 @@ at their tier.
 
 ## 5. Live lane board
 
+> **SUPERSEDED (2026-06-30) by the orchestration manifest — see `docs/ORCHESTRATION.md`.** The
+> live lock + board is now `.celnet/tasks.jsonl`, claimed via `tools/celnet-task` (git-push-as-CAS
+> on `coord/board`) with lease-expiry reclaim and a SessionStart selector. Do **not** hand-edit
+> the table below to claim work — use `tools/celnet-task claim <id>`. The table is retained as the
+> historical record of the wave program; the §6 narrative and §1–4 rules remain in force.
+
 > Status: `OPEN` (claimable now) · `BLOCKED:<dep>` (opens when the dep lands) · `CLAIMED` ·
 > `READY-FOR-MERGE` · `DONE`. **Claim by editing your row, commit-only-this-file, push.**
 
@@ -378,3 +384,5 @@ at their tier.
 - Plans on `main`: `docs/W2-LINEAR-PLAN.md`, `W3-CRYPTO-PLAN.md`, `W4-STRUCTURED-RFQ-PLAN.md`,
   `W5-CROSSASSET-RISK-PLAN.md`, `GW-FOUNDATION-PLAN.md`, `DOWNSTREAM-EXECUTION-MAP.md`,
   `adr/ADR-0008-multi-asset-carry-architecture.md`.
+
+> **2026-06-30 coordinator status:** Arch-program **A–L + dev-infra + 1638-claim mirror LANDED on `origin/main` `0da3eeb`** (full t2 19/19 green incl. gui-e2e 175 + excel-e2e under Enforce). The 6 cross-asset leaves were already on main (no re-merge); `leaf/*` are stale tips (prunable). **Next:** this board is being superseded by the git-committed `.celnet/tasks.jsonl` orchestration manifest (ratified design — see memory `cross-session-orchestration`) for autonomous, claim-locked, cross-session task continuation; coordinator builds acceptance-targets+lodestar-done+lands, parallel session builds the mechanism on a rebased `coord/board-ops`.

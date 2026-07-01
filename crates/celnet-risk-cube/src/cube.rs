@@ -33,6 +33,7 @@
 //! that way (they need constituent facts), which is precisely the §3.4 caveat that
 //! a firm-level VaR/curvature run gathers facts rather than summing shard results.
 
+use celnet_core::ExoticLegPricer;
 use celnet_core::carry::CarryPricer;
 use celnet_risk_normalize::{CanonicalLeaf, Numeraire, NumeraireError, PositionRisk, SpotResolver};
 
@@ -264,11 +265,19 @@ impl Cube {
     #[must_use]
     pub fn node_var_es<P: CarryPricer>(
         pricer: &P,
+        exotic_pricer: &dyn ExoticLegPricer,
         node: &NodeAggregate,
         scenarios: &[Scenario],
         alpha: f64,
     ) -> VarEs {
-        node_var_es_combined(pricer, &node.positions, &node.exotic_legs, scenarios, alpha)
+        node_var_es_combined(
+            pricer,
+            exotic_pricer,
+            &node.positions,
+            &node.exotic_legs,
+            scenarios,
+            alpha,
+        )
     }
 
     /// **Non-additive (scale path)**: VaR/ES of a node by the **AAD sensitivity
@@ -284,12 +293,14 @@ impl Cube {
     #[must_use]
     pub fn node_var_es_sensitivity<P: CarryPricer>(
         pricer: &P,
+        exotic_pricer: &dyn ExoticLegPricer,
         node: &NodeAggregate,
         scenarios: &[Scenario],
         alpha: f64,
     ) -> VarEs {
         node_var_es_sensitivity_combined(
             pricer,
+            exotic_pricer,
             &node.positions,
             &node.exotic_legs,
             scenarios,
@@ -300,8 +311,19 @@ impl Cube {
     /// **Non-additive**: FRTB-SbM spot curvature of a node by up/down full reprice
     /// net of the linear delta term (`docs/RISK-HIERARCHY.md` §2.5).
     #[must_use]
-    pub fn node_curvature_spot<P: CarryPricer>(pricer: &P, node: &NodeAggregate, rw: f64) -> f64 {
-        sbm_curvature_spot_combined(pricer, &node.positions, &node.exotic_legs, rw)
+    pub fn node_curvature_spot<P: CarryPricer>(
+        pricer: &P,
+        exotic_pricer: &dyn ExoticLegPricer,
+        node: &NodeAggregate,
+        rw: f64,
+    ) -> f64 {
+        sbm_curvature_spot_combined(
+            pricer,
+            exotic_pricer,
+            &node.positions,
+            &node.exotic_legs,
+            rw,
+        )
     }
 
     /// **Non-additive**: the correlation-weighted vega aggregate over a node's
@@ -328,11 +350,12 @@ mod tests {
     use super::*;
     use crate::additive::VegaPillar;
     use crate::dimension::{BookId, DeskId, EntityId, FactKey, LocationId, TraderId};
-    use crate::exotic::ExoticKind;
+    use crate::test_support::DigitalTestPricer;
     use celnet_risk_normalize::{AssetPricer, CanonicalGreeks, canonicalize};
     use celnet_types::{
         Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, Underlying, VanillaInputs,
     };
+    use celnet_types::{DigitalKind, ExoticKind};
 
     struct OnePillar;
     impl VegaPillarMap for OnePillar {
@@ -499,13 +522,13 @@ mod tests {
         // An exotic digital fact under trader 9.
         let leg = crate::exotic::ExoticLeg::new(
             eurusd(),
-            ExoticKind::Digital(celnet_exotics::DigitalKind::cash(OptionType::Call)),
+            ExoticKind::Digital(DigitalKind::cash(OptionType::Call)),
             5.0,
             VanillaInputs::new(1.10, 1.11, 0.10, 0.25, 0.04, 0.02),
         );
         let meta = pos(5.0, leg.inputs);
         let mut ef = fact(3, (9, 1, 1, 1, 1), &meta);
-        ef.measure.leaf = leg.canonical_leaf();
+        ef.measure.leaf = leg.canonical_leaf(&DigitalTestPricer);
         ef.measure.exotic = Some(leg);
         cube.upsert(ef);
 
@@ -522,7 +545,10 @@ mod tests {
         assert_eq!(by_trader[1].exotic_legs.len(), 0);
         // The exotic's REAL Greek leaf contributes to the additive roll-up.
         let want_vega = canonicalize(&p1).unwrap().greeks.vega
-            + by_trader[0].exotic_legs[0].canonical_leaf().greeks.vega;
+            + by_trader[0].exotic_legs[0]
+                .canonical_leaf(&DigitalTestPricer)
+                .greeks
+                .vega;
         assert!(
             celnet_core::is_close(by_trader[0].net_greeks.vega, want_vega, 1e-12, 1e-9),
             "exotic leaf vega must be in the node roll-up"
@@ -591,7 +617,7 @@ mod tests {
             .filter(|i| *i != 0)
             .map(|i| Scenario::spot(f64::from(i) * 0.01))
             .collect();
-        let oracle = Cube::node_var_es(&AssetPricer, &node, &scen, 0.9);
+        let oracle = Cube::node_var_es(&AssetPricer, &DigitalTestPricer, &node, &scen, 0.9);
         let free = crate::nonadditive::historical_var_es(
             &AssetPricer,
             std::slice::from_ref(&p),
@@ -600,7 +626,8 @@ mod tests {
         );
         assert_eq!(oracle.var.to_bits(), free.var.to_bits());
         assert_eq!(oracle.es.to_bits(), free.es.to_bits());
-        let fast = Cube::node_var_es_sensitivity(&AssetPricer, &node, &scen, 0.9);
+        let fast =
+            Cube::node_var_es_sensitivity(&AssetPricer, &DigitalTestPricer, &node, &scen, 0.9);
         let free_fast = crate::nonadditive::sensitivity_var_es(
             &AssetPricer,
             std::slice::from_ref(&p),
@@ -609,7 +636,7 @@ mod tests {
         );
         assert_eq!(fast.var.to_bits(), free_fast.var.to_bits());
         assert_eq!(fast.es.to_bits(), free_fast.es.to_bits());
-        let cvr = Cube::node_curvature_spot(&AssetPricer, &node, 0.15);
+        let cvr = Cube::node_curvature_spot(&AssetPricer, &DigitalTestPricer, &node, 0.15);
         let free_cvr =
             crate::nonadditive::sbm_curvature_spot(&AssetPricer, std::slice::from_ref(&p), 0.15);
         assert_eq!(cvr.to_bits(), free_cvr.to_bits());

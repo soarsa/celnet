@@ -110,7 +110,7 @@ fn law_winner(dealers: &[DealerQuote], bid_side: bool) -> String {
 #[tokio::test]
 async fn multi_dealer_panel_ranks_per_engine_law() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_panel_edge(3).await;
+        let (edge, addr, _data_dir) = start_ready_panel_edge(3).await;
         let mut client = quote_client(addr).await;
 
         let key = "md-rank-1";
@@ -225,7 +225,7 @@ async fn multi_dealer_panel_ranks_per_engine_law() {
 #[tokio::test]
 async fn accept_with_lp_id_books_pinned_panel_row() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_panel_edge(3).await;
+        let (edge, addr, _data_dir) = start_ready_panel_edge(3).await;
         let mut client = quote_client(addr).await;
 
         // BUY the best offer's line (SYNTH-LP-2).
@@ -356,7 +356,7 @@ async fn accept_with_lp_id_books_pinned_panel_row() {
 #[tokio::test]
 async fn empty_lp_id_keeps_single_dealer_path_byte_identical() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_panel_edge(3).await;
+        let (edge, addr, _data_dir) = start_ready_panel_edge(3).await;
         let mut client = quote_client(addr).await;
 
         // Issue the single-dealer quote FIRST, then run the panel over the same
@@ -431,7 +431,7 @@ async fn empty_lp_id_keeps_single_dealer_path_byte_identical() {
 async fn expired_panel_row_accept_refused() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let clock = Clock::manual(1_000_000_000);
-        let (edge, addr) = start_panel_edge_with(true, clock.clone(), 3).await;
+        let (edge, addr, _data_dir) = start_panel_edge_with(true, clock.clone(), 3).await;
         let mut client = quote_client(addr).await;
 
         let key = "md-lastlook-1";
@@ -541,7 +541,7 @@ where
 #[tokio::test]
 async fn ws_multi_dealer_frame_round_trips_and_books_lp_line() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, _grpc) = start_ready_panel_edge(3).await;
+        let (edge, _grpc, _data_dir) = start_ready_panel_edge(3).await;
         let url = format!("ws://{}", edge.ws_addr());
         let (mut ws, _resp) = tokio::time::timeout(STEP_DEADLINE, connect_async(url))
             .await

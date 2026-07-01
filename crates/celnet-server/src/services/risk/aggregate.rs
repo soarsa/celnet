@@ -320,6 +320,7 @@ fn nonadditive_measures(
         let scenarios: Vec<Scenario> = cfg.spot_shocks.iter().map(|s| Scenario::spot(*s)).collect();
         let ve = Cube::node_var_es(
             &celnet_risk_normalize::AssetPricer,
+            &super::exotic_pricer::ExoticEngine,
             &scaled_node,
             &scenarios,
             cfg.alpha(),
@@ -331,6 +332,7 @@ fn nonadditive_measures(
     let curvature_spot = if cfg.evaluates_curvature() {
         Some(Cube::node_curvature_spot(
             &celnet_risk_normalize::AssetPricer,
+            &super::exotic_pricer::ExoticEngine,
             &scaled_node,
             cfg.curvature_risk_weight,
         ))
