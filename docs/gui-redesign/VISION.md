@@ -80,6 +80,31 @@ serve one of these jobs, it doesn't ship. Delivery process: **loop + multi-agent
 critique of the visuals AND end-to-end intuitivity** each round (visual agents render/critique; a UX
 agent walks flows) — build → critique → fix until clean.
 
+## 0.8 FULL REDESIGN v2 (operator, 2026-07-01) — July-2026 SOTA, integrated, multi-persona
+
+- **The integrated market-making LOOP is the design spine** (the "link" between capabilities):
+  `FEEDS → PRICING/MODEL → CONTRIBUTION (Celnet-as-LP make) ⇄ RFQ/LP-TAKE + SALES-TRADER →
+  BOOKS/POSITIONS → RISK/XVA → OPS`, and **RISK feeds back into pricing/contribution skew** — one
+  CLOSED loop, not distinct tools. Every surface is a lens on this loop.
+- **Celnet is an LP that also TAKES prices from LPs, with SALES-TRADER on top:** *make* (price →
+  contribute/stream), *take* (RFQ-panel aggregate other LPs → hedge/best-ex/composite), *sales-trade*
+  (respond to client RFQs, tiers, client analytics) — in one flow.
+- **Multi-persona = lenses on the loop:** quant · trader/market-maker · sales-trader · risk manager ·
+  desk head. Each gets a default PERSPECTIVE (panel arrangement) over the shared loop; same data,
+  different lens.
+- **Asset-class → quant-detail selection must be explicit + guided:** asset class (FX/FI/Crypto/…) →
+  underlier → product/structure → quant details (model · surface/curve · conventions · calibration) →
+  price. Full FX + FI + Crypto depth.
+- **Visual language upgraded SIGNIFICANTLY** to feel July-2026 SOTA (evolve color/type/depth/motion,
+  keep Celer identity but modernize; the pricing tiles + charts must become genuinely state-of-the-art).
+- **Interactive:** HTML mockups must be CLICKABLE prototypes; then promote validated components into
+  the `gui/` **Storybook** as real, reusable, evolvable components.
+- **Risk / XVA / books/positions** must be a stunning INTEGRATED experience (part of the loop), not
+  separated screens.
+- **Method:** comprehensively capture the ENTIRE-codebase knowledge via lodestar FIRST, then fully
+  redesign; run as a **/loop** with the adversarial critique gate (verify against real competitor
+  visuals). Charts are the bar.
+
 ## 1. Core thesis — one evolved API, thin parametric clients
 
 The defect today is **replication born of asset-class silos**: two parallel FX-vs-FI stacks sharing
