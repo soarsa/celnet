@@ -74,6 +74,10 @@ use celnet_proto::{
     CurveSet, OisInstrument, OisPillar, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
     RatesPricingResult, rates_instrument,
 };
+// XVA (valuation-adjustment) contract — the WS mirror of PricingService::PriceXva.
+use celnet_proto::{
+    PriceXvaRequest, PriceXvaResponse, XvaResult as WireXvaResult, XvaSurvivalCurve, XvaTrade,
+};
 // Linear-rates portfolio risk — the WS mirror of RiskService::AggregateRatesRisk.
 use celnet_proto::{
     AcceptDeskQuoteRequest, BookRatesPositionRequest, BookRatesPositionResponse, Deal, DeskQuote,
@@ -1416,6 +1420,97 @@ pub(super) fn rates_price_response_to_json(r: &RatesPriceResponse) -> Value {
     json!({
         "request_id": r.request_id,
         "result": r.result.as_ref().map(rates_pricing_result_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// XVA (valuation adjustments) — the WS mirror of PricingService::PriceXva
+// ---------------------------------------------------------------------------
+
+/// Decode a required `repeated double` field carried as a JSON array (absent/null
+/// ⇒ empty). Each element must be a JSON number.
+fn f64_array(o: &Map<String, Value>, key: &str) -> Result<Vec<f64>> {
+    match o.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.as_f64()
+                    .ok_or_else(|| err(format!("`{key}[{i}]` must be a number")))
+            })
+            .collect(),
+        Some(_) => Err(err(format!("`{key}` must be an array of numbers"))),
+    }
+}
+
+/// Decode one `XvaTrade` `{ option_type, strike, expiry_years, vol, notional }`.
+fn xva_trade_from_json(v: &Value) -> Result<XvaTrade> {
+    let o = obj(v, "trade")?;
+    Ok(XvaTrade {
+        option_type: enum_or_zero(o, "option_type"),
+        strike: f64_field(o, "strike")?,
+        expiry_years: f64_field(o, "expiry_years")?,
+        vol: f64_field(o, "vol")?,
+        notional: f64_field(o, "notional")?,
+    })
+}
+
+/// Decode an `XvaSurvivalCurve` `{ pillar_times[], hazard_rates[] }`. Empty
+/// `pillar_times` with a single `hazard_rates` entry is the flat-curve form; equal
+/// lengths otherwise (the piecewise form). Shape is enforced by the engine mapping.
+fn xva_survival_curve_from_json(v: &Value) -> Result<XvaSurvivalCurve> {
+    let o = obj(v, "survival_curve")?;
+    Ok(XvaSurvivalCurve {
+        pillar_times: f64_array(o, "pillar_times")?,
+        hazard_rates: f64_array(o, "hazard_rates")?,
+    })
+}
+
+/// Decode a `PriceXvaRequest` from the browser JSON shape.
+pub(super) fn price_xva_request_from_json(o: &Map<String, Value>) -> Result<PriceXvaRequest> {
+    let trades = o
+        .get("trades")
+        .and_then(Value::as_array)
+        .ok_or_else(|| err("`trades` must be an array"))?
+        .iter()
+        .map(xva_trade_from_json)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(PriceXvaRequest {
+        request_id: u64_or_zero(o, "request_id"),
+        trades,
+        r_dom: f64_field(o, "r_dom")?,
+        r_for: f64_field(o, "r_for")?,
+        spot0: f64_field(o, "spot0")?,
+        sigma: f64_field(o, "sigma")?,
+        paths: u32_field(o, "paths")?,
+        seed: u64_or_zero(o, "seed"),
+        exposure_steps: u32_field(o, "exposure_steps")?,
+        counterparty: Some(nested(o, "counterparty", xva_survival_curve_from_json)?),
+        own: Some(nested(o, "own", xva_survival_curve_from_json)?),
+        lgd_counterparty: f64_field(o, "lgd_counterparty")?,
+        lgd_own: f64_field(o, "lgd_own")?,
+        funding_spread: f64_field(o, "funding_spread")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+/// Encode an `XvaResult` `{ cva, dva, fva, total_adjustment }`.
+fn xva_result_to_json(r: &WireXvaResult) -> Value {
+    json!({
+        "cva": r.cva,
+        "dva": r.dva,
+        "fva": r.fva,
+        "total_adjustment": r.total_adjustment,
+    })
+}
+
+/// Encode a `PriceXvaResponse`.
+pub(super) fn price_xva_response_to_json(r: &PriceXvaResponse) -> Value {
+    json!({
+        "request_id": r.request_id,
+        "result": r.result.as_ref().map(xva_result_to_json),
         "correlation_id": r.correlation_id,
     })
 }
@@ -4481,6 +4576,85 @@ mod tests {
         assert_eq!(v["correlation_id"], json!(7));
         assert!(v["result"]["par_rate"].as_f64().unwrap() > 0.0);
         assert_eq!(v["result"]["key_rate_ladder"].as_array().unwrap().len(), 3);
+    }
+
+    /// A `price_xva` request decodes from the browser JSON shape into the proto
+    /// `PriceXvaRequest`, prices through the SAME `celnet-xva` engine the gRPC edge
+    /// uses, and the `PriceXvaResponse` re-encodes to the browser shape — the WS
+    /// mirror is a second encoding of the one contract, round-tripping field-for-field.
+    #[test]
+    fn xva_price_request_decodes_prices_and_response_round_trips() {
+        let body = json!({
+            "request_id": 11,
+            "trades": [
+                { "option_type": 0, "strike": 1.10, "expiry_years": 1.0, "vol": 0.12, "notional": 1.0 },
+                { "option_type": 1, "strike": 1.05, "expiry_years": 1.5, "vol": 0.14, "notional": -1.0 }
+            ],
+            "r_dom": 0.03,
+            "r_for": 0.01,
+            "spot0": 1.10,
+            "sigma": 0.13,
+            "paths": 2048,
+            "seed": 11259375,
+            "exposure_steps": 8,
+            "counterparty": { "pillar_times": [0.5, 2.0], "hazard_rates": [0.02, 0.05] },
+            "own": { "pillar_times": [], "hazard_rates": [0.015] },
+            "lgd_counterparty": 0.6,
+            "lgd_own": 0.55,
+            "funding_spread": 0.008,
+            "correlation_id": 5
+        });
+        let o = body.as_object().unwrap();
+        let req = price_xva_request_from_json(o).expect("decodes");
+
+        // Header + netting set decoded field-for-field.
+        assert_eq!(req.request_id, 11);
+        assert_eq!(req.correlation_id, Some(5));
+        assert_eq!(req.trades.len(), 2);
+        assert_eq!(
+            req.trades[0].option_type,
+            celnet_proto::OptionType::Call as i32
+        );
+        assert_eq!(
+            req.trades[1].option_type,
+            celnet_proto::OptionType::Put as i32
+        );
+        assert_eq!(req.trades[1].notional, -1.0);
+        assert_eq!(req.paths, 2048);
+        assert_eq!(req.exposure_steps, 8);
+        // Piecewise counterparty curve vs flat own curve decoded distinctly.
+        let cpty = req.counterparty.as_ref().unwrap();
+        assert_eq!(cpty.pillar_times, vec![0.5, 2.0]);
+        assert_eq!(cpty.hazard_rates, vec![0.02, 0.05]);
+        let own = req.own.as_ref().unwrap();
+        assert!(own.pillar_times.is_empty());
+        assert_eq!(own.hazard_rates, vec![0.015]);
+
+        // The decoded request prices through the engine (same path as gRPC).
+        let result = crate::xva_pricing::price_xva(&req).expect("prices");
+        assert!(result.cva > 0.0, "CVA {}", result.cva);
+        assert!(result.dva > 0.0, "DVA {}", result.dva);
+        assert!(
+            (result.total_adjustment - (result.cva - result.dva + result.fva)).abs() < 1e-15,
+            "total identity"
+        );
+
+        // The response re-encodes to the browser shape, field-for-field.
+        let resp = celnet_proto::PriceXvaResponse {
+            request_id: req.request_id,
+            result: Some(result),
+            correlation_id: req.correlation_id,
+        };
+        let v = price_xva_response_to_json(&resp);
+        assert_eq!(v["request_id"], json!(11));
+        assert_eq!(v["correlation_id"], json!(5));
+        assert_eq!(v["result"]["cva"].as_f64().unwrap(), result.cva);
+        assert_eq!(v["result"]["dva"].as_f64().unwrap(), result.dva);
+        assert_eq!(v["result"]["fva"].as_f64().unwrap(), result.fva);
+        assert_eq!(
+            v["result"]["total_adjustment"].as_f64().unwrap(),
+            result.total_adjustment
+        );
     }
 
     /// The `build_curve` frame decodes the registry-referenced pillar set the GUI /

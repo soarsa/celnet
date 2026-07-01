@@ -14,7 +14,10 @@
 use std::sync::Arc;
 
 use celnet_proto::pricing_service_server::PricingService;
-use celnet_proto::{PriceRequest, PriceResponse, RatesPriceRequest, RatesPriceResponse};
+use celnet_proto::{
+    PriceRequest, PriceResponse, PriceXvaRequest, PriceXvaResponse, RatesPriceRequest,
+    RatesPriceResponse,
+};
 use tonic::{Request, Response, Status};
 
 use crate::pricer::{ConventionSet, price_instrument};
@@ -24,6 +27,7 @@ use crate::services::forward::{Serve, route_underlying, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::services::risk::federate::Fleet;
 use crate::surface_book::SurfaceBook;
+use crate::xva_pricing::{XvaPriceError, price_xva};
 
 /// The one-shot pricing service over the readiness gate.
 ///
@@ -162,6 +166,31 @@ impl PricingService for PricingEdge {
         })?;
 
         Ok(Response::new(RatesPriceResponse {
+            request_id: req.request_id,
+            result: Some(result),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn price_xva(
+        &self,
+        request: Request<PriceXvaRequest>,
+    ) -> Result<Response<PriceXvaResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+
+        // XVA is a pure calculation against the caller-supplied netting set and
+        // survival curves — there is no per-pair market read to route — so every
+        // replica computes the identical result; no fleet forwarding is needed.
+        let result = price_xva(&req).map_err(|e| match e {
+            // A non-finite adjustment on otherwise-valid input is an internal
+            // numeric fault; every other variant is a malformed request.
+            XvaPriceError::NonFiniteResult => Status::internal(e.to_string()),
+            _ => Status::invalid_argument(e.to_string()),
+        })?;
+
+        Ok(Response::new(PriceXvaResponse {
             request_id: req.request_id,
             result: Some(result),
             correlation_id: req.correlation_id,

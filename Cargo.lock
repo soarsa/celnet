@@ -877,6 +877,7 @@ dependencies = [
  "celnet-testkit",
  "celnet-types",
  "celnet-vanilla",
+ "celnet-xva",
  "futures-util",
  "getrandom 0.2.17",
  "prost",

@@ -2998,6 +2998,12 @@ service PricingService {
   // supplies the market (the `CurveSet`) explicitly, so this is a calculation
   // RPC needing no live-market read. USD-SOFR OIS is the first instrument arm.
   rpc PriceRates(RatesPriceRequest) returns (RatesPriceResponse);
+  // Compute the CVA / DVA / FVA valuation adjustments of a synthetic netting set
+  // of vanilla FX options (see `PriceXvaRequest`). Like `PriceRates`, the caller
+  // supplies the whole market (the netting set, exposure-model config, and the
+  // counterparty/own hazard-rate survival curves) explicitly, so this is a
+  // calculation RPC needing no live-market read.
+  rpc PriceXva(PriceXvaRequest) returns (PriceXvaResponse);
 }
 
 // The RFQ lifecycle: request a quote, then accept or reject it.
@@ -4407,6 +4413,118 @@ message RatesPriceResponse {
   // The PV + PV01 / DV01 / key-rate-ladder result.
   RatesPricingResult result = 2;
   // Echo of the originating `RatesPriceRequest.correlation_id`, if supplied.
+  optional uint64 correlation_id = 3;
+}
+
+// ===========================================================================
+// XVA — valuation adjustments (CVA / DVA / FVA) over a synthetic netting set
+// ===========================================================================
+//
+// Serves the `celnet-xva` engine (standard Basel III / ISDA SA-CVA
+// discretization; Gregory, *The xVA Challenge* 2015; Brigo-Morini-Pallavicini
+// 2013). Given a netting set of vanilla FX options, an exposure-simulation
+// configuration, and the counterparty/own hazard-rate survival curves, the
+// server evolves spot under risk-neutral GBM on a uniform exposure grid with
+// scrambled-Sobol QMC, reprices and nets the set at each grid date to the
+// expected positive/negative exposure profile (EPE/ENE), then aggregates the
+// discrete unilateral CVA, symmetric DVA, and funding FVA. Synthetic netting
+// sets only — the engine does not model live CSAs / collateral / margin or
+// wrong-way risk (its honest boundary), so no collateral terms ride the wire.
+// Additive (rule 9): a new `PricingService` RPC; no existing message is touched.
+
+// One vanilla FX option in an XVA netting set (mirrors `celnet_xva::NettedTrade`):
+// its option type, strike, expiry, flat pricing vol, and signed notional.
+message XvaTrade {
+  // Call or put.
+  OptionType option_type = 1;
+  // Strike (quote per 1 unit of base), > 0.
+  double strike = 2;
+  // Option expiry in years from valuation (t = 0), > 0.
+  double expiry_years = 3;
+  // Flat lognormal vol used for this trade's mark, > 0.
+  double vol = 4;
+  // Signed notional in base units (+ long / - short).
+  double notional = 5;
+}
+
+// A hazard-rate survival curve (mirrors `celnet_xva::SurvivalCurve`). A flat
+// curve `S(t) = exp(-λt)` is carried as an empty `pillar_times` with a single
+// `hazard_rates` entry (the flat hazard λ). A piecewise-constant curve carries
+// strictly-increasing positive `pillar_times` with an equal-length
+// `hazard_rates`, each rate applying on `(pillar[i-1], pillar[i]]` and the last
+// rate held flat past the final pillar (the standard market convention).
+message XvaSurvivalCurve {
+  // Strictly-increasing positive pillar times (years). Empty ⇒ a flat curve.
+  repeated double pillar_times = 1;
+  // Per-segment hazard rates (decimal, ≥ 0). Equal length to `pillar_times`, or
+  // exactly one entry when `pillar_times` is empty (the flat hazard).
+  repeated double hazard_rates = 2;
+}
+
+// Request: compute the CVA / DVA / FVA of a synthetic netting set. The server
+// simulates the expected-exposure profile out to the set's horizon (`paths`
+// low-discrepancy paths over `exposure_steps` uniform grid intervals, `seed`
+// for bit-reproducible Owen scrambling) then aggregates it against the two
+// survival curves, the loss-given-default fractions, and the funding spread.
+message PriceXvaRequest {
+  // Opaque client correlation id, echoed in `PriceXvaResponse.request_id`.
+  uint64 request_id = 1;
+  // The netting set: the vanilla FX option trades that net under one master
+  // agreement. At least one trade is required.
+  repeated XvaTrade trades = 2;
+  // Domestic (quote) continuously-compounded rate used to mark the set and
+  // discount exposures to present value.
+  double r_dom = 3;
+  // Foreign (base) continuously-compounded rate used to mark the set.
+  double r_for = 4;
+  // Initial spot at valuation (t = 0), > 0.
+  double spot0 = 5;
+  // Exposure-model diffusion volatility for the spot evolution (may differ from
+  // each trade's own pricing vol), ≥ 0.
+  double sigma = 6;
+  // Number of low-discrepancy exposure paths, ≥ 1.
+  uint32 paths = 7;
+  // Owen-scramble replication seed (bit-reproducible exposure simulation).
+  uint64 seed = 8;
+  // Number of uniform exposure-grid steps out to the netting-set horizon, ≥ 1.
+  uint32 exposure_steps = 9;
+  // The counterparty survival curve (drives CVA and the joint-survival funding
+  // weight).
+  XvaSurvivalCurve counterparty = 10;
+  // The own survival curve (drives DVA and the joint-survival funding weight).
+  XvaSurvivalCurve own = 11;
+  // Counterparty loss-given-default `LGD = 1 - R_cpty`, in [0, 1].
+  double lgd_counterparty = 12;
+  // Own loss-given-default `LGD = 1 - R_own`, in [0, 1].
+  double lgd_own = 13;
+  // Funding spread (annualized decimal) charged on the net expected exposure.
+  double funding_spread = 14;
+  // Optional caller correlation id, echoed verbatim on the response.
+  optional uint64 correlation_id = 15;
+}
+
+// The computed valuation adjustments (mirrors `celnet_xva::XvaResult`): the three
+// adjustments plus the all-in total `CVA - DVA + FVA` a dealer charges over the
+// risk-free value.
+message XvaResult {
+  // Credit valuation adjustment (≥ 0): expected loss from counterparty default.
+  double cva = 1;
+  // Debit valuation adjustment (≥ 0): expected benefit from own default.
+  double dva = 2;
+  // Funding valuation adjustment (signed): funding cost (+) or benefit (-) of the
+  // uncollateralized net expected exposure.
+  double fva = 3;
+  // The all-in adjustment `CVA - DVA + FVA` subtracted from the risk-free value.
+  double total_adjustment = 4;
+}
+
+// Response: the XVA figures for the requested netting set.
+message PriceXvaResponse {
+  // Correlates with `PriceXvaRequest.request_id`.
+  uint64 request_id = 1;
+  // The CVA / DVA / FVA result.
+  XvaResult result = 2;
+  // Echo of the originating `PriceXvaRequest.correlation_id`, if supplied.
   optional uint64 correlation_id = 3;
 }
 

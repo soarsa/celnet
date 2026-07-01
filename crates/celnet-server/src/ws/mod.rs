@@ -20,7 +20,9 @@
 //!   carry a panel row's `lp_id`), `accept_quote` → `execution`,
 //!   `reject_quote` → `reject_ack`;
 //! * **pricing** — `price` → `price_response`, `price_rates` → `rates_price_response`
-//!   (the fixed-income linear-rates mirror of `PricingService::PriceRates`);
+//!   (the fixed-income linear-rates mirror of `PricingService::PriceRates`),
+//!   `price_xva` → `price_xva_response` (the CVA/DVA/FVA valuation-adjustment
+//!   mirror of `PricingService::PriceXva`);
 //! * **surface** — `get_smile` → `smile`, `mark_surface` → `mark_surface_response`,
 //!   `scenario` → `scenario_response`;
 //! * **RFS** — `subscribe` / `modify` / `unsubscribe` / `resync` / `execute` /
@@ -731,6 +733,14 @@ async fn handle_unary(
                 services.pricing.price_rates(Request::new(req)),
                 "rates_price_response",
                 codec::rates_price_response_to_json
+            )
+        }
+        "price_xva" => {
+            let req = decode!(codec::price_xva_request_from_json(o));
+            call!(
+                services.pricing.price_xva(Request::new(req)),
+                "price_xva_response",
+                codec::price_xva_response_to_json
             )
         }
         "request_quote" => {

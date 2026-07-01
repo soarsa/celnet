@@ -81,6 +81,7 @@ pub mod spread;
 pub mod surface_book;
 pub mod tick;
 pub mod ws;
+pub mod xva_pricing;
 
 pub use clock::Clock;
 // The edge's entitlements trust-boundary posture, re-exported on the server facade

@@ -31,6 +31,12 @@ celnet-calendar.workspace = true
 celnet-equity-vanilla.workspace = true
 celnet-commodity-vanilla.workspace = true
 celnet-crypto-vanilla.workspace = true
+# Valuation-adjustment (XVA) analytics — the CVA/DVA/FVA aggregation over a
+# synthetic netting set's expected-exposure profile and hazard-rate survival
+# curves, served by the `PricingService::PriceXva` edge (dormant-crate
+# activation). One-way edge (server → xva); xva's leaf graph is
+# {vanilla, types, qmc}, all already in the server tree, so no cycle.
+celnet-xva.workspace = true
 celnet-rfq.workspace = true
 celnet-engine.workspace = true
 # User-extensible analytics: the tiered plugin host whose ModelRegistry the
