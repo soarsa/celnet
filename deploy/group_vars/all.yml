@@ -60,16 +60,14 @@ celnet_env:
   CELNET_DEPLOY:    "{{ celnet_deploy_name | default('uat') }}"
   CELNET_ACCESS_MODE: "enforce"
   RUST_LOG:         "info"
-  # --- FIX 4.4 acceptor (the RFQ price-maker edge the quote simulator dials) ---
-  # Loopback bind: FIX is NOT internet-facing (only HAProxy is); the simulator
-  # (deploy/start-fix-sim.sh / fixsimctl) runs on the same host and dials this.
-  # CompIDs are the venue's own CompID (SENDER, what the client addresses as its
-  # TargetCompID) and the accepted counterparty (TARGET, the client's SenderCompID
-  # == the simulator's FIXSIM_SENDER). Keep these three in lockstep with the
-  # simulator config.
-  CELNET_FIX_ADDR:     "127.0.0.1:56001"
-  CELNET_FIX_SENDER:   "CELNET"
-  CELNET_FIX_TARGET:   "CELER_FXO"
+  # FIX acceptors are NOT configured via this legacy env knob. The server binds its
+  # FIX 4.4 acceptors from the MANAGED registry (fix-connections.json, edited in the
+  # GUI FIX admin) — on this host that is "celer" (FX/options) at 127.0.0.1:51001 and
+  # an FI quote venue at 127.0.0.1:9100. Setting CELNET_FIX_ADDR here binds a SECOND,
+  # legacy acceptor that collides with the registry and aborts boot with EADDRINUSE
+  # (took the server down 2026-07-01). The quote simulator dials the managed acceptor
+  # directly — see deploy/start-fix-sim.sh. Do NOT re-enable CELNET_FIX_ADDR unless the
+  # managed registry is empty.
   # Optional integrations — uncomment / set per environment as needed:
   # CELNET_VENDOR_WS:    "wss://vendor.example/feed"
   # CELNET_FLEET_MODE:   ""

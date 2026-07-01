@@ -9,12 +9,15 @@
 # randomized RFQ every period ± jitter.
 #
 # What it needs to work (the reason a bare run used to "do nothing"):
-#   * a FIX acceptor must be listening at FIXSIM_HOST:FIXSIM_PORT. On the server
-#     that means CELNET_FIX_ADDR is set in the deploy env (group_vars/all.yml →
-#     celnet_env) and the server has been (re)deployed. If nothing is listening,
-#     each attempt now logs a LOUD, actionable message instead of failing silently.
-#   * the CompIDs must line up: the simulator's FIXSIM_SENDER must equal the
-#     server's CELNET_FIX_TARGET, and FIXSIM_TARGET must equal CELNET_FIX_SENDER.
+#   * a FIX acceptor must be listening at FIXSIM_HOST:FIXSIM_PORT. The server binds
+#     its acceptors from the MANAGED registry (fix-connections.json, GUI FIX admin) —
+#     the "celer" FX/options venue is 127.0.0.1:51001 (the default here). Do NOT set
+#     CELNET_FIX_ADDR to add a legacy acceptor: it collides with the registry and
+#     aborts the server at boot (EADDRINUSE). If nothing is listening, each attempt
+#     now logs a LOUD, actionable message instead of failing silently.
+#   * the CompIDs must line up: the simulator's FIXSIM_SENDER must equal the venue's
+#     accepted counterparty (target_comp_id, "CELNET-CPTY"), and FIXSIM_TARGET must
+#     equal the venue's own CompID (sender_comp_id, "CELNET").
 #
 # Usage:
 #   deploy/start-fix-sim.sh              # loop RFQs in the foreground (tees to log)
@@ -31,9 +34,14 @@
 #   FIXSIM_ONESHOT (0) FIXSIM_DAEMON (0)
 set -euo pipefail
 
+# Defaults match the MANAGED FIX acceptor "celer" (FX/options) in fix-connections.json:
+# bind 127.0.0.1:51001, venue SenderCompID CELNET / accepted counterparty CELNET-CPTY.
+# The simulator is the client, so its SenderCompID is the venue's counterparty
+# (CELNET-CPTY) and its TargetCompID is the venue's own CompID (CELNET).
+# (The FI quote venue is 127.0.0.1:9100 — set FIXSIM_PORT=9100 to drive that one.)
 FIXSIM_HOST="${FIXSIM_HOST:-127.0.0.1}"
-FIXSIM_PORT="${FIXSIM_PORT:-56001}"
-FIXSIM_SENDER="${FIXSIM_SENDER:-CELER_FXO}"
+FIXSIM_PORT="${FIXSIM_PORT:-51001}"
+FIXSIM_SENDER="${FIXSIM_SENDER:-CELNET-CPTY}"
 FIXSIM_TARGET="${FIXSIM_TARGET:-CELNET}"
 FIXSIM_PERIOD="${FIXSIM_PERIOD:-180}"
 FIXSIM_JITTER="${FIXSIM_JITTER:-60}"
@@ -119,8 +127,8 @@ if preflight; then
   log "acceptor reachable."
 else
   log "WARN: acceptor $FIXSIM_HOST:$FIXSIM_PORT is NOT reachable."
-  log "      -> enable it on the server: set CELNET_FIX_ADDR=$FIXSIM_HOST:$FIXSIM_PORT in"
-  log "         deploy/group_vars/all.yml (celnet_env) and redeploy, then restart the sim."
+  log "      -> confirm the managed FIX acceptor is enabled (GUI FIX admin / fix-connections.json)"
+  log "         and its bind_addr matches FIXSIM_PORT (celer=51001, FI=9100), then restart the sim."
   log "      Continuing anyway — each RFQ attempt is logged below so failures are visible."
 fi
 
