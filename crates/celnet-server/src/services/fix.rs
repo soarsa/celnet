@@ -63,6 +63,7 @@ use celnet_fix::session::{InMemoryStore, Role, Session, SessionAction, SessionCo
 use celnet_fix::transport::{FrameReader, write_frame};
 
 use celnet_proto::{CcyPair, Instrument, MarketContext, Quantity, Side, StrikeOrDelta, Vanilla};
+use celnet_proto::{CurveSet, DeskQuote, OisInstrument, RatesInstrument, rates_instrument};
 use celnet_proto::{instrument, strike_or_delta};
 
 use celnet_types::{OptionType, Tenor};
@@ -135,6 +136,49 @@ pub(crate) struct FixContext {
     /// FX-options kind prices the FX block and still content-detects an OIS request
     /// for the legacy/demo venue.
     kind: AcceptorKind,
+    /// The dealer-quoting desk inbox this acceptor records inbound rates RFQs into
+    /// (so the GUI desk shows what a FIX venue received — live pending + processed
+    /// history). `None` for the legacy env seed / tests that don't wire a desk.
+    desk_edge: Option<Arc<crate::services::desk::RfqDeskEdge>>,
+    /// The desk id an inbound rates RFQ is booked under (must be a desk the trader's
+    /// session may see, or the reader is an all-desks admin). Empty when unrouted.
+    desk: String,
+    /// The auto-quote admission policy for a fixed-income venue: an RFQ it admits is
+    /// auto-quoted (recorded QUOTED history); one it declines is routed to a human
+    /// desk (recorded PENDING, no auto `Quote(S)` sent back).
+    auto_quote: RatesAutoQuotePolicy,
+}
+
+/// The admission policy that decides whether an inbound rates RFQ is **auto-quoted**
+/// by the venue or **routed to a human desk**. A bank auto-quotes small, on-the-run
+/// clips and works larger or off-the-run risk by voice/manual — modelled here as a
+/// notional cap plus an on-the-run tenor set. Both are configurable; the defaults
+/// give a realistic mix for the standard simulator flow.
+#[derive(Debug, Clone)]
+pub(crate) struct RatesAutoQuotePolicy {
+    /// The largest notional the venue will auto-quote; above this it routes to a desk.
+    pub max_notional: f64,
+    /// The on-the-run tenors (whole years) the venue will auto-quote; any other tenor
+    /// routes to a desk.
+    pub tenors: std::collections::HashSet<u32>,
+}
+
+impl Default for RatesAutoQuotePolicy {
+    fn default() -> Self {
+        Self {
+            max_notional: 25_000_000.0,
+            tenors: [1, 2, 3, 5, 7, 10].into_iter().collect(),
+        }
+    }
+}
+
+impl RatesAutoQuotePolicy {
+    /// Whether an RFQ of this `notional` and `tenor_years` is auto-quoted (`true`) or
+    /// routed to a human desk (`false`).
+    #[must_use]
+    pub(crate) fn admits(&self, notional: f64, tenor_years: u32) -> bool {
+        notional <= self.max_notional && self.tenors.contains(&tenor_years)
+    }
 }
 
 impl FixContext {
@@ -167,6 +211,11 @@ impl FixContext {
             // The legacy env-seeded acceptor serves the FX-options dialect (and still
             // content-detects an OIS request, as it did before connection kinds).
             kind: AcceptorKind::Options,
+            // The legacy env seed is not desk-routed (it predates the managed registry
+            // and only ever serves the FX/legacy path).
+            desk_edge: None,
+            desk: String::new(),
+            auto_quote: RatesAutoQuotePolicy::default(),
         }
     }
 
@@ -196,7 +245,29 @@ impl FixContext {
             monitor,
             connection_id,
             kind,
+            desk_edge: None,
+            desk: String::new(),
+            auto_quote: RatesAutoQuotePolicy::default(),
         }
+    }
+
+    /// Wire the desk routing for a managed fixed-income venue: the inbox `desk_edge`
+    /// an inbound rates RFQ is recorded into, the `desk` it is booked under, and the
+    /// `auto_quote` admission policy (admitted ⇒ auto-quoted history; declined ⇒
+    /// routed to a human desk as PENDING). A no-op for an FX-options acceptor (whose
+    /// path never records to the desk). Builder-style so existing callers/tests that
+    /// don't route to a desk are unchanged.
+    #[must_use]
+    pub(crate) fn with_desk_routing(
+        mut self,
+        desk_edge: Option<Arc<crate::services::desk::RfqDeskEdge>>,
+        desk: String,
+        auto_quote: RatesAutoQuotePolicy,
+    ) -> Self {
+        self.desk_edge = desk_edge;
+        self.desk = desk;
+        self.auto_quote = auto_quote;
+        self
     }
 
     /// Project the live engine market state into the wire market context the pricer
@@ -401,13 +472,37 @@ impl FixSession {
             return;
         };
 
+        // A dedicated fixed-income venue records every inbound RFQ into the desk inbox
+        // (so the GUI shows inbound RFQs — live pending + processed history) and decides
+        // auto-quote vs route-to-human. The FX-options path and the legacy
+        // content-detected OIS path below are unchanged (byte-identical).
+        if rates_intent_for_kind(self.ctx.kind).is_some() {
+            self.on_rates_quote_request(frame, st, &req_id, &symbol, out)
+                .await;
+            return;
+        }
+
         // Resolve the option + price it; a dialect/convention/pricing error declines
         // the quote (no `Quote` is sent — the maker simply does not show a price).
         let priced = match self.price_request(frame).await {
             Ok(p) => p,
             Err(_) => return,
         };
+        self.emit_two_way_quote(st, &req_id, &symbol, &priced, out);
+    }
 
+    /// Mint the keyed-MAC two-way tokens for a priced line and send the `Quote(S)`,
+    /// registering the live quote so a subsequent lift books through the SAME ledger.
+    /// Shared by the FX-options path and the fixed-income auto-quote path — the FX
+    /// numbers/wire are byte-identical to before this extraction.
+    fn emit_two_way_quote(
+        &mut self,
+        st: &[u8],
+        req_id: &[u8],
+        symbol: &[u8],
+        priced: &PricedLine,
+        out: &mut Vec<Vec<u8>>,
+    ) {
         let now = self.ctx.clock.now_nanos();
         let line_id = {
             self.next_line += 1;
@@ -446,7 +541,7 @@ impl FixSession {
         self.live.insert(
             quote_id.clone(),
             FixQuote {
-                symbol: symbol.clone(),
+                symbol: symbol.to_vec(),
                 buy_token,
                 sell_token,
             },
@@ -455,9 +550,9 @@ impl FixSession {
         let valid_until = utc_timestamp(now.saturating_add(QUOTE_VALIDITY_NANOS));
         let frame_out = self.session.send_app(st, |h, e| {
             let p = QuoteParams {
-                quote_req_id: &req_id,
+                quote_req_id: req_id,
                 quote_id: &quote_id,
-                symbol: &symbol,
+                symbol,
                 bid_px: priced.bid,
                 offer_px: priced.offer,
                 size: priced.size,
@@ -466,6 +561,88 @@ impl FixSession {
             messages::build_quote(h, &p, e)
         });
         out.push(frame_out);
+    }
+
+    /// Handle an inbound rates `QuoteRequest(R)` on a dedicated fixed-income venue:
+    /// decode + intent-check the RFQ, record it into the desk inbox, and either
+    /// auto-quote it (admitted by the venue policy → `Quote(S)` + QUOTED history) or
+    /// route it to a human desk (declined → PENDING, no auto `Quote(S)`). The taker
+    /// runs an Observe policy, so a routed RFQ receiving no immediate quote is expected.
+    async fn on_rates_quote_request(
+        &mut self,
+        frame: &FrameCursor<'_>,
+        st: &[u8],
+        req_id: &[u8],
+        symbol: &[u8],
+        out: &mut Vec<Vec<u8>>,
+    ) {
+        let Some(intent) = rates_intent_for_kind(self.ctx.kind) else {
+            return;
+        };
+        let Ok(rfq) = dialect_rates::decode_rates_rfq(frame) else {
+            return;
+        };
+        if !subscription_matches_intent(intent, rfq.subscription) {
+            return;
+        }
+        let side = rates_side_to_side(rfq.side);
+        let curve = crate::rates_pricing::default_usd_sofr_curve_set();
+        if self.ctx.auto_quote.admits(rfq.notional, rfq.tenor_years) {
+            // Auto-quote: the SAME shared rates line + `Quote(S)` as before, plus a
+            // QUOTED history row at the two-way mid.
+            let Ok(priced) = rates_line(frame, Some(intent)) else {
+                return;
+            };
+            self.emit_two_way_quote(st, req_id, symbol, &priced, out);
+            let mid = 0.5 * (priced.bid + priced.offer);
+            self.record_rates_rfq(&rfq, side, &curve, Some(mid));
+        } else {
+            // Route to a human desk: PENDING, no auto `Quote(S)` (the desk prices it).
+            self.record_rates_rfq(&rfq, side, &curve, None);
+        }
+    }
+
+    /// Record an inbound rates RFQ into the desk inbox under this venue's desk. When
+    /// `auto_level` is `Some`, the venue auto-quoted → stored QUOTED at that level;
+    /// otherwise stored PENDING for a human trader. A no-op when the acceptor is not
+    /// desk-routed (legacy env seed / tests) or carries no desk.
+    fn record_rates_rfq(
+        &self,
+        rfq: &dialect_rates::RatesRfq,
+        side: Side,
+        curve: &CurveSet,
+        auto_level: Option<f64>,
+    ) {
+        let Some(edge) = self.ctx.desk_edge.as_ref() else {
+            return;
+        };
+        if self.ctx.desk.trim().is_empty() {
+            return;
+        }
+        let counterparty = String::from_utf8_lossy(&self.ctx.counterparty).into_owned();
+        let instrument = RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+                tenor_years: rfq.tenor_years,
+                fixed_rate: auto_level.unwrap_or(0.0),
+                notional: rfq.notional,
+                side: side as i32,
+            })),
+        };
+        let quote = auto_level.map(|lvl| DeskQuote {
+            price: lvl,
+            notional: rfq.notional,
+            valid_for_ms: RATES_AUTO_QUOTE_VALID_MS,
+            trader: "auto".to_owned(),
+        });
+        edge.ingest_fix_rfq(
+            &self.ctx.desk,
+            &counterparty,
+            instrument,
+            curve.clone(),
+            side,
+            rfq.notional,
+            quote,
+        );
     }
 
     /// Execute a `NewOrderSingle(D)` / `NewOrderMultileg(AB)` against a live quote:
@@ -679,6 +856,19 @@ fn subscription_matches_intent(
 /// connection (`Some`), or `None` for the legacy/demo FX-options acceptor's
 /// content-detected OIS path (which imposes no `263` constraint). When set, an
 /// inbound subscription type that does not match the intent is refused.
+/// The validity a venue auto-quote is recorded with in the desk history (ms).
+const RATES_AUTO_QUOTE_VALID_MS: u32 = 30_000;
+
+/// Map a dialect [`RatesSide`] to the canonical proto [`Side`]: pay-fixed is a
+/// (fixed-rate) buy, receive-fixed a sell; a two-way request carries no firm side.
+fn rates_side_to_side(side: dialect_rates::RatesSide) -> Side {
+    match side {
+        dialect_rates::RatesSide::PayFixed => Side::Buy,
+        dialect_rates::RatesSide::ReceiveFixed => Side::Sell,
+        dialect_rates::RatesSide::TwoWay => Side::TwoWay,
+    }
+}
+
 fn rates_line(frame: &FrameCursor<'_>, expected: Option<RatesIntent>) -> Result<PricedLine, ()> {
     let rfq = dialect_rates::decode_rates_rfq(frame).map_err(|_| ())?;
     if let Some(intent) = expected
@@ -804,6 +994,25 @@ mod tests {
         assert_eq!(s.len(), "YYYYMMDD-HH:MM:SS.sss".len());
         assert_eq!(&s[8..9], "-");
         assert!(s.starts_with("2026"));
+    }
+
+    /// The auto-quote policy admits small, on-the-run clips and routes larger or
+    /// off-the-run risk to a human desk — the mix the desk inbox surfaces.
+    #[test]
+    fn auto_quote_policy_admits_small_on_the_run_only() {
+        let p = RatesAutoQuotePolicy::default();
+        assert!(p.admits(10_000_000.0, 5)); // small + on-the-run ⇒ auto
+        assert!(p.admits(25_000_000.0, 2)); // at the cap ⇒ auto
+        assert!(!p.admits(50_000_000.0, 5)); // over the cap ⇒ desk
+        assert!(!p.admits(10_000_000.0, 30)); // off-the-run tenor ⇒ desk
+    }
+
+    /// A dialect rates side maps to the canonical proto side (pay⇒buy, receive⇒sell).
+    #[test]
+    fn rates_side_maps_to_proto_side() {
+        assert_eq!(rates_side_to_side(RatesSide::PayFixed), Side::Buy);
+        assert_eq!(rates_side_to_side(RatesSide::ReceiveFixed), Side::Sell);
+        assert_eq!(rates_side_to_side(RatesSide::TwoWay), Side::TwoWay);
     }
 
     // --- fixed-income dialect dispatch --------------------------------------

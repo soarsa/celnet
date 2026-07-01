@@ -263,7 +263,8 @@ impl AuthService for AuthEdge {
         // while the external error below stays a single opaque
         // `unauthenticated` (anti-enumeration): the client cannot tell an unknown
         // email from a bad password, but an operator can.
-        let (authed_user, ok, fail_reason): (Option<UserDef>, bool, &'static str) = match candidate {
+        let (authed_user, ok, fail_reason): (Option<UserDef>, bool, &'static str) = match candidate
+        {
             Some(u) if u.disabled => {
                 let _ = verify_async(dummy_hash().to_string(), req.password.clone()).await;
                 (None, false, "disabled")

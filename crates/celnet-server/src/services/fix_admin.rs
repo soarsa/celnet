@@ -671,6 +671,7 @@ mod tests {
                 clock.clone(),
                 Arc::new(SurfaceBook::new()),
                 Arc::clone(&monitor),
+                None,
                 cfg,
             )
             .unwrap(),

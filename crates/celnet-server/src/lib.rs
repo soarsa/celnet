@@ -474,6 +474,10 @@ impl Edge {
                 clock.clone(),
                 Arc::clone(&surface_book),
                 Arc::clone(&fix_monitor),
+                // The desk inbox a managed fixed-income acceptor records inbound RFQs
+                // into (auto-quoted history + human-routed pending), so the GUI desk
+                // shows what a FIX venue received.
+                Some(Arc::clone(&rfq_desk_edge)),
                 FixConnectionStore::config_path(),
             )
             .map_err(|e| std::io::Error::new(e.kind(), format!("FIX connection config: {e}")))?,

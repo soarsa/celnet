@@ -288,6 +288,74 @@ impl RfqDeskEdge {
         self.notify.publish(&notification);
     }
 
+    /// Ingest an externally-originated (FIX venue) rates RFQ into the desk inbox
+    /// **without** the RPC authorization boundary: a managed FIX acceptor has already
+    /// authenticated the counterparty at the transport (CompID) layer, so this is the
+    /// venue recording what it received — not an unauthenticated RPC caller.
+    ///
+    /// When `quote` is `Some` the venue auto-quoted the RFQ, so it is stored
+    /// [`DeskRequestState::Quoted`] at that firm level (processed history the GUI shows
+    /// alongside live work); otherwise it is stored [`DeskRequestState::Pending`] for a
+    /// human trader to price. Either way the SAME notification the RPC submit path emits
+    /// is published, so a subscribed desk sees the inbound RFQ instantly.
+    ///
+    /// Returns the stored [`DeskRequest`] (for logging/tests).
+    #[allow(clippy::too_many_arguments)] // the request's identifying fields, no natural sub-struct.
+    pub fn ingest_fix_rfq(
+        &self,
+        desk: &str,
+        counterparty: &str,
+        instrument: RatesInstrument,
+        curve_set: CurveSet,
+        side: Side,
+        notional: f64,
+        quote: Option<DeskQuote>,
+    ) -> DeskRequest {
+        let now = self.clock.now_nanos();
+        let expires_at = now.saturating_add(i64::from(DEFAULT_TTL_MS).saturating_mul(1_000_000));
+        let state = if quote.is_some() {
+            DeskRequestState::Quoted
+        } else {
+            DeskRequestState::Pending
+        };
+        let stored = DeskRequest {
+            request_id: self.requests.next_request_id(),
+            kind: DeskRequestKind::Rfq as i32,
+            counterparty: counterparty.to_owned(),
+            desk: desk.to_owned(),
+            instrument: Some(instrument),
+            curve_set: Some(curve_set),
+            side: side as i32,
+            notional,
+            received_at_nanos: now,
+            expires_at_nanos: expires_at,
+            state: state as i32,
+            quote,
+            correlation_id: None,
+        };
+        self.requests.insert(stored.clone());
+
+        // Notify the desk: an auto-quoted RFQ is history (QUOTE_ACCEPTED reads as "the
+        // venue showed a price"); a routed RFQ needs a human (RFQ_RECEIVED).
+        let (kind, headline, detail) = if stored.quote.is_some() {
+            (
+                NotificationKind::QuoteAccepted,
+                format!("Auto-quoted RFQ from {counterparty}"),
+                Some(format!(
+                    "{notional:.0} notional on desk {desk} — auto-quoted"
+                )),
+            )
+        } else {
+            (
+                NotificationKind::RfqReceived,
+                format!("New RFQ from {counterparty} — needs pricing"),
+                Some(format!("{notional:.0} notional on desk {desk}")),
+            )
+        };
+        self.publish_notification(kind, &stored, headline, detail);
+        stored
+    }
+
     /// A deterministic, broker-scoped notification id.
     fn notify_id(&self) -> String {
         // The broker owns no id space (it is a pure fan-out); deals/requests own
@@ -995,6 +1063,65 @@ mod tests {
             .try_recv()
             .expect("the g10 subscriber receives the RFQ");
         assert_eq!(n.desk, "g10");
+    }
+
+    /// A FIX venue ingesting an inbound RFQ records it into the inbox WITHOUT the RPC
+    /// auth boundary: an auto-quoted RFQ lands QUOTED (with the firm quote) as processed
+    /// history, a routed one lands PENDING for a human — and both fan a notification and
+    /// appear in the snapshot the GUI reads.
+    #[tokio::test]
+    async fn ingest_fix_rfq_records_auto_and_manual() {
+        let edge = edge();
+        let mut sub = edge.notify.subscribe(DeskFilter::All);
+
+        // Auto-quoted: carries a firm quote ⇒ QUOTED history.
+        let auto = edge.ingest_fix_rfq(
+            "g10-rates",
+            "CELER_RATES",
+            ois_instrument(Side::Buy),
+            curve(),
+            Side::Buy,
+            10_000_000.0,
+            Some(DeskQuote {
+                price: 0.0405,
+                notional: 10_000_000.0,
+                valid_for_ms: 30_000,
+                trader: "auto".to_owned(),
+            }),
+        );
+        assert_eq!(auto.state, DeskRequestState::Quoted as i32);
+        assert_eq!(auto.desk, "g10-rates");
+        assert_eq!(auto.counterparty, "CELER_RATES");
+        assert!(auto.quote.is_some());
+        let n = sub.rx.try_recv().expect("auto-quote fans a notification");
+        assert_eq!(n.kind, NotificationKind::QuoteAccepted as i32);
+
+        // Routed: no quote ⇒ PENDING for a human.
+        let manual = edge.ingest_fix_rfq(
+            "g10-rates",
+            "CELER_RATES",
+            ois_instrument(Side::Sell),
+            curve(),
+            Side::Sell,
+            50_000_000.0,
+            None,
+        );
+        assert_eq!(manual.state, DeskRequestState::Pending as i32);
+        assert!(manual.quote.is_none());
+        let n = sub.rx.try_recv().expect("a routed RFQ fans a notification");
+        assert_eq!(n.kind, NotificationKind::RfqReceived as i32);
+
+        // Both are in the snapshot the GUI reads (history + live), newest-first.
+        let all = edge.requests.snapshot();
+        assert_eq!(all.len(), 2);
+        assert!(
+            all.iter()
+                .any(|r| r.state == DeskRequestState::Quoted as i32)
+        );
+        assert!(
+            all.iter()
+                .any(|r| r.state == DeskRequestState::Pending as i32)
+        );
     }
 
     /// `effective_desk_filter` intersects requested desks with the caller's scope.

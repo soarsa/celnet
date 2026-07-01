@@ -167,16 +167,28 @@ PAIRS=(EURUSD GBPUSD USDJPY USDCHF AUDUSD EURGBP EURJPY)
 SIDES=(observe buy sell)   # FX: observe = RFQ only; buy = lift the offer; sell = hit the bid
 TYPES=(call put)
 RATES_SIDES=(pay receive two-way)  # FI: pay fixed / receive fixed / two-way request
+# To exercise BOTH desk paths, rotate the FI tenor/notional so some RFQs are
+# auto-quoted by the venue (small + on-the-run: notional <= 25mm AND tenor in
+# {1,2,3,5,7,10}) and others are routed to a human desk (over the cap or off-the-run:
+# 30y, or 50mm). Set FIXSIM_VARY=0 to pin the fixed FIXSIM_TENOR/FIXSIM_NOTIONAL.
+RATES_TENORS=(2 5 10 30)               # 30y is off-the-run ⇒ routed to a human desk
+RATES_NOTIONALS=(10000000 50000000)    # 50mm is over the auto-quote cap ⇒ routed
 
 run_once() {
   local req="RFQ-$(date +%s)-$RANDOM"
   if [ "$FIXSIM_ASSET" = "fi" ]; then
-    # Fixed-income OIS RFQ — routed to the rates desk (a human prices it in the GUI).
+    # Fixed-income OIS RFQ — auto-quoted when small + on-the-run, else routed to the
+    # rates desk (a human prices it in the GUI). The inbox shows both.
     local rside="${RATES_SIDES[$((RANDOM % ${#RATES_SIDES[@]}))]}"
-    log ">>> FI RFQ curve=$FIXSIM_CURVE tenor=${FIXSIM_TENOR}y side=$rside notional=$FIXSIM_NOTIONAL req=$req"
+    local tenor="$FIXSIM_TENOR" notional="$FIXSIM_NOTIONAL"
+    if [ "${FIXSIM_VARY:-1}" != "0" ]; then
+      tenor="${RATES_TENORS[$((RANDOM % ${#RATES_TENORS[@]}))]}"
+      notional="${RATES_NOTIONALS[$((RANDOM % ${#RATES_NOTIONALS[@]}))]}"
+    fi
+    log ">>> FI RFQ curve=$FIXSIM_CURVE tenor=${tenor}y side=$rside notional=$notional req=$req"
     if "${RUNNER[@]}" --asset fi --addr "$FIXSIM_HOST:$FIXSIM_PORT" \
         --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" \
-        --curve "$FIXSIM_CURVE" --tenor "$FIXSIM_TENOR" --notional "$FIXSIM_NOTIONAL" \
+        --curve "$FIXSIM_CURVE" --tenor "$tenor" --notional "$notional" \
         --side "$rside" --req-id "$req"; then
       log "<<< FI RFQ $req complete"
     else

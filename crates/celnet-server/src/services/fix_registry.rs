@@ -21,7 +21,8 @@ use tokio::sync::Mutex;
 use crate::clock::Clock;
 use crate::config::fix_connections::{FixConnectionDef, FixConnectionStore};
 use crate::core_link::CoreLink;
-use crate::services::fix::{FixAcceptor, FixContext};
+use crate::services::desk::RfqDeskEdge;
+use crate::services::fix::{FixAcceptor, FixContext, RatesAutoQuotePolicy};
 use crate::services::fix_monitor::FixMonitor;
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
@@ -51,6 +52,13 @@ pub struct FixAcceptorRegistry {
     clock: Clock,
     surface_book: Arc<SurfaceBook>,
     monitor: Arc<FixMonitor>,
+    /// The dealer-quoting desk inbox a managed fixed-income acceptor records inbound
+    /// RFQs into (so the GUI desk shows what a FIX venue received). `None` on a build
+    /// that doesn't wire a desk (never, in the live edge).
+    desk_edge: Option<Arc<RfqDeskEdge>>,
+    /// The auto-quote admission policy every fixed-income acceptor applies (notional
+    /// cap + on-the-run tenors): admitted ⇒ auto-quoted, declined ⇒ routed to a desk.
+    auto_quote: RatesAutoQuotePolicy,
     config_path: PathBuf,
 }
 
@@ -78,6 +86,7 @@ impl FixAcceptorRegistry {
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
         monitor: Arc<FixMonitor>,
+        desk_edge: Option<Arc<RfqDeskEdge>>,
         config_path: PathBuf,
     ) -> std::io::Result<Self> {
         let store = FixConnectionStore::load(&config_path)?;
@@ -91,6 +100,8 @@ impl FixAcceptorRegistry {
             clock,
             surface_book,
             monitor,
+            desk_edge,
+            auto_quote: RatesAutoQuotePolicy::default(),
             config_path,
         })
     }
@@ -268,6 +279,14 @@ impl FixAcceptorRegistry {
             Arc::clone(&self.monitor),
             def.id.clone(),
             def.kind,
+        )
+        // A fixed-income venue records inbound RFQs into the desk inbox under its
+        // configured desk and applies the shared auto-quote policy; an FX-options
+        // acceptor ignores this (its path never records to a desk).
+        .with_desk_routing(
+            self.desk_edge.clone(),
+            def.desk.clone(),
+            self.auto_quote.clone(),
         );
         FixAcceptor::start(addr, ctx)
             .await
