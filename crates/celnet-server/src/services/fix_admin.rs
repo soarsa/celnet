@@ -664,6 +664,8 @@ mod tests {
             &link
         ));
         let _ = std::fs::remove_file(&cfg);
+        let store = Arc::new(PositionStore::new());
+        store.set_access_mode(AccessMode::Enforce);
         let registry = Arc::new(
             FixAcceptorRegistry::load(
                 link,
@@ -671,14 +673,13 @@ mod tests {
                 clock.clone(),
                 Arc::new(SurfaceBook::new()),
                 Arc::clone(&monitor),
+                Arc::clone(&store),
                 cfg,
             )
             .unwrap(),
         );
         let gate = Arc::new(ReadinessGate::new());
         gate.mark_ready();
-        let store = Arc::new(PositionStore::new());
-        store.set_access_mode(AccessMode::Enforce);
         let sessions = Arc::new(SessionRegistry::new(clock));
         let edge =
             FixAdminEdge::new(registry, gate, store, monitor).with_sessions(Arc::clone(&sessions));

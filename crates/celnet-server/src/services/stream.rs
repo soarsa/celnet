@@ -810,49 +810,57 @@ pub(crate) async fn run_session<S>(
 }
 
 /// Record a click-to-trade fill of a **vanilla** line into the shared live position
-/// book, so `RiskService` aggregates the same lines this stream trades.
+/// book **through the pre-trade limit gate** ([`PositionStore::book`]), so
+/// `RiskService` aggregates the same lines this stream trades and a hard-limit-blown
+/// fill is refused (ADR-0016 A1).
 ///
 /// The booked fact is built from the subscription's instrument + the market it was
 /// shown against: pair, expiry, the resolved strike + vol (re-priced off the
 /// subscription's base market), the quoted conventions, the surface version, and the
 /// signed base notional (BUY = long, SELL = short). A non-vanilla product, a missing
-/// pair, or an unparseable convention is **not** recorded (honest scope — never a
-/// faked vanilla risk leaf). Best-effort: a failure to record never fails the trade.
+/// pair, or an unparseable convention has no canonical-vanilla risk leaf, so it is
+/// **not** recorded (honest scope — never a faked vanilla risk leaf) and returns
+/// [`PreTradeDecision::Accept`] (nothing to gate).
+///
+/// # Errors
+/// `failed_precondition` when a **hard** limit would be breached — the caller
+/// ([`Session::handle_execute`]) refuses the fill and books nothing.
 fn record_booked_position(
     store: &crate::services::risk::store::PositionStore,
     sub: &Subscription,
     spread: &SpreadModel,
     execution_id: u64,
     side: Side,
-) {
+) -> Result<celnet_limits::PreTradeDecision, Status> {
+    use celnet_limits::PreTradeDecision;
     use celnet_proto::instrument::Product;
 
     // Only vanilla lines have a canonical-vanilla risk leaf.
     let Some(Product::Vanilla(vanilla)) = sub.instrument.product.as_ref() else {
-        return;
+        return Ok(PreTradeDecision::Accept);
     };
     let Ok(option) = celnet_proto::OptionType::try_from(vanilla.option_type) else {
-        return;
+        return Ok(PreTradeDecision::Accept);
     };
     let option = celnet_types::OptionType::from(option);
 
     // The pair the line trades (the FX arm of the instrument's underlying).
     let Some(wire_underlying) = sub.instrument.underlying.as_ref() else {
-        return;
+        return Ok(PreTradeDecision::Accept);
     };
     let Ok(pair) =
         celnet_proto::convert::validate_fx_underlying(wire_underlying).map(|u| u.as_fx())
     else {
-        return;
+        return Ok(PreTradeDecision::Accept);
     };
     let Some(pair) = pair else {
-        return;
+        return Ok(PreTradeDecision::Accept);
     };
 
     // Resolve the strike + vol the line is marked at by pricing off the base market
     // (the same deterministic pricer the stream shows the line with).
     let Ok((priced, _two_way)) = sub.price(&sub.base_market, spread) else {
-        return;
+        return Ok(celnet_limits::PreTradeDecision::Accept);
     };
     let inputs = celnet_types::VanillaInputs::new(
         sub.base_market.spot,
@@ -881,7 +889,7 @@ fn record_booked_position(
         _ => abs_base,
     };
     if signed == 0.0 {
-        return; // nothing to book (no notional).
+        return Ok(celnet_limits::PreTradeDecision::Accept); // nothing to book (no notional).
     }
 
     let booked = crate::services::risk::store::BookedPosition {
@@ -894,7 +902,7 @@ fn record_booked_position(
         premium_style: sub.conv.premium,
         surface_version: sub.surface_version.unwrap_or(0),
     };
-    let _ = store.book_from_attribution(booked, &sub.attribution.clone().unwrap_or_default());
+    store.book_from_attribution(booked, &sub.attribution.clone().unwrap_or_default())
 }
 
 /// The single-owner per-session state and the operations over it.
@@ -1357,6 +1365,25 @@ impl Session {
         };
 
         let execution_id = exec_id_counter.fetch_add(1, Ordering::Relaxed);
+
+        // Pre-trade limit gate at the position sink (ADR-0016 A1): the click-to-trade
+        // fill funnels through `PositionStore::book`, which refuses a hard-limit-blown
+        // booking BEFORE mutating store state and BEFORE any `Executed` is emitted. A
+        // reject books nothing; the last-look token was already consumed by `try_book`
+        // above (a quoted line is dead once a hard limit blows — the trader
+        // re-requests). The typed `failed_precondition` status is the wire reason: the
+        // frozen `StreamReject` frame carries no limit/free-text field, so a hard
+        // breach fails the session closed rather than misusing a token reject code.
+        // A non-vanilla fill has no canonical-vanilla risk leaf ⇒ `Accept` (nothing to
+        // gate), preserving byte-identical behaviour on the non-recorded paths.
+        if let Some(store) = self.store.clone()
+            && let Err(status) =
+                record_booked_position(&store, sub, &self.spread, execution_id, side)
+        {
+            let _ = out_tx.send(Err(status)).await;
+            return false;
+        }
+
         let executed = Executed {
             subscription: Some(id),
             token: e.token,
@@ -1372,16 +1399,6 @@ impl Session {
         if !e.idempotency_key.is_empty() {
             sub.execute_idempotency
                 .insert(e.idempotency_key.clone(), executed.clone());
-        }
-
-        // Record the booked vanilla position into the shared live book so
-        // `RiskService` aggregates exactly the lines this stream trades (API-first
-        // parity: the Book/Risk views read the server's aggregate of this book). A
-        // non-vanilla fill has no canonical-vanilla risk leaf, so it is not recorded
-        // (honest scope — never a faked vanilla risk). Booking is best-effort: a
-        // failure to record a risk fact must never fail the trade itself.
-        if let Some(store) = self.store.clone() {
-            record_booked_position(&store, sub, &self.spread, execution_id, side);
         }
 
         let msg = ServerStreamMessage {
