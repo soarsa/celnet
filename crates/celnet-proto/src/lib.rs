@@ -1626,3 +1626,167 @@ mod wire_contract_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod field_table_tests {
+    //! The descriptor-derived per-message field tables (arch item G —
+    //! `ws-codec-from-proto`, increment 1). These assert the field projection is
+    //! well-formed and load-bearing (the oneof grouping the WS codec routes on)
+    //! — the first descriptor-side input to the deferred unary codec swap.
+    use super::wire_contract::{MESSAGE_FIELDS, MESSAGES, WireField, WireLabel, fields_for};
+
+    /// Locate a field by proto name within a message's table (panics with a clear
+    /// message if the message or field is absent).
+    fn field(message: &str, proto_name: &str) -> &'static WireField {
+        let fields =
+            fields_for(message).unwrap_or_else(|| panic!("no field table for message {message:?}"));
+        fields
+            .iter()
+            .find(|f| f.proto_name == proto_name)
+            .unwrap_or_else(|| panic!("message {message:?} has no field {proto_name:?}"))
+    }
+
+    /// Every message in `MESSAGES` has exactly one aligned `MESSAGE_FIELDS` entry,
+    /// and `fields_for` resolves it. Both tables come from the same descriptor
+    /// walk, so they must be index-aligned and name-consistent; a name outside the
+    /// contract resolves to `None`.
+    #[test]
+    fn every_message_has_an_aligned_field_table() {
+        assert_eq!(
+            MESSAGE_FIELDS.len(),
+            MESSAGES.len(),
+            "MESSAGE_FIELDS must have exactly one entry per message"
+        );
+        for (i, name) in MESSAGES.iter().enumerate() {
+            assert_eq!(
+                MESSAGE_FIELDS[i].message, *name,
+                "MESSAGE_FIELDS[{i}] must align index-for-index with MESSAGES"
+            );
+            assert!(
+                fields_for(name).is_some(),
+                "fields_for({name:?}) must resolve"
+            );
+        }
+        assert!(
+            fields_for("NotAContractMessage").is_none(),
+            "a non-contract name must not resolve"
+        );
+    }
+
+    /// The field projection has the exact expected shape (name / json_key / type /
+    /// label) for representative scalar, nested-message, repeated and
+    /// explicit-presence fields, and — increment 1 — every `json_key` equals its
+    /// proto snake_case name (the override table remaps the exceptions later).
+    #[test]
+    fn field_tables_have_the_projected_shape() {
+        for mf in MESSAGE_FIELDS {
+            for f in mf.fields {
+                assert_eq!(
+                    f.json_key, f.proto_name,
+                    "increment 1: {}.{} json_key must equal the proto name",
+                    mf.message, f.proto_name
+                );
+            }
+        }
+
+        // CcyPair: two string scalars, no oneof.
+        let ccy = fields_for("CcyPair").expect("CcyPair table");
+        assert_eq!(ccy.len(), 2, "CcyPair has base + quote");
+        let base = field("CcyPair", "base");
+        assert_eq!(base.proto_type, "string");
+        assert_eq!(base.label, WireLabel::Singular);
+        assert_eq!(base.oneof_group, None);
+
+        // Greeks: a double scalar and a nested-message field, both non-oneof.
+        assert!(
+            !fields_for("Greeks").expect("Greeks table").is_empty(),
+            "Greeks declares fields"
+        );
+        let price = field("Greeks", "price");
+        assert_eq!(price.proto_type, "double");
+        assert_eq!(price.label, WireLabel::Singular);
+        assert_eq!(price.oneof_group, None);
+        let rates = field("Greeks", "rate_sensitivities");
+        assert_eq!(rates.proto_type, "RateSensitivities");
+        assert_eq!(rates.label, WireLabel::Singular);
+        assert_eq!(rates.oneof_group, None);
+
+        // Repeated field.
+        let legs = field("Strategy", "legs");
+        assert_eq!(legs.proto_type, "Leg");
+        assert_eq!(legs.label, WireLabel::Repeated);
+        assert_eq!(legs.oneof_group, None);
+
+        // proto3 `optional` → Optional label, NOT a real oneof group (the
+        // synthetic single-arm oneof must be filtered out).
+        let broken = field("Tenor", "broken_date");
+        assert_eq!(broken.label, WireLabel::Optional);
+        assert_eq!(broken.oneof_group, None);
+        assert_eq!(broken.proto_type, "BrokenDate");
+        // A nested enum-typed field: package-stripped but nesting preserved.
+        assert_eq!(field("Tenor", "unit").proto_type, "Tenor.Unit");
+    }
+
+    /// The real (non-synthetic) oneof groups are populated with the correct group
+    /// name on every arm, and their non-oneof siblings carry `None` — this is the
+    /// discriminator the WS router/codec keys on.
+    #[test]
+    fn real_oneof_groups_are_populated() {
+        // Underlying.ref — the asset-class discriminator.
+        for arm in ["fx", "metal", "equity", "commodity", "digital_asset"] {
+            assert_eq!(
+                field("Underlying", arm).oneof_group,
+                Some("ref"),
+                "Underlying.{arm} must be in oneof group `ref`"
+            );
+        }
+        assert_eq!(
+            field("Underlying", "settlement_ccy").oneof_group,
+            None,
+            "the scalar sibling is not part of the `ref` oneof"
+        );
+
+        // Instrument.product — the product-payoff discriminator.
+        for arm in [
+            "vanilla",
+            "strategy",
+            "single_barrier",
+            "listed_future_option",
+            "perpetual_option",
+            "pivot",
+        ] {
+            assert_eq!(
+                field("Instrument", arm).oneof_group,
+                Some("product"),
+                "Instrument.{arm} must be in oneof group `product`"
+            );
+        }
+        // Scalar selectors on Instrument are outside the product oneof.
+        assert_eq!(field("Instrument", "pricing_model").oneof_group, None);
+        assert_eq!(field("Instrument", "underlying").oneof_group, None);
+        // The full product-oneof arm set is tagged (24 arms in the current
+        // contract: fields 7–21, 23–28, 30–32).
+        let product_arms = fields_for("Instrument")
+            .expect("Instrument table")
+            .iter()
+            .filter(|f| f.oneof_group == Some("product"))
+            .count();
+        assert!(
+            product_arms >= 24,
+            "all Instrument.product arms must be tagged, got {product_arms}"
+        );
+
+        // Other real oneofs across the vocabulary.
+        assert_eq!(field("StrikeOrDelta", "strike").oneof_group, Some("spec"));
+        assert_eq!(field("StrikeOrDelta", "delta").oneof_group, Some("spec"));
+        assert_eq!(field("CarryModel", "fx").oneof_group, Some("model"));
+        assert_eq!(
+            field("CarryModel", "generalized").oneof_group,
+            Some("model")
+        );
+        assert_eq!(
+            field("RateSensitivities", "fx").oneof_group,
+            Some("sensitivities")
+        );
+    }
+}
