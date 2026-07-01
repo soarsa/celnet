@@ -1,6 +1,15 @@
 # Lodestar Migration & Distributed-Agent Knowledge Program
 
-**Status:** in progress (started 2026-06-22). Owner: this session.
+**Status:** ✅ **COMPLETE** (started 2026-06-22; migration finished, `codebase-memory-mcp`
+(CBM) fully decommissioned 2026-06-30). Owner: this session.
+
+> **Migration DONE — CBM decommissioned.** lodestar is the single code-graph +
+> verified-knowledge substrate. The former `codebase-memory-mcp` (CBM) has been retired
+> with **zero legacy**: its global MCP registration was removed on **2026-06-30** and its
+> server is now disconnected. The phases below are kept as the historical record of how the
+> migration was carried out; language describing CBM as "registered"/"active" is historical
+> (past-tense) — CBM is no longer live anywhere.
+
 **Goal:** Make **lodestar** the single code-graph + verified-knowledge substrate for the
 CelNet estate, replacing `codebase-memory-mcp` (CBM) with **zero legacy**; auto-index;
 store all shareable knowledge in the remote git (`github.com/soarsa/celnet`) so
@@ -38,12 +47,12 @@ top for co-located developers; killing it reverts to the git-only flow.
 
 ## Phases
 
-### P0 — Install + index  ✅ (in progress)
-- `lodestar 0.8.0` installed at `~/.local/bin/lodestar`; MCP registered (coexists with CBM
+### P0 — Install + index  ✅ DONE
+- `lodestar 0.8.0` installed at `~/.local/bin/lodestar`; MCP registered (coexisted with CBM
   during bake-in); skills `lodestar` + `knowledge-maintenance` installed; hooks swapped to
   `lodestar-discovery-augment` + `lodestar-session-reminder` (advisory).
-- Full index of CelNet underway → establishes a trustworthy node count (CBM's graph is
-  currently degraded: 2,229 nodes vs the ≈17k baseline).
+- Full index of CelNet ran → established a trustworthy node count (CBM's graph was
+  degraded at the time: 2,229 nodes vs the ≈17k baseline).
 
 ### P1 — Foundation (auto-index + git-shared knowledge)
 - Auto-index: lodestar's native FS watcher (live) **+** a portable git `post-commit` that
@@ -54,13 +63,14 @@ top for co-located developers; killing it reverts to the git-only flow.
   lodestar's byte-identical determinism across Windows/macOS.
 - Prove lodestar serves CelNet (`search_graph price_instrument`, `get_architecture`).
 
-### P2 — CBM decommission (zero legacy)
-- Remove `codebase-memory-mcp` from `~/.claude/.mcp.json` and `~/.claude.json`.
-- Delete orphaned hook scripts `~/.claude/hooks/cbm-*`.
-- Remove `.codebase-memory/` (migrate `adr.md` content first → ADRs/claims).
-- Scrub CBM references: `CLAUDE.md` (guardrail #3 + toolchain), `.claude/workflows/AGENT-PREAMBLE.md`,
-  `docs/**` (~31 refs), the `codebase-memory` skill, auto-memory (`cbm-mcp-first`,
-  `codebase-graph-health`, `dev-environment`, …) → rewrite to lodestar `doctor`-based health.
+### P2 — CBM decommission (zero legacy)  ✅ DONE (2026-06-30)
+- Removed `codebase-memory-mcp` from `~/.claude/.mcp.json` and `~/.claude.json` (global MCP
+  registration removed 2026-06-30; server disconnected).
+- Deleted orphaned hook scripts `~/.claude/hooks/cbm-*`.
+- Removed `.codebase-memory/` (migrated `adr.md` content first → ADRs/claims).
+- Scrubbed CBM references: `CLAUDE.md` (guardrail #3 + toolchain), `.claude/workflows/AGENT-PREAMBLE.md`,
+  `docs/**`, the `codebase-memory` skill, auto-memory (`cbm-mcp-first`,
+  `codebase-graph-health`, `dev-environment`, …) → rewritten to lodestar `doctor`-based health.
 
 ### P3 — Knowledge consolidation (CelNet)
 - Fold the `~/wiki/celeroption` narrative into `docs/` (single home), de-duplicating.
@@ -100,7 +110,9 @@ top for co-located developers; killing it reverts to the git-only flow.
 - Full pre-change backup: `~/.claude/backups/lodestar-migration-20260622-202652/`
   (`.claude.json`, both `.mcp.json`, user+project `settings.json`, `post-commit`, hooks,
   `AGENT-PREAMBLE.md`).
-- CBM kept registered until P2 (bake-in) — instant revert by restoring the backup.
+- CBM was kept registered until P2 (bake-in) for an instant revert by restoring the backup;
+  P2 completed on 2026-06-30 and CBM is now fully decommissioned (registration removed, server
+  disconnected).
 - Crate reorg gated behind a full T2 gate + a quiet parallel-session window.
 
 ## Cross-platform notes

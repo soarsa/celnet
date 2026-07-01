@@ -4,7 +4,8 @@
 > increment landed; `just check` 1231/1231 green). Five gap-audit lenses (analytics,
 > deferrals, rigor, architecture, experience) returned and were independently
 > spot-verified against the tree (ripgrep, `ls crates`, proto/doc reads) — the
-> codebase-memory MCP was treated as possibly offline and not relied upon.
+> code-graph MCP (then codebase-memory, since replaced by lodestar) was treated as
+> possibly offline and not relied upon.
 
 ## Headline
 

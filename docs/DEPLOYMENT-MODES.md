@@ -1,7 +1,7 @@
 # Celnet — Deployment Modes (Standalone / Celer-Integrated / Hybrid)
 
 > **Purpose.** Celnet is the FX-**options** pricing platform. The parent **Celer** estate
-> (`celertech-*`, ~113 repos indexed in codebase-memory) has *no option product type today*
+> (`celertech-*`, ~113 repos indexed in lodestar) has *no option product type today*
 > and prices FX **spot/forward** through a JVM, disruptor-based price/order path. This document
 > specifies the **three deployment topologies** in which Celnet ships, and for each: which Celer
 > services Celnet **replaces**, **consumes**, and **publishes-to**; the **adapter** each mode
@@ -13,11 +13,12 @@
 > INTEGRATION-PLAN.md` is the engineering *plan* (crates, ADRs, build-vs-defer). This doc is the
 > *topology* layer that selects among them. It does not change any guardrail.
 >
-> **Evidence convention.** Facts traced through the codebase-memory graph or the `~/wiki/`
+> **Evidence convention.** Facts traced through the lodestar graph or the `~/wiki/`
 > narrative wikis are tagged **[graph]** / **[wiki]** with the symbol/file. Items I could **not**
 > runtime-trace (the estate uses an in-proc JVM disruptor + Protobuf + FIX, so cross-service
-> edges are invisible to static tooling — confirmed: `codebase-memory` finds zero cross-service
-> edges) are tagged **[inferred — live-staging gate]** and must be verified in a staging tenant
+> edges are invisible to static tooling — confirmed: the code-graph tool finds zero cross-service
+> edges, historically observed under codebase-memory, now decommissioned) are tagged
+> **[inferred — live-staging gate]** and must be verified in a staging tenant
 > before being relied upon. I never fake the far side to claim completeness (guardrail #2).
 
 ---

@@ -31,7 +31,6 @@
       - "--exclude=gui/e2e-artifacts/"
       - "--exclude=excel/dist/"
       - "--exclude=.serena/"
-      - "--exclude=.codebase-memory/"
       - "--exclude=*.log"
   become: false
 
