@@ -49,6 +49,14 @@ celnet_build_packages:
 # rust-toolchain.toml automatically on first build. Set to override if needed.
 celnet_rust_profile: minimal
 
+# --- FIX quote simulator ----------------------------------------------------
+# When true, the release builds the celnet-fix RFQ client, ships it as
+# <release>/bin/fix-rfq-client, and installs the launcher + `fixsimctl` control
+# script. Run it on the host with:  fixsimctl start | once | stop | status | tail
+# It dials the managed FIX acceptor (registry "CELER_FXO_CELNET" @127.0.0.1:56001);
+# override with celnet_fixsim_host/port/sender/target if the GUI FIX admin changes it.
+celnet_fixsim_enabled: true
+
 # --- Runtime environment (templated into shared/config/celnet.env) ----------
 # The celnet-server binary reads these. WS mirror gets a FIXED port so HAProxy
 # can front it (see crates/celnet-server/src/main.rs : CELNET_WS_ADDR).

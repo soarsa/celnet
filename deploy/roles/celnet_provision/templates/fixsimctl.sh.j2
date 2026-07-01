@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# fixsimctl — start/stop/status/tail for the celnet FIX quote simulator.
+# MANAGED BY ANSIBLE. Installed at {{ celnet_bin_dir }}/fixsimctl.
+#
+#   fixsimctl start | once | stop | status | tail [n]
+#
+# Thin wrapper over {{ celnet_bin_dir }}/start-fix-sim.sh: it points the launcher
+# at the release-shipped RFQ client binary (no cargo needed on the host) and the
+# managed FIX acceptor, daemonizes, and logs into the shared log dir. The acceptor
+# address/CompIDs default to the runtime registry's "CELER_FXO_CELNET" venue; override
+# with celnet_fixsim_* group_vars if the GUI FIX admin changes them.
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+LAUNCHER="{{ celnet_bin_dir }}/start-fix-sim.sh"
+export FIXSIM_RFQ_BIN="{{ celnet_current_link }}/bin/fix-rfq-client"
+export FIXSIM_RUN_DIR="{{ celnet_run_dir }}/fixsim"
+export FIXSIM_LOG="{{ celnet_log_dir }}/fix-sim.out.log"
+export FIXSIM_HOST="{{ celnet_fixsim_host | default('127.0.0.1') }}"
+export FIXSIM_PORT="{{ celnet_fixsim_port | default('56001') }}"
+export FIXSIM_SENDER="{{ celnet_fixsim_sender | default('CELER_FXO') }}"
+export FIXSIM_TARGET="{{ celnet_fixsim_target | default('CELNET') }}"
+export FIXSIM_PERIOD="{{ celnet_fixsim_period | default('180') }}"
+export FIXSIM_JITTER="{{ celnet_fixsim_jitter | default('60') }}"
+PIDFILE="$FIXSIM_RUN_DIR/fix-sim.pid"
+
+is_running() {
+  [[ -f "$PIDFILE" ]] || return 1
+  local pid; pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+case "${1:-}" in
+  start)
+    if is_running; then echo "fix-sim already running (pid $(cat "$PIDFILE"))"; exit 0; fi
+    [[ -x "$FIXSIM_RFQ_BIN" ]] || { echo "ERROR: $FIXSIM_RFQ_BIN missing (deploy a release with celnet_fixsim_enabled)"; exit 1; }
+    FIXSIM_DAEMON=1 "$LAUNCHER"
+    ;;
+  once)
+    FIXSIM_ONESHOT=1 "$LAUNCHER"
+    ;;
+  stop)
+    if is_running; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; echo "Stopped."; else echo "fix-sim not running"; rm -f "$PIDFILE"; fi
+    ;;
+  status)
+    if is_running; then echo "fix-sim: RUNNING (pid $(cat "$PIDFILE"))"; echo "  log: $FIXSIM_LOG"; echo "  acceptor: $FIXSIM_HOST:$FIXSIM_PORT ($FIXSIM_SENDER -> $FIXSIM_TARGET)"; else echo "fix-sim: STOPPED"; exit 3; fi
+    ;;
+  tail)
+    tail -n "${2:-50}" -f "$FIXSIM_LOG"
+    ;;
+  *)
+    echo "usage: fixsimctl {start|once|stop|status|tail [n]}"; exit 64
+    ;;
+esac

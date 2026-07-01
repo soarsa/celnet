@@ -30,6 +30,8 @@
 #   FIXSIM_SENDER (CELER_FXO)  FIXSIM_TARGET (CELNET)
 #   FIXSIM_PERIOD (180) FIXSIM_JITTER (60)   # seconds between RFQs
 #   FIXSIM_BIN (target/release/fix-sim)      # preferred once the full bot is built
+#   FIXSIM_RFQ_BIN ()                        # prebuilt RFQ client (shipped by the release);
+#                                            # used on the server where cargo is unavailable
 #   FIXSIM_RUN_DIR (deploy/fix-sim-run) FIXSIM_LOG (<run>/log/fix-sim.log)
 #   FIXSIM_ONESHOT (0) FIXSIM_DAEMON (0)
 set -euo pipefail
@@ -97,6 +99,12 @@ RUNNER=()
 if [ -x "$FIXSIM_BIN" ]; then
   log "using fix-sim binary $FIXSIM_BIN"
   RUNNER=("$FIXSIM_BIN")
+elif [ -n "${FIXSIM_RFQ_BIN:-}" ] && [ -x "${FIXSIM_RFQ_BIN:-}" ]; then
+  # A prebuilt RFQ-client binary shipped by the release (deploy/roles/celnet_release
+  # installs it at <release>/bin/fix-rfq-client). This is the path used ON the server,
+  # where the celnet user has no cargo to build the example at runtime.
+  log "using prebuilt RFQ client $FIXSIM_RFQ_BIN"
+  RUNNER=("$FIXSIM_RFQ_BIN")
 elif command -v cargo >/dev/null 2>&1; then
   log "no fix-sim binary yet — building the celnet-fix example RFQ client (v0 simulator)..."
   if ! cargo build -p celnet-fix --example fix_rfq_client; then

@@ -73,6 +73,39 @@
     remote_src: true
   loop: "{{ celnet_bins }}"
 
+# --- FIX quote simulator (opt-in via celnet_fixsim_enabled) -----------------
+# Build the celnet-fix RFQ client example and ship it into the release bin, plus
+# the launcher, so the simulator runs ON the server (the celnet user has no cargo
+# at runtime — the build here uses the release toolchain at {{ celnet_base }}/.cargo).
+- name: Build the FIX quote-simulator RFQ client (celnet-fix example)
+  ansible.builtin.shell: >-
+    source "{{ celnet_base }}/.cargo/env" &&
+    cargo build --release -p celnet-fix --example fix_rfq_client
+  args:
+    chdir: "{{ celnet_build_dir }}"
+    executable: /bin/bash
+  environment:
+    CARGO_HOME: "{{ celnet_base }}/.cargo"
+    RUSTUP_HOME: "{{ celnet_base }}/.rustup"
+    RUSTC_WRAPPER: ""
+  changed_when: true
+  when: celnet_fixsim_enabled | default(true) | bool
+
+- name: Install the FIX quote-simulator RFQ client into the release
+  ansible.builtin.copy:
+    src: "{{ celnet_build_dir }}/target/release/examples/fix_rfq_client"
+    dest: "{{ celnet_releases_dir }}/{{ celnet_release_name }}/bin/fix-rfq-client"
+    mode: "0755"
+    remote_src: true
+  when: celnet_fixsim_enabled | default(true) | bool
+
+- name: Install the FIX quote-simulator launcher (start-fix-sim.sh) into shared bin
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/start-fix-sim.sh"
+    dest: "{{ celnet_bin_dir }}/start-fix-sim.sh"
+    mode: "0755"
+  when: celnet_fixsim_enabled | default(true) | bool
+
 - name: Write the release VERSION marker
   ansible.builtin.copy:
     dest: "{{ celnet_releases_dir }}/{{ celnet_release_name }}/VERSION"
