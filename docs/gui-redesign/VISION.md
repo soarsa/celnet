@@ -15,6 +15,71 @@ Phase-2 competitor/SOTA research (in flight) refines §6/§9; the invariants in 
 
 ---
 
+## 0.5 PERSONA & POSITIONING — CORRECTION (operator, 2026-07-01)
+
+Celnet's front-ends (GUI + Excel) are **NOT a buy-side trading/execution surface.** The users
+**price, administer, manage market-data feeds, and contribute/distribute prices** — this is a
+**sell-side market-maker pricing & distribution platform positioned to replace Fenics and
+Synoption**, not a taker's trading blotter. This retunes everything below (§1–§9 hold, but retargeted):
+
+- **Personas:** a pricing/quant; a market-data & FEED operator; a price-CONTRIBUTION/distribution
+  manager; a platform admin. Not a trader clicking buy/sell.
+- **Remove execute-to-trade affordances** — no Buy/Sell, no taker "lift-the-axe", no trading-P&L
+  blotter / VaR-to-trade. The prior `00-shell` mock over-indexed on these and is being re-framed.
+- **The real pillars** (some were under-covered):
+  - **Pricing workbench** — price instruments/structures, greeks, scenario/what-if, as a pricing tool.
+  - **Vol surface** — mark / calibrate / version / PUBLISH (5 smile models, arb checks).
+  - **Feed management (inbound)** — vendor MD sources, FIX/MD sessions, symbology/mapping,
+    compositing/arbitration, staleness, feed health. **A core Fenics pillar — was missing.**
+  - **Price contribution / distribution (outbound)** — what the desk streams/quotes to which
+    clients/venues, **tiering, spread/skew rules, publication controls, contribution health**. The
+    "axe" surface **flips to the SELL side**: the desk's OWN contributed axes/skew + inbound-RFQ
+    **auto-quoting (maker)** — NOT lifting others' axes. **Core Synoption/Fenics pillar — was inverted.**
+  - **Administration** — users, roles, entitlements (deny-wins), FIX connectivity, config, monitoring.
+- **Still valid, retargeted:** cross-asset unification, the Celer design system, the command spine,
+  and XVA-as-a-pricing-analytic. Competitive frame is **Fenics/Synoption (sell-side pricing +
+  market-data + distribution)** — NOT SpectrAxe/OptAxe execution venues. Ground-truth re-inventory in
+  flight; §7 mockup set + §3 are being reworked to the pricing/feed/contribution/admin jobs.
+
+## 0.6 DESIGN MANDATE — raise the bar (operator, 2026-07-01)
+
+Do **NOT** treat today's GUI as good or as the target — reimagine to SOTA. This governs all below.
+
+- **All asset classes, integrated but separately licensed.** One experience; each class is
+  **distinctly permissioned + commercially licensed**. The UI integrates what a firm holds and
+  cleanly gates/omits the rest — *integrated feel, modular license*. Entitlement is a design
+  primitive (present/gated/upsell), not an afterthought.
+- **Investment-banking scale** for risk and data — millions of instruments/positions, real-time
+  risk aggregation; density handled with discipline (virtualized, progressive, GPU where it earns
+  it), **never cluttered**.
+- **SOTA pricing & modelling are hero capabilities** — model choice/calibration (LSV/Heston/SABR/
+  SSVI/eSSVI), surface marking, scenario — surfaced intuitively, never buried.
+- **Ruthless minimalism** — integrated, intuitive, clean, **visually stunning**. No verbose
+  descriptions, no unnecessary functionality. Every element earns its place; high signal, low chrome.
+
+## 0.7 CAPABILITY SCOPE — curated; all must make sense (operator, 2026-07-01)
+
+The integrated, per-class-licensed experience serves these coherent jobs — nothing superfluous:
+- **Pricing & modelling** — price any instrument/structure; choose & calibrate models (LSV/Heston/
+  SABR/SSVI/eSSVI); greeks; scenario / what-if. (hero)
+- **Vol surface lifecycle** — mark / calibrate / version / publish; arbitrage checks.
+- **Market-data & FIX (inbound)** — vendor feeds, FIX sessions, symbology/mapping, compositing/
+  arbitration, staleness, feed health.
+- **Contribution & distribution (outbound)** — stream/quote to client tiers & venues; spread/skew
+  rules; publication controls; contribution health; **maker auto-quoting** of inbound RFQ. FIX out.
+- **Risk at IB scale** — real-time cross-asset risk aggregation across desks/books; scenario; limits.
+- **Desks & books** — org hierarchy; scope pricing/risk/contribution/reporting by **desk/book**; a
+  first-class entitlement + aggregation boundary.
+- **Permissioning & licensing** — roles/capabilities (deny-wins) **+ per-asset-class commercial
+  license** (present / gated / upsell) as a design primitive.
+- **Reporting** — valuation / risk / activity / contribution / feed & regulatory; scheduled + ad-hoc.
+- **Administration & ops** — users, FIX connectivity, config, monitoring, telemetry (p50/p99).
+
+Everything is **scoped by desk/book** and **gated by entitlement + license**. If a capability doesn't
+serve one of these jobs, it doesn't ship. Delivery process: **loop + multi-agent**, with **adversarial
+critique of the visuals AND end-to-end intuitivity** each round (visual agents render/critique; a UX
+agent walks flows) — build → critique → fix until clean.
+
 ## 1. Core thesis — one evolved API, thin parametric clients
 
 The defect today is **replication born of asset-class silos**: two parallel FX-vs-FI stacks sharing
