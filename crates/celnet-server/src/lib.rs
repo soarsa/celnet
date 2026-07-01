@@ -495,6 +495,7 @@ impl Edge {
                 clock.clone(),
                 Arc::clone(&surface_book),
                 Arc::clone(&fix_monitor),
+                Arc::clone(&store),
                 data_dir
                     .map(|d| d.join("fix-connections.json"))
                     .unwrap_or_else(FixConnectionStore::config_path),
@@ -635,6 +636,7 @@ impl Edge {
                     Arc::clone(&surface_book),
                     Arc::clone(&fix_monitor),
                     LEGACY_FIX_CONNECTION_ID.to_owned(),
+                    Arc::clone(&store),
                 );
                 Some(FixAcceptor::start(addr, ctx).await?)
             }
@@ -736,6 +738,7 @@ impl Edge {
             // content-detects an OIS request) — dedicated FI venues are stood up
             // through the managed `FixAdminService` registry, with their own kind.
             crate::config::fix_connections::AcceptorKind::Options,
+            Arc::clone(&self.store),
         );
         let acceptor = FixAcceptor::start(addr, ctx).await?;
         let bound = acceptor.local_addr();

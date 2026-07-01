@@ -154,6 +154,18 @@ impl ScopePath {
         }
     }
 
+    /// Build a scope path directly from an explicit, ordered scope list (finest to
+    /// apex). Used where a position does **not** live in the FX cube's full org
+    /// [`Hierarchy`] and so cannot be resolved through [`ScopePath::resolve`] — most
+    /// notably a linear-rates cell, which carries only `(entity, book)` and rolls up
+    /// through `book → entity → firm` (`docs/RISK-HIERARCHY.md` §5; ADR-0016 A1). The
+    /// caller is responsible for ordering finest-to-apex and for always including the
+    /// [`LimitScope::Firm`] apex if a firm-wide limit is to be consulted.
+    #[must_use]
+    pub fn from_scopes(scopes: Vec<LimitScope>) -> Self {
+        Self { scopes }
+    }
+
     /// The scopes on this path, finest (trader) to apex (firm).
     pub fn scopes(&self) -> impl Iterator<Item = LimitScope> + '_ {
         self.scopes.iter().copied()

@@ -23,6 +23,7 @@ use crate::config::fix_connections::{FixConnectionDef, FixConnectionStore};
 use crate::core_link::CoreLink;
 use crate::services::fix::{FixAcceptor, FixContext};
 use crate::services::fix_monitor::FixMonitor;
+use crate::services::risk::store::PositionStore;
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
 
@@ -51,6 +52,9 @@ pub struct FixAcceptorRegistry {
     clock: Clock,
     surface_book: Arc<SurfaceBook>,
     monitor: Arc<FixMonitor>,
+    /// The shared live position book every managed acceptor gates against (ADR-0016 A1),
+    /// so a FIX lift on any managed connection sees the same pre-trade limit tree.
+    store: Arc<PositionStore>,
     config_path: PathBuf,
 }
 
@@ -78,12 +82,13 @@ impl FixAcceptorRegistry {
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
         monitor: Arc<FixMonitor>,
+        store: Arc<PositionStore>,
         config_path: PathBuf,
     ) -> std::io::Result<Self> {
-        let store = FixConnectionStore::load(&config_path)?;
+        let connections = FixConnectionStore::load(&config_path)?;
         Ok(Self {
             inner: Mutex::new(Inner {
-                store,
+                store: connections,
                 running: HashMap::new(),
             }),
             link,
@@ -91,6 +96,7 @@ impl FixAcceptorRegistry {
             clock,
             surface_book,
             monitor,
+            store,
             config_path,
         })
     }
@@ -268,6 +274,7 @@ impl FixAcceptorRegistry {
             Arc::clone(&self.monitor),
             def.id.clone(),
             def.kind,
+            Arc::clone(&self.store),
         );
         FixAcceptor::start(addr, ctx)
             .await
