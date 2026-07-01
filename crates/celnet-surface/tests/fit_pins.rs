@@ -157,80 +157,91 @@ impl FrozenSlice {
 // ---------------------------------------------------------------------------
 
 /// Benign stochastic-vol fit: (α, ρ, ν) bits + converged vol-space cost bits.
+// ADR-0012: regenerated when the FX leaf's core gBSM moved onto the unified
+// forward-space kernel. The SABR fit is a flat-optimum least-squares whose
+// converged (α, ρ, ν) amplify the sub-1e-12 delta→strike shift into a small param
+// move; the FIT QUALITY is preserved (the reprice residual below is unchanged to
+// 9 significant figures). Determinism baseline re-pinned, not loosened.
 const BENIGN_SV: (u64, u64, u64, u64) = (
-    0x3fb8f5f9fa78d946, // alpha = 0.09750330319443376
-    0xbfc015832bf556a7, // rho   = -0.1256565060272596
-    0x3fe29090760fe19b, // nu    = 0.5801470094584603
+    0x3fb8f5f9fa78d943, // alpha = 0.09750330319443372
+    0xbfc015832bf556cb, // rho   = -0.1256565060272606
+    0x3fe29090760fe1bd, // nu    = 0.5801470094584641
     0x38f0000000000000, // cost  = 1.925929944387236e-34
 );
 const STRESSED_SV: (u64, u64, u64, u64) = (
-    0x3fbe9795797fd613, // alpha = 0.11950048652928329
-    0xbfddc50bae6fe472, // rho   = -0.46515171084281015
-    0x3feb88a782b3719f, // nu    = 0.860431437754915
-    0x3ed2dd05b5fb4e76, // cost  = 4.497377488827197e-6
+    0x3fbe9795797d9d40, // alpha = 0.11950048652726242
+    0xbfddc50bae5cd1fc, // rho   = -0.4651517107734262
+    0x3feb88a782be36be, // nu    = 0.8604314378332771
+    0x3ed2dd05b5fb5012, // cost  = 4.497377488827546e-6
 );
 
+// ADR-0012: parametric slices regenerated for the unified-kernel FX leaf (flat-
+// optimum least-squares amplifying the sub-1e-12 delta→strike shift; fit quality
+// preserved — see STRESSED_MAX_ANCHOR_ERR).
 const BENIGN_SVI: FrozenSlice = FrozenSlice {
-    a: 0x3f7cdf7831542726,     // 0.007049054625221795
-    b: 0x3f9c26482a2e6a35,     // 0.027489783834974985
-    rho: 0xbfaad85234d9449a,   // -0.05243164916158456
-    m: 0x3f9af2ed4e21a753,     // 0.026317317861333688
-    sigma: 0x3fba4714cd1f52f1, // 0.10264711387510396
+    a: 0x3f7cdf7831545b76,     // 0.007049054625233411
+    b: 0x3f9c26482a2e4003,     // 0.02748978383493751
+    rho: 0xbfaad85234d6c85c,   // -0.05243164916045437
+    m: 0x3f9af2ed4e224399,     // 0.026317317861472487
+    sigma: 0x3fba4714cd1eff31, // 0.10264711387480642
 };
 const BENIGN_SVI_COST: u64 = 0x0000000000000000; // exact fit: cost = 0.0
 
 const STRESSED_SVI: FrozenSlice = FrozenSlice {
-    a: 0x3f790ad1fe57418e,     // 0.0061138346549828426
-    b: 0x3f935362b3db34ec,     // 0.018872778155857015
+    a: 0x3f790ad1fe59df12,     // 0.006113834655131505
+    b: 0x3f935362b3d72705,     // 0.018872778154935172
     rho: 0xbfeff7ced916872b,   // -0.999 (projection boundary active)
-    m: 0x3f95ec0722683ea4,     // 0.021408187365578826
-    sigma: 0x3f9dd8fd8c20341f, // 0.029148065259551822
+    m: 0x3f95ec07227cd848,     // 0.02140818737026276
+    sigma: 0x3f9dd8fd8bdbe54c, // 0.029148065244020402
 };
 const STRESSED_SVI_COST: u64 = 0x3e56bb6f15e404b7; // 2.1170977298517854e-8
 
 const BENIGN_SSVI: FrozenSlice = FrozenSlice {
-    a: 0x3f743c7c79333e12,
-    b: 0x3fa1c5d0e3dcc1fb,
-    rho: 0xbfbbed5594fb4eb7,
-    m: 0x3f90173053d49c35,
-    sigma: 0x3fc253c413c985a7,
+    a: 0x3f743c7c79333e14,
+    b: 0x3fa1c5d0e3dcc22e,
+    rho: 0xbfbbed5594fb4e51,
+    m: 0x3f90173053d49bcd,
+    sigma: 0x3fc253c413c98574,
 };
 const BENIGN_SSVI_COST: u64 = 0x3890000000000000; // 3.009265538105056e-36
 
 const STRESSED_SSVI: FrozenSlice = FrozenSlice {
-    a: 0x3f69260dacdc7494,
-    b: 0x3fa120323e2b49de,
-    rho: 0xbfd88f0a9b6d8679,
-    m: 0x3fa525421ef08172,
-    sigma: 0x3fb9717c4c66a8df,
+    a: 0x3f69260dacb0a24a,
+    b: 0x3fa120323dd9679d,
+    rho: 0xbfd88f0a9be97045,
+    m: 0x3fa525421fc04d06,
+    sigma: 0x3fb9717c4cca2514,
 };
 const STRESSED_SSVI_COST: u64 = 0x3e796d4d40b71622; // 9.472280753434902e-8
 
 const BENIGN_ESSVI: FrozenSlice = FrozenSlice {
-    a: 0x3f743c7c79333e12,
-    b: 0x3fa1c5d0e3dcc1fb,
-    rho: 0xbfbbed5594fb4eb3,
-    m: 0x3f90173053d49c33,
-    sigma: 0x3fc253c413c985a7,
+    a: 0x3f743c7c79333e14,
+    b: 0x3fa1c5d0e3dcc22c,
+    rho: 0xbfbbed5594fb4e50,
+    m: 0x3f90173053d49bcd,
+    sigma: 0x3fc253c413c98575,
 };
 const BENIGN_ESSVI_COST: u64 = 0x3890000000000000; // 3.009265538105056e-36
 
 const STRESSED_ESSVI: FrozenSlice = FrozenSlice {
-    a: 0x3f69260db340e0ae,
-    b: 0x3fa120324a1e9353,
-    rho: 0xbfd88f0a895a3cb7,
-    m: 0x3fa52542009ef5ea,
-    sigma: 0x3fb9717c3de15ae9,
+    a: 0x3f69260db341884e,
+    b: 0x3fa120324a1f2798,
+    rho: 0xbfd88f0a895862b9,
+    m: 0x3fa52542009ca6ba,
+    sigma: 0x3fb9717c3de0d36d,
 };
 const STRESSED_ESSVI_COST: u64 = 0x3e796d4d40b71f29; // 9.472280753437961e-8
 
 /// Frozen max |fitted vol − anchor vol| for the stressed five-point fixture
 /// (a genuine least-squares fit: 2–4 shape parameters over five anchors).
+// ADR-0012: residuals regenerated for the unified-kernel FX leaf. Each is
+// unchanged to ~9 significant figures (the fit quality is preserved); only the
+// last-bit-level of the converged residual moved.
 const STRESSED_MAX_ANCHOR_ERR: [(SmileModel, f64); 4] = [
-    (SmileModel::StochasticVol, 1.5287853966807485e-3),
-    (SmileModel::Parametric, 7.887281675096197e-4),
-    (SmileModel::ParametricSurface, 1.804674255801192e-3),
-    (SmileModel::ExtendedSurface, 1.8046739823601166e-3),
+    (SmileModel::StochasticVol, 1.5287853977414e-3),
+    (SmileModel::Parametric, 7.887281678209124e-4),
+    (SmileModel::ParametricSurface, 1.8046742631139812e-3),
+    (SmileModel::ExtendedSurface, 1.8046739824071345e-3),
 ];
 
 // ---------------------------------------------------------------------------

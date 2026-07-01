@@ -76,6 +76,7 @@ use crate::services::clicktrade::{
     BookOutcome, MintedToken, TokenLedger, TokenMinter, TwoWayLine, mint_two_way,
 };
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
+use crate::services::risk::store::{BookedPosition, PositionStore, limit_breach_message};
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
 
@@ -107,6 +108,12 @@ struct FixQuote {
     /// The SELL (bid) token, if a positive bid was quoted (a floored-zero bid mints
     /// none — that side is indicative only).
     sell_token: Option<u64>,
+    /// The FX-vanilla pre-trade template captured at quote time (ADR-0016 A1): the
+    /// BUY-side [`BookedPosition`] this line would book, so a `NewOrderSingle` lift can
+    /// run the pre-trade limit gate without re-pricing (a `Side=SELL` lift negates the
+    /// notional). `None` for a rates line — an OIS quote carries no canonical-vanilla
+    /// risk leaf and so is never limit-gated.
+    fx: Option<BookedPosition>,
 }
 
 /// The shared, immutable pricing context every FIX session on this edge prices and
@@ -147,6 +154,12 @@ pub(crate) struct FixContext {
     /// auto-quoted (recorded QUOTED history); one it declines is routed to a human
     /// desk (recorded PENDING, no auto `Quote(S)` sent back).
     auto_quote: RatesAutoQuotePolicy,
+    /// The shared live position book (ADR-0016 A1): a FIX lift consults the SAME
+    /// pre-trade limit tree the RFS click-to-trade sink enforces, so a hard-limit-blown
+    /// `NewOrderSingle` is refused with a rejected `ExecutionReport(ExecType=8)` — a
+    /// `Text(58) = "limit breached: …"` — before the fill is emitted. Shared behind an
+    /// `Arc` with every gRPC/WS edge, so the FIX venue sees the same firm/pair caps.
+    store: Arc<PositionStore>,
 }
 
 /// The admission policy that decides whether an inbound rates RFQ is **auto-quoted**
@@ -192,6 +205,7 @@ impl FixContext {
         surface_book: Arc<SurfaceBook>,
         monitor: Arc<FixMonitor>,
         connection_id: String,
+        store: Arc<PositionStore>,
     ) -> Self {
         let sender = std::env::var("CELNET_FIX_SENDER")
             .unwrap_or_else(|_| DEFAULT_VENUE_COMP_ID.to_owned())
@@ -216,6 +230,7 @@ impl FixContext {
             desk_edge: None,
             desk: String::new(),
             auto_quote: RatesAutoQuotePolicy::default(),
+            store,
         }
     }
 
@@ -234,6 +249,7 @@ impl FixContext {
         monitor: Arc<FixMonitor>,
         connection_id: String,
         kind: AcceptorKind,
+        store: Arc<PositionStore>,
     ) -> Self {
         Self {
             link,
@@ -248,6 +264,7 @@ impl FixContext {
             desk_edge: None,
             desk: String::new(),
             auto_quote: RatesAutoQuotePolicy::default(),
+            store,
         }
     }
 
@@ -483,24 +500,29 @@ impl FixSession {
         }
 
         // Resolve the option + price it; a dialect/convention/pricing error declines
-        // the quote (no `Quote` is sent — the maker simply does not show a price).
-        let priced = match self.price_request(frame).await {
+        // the quote (no `Quote` is sent — the maker simply does not show a price). The
+        // FX-vanilla pre-trade template (ADR-0016 A1) rides alongside the priced line so
+        // a lift can run the limit gate; a rates line carries `None`.
+        let (priced, fx) = match self.price_request(frame).await {
             Ok(p) => p,
             Err(_) => return,
         };
-        self.emit_two_way_quote(st, &req_id, &symbol, &priced, out);
+        self.emit_two_way_quote(st, &req_id, &symbol, &priced, fx, out);
     }
 
     /// Mint the keyed-MAC two-way tokens for a priced line and send the `Quote(S)`,
     /// registering the live quote so a subsequent lift books through the SAME ledger.
     /// Shared by the FX-options path and the fixed-income auto-quote path — the FX
-    /// numbers/wire are byte-identical to before this extraction.
+    /// numbers/wire are byte-identical to before this extraction. `fx` is the BUY-side
+    /// pre-trade [`BookedPosition`] template (ADR-0016 A1) an FX line carries for the
+    /// lift-time limit gate; a rates line passes `None` (no canonical-vanilla risk leaf).
     fn emit_two_way_quote(
         &mut self,
         st: &[u8],
         req_id: &[u8],
         symbol: &[u8],
         priced: &PricedLine,
+        fx: Option<BookedPosition>,
         out: &mut Vec<Vec<u8>>,
     ) {
         let now = self.ctx.clock.now_nanos();
@@ -544,6 +566,7 @@ impl FixSession {
                 symbol: symbol.to_vec(),
                 buy_token,
                 sell_token,
+                fx,
             },
         );
 
@@ -593,7 +616,8 @@ impl FixSession {
             let Ok(priced) = rates_line(frame, Some(intent)) else {
                 return;
             };
-            self.emit_two_way_quote(st, req_id, symbol, &priced, out);
+            // A rates line carries no FX pre-trade template (no canonical-vanilla leaf).
+            self.emit_two_way_quote(st, req_id, symbol, &priced, None, out);
             let mid = 0.5 * (priced.bid + priced.offer);
             self.record_rates_rfq(&rfq, side, &curve, Some(mid));
         } else {
@@ -676,6 +700,12 @@ impl FixSession {
             .map(|lq| lq.symbol.clone())
             .or_else(|| frame.get(55).map(<[u8]>::to_vec))
             .unwrap_or_default();
+        // The FX-vanilla pre-trade template for this line (ADR-0016 A1), captured at
+        // quote time; `None` for a rates line or an unknown quote.
+        let fx_line = quote_id
+            .as_ref()
+            .and_then(|q| self.live.get(q))
+            .and_then(|lq| lq.fx);
 
         // Book through the SAME last-look ledger the RFS stream uses. An unknown
         // quote/side ⇒ UnknownToken (no live token), exactly as a forged token.
@@ -684,15 +714,44 @@ impl FixSession {
             None => BookOutcome::UnknownToken,
         };
 
-        let (filled, premium, text): (bool, f64, Option<&[u8]>) = match outcome {
+        let (mut filled, premium, mut text): (bool, f64, Option<&[u8]>) = match outcome {
             BookOutcome::Booked { premium, .. } => (true, premium, None),
             BookOutcome::Expired => (false, 0.0, Some(b"quote expired (last-look)")),
             BookOutcome::AlreadyConsumed => (false, 0.0, Some(b"quote already executed")),
             BookOutcome::UnknownToken => (false, 0.0, Some(b"unknown or forged quote")),
         };
 
+        // Pre-trade limit gate (ADR-0016 A1): a filled FX-vanilla lift consults the SAME
+        // shared limit tree the RFS click-to-trade sink enforces. A hard breach converts
+        // the fill into a rejected `ExecutionReport(ExecType=8)` with a `Text(58)` reason
+        // BEFORE the fill is emitted. The last-look token was already consumed by the
+        // ledger above, so the line is dead (a re-lift now rejects as already-consumed)
+        // and the trader re-requests — mirroring the gRPC/RFS reject-after-consume path.
+        // A rates line (no `fx` template) or a canonicalization miss is not gated.
+        let limit_reason: Option<String> = if filled {
+            fx_line.and_then(|template| {
+                let mut booked = template;
+                if side_byte == dialect_fx::SIDE_SELL {
+                    booked.notional_base = -booked.notional_base;
+                }
+                match self.ctx.store.evaluate_pre_trade(&booked) {
+                    Ok(res) if res.decision == celnet_limits::PreTradeDecision::Reject => {
+                        Some(limit_breach_message(&res))
+                    }
+                    _ => None,
+                }
+            })
+        } else {
+            None
+        };
+        if let Some(reason) = &limit_reason {
+            filled = false;
+            text = Some(reason.as_bytes());
+        }
+
         // A successful lift retires the quote (idempotency: a second lift of the same
-        // QuoteID now rejects as already-consumed via the ledger).
+        // QuoteID now rejects as already-consumed via the ledger). A limit-rejected lift
+        // is NOT retired, but its token is already consumed, so a re-lift still rejects.
         if filled && let Some(q) = quote_id.as_ref() {
             self.live.remove(q);
         }
@@ -720,8 +779,14 @@ impl FixSession {
 
     /// Decode + convention-check the inbound option block and price it through the
     /// SHARED engine/surface path, returning the maker two-way (the SAME numbers the
-    /// gRPC `QuoteService` would return for this instrument and market).
-    async fn price_request(&self, frame: &FrameCursor<'_>) -> Result<PricedLine, ()> {
+    /// gRPC `QuoteService` would return for this instrument and market) plus, for an
+    /// FX-vanilla line, the BUY-side pre-trade [`BookedPosition`] template (ADR-0016 A1)
+    /// a lift will run the limit gate against. A rates line has no vanilla risk leaf and
+    /// so carries `None`.
+    async fn price_request(
+        &self,
+        frame: &FrameCursor<'_>,
+    ) -> Result<(PricedLine, Option<BookedPosition>), ()> {
         // Dialect dispatch keyed on the connection's kind:
         //
         // * a fixed-income venue routes EVERY inbound `QuoteRequest(R)` to the shared
@@ -735,10 +800,11 @@ impl FixSession {
         // Either way the rate-valued two-way line flows through the SAME token / Quote
         // / lift / fill machinery as an FX option line.
         if let Some(intent) = rates_intent_for_kind(self.ctx.kind) {
-            return rates_line(frame, Some(intent));
+            // A rates line has no canonical-vanilla risk leaf ⇒ no pre-trade template.
+            return rates_line(frame, Some(intent)).map(|line| (line, None));
         }
         if frame.get(167) == Some(dialect_rates::SEC_TYPE_OIS) {
-            return rates_line(frame, None);
+            return rates_line(frame, None).map(|line| (line, None));
         }
 
         // The vol-time in years carried by the dialect (fully wire-specified, no date
@@ -783,11 +849,38 @@ impl FixSession {
 
         let priced = price_instrument(&instrument, &effective_market, &conv).map_err(|_| ())?;
         let two_way = self.ctx.spread.two_way(priced.greeks.price, &priced.greeks);
-        Ok(PricedLine {
-            bid: two_way.bid,
-            offer: two_way.offer,
-            size: 1_000_000.0,
-        })
+
+        // ADR-0016 A1: the BUY-side pre-trade template a lift will limit-gate. The FIX
+        // venue books a fixed 1mm base (the `last_qty` an `ExecutionReport` fill carries),
+        // marked at the resolved strike + vol of the priced market — the SAME risk leaf
+        // the RFS click-to-trade sink records. A `Side=SELL` lift negates the notional.
+        let inputs = celnet_types::VanillaInputs::new(
+            effective_market.spot,
+            priced.resolved_strike,
+            priced.vol,
+            expiry_years,
+            effective_market.r_dom(),
+            effective_market.r_for(),
+        );
+        let template = BookedPosition {
+            position_id: 0,
+            pair: desc.pair,
+            option: desc.option_type,
+            notional_base: 1_000_000.0,
+            inputs,
+            quoted_delta: conv.delta,
+            premium_style: conv.premium,
+            surface_version: surface_version.unwrap_or(0),
+        };
+
+        Ok((
+            PricedLine {
+                bid: two_way.bid,
+                offer: two_way.offer,
+                size: 1_000_000.0,
+            },
+            Some(template),
+        ))
     }
 }
 

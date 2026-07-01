@@ -1008,6 +1008,82 @@ impl Carry {
     }
 }
 
+/// A term-structure discount/forward *producer* — the single abstraction over both the
+/// flat cost-of-carry ([`Carry`]) and the bootstrapped rates curve
+/// (`celnet_rates::curve::Curve`). This is the Phase-0 substrate of the term-structure
+/// unification (ADR-0010 §2.1): [`Carry`] is the **degenerate one-pillar curve**, the
+/// rates `Curve` is the **general term structure**, and both express the same DF/forward
+/// contract through this one trait.
+///
+/// # Why this trait lives in `celnet-types` (dep-acyclicity)
+///
+/// [`Carry`], [`Df`], and [`Time`] are all defined here, and `celnet-rates` **already
+/// depends on `celnet-types`** (it re-uses those newtypes — see
+/// `celnet_rates::curve`'s `use celnet_types::{Df, Rate, Time}`). Homing `DiscountCurve`
+/// here therefore lets *both* implementors reach it with **no new dependency edge and no
+/// cycle**: [`Carry`] implements it in place, and `Curve` implements it in `celnet-rates`
+/// over the existing downstream `celnet-rates → celnet-types` edge. Hoisting the trait
+/// into `celnet-core` instead — as an earlier draft of ADR-0010 §2.1 floated — would
+/// force a *fresh* `celnet-rates → celnet-core` edge purely for a pure-`f64` discount
+/// abstraction that needs nothing from core; `celnet-types` is the minimal, acyclic home
+/// (ADR-0010 §2.1: "or the trait in celnet-types; decide in Phase 0 to keep deps acyclic").
+///
+/// # Semantics
+///
+/// - [`discount_factor`](DiscountCurve::discount_factor) is `DF(0,t) ∈ (0,1]` — the value
+///   today of one unit of the discount numeraire paid at `t`. Unambiguous and shared by
+///   every implementor.
+/// - [`forward_factor`](DiscountCurve::forward_factor) is the multiplicative *growth*
+///   factor applied to spot. The provided default `1 / DF(0,t)` is the numeraire
+///   capitalization factor of a **single** curve (`e^{+r·t}` for a flat rate). An
+///   implementor whose forward is an *outright asset* forward produced from a curve
+///   **pair** — FX's `e^{(r_dom−r_for)·t} = df_for/df_dom` — overrides the default with
+///   its own factor (`F = S · forward_factor`); see the [`Carry`] impl below.
+///
+/// The trait is **object-safe** (`&dyn DiscountCurve`) for the Phase-1 curve-backed
+/// `CarryInputs` generalization (ADR-0010 §2.2); this phase adds only the trait and the
+/// two impls, with **no behaviour change** on any existing path.
+pub trait DiscountCurve {
+    /// The discount factor `DF(0,t) ∈ (0,1]` — the value today of one unit of the
+    /// discount numeraire paid at horizon `t` (years).
+    fn discount_factor(&self, t: f64) -> f64;
+
+    /// The multiplicative growth (capitalization) factor for horizon `t`. Defaults to the
+    /// reciprocal of the discount factor — the single-curve numeraire growth `1/DF(0,t)`.
+    /// An implementor whose forward is an *outright* two-curve ratio (e.g. FX `e^{b·t}`)
+    /// overrides this so that `F = S · forward_factor`.
+    fn forward_factor(&self, t: f64) -> f64 {
+        1.0 / self.discount_factor(t)
+    }
+}
+
+/// [`Carry`] is the **degenerate flat (one-pillar) term structure** — the single-point
+/// special case of a bootstrapped [`DiscountCurve`]. Both methods delegate *verbatim* to
+/// the existing inherent [`Carry`] arithmetic, so the flat carry path stays **bit-for-bit**
+/// (`to_bits`) unchanged — the ADR-0010 FX byte-identity invariant (`cl_c701d7d260f82523`):
+///
+/// - [`discount_factor`](DiscountCurve::discount_factor) delegates to [`Carry::discount_df`]
+///   (`e^{−r·t}`).
+/// - [`forward_factor`](DiscountCurve::forward_factor) **overrides** the trait default: it
+///   delegates to the inherent [`Carry::forward_factor`] (`e^{b·t}`) — the *outright
+///   forward* factor (`F = S·e^{b·t}`), which for FX equals `df_for/df_dom` (a two-curve
+///   ratio), **not** the single-curve reciprocal `1/discount_factor = e^{r·t}`. The two
+///   coincide only when `b = r` (for FX, `r_for = 0`); the override preserves [`Carry`]'s
+///   forward semantics exactly, so `forward_factor` is byte-identical to the inherent method.
+impl DiscountCurve for Carry {
+    #[inline]
+    fn discount_factor(&self, t: f64) -> f64 {
+        self.discount_df(t)
+    }
+
+    #[inline]
+    fn forward_factor(&self, t: f64) -> f64 {
+        // Explicit inherent-method path (not `self.forward_factor` / the trait default):
+        // selects `Carry::forward_factor` (`e^{b·t}`) unambiguously and cannot recurse.
+        Carry::forward_factor(self, t)
+    }
+}
+
 /// The full FX-options Greek set produced by the vanilla engine.
 ///
 /// All sensitivities are *raw* (per unit of the underlying quantity): vega and
@@ -1418,6 +1494,45 @@ mod tests {
         assert_eq!(carry.carry_rate(), b);
         assert_eq!(carry.discount_df(t), libm::exp(-r * t));
         assert_eq!(spot * carry.forward_factor(t), spot * libm::exp(b * t));
+    }
+
+    /// Phase-0 byte-identity gate (ADR-0010 `cl_c701d7d260f82523`): viewing a [`Carry`] as
+    /// a degenerate [`DiscountCurve`] must be a *zero-cost delegation* — the trait
+    /// `discount_factor`/`forward_factor` are **bit-for-bit** (`to_bits`) identical to the
+    /// inherent `Carry::discount_df`/`Carry::forward_factor`, for both carry variants across
+    /// several horizons. Any perturbation (even one ULP) would break the flat-carry path.
+    #[test]
+    fn carry_discount_curve_is_byte_identical_delegation() {
+        let cases: [(Carry, &[f64]); 2] = [
+            (
+                Carry::FxRates {
+                    r_dom: 0.025,
+                    r_for: 0.011,
+                },
+                &[0.0, 0.25, 1.0, 2.5, 7.0, 30.0],
+            ),
+            (
+                // Equity-style: r = 0.04, b = r − q = 0.04 − 0.03; b ≠ r so the trait's
+                // default `1/discount_factor = e^{r·t}` would NOT match `e^{b·t}` — the
+                // override is what makes `forward_factor` byte-identical here.
+                Carry::CostOfCarry { r: 0.04, b: 0.01 },
+                &[0.0, 0.5, 1.0, 3.0, 10.0, 30.0],
+            ),
+        ];
+        for (carry, times) in cases {
+            for &t in times {
+                assert_eq!(
+                    <Carry as DiscountCurve>::discount_factor(&carry, t).to_bits(),
+                    carry.discount_df(t).to_bits(),
+                    "DiscountCurve::discount_factor must be byte-identical to Carry::discount_df at t={t}"
+                );
+                assert_eq!(
+                    <Carry as DiscountCurve>::forward_factor(&carry, t).to_bits(),
+                    Carry::forward_factor(&carry, t).to_bits(),
+                    "DiscountCurve::forward_factor must be byte-identical to Carry::forward_factor at t={t}"
+                );
+            }
+        }
     }
 
     #[test]

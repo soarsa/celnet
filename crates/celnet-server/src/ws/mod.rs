@@ -634,22 +634,19 @@ async fn handle_subscribe_notifications(
 
 /// Whether a frame `type` is an RFS stream-control verb (forwarded to the shared
 /// session driver) rather than a request/response RPC. The SINGLE source of truth
-/// for the routing decision in [`dispatch`], kept in lockstep with the verbs
-/// [`decode_stream_control`] decodes — including `authenticate`, the session-pinning
-/// first frame whose omission left WS sessions anonymous under `Enforce`.
+/// for the routing decision in [`dispatch`].
+///
+/// The verb set is the descriptor-derived [`celnet_proto::wire_contract::STREAM_CONTROL_VERBS`]
+/// — the `ClientStreamMessage` oneof arm names, generated at build time from
+/// `celnet.proto` (arch item G — `ws-codec-from-proto`). Sourcing it from the
+/// schema means the router can no longer drift from the contract: a new oneof arm
+/// added to `ClientStreamMessage` is classified here automatically, with no hand
+/// edit to this function (the `authenticate` omission — which left WS sessions
+/// anonymous under `Enforce` — is now structurally impossible). The matching
+/// [`decode_stream_control`] arm is still required, and the lockstep test in this
+/// module asserts the decoder keeps up with the generated verb set.
 fn is_stream_control(kind: &str) -> bool {
-    matches!(
-        kind,
-        "authenticate"
-            | "subscribe"
-            | "modify"
-            | "unsubscribe"
-            | "resync"
-            | "execute"
-            | "heartbeat"
-            | "market_series_subscribe"
-            | "market_series_unsubscribe"
-    )
+    celnet_proto::wire_contract::STREAM_CONTROL_VERBS.contains(&kind)
 }
 
 /// Decode a stream-control frame into the [`ClientStreamMessage`] the shared RFS
@@ -1217,11 +1214,31 @@ mod tests {
         );
     }
 
-    /// Every other stream-control verb routes to the driver too — the live RFS
-    /// control surface, none of it treated as a request/response RPC.
+    /// Every descriptor-derived stream-control verb routes to the driver — the live
+    /// RFS control surface, none of it treated as a request/response RPC. Driving
+    /// the generated [`celnet_proto::wire_contract::STREAM_CONTROL_VERBS`] (the
+    /// `ClientStreamMessage` oneof arms) makes this a forward guard: a new oneof
+    /// arm added to the proto is asserted to route here automatically.
     #[test]
     fn every_stream_control_verb_is_classified() {
-        for kind in [
+        assert!(
+            !celnet_proto::wire_contract::STREAM_CONTROL_VERBS.is_empty(),
+            "the generated stream-control verb set must be populated"
+        );
+        for &kind in celnet_proto::wire_contract::STREAM_CONTROL_VERBS {
+            assert!(is_stream_control(kind), "`{kind}` must route to the driver");
+        }
+    }
+
+    /// The router's stream-control classification is byte-identical to the verb set
+    /// the WS clients have always sent — the no-regression proof for sourcing it
+    /// from the proto descriptor (arch item G). If the generated set ever differs
+    /// from this frozen list, the wire-routing contract changed and this fails.
+    #[test]
+    fn is_stream_control_matches_generated_contract() {
+        let mut generated: Vec<&str> = celnet_proto::wire_contract::STREAM_CONTROL_VERBS.to_vec();
+        generated.sort_unstable();
+        let mut frozen = [
             "authenticate",
             "subscribe",
             "modify",
@@ -1231,9 +1248,12 @@ mod tests {
             "heartbeat",
             "market_series_subscribe",
             "market_series_unsubscribe",
-        ] {
-            assert!(is_stream_control(kind), "`{kind}` must route to the driver");
-        }
+        ];
+        frozen.sort_unstable();
+        assert_eq!(
+            generated, frozen,
+            "the descriptor-derived stream-control verbs must match the frozen wire set"
+        );
     }
 
     /// `is_stream_control` and `decode_stream_control` stay in LOCKSTEP: a verb the
@@ -1245,23 +1265,20 @@ mod tests {
     #[test]
     fn classification_matches_the_decoder() {
         let empty = serde_json::Map::new();
-        for kind in [
-            "authenticate",
-            "subscribe",
-            "modify",
-            "unsubscribe",
-            "resync",
-            "execute",
-            "heartbeat",
-            "market_series_subscribe",
-            "market_series_unsubscribe",
-            // request/response RPCs + a nonsense verb: NOT stream-control.
+        // The descriptor-derived control verbs (every one must be decoder-recognized:
+        // a proto oneof arm added without its `decode_stream_control` arm fails here),
+        // plus request/response RPCs and a nonsense verb that must NOT be control.
+        let control = celnet_proto::wire_contract::STREAM_CONTROL_VERBS
+            .iter()
+            .copied();
+        let non_control = [
             "price",
             "request_quote",
             "accept_quote",
             "login",
             "not_a_real_frame",
-        ] {
+        ];
+        for kind in control.chain(non_control) {
             // `decode_stream_control` rejects ONLY with the "unknown stream-control
             // type" error for a non-control verb; a control verb either decodes or
             // fails on a missing field (still "recognized"). Distinguish on the error.

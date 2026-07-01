@@ -26,7 +26,8 @@
 //! produces the byte-identical FX price the golden grid was generated from.
 
 use celnet_core::CarryInputs;
-use celnet_core::math::{exp, ln, norm_cdf, sqrt};
+use celnet_core::gbsm_carry_price;
+use celnet_core::math::exp;
 use celnet_types::{Carry, OptionType, Underlying, VanillaInputs};
 
 /// The agnostic market state every exotic engine prices against.
@@ -152,46 +153,37 @@ impl ExoticInputs {
     }
 }
 
-/// Generalized closed-form vanilla priced **through the carry seam** — the
-/// Black-Scholes-Merton-family vanilla in its `(r, q)` discount/yield form,
-/// where `r = carry.discount_rate()` and `q = carry.yield_rate()`:
-///
-/// ```text
-/// d1 = [ln(S/K) + (r − q + ½σ²)·t] / (σ√t),   d2 = d1 − σ√t
-/// Call = S·e^{−q·t}·Φ(d1) − K·e^{−r·t}·Φ(d2)
-/// Put  = K·e^{−r·t}·Φ(−d2) − S·e^{−q·t}·Φ(−d1)
-/// ```
+/// Generalized closed-form vanilla priced **through the carry seam**, delegating to
+/// the one unified generalized-BSM forward-space kernel
+/// ([`celnet_core::gbsm_carry_price`]) with `b = carry.carry_rate()`,
+/// `r = carry.discount_rate()`.
 ///
 /// This is the agnostic vanilla every synthetic-recast site in this crate prices
-/// against (geometric-Asian control variates, forward-start unit-spot legs): the
-/// recasts build a [`Carry::CostOfCarry`] `{ r, b }` whose effective vol/carry
-/// encode the structure, and this closed form completes the leg for **any** asset
-/// class.
+/// against (geometric-Asian control variates, forward-start unit-spot legs, the
+/// variance-swap replication strip): the recasts build a [`Carry`] whose effective
+/// vol/carry encode the structure, and this closed form completes the leg for **any**
+/// asset class.
 ///
-/// # FX byte-identity (the load-bearing property)
+/// # FX byte-identity (the load-bearing property, ADR-0012)
 ///
-/// The formula is written in the `(r, q)` form — **not** the `b = carry_rate()`
-/// form — deliberately, so that *both* historical FX paths reproduce bit-for-bit:
-///
-/// * a genuine [`Carry::FxRates`] reads `r = r_dom`, `q = r_for` verbatim, making
-///   every expression the identical IEEE-754 op sequence of the FX two-rate
-///   vanilla (`celnet_vanilla::price`);
-/// * a synthetic [`Carry::CostOfCarry`] `{ r, b }` yields `q = r − b` — the exact
-///   float expression the legacy recast used when it materialized
-///   `r_for = r_dom − eff_b` into a synthetic FX input. Writing the drift as
-///   `b` directly would change the rounding (`r − (r − b)` does not round-trip
-///   to `b`), silently breaking the golden grid.
-///
-/// Gated to_bits against `celnet_vanilla::price` in this module's tests.
+/// This routes through the *same* kernel as the FX (Garman-Kohlhagen) leaf
+/// (`celnet_vanilla::price`). For a genuine [`Carry::FxRates`], both sides assemble
+/// `b = r_dom − r_for` (bit-identically: `carry_rate()` and `r_dom − r_for` are the
+/// same subtraction), so the carry-seam vanilla is **byte-for-byte identical** to the
+/// FX two-rate vanilla — the ADR-0008 invariant, restored on the unified kernel.
+/// A synthetic [`Carry::CostOfCarry`] `{ r, b }` passes `b` directly, whereas the
+/// legacy FX recast materialized `r_for = r − b` and the FX leaf reconstructs
+/// `r − (r − b)` (not bit-equal to `b`); those synthetic paths therefore agree to
+/// 1e-12, not bit-for-bit (gated in this module's tests, ADR-0012 §6).
 #[must_use]
 pub(crate) fn carry_vanilla_price(opt: OptionType, i: &ExoticInputs) -> f64 {
     carry_vanilla_price_at(opt, i.spot, i.strike, i.vol, i.t, &i.carry)
 }
 
 /// [`carry_vanilla_price`] at an explicit `(spot, strike, vol, t)` market state —
-/// the same `(r, q)` closed form for callers (the variance-swap replication
-/// strip) that price a whole strike continuum against one [`Carry`] without
-/// materializing per-strike [`ExoticInputs`]. Identical IEEE-754 op sequence.
+/// the same kernel call for callers (the variance-swap replication strip) that price
+/// a whole strike continuum against one [`Carry`] without materializing per-strike
+/// [`ExoticInputs`]. Identical IEEE-754 op sequence.
 #[must_use]
 pub(crate) fn carry_vanilla_price_at(
     opt: OptionType,
@@ -201,18 +193,15 @@ pub(crate) fn carry_vanilla_price_at(
     t: f64,
     carry: &Carry,
 ) -> f64 {
-    let r = carry.discount_rate();
-    let q = carry.yield_rate();
-    let sqt = sqrt(t);
-    let vsqt = vol * sqt;
-    let d1 = (ln(spot / strike) + (r - q + 0.5 * vol * vol) * t) / vsqt;
-    let d2 = d1 - vsqt;
-    let s_disc = spot * exp(-q * t);
-    let k_disc = strike * exp(-r * t);
-    match opt {
-        OptionType::Call => s_disc * norm_cdf(d1) - k_disc * norm_cdf(d2),
-        OptionType::Put => k_disc * norm_cdf(-d2) - s_disc * norm_cdf(-d1),
-    }
+    gbsm_carry_price(
+        opt,
+        carry.carry_rate(),
+        carry.discount_rate(),
+        spot,
+        strike,
+        vol,
+        t,
+    )
 }
 
 impl From<&ExoticInputs> for CarryInputs {
@@ -340,9 +329,11 @@ mod tests {
     }
 
     /// The carry-seam vanilla reproduces the FX two-rate vanilla BIT-FOR-BIT for a
-    /// genuine FX carry, and a synthetic `CostOfCarry { r, b }` reproduces the
-    /// legacy synthetic-FX recast (`r_for = r − b`) BIT-FOR-BIT — the two
-    /// byte-identity contracts the doc comment claims.
+    /// genuine FX carry (both assemble `b = r_dom − r_for` and route through the one
+    /// gBSM kernel — ADR-0012). A synthetic `CostOfCarry { r, b }` passes `b`
+    /// directly, whereas the legacy FX recast reconstructs `r − (r − b)` (not
+    /// bit-equal to `b`), so that path agrees to 1e-12, not bit-for-bit (the
+    /// `funding_maps` class — ADR-0012 §6; residual ~1e-15).
     #[test]
     fn carry_vanilla_byte_identical_to_fx_forms() {
         for &(spot, strike, vol, t, r_dom, r_for) in &[
@@ -353,23 +344,27 @@ mod tests {
             let v = VanillaInputs::new(spot, strike, vol, t, r_dom, r_for);
             let e = ExoticInputs::from(&v);
             for opt in [OptionType::Call, OptionType::Put] {
-                // Genuine FX carry: identical to the FX two-rate vanilla.
+                // Genuine FX carry: RESTORED bit-for-bit (both route the kernel with
+                // b = r_dom − r_for).
                 assert_eq!(
                     carry_vanilla_price(opt, &e).to_bits(),
                     celnet_vanilla::price(opt, &v).to_bits(),
                 );
-                // Synthetic cost-of-carry: identical to the legacy recast that
-                // materialized r_for = r − b into a synthetic FX input.
+                // Synthetic cost-of-carry: the kernel takes b directly while the
+                // legacy recast materialized r_for = r − b (FX leaf reconstructs
+                // r − (r − b)); agree to 1e-12 (ADR-0012 §6).
                 let (r, b) = (r_dom, 0.0173);
                 let synthetic = ExoticInputs {
                     carry: Carry::CostOfCarry { r, b },
                     ..e.clone()
                 };
                 let legacy = VanillaInputs::new(spot, strike, vol, t, r, r - b);
-                assert_eq!(
-                    carry_vanilla_price(opt, &synthetic).to_bits(),
-                    celnet_vanilla::price(opt, &legacy).to_bits(),
-                );
+                assert!(celnet_core::is_close(
+                    carry_vanilla_price(opt, &synthetic),
+                    celnet_vanilla::price(opt, &legacy),
+                    1e-12,
+                    1e-12
+                ));
             }
         }
     }

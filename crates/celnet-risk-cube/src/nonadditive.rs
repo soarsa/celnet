@@ -42,17 +42,26 @@
 //! tolerance over a moderate shock regime, and proves the gap widens for large
 //! shocks (the honest truncation regime of a second-order expansion).
 //!
-//! # On the GPU lever (honest, deliberate non-wiring)
+//! # On the GPU lever — the paradigm-matched reprice seam (ADR-0013 Lane 2)
 //!
-//! The batched-GPU Monte-Carlo `celnet_gpu::ScenarioPricer` (driven by
-//! [`crate::scenario_grid`]) is **deliberately NOT** wired into this closed-form
-//! vanilla VaR path. Mixing Monte-Carlo estimator noise into an *exact* closed-form
-//! reval would be a numerical regression — the analytic/AAD path is machine-exact,
-//! and a 5σ-band MC grid is not. The appropriate GPU lever for *this* closed-form
-//! path is a **batched closed-form vanilla kernel** (`docs/GPU-AT-SCALE-PLAN.md`
-//! Workload A / G2): the same exact arithmetic, dispatched across positions×
-//! scenarios in parallel. That is a distinct, still-pending GPU increment; the AAD
-//! sensitivity lens here is the *algorithmic* throughput win that lands first.
+//! The batched-GPU Monte-Carlo `celnet_gpu::ScenarioPricer` MC grid is **never**
+//! wired into this **exact** closed-form vanilla VaR path: mixing Monte-Carlo
+//! estimator noise into a machine-exact reval would be a numerical regression (the
+//! analytic/AAD path is exact; a 5σ-band MC grid is not). The reprice loop is now
+//! pluggable behind the [`ScenarioReprice`] seam, so a **batched closed-form**
+//! backend (`docs/GPU-AT-SCALE-PLAN.md` Workload A / G2 — the same exact arithmetic
+//! dispatched across positions×scenarios) can accelerate it **one layer up**, in
+//! the dedicated `celnet-risk-accel` crate, without this lean OLAP crate ever
+//! taking a `wgpu`/heavy-pricer dependency (arch-program item E; `docs/INTERFACES.md`
+//! one-way edges). The seam's **precision contract keeps the exact path honest**: a
+//! backend used on the exact VaR must match the CPU-f64 oracle ([`SerialReprice`])
+//! to ≤1e-12, or it is only a *screening* lens with its own documented bound. The
+//! GPU closed-form batch is f32 (Metal has no `f64`) with an Abramowitz-&-Stegun
+//! `erf`, so on an f32 device it serves the **screening** lens (reconciled within
+//! the derived f32/A&S bound), while the exact VaR degrades cleanly to the CPU-f64
+//! seam — never contaminating a machine-exact reval, exactly as the MC grid is
+//! refused. The AAD sensitivity lens ([`sensitivity_var_es`]) remains the
+//! *algorithmic* throughput win on the exact path.
 //!
 //! All shocks are **relative or absolute parameter bumps** applied to
 //! [`VanillaInputs`]; both repricing and the AAD sweep are deterministic (`libm`),
@@ -261,6 +270,89 @@ pub fn historical_var_es<P: CarryPricer>(
         .iter()
         .map(|s| node_pnl(pricer, positions, *s))
         .collect();
+    quantile_var_es(&mut pnl, alpha)
+}
+
+// ===========================================================================
+// The pluggable reprice-backend seam (ADR-0013 Lane 2)
+// ===========================================================================
+
+/// A pluggable backend for the non-additive **reprice loop** — the
+/// `O(Npos × Nscen)` bump-and-revalue that dominates portfolio-scale VaR/ES and
+/// FRTB curvature (`docs/RISK-HIERARCHY.md` §2.5; ADR-0013 decision 2). Given a
+/// node's positions and a scenario set it returns the node's **per-scenario P&L
+/// vector** (row-aligned with `scenarios`) — the same quantity [`node_pnl`]
+/// computes per scenario — from which the shared [`quantile_var_es`] reduction
+/// derives VaR/ES.
+///
+/// # Why a seam (and why the cube stays lean)
+///
+/// Factoring the reprice loop behind this seam lets a batched / hardware-
+/// accelerated backend (a GPU closed-form kernel, a many-core CPU pass) plug in
+/// **one layer up**, so this OLAP crate keeps its lean dependency set — it pulls
+/// **no** `wgpu`/heavy-pricer dependency (arch-program item E; `docs/INTERFACES.md`
+/// one-way edges), exactly as the concrete exotic closed forms are injected through
+/// [`celnet_core::ExoticLegPricer`] rather than depended on directly. The
+/// GPU-backed implementation lives in the dedicated `celnet-risk-accel` crate
+/// (which depends on `celnet-gpu`), never here.
+///
+/// # Precision contract (non-negotiable — the exact-reval invariant)
+///
+/// A backend used on the **exact** VaR/curvature path MUST return a per-scenario
+/// node P&L that equals the exact f64 closed-form oracle ([`SerialReprice`]) to
+/// **≤1e-12** for every scenario, OR it must not be used on the exact path. An
+/// *approximate* backend — f32 GPU round-off, a Monte-Carlo estimator, an
+/// Abramowitz-&-Stegun-`erf` closed form — is a **screening** lens with its own
+/// documented error bound and is **never** the exact path (the module note above:
+/// no estimator/approximation noise contaminates a machine-exact reval). An
+/// accelerated backend degrades cleanly to [`SerialReprice`] (CPU f64) whenever it
+/// cannot certify the ≤1e-12 contract on the running device.
+pub trait ScenarioReprice {
+    /// The node's P&L under each scenario, row-aligned with `scenarios`, in the
+    /// node's common premium currency — the same value [`node_pnl`] computes per
+    /// scenario, produced in whatever batched form the backend prefers.
+    fn node_pnls(&self, positions: &[PositionRisk], scenarios: &[Scenario]) -> Vec<f64>;
+}
+
+/// The exact CPU-f64 closed-form reprice backend — the authoritative oracle and
+/// the clean fallback every accelerated backend degrades to.
+///
+/// Wraps a `&P: CarryPricer`; its [`ScenarioReprice::node_pnls`] is
+/// **byte-identical** to the [`historical_var_es`] per-scenario [`node_pnl`] loop,
+/// so `historical_var_es_via(&SerialReprice(&pricer), …)` reproduces
+/// `historical_var_es(&pricer, …)` bit-for-bit (proved in the tests). This is the
+/// ≤1e-12 reference an accelerated backend is validated against.
+#[derive(Debug, Clone, Copy)]
+pub struct SerialReprice<'p, P: CarryPricer>(pub &'p P);
+
+impl<P: CarryPricer> ScenarioReprice for SerialReprice<'_, P> {
+    #[inline]
+    fn node_pnls(&self, positions: &[PositionRisk], scenarios: &[Scenario]) -> Vec<f64> {
+        scenarios
+            .iter()
+            .map(|s| node_pnl(self.0, positions, *s))
+            .collect()
+    }
+}
+
+/// [`historical_var_es`] computed over a pluggable [`ScenarioReprice`] backend.
+///
+/// With [`SerialReprice`] this is **byte-identical** to [`historical_var_es`]
+/// (same per-scenario [`node_pnl`], same [`quantile_var_es`] reduction); with an
+/// accelerated backend it is the identical reduction over the backend's node P&L
+/// vector (which, on the exact path, matches [`SerialReprice`] to ≤1e-12). The
+/// empty-scenario-set / currency caveats of [`historical_var_es`] apply unchanged.
+#[must_use]
+pub fn historical_var_es_via<R: ScenarioReprice>(
+    reprice: &R,
+    positions: &[PositionRisk],
+    scenarios: &[Scenario],
+    alpha: f64,
+) -> VarEs {
+    if scenarios.is_empty() {
+        return VarEs { var: 0.0, es: 0.0 };
+    }
+    let mut pnl = reprice.node_pnls(positions, scenarios);
     quantile_var_es(&mut pnl, alpha)
 }
 
@@ -952,6 +1044,51 @@ mod tests {
         let b = sensitivity_var_es(&AssetPricer, &node, &scen, 0.975);
         assert_eq!(a.var.to_bits(), b.var.to_bits());
         assert_eq!(a.es.to_bits(), b.es.to_bits());
+    }
+
+    /// **The reprice seam is a byte-identical refactor.** Routing the exact CPU-f64
+    /// backend [`SerialReprice`] through [`historical_var_es_via`] reproduces
+    /// [`historical_var_es`] **bit-for-bit** (both the per-scenario node P&L vector
+    /// and the reduced VaR/ES) — the seam moves no ULP, so an accelerated backend
+    /// that matches [`SerialReprice`] to ≤1e-12 is a faithful drop-in on the exact
+    /// path. This is the contract `celnet-risk-accel`'s GPU backend is gated against.
+    #[test]
+    fn serial_reprice_seam_is_byte_identical() {
+        let scen = moderate_ladder();
+        let node = [
+            pos(
+                OptionType::Call,
+                10_000_000.0,
+                VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02),
+            ),
+            pos(
+                OptionType::Put,
+                6_000_000.0,
+                VanillaInputs::new(1.10, 1.06, 0.115, 0.75, 0.04, 0.02),
+            ),
+            pos(
+                OptionType::Call,
+                -4_000_000.0,
+                VanillaInputs::new(1.10, 1.15, 0.095, 1.5, 0.04, 0.02),
+            ),
+        ];
+        // The per-scenario P&L vector is bit-identical to the direct loop.
+        let via_vec = SerialReprice(&AssetPricer).node_pnls(&node, &scen);
+        let direct_vec: Vec<f64> = scen
+            .iter()
+            .map(|s| node_pnl(&AssetPricer, &node, *s))
+            .collect();
+        assert_eq!(via_vec.len(), direct_vec.len());
+        for (x, y) in via_vec.iter().zip(direct_vec.iter()) {
+            assert_eq!(x.to_bits(), y.to_bits());
+        }
+        // And the reduced VaR/ES is bit-identical to `historical_var_es`.
+        for alpha in [0.975, 0.99] {
+            let direct = historical_var_es(&AssetPricer, &node, &scen, alpha);
+            let via = historical_var_es_via(&SerialReprice(&AssetPricer), &node, &scen, alpha);
+            assert_eq!(via.var.to_bits(), direct.var.to_bits());
+            assert_eq!(via.es.to_bits(), direct.es.to_bits());
+        }
     }
 
     /// **The carry-shock terms expand correctly.** A pure discount-rate scenario's

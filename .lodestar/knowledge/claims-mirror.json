@@ -13567,5 +13567,361 @@
    "github.com-soarsa-celnet.crates.celnet-proto.src.lib"
   ],
   "text": "Deliverable typecheck-and-dep-gates (arch item L): the gui+excel typecheck:e2e/typecheck:test scripts are wired into the t2 gate and the two dev-dep back-edges are removed — celnet-surface has zero edges into celnet-crypto-vanilla, and celnet-proto carries no dev-dependency cycle into celnet-core (cargo tree / cargo-machete). Acceptance target docs/acceptance/typecheck-and-dep-gates.acceptance.json. (t2-wiring and dev-cycle assertions DEFER to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/dormant-crate-activation.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch_live",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.PluginModelEngine",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.EngineCtx.plugin_models",
+   "github.com-soarsa-celnet.crates.celnet-plugin-host.src.registry.ModelRegistry.active_pricing_model"
+  ],
+  "text": "Deliverable dormant-crate-activation (arch item D): a registered plugin-host model prices through the same ProductEngine registry as native products — engines::dispatch_live routes the vanilla arm through EngineCtx.plugin_models (Option<&ModelRegistry>) to celnet_plugin_host::registry::ModelRegistry::active_pricing_model via the PluginModelEngine, while with no plugin model installed every product arm prices bit-for-bit as before the seam existed. celnet-xva and celnet-replog remain explicitly deferred (recorded in docs/INTERFACES.md), not silently dormant. Acceptance target docs/acceptance/dormant-crate-activation.acceptance.json. (Behavioral/byte-identity assertions DEFER to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/ws-codec-from-proto.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-proto.build.emit_wire_contract",
+   "github.com-soarsa-celnet.crates.celnet-server.src.ws.mod.is_stream_control",
+   "github.com-soarsa-celnet.crates.celnet-server.src.ws.mod.is_stream_control_matches_generated_contract"
+  ],
+  "text": "Deliverable ws-codec-from-proto (arch item G): celnet-proto's build.rs emit_wire_contract derives the wire verb manifest (including STREAM_CONTROL_VERBS) from the proto FileDescriptorSet — byte-identical on every build — and celnet-server::ws::is_stream_control routes stream-control verbs off that generated contract, with is_stream_control_matches_generated_contract asserting the server decoder stays in lockstep with the generated verb set. The full unary JSON codec swap (hand codec to fully build.rs-generated) is a documented forward deferral; the routing/manifest increment is what is satisfied here. Acceptance target docs/acceptance/ws-codec-from-proto.acceptance.json. (Generated-codec and wire-byte-identity assertions DEFER to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/desk-session-risk-scoping.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.narrow_to_desk",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.mod.RiskEdge.effective_principal",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.desk.mod.effective_desk_filter",
+   "github.com-soarsa-celnet.crates.celnet-server.tests.desk_session_boundary.aggregate_risk_narrows_a_desk_trader_to_their_own_desk"
+  ],
+  "text": "Deliverable desk-session-risk-scoping (arch item J): a desk-bound trader session resolves RiskEdge::effective_principal and narrows it to its desk via narrow_to_desk (grant-all base becomes one Desk-dimension grant; a scoped base has every grant ANDed with the desk rule; denies preserved), and effective_desk_filter derives the desk-visibility filter, so under the Enforce posture the session sees strictly fewer positions than a grant-all principal — exercised by the desk_session_boundary suite (aggregate_risk_narrows_a_desk_trader_to_their_own_desk). The structural narrowing seam is landed; the wire-client e2e is the deferred tail. Acceptance target docs/acceptance/desk-session-risk-scoping.acceptance.json. (Behavioral/Enforce-posture assertion DEFERS to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-gpu.src.batch.BatchPricer",
+   "github.com-soarsa-celnet.crates.celnet-limits.src.check.pre_trade_check",
+   "github.com-soarsa-celnet.crates.celnet-replog.src.election.RaftNode"
+  ],
+  "text": "TARGET-ARCH CENTRAL FINDING (ARCHITECTURE-TARGET.md §0; ADR-0013/0015/0016): Celnet has built genuinely SOTA capabilities to a high standard and left them UNWIRED from the live path — GPU acceleration (5 wgpu/WGSL pipelines, celnet-gpu::BatchPricer/ScenarioPricer, ZERO non-test callers), Raft consensus (celnet-replog::RaftNode — complete election/append/snapshot over real TCP, no celnet-server dep), the pre-trade limit engine (celnet-limits::pre_trade_check — full hard/soft/RAG/hierarchical, ZERO execution-path callers so a hard-limit-blown lift still books), FI analytics (Fra/Swap/CashBond, only OIS served), tiered plugin dispatch (only the vanilla-FX arm), and the descriptor-manifest wire codec (still hand-written, ~9,293 lines). The dominant architectural win is therefore INTEGRATION + DE-DUPLICATION, not new capability: the target is to WIRE the islands into the one live path and DELETE the duplication, NOT to rebuild them. The core pricing kernel (ADR-0012 unified gBSM) and the one unversioned contract (ADR-0007) are already right. Representative islands are anchored here; program P1 'wire the islands' (ADR-0013/0014/0016) is the low-blast, additive dispatch/client/codec tier that changes no shared enum."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-replog.src.election.RaftNode.propose",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.rates_book.RatesPositionStore.book",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.book_from_attribution"
+  ],
+  "text": "DESIGN DIRECTION (ADR-0015 §2.1, proposed, NOT yet implemented): Raft is activated as a CONFIGURABLE CONSISTENCY TIER — wired everywhere, forced nowhere — resolved per book/desk/tenant at the authoritative state-write SINKS PositionStore::book_from_attribution (risk/store.rs:450) and RatesPositionStore::book (rates_book.rs:64). Strong (opt-in): the write becomes a BookUpdate proposed via RaftNode::propose (election.rs:670) — linearizable, quorum-replicated, zero-data-loss, ms-scale, on the async/booking edge. Local (DEFAULT): single-node celnet-journal append + sync_data fsync + a light non-quorum epoch peer-broadcast — µs-scale, no quorum round-trip. Granularity cascades book→desk→tenant→platform-default(Local) via a typed consistency:strong|local key in ADR-0013's PlatformConfig, resolved ONCE off the hot path at the booking sink. This SUPERSEDES any 'route every state write through the Raft log' framing and reuses the dormant, already-validated celnet-replog as the Strong engine — NO new consensus code. Because the default is Local, a fleet configuring nothing keeps today's single-node ultra-low-latency behaviour byte-for-byte. SOTA: tunable/leveled consistency (Cassandra/DynamoDB per-request levels, Cosmos DB's five levels, Spanner at the strong end); the novel application is a per-book consistency SLA in an ultra-low-latency options state layer where the regenerable market-data plane stays fast regardless of any book's level."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-replog.src.election.RaftNode",
+   "github.com-soarsa-celnet.crates.celnet-replog.src.election.RaftNode.boot"
+  ],
+  "text": "DESIGN FACT (ADR-0015 §1; ARCHITECTURE-TARGET.md §0 D3): celnet-replog is a COMPLETE, validated Raft consensus engine — leader election with randomized timeouts + Pre-Vote + the §5.4.1 up-to-date voting rule, AppendEntries with §5.3 log-matching + durable conflicting-tail truncation, §5.4.2 quorum commitment, deterministic f64::to_bits apply, crash recovery, and §7 log compaction / snapshot / InstallSnapshot — proven over ≥3 logical nodes on real loopback TCP (celnet-parity raft_election/raft_compaction/raft_snapshot). But it is DORMANT: RaftNode::boot (election.rs:433) has ZERO production callers and celnet-server has NO celnet-replog dependency (verified against celnet-server/Cargo.toml, which deps celnet-engine + celnet-limits but not celnet-replog). This is the platform's #1 scaling bottleneck (no hot-standby failover — a shard crash makes its pairs unavailable until restart; no elastic membership; no cross-shard deterministic replay). Therefore the D-replog work is ACTIVATION ONLY — wire RaftNode::boot into Edge::start_on_with_topology (celnet-server/src/lib.rs:346) and reconcile the two disjoint BookState types (the live celnet_engine::BookState rt.rs:533 vs the dormant replicated celnet_replog::BookState state.rs:136, gated by the to_bits apply oracle) — NOT new consensus. SOTA: Raft (Ongaro & Ousterhout); Aeron-Cluster's thin Raft-replicated event log carrying only must-order durable events."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-gpu.src.batch.BatchPricer",
+   "github.com-soarsa-celnet.crates.celnet-gpu.src.scenario.ScenarioPricer",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.VarEs"
+  ],
+  "text": "DESIGN DIRECTION (ADR-0013, proposed, NOT yet implemented): celnet-gpu has 5 validated wgpu/WGSL pipelines (BatchPricer closed-form batch, ScenarioPricer spot×vol grid in one dispatch, PathwiseGreeksPricer Sobol-QMC, GpuBackend MC, MultiStepPathPricer path payoffs) with ZERO live callers — every live path (price_instrument, the risk-cube reprice loop, streaming) is CPU. Wire the GPU into the live path at the BATCH/portfolio tier and make ScenarioPricer/BatchPricer the celnet-risk-cube repricer backend: the O(Npos×Nspot×Nvol) bump-and-revalue (nonadditive.rs, VarEs at :504) is the portfolio-scale throughput bottleneck and the single biggest win, collapsing the per-scenario reprice loop into one GPU command buffer. CRITICAL — the repricer is PARADIGM-MATCHED to the node's valuation paradigm, honouring the code's own note (nonadditive.rs:44-56): an exact CLOSED-FORM node is revalued by a batched closed-form scenario kernel (BatchPricer-family, exact arithmetic), while MC/exotic nodes use ScenarioPricer's MC grid — MC estimator noise is NEVER mixed into an exact closed-form reval (that would be a numerical regression the code already refuses). A CrossAssetBatchPricer carries CostOfCarry so a mixed-asset portfolio prices in one dispatch (zero new RPC — Instrument.oneof is universal). Metal-f64 handled correctly (f32 math, f64 reduction); every GPU lane keeps a bit-reproducible CPU-SIMD (Philox) equivalent. SOTA: coalesced AoS + one command buffer + on-device f64 reduction (standard GPU derivatives-batch pattern)."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-engine.src.rt.MarketState"
+  ],
+  "text": "INVARIANT (ADR-0016 B2; the hard constraint the ADR-0010 term-structure unification MUST honour): celnet_engine::MarketState (rt.rs:53) stays FLAT f64 — r_dom (:57) / r_for (:59) as bare scalars, forward = S·e^{(r_dom−r_for)·t} (rt.rs:76) with zero pointer-deref on the hot path. NO Arc<Curve>/Arc<YieldCurve>/Arc<*Surface> may enter MarketState: a heap term-structure handle would import refcount traffic + an O(log N) tenor interpolation into the pinned zero-alloc/lock-free pricing loop, destroying the zero-deref property and the zero-alloc proof (zero_alloc.rs:221). The term-structure Curve (ADR-0010) lives in the SURFACE-REBUILD TIER; the hot engine consumes only a pre-interpolated FLAT slice, and streaming always pins the O(1) CalibratedSmile::Parametric (calibrate.rs:104) — never the O(log N) ParametricSurface tenor-search arm (parametric.rs:212). The curve tier publishes effective zero rates r_eff=−ln(df(t))/t per slice so the flat degenerate reproduces the curve forward BYTE-FOR-BYTE (S·e^{(r_dom−r_for)·t} == S·df_for(t)/df_dom(t)). Enforced by a trybuild compile-fail test + a MarketState field-type reflection unit test (NOT a lint: cargo-deny sees only Cargo metadata and stock clippy has no field-type lint under the pinned 1.96.0 toolchain). The DiscountCurve trait may be hoisted into celnet-core but may NOT enter MarketState."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-engine.src.core.PricingCore.drain",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.rt.MarketState"
+  ],
+  "text": "INVARIANT (ADR-0015 §4.3(1); ADR-0016): ultra-low-latency ALWAYS — pricing / greeks / streaming / market-data are NEVER gated on any consistency, replication, or cross-node choice. The pinned zero-alloc lock-free hot core PricingCore::drain (celnet-engine/src/core.rs:189) reads only the node-local arc-swap snapshot + the flat-f64 MarketState (rt.rs:53) + the light monotonic surface epoch-broadcast; it touches no Raft state, and the router is provably off the per-tick path (per_tick_price_path_never_crosses_the_router, forward.rs:126). Even a Strong (Raft-quorum) book's ms-scale commit happens on the async booking/state path, off the pinned pricing thread — a cross-node hop (~20–50µs kernel stack) is 10–25× the vanilla p50≤2µs budget (ARCHITECTURE.md §1.2) and a quorum is ms-scale, so consensus may carry only must-order durable events, never a single price. GATE: the SLO harness must show pricing p50/p99 IDENTICAL whether the book under load is configured Strong or Local (ADR-0015 §4.2 in-shard price regression guard). SOTA: LMAX Disruptor's single-fat-node ceiling is why pricing stays on one node; Aeron-Cluster replays pricing off the ordered log asynchronously, never through quorum."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-limits.src.check.pre_trade_check",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.rates_book.RatesPositionStore.book",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.book_from_attribution"
+  ],
+  "text": "INVARIANT (⚠ safety-first; ADR-0016 A1 — the load-bearing risk-control invariant): a hard-limit breach can NEVER book. celnet-limits::pre_trade_check (check.rs:218 — full hard/soft/RAG/hierarchical, returns PreTradeDecision) is complete but today has ZERO execution-path callers, so a hard Delta/VaR/StopLoss-blown lift books straight through. All four booking front-ends (stream/FIX click-to-trade via TokenLedger::try_book clicktrade.rs:258; QuoteService::AcceptQuote quote.rs:1024; RfqDeskService::AcceptDeskQuote desk/mod.rs:523; RiskService::BookRatesPosition risk/mod.rs:665) converge on the two position-mutation SINKS PositionStore::book (reached via book_from_attribution, risk/store.rs:450) and RatesPositionStore::book (rates_book.rs:64). Gate at the SINKS, not merely at try_book (which the latter three bypass): each sink builds a ScopePath from the booking binding and calls pre_trade_check BEFORE mutating store state; PreTradeDecision::Reject → BookOutcome::LimitBreached → FIX ExecutionReport(35=8, ExecType=8), and store state is NEVER mutated on a reject. Gating the sink (not try_book) is also what makes A3's LimitScope::Tenor / LimitMetric::Dv01 rates limits reachable, since rates bookings bypass try_book. Hard limits are PRE-TRADE BLOCKING, never post-trade reconciliation (Bloomberg SSEOMS / Murex / TriOptima canon); a soft (Warn) decision books but raises the RAG amber/red state + an audit event."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.Instrument",
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.PricingService",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument"
+  ],
+  "text": "INVARIANT (ADR-0007; ADR-0014): there is exactly ONE clean, unversioned, cross-asset contract — proto Instrument.oneof (25 product arms, fields 7–32) over Underlying.oneof (5 asset classes) priced through PricingService.Price → the universal server entry celnet-server::price_instrument (pricer.rs). Zero schema_version, no N/N-1 negotiation, no back-compat shims, no mixed-version window (guardrail #9). Consequence for cross-asset breadth: adding non-vanilla arms on equity/crypto/commodity needs only new price_instrument dispatch + Underlying acceptance — ZERO new RPC / proto / message / codec shape change (ws_routes_every_cross_asset_arm at cross_asset_ws.rs:323 proves the router already carries every cross-asset arm; a generated codec makes new arms codec-free). The domain-justified Price vs PriceRates and AggregateRisk vs AggregateRatesRisk splits (options need a surface + MarketContext; FI needs a CurveSet) are two RPCs for two domains — NOT accidental duplication — and must not be collapsed into a union payload. Every capability lives in this one API; SDK / CLI / Excel / GUI / FIX consume it uniformly (guardrail #11)."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.crossasset.commodity_price_matches_independent_black76_oracle",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.crossasset.crypto_inverse_price_matches_independent_oracle",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.crossasset.equity_price_matches_independent_bsm_oracle"
+  ],
+  "text": "INVARIANT (CLAUDE.md #5; ADR-0012 §4; ADR-0013 invariants): every numerical result is validated against an INDEPENDENT oracle at ≤1e-12 — a code-disjoint reference (QuantLib golden vectors / published multi-curve prices / a from-scratch re-derivation that CAN disagree), NEVER a self-referential regeneration of the same code path. The cross-asset parity harness exemplifies the contract: equity_price_matches_independent_bsm_oracle (generalized-BSM), commodity_price_matches_independent_black76_oracle (Black-76), and crypto_inverse_price_matches_independent_oracle each pin the engine to an independent oracle that is free to diverge. Corollaries: (1) to_bits byte-identity is a CPU-ONLY oracle — no test may pin a GPU FX result to to_bits; the GPU (f32 math, f64 reduction) stays a ≤1e-12 batch-tier result while the CPU flat-carry path (carry.rs:525) remains the SOLE to_bits byte-identity oracle (ADR-0013). (2) the FRTB circular-oracle lesson — a reference constant must be re-derived from its published source, never regenerated from the code under test (a green self-check over a self-referential regen proves nothing)."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-engine.src.core.PricingCore.drain",
+   "github.com-soarsa-celnet.crates.celnet-gpu.src.batch.BatchPricer",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument"
+  ],
+  "text": "INVARIANT (ADR-0013 §invariants): GPU is the BATCH / portfolio tier ONLY — large-batch pricing, the risk-cube reprice, and streaming fan-out batch. The single-tick streaming / per-instrument hot path stays CPU and is NEVER a wgpu caller: a GPU command-buffer round-trip is orders of magnitude over the vanilla p50≤2µs / p99≤10µs budget (ARCHITECTURE.md §1.2). This is structurally true at the source, not merely policy — the pinned zero-alloc core PricingCore::drain → price (core.rs:161-211) calls celnet_vanilla::greeks DIRECTLY, NOT through engines::dispatch and NOT through the batch tier; and price_instrument (pricer.rs) prices exactly ONE instrument (batch size is always 1 there), so there is no batch-size branch to bolt onto per-instrument dispatch. The actual batch surface is a NEW PriceBatch RPC + the risk-cube reprice loop, both on the async / portfolio edge and source-disjoint from the sacred pricing thread; BatchPricer / ScenarioPricer never touch the pinned OS thread. Within the batch tier, small batches (≤~16) loop the CPU analytic path (dispatch latency dominates a GPU round-trip); the threshold is a tuned PlatformConfig constant, not hardcoded."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-integration.src.divergence.divergence_report",
+   "github.com-soarsa-celnet.crates.celnet-replog.src.election.RaftNode.propose"
+  ],
+  "text": "INVARIANT (ADR-0015 §2.2/§4.3(3) — NOT an operator option): the regenerable market-data plane (surfaces/curves) is NEVER on the quorum-committed Raft log. Every shard already derives its own arb-free surface + curves locally and is therefore always available even with no peer (celnet-integration::divergence_report, divergence.rs:208, is per-node) — regenerable DERIVED data with no durable truth to diverge from — so it rides a light, monotonic SurfaceEpoch{epoch,curves,smile-params} broadcast applied to each node's arc-swap snapshot (a flat pre-interpolated slice; no Arc<Curve> in MarketState — the ADR-0016 embargo), NEVER through RaftNode::propose. The Raft log carries ONLY must-order state: the versioned membership changelog (always — replacing 'versioned+gossiped' with a log-derived map, single source of truth, the commit index IS the map version) and Strong-book writes. Folding surfaces into the quorum log would put a ms-scale commit on the market-data publish path and blow the surface publish→snapshot p99≤150µs budget — which is exactly why the decoupling is an invariant, not a choice. This holds even for a Strong book: only its state commit takes the quorum path; its pricing/greeks/streaming/surface distribution stay µs. Every quote/tick is tagged with its surface epoch (the deterministic-replay key). The 'two sources of truth' objection that keeps membership on the log does NOT apply to surfaces (no durable truth to diverge from)."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.book_from_attribution",
+   "github.com-soarsa-celnet.crates.celnet-server.src.spread.SpreadModel"
+  ],
+  "text": "Celnet's single sell-side front-end (GUI+Excel redesign, docs/gui-redesign/) is designed as persona lenses (quant/trader/sales-trader/risk-manager/desk-head) over ONE market-making loop: feeds -> pricing/model -> contribution(LP-make) <=> RFQ/LP-take + sales-trader -> books/positions -> risk/XVA -> ops, with risk feeding back into contribution skew. The streaming LP-maker leg is LIVE end-to-end (price_instrument -> SpreadModel spread -> PositionStore::book_from_attribution books the fill the risk cube aggregates); the feeds->pricing, risk->skew, unified-book and XVA legs are TARGET (named gaps). (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_cross_asset",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument"
+  ],
+  "text": "Mockup 00-shell (Price & Model): the pricing workbench — live-editable ticket, model choice/calibration, $-Greeks, payoff, two-way contributed price — realizes celnet-server price_instrument / price_cross_asset. Serves the quant + trader lens across FX/metal/equity/commodity/crypto. State: LIVE (pricing workbench wired via all clients). (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.surface_book.marked_smile",
+   "github.com-soarsa-celnet.crates.celnet-surface.src.calibrate.build_model_smile"
+  ],
+  "text": "Mockup 01-vol-surface: mark -> arb-gate -> version -> publish with 5-smile calibration and 3D surface / smile / term slices realizes celnet-surface build_model_smile plus the versioned SurfaceBook publish path (surface_book::marked_smile). Serves the quant lens (FX/metal). State: LIVE (the publish-gate is the reuse template for a symmetric contribution publish control). (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument"
+  ],
+  "text": "Mockup 02-structure: the registry-driven multi-leg structure builder (combined payoff, leg ladder, net-Greek strip) realizes the ProductEngine registry celnet-server engines::dispatch behind price_instrument; exotics are class-gated (offered only where licensed + priceable). Serves the structurer/trader lens (FX/metal full exotics). State: LIVE. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-integration.src.egress.EgressGovernor",
+   "github.com-soarsa-celnet.crates.celnet-server.src.spread.SpreadModel"
+  ],
+  "text": "Mockup 03-contribute: the outbound contribution/distribution console — per-client-tier spread/skew, publish on/off, client analytics. The pricing + distribution engine is LIVE (SpreadModel prices streaming/RFQ/FIX alike; EgressGovernor conflates the egress); the administrable tiering/skew console + per-instrument publish-on/off is TARGET (no admin surface exists today). Serves the trader/market-maker + desk-head lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.desk.mod.RfqDeskEdge.accept_desk_quote",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.quote.QuoteEdge.request_multi_dealer_quote"
+  ],
+  "text": "Mockup 04-rfq-desk: sales-trader inbound client-RFQ maker response (RfqDeskEdge::accept_desk_quote) and the LP-take multi-dealer aggregation/hedge panel (MultiDealerEngine + QuoteEdge::request_multi_dealer_quote) are LIVE; AUTO-QUOTE of inbound RFQ is TARGET, and the LP-take hedge-fill -> book leg is a GAP (accept_quote writes an ephemeral Execution, never a position store). Serves the sales-trader + trader lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-integration.src.aggregate.blend",
+   "github.com-soarsa-celnet.crates.celnet-integration.src.divergence.divergence_report"
+  ],
+  "text": "Mockup 05-feed-manage: the multi-source inbound feed console (source overlay, divergence band, per-source freshness health, symbology/compositing) realizes celnet-integration blend + divergence_report. State: TARGET — the blend/divergence math is built but has ZERO runtime callers (unwired); live ticks today are a synthetic random walk and surface marks are manual. Serves the feed-operator lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.cube.Cube.firm_aggregate",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.aggregate.numeraire_vega_ladder",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.mod.RiskEdge.drill_risk"
+  ],
+  "text": "Mockup 06-risk-scenario: the cross-asset risk cube (additive roll-up, VaR/ES/FRTB, vega ladder, drill-through, spot-vol scenario) realizes celnet-risk-cube Cube::firm_aggregate plus the server risk edge (numeraire_vega_ladder, RiskEdge::drill_risk). Serves the risk-manager + desk-head lens at IB scale. State: LIVE (single-node; cross-shard transport DEFERRED). (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.cva.compute_xva"
+  ],
+  "text": "Mockup 07-xva: the EE/EPE/PFE exposure fan + CVA/DVA/FVA stack + netting-set drill realizes celnet-xva compute_xva. State: TARGET — compute_xva is oracle-validated but has ZERO non-test callers (no proto message / handle_unary arm); it is the highest-value surface gap (coordinates with the D-xva cargo lane). Serves the risk-manager lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.rates_book.RatesPositionStore",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.book_from_attribution"
+  ],
+  "text": "Mockup 08-books-positions: one virtualized cross-asset blotter over the Firm->Desk->Book tree with P&L attribution. The FX PositionStore (book_from_attribution) and the rates RatesPositionStore are each LIVE but are DISJOINT types with no unifying view/trait; the unified cross-asset 'one net book' is TARGET. Serves every lens (the Desk/Book scoping spine). (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.surface.arb_report"
+  ],
+  "text": "Mockup 09-reporting: the valuation/risk/activity/regulatory report builder is GREENFIELD — no ReportingService exists. celnet-server surface::arb_report, the FIX execution report, and the celnet-cli format_report pretty-printers are NOT a reporting service. State: TARGET (design flags a new backend). Serves the desk-head + risk-manager + ops lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-entitlements.src.capability.Action",
+   "github.com-soarsa-celnet.crates.celnet-entitlements.src.capability.AssetClass",
+   "github.com-soarsa-celnet.crates.celnet-entitlements.src.capability.deny_wins_over_grant"
+  ],
+  "text": "Mockup 10-admin-license: the capability matrix (Action x AssetClass x Desk, deny-wins) + per-asset-class license tiers + persona presets realizes the celnet-entitlements capability kernel (deny_wins_over_grant over the Action and AssetClass axes). The per-class licensing primitive is engine-enforced (present/gated/upsell). Serves the admin/desk-head lens. State: LIVE. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-observability.src.channel.telemetry_channel",
+   "github.com-soarsa-celnet.crates.celnet-server.src.lib.Edge.attach_fix_acceptor"
+  ],
+  "text": "Mockup 11-ops-connectivity: FIX connectivity (acceptor/session CRUD + monitor via Edge::attach_fix_acceptor) is LIVE; the latency p50/p99/p99.9 histograms + stream/session stats are instrumented server-side (celnet-observability telemetry_channel) but have no operator dashboard surface -> the ops dashboard is TARGET; Raft/HA (celnet-replog) is DEFERRED. Serves the ops lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-plugin-host.src.registry.ModelRegistry",
+   "github.com-soarsa-celnet.crates.celnet-plugin-host.src.wasm.sandbox_config"
+  ],
+  "text": "Mockup 12-models-plugins: the model registry + calibration diagnostics + plugin sandbox (Tier-0 native + Tier-2 wasmi) view. The plugin host is LIVE-wired (celnet-plugin-host ModelRegistry + wasm sandbox_config on the dispatch path); the install/list/version/retire model-management UX is NO-SURFACE -> TARGET. Serves the quant + admin lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.gui.src.app.Shell.openPalette"
+  ],
+  "text": "Mockup 13-command-palette: the Cmd-K entity x verb command palette is the primary navigation grammar (glass overlay) of the redesigned IA. The gui Shell has a palette scaffold (Shell.openPalette); the full entity x verb + scope-bus + saved-perspective grammar that replaces the 15 hard-mounted workspaces is TARGET. Serves every persona lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rates.src.bootstrap.bootstrap_ois",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve"
+  ],
+  "text": "Mockup 14-curve-workbench: the FI curve construction workbench (par-pillar bootstrap, zero/fwd/DF curves, interpolation, key-rate Jacobian, publish gate) realizes celnet-rates bootstrap_ois over the Curve term-structure. State: OIS bootstrap + curve evaluation LIVE; the full multi-curve suite (SOFR projection, publish gate, key-rate Jacobian UI) is TARGET. FI is a peer asset class (ADR-0010). Serves the quant/rates lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rates.src.risk.ladder",
+   "github.com-soarsa-celnet.crates.celnet-server.src.rates_pricing.price_rates"
+  ],
+  "text": "Mockup 15-rates-ticket: the rates-instrument ticket (PV/DV01, key-rate ladder, cashflow schedule, RFR legs) realizes celnet-server rates_pricing::price_rates plus the celnet-rates key-rate ladder. State: FRA/IRS/OIS/bond PV + key-rate DV01 LIVE; the full rates ticket (STIR futures, rates quoting/booking breadth) is TARGET. Serves the trader/rates lens. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-limits.src.check.pre_trade_check",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.PositionStore.book",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.rates_book.RatesPositionStore.book"
+  ],
+  "text": "Hard pre-trade limit enforcement is centralized at the TWO position sinks PositionStore::book and RatesPositionStore::book: each runs celnet-limits pre_trade_check and rejects a hard-limit-blown booking (typed LimitBreached -> gRPC failed_precondition / FIX ExecType=8) before the write. Gating at the sinks (not per front-end) makes ALL five booking paths (clicktrade / FIX / AcceptQuote / AcceptDeskQuote / BookRatesPosition) enforce identically, closing a real gap where AcceptQuote/AcceptDeskQuote/BookRatesPosition previously booked with no limit check. The projection runs off a READ snapshot taken before the write lock, so the check adds no hot-path lock contention; off-book paths gate at the firm + ccy-pair grain. (ADR-0016)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-accel.src.lib.GpuBatchReprice",
+   "github.com-soarsa-celnet.crates.celnet-gpu.src.batch.BatchPricer.price_batch",
+   "github.com-soarsa-celnet.crates.celnet-risk-accel.src.lib.screening_node_pnl_bound"
+  ],
+  "text": "The new celnet-risk-accel crate wires the celnet-gpu BatchPricer (BatchPricer::price_batch) into the risk-cube reprice loop as an f32 SCREENING lens only: GpuBatchReprice fast-filters which scenario nodes matter while exact revaluation stays CPU-f64 to <=1e-12. f32 is NEVER the byte-identity oracle (Metal has no f64), so every screened result is bounded and reconciled against the f64 truth (screening_node_pnl_bound) rather than asserted as the price. The dependency edge is one-way risk-accel -> {risk-cube, gpu}, keeping celnet-risk-cube lean and GPU-agnostic. (ADR-0013)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-replog.src.election.RaftNode.propose",
+   "github.com-soarsa-celnet.crates.celnet-server.src.config.consistency.ConsistencyLevel",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.consensus.ConsensusHandle.level_for_rates_book"
+  ],
+  "text": "The already-complete but dormant celnet-replog Raft is activated as ADR-0015's per-book/desk/tenant consistency tier via ConsistencyLevel{Strong,Local}: a Strong book routes PositionStore::book / RatesPositionStore::book through RaftNode::propose(BookUpdate) — quorum-committed before local apply — while Local (the default) keeps the fast fsync path byte-identical. ConsensusHandle::level_for_rates_book resolves the per-book grain and a RaftNode boots ONLY when a Strong book is configured, so the common deployment pays nothing. Only the un-regenerable position size is replicated (the regenerable mark is not logged). Pricing is bit-identical Strong-vs-Local — the hot pricing path is never gated on consistency — validated on a real 3-node cluster; NO new consensus code was written. (ADR-0015)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.DiscountCurve",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.forward_factor",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.discount_factor"
+  ],
+  "text": "DiscountCurve is homed in celnet-types so BOTH the flat Carry and celnet_rates::Curve implement it with NO new crate edge (dep-acyclic). impl DiscountCurve for Carry is the degenerate one-pillar curve — flat Carry is the degenerate limit of the general term-structure Curve — with byte-identical to_bits delegation and a forward_factor override carrying the FX e^{bt} carry sign. This trait is the term-structure-unification foundation (ADR-0010: Carry = degenerate curve), added with no behaviour change on any existing path."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.CurveCarry",
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.curve_carry_price",
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.forward_space_price"
+  ],
+  "text": "CurveCarry<'a>{dom, for_: &dyn DiscountCurve} in celnet-core discounts gBSM off a term structure: curve_carry_price computes forward = DF_for/DF_dom and PVs through the shared forward_space_price core (the same core as flat Carry), so the flat path stays byte-identical and the curve path is validated <=1e-12 vs an independent multi-curve QuantLib oracle. It is a borrowed, Copy value (no owned Arc) — chosen OVER a Carry::Curves variant, which would have cycled celnet-types -> celnet-rates and stripped Copy/Serialize from Carry. The curve is kept OFF the hot MarketState (ADR-0016 embargo). (P2 Phase-1)"
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-client.src.desk.DeskClient",
+   "github.com-soarsa-celnet.crates.celnet-client.src.lib.Client.stream_notifications",
+   "github.com-soarsa-celnet.crates.celnet-client.src.lib.Client.aggregate_rates_risk",
+   "github.com-soarsa-celnet.crates.celnet-client.src.lib.Client.book_rates_position",
+   "github.com-soarsa-celnet.crates.celnet-client.src.lib.Client.list_rates_positions"
+  ],
+  "text": "The Rust SDK+CLI reach client-parity over EXISTING RPCs (no proto change): DeskClient exposes the 5 RfqDeskService RPCs, Client::stream_notifications drives the NotificationStream, and Client::aggregate_rates_risk / book_rates_position / list_rates_positions cover RiskService FI-risk — each mirrored by a celnet-cli command. This closes the ADR-0014 api-first parity gap where these capabilities were GUI-only, restoring the invariant that every capability lives in the one canonical API and is consumed identically by GUI/SDK/CLI. (ADR-0014)"
  }
 ]

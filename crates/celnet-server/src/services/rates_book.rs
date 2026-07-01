@@ -21,10 +21,30 @@
 //! `AcceptDeskQuote` books the dealt position here), so the desk blotter and the
 //! Book workspace read one coherent book.
 
-use std::sync::RwLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+// `tonic::Status` is the platform-standard edge error (the pre-trade `LimitBreached`
+// reject rides it, uniform with every service edge); a large `Err` variant is the
+// house convention (see `services::quote` / `services::desk`), not boxed per call.
+#![allow(clippy::result_large_err)]
 
-use celnet_proto::{EntitlementPrincipal, EntitlementRule, RatesPosition, RiskDimension};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
+
+use crate::services::consensus::{ConsensusHandle, rates_book_key};
+
+use celnet_limits::{
+    IncrementalTrade, LimitScope, LimitSpec, LimitTree, NonAdditiveExposure, PreTradeDecision,
+    PreTradeResult, ScopePath, pre_trade_check,
+};
+use celnet_proto::{
+    EntitlementPrincipal, EntitlementRule, RatesPosition, RiskDimension, Side, rates_instrument,
+};
+use celnet_risk_cube::{BookId, EntityId, NetGreeks, NodeAggregate, VegaPillar};
+
+use crate::services::risk::store::limit_breached_status;
+
+/// One basis point in absolute rate terms — the scale of the linear-rates limit
+/// exposure (see [`rates_linear_exposure`]).
+const ONE_BP: f64 = 1e-4;
 
 /// The shared in-memory linear-rates position book. Cheap to share behind an
 /// [`Arc`](std::sync::Arc); every mutation takes the write lock briefly. Lives
@@ -36,6 +56,18 @@ pub struct RatesPositionStore {
     /// `1` (id `0` is the wire "assign me a fresh id" sentinel), so booking is
     /// deterministic and test-reproducible (no wall-clock / randomness).
     next_id: AtomicU64,
+    /// The pre-trade limit tree configured at the org scopes a linear-rates cell
+    /// carries (`book → entity → firm`; ADR-0016 A1). Empty by default — an empty
+    /// tree makes [`RatesPositionStore::book`] byte-identical to the pre-gate store
+    /// (every booking accepts) until an admin path sets a cap.
+    limits: RwLock<LimitTree>,
+    /// The optional activated consistency tier (ADR-0015 §2.1), shared with the FX
+    /// [`PositionStore`](super::risk::store::PositionStore) (one booted node backs both
+    /// books, keyed into disjoint ranges by [`rates_book_key`]). A rates cell whose
+    /// numeric book id resolves to `Strong` routes its authoritative write through the
+    /// quorum log **before** the local apply; a `Local` cell (the default) never touches
+    /// it, so the fast path stays byte-identical. Off the pinned pricing thread (§4.3).
+    consensus: OnceLock<Arc<ConsensusHandle>>,
 }
 
 impl Default for RatesPositionStore {
@@ -45,23 +77,110 @@ impl Default for RatesPositionStore {
 }
 
 impl RatesPositionStore {
-    /// An empty rates book with the id counter primed at `1`.
+    /// An empty rates book with the id counter primed at `1` and no limits.
     #[must_use]
     pub fn new() -> Self {
         Self {
             inner: RwLock::new(Vec::new()),
             next_id: AtomicU64::new(1),
+            limits: RwLock::new(LimitTree::new()),
+            consensus: OnceLock::new(),
         }
     }
 
-    /// Book a rates position, returning the stored fact (with its assigned id).
+    /// Attach the activated consistency tier (ADR-0015 §2.1) — the SAME handle the FX
+    /// [`PositionStore`](super::risk::store::PositionStore) holds. Called once at edge
+    /// boot; a store never given a handle (the pure-`Local` default) is byte-identical to
+    /// today. Idempotent-once.
+    pub fn set_consensus(&self, handle: Arc<ConsensusHandle>) {
+        let _ = self.consensus.set(handle);
+    }
+
+    /// The builder form of [`Self::set_consensus`] for a store constructed inline.
+    #[must_use]
+    pub fn with_consensus(self, handle: Arc<ConsensusHandle>) -> Self {
+        let _ = self.consensus.set(handle);
+        self
+    }
+
+    /// The attached consistency tier, if any.
+    #[must_use]
+    pub fn consensus(&self) -> Option<&Arc<ConsensusHandle>> {
+        self.consensus.get()
+    }
+
+    /// Configure a limit at a linear-rates org scope (admin / setup path). A rates
+    /// cell rolls up through `book → entity → firm`, so a cap is set at
+    /// [`LimitScope::Book`] / [`LimitScope::Entity`] / [`LimitScope::Firm`]; a cap at
+    /// any other scope is never consulted by [`Self::book`] (a rates cell is not
+    /// trader/desk/ccy-pair/location-attributed).
+    pub fn set_limit(&self, scope: LimitScope, spec: LimitSpec) {
+        let mut g = self.limits.write().expect("rates limit tree lock poisoned");
+        g.set(scope, spec);
+    }
+
+    /// **The pre-trade limit gate + booking sink** for linear-rates positions
+    /// (ADR-0016 A1): the single convergence point both rates booking front-ends
+    /// funnel through — `RiskService::BookRatesPosition`
+    /// ([`crate::services::risk`]) and `RfqDeskService::AcceptDeskQuote`
+    /// ([`crate::services::desk`]). Runs [`pre_trade_check`] over the position's
+    /// `book → entity → firm` roll-up path **before** mutating store state; a hard
+    /// breach refuses the booking with a `failed_precondition` `LimitBreached` status
+    /// and leaves the book unmutated, uniform with the FX sink
+    /// ([`crate::services::risk::store::PositionStore::book`]).
     ///
     /// `position.position_id == 0` ⇒ the server assigns a fresh monotonic id (a new
     /// booking). A non-zero id **upserts** (supersedes) the current fact for that id
     /// — one current fact per `position_id`, mirroring the FX store's `upsert`
-    /// supersede semantics — so a re-book never double-counts.
-    #[must_use]
-    pub fn book(&self, mut position: RatesPosition) -> RatesPosition {
+    /// supersede semantics — so a re-book never double-counts (and the pre-trade
+    /// projection excludes the superseded fact).
+    ///
+    /// # Errors
+    /// `failed_precondition` when a **hard** limit would be breached.
+    pub fn book(&self, mut position: RatesPosition) -> Result<RatesPosition, tonic::Status> {
+        // Pre-trade limit gate (ADR-0016 A1) over a READ snapshot, BEFORE the write lock,
+        // so a hard breach can never book and the projection never runs while the exclusive
+        // write lock is held (guardrails #6/#11 — a fill never serialises the whole book
+        // behind its own limit projection). Skipped when no limit is set (the empty-tree
+        // default keeps the store byte-identical to the pre-gate behaviour). The narrow
+        // snapshot→write window is the standard pre-trade TOCTOU: a hard breach still
+        // rejects here and leaves the book unmutated, the post-trade limit monitor
+        // backstopping any concurrent joint breach.
+        {
+            let limits = self.limits.read().expect("rates limit tree lock poisoned");
+            if !limits.is_empty() {
+                let g = self
+                    .inner
+                    .read()
+                    .expect("rates position store lock poisoned");
+                let result = rates_pre_trade(&g, &limits, &position);
+                if result.decision == PreTradeDecision::Reject {
+                    return Err(limit_breached_status(&result));
+                }
+            }
+        }
+
+        // ADR-0015 §2.1: a rates cell whose numeric book id is configured `Strong`
+        // routes its authoritative write through the Raft quorum log BEFORE the local
+        // apply. Resolved once, off the hot path, from the cell's book id (the only
+        // identifier a linear-rates cell carries). The id is assigned up front for a
+        // Strong write so the replicated key is stable; the must-order state replicated
+        // is the position's signed linear PV01 (`rates_linear_exposure`) — the derived
+        // mark is regenerable (§4.3) and not quorum-logged. A `Local` cell (the default)
+        // skips this, keeping today's under-lock id assignment and byte-identical path.
+        if let Some(consensus) = self.consensus.get() {
+            let level = consensus.level_for_rates_book(position.book);
+            if level.is_strong() {
+                if position.position_id == 0 {
+                    position.position_id = self.next_id.fetch_add(1, Ordering::Relaxed);
+                }
+                consensus.commit_book_write(
+                    rates_book_key(position.position_id),
+                    rates_linear_exposure(&position),
+                )?;
+            }
+        }
+
         let mut g = self
             .inner
             .write()
@@ -89,7 +208,7 @@ impl RatesPositionStore {
         } else {
             g.push(position);
         }
-        position
+        Ok(position)
     }
 
     /// A deterministic snapshot of the whole book, ascending by `position_id`.
@@ -118,6 +237,94 @@ impl RatesPositionStore {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+/// The signed **linear interest-rate exposure** a rates position charges against a
+/// limit: a conservative undiscounted PV01 (`notional · tenor_years · 1bp`) — the
+/// linear IR delta of the linear-rates line — signed by direction (pay-fixed `+`,
+/// receive-fixed `−`, so a payer and a receiver of equal size net to zero at a node).
+///
+/// This is a deliberately curve-free, deterministic P1 exposure: the discount factors
+/// are `≤ 1`, so the undiscounted PV01 is an **upper bound** on the true annuity PV01
+/// — conservative (fail-safe) for a hard limit. The exact curve-bootstrapped DV01 and
+/// the tenor-bucketed IR limit (`LimitScope::Tenor` / a dedicated `LimitMetric::Dv01`)
+/// are the ADR-0016 **A3** breadth wave (P2); this A1 gate consults the linear delta at
+/// the `book → entity → firm` scopes, which is the reachability A3 depends on.
+#[must_use]
+fn rates_linear_exposure(position: &RatesPosition) -> f64 {
+    let Some(instr) = position
+        .instrument
+        .as_ref()
+        .and_then(|i| i.instrument.as_ref())
+    else {
+        return 0.0;
+    };
+    match instr {
+        rates_instrument::Instrument::Ois(ois) => {
+            let magnitude = ois.notional.abs() * f64::from(ois.tenor_years) * ONE_BP;
+            match Side::try_from(ois.side) {
+                // Receive-fixed is the opposite IR sign to pay-fixed, so equal-and-
+                // opposite legs at one node net (mirrors the FX `delta_base` netting).
+                Ok(Side::Sell) => -magnitude,
+                _ => magnitude,
+            }
+        }
+    }
+}
+
+/// Whether an org `scope` covers a linear-rates cell — the rates analogue of the FX
+/// cube's group match, over the two org axes a rates cell carries (`book`, `entity`)
+/// plus the firm apex. A scope on any other dimension never matches (a rates cell is
+/// not trader/desk/ccy-pair/location-attributed).
+#[must_use]
+fn rates_scope_matches(scope: LimitScope, p: &RatesPosition) -> bool {
+    match scope {
+        LimitScope::Firm => true,
+        LimitScope::Book(b) => b.raw() == p.book,
+        LimitScope::Entity(e) => e.raw() == p.entity,
+        _ => false,
+    }
+}
+
+/// Run the pre-trade limit check for a proposed rates booking against the projected
+/// book: the current linear exposure at each of the position's `book → entity → firm`
+/// scopes (excluding any prior fact under the same id so a re-book projects
+/// `others + this trade`) plus this trade's incremental linear IR delta.
+#[must_use]
+fn rates_pre_trade(
+    positions: &[RatesPosition],
+    limits: &LimitTree,
+    position: &RatesPosition,
+) -> PreTradeResult {
+    let path = ScopePath::from_scopes(vec![
+        LimitScope::Book(BookId(position.book)),
+        LimitScope::Entity(EntityId(position.entity)),
+        LimitScope::Firm,
+    ]);
+    let mut greeks = NetGreeks::zero();
+    greeks.delta_base = rates_linear_exposure(position);
+    // A linear-rates line carries no vega; the increment's vega is 0, so the pillar is
+    // inert (adding 0 vega to any bucket is a no-op).
+    let increment = IncrementalTrade {
+        greeks,
+        vega_pillar: VegaPillar::new(0, 0),
+        vega: 0.0,
+    };
+    let exclude = position.position_id;
+    let node_at = |scope: LimitScope| -> NodeAggregate {
+        let sum: f64 = positions
+            .iter()
+            .filter(|p| exclude == 0 || p.position_id != exclude)
+            .filter(|p| rates_scope_matches(scope, p))
+            .map(rates_linear_exposure)
+            .sum();
+        let mut node = NodeAggregate::empty(scope.group_value().unwrap_or(0));
+        node.net_greeks.delta_base = sum;
+        node
+    };
+    // Booking never re-derives VaR/ES/stop-loss on the linear-rates path.
+    let nonadditive_at = |_scope: LimitScope| NonAdditiveExposure::default();
+    pre_trade_check(limits, &path, &increment, node_at, nonadditive_at)
 }
 
 /// Whether a rates `(entity, book)` cell is admitted by an asserted entitlement
@@ -191,8 +398,8 @@ mod tests {
     #[test]
     fn booking_assigns_monotonic_ids() {
         let store = RatesPositionStore::new();
-        let a = store.book(position(0, 1, 10));
-        let b = store.book(position(0, 1, 11));
+        let a = store.book(position(0, 1, 10)).unwrap();
+        let b = store.book(position(0, 1, 11)).unwrap();
         assert_eq!(a.position_id, 1);
         assert_eq!(b.position_id, 2);
         assert_eq!(store.len(), 2);
@@ -208,10 +415,10 @@ mod tests {
     #[test]
     fn rebooking_an_id_supersedes() {
         let store = RatesPositionStore::new();
-        let first = store.book(position(0, 1, 10));
+        let first = store.book(position(0, 1, 10)).unwrap();
         assert_eq!(first.position_id, 1);
         // Re-book id 1 in a different book — supersede, not duplicate.
-        let again = store.book(position(1, 1, 99));
+        let again = store.book(position(1, 1, 99)).unwrap();
         assert_eq!(again.position_id, 1);
         assert_eq!(store.len(), 1);
         assert_eq!(store.snapshot()[0].book, 99);
@@ -222,9 +429,72 @@ mod tests {
     #[test]
     fn explicit_id_advances_the_counter() {
         let store = RatesPositionStore::new();
-        let _ = store.book(position(50, 1, 10));
-        let next = store.book(position(0, 1, 11));
+        let _ = store.book(position(50, 1, 10)).unwrap();
+        let next = store.book(position(0, 1, 11)).unwrap();
         assert_eq!(next.position_id, 51);
+    }
+
+    // ---- ADR-0016 A1 pre-trade limit gate at the rates position sink ----
+    //
+    // `RatesPositionStore::book` is the exact function BOTH rates booking front-ends
+    // funnel through — `RiskService::BookRatesPosition` and
+    // `RfqDeskService::AcceptDeskQuote` — so gating it gates both by construction. A 5y
+    // 10mm OIS charges `10mm · 5 · 1bp = 5000` of linear IR exposure against a Delta cap.
+
+    /// The rates sink **rejects** a hard-limit-blown OIS booking with a
+    /// `failed_precondition` `LimitBreached` status and leaves the book unmutated.
+    #[test]
+    fn rates_sink_rejects_a_hard_limit_blown_book() {
+        let store = RatesPositionStore::new();
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Delta, 1.0),
+        );
+
+        let err = store
+            .book(position(0, 1, 10))
+            .expect_err("a hard-limit-blown rates book must be rejected");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("limit breached"),
+            "the reject carries the uniform LimitBreached reason, got {:?}",
+            err.message()
+        );
+        assert_eq!(
+            store.len(),
+            0,
+            "a rejected rates book must not mutate the book"
+        );
+    }
+
+    /// A within-limit rates booking still succeeds and records the position.
+    #[test]
+    fn rates_within_limit_book_succeeds() {
+        let store = RatesPositionStore::new();
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Delta, 1.0e12),
+        );
+        let booked = store
+            .book(position(0, 1, 10))
+            .expect("within-limit rates book");
+        assert_eq!(booked.position_id, 1);
+        assert_eq!(store.len(), 1);
+    }
+
+    /// A soft rates limit breach books (never blocks) — soft limits only early-warn.
+    #[test]
+    fn rates_soft_breach_books() {
+        let store = RatesPositionStore::new();
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::soft(celnet_limits::LimitMetric::Delta, 1.0),
+        );
+        let booked = store
+            .book(position(0, 1, 10))
+            .expect("a soft rates breach books (warn, never block)");
+        assert_eq!(booked.position_id, 1);
+        assert_eq!(store.len(), 1);
     }
 
     /// Absent principal ⇒ grant-all; a grant on `BOOK=10` admits only that book; a

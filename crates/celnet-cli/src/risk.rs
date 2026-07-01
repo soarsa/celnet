@@ -28,9 +28,11 @@ use std::fmt::Write as _;
 use std::time::Duration;
 
 use celnet_client::{
-    AggregateQuery, Client, ClientError, Conventions, DrillQuery, Entitlements, InstrumentSpec,
-    LimitQuery, LimitStatus, Numeraire, OrgDimension, PositionList, PositionQuery, Quantity,
-    RiskAggregate, RiskDrill, RiskNode, Scope, Side, StreamEvent, StrikeSpec,
+    AggregateQuery, CivilDate, Client, ClientError, Conventions, DrillQuery, Entitlements,
+    InstrumentSpec, LimitQuery, LimitStatus, Numeraire, Ois, OisSide, OrgDimension, PositionList,
+    PositionQuery, Quantity, RatesAggregateQuery, RatesPosition, RatesPositionQuery,
+    RatesRiskAggregate, RatesRiskScope, RiskAggregate, RiskDrill, RiskNode, Scope, Side,
+    StreamEvent, StrikeSpec, UsdSofrCurve,
 };
 use celnet_types::{CcyPair, OptionType, Tenor};
 
@@ -521,6 +523,296 @@ pub(crate) async fn bounded<T>(
 }
 
 // ===========================================================================
+// linear-rates (fixed-income) risk — the FI analogue of the options risk surface
+// ===========================================================================
+
+/// One rates position parsed from a `risk rates-aggregate --position` flag:
+/// `ENTITY:BOOK:TENOR_YEARS:FIXED_RATE:NOTIONAL:SIDE`.
+#[derive(Debug, Clone)]
+pub(crate) struct CliRatesPosition {
+    entity: u32,
+    book: u32,
+    tenor_years: u32,
+    rate: f64,
+    notional: f64,
+    side: OisSide,
+}
+
+impl CliRatesPosition {
+    /// Build the typed SDK [`RatesPosition`] (a fresh, unbooked line, id `0`).
+    fn to_position(&self) -> RatesPosition {
+        let ois = match self.side {
+            OisSide::PayFixed => Ois::pay_fixed(self.tenor_years, self.rate),
+            OisSide::ReceiveFixed => Ois::receive_fixed(self.tenor_years, self.rate),
+        }
+        .notional(self.notional);
+        RatesPosition::new(self.entity, self.book, ois)
+    }
+}
+
+/// Parse one `--pillar TENOR_YEARS=PAR_RATE` calibrating-pillar flag (e.g. `5=0.0405`).
+pub(crate) fn parse_pillar(s: &str) -> Result<(u32, f64), String> {
+    let (t, r) = s
+        .split_once('=')
+        .ok_or_else(|| format!("expected TENOR=RATE, got `{s}`"))?;
+    let tenor: u32 = t
+        .parse()
+        .map_err(|_| format!("invalid tenor in `{s}` (expected a whole-year integer)"))?;
+    let rate: f64 = r
+        .parse()
+        .map_err(|_| format!("invalid rate in `{s}` (expected a number)"))?;
+    if tenor < 1 {
+        return Err(format!("pillar tenor in `{s}` must be >= 1"));
+    }
+    if !rate.is_finite() {
+        return Err(format!("pillar rate in `{s}` must be finite"));
+    }
+    Ok((tenor, rate))
+}
+
+/// Parse an OIS directional side flag: `pay`(-fixed) / `receive`(-fixed).
+pub(crate) fn parse_ois_side(s: &str) -> Result<OisSide, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "pay" | "pay-fixed" | "payer" | "buy" => Ok(OisSide::PayFixed),
+        "receive" | "receive-fixed" | "receiver" | "rec" | "sell" => Ok(OisSide::ReceiveFixed),
+        other => Err(format!(
+            "unknown OIS side `{other}` (expected pay / receive)"
+        )),
+    }
+}
+
+/// Parse one `--position ENTITY:BOOK:TENOR_YEARS:FIXED_RATE:NOTIONAL:SIDE` flag.
+pub(crate) fn parse_rates_position(s: &str) -> Result<CliRatesPosition, String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 6 {
+        return Err(format!(
+            "expected ENTITY:BOOK:TENOR_YEARS:FIXED_RATE:NOTIONAL:SIDE, got `{s}`"
+        ));
+    }
+    let entity: u32 = parts[0]
+        .parse()
+        .map_err(|_| format!("invalid entity in `{s}`"))?;
+    let book: u32 = parts[1]
+        .parse()
+        .map_err(|_| format!("invalid book in `{s}`"))?;
+    let tenor_years: u32 = parts[2]
+        .parse()
+        .map_err(|_| format!("invalid tenor in `{s}`"))?;
+    let rate: f64 = parts[3]
+        .parse()
+        .map_err(|_| format!("invalid rate in `{s}`"))?;
+    let notional: f64 = parts[4]
+        .parse()
+        .map_err(|_| format!("invalid notional in `{s}`"))?;
+    let side = parse_ois_side(parts[5])?;
+    if tenor_years < 1 {
+        return Err(format!("position tenor in `{s}` must be >= 1"));
+    }
+    if !(notional.is_finite() && notional > 0.0) {
+        return Err(format!("position notional in `{s}` must be > 0"));
+    }
+    Ok(CliRatesPosition {
+        entity,
+        book,
+        tenor_years,
+        rate,
+        notional,
+        side,
+    })
+}
+
+/// Today's civil date (UTC) — the default rates-curve reference (spot-anchor) date.
+fn today_civil() -> CivilDate {
+    let d = time::OffsetDateTime::now_utc().date();
+    CivilDate::new(d.year(), u32::from(u8::from(d.month())), u32::from(d.day()))
+}
+
+/// Parse a `YYYY-MM-DD` civil date into a [`CivilDate`].
+fn parse_civil_date(s: &str) -> Result<CivilDate, RiskError> {
+    let mut it = s.split('-');
+    let year = it.next().and_then(|p| p.parse::<i32>().ok());
+    let month = it.next().and_then(|p| p.parse::<u32>().ok());
+    let day = it.next().and_then(|p| p.parse::<u32>().ok());
+    match (year, month, day, it.next()) {
+        (Some(y), Some(m), Some(d), None) if (1..=12).contains(&m) && (1..=31).contains(&d) => {
+            Ok(CivilDate::new(y, m, d))
+        }
+        _ => Err(RiskError::Invalid(format!(
+            "--curve-date must be YYYY-MM-DD, got `{s}`"
+        ))),
+    }
+}
+
+/// Build the calibrated USD-SOFR curve from the reference date + par-OIS pillars.
+pub(crate) fn build_curve(
+    curve_date: Option<&str>,
+    pillars: &[(u32, f64)],
+) -> Result<UsdSofrCurve, RiskError> {
+    let date = match curve_date {
+        Some(s) => parse_civil_date(s)?,
+        None => today_civil(),
+    };
+    let mut curve = UsdSofrCurve::new(date);
+    for &(tenor, rate) in pillars {
+        curve = curve.pillar(tenor, rate);
+    }
+    Ok(curve)
+}
+
+/// Build a `(entity, book, ccy)` rates scope from the optional narrowing flags.
+fn rates_scope(
+    entity: Option<u32>,
+    book: Option<u32>,
+    ccy: Option<&str>,
+) -> Option<RatesRiskScope> {
+    if entity.is_none() && book.is_none() && ccy.is_none() {
+        return None;
+    }
+    let mut s = RatesRiskScope::new();
+    if let Some(e) = entity {
+        s = s.entity(e);
+    }
+    if let Some(b) = book {
+        s = s.book(b);
+    }
+    if let Some(c) = ccy {
+        s = s.ccy(c);
+    }
+    Some(s)
+}
+
+/// Connect to the edge, attaching the `AuthService.Login` bearer when one is given
+/// (needed for a capability-gated write; harmless on the `ReadAny` reads).
+pub(crate) async fn connect_authed(
+    endpoint: &str,
+    session_token: Option<&str>,
+) -> Result<Client, RiskError> {
+    let client = connect(endpoint).await?;
+    Ok(match session_token {
+        Some(t) => client.with_session_token(t.to_owned()),
+        None => client,
+    })
+}
+
+/// A fully-parsed `risk rates-aggregate` request.
+#[derive(Debug, Clone)]
+pub(crate) struct RatesAggregateReq {
+    pub(crate) endpoint: String,
+    pub(crate) curve_date: Option<String>,
+    pub(crate) pillars: Vec<(u32, f64)>,
+    pub(crate) positions: Vec<CliRatesPosition>,
+    pub(crate) grants: Vec<(OrgDimension, u64)>,
+    pub(crate) denies: Vec<(OrgDimension, u64)>,
+    pub(crate) session_token: Option<String>,
+    pub(crate) entity: Option<u32>,
+    pub(crate) book: Option<u32>,
+    pub(crate) ccy: Option<String>,
+}
+
+/// A fully-parsed `risk rates-positions` request.
+#[derive(Debug, Clone)]
+pub(crate) struct RatesPositionsReq {
+    pub(crate) endpoint: String,
+    pub(crate) grants: Vec<(OrgDimension, u64)>,
+    pub(crate) denies: Vec<(OrgDimension, u64)>,
+    pub(crate) session_token: Option<String>,
+    pub(crate) entity: Option<u32>,
+    pub(crate) book: Option<u32>,
+    pub(crate) ccy: Option<String>,
+}
+
+/// Run `risk rates-aggregate`: price the inline OIS book against the curve and print
+/// the per-currency firm rollup (netted SERVER-SIDE).
+pub(crate) fn run_rates_aggregate<W: std::io::Write>(
+    req: &RatesAggregateReq,
+    out: &mut W,
+) -> Result<(), RiskError> {
+    let curve = build_curve(req.curve_date.as_deref(), &req.pillars)?;
+    let positions: Vec<RatesPosition> = req
+        .positions
+        .iter()
+        .map(CliRatesPosition::to_position)
+        .collect();
+    let agg = block_on(async {
+        let client = connect_authed(&req.endpoint, req.session_token.as_deref()).await?;
+        let mut q = RatesAggregateQuery::new(curve, positions);
+        if let Some(scope) = rates_scope(req.entity, req.book, req.ccy.as_deref()) {
+            q = q.scoped(scope);
+        }
+        if let Some(p) = entitlements(&req.grants, &req.denies) {
+            q = q.entitled(p);
+        }
+        bounded("aggregate_rates_risk", client.aggregate_rates_risk(&q)).await
+    })??;
+    out.write_all(format_rates_aggregate(&agg).as_bytes())
+        .map_err(|e| RiskError::Invalid(e.to_string()))
+}
+
+/// Run `risk rates-positions`: list the firm's booked rates positions.
+pub(crate) fn run_rates_positions<W: std::io::Write>(
+    req: &RatesPositionsReq,
+    out: &mut W,
+) -> Result<(), RiskError> {
+    let listed = block_on(async {
+        let client = connect_authed(&req.endpoint, req.session_token.as_deref()).await?;
+        let mut q = RatesPositionQuery::new();
+        if let Some(scope) = rates_scope(req.entity, req.book, req.ccy.as_deref()) {
+            q = q.scoped(scope);
+        }
+        if let Some(p) = entitlements(&req.grants, &req.denies) {
+            q = q.entitled(p);
+        }
+        bounded("list_rates_positions", client.list_rates_positions(&q)).await
+    })??;
+    out.write_all(format_rates_positions(&listed).as_bytes())
+        .map_err(|e| RiskError::Invalid(e.to_string()))
+}
+
+/// Format a `risk rates-aggregate` response (one node per settlement currency).
+fn format_rates_aggregate(agg: &RatesRiskAggregate) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "rates aggregate  currencies={}", agg.nodes.len());
+    if let Some(cid) = agg.correlation_id {
+        let _ = writeln!(out, "  correlation_id  {cid}");
+    }
+    for n in &agg.nodes {
+        let _ = writeln!(
+            out,
+            "  ccy {}  net_pv={:.4}  net_pv01={:.6}  net_dv01={:.6}",
+            n.ccy, n.net_pv, n.net_pv01, n.net_dv01
+        );
+        for b in &n.key_rate_ladder {
+            let _ = writeln!(
+                out,
+                "    key_rate {:>3}y  dv01={:.6}",
+                b.tenor_years, b.dv01
+            );
+        }
+    }
+    out
+}
+
+/// Format a `risk rates-positions` response.
+fn format_rates_positions(positions: &[RatesPosition]) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "rates positions  count={}", positions.len());
+    for p in positions {
+        let _ = writeln!(
+            out,
+            "  position {:<6} entity={} book={}  {}y {:?}  rate={:.6}  notional={:.2}",
+            p.position_id,
+            p.entity,
+            p.book,
+            p.instrument.tenor_years(),
+            p.instrument.side(),
+            p.instrument.fixed_rate(),
+            p.instrument.notional_amount(),
+        );
+    }
+    out
+}
+
+// ===========================================================================
 // formatting — 2-space-indented fixed-precision reports (CLI house style)
 // ===========================================================================
 
@@ -653,6 +945,53 @@ mod tests {
         assert!(parse_rate("EUR=0").is_err());
         assert!(parse_rate("EUR=-1").is_err());
         assert!(parse_rate("EUR=xyz").is_err());
+    }
+
+    #[test]
+    fn parses_a_pillar_flag() {
+        assert_eq!(parse_pillar("5=0.0405").unwrap(), (5, 0.0405));
+        assert!(parse_pillar("5").is_err(), "missing =RATE");
+        assert!(parse_pillar("0=0.04").is_err(), "tenor must be >= 1");
+        assert!(parse_pillar("x=0.04").is_err(), "non-integer tenor");
+        assert!(parse_pillar("5=abc").is_err(), "non-number rate");
+    }
+
+    #[test]
+    fn parses_an_ois_side() {
+        assert_eq!(parse_ois_side("pay").unwrap(), OisSide::PayFixed);
+        assert_eq!(parse_ois_side("PAY-FIXED").unwrap(), OisSide::PayFixed);
+        assert_eq!(parse_ois_side("receive").unwrap(), OisSide::ReceiveFixed);
+        assert_eq!(parse_ois_side("Receiver").unwrap(), OisSide::ReceiveFixed);
+        assert!(parse_ois_side("sideways").is_err());
+    }
+
+    #[test]
+    fn parses_a_rates_position() {
+        let p = parse_rates_position("1:10:5:0.0405:25000000:receive").unwrap();
+        let pos = p.to_position();
+        assert_eq!(pos.entity, 1);
+        assert_eq!(pos.book, 10);
+        assert_eq!(pos.position_id, 0, "an unbooked line has id 0");
+        assert_eq!(pos.instrument.tenor_years(), 5);
+        assert_eq!(pos.instrument.side(), OisSide::ReceiveFixed);
+        assert_eq!(pos.instrument.notional_amount(), 25_000_000.0);
+        // Malformed shapes are rejected.
+        assert!(
+            parse_rates_position("1:10:5:0.0405:25000000").is_err(),
+            "too few fields"
+        );
+        assert!(
+            parse_rates_position("1:10:0:0.0405:1:pay").is_err(),
+            "tenor >= 1"
+        );
+        assert!(
+            parse_rates_position("1:10:5:0.04:0:pay").is_err(),
+            "notional > 0"
+        );
+        assert!(
+            parse_rates_position("1:10:5:0.04:1:hold").is_err(),
+            "bad side"
+        );
     }
 
     #[test]

@@ -332,18 +332,21 @@ mod tests {
         v
     }
 
-    /// The AAD price must be bit-identical to the standalone pricer: the tape's
-    /// recorded `value` is the same arithmetic as `price()`.
+    /// The AAD price agrees with the standalone pricer to 1e-12. The AAD tape
+    /// records the genuine **spot-space** Garman-Kohlhagen graph
+    /// (`S·e^{−r_f t}·Φ(d1) − K·e^{−r_d t}·Φ(d2)`); `price()` now delegates to the
+    /// unified **forward-space** gBSM kernel (`df·(F·Φ(d1) − K·Φ(d2))`, ADR-0012).
+    /// The two are the SAME model in two float arrangements, so the residual is pure
+    /// last-bit forward-vs-spot rounding (~1e-15), far under the correctness bar.
+    /// (The former bit-for-bit pin was a determinism artefact, not a correctness
+    /// statement — `aad_matches_analytic` and the independent FD oracle below remain
+    /// the real cross-checks, both still exact-to-tolerance.)
     #[test]
-    fn aad_price_bit_identical() {
+    fn aad_price_matches_within_1e12() {
         for (opt, i) in cases() {
             let aad = adjoint_greeks(opt, &i).price;
             let std = price(opt, &i);
-            assert_eq!(
-                aad.to_bits(),
-                std.to_bits(),
-                "AAD price must equal price(): {opt:?} {i:?}"
-            );
+            assert_close!(aad, std, 1e-12, 1e-12);
         }
     }
 

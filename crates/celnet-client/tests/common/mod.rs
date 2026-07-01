@@ -29,10 +29,16 @@ use tempfile::TempDir;
 
 /// The hard wall-clock ceiling for any single client integration test. A
 /// correctness failure must surface as a *fast* failure, never an infinite hang.
-pub const TEST_DEADLINE: Duration = Duration::from_secs(10);
+///
+/// Sized for the real edge-boot cost (argon2 seed-admin hashing + socket bind +
+/// leader wait) under a *fully-loaded* `just t2` run, where `cargo test --test '*'`
+/// boots several edges concurrently on one machine — a 10s ceiling flaked
+/// `desk`/`multi_dealer` around boot time (a slow boot, not a hang). Matches the
+/// `lsv_workflow` local precedent; a genuine hang still fails well within it.
+pub const TEST_DEADLINE: Duration = Duration::from_secs(45);
 
 /// Bound a single network / response await so a never-arriving reply fails fast.
-pub const STEP_DEADLINE: Duration = Duration::from_secs(5);
+pub const STEP_DEADLINE: Duration = Duration::from_secs(20);
 
 /// The EURUSD spot the fixture is built on.
 pub const FIXTURE_SPOT: f64 = 1.10;

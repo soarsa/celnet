@@ -737,6 +737,7 @@ version = "0.0.0"
 dependencies = [
  "celnet-types",
  "prost",
+ "prost-types",
  "protox",
  "tonic",
  "tonic-build",
@@ -778,6 +779,18 @@ dependencies = [
  "futures-util",
  "proptest",
  "tokio",
+]
+
+[[package]]
+name = "celnet-risk-accel"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-gpu",
+ "celnet-risk-cube",
+ "celnet-risk-normalize",
+ "celnet-types",
+ "celnet-vanilla",
 ]
 
 [[package]]
@@ -850,8 +863,11 @@ dependencies = [
  "celnet-limits",
  "celnet-linear",
  "celnet-observability",
+ "celnet-plugin-api",
+ "celnet-plugin-host",
  "celnet-proto",
  "celnet-rates",
+ "celnet-replog",
  "celnet-rfq",
  "celnet-risk-cube",
  "celnet-risk-fleet",

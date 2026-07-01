@@ -81,7 +81,13 @@ pub struct NodeAggregate {
 }
 
 impl NodeAggregate {
-    fn empty(group: u64) -> Self {
+    /// An empty aggregate for `group` — all Greeks zero, no constituents. The public
+    /// seam a pre-trade limit check (`celnet-limits`) uses to synthesize the current
+    /// node at a scope that has no facts yet (a fresh book) or a scope built outside
+    /// the FX cube (the linear-rates roll-up in `celnet-server`'s rates sink), before
+    /// the proposed trade's increment is added.
+    #[must_use]
+    pub fn empty(group: u64) -> Self {
         Self {
             group,
             net_greeks: NetGreeks::zero(),

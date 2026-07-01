@@ -688,7 +688,7 @@
       "p"
     ],
     "risks": [
-      "codebase-memory-mcp finds zero cross-service edges (in-proc distributor and Protobuf and FIX, not HTTP or gRPC), so automated cross-service impact analysis misses Celnet deps; maintain the map manually and verify against Spring config and distributor notifyUsers names.",
+      "static code-graph tooling found zero cross-service edges (in-proc distributor and Protobuf and FIX, not HTTP or gRPC), so automated cross-service impact analysis misses Celnet deps; maintain the map manually and verify against Spring config and distributor notifyUsers names.",
       "Hops orderrouting to risk and risk to destination to clearing to positionmanager are marked inferred from api deps and handler signatures, not runtime-traced; validate before relying on them.",
       "The distributor is a bounded disruptor mailbox with skip-while-full back-pressure so a high-frequency option pricer can cause silent price drops; size mailboxes and rate-limit.",
       "The distributor runs in-process in the JVM baseserver so a Rust process cannot natively join it and must use a JVM adapter or the distributor socket protocol DistributorProducerChannelHandler; decide before committing.",

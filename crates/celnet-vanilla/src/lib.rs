@@ -30,7 +30,7 @@
 
 #![forbid(unsafe_code)]
 
-use celnet_core::math::{ln, norm_cdf, norm_pdf, sqrt};
+use celnet_core::{carry_greeks_to_greeks, gbsm_carry_greeks, gbsm_carry_price};
 use celnet_types::{Greeks, OptionType, VanillaInputs};
 
 pub mod adjoint;
@@ -47,126 +47,49 @@ pub use premium::{premium, premium_from_domestic_pips};
 pub use pricer::FxPricer;
 pub use solver::{DeltaSolveError, strike_from_delta};
 
-/// Intermediate quantities shared by price and Greeks.
-struct Aux {
-    d1: f64,
-    d2: f64,
-    sqt: f64,
-    vsqt: f64,
-}
-
-#[inline]
-fn aux(i: &VanillaInputs) -> Aux {
-    let sqt = sqrt(i.t);
-    let vsqt = i.vol * sqt;
-    let d1 = (ln(i.spot / i.strike) + (i.r_dom - i.r_for + 0.5 * i.vol * i.vol) * i.t) / vsqt;
-    let d2 = d1 - vsqt;
-    Aux { d1, d2, sqt, vsqt }
-}
-
 /// Present value (domestic premium per 1 unit of base notional).
+///
+/// The FX (Garman-Kohlhagen) core is the generalized-BSM with net carry
+/// `b = r_dom − r_for` and discount `r = r_dom`; it delegates to the one canonical
+/// forward-space kernel ([`gbsm_carry_price`]). The former in-crate spot-space GK
+/// form is replaced by the unified kernel (ADR-0012 — the sub-1e-12 forward-vs-spot
+/// rounding change is accepted; the QuantLib golden grid holds at its documented
+/// tolerances and every independent oracle at ≤1e-12).
 #[must_use]
 pub fn price(opt: OptionType, i: &VanillaInputs) -> f64 {
-    let a = aux(i);
-    let s_disc = i.spot * i.df_for();
-    let k_disc = i.strike * i.df_dom();
-    match opt {
-        OptionType::Call => s_disc * norm_cdf(a.d1) - k_disc * norm_cdf(a.d2),
-        OptionType::Put => k_disc * norm_cdf(-a.d2) - s_disc * norm_cdf(-a.d1),
-    }
+    gbsm_carry_price(
+        opt,
+        i.r_dom - i.r_for,
+        i.r_dom,
+        i.spot,
+        i.strike,
+        i.vol,
+        i.t,
+    )
 }
 
 /// Price and the full Greek set in a single pass.
 ///
 /// See [`Greeks`] for the precise definition and units of each sensitivity.
+///
+/// The FX core gBSM math is produced by the one canonical forward-space kernel
+/// ([`gbsm_carry_greeks`]) with `b = r_dom − r_for`, `r = r_dom`; the FX leaf then
+/// projects the carry-tagged rate block back to its **two-rate `rho_dom`/`rho_for`
+/// output basis** via [`carry_greeks_to_greeks`] (`rho_dom = discount_rho +
+/// carry_rho`, `rho_for = −carry_rho`). Only the core math unifies — the FX output
+/// contract (two rhos) is unchanged (ADR-0012).
 #[must_use]
-#[allow(clippy::similar_names)] // d1/d2, nd1/nd2 are the canonical option-pricing names
 pub fn greeks(opt: OptionType, i: &VanillaInputs) -> Greeks {
-    let a = aux(i);
-    let (d1, d2, sqt, vsqt) = (a.d1, a.d2, a.sqt, a.vsqt);
-    let (s, k, t, vol) = (i.spot, i.strike, i.t, i.vol);
-    let df_dom = i.df_dom();
-    let df_for = i.df_for();
-    let b = i.r_dom - i.r_for; // cost of carry
-
-    let pd1 = norm_pdf(d1);
-    let nd1 = norm_cdf(d1);
-    let nd2 = norm_cdf(d2);
-    let nmd1 = norm_cdf(-d1);
-    let nmd2 = norm_cdf(-d2);
-
-    let s_disc = s * df_for;
-    let k_disc = k * df_dom;
-
-    let price = match opt {
-        OptionType::Call => s_disc * nd1 - k_disc * nd2,
-        OptionType::Put => k_disc * nmd2 - s_disc * nmd1,
-    };
-
-    let delta_spot = match opt {
-        OptionType::Call => df_for * nd1,
-        OptionType::Put => df_for * (nd1 - 1.0),
-    };
-    let delta_forward = match opt {
-        OptionType::Call => nd1,
-        OptionType::Put => nd1 - 1.0,
-    };
-
-    // Symmetric across call/put.
-    let gamma = df_for * pd1 / (s * vsqt);
-    let vega = s_disc * sqt * pd1;
-    let vanna = -df_for * pd1 * d2 / vol;
-    let volga = vega * d1 * d2 / vol;
-    let speed = -gamma / s * (d1 / vsqt + 1.0);
-    let zomma = gamma * (d1 * d2 - 1.0) / vol;
-
-    // theta = ∂V/∂t (per year) = −∂V/∂T.
-    let theta_common = -(s_disc * pd1 * vol) / (2.0 * sqt);
-    let theta = match opt {
-        OptionType::Call => theta_common + i.r_for * s_disc * nd1 - i.r_dom * k_disc * nd2,
-        OptionType::Put => theta_common - i.r_for * s_disc * nmd1 + i.r_dom * k_disc * nmd2,
-    };
-
-    let rho_dom = match opt {
-        OptionType::Call => k * t * df_dom * nd2,
-        OptionType::Put => -k * t * df_dom * nmd2,
-    };
-    let rho_for = match opt {
-        OptionType::Call => -s * t * df_for * nd1,
-        OptionType::Put => s * t * df_for * nmd1,
-    };
-
-    // charm = ∂(delta_spot)/∂T. With delta_spot = e^{−r_f T}·Φ(±d1):
-    //   ∂Δ/∂T = −r_f·e^{−r_f T}·Φ(d1) + e^{−r_f T}·φ(d1)·∂d1/∂T,
-    //   ∂d1/∂T = b/(σ√T) − d1/(2T) + … collapses to (b/vsqt − d2/(2T))/… ; we use the
-    //   standard generalized-BSM closed form and validate against finite differences.
-    // ∂d1/∂T = (b + ½σ²)/(2σ√T) − ln(S/K)/(2σ·T^{3/2}); equivalently:
-    let dd1_dt = b / vsqt - d1 / (2.0 * t) + 0.5 * vol / sqt;
-    let charm = match opt {
-        OptionType::Call => -i.r_for * df_for * nd1 + df_for * pd1 * dd1_dt,
-        OptionType::Put => i.r_for * df_for * nmd1 + df_for * pd1 * dd1_dt,
-    };
-
-    // color = ∂gamma/∂T. gamma = e^{−r_f T}·φ(d1)/(S·σ·√T); differentiate w.r.t. T.
-    //   = gamma·[ −r_f − 1/(2T) − d1·∂d1/∂T ].
-    let color = gamma * (-i.r_for - 1.0 / (2.0 * t) - d1 * dd1_dt);
-
-    Greeks {
-        price,
-        delta_spot,
-        delta_forward,
-        gamma,
-        vega,
-        theta,
-        rho_dom,
-        rho_for,
-        vanna,
-        volga,
-        charm,
-        speed,
-        zomma,
-        color,
-    }
+    let cg = gbsm_carry_greeks(
+        opt,
+        i.r_dom - i.r_for,
+        i.r_dom,
+        i.spot,
+        i.strike,
+        i.vol,
+        i.t,
+    );
+    carry_greeks_to_greeks(&cg)
 }
 
 #[cfg(test)]

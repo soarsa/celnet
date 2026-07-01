@@ -94,7 +94,8 @@ a *light* `celnet-verifier` review only for non-decidable residue; never a laten
 
 ### WS-6 — Forward-compatibility (don't inhibit new Claude Code capabilities)
 - Every hook stays **structurally non-blocking** (exit 0); no hook may gate a tool call. (The old
-  blocking CBM discovery-gate is already removed.)
+  blocking code-graph discovery-gate — from the since-decommissioned prior code-graph tool — was
+  already removed.)
 - Every skill/agent carries explicit **when-NOT** triggers so Claude's own router keeps autonomy.
 - Keep lodestar features **opt-in** (proposals, derive rules, custom kinds, judge) — never mandatory.
 - Portable keys only (`.lodestar/project-id` = git-remote slug). Pin nothing to a person/machine.

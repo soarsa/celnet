@@ -26,7 +26,7 @@
 use celnet_proto::{Instrument, MarketContext as WireMarketContext, instrument};
 use celnet_types::{Carry, Greeks};
 
-use celnet_core::FlatSmile;
+use celnet_core::{CarryInputs, FlatSmile};
 use celnet_exotics::{
     Accumulator as ExAccumulator, AccumulatorMcConfig, AmericanGrid, AmericanOption as ExAmerican,
     AnalyticAsian, AveragingSchedule, BarrierKind as ExBarrierKind, BarrierStyle,
@@ -43,6 +43,7 @@ use celnet_exotics::{
     price_basket, quanto_digital_price, quanto_vanilla_price, single_barrier_price, tarf_price,
     turnbull_wakeman_price,
 };
+use celnet_plugin_host::{HostModel, ModelRegistry};
 
 use super::{
     DEFAULT_ACCUMULATOR_MC_PAIRS, DEFAULT_BASKET_MC_PATHS, DEFAULT_BASKET_MC_REPLICATIONS,
@@ -66,6 +67,16 @@ pub(super) struct EngineCtx<'a> {
     pub expiry: f64,
     /// The decoded trade conventions.
     pub conv: &'a super::ConventionSet,
+    /// The calling pricing worker's installed house-model registry (architecture
+    /// item D — dormant-crate activation). When a pricing model is registered, the
+    /// analytic vanilla arm prices through it via the plugin-host
+    /// [`ModelRegistry`] — priced *as a* [`ProductEngine`], the same decode →
+    /// guard → dispatch seam as a native arm. `None` (the default) leaves every
+    /// arm on the verbatim native static path (byte-identical, zero-allocation).
+    /// Borrowed for the dispatch only; the registry is per-worker (`!Sync` by
+    /// design — a model handle is owned by one worker), never shared across
+    /// threads.
+    pub plugin_models: Option<&'a ModelRegistry>,
 }
 
 /// One product family's pricing engine. `Product` is the decoded oneof payload
@@ -98,6 +109,76 @@ impl ProductEngine for VanillaEngine {
             .ok_or(PriceError::MissingField("vanilla.strike"))?;
         let strike = resolve_strike(spec, market, expiry, conv, option_type)?;
         Ok(price_vanilla_leg(option_type, strike, market, expiry))
+    }
+}
+
+/// Prices the analytic vanilla arm through a **registered house pricing model**
+/// resolved from the plugin-host [`ModelRegistry`], rather than the built-in
+/// closed form — the activation of the otherwise-dormant `celnet-plugin-host`
+/// crate (architecture item D). A registered model is priced *as a*
+/// [`ProductEngine`], so it flows through the identical decode → guard → dispatch
+/// seam as a native arm: same strike resolution, same [`Priced`] shape.
+///
+/// The model receives the generalized carry-tagged [`CarryInputs`] for the FX
+/// two-rate arm — exactly the `(spot, strike, vol, t, r_dom, r_for)` the native
+/// [`VanillaEngine`] prices off — and returns the carry-tagged
+/// [`celnet_core::CarryGreeks`], mapped onto the wire [`Greeks`] by the single
+/// source of the carry↔flat-rho bijection ([`super::carry_greeks_to_greeks`]).
+/// For the reference FX model this is byte-identical to the native Garman-
+/// Kohlhagen strip; a desk's own model legitimately differs. Selecting a house
+/// model touches only this arm — the other product arms stay static dispatch.
+struct PluginModelEngine<'r> {
+    /// The resolved house pricing-model handle (tier-blind: native or sandboxed).
+    model: &'r dyn HostModel,
+    /// The decoded FX/metal underlying handed to the model so it can confirm the
+    /// asset class it prices (the FX two-rate arm).
+    underlying: celnet_types::Underlying,
+}
+
+impl ProductEngine for PluginModelEngine<'_> {
+    type Product = celnet_proto::Vanilla;
+    fn price(&self, v: &Self::Product, ctx: &EngineCtx<'_>) -> Result<Priced, PriceError> {
+        let (market, expiry) = (ctx.market, ctx.expiry);
+        let option_type = decode_option_type(v.option_type)?;
+        let spec = v
+            .strike
+            .as_ref()
+            .and_then(|s| s.spec.as_ref())
+            .ok_or(PriceError::MissingField("vanilla.strike"))?;
+        let strike = resolve_strike(spec, market, expiry, ctx.conv, option_type)?;
+        // The generalized carry-tagged inputs for the FX two-rate arm — the same
+        // `(spot, strike, vol, t, r_dom, r_for)` the native vanilla path prices
+        // off. The FX `Carry` arm reproduces the FX two-rate arithmetic
+        // bit-for-bit (proven in `celnet-core`), so the reference model stays FX
+        // byte-identical; a desk's own model is free to differ.
+        let inputs = CarryInputs {
+            spot: market.spot,
+            strike,
+            vol: market.vol,
+            t: expiry,
+            underlying: self.underlying.clone(),
+            carry: Carry::FxRates {
+                r_dom: market.r_dom(),
+                r_for: market.r_for(),
+            },
+        };
+        // The registered model prices and returns the full carry-tagged Greek
+        // strip in one pass. A model-domain failure is surfaced as a typed domain
+        // error at the boundary (mapped to INVALID_ARGUMENT) — never a silent
+        // fallback to the built-in form. (Richer plugin-error propagation rides
+        // the canonical error→Status taxonomy, owned by a separate lane.)
+        let carry_greeks = self
+            .model
+            .price_and_greeks(option_type, &inputs)
+            .map_err(|_| {
+                PriceError::Domain("registered pricing model could not price this instrument")
+            })?;
+        Ok(Priced {
+            greeks: super::carry_greeks_to_greeks(&carry_greeks),
+            resolved_strike: strike,
+            vol: market.vol,
+            std_error: None,
+        })
     }
 }
 
@@ -1364,7 +1445,30 @@ pub(super) fn dispatch(
 ) -> Result<Priced, PriceError> {
     use instrument::Product as P;
     match product {
-        P::Vanilla(v) => VanillaEngine.price(v, ctx),
+        // House-model override (architecture item D): when the worker has a
+        // registered pricing model, the analytic vanilla arm prices through it via
+        // the plugin-host registry — priced as a `ProductEngine`, the same seam as
+        // a native arm. It needs a decodable FX/metal underlying to hand the model
+        // (the asset class it prices). Absent a registry, a registered model, or
+        // an FX/metal underlying this is the verbatim native static path
+        // (byte-identical, zero-allocation). Only this arm consults the registry;
+        // every other arm below stays pure static dispatch — so the registry
+        // lookup never regresses the native fast path.
+        P::Vanilla(v) => {
+            if let Some(registry) = ctx.plugin_models
+                && let Some(model) = registry.active_pricing_model()
+                && let Some(underlying) = ctx
+                    .instrument
+                    .underlying
+                    .as_ref()
+                    .and_then(|u| celnet_types::Underlying::try_from(u.clone()).ok())
+                    .filter(|u| u.as_ccy_pair().is_some())
+            {
+                PluginModelEngine { model, underlying }.price(v, ctx)
+            } else {
+                VanillaEngine.price(v, ctx)
+            }
+        }
         P::Strategy(s) => StrategyEngine.price(s, ctx),
         P::SingleBarrier(b) => SingleBarrierEngine.price(b, ctx),
         P::DoubleBarrier(b) => DoubleBarrierEngine.price(b, ctx),
@@ -1388,5 +1492,275 @@ pub(super) fn dispatch(
         P::Ndf(n) => NdfEngine.price(n, ctx),
         P::PerpetualOption(p) => PerpetualOptionEngine.price(p, ctx),
         P::ListedFutureOption(o) => ListedFutureOptionEngine.price(o, ctx),
+    }
+}
+
+thread_local! {
+    /// The calling pricing worker's installed house-model registry (architecture
+    /// item D). The plugin-host [`ModelRegistry`] is per-worker by design
+    /// (`!Sync` — a model handle, especially a sandboxed one, is owned by one
+    /// worker), so it lives in thread-local state rather than a shared global:
+    /// each worker installs its own set once and reads it lock-free on the hot
+    /// path. Empty by default (no house models configured ⇒ the verbatim native
+    /// dispatch). For the async edge a server installs it from the tokio runtime's
+    /// `on_thread_start` hook so every worker thread carries the registry.
+    static HOUSE_MODELS: core::cell::RefCell<Option<ModelRegistry>> =
+        const { core::cell::RefCell::new(None) };
+}
+
+/// Install the calling pricing worker's house-model [`ModelRegistry`], activating
+/// its registered models on this worker's analytic vanilla dispatch (architecture
+/// item D — dormant-crate activation). Per-worker by design (the registry is
+/// `!Sync`): call once per pricing worker at start-up — for the async edge, from
+/// the tokio runtime's `on_thread_start` hook. Replaces any registry previously
+/// installed on this thread.
+pub fn install_house_models(registry: ModelRegistry) {
+    HOUSE_MODELS.with(|cell| *cell.borrow_mut() = Some(registry));
+}
+
+/// The live dispatch entry: borrow the calling worker's installed house-model
+/// registry (if any) and dispatch with it threaded onto the [`EngineCtx`]. Absent
+/// an installed registry the borrow is `None` and every product arm is the
+/// verbatim native static dispatch (byte-identical, zero-allocation) — so a server
+/// with no house models priced bit-for-bit as before this seam existed.
+pub(super) fn dispatch_live(
+    product: &instrument::Product,
+    instrument: &Instrument,
+    market: &WireMarketContext,
+    expiry: f64,
+    conv: &super::ConventionSet,
+) -> Result<Priced, PriceError> {
+    HOUSE_MODELS.with(|cell| {
+        let guard = cell.borrow();
+        dispatch(
+            product,
+            &EngineCtx {
+                instrument,
+                market,
+                expiry,
+                conv,
+                plugin_models: guard.as_ref(),
+            },
+        )
+    })
+}
+
+#[cfg(test)]
+mod plugin_dispatch_tests {
+    use super::{EngineCtx, dispatch, dispatch_live, install_house_models};
+    use celnet_core::{CarryInputs, is_close};
+    use celnet_plugin_api::example::FlatSmilePricer;
+    use celnet_plugin_host::ModelRegistry;
+    use celnet_types::{Carry, OptionType, Underlying};
+
+    fn conv() -> crate::pricer::ConventionSet {
+        let wire = celnet_proto::Conventions {
+            delta_convention: celnet_proto::DeltaConvention::SpotUnadjusted as i32,
+            atm_convention: celnet_proto::AtmConvention::AtmForward as i32,
+            premium_style: celnet_proto::PremiumStyle::DomesticPips as i32,
+            cut: celnet_proto::Cut::NewYork1000 as i32,
+            day_count: celnet_proto::DayCount::Act365Fixed as i32,
+            settlement: celnet_proto::Settlement::Deliverable as i32,
+        };
+        crate::pricer::ConventionSet::decode(&wire).unwrap()
+    }
+
+    fn market() -> celnet_proto::MarketContext {
+        celnet_proto::MarketContext::fx(1.10, 0.10, 0.02, 0.01)
+    }
+
+    fn eurusd() -> celnet_proto::Underlying {
+        celnet_proto::Underlying::fx(celnet_proto::CcyPair {
+            base: "EUR".into(),
+            quote: "USD".into(),
+        })
+    }
+
+    fn vanilla_fx(strike: f64) -> celnet_proto::Instrument {
+        celnet_proto::Instrument {
+            underlying: Some(eurusd()),
+            expiry_years: 1.0,
+            side: celnet_proto::Side::Buy as i32,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(celnet_proto::instrument::Product::Vanilla(
+                celnet_proto::Vanilla {
+                    option_type: celnet_proto::OptionType::Call as i32,
+                    strike: Some(celnet_proto::StrikeOrDelta {
+                        spec: Some(celnet_proto::strike_or_delta::Spec::Strike(strike)),
+                    }),
+                },
+            )),
+            ..Default::default()
+        }
+    }
+
+    /// A registered plugin model serves the vanilla arm *through the dispatch
+    /// path*: the result is the registered model's own price (proving the
+    /// dispatch→ModelRegistry edge), and for the reference FX model it agrees with
+    /// the native Garman-Kohlhagen strip — the plugin seam preserves FX parity.
+    #[test]
+    fn plugin_model_serves_vanilla_arm_through_dispatch() {
+        let mut registry = ModelRegistry::new();
+        registry
+            .register_native(FlatSmilePricer::new(0.10))
+            .unwrap();
+
+        let instr = vanilla_fx(1.12);
+        let market = market();
+        let conv = conv();
+        let product = instr.product.as_ref().unwrap();
+
+        // Native (no registry): the built-in closed form.
+        let native = dispatch(
+            product,
+            &EngineCtx {
+                instrument: &instr,
+                market: &market,
+                expiry: 1.0,
+                conv: &conv,
+                plugin_models: None,
+            },
+        )
+        .unwrap();
+
+        // Plugin route (registry present): prices through the registered model.
+        let via_plugin = dispatch(
+            product,
+            &EngineCtx {
+                instrument: &instr,
+                market: &market,
+                expiry: 1.0,
+                conv: &conv,
+                plugin_models: Some(&registry),
+            },
+        )
+        .unwrap();
+
+        // The edge routed through the registry: identical to the model's own call.
+        let model = registry.active_pricing_model().unwrap();
+        let direct = model
+            .price_and_greeks(
+                OptionType::Call,
+                &CarryInputs {
+                    spot: 1.10,
+                    strike: native.resolved_strike,
+                    vol: 0.10,
+                    t: 1.0,
+                    underlying: Underlying::try_from(eurusd()).unwrap(),
+                    carry: Carry::FxRates {
+                        r_dom: 0.02,
+                        r_for: 0.01,
+                    },
+                },
+            )
+            .unwrap();
+        assert_eq!(via_plugin.greeks.price, direct.price);
+        assert_eq!(via_plugin.greeks.delta_spot, direct.delta_spot);
+        assert_eq!(via_plugin.greeks.vega, direct.vega);
+
+        // The reference FX model reproduces native Garman-Kohlhagen, so the plugin
+        // seam preserves FX parity (Tier-0 interchangeability).
+        assert!(is_close(
+            via_plugin.greeks.price,
+            native.greeks.price,
+            1e-12,
+            1e-12
+        ));
+        assert!(is_close(
+            via_plugin.greeks.vega,
+            native.greeks.vega,
+            1e-12,
+            1e-12
+        ));
+        assert!(is_close(
+            via_plugin.greeks.rho_dom,
+            native.greeks.rho_dom,
+            1e-12,
+            1e-12
+        ));
+        assert_eq!(via_plugin.resolved_strike, native.resolved_strike);
+    }
+
+    /// A context-only request (no underlying) cannot be handed to a model that
+    /// needs the asset class, so it stays on the native path even with a model
+    /// registered — byte-identical to no registry.
+    #[test]
+    fn context_only_request_stays_native_with_registry() {
+        let mut registry = ModelRegistry::new();
+        registry
+            .register_native(FlatSmilePricer::new(0.10))
+            .unwrap();
+        let mut instr = vanilla_fx(1.12);
+        instr.underlying = None;
+        let market = market();
+        let conv = conv();
+        let product = instr.product.as_ref().unwrap();
+
+        let with = dispatch(
+            product,
+            &EngineCtx {
+                instrument: &instr,
+                market: &market,
+                expiry: 1.0,
+                conv: &conv,
+                plugin_models: Some(&registry),
+            },
+        )
+        .unwrap();
+        let without = dispatch(
+            product,
+            &EngineCtx {
+                instrument: &instr,
+                market: &market,
+                expiry: 1.0,
+                conv: &conv,
+                plugin_models: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(with.greeks.price, without.greeks.price);
+    }
+
+    /// The live `dispatch_live` reads the worker's installed registry: with a
+    /// house model installed it routes through the plugin path; reset to empty it
+    /// returns to the native path bit-for-bit. A drop guard resets the worker's
+    /// registry even on panic so the install never leaks to sibling tests sharing
+    /// this thread under `cargo test`.
+    #[test]
+    fn install_house_models_routes_live_dispatch() {
+        struct ResetGuard;
+        impl Drop for ResetGuard {
+            fn drop(&mut self) {
+                install_house_models(ModelRegistry::new());
+            }
+        }
+        let _reset = ResetGuard;
+
+        let instr = vanilla_fx(1.12);
+        let market = market();
+        let conv = conv();
+        let product = instr.product.as_ref().unwrap();
+
+        // Nothing installed yet on this worker: the native path.
+        let native = dispatch_live(product, &instr, &market, 1.0, &conv).unwrap();
+
+        // Install a house model; the live path now routes through it.
+        let mut registry = ModelRegistry::new();
+        registry
+            .register_native(FlatSmilePricer::new(0.10))
+            .unwrap();
+        install_house_models(registry);
+        let live = dispatch_live(product, &instr, &market, 1.0, &conv).unwrap();
+        assert!(is_close(
+            live.greeks.price,
+            native.greeks.price,
+            1e-12,
+            1e-12
+        ));
+
+        // Reset to an empty registry: back to the native path, bit-for-bit.
+        install_house_models(ModelRegistry::new());
+        let after = dispatch_live(product, &instr, &market, 1.0, &conv).unwrap();
+        assert_eq!(after.greeks.price, native.greeks.price);
     }
 }

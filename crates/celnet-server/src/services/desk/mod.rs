@@ -593,7 +593,7 @@ impl RfqDeskService for RfqDeskEdge {
             entity: 0,
             book: 0,
             instrument: Some(booked_instrument),
-        });
+        })?;
 
         let now = self.clock.now_nanos();
         let deal = Deal {
@@ -739,6 +739,7 @@ impl celnet_proto::notification_service_server::NotificationService for RfqDeskE
 mod tests {
     use super::*;
     use crate::services::rates_book::RatesPositionStore;
+    use celnet_limits::{LimitScope, LimitSpec};
     use celnet_proto::{CurveSet, RatesInstrument};
 
     fn curve() -> CurveSet {
@@ -899,6 +900,87 @@ mod tests {
         let booked_ois = ois_of(pos.instrument.as_ref()).unwrap();
         assert_eq!(booked_ois.side, Side::Sell as i32);
         assert_eq!(booked_ois.fixed_rate.to_bits(), 0.0411_f64.to_bits());
+    }
+
+    /// FRONT-END 4 (`RfqDeskService::AcceptDeskQuote`, ADR-0016 A1): accepting a desk
+    /// quote whose booking would blow a hard firm-wide limit is **rejected** with a
+    /// `failed_precondition` `LimitBreached` status at the rates position sink, and
+    /// nothing is booked — neither a rates position nor a deal.
+    #[tokio::test]
+    async fn accept_desk_quote_rejects_a_hard_limit_blown_booking() {
+        // A desk edge over a rates book with a hard firm Delta cap of 1 base unit — a
+        // 25mm 5y OIS charges `25mm · 5 · 1bp = 12500` against it, a hard breach.
+        let rates = Arc::new(RatesPositionStore::new());
+        rates.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Delta, 1.0),
+        );
+        let gate = Arc::new(ReadinessGate::new());
+        gate.mark_ready();
+        let edge = RfqDeskEdge::new(
+            Arc::new(PositionStore::new()),
+            Arc::new(SessionRegistry::new(Clock::manual(0))),
+            gate,
+            Arc::new(DeskRequestStore::new()),
+            Arc::new(DealStore::new()),
+            Arc::clone(&rates),
+            Arc::new(NotificationBroker::new()),
+            Clock::manual(1_000),
+        );
+        let token = trader_token(&edge);
+
+        let id = edge
+            .submit_desk_request(Request::new(submit_req(DeskRequestKind::Rfq, Side::Buy)))
+            .await
+            .expect("submit")
+            .into_inner()
+            .request
+            .expect("request")
+            .request_id;
+        edge.respond_desk_request(Request::new(RespondDeskRequestRequest {
+            session_token: Some(token.clone()),
+            request_id: id.clone(),
+            principal: Some(celnet_proto::EntitlementPrincipal {
+                grant_all: true,
+                grants: vec![],
+                denies: vec![],
+            }),
+            correlation_id: None,
+            response: Some(RespondArm::Quote(DeskQuote {
+                price: 0.0411,
+                notional: 25_000_000.0,
+                valid_for_ms: 30_000,
+                trader: "alice".to_owned(),
+            })),
+        }))
+        .await
+        .expect("respond");
+
+        let err = edge
+            .accept_desk_quote(Request::new(AcceptDeskQuoteRequest {
+                session_token: Some(token),
+                request_id: id,
+                principal: Some(celnet_proto::EntitlementPrincipal {
+                    grant_all: true,
+                    grants: vec![],
+                    denies: vec![],
+                }),
+                correlation_id: None,
+            }))
+            .await
+            .expect_err("a hard-limit-blown desk accept must be rejected");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("limit breached"),
+            "the reject carries the uniform LimitBreached reason, got {:?}",
+            err.message()
+        );
+        assert_eq!(
+            rates.len(),
+            0,
+            "a rejected desk accept books no rates position"
+        );
+        assert_eq!(edge.deals.len(), 0, "a rejected desk accept books no deal");
     }
 
     /// submit → respond(reject) sets REJECTED and never books anything.

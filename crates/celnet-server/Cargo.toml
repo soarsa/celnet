@@ -33,6 +33,10 @@ celnet-commodity-vanilla.workspace = true
 celnet-crypto-vanilla.workspace = true
 celnet-rfq.workspace = true
 celnet-engine.workspace = true
+# User-extensible analytics: the tiered plugin host whose ModelRegistry the
+# pricer's ProductEngine dispatch resolves a registered house model through
+# (architecture item D — dormant-crate activation).
+celnet-plugin-host.workspace = true
 celnet-proto.workspace = true
 celnet-risk-normalize.workspace = true
 celnet-risk-cube.workspace = true
@@ -41,6 +45,10 @@ celnet-entitlements.workspace = true
 celnet-risk-fleet.workspace = true
 celnet-router.workspace = true
 celnet-fanout.workspace = true
+# ADR-0015: the dormant Raft consensus, activated as the engine of the `Strong`
+# consistency tier (wired everywhere, forced nowhere). One-way edge
+# (server → replog); replog depends only on celnet-journal, so no cycle.
+celnet-replog.workspace = true
 celnet-observability.workspace = true
 celnet-client.workspace = true
 celnet-fix.workspace = true
@@ -67,6 +75,9 @@ tracing.workspace = true
 
 [dev-dependencies]
 celnet-testkit.workspace = true
+# The frozen plugin SDK contract + its reference FlatSmilePricer model, registered
+# as a native house model in the pricer's plugin-dispatch tests (item D).
+celnet-plugin-api.workspace = true
 # The frozen golden-vector corpus: the cross-asset WS conformance suite
 # (tests/cross_asset_ws.rs) reconciles the WS mirror against the vectors'
 # independent oracles.

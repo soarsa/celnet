@@ -674,7 +674,7 @@ impl RiskEdge {
                 "BookRatesPosition: position carries no instrument",
             ));
         }
-        let booked = self.rates.book(position);
+        let booked = self.rates.book(position)?;
         Ok(BookRatesPositionResponse {
             position: Some(booked),
         })
@@ -1629,6 +1629,69 @@ mod tests {
             denied.is_err(),
             "an unauthenticated grant-all principal must not book under enforce"
         );
+    }
+
+    /// FRONT-END 5 (`RiskService::BookRatesPosition`, ADR-0016 A1): an authenticated
+    /// trader's rates booking that would blow a hard firm-wide limit is **rejected** at
+    /// the rates position sink with a `failed_precondition` `LimitBreached` status, and
+    /// nothing is booked (the load-bearing risk-control invariant on the FI path).
+    #[tokio::test]
+    async fn book_rates_position_rejects_a_hard_limit_blown_booking() {
+        use celnet_proto::{OisInstrument, RatesInstrument, RatesPosition, Side, rates_instrument};
+
+        // A rates book with a hard firm Delta cap of 1 base unit — a 5y 10mm OIS charges
+        // `10mm · 5 · 1bp = 5000` of linear IR exposure, a hard breach.
+        let rates = Arc::new(crate::services::rates_book::RatesPositionStore::new());
+        rates.set_limit(LimitScope::Firm, LimitSpec::hard(LimitMetric::Delta, 1.0));
+
+        let registry = Arc::new(SessionRegistry::new(Clock::system()));
+        let token = registry
+            .issue(crate::services::sessions::AuthenticatedUser {
+                user_id: "t-1".to_owned(),
+                email: "trader@celnet.com".to_owned(),
+                display_name: "Rates Trader".to_owned(),
+                role: crate::config::identity::Role::Trader,
+                desk_id: Some("g10".to_owned()),
+                role_caps: crate::config::identity::default_trader_bundle(),
+                cap_grants: Vec::new(),
+                cap_denies: Vec::new(),
+            })
+            .expect("issue trader session")
+            .token;
+        let edge = edge()
+            .with_rates_store(Arc::clone(&rates))
+            .with_sessions(registry);
+
+        let line = RatesPosition {
+            position_id: 0,
+            entity: 1,
+            book: 10,
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+                    tenor_years: 5,
+                    fixed_rate: 0.04,
+                    notional: 10_000_000.0,
+                    side: Side::Buy as i32,
+                })),
+            }),
+        };
+
+        let err = edge
+            .book_rates_position(Request::new(BookRatesPositionRequest {
+                session_token: Some(token),
+                position: Some(line),
+                principal: None,
+                correlation_id: None,
+            }))
+            .await
+            .expect_err("a hard-limit-blown rates booking must be rejected");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("limit breached"),
+            "the reject carries the uniform LimitBreached reason, got {:?}",
+            err.message()
+        );
+        assert_eq!(rates.len(), 0, "a rejected rates booking books nothing");
     }
 
     // --- §3 desk-identity bridge + risk narrowing -----------------------------
