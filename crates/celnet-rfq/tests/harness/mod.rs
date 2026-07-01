@@ -140,7 +140,12 @@ pub async fn spawn_fix_lp(
         validity_ticks: 1_000_000,
         pricer,
         securities: vec![dialect_fx::SecurityDef::new(
-            format!("{}{}", request.pair.base.as_str(), request.pair.quote.as_str()).as_bytes(),
+            format!(
+                "{}{}",
+                request.pair.base.as_str(),
+                request.pair.quote.as_str()
+            )
+            .as_bytes(),
             dialect_fx::SEC_TYPE_FXVO,
             request.pair.quote.as_str().as_bytes(),
         )],
