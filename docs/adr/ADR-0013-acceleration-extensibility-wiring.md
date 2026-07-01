@@ -86,13 +86,27 @@ Wire the acceleration island into the live path and open the plugin surface, alo
 concrete seams. **Design-first** — this ADR fixes the seams and invariants; each lane lands
 behind its own ≤1e-12 gate.
 
-1. **GPU into the live path by BATCH SIZE (not by asset class).** `price_instrument` /
-   `engines::dispatch` gains a batch-size branch: **small batches (≤~16 instruments) stay on
-   the CPU analytic path** (dispatch latency dominates a GPU round-trip; the single-tick hot
-   path is *never* a GPU caller — see the invariant), while **large batches route to the
-   `celnet-gpu` `BatchPricer` in one dispatch**. The threshold is a tuned constant in the
-   declarative config (7), not hardcoded. This is the "coalesced AoS, one command buffer"
-   SOTA pattern (§3).
+1. **GPU into the live path at the BATCH TIER — a distinct surface, NOT an `engines::dispatch`
+   branch.** `engines::dispatch` (`engines.rs:1442`, 25 arms) and the proto `PriceRequest` price
+   **exactly one** instrument — **batch size is always 1 there** — so there is *no* batch-size branch
+   to bolt onto single-instrument dispatch. The **actual batch tier** is twofold: (i) the **risk-cube
+   reprice loop** (`crates/celnet-risk-cube/src/nonadditive.rs`), whose O(Npos×Nspot×Nvol)
+   bump-and-revalue is the real portfolio-scale batch, and (ii) a **NEW batch RPC** (a `PriceBatch`
+   over a repeated `Instrument`) that **does not exist yet** — called out here as **new contract
+   surface** (guardrail #9: one clean current contract, evolve it), *not* a hidden branch of the
+   per-instrument path. Within that tier: **large batches** route to the `celnet-gpu` `BatchPricer`
+   in one dispatch; **small batches (≤~16)** loop the CPU analytic path (dispatch latency dominates a
+   GPU round-trip; the single-tick hot path is *never* a GPU caller — see the invariant). The
+   threshold is a tuned constant in the declarative config (6), not hardcoded. This is the "coalesced
+   AoS, one command buffer" SOTA pattern (see **SOTA basis** below).
+
+   **Positive finding — the hot-core concern is unfounded.** The pinned zero-alloc core
+   `PricingCore::drain` → `price` (`crates/celnet-server/src/pricer/core.rs:161-211`) calls
+   `celnet_vanilla::greeks` **directly** — **not** through `engines::dispatch`, and not through the
+   batch tier. The batch surface (the risk-cube reprice loop + the new batch RPC) lives entirely on
+   the async / portfolio edge, so it **can never reach the sacred zero-alloc pricing thread**: the two
+   are already disjoint at the source. This is the source-level basis for the hot-core embargo
+   invariant below.
 
 2. **`ScenarioPricer` becomes the `celnet-risk-cube` repricer backend — paradigm-matched.**
    The risk cube's O(Npos×Nspot×Nvol) bump-and-revalue (`nonadditive.rs`) is the

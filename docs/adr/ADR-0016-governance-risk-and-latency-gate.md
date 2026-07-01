@@ -33,17 +33,28 @@ islands.)
   `LimitMetric{Delta,Gamma,Vega,Vanna,Volga,VegaBucket,TenorVega,Concentration,Var,ES,
   StopLoss}` (`limit.rs:39`), `LimitSpec{cap,amber,red,Hard|Soft}` — but display-only.
 - The deal-execution path **never consults it.** `TokenLedger::try_book`
-  (`crates/celnet-server/src/services/clicktrade.rs:258`; ledger struct at `:153`) is the
-  single source of truth for a last-look lift and returns `BookOutcome`
-  (`clicktrade.rs:131`). It has **no `celnet-limits` import.** The FIX ingress lifts
-  through the *same* ledger — `on_new_order` (`crates/celnet-server/src/services/fix.rs:476`)
-  validates the keyed-MAC token against `TokenLedger::try_book` and emits
-  `ExecutionReport(35=8, ExecType=8)` with a `Text(58)` reason (`fix.rs:28`) on rejection
-  — but likewise never checks a limit. **Net defect (highest priority): a `NewOrderSingle`
-  / `AcceptQuote` / RFS click-to-trade books even with a hard Delta/VaR/StopLoss limit
-  BLOWN.** `LimitStatus` is a view-only RPC (`LimitTree.iter`). This is a *risk-control*
-  gap, not a feature gap — Bloomberg SSEOMS / Murex / TriOptima all treat hard limits as
-  **pre-trade blocking**, never post-trade reconciliation.
+  (`crates/celnet-server/src/services/clicktrade.rs:258`; ledger struct at `:153`) validates
+  the keyed-MAC token for a last-look lift and returns `BookOutcome` (`clicktrade.rs:131`),
+  but it has **no `celnet-limits` import** — and, critically, it covers **only the
+  stream/FIX click-to-trade front-ends**. **Three further booking paths BYPASS `try_book`
+  and book directly**, none checking a limit: `QuoteService::AcceptQuote`
+  (`crates/celnet-server/src/services/quote.rs:815`–`1036`, sets `stored.execution =
+  Some(…)` at `:1024`), `RfqDeskService::AcceptDeskQuote`
+  (`crates/celnet-server/src/services/desk/mod.rs:474`–`569`,
+  `self.rates.book(RatesPosition{…})` at `:523`), and `RiskService::BookRatesPosition`
+  (`crates/celnet-server/src/services/risk/mod.rs:997`; impl `:665`). **All bookings — from
+  every one of the four front-ends — converge on two position-mutation sinks:**
+  `record_booked_position` → `PositionStore::book` (`stream.rs:821`) and
+  `RatesPositionStore::book`. The FIX ingress lifts through the *same* ledger —
+  `on_new_order` (`crates/celnet-server/src/services/fix.rs:476`) validates the token
+  against `TokenLedger::try_book` and emits `ExecutionReport(35=8, ExecType=8)` with a
+  `Text(58)` reason (`fix.rs:28`) on rejection — but likewise never checks a limit. **Net
+  defect (highest priority): a `NewOrderSingle` / `AcceptQuote` / `AcceptDeskQuote` /
+  `BookRatesPosition` lift books even with a hard Delta/VaR/StopLoss limit BLOWN — and today
+  `AcceptQuote` / `AcceptDeskQuote` / `BookRatesPosition` book entirely UNCHECKED (a
+  hard-limit-blown lift books).** `LimitStatus` is a view-only RPC (`LimitTree.iter`). This
+  is a *risk-control* gap, not a feature gap — Bloomberg SSEOMS / Murex / TriOptima all treat
+  hard limits as **pre-trade blocking**, never post-trade reconciliation.
 - **Cross-asset breadth is narrow.** `AssetClass`
   (`crates/celnet-entitlements/src/capability.rs:119`) has only `FxOptions | FixedIncome`
   — 2 variants. FIX `AcceptorKind` (`crates/celnet-server/src/config/fix_connections.rs`;
@@ -110,38 +121,60 @@ control).
 
 ### A. Governance / pre-trade risk wiring (⚠ safety-first — leads)
 
-**A1 (P0) — Wire `pre_trade_check` into the deal-execution path.** Both execution entry
-points build a `ScopePath` from the lifting token's `TokenBinding` (desk/book/entity/
-ccy-pair already carried on the token) and call `pre_trade_check` **before** the book
-commits:
+**A1 (P1 — ⚠ safety-first lead) — Gate `pre_trade_check` at the position-mutation sinks.**
+Because three of the four booking front-ends bypass `TokenLedger::try_book` (Context §A),
+wiring the check into `try_book` alone would leave `AcceptQuote` / `AcceptDeskQuote` /
+`BookRatesPosition` UNCHECKED. Instead, gate at the **single convergence point** every
+booking path funnels through — the two position-mutation sinks — so **exactly one**
+enforcement site covers all four front-ends: `PositionStore::book` (`stream.rs:821`,
+reached via `record_booked_position`) and `RatesPositionStore::book`. Each sink builds a
+`ScopePath` from the booking's binding (desk/book/entity/ccy-pair, or tenor for rates) and
+calls `pre_trade_check` **before** mutating store state:
 
-- `TokenLedger::try_book` (`clicktrade.rs:258`) consults the limit tree; a
-  `PreTradeDecision::Reject` short-circuits to a new `BookOutcome::LimitBreached`
-  (`clicktrade.rs:131`) carrying the breached scope/metric and RAG state. The book state
-  is **never** mutated on a reject.
-- FIX `on_new_order` (`fix.rs:476`) maps `BookOutcome::LimitBreached` to
-  `ExecutionReport(35=8, ExecType=8)` with `Text(58) = "limit breached: <scope>/<metric>"`
-  — reusing the existing reject wire encoding (`fix.rs:28`).
-- The gRPC/WS `AcceptQuote` / RFS lift surfaces the same `LimitBreached` outcome uniformly
-  (guardrail #11 cross-client parity), so every client renders an identical rejection.
+- `PositionStore::book` (`stream.rs:821`) and `RatesPositionStore::book` consult the limit
+  tree; a `PreTradeDecision::Reject` refuses the mutation and surfaces
+  `BookOutcome::LimitBreached` (`clicktrade.rs:131`) carrying the breached scope/metric and
+  RAG state. Store state is **never** mutated on a reject.
+- The stream/FIX front-ends (`TokenLedger::try_book`, `clicktrade.rs:258`) short-circuit
+  their own path on the sink's `LimitBreached`; FIX `on_new_order` (`fix.rs:476`) maps it to
+  `ExecutionReport(35=8, ExecType=8)` with `Text(58) = "limit breached: <scope>/<metric>"`,
+  reusing the existing reject wire encoding (`fix.rs:28`).
+- `QuoteService::AcceptQuote` (`quote.rs:1024`), `RfqDeskService::AcceptDeskQuote`
+  (`desk/mod.rs:523`), and `RiskService::BookRatesPosition` (`risk/mod.rs:665`) — the paths
+  that book UNCHECKED today — inherit the same `LimitBreached` refusal from the sink. Every
+  client renders an identical rejection (guardrail #11 cross-client parity).
+
+Gating at the sink (rather than only `try_book`) is also what makes A3's rates limits
+reachable: `LimitScope::Tenor` / `LimitMetric::Dv01` are consulted at
+`RatesPositionStore::book`, the path `try_book` never touched — resolving the A1↔A3
+reachability gap (see A3).
 
 Hard limits are enforced **pre-trade, blocking** — never post-trade reconciliation
 (Bloomberg SSEOMS / Murex / TriOptima norm). Soft (`Warn`) decisions book but raise the
 RAG amber/red state and an audit event.
 
-**A2 (P1) — Extend `AssetClass` + FIX `AcceptorKind` per new leaf.** Add
-`Equity | Crypto | Commodity` to `AssetClass` (`capability.rs:119`) and the matching
-`AcceptorKind` dialect variants + `required_dialect_capability` arms
-(`fix_admin.rs:491`), in lockstep with the entitlement grants — following the existing
-capability-deny test template (`admin_without_fi_quote_capability_is_denied`,
-`fix_admin.rs:743`) as the acceptance pattern for each new leaf. Additive to the enum; no
-contract reshape (guardrail #9).
+**A2 (P2 — coordinator-gated cross-cut) — Extend `AssetClass` + FIX `AcceptorKind` per new
+leaf.** Add `Equity | Crypto | Commodity` to `AssetClass` (`capability.rs:119`) and the
+matching `AcceptorKind` dialect variants + `required_dialect_capability` arms (wire mapping
+`fix_admin.rs:457`, capability gate `fix_admin.rs:491`), in lockstep with the entitlement
+grants — following the existing capability-deny test template
+(`admin_without_fi_quote_capability_is_denied`, `fix_admin.rs:743`) as the acceptance
+pattern for each new leaf. Additive to the enum; no contract reshape (guardrail #9).
+**Sequenced after A1 as P2, not P1:** `AssetClass` is a *shared* enum consumed by every
+client (gui / excel / cli), the FIX dialect mapping, and risk — broadening it is a
+coordinator-gated cross-cut (the shared-crate work). By contrast A1 is genuinely low-blast
+— `celnet-limits` is *already* a `celnet-server` dependency (`Cargo.toml:39`) — so A1 leads
+on safety and the breadth items follow.
 
-**A3 (additive) — `LimitScope::Tenor` + `LimitMetric::Dv01` for rates.** Add
-`LimitScope::Tenor` (`tree.rs:58`) and `LimitMetric::Dv01` (`limit.rs:39`) so rates/FI
-positions carry a curve-bucketed IR limit alongside the FX Greek limits. Purely additive
-variants — the hierarchical roll-up in `pre_trade_check` already generalizes over
-scope/metric.
+**A3 (P2 — breadth, sequenced with A2) — `LimitScope::Tenor` + `LimitMetric::Dv01` for
+rates.** Add `LimitScope::Tenor` (`tree.rs:58`) and `LimitMetric::Dv01` (`limit.rs:39`) so
+rates/FI positions carry a curve-bucketed IR limit alongside the FX Greek limits. Purely
+additive variants — the hierarchical roll-up in `pre_trade_check` already generalizes over
+scope/metric. **These limits are only reachable because A1 gates at
+`RatesPositionStore::book`:** rates bookings (`AcceptDeskQuote` / `BookRatesPosition`)
+bypass `TokenLedger::try_book`, so had A1 gated only the ledger, `Tenor` / `Dv01` limits
+would never be consulted (the A1↔A3 inconsistency, now resolved). Sequenced with A2 as the
+P2 breadth wave.
 
 **A4 (P2) — Activate the FIX `IOI(35=6)` server path.** Add an `IOI` arm to
 `handle_frame` (`fix.rs:364/378`) gated on the `Action::IoiRespond` capability — promoting
@@ -167,9 +200,14 @@ the SLO becomes a blocking correctness contract, not a soft criterion baseline. 
 once per push milestone at T2 per the tiered-gate law — `docs/PARALLEL-SESSIONS.md` §4.2.)
 
 **B2 (P2/D1 constraint) — `Arc<*Curve>` / `Arc<*Surface>` EMBARGO inside `MarketState`.**
-A clippy/`cargo-deny` lint forbids any `Arc<…Curve>` / `Arc<…Surface>` (or other heap
-term-structure handle) as a field of `MarketState` (`rt.rs:53`). `MarketState` stays **flat
-`f64`**. The term-structure `Curve` (ADR-0010) lives in the **surface-rebuild tier**; the
+A **`trybuild` compile-fail test** (a fixture that adds an `Arc<…Curve>` / `Arc<…Surface>`
+field to a `MarketState`-shaped struct must fail to compile) **plus a field-type reflection
+unit test pinned on `MarketState`** (`rt.rs:53`–`67`) asserting every field stays a flat
+`f64` together forbid any heap term-structure handle from entering `MarketState`. (This
+cannot be a lint: `cargo-deny` inspects only Cargo dependency metadata, not struct fields,
+and stock clippy has no field-type lint — that would require a `dylint` / custom clippy
+driver outside the pinned 1.96.0 toolchain — so the guarantee is carried by a test, not a
+lint.) `MarketState` stays **flat `f64`**. The term-structure `Curve` (ADR-0010) lives in the **surface-rebuild tier**; the
 hot engine sees only a **pre-interpolated flat slice**, and streaming **always pins a
 `CalibratedSmile::Parametric`** (O(1), `calibrate.rs:104`) — never the O(log N)
 `ParametricSurface`/`ExtendedSurface` tenor-search arm (`parametric.rs:212`). **This is the
@@ -194,13 +232,18 @@ tier's 52× gap for the small/interactive path.)
 
 ## Consequences + invariants
 
-- **A hard-limit breach can no longer book.** After A1, every execution entry point
-  (`clicktrade`, FIX, gRPC/WS) is gated by `pre_trade_check`; a `Reject` cannot mutate book
-  state. This is the load-bearing risk-control invariant of this ADR.
+- **A hard-limit breach can no longer book.** After A1, the two position-mutation sinks
+  (`PositionStore::book` `stream.rs:821`, `RatesPositionStore::book`) — the single
+  convergence point of all four booking front-ends (stream/FIX click-to-trade,
+  `AcceptQuote`, `AcceptDeskQuote`, `BookRatesPosition`) — gate on `pre_trade_check`; a
+  `Reject` cannot mutate store state. This closes the three paths (`AcceptQuote` /
+  `AcceptDeskQuote` / `BookRatesPosition`) that book UNCHECKED today. This is the
+  load-bearing risk-control invariant of this ADR.
 - **The pinned pricing thread stays alloc/lock/log-free.** B2 (embargo) + B3 (drop
   isolation) + the existing no-log rule (`ARCHITECTURE.md:264`) are jointly enforced by the
-  lint, the epoch reclamation, and `hot_pricing_under_concurrent_publish_allocates_zero`.
-  **No `Arc<Curve>` on the hot path, ever** (also `docs/ARCHITECTURE-TARGET.md` §4).
+  `MarketState` compile-fail / field-reflection test, the epoch reclamation, and
+  `hot_pricing_under_concurrent_publish_allocates_zero`. **No `Arc<Curve>` on the hot path,
+  ever** (also `docs/ARCHITECTURE-TARGET.md` §4).
 - **The SLO is a gate, not a hope.** B1 makes p50≤2µs/p99≤10µs/p99.9≤25µs a `t2` blocking
   assertion; a tail regression fails the landing.
 - **Numerical invariant preserved (≤1e-12).** None of A/B changes a pricing float form;
@@ -243,20 +286,30 @@ tier's 52× gap for the small/interactive path.)
 Authored graph-anchored, lifecycle **draft** (proposed direction; promotion to `active`
 awaits implementation + a Stage-2 review):
 
-- **(invariant)** A hard-limit breach cannot book: every execution entry point
-  (`TokenLedger::try_book`, FIX `on_new_order`, gRPC/WS `AcceptQuote`/RFS) calls
-  `pre_trade_check`; `PreTradeDecision::Reject → BookOutcome::LimitBreached → ExecutionReport
-  (ExecType=8)` and book state is never mutated. Anchors: `pre_trade_check`
-  (`check.rs:218`), `PreTradeDecision` (`check.rs:172`), `TokenLedger::try_book`
-  (`clicktrade.rs:258`), `BookOutcome` (`clicktrade.rs:131`), `on_new_order` (`fix.rs:476`).
-- **(decision)** Governance breadth extends additively per asset leaf: `AssetClass`
-  (`capability.rs:119`), FIX `AcceptorKind` / `required_dialect_capability`
-  (`fix_admin.rs:491`), `LimitScope::Tenor` (`tree.rs:58`), `LimitMetric::Dv01`
-  (`limit.rs:39`) grow in lockstep with the entitlement grants; the deny-by-default kernel
-  is kept, not redesigned. Template: `admin_without_fi_quote_capability_is_denied`
-  (`fix_admin.rs:743`).
+- **(invariant)** A hard-limit breach cannot book: the two position-mutation sinks
+  (`PositionStore::book` `stream.rs:821`, `RatesPositionStore::book`) — the single
+  convergence point of all four booking front-ends (`TokenLedger::try_book`,
+  `QuoteService::AcceptQuote`, `RfqDeskService::AcceptDeskQuote`,
+  `RiskService::BookRatesPosition`) — call `pre_trade_check` before mutating store state;
+  `PreTradeDecision::Reject → BookOutcome::LimitBreached → ExecutionReport (ExecType=8)` and
+  store state is never mutated. Gating the sinks (not only `try_book`, which three paths
+  bypass) is what closes the today-UNCHECKED `AcceptQuote` / `AcceptDeskQuote` /
+  `BookRatesPosition` paths and makes A3's rates limits reachable. Anchors: `pre_trade_check`
+  (`check.rs:218`), `PreTradeDecision` (`check.rs:172`), `PositionStore::book`
+  (`stream.rs:821`), `TokenLedger::try_book` (`clicktrade.rs:258`), `AcceptQuote`
+  (`quote.rs:1024`), `AcceptDeskQuote` (`desk/mod.rs:523`), `BookRatesPosition`
+  (`risk/mod.rs:665`), `BookOutcome` (`clicktrade.rs:131`), `on_new_order` (`fix.rs:476`).
+- **(decision)** Governance breadth extends additively per asset leaf — a P2
+  coordinator-gated cross-cut sequenced *after* the A1 (P1) safety lead: `AssetClass`
+  (`capability.rs:119`, a shared enum consumed by gui/excel/cli + the FIX dialect + risk),
+  FIX `AcceptorKind` / `required_dialect_capability` (`fix_admin.rs:457/491`),
+  `LimitScope::Tenor` (`tree.rs:58`), `LimitMetric::Dv01` (`limit.rs:39`) grow in lockstep
+  with the entitlement grants; the deny-by-default kernel is kept, not redesigned. Template:
+  `admin_without_fi_quote_capability_is_denied` (`fix_admin.rs:743`).
 - **(invariant)** `MarketState` stays flat `f64` — `Arc<*Curve>`/`Arc<*Surface>` is
-  embargoed on the hot path (clippy/deny lint); the curve lives in the surface-rebuild
+  embargoed on the hot path by a `trybuild` compile-fail test + a field-type reflection unit
+  test pinned on `MarketState` (`rt.rs:53`–`67`), NOT a lint (`cargo-deny` sees only Cargo
+  metadata; stock clippy has no field-type lint); the curve lives in the surface-rebuild
   tier; streaming pins `CalibratedSmile::Parametric` (O(1)). This is the hard constraint
   ADR-0010 must honour. Anchors: `MarketState` (`rt.rs:53`), `CalibratedSmile`
   (`calibrate.rs:58/104`), `ParametricSurface::implied_vol` (`parametric.rs:212`).

@@ -2,11 +2,11 @@
 
 - **Status:** Proposed / Accepted as a **design direction** (2026-07-01). **NOT yet
   implemented.** Records the intended activation of the built-but-dormant Raft consensus
-  and the move to an elastic fleet; the single-node `PersistStore` + per-shard `arc-swap`
-  snapshot path remains authoritative until `celnet-server` takes a `celnet-replog`
-  dependency. This is program phase **P3** of the target architecture
-  (`docs/ARCHITECTURE-TARGET.md` §5) and the concrete build-out of `docs/SCALE-OUT.md`
-  §4 / §8 / §2 / §12.
+  and the move to an elastic fleet; the single-node `celnet-journal` `DurableBook` +
+  per-shard `arc-swap` snapshot path remains authoritative until `celnet-server` takes a
+  `celnet-replog` dependency (**it has none today**). This is program phase **P3** of the
+  target architecture (`docs/ARCHITECTURE-TARGET.md` §5) and the concrete build-out of
+  `docs/SCALE-OUT.md` §4 / §8 / §2 / §12.
 - **Date:** 2026-07-01
 - **Extends:** ADR-0011 (Celer-estate ingress — the `DeploymentMode` / fleet boot seams).
   **Constrained by:** ADR-0016 (hot-core embargoes + latency SLO gate) — the
@@ -55,12 +55,24 @@ explicit: this is the platform's #1 scaling bottleneck.
   crash-recovery, and §7 log compaction / snapshot / InstallSnapshot — proven over ≥3
   logical nodes on real loopback TCP (`celnet-parity/tests/{raft_election,raft_compaction,raft_snapshot}.rs`).
   Its entry point `RaftNode::boot` (`crates/celnet-replog/src/election.rs:433`, and
-  `boot_on:453`) has **zero production callers**; `celnet-server` has **no `celnet-replog`
-  dependency**. `celnet-server` uses from `celnet-replog` only the single-node pieces:
-  `PersistStore` (atomic write→fsync→rename crash recovery), `wire::Cursor`/`write_frame`,
-  and **`BookState`** (`crates/celnet-replog/src/state.rs`: `apply:148`, `encode:205`,
-  `applied_state` at `election.rs:641`) — which is **designed to become the Raft applied
-  state** but is currently only the click-trade book.
+  `boot_on:453`) has **zero production callers**, and — verified against
+  `celnet-server/Cargo.toml`, which depends on `celnet-engine` (`:31`) and `celnet-limits`
+  (`:39`) but **not** `celnet-replog` — **`celnet-server` has no `celnet-replog` dependency
+  at all**. The whole replog stack is therefore a disconnected island: `PersistStore`
+  (`crates/celnet-replog/src/persist.rs:50`, atomic write→fsync→rename crash recovery) is
+  **not referenced anywhere in `celnet-server/src`**, and `celnet_replog::BookState`
+  (`crates/celnet-replog/src/state.rs:136`, with `apply:148` / `encode:205`) has **zero
+  production callers** — `celnet_replog::BookState::apply` is invoked only by the
+  replog-internal `election.rs` (`applied_state` at `election.rs:641`) and by
+  `celnet-parity` / `celnet-replog` tests. It is **designed to become the Raft applied
+  state**, but today is a dormant type wired to nothing in the server.
+- **The live book is a DIFFERENT type.** What `celnet-server` actually runs is
+  `celnet_engine::BookState` (`crates/celnet-engine/src/rt.rs:533`), reached via
+  `risk/store.rs:10` + `PositionStore` and made durable by `celnet-engine::DurableBook`
+  (`journal.rs:171`) over **`celnet-journal`** — with **no connection to
+  `celnet_replog::BookState`**. The two `BookState` types are **disjoint**: the live one
+  (`celnet_engine`) and the dormant replicated one (`celnet_replog`) share no code path
+  today. This is the crux the activation must reconcile (§2.1), not a seam to be wired.
 - **Durability is single-node.** `celnet-journal` is CRC-framed append + `sync_data` with
   crash-safe compaction (`lib.rs:437`); `celnet-engine::DurableBook` (`journal.rs:171`) is
   a **single-node** durable book, **not Raft-replicated**.
@@ -68,11 +80,12 @@ explicit: this is the platform's #1 scaling bottleneck.
   (1) no multi-node replicated state machine ⇒ **no hot-standby failover** — a backend
   shard crash makes its pairs `Status::unavailable` until restart (the fleet SPOF);
   (2) static membership ⇒ **no elastic node add/remove** (contradicts `SCALE-OUT.md` §2);
-  (3) surface/curve distribution does **not** flow through the replicated log — each shard
-  holds an independent surface view fed in-process by `celnet-integration`'s aggregator
-  (`divergence_report` at `divergence.rs:208` is per-node, not cross-fleet), so
-  cross-shard staleness is unbounded and unmeasured (`SCALE-OUT.md` §4 names this as the
-  drop-in the built consensus is meant to close).
+  (3) surface/curve distribution has **no cross-fleet coherence channel at all** — each
+  shard derives an independent surface view locally in-process via `celnet-integration`'s
+  aggregator (`divergence_report` at `divergence.rs:208` is per-node, not cross-fleet), so
+  cross-shard staleness is unbounded and unmeasured. Note these surfaces are **regenerable
+  derived data** (every shard is always able to re-derive locally), so the fix is a
+  **coherence broadcast, not consensus** (§2.1) — `SCALE-OUT.md` §4 names the gap.
 - **HFT counterparty fan-out** to remote sessions is unicast over the stock OS TCP stack;
   `SO_REUSEPORT` accept-sharding, `io_uring`, and the Jasper proxy-multicast tree are
   **designed only** (`SCALE-OUT.md` §5, §12).
@@ -88,52 +101,81 @@ single price.
 Activate the dormant consensus and make the fleet elastic, in four moves, **without ever
 putting consensus, replication, or a cross-node hop on the per-tick price path.**
 
-### 2.1 Wire `celnet-replog` into the server lifecycle — one leader-append log for
-authoritative state
+### 2.1 Wire `celnet-replog` into the server lifecycle — a leader-append log for must-order
+state, a lighter broadcast for regenerable surfaces
 
 `celnet-server` takes a `celnet-replog` dependency; `Edge::start_on_with_topology`
 (`crates/celnet-server/src/lib.rs:346`) grows a consensus stage that calls
 `RaftNode::boot` (`crates/celnet-replog/src/election.rs:433`) for a shard's replica group
-(a leader + hot-standby followers per HRW partition slice). The **two authoritative write
-streams** are routed through the leader-append log and applied by every replica via the
-existing deterministic `to_bits` apply:
+(a leader + hot-standby followers per HRW partition slice). Two write streams are activated
+and handled by **different** tiers, split on whether they are must-order durable state or
+regenerable derived data:
 
-- **Book writes** — `PositionStore` / click-trade booking becomes a Raft log entry;
-  `BookState` (`crates/celnet-replog/src/state.rs:148`) is promoted from the single-node
-  click-trade book to **the replicated applied state machine** it was designed to be
-  (`applied_state`, `election.rs:641`). The single-node `DurableBook`
-  (`celnet-engine/src/journal.rs:171`) becomes the leader's local journal *under* the
-  replicated log rather than the top-level durability tier.
-- **Authoritative surface / curve updates** — the arb-free surface + curve epochs that
-  today each shard derives locally become committed log entries, applied identically on
-  every replica, then published to the per-shard node-local `arc-swap` snapshot. Every
-  quote/tick stays tagged with its **surface epoch** (already the deterministic-replay
-  key, `SCALE-OUT.md` §4) so a price is attributable to an exact committed version.
+- **Book writes (must-order, quorum-durable)** — `PositionStore` / click-trade booking
+  becomes a Raft log entry. This is **not a wiring exercise**: the live book is
+  `celnet_engine::BookState` (`crates/celnet-engine/src/rt.rs:533`, via `risk/store.rs:10`
+  + `PositionStore`), whereas the replicated applied state machine is the **disjoint**
+  `celnet_replog::BookState` (`crates/celnet-replog/src/state.rs:136`, `apply:148`;
+  `applied_state` at `election.rs:641`). Activation therefore requires **reconciling /
+  migrating the two state types** — either (a) making `celnet_engine::BookState` the Raft
+  applied state (teach the engine book to be driven by committed log entries), or (b)
+  unifying on `celnet_replog::BookState` and re-pointing `risk/store.rs` at it. Both are
+  real capability work, gated by the `to_bits` apply oracle to prove the migrated book
+  replays bit-identically. The single-node `DurableBook`
+  (`celnet-engine/src/journal.rs:171`, over `celnet-journal`) then becomes the leader's
+  local journal *under* the replicated log rather than the top-level durability tier.
+- **Surface / curve epochs (decoupled from consensus — recommended)** — surfaces and curves
+  are **regenerable derived data**: every shard already derives its own arb-free surface +
+  curves locally today and is therefore **always available** even with no peer
+  (`divergence_report` at `divergence.rs:208` is per-node). They are **not must-order durable
+  state** like a trade, so they are deliberately kept **off** the quorum-committed log and
+  ride a **lighter epoch-broadcast** instead — a best-effort, monotonic
+  `SurfaceEpoch{epoch, curves, smile-params}` push, **not** quorum-gated, applied on each
+  shard to its node-local `arc-swap` snapshot (a flat pre-interpolated slice, never
+  `Arc<Curve>` in `MarketState` — the ADR-0016 embargo, §4.3). This keeps market-data
+  freshness **decoupled from quorum liveness** — a slow or stalled quorum never delays a
+  surface publish — and lets the broadcast meet a **µs-scale** publish→snapshot budget that a
+  **ms-scale** quorum commit physically cannot (§4.2). Every quote/tick stays tagged with its
+  **surface epoch** (already the deterministic-replay key, `SCALE-OUT.md` §4) so a price is
+  attributable to an exact broadcast version. **Operator choice** (one shared log vs.
+  decoupled broadcast) is spelled out in §2.2.
 
-This **closes the hot-standby-failover gap and the cross-shard surface-distribution gap in
-one step**: failover is bounded by ~2× election timeout with bit-identical replay
-(`SCALE-OUT.md` §11 SLO), and every shard in a replica group sees the same
-committed surface epoch. The `BookState`/`Journal`/`PersistStore` seams already exist — this
-is **wiring, not new capability**.
+This **closes the hot-standby-failover gap and narrows the cross-shard surface-distribution
+gap**: failover is bounded by ~2× election timeout with bit-identical replay
+(`SCALE-OUT.md` §11 SLO), and every shard in a replica group converges on the same surface
+epoch via the decoupled broadcast. Contrary to an earlier framing, this is **not "wiring,
+not new capability"**: the `RaftNode` / `Journal` / `PersistStore` machinery exists, but the
+live book (`celnet_engine::BookState` + `PositionStore`) is **disjoint** from the dormant
+replicated `celnet_replog::BookState`, so activation requires **reconciling / migrating the
+two state types** — real capability work, honestly scoped in §4.2.
 
-### 2.2 The Raft log **is** the versioned membership changelog **and** the surface feed —
-no separate gossip
+### 2.2 The Raft log **is** the versioned membership changelog + the authoritative book log
+— surface distribution is decoupled (operator choice)
 
 The one committed, totally-ordered, bit-identically-applied log is the **single source of
-truth** for three entry kinds:
+truth** for the two **must-order, durable** entry kinds:
 
-- `BookWrite{…}` — position / trade-lifecycle mutations (§2.1);
-- `SurfaceEpoch{epoch, curves, smile-params}` — the authoritative cross-node surface/curve
-  distribution feed (§2.1, `SCALE-OUT.md` §4);
+- `BookWrite{…}` — position / trade-lifecycle mutations (§2.1); ordering + durability are
+  correctness requirements, so these are quorum-committed;
 - `Membership{C_old, C_new}` — the **versioned partition map** as a committed log entry.
 
-Because a membership or surface entry is applied by **all** nodes in log order, the HRW
-partition map (`crates/celnet-router/src/hash.rs:55`) and the per-shard surface cache are
-both driven off the same watermark. This **replaces the "versioned and gossiped" map of
-`SCALE-OUT.md` §2 with a Raft-log-derived map** — there is **no separate gossip layer** to
-reconcile against the log (which would introduce a second source of truth and its own
-version-vector divergence). Routers converge by tailing the committed membership entries;
-the log commit index **is** the map version.
+Because a membership entry is applied by **all** nodes in log order, the HRW partition map
+(`crates/celnet-router/src/hash.rs:55`) is driven off the commit watermark. This **replaces
+the "versioned and gossiped" map of `SCALE-OUT.md` §2 with a Raft-log-derived map** — for
+membership there is **no separate gossip layer** to reconcile against the log (which would
+introduce a second source of truth and its own version-vector divergence). Routers converge
+by tailing the committed membership entries; the log commit index **is** the map version.
+
+**Surface/curve epochs are NOT on this log (recommended, §2.1).** Because they are
+regenerable derived data (every shard can always re-derive locally, `divergence.rs:208`),
+there is **no durable truth to diverge from**, so the "two sources of truth" objection that
+keeps membership on the log does **not** apply — a best-effort epoch-broadcast is safe and,
+being un-gated by quorum, is the only option that meets the µs freshness budget (§4.2).
+**Operator choice:** either **(A — recommended)** route only `BookWrite` / `Membership`
+through Raft and distribute `SurfaceEpoch` over the lighter, non-quorum broadcast; or **(B)**
+fold `SurfaceEpoch` into the one shared log for a single tail, at the cost of coupling surface
+freshness to quorum latency/liveness — which then **cannot** meet the §4.2 surface SLO, so
+that SLO must be relaxed to ms if B is chosen.
 
 ### 2.3 Raft §6 dynamic membership (joint consensus) — elastic add/remove without restart
 
@@ -191,28 +233,41 @@ future hardware edge).
   eliminated for any pair in a ≥3-node replica group.
 - The **#2 bottleneck (static membership)**: elastic node add/remove without restart via
   §6 joint consensus, HRW reshuffling only ~1/N partitions.
-- The **#3 bottleneck (surface distribution)**: one committed surface epoch across a
-  replica group; cross-shard staleness becomes **bounded and measurable** (the
-  publish→local-snapshot lag SLO, `SCALE-OUT.md` §11).
+- The **#3 bottleneck (surface distribution)**: a coherent surface epoch across a replica
+  group via the lighter epoch-broadcast (§2.1) — **decoupled from the quorum log** so
+  freshness is not gated by consensus; cross-shard staleness becomes **bounded and
+  measurable** (the publish→local-snapshot lag SLO, `SCALE-OUT.md` §11).
 
 ### 4.2 Blast radius / costs
-- `celnet-server` gains its first `celnet-replog` dependency and a new
-  leader/follower lifecycle stage inside `Edge::start_on_with_topology`
+- `celnet-server` gains its **first** `celnet-replog` dependency (`Cargo.toml` has none
+  today) and a new leader/follower lifecycle stage inside `Edge::start_on_with_topology`
   (`lib.rs:346`). `InProcess` topology (the default) stays byte-identical to single-node —
   the consensus stage is inert with a 1-node group.
-- The **booking** and **surface-publish** write paths gain an off-hot-path leader-append +
-  quorum-commit latency (ms-scale, acceptable for durable lifecycle events — `SCALE-OUT.md`
-  §8) — **never on the per-tick price path**, which still reads only the node-local
-  snapshot.
+- **State-type reconciliation is the main capability cost (not wiring).** The live book
+  `celnet_engine::BookState` (`rt.rs:533`, via `PositionStore`) and the dormant replicated
+  `celnet_replog::BookState` (`state.rs:136`) are **disjoint types** today (§1). Activation
+  must migrate one onto the other (§2.1) — a real change to how the engine book is driven,
+  gated by the `to_bits` apply oracle to prove the migrated book replays bit-identically.
+- The **booking** write path gains an off-hot-path leader-append + quorum-commit latency
+  (ms-scale, acceptable for durable lifecycle events — `SCALE-OUT.md` §8); the
+  **surface-publish** path gains only the lighter epoch-broadcast (µs-scale, no quorum,
+  §2.1). Neither is **ever on the per-tick price path**, which still reads only the
+  node-local snapshot.
 - `DurableBook` (`journal.rs:171`) is demoted from the top-level durability tier to the
   leader's local journal beneath the replicated log; `celnet-integration`'s in-process
   surface feed becomes a *producer of proposals to the leader*, not the authoritative
   per-node source.
-- New `SCALE-OUT.md` §11 SLO gates required before "built": failover time (kill primary
-  under load, assert standby takeover + `to_bits`-identical replay via the f64 oracle);
-  surface publish→snapshot lag p99 ≤ 150 µs; and the **in-shard price regression guard**
-  (p50 ≤ 2 µs / p99 ≤ 10 µs **must not regress** when `celnet-replog` is linked into the
-  server).
+- New `SCALE-OUT.md` §11 SLO gates required before "built", with the **split budget** the
+  decoupling implies:
+  - **book commit** (quorum-durable `BookWrite`) — **ms-scale**, off the hot path;
+  - **surface publish→snapshot lag** (the lighter epoch-broadcast) — p99 ≤ 150 µs, which is
+    **only achievable because the surface feed is decoupled from the ms-scale quorum**.
+    Routing it through the log (§2.2 option B) would put a quorum commit on the publish path
+    and blow this budget by an order of magnitude, forcing the SLO to relax to ms;
+  - **failover time** — kill primary under load, assert standby takeover + `to_bits`-identical
+    replay via the f64 oracle;
+  - the **in-shard price regression guard** — p50 ≤ 2 µs / p99 ≤ 10 µs **must not regress**
+    when `celnet-replog` is linked into the server.
 
 ### 4.3 Invariants (non-negotiable)
 1. **No consensus / replication on the hot pricing thread.** `PricingCore::drain`
@@ -226,8 +281,10 @@ future hardware edge).
    publishes a node-local `arc-swap` snapshot — it introduces **no `Arc<*Curve>` /
    `Arc<*Surface>` into `MarketState`** (the ADR-0016 embargo). Streaming still pins a
    pre-interpolated flat `CalibratedSmile::Parametric`.
-4. **Single-writer discipline** — the leader-append log is the only writer of authoritative
-   book / surface / membership state; followers apply in log order only.
+4. **Single-writer discipline for must-order state** — the leader-append log is the only
+   writer of authoritative **book / membership** state; followers apply in log order only.
+   Surface/curve epochs are **not** must-order durable state and ride the decoupled
+   epoch-broadcast (§2.1), monotonic by epoch rather than quorum-ordered.
 5. **In-process fan-out unchanged** — the `BroadcastRing` `received + skipped == produced`
    conflation accounting (`ring.rs:424`) is untouched; consensus is **not** the fan-out.
 6. **One unversioned contract** (ADR-0007) — no `celnet.proto` change; the log-entry /
@@ -236,15 +293,24 @@ future hardware edge).
 ## 5. Alternatives rejected
 
 - **Keep Raft a validated-but-dormant island (status quo).** Rejected: leaves the #1 D3
-  bottleneck open — no hot-standby failover (the fleet SPOF), no quorum surface
-  distribution, no cross-shard deterministic replay — and a SOTA capability built and
+  bottleneck open — no hot-standby failover (the fleet SPOF), no cross-shard surface
+  coherence, no cross-shard deterministic replay — and a SOTA capability built and
   proven over real sockets sits unused, exactly the "disconnected islands" anti-pattern the
   target architecture exists to eliminate (`ARCHITECTURE-TARGET.md` §0).
-- **A separate gossip layer for membership/surface instead of the Raft log.** Rejected:
-  two sources of truth. The committed Raft log is already a total order applied
-  bit-identically by every node, so membership + surface distribution ride it for free
-  (§2.2). A gossip layer needs its own version-vector reconciliation and can diverge from
-  the committed log — precisely the inconsistency consensus is there to prevent.
+- **A separate gossip layer for the versioned membership map instead of the Raft log.**
+  Rejected **for membership**: two sources of truth. The committed Raft log is already a
+  total order applied bit-identically by every node, so the membership map rides it for free
+  (§2.2); a gossip layer needs its own version-vector reconciliation and can diverge from the
+  committed log — precisely the inconsistency consensus is there to prevent. **This does NOT
+  extend to surfaces:** surfaces are regenerable derived data with no durable truth to
+  diverge from, so they are deliberately kept **off** the quorum log and distributed by a
+  lighter epoch-broadcast (§2.1/§2.2).
+- **Route regenerable surface/curve epochs through the quorum-committed log (one shared
+  log).** Rejected as the default: a quorum commit is ms-scale, so it **cannot** meet the
+  surface publish→snapshot p99 ≤ 150 µs budget (§4.2), and it couples market-data freshness to
+  quorum liveness even though each shard can always re-derive its surface locally
+  (`divergence.rs:208`). Retained only as the explicit operator **option B** (§2.2), which
+  requires relaxing the surface SLO to ms.
 - **Route single prices / quotes through the cluster (consensus on the per-tick path).**
   Rejected: blows the SLA (`SCALE-OUT.md` §1 — a kernel-stack hop is 10–25× the p50 ≤ 2 µs
   budget; a Raft quorum is ms-scale, off the path entirely). The hot core stays single-node;
@@ -264,16 +330,23 @@ Stage-2 review **and** implementation — the flat-carry / `InProcess`-default p
 authoritative until then):
 
 - *(decision)* — Activate `celnet-replog`: wire `RaftNode::boot` into
-  `Edge::start_on_with_topology`; route `PositionStore`/`BookState` book writes +
-  authoritative surface/curve epochs through the leader-append log; `BookState` becomes the
-  replicated applied state. Anchors: `RaftNode::boot` (`election.rs:433`),
-  `Edge::start_on_with_topology` (`celnet-server/src/lib.rs:346`), `BookState::apply`
-  (`celnet-replog/src/state.rs:148`), `RaftNode::applied_state` (`election.rs:641`),
+  `Edge::start_on_with_topology`; route **must-order** `PositionStore` book writes through
+  the leader-append log, and **reconcile the two disjoint `BookState` types** — the live
+  `celnet_engine::BookState` (`rt.rs:533`, via `risk/store.rs:10` + `PositionStore`) and the
+  dormant replicated `celnet_replog::BookState` (`state.rs:136`, zero production callers) —
+  onto one Raft applied state (capability work, not wiring). Anchors: `RaftNode::boot`
+  (`election.rs:433`), `Edge::start_on_with_topology` (`celnet-server/src/lib.rs:346`),
+  `celnet_engine::BookState` (`celnet-engine/src/rt.rs:533`), `celnet_replog::BookState`
+  (`celnet-replog/src/state.rs:136`, `apply:148`), `RaftNode::applied_state`
+  (`election.rs:641`), `celnet-server/Cargo.toml` (no `celnet-replog` dependency),
   `FleetTopology` (`celnet-risk-fleet/src/lib.rs:534`).
-- *(decision)* — The Raft log **is** the versioned membership changelog + the cross-node
-  surface-distribution feed; no separate gossip layer (single source of truth). Anchors:
-  `FleetTopology`, `rendezvous_weight` (`celnet-router/src/hash.rs:55`), `BookState::encode`
-  (`state.rs:205`).
+- *(decision)* — The Raft log carries the **must-order** state only — the versioned
+  membership changelog + book writes; **surface/curve epochs are decoupled onto a lighter,
+  non-quorum epoch-broadcast** (regenerable derived data, µs freshness budget, not coupled to
+  quorum liveness — operator option A). No separate gossip layer for membership (single
+  source of truth). Anchors: `FleetTopology`, `rendezvous_weight`
+  (`celnet-router/src/hash.rs:55`), `divergence_report` (`celnet-integration/src/divergence.rs:208`),
+  `celnet_replog::BookState::encode` (`state.rs:205`).
 - *(decision)* — Elastic membership via Raft §6 joint consensus (node add/remove without
   restart); HFT fan-out tier (`SO_REUSEPORT`+`io_uring`, then Jasper arXiv:2402.09527)
   gated on a measured single-shard bottleneck. Anchors: `RaftNode::boot`,

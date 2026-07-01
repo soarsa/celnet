@@ -39,6 +39,14 @@ The target is to **connect the islands, unify the substrates, and delete the dup
   discount substrate + risk org-hierarchy/envelope + contract vocabulary; keep payoff engines &
   the Greek-vector-vs-DV01-ladder representations domain-appropriate. **FX byte-identity
   preserved** (flat variant untouched). → **ADR-0010**, `docs/plan/TERM-STRUCTURE-UNIFICATION.md`.
+- **Effective-zero-rate contract (curve tier → flat hot state) — required for exact forward reproduction:**
+  the ADR-0016 embargo keeps `MarketState` FLAT (`f64` rates, no `Arc<Curve>`), so the discount
+  *value* — not the curve object — crosses the seam. For that flat degenerate slice to reproduce the
+  curve forward **exactly**, the surface-rebuild tier must publish **effective zero rates**
+  `r_eff = −ln(df(t))/t` per slice, so that `S·e^{(r_dom−r_for)·t}` == `S·df_for(t)/df_dom(t)` holds
+  byte-for-byte. This is the concrete contract between the curve tier (ADR-0010/0015) and the flat
+  hot state (ADR-0016 embargo) — without it a slice priced off the flat scalars diverges from the
+  same slice priced off the full curve.
 
 ### D2. Integrated API + SDKs + Excel — *the contract is right; the hand codec is the debt*
 - **Now:** ONE clean cross-asset contract (9 services, 25-arm `Instrument.oneof`, 5 asset
@@ -101,8 +109,11 @@ The target is to **connect the islands, unify the substrates, and delete the dup
   has only `FxOptions|FixedIncome`; FIX dialects cover FX+FI only (no equity/crypto/commodity);
   limits are FX-centric (Vanna/Volga/CcyPair, no IR DV01/tenor). (c) FIX IOI is a test fixture, not
   a live server path.
-- **Target:** **wire `pre_trade_check` into the deal-execution critical path** (`clicktrade::TokenLedger::
-  try_book` + FIX `on_new_order`; `Reject → BookOutcome::LimitBreached → ExecutionReport(ExecType=8)`)
+- **Target:** **wire `pre_trade_check` at the POSITION SINKS** — `PositionStore::book` +
+  `RatesPositionStore::book`, where **every** booking converges, since `AcceptQuote`
+  (`quote.rs:815-1036`), `AcceptDeskQuote` (`desk/mod.rs:523`) and `BookRatesPosition`
+  (`risk/mod.rs:665`) book **directly** and bypass `clicktrade::try_book` — plus FIX `on_new_order`;
+  `Reject → BookOutcome::LimitBreached → ExecutionReport(ExecType=8)`
   — hard limits are **pre-trade, not post-trade** (Bloomberg SSEOMS / Murex / TriOptima canonical);
   extend `AssetClass` + `AcceptorKind` per leaf (with the existing capability-deny test as the
   template); add `LimitScope::Tenor` + `LimitMetric::Dv01` (additive); activate the IOI path; enforce
@@ -113,8 +124,12 @@ The target is to **connect the islands, unify the substrates, and delete the dup
 
 The carry-seam (ADR-0008) + the unified kernel (ADR-0012) already route every asset class through
 one `price_greeks`. That makes these **structurally low-impedance** (the audit confirmed each):
-1. **One curve-risk cube** — FX + rates + equity delta/DV01 aggregate in one pass through the seam
-   (needs the D1 `Underlying::InterestRate` arm + risk envelope).
+1. **One curve-risk cube** — FX + rates + equity delta/DV01 aggregate through the seam, but **not**
+   for free "in one pass": it needs a **tagged `Measure` enum** (`Options(NetGreeks)` |
+   `Rates(RatesNodeAggregate)`) plus a shared **`RateKey{ccy,tenor}`** to net rho against DV01. The
+   two representations **do not collapse** into one vector — the `NetGreeks` vs `RatesNodeAggregate`
+   split has no free summation path (§1 D1); netting is an explicit keyed reduction, not an implicit
+   sum. Needs the D1 `Underlying::InterestRate` arm + risk envelope.
 2. **GPU cross-asset batch Greeks** — `BatchPricer`/`ScenarioPricer` over a mixed-asset portfolio in
    one dispatch (needs a `GpuInstrument` carrying `CostOfCarry`).
 3. **Universal product coverage** — barrier/Asian/variance-swap on equity/crypto/commodity needs only
@@ -134,6 +149,9 @@ doc claim. No versioning/back-compat cruft exists (ADR-0007 already clean).
 ## 4. Hard invariants (non-negotiable through every phase)
 - **Hot core sacred:** no alloc/lock/log on the pricing thread; **no `Arc<Curve>` in `MarketState`**.
 - **FX byte-identity** (`to_bits`) across the term-structure generalization (ADR-0010).
+- **`to_bits` byte-identity is a CPU-only oracle:** **no test may pin a GPU FX result to `to_bits`** —
+  the GPU (f32 math, f64 reduction) stays a **≤1e-12 batch-tier** result, while the CPU flat-carry
+  path (`carry.rs:525`) remains the **sole** `to_bits` byte-identity oracle (ADR-0013 §invariants).
 - **Numerical vs INDEPENDENT oracles ≤1e-12** (QuantLib/multi-curve); never a self-referential regen.
 - **One unversioned contract** (ADR-0007); every capability lives in the one API, uniform client parity.
 
@@ -141,15 +159,26 @@ doc claim. No versioning/back-compat cruft exists (ADR-0007 already clean).
 
 Ordered by leverage × independence (so lanes parallelize across sessions without shared-crate churn):
 
-- **P1 — Wire the islands (highest ROI, mostly additive, low blast radius):**
-  (a) **⚠ SAFETY-FIRST: wire `pre_trade_check` into the execution path** — the only *risk-control*
-  gap (a hard-limit-blown lift currently books); small, self-contained, should lead [ADR-0016];
+- **P1 — Wire the islands (highest ROI, genuinely low blast radius — additive dispatch/client/codec
+  wiring, NO shared-enum change):**
+  (a) **⚠ SAFETY-FIRST: wire `pre_trade_check` into the execution path** [ADR-0016 A1] — the only
+  *risk-control* gap (a hard-limit-blown lift currently books); small, self-contained, should lead.
+  **The gate sits at the POSITION SINKS** (`PositionStore::book` + `RatesPositionStore::book`), where
+  **every** booking converges — **not** merely at `clicktrade::try_book` — because `AcceptQuote`
+  (`quote.rs:815-1036`), `AcceptDeskQuote` (`desk/mod.rs:523`), and `BookRatesPosition`
+  (`risk/mod.rs:665`) book **directly** and today bypass any limit check (a hard-limit-blown lift
+  books straight through them);
   (b) GPU into the live path (batch-size branch + risk-cube repricer) [ADR-0013];
   (c) serve the built FI analytics (Fra/Swap/Bond) + FI risk/desk/notification SDK+CLI parity [ADR-0014 clients];
   (d) generate the WS codec from the descriptor — complete G [ADR-0014 codec].
-- **P2 — Unify the substrate (shared interface crates — coordinator-gated):**
+  These four are additive at the dispatch/client/codec boundary and change **no shared enum and no
+  cross-client contract**, so they parallelize without coordinator gating.
+- **P2 — Unify the substrate + broaden the shared vocabulary (shared interface crates — coordinator-gated):**
   the `DiscountCurve` trait + curve-backed carry (curve OFF the hot path) + `Underlying::InterestRate`
-  + the risk-cube envelope [ADR-0010 → build]. FX byte-identity gate every step.
+  + the risk-cube envelope [ADR-0010 → build]; **and the `AssetClass` / `AcceptorKind` breadth
+  broadening [ADR-0016 A2/A3]** — a **shared-enum** change consumed by **every** client (gui/excel/cli)
+  + the FIX dialect + risk, so it is coordinator-gated cross-cutting that belongs here, **not** in the
+  low-blast P1. FX byte-identity gate every step.
 - **P3 — Activate consensus & elastic scale-out** [ADR-0015]: replog wiring + Raft-log membership +
   surface distribution; then HFT fan-out tier on a measured bottleneck.
 - **P4 — Harden latency & extensibility** [ADR-0016]: hard SLO gate, reader-thread drop isolation,
