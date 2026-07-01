@@ -70,6 +70,8 @@
 //! for WS sessions exactly as it waits for gRPC calls.
 
 pub mod codec;
+mod codec_overrides;
+pub mod generated_codec;
 mod limits;
 
 use std::net::SocketAddr;

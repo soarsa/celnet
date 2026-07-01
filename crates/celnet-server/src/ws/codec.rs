@@ -3655,6 +3655,75 @@ const _: fn() = || {
     );
 };
 
+/// Test-support surface for the differential byte-identity harness
+/// (`tests/ws_codec_differential.rs`, arch item G — `ws-codec-from-proto`).
+///
+/// The per-message hand encoders/decoders in this module are (intentionally)
+/// module-private. This surface exposes thin `pub` wrappers around exactly the
+/// ones the differential harness compares the [generated](super::generated_codec)
+/// descriptor-driven encoder against — the hand codec is the byte-identity
+/// reference. `#[doc(hidden)]`: this is not part of the client contract, only a
+/// verification seam.
+#[doc(hidden)]
+pub mod diff_support {
+    use celnet_proto::{
+        CcyPair, Greeks, MarketContext, RateSensitivities, Strategy, Tenor, Underlying,
+    };
+    use serde_json::Value;
+
+    use super::CodecError;
+
+    /// Hand-codec reference for `CcyPair` (byte-identity target).
+    #[must_use]
+    pub fn hand_ccy_pair(p: &CcyPair) -> Value {
+        super::ccy_pair_to_json(p)
+    }
+
+    /// Hand-codec reference for the FX-legacy `Underlying` projection.
+    #[must_use]
+    pub fn hand_underlying(u: &Underlying) -> Value {
+        super::underlying_to_json(u)
+    }
+
+    /// Hand-codec reference for the FX-legacy `MarketContext` projection.
+    #[must_use]
+    pub fn hand_market_context(m: &MarketContext) -> Value {
+        super::market_context_to_json(m)
+    }
+
+    /// Hand-codec reference for `Greeks` (incl. the flat `rho_dom`/`rho_for`).
+    #[must_use]
+    pub fn hand_greeks(g: &Greeks) -> Value {
+        super::greeks_to_json(g)
+    }
+
+    /// Hand-codec reference for the carry-tagged `RateSensitivities` oneof.
+    #[must_use]
+    pub fn hand_rate_sensitivities(rs: &RateSensitivities) -> Value {
+        super::rate_sensitivities_to_json(rs)
+    }
+
+    /// Hand-codec `Tenor` decoder — the round-trip reference for the decode-only
+    /// `Tenor` (no hand encoder exists; the generated encoder's output must
+    /// round-trip through this decoder to the identical proto, exercising the
+    /// camelCase `brokenDate` key).
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_tenor_from_json(v: &Value) -> Result<Tenor, CodecError> {
+        super::tenor_from_json(v)
+    }
+
+    /// Hand-codec `Strategy` decoder — the round-trip reference for the decode-only
+    /// `Strategy` (repeated legs + the `strike`/`delta` oneof body).
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_strategy_from_json(v: &Value) -> Result<Strategy, CodecError> {
+        super::strategy_from_json(v)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
