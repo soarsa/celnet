@@ -20,7 +20,7 @@
 
 use std::sync::Arc;
 
-use celnet_types::{Df, Rate, Time};
+use celnet_types::{Df, DiscountCurve, Rate, Time};
 
 /// Absolute tolerance used when validating the curve origin pillar `(t = 0, DF = 1)`.
 const ORIGIN_TOL: f64 = 1e-12;
@@ -372,6 +372,23 @@ impl Curve {
     }
 }
 
+/// The general **term-structure** case of the [`DiscountCurve`] contract (ADR-0010 §2.1):
+/// a [`Curve`] is the bootstrapped many-pillar curve of which [`celnet_types::Carry`] is
+/// the degenerate one-pillar special case. The trait method is a **zero-cost delegation**
+/// to the inherent [`Curve::discount_factor`] — it merely bridges the newtype boundary
+/// (`f64 → Time`, `Df → f64`) so the same discount contract reads uniformly over both the
+/// flat carry and the full curve. `forward_factor` inherits the trait default `1/DF(0,t)`
+/// — the single-curve capitalization factor — which is the correct outright growth for a
+/// bare discount curve (a `Curve` carries no separate asset/foreign leg of its own).
+impl DiscountCurve for Curve {
+    #[inline]
+    fn discount_factor(&self, t: f64) -> f64 {
+        // Explicit inherent-method path selects `Curve::discount_factor(&self, Time) -> Df`
+        // (never the trait method of the same name) — unwrap the `Df` newtype to `f64`.
+        Curve::discount_factor(self, Time(t)).0
+    }
+}
+
 /// Instantaneous forwards at the pillar knots for the monotone-convex scheme.
 ///
 /// Each interval `i` carries the discrete (continuously-compounded) forward
@@ -506,6 +523,48 @@ mod tests {
         close(c.discount_factor(Time(0.0)).0, 1.0, 0.0);
         // Times at or before the reference date also discount to one.
         close(c.discount_factor(Time(-1.0)).0, 1.0, 0.0);
+    }
+
+    /// Phase-0 delegation gate (ADR-0010 §2.1): the `DiscountCurve` trait method must be a
+    /// zero-cost delegation to the inherent `Curve::discount_factor`, bit-for-bit, after
+    /// bridging the newtype boundary (`f64 → Time`, `Df → f64`). Exercised across the
+    /// pillars, between pillars, at the origin, and before the reference date.
+    #[test]
+    fn discount_curve_trait_delegates_to_inherent() {
+        let c = sample();
+        for &t in &[-1.0, 0.0, 0.25, 0.5, 1.3, 2.0, 4.7, 10.0, 15.0] {
+            assert_eq!(
+                <Curve as DiscountCurve>::discount_factor(&c, t).to_bits(),
+                Curve::discount_factor(&c, Time(t)).0.to_bits(),
+                "DiscountCurve::discount_factor must delegate byte-identically at t={t}"
+            );
+        }
+    }
+
+    /// The whole point of Phase 0: a flat [`celnet_types::Carry`] viewed as a
+    /// [`DiscountCurve`] is the **degenerate one-pillar case** of the general term-structure
+    /// [`Curve`]. A single-rate `Curve` built from the same continuously-compounded rate `r`
+    /// discounts to `e^{−r·t}` at every horizon; the flat carry discounts to `e^{−r·t}` too,
+    /// so the two agree to within floating-point noise (`Carry` uses `libm::exp`, the curve
+    /// uses `f64::exp`), well inside 1e-12. Both are read *through the one `DiscountCurve`
+    /// contract* — proving the flat carry is the general curve's single-point special case.
+    #[test]
+    fn flat_carry_equals_single_rate_curve_through_the_trait() {
+        for &r in &[0.0, 0.011, 0.025, 0.05, -0.004] {
+            // Flat term structure: two pillars at the SAME zero rate ⇒ DF(t) = e^{−r·t}
+            // everywhere (log-linear is exact on a straight ln-DF line; constant-forward
+            // extrapolation holds it flat beyond the last pillar).
+            let flat: Curve =
+                Curve::from_zero_rates(&[(Time(1.0), Rate(r)), (Time(30.0), Rate(r))])
+                    .expect("valid flat pillars");
+            // Discounting depends only on the numeraire rate `r`; `b` (here 0) is irrelevant.
+            let carry = celnet_types::Carry::CostOfCarry { r, b: 0.0 };
+            for &t in &[0.0, 0.25, 1.0, 2.5, 7.0, 20.0, 30.0] {
+                let via_curve = <Curve as DiscountCurve>::discount_factor(&flat, t);
+                let via_carry = <celnet_types::Carry as DiscountCurve>::discount_factor(&carry, t);
+                close(via_curve, via_carry, 1e-12);
+            }
+        }
     }
 
     #[test]
