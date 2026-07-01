@@ -62,6 +62,10 @@ pub enum MsgType {
     ExecutionReport,
     /// `AG` — QuoteRequestReject (the desk declined / could not price an RFQ).
     QuoteRequestReject,
+    /// `x` — SecurityListRequest (download the tradable-securities universe).
+    SecurityListRequest,
+    /// `y` — SecurityList (the venue's tradable-securities universe response).
+    SecurityList,
 }
 
 impl MsgType {
@@ -84,6 +88,8 @@ impl MsgType {
             MsgType::NewOrderMultileg => b"AB",
             MsgType::ExecutionReport => b"8",
             MsgType::QuoteRequestReject => b"AG",
+            MsgType::SecurityListRequest => b"x",
+            MsgType::SecurityList => b"y",
         }
     }
 
@@ -106,6 +112,8 @@ impl MsgType {
             b"AB" => MsgType::NewOrderMultileg,
             b"8" => MsgType::ExecutionReport,
             b"AG" => MsgType::QuoteRequestReject,
+            b"x" => MsgType::SecurityListRequest,
+            b"y" => MsgType::SecurityList,
             _ => return None,
         })
     }
@@ -494,6 +502,37 @@ pub const TAGS: &[TagSpec] = &[
         field_type: FieldType::Int,
         name: "LegPutOrCall",
     },
+    // --- security-list request / response (35=x / 35=y) ---
+    TagSpec {
+        tag: 320,
+        field_type: FieldType::String,
+        name: "SecurityReqID",
+    },
+    TagSpec {
+        tag: 559,
+        field_type: FieldType::Int,
+        name: "SecurityListRequestType",
+    },
+    TagSpec {
+        tag: 560,
+        field_type: FieldType::Int,
+        name: "SecurityRequestResult",
+    },
+    TagSpec {
+        tag: 393,
+        field_type: FieldType::Int,
+        name: "TotNoRelatedSym",
+    },
+    TagSpec {
+        tag: 146,
+        field_type: FieldType::Int,
+        name: "NoRelatedSym",
+    },
+    TagSpec {
+        tag: 893,
+        field_type: FieldType::Char,
+        name: "LastFragment",
+    },
 ];
 
 /// Look up the [`TagSpec`] for a tag number, if it is in the dialect.
@@ -526,6 +565,10 @@ pub const fn required_tags(mt: MsgType) -> &'static [u32] {
         MsgType::ExecutionReport => &[35, 37, 17, 150, 39],
         // A reject must address the originating request (QuoteReqID).
         MsgType::QuoteRequestReject => &[35, 131],
+        // Both sides of the security-list exchange carry SecurityReqID(320); the
+        // request states its type (559), the response its result (560).
+        MsgType::SecurityListRequest => &[35, 320, 559],
+        MsgType::SecurityList => &[35, 320, 560],
     }
 }
 

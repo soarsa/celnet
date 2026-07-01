@@ -76,6 +76,11 @@ async fn quote_request_reprices_to_vanilla_engine_over_socket() {
             half_spread: 0.0, // mid == bid == offer so we can compare to mid
             validity_ticks: 1000,
             pricer,
+            securities: vec![dialect_fx::SecurityDef::new(
+                b"EURUSD",
+                dialect_fx::SEC_TYPE_FXVO,
+                b"USD",
+            )],
         };
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -144,6 +149,11 @@ async fn click_to_trade_last_look_fills_then_rejects_replay() {
             half_spread: 0.0005,
             validity_ticks: 1_000_000,
             pricer,
+            securities: vec![dialect_fx::SecurityDef::new(
+                b"EURUSD",
+                dialect_fx::SEC_TYPE_FXVO,
+                b"USD",
+            )],
         };
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

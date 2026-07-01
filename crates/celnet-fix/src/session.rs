@@ -379,7 +379,9 @@ impl<S: MessageStore> Session<S> {
             | MsgType::NewOrderSingle
             | MsgType::NewOrderMultileg
             | MsgType::ExecutionReport
-            | MsgType::QuoteRequestReject => {
+            | MsgType::QuoteRequestReject
+            | MsgType::SecurityListRequest
+            | MsgType::SecurityList => {
                 action.deliver = Some(mt);
             }
             MsgType::Reject => {}

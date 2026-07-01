@@ -117,6 +117,123 @@ pub fn build_quote_request(
     enc.finish()
 }
 
+/// FIX `SecurityListRequestType(559)`: request **all** securities the venue can
+/// quote (the whole tradable universe, unfiltered).
+pub const SECURITY_LIST_REQUEST_TYPE_ALL: u32 = 4;
+/// FIX `SecurityRequestResult(560)`: the request was valid and the list follows.
+pub const SECURITY_REQUEST_RESULT_VALID: u32 = 0;
+/// FIX `LastFragment(893)` value marking the final (or only) `SecurityList`
+/// fragment — the universe fits one message here, so it is always `Y`.
+pub const LAST_FRAGMENT_YES: &[u8] = b"Y";
+
+/// One tradable security in the venue's universe, as projected onto the
+/// `SecurityList(y)` `NoRelatedSym(146)` repeating group. Purpose-named and
+/// vendor-neutral: it is the venue's authoritative "what I can quote" row —
+/// `Symbol(55)` plus, where known, `SecurityType(167)` and `Currency(15)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecurityDef {
+    /// `Symbol(55)` — the pair, e.g. `b"EURUSD"`.
+    pub symbol: Vec<u8>,
+    /// `SecurityType(167)` — e.g. [`SEC_TYPE_FXVO`]; empty when unspecified.
+    pub security_type: Vec<u8>,
+    /// `Currency(15)` — the deal (premium) currency; empty when unspecified.
+    pub currency: Vec<u8>,
+}
+
+impl SecurityDef {
+    /// Build a security row from its `Symbol` / `SecurityType` / `Currency`
+    /// bytes. Any of `security_type` / `currency` may be empty to omit that
+    /// optional field from the emitted group entry.
+    #[must_use]
+    pub fn new(symbol: &[u8], security_type: &[u8], currency: &[u8]) -> Self {
+        Self {
+            symbol: symbol.to_vec(),
+            security_type: security_type.to_vec(),
+            currency: currency.to_vec(),
+        }
+    }
+}
+
+/// Parameters for a `SecurityListRequest(x)` — the client asks the venue to
+/// enumerate the securities it can quote. `SecurityReqID(320)` correlates the
+/// answering `SecurityList(y)`; the request is always the all-securities type,
+/// optionally narrowed by `Product(460)` and/or `Currency(15)`.
+#[derive(Debug, Clone, Copy)]
+pub struct SecurityListRequestParams<'a> {
+    /// `SecurityReqID(320)` — the client-minted correlation id.
+    pub security_req_id: &'a [u8],
+    /// Optional `Product(460)` filter (e.g. [`PRODUCT_CURRENCY`]).
+    pub product: Option<u32>,
+    /// Optional `Currency(15)` filter (the deal currency of interest).
+    pub currency: Option<&'a [u8]>,
+}
+
+/// Build a `SecurityListRequest(x)` frame from [`SecurityListRequestParams`].
+///
+/// Layout: `SecurityReqID(320)`, `SecurityListRequestType(559)=4` (all
+/// securities), then the optional `Product(460)` / `Currency(15)` narrowing
+/// fields when supplied.
+#[must_use]
+pub fn build_security_list_request(
+    hdr: &Header<'_>,
+    p: &SecurityListRequestParams<'_>,
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
+    enc.clear();
+    hdr.encode(MsgType::SecurityListRequest, enc);
+    enc.push(320, p.security_req_id);
+    enc.push_int(559, i64::from(SECURITY_LIST_REQUEST_TYPE_ALL));
+    if let Some(product) = p.product {
+        enc.push_int(460, i64::from(product));
+    }
+    if let Some(currency) = p.currency {
+        enc.push(15, currency);
+    }
+    enc.finish()
+}
+
+/// Parameters for a `SecurityList(y)` — the venue's answer enumerating the
+/// securities it can quote.
+#[derive(Debug, Clone, Copy)]
+pub struct SecurityListParams<'a> {
+    /// `SecurityReqID(320)` — echoed from the answered request.
+    pub security_req_id: &'a [u8],
+    /// The venue's tradable-securities universe (the `NoRelatedSym(146)` group).
+    pub securities: &'a [SecurityDef],
+}
+
+/// Build a `SecurityList(y)` frame from [`SecurityListParams`].
+///
+/// Layout: `SecurityReqID(320)` echoed, `SecurityRequestResult(560)=0` (valid),
+/// `TotNoRelatedSym(393)` = total count, then the `NoRelatedSym(146)` repeating
+/// group — each entry a `Symbol(55)` plus `SecurityType(167)` / `Currency(15)`
+/// where known — closed by `LastFragment(893)=Y`. The whole universe is emitted
+/// as a single (final) fragment.
+#[must_use]
+pub fn build_security_list(
+    hdr: &Header<'_>,
+    p: &SecurityListParams<'_>,
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
+    enc.clear();
+    hdr.encode(MsgType::SecurityList, enc);
+    enc.push(320, p.security_req_id);
+    enc.push_int(560, i64::from(SECURITY_REQUEST_RESULT_VALID));
+    enc.push_int(393, p.securities.len() as i64);
+    enc.push_int(146, p.securities.len() as i64);
+    for def in p.securities {
+        enc.push(55, &def.symbol);
+        if !def.security_type.is_empty() {
+            enc.push(167, &def.security_type);
+        }
+        if !def.currency.is_empty() {
+            enc.push(15, &def.currency);
+        }
+    }
+    enc.push(893, LAST_FRAGMENT_YES);
+    enc.finish()
+}
+
 /// Exercise style as carried by the dialect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExerciseStyle {

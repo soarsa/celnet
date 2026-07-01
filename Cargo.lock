@@ -409,6 +409,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-bond"
+version = "0.0.0"
+dependencies = [
+ "celnet-calendar",
+ "celnet-rates",
+ "celnet-types",
+ "time",
+]
+
+[[package]]
 name = "celnet-calendar"
 version = "0.0.0"
 dependencies = [
