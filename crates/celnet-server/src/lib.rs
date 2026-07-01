@@ -116,9 +116,11 @@ use celnet_proto::risk_service_server::RiskServiceServer;
 use celnet_proto::stream_service_server::StreamServiceServer;
 use celnet_proto::surface_service_server::SurfaceServiceServer;
 
+use config::consistency::ConsistencyPolicy;
 use config::fix_connections::FixConnectionStore;
 use config::identity::IdentityStore;
 use services::auth::AuthEdge;
+use services::consensus::{ConsensusBoot, ConsensusHandle, boot_if_strong_async};
 use services::fix::{FixAcceptor, FixContext};
 use services::fix_admin::FixAdminEdge;
 use services::fix_monitor::FixMonitor;
@@ -220,6 +222,11 @@ pub struct Edge {
     /// prices a pinned request against. Absent (the `Standalone` default) ⇒ no feed and
     /// no governor are bound and the edge is byte-identical to today.
     vendor_feed: Option<services::deploy::VendorFeed>,
+    /// The optional activated consistency tier (ADR-0015): `Some` iff a `Strong`-tier
+    /// book was configured and Raft was booted at start. Held so the node's serve / tick
+    /// threads are torn down with the edge (its `Drop` stops them on the last `Arc`);
+    /// `None` (the pure-`Local` default) means no consensus node was ever bound.
+    consensus: Option<Arc<ConsensusHandle>>,
 }
 
 impl Edge {
@@ -561,6 +568,31 @@ impl Edge {
         for d in &identity_store.desks {
             store.configure_desk(&d.id, &d.books);
         }
+
+        // ADR-0015 §2.1: activate the configurable consistency tier — Raft **wired
+        // everywhere but forced nowhere**. A `RaftNode` is booted ONLY when a
+        // `Strong`-tier book / desk / tenant is configured (else zero overhead: a
+        // pure-`Local` fleet is byte-identical to the single-node fast path). The
+        // resolved handle is shared by the FX + rates position sinks; a `Strong` book's
+        // ms-scale quorum commit runs on this async booking / state tier, NEVER on the
+        // pinned pricing thread (§4.3). The `book → desk` membership is folded in first
+        // so a book inherits its desk's level in the cascade. Raft peers come from the
+        // dedicated transport knob (`CELNET_RAFT_PEERS`); `InProcess` (the default) boots
+        // an inert single-node group. The blocking boot (socket bind + bounded leader
+        // wait) runs off the reactor.
+        let mut consistency = ConsistencyPolicy::from_env();
+        for d in &identity_store.desks {
+            for b in &d.books {
+                consistency.map_book_to_desk(b.clone(), d.id.clone());
+            }
+        }
+        let consensus =
+            boot_if_strong_async(consistency, ConsensusBoot::from_env(data_dir)).await?;
+        if let Some(handle) = &consensus {
+            store.set_consensus(Arc::clone(handle));
+            rates_store.set_consensus(Arc::clone(handle));
+        }
+
         let auth_edge = Arc::new(AuthEdge::new(
             Arc::new(std::sync::Mutex::new(identity_store)),
             identity_path,
@@ -688,6 +720,7 @@ impl Edge {
             fix_registry,
             fix_monitor,
             vendor_feed,
+            consensus,
         })
     }
 
@@ -825,6 +858,14 @@ impl Edge {
     #[must_use]
     pub fn store(&self) -> &Arc<PositionStore> {
         &self.store
+    }
+
+    /// The activated consistency tier (ADR-0015), if one was booted (`Some` iff a
+    /// `Strong`-tier book was configured at start). Exposes the leader/commit state for
+    /// an ops probe or a test; `None` is the pure-`Local` default.
+    #[must_use]
+    pub fn consensus(&self) -> Option<&Arc<ConsensusHandle>> {
+        self.consensus.as_ref()
     }
 
     /// Gracefully drain and stop the edge for a blue-green cutover (§5).

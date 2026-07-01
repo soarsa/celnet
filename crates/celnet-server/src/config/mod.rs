@@ -8,5 +8,6 @@
 //! * [`identity`] — the operator users and desks (`AuthService` + the GUI Admin
 //!   workspace), with Argon2id-hashed passwords and a seeded default admin.
 
+pub mod consistency;
 pub mod fix_connections;
 pub mod identity;

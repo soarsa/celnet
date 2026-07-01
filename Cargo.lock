@@ -856,6 +856,7 @@ dependencies = [
  "celnet-plugin-host",
  "celnet-proto",
  "celnet-rates",
+ "celnet-replog",
  "celnet-rfq",
  "celnet-risk-cube",
  "celnet-risk-fleet",

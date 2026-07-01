@@ -43,8 +43,10 @@
 //! sensitivities, not a vanilla proxy (guardrail #2).
 
 use std::collections::HashMap;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
+
+use crate::services::consensus::{ConsensusHandle, fx_book_key};
 
 use celnet_entitlements::AccessMode;
 use celnet_proto::{AttributionRecord, BookId, Owner, owner};
@@ -158,6 +160,14 @@ pub struct PositionStore {
     /// the gRPC server, the WS mirror and a federating frontend all read one
     /// coherent policy, lock-free per request.
     permissive_access: AtomicBool,
+    /// The optional activated consistency tier (ADR-0015 §2.1). `Some` only when a
+    /// `Strong`-tier book is configured and Raft was booted at edge start. A booking
+    /// whose book resolves to [`ConsistencyLevel`](crate::config::consistency::ConsistencyLevel)`::Strong`
+    /// routes its authoritative write through the quorum log here **before** the local
+    /// apply; a `Local` book (the default) never touches it, so the fast path stays
+    /// byte-identical. Set once at boot and read on the async booking tier only — never
+    /// the pinned pricing thread (§4.3).
+    consensus: OnceLock<Arc<ConsensusHandle>>,
 }
 
 #[derive(Debug, Default)]
@@ -196,7 +206,29 @@ impl PositionStore {
         Self {
             inner: RwLock::new(StoreInner::default()),
             permissive_access: AtomicBool::new(false),
+            consensus: OnceLock::new(),
         }
+    }
+
+    /// Attach the activated consistency tier (ADR-0015 §2.1). Called once at edge boot
+    /// (`Edge::start_on_with_topology`) after Raft is booted, when at least one book is
+    /// configured `Strong`. Idempotent-once (a second call is ignored). A store never
+    /// given a handle — the pure-`Local` default — is byte-identical to today.
+    pub fn set_consensus(&self, handle: Arc<ConsensusHandle>) {
+        let _ = self.consensus.set(handle);
+    }
+
+    /// The builder form of [`Self::set_consensus`] for a store constructed inline.
+    #[must_use]
+    pub fn with_consensus(self, handle: Arc<ConsensusHandle>) -> Self {
+        let _ = self.consensus.set(handle);
+        self
+    }
+
+    /// The attached consistency tier, if any.
+    #[must_use]
+    pub fn consensus(&self) -> Option<&Arc<ConsensusHandle>> {
+        self.consensus.get()
     }
 
     /// The entitlements trust-boundary [`AccessMode`] guarding this book — read
@@ -245,6 +277,9 @@ impl PositionStore {
             // Carried for coherence; a staged store only ever backs the
             // post-boundary `*_impl` internals, which no longer re-authorize.
             permissive_access: AtomicBool::new(self.permissive_access.load(Ordering::Relaxed)),
+            // A staged federation-union view is transient and never the must-order
+            // writer, so it never replicates (ADR-0015 §4.3 single-writer discipline).
+            consensus: OnceLock::new(),
         }
     }
 
@@ -557,6 +592,28 @@ impl PositionStore {
                 result.decision
             }
         };
+        // ADR-0015 §2.1: a book configured `Strong` routes its authoritative write
+        // through the Raft quorum log BEFORE the local apply — linearizable,
+        // quorum-replicated, zero-data-loss. The level is resolved once, off the hot
+        // path, from the book name the booking carries (its attribution). A `Local` book
+        // (the default) skips this entirely, so the fast path below stays byte-identical.
+        // The must-order state replicated is the position's signed economic size
+        // (`notional_base`) — the derived mark is regenerable per §4.3 and deliberately
+        // NOT quorum-logged. A quorum that cannot commit refuses the booking (the store
+        // is left unmutated) rather than degrading a `Strong` book to un-replicated
+        // durability. This runs on the async booking tier, never the pricing thread.
+        if let Some(consensus) = self.consensus.get() {
+            let book_name = attribution
+                .as_ref()
+                .and_then(|a| a.held_by.as_ref().or(a.quoted_by.as_ref()))
+                .map(|b| b.book.as_str())
+                .unwrap_or_default();
+            if consensus.level_for_book(book_name).is_strong() {
+                consensus
+                    .commit_book_write(fx_book_key(booked.position_id), booked.notional_base)?;
+            }
+        }
+
         // Within limit (accept) or soft warn: take the write lock only for the mutation —
         // the same insert `upsert` does. The read guard above is already released.
         let mut g = self.inner.write().expect("position store lock poisoned");

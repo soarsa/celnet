@@ -26,8 +26,10 @@
 // house convention (see `services::quote` / `services::desk`), not boxed per call.
 #![allow(clippy::result_large_err)]
 
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
+
+use crate::services::consensus::{ConsensusHandle, rates_book_key};
 
 use celnet_limits::{
     IncrementalTrade, LimitScope, LimitSpec, LimitTree, NonAdditiveExposure, PreTradeDecision,
@@ -59,6 +61,13 @@ pub struct RatesPositionStore {
     /// tree makes [`RatesPositionStore::book`] byte-identical to the pre-gate store
     /// (every booking accepts) until an admin path sets a cap.
     limits: RwLock<LimitTree>,
+    /// The optional activated consistency tier (ADR-0015 §2.1), shared with the FX
+    /// [`PositionStore`](super::risk::store::PositionStore) (one booted node backs both
+    /// books, keyed into disjoint ranges by [`rates_book_key`]). A rates cell whose
+    /// numeric book id resolves to `Strong` routes its authoritative write through the
+    /// quorum log **before** the local apply; a `Local` cell (the default) never touches
+    /// it, so the fast path stays byte-identical. Off the pinned pricing thread (§4.3).
+    consensus: OnceLock<Arc<ConsensusHandle>>,
 }
 
 impl Default for RatesPositionStore {
@@ -75,7 +84,29 @@ impl RatesPositionStore {
             inner: RwLock::new(Vec::new()),
             next_id: AtomicU64::new(1),
             limits: RwLock::new(LimitTree::new()),
+            consensus: OnceLock::new(),
         }
+    }
+
+    /// Attach the activated consistency tier (ADR-0015 §2.1) — the SAME handle the FX
+    /// [`PositionStore`](super::risk::store::PositionStore) holds. Called once at edge
+    /// boot; a store never given a handle (the pure-`Local` default) is byte-identical to
+    /// today. Idempotent-once.
+    pub fn set_consensus(&self, handle: Arc<ConsensusHandle>) {
+        let _ = self.consensus.set(handle);
+    }
+
+    /// The builder form of [`Self::set_consensus`] for a store constructed inline.
+    #[must_use]
+    pub fn with_consensus(self, handle: Arc<ConsensusHandle>) -> Self {
+        let _ = self.consensus.set(handle);
+        self
+    }
+
+    /// The attached consistency tier, if any.
+    #[must_use]
+    pub fn consensus(&self) -> Option<&Arc<ConsensusHandle>> {
+        self.consensus.get()
     }
 
     /// Configure a limit at a linear-rates org scope (admin / setup path). A rates
@@ -126,6 +157,27 @@ impl RatesPositionStore {
                 if result.decision == PreTradeDecision::Reject {
                     return Err(limit_breached_status(&result));
                 }
+            }
+        }
+
+        // ADR-0015 §2.1: a rates cell whose numeric book id is configured `Strong`
+        // routes its authoritative write through the Raft quorum log BEFORE the local
+        // apply. Resolved once, off the hot path, from the cell's book id (the only
+        // identifier a linear-rates cell carries). The id is assigned up front for a
+        // Strong write so the replicated key is stable; the must-order state replicated
+        // is the position's signed linear PV01 (`rates_linear_exposure`) — the derived
+        // mark is regenerable (§4.3) and not quorum-logged. A `Local` cell (the default)
+        // skips this, keeping today's under-lock id assignment and byte-identical path.
+        if let Some(consensus) = self.consensus.get() {
+            let level = consensus.level_for_rates_book(position.book);
+            if level.is_strong() {
+                if position.position_id == 0 {
+                    position.position_id = self.next_id.fetch_add(1, Ordering::Relaxed);
+                }
+                consensus.commit_book_write(
+                    rates_book_key(position.position_id),
+                    rates_linear_exposure(&position),
+                )?;
             }
         }
 
