@@ -506,8 +506,16 @@ impl PositionStore {
     /// * [`PreTradeDecision::Warn`] (a **soft** limit) and [`PreTradeDecision::Accept`]
     ///   both book, the `Warn` carrying the amber/red RAG for the audit trail.
     ///
-    /// The check + insert run under the **same** write lock, so two concurrent
-    /// bookings cannot each pass an individually-clean check and jointly breach.
+    /// The projection runs over a **read** snapshot and the write lock is then taken
+    /// only for the O(1) mutation — the exclusive lock is never held across the
+    /// O(#facts) cube build, so one fill never serialises every other booking behind
+    /// its own limit projection (guardrails #6/#11: the sink scales to an IB-sized hot
+    /// book). The narrow window between the snapshot check and the write is the standard
+    /// pre-trade TOCTOU: a hard breach still rejects **before** any mutation (the
+    /// load-bearing invariant holds), and two fills that individually clear a near-full
+    /// hard cap but jointly cross it are caught by the post-trade limit monitor
+    /// ([`super::RiskEdge`]'s `LimitStatus` RAG), exactly as production pre-trade gates
+    /// resolve throughput vs. strict serialisation.
     ///
     /// # Errors
     /// `invalid_argument` if `booked.position_id` does not fit a `u32` cube handle or
@@ -518,35 +526,40 @@ impl PositionStore {
         key: FactKey,
         attribution: Option<AttributionRecord>,
     ) -> Result<PreTradeDecision, tonic::Status> {
-        // Canonicalize off-lock (pure, convention-free) so the write lock is held only
-        // for the check + insert. The key is cloned into the fact; the original drives
-        // the pre-trade scope resolution below.
+        // Canonicalize off-lock (pure, convention-free). The key is cloned into the fact;
+        // the original drives the pre-trade scope resolution below.
         let (position, leaf, fact) = canonical_vanilla_fact(&booked, key.clone())?;
         let handle = fact.position_id.0;
 
-        let mut g = self.inner.write().expect("position store lock poisoned");
-        // Pre-trade gate under the write lock, before any mutation, so a hard breach can
-        // never book. Skipped when no limit is configured (the empty-tree default keeps
-        // the sink byte-identical to the pre-gate booking path, and avoids building a
-        // cube on every fill when the desk has set no caps).
-        let decision = if g.limits.is_empty() {
-            PreTradeDecision::Accept
-        } else {
-            let result = project_pre_trade(
-                &g.facts,
-                &g.limits,
-                &g.hierarchy,
-                &position,
-                &leaf,
-                key,
-                handle,
-            );
-            if result.decision == PreTradeDecision::Reject {
-                return Err(limit_breached_status(&result));
+        // Pre-trade gate over a READ snapshot, BEFORE acquiring the write lock, so a hard
+        // breach can never book AND the O(#facts) cube projection never runs while the
+        // exclusive write lock is held (guardrails #6/#11 — a fill never serialises every
+        // other booking behind its own limit projection). Skipped when no limit is
+        // configured (the empty-tree default keeps the sink byte-identical to the pre-gate
+        // booking path and builds no cube on a fill when the desk has set no caps).
+        let decision = {
+            let g = self.inner.read().expect("position store lock poisoned");
+            if g.limits.is_empty() {
+                PreTradeDecision::Accept
+            } else {
+                let result = project_pre_trade(
+                    &g.facts,
+                    &g.limits,
+                    &g.hierarchy,
+                    &position,
+                    &leaf,
+                    key,
+                    handle,
+                );
+                if result.decision == PreTradeDecision::Reject {
+                    return Err(limit_breached_status(&result));
+                }
+                result.decision
             }
-            result.decision
         };
-        // Within limit (accept) or soft warn: perform the same insert `upsert` does.
+        // Within limit (accept) or soft warn: take the write lock only for the mutation —
+        // the same insert `upsert` does. The read guard above is already released.
+        let mut g = self.inner.write().expect("position store lock poisoned");
         if let Some(slot) = g
             .facts
             .iter_mut()

@@ -107,17 +107,21 @@ impl RatesPositionStore {
     /// # Errors
     /// `failed_precondition` when a **hard** limit would be breached.
     pub fn book(&self, mut position: RatesPosition) -> Result<RatesPosition, tonic::Status> {
-        let mut g = self
-            .inner
-            .write()
-            .expect("rates position store lock poisoned");
-
-        // Pre-trade limit gate (ADR-0016 A1) — checked under the write lock, before any
-        // mutation, so a hard breach can never book. Skipped when no limit is set (the
-        // empty-tree default keeps the store byte-identical to the pre-gate behaviour).
+        // Pre-trade limit gate (ADR-0016 A1) over a READ snapshot, BEFORE the write lock,
+        // so a hard breach can never book and the projection never runs while the exclusive
+        // write lock is held (guardrails #6/#11 — a fill never serialises the whole book
+        // behind its own limit projection). Skipped when no limit is set (the empty-tree
+        // default keeps the store byte-identical to the pre-gate behaviour). The narrow
+        // snapshot→write window is the standard pre-trade TOCTOU: a hard breach still
+        // rejects here and leaves the book unmutated, the post-trade limit monitor
+        // backstopping any concurrent joint breach.
         {
             let limits = self.limits.read().expect("rates limit tree lock poisoned");
             if !limits.is_empty() {
+                let g = self
+                    .inner
+                    .read()
+                    .expect("rates position store lock poisoned");
                 let result = rates_pre_trade(&g, &limits, &position);
                 if result.decision == PreTradeDecision::Reject {
                     return Err(limit_breached_status(&result));
@@ -125,6 +129,10 @@ impl RatesPositionStore {
             }
         }
 
+        let mut g = self
+            .inner
+            .write()
+            .expect("rates position store lock poisoned");
         if position.position_id == 0 {
             position.position_id = self.next_id.fetch_add(1, Ordering::Relaxed);
         } else {
