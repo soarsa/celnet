@@ -2493,8 +2493,9 @@ fn price_instrument_lsv(
 }
 
 /// A stable, purpose-named label for a product oneof variant (for clear error
-/// messages when an unsupported model is selected).
-fn product_name(product: &instrument::Product) -> &'static str {
+/// messages when an unsupported model is selected, and for the edge quote log's
+/// instrument summary — [`crate::services::quote`]).
+pub(crate) fn product_name(product: &instrument::Product) -> &'static str {
     match product {
         instrument::Product::Vanilla(_) => "vanilla",
         instrument::Product::Strategy(_) => "strategy",

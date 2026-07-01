@@ -495,6 +495,78 @@ fn accept_key_mismatch(quote_id: u64) -> Status {
     ))
 }
 
+/// A stable, log-safe label for the caller that requested a quote: an
+/// authenticated user's email, else `anonymous` (the permissive demo path).
+/// **Never** logs a session token.
+fn requester_label(caller: &ResolvedCaller) -> String {
+    caller
+        .user()
+        .map(|u| u.email.clone())
+        .unwrap_or_else(|| "anonymous".to_owned())
+}
+
+/// A cheap, human-readable one-line instrument summary for the structured quote
+/// log — asset class + symbol + product family + tenor (+ the vanilla
+/// strike/type for the common FX case).
+///
+/// Built at the request EDGE where allocation is fine; it is never constructed on
+/// the pinned zero-alloc pricing hot core.
+fn summarize_instrument(instrument: Option<&celnet_proto::Instrument>) -> String {
+    let Some(inst) = instrument else {
+        return "<none>".to_owned();
+    };
+    let (asset, symbol) = underlying_label(inst.underlying.as_ref());
+    let product = inst
+        .product
+        .as_ref()
+        .map_or("<none>", crate::pricer::product_name);
+    let tenor = format!("{:.4}y", inst.expiry_years);
+    let detail = vanilla_detail(inst.product.as_ref());
+    format!("{asset}:{symbol} {product} {tenor}{detail}")
+}
+
+/// The asset-class tag + symbol of an instrument's underlying: rendered fully for
+/// the first-class FX arm, and coarsely (asset tag only) for the cross-asset arms
+/// (whose exact symbol is not needed to make a quote log investigable).
+fn underlying_label(underlying: Option<&celnet_proto::Underlying>) -> (&'static str, String) {
+    let Some(u) = underlying else {
+        return ("none", String::new());
+    };
+    if let Some(p) = u.as_fx() {
+        ("fx", format!("{}{}", p.base, p.quote))
+    } else if u.as_metal().is_some() {
+        ("metal", String::new())
+    } else if u.as_equity().is_some() {
+        ("equity", String::new())
+    } else if u.as_commodity().is_some() {
+        ("commodity", String::new())
+    } else if u.as_digital_asset().is_some() {
+        ("crypto", String::new())
+    } else {
+        ("?", String::new())
+    }
+}
+
+/// The ` type@strike` detail for a plain vanilla (the common FX case); empty for
+/// every other product family (whose shape the `product` family label already
+/// conveys). A delta-specified strike is not resolved here (that is the pricer's
+/// job) — the family label plus the `call`/`put` suffix keep the summary cheap.
+fn vanilla_detail(product: Option<&celnet_proto::instrument::Product>) -> String {
+    use celnet_proto::instrument::Product;
+    let Some(Product::Vanilla(v)) = product else {
+        return String::new();
+    };
+    let opt = match celnet_proto::OptionType::try_from(v.option_type) {
+        Ok(celnet_proto::OptionType::Call) => "call",
+        Ok(celnet_proto::OptionType::Put) => "put",
+        _ => "?",
+    };
+    match v.strike.as_ref().and_then(|s| s.spec.as_ref()) {
+        Some(celnet_proto::strike_or_delta::Spec::Strike(k)) => format!(" {opt}@{k}"),
+        _ => format!(" {opt}"),
+    }
+}
+
 #[tonic::async_trait]
 impl QuoteService for QuoteEdge {
     async fn request_quote(
@@ -523,6 +595,19 @@ impl QuoteService for QuoteEdge {
             req.correlation_id,
         )?;
         let requester = caller_binding(&caller);
+
+        // Structured quote-request edge event (allocation-OK edge; never the hot
+        // core). Records WHO asked, the idempotency key, and a cheap instrument
+        // summary so LOGIN→QUOTE activity is investigable. No token is logged.
+        let requester_disp = requester_label(&caller);
+        let instrument_summary = summarize_instrument(req.instrument.as_ref());
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            requester = %requester_disp,
+            idempotency_key = %req.idempotency_key,
+            instrument = %instrument_summary,
+            "quote requested"
+        );
 
         // Distributed: forward RequestQuote to the backend that owns the instrument's
         // pair, record `quote_id → issuing backend` so the matching accept/reject
@@ -561,6 +646,21 @@ impl QuoteService for QuoteEdge {
                     req.instrument.as_ref(),
                     req.conventions.as_ref(),
                 ) {
+                    let (bid, offer) = rec
+                        .quote
+                        .price
+                        .as_ref()
+                        .map_or((f64::NAN, f64::NAN), |p| (p.bid, p.offer));
+                    tracing::info!(
+                        class = celnet_observability::LogClass::Security.label(),
+                        requester = %requester_disp,
+                        idempotency_key = %req.idempotency_key,
+                        quote_id = rec.quote.quote_id,
+                        bid,
+                        offer,
+                        replay = true,
+                        "quote returned"
+                    );
                     return Ok(Response::new(rec.quote.clone()));
                 }
                 return Err(idempotency_conflict(&req.idempotency_key));
@@ -589,8 +689,19 @@ impl QuoteService for QuoteEdge {
             &instrument,
             &market,
         )?;
-        let priced = price_instrument(&instrument, &effective_market, &conv)
-            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+        let priced = match price_instrument(&instrument, &effective_market, &conv) {
+            Ok(priced) => priced,
+            Err(e) => {
+                tracing::warn!(
+                    class = celnet_observability::LogClass::Security.label(),
+                    requester = %requester_disp,
+                    idempotency_key = %req.idempotency_key,
+                    reason = %e,
+                    "quote rejected"
+                );
+                return Err(Status::invalid_argument(e.to_string()));
+            }
+        };
 
         let two_way = self.spread.two_way(priced.greeks.price, &priced.greeks);
 
@@ -652,6 +763,19 @@ impl QuoteService for QuoteEdge {
             }
         }
 
+        let (bid, offer) = quote
+            .price
+            .as_ref()
+            .map_or((f64::NAN, f64::NAN), |p| (p.bid, p.offer));
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            requester = %requester_disp,
+            idempotency_key = %req.idempotency_key,
+            quote_id = quote.quote_id,
+            bid,
+            offer,
+            "quote returned"
+        );
         Ok(Response::new(quote))
     }
 
@@ -809,6 +933,17 @@ impl QuoteService for QuoteEdge {
             correlation_id,
             surface_version: quote.surface_version,
         };
+        // Panel RESULT edge event: the inner `request_quote` already logged the
+        // "quote requested"/"quote returned" pair for the native line; this records
+        // the aggregated panel outcome (breadth + the ranked touch winners).
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            quote_id = multi.quote_id,
+            dealers = multi.dealers.len(),
+            best_bid_lp = %multi.best_bid_lp_id,
+            best_offer_lp = %multi.best_offer_lp_id,
+            "multi-dealer panel returned"
+        );
         Ok(Response::new(multi))
     }
 

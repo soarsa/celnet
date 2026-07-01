@@ -233,6 +233,16 @@ impl AuthService for AuthEdge {
         // parallelized guesser cannot keep spending Argon2 verifications.
         let email_key = req.email.trim().to_ascii_lowercase();
         if let Some(retry_secs) = self.throttle.locked_for(&email_key) {
+            // Security-relevant: an email under active brute-force lockout. The
+            // external contract is unchanged (`resource_exhausted`); the precise
+            // internal reason is recorded for investigation.
+            tracing::warn!(
+                class = celnet_observability::LogClass::Security.label(),
+                email = %email_key,
+                reason = "rate_limited",
+                retry_secs,
+                "login failed"
+            );
             return Err(Status::resource_exhausted(format!(
                 "too many failed login attempts; retry in {retry_secs}s"
             )));
@@ -248,19 +258,35 @@ impl AuthService for AuthEdge {
         // Verify off the async worker. To blunt user-enumeration timing, an absent
         // (or disabled) account still runs a verification against a fixed dummy
         // hash, so the response time does not reveal whether the email exists.
-        let (authed_user, ok) = match candidate {
-            Some(u) if !u.disabled => {
-                let ok = verify_async(u.password_hash.clone(), req.password.clone()).await;
-                (Some(u), ok)
-            }
-            _ => {
+        //
+        // `fail_reason` records the PRECISE internal cause for the security log
+        // while the external error below stays a single opaque
+        // `unauthenticated` (anti-enumeration): the client cannot tell an unknown
+        // email from a bad password, but an operator can.
+        let (authed_user, ok, fail_reason): (Option<UserDef>, bool, &'static str) = match candidate {
+            Some(u) if u.disabled => {
                 let _ = verify_async(dummy_hash().to_string(), req.password.clone()).await;
-                (None, false)
+                (None, false, "disabled")
+            }
+            Some(u) => {
+                let ok = verify_async(u.password_hash.clone(), req.password.clone()).await;
+                let reason = if ok { "ok" } else { "bad_password" };
+                (Some(u), ok, reason)
+            }
+            None => {
+                let _ = verify_async(dummy_hash().to_string(), req.password.clone()).await;
+                (None, false, "unknown_user")
             }
         };
 
         let Some(user) = authed_user.filter(|_| ok) else {
             self.throttle.record_failure(&email_key);
+            tracing::warn!(
+                class = celnet_observability::LogClass::Security.label(),
+                email = %email_key,
+                reason = fail_reason,
+                "login failed"
+            );
             return Err(Status::unauthenticated("invalid email or password"));
         };
         self.throttle.record_success(&email_key);
@@ -275,6 +301,16 @@ impl AuthService for AuthEdge {
                 role_base.clone(),
             ))
             .map_err(|e| Status::internal(format!("issue session: {e}")))?;
+        // Successful authentication is a security-relevant event. The session
+        // TOKEN is never logged (only its expiry); the resolved role is recorded
+        // so an operator can see which authority was minted.
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            email = %user.email,
+            role = role_label(user.role),
+            session_expires_nanos = issued.expires_nanos,
+            "login succeeded"
+        );
         Ok(Response::new(LoginResponse {
             session_token: issued.token,
             user: Some(user_to_wire(&user)),
@@ -293,7 +329,16 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+        // Resolve the actor before ending the session so the security log can
+        // attribute the logout by email; the token value itself is never logged.
+        let actor_email = self.sessions.validate(&req.session_token).map(|u| u.email);
         let ended = self.sessions.logout(&req.session_token);
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            email = actor_email.as_deref(),
+            ended,
+            "logout"
+        );
         Ok(Response::new(LogoutResponse {
             ended,
             correlation_id: req.correlation_id,
@@ -322,7 +367,7 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        let actor = self.require_admin(&req.session_token)?;
 
         let email = req.email.trim().to_string();
         if !valid_email(&email) {
@@ -370,6 +415,13 @@ impl AuthService for AuthEdge {
         let mut next = guard.clone();
         next.users.push(new_user.clone());
         self.persist_and_commit(&mut guard, next)?;
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            actor = %actor.email,
+            target_email = %new_user.email,
+            role = role_label(new_user.role),
+            "admin created user"
+        );
         Ok(Response::new(CreateUserResponse {
             user: Some(user_to_wire(&new_user)),
             correlation_id: req.correlation_id,
@@ -383,7 +435,7 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        let actor = self.require_admin(&req.session_token)?;
 
         let display_name = req.display_name.trim().to_string();
         if display_name.is_empty() {
@@ -439,6 +491,15 @@ impl AuthService for AuthEdge {
         if authority_changed {
             self.sessions.revoke_user(&updated.id);
         }
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            actor = %actor.email,
+            target_email = %updated.email,
+            role = role_label(updated.role),
+            disabled = updated.disabled,
+            authority_changed,
+            "admin updated user"
+        );
         Ok(Response::new(UpdateUserResponse {
             user: Some(user_to_wire(&updated)),
             correlation_id: req.correlation_id,
@@ -452,7 +513,7 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        let actor = self.require_admin(&req.session_token)?;
 
         let mut guard = self.lock();
         let Some(target) = guard.user(&req.id).cloned() else {
@@ -472,6 +533,13 @@ impl AuthService for AuthEdge {
         drop(guard);
 
         self.sessions.revoke_user(&req.id);
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            actor = %actor.email,
+            target_email = %target.email,
+            target_user_id = %req.id,
+            "admin deleted user"
+        );
         Ok(Response::new(DeleteUserResponse {
             removed: true,
             correlation_id: req.correlation_id,
@@ -485,13 +553,18 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        let actor = self.require_admin(&req.session_token)?;
 
         check_password_strength(&req.new_password)?;
-        // Confirm the target exists before paying for a hash.
-        if self.lock().user(&req.id).is_none() {
-            return Err(Status::not_found(format!("no user with id `{}`", req.id)));
-        }
+        // Confirm the target exists before paying for a hash, capturing its email
+        // for the security log (the new password is NEVER logged).
+        let target_email = {
+            let store = self.lock();
+            match store.user(&req.id) {
+                Some(u) => u.email.clone(),
+                None => return Err(Status::not_found(format!("no user with id `{}`", req.id))),
+            }
+        };
         let password_hash = hash_async(req.new_password.clone())
             .await
             .map_err(|e| Status::internal(format!("hash password: {e}")))?;
@@ -509,6 +582,12 @@ impl AuthService for AuthEdge {
 
         // Force re-login with the new credential everywhere.
         self.sessions.revoke_user(&req.id);
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            actor = %actor.email,
+            target_email = %target_email,
+            "admin reset user password"
+        );
         Ok(Response::new(ResetPasswordResponse {
             correlation_id: req.correlation_id,
         }))
@@ -1439,6 +1518,15 @@ fn book_to_wire(b: &BookDef) -> BookDesc {
         key: b.key,
         name: b.name.clone(),
         entity_key: b.entity_key,
+    }
+}
+
+/// A stable, human-facing label for a [`Role`] — used as the `role` field in the
+/// security logs (never a bare enum discriminant).
+fn role_label(role: Role) -> &'static str {
+    match role {
+        Role::Admin => "admin",
+        Role::Trader => "trader",
     }
 }
 

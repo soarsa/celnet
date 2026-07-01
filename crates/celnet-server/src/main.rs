@@ -39,6 +39,18 @@ fn addr_from_env(key: &str, default: &str) -> SocketAddr {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Install the structured (line-delimited JSON) tracing subscriber BEFORE any
+    // other work so every edge event — auth logins, RFQ quotes, the seed-admin
+    // security warning, entitlement decisions — reaches stdout. `LogConfig`
+    // defaults to INFO and honours `RUST_LOG` (the deploy runs `RUST_LOG=info`),
+    // so INFO events emit by default. A failed install (a global subscriber
+    // already set by a wrapping harness) is non-fatal: log to stderr and carry on.
+    if let Err(e) =
+        celnet_observability::init_json_subscriber(&celnet_observability::LogConfig::default())
+    {
+        eprintln!("celnet-server: structured logging subscriber not installed ({e}); continuing");
+    }
+
     let grpc_addr = addr_from_env("CELNET_GRPC_ADDR", "127.0.0.1:50051");
     // WS mirror: a fixed port when `CELNET_WS_ADDR` is set (so a reverse proxy can
     // target it), else `{grpc_ip}:0` — an OS-assigned ephemeral port, preserving the
