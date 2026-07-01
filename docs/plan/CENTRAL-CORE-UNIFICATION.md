@@ -172,3 +172,55 @@ The central contract is **sound and largely latent** — the seams (`DiscountCur
 `Priceable`/`MarketResolver`/`RiskMeasure` contract and migrates every class onto it, linear FI
 kept linear. **Phase A is byte-identical and FI-untouching** — the safe, high-confidence first
 step that proves the contract. Recommend: land Phase A, then coordinate B–D with the FI session.
+See §8 for the corrections that revise this.
+
+## 8. Critique incorporated — celnet-verifier verdict: **SOUND-WITH-FIXES**
+
+Adversarial verification confirmed the "already latent" thesis is TRUE and correctly cited (the
+`DiscountCurve` dual-impl, the asset-class-agnostic carry kernel, the shared `PricingEdge`/`RiskEdge`
+/fleet, the additive rate ladders, and `celnet-bond` being unwired all verify against real code).
+But it corrected three over-claims — these SUPERSEDE the optimistic framing above:
+
+- **F1 (HIGH) — the RISK unification is not free (this is the real decision).** §3's original "the
+  non-additive layer re-derives over the union, `RateLadder` is zero-curvature so it's fine" is the
+  **wrong axis**. The existing non-additive VaR/ES/FRTB path (`cube.rs:272,320`) bumps **spot/vol**
+  scenarios and re-prices via `CarryPricer`/`ExoticLegPricer`; a linear FI ladder is neither, and it
+  *does* carry first-order VaR under **rate** shocks the cube cannot compute (FRTB is spot-curvature
+  only — no GIRR bucket). ⇒ full risk unification is **R-a** (build a curve-repricer + rate-scenario
+  /GIRR generator — genuinely NEW machinery) or **R-b** (keep FI tail-risk in its own additive+rate
+  path, co-located behind the unified façade). The **additive** cube unifies now regardless; §3 is
+  corrected to say so. This is the central open decision for the operator.
+- **F2 (HIGH) — Phase A is NOT "pure indirection."** `price_instrument` is a multi-guard cascade
+  (perpetual special-case, LSV refusal, FX two-rate guard, an **LSV booking-model selector → a
+  different engine**, and a **plugin-host runtime `dispatch_live` registry**), and `price_cross_asset`
+  is a hand-match over **five leaf crates** + sub-arms + a delta-key refusal — none engine-shaped like
+  the FX `ProductEngine` unit structs. ⇒ Phase A is re-scoped: **(i)** keep the entire guard/selector
+  cascade verbatim as pre-dispatch, **(ii)** re-seat `Priceable` at the **leaf**, not the dispatch,
+  **(iii)** budget reifying each cross-asset match arm into an engine type, **(iv)** preserve
+  plugin-host dynamic dispatch and the `ExoticLegPricer` VaR seam (do not collapse both pricing seams
+  into one and silently drop exotics from VaR). Byte-identity is still achievable, but it is a
+  leaf-level re-seat, not a free wrap.
+- **F3 (MED) — Phase C deletes the dispatch/RPC surface, not the risk math.** The additive rate-ladder
+  logic *relocates* into the cube (must reproduce `RatesFleetReducer::fan_in_additive` bit-exactly),
+  and under R-a the non-additive FI-VaR is *new* code. So Phase C is net-additive in the risk layer;
+  the genuine deletion is the duplicate dispatch/RPC/edge/fan-out wiring. §5 Phase C is corrected.
+- **F4 (MED) — `MarketResolver` is request/batch-tier only.** Options read a live hot `MarketState`
+  via `ArcSwap`; `MarketResolver::resolve` models per-request resolution (fits FI, request-tier view
+  for options — it does NOT cover the streaming hot path, which keeps its own market). `ResolvedMarket`
+  must also carry `ConventionSet` + the delta-key solver (threaded today as `conv: &ConventionSet`).
+- **F5 (LOW-MED) — DELIVER the ADR-0016 embargo test in Phase A.** The `trybuild`/reflection test
+  asserting no curve handle reaches `MarketState` is an **unbuilt** future deliverable — Phase A must
+  build it, not cite it as an existing guardrail.
+- **F6 (LOW, ties to the ADR-verification mandate) — the ADR corpus is broken.** `docs/adr/` stops at
+  0013 (with 2×0012 + 2×0013 collisions), yet **ADR-0014/0015/0016 are cited 32× in code with NO
+  files** (ADR-0016 is cited as the hot-core embargo authority but does not exist as a document), and
+  ADR-0017 is already referenced 2×. ⇒ this design's ADR is **renumbered pending the ADR-corpus
+  reconciliation** (the parallel knowledge-completeness pass), and the missing ADR-0014..0016 must be
+  written + made lodestar-governing (manage_adr Decision→Deliverable + anchored claims) — not left as
+  dangling citations. This is exactly the "ADRs should be lodestar-verified" gap.
+
+**Revised recommendation.** The PRICING unification (`Priceable`/`MarketResolver` + additive risk) is
+sound, high-value, and Phase-A-byte-identical after the F2 re-scope — proceed. The full RISK-cube
+unification is a genuine fork (R-a new rate-VaR machinery vs R-b co-located façade) that the operator
+should choose before Phase C. Do NOT claim "one cube, delete `RatesFleetReducer`" until R-a is
+designed as new work. Each phase ships its verified lodestar knowledge + a lodestar-governing ADR.
