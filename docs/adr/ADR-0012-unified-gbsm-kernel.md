@@ -156,9 +156,33 @@ deliberate sub-1e-12 rebaseline (correctness unaffected — no oracle loosened):
 - `tests/fx_fit_pin.rs`: the `PINS` table (50 = 5 models × 2 quote sets × 5 strikes),
   re-pinned via its own sanctioned print-then-paste aid.
 
-### 6.3 Unchanged / green
+### 6.3 `celnet-xva` exposure-simulation frozen pins (regenerated)
 
-`celnet-engine`, `celnet-risk-cube`, `celnet-xva`, `celnet-cli`, `celnet-gpu` pass
+`celnet-xva` is **not** in the kernel diff, but `NettedTrade::mark`
+(`crates/celnet-xva/src/netting.rs`) prices each netting-set trade through
+`celnet_vanilla::price`, so the FX-leaf spot→forward re-association propagates into every
+exposure quantity the Monte-Carlo profile derives from those marks. The XVA/survival/
+netting oracles (CVA/DVA/FVA vs independent quadrature, the from-scratch two-rate mark
+re-derivation, survival identities) are **unchanged and green** — none was loosened.
+Regenerated as a deliberate sub-1e-12 rebaseline:
+
+- `tests/closed_form_oracle.rs`: the four exposure frozen-bits arrays
+  (`MIXED_EPE_BITS`/`MIXED_ENE_BITS`/`NET_SHORT_ENE_BITS`; the all-zero
+  `NET_SHORT_EPE_BITS` and the matured `⇒ 0.0` last-node pins are **unchanged**) plus the
+  human-readable decimals. Drift 1–25 ULP (≤ 3e-15 rel). The two **deterministic** node-0
+  marks (`net_value(0,·).max(0)`) were **re-validated ≤1e-12** against the test's own
+  independent from-scratch two-rate closed form (`vanilla_ref`, raw `std`/`erfc`, never
+  `celnet_vanilla`): MIXED epe node 0 rel 2.2e-15, NET_SHORT ene node 0 rel 1.1e-15. The
+  **Monte-Carlo** median pins (MIXED node 4, NET_SHORT node 3 — no closed form) drifted
+  only ≤ 3e-16 rel and `exposure_simulation_is_bit_reproducible` still passes, so they
+  remain regression/mutation guards whose correctness is carried by the oracle-validated
+  mark + averaging logic.
+- `netting_fuzz.rs` carries **no** frozen bit pins (property/invariant assertions only) —
+  unchanged and green.
+
+### 6.4 Unchanged / green
+
+`celnet-engine`, `celnet-risk-cube`, `celnet-cli`, `celnet-gpu` pass
 unchanged (within-path routing, independent oracles, and tolerance gates). Every
 independent-oracle + correctness gate holds at ≤1e-12 across the whole surface. The
 **only** relaxations to 1e-12 are the genuinely-different-parameterisation bit-pins
