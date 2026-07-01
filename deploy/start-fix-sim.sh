@@ -11,12 +11,12 @@
 # What it needs to work (the reason a bare run used to "do nothing"):
 #   * a FIX acceptor must be listening at FIXSIM_HOST:FIXSIM_PORT. The server binds
 #     its acceptors from the MANAGED registry (fix-connections.json, GUI FIX admin) —
-#     the "celer" FX/options venue is 127.0.0.1:51001 (the default here). Do NOT set
-#     CELNET_FIX_ADDR to add a legacy acceptor: it collides with the registry and
-#     aborts the server at boot (EADDRINUSE). If nothing is listening, each attempt
-#     now logs a LOUD, actionable message instead of failing silently.
+#     on the UAT host that is "CELER_FXO_CELNET" at 127.0.0.1:56001 (the default here).
+#     Do NOT set CELNET_FIX_ADDR to add a legacy acceptor: it collides with this
+#     registry acceptor on the same port and aborts the server at boot (EADDRINUSE).
+#     If nothing is listening, each attempt now logs a LOUD, actionable message.
 #   * the CompIDs must line up: the simulator's FIXSIM_SENDER must equal the venue's
-#     accepted counterparty (target_comp_id, "CELNET-CPTY"), and FIXSIM_TARGET must
+#     accepted counterparty (target_comp_id, "CELER_FXO"), and FIXSIM_TARGET must
 #     equal the venue's own CompID (sender_comp_id, "CELNET").
 #
 # Usage:
@@ -34,14 +34,16 @@
 #   FIXSIM_ONESHOT (0) FIXSIM_DAEMON (0)
 set -euo pipefail
 
-# Defaults match the MANAGED FIX acceptor "celer" (FX/options) in fix-connections.json:
-# bind 127.0.0.1:51001, venue SenderCompID CELNET / accepted counterparty CELNET-CPTY.
-# The simulator is the client, so its SenderCompID is the venue's counterparty
-# (CELNET-CPTY) and its TargetCompID is the venue's own CompID (CELNET).
-# (The FI quote venue is 127.0.0.1:9100 — set FIXSIM_PORT=9100 to drive that one.)
+# Defaults match the live MANAGED FIX acceptor on the UAT host, from the runtime
+# registry /home/celnet/fix-connections.json: connection "CELER_FXO_CELNET", kind
+# options, bind_addr 127.0.0.1:56001, sender_comp_id=CELNET, target_comp_id=CELER_FXO.
+# The simulator is the CLIENT, so it presents the venue's counterparty CompID as its
+# SenderCompID (= venue target_comp_id = CELER_FXO) and addresses the venue's own
+# CompID as its TargetCompID (= venue sender_comp_id = CELNET). If the acceptor's
+# bind_addr/CompIDs change in the GUI FIX admin, update these to match.
 FIXSIM_HOST="${FIXSIM_HOST:-127.0.0.1}"
-FIXSIM_PORT="${FIXSIM_PORT:-51001}"
-FIXSIM_SENDER="${FIXSIM_SENDER:-CELNET-CPTY}"
+FIXSIM_PORT="${FIXSIM_PORT:-56001}"
+FIXSIM_SENDER="${FIXSIM_SENDER:-CELER_FXO}"
 FIXSIM_TARGET="${FIXSIM_TARGET:-CELNET}"
 FIXSIM_PERIOD="${FIXSIM_PERIOD:-180}"
 FIXSIM_JITTER="${FIXSIM_JITTER:-60}"
@@ -128,7 +130,7 @@ if preflight; then
 else
   log "WARN: acceptor $FIXSIM_HOST:$FIXSIM_PORT is NOT reachable."
   log "      -> confirm the managed FIX acceptor is enabled (GUI FIX admin / fix-connections.json)"
-  log "         and its bind_addr matches FIXSIM_PORT (celer=51001, FI=9100), then restart the sim."
+  log "         and its bind_addr matches FIXSIM_PORT (CELER_FXO_CELNET=56001), then restart the sim."
   log "      Continuing anyway — each RFQ attempt is logged below so failures are visible."
 fi
 
