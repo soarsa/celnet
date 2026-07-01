@@ -22,7 +22,7 @@
  *                       runnable `Command[]` the palette + Shell dispatch.
  */
 
-import type { CapabilityAction, CapabilityAsset } from "../data/contract";
+import { CAPABILITY_ASSETS, type CapabilityAction, type CapabilityAsset } from "../data/contract";
 import type { Command } from "../components/CommandPalette";
 
 /** Workspace ids the rail exposes (kept in sync with `AppContext.WorkspaceId`). */
@@ -200,6 +200,119 @@ export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
 export function firstAccessibleWorkspace(auth: NavAuth): WorkspaceId | null {
   const entry = RAIL.find((r) => workspaceAccessible(r.id, auth));
   return entry ? entry.id : null;
+}
+
+// ---------------------------------------------------------------------------
+// License gating (DEC-license-gating-and-scope) — the THREE-state rail.
+//
+// Entitlement (`celnet-entitlements`) and commercial LICENSE are DISTINCT gates:
+//   • Not ENTITLED (deny-wins capability / information barrier) ⇒ HIDDEN — a user
+//     denied a capability must not even see it (security; unchanged).
+//   • Not LICENSED (the firm holds no commercial license for the asset class) ⇒
+//     GATED-UPSELL — PRESENT but greyed with a lock + a "license this class"
+//     affordance, so the class stays DISCOVERABLE and can be licensed (per-class
+//     licensing is a first-class product primitive — this supersedes "hide" for
+//     commercial gating).
+//   • Otherwise ⇒ PRESENT.
+// License is a per-ASSET-CLASS flag (a `LicensePredicate`), config-driven and
+// DEFAULTING TO ALL-LICENSED, so the rail is byte-identical to before unless a
+// deployment explicitly gates a class (then, and only then, does gated-upsell
+// appear). Entitlement is evaluated FIRST so an info-barrier hide can never be
+// downgraded into a visible upsell. UX-only: the server still enforces every RPC.
+// ---------------------------------------------------------------------------
+
+/** The three states a rail workspace / domain tab can render in. */
+export type RailState = "present" | "gated-upsell" | "hidden";
+
+/** The affordance title shown on a license-gated (unlicensed) rail entry / tab. */
+export const LICENSE_UPSELL_TITLE = "license this class";
+
+/**
+ * Whether the firm holds a commercial license for an asset class. The default
+ * ({@link ALL_LICENSED}) returns `true` for every class ⇒ no gated-upsell state,
+ * so existing behavior is unchanged until a class is explicitly unlicensed.
+ */
+export type LicensePredicate = (asset: CapabilityAsset) => boolean;
+
+/** The default license predicate: every asset class licensed (no behavior change). */
+export const ALL_LICENSED: LicensePredicate = () => true;
+
+/** Build a license predicate that treats exactly `unlicensed` as NOT licensed. */
+export function makeLicensePredicate(unlicensed: Iterable<CapabilityAsset>): LicensePredicate {
+  const set = new Set(unlicensed);
+  return (asset) => !set.has(asset);
+}
+
+/**
+ * The asset class a domain licenses under, or `null` when the domain has no
+ * commercial-license concept (Administration is admin-gated, never licensed).
+ */
+export function assetOfDomain(domain: Domain): CapabilityAsset | null {
+  switch (domain) {
+    case "fx-options":
+      return "fx_options";
+    case "fixed-income":
+      return "fixed_income";
+    case "administration":
+      return null;
+  }
+}
+
+/** The asset class a workspace licenses under (via its domain), or `null`. */
+export function workspaceAsset(id: WorkspaceId): CapabilityAsset | null {
+  return assetOfDomain(domainOf(id));
+}
+
+/**
+ * The three-state a DOMAIN tab renders in: entitlement-deny ⇒ hidden;
+ * entitled-but-unlicensed ⇒ gated-upsell; else present. With the default
+ * all-licensed predicate this collapses to the legacy two-state (present iff
+ * {@link domainAccessible}).
+ */
+export function domainRailState(
+  domain: Domain,
+  auth: NavAuth,
+  licensed: LicensePredicate = ALL_LICENSED,
+): RailState {
+  if (!domainAccessible(domain, auth)) return "hidden";
+  const asset = assetOfDomain(domain);
+  if (asset !== null && !licensed(asset)) return "gated-upsell";
+  return "present";
+}
+
+/**
+ * The three-state a WORKSPACE rail entry renders in — the per-workspace twin of
+ * {@link domainRailState}: entitlement-deny ⇒ hidden; entitled-but-unlicensed ⇒
+ * gated-upsell; else present. With the default all-licensed predicate this
+ * collapses to the legacy two-state (present iff {@link workspaceAccessible}).
+ */
+export function railState(
+  id: WorkspaceId,
+  auth: NavAuth,
+  licensed: LicensePredicate = ALL_LICENSED,
+): RailState {
+  if (!workspaceAccessible(id, auth)) return "hidden";
+  const asset = workspaceAsset(id);
+  if (asset !== null && !licensed(asset)) return "gated-upsell";
+  return "present";
+}
+
+/**
+ * The license predicate for THIS deployment, read from the config env
+ * `VITE_CELNET_UNLICENSED` (comma/space-separated `CapabilityAsset` ids the firm
+ * is NOT licensed for; unknown tokens ignored). Unset/empty ⇒ {@link ALL_LICENSED}
+ * — every class licensed, so the rail is unchanged unless a deployment opts a
+ * class into the gated-upsell state. Config-driven, mirroring `VITE_CELNET_*`.
+ */
+export function configuredLicense(): LicensePredicate {
+  const raw = (import.meta.env as Record<string, string | undefined>).VITE_CELNET_UNLICENSED;
+  if (!raw) return ALL_LICENSED;
+  const valid = new Set<string>(CAPABILITY_ASSETS);
+  const unlicensed: CapabilityAsset[] = [];
+  for (const tok of raw.split(/[\s,]+/)) {
+    if (valid.has(tok)) unlicensed.push(tok as CapabilityAsset);
+  }
+  return unlicensed.length === 0 ? ALL_LICENSED : makeLicensePredicate(unlicensed);
 }
 
 /**

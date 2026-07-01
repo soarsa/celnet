@@ -77,6 +77,30 @@
   color: var(--text-primary);
 }
 
+/* --- license-gated (unlicensed) rail entries: present, but greyed + locked ---
+ * Three-state rail (DEC-license-gating-and-scope): an entitled-but-unlicensed
+ * asset class stays VISIBLE as an upsell (greyed + lock) rather than hidden, so
+ * the class is discoverable. Entitlement-hidden entries remain absent from the
+ * DOM. The lock is an upsell affordance, not a live nav target — no hover cue. */
+.railLocked {
+  position: relative;
+  color: var(--text-tertiary);
+  opacity: 0.5;
+  cursor: default;
+}
+.railLocked:hover {
+  color: var(--text-tertiary);
+  background: transparent;
+}
+.lockBadge {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: var(--type-micro);
+  line-height: 1;
+  color: var(--text-tertiary);
+}
+
 /* --- top-level domain tab bar --- */
 /* The product-domain tabs (FX Options / Fixed Income / Administration) sit atop
  * the main column. The active tab follows the active workspace; clicking a tab
@@ -121,6 +145,20 @@
 .tabActive {
   color: var(--text-primary);
   border-bottom-color: var(--accent);
+}
+
+/* A license-gated DOMAIN tab: greyed + locked + an upsell, not a jump. */
+.tabLocked {
+  color: var(--text-tertiary);
+  opacity: 0.6;
+  cursor: default;
+}
+.tabLocked:hover {
+  color: var(--text-tertiary);
+}
+.tabLock {
+  margin-left: var(--space-2);
+  font-size: var(--type-micro);
 }
 
 /* --- main column --- */

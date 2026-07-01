@@ -28,8 +28,15 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+// The three.js runtime is code-split OUT of the main bundle: only its TYPES are
+// imported statically (fully erased at build — `verbatimModuleSyntax`), while the
+// runtime module + OrbitControls are `await import(…)`-ed inside the mount effect
+// (fixes the >500KB main-chunk warning). A lightweight loading state shows until
+// they resolve; the public Props and rendered behaviour are unchanged.
+import type * as THREE from "three";
+
+/** The three.js runtime module type (for the lazily-imported values). */
+type ThreeModule = typeof import("three");
 
 /** A vertex to highlight — e.g. an arbitrage-flagged wing (butterfly < 0). */
 export interface VolSurfaceMarker {
@@ -136,15 +143,15 @@ function buildModel(
  * (an `oklch()` string) and normalises it through a 1×1 canvas so the browser
  * gamut-maps it to sRGB bytes, which are handed to `setRGB(..., SRGBColorSpace)`.
  */
-function resolveTokenColor(token: string, fallback: string): THREE.Color {
-  const color = new THREE.Color();
+function resolveTokenColor(three: ThreeModule, token: string, fallback: string): THREE.Color {
+  const color = new three.Color();
   let css = fallback;
   if (typeof document !== "undefined") {
     const v = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
     if (v) css = v;
   }
   if (typeof document === "undefined") {
-    color.setStyle(fallback, THREE.SRGBColorSpace);
+    color.setStyle(fallback, three.SRGBColorSpace);
     return color;
   }
   const canvas = document.createElement("canvas");
@@ -152,14 +159,14 @@ function resolveTokenColor(token: string, fallback: string): THREE.Color {
   canvas.height = 1;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) {
-    color.setStyle(fallback, THREE.SRGBColorSpace);
+    color.setStyle(fallback, three.SRGBColorSpace);
     return color;
   }
   ctx.fillStyle = fallback; // known-parseable seed; kept if `css` is unparseable
   ctx.fillStyle = css; // oklch() → normalised by the browser
   ctx.fillRect(0, 0, 1, 1);
   const data = ctx.getImageData(0, 0, 1, 1).data;
-  color.setRGB((data[0] ?? 0) / 255, (data[1] ?? 0) / 255, (data[2] ?? 0) / 255, THREE.SRGBColorSpace);
+  color.setRGB((data[0] ?? 0) / 255, (data[1] ?? 0) / 255, (data[2] ?? 0) / 255, three.SRGBColorSpace);
   return color;
 }
 
@@ -203,6 +210,8 @@ export function VolSurface3D({
   const mountRef = useRef<HTMLDivElement>(null);
   const reducedMotion = useReducedMotion();
   const [glError, setGlError] = useState<string | null>(null);
+  // False until the code-split three.js runtime resolves; drives the loading state.
+  const [libLoaded, setLibLoaded] = useState(false);
 
   const model = useMemo(() => buildModel(vols, tenors, deltas), [vols, tenors, deltas]);
 
@@ -210,179 +219,211 @@ export function VolSurface3D({
     const mount = mountRef.current;
     if (!mount || !model.ok) return;
 
-    const { grid, nT, nD, vMin, vMax } = model;
-    const vSpan = vMax - vMin || 1;
-    const gain = Number.isFinite(heightGain) && heightGain > 0 ? heightGain : 1;
+    // The heavy three.js runtime + OrbitControls are code-split out of the main
+    // bundle and dynamically imported here on mount; the effect stays sync-return
+    // (React requires a cleanup fn, not a Promise), so the async work runs in an
+    // IIFE and its teardown is captured into `cleanup`, guarded by `disposed`.
+    let disposed = false;
+    let cleanup: (() => void) | null = null;
 
-    // Lazy WebGL init — bail to an honest fallback if the context can't be made.
-    let renderer: THREE.WebGLRenderer;
-    try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    } catch {
-      setGlError("WebGL is unavailable in this environment");
-      return;
-    }
-    renderer.setPixelRatio(Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2));
-    renderer.setSize(width, height);
-    renderer.setClearColor(0x000000, 0);
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.domElement.style.display = "block";
-    renderer.domElement.style.touchAction = "none";
-    mount.appendChild(renderer.domElement);
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
-    camera.position.set(1.9, 1.5, 2.35);
-    camera.lookAt(0, 0, 0);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, 0, 0);
-    controls.enablePan = false;
-    controls.enableZoom = true;
-    controls.minDistance = 1.5;
-    controls.maxDistance = 7;
-    controls.enableDamping = !reducedMotion;
-    controls.dampingFactor = 0.08;
-    controls.update();
-
-    // Neutral white lighting so the Viridis vertex colours read true, only shaded.
-    const ambient = new THREE.AmbientLight(0xffffff, 0.72);
-    const key = new THREE.DirectionalLight(0xffffff, 0.9);
-    key.position.set(2.2, 3.4, 1.8);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.25);
-    fill.position.set(-2.4, 1.2, -1.6);
-    scene.add(ambient, key, fill);
-
-    const disposables: Array<{ dispose: () => void }> = [];
-
-    const seqStops = SEQ_TOKENS.map((tok, i) => resolveTokenColor(tok, SEQ_FALLBACK[i]!));
-    const dangerColor = resolveTokenColor("--danger", "#e5484d");
-    const gridColor = resolveTokenColor("--grid-line", "rgba(255,255,255,0.16)");
-
-    const posOf = (ti: number, di: number, v: number): { x: number; y: number; z: number; h: number } => {
-      const x = (ti / (nT - 1)) * 2 * HALF_X - HALF_X;
-      const z = (di / (nD - 1)) * 2 * HALF_Z - HALF_Z;
-      const h = (v - vMin) / vSpan;
-      const y = (h - 0.5) * HEIGHT_AMP * gain;
-      return { x, y, z, h };
-    };
-
-    // Vertex buffers: position + Viridis vertex colour (height & colour both = vol).
-    const positions: number[] = [];
-    const colors: number[] = [];
-    const scratch = new THREE.Color();
-    for (let ti = 0; ti < nT; ti += 1) {
-      for (let di = 0; di < nD; di += 1) {
-        const v = grid[ti]![di]!;
-        const p = posOf(ti, di, v);
-        positions.push(p.x, p.y, p.z);
-        sampleRamp(seqStops, p.h, scratch);
-        colors.push(scratch.r, scratch.g, scratch.b);
-      }
-    }
-    const indices: number[] = [];
-    const vIndex = (ti: number, di: number): number => ti * nD + di;
-    for (let ti = 0; ti < nT - 1; ti += 1) {
-      for (let di = 0; di < nD - 1; di += 1) {
-        const a = vIndex(ti, di);
-        const b = vIndex(ti + 1, di);
-        const c = vIndex(ti + 1, di + 1);
-        const d = vIndex(ti, di + 1);
-        indices.push(a, b, c, a, c, d);
-      }
-    }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
-    disposables.push(geometry);
-
-    // The lit mesh is always present; it dims under wire/points to give the
-    // overlay context (matches the mockup's layered shaded→wire→points modes).
-    const meshOpacity = mode === "shaded" ? 1 : mode === "wireframe" ? 0.16 : 0.07;
-    const surfaceMat = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      side: THREE.DoubleSide,
-      roughness: 0.68,
-      metalness: 0.03,
-      flatShading: false,
-      transparent: mode !== "shaded",
-      opacity: meshOpacity,
-    });
-    disposables.push(surfaceMat);
-    const surface = new THREE.Mesh(geometry, surfaceMat);
-    scene.add(surface);
-
-    if (mode === "wireframe") {
-      const wireGeo = new THREE.WireframeGeometry(geometry);
-      const wireMat = new THREE.LineBasicMaterial({ color: gridColor, transparent: true, opacity: 0.55 });
-      disposables.push(wireGeo, wireMat);
-      scene.add(new THREE.LineSegments(wireGeo, wireMat));
-    } else if (mode === "points") {
-      const pointMat = new THREE.PointsMaterial({ vertexColors: true, size: 0.07, sizeAttenuation: true });
-      disposables.push(pointMat);
-      scene.add(new THREE.Points(geometry, pointMat));
-    }
-
-    // Arb-flagged vertices: a danger flag (sphere + stem) at each in-range marker.
-    if (markers.length > 0) {
-      const flagMat = new THREE.MeshBasicMaterial({ color: dangerColor });
-      const stemMat = new THREE.LineBasicMaterial({ color: dangerColor, transparent: true, opacity: 0.85 });
-      disposables.push(flagMat, stemMat);
-      let anyFlag = false;
-      for (const m of markers) {
-        if (!Number.isInteger(m.tenorIndex) || m.tenorIndex < 0 || m.tenorIndex >= nT) continue;
-        if (!Number.isInteger(m.deltaIndex) || m.deltaIndex < 0 || m.deltaIndex >= nD) continue;
-        anyFlag = true;
-        const v = grid[m.tenorIndex]![m.deltaIndex]!;
-        const p = posOf(m.tenorIndex, m.deltaIndex, v);
-        const topY = p.y + 0.12;
-        const sphereGeo = new THREE.SphereGeometry(0.035, 16, 16);
-        disposables.push(sphereGeo);
-        const flag = new THREE.Mesh(sphereGeo, flagMat);
-        flag.position.set(p.x, topY, p.z);
-        scene.add(flag);
-        const stemGeo = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(p.x, p.y, p.z),
-          new THREE.Vector3(p.x, topY, p.z),
+    void (async () => {
+      let mods: readonly [ThreeModule, typeof import("three/examples/jsm/controls/OrbitControls.js")];
+      try {
+        mods = await Promise.all([
+          import("three"),
+          import("three/examples/jsm/controls/OrbitControls.js"),
         ]);
-        disposables.push(stemGeo);
-        scene.add(new THREE.Line(stemGeo, stemMat));
+      } catch {
+        if (!disposed) setGlError("3D renderer library failed to load");
+        return;
       }
-      if (!anyFlag) {
-        flagMat.dispose();
-        stemMat.dispose();
-      }
-    }
+      if (disposed) return;
+      const THREE = mods[0];
+      const { OrbitControls } = mods[1];
+      setLibLoaded(true);
 
-    // Draw on demand; run a rAF loop only while damping needs to settle frames.
-    let raf = 0;
-    const renderFrame = (): void => {
-      renderer.render(scene, camera);
-    };
-    const onControlsChange = (): void => renderFrame();
-    if (reducedMotion) {
-      controls.addEventListener("change", onControlsChange);
-      renderFrame();
-    } else {
-      const animate = (): void => {
-        raf = requestAnimationFrame(animate);
-        controls.update();
+      const { grid, nT, nD, vMin, vMax } = model;
+      const vSpan = vMax - vMin || 1;
+      const gain = Number.isFinite(heightGain) && heightGain > 0 ? heightGain : 1;
+
+      // Lazy WebGL init — bail to an honest fallback if the context can't be made.
+      let renderer: THREE.WebGLRenderer;
+      try {
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      } catch {
+        if (!disposed) setGlError("WebGL is unavailable in this environment");
+        return;
+      }
+      renderer.setPixelRatio(Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2));
+      renderer.setSize(width, height);
+      renderer.setClearColor(0x000000, 0);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.domElement.style.display = "block";
+      renderer.domElement.style.touchAction = "none";
+      mount.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+      camera.position.set(1.9, 1.5, 2.35);
+      camera.lookAt(0, 0, 0);
+
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 0, 0);
+      controls.enablePan = false;
+      controls.enableZoom = true;
+      controls.minDistance = 1.5;
+      controls.maxDistance = 7;
+      controls.enableDamping = !reducedMotion;
+      controls.dampingFactor = 0.08;
+      controls.update();
+
+      // Neutral white lighting so the Viridis vertex colours read true, only shaded.
+      const ambient = new THREE.AmbientLight(0xffffff, 0.72);
+      const key = new THREE.DirectionalLight(0xffffff, 0.9);
+      key.position.set(2.2, 3.4, 1.8);
+      const fill = new THREE.DirectionalLight(0xffffff, 0.25);
+      fill.position.set(-2.4, 1.2, -1.6);
+      scene.add(ambient, key, fill);
+
+      const disposables: Array<{ dispose: () => void }> = [];
+
+      const seqStops = SEQ_TOKENS.map((tok, i) => resolveTokenColor(THREE, tok, SEQ_FALLBACK[i]!));
+      const dangerColor = resolveTokenColor(THREE, "--danger", "#e5484d");
+      const gridColor = resolveTokenColor(THREE, "--grid-line", "rgba(255,255,255,0.16)");
+
+      const posOf = (ti: number, di: number, v: number): { x: number; y: number; z: number; h: number } => {
+        const x = (ti / (nT - 1)) * 2 * HALF_X - HALF_X;
+        const z = (di / (nD - 1)) * 2 * HALF_Z - HALF_Z;
+        const h = (v - vMin) / vSpan;
+        const y = (h - 0.5) * HEIGHT_AMP * gain;
+        return { x, y, z, h };
+      };
+
+      // Vertex buffers: position + Viridis vertex colour (height & colour both = vol).
+      const positions: number[] = [];
+      const colors: number[] = [];
+      const scratch = new THREE.Color();
+      for (let ti = 0; ti < nT; ti += 1) {
+        for (let di = 0; di < nD; di += 1) {
+          const v = grid[ti]![di]!;
+          const p = posOf(ti, di, v);
+          positions.push(p.x, p.y, p.z);
+          sampleRamp(seqStops, p.h, scratch);
+          colors.push(scratch.r, scratch.g, scratch.b);
+        }
+      }
+      const indices: number[] = [];
+      const vIndex = (ti: number, di: number): number => ti * nD + di;
+      for (let ti = 0; ti < nT - 1; ti += 1) {
+        for (let di = 0; di < nD - 1; di += 1) {
+          const a = vIndex(ti, di);
+          const b = vIndex(ti + 1, di);
+          const c = vIndex(ti + 1, di + 1);
+          const d = vIndex(ti, di + 1);
+          indices.push(a, b, c, a, c, d);
+        }
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      disposables.push(geometry);
+
+      // The lit mesh is always present; it dims under wire/points to give the
+      // overlay context (matches the mockup's layered shaded→wire→points modes).
+      const meshOpacity = mode === "shaded" ? 1 : mode === "wireframe" ? 0.16 : 0.07;
+      const surfaceMat = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        side: THREE.DoubleSide,
+        roughness: 0.68,
+        metalness: 0.03,
+        flatShading: false,
+        transparent: mode !== "shaded",
+        opacity: meshOpacity,
+      });
+      disposables.push(surfaceMat);
+      const surface = new THREE.Mesh(geometry, surfaceMat);
+      scene.add(surface);
+
+      if (mode === "wireframe") {
+        const wireGeo = new THREE.WireframeGeometry(geometry);
+        const wireMat = new THREE.LineBasicMaterial({ color: gridColor, transparent: true, opacity: 0.55 });
+        disposables.push(wireGeo, wireMat);
+        scene.add(new THREE.LineSegments(wireGeo, wireMat));
+      } else if (mode === "points") {
+        const pointMat = new THREE.PointsMaterial({ vertexColors: true, size: 0.07, sizeAttenuation: true });
+        disposables.push(pointMat);
+        scene.add(new THREE.Points(geometry, pointMat));
+      }
+
+      // Arb-flagged vertices: a danger flag (sphere + stem) at each in-range marker.
+      if (markers.length > 0) {
+        const flagMat = new THREE.MeshBasicMaterial({ color: dangerColor });
+        const stemMat = new THREE.LineBasicMaterial({ color: dangerColor, transparent: true, opacity: 0.85 });
+        disposables.push(flagMat, stemMat);
+        let anyFlag = false;
+        for (const m of markers) {
+          if (!Number.isInteger(m.tenorIndex) || m.tenorIndex < 0 || m.tenorIndex >= nT) continue;
+          if (!Number.isInteger(m.deltaIndex) || m.deltaIndex < 0 || m.deltaIndex >= nD) continue;
+          anyFlag = true;
+          const v = grid[m.tenorIndex]![m.deltaIndex]!;
+          const p = posOf(m.tenorIndex, m.deltaIndex, v);
+          const topY = p.y + 0.12;
+          const sphereGeo = new THREE.SphereGeometry(0.035, 16, 16);
+          disposables.push(sphereGeo);
+          const flag = new THREE.Mesh(sphereGeo, flagMat);
+          flag.position.set(p.x, topY, p.z);
+          scene.add(flag);
+          const stemGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(p.x, p.y, p.z),
+            new THREE.Vector3(p.x, topY, p.z),
+          ]);
+          disposables.push(stemGeo);
+          scene.add(new THREE.Line(stemGeo, stemMat));
+        }
+        if (!anyFlag) {
+          flagMat.dispose();
+          stemMat.dispose();
+        }
+      }
+
+      // Draw on demand; run a rAF loop only while damping needs to settle frames.
+      let raf = 0;
+      const renderFrame = (): void => {
         renderer.render(scene, camera);
       };
-      animate();
-    }
+      const onControlsChange = (): void => renderFrame();
+      if (reducedMotion) {
+        controls.addEventListener("change", onControlsChange);
+        renderFrame();
+      } else {
+        const animate = (): void => {
+          raf = requestAnimationFrame(animate);
+          controls.update();
+          renderer.render(scene, camera);
+        };
+        animate();
+      }
+
+      cleanup = () => {
+        if (raf) cancelAnimationFrame(raf);
+        controls.removeEventListener("change", onControlsChange);
+        controls.dispose();
+        for (const d of disposables) d.dispose();
+        renderer.dispose();
+        renderer.forceContextLoss();
+        if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
+      };
+
+      // Unmounted while the dynamic import was in flight — tear straight back down.
+      if (disposed) cleanup();
+    })();
 
     return () => {
-      if (raf) cancelAnimationFrame(raf);
-      controls.removeEventListener("change", onControlsChange);
-      controls.dispose();
-      for (const d of disposables) d.dispose();
-      renderer.dispose();
-      renderer.forceContextLoss();
-      if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
+      disposed = true;
+      if (cleanup) cleanup();
     };
   }, [model, markers, mode, width, height, heightGain, reducedMotion]);
 
@@ -467,6 +508,28 @@ export function VolSurface3D({
             cursor: "grab",
           }}
         />
+      )}
+
+      {/* Lightweight loading state while the code-split three.js runtime resolves.
+          Decorative (the figure keeps its accessible name); honours reduced motion. */}
+      {!glError && !libLoaded && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "grid",
+            placeItems: "center",
+            pointerEvents: "none",
+            borderRadius: "var(--r-md)",
+            fontFamily: "var(--font-display)",
+            fontSize: "var(--type-caption)",
+            letterSpacing: "0.04em",
+            color: "var(--text-tertiary)",
+          }}
+        >
+          loading 3D surface…
+        </div>
       )}
 
       {/* Axis cues — decorative overlay (the mesh carries the meaning); pointer

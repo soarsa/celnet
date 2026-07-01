@@ -54,7 +54,7 @@ export function ScopeControl(): React.ReactElement {
             <span key={`${node.level}:${i}`} className={styles.crumbWrap}>
               {i > 0 && (
                 <span className={styles.sep} aria-hidden>
-                  ›
+                  ▸
                 </span>
               )}
               {isLast ? (

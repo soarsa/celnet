@@ -139,6 +139,12 @@
         "$description": "Celer brand typeface — display/title/headline/brand/labels. Anaheim loads via the Google Fonts <link> in index.html; --font-ui is the immediate fallback. Numerics NEVER use this.",
         "$extensions": { "com.celer.celnet": { "cssVar": "--font-brand" } }
       },
+      "display": {
+        "$type": "fontFamily",
+        "$value": ["Space Grotesk", "{font.family.ui}"],
+        "$description": "Modern grotesque for section headings/labels (July-2026 SOTA design language). Anaheim stays wordmark-only; numerics NEVER use display, they stay --font-mono. Space Grotesk loads via the Google Fonts <link> in index.html; --font-ui is the immediate fallback.",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--font-display" } }
+      },
       "mono": {
         "$type": "fontFamily",
         "$value": [
@@ -704,6 +710,64 @@
             "themes": { "light": "oklch(0.62 0.16 150)" }
           }
         }
+      }
+    },
+    "dataviz": {
+      "$description": "Dataviz color contract — NOT brand hues (SOTA design language: brand hues must not encode quantitative scales). Sequential (seq-1..6) = Viridis-family; diverging (div-neg2..div-pos2) = blue↔orange centered at 0. Colorblind-safe. Consumed by surface/heatmap/key-rate-ladder/XVA charts, never by chrome. Single value (no appearance/contrast overrides).",
+      "seq-1": {
+        "$type": "color",
+        "$value": "oklch(0.32 0.10 285)",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-1" } }
+      },
+      "seq-2": {
+        "$type": "color",
+        "$value": "oklch(0.44 0.11 262)",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-2" } }
+      },
+      "seq-3": {
+        "$type": "color",
+        "$value": "oklch(0.55 0.09 210)",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-3" } }
+      },
+      "seq-4": {
+        "$type": "color",
+        "$value": "oklch(0.66 0.11 168)",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-4" } }
+      },
+      "seq-5": {
+        "$type": "color",
+        "$value": "oklch(0.79 0.15 135)",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-5" } }
+      },
+      "seq-6": {
+        "$type": "color",
+        "$value": "oklch(0.90 0.17 108)",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-6" } }
+      },
+      "div-neg2": {
+        "$type": "color",
+        "$value": "oklch(0.58 0.13 248)",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--div-neg2" } }
+      },
+      "div-neg1": {
+        "$type": "color",
+        "$value": "oklch(0.70 0.07 240)",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--div-neg1" } }
+      },
+      "div-mid": {
+        "$type": "color",
+        "$value": "oklch(0.5 0.006 264)",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--div-mid" } }
+      },
+      "div-pos1": {
+        "$type": "color",
+        "$value": "oklch(0.72 0.11 62)",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--div-pos1" } }
+      },
+      "div-pos2": {
+        "$type": "color",
+        "$value": "oklch(0.68 0.16 45)",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--div-pos2" } }
       }
     },
     "grid-line": {

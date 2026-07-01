@@ -12,7 +12,7 @@
  * analytics) are URL-encoded + localStorage-persisted (`SavedViewsMenu`).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { useApp } from "./AppContext";
 import { CommandPalette } from "../components/CommandPalette";
@@ -45,14 +45,17 @@ import { SignInDialog } from "../components/SignInDialog";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import {
   buildCommands,
-  domainAccessible,
+  configuredLicense,
+  domainRailState,
   DOMAINS,
   domainOf,
+  LICENSE_UPSELL_TITLE,
   RAIL,
   railChord,
+  railState,
   resolveChord,
-  workspaceAccessible,
   type Domain,
+  type RailState,
   type WorkspaceId,
 } from "../lib/commands";
 import { isTerminal } from "../lib/scope";
@@ -84,32 +87,45 @@ export function Shell(): React.ReactElement {
   // The keyboard-shortcut cheatsheet overlay (bound to `?`). Shell-local UI.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-  // Navigation gating (single source: lib/commands.ts). A workspace is reachable
-  // only if `workspaceAccessible` admits it for this identity — this HIDES (never
-  // disables) whole domains a signed-in user lacks `view` on, exactly as the
-  // Administration tab is hidden for non-admins. Admin-only workspaces
-  // (Connections/Admin/Permissions) require `isAdmin`; FX/FI workspaces require
-  // `view` on their asset class; Excel stays visible to all. Signed out, `can` is
-  // permissive ⇒ every domain shows as before (gating only narrows a real
-  // identity). Every entry keeps its ORIGINAL rail index so the ⌘N numbers stay
-  // aligned with `resolveChord` (which maps digits against the full RAIL); chords
-  // for a now-hidden workspace resolve to an absent command and are inert.
-  const railVisible = (r: (typeof RAIL)[number]): boolean =>
-    workspaceAccessible(r.id, app.auth);
+  // Navigation gating (single source: lib/commands.ts) is now THREE-state
+  // (DEC-license-gating-and-scope). A workspace's `railState` is:
+  //   • HIDDEN — entitlement-deny (no `view` on the asset class / non-admin on an
+  //     admin pane): an information-barrier hide, exactly as before.
+  //   • GATED-UPSELL — entitled but the asset class is NOT LICENSED: PRESENT but
+  //     greyed + locked + a "license this class" upsell (discoverable, not hidden).
+  //   • PRESENT — entitled AND licensed: a normal, navigable entry.
+  // The license predicate is config-driven (`VITE_CELNET_UNLICENSED`) and DEFAULTS
+  // TO ALL-LICENSED, so with no config `railState` is present-or-hidden exactly as
+  // the old two-state — the rail is byte-identical to before. Signed out, `can` is
+  // permissive ⇒ every asset domain is entitled. Every entry keeps its ORIGINAL
+  // rail index so the ⌘N numbers stay aligned with `resolveChord`.
+  const licensed = useMemo(() => configuredLicense(), []);
+  const stateOfWs = (r: (typeof RAIL)[number]): RailState => railState(r.id, app.auth, licensed);
+  // Shown in the rail: everything NOT entitlement-hidden (present OR gated-upsell).
+  const railShown = (r: (typeof RAIL)[number]): boolean => stateOfWs(r) !== "hidden";
+  // Fully usable (licensed + entitled): the only entries that MOUNT a pane and that
+  // keyboard/command navigation may target — a gated class never mounts a workspace
+  // it cannot price. (Default all-licensed ⇒ usable == shown, so unchanged.)
+  const railUsable = (r: (typeof RAIL)[number]): boolean => stateOfWs(r) === "present";
 
   // GW-tabs: the rail is split into top-level DOMAIN tabs (FX Options / Fixed
   // Income / Administration). The active domain follows the active workspace; the
-  // rail BUTTONS show only the active domain's workspaces (`navRail`), while the
-  // persistent-mount canvas iterates every ACCESSIBLE domain's workspaces
+  // rail BUTTONS show the active domain's shown workspaces (`navRail`, incl. gated),
+  // while the persistent-mount canvas iterates every USABLE domain's workspaces
   // (`mountRail`) so switching tabs never unmounts a pane (preserves P0-11
-  // persistent mount) — and an inaccessible domain's panes are never mounted.
+  // persistent mount) — and a hidden/gated domain's panes are never mounted.
   const activeDomain = domainOf(app.workspace);
-  const mountRail = RAIL.filter(railVisible);
-  const navRail = mountRail.filter((r) => r.domain === activeDomain);
+  const mountRail = RAIL.filter(railUsable);
+  const navRail = RAIL.filter((r) => r.domain === activeDomain && railShown(r));
 
-  // Domain tabs are shown only when accessible: Administration ⇒ admins;
-  // FX Options / Fixed Income ⇒ `view` on the asset class (permissive signed out).
-  const visibleDomains = DOMAINS.filter((d) => domainAccessible(d.id, app.auth));
+  // Domain tabs are three-state too: entitlement-deny (or non-admin on
+  // Administration) hides the tab; an entitled-but-unlicensed asset domain shows a
+  // greyed, locked tab (upsell); else present. Default all-licensed ⇒ every
+  // accessible tab is present (unchanged).
+  const visibleDomains = DOMAINS.map((d) => ({
+    def: d,
+    state: domainRailState(d.id, app.auth, licensed),
+  })).filter((x) => x.state !== "hidden");
 
   // Per-domain memory of the last-active workspace, so re-selecting a tab returns
   // to where the trader left it (defaulting to that domain's first rail entry).
@@ -123,10 +139,14 @@ export function Shell(): React.ReactElement {
   }, [app.workspace]);
 
   const firstOfDomain = (d: Domain): WorkspaceId => {
-    const entry = RAIL.find((r) => r.domain === d && railVisible(r));
+    const entry = RAIL.find((r) => r.domain === d && railUsable(r));
     return entry ? entry.id : app.workspace;
   };
   const selectDomain = (d: Domain): void => {
+    // A locked (unlicensed) domain tab is an upsell affordance, not a jump: leave
+    // the active workspace put. (Default all-licensed ⇒ every visible tab is
+    // present, so this is a no-op guard until a class is explicitly gated.)
+    if (domainRailState(d, app.auth, licensed) !== "present") return;
     app.setWorkspace(lastByDomain[d] ?? firstOfDomain(d));
   };
 
@@ -150,11 +170,13 @@ export function Shell(): React.ReactElement {
     toggleContrast,
     canDrillScope: !isTerminal(app.scope),
   }).filter((c) => {
-    // Drop workspace-jump commands (palette + ⌘N) for inaccessible workspaces so
-    // no command can navigate to a hidden domain; non-workspace commands pass.
+    // Drop workspace-jump commands (palette + ⌘N) for any workspace that is not
+    // fully USABLE — entitlement-hidden OR license-gated — so no command can
+    // navigate to a pane that isn't mounted; non-workspace commands pass. (Default
+    // all-licensed ⇒ this is exactly the old entitlement filter.)
     if (!c.id.startsWith("ws-")) return true;
     const id = c.id.slice("ws-".length) as WorkspaceId;
-    return workspaceAccessible(id, app.auth);
+    return railState(id, app.auth, licensed) === "present";
   });
 
   // Global keyboard grammar (single source: lib/commands.ts). The Shell resolves a
@@ -198,6 +220,31 @@ export function Shell(): React.ReactElement {
             // Original RAIL index keeps the ⌘N hint aligned with resolveChord
             // (which maps digits against the full, admin-filtered RAIL globally).
             const kbd = railChord(RAIL.indexOf(r)).join("");
+            // A license-gated (entitled-but-unlicensed) entry is PRESENT-BUT-LOCKED:
+            // greyed, a lock badge, and a "license this class" upsell title. It is
+            // `aria-disabled` and carries NO click/navigation handler — the class is
+            // discoverable but not enterable until it is licensed (the server never
+            // mints an unlicensed session). Default all-licensed ⇒ this never renders.
+            if (stateOfWs(r) === "gated-upsell") {
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  className={`${styles.railBtn} ${styles.railLocked}`}
+                  aria-disabled="true"
+                  title={LICENSE_UPSELL_TITLE}
+                  aria-label={`${r.label} — ${LICENSE_UPSELL_TITLE}`}
+                >
+                  <span className={styles.railGlyph} aria-hidden>
+                    {r.glyph}
+                  </span>
+                  <span className={styles.railLabel}>{r.label}</span>
+                  <span className={styles.lockBadge} aria-hidden>
+                    {"🔒︎"}
+                  </span>
+                </button>
+              );
+            }
             return (
               <button
                 key={r.id}
@@ -238,18 +285,33 @@ export function Shell(): React.ReactElement {
 
       <div className={styles.main}>
         <div className={styles.tabBar} role="tablist" aria-label="product domains">
-          {visibleDomains.map((d) => {
+          {visibleDomains.map(({ def: d, state }) => {
             const active = d.id === activeDomain;
+            const gated = state === "gated-upsell";
+            // A license-gated domain tab is greyed + locked + an upsell (title
+            // "license this class"); the click guard in `selectDomain` keeps it
+            // from navigating. Spread the lock props so present tabs stay byte-
+            // identical (no undefined title/aria-disabled). Default all-licensed ⇒
+            // every visible tab is present, so `gated` is never true here.
+            const lockProps = gated
+              ? { title: LICENSE_UPSELL_TITLE, "aria-disabled": true as const }
+              : {};
             return (
               <button
                 key={d.id}
                 role="tab"
                 aria-selected={active}
                 tabIndex={active ? 0 : -1}
-                className={`${styles.tab} ${active ? styles.tabActive : ""}`}
+                className={`${styles.tab} ${active ? styles.tabActive : ""} ${gated ? styles.tabLocked : ""}`}
                 onClick={() => selectDomain(d.id)}
+                {...lockProps}
               >
                 {d.label}
+                {gated && (
+                  <span className={styles.tabLock} aria-hidden>
+                    {"🔒︎"}
+                  </span>
+                )}
               </button>
             );
           })}

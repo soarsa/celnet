@@ -22,8 +22,12 @@
  * of fabricating a surface.
  */
 
-import { useEffect, useRef } from "react";
-import * as echarts from "echarts";
+import { useEffect, useRef, useState } from "react";
+// The heavy ECharts runtime is code-split OUT of the main bundle: only its TYPES
+// are imported statically (fully erased at build — `verbatimModuleSyntax`), while
+// the runtime is `await import("echarts")`-ed inside the mount effect (fixes the
+// >500KB main-chunk warning). A lightweight loading state shows until it resolves;
+// the public Props and rendered behaviour are unchanged.
 import type { EChartsOption, EChartsType, ECElementEvent } from "echarts";
 
 /** A single scenario cell, emitted on click for the drill panel. */
@@ -121,6 +125,8 @@ export function ScenarioHeatmap(props: ScenarioHeatmapProps): React.ReactElement
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<EChartsType | null>(null);
+  // False until the code-split ECharts runtime resolves; drives the loading state.
+  const [libLoaded, setLibLoaded] = useState(false);
   // Latest render closure, so the mount-bound observers repaint with current props.
   const renderRef = useRef<() => void>(() => {});
   // Latest props for the mount-bound click handler (avoids re-binding on every render).
@@ -164,46 +170,69 @@ export function ScenarioHeatmap(props: ScenarioHeatmapProps): React.ReactElement
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const chart = echarts.init(el, undefined, { renderer: "canvas" });
-    chartRef.current = chart;
 
-    const onClick = (params: ECElementEvent): void => {
-      const cur = clickRef.current;
-      if (!cur.onCellClick) return;
-      const d = params.data as unknown as [number, number, number] | undefined;
-      if (!d) return;
-      const [x, y, v] = d;
-      const spotLabel = cur.spotLabels[x];
-      const volLabel = cur.volLabels[y];
-      if (spotLabel === undefined || volLabel === undefined) return;
-      cur.onCellClick({ spotIndex: x, volIndex: y, spotLabel, volLabel, pnl: v });
-    };
-    chart.on("click", onClick);
+    // The heavy ECharts runtime is code-split out of the main bundle and loaded
+    // on mount; the effect stays sync-return (React needs a cleanup fn, not a
+    // Promise), so the async work runs in an IIFE and its teardown is captured
+    // into `cleanup`, guarded by `disposed` against an unmount mid-import.
+    let disposed = false;
+    let cleanup: (() => void) | null = null;
 
-    const ro = new ResizeObserver(() => chart.resize());
-    ro.observe(el);
+    void (async () => {
+      const echarts = await import("echarts").catch(() => null);
+      if (disposed || !echarts) return;
+      const chart = echarts.init(el, undefined, { renderer: "canvas" });
+      chartRef.current = chart;
+      setLibLoaded(true);
 
-    // Canvas can't consume CSS vars live like SVG — repaint with freshly resolved
-    // tokens when the appearance / contrast / density axes flip on <html>.
-    const mo = new MutationObserver(() => renderRef.current());
-    mo.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-appearance", "data-contrast", "data-density"],
-    });
+      const onClick = (params: ECElementEvent): void => {
+        const cur = clickRef.current;
+        if (!cur.onCellClick) return;
+        const d = params.data as unknown as [number, number, number] | undefined;
+        if (!d) return;
+        const [x, y, v] = d;
+        const spotLabel = cur.spotLabels[x];
+        const volLabel = cur.volLabels[y];
+        if (spotLabel === undefined || volLabel === undefined) return;
+        cur.onCellClick({ spotIndex: x, volIndex: y, spotLabel, volLabel, pnl: v });
+      };
+      chart.on("click", onClick);
 
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const onMq = (): void => renderRef.current();
-    mq.addEventListener("change", onMq);
+      const ro = new ResizeObserver(() => chart.resize());
+      ro.observe(el);
 
-    renderRef.current();
+      // Canvas can't consume CSS vars live like SVG — repaint with freshly resolved
+      // tokens when the COLOUR axes flip on <html>. The density axis is sizing-only (it
+      // doesn't move the --seq/--div palette) and is owned by its own module, so we
+      // watch appearance + contrast only.
+      const mo = new MutationObserver(() => renderRef.current());
+      mo.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-appearance", "data-contrast"],
+      });
+
+      const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const onMq = (): void => renderRef.current();
+      mq.addEventListener("change", onMq);
+
+      renderRef.current();
+
+      cleanup = () => {
+        mq.removeEventListener("change", onMq);
+        mo.disconnect();
+        ro.disconnect();
+        chart.off("click", onClick);
+        chart.dispose();
+        chartRef.current = null;
+      };
+
+      // Unmounted while the dynamic import was in flight — tear straight back down.
+      if (disposed) cleanup();
+    })();
 
     return () => {
-      mq.removeEventListener("change", onMq);
-      mo.disconnect();
-      ro.disconnect();
-      chart.off("click", onClick);
-      chart.dispose();
-      chartRef.current = null;
+      disposed = true;
+      if (cleanup) cleanup();
     };
     // Mount-only: current props reach the handlers via refs / renderRef.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -381,6 +410,25 @@ export function ScenarioHeatmap(props: ScenarioHeatmapProps): React.ReactElement
           role="img"
           aria-label={label}
         />
+        {valid && !libLoaded && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "none",
+              fontFamily: "var(--font-display)",
+              fontSize: "var(--type-caption)",
+              letterSpacing: "0.04em",
+              color: "var(--text-tertiary)",
+            }}
+          >
+            loading scenario grid…
+          </div>
+        )}
         {!valid && (
           <div
             style={{
