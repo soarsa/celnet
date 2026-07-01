@@ -60,10 +60,17 @@ celnet_env:
   CELNET_DEPLOY:    "{{ celnet_deploy_name | default('uat') }}"
   CELNET_ACCESS_MODE: "enforce"
   RUST_LOG:         "info"
+  # --- FIX 4.4 acceptor (the RFQ price-maker edge the quote simulator dials) ---
+  # Loopback bind: FIX is NOT internet-facing (only HAProxy is); the simulator
+  # (deploy/start-fix-sim.sh / fixsimctl) runs on the same host and dials this.
+  # CompIDs are the venue's own CompID (SENDER, what the client addresses as its
+  # TargetCompID) and the accepted counterparty (TARGET, the client's SenderCompID
+  # == the simulator's FIXSIM_SENDER). Keep these three in lockstep with the
+  # simulator config.
+  CELNET_FIX_ADDR:     "127.0.0.1:56001"
+  CELNET_FIX_SENDER:   "CELNET"
+  CELNET_FIX_TARGET:   "CELER_FXO"
   # Optional integrations — uncomment / set per environment as needed:
-  # CELNET_FIX_ADDR:     "0.0.0.0:51001"
-  # CELNET_FIX_SENDER:   "CELNET-UAT"
-  # CELNET_FIX_TARGET:   "CELNET-CPTY"
   # CELNET_VENDOR_WS:    "wss://vendor.example/feed"
   # CELNET_FLEET_MODE:   ""
   # CELNET_FLEET_BACKENDS: ""

@@ -1,36 +1,40 @@
 #!/usr/bin/env bash
-# start-fix-sim.sh — launch the celnet FIX client simulator on the UAT box.
+# start-fix-sim.sh — run the celnet FIX quote simulator against the live acceptor
+# and log EVERY RFQ it sends plus every Quote / fill it receives to a file, so an
+# operator can watch the request/response flow with `tail -f`.
 #
-# Design: docs/FIX-SIM-DESIGN.md. This script is the UAT entrypoint. It:
-#   * sources the Rust env and creates the store/ + log/ run dirs
-#     (mirrors the QuickFIX FileStorePath / FileLogPath),
-#   * TCP-preflights the acceptor host:port,
-#   * PREFERS the full `fix-sim` binary when it has been built,
-#   * otherwise FALLS BACK to looping the runnable celnet-fix example RFQ client
-#     (`cargo run -p celnet-fix --example fix_rfq_client`) as a v0 simulator, so
-#     UAT has a live FIX price-taker today — one randomized RFQ every period +/- jitter.
+# Design: docs/FIX-SIM-DESIGN.md. Until the full `fix-sim` bot binary is built
+# (design step 2), this drives the runnable celnet-fix example RFQ client
+# (`--example fix_rfq_client`) — a real FIX 4.4 price-taker, not a stub — one
+# randomized RFQ every period ± jitter.
 #
-# It is deliberately honest: if neither the binary nor the example can run it exits
-# non-zero with a clear message rather than pretending to have started.
+# What it needs to work (the reason a bare run used to "do nothing"):
+#   * a FIX acceptor must be listening at FIXSIM_HOST:FIXSIM_PORT. On the server
+#     that means CELNET_FIX_ADDR is set in the deploy env (group_vars/all.yml →
+#     celnet_env) and the server has been (re)deployed. If nothing is listening,
+#     each attempt now logs a LOUD, actionable message instead of failing silently.
+#   * the CompIDs must line up: the simulator's FIXSIM_SENDER must equal the
+#     server's CELNET_FIX_TARGET, and FIXSIM_TARGET must equal CELNET_FIX_SENDER.
 #
 # Usage:
-#   deploy/start-fix-sim.sh              # loop RFQs against the UAT FXO acceptor
-#   FIXSIM_ONESHOT=1 deploy/start-fix-sim.sh    # send one RFQ and exit
-#   FIXSIM_DAEMON=1  deploy/start-fix-sim.sh    # background + write a PID file
+#   deploy/start-fix-sim.sh              # loop RFQs in the foreground (tees to log)
+#   FIXSIM_ONESHOT=1 deploy/start-fix-sim.sh   # send one RFQ and exit
+#   FIXSIM_DAEMON=1  deploy/start-fix-sim.sh   # background, write a PID file, log to file
+#   tail -f deploy/fix-sim-run/log/fix-sim.log # watch requests in/out
 #
-# Env overrides (defaults = the UAT FXO session from the generated QuickFIX profile):
+# Env overrides (defaults match group_vars/all.yml celnet_env FIX settings):
 #   FIXSIM_HOST (127.0.0.1)  FIXSIM_PORT (56001)
-#   FIXSIM_SENDER (CELER_FXO) FIXSIM_TARGET (CELNET) FIXSIM_DIALECT (fx)
+#   FIXSIM_SENDER (CELER_FXO)  FIXSIM_TARGET (CELNET)
 #   FIXSIM_PERIOD (180) FIXSIM_JITTER (60)   # seconds between RFQs
-#   FIXSIM_BIN (target/release/fix-sim) FIXSIM_CONFIG ()  # for the full bot when built
-#   FIXSIM_RUN_DIR (deploy/fix-sim-run) FIXSIM_ONESHOT (0) FIXSIM_DAEMON (0)
+#   FIXSIM_BIN (target/release/fix-sim)      # preferred once the full bot is built
+#   FIXSIM_RUN_DIR (deploy/fix-sim-run) FIXSIM_LOG (<run>/log/fix-sim.log)
+#   FIXSIM_ONESHOT (0) FIXSIM_DAEMON (0)
 set -euo pipefail
 
 FIXSIM_HOST="${FIXSIM_HOST:-127.0.0.1}"
 FIXSIM_PORT="${FIXSIM_PORT:-56001}"
 FIXSIM_SENDER="${FIXSIM_SENDER:-CELER_FXO}"
 FIXSIM_TARGET="${FIXSIM_TARGET:-CELNET}"
-FIXSIM_DIALECT="${FIXSIM_DIALECT:-fx}"
 FIXSIM_PERIOD="${FIXSIM_PERIOD:-180}"
 FIXSIM_JITTER="${FIXSIM_JITTER:-60}"
 FIXSIM_ONESHOT="${FIXSIM_ONESHOT:-0}"
@@ -41,19 +45,68 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 RUN_DIR="${FIXSIM_RUN_DIR:-$REPO_ROOT/deploy/fix-sim-run}"
-mkdir -p "$RUN_DIR/store" "$RUN_DIR/log"
-LOG="$RUN_DIR/log/fix-sim.$(date +%Y%m%d-%H%M%S).log"
+mkdir -p "$RUN_DIR/log"
+LOG="${FIXSIM_LOG:-$RUN_DIR/log/fix-sim.log}"
 PID_FILE="$RUN_DIR/fix-sim.pid"
-
 FIXSIM_BIN="${FIXSIM_BIN:-$REPO_ROOT/target/release/fix-sim}"
-FIXSIM_CONFIG="${FIXSIM_CONFIG:-}"
-
-log() { echo "[fix-sim] $*"; }
 
 # Source the Rust toolchain (shell does not persist env on this estate).
 if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+
+ts() { date +%Y-%m-%dT%H:%M:%S%z; }
+log() { echo "[$(ts)] [fix-sim] $*"; }
+
+# --- Daemon: re-exec self into the logfile, record the child PID, and return. --
+# Serializing shell functions through `bash -c` (the old approach) was brittle;
+# re-exec keeps ONE code path and sends all child output straight to the log.
+if [ "$FIXSIM_DAEMON" = "1" ] && [ "${FIXSIM__CHILD:-0}" != "1" ]; then
+  touch "$LOG"
+  FIXSIM__CHILD=1 nohup "$0" "$@" >>"$LOG" 2>&1 &
+  echo $! >"$PID_FILE"
+  echo "[fix-sim] daemonized pid $(cat "$PID_FILE"); logging to $LOG"
+  echo "[fix-sim] follow with:  tail -f $LOG"
+  exit 0
+fi
+
+# --- Foreground: mirror all output to the logfile so a watching terminal sees --
+# exactly what lands in the log. (The daemon child already writes to the log via
+# the nohup redirect above, so it must NOT tee — that would double every line.)
+if [ "${FIXSIM__CHILD:-0}" != "1" ]; then
+  exec > >(tee -a "$LOG") 2>&1
+fi
+
+log "run dir $RUN_DIR ; log $LOG"
+log "acceptor $FIXSIM_HOST:$FIXSIM_PORT ; identity $FIXSIM_SENDER -> $FIXSIM_TARGET"
+
+# --- Resolve the runner up front so a build failure is LOUD, not hidden inside --
+# each RFQ iteration (the old `cargo run --quiet` swallowed both build and
+# connect errors, which is why a bare run looked like it did nothing).
+RUNNER=()
+if [ -x "$FIXSIM_BIN" ]; then
+  log "using fix-sim binary $FIXSIM_BIN"
+  RUNNER=("$FIXSIM_BIN")
+elif command -v cargo >/dev/null 2>&1; then
+  log "no fix-sim binary yet — building the celnet-fix example RFQ client (v0 simulator)..."
+  if ! cargo build -p celnet-fix --example fix_rfq_client; then
+    log "ERROR: failed to build the example RFQ client — see the build output above."
+    exit 1
+  fi
+  EX_BIN="$REPO_ROOT/target/debug/examples/fix_rfq_client"
+  if [ ! -x "$EX_BIN" ]; then
+    EX_BIN="$(find "$REPO_ROOT/target" -name fix_rfq_client -type f -perm -u+x 2>/dev/null | head -1)"
+  fi
+  if [ ! -x "${EX_BIN:-}" ]; then
+    log "ERROR: built the example but cannot locate its binary under target/."
+    exit 1
+  fi
+  log "example built: $EX_BIN"
+  RUNNER=("$EX_BIN")
+else
+  log "ERROR: no fix-sim binary at $FIXSIM_BIN and cargo is unavailable — nothing to run."
+  exit 1
+fi
 
 preflight() {
   if command -v nc >/dev/null 2>&1; then
@@ -63,67 +116,45 @@ preflight() {
   fi
 }
 if preflight; then
-  log "acceptor $FIXSIM_HOST:$FIXSIM_PORT reachable."
+  log "acceptor reachable."
 else
-  log "WARN: acceptor $FIXSIM_HOST:$FIXSIM_PORT not reachable yet — the client will retry on its reconnect interval."
+  log "WARN: acceptor $FIXSIM_HOST:$FIXSIM_PORT is NOT reachable."
+  log "      -> enable it on the server: set CELNET_FIX_ADDR=$FIXSIM_HOST:$FIXSIM_PORT in"
+  log "         deploy/group_vars/all.yml (celnet_env) and redeploy, then restart the sim."
+  log "      Continuing anyway — each RFQ attempt is logged below so failures are visible."
 fi
-
-# --- Preferred path: the full fix-sim binary (once step 2 of the design is built). ---
-if [ -x "$FIXSIM_BIN" ]; then
-  log "launching fix-sim binary: $FIXSIM_BIN (dialect=$FIXSIM_DIALECT)"
-  set -- "$FIXSIM_BIN" --host "$FIXSIM_HOST" --port "$FIXSIM_PORT" \
-    --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" --dialect "$FIXSIM_DIALECT"
-  [ -n "$FIXSIM_CONFIG" ] && set -- "$@" --config "$FIXSIM_CONFIG"
-  if [ "$FIXSIM_DAEMON" = "1" ]; then
-    nohup "$@" >>"$LOG" 2>&1 & echo $! >"$PID_FILE"; log "daemonized pid $(cat "$PID_FILE"); log $LOG"
-  else
-    exec "$@"
-  fi
-  exit 0
-fi
-
-# --- Fallback: loop the runnable example RFQ price-taker (v0 simulator). ---
-if ! command -v cargo >/dev/null 2>&1; then
-  log "ERROR: no fix-sim binary at $FIXSIM_BIN and cargo is unavailable — nothing to start." >&2
-  exit 1
-fi
-log "no fix-sim binary yet — looping celnet-fix example RFQ client as the v0 simulator."
 
 PAIRS=(EURUSD GBPUSD USDJPY USDCHF AUDUSD EURGBP EURJPY)
-SIDES=(observe buy sell)   # observe = watch; buy/sell = lift (accept) the quote
+SIDES=(observe buy sell)   # observe = RFQ only; buy = lift the offer; sell = hit the bid
 TYPES=(call put)
 
 run_once() {
   local pair="${PAIRS[$((RANDOM % ${#PAIRS[@]}))]}"
   local side="${SIDES[$((RANDOM % ${#SIDES[@]}))]}"
   local otype="${TYPES[$((RANDOM % ${#TYPES[@]}))]}"
-  local strike; strike="$(awk "BEGIN{printf \"%.4f\", 1.00 + (${RANDOM} % 40) / 100.0}")"
+  local strike
+  strike="$(awk "BEGIN{printf \"%.4f\", 1.00 + (${RANDOM} % 40) / 100.0}")"
   local req="RFQ-$(date +%s)-$RANDOM"
-  log "RFQ pair=$pair type=$otype side=$side strike=$strike req=$req -> $FIXSIM_HOST:$FIXSIM_PORT"
-  cargo run --quiet -p celnet-fix --example fix_rfq_client -- \
-    --addr "$FIXSIM_HOST:$FIXSIM_PORT" \
-    --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" \
-    --pair "$pair" --type "$otype" --side "$side" --strike "$strike" --req-id "$req"
-}
-
-loop() {
-  while true; do
-    run_once || log "RFQ run exited non-zero ($?), continuing"
-    local span=$(( FIXSIM_PERIOD + (RANDOM % (2 * FIXSIM_JITTER + 1)) - FIXSIM_JITTER ))
-    [ "$span" -lt 5 ] && span=5
-    log "sleeping ${span}s"
-    sleep "$span"
-  done
+  log ">>> RFQ pair=$pair type=$otype side=$side strike=$strike req=$req"
+  if "${RUNNER[@]}" --addr "$FIXSIM_HOST:$FIXSIM_PORT" \
+      --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" \
+      --pair "$pair" --type "$otype" --side "$side" --strike "$strike" --req-id "$req"; then
+    log "<<< RFQ $req complete"
+  else
+    log "<<< RFQ $req exited non-zero ($?) — see the client output above"
+  fi
 }
 
 if [ "$FIXSIM_ONESHOT" = "1" ]; then
   run_once
-elif [ "$FIXSIM_DAEMON" = "1" ]; then
-  nohup bash -c "$(declare -f log run_once loop); \
-    FIXSIM_HOST=$FIXSIM_HOST FIXSIM_PORT=$FIXSIM_PORT FIXSIM_SENDER=$FIXSIM_SENDER \
-    FIXSIM_TARGET=$FIXSIM_TARGET FIXSIM_PERIOD=$FIXSIM_PERIOD FIXSIM_JITTER=$FIXSIM_JITTER loop" \
-    >>"$LOG" 2>&1 & echo $! >"$PID_FILE"
-  log "daemonized pid $(cat "$PID_FILE"); log $LOG"
-else
-  loop
+  exit 0
 fi
+
+log "looping RFQs every ${FIXSIM_PERIOD}s +/-${FIXSIM_JITTER}s (Ctrl-C to stop)."
+while true; do
+  run_once || true
+  span=$(( FIXSIM_PERIOD + (RANDOM % (2 * FIXSIM_JITTER + 1)) - FIXSIM_JITTER ))
+  [ "$span" -lt 5 ] && span=5
+  log "sleeping ${span}s"
+  sleep "$span"
+done

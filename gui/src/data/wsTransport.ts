@@ -221,6 +221,22 @@ const DEFAULT_MAX_BACKOFF_MS = 5_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 /**
+ * Client keepalive cadence (ms). The browser `WebSocket` API cannot emit
+ * protocol-level ping frames, so an otherwise-idle GUI session (no live price
+ * subscriptions ticking) puts ZERO bytes on the wire — and a reverse proxy in
+ * front of the server reaps the idle socket at its idle timeout (commonly 60s).
+ * That surfaced as the app flickering to the reconnecting overlay every idle
+ * cycle: close → overlay → reconnect → idle → close. We instead send the
+ * contract's client→server `heartbeat` stream-control frame (a pure liveness
+ * no-op server-side — `services/stream.rs` handles `Message::Heartbeat` by doing
+ * nothing) on this interval. 20s stays comfortably under a 60s proxy idle timeout
+ * while adding negligible traffic, and keeps the OS TCP write path exercised so a
+ * silently-dead peer surfaces as a real `onclose` promptly instead of hanging
+ * half-open.
+ */
+const KEEPALIVE_INTERVAL_MS = 20_000;
+
+/**
  * The per-call deadline for PRICING-class requests (`price`, `request_quote`,
  * `request_multi_dealer_quote`, `scenario`) — the calls whose latency is the
  * server's pricing engines, not the wire. The Monte-Carlo/LSM families (TARF,
@@ -268,6 +284,8 @@ class WsConnection {
   private nextCorrelation = 1n;
   private backoff: number;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The idle-keepalive ticker; live only while the socket is OPEN. */
+  private keepaliveTimer: ReturnType<typeof setInterval> | undefined;
   private closed = false;
   private readonly waiters = new Map<bigint, Waiter>();
   /** Frames queued while the socket is not OPEN, flushed on connect. */
@@ -352,6 +370,9 @@ class WsConnection {
       // the push stream survives a blue-green cutover / transient drop, exactly
       // as the RFS subscriptions are re-established above.
       for (const sub of this.notificationSubs.values()) this.sendNotificationSubscribe(sub.scope);
+      // Arm the idle keepalive so a quiescent socket keeps a trickle of bytes
+      // flowing and is not reaped by a proxy idle timeout (the reconnect-flicker).
+      this.startKeepalive();
       for (const l of this.stateListeners) l(true);
     };
     ws.onmessage = (ev: MessageEvent<unknown>) => {
@@ -364,6 +385,7 @@ class WsConnection {
     };
     ws.onclose = () => {
       if (this.ws === ws) this.ws = null;
+      this.stopKeepalive();
       for (const l of this.stateListeners) l(false);
       // Fail every outstanding request/response waiter fast so no `await` hangs
       // across a drop (SDK reconnect-liveness parity), then redial.
@@ -380,6 +402,27 @@ class WsConnection {
       this.reconnectTimer = undefined;
       this.open();
     }, delay);
+  }
+
+  /**
+   * Arm the idle keepalive: every {@link KEEPALIVE_INTERVAL_MS} while the socket
+   * is OPEN, send the contract's client→server `heartbeat` frame (server-side
+   * liveness no-op). Sent directly on the live socket — a keepalive queued into
+   * the outbox while down would be pointless (reconnect re-establishes state).
+   */
+  private startKeepalive(): void {
+    this.stopKeepalive();
+    this.keepaliveTimer = setInterval(() => {
+      if (this.isOpen() && this.ws) this.ws.send('{"type":"heartbeat"}');
+    }, KEEPALIVE_INTERVAL_MS);
+  }
+
+  /** Disarm the idle keepalive (on close / teardown). Idempotent. */
+  private stopKeepalive(): void {
+    if (this.keepaliveTimer !== undefined) {
+      clearInterval(this.keepaliveTimer);
+      this.keepaliveTimer = undefined;
+    }
   }
 
   private dispatch(raw: string): void {
@@ -528,6 +571,7 @@ class WsConnection {
   /** Tear down the connection permanently (no further reconnects). */
   close(): void {
     this.closed = true;
+    this.stopKeepalive();
     if (this.reconnectTimer !== undefined) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
