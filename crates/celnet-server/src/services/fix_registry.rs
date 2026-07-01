@@ -84,6 +84,9 @@ impl FixAcceptorRegistry {
     ///
     /// # Errors
     /// Propagates a corrupt-config load error.
+    // Constructor-style loader wiring the registry's collaborators; the house
+    // convention allows the arg count rather than boxing indirection into every caller.
+    #[allow(clippy::too_many_arguments)]
     pub fn load(
         link: Arc<CoreLink>,
         spread: SpreadModel,
