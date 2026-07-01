@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en" data-appearance="dark" data-density="compact">
+<html lang="en" data-appearance="dark" data-density="comfortable">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Celnet — Sell-Side Shell (mockup 00, v3)</title>
+<title>Celnet — Price & Model (mockup 00, v4)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Anaheim&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="celer.css" />
@@ -22,96 +22,82 @@
       <span class="glyph num">⌘K</span>
       <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
     </div>
-    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — click to request">Eq</span><span class="t off" title="Not licensed — click to request">Cmdty</span><span class="t off" title="Not licensed — click to request">Crypto</span></span>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
     <span class="pill">A. Marchetti · Vol Desk</span>
   </header>
 
   <!-- ============ CAPABILITY RAIL ============ -->
   <nav class="rail" aria-label="Capabilities">
     <div class="grp label">Price</div>
-    <a class="on"><span class="ic">◈</span><span>Price &amp; Model</span><span></span></a>
-    <a><span class="ic">⋔</span><span>Structure</span><span></span></a>
-    <a><span class="ic">◷</span><span>Vol Surface</span><span></span></a>
+    <a class="on"><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
     <div class="grp label">Market data</div>
-    <a><span class="ic">≡</span><span>Feed Manage</span><span></span></a>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
     <div class="grp label">Distribute</div>
-    <a><span class="ic">⇉</span><span>Contribute</span><span></span></a>
-    <a><span class="ic">⇌</span><span>RFQ Desk</span><span></span></a>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
     <div class="grp label">Risk</div>
-    <a><span class="ic">⊞</span><span>Risk &amp; Scenario</span><span></span></a>
-    <a><span class="ic">∮</span><span>XVA</span><span></span></a>
-    <a><span class="ic">▤</span><span>Books &amp; Positions</span><span></span></a>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
     <div class="grp label">Operate</div>
-    <a><span class="ic">▦</span><span>Reporting</span><span></span></a>
-    <a><span class="ic">⚷</span><span>Admin &amp; License</span><span></span></a>
-    <a><span class="ic">❈</span><span>Ops &amp; Connectivity</span><span></span></a>
-    <a class="gate"><span class="ic">⚙</span><span>Models &amp; Plugins</span><span class="lock">🔒</span></a>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
   </nav>
 
-  <!-- ============ MAIN — PRICE & MODEL WORKBENCH ============ -->
+  <!-- ============ MAIN — PRICE & MODEL ============ -->
   <main class="main" style="gap:var(--space-4)">
-    <!-- editable ticket line -->
     <div class="ticketline">
-      <span class="step on" style="padding:3px 10px">Price &amp; Model</span>
       <span class="field"><span class="lbl">pair</span> EUR/USD <span class="car">▾</span></span>
       <span class="field"><span class="lbl">type</span> Call <span class="car">▾</span></span>
       <span class="field"><span class="lbl">expiry</span> 1M · 28 Jul <span class="car">▾</span></span>
-      <span class="field"><span class="lbl">cut</span> NY <span class="car">▾</span></span>
       <span class="field"><span class="lbl">Δ / K</span> 25Δ ⇄ 1.0965</span>
       <span class="field"><span class="lbl">notional</span> 10.00mm EUR <span class="car">▾</span></span>
       <span class="field"><span class="lbl">prem</span> USD <span class="car">▾</span></span>
       <span class="selctl"><span class="lbl">solve</span> Δ→K <span class="car">▾</span></span>
     </div>
 
-    <!-- model hero -->
     <div class="model">
       <span class="title" style="font-size:15px">Pricing model · LSV <span class="car" style="font-size:11px">▾</span></span>
       <span class="meta">calibrated 2m ago · RMSE <span class="num">0.03v</span> <span class="ok">✓ arb-free</span></span>
       <span class="selctl"><span class="lbl">Δ conv</span> spot <span class="car">▾</span></span>
-      <span class="selctl"><span class="lbl">prem-adj</span> on <span class="car">▾</span></span>
       <span style="flex:1"></span>
       <button class="btn">Recalibrate</button>
       <button class="btn ghost">Diff vs market ◷</button>
     </div>
 
-    <div class="cols c2" style="grid-template-columns:1.05fr 1fr">
-      <!-- contributed price -->
-      <section class="panel">
+    <div class="grid2">
+      <!-- PRICE (tall) -->
+      <section class="panel" style="grid-row: span 2">
         <header>
-          <span class="headline">Your contributed price</span>
-          <span class="state live">● LIVE ▸ Tier 1–3 <span class="car">▾</span></span>
+          <span class="headline">Price · EUR/USD 1M 25Δ Call</span>
+          <span class="state live">● LIVE ▸ T1–3 <span class="car">▾</span></span>
         </header>
         <div class="body">
           <div class="quote2">
-            <div class="q buy"><div class="side">Your bid</div><div class="val">7.94</div><div class="conv">0.00408 USD · 0.00375 EUR · 10.0mm</div></div>
-            <div class="q sell"><div class="side">Your offer</div><div class="val">8.18</div><div class="conv">0.00421 USD · 0.00387 EUR · 10.0mm</div></div>
+            <div class="q buy"><div class="side">Your bid</div><div class="val">7.88</div><div class="conv">0.00402 USD · 10.0mm · size 25</div></div>
+            <div class="q sell"><div class="side">Your offer</div><div class="val">8.12</div><div class="conv">0.00415 USD · 10.0mm · size 25</div></div>
           </div>
-          <div class="kv"><span class="k">Spread</span><span class="v num">0.24v · 2.1 pips · 18 bps · <span class="dim">age 0.4s</span> <span class="pos">▲</span></span></div>
-          <div class="kv"><span class="k">Screen mid</span><span class="v num">8.06v <span class="dim">as-of 12:04:07 · ● recalc-on-tick</span></span></div>
-          <div class="kv"><span class="k">½-spread</span><span class="v num">0.12v <span class="selctl" style="height:20px">risk-based <span class="car">▾</span></span> <span class="dim">floor+vega+gamma</span></span></div>
-          <div class="kv"><span class="k">Skew · lean</span><span class="v num">+0.03v ▸ <span class="offer">offer −0.04v</span> <span class="dim">shed +Δ inv</span> <span class="selctl" style="height:20px">nudge − +</span></span></div>
+          <div class="kv"><span class="k">Mid</span><span class="v num">8.00v <span class="dim">· 25ΔC smile · as-of 12:04:07 ● tick</span></span></div>
+          <div class="kv"><span class="k">Spread</span><span class="v num">0.24v · 2.1 pips · 18 bps</span></div>
+          <div class="kv"><span class="k">½-spread</span><span class="v num">0.12v <span class="selctl" style="height:20px">risk-based <span class="car">▾</span></span></span></div>
+          <div class="kv"><span class="k">Skew</span><span class="v num">+0.03v · <span class="offer">offer-lean</span> <span class="selctl" style="height:20px">nudge − +</span></span></div>
 
           <div style="margin:12px 0 6px" class="label">Greeks · USD / per-1v / per-day</div>
           <div class="greeks">
-            <div class="g"><div class="k">Δ spot</div><div class="v">0.251</div><div class="sub">+2.51mm</div></div>
-            <div class="g"><div class="k">Γ</div><div class="v">0.043</div><div class="sub">0.43mm/%</div></div>
+            <div class="g"><div class="k">Δ</div><div class="v">0.251</div><div class="sub">+2.51mm</div></div>
+            <div class="g"><div class="k">Γ</div><div class="v">0.043</div><div class="sub">0.43/%</div></div>
             <div class="g"><div class="k">Vega</div><div class="v">0.118</div><div class="sub">$11.8k</div></div>
             <div class="g"><div class="k">Θ</div><div class="v neg">−0.021</div><div class="sub">−$2.1k/d</div></div>
             <div class="g"><div class="k">Vanna</div><div class="v">0.009</div><div class="sub">$0.9k</div></div>
-            <div class="g"><div class="k">ρ dom</div><div class="v">0.061</div><div class="sub">$6.1k</div></div>
-            <div class="g"><div class="k">ρ for</div><div class="v neg">−0.058</div><div class="sub">−$5.8k</div></div>
+            <div class="g"><div class="k">ρd</div><div class="v">0.061</div><div class="sub">$6.1k</div></div>
+            <div class="g"><div class="k">ρf</div><div class="v neg">−0.058</div><div class="sub">−$5.8k</div></div>
           </div>
 
-          <svg class="payoff" viewBox="0 0 400 92" preserveAspectRatio="none" style="margin-top:12px;height:96px" aria-label="Payoff at expiry">
-            <defs><linearGradient id="pf" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="oklch(0.62 0.19 280 / 0.35)"/><stop offset="1" stop-color="oklch(0.62 0.19 280 / 0)"/></linearGradient></defs>
-            <line class="axis" x1="0" y1="66" x2="400" y2="66" /><line class="zero" x1="0" y1="52" x2="400" y2="52" />
-            <line x1="212" y1="0" x2="212" y2="92" stroke="var(--text-tertiary)" stroke-dasharray="2 3" stroke-width="1"/>
-            <path d="M0,52 L212,52 L400,6 L400,66 L0,66 Z" fill="url(#pf)"/>
-            <path class="curve" d="M0,52 L212,52 L400,6" />
-            <circle cx="212" cy="52" r="2.5" fill="var(--brand)"/><circle cx="258" cy="52" r="2.5" fill="var(--accent)"/>
-            <text x="214" y="86" font-size="8" fill="var(--text-tertiary)">K 1.0965</text><text x="248" y="86" font-size="8" fill="var(--text-tertiary)">S 1.0842</text>
-          </svg>
-          <div style="display:flex; gap:6px; margin-top:10px">
+          <div style="display:flex; gap:6px; margin-top:16px">
             <button class="btn primary">Update live ▸ T1–3</button>
             <button class="btn sell">Pull</button>
             <button class="btn ghost">Send to RFQ desk</button>
@@ -119,56 +105,46 @@
         </div>
       </section>
 
-      <!-- REAL vol surface -->
+      <!-- PAYOFF chart -->
       <section class="panel">
-        <header><span class="headline">Vol surface · EUR/USD</span><span class="chip brand">v128 · live diff</span></header>
-        <div class="body">
-          <table class="heat" style="margin-bottom:10px">
-            <thead><tr><th></th><th>10ΔP</th><th>25ΔP</th><th>ATM</th><th>25ΔC</th><th>10ΔC</th></tr></thead>
-            <tbody>
-              <tr><td class="lab">ON</td><td class="h5">8.9</td><td class="h4">7.9</td><td class="h3">7.3</td><td class="h3">7.4</td><td class="h4">8.2</td></tr>
-              <tr><td class="lab">1W</td><td class="h5">9.0</td><td class="h4">8.0</td><td class="h3">7.4</td><td class="h3">7.5</td><td class="h4">8.3</td></tr>
-              <tr><td class="lab">1M</td><td class="h5">9.6</td><td class="h4">8.5</td><td class="h4">8.1</td><td class="h3">8.0</td><td class="h4">8.8</td></tr>
-              <tr><td class="lab">3M</td><td class="h6">10.1</td><td class="h5">9.0</td><td class="h4">8.6</td><td class="h4">8.5</td><td class="h5">9.3</td></tr>
-              <tr><td class="lab">6M</td><td class="h6">10.6</td><td class="h5">9.4</td><td class="h4">9.0</td><td class="h4">8.9</td><td class="h5">9.8</td></tr>
-              <tr><td class="lab">1Y</td><td class="h6">11.2</td><td class="h5">9.9</td><td class="h5">9.3</td><td class="h4">9.2</td><td class="h6">10.4</td></tr>
-            </tbody>
-          </table>
-          <table class="grid">
-            <thead><tr><th>Tenor</th><th>ATM</th><th>25Δ RR</th><th>25Δ BF</th><th>10Δ RR</th><th>vs mkt</th><th></th></tr></thead>
-            <tbody>
-              <tr><td>1W</td><td class="n">7.42</td><td class="n neg">−0.35</td><td class="n">0.18</td><td class="n neg">−0.66</td><td class="n pos">+0.01</td><td class="dim">✎</td></tr>
-              <tr><td>1M</td><td class="n">8.06</td><td class="n neg">−0.42</td><td class="n">0.21</td><td class="n neg">−0.79</td><td class="n">0.00</td><td class="dim">✎</td></tr>
-              <tr><td>3M</td><td class="n">8.61</td><td class="n neg">−0.55</td><td class="n">0.27</td><td class="n neg">−1.03</td><td class="n neg">−0.02</td><td class="dim">✎</td></tr>
-              <tr><td>1Y</td><td class="n">9.30</td><td class="n neg">−0.71</td><td class="n">0.39</td><td class="n neg">−1.34</td><td class="n pos">+0.03</td><td class="dim">✎</td></tr>
-            </tbody>
-          </table>
-          <div class="kv"><span class="k">Smile</span><span class="v">eSSVI · arb-gated</span></div>
-          <div class="kv"><span class="k">Status</span><span class="v"><span class="rag g"></span>published · <span class="dim">no unmarked edits</span></span></div>
-          <button class="btn" style="margin-top:10px; width:100%">Open surface</button>
+        <header><span class="headline">Payoff at expiry</span><span class="muted" style="font-size:11px">premium-adjusted · USD/EUR</span></header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg class="chart" viewBox="0 0 340 172" height="168" aria-label="Payoff diagram">
+            <line class="gl" x1="34" y1="60" x2="326" y2="60"/>
+            <line class="gl" x1="34" y1="100" x2="326" y2="100"/>
+            <path class="pfill-pos" d="M211,100 L326,21 L326,100 Z"/>
+            <path class="pfill-neg" d="M34,100 L34,110 L196,110 L211,100 Z"/>
+            <line class="mk" x1="196" y1="18" x2="196" y2="148"/>
+            <line class="mk" x1="151" y1="18" x2="151" y2="148"/>
+            <path class="cline" d="M34,110 L196,110 L326,21"/>
+            <circle class="cdot" cx="211" cy="100" r="2.6"/>
+            <circle cx="151" cy="100" r="2.6" fill="var(--accent)"/>
+            <text class="axlbl b" x="196" y="14" text-anchor="middle">K 1.0965</text>
+            <text class="axlbl" x="151" y="162" text-anchor="middle">spot 1.0842</text>
+            <text class="axlbl" x="216" y="97" fill="var(--brand)">B/E 1.1006</text>
+            <text class="axlbl" x="4" y="24">+.031</text><text class="axlbl" x="4" y="103">0</text><text class="axlbl" x="2" y="113">−.004</text>
+            <text class="axlbl" x="63" y="162" text-anchor="middle">1.06</text><text class="axlbl" x="136" y="162" text-anchor="middle">1.08</text><text class="axlbl" x="209" y="162" text-anchor="middle">1.10</text><text class="axlbl" x="282" y="162" text-anchor="middle">1.12</text>
+          </svg>
+        </div>
+      </section>
+
+      <!-- VOL SMILE chart -->
+      <section class="panel">
+        <header><span class="headline">Vol smile · EUR/USD</span><span class="muted" style="font-size:11px">1M ● &nbsp; 3M – –</span></header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg class="chart" viewBox="0 0 340 158" height="150" aria-label="Vol smile">
+            <line class="gl" x1="40" y1="24" x2="320" y2="24"/><line class="gl" x1="40" y1="64" x2="320" y2="64"/><line class="gl" x1="40" y1="104" x2="320" y2="104"/>
+            <line class="mk" x1="184" y1="20" x2="184" y2="128"/>
+            <path class="cline2" d="M52,20 Q85,42 118,64 Q151,72 184,80 Q217,82 250,84 Q279,68 308,52"/>
+            <path class="cline" d="M52,40 Q85,62 118,84 Q151,95 184,102 Q217,104 250,104 Q279,88 308,72"/>
+            <circle class="cdot" cx="52" cy="40" r="2.6"/><circle class="cdot" cx="118" cy="84" r="2.6"/><circle class="cdot" cx="184" cy="102" r="2.6"/><circle class="cdot" cx="250" cy="104" r="2.6"/><circle class="cdot" cx="308" cy="72" r="2.6"/>
+            <text class="axlbl" x="6" y="27">10</text><text class="axlbl" x="10" y="67">9</text><text class="axlbl" x="10" y="107">8</text>
+            <text class="axlbl" x="52" y="140" text-anchor="middle">10ΔP</text><text class="axlbl" x="118" y="140" text-anchor="middle">25ΔP</text><text class="axlbl b" x="184" y="140" text-anchor="middle">ATM</text><text class="axlbl" x="250" y="140" text-anchor="middle">25ΔC</text><text class="axlbl" x="308" y="140" text-anchor="middle">10ΔC</text>
+            <text class="axlbl b" x="318" y="18" text-anchor="end">RR −0.42 · BF 0.21 · eSSVI</text>
+          </svg>
         </div>
       </section>
     </div>
-
-    <!-- contribution book (density row that kills the void) -->
-    <section class="panel">
-      <header><span class="headline">Contribution book · G10-A</span><span class="muted" style="font-size:11px">42 instruments · 3 tiers · 128 clients</span></header>
-      <div class="body" style="padding-top:var(--space-2)">
-        <table class="grid">
-          <thead><tr><th>Instrument</th><th>Tier</th><th>Your bid</th><th>Your offer</th><th>½-spr</th><th>Skew</th><th>Clients</th><th>Age</th><th>Upd/s</th><th>State</th></tr></thead>
-          <tbody>
-            <tr><td>EUR/USD 1M 25Δ C</td><td class="n">1–3</td><td class="n bid">7.94</td><td class="n offer">8.18</td><td class="n">0.12</td><td class="n">+0.03</td><td class="n">128</td><td class="n dim">0.4s</td><td class="n">31</td><td><span class="state live" style="padding:1px 8px">LIVE</span></td></tr>
-            <tr><td>EUR/USD 3M ATM</td><td class="n">1–2</td><td class="n bid">8.49</td><td class="n offer">8.73</td><td class="n">0.12</td><td class="n">+0.02</td><td class="n">96</td><td class="n dim">0.6s</td><td class="n">22</td><td><span class="state live" style="padding:1px 8px">LIVE</span></td></tr>
-            <tr><td>USD/JPY 1M 25Δ P</td><td class="n">1–3</td><td class="n bid">9.11</td><td class="n offer">9.39</td><td class="n">0.14</td><td class="n neg">−0.05</td><td class="n">120</td><td class="n dim">0.3s</td><td class="n">34</td><td><span class="state live" style="padding:1px 8px">LIVE</span></td></tr>
-            <tr><td>GBP/USD 2W ATM</td><td class="n">1</td><td class="n bid">7.60</td><td class="n offer">7.92</td><td class="n">0.16</td><td class="n">+0.01</td><td class="n">44</td><td class="n dim">1.1s</td><td class="n">12</td><td><span class="state live" style="padding:1px 8px">LIVE</span></td></tr>
-            <tr><td>AUD/USD 1M 25Δ C</td><td class="n">2</td><td class="n bid">9.85</td><td class="n offer">10.21</td><td class="n">0.18</td><td class="n">+0.06</td><td class="n">31</td><td class="n dim">0.8s</td><td class="n">9</td><td><span class="state live" style="padding:1px 8px">LIVE</span></td></tr>
-            <tr><td>EUR/GBP 1M ATM</td><td class="n dim">—</td><td class="n dim">6.71</td><td class="n dim">7.05</td><td class="n dim">0.17</td><td class="n dim">0.00</td><td class="n dim">—</td><td class="n dim">—</td><td class="n dim">0</td><td><span class="state draft" style="padding:1px 8px">DRAFT</span></td></tr>
-            <tr><td>USD/CHF 1M 25Δ P</td><td class="n">1–2</td><td class="n bid">7.20</td><td class="n offer">7.48</td><td class="n">0.14</td><td class="n neg">−0.03</td><td class="n">88</td><td class="n dim">0.5s</td><td class="n">18</td><td><span class="state live" style="padding:1px 8px">LIVE</span></td></tr>
-            <tr><td>XAU/USD 1M ATM</td><td class="n">1</td><td class="n dim">12.40</td><td class="n dim">12.98</td><td class="n dim">0.29</td><td class="n dim">+0.04</td><td class="n dim">—</td><td class="n warn">stale</td><td class="n dim">0</td><td><span class="state draft" style="padding:1px 8px">PULLED</span></td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
   </main>
 
   <!-- ============ CONTEXT RAIL ============ -->
@@ -176,7 +152,6 @@
     <section>
       <div class="grouphdr"><span class="label">Contribution</span></div>
       <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
-      <div class="kv"><span class="k">Audience</span><span class="v num">3 tiers · 128</span></div>
       <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
       <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
       <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
@@ -202,9 +177,8 @@
       <div class="grouphdr"><span class="label">Activity</span></div>
       <div class="tape">
         <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
-        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted 8.9v</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
         <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
-        <div class="ev"><span class="ts">12:03:51</span><span>mark surface EUR/USD v128</span><span class="pos">▲</span></div>
         <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
       </div>
     </section>
