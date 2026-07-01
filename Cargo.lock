@@ -772,6 +772,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-risk-accel"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-gpu",
+ "celnet-risk-cube",
+ "celnet-risk-normalize",
+ "celnet-types",
+ "celnet-vanilla",
+]
+
+[[package]]
 name = "celnet-risk-cube"
 version = "0.0.0"
 dependencies = [
