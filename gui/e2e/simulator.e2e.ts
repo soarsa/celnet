@@ -5,7 +5,7 @@
  *
  *   A. The permission-gated Simulator opens a SEPARATE OS WINDOW (so the main desk
  *      stays visible), and generating an RFQ in that popout INJECTS it into the
- *      live desk: back in the MAIN window, Fixed Income ▸ Quoting's RFQ/IOI inbox
+ *      live desk: back in the MAIN window, the Quoting workspace's RFQ/IOI inbox
  *      now shows the injected request (count > 0). Screenshot the popout + the
  *      main-window inbox at 1440 + an axe pass on the popout (0 serious/critical).
  *
@@ -24,16 +24,15 @@ const TRADER_PW = "longenoughpw1";
 const SIM_DENIED_TITLE =
   "Your permissions don't allow using the fixed-income counterparty simulator.";
 
-/** Click a top-level product-domain tab (FX Options / Fixed Income / Administration). */
-async function selectDomain(page: Page, name: string): Promise<void> {
-  await page.getByRole("tab", { name }).click();
-}
-
-/** Click a workspace rail button by label within the active domain. */
-async function railClick(page: Page, label: string | RegExp): Promise<void> {
+/**
+ * Click a workspace rail button by its title prefix `"<label> ("` (unique per
+ * view). fe-fi-migration #6: every workspace is a direct button on the single
+ * class-parametric rail — no product-domain tab to select first.
+ */
+async function railClick(page: Page, label: string): Promise<void> {
   await page
     .getByRole("complementary", { name: "workspaces" })
-    .getByRole("button", { name: label, exact: false })
+    .locator(`button[title^="${label} ("]`)
     .click();
 }
 
@@ -72,9 +71,8 @@ test("admin: a popout window injects an RFQ into the live RFQ/IOI inbox", async 
   await popout.screenshot({ path: "e2e-artifacts/simulator-popout-admin-1440.png" });
   await expectNoSeriousA11y(popout, "simulator popout (admin)");
 
-  // Back in the MAIN window: Fixed Income ▸ Quoting now shows the injected request.
+  // Back in the MAIN window: the Quoting workspace now shows the injected request.
   await page.bringToFront();
-  await selectDomain(page, "Fixed Income");
   await railClick(page, "Quoting");
 
   // The inbox is live (it refreshes on the *_RECEIVED push) — count > 0, the
@@ -91,9 +89,9 @@ test("admin: a popout window injects an RFQ into the live RFQ/IOI inbox", async 
 });
 
 test("a denied simulate capability disables the trader's Simulator button", async ({ page }) => {
-  // 1) Admin signs in; create a fresh trader.
+  // 1) Admin signs in; create a fresh trader via the Admin workspace (a direct
+  // button on the single class-parametric rail — no product-domain tab).
   await openLive(page);
-  await selectDomain(page, "Administration");
   await railClick(page, "Admin");
 
   await page.getByRole("button", { name: "New user" }).click();

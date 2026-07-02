@@ -16,12 +16,8 @@ import { openLive, signIn, expectNoSeriousA11y } from "./helpers";
 
 const TRADER_PW = "longenoughpw1";
 
-/** Open a workspace via its product-domain tab + rail button (title prefix). */
-async function gotoView(page: Page, domain: string, label: string) {
-  await page
-    .getByRole("tablist", { name: "product domains" })
-    .getByRole("tab", { name: domain, exact: true })
-    .click();
+/** Open a workspace via its direct rail button (by `title="<label> (…)"` prefix). */
+async function gotoView(page: Page, label: string) {
   const rail = page.getByRole("complementary", { name: "workspaces" });
   await rail.locator(`button[title^="${label} ("]`).click();
   const pane = page.locator('[aria-hidden="false"]:not([inert])').last();
@@ -43,7 +39,7 @@ test("admin manages OIS + bond defs under Administration; trader has no access",
   const bondName = `US Treasury ${stamp}`;
   const bondIsin = `US0000${stamp}`;
 
-  const pane = await gotoView(page, "Administration", "Reference Data");
+  const pane = await gotoView(page, "Reference Data");
 
   // --- create an OIS definition (family defaults to OIS) ---------------------
   // All workspaces are persistently mounted, so scope every form locator to the
@@ -79,7 +75,7 @@ test("admin manages OIS + bond defs under Administration; trader has no access",
   await expectNoSeriousA11y(page, "Reference Data (instrument registry, admin)");
 
   // --- a fresh trader: create via Admin, then sign in as them ---------------
-  const admin = await gotoView(page, "Administration", "Admin");
+  const admin = await gotoView(page, "Admin");
   await admin.getByRole("button", { name: "New user" }).click();
   await page.getByPlaceholder("trader@celnet.com").fill(traderEmail);
   await page.getByPlaceholder("Jane Trader").fill("Ref Data Trader");
@@ -90,12 +86,11 @@ test("admin manages OIS + bond defs under Administration; trader has no access",
   await signIn(page, traderEmail, TRADER_PW);
   await expect(page.getByRole("complementary", { name: "workspaces" })).toBeVisible();
 
-  // The trader is not an admin — Reference Data is admin-managed and now lives
-  // under the (hidden-for-non-admins) Administration domain, so its management UI
-  // is unreachable for the trader. The registry data itself stays
-  // server-resolvable for pricing/curve-building; only the UI is admin-only.
-  await expect(page.getByRole("tab", { name: "Administration" })).toHaveCount(0);
-  await expect(
-    page.getByRole("complementary", { name: "workspaces" }).getByText("Reference Data"),
-  ).toHaveCount(0);
+  // The trader is not an admin — Reference Data (and Admin) are admin/ops
+  // workspaces on the single class-parametric rail, hidden for non-admins, so
+  // their management UI is unreachable for the trader. The registry data itself
+  // stays server-resolvable for pricing/curve-building; only the UI is admin-only.
+  const railNav = page.getByRole("complementary", { name: "workspaces" });
+  await expect(railNav.locator('button[title^="Reference Data ("]')).toHaveCount(0);
+  await expect(railNav.locator('button[title^="Admin ("]')).toHaveCount(0);
 });
