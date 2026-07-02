@@ -29,7 +29,9 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use common::{TEST_DEADLINE, live_market, start_ready_edge};
 
 /// A bound on any single socket send/receive so a never-arriving frame fails fast.
-const STEP: Duration = Duration::from_secs(5);
+///
+/// Raised 5 s → 20 s: loaded-t2 M4 contention; mirrors celnet-client STEP_DEADLINE.
+const STEP: Duration = Duration::from_secs(20);
 
 /// The wire conventions as a JSON object (proto enum numbers), mirroring
 /// `common::wire_conventions`: spot-unadjusted Δ / ATM-forward / domestic-pips /
