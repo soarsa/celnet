@@ -103,6 +103,7 @@ describe("ENTRY_POINTS — affordance → capability map", () => {
     expect(ENTRY_POINTS.subscribe).toMatchObject({ action: "stream", asset: "fx_options" });
     expect(ENTRY_POINTS.series).toMatchObject({ action: "stream", asset: "fx_options" });
     expect(ENTRY_POINTS.rates).toMatchObject({ action: "price", asset: "fixed_income" });
+    expect(ENTRY_POINTS.curve).toMatchObject({ action: "price", asset: "fixed_income" });
     expect(ENTRY_POINTS.marksurface).toMatchObject({ action: "price", asset: "fx_options" });
     expect(ENTRY_POINTS.mark).toMatchObject({ action: "price", asset: "fx_options" });
   });
@@ -127,6 +128,7 @@ describe("ENTRY_POINTS — affordance → capability map", () => {
   it("entryDenialTitle / entrySignInPrompt delegate to the right capability", () => {
     expect(entryDenialTitle("book")).toBe(capabilityDenialTitle("execute", "fx_options"));
     expect(entryDenialTitle("rates")).toBe(capabilityDenialTitle("price", "fixed_income"));
+    expect(entryDenialTitle("curve")).toBe(capabilityDenialTitle("price", "fixed_income"));
     expect(entrySignInPrompt("rfq")).toBe("Sign in to request dealer quotes.");
     expect(entrySignInPrompt("book")).toBe("Sign in to book a trade.");
   });
