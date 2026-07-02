@@ -1,0 +1,45 @@
+# Celnet — Memory Index
+
+One line per memory. Loaded each session. Content lives in the linked files.
+
+## Guardrails (feedback)
+- [Git push policy](git-local-only.md) — commit locally freely; push ONLY to origin github.com/soarsa/celnet (authorized 2026-06-05); no other remotes.
+- [lodestar first](lodestar-first.md) — use the lodestar graph + verified-knowledge MCP before grep/read for code discovery; replaced CBM (2026-06-22), upgraded 0.8.0→0.9.0 (2026-06-29); worktrees MUST pin .lodestar/project-id or they fragment + share nothing.
+- [lodestar no-workaround](lodestar-no-workaround.md) — never replicate/work around lodestar; raise GitHub issues on soarsa/lodestar for gaps (first: lodestar#7 design:token CSS-module extraction).
+- [lodestar lifecycle substrate](lodestar-lifecycle-substrate.md) — drive the WHOLE lifecycle through lodestar: plan/refactor/optimise/deterministically-deliver/test/accelerate, not just discovery.
+- [No mocks, no placeholders](no-mocks-policy.md) — only 100% complete, state-of-the-art implementations.
+- [No commercial products](no-commercial-products.md) — open-source / free software only, everywhere.
+- [Scale & performance](scale-and-performance.md) — IB-sized portfolios, HFT streaming, latest academic research.
+- [API naming & evolution](api-naming-and-evolution.md) — celnet-logical vendor-neutral names, no versioned APIs, zero legacy.
+- [Product surface & observability](product-surface-observability.md) — evolving trader-workflow API clients, zero-cost observability, distributed scale-out.
+- [GA-push directives](ga-push-directives.md) — optimize-not-version API, plugin-host alternative to wasmtime, MacOS-inspired GUI beating Synoption, May-2026 SOTA mandate.
+- [API-first client parity](api-first-client-parity.md) — every capability lives in the one canonical API; GUI/SDK/Excel/docs all consume it and evolve in lockstep; front-end uses the same APIs.
+- [Deferred e2e = defect reservoir](deferred-e2e-defect-reservoir.md) — GW1 layout break survived 3 waves of green vitest; gui-touching gates must run the live Playwright e2e + axe (warm, ~23s), never defer a new e2e suite.
+- [Dev posture masks prod defects](dev-posture-masks-prod-defects.md) — Permissive test/demo edges hid a deny-by-default P1; gate against the production posture (Enforce), propagate a server default-flip to every client + gate in the same change.
+- [Agent worktree base & cross-cuts](agent-worktree-base-and-cross-cuts.md) — isolation:worktree bases on main not your branch; client-auth changes are a cross-cut (do on the branch + gate with server under Enforce); a new wire verb needs decoder AND router; misbased-worktree disjoint changes graft cleanly.
+- [Excel add-in runtime delivery](excel-addin-runtime-delivery.md) — Excel-for-Mac custom fns need a COMPILED bundle (not Vite-dev raw .ts) + shared runtime + Office.onReady-gated registration; plain `=NS.FN()` (no `_xlfn.`); see docs/EXCEL-ADDIN-LOCAL-BRINGUP.md.
+- [Model selection policy](model-selection-policy.md) — fable for math-judgment (small units), sonnet for mechanical/pattern work, opus for adversarial verify (diversity), measured results behind each tier.
+- [Planned builds, no blocking](planned-builds-no-blocking.md) — operator directive: never fully block on another session's long gate (bounded slice instead); build only what changed; ONE milestone gate per merge window, result shared via §6 gate ledger.
+- [Use agent teams and /loop](use-agent-teams-and-loop.md) — operator (2026-07-01): use AGENT TEAMS (parallel Agent spawns) + /loop MORE FREQUENTLY; default to parallel fan-out for decomposable work (mapping/drafting/verify/lanes), keep the loop iterating, fall back in-session only for synthesis/coordination/small edits; right-size the fan-out.
+- [Token & context discipline](token-and-context-discipline.md) — externalize durable state to disk (ledger/memory/git/graph) so clears are lossless; pass workflow seams by file-reference not paste; right-size fan-out.
+
+## Reference (reference)
+- [Celer brand kit](celer-brand-kit.md) — coral #ff7357, indigo accent, Anaheim font, pinwheel logo + path data; for branding Celnet as a Celer product.
+- [Claude plugins](claude-plugins.md) — installed `protobuf@buf-plugins` (proto skill, auto-triggers on *.proto); skipped always-on security-guidance for token reasons; what's already present.
+
+## Project (project)
+- [▶ GUI experience redesign lane](gui-experience-redesign-lane.md) — SESSION-3 lane (2026-06-30): full cross-asset SOTA GUI redesign; board id `gui-experience-redesign`/tag `guixp001`, non-cargo, runs under /loop; first deliverable = HTML mockups as lodestar neurosymbolic refs.
+- [▶ Target architecture program](target-architecture-program.md) — ACTIVE (operator 2026-07-01): define a CLEAR whole-platform TARGET ARCHITECTURE first (design BEFORE implementation) — clean integrated one-contract API, scaling/perf + ultra-low-latency, SOTA, cross-asset opportunity, NO replication, legacy removed; comprehensively map ALL code/capabilities in lodestar (API/Excel/SDKs/nodes/latency/analytics/config/accel) via /loop + agent teams + research + critique. Dim1 (pricing/risk/FI) mapped → [[platform-integration-rearchitecture]].
+- [▶ Platform integration rearchitecture](platform-integration-rearchitecture.md) — ACTIVE (operator 2026-07-01): whole-platform SOTA integration — gBSM OPTIONS core unified+landed (ADR-0012, 4371f17) but FI/rates + Heston + surface are DISTINCT paradigms (celnet-rates deps = types+calendar only, NOT core); gather knowledge across all crates/asset-classes → critique → rearchitect to one term-structure-unified core (ADR-0010: Carry = degenerate curve).
+- [▶ Cross-session orchestration](cross-session-orchestration.md) — ✅ LANDED + LIVE on origin/main (ba35a01), dogfooded (D/G/J ran claim→done on coord/board): `.celnet/tasks.jsonl` + `tools/celnet-task` CLI + SessionStart/PreCompact/Stop hooks + git-CAS claim/lease + done=lodestar deliverable. Sentinel roll-ups BLOCKED on upstream: design-target refs report "unreadable" though committed → filed on soarsa/lodestar#19; deliverable done-gating stays coordinator-attested.
+- [▶ Ship-program resume](ship-program-resume.md) — A–L COMPLETE (0b1a3ff, t2-19/19) + ▶ ACTIVE MISSION (operator 2026-06-30): FULLY IMPLEMENT the deferrals — G full unary WS-codec swap, D celnet-xva + celnet-replog activation, lodestar design-target-sentinel binding — no deferral, collaborating w/ the parallel session; encode each as a coord/board manifest task first, then build→T1→batched-t2→land→update plan+knowledge. git=gh credential helper. Steps + git-auth inside.
+- [G WS-codec swap progress](g-ws-codec-swap-progress.md) — deferral `ws-codec-from-proto` increment tracker: INC1 DONE (`655e292` on `arch/G-ws-codec-full-swap`, T1 6/6 green, unpushed); next = override table → codecs → differential harness → handle_unary swap; carries the descriptor quirks the override must handle.
+- [Parallel doc session](parallel-doc-session.md) — a parallel session owns the Celnet capabilities/architecture/Celer-Trader-integration doc; this session owns code + the phase12 workflow; disjoint ownership + honesty (shipped vs in-flight vs deferred).
+- [Capabilities doc session](capabilities-doc-session.md) — flagship docs/CELNET-CAPABILITIES.md + assets: scope, house rules, research digest path, live-capture rig, screenshot/diagram inventory, honesty anchors.
+- [Plugin host = wasmi](plugin-host-wasmi.md) — tiered host (Tier-0 native + Tier-2 wasmi fuel-metered sandbox + replay) behind frozen plugin-api; wasmtime rejected; WS-G done.
+- [Celnet mission](celnet-mission.md) — what we're building and the non-negotiable product pillars.
+- [Dev environment](dev-environment.md) — toolchain, hardware, GPU strategy, how to invoke cargo.
+- [Parallel-session model](parallel-session-model.md) — how multiple Claude sessions work without conflict.
+- [Cargo gate environment pitfalls](cargo-gate-environment-pitfalls.md) — nextest orchestration wedges (use cargo test); macOS first-launch dyld stall + tokio-timeout flakes under build churn; serialize heavy cargo on the one M4.
+- [Lodestar migration](lodestar-migration.md) — replaced CBM with lodestar 0.8.0 (2026-06-22), upgraded to 0.9.0 (2026-06-29); shared substrate in git; project key github.com-soarsa-celnet; worktree project-id unification; judge Stage-1-only; #18 still open ⇒ mirror stays.
+- [Multi-asset experience program](multiasset-experience-program.md) — GUI+Excel multi-asset UX: capability.ts matrix + asset-class-aware gallery + class-correct Greeks SHIPPED (`4874b32`,`6700df0`); inc-4 (cross-asset perpetual/future-option) deferred (AppContext pairCtx groundwork); inc 6/7/8 remain.

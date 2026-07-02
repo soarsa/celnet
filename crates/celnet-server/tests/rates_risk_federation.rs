@@ -26,7 +26,8 @@ use std::sync::Arc;
 use celnet_proto::risk_service_server::RiskService;
 use celnet_proto::{
     AggregateRatesRiskRequest, BrokenDate, CurveSet, EntitlementPrincipal, OisInstrument,
-    OisPillar, RatesInstrument, RatesPosition, RatesRiskScope, Side, rates_instrument,
+    OisPillar, PillarTenor, RatesInstrument, RatesPosition, RatesRiskScope, Side, pillar_tenor,
+    rates_instrument,
 };
 use celnet_risk_cube::{BookId, EntityId};
 use celnet_risk_fleet::{KeyRateBucket, RatesFactKey, RatesRiskFact, firm_aggregate_rates};
@@ -47,24 +48,15 @@ fn usd_curve() -> CurveSet {
             month: 6,
             day: 15,
         }),
-        ois_pillars: vec![
-            OisPillar {
-                tenor_years: 1,
-                par_rate: 0.0402,
-            },
-            OisPillar {
-                tenor_years: 2,
-                par_rate: 0.0408,
-            },
-            OisPillar {
-                tenor_years: 5,
-                par_rate: 0.0421,
-            },
-            OisPillar {
-                tenor_years: 10,
-                par_rate: 0.0435,
-            },
-        ],
+        ois_pillars: [(1, 0.0402), (2, 0.0408), (5, 0.0421), (10, 0.0435)]
+            .into_iter()
+            .map(|(years, par_rate)| OisPillar {
+                tenor: Some(PillarTenor {
+                    point: Some(pillar_tenor::Point::Years(years)),
+                }),
+                par_rate,
+            })
+            .collect(),
     }
 }
 

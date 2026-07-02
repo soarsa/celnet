@@ -139,6 +139,16 @@ pub async fn spawn_fix_lp(
         half_spread,
         validity_ticks: 1_000_000,
         pricer,
+        securities: vec![dialect_fx::SecurityDef::new(
+            format!(
+                "{}{}",
+                request.pair.base.as_str(),
+                request.pair.quote.as_str()
+            )
+            .as_bytes(),
+            dialect_fx::SEC_TYPE_FXVO,
+            request.pair.quote.as_str().as_bytes(),
+        )],
     };
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -152,7 +162,7 @@ pub async fn spawn_fix_lp(
                 break;
             };
             let session = Session::new(acc_cfg(), InMemoryStore::new());
-            let mut acc = Acceptor::new(session, qs);
+            let mut acc = Acceptor::new(session, qs.clone());
             acc.run(stream, SENDING_TIME.to_vec()).await.ok();
         }
     });

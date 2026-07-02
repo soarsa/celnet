@@ -8,6 +8,8 @@
 //! with the acceptor, so the two interoperate over a loopback socket exactly as
 //! they would against the live Celer FIX edge.
 
+use std::time::Duration;
+
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::dictionary::MsgType;
@@ -42,21 +44,40 @@ pub struct InitiatorResult {
     pub filled: bool,
 }
 
+/// The default time the initiator waits for a `Quote` before giving up: a venue that
+/// routes an RFQ to a human desk (rather than auto-quoting) sends no reply, so without
+/// a bound the request/lift cycle would block forever. Five seconds comfortably covers
+/// an auto-quote round-trip while keeping a routed (no-quote) request responsive.
+pub const DEFAULT_QUOTE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// The initiator driver.
 pub struct Initiator<S: MessageStore> {
     session: Session<S>,
     policy: LiftPolicy,
     seq: u64,
+    /// How long to wait for a `Quote` (and its exec report, when lifting) before the
+    /// cycle returns no-quote. Bounds the wait so a venue that routes the RFQ to a human
+    /// desk — and therefore never auto-quotes — does not hang the caller.
+    quote_timeout: Duration,
 }
 
 impl<S: MessageStore> Initiator<S> {
-    /// Build an initiator over a session and a lift policy.
+    /// Build an initiator over a session and a lift policy (default quote timeout).
     pub fn new(session: Session<S>, policy: LiftPolicy) -> Self {
         Self {
             session,
             policy,
             seq: 0,
+            quote_timeout: DEFAULT_QUOTE_TIMEOUT,
         }
+    }
+
+    /// Override the quote-wait timeout (e.g. a longer window for a slow manual desk, or
+    /// a shorter one for a snappy demo). Builder-style; leaves every other field intact.
+    #[must_use]
+    pub fn with_quote_timeout(mut self, quote_timeout: Duration) -> Self {
+        self.quote_timeout = quote_timeout;
+        self
     }
 
     fn mint(&mut self, prefix: &str) -> Vec<u8> {
@@ -108,12 +129,22 @@ impl<S: MessageStore> Initiator<S> {
         let req = self.session.send_app(&sending_time, build_request);
         write_frame(&mut write_half, &req).await?;
 
-        // 3. Collect the quote, optionally lift, collect the exec report.
+        // 3. Collect the quote, optionally lift, collect the exec report. Bounded by a
+        //    deadline so a venue that routes the RFQ to a human desk (no auto-quote, so
+        //    no reply frame ever arrives — only periodic heartbeats) returns no-quote
+        //    instead of blocking forever. Heartbeats do not extend the deadline.
         let mut result = InitiatorResult::default();
         let mut awaiting_exec = false;
+        let deadline = tokio::time::Instant::now() + self.quote_timeout;
         loop {
-            let Some(frame_bytes) = reader.next_frame().await? else {
-                break;
+            let frame_bytes = match tokio::time::timeout_at(deadline, reader.next_frame()).await {
+                // Deadline hit — the venue is not going to auto-quote (routed to a desk).
+                Err(_elapsed) => break,
+                Ok(Ok(Some(bytes))) => bytes,
+                // Peer closed the session.
+                Ok(Ok(None)) => break,
+                // A transport error propagates as before.
+                Ok(Err(e)) => return Err(e),
             };
             let mt = self
                 .drive(&frame_bytes, &sending_time, &mut write_half)

@@ -19,7 +19,7 @@ use crate::risk::{
     self, AggregateReq, CliDimension, DrillReq, LimitsReq, PositionsReq, RiskCommon, StreamReq,
 };
 use crate::tenor::parse_tenor;
-use crate::{convention, exotic, fix, future_option, linear, perpetual, price, rfq, surface};
+use crate::{convention, desk, exotic, fix, future_option, linear, perpetual, price, rfq, surface};
 
 use celnet_client::{OrgDimension, Scope, StrikeSpec};
 
@@ -90,6 +90,12 @@ pub(crate) enum Command {
     /// `celnet-fix` engine's real session + rates dialect, against a local or UAT
     /// gateway (a live counterparty venue is a deploy concern, never required).
     Fix(FixArgs),
+    /// Drive the dealer-side quoting desk (`RfqDeskService`) against a running edge
+    /// via the `celnet-client` SDK: submit an inbound RFQ/IOI, quote/decline it,
+    /// accept a quote (books a deal + rates position), and read the inbox / deals
+    /// blotter — the SAME desk contract the GUI desk view consumes. The
+    /// quote/accept actions are capability-gated; pass `--session-token`.
+    Desk(DeskArgs),
 }
 
 /// Arguments to `risk` — the edge endpoint, the entitlement scope flags, and one
@@ -116,9 +122,28 @@ pub(crate) struct RiskArgs {
     /// grant (a Chinese wall on a grant-all firm view).
     #[arg(long = "deny", value_parser = risk::parse_scope_flag)]
     pub(crate) denies: Vec<(OrgDimension, u64)>,
+    /// An `AuthService.Login`-issued session token authorizing a capability-gated
+    /// operation (`rates-book`). Omitted ⇒ the SDK asserts the audited grant-all
+    /// principal the production edge admits for the `ReadAny` reads (parity with the
+    /// FX-risk commands); a capability-gated write still needs a real token.
+    #[arg(long = "session-token")]
+    pub(crate) session_token: Option<String>,
     /// The risk sub-subcommand.
     #[command(subcommand)]
     pub(crate) kind: RiskKind,
+}
+
+/// Reference the calibrated USD-SOFR curve the linear-rates commands price against:
+/// a spot-anchor date plus its dated par-OIS pillars.
+#[derive(Debug, Args, Clone)]
+pub(crate) struct CurveArgs {
+    /// The curve reference (spot-anchor) civil date, `YYYY-MM-DD`. Omitted ⇒ today.
+    #[arg(long = "curve-date")]
+    pub(crate) curve_date: Option<String>,
+    /// A calibrating par-OIS pillar `TENOR_YEARS=PAR_RATE` (repeatable, at least one;
+    /// e.g. `--pillar 1=0.0432 --pillar 5=0.0405`).
+    #[arg(long = "pillar", value_parser = risk::parse_pillar, required = true)]
+    pub(crate) pillars: Vec<(u32, f64)>,
 }
 
 /// The `risk` sub-subcommands — one per `RiskService` operation.
@@ -176,6 +201,42 @@ pub(crate) enum RiskKind {
         /// The VaR/ES confidence level.
         #[arg(long, default_value_t = 0.99)]
         var_alpha: f64,
+    },
+    /// Price a book of linear-rates (OIS) positions against a curve and print the
+    /// firm rollup netted per settlement currency (net PV / PV01 / DV01 + key-rate
+    /// ladder) — the fixed-income analogue of `risk aggregate`. Positions travel
+    /// inline; the server prices + nets them (the CLI never sums).
+    RatesAggregate {
+        /// The calibrated USD-SOFR curve the positions price against.
+        #[command(flatten)]
+        curve: CurveArgs,
+        /// A rates position `ENTITY:BOOK:TENOR_YEARS:FIXED_RATE:NOTIONAL:SIDE`
+        /// (`SIDE` = `pay`/`receive`), repeatable and at least one — e.g.
+        /// `--position 1:10:5:0.0405:25000000:receive`.
+        #[arg(long = "position", value_parser = risk::parse_rates_position, required = true)]
+        positions: Vec<risk::CliRatesPosition>,
+        /// Narrow the rollup to one legal entity.
+        #[arg(long)]
+        entity: Option<u32>,
+        /// Narrow the rollup to one netting book.
+        #[arg(long)]
+        book: Option<u32>,
+        /// Narrow the rollup to one settlement currency (ISO 4217).
+        #[arg(long)]
+        ccy: Option<String>,
+    },
+    /// List the firm's booked linear-rates (OIS) positions — the rates analogue of
+    /// `risk positions`. `ReadAny`-gated (the grant-all default serves it).
+    RatesPositions {
+        /// Narrow the listing to one legal entity.
+        #[arg(long)]
+        entity: Option<u32>,
+        /// Narrow the listing to one netting book.
+        #[arg(long)]
+        book: Option<u32>,
+        /// Narrow the listing to one settlement currency (ISO 4217).
+        #[arg(long)]
+        ccy: Option<String>,
     },
 }
 
@@ -305,6 +366,105 @@ pub(crate) struct FixArgs {
     /// The session heartbeat interval (seconds).
     #[arg(long, default_value_t = 30)]
     pub(crate) heartbeat: u32,
+}
+
+/// Arguments to `desk` — the edge endpoint, an optional entitlement principal and
+/// session token, and one of the desk sub-subcommands.
+#[derive(Debug, Args)]
+pub(crate) struct DeskArgs {
+    /// The gRPC endpoint of the edge, e.g. `http://127.0.0.1:50551`.
+    #[arg(long, default_value = "http://127.0.0.1:50551")]
+    pub(crate) endpoint: String,
+    /// An `AuthService.Login`-issued session token. Required for the capability-gated
+    /// `respond` / `decline` / `accept`; the `ReadAny` reads (submit / requests /
+    /// deals) are served by the SDK's audited grant-all default when omitted.
+    #[arg(long = "session-token")]
+    pub(crate) session_token: Option<String>,
+    /// The desk sub-subcommand.
+    #[command(subcommand)]
+    pub(crate) kind: DeskKind,
+}
+
+/// The `desk` sub-subcommands — one per `RfqDeskService` operation.
+#[derive(Debug, Subcommand)]
+pub(crate) enum DeskKind {
+    /// Submit an inbound RFQ (or IOI with `--ioi`) to a desk for a USD-SOFR OIS,
+    /// priced against the supplied curve. Prints the captured `PENDING` request +
+    /// its server-assigned id.
+    Submit {
+        /// The submitting counterparty label (display/attribution).
+        #[arg(long)]
+        counterparty: String,
+        /// The target desk the request routes to.
+        #[arg(long)]
+        desk: String,
+        /// The OIS tenor in whole years (`>= 1`).
+        #[arg(long = "tenor-years")]
+        tenor_years: u32,
+        /// The OIS fixed rate as a decimal (`0.0405` = 4.05%).
+        #[arg(long)]
+        rate: f64,
+        /// The notional in the curve currency (`> 0`).
+        #[arg(long, default_value_t = 25_000_000.0)]
+        notional: f64,
+        /// The counterparty's directional side (`pay` fixed / `receive` fixed).
+        #[arg(long, value_parser = risk::parse_ois_side, default_value = "pay")]
+        side: celnet_client::OisSide,
+        /// Submit an indication-of-interest instead of a firm request-for-quote.
+        #[arg(long, default_value_t = false)]
+        ioi: bool,
+        /// Time-to-live for the desk to respond, milliseconds (`0` ⇒ a server default).
+        #[arg(long = "ttl-ms", default_value_t = 0)]
+        ttl_ms: u32,
+        /// The calibrated USD-SOFR curve to price against.
+        #[command(flatten)]
+        curve: CurveArgs,
+    },
+    /// Quote a pending desk request at a firm level (capability-gated).
+    Respond {
+        /// The request id being quoted (from `desk submit` / `desk requests`).
+        #[arg(long = "request-id")]
+        request_id: String,
+        /// The quoted all-in fixed rate as a decimal.
+        #[arg(long)]
+        price: f64,
+        /// The notional the quote stands for (curve currency, `> 0`).
+        #[arg(long, default_value_t = 25_000_000.0)]
+        notional: f64,
+        /// How long the quote stands, milliseconds (`0` ⇒ indicative only).
+        #[arg(long = "valid-ms", default_value_t = 2_000)]
+        valid_ms: u32,
+        /// The quoting trader (attribution).
+        #[arg(long, default_value = "desk")]
+        trader: String,
+    },
+    /// Decline to quote a pending desk request (capability-gated).
+    Decline {
+        /// The request id being declined.
+        #[arg(long = "request-id")]
+        request_id: String,
+        /// A short human reason shown to the counterparty.
+        #[arg(long, default_value = "no axe")]
+        reason: String,
+    },
+    /// Lift a quoted desk request — books a deal + a rates position (capability-gated).
+    Accept {
+        /// The request id being lifted.
+        #[arg(long = "request-id")]
+        request_id: String,
+    },
+    /// Read the desk inbox (the pending/terminal RFQ & IOI requests), newest first.
+    Requests {
+        /// Restrict to one desk.
+        #[arg(long)]
+        desk: Option<String>,
+    },
+    /// Read the received-deals blotter, newest first.
+    Deals {
+        /// Restrict to one desk.
+        #[arg(long)]
+        desk: Option<String>,
+    },
 }
 
 /// Shared Garman-Kohlhagen market inputs accepted by `price` and `exotic`.
@@ -1898,6 +2058,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
             fix::run(&req, out).map_err(DispatchError::Fix)?;
             Ok(())
         }
+        Command::Desk(a) => dispatch_desk(a, out),
     }
 }
 
@@ -1974,6 +2135,128 @@ fn dispatch_risk<W: Write>(a: RiskArgs, out: &mut W) -> Result<(), DispatchError
             };
             risk::run_limits(&req, out).map_err(DispatchError::Risk)
         }
+        RiskKind::RatesAggregate {
+            curve,
+            positions,
+            entity,
+            book,
+            ccy,
+        } => {
+            let req = risk::RatesAggregateReq {
+                endpoint: a.endpoint,
+                curve_date: curve.curve_date,
+                pillars: curve.pillars,
+                positions,
+                grants: a.grants,
+                denies: a.denies,
+                session_token: a.session_token,
+                entity,
+                book,
+                ccy,
+            };
+            risk::run_rates_aggregate(&req, out).map_err(DispatchError::Risk)
+        }
+        RiskKind::RatesPositions { entity, book, ccy } => {
+            let req = risk::RatesPositionsReq {
+                endpoint: a.endpoint,
+                grants: a.grants,
+                denies: a.denies,
+                session_token: a.session_token,
+                entity,
+                book,
+                ccy,
+            };
+            risk::run_rates_positions(&req, out).map_err(DispatchError::Risk)
+        }
+    }
+}
+
+/// Dispatch the `desk` subcommand to the matching `RfqDeskService` SDK call.
+fn dispatch_desk<W: Write>(a: DeskArgs, out: &mut W) -> Result<(), DispatchError> {
+    match a.kind {
+        DeskKind::Submit {
+            counterparty,
+            desk,
+            tenor_years,
+            rate,
+            notional,
+            side,
+            ioi,
+            ttl_ms,
+            curve,
+        } => {
+            let req = desk::SubmitReq {
+                endpoint: a.endpoint,
+                session_token: a.session_token,
+                counterparty,
+                desk,
+                tenor_years,
+                rate,
+                notional,
+                side,
+                ioi,
+                ttl_ms,
+                curve_date: curve.curve_date,
+                pillars: curve.pillars,
+            };
+            desk::run_submit(&req, out).map_err(DispatchError::Risk)
+        }
+        DeskKind::Respond {
+            request_id,
+            price,
+            notional,
+            valid_ms,
+            trader,
+        } => desk::run_respond(
+            &desk::RespondReq {
+                endpoint: a.endpoint,
+                session_token: a.session_token,
+                request_id,
+                price,
+                notional,
+                valid_ms,
+                trader,
+            },
+            out,
+        )
+        .map_err(DispatchError::Risk),
+        DeskKind::Decline { request_id, reason } => desk::run_decline(
+            &desk::DeclineReq {
+                endpoint: a.endpoint,
+                session_token: a.session_token,
+                request_id,
+                reason,
+            },
+            out,
+        )
+        .map_err(DispatchError::Risk),
+        DeskKind::Accept { request_id } => desk::run_accept(
+            &desk::AcceptReq {
+                endpoint: a.endpoint,
+                session_token: a.session_token,
+                request_id,
+            },
+            out,
+        )
+        .map_err(DispatchError::Risk),
+        DeskKind::Requests { desk: desk_filter } => desk::run_requests(
+            &desk::ReadReq {
+                endpoint: a.endpoint,
+                session_token: a.session_token,
+                desk: desk_filter,
+            },
+            out,
+        )
+        .map_err(DispatchError::Risk),
+        DeskKind::Deals { desk: desk_filter } => desk::run_deals(
+            &desk::ReadReq {
+                endpoint: a.endpoint,
+                session_token: a.session_token,
+                desk: desk_filter,
+            },
+            out,
+        )
+        .map_err(DispatchError::Risk),
     }
 }
 
@@ -2523,5 +2806,104 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    // ---- the linear-rates risk + dealer-desk command trees parse -------------
+
+    #[test]
+    fn risk_rates_aggregate_parses() {
+        let cli = Cli::try_parse_from([
+            "celnet",
+            "risk",
+            "--endpoint",
+            "http://127.0.0.1:1",
+            "rates-aggregate",
+            "--curve-date",
+            "2026-06-25",
+            "--pillar",
+            "1=0.0432",
+            "--pillar",
+            "5=0.0405",
+            "--position",
+            "1:10:5:0.0405:25000000:receive",
+            "--ccy",
+            "USD",
+        ])
+        .expect("rates-aggregate parses");
+        assert!(matches!(
+            cli.command,
+            Command::Risk(RiskArgs {
+                kind: RiskKind::RatesAggregate { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn risk_rates_aggregate_requires_a_pillar() {
+        assert!(
+            Cli::try_parse_from([
+                "celnet",
+                "risk",
+                "rates-aggregate",
+                "--position",
+                "1:10:5:0.0405:25000000:pay",
+            ])
+            .is_err(),
+            "a curve with no --pillar is a structural parse error"
+        );
+    }
+
+    #[test]
+    fn desk_command_tree_parses() {
+        // submit, with the inline curve.
+        let submit = Cli::try_parse_from([
+            "celnet",
+            "desk",
+            "--session-token",
+            "tok",
+            "submit",
+            "--counterparty",
+            "ACME",
+            "--desk",
+            "g10",
+            "--tenor-years",
+            "5",
+            "--rate",
+            "0.0405",
+            "--side",
+            "pay",
+            "--pillar",
+            "5=0.0405",
+        ])
+        .expect("desk submit parses");
+        assert!(matches!(
+            submit.command,
+            Command::Desk(DeskArgs {
+                kind: DeskKind::Submit { .. },
+                ..
+            })
+        ));
+
+        // respond / accept / requests / deals all parse.
+        for argv in [
+            vec![
+                "celnet",
+                "desk",
+                "respond",
+                "--request-id",
+                "r-1",
+                "--price",
+                "0.0412",
+            ],
+            vec!["celnet", "desk", "accept", "--request-id", "r-1"],
+            vec!["celnet", "desk", "requests", "--desk", "g10"],
+            vec!["celnet", "desk", "deals"],
+        ] {
+            assert!(
+                Cli::try_parse_from(argv.clone()).is_ok(),
+                "desk subcommand {argv:?} must parse"
+            );
+        }
     }
 }

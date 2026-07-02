@@ -34,6 +34,7 @@ export type WorkspaceId =
   | "quoting"
   | "deals"
   | "ratesbook"
+  | "refdata"
   | "stream"
   | "surface"
   | "risk"
@@ -51,6 +52,7 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "quoting",
   "deals",
   "ratesbook",
+  "refdata",
   "stream",
   "surface",
   "risk",

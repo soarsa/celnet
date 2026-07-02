@@ -30,10 +30,7 @@ export type DeltaConvention =
 export type AtmConvention = "ATM_FORWARD" | "DELTA_NEUTRAL_STRADDLE";
 
 export type PremiumStyle =
-  | "DOMESTIC_PIPS"
-  | "PERCENT_FOREIGN"
-  | "PERCENT_DOMESTIC"
-  | "FOREIGN_PIPS";
+  "DOMESTIC_PIPS" | "PERCENT_FOREIGN" | "PERCENT_DOMESTIC" | "FOREIGN_PIPS";
 
 export type Cut = "NEW_YORK_1000" | "TOKYO_1500";
 
@@ -86,7 +83,8 @@ export type FixingSource =
   | "CLP_DOLAR_OBS"
   | "COP_TRM";
 
-export type StrategyKind = "RISK_REVERSAL" | "STRANGLE" | "STRADDLE" | "SEAGULL";
+export type StrategyKind =
+  "RISK_REVERSAL" | "STRANGLE" | "STRADDLE" | "SEAGULL";
 
 /**
  * The crossing semantics of a barrier level (`celnet.wire.BarrierKind`):
@@ -116,10 +114,7 @@ export type MonitoringStyle = "CONTINUOUS" | "DISCRETE";
  * `DOUBLE_ONE_TOUCH` pays if EITHER is touched. Purpose-named, vendor/method-neutral.
  */
 export type TouchKind =
-  | "ONE_TOUCH"
-  | "NO_TOUCH"
-  | "DOUBLE_NO_TOUCH"
-  | "DOUBLE_ONE_TOUCH";
+  "ONE_TOUCH" | "NO_TOUCH" | "DOUBLE_NO_TOUCH" | "DOUBLE_ONE_TOUCH";
 
 /**
  * The settlement style of a digital (binary) option (`celnet.wire.DigitalStyle`):
@@ -236,11 +231,7 @@ export type SmileModel =
  * ATM_VOL/RISK_REVERSAL/BUTTERFLY/FORWARD need a tenor; SPOT is tenor-independent.
  */
 export type MarketObservable =
-  | "ATM_VOL"
-  | "SPOT"
-  | "RISK_REVERSAL"
-  | "BUTTERFLY"
-  | "FORWARD";
+  "ATM_VOL" | "SPOT" | "RISK_REVERSAL" | "BUTTERFLY" | "FORWARD";
 
 // --- value messages ---------------------------------------------------------
 
@@ -423,8 +414,7 @@ export interface TradableToken {
 
 /** A strike expressed either as an absolute level or a signed convention delta. */
 export type StrikeOrDelta =
-  | { kind: "strike"; strike: number }
-  | { kind: "delta"; delta: number };
+  { kind: "strike"; strike: number } | { kind: "delta"; delta: number };
 
 export interface Vanilla {
   optionType: OptionType;
@@ -1181,10 +1171,7 @@ export interface Heartbeat {
 }
 
 export type StreamEndReason =
-  | "LAGGED"
-  | "DRAINING"
-  | "UNSUBSCRIBED"
-  | "EXPIRED";
+  "LAGGED" | "DRAINING" | "UNSUBSCRIBED" | "EXPIRED";
 
 export interface Executed {
   subscriptionId: bigint;
@@ -1198,7 +1185,8 @@ export interface Executed {
   attribution?: AttributionRecord;
 }
 
-export type StreamRejectReason = "EXPIRED" | "UNKNOWN_TOKEN" | "ALREADY_CONSUMED";
+export type StreamRejectReason =
+  "EXPIRED" | "UNKNOWN_TOKEN" | "ALREADY_CONSUMED";
 
 export interface StreamReject {
   subscriptionId: bigint;
@@ -1726,7 +1714,8 @@ export interface LimitStatusResponse {
  * (`quote_respond` / `stream` on `fixed_income`). Kind-generic: the spot dialect
  * adds a member in a later phase without reshaping the contract or the UI.
  */
-export type FixConnectionKind = "OPTIONS" | "FIXED_INCOME_QUOTE" | "FIXED_INCOME_STREAM";
+export type FixConnectionKind =
+  "OPTIONS" | "FIXED_INCOME_QUOTE" | "FIXED_INCOME_STREAM";
 
 /**
  * A managed inbound FIX-acceptor connection: the persisted definition plus its
@@ -1903,6 +1892,266 @@ export interface BookInput {
   entityKey: number;
 }
 
+// --- instrument reference-data registry (`AuthService` instrument admin) ------
+//
+// The admin-managed registry of instrument DEFINITIONS (`celnet.wire`
+// `InstrumentDefDesc`) — the canonical static terms of a tradable rates/credit
+// instrument (its conventions, schedule terms, identifiers). Listing
+// (`list_instruments`/`get_instrument`) is open to any authenticated user (it
+// populates pickers and reference views); create/update/delete are admin-only
+// (server-enforced). A definition carries exactly ONE family sub-object keyed by
+// its family token; the GUI keeps that as a `family` discriminant plus a single
+// per-family field bag (camelCase). The codec layer maps every field to the
+// snake_case wire form (`day_count`, `external_ids`, the family key itself).
+
+/** A vendor/identifier scheme an instrument may be tagged with (wire labels). */
+export type ExternalIdScheme =
+  "isin" | "cusip" | "sedol" | "figi" | "ticker" | "internal";
+
+/** The full set of {@link ExternalIdScheme} labels, in canonical order. */
+export const EXTERNAL_ID_SCHEMES: readonly ExternalIdScheme[] = [
+  "isin",
+  "cusip",
+  "sedol",
+  "figi",
+  "ticker",
+  "internal",
+];
+
+/** One external identifier on an instrument (`celnet.wire.ExternalId`). */
+export interface ExternalIdEntry {
+  scheme: ExternalIdScheme;
+  value: string;
+}
+
+/**
+ * A day-count basis. `act_act` is bond-only (it is rejected by the server on the
+ * money-market / swap families); the others are valid everywhere.
+ */
+export type RatesDayCount =
+  "act_360" | "act_365_fixed" | "thirty_360_bond_basis" | "act_act";
+
+/** Day-count labels valid on the money-market / swap families (no `act_act`). */
+export const RATES_DAY_COUNTS: readonly RatesDayCount[] = [
+  "act_360",
+  "act_365_fixed",
+  "thirty_360_bond_basis",
+];
+
+/** Day-count labels valid on the bond family (adds `act_act`). */
+export const BOND_DAY_COUNTS: readonly RatesDayCount[] = [
+  "act_360",
+  "act_365_fixed",
+  "thirty_360_bond_basis",
+  "act_act",
+];
+
+/** A schedule date-roll/business-day adjustment convention (wire labels). */
+export type BusinessDayConvention =
+  "unadjusted" | "following" | "preceding" | "modified_following";
+
+/** The full set of {@link BusinessDayConvention} labels, in canonical order. */
+export const BUSINESS_DAY_CONVENTIONS: readonly BusinessDayConvention[] = [
+  "unadjusted",
+  "following",
+  "preceding",
+  "modified_following",
+];
+
+/** A holiday calendar a schedule is adjusted against (wire labels). */
+export type Calendar =
+  | "united_states"
+  | "target2"
+  | "united_kingdom"
+  | "japan"
+  | "switzerland"
+  | "australia"
+  | "canada"
+  | "new_zealand"
+  | "mexico"
+  | "south_africa"
+  | "norway"
+  | "sweden";
+
+/** The full set of {@link Calendar} labels, in canonical order. */
+export const CALENDARS: readonly Calendar[] = [
+  "united_states",
+  "target2",
+  "united_kingdom",
+  "japan",
+  "switzerland",
+  "australia",
+  "canada",
+  "new_zealand",
+  "mexico",
+  "south_africa",
+  "norway",
+  "sweden",
+];
+
+/** A coupon/leg payment frequency (wire labels). */
+export type Frequency = "annual" | "semi_annual" | "quarterly";
+
+/** The full set of {@link Frequency} labels, in canonical order. */
+export const FREQUENCIES: readonly Frequency[] = [
+  "annual",
+  "semi_annual",
+  "quarterly",
+];
+
+/** A schedule roll convention (wire labels). */
+export type RollConvention = "none" | "eom" | "imm";
+
+/** The full set of {@link RollConvention} labels, in canonical order. */
+export const ROLL_CONVENTIONS: readonly RollConvention[] = [
+  "none",
+  "eom",
+  "imm",
+];
+
+/** A bond coupon type (wire labels). `zero` ⇒ no coupon schedule. */
+export type CouponType = "fixed" | "frn" | "zero";
+
+/** The full set of {@link CouponType} labels, in canonical order. */
+export const COUPON_TYPES: readonly CouponType[] = ["fixed", "frn", "zero"];
+
+/** The family discriminant of an {@link InstrumentDef} (the wire family token). */
+export type InstrumentFamily =
+  "deposit" | "fra" | "stir_future" | "vanilla_irs" | "ois" | "bond";
+
+/** The full set of {@link InstrumentFamily} tokens, in canonical order. */
+export const INSTRUMENT_FAMILIES: readonly InstrumentFamily[] = [
+  "deposit",
+  "fra",
+  "stir_future",
+  "vanilla_irs",
+  "ois",
+  "bond",
+];
+
+/** Human-friendly labels for each family (UI display only; never on the wire). */
+export const INSTRUMENT_FAMILY_LABELS: Readonly<
+  Record<InstrumentFamily, string>
+> = {
+  deposit: "Deposit",
+  fra: "FRA",
+  stir_future: "STIR future",
+  vanilla_irs: "Vanilla IRS",
+  ois: "OIS",
+  bond: "Bond",
+};
+
+/** A money-market deposit's terms. */
+export interface DepositDef {
+  index: string;
+  tenor: string;
+  dayCount: RatesDayCount;
+  businessDayConvention: BusinessDayConvention;
+  calendars: Calendar[];
+  spotLagDays: number;
+}
+
+/** A forward-rate-agreement's terms. */
+export interface FraDef {
+  floatIndex: string;
+  startTenor: string;
+  endTenor: string;
+  accrualDayCount: RatesDayCount;
+  businessDayConvention: BusinessDayConvention;
+  calendars: Calendar[];
+  spotLagDays: number;
+}
+
+/** A short-term-interest-rate future's terms. */
+export interface StirFutureDef {
+  contractCode: string;
+  referenceStart: string;
+  referenceEnd: string;
+  dayCount: RatesDayCount;
+  calendars: Calendar[];
+  convexityVol: number;
+  contractSize: number;
+}
+
+/** A vanilla fixed-vs-float interest-rate swap's terms. */
+export interface VanillaIrsDef {
+  tenor: string;
+  fixedFrequency: Frequency;
+  fixedDayCount: RatesDayCount;
+  floatIndex: string;
+  floatFrequency: Frequency;
+  floatDayCount: RatesDayCount;
+  businessDayConvention: BusinessDayConvention;
+  calendars: Calendar[];
+  rollConvention: RollConvention;
+  spotLagDays: number;
+}
+
+/** An overnight-indexed swap's terms. */
+export interface OisDef {
+  tenor: string;
+  index: string;
+  fixedFrequency: Frequency;
+  fixedDayCount: RatesDayCount;
+  floatDayCount: RatesDayCount;
+  businessDayConvention: BusinessDayConvention;
+  calendars: Calendar[];
+  spotLagDays: number;
+}
+
+/**
+ * A bond's terms. For a zero-coupon bond (`couponType === "zero"`) the
+ * `couponFrequency` MUST be blank and `couponRate` is `0`. `maturityDate` is
+ * required; the other dates are optional (omitted on the wire when absent).
+ */
+export interface BondDef {
+  issuer: string;
+  couponRate: number;
+  couponType: CouponType;
+  /** Blank for a zero-coupon bond; a {@link Frequency} otherwise. */
+  couponFrequency: Frequency | "";
+  dayCount: RatesDayCount;
+  issueDate?: BrokenDate;
+  datedDate?: BrokenDate;
+  firstCouponDate?: BrokenDate;
+  maturityDate: BrokenDate;
+  redemption: number;
+  calendars: Calendar[];
+}
+
+/** The fields every instrument definition carries, regardless of family. */
+interface InstrumentDefBase {
+  /** Stable id; blank on create ⇒ the server mints one from the name. */
+  instrumentId: string;
+  name: string;
+  description: string;
+  /** ISO 4217 currency, e.g. "USD". */
+  currency: string;
+  externalIds: ExternalIdEntry[];
+}
+
+/**
+ * An instrument definition (`celnet.wire.InstrumentDefDesc`): the base fields plus
+ * exactly one family sub-object, modelled as a discriminated union on `family`.
+ * The discriminant value is the wire family token; the matching field bag is held
+ * under a camelCase key (`stirFuture`, `vanillaIrs`) the codec maps to/from the
+ * snake_case wire key.
+ */
+export type InstrumentDef =
+  | (InstrumentDefBase & { family: "deposit"; deposit: DepositDef })
+  | (InstrumentDefBase & { family: "fra"; fra: FraDef })
+  | (InstrumentDefBase & { family: "stir_future"; stirFuture: StirFutureDef })
+  | (InstrumentDefBase & { family: "vanilla_irs"; vanillaIrs: VanillaIrsDef })
+  | (InstrumentDefBase & { family: "ois"; ois: OisDef })
+  | (InstrumentDefBase & { family: "bond"; bond: BondDef });
+
+/**
+ * The create/update payload (`AuthService.{Create,Update}Instrument`). It is the
+ * full definition; on create the `instrumentId` is blank (server-minted), on
+ * update it identifies the record being replaced.
+ */
+export type InstrumentInput = InstrumentDef;
+
 /** The issued session on a successful login (`celnet.wire.LoginResponse`). */
 export interface LoginResult {
   /** The opaque bearer token to present on subsequent RPCs (a secret). */
@@ -1995,7 +2244,10 @@ export const CAPABILITY_ACTIONS: readonly CapabilityAction[] = [
 ];
 
 /** Both asset classes in canonical order — the column axis of the matrix. */
-export const CAPABILITY_ASSETS: readonly CapabilityAsset[] = ["fx_options", "fixed_income"];
+export const CAPABILITY_ASSETS: readonly CapabilityAsset[] = [
+  "fx_options",
+  "fixed_income",
+];
 
 /**
  * A user's capability overlay plus the fully-resolved effective set
@@ -2037,10 +2289,46 @@ export interface RoleCapabilities {
 // backed end-to-end; the OIS arm is the USD-SOFR P0 arm.
 // ---------------------------------------------------------------------------
 
+/**
+ * Where an OIS curve pillar matures (`celnet.wire.PillarTenor`): a whole-year
+ * tenor, a month tenor (sub-/broken-year pillars), or an explicit odd-dated
+ * ("broken date") maturity. Exactly one arm, discriminated by `kind`.
+ */
+export type PillarTenor =
+  | { kind: "years"; years: number }
+  | { kind: "months"; months: number }
+  | { kind: "date"; maturityDate: BrokenDate };
+
+/** A short human label for a pillar tenor: `"5Y"`, `"18M"`, or `"2031-06-30"`. */
+export function pillarTenorLabel(tenor: PillarTenor): string {
+  switch (tenor.kind) {
+    case "years":
+      return `${tenor.years}Y`;
+    case "months":
+      return `${tenor.months}M`;
+    case "date": {
+      const d = tenor.maturityDate;
+      const mm = String(d.month).padStart(2, "0");
+      const dd = String(d.day).padStart(2, "0");
+      return `${d.year}-${mm}-${dd}`;
+    }
+  }
+}
+
+/** A whole-year pillar tenor — the canonical liquid-grid arm. */
+export function yearsPillarTenor(years: number): PillarTenor {
+  return { kind: "years", years };
+}
+
+/** The whole-year tenor a pillar labels, or `undefined` for month/dated arms. */
+export function pillarYears(tenor: PillarTenor): number | undefined {
+  return tenor.kind === "years" ? tenor.years : undefined;
+}
+
 /** One self-discounting OIS curve pillar (`celnet.wire.OisPillar`). */
 export interface OisCurvePillar {
-  /** The swap tenor in whole years from spot (e.g. 2, 5, 10); `>= 1`. */
-  tenorYears: number;
+  /** Where this pillar matures: whole-year tenor, month tenor, or broken date. */
+  tenor: PillarTenor;
   /** The quoted par (fair fixed) rate as a decimal (0.041 = 4.10%). */
   parRate: number;
 }
@@ -2104,6 +2392,100 @@ export interface RatesPricingResult {
    * `dv01` to first order (the residual is curve cross-gamma).
    */
   keyRateLadder: readonly number[];
+}
+
+// ---------------------------------------------------------------------------
+// curve bootstrap from registry-referenced instruments (`AuthService.BuildCurve`).
+// Distinct from the slice-A par-OIS-pillar authoring above: here the trader picks
+// reference-data instruments (the `ListInstruments` roster) and supplies one
+// calibrating quote each; the SERVER resolves every id against the registry,
+// rebuilds each schedule from the reference date, runs the sequential bootstrap,
+// and returns per-instrument calibrated points (short→long by resolved maturity).
+// ---------------------------------------------------------------------------
+
+/**
+ * One calibrating quote for a {@link BuildCurveRequest} (`celnet.wire
+ * .InstrumentQuote`): a reference-data instrument id paired with its observed
+ * market quote. The id resolves against the instrument registry; the quote is the
+ * instrument's calibration observable as a decimal (a deposit/FRA/par-swap fixed
+ * rate, or a STIR future's `(100 − price) / 100` futures rate).
+ */
+export interface InstrumentQuote {
+  /** The registry instrument id to resolve (e.g. `usd-irs-10y`). */
+  instrumentId: string;
+  /** The observed calibrating quote as a decimal (0.0405 = 4.05%). */
+  quote: number;
+}
+
+/**
+ * A standalone date-anchored calibration pillar (`celnet.wire.DatePillar`): an
+ * explicit maturity date paired with its observed simple ACT/360 rate. The server
+ * resolves it to a synthetic money-market cash deposit (`DF = 1/(1 + r·τ)`) from the
+ * curve reference date to `maturityDate`, pinning the curve at a date with no
+ * registry instrument maturing there (a turn, an IMM, a central-bank meeting).
+ */
+export interface DatePillar {
+  /** The pillar maturity date the synthetic deposit runs to (after the reference date). */
+  maturityDate: BrokenDate;
+  /** The observed simple ACT/360 rate to that date as a decimal (0.0415 = 4.15%). */
+  quote: number;
+}
+
+/**
+ * A request to bootstrap a single-currency discount curve (`celnet.wire
+ * .BuildCurveRequest`). Pillars may arrive in any order — the server orders them by
+ * resolved maturity. Calibrating pillars are either registry instruments
+ * ({@link pillars}) or standalone date-anchored pillars ({@link datePillars}); at
+ * least one pillar across both lists is required.
+ */
+export interface BuildCurveRequest {
+  /** Caller-supplied correlation token, echoed back on the result. */
+  requestId: string;
+  /** ISO-4217 currency of the curve (the pillar set must be single-currency). */
+  currency: string;
+  /** The curve reference (spot-anchor) civil date the pillar schedules roll from. */
+  referenceDate: BrokenDate;
+  /** The calibrating instrument quotes; maturity order not required. */
+  pillars: readonly InstrumentQuote[];
+  /** Standalone date-anchored pillars, calibrated alongside the instrument pillars. */
+  datePillars: readonly DatePillar[];
+}
+
+/**
+ * One bootstrapped pillar of a {@link CalibratedCurve} (`celnet.wire
+ * .CalibratedCurvePoint`): the resolved curve coordinate and discount factor at one
+ * calibrating instrument's maturity.
+ */
+export interface CalibratedCurvePoint {
+  /** The input instrument id this pillar calibrates; empty for a date-anchored pillar. */
+  instrumentId: string;
+  /** The pillar maturity on the ACT/365F curve year-fraction axis. */
+  timeYears: number;
+  /** The bootstrapped discount factor at `timeYears`. */
+  discountFactor: number;
+  /** The continuously-compounded zero rate at `timeYears` (decimal). */
+  zeroRate: number;
+  /**
+   * A display label for the pillar: the date-anchored pillar's `Date YYYY-MM-DD`, or
+   * empty for an instrument pillar (the client resolves its name by {@link instrumentId}).
+   */
+  label: string;
+}
+
+/**
+ * A bootstrapped discount curve (`celnet.wire.CalibratedCurve`): the calibrated
+ * pillar points (one per input instrument, ordered short→long by maturity) plus the
+ * echoed request header.
+ */
+export interface CalibratedCurve {
+  /** Echoed {@link BuildCurveRequest.requestId}. */
+  requestId: string;
+  /** ISO-4217 currency of the curve. */
+  currency: string;
+  /** The curve reference (spot-anchor) date, echoed from the request. */
+  referenceDate: BrokenDate;
+  /** The bootstrapped pillars, ordered short→long by maturity. */
+  points: readonly CalibratedCurvePoint[];
 }
 
 // ---------------------------------------------------------------------------
@@ -2228,12 +2610,7 @@ export type DeskRequestKind = "RFQ" | "IOI";
  * on timeout / counterparty pull.
  */
 export type DeskRequestState =
-  | "PENDING"
-  | "QUOTED"
-  | "ACCEPTED"
-  | "REJECTED"
-  | "EXPIRED"
-  | "WITHDRAWN";
+  "PENDING" | "QUOTED" | "ACCEPTED" | "REJECTED" | "EXPIRED" | "WITHDRAWN";
 
 /**
  * The kind of a push `Notification` (`celnet.wire.NotificationKind`, proto
@@ -2377,8 +2754,7 @@ export interface SubmitDeskRequestResponse {
 
 /** The oneof arm a `RespondDeskRequest` carries: a quote OR a reject. */
 export type DeskResponseArm =
-  | { kind: "quote"; quote: DeskQuote }
-  | { kind: "reject"; reject: DeskReject };
+  { kind: "quote"; quote: DeskQuote } | { kind: "reject"; reject: DeskReject };
 
 /**
  * `RfqDeskService.RespondDeskRequest` request — the desk's response to a

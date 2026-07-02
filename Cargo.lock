@@ -409,6 +409,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-bond"
+version = "0.0.0"
+dependencies = [
+ "celnet-calendar",
+ "celnet-rates",
+ "celnet-types",
+ "time",
+]
+
+[[package]]
 name = "celnet-calendar"
 version = "0.0.0"
 dependencies = [
@@ -772,6 +782,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-risk-accel"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-gpu",
+ "celnet-risk-cube",
+ "celnet-risk-normalize",
+ "celnet-types",
+ "celnet-vanilla",
+]
+
+[[package]]
 name = "celnet-risk-cube"
 version = "0.0.0"
 dependencies = [
@@ -824,6 +846,7 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "blake3",
+ "celnet-calendar",
  "celnet-client",
  "celnet-commodity-vanilla",
  "celnet-conventions",
@@ -844,6 +867,7 @@ dependencies = [
  "celnet-plugin-host",
  "celnet-proto",
  "celnet-rates",
+ "celnet-replog",
  "celnet-rfq",
  "celnet-risk-cube",
  "celnet-risk-fleet",
@@ -853,6 +877,7 @@ dependencies = [
  "celnet-testkit",
  "celnet-types",
  "celnet-vanilla",
+ "celnet-xva",
  "futures-util",
  "getrandom 0.2.17",
  "prost",

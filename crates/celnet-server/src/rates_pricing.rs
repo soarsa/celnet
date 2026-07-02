@@ -28,11 +28,12 @@
 //! bootstrap failure on otherwise-valid input).
 
 use celnet_proto::{
-    BrokenDate, CurveSet, OisInstrument, OisPillar, RatesPriceRequest, RatesPricingResult, Side,
-    rates_instrument,
+    BrokenDate, CurveSet, OisInstrument, OisPillar, PillarTenor, RatesPriceRequest,
+    RatesPricingResult, Side, pillar_tenor, rates_instrument,
 };
 use celnet_rates::{
-    BootstrapError, OisQuote, ScheduleError, bootstrap_ois, ois_par_rate, ois_risk,
+    AccrualBasis, BootstrapError, OisQuote, OisSchedule, ScheduleError, bootstrap_ois,
+    ois_par_rate, ois_risk, usd_ois_schedule_for_months, usd_ois_schedule_to_maturity,
     usd_sofr_ois_schedule,
 };
 use celnet_types::Rate;
@@ -58,7 +59,11 @@ pub enum RatesPriceError {
     EmptyPillars,
     /// A pillar (curve or instrument) had a zero tenor; tenors must be `>= 1`.
     ZeroTenor,
-    /// The pillar tenors were not strictly increasing (duplicate or out of order).
+    /// A pillar carried no `tenor` (the `PillarTenor` oneof was unset).
+    MissingPillarTenor,
+    /// A pillar's `maturity_date` arm was not a real calendar date.
+    InvalidPillarDate,
+    /// The pillar maturities were not strictly increasing (duplicate or out of order).
     NonIncreasingPillars,
     /// The request carried no `instrument`, or an unset oneof arm.
     MissingInstrument,
@@ -87,9 +92,13 @@ impl core::fmt::Display for RatesPriceError {
                 )
             }
             Self::EmptyPillars => f.write_str("`curve_set.ois_pillars` is empty"),
-            Self::ZeroTenor => f.write_str("tenor_years must be >= 1"),
+            Self::ZeroTenor => f.write_str("pillar tenor must be >= 1"),
+            Self::MissingPillarTenor => f.write_str("a pillar carried no `tenor`"),
+            Self::InvalidPillarDate => {
+                f.write_str("a pillar `maturity_date` is not a real calendar date")
+            }
             Self::NonIncreasingPillars => {
-                f.write_str("`ois_pillars` tenors must be strictly increasing")
+                f.write_str("`ois_pillars` maturities must be strictly increasing")
             }
             Self::MissingInstrument => f.write_str("missing `instrument`"),
             Self::NonPositiveNotional => f.write_str("notional must be > 0"),
@@ -116,14 +125,59 @@ impl From<BootstrapError> for RatesPriceError {
     }
 }
 
-/// Resolve a wire [`BrokenDate`] to a real [`time::Date`], or fail.
-fn resolve_date(d: &BrokenDate) -> Result<Date, RatesPriceError> {
+/// Parse a wire [`BrokenDate`] to a real [`time::Date`], or `None` if it is not a
+/// real civil date. Callers map `None` to the context-appropriate error
+/// (reference date vs. pillar maturity).
+fn parse_broken_date(d: &BrokenDate) -> Option<Date> {
     let month = u8::try_from(d.month)
         .ok()
-        .and_then(|m| Month::try_from(m).ok())
-        .ok_or(RatesPriceError::InvalidReferenceDate)?;
-    let day = u8::try_from(d.day).map_err(|_| RatesPriceError::InvalidReferenceDate)?;
-    Date::from_calendar_date(d.year, month, day).map_err(|_| RatesPriceError::InvalidReferenceDate)
+        .and_then(|m| Month::try_from(m).ok())?;
+    let day = u8::try_from(d.day).ok()?;
+    Date::from_calendar_date(d.year, month, day).ok()
+}
+
+/// Resolve the `CurveSet` reference (spot-anchor) date, or fail.
+fn resolve_date(d: &BrokenDate) -> Result<Date, RatesPriceError> {
+    parse_broken_date(d).ok_or(RatesPriceError::InvalidReferenceDate)
+}
+
+/// A whole-year [`PillarTenor`] — the canonical liquid-grid arm. Convenience for
+/// the static ladder and any caller building a regular-tenor curve.
+#[must_use]
+pub fn years_pillar(years: u32) -> PillarTenor {
+    PillarTenor {
+        point: Some(pillar_tenor::Point::Years(years)),
+    }
+}
+
+/// Build the spot-starting USD-SOFR schedule that prices one curve pillar from its
+/// [`PillarTenor`] arm: a whole-year tenor, a month tenor, or an explicit
+/// broken-date maturity. All arms use the ACT/360 fixed-leg accrual that the
+/// par-OIS quote convention assumes.
+fn pillar_schedule(tenor: &PillarTenor, reference: Date) -> Result<OisSchedule, RatesPriceError> {
+    match tenor
+        .point
+        .as_ref()
+        .ok_or(RatesPriceError::MissingPillarTenor)?
+    {
+        pillar_tenor::Point::Years(0) | pillar_tenor::Point::Months(0) => {
+            Err(RatesPriceError::ZeroTenor)
+        }
+        pillar_tenor::Point::Years(years) => Ok(usd_sofr_ois_schedule(reference, *years)?),
+        pillar_tenor::Point::Months(months) => Ok(usd_ois_schedule_for_months(
+            reference,
+            *months,
+            AccrualBasis::Act360,
+        )?),
+        pillar_tenor::Point::MaturityDate(d) => {
+            let maturity = parse_broken_date(d).ok_or(RatesPriceError::InvalidPillarDate)?;
+            Ok(usd_ois_schedule_to_maturity(
+                reference,
+                maturity,
+                AccrualBasis::Act360,
+            )?)
+        }
+    }
 }
 
 /// The receive-fixed sign for a client `side`: `SIDE_SELL` receives fixed (the
@@ -148,16 +202,25 @@ fn build_quotes(curve: &CurveSet, reference: Date) -> Result<Vec<OisQuote>, Rate
     }
 
     let mut quotes = Vec::with_capacity(curve.ois_pillars.len());
-    let mut prev_tenor = 0u32;
+    // Order pillars by their final ACT/365F payment time from spot — strictly
+    // increasing iff the resolved maturities are, regardless of which arm
+    // (years / months / broken date) located each pillar.
+    let mut prev_pay = 0.0_f64;
     for pillar in &curve.ois_pillars {
-        if pillar.tenor_years == 0 {
-            return Err(RatesPriceError::ZeroTenor);
-        }
-        if pillar.tenor_years <= prev_tenor {
+        let tenor = pillar
+            .tenor
+            .as_ref()
+            .ok_or(RatesPriceError::MissingPillarTenor)?;
+        let schedule = pillar_schedule(tenor, reference)?;
+        let last_pay = schedule
+            .periods()
+            .last()
+            .map(|p| p.pay.0)
+            .ok_or(RatesPriceError::ZeroTenor)?;
+        if last_pay <= prev_pay {
             return Err(RatesPriceError::NonIncreasingPillars);
         }
-        prev_tenor = pillar.tenor_years;
-        let schedule = usd_sofr_ois_schedule(reference, pillar.tenor_years)?;
+        prev_pay = last_pay;
         quotes.push(OisQuote {
             schedule,
             par_rate: Rate(pillar.par_rate),
@@ -268,8 +331,8 @@ pub fn default_usd_sofr_curve_set() -> CurveSet {
         reference_date: Some(P0_REFERENCE),
         ois_pillars: P0_USD_SOFR_PILLARS
             .iter()
-            .map(|&(tenor_years, par_rate)| OisPillar {
-                tenor_years,
+            .map(|&(years, par_rate)| OisPillar {
+                tenor: Some(years_pillar(years)),
                 par_rate,
             })
             .collect(),
@@ -313,24 +376,19 @@ mod tests {
         }
     }
 
+    fn pillar(years: u32, par_rate: f64) -> OisPillar {
+        OisPillar {
+            tenor: Some(years_pillar(years)),
+            par_rate,
+        }
+    }
+
     fn pillars() -> Vec<OisPillar> {
         vec![
-            OisPillar {
-                tenor_years: 1,
-                par_rate: 0.0420,
-            },
-            OisPillar {
-                tenor_years: 2,
-                par_rate: 0.0410,
-            },
-            OisPillar {
-                tenor_years: 5,
-                par_rate: 0.0405,
-            },
-            OisPillar {
-                tenor_years: 10,
-                par_rate: 0.0415,
-            },
+            pillar(1, 0.0420),
+            pillar(2, 0.0410),
+            pillar(5, 0.0405),
+            pillar(10, 0.0415),
         ]
     }
 
@@ -436,20 +494,60 @@ mod tests {
     #[test]
     fn rejects_non_increasing_pillars() {
         let mut req = request(5, 0.04, 100.0, Side::Sell);
-        req.curve_set.as_mut().unwrap().ois_pillars = vec![
-            OisPillar {
-                tenor_years: 2,
-                par_rate: 0.041,
-            },
-            OisPillar {
-                tenor_years: 2,
-                par_rate: 0.041,
-            },
-        ];
+        req.curve_set.as_mut().unwrap().ois_pillars = vec![pillar(2, 0.041), pillar(2, 0.041)];
         assert_eq!(
             price_rates(&req),
             Err(RatesPriceError::NonIncreasingPillars)
         );
+    }
+
+    #[test]
+    fn month_tenor_of_whole_year_matches_year_pillar() {
+        // A 24-month pillar resolves to the same schedule (hence the same bootstrap
+        // and par rate) as the 2-year pillar — the dated/tenor parity guarantee.
+        let mut req = request(2, 0.04, 100.0, Side::Sell);
+        req.curve_set.as_mut().unwrap().ois_pillars = vec![pillar(1, 0.0420), pillar(2, 0.0410)];
+        let by_years = price_rates(&req).expect("years price");
+
+        req.curve_set.as_mut().unwrap().ois_pillars = vec![
+            OisPillar {
+                tenor: Some(PillarTenor {
+                    point: Some(pillar_tenor::Point::Months(12)),
+                }),
+                par_rate: 0.0420,
+            },
+            OisPillar {
+                tenor: Some(PillarTenor {
+                    point: Some(pillar_tenor::Point::Months(24)),
+                }),
+                par_rate: 0.0410,
+            },
+        ];
+        let by_months = price_rates(&req).expect("months price");
+        assert_eq!(by_years.par_rate, by_months.par_rate);
+        assert_eq!(by_years.pv, by_months.pv);
+    }
+
+    #[test]
+    fn broken_date_pillar_prices() {
+        // An explicit broken-date maturity (≈18M) calibrates and prices without
+        // error, exercising the dated arm end to end.
+        let mut req = request(1, 0.04, 100.0, Side::Sell);
+        req.curve_set.as_mut().unwrap().ois_pillars = vec![
+            pillar(1, 0.0420),
+            OisPillar {
+                tenor: Some(PillarTenor {
+                    point: Some(pillar_tenor::Point::MaturityDate(BrokenDate {
+                        year: 2027,
+                        month: 12,
+                        day: 27,
+                    })),
+                }),
+                par_rate: 0.0412,
+            },
+        ];
+        let priced = price_rates(&req).expect("broken-date price");
+        assert!(priced.par_rate.is_finite() && priced.par_rate > 0.0);
     }
 
     #[test]

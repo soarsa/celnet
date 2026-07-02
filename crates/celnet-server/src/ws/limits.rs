@@ -183,6 +183,8 @@ mod tests {
                 Clock::system(),
                 Arc::clone(&surface_book),
                 Arc::clone(&fix_monitor),
+                Arc::clone(&store),
+                None,
                 std::env::temp_dir().join(format!("celnet-ws-cap-fix-{}.json", std::process::id())),
             )
             .expect("a missing config loads as an empty registry"),

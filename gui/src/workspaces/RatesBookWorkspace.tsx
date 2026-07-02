@@ -28,7 +28,13 @@ import { principalForScope } from "../data/riskView";
 import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import { fmtRate } from "../lib/format";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
-import type { BookDesc, EntityDesc, OisDirection, RatesPosition } from "../data/contract";
+import type {
+  BookDesc,
+  EntityDesc,
+  OisDirection,
+  RatesPosition,
+} from "../data/contract";
+import { pillarYears } from "../data/contract";
 import styles from "./RatesBookWorkspace.module.css";
 
 const MM = 1_000_000;
@@ -46,7 +52,9 @@ interface BookTicket {
 }
 
 function defaultTicket(): BookTicket {
-  const pillar = DEFAULT_USD_SOFR_CURVE.pillars.find((p) => p.tenorYears === 5);
+  const pillar = DEFAULT_USD_SOFR_CURVE.pillars.find(
+    (p) => pillarYears(p.tenor) === 5,
+  );
   const parPct = (pillar?.parRate ?? 0.04) * 100;
   return {
     entityKey: null,
@@ -81,7 +89,9 @@ export function RatesBookWorkspace(): React.ReactElement {
         setError(null);
       })
       .catch((err) =>
-        setError(err instanceof Error ? err.message : "failed to load rates positions"),
+        setError(
+          err instanceof Error ? err.message : "failed to load rates positions",
+        ),
       );
   }, [app.transport, principal]);
 
@@ -110,7 +120,11 @@ export function RatesBookWorkspace(): React.ReactElement {
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "failed to load entity/book registry");
+        setError(
+          err instanceof Error
+            ? err.message
+            : "failed to load entity/book registry",
+        );
       });
     return () => {
       cancelled = true;
@@ -123,17 +137,28 @@ export function RatesBookWorkspace(): React.ReactElement {
     const firstEntity = entities[0];
     if (!firstEntity) return;
     setTicket((t) => {
-      if (t.entityKey !== null && entities.some((e) => e.key === t.entityKey)) return t;
+      if (t.entityKey !== null && entities.some((e) => e.key === t.entityKey))
+        return t;
       const firstBook = books.find((b) => b.entityKey === firstEntity.key);
-      return { ...t, entityKey: firstEntity.key, bookKey: firstBook ? firstBook.key : null };
+      return {
+        ...t,
+        entityKey: firstEntity.key,
+        bookKey: firstBook ? firstBook.key : null,
+      };
     });
   }, [entities, books]);
 
-  const patch = useCallback((p: Partial<BookTicket>) => setTicket((t) => ({ ...t, ...p })), []);
+  const patch = useCallback(
+    (p: Partial<BookTicket>) => setTicket((t) => ({ ...t, ...p })),
+    [],
+  );
 
   /** The books belonging to the selected entity (the filtered Book dropdown). */
   const entityBooks = useMemo(
-    () => (ticket.entityKey === null ? [] : books.filter((b) => b.entityKey === ticket.entityKey)),
+    () =>
+      ticket.entityKey === null
+        ? []
+        : books.filter((b) => b.entityKey === ticket.entityKey),
     [books, ticket.entityKey],
   );
 
@@ -182,7 +207,8 @@ export function RatesBookWorkspace(): React.ReactElement {
   // defensively, the server still enforces). Anonymous ⇒ permissive.
   const canBook = app.auth.can("book", "fixed_income");
   const bookDeniedTitle = capabilityDenialTitle("book", "fixed_income");
-  const selectionResolved = ticket.entityKey !== null && ticket.bookKey !== null;
+  const selectionResolved =
+    ticket.entityKey !== null && ticket.bookKey !== null;
   const canSubmit = canBook && selectionResolved && !registryEmpty;
 
   const book = useCallback(async () => {
@@ -222,7 +248,8 @@ export function RatesBookWorkspace(): React.ReactElement {
   }, [app.transport, principal, ticket, refresh, canBook]);
 
   const isOffline = !app.transport.label.startsWith("live");
-  const totalMm = positions.reduce((acc, p) => acc + p.instrument.notional, 0) / MM;
+  const totalMm =
+    positions.reduce((acc, p) => acc + p.instrument.notional, 0) / MM;
 
   return (
     <div className={styles.wrap}>
@@ -256,7 +283,10 @@ export function RatesBookWorkspace(): React.ReactElement {
                   aria-label="netting book"
                   disabled={entityBooks.length === 0}
                   onChange={(e) =>
-                    patch({ bookKey: e.target.value === "" ? null : Number(e.target.value) })
+                    patch({
+                      bookKey:
+                        e.target.value === "" ? null : Number(e.target.value),
+                    })
                   }
                 >
                   {entityBooks.length === 0 ? (
@@ -279,7 +309,12 @@ export function RatesBookWorkspace(): React.ReactElement {
                   value={ticket.tenorYears}
                   aria-label="tenor in years"
                   onChange={(e) =>
-                    patch({ tenorYears: Math.max(1, Math.trunc(Number(e.target.value))) })
+                    patch({
+                      tenorYears: Math.max(
+                        1,
+                        Math.trunc(Number(e.target.value)),
+                      ),
+                    })
                   }
                 />
               </Field>
@@ -290,7 +325,9 @@ export function RatesBookWorkspace(): React.ReactElement {
                   step={0.01}
                   value={ticket.fixedRatePct}
                   aria-label="fixed rate in percent"
-                  onChange={(e) => patch({ fixedRatePct: Number(e.target.value) })}
+                  onChange={(e) =>
+                    patch({ fixedRatePct: Number(e.target.value) })
+                  }
                 />
               </Field>
               <Field label="Notional mm">
@@ -301,7 +338,9 @@ export function RatesBookWorkspace(): React.ReactElement {
                   step={5}
                   value={ticket.notionalMm}
                   aria-label="notional in millions"
-                  onChange={(e) => patch({ notionalMm: Math.max(1, Number(e.target.value)) })}
+                  onChange={(e) =>
+                    patch({ notionalMm: Math.max(1, Number(e.target.value)) })
+                  }
                 />
               </Field>
               <Field label="Side">
@@ -309,7 +348,9 @@ export function RatesBookWorkspace(): React.ReactElement {
                   className={styles.input}
                   value={ticket.direction}
                   aria-label="swap direction"
-                  onChange={(e) => patch({ direction: e.target.value as OisDirection })}
+                  onChange={(e) =>
+                    patch({ direction: e.target.value as OisDirection })
+                  }
                 >
                   <option value="RECEIVE_FIXED">Receive</option>
                   <option value="PAY_FIXED">Pay</option>
@@ -325,7 +366,9 @@ export function RatesBookWorkspace(): React.ReactElement {
               >
                 Book position
               </Button>
-              <span className={styles.curveTag}>{DEFAULT_USD_SOFR_CURVE.currency}-SOFR</span>
+              <span className={styles.curveTag}>
+                {DEFAULT_USD_SOFR_CURVE.currency}-SOFR
+              </span>
             </div>
           </>
         )}
@@ -338,14 +381,19 @@ export function RatesBookWorkspace(): React.ReactElement {
 
       <Panel className={styles.positions} title="Rates book">
         <div className={styles.head}>
-          <span className={styles.engine}>{isOffline ? "in-app book" : "live book"}</span>
+          <span className={styles.engine}>
+            {isOffline ? "in-app book" : "live book"}
+          </span>
           <span className={styles.summary}>
             {positions.length} position{positions.length === 1 ? "" : "s"} ·{" "}
-            {totalMm.toLocaleString(undefined, { maximumFractionDigits: 0 })}mm notional
+            {totalMm.toLocaleString(undefined, { maximumFractionDigits: 0 })}mm
+            notional
           </span>
         </div>
         {positions.length === 0 ? (
-          <p className={styles.empty}>The rates book is empty — book a position to populate it.</p>
+          <p className={styles.empty}>
+            The rates book is empty — book a position to populate it.
+          </p>
         ) : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
@@ -363,13 +411,19 @@ export function RatesBookWorkspace(): React.ReactElement {
               <tbody>
                 {positions.map((p) => (
                   <tr key={p.positionId.toString()}>
-                    <td className={`${styles.num} ${styles.mono} ${styles.idCell}`}>
+                    <td
+                      className={`${styles.num} ${styles.mono} ${styles.idCell}`}
+                    >
                       {p.positionId.toString()}
                     </td>
                     <td>{entityName(p.entity)}</td>
                     <td>{bookName(p.book)}</td>
-                    <td className={styles.strong}>{p.instrument.tenorYears}y OIS</td>
-                    <td className={`${styles.num} ${styles.mono} ${styles.rate}`}>
+                    <td className={styles.strong}>
+                      {p.instrument.tenorYears}y OIS
+                    </td>
+                    <td
+                      className={`${styles.num} ${styles.mono} ${styles.rate}`}
+                    >
                       {fmtRate(p.instrument.fixedRate)}
                     </td>
                     <td className={`${styles.num} ${styles.mono}`}>

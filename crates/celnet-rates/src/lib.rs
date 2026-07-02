@@ -28,6 +28,7 @@ pub mod bond;
 pub mod bootstrap;
 pub mod curve;
 pub mod daycount;
+pub mod deposit;
 pub mod fra;
 pub mod futures;
 pub mod futures_strip;
@@ -42,9 +43,13 @@ pub use bond::{
     BondError, CashBond, asset_swap_spread, bond_pv, fixed_coupon_bond, g_spread, price_at_yield,
     yield_to_maturity, z_spread,
 };
-pub use bootstrap::{BootstrapError, OisQuote, bootstrap_ois};
+pub use bootstrap::{
+    BootstrapError, CalibrationInstrument, OisQuote, VanillaIrsQuote, bootstrap_curve,
+    bootstrap_ois,
+};
 pub use curve::{Curve, CurveError, Interpolation};
 pub use daycount::AccrualBasis;
+pub use deposit::{Deposit, DepositError, deposit_discount_factor, deposit_par_rate};
 pub use fra::{Fra, FraError, FraRisk, fra_par_rate, fra_pv, fra_pv01, fra_risk};
 pub use futures::{
     Deliverable, FutureError, StirFuture, cheapest_to_deliver, conversion_factor,
@@ -56,7 +61,10 @@ pub use futures_strip::{
 };
 pub use ois::{FixedPeriod, OisSchedule, ScheduleError, ois_annuity, ois_par_rate, ois_pv};
 pub use risk::{OisRisk, ois_risk, pv01};
-pub use schedule::{us_settlement_calendar, usd_ois_schedule_with_basis, usd_sofr_ois_schedule};
+pub use schedule::{
+    us_settlement_calendar, usd_ois_schedule_for_months, usd_ois_schedule_to_maturity,
+    usd_ois_schedule_with_basis, usd_sofr_ois_schedule,
+};
 pub use solver::{SolverError, brent_root};
 pub use turns::{TurnError, TurnJump, turn_discount_factor, with_turns};
 pub use vanilla_swap::{

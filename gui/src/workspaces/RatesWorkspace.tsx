@@ -25,16 +25,17 @@ import type {
   OisInstrument,
   RatesPricingResult,
 } from "../data/contract";
+import { pillarTenorLabel, pillarYears } from "../data/contract";
 import styles from "./RatesWorkspace.module.css";
 
 /** The standard quick-pick tenors — the calibrating pillar grid of the curve. */
-const QUICK_TENORS: readonly number[] = DEFAULT_USD_SOFR_CURVE.pillars.map(
-  (p) => p.tenorYears,
-);
+const QUICK_TENORS: readonly number[] = DEFAULT_USD_SOFR_CURVE.pillars
+  .map((p) => pillarYears(p.tenor))
+  .filter((y): y is number => y !== undefined);
 
 /** One row of the key-rate DV01 ladder (a curve pillar's bucketed DV01). */
 interface LadderRow {
-  readonly tenorYears: number;
+  readonly tenorLabel: string;
   readonly dv01: number;
   /** This bucket's share of the total DV01 (percent); `0` when DV01 is ~0. */
   readonly sharePct: number;
@@ -46,7 +47,7 @@ const LADDER_COLUMNS: readonly ColumnDef<LadderRow>[] = [
     header: "Pillar",
     width: 96,
     align: "left",
-    accessor: (r) => `${r.tenorYears}y`,
+    accessor: (r) => r.tenorLabel,
   },
   {
     key: "dv01",
@@ -138,7 +139,7 @@ export function RatesWorkspace(): React.ReactElement {
     return curve.pillars.map((p, i) => {
       const dv01 = result.keyRateLadder[i] ?? 0;
       return {
-        tenorYears: p.tenorYears,
+        tenorLabel: pillarTenorLabel(p.tenor),
         dv01,
         sharePct: total > 0 ? (dv01 / result.dv01) * 100 : 0,
       };
@@ -150,7 +151,7 @@ export function RatesWorkspace(): React.ReactElement {
       {
         key: "",
         label: "",
-        rows: ladder.map((r) => ({ key: String(r.tenorYears), datum: r })),
+        rows: ladder.map((r) => ({ key: r.tenorLabel, datum: r })),
       },
     ],
     [ladder],
@@ -165,13 +166,18 @@ export function RatesWorkspace(): React.ReactElement {
           <span className={styles.curveMeta}>
             {curve.pillars.length} pillars · ref {curve.referenceDate.year}-
             {String(curve.referenceDate.month).padStart(2, "0")}-
-            {String(curve.referenceDate.day).padStart(2, "0")} · self-discounting
+            {String(curve.referenceDate.day).padStart(2, "0")} ·
+            self-discounting
           </span>
         </div>
 
         <div className={styles.field}>
           <span className={styles.fieldLabel}>Direction</span>
-          <div className={styles.toggle} role="tablist" aria-label="swap direction">
+          <div
+            className={styles.toggle}
+            role="tablist"
+            aria-label="swap direction"
+          >
             <button
               type="button"
               role="tab"
@@ -214,7 +220,9 @@ export function RatesWorkspace(): React.ReactElement {
                 step={1}
                 value={tenorYears}
                 aria-label="swap tenor in years"
-                onChange={(e) => setTenorYears(Math.trunc(Number(e.target.value)))}
+                onChange={(e) =>
+                  setTenorYears(Math.trunc(Number(e.target.value)))
+                }
               />
               <span className={styles.inputUnit}>y</span>
             </label>
@@ -261,11 +269,17 @@ export function RatesWorkspace(): React.ReactElement {
             {busy ? "Pricing…" : "Request quote"}
           </Button>
           {result && (
-            <Button variant="ghost" onClick={setToPar} title="set the fixed rate to the par (breakeven) rate">
+            <Button
+              variant="ghost"
+              onClick={setToPar}
+              title="set the fixed rate to the par (breakeven) rate"
+            >
               Set to par
             </Button>
           )}
-          <span className={styles.engine}>{isOffline ? "in-app pricer" : "live edge"}</span>
+          <span className={styles.engine}>
+            {isOffline ? "in-app pricer" : "live edge"}
+          </span>
         </div>
 
         {error && (
@@ -279,10 +293,23 @@ export function RatesWorkspace(): React.ReactElement {
         {result ? (
           <>
             <dl className={styles.metrics}>
-              <Metric label="PV" value={fmtPnlAdaptive(result.pv)} unit="USD" emphatic />
+              <Metric
+                label="PV"
+                value={fmtPnlAdaptive(result.pv)}
+                unit="USD"
+                emphatic
+              />
               <Metric label="Par rate" value={fmtRatePct(result.parRate)} />
-              <Metric label="PV01" value={fmtPnlAdaptive(result.pv01)} unit="USD/bp" />
-              <Metric label="DV01" value={fmtPnlAdaptive(result.dv01)} unit="USD/bp" />
+              <Metric
+                label="PV01"
+                value={fmtPnlAdaptive(result.pv01)}
+                unit="USD/bp"
+              />
+              <Metric
+                label="DV01"
+                value={fmtPnlAdaptive(result.dv01)}
+                unit="USD/bp"
+              />
             </dl>
             <div className={styles.ladder}>
               <h3 className={styles.ladderTitle}>Key-rate DV01 ladder</h3>
@@ -295,7 +322,8 @@ export function RatesWorkspace(): React.ReactElement {
           </>
         ) : (
           <p className={styles.empty}>
-            Build an OIS and request a quote to price the swap and its curve risk.
+            Build an OIS and request a quote to price the swap and its curve
+            risk.
           </p>
         )}
       </Panel>
@@ -316,7 +344,9 @@ function Metric({
   emphatic?: boolean;
 }): React.ReactElement {
   return (
-    <div className={`${styles.metric} ${emphatic ? styles.metricEmphatic : ""}`}>
+    <div
+      className={`${styles.metric} ${emphatic ? styles.metricEmphatic : ""}`}
+    >
       <dt className={styles.metricLabel}>{label}</dt>
       <dd className={styles.metricValue}>
         {value}

@@ -1365,6 +1365,73 @@ export interface RatesCurveSet {
   pillars: readonly OisCurvePillar[];
 }
 
+// --- curve bootstrap from registry-referenced instruments (`BuildCurve`) ------
+// Mirrors the GUI client (`gui/src/data/contract.ts`) field-for-field: pick
+// reference-data registry instruments + a calibrating quote each, the server
+// resolves every id, bootstraps, and returns per-instrument calibrated points.
+
+/**
+ * One calibrating quote for a {@link BuildCurveRequest} (`celnet.wire
+ * .InstrumentQuote`): a registry instrument id + its observed market quote as a
+ * decimal (0.0405 = 4.05%).
+ */
+export interface InstrumentQuote {
+  instrumentId: string;
+  quote: number;
+}
+
+/**
+ * A standalone date-anchored calibration pillar (`celnet.wire.DatePillar`): an
+ * explicit maturity date + its observed simple ACT/360 rate (decimal). The server
+ * resolves it to a synthetic cash deposit (`DF = 1/(1 + r·τ)`) from the curve
+ * reference date, pinning the curve where no registry instrument matures.
+ */
+export interface DatePillar {
+  maturityDate: BrokenDate;
+  quote: number;
+}
+
+/**
+ * A request to bootstrap a single-currency discount curve (`celnet.wire
+ * .BuildCurveRequest`). Pillars may arrive in any order. Calibrating pillars are
+ * registry instruments ({@link pillars}) or standalone date-anchored pillars
+ * ({@link datePillars}); at least one across both is required.
+ */
+export interface BuildCurveRequest {
+  requestId: string;
+  currency: string;
+  referenceDate: BrokenDate;
+  pillars: readonly InstrumentQuote[];
+  datePillars: readonly DatePillar[];
+}
+
+/**
+ * One bootstrapped pillar of a {@link CalibratedCurve} (`celnet.wire
+ * .CalibratedCurvePoint`).
+ */
+export interface CalibratedCurvePoint {
+  /** The input instrument id; empty for a date-anchored pillar. */
+  instrumentId: string;
+  /** Pillar maturity on the ACT/365F curve year-fraction axis. */
+  timeYears: number;
+  discountFactor: number;
+  /** Continuously-compounded zero rate (decimal). */
+  zeroRate: number;
+  /** Display label: `Date YYYY-MM-DD` for a date pillar, else empty. */
+  label: string;
+}
+
+/**
+ * A bootstrapped discount curve (`celnet.wire.CalibratedCurve`): the calibrated
+ * pillar points (short→long by maturity) plus the echoed request header.
+ */
+export interface CalibratedCurve {
+  requestId: string;
+  currency: string;
+  referenceDate: BrokenDate;
+  points: readonly CalibratedCurvePoint[];
+}
+
 /**
  * The fixed-leg direction of an OIS from the client's perspective. The wire
  * `Side` carries this: SIDE_BUY pays fixed (payer), SIDE_SELL receives fixed.

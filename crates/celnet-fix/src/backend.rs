@@ -29,7 +29,8 @@ use celnet_proto::rfq_desk_service_client::RfqDeskServiceClient;
 use celnet_proto::{
     AcceptDeskQuoteRequest, BrokenDate, CurveSet, Deal, DeskRequestKind, DeskRequestScope,
     DeskRequestState, EntitlementPrincipal, ListDeskRequestsRequest, LoginRequest, OisInstrument,
-    OisPillar, RatesInstrument, Side, SubmitDeskRequestRequest, rates_instrument,
+    OisPillar, PillarTenor, RatesInstrument, Side, SubmitDeskRequestRequest, pillar_tenor,
+    rates_instrument,
 };
 use tonic::transport::{Channel, Endpoint};
 
@@ -437,7 +438,9 @@ pub fn usd_sofr_curve(reference: (i32, u32, u32), pillars: &[(u32, f64)]) -> Cur
         ois_pillars: pillars
             .iter()
             .map(|&(tenor_years, par_rate)| OisPillar {
-                tenor_years,
+                tenor: Some(PillarTenor {
+                    point: Some(pillar_tenor::Point::Years(tenor_years)),
+                }),
                 par_rate,
             })
             .collect(),
@@ -473,7 +476,10 @@ mod tests {
         assert_eq!(cs.currency, "USD");
         assert_eq!(cs.reference_date.unwrap().day, 25);
         assert_eq!(cs.ois_pillars.len(), 2);
-        assert_eq!(cs.ois_pillars[1].tenor_years, 5);
+        assert_eq!(
+            cs.ois_pillars[1].tenor.as_ref().unwrap().point,
+            Some(pillar_tenor::Point::Years(5))
+        );
         assert_eq!(cs.ois_pillars[1].par_rate, 0.0405);
     }
 }

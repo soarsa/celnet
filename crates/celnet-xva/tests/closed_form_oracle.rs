@@ -442,32 +442,39 @@ fn simulate_accepts_minimal_config_boundary() {
     assert!(p.epe()[1] >= 0.0);
 }
 
-/// Frozen-bits regression rows (captured 2026-06-10 on aarch64-apple-darwin in
-/// a quiet window, toolchain 1.96.0 — the fx_byte_identity house pattern; the
-/// integer Sobol/scramble core and the `libm`-routed transcendentals are
-/// bit-identical across platforms). Any mutation of the seed/scramble plumbing,
-/// the GBM drift/diffusion arithmetic, the exposure floors, or the path
-/// averaging shifts these bits.
+/// Frozen-bits regression rows (originally captured 2026-06-10 on
+/// aarch64-apple-darwin in a quiet window, toolchain 1.96.0 — the
+/// fx_byte_identity house pattern; the integer Sobol/scramble core and the
+/// `libm`-routed transcendentals are bit-identical across platforms).
+/// Regenerated 2026-06-30 for the gBSM forward-space kernel unification
+/// (ADR-0012): `NettedTrade::mark` calls `celnet_vanilla::price`, which was
+/// re-associated spot-space → forward-space (`F = S·e^{bt}`), so the marks —
+/// and every exposure quantity derived from them — round differently at ~1e-15.
+/// The regenerated marks were re-validated ≤1e-12 vs the independent two-rate
+/// closed form (`vanilla_ref` above); this is sub-1e-12 reformulation drift
+/// (deterministic node 0 rel ≤ 3e-15, MC nodes ≤ 1e-15), NOT a correctness
+/// change. Any mutation of the seed/scramble plumbing, the GBM drift/diffusion
+/// arithmetic, the exposure floors, or the path averaging still shifts these bits.
 ///
 /// Nodes pinned per set: first (t = 0, the deterministic mark), median, last
 /// (= the longest expiry, where every trade has matured ⇒ exactly 0.0 — this
 /// pins the `τ ≤ 0 ⇒ 0` boundary *through the simulation path*: a mutant that
 /// prices τ = 0 picks up the in-the-money paths' intrinsic value instead).
 ///
-/// MIXED   node 0: epe = 0.4114276432137536   ene = 0
-/// MIXED   node 4: epe = 1.788826778771431    ene = 1.536611730993055
-/// MIXED   node 8: epe = 0                    ene = 0
-/// NET_SHORT node 0: ene = 1.8765675546592522 (epe = 0: strictly net-short)
-/// NET_SHORT node 3: ene = 2.532854659315187
+/// MIXED   node 0: epe = 0.41142764321375447  ene = 0
+/// MIXED   node 4: epe = 1.7888267787714307   ene = 1.5366117309930545
+/// MIXED   node 8: epe = 0                     ene = 0
+/// NET_SHORT node 0: ene = 1.8765675546592466 (epe = 0: strictly net-short)
+/// NET_SHORT node 3: ene = 2.5328546593151922
 /// NET_SHORT node 6: epe = ene = 0
 const MIXED_EPE_BITS: [u64; 3] = [
-    0x3FDA_54D4_9C11_7FD8,
-    0x3FFC_9F08_D410_8465,
+    0x3FDA_54D4_9C11_7FE8,
+    0x3FFC_9F08_D410_8464,
     0x0000_0000_0000_0000,
 ];
 const MIXED_ENE_BITS: [u64; 3] = [
     0x0000_0000_0000_0000,
-    0x3FF8_95F6_2EB4_3DEF,
+    0x3FF8_95F6_2EB4_3DED,
     0x0000_0000_0000_0000,
 ];
 const NET_SHORT_EPE_BITS: [u64; 3] = [
@@ -476,8 +483,8 @@ const NET_SHORT_EPE_BITS: [u64; 3] = [
     0x0000_0000_0000_0000,
 ];
 const NET_SHORT_ENE_BITS: [u64; 3] = [
-    0x3FFE_066B_B33F_F05B,
-    0x4004_4349_4DBA_3D56,
+    0x3FFE_066B_B33F_F042,
+    0x4004_4349_4DBA_3D62,
     0x0000_0000_0000_0000,
 ];
 

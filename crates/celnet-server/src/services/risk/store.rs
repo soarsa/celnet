@@ -43,19 +43,26 @@
 //! sensitivities, not a vanilla proxy (guardrail #2).
 
 use std::collections::HashMap;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
+
+use crate::services::consensus::{ConsensusHandle, fx_book_key};
 
 use celnet_entitlements::AccessMode;
 use celnet_proto::{AttributionRecord, BookId, Owner, owner};
 use celnet_risk_cube::{
     BookId as CubeBookId, DeskId, EntityId, FactKey, FactMeasure, Hierarchy, LocationId,
-    PositionId, RiskFact, TraderId,
+    NodeAggregate, PositionId, RiskFact, TraderId, VegaPillarMap,
 };
-use celnet_risk_normalize::{PositionRisk, canonicalize};
+use celnet_risk_normalize::{CanonicalLeaf, PositionRisk, canonicalize};
 use celnet_types::{CcyPair, DeltaConvention, OptionType, PremiumStyle};
 
-use celnet_limits::LimitTree;
+use celnet_limits::{
+    IncrementalTrade, LimitScope, LimitTree, NonAdditiveExposure, PreTradeDecision, PreTradeResult,
+    ScopePath, pre_trade_check,
+};
+
+use super::aggregate::{cube_from_facts, default_grid};
 
 /// A deterministic string→`u32` interner: distinct strings get distinct,
 /// monotonically-increasing handles starting at `1` (handle `0` is reserved as the
@@ -153,6 +160,14 @@ pub struct PositionStore {
     /// the gRPC server, the WS mirror and a federating frontend all read one
     /// coherent policy, lock-free per request.
     permissive_access: AtomicBool,
+    /// The optional activated consistency tier (ADR-0015 §2.1). `Some` only when a
+    /// `Strong`-tier book is configured and Raft was booted at edge start. A booking
+    /// whose book resolves to [`ConsistencyLevel`](crate::config::consistency::ConsistencyLevel)`::Strong`
+    /// routes its authoritative write through the quorum log here **before** the local
+    /// apply; a `Local` book (the default) never touches it, so the fast path stays
+    /// byte-identical. Set once at boot and read on the async booking tier only — never
+    /// the pinned pricing thread (§4.3).
+    consensus: OnceLock<Arc<ConsensusHandle>>,
 }
 
 #[derive(Debug, Default)]
@@ -191,7 +206,29 @@ impl PositionStore {
         Self {
             inner: RwLock::new(StoreInner::default()),
             permissive_access: AtomicBool::new(false),
+            consensus: OnceLock::new(),
         }
+    }
+
+    /// Attach the activated consistency tier (ADR-0015 §2.1). Called once at edge boot
+    /// (`Edge::start_on_with_topology`) after Raft is booted, when at least one book is
+    /// configured `Strong`. Idempotent-once (a second call is ignored). A store never
+    /// given a handle — the pure-`Local` default — is byte-identical to today.
+    pub fn set_consensus(&self, handle: Arc<ConsensusHandle>) {
+        let _ = self.consensus.set(handle);
+    }
+
+    /// The builder form of [`Self::set_consensus`] for a store constructed inline.
+    #[must_use]
+    pub fn with_consensus(self, handle: Arc<ConsensusHandle>) -> Self {
+        let _ = self.consensus.set(handle);
+        self
+    }
+
+    /// The attached consistency tier, if any.
+    #[must_use]
+    pub fn consensus(&self) -> Option<&Arc<ConsensusHandle>> {
+        self.consensus.get()
     }
 
     /// The entitlements trust-boundary [`AccessMode`] guarding this book — read
@@ -240,6 +277,9 @@ impl PositionStore {
             // Carried for coherence; a staged store only ever backs the
             // post-boundary `*_impl` internals, which no longer re-authorize.
             permissive_access: AtomicBool::new(self.permissive_access.load(Ordering::Relaxed)),
+            // A staged federation-union view is transient and never the must-order
+            // writer, so it never replicates (ADR-0015 §4.3 single-writer discipline).
+            consensus: OnceLock::new(),
         }
     }
 
@@ -446,12 +486,14 @@ impl PositionStore {
     /// the default booking unit until an admin path sets them, never faked per-line.
     ///
     /// # Errors
-    /// `invalid_argument` if `booked.position_id` does not fit a `u32` cube handle.
+    /// `invalid_argument` if `booked.position_id` does not fit a `u32` cube handle;
+    /// `failed_precondition` if a **hard** pre-trade limit would be breached (the
+    /// booking is refused and store state is left unmutated — see [`Self::book`]).
     pub fn book_from_attribution(
         &self,
         booked: BookedPosition,
         attribution: &AttributionRecord,
-    ) -> Result<(), tonic::Status> {
+    ) -> Result<PreTradeDecision, tonic::Status> {
         let holder = attribution
             .held_by
             .as_ref()
@@ -480,7 +522,164 @@ impl PositionStore {
             // Entity resolves from the location's parent pointer (0 ⇒ resolve).
             entity: EntityId(0),
         };
-        self.upsert(booked, key, Some(attribution.clone()))
+        self.book(booked, key, Some(attribution.clone()))
+    }
+
+    /// **The pre-trade limit gate + booking sink** (ADR-0016 A1): the single
+    /// convergence point every FX booking front-end funnels through
+    /// ([`crate::services::stream`]'s click-to-trade fill via
+    /// [`Self::book_from_attribution`], and the check-only consultations from
+    /// `QuoteService::AcceptQuote` / the FIX acceptor via [`Self::evaluate_pre_trade`]).
+    ///
+    /// Runs [`pre_trade_check`](celnet_limits::pre_trade_check) over the **projected**
+    /// book (the current facts at every scope on the position's roll-up path *plus*
+    /// this trade's incremental canonical leaf) **before** any state mutation:
+    ///
+    /// * a [`PreTradeDecision::Reject`] (a **hard** limit would be breached) refuses
+    ///   the booking with a typed `failed_precondition` `LimitBreached` status and
+    ///   leaves the store **unmutated** — the load-bearing risk-control invariant;
+    /// * [`PreTradeDecision::Warn`] (a **soft** limit) and [`PreTradeDecision::Accept`]
+    ///   both book, the `Warn` carrying the amber/red RAG for the audit trail.
+    ///
+    /// The projection runs over a **read** snapshot and the write lock is then taken
+    /// only for the O(1) mutation — the exclusive lock is never held across the
+    /// O(#facts) cube build, so one fill never serialises every other booking behind
+    /// its own limit projection (guardrails #6/#11: the sink scales to an IB-sized hot
+    /// book). The narrow window between the snapshot check and the write is the standard
+    /// pre-trade TOCTOU: a hard breach still rejects **before** any mutation (the
+    /// load-bearing invariant holds), and two fills that individually clear a near-full
+    /// hard cap but jointly cross it are caught by the post-trade limit monitor
+    /// ([`super::RiskEdge`]'s `LimitStatus` RAG), exactly as production pre-trade gates
+    /// resolve throughput vs. strict serialisation.
+    ///
+    /// # Errors
+    /// `invalid_argument` if `booked.position_id` does not fit a `u32` cube handle or
+    /// the position is not priceable; `failed_precondition` on a hard-limit breach.
+    pub fn book(
+        &self,
+        booked: BookedPosition,
+        key: FactKey,
+        attribution: Option<AttributionRecord>,
+    ) -> Result<PreTradeDecision, tonic::Status> {
+        // Canonicalize off-lock (pure, convention-free). The key is cloned into the fact;
+        // the original drives the pre-trade scope resolution below.
+        let (position, leaf, fact) = canonical_vanilla_fact(&booked, key.clone())?;
+        let handle = fact.position_id.0;
+
+        // Pre-trade gate over a READ snapshot, BEFORE acquiring the write lock, so a hard
+        // breach can never book AND the O(#facts) cube projection never runs while the
+        // exclusive write lock is held (guardrails #6/#11 — a fill never serialises every
+        // other booking behind its own limit projection). Skipped when no limit is
+        // configured (the empty-tree default keeps the sink byte-identical to the pre-gate
+        // booking path and builds no cube on a fill when the desk has set no caps).
+        let decision = {
+            let g = self.inner.read().expect("position store lock poisoned");
+            if g.limits.is_empty() {
+                PreTradeDecision::Accept
+            } else {
+                let result = project_pre_trade(
+                    &g.facts,
+                    &g.limits,
+                    &g.hierarchy,
+                    &position,
+                    &leaf,
+                    key,
+                    handle,
+                );
+                if result.decision == PreTradeDecision::Reject {
+                    return Err(limit_breached_status(&result));
+                }
+                result.decision
+            }
+        };
+        // ADR-0015 §2.1: a book configured `Strong` routes its authoritative write
+        // through the Raft quorum log BEFORE the local apply — linearizable,
+        // quorum-replicated, zero-data-loss. The level is resolved once, off the hot
+        // path, from the book name the booking carries (its attribution). A `Local` book
+        // (the default) skips this entirely, so the fast path below stays byte-identical.
+        // The must-order state replicated is the position's signed economic size
+        // (`notional_base`) — the derived mark is regenerable per §4.3 and deliberately
+        // NOT quorum-logged. A quorum that cannot commit refuses the booking (the store
+        // is left unmutated) rather than degrading a `Strong` book to un-replicated
+        // durability. This runs on the async booking tier, never the pricing thread.
+        if let Some(consensus) = self.consensus.get() {
+            let book_name = attribution
+                .as_ref()
+                .and_then(|a| a.held_by.as_ref().or(a.quoted_by.as_ref()))
+                .map(|b| b.book.as_str())
+                .unwrap_or_default();
+            if consensus.level_for_book(book_name).is_strong() {
+                consensus
+                    .commit_book_write(fx_book_key(booked.position_id), booked.notional_base)?;
+            }
+        }
+
+        // Within limit (accept) or soft warn: take the write lock only for the mutation —
+        // the same insert `upsert` does. The read guard above is already released.
+        let mut g = self.inner.write().expect("position store lock poisoned");
+        if let Some(slot) = g
+            .facts
+            .iter_mut()
+            .find(|f| f.position_id == fact.position_id)
+        {
+            *slot = fact;
+        } else {
+            g.facts.push(fact);
+        }
+        g.wire_ids.insert(handle, booked.position_id);
+        match attribution {
+            Some(a) => {
+                g.attribution.insert(handle, a);
+            }
+            None => {
+                g.attribution.remove(&handle);
+            }
+        }
+        Ok(decision)
+    }
+
+    /// **Check-only pre-trade limit gate** for a booking whose position artifact lives
+    /// off the FX risk book (`QuoteService::AcceptQuote`'s quote-store execution, the
+    /// FIX acceptor's `ExecutionReport` fill): consult the **same** limit tree +
+    /// current-book aggregation [`Self::book`] uses, without recording a risk fact. A
+    /// hard breach must refuse the front-end's own booking; a clean/soft path proceeds.
+    ///
+    /// These front-ends never recorded a risk fact (they book into the quote store /
+    /// emit a FIX fill, not the FX warehouse), so there is no org attribution to honour:
+    /// the check is placed at the org-unattributed scopes the position **does** carry —
+    /// the currency pair and the firm apex ([`unattributed_fx_key`]) — never a
+    /// fabricated desk/book/trader the booking did not record. The current book at those
+    /// scopes is the shared warehouse's live aggregate (the lines the RFS click-to-trade
+    /// path booked), so a firm/pair cap already at its limit rejects the accept.
+    ///
+    /// # Errors
+    /// `invalid_argument` if the position is not priceable / the id overflows `u32`.
+    pub fn evaluate_pre_trade(
+        &self,
+        booked: &BookedPosition,
+    ) -> Result<PreTradeResult, tonic::Status> {
+        let key = unattributed_fx_key(booked.pair);
+        let g = self.inner.read().expect("position store lock poisoned");
+        // No limits configured ⇒ nothing to gate: accept without canonicalizing, so a
+        // deployment that has set no caps is byte-identical to the pre-gate booking path
+        // (and the check adds no new failure mode on the accept/lift path).
+        if g.limits.is_empty() {
+            return Ok(PreTradeResult {
+                decision: PreTradeDecision::Accept,
+                checks: Vec::new(),
+            });
+        }
+        let (position, leaf, fact) = canonical_vanilla_fact(booked, key.clone())?;
+        let handle = fact.position_id.0;
+        Ok(project_pre_trade(
+            &g.facts,
+            &g.limits,
+            &g.hierarchy,
+            &position,
+            &leaf,
+            key,
+            handle,
+        ))
     }
 
     /// A read-only snapshot of the store for one aggregation cycle: the current
@@ -560,6 +759,129 @@ fn seat_name(book: &BookId) -> String {
         Some(owner::Seat::Trader(t)) => t.clone(),
         Some(owner::Seat::AutoPricer(p)) => p.clone(),
         None => "unknown-seat".to_owned(),
+    }
+}
+
+/// The org-**unattributed** [`FactKey`] for a booking that lives OFF the FX risk
+/// warehouse — a `QuoteService::AcceptQuote` execution (kept in the quote store) or a
+/// FIX acceptor `ExecutionReport` fill (emitted on the wire). Its trader / book / desk
+/// / location / entity handles are all `0` (the "unknown / resolve-from-parent"
+/// sentinel), so the only scopes [`ScopePath::resolve`] yields a *configurable* limit
+/// at are the position's currency pair and the firm apex (always appended). The gate
+/// therefore enforces exactly the **firm-wide** and **ccy-pair** caps that apply
+/// regardless of desk attribution — it never invents a desk/book/trader the accept
+/// never recorded (guardrail #2: derive from the position, never fabricate).
+fn unattributed_fx_key(pair: CcyPair) -> FactKey {
+    FactKey {
+        trader: TraderId(0),
+        book: CubeBookId(0),
+        desk: DeskId(0),
+        underlying: celnet_types::Underlying::Fx(pair),
+        location: LocationId(0),
+        entity: EntityId(0),
+    }
+}
+
+/// Canonicalize a booked vanilla line into its convention-free `(position, leaf,
+/// fact)` — the pure, lock-free step shared by [`PositionStore::book`] and
+/// [`PositionStore::evaluate_pre_trade`]. The leaf drives the pre-trade increment;
+/// the fact is the store record inserted on a clean/soft decision.
+fn canonical_vanilla_fact(
+    booked: &BookedPosition,
+    key: FactKey,
+) -> Result<(PositionRisk, CanonicalLeaf, RiskFact), tonic::Status> {
+    let handle = u32::try_from(booked.position_id).map_err(|_| {
+        tonic::Status::invalid_argument(format!(
+            "position_id {} exceeds the u32 cube handle space",
+            booked.position_id
+        ))
+    })?;
+    let position = PositionRisk::fx(
+        booked.pair,
+        booked.option,
+        booked.notional_base,
+        booked.inputs,
+        booked.quoted_delta,
+        booked.premium_style,
+    );
+    let leaf = canonicalize(&position).map_err(|e| {
+        tonic::Status::invalid_argument(format!("booked position is not priceable: {e}"))
+    })?;
+    let fact = RiskFact {
+        position_id: PositionId(handle),
+        key,
+        measure: FactMeasure {
+            leaf: leaf.clone(),
+            position: position.clone(),
+            exotic: None,
+        },
+        surface_version: booked.surface_version,
+    };
+    Ok((position, leaf, fact))
+}
+
+/// Run the pre-trade check for a proposed vanilla booking against the **projected**
+/// book: the current facts (excluding any prior fact under the same `exclude_handle`,
+/// so a re-book projects `others + this trade` rather than double-counting) at every
+/// scope on the position's roll-up path, plus this trade's incremental canonical leaf.
+/// The current node aggregate at each scope is built from the cube exactly as the
+/// post-trade `LimitStatus` read does (`cube_from_facts` → `firm_aggregate` /
+/// `group_by`), so pre-trade and post-trade agree on the same node units.
+fn project_pre_trade(
+    facts: &[RiskFact],
+    limits: &LimitTree,
+    hierarchy: &Hierarchy,
+    position: &PositionRisk,
+    leaf: &CanonicalLeaf,
+    key: FactKey,
+    exclude_handle: u32,
+) -> PreTradeResult {
+    let current: Vec<RiskFact> = facts
+        .iter()
+        .filter(|f| f.position_id.0 != exclude_handle)
+        .cloned()
+        .collect();
+    let grid = default_grid();
+    let cube = cube_from_facts(&current, hierarchy.clone());
+    let path = ScopePath::resolve(&key, hierarchy);
+    let vega_pillar = grid.pillar_of(leaf, position);
+    let increment = IncrementalTrade::from_leaf(leaf, vega_pillar);
+    let node_at = |scope: LimitScope| -> NodeAggregate {
+        match scope.dimension() {
+            None => cube.firm_aggregate(&grid),
+            Some(d) => cube
+                .group_by(d, &grid)
+                .into_iter()
+                .find(|n| Some(n.group) == scope.group_value())
+                .unwrap_or_else(|| NodeAggregate::empty(scope.group_value().unwrap_or(0))),
+        }
+    };
+    // Booking never re-derives VaR/ES/stop-loss (no shock grid on the booking path);
+    // the non-additive metrics read `0` and so never spuriously reject a booking.
+    let nonadditive_at = |_scope: LimitScope| NonAdditiveExposure::default();
+    pre_trade_check(limits, &path, &increment, node_at, nonadditive_at)
+}
+
+/// A `failed_precondition` status carrying the first hard breach behind a pre-trade
+/// [`PreTradeDecision::Reject`] — the uniform `LimitBreached` wire reason every FX
+/// booking front-end surfaces (guardrail #11 cross-client parity). Shared by the FX
+/// sink and the rates sink ([`crate::services::rates_book`]).
+#[must_use]
+pub(crate) fn limit_breached_status(res: &PreTradeResult) -> tonic::Status {
+    tonic::Status::failed_precondition(limit_breach_message(res))
+}
+
+/// The human-readable `LimitBreached` reason for the first hard breach on a rejected
+/// pre-trade path (`<scope>/<metric>` + utilization + cap), reused verbatim as the
+/// FIX `ExecutionReport` `Text(58)` and the gRPC `Status` message.
+#[must_use]
+pub(crate) fn limit_breach_message(res: &PreTradeResult) -> String {
+    match res.hard_breaches().next() {
+        Some(c) => format!(
+            "limit breached: {:?}/{:?} at {:.4}x of cap {} ({:?})",
+            c.scope, c.limit.metric, c.utilization.ratio, c.limit.cap, c.utilization.status
+        ),
+        None => "limit breached".to_owned(),
     }
 }
 
@@ -737,5 +1059,94 @@ mod tests {
         // The leaf is the REAL exotic Greek set (premium == closed-form barrier price).
         let want = celnet_exotics::single_barrier_price(&(&leg.inputs).into(), spec) * 8_000_000.0;
         assert!((fact.measure.leaf.premium_quote - want).abs() <= 1e-6 * (1.0 + want.abs()));
+    }
+
+    // ---- ADR-0016 A1 pre-trade limit gate at the FX position sink ----
+    //
+    // `book_from_attribution` is the exact function the RFS click-to-trade front-end
+    // (`TokenLedger::try_book` → `record_booked_position`) funnels every booked vanilla
+    // fill through, so gating it gates that front-end by construction.
+
+    use celnet_limits::{LimitMetric, LimitScope, LimitSpec};
+
+    /// FRONT-END 1 (clicktrade `TokenLedger::try_book`): a hard firm-wide Delta cap that
+    /// the proposed booking would blow **rejects** the book with a `failed_precondition`
+    /// `LimitBreached` status, and the store is left **unmutated** (the load-bearing
+    /// risk-control invariant — a hard-limit-blown lift books nothing).
+    #[test]
+    fn clicktrade_sink_rejects_a_hard_limit_blown_book() {
+        let store = PositionStore::new();
+        // A firm Delta cap of 1 base unit: any real option delta (a 10mm EURUSD call is
+        // millions of base delta) blows it hard.
+        store.set_limit(LimitScope::Firm, LimitSpec::hard(LimitMetric::Delta, 1.0));
+
+        let err = store
+            .book_from_attribution(booked(0, 10_000_000.0), &attribution("EM-VOL-1", "jdoe"))
+            .expect_err("a hard-limit-blown book must be rejected");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("limit breached"),
+            "the reject carries the uniform LimitBreached reason, got {:?}",
+            err.message()
+        );
+        assert_eq!(store.len(), 0, "a rejected book must not mutate the store");
+    }
+
+    /// A **within-limit** book still succeeds (an accept decision) and records the fact —
+    /// the gate must not refuse a legitimate booking.
+    #[test]
+    fn within_limit_book_succeeds() {
+        let store = PositionStore::new();
+        // A generous firm Delta cap no single 10mm line approaches.
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(LimitMetric::Delta, 1.0e12),
+        );
+
+        let decision = store
+            .book_from_attribution(booked(0, 10_000_000.0), &attribution("EM-VOL-1", "jdoe"))
+            .expect("a within-limit book succeeds");
+        assert_eq!(decision, PreTradeDecision::Accept);
+        assert_eq!(store.len(), 1, "a within-limit book records the fact");
+    }
+
+    /// A **soft** breach books (the position is recorded) but returns a `Warn` decision —
+    /// soft limits early-warn, they never block.
+    #[test]
+    fn soft_breach_books_and_warns() {
+        let store = PositionStore::new();
+        // A soft Delta cap of 1 base unit is breached by any real line, but soft ⇒ warn.
+        store.set_limit(LimitScope::Firm, LimitSpec::soft(LimitMetric::Delta, 1.0));
+
+        let decision = store
+            .book_from_attribution(booked(0, 10_000_000.0), &attribution("EM-VOL-1", "jdoe"))
+            .expect("a soft breach books (warn, never block)");
+        assert_eq!(decision, PreTradeDecision::Warn);
+        assert_eq!(store.len(), 1, "a soft-warned book is still recorded");
+    }
+
+    /// The check-only `evaluate_pre_trade` (the path `QuoteService::AcceptQuote` and the
+    /// FIX acceptor consult) rejects a hard-limit-blown line **without** recording a
+    /// fact — it is a consult, not a booking.
+    #[test]
+    fn evaluate_pre_trade_rejects_without_recording() {
+        let store = PositionStore::new();
+        store.set_limit(LimitScope::Firm, LimitSpec::hard(LimitMetric::Delta, 1.0));
+
+        let result = store
+            .evaluate_pre_trade(&booked(0, 10_000_000.0))
+            .expect("canonicalization succeeds");
+        assert_eq!(result.decision, PreTradeDecision::Reject);
+        assert_eq!(store.len(), 0, "a check-only evaluation records nothing");
+
+        // With no limit configured the consult is a no-op Accept (byte-identical path).
+        let clean = PositionStore::new();
+        assert_eq!(
+            clean
+                .evaluate_pre_trade(&booked(0, 10_000_000.0))
+                .expect("no-limit consult")
+                .decision,
+            PreTradeDecision::Accept
+        );
     }
 }

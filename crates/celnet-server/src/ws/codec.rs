@@ -56,10 +56,27 @@ use celnet_proto::{
     SetUserCapabilitiesResponse, UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest,
     UpdateEntityResponse, UpdateUserRequest, UpdateUserResponse, UserDesc,
 };
+// AuthService — instrument reference-data registry (WS mirror of the instrument RPCs).
+use celnet_proto::{
+    CreateInstrumentRequest, CreateInstrumentResponse, DeleteInstrumentRequest,
+    DeleteInstrumentResponse, GetInstrumentRequest, GetInstrumentResponse, InstrumentDefDesc,
+    ListInstrumentsRequest, ListInstrumentsResponse, UpdateInstrumentRequest,
+    UpdateInstrumentResponse, instrument_def_desc::Definition as InstrumentDefinition,
+};
+// AuthService — discount-curve bootstrap from registry-referenced instruments
+// (WS mirror of the `BuildCurve` RPC: resolve each pillar id against the
+// reference-data registry, bootstrap, return per-instrument calibrated points).
+use celnet_proto::{
+    BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, DatePillar, InstrumentQuote,
+};
 // Linear-rates (fixed-income) contract — the WS mirror of PricingService::PriceRates.
 use celnet_proto::{
     CurveSet, OisInstrument, OisPillar, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
     RatesPricingResult, rates_instrument,
+};
+// XVA (valuation-adjustment) contract — the WS mirror of PricingService::PriceXva.
+use celnet_proto::{
+    PriceXvaRequest, PriceXvaResponse, XvaResult as WireXvaResult, XvaSurvivalCurve, XvaTrade,
 };
 // Linear-rates portfolio risk — the WS mirror of RiskService::AggregateRatesRisk.
 use celnet_proto::{
@@ -1234,11 +1251,30 @@ fn u32_field(o: &Map<String, Value>, key: &str) -> Result<u32> {
     u32::try_from(u64_field(o, key)?).map_err(|_| err(format!("field `{key}` out of u32 range")))
 }
 
-/// Decode one OIS curve pillar `{ tenor_years, par_rate }`.
+/// Decode a `PillarTenor` `{ years | months | maturity_date }` — exactly one arm.
+/// `years`/`months` are whole counts; `maturity_date` is a `BrokenDate`.
+fn pillar_tenor_from_json(v: &Value) -> Result<celnet_proto::PillarTenor> {
+    use celnet_proto::pillar_tenor::Point;
+    let o = obj(v, "tenor")?;
+    let point = if o.contains_key("years") {
+        Point::Years(u32_field(o, "years")?)
+    } else if o.contains_key("months") {
+        Point::Months(u32_field(o, "months")?)
+    } else if o.contains_key("maturity_date") {
+        Point::MaturityDate(nested(o, "maturity_date", broken_date_from_json)?)
+    } else {
+        return Err(err(
+            "pillar `tenor` oneof: expected a `years`, `months`, or `maturity_date` arm",
+        ));
+    };
+    Ok(celnet_proto::PillarTenor { point: Some(point) })
+}
+
+/// Decode one OIS curve pillar `{ tenor: {...}, par_rate }`.
 fn ois_pillar_from_json(v: &Value) -> Result<OisPillar> {
     let o = obj(v, "ois_pillar")?;
     Ok(OisPillar {
-        tenor_years: u32_field(o, "tenor_years")?,
+        tenor: Some(nested(o, "tenor", pillar_tenor_from_json)?),
         par_rate: f64_field(o, "par_rate")?,
     })
 }
@@ -1257,6 +1293,80 @@ fn curve_set_from_json(v: &Value) -> Result<CurveSet> {
         currency: string_field(o, "currency")?,
         reference_date: Some(nested(o, "reference_date", broken_date_from_json)?),
         ois_pillars: pillars,
+    })
+}
+
+/// Decode one `InstrumentQuote` `{ instrument_id, quote }` — a registry pillar id
+/// paired with its observed calibrating quote.
+fn instrument_quote_from_json(v: &Value) -> Result<InstrumentQuote> {
+    let o = obj(v, "pillar")?;
+    Ok(InstrumentQuote {
+        instrument_id: string_field(o, "instrument_id")?,
+        quote: f64_field(o, "quote")?,
+    })
+}
+
+/// Decode one date-anchored `DatePillar` `{ maturity_date, quote }` — an explicit
+/// maturity date paired with its observed simple ACT/360 rate.
+fn date_pillar_from_json(v: &Value) -> Result<DatePillar> {
+    let o = obj(v, "date_pillar")?;
+    Ok(DatePillar {
+        maturity_date: Some(nested(o, "maturity_date", broken_date_from_json)?),
+        quote: f64_field(o, "quote")?,
+    })
+}
+
+/// Decode an optional `{ key: [...] }` pillar array (absent ⇒ empty), mapping each
+/// element through `decode`.
+fn optional_pillar_array<T>(
+    o: &Map<String, Value>,
+    key: &str,
+    decode: impl Fn(&Value) -> Result<T>,
+) -> Result<Vec<T>> {
+    match o.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(items)) => items.iter().map(decode).collect(),
+        Some(_) => Err(err(format!("`build_curve.{key}` must be an array"))),
+    }
+}
+
+/// Decode a `BuildCurveRequest` `{ request_id, currency, reference_date, pillars[],
+/// date_pillars[], session_token }`. Both pillar arrays are optional (default empty);
+/// the handler rejects a request carrying neither. The bearer `session_token` is
+/// injected by the connection.
+pub(super) fn build_curve_request_from_json(o: &Map<String, Value>) -> Result<BuildCurveRequest> {
+    let pillars = optional_pillar_array(o, "pillars", instrument_quote_from_json)?;
+    let date_pillars = optional_pillar_array(o, "date_pillars", date_pillar_from_json)?;
+    Ok(BuildCurveRequest {
+        request_id: string_field(o, "request_id")?,
+        currency: string_field(o, "currency")?,
+        reference_date: Some(nested(o, "reference_date", broken_date_from_json)?),
+        pillars,
+        session_token: string_field(o, "session_token")?,
+        date_pillars,
+    })
+}
+
+/// Encode one bootstrapped `CalibratedCurvePoint`.
+fn calibrated_curve_point_to_json(p: &CalibratedCurvePoint) -> Value {
+    json!({
+        "instrument_id": p.instrument_id,
+        "time_years": p.time_years,
+        "discount_factor": p.discount_factor,
+        "zero_rate": p.zero_rate,
+        "label": p.label,
+    })
+}
+
+/// Encode a `CalibratedCurve` `{ request_id, currency, reference_date, points[] }`.
+pub(super) fn calibrated_curve_to_json(c: &CalibratedCurve) -> Value {
+    json!({
+        "request_id": c.request_id,
+        "currency": c.currency,
+        "reference_date": c.reference_date.as_ref().map(broken_date_to_json),
+        "points": Value::Array(
+            c.points.iter().map(calibrated_curve_point_to_json).collect(),
+        ),
     })
 }
 
@@ -1310,6 +1420,97 @@ pub(super) fn rates_price_response_to_json(r: &RatesPriceResponse) -> Value {
     json!({
         "request_id": r.request_id,
         "result": r.result.as_ref().map(rates_pricing_result_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// XVA (valuation adjustments) — the WS mirror of PricingService::PriceXva
+// ---------------------------------------------------------------------------
+
+/// Decode a required `repeated double` field carried as a JSON array (absent/null
+/// ⇒ empty). Each element must be a JSON number.
+fn f64_array(o: &Map<String, Value>, key: &str) -> Result<Vec<f64>> {
+    match o.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.as_f64()
+                    .ok_or_else(|| err(format!("`{key}[{i}]` must be a number")))
+            })
+            .collect(),
+        Some(_) => Err(err(format!("`{key}` must be an array of numbers"))),
+    }
+}
+
+/// Decode one `XvaTrade` `{ option_type, strike, expiry_years, vol, notional }`.
+fn xva_trade_from_json(v: &Value) -> Result<XvaTrade> {
+    let o = obj(v, "trade")?;
+    Ok(XvaTrade {
+        option_type: enum_or_zero(o, "option_type"),
+        strike: f64_field(o, "strike")?,
+        expiry_years: f64_field(o, "expiry_years")?,
+        vol: f64_field(o, "vol")?,
+        notional: f64_field(o, "notional")?,
+    })
+}
+
+/// Decode an `XvaSurvivalCurve` `{ pillar_times[], hazard_rates[] }`. Empty
+/// `pillar_times` with a single `hazard_rates` entry is the flat-curve form; equal
+/// lengths otherwise (the piecewise form). Shape is enforced by the engine mapping.
+fn xva_survival_curve_from_json(v: &Value) -> Result<XvaSurvivalCurve> {
+    let o = obj(v, "survival_curve")?;
+    Ok(XvaSurvivalCurve {
+        pillar_times: f64_array(o, "pillar_times")?,
+        hazard_rates: f64_array(o, "hazard_rates")?,
+    })
+}
+
+/// Decode a `PriceXvaRequest` from the browser JSON shape.
+pub(super) fn price_xva_request_from_json(o: &Map<String, Value>) -> Result<PriceXvaRequest> {
+    let trades = o
+        .get("trades")
+        .and_then(Value::as_array)
+        .ok_or_else(|| err("`trades` must be an array"))?
+        .iter()
+        .map(xva_trade_from_json)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(PriceXvaRequest {
+        request_id: u64_or_zero(o, "request_id"),
+        trades,
+        r_dom: f64_field(o, "r_dom")?,
+        r_for: f64_field(o, "r_for")?,
+        spot0: f64_field(o, "spot0")?,
+        sigma: f64_field(o, "sigma")?,
+        paths: u32_field(o, "paths")?,
+        seed: u64_or_zero(o, "seed"),
+        exposure_steps: u32_field(o, "exposure_steps")?,
+        counterparty: Some(nested(o, "counterparty", xva_survival_curve_from_json)?),
+        own: Some(nested(o, "own", xva_survival_curve_from_json)?),
+        lgd_counterparty: f64_field(o, "lgd_counterparty")?,
+        lgd_own: f64_field(o, "lgd_own")?,
+        funding_spread: f64_field(o, "funding_spread")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+/// Encode an `XvaResult` `{ cva, dva, fva, total_adjustment }`.
+fn xva_result_to_json(r: &WireXvaResult) -> Value {
+    json!({
+        "cva": r.cva,
+        "dva": r.dva,
+        "fva": r.fva,
+        "total_adjustment": r.total_adjustment,
+    })
+}
+
+/// Encode a `PriceXvaResponse`.
+pub(super) fn price_xva_response_to_json(r: &PriceXvaResponse) -> Value {
+    json!({
+        "request_id": r.request_id,
+        "result": r.result.as_ref().map(xva_result_to_json),
         "correlation_id": r.correlation_id,
     })
 }
@@ -2123,6 +2324,17 @@ fn broken_date_to_json(d: &celnet_proto::BrokenDate) -> Value {
     json!({ "year": d.year, "month": d.month, "day": d.day })
 }
 
+/// Encode a `PillarTenor` to its single-arm object `{ years | months | maturity_date }`.
+fn pillar_tenor_to_json(t: &celnet_proto::PillarTenor) -> Value {
+    use celnet_proto::pillar_tenor::Point;
+    match &t.point {
+        Some(Point::Years(years)) => json!({ "years": years }),
+        Some(Point::Months(months)) => json!({ "months": months }),
+        Some(Point::MaturityDate(d)) => json!({ "maturity_date": broken_date_to_json(d) }),
+        None => json!({}),
+    }
+}
+
 /// Encode a `CurveSet` `{ currency, reference_date, ois_pillars[] }`.
 fn curve_set_to_json(c: &CurveSet) -> Value {
     json!({
@@ -2131,7 +2343,10 @@ fn curve_set_to_json(c: &CurveSet) -> Value {
         "ois_pillars": Value::Array(
             c.ois_pillars
                 .iter()
-                .map(|p| json!({ "tenor_years": p.tenor_years, "par_rate": p.par_rate }))
+                .map(|p| json!({
+                    "tenor": p.tenor.as_ref().map(pillar_tenor_to_json),
+                    "par_rate": p.par_rate,
+                }))
                 .collect(),
         ),
     })
@@ -3069,6 +3284,342 @@ pub(super) fn delete_book_response_to_json(r: &DeleteBookResponse) -> Value {
     json!({ "removed": r.removed, "correlation_id": r.correlation_id })
 }
 
+// --- instrument reference data (AuthService instrument RPCs) ----------------
+//
+// The WS mirror of the instrument registry. The `InstrumentDefDesc.definition`
+// oneof is carried as a single family-keyed sub-object (`{ "ois": { … } }`); the
+// keys are the proto oneof variant tokens. Every field is snake_case on the wire
+// (the GUI codec maps camelCase ⇄ snake_case in lockstep with this file).
+
+/// Read a `Vec<String>` array field, defaulting to empty when absent/non-array.
+fn string_array(o: &Map<String, Value>, key: &str) -> Vec<String> {
+    o.get(key)
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn external_id_to_json(x: &celnet_proto::ExternalId) -> Value {
+    json!({ "scheme": x.scheme, "value": x.value })
+}
+
+fn external_id_from_json(v: &Value) -> Result<celnet_proto::ExternalId> {
+    let o = obj(v, "external_id")?;
+    Ok(celnet_proto::ExternalId {
+        scheme: string_field(o, "scheme")?,
+        value: string_field(o, "value")?,
+    })
+}
+
+/// Encode the family-specific block as `(variant_token, fields_object)`.
+fn family_to_json(def: &InstrumentDefinition) -> (&'static str, Value) {
+    match def {
+        InstrumentDefinition::Deposit(d) => (
+            "deposit",
+            json!({
+                "index": d.index, "tenor": d.tenor, "day_count": d.day_count,
+                "business_day_convention": d.business_day_convention,
+                "calendars": d.calendars, "spot_lag_days": d.spot_lag_days,
+            }),
+        ),
+        InstrumentDefinition::Fra(f) => (
+            "fra",
+            json!({
+                "float_index": f.float_index, "start_tenor": f.start_tenor,
+                "end_tenor": f.end_tenor, "accrual_day_count": f.accrual_day_count,
+                "business_day_convention": f.business_day_convention,
+                "calendars": f.calendars, "spot_lag_days": f.spot_lag_days,
+            }),
+        ),
+        InstrumentDefinition::StirFuture(s) => (
+            "stir_future",
+            json!({
+                "contract_code": s.contract_code, "reference_start": s.reference_start,
+                "reference_end": s.reference_end, "day_count": s.day_count,
+                "calendars": s.calendars, "convexity_vol": s.convexity_vol,
+                "contract_size": s.contract_size,
+            }),
+        ),
+        InstrumentDefinition::VanillaIrs(v) => (
+            "vanilla_irs",
+            json!({
+                "tenor": v.tenor, "fixed_frequency": v.fixed_frequency,
+                "fixed_day_count": v.fixed_day_count, "float_index": v.float_index,
+                "float_frequency": v.float_frequency, "float_day_count": v.float_day_count,
+                "business_day_convention": v.business_day_convention,
+                "calendars": v.calendars, "roll_convention": v.roll_convention,
+                "spot_lag_days": v.spot_lag_days,
+            }),
+        ),
+        InstrumentDefinition::Ois(o) => (
+            "ois",
+            json!({
+                "tenor": o.tenor, "index": o.index, "fixed_frequency": o.fixed_frequency,
+                "fixed_day_count": o.fixed_day_count, "float_day_count": o.float_day_count,
+                "business_day_convention": o.business_day_convention,
+                "calendars": o.calendars, "spot_lag_days": o.spot_lag_days,
+            }),
+        ),
+        InstrumentDefinition::Bond(b) => (
+            "bond",
+            json!({
+                "issuer": b.issuer, "coupon_rate": b.coupon_rate,
+                "coupon_type": b.coupon_type, "coupon_frequency": b.coupon_frequency,
+                "day_count": b.day_count,
+                "issue_date": b.issue_date.as_ref().map(broken_date_to_json),
+                "dated_date": b.dated_date.as_ref().map(broken_date_to_json),
+                "first_coupon_date": b.first_coupon_date.as_ref().map(broken_date_to_json),
+                "maturity_date": b.maturity_date.as_ref().map(broken_date_to_json),
+                "redemption": b.redemption, "calendars": b.calendars,
+            }),
+        ),
+    }
+}
+
+fn deposit_from_json(v: &Value) -> Result<celnet_proto::DepositDef> {
+    let o = obj(v, "deposit")?;
+    Ok(celnet_proto::DepositDef {
+        index: string_field(o, "index")?,
+        tenor: string_field(o, "tenor")?,
+        day_count: string_field(o, "day_count")?,
+        business_day_convention: string_field(o, "business_day_convention")?,
+        calendars: string_array(o, "calendars"),
+        spot_lag_days: opt_u32(o, "spot_lag_days").unwrap_or(0),
+    })
+}
+
+fn fra_from_json(v: &Value) -> Result<celnet_proto::FraDef> {
+    let o = obj(v, "fra")?;
+    Ok(celnet_proto::FraDef {
+        float_index: string_field(o, "float_index")?,
+        start_tenor: string_field(o, "start_tenor")?,
+        end_tenor: string_field(o, "end_tenor")?,
+        accrual_day_count: string_field(o, "accrual_day_count")?,
+        business_day_convention: string_field(o, "business_day_convention")?,
+        calendars: string_array(o, "calendars"),
+        spot_lag_days: opt_u32(o, "spot_lag_days").unwrap_or(0),
+    })
+}
+
+fn stir_future_from_json(v: &Value) -> Result<celnet_proto::StirFutureDef> {
+    let o = obj(v, "stir_future")?;
+    Ok(celnet_proto::StirFutureDef {
+        contract_code: string_field(o, "contract_code")?,
+        reference_start: string_field(o, "reference_start")?,
+        reference_end: string_field(o, "reference_end")?,
+        day_count: string_field(o, "day_count")?,
+        calendars: string_array(o, "calendars"),
+        convexity_vol: opt_f64(o, "convexity_vol").unwrap_or(0.0),
+        contract_size: opt_f64(o, "contract_size").unwrap_or(0.0),
+    })
+}
+
+fn vanilla_irs_from_json(v: &Value) -> Result<celnet_proto::VanillaIrsDef> {
+    let o = obj(v, "vanilla_irs")?;
+    Ok(celnet_proto::VanillaIrsDef {
+        tenor: string_field(o, "tenor")?,
+        fixed_frequency: string_field(o, "fixed_frequency")?,
+        fixed_day_count: string_field(o, "fixed_day_count")?,
+        float_index: string_field(o, "float_index")?,
+        float_frequency: string_field(o, "float_frequency")?,
+        float_day_count: string_field(o, "float_day_count")?,
+        business_day_convention: string_field(o, "business_day_convention")?,
+        calendars: string_array(o, "calendars"),
+        roll_convention: opt_string(o, "roll_convention").unwrap_or_default(),
+        spot_lag_days: opt_u32(o, "spot_lag_days").unwrap_or(0),
+    })
+}
+
+fn ois_def_from_json(v: &Value) -> Result<celnet_proto::OisDef> {
+    let o = obj(v, "ois")?;
+    Ok(celnet_proto::OisDef {
+        tenor: string_field(o, "tenor")?,
+        index: string_field(o, "index")?,
+        fixed_frequency: string_field(o, "fixed_frequency")?,
+        fixed_day_count: string_field(o, "fixed_day_count")?,
+        float_day_count: string_field(o, "float_day_count")?,
+        business_day_convention: string_field(o, "business_day_convention")?,
+        calendars: string_array(o, "calendars"),
+        spot_lag_days: opt_u32(o, "spot_lag_days").unwrap_or(0),
+    })
+}
+
+fn opt_broken_date(o: &Map<String, Value>, key: &str) -> Result<Option<celnet_proto::BrokenDate>> {
+    match o.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => Ok(Some(broken_date_from_json(v)?)),
+    }
+}
+
+fn bond_from_json(v: &Value) -> Result<celnet_proto::BondDef> {
+    let o = obj(v, "bond")?;
+    Ok(celnet_proto::BondDef {
+        issuer: string_field(o, "issuer")?,
+        coupon_rate: opt_f64(o, "coupon_rate").unwrap_or(0.0),
+        coupon_type: string_field(o, "coupon_type")?,
+        coupon_frequency: opt_string(o, "coupon_frequency").unwrap_or_default(),
+        day_count: string_field(o, "day_count")?,
+        issue_date: opt_broken_date(o, "issue_date")?,
+        dated_date: opt_broken_date(o, "dated_date")?,
+        first_coupon_date: opt_broken_date(o, "first_coupon_date")?,
+        maturity_date: opt_broken_date(o, "maturity_date")?,
+        redemption: opt_f64(o, "redemption").unwrap_or(0.0),
+        calendars: string_array(o, "calendars"),
+    })
+}
+
+/// Detect and decode the family sub-object; `None` ⇒ no family set (the service
+/// rejects it with `invalid_argument`).
+fn family_from_json(o: &Map<String, Value>) -> Result<Option<InstrumentDefinition>> {
+    if o.contains_key("deposit") {
+        Ok(Some(InstrumentDefinition::Deposit(deposit_from_json(
+            &o["deposit"],
+        )?)))
+    } else if o.contains_key("fra") {
+        Ok(Some(InstrumentDefinition::Fra(fra_from_json(&o["fra"])?)))
+    } else if o.contains_key("stir_future") {
+        Ok(Some(InstrumentDefinition::StirFuture(
+            stir_future_from_json(&o["stir_future"])?,
+        )))
+    } else if o.contains_key("vanilla_irs") {
+        Ok(Some(InstrumentDefinition::VanillaIrs(
+            vanilla_irs_from_json(&o["vanilla_irs"])?,
+        )))
+    } else if o.contains_key("ois") {
+        Ok(Some(InstrumentDefinition::Ois(ois_def_from_json(
+            &o["ois"],
+        )?)))
+    } else if o.contains_key("bond") {
+        Ok(Some(InstrumentDefinition::Bond(bond_from_json(
+            &o["bond"],
+        )?)))
+    } else {
+        Ok(None)
+    }
+}
+
+fn instrument_def_to_json(d: &InstrumentDefDesc) -> Value {
+    let mut v = json!({
+        "instrument_id": d.instrument_id,
+        "name": d.name,
+        "description": d.description,
+        "currency": d.currency,
+        "external_ids": Value::Array(d.external_ids.iter().map(external_id_to_json).collect()),
+    });
+    if let (Some(map), Some(def)) = (v.as_object_mut(), d.definition.as_ref()) {
+        let (key, val) = family_to_json(def);
+        map.insert(key.to_string(), val);
+    }
+    v
+}
+
+fn instrument_def_from_json(v: &Value) -> Result<InstrumentDefDesc> {
+    let o = obj(v, "instrument")?;
+    let external_ids = o
+        .get("external_ids")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(external_id_from_json)
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(InstrumentDefDesc {
+        instrument_id: opt_string(o, "instrument_id").unwrap_or_default(),
+        name: string_field(o, "name")?,
+        description: opt_string(o, "description").unwrap_or_default(),
+        currency: string_field(o, "currency")?,
+        external_ids,
+        definition: family_from_json(o)?,
+    })
+}
+
+pub(super) fn list_instruments_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListInstrumentsRequest> {
+    Ok(ListInstrumentsRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_instruments_response_to_json(r: &ListInstrumentsResponse) -> Value {
+    json!({
+        "instruments": Value::Array(r.instruments.iter().map(instrument_def_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn get_instrument_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<GetInstrumentRequest> {
+    Ok(GetInstrumentRequest {
+        session_token: string_field(o, "session_token")?,
+        instrument_id: string_field(o, "instrument_id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn get_instrument_response_to_json(r: &GetInstrumentResponse) -> Value {
+    json!({
+        "instrument": r.instrument.as_ref().map(instrument_def_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn create_instrument_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<CreateInstrumentRequest> {
+    Ok(CreateInstrumentRequest {
+        session_token: string_field(o, "session_token")?,
+        instrument: Some(nested(o, "instrument", instrument_def_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn create_instrument_response_to_json(r: &CreateInstrumentResponse) -> Value {
+    json!({
+        "instrument": r.instrument.as_ref().map(instrument_def_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_instrument_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdateInstrumentRequest> {
+    Ok(UpdateInstrumentRequest {
+        session_token: string_field(o, "session_token")?,
+        instrument: Some(nested(o, "instrument", instrument_def_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_instrument_response_to_json(r: &UpdateInstrumentResponse) -> Value {
+    json!({
+        "instrument": r.instrument.as_ref().map(instrument_def_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn delete_instrument_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<DeleteInstrumentRequest> {
+    Ok(DeleteInstrumentRequest {
+        session_token: string_field(o, "session_token")?,
+        instrument_id: string_field(o, "instrument_id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn delete_instrument_response_to_json(r: &DeleteInstrumentResponse) -> Value {
+    json!({ "removed": r.removed, "correlation_id": r.correlation_id })
+}
+
 // ---------------------------------------------------------------------------
 // frame helpers
 // ---------------------------------------------------------------------------
@@ -3975,9 +4526,9 @@ mod tests {
                 "currency": "USD",
                 "reference_date": { "year": 2026, "month": 6, "day": 25 },
                 "ois_pillars": [
-                    { "tenor_years": 1, "par_rate": 0.0432 },
-                    { "tenor_years": 2, "par_rate": 0.0418 },
-                    { "tenor_years": 5, "par_rate": 0.0405 }
+                    { "tenor": { "years": 1 }, "par_rate": 0.0432 },
+                    { "tenor": { "years": 2 }, "par_rate": 0.0418 },
+                    { "tenor": { "years": 5 }, "par_rate": 0.0405 }
                 ]
             },
             "instrument": {
@@ -3992,7 +4543,16 @@ mod tests {
         let curve = req.curve_set.as_ref().unwrap();
         assert_eq!(curve.currency, "USD");
         assert_eq!(curve.ois_pillars.len(), 3);
-        assert_eq!(curve.ois_pillars[2].tenor_years, 5);
+        // Each whole-year pillar decoded into the `Years` arm.
+        use celnet_proto::pillar_tenor::Point;
+        assert_eq!(
+            curve.ois_pillars[0].tenor.as_ref().unwrap().point,
+            Some(Point::Years(1))
+        );
+        assert_eq!(
+            curve.ois_pillars[2].tenor.as_ref().unwrap().point,
+            Some(Point::Years(5))
+        );
 
         // The decoded request prices through the engine: a 5y receive-fixed swap
         // (side=1=SELL) at the 5y par rate is ~par, so PV ~ 0.
@@ -4018,6 +4578,241 @@ mod tests {
         assert_eq!(v["result"]["key_rate_ladder"].as_array().unwrap().len(), 3);
     }
 
+    /// A `price_xva` request decodes from the browser JSON shape into the proto
+    /// `PriceXvaRequest`, prices through the SAME `celnet-xva` engine the gRPC edge
+    /// uses, and the `PriceXvaResponse` re-encodes to the browser shape — the WS
+    /// mirror is a second encoding of the one contract, round-tripping field-for-field.
+    #[test]
+    fn xva_price_request_decodes_prices_and_response_round_trips() {
+        let body = json!({
+            "request_id": 11,
+            "trades": [
+                { "option_type": 0, "strike": 1.10, "expiry_years": 1.0, "vol": 0.12, "notional": 1.0 },
+                { "option_type": 1, "strike": 1.05, "expiry_years": 1.5, "vol": 0.14, "notional": -1.0 }
+            ],
+            "r_dom": 0.03,
+            "r_for": 0.01,
+            "spot0": 1.10,
+            "sigma": 0.13,
+            "paths": 2048,
+            "seed": 11259375,
+            "exposure_steps": 8,
+            "counterparty": { "pillar_times": [0.5, 2.0], "hazard_rates": [0.02, 0.05] },
+            "own": { "pillar_times": [], "hazard_rates": [0.015] },
+            "lgd_counterparty": 0.6,
+            "lgd_own": 0.55,
+            "funding_spread": 0.008,
+            "correlation_id": 5
+        });
+        let o = body.as_object().unwrap();
+        let req = price_xva_request_from_json(o).expect("decodes");
+
+        // Header + netting set decoded field-for-field.
+        assert_eq!(req.request_id, 11);
+        assert_eq!(req.correlation_id, Some(5));
+        assert_eq!(req.trades.len(), 2);
+        assert_eq!(
+            req.trades[0].option_type,
+            celnet_proto::OptionType::Call as i32
+        );
+        assert_eq!(
+            req.trades[1].option_type,
+            celnet_proto::OptionType::Put as i32
+        );
+        assert_eq!(req.trades[1].notional, -1.0);
+        assert_eq!(req.paths, 2048);
+        assert_eq!(req.exposure_steps, 8);
+        // Piecewise counterparty curve vs flat own curve decoded distinctly.
+        let cpty = req.counterparty.as_ref().unwrap();
+        assert_eq!(cpty.pillar_times, vec![0.5, 2.0]);
+        assert_eq!(cpty.hazard_rates, vec![0.02, 0.05]);
+        let own = req.own.as_ref().unwrap();
+        assert!(own.pillar_times.is_empty());
+        assert_eq!(own.hazard_rates, vec![0.015]);
+
+        // The decoded request prices through the engine (same path as gRPC).
+        let result = crate::xva_pricing::price_xva(&req).expect("prices");
+        assert!(result.cva > 0.0, "CVA {}", result.cva);
+        assert!(result.dva > 0.0, "DVA {}", result.dva);
+        assert!(
+            (result.total_adjustment - (result.cva - result.dva + result.fva)).abs() < 1e-15,
+            "total identity"
+        );
+
+        // The response re-encodes to the browser shape, field-for-field.
+        let resp = celnet_proto::PriceXvaResponse {
+            request_id: req.request_id,
+            result: Some(result),
+            correlation_id: req.correlation_id,
+        };
+        let v = price_xva_response_to_json(&resp);
+        assert_eq!(v["request_id"], json!(11));
+        assert_eq!(v["correlation_id"], json!(5));
+        assert_eq!(v["result"]["cva"].as_f64().unwrap(), result.cva);
+        assert_eq!(v["result"]["dva"].as_f64().unwrap(), result.dva);
+        assert_eq!(v["result"]["fva"].as_f64().unwrap(), result.fva);
+        assert_eq!(
+            v["result"]["total_adjustment"].as_f64().unwrap(),
+            result.total_adjustment
+        );
+    }
+
+    /// The `build_curve` frame decodes the registry-referenced pillar set the GUI /
+    /// Excel client sends, and a `CalibratedCurve` re-encodes to the browser shape —
+    /// the WS mirror of `AuthService::BuildCurve`, field-for-field with the GUI codec.
+    #[test]
+    fn build_curve_request_decodes_and_calibrated_curve_encodes() {
+        let body = json!({
+            "request_id": "curve-001",
+            "currency": "USD",
+            "reference_date": { "year": 2026, "month": 6, "day": 25 },
+            "pillars": [
+                { "instrument_id": "usd-depo-3m", "quote": 0.0431 },
+                { "instrument_id": "usd-irs-10y", "quote": 0.0418 }
+            ],
+            "date_pillars": [
+                { "maturity_date": { "year": 2027, "month": 12, "day": 31 }, "quote": 0.0415 }
+            ],
+            "session_token": "tok-123"
+        });
+        let req = build_curve_request_from_json(body.as_object().unwrap()).expect("decodes");
+        assert_eq!(req.request_id, "curve-001");
+        assert_eq!(req.currency, "USD");
+        assert_eq!(req.session_token, "tok-123");
+        let ref_date = req.reference_date.as_ref().unwrap();
+        assert_eq!((ref_date.year, ref_date.month, ref_date.day), (2026, 6, 25));
+        assert_eq!(req.pillars.len(), 2);
+        assert_eq!(req.pillars[0].instrument_id, "usd-depo-3m");
+        assert!((req.pillars[1].quote - 0.0418).abs() < 1e-12);
+        // The date-anchored pillar decodes alongside the instrument pillars.
+        assert_eq!(req.date_pillars.len(), 1);
+        let dp_date = req.date_pillars[0].maturity_date.as_ref().unwrap();
+        assert_eq!((dp_date.year, dp_date.month, dp_date.day), (2027, 12, 31));
+        assert!((req.date_pillars[0].quote - 0.0415).abs() < 1e-12);
+
+        // A bootstrapped result re-encodes to the snake_case `calibrated_curve` frame.
+        let curve = CalibratedCurve {
+            request_id: req.request_id.clone(),
+            currency: req.currency.clone(),
+            reference_date: req.reference_date,
+            points: vec![
+                CalibratedCurvePoint {
+                    instrument_id: "usd-depo-3m".to_owned(),
+                    time_years: 0.2521,
+                    discount_factor: 0.98912,
+                    zero_rate: 0.04318,
+                    label: String::new(),
+                },
+                CalibratedCurvePoint {
+                    instrument_id: String::new(),
+                    time_years: 1.5151,
+                    discount_factor: 0.93827,
+                    zero_rate: 0.04150,
+                    label: "Date 2027-12-31".to_owned(),
+                },
+                CalibratedCurvePoint {
+                    instrument_id: "usd-irs-10y".to_owned(),
+                    time_years: 10.0,
+                    discount_factor: 0.6612,
+                    zero_rate: 0.04134,
+                    label: String::new(),
+                },
+            ],
+        };
+        let v = calibrated_curve_to_json(&curve);
+        assert_eq!(v["request_id"], json!("curve-001"));
+        assert_eq!(v["currency"], json!("USD"));
+        assert_eq!(v["reference_date"]["year"], json!(2026));
+        assert_eq!(v["points"].as_array().unwrap().len(), 3);
+        assert_eq!(v["points"][0]["instrument_id"], json!("usd-depo-3m"));
+        // The date pillar carries its display label and an empty instrument id.
+        assert_eq!(v["points"][1]["label"], json!("Date 2027-12-31"));
+        assert_eq!(v["points"][1]["instrument_id"], json!(""));
+        assert!((v["points"][2]["discount_factor"].as_f64().unwrap() - 0.6612).abs() < 1e-12);
+        assert!((v["points"][2]["time_years"].as_f64().unwrap() - 10.0).abs() < 1e-12);
+    }
+
+    /// A `build_curve` body with neither pillar array decodes to two empty ladders
+    /// (the handler enforces non-empty); a non-array `pillars` is a contract error.
+    #[test]
+    fn build_curve_request_pillar_arrays_are_optional_but_typed() {
+        let empty = json!({
+            "request_id": "curve-002",
+            "currency": "USD",
+            "reference_date": { "year": 2026, "month": 6, "day": 25 },
+            "session_token": "tok-123"
+        });
+        let req = build_curve_request_from_json(empty.as_object().unwrap())
+            .expect("missing pillar arrays default to empty");
+        assert!(req.pillars.is_empty());
+        assert!(req.date_pillars.is_empty());
+
+        let malformed = json!({
+            "request_id": "curve-003",
+            "currency": "USD",
+            "reference_date": { "year": 2026, "month": 6, "day": 25 },
+            "pillars": "not-an-array",
+            "session_token": "tok-123"
+        });
+        let err = build_curve_request_from_json(malformed.as_object().unwrap())
+            .expect_err("a non-array pillars must error");
+        assert!(err.to_string().contains("pillars"));
+    }
+
+    /// A curve mixing all three `PillarTenor` arms — a whole-year `years`, a
+    /// `months` tenor, and an explicit `maturity_date` broken date — decodes into
+    /// the matching oneof variants, then re-encodes to the same JSON shape
+    /// (round-trip of the new wire form), and prices without error.
+    #[test]
+    fn rates_price_request_decodes_mixed_pillar_arms() {
+        use celnet_proto::pillar_tenor::Point;
+        let body = json!({
+            "request_id": 11,
+            "curve_set": {
+                "currency": "USD",
+                "reference_date": { "year": 2026, "month": 6, "day": 25 },
+                "ois_pillars": [
+                    { "tenor": { "years": 1 }, "par_rate": 0.0432 },
+                    { "tenor": { "months": 18 }, "par_rate": 0.0418 },
+                    { "tenor": { "maturity_date": { "year": 2031, "month": 6, "day": 30 } }, "par_rate": 0.0405 }
+                ]
+            },
+            "instrument": {
+                "ois": { "tenor_years": 2, "fixed_rate": 0.041, "notional": 100000000.0, "side": 1 }
+            }
+        });
+        let req = rates_price_request_from_json(body.as_object().unwrap()).expect("decodes");
+        let pillars = &req.curve_set.as_ref().unwrap().ois_pillars;
+        assert_eq!(
+            pillars[0].tenor.as_ref().unwrap().point,
+            Some(Point::Years(1))
+        );
+        assert_eq!(
+            pillars[1].tenor.as_ref().unwrap().point,
+            Some(Point::Months(18))
+        );
+        assert_eq!(
+            pillars[2].tenor.as_ref().unwrap().point,
+            Some(Point::MaturityDate(celnet_proto::BrokenDate {
+                year: 2031,
+                month: 6,
+                day: 30,
+            }))
+        );
+
+        // The curve re-encodes to the same arm shapes (encode/decode symmetry).
+        let back = curve_set_to_json(req.curve_set.as_ref().unwrap());
+        assert_eq!(back["ois_pillars"][1]["tenor"]["months"], json!(18));
+        assert_eq!(
+            back["ois_pillars"][2]["tenor"]["maturity_date"]["year"],
+            json!(2031)
+        );
+
+        // And it prices to a finite par rate end to end.
+        let priced = crate::rates_pricing::price_rates(&req).expect("prices");
+        assert!(priced.par_rate.is_finite() && priced.par_rate > 0.0);
+    }
+
     /// An `aggregate_rates_risk` request decodes from the browser JSON shape into
     /// the proto `AggregateRatesRiskRequest`: the shared curve/instrument codecs
     /// rebuild the market + economics, positions carry their `(entity, book)` cell,
@@ -4030,8 +4825,8 @@ mod tests {
                 "currency": "USD",
                 "reference_date": { "year": 2026, "month": 6, "day": 25 },
                 "ois_pillars": [
-                    { "tenor_years": 1, "par_rate": 0.0432 },
-                    { "tenor_years": 5, "par_rate": 0.0405 }
+                    { "tenor": { "years": 1 }, "par_rate": 0.0432 },
+                    { "tenor": { "years": 5 }, "par_rate": 0.0405 }
                 ]
             },
             "positions": [
@@ -4096,7 +4891,7 @@ mod tests {
         json!({
             "currency": "USD",
             "reference_date": { "year": 2026, "month": 6, "day": 25 },
-            "ois_pillars": [ { "tenor_years": 1, "par_rate": 0.0432 }, { "tenor_years": 5, "par_rate": 0.0405 } ]
+            "ois_pillars": [ { "tenor": { "years": 1 }, "par_rate": 0.0432 }, { "tenor": { "years": 5 }, "par_rate": 0.0405 } ]
         })
     }
 
@@ -4374,5 +5169,74 @@ mod tests {
             let v = fix_connection_desc_to_json(&desc);
             assert_eq!(v["kind"], json!(tag), "the descriptor re-emits the tag");
         }
+    }
+
+    /// Each instrument family round-trips byte-identically through the WS codec
+    /// (`InstrumentDefDesc` → JSON → `InstrumentDefDesc`), and the family oneof is
+    /// carried under its variant-token key.
+    #[test]
+    fn instrument_families_round_trip_through_codec() {
+        let families = vec![
+            InstrumentDefinition::Ois(celnet_proto::OisDef {
+                tenor: "2Y".into(),
+                index: "sofr".into(),
+                fixed_frequency: "annual".into(),
+                fixed_day_count: "act_360".into(),
+                float_day_count: "act_360".into(),
+                business_day_convention: "modified_following".into(),
+                calendars: vec!["united_states".into()],
+                spot_lag_days: 2,
+            }),
+            InstrumentDefinition::Bond(celnet_proto::BondDef {
+                issuer: "US Treasury".into(),
+                coupon_rate: 0.045,
+                coupon_type: "fixed".into(),
+                coupon_frequency: "semi_annual".into(),
+                day_count: "act_act".into(),
+                issue_date: Some(celnet_proto::BrokenDate {
+                    year: 2026,
+                    month: 1,
+                    day: 31,
+                }),
+                dated_date: None,
+                first_coupon_date: None,
+                maturity_date: Some(celnet_proto::BrokenDate {
+                    year: 2028,
+                    month: 1,
+                    day: 31,
+                }),
+                redemption: 100.0,
+                calendars: vec!["united_states".into()],
+            }),
+        ];
+        for (i, fam) in families.into_iter().enumerate() {
+            let desc = InstrumentDefDesc {
+                instrument_id: format!("x-{i}"),
+                name: format!("X {i}"),
+                description: "round-trip".into(),
+                currency: "USD".into(),
+                external_ids: vec![celnet_proto::ExternalId {
+                    scheme: "ticker".into(),
+                    value: format!("X{i}"),
+                }],
+                definition: Some(fam),
+            };
+            let v = instrument_def_to_json(&desc);
+            let back = instrument_def_from_json(&v).expect("decodes");
+            assert_eq!(desc, back, "family at index {i}");
+        }
+    }
+
+    /// A `create_instrument` request with no family sub-object decodes with an
+    /// unset `definition` (the service then rejects it with `invalid_argument`).
+    #[test]
+    fn instrument_without_family_decodes_unset() {
+        let req = json!({
+            "session_token": "t",
+            "instrument": { "name": "X", "currency": "USD" },
+        });
+        let o = req.as_object().unwrap();
+        let decoded = create_instrument_request_from_json(o).expect("decodes");
+        assert!(decoded.instrument.unwrap().definition.is_none());
     }
 }

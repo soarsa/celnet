@@ -34,7 +34,8 @@
 
 #![forbid(unsafe_code)]
 
-use celnet_core::math::{exp, ln, norm_cdf, norm_pdf, sqrt};
+use celnet_core::math::exp;
+use celnet_core::{gbsm_carry_greeks, gbsm_carry_price};
 use celnet_types::{OptionType, RateSensitivities};
 
 /// Legitimate input to the generalized-BSM equity pricer.
@@ -108,9 +109,10 @@ impl EquityInputs {
     }
 
     /// Carry-discounted spot `S·e^{(b−r)·t}` (= `S·e^{−(q+repo)·t}`) — the
-    /// coefficient on `Φ(d1)` in the price.
+    /// coefficient on `Φ(d1)` in the price, and a convenient model-free building
+    /// block for put-call parity (`C − P = carry_disc_spot − K·discount_df`).
     #[must_use]
-    fn carry_disc_spot(&self) -> f64 {
+    pub fn carry_disc_spot(&self) -> f64 {
         self.spot * exp((self.carry() - self.r) * self.t)
     }
 }
@@ -148,146 +150,42 @@ pub struct EquityGreeks {
     pub color: f64,
 }
 
-/// Intermediate quantities shared by price and Greeks.
-struct Aux {
-    d1: f64,
-    d2: f64,
-    sqt: f64,
-    vsqt: f64,
-}
-
-#[inline]
-fn aux(i: &EquityInputs) -> Aux {
-    let sqt = sqrt(i.t);
-    let vsqt = i.vol * sqt;
-    // d1 = [ln(S/K) + (b + ½σ²)·t] / (σ√t) with b the net cost of carry.
-    let d1 = (ln(i.spot / i.strike) + (i.carry() + 0.5 * i.vol * i.vol) * i.t) / vsqt;
-    let d2 = d1 - vsqt;
-    Aux { d1, d2, sqt, vsqt }
-}
-
 /// Present value (premium per 1 unit of underlying).
+///
+/// Delegates to the unified generalized-BSM forward-space kernel
+/// ([`gbsm_carry_price`]) with the equity net carry `b = r − q − repo`, `r` the
+/// numeraire discount rate. The former in-crate spot-space form is replaced by the
+/// one canonical kernel (ADR-0012 — the sub-1e-12 forward-vs-spot rounding change is
+/// accepted; independent oracles hold at ≤1e-12).
 #[must_use]
 pub fn price(opt: OptionType, i: &EquityInputs) -> f64 {
-    let a = aux(i);
-    let s_disc = i.carry_disc_spot(); // S·e^{(b−r)t}
-    let k_disc = i.strike * i.discount_df(); // K·e^{−r t}
-    match opt {
-        OptionType::Call => s_disc * norm_cdf(a.d1) - k_disc * norm_cdf(a.d2),
-        OptionType::Put => k_disc * norm_cdf(-a.d2) - s_disc * norm_cdf(-a.d1),
-    }
+    gbsm_carry_price(opt, i.carry(), i.r, i.spot, i.strike, i.vol, i.t)
 }
 
 /// Price and the full Greek strip in a single pass.
 ///
-/// See [`EquityGreeks`] for the precise definition and units of each sensitivity.
-/// The discount-rho and carry-rho are emitted via [`RateSensitivities::Carry`].
+/// Delegates to the unified generalized-BSM forward-space kernel
+/// ([`gbsm_carry_greeks`]) with the equity net carry `b = r − q − repo`; the
+/// discount-rho and carry-rho (the equity dividend-rho) are emitted via
+/// [`RateSensitivities::Carry`]. See [`EquityGreeks`] for the precise definition and
+/// units of each sensitivity.
 #[must_use]
-#[allow(clippy::similar_names)] // d1/d2, nd1/nd2 are the canonical option-pricing names
 pub fn greeks(opt: OptionType, i: &EquityInputs) -> EquityGreeks {
-    let a = aux(i);
-    let (d1, d2, sqt, vsqt) = (a.d1, a.d2, a.sqt, a.vsqt);
-    let (s, k, t, vol) = (i.spot, i.strike, i.t, i.vol);
-    let b = i.carry(); // net cost of carry
-    let r = i.r; // numeraire discount rate
-    let df = i.discount_df(); // e^{−r t}
-    let cd = exp((b - r) * t); // e^{(b−r) t}: dividend/carry discount on spot
-
-    let pd1 = norm_pdf(d1);
-    let nd1 = norm_cdf(d1);
-    let nd2 = norm_cdf(d2);
-    let nmd1 = norm_cdf(-d1);
-    let nmd2 = norm_cdf(-d2);
-
-    let s_disc = s * cd; // S·e^{(b−r)t}
-    let k_disc = k * df; // K·e^{−r t}
-
-    let price = match opt {
-        OptionType::Call => s_disc * nd1 - k_disc * nd2,
-        OptionType::Put => k_disc * nmd2 - s_disc * nmd1,
-    };
-
-    // delta_spot = ∂V/∂S = e^{(b−r)t}·Φ(±d1).
-    let delta_spot = match opt {
-        OptionType::Call => cd * nd1,
-        OptionType::Put => cd * (nd1 - 1.0),
-    };
-    // delta_forward = ∂V_fwd/∂F where V_fwd = V·e^{rt} and F = S·e^{bt}.
-    //   V_fwd = e^{rt}·[S e^{(b−r)t}Φ(d1) − K e^{−rt}Φ(d2)]
-    //         = F·Φ(d1) − K·Φ(d2)  (call) ⇒ ∂V_fwd/∂F = Φ(d1).
-    let delta_forward = match opt {
-        OptionType::Call => nd1,
-        OptionType::Put => nd1 - 1.0,
-    };
-
-    // Symmetric across call/put.
-    let gamma = cd * pd1 / (s * vsqt);
-    let vega = s_disc * sqt * pd1;
-    let vanna = -cd * pd1 * d2 / vol;
-    let volga = vega * d1 * d2 / vol;
-    let speed = -gamma / s * (d1 / vsqt + 1.0);
-    let zomma = gamma * (d1 * d2 - 1.0) / vol;
-
-    // theta = ∂V/∂t (per year) = −∂V/∂T. The generalized-BSM theta:
-    //   call: −S e^{(b−r)t} φ(d1) σ/(2√t) − (b−r) S e^{(b−r)t} Φ(d1) − r K e^{−rt} Φ(d2)
-    //   put:  −S e^{(b−r)t} φ(d1) σ/(2√t) + (b−r) S e^{(b−r)t} Φ(−d1) + r K e^{−rt} Φ(−d2)
-    // (Haug, generalized-BSM; cross-checked vs central FD in the tests.)
-    let theta_common = -(s_disc * pd1 * vol) / (2.0 * sqt);
-    let theta = match opt {
-        OptionType::Call => theta_common - (b - r) * s_disc * nd1 - r * k_disc * nd2,
-        OptionType::Put => theta_common + (b - r) * s_disc * nmd1 + r * k_disc * nmd2,
-    };
-
-    // Carry-tagged rate sensitivities. (r, b) are the two INDEPENDENT carry
-    // coordinates: d1, d2 depend on b but NOT on r, so the partials are clean.
-    //   discount_rho = ∂V/∂r at fixed b. Both price legs carry an e^{−rt} factor
-    //   (the spot leg is S e^{(b−r)t}, the strike leg K e^{−rt}), so:
-    //       call:  −S t e^{(b−r)t} Φ(d1)  +  K t e^{−rt} Φ(d2)
-    //       put:    S t e^{(b−r)t} Φ(−d1) −  K t e^{−rt} Φ(−d2)
-    //   carry_rho = ∂V/∂b at fixed r (the equity dividend-rho), through the forward/
-    //   spot carry S e^{(b−r)t} only; the φ-terms from ∂d1/∂b cancel between the two
-    //   price legs (S e^{(b−r)t} φ(d1) = K e^{−rt} φ(d2)):
-    //       call:  S t e^{(b−r)t} Φ(d1),   put: −S t e^{(b−r)t} Φ(−d1)
-    let discount_rho = match opt {
-        OptionType::Call => -s * t * cd * nd1 + k * t * df * nd2,
-        OptionType::Put => s * t * cd * nmd1 - k * t * df * nmd2,
-    };
-    let carry_rho = match opt {
-        OptionType::Call => s * t * cd * nd1,
-        OptionType::Put => -s * t * cd * nmd1,
-    };
-
-    // charm = ∂(delta_spot)/∂T. delta_spot = e^{(b−r)T}·Φ(±d1) ⇒
-    //   ∂Δ/∂T = (b−r)·e^{(b−r)T}·Φ(±d1) ± e^{(b−r)T}·φ(d1)·∂d1/∂T.
-    // ∂d1/∂T = (b + ½σ²)/(σ√T) − [ln(S/K)+(b+½σ²)T]/(2σ T^{3/2})
-    //        = b/(σ√T) − d1/(2T) + ½σ/√T  (same collapse as the FX leaf with b↦b).
-    let dd1_dt = b / vsqt - d1 / (2.0 * t) + 0.5 * vol / sqt;
-    let charm = match opt {
-        OptionType::Call => (b - r) * cd * nd1 + cd * pd1 * dd1_dt,
-        OptionType::Put => (b - r) * cd * (nd1 - 1.0) + cd * pd1 * dd1_dt,
-    };
-
-    // color = ∂gamma/∂T. gamma = e^{(b−r)T}·φ(d1)/(S·σ·√T); differentiate w.r.t. T:
-    //   = gamma·[ (b−r) − 1/(2T) − d1·∂d1/∂T ].
-    let color = gamma * ((b - r) - 1.0 / (2.0 * t) - d1 * dd1_dt);
-
+    let cg = gbsm_carry_greeks(opt, i.carry(), i.r, i.spot, i.strike, i.vol, i.t);
     EquityGreeks {
-        price,
-        delta_spot,
-        delta_forward,
-        gamma,
-        vega,
-        theta,
-        rates: RateSensitivities::Carry {
-            discount_rho,
-            carry_rho,
-        },
-        vanna,
-        volga,
-        charm,
-        speed,
-        zomma,
-        color,
+        price: cg.price,
+        delta_spot: cg.delta_spot,
+        delta_forward: cg.delta_forward,
+        gamma: cg.gamma,
+        vega: cg.vega,
+        theta: cg.theta,
+        rates: cg.rates,
+        vanna: cg.vanna,
+        volga: cg.volga,
+        charm: cg.charm,
+        speed: cg.speed,
+        zomma: cg.zomma,
+        color: cg.color,
     }
 }
 

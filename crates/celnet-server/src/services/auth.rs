@@ -34,27 +34,37 @@ use std::sync::{Arc, Mutex, OnceLock};
 use celnet_entitlements::{Action, AssetClass, Capability};
 use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
-    BookDesc, CapabilityDesc, CreateBookRequest, CreateBookResponse, CreateDeskRequest,
-    CreateDeskResponse, CreateEntityRequest, CreateEntityResponse, CreateUserRequest,
-    CreateUserResponse, DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest,
-    DeleteDeskResponse, DeleteEntityRequest, DeleteEntityResponse, DeleteUserRequest,
-    DeleteUserResponse, DeskDesc, EntityDesc, GetRoleCapabilitiesRequest,
+    BookDesc, BrokenDate, BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
+    CreateBookRequest, CreateBookResponse, CreateDeskRequest, CreateDeskResponse,
+    CreateEntityRequest, CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse,
+    CreateUserRequest, CreateUserResponse, DeleteBookRequest, DeleteBookResponse,
+    DeleteDeskRequest, DeleteDeskResponse, DeleteEntityRequest, DeleteEntityResponse,
+    DeleteInstrumentRequest, DeleteInstrumentResponse, DeleteUserRequest, DeleteUserResponse,
+    DeskDesc, EntityDesc, GetInstrumentRequest, GetInstrumentResponse, GetRoleCapabilitiesRequest,
     GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest, GetUserCapabilitiesResponse,
     ListBooksRequest, ListBooksResponse, ListDesksRequest, ListDesksResponse, ListEntitiesRequest,
-    ListEntitiesResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
-    LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
-    SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
-    SetUserCapabilitiesResponse, UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest,
-    UpdateEntityResponse, UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
+    ListEntitiesResponse, ListInstrumentsRequest, ListInstrumentsResponse, ListUsersRequest,
+    ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse,
+    ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
+    SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
+    UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest, UpdateEntityResponse,
+    UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest, UpdateUserResponse,
+    UserDesc, UserRole,
 };
+use celnet_rates::{CalibrationInstrument, bootstrap_curve};
 use tonic::{Request, Response, Status};
 
 use crate::clock::Clock;
+use crate::config::curve_calibration::{
+    CurveCalibrationError, calibration_set, date_pillar_instrument,
+};
 use crate::config::identity::{
     BookDef, DeskDef, EntityDef, IdentityStore, PermissionGrant, Role, UserDef, hash_password,
     mint_desk_id, mint_user_id, verify_password,
 };
+use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
+use crate::services::instrument_wire::{instrument_from_wire, instrument_to_wire};
 use crate::services::sessions::{AuthenticatedUser, SessionRegistry};
 
 /// The minimum acceptable password length for a created or reset password. A
@@ -223,6 +233,16 @@ impl AuthService for AuthEdge {
         // parallelized guesser cannot keep spending Argon2 verifications.
         let email_key = req.email.trim().to_ascii_lowercase();
         if let Some(retry_secs) = self.throttle.locked_for(&email_key) {
+            // Security-relevant: an email under active brute-force lockout. The
+            // external contract is unchanged (`resource_exhausted`); the precise
+            // internal reason is recorded for investigation.
+            tracing::warn!(
+                class = celnet_observability::LogClass::Security.label(),
+                email = %email_key,
+                reason = "rate_limited",
+                retry_secs,
+                "login failed"
+            );
             return Err(Status::resource_exhausted(format!(
                 "too many failed login attempts; retry in {retry_secs}s"
             )));
@@ -238,19 +258,36 @@ impl AuthService for AuthEdge {
         // Verify off the async worker. To blunt user-enumeration timing, an absent
         // (or disabled) account still runs a verification against a fixed dummy
         // hash, so the response time does not reveal whether the email exists.
-        let (authed_user, ok) = match candidate {
-            Some(u) if !u.disabled => {
-                let ok = verify_async(u.password_hash.clone(), req.password.clone()).await;
-                (Some(u), ok)
-            }
-            _ => {
+        //
+        // `fail_reason` records the PRECISE internal cause for the security log
+        // while the external error below stays a single opaque
+        // `unauthenticated` (anti-enumeration): the client cannot tell an unknown
+        // email from a bad password, but an operator can.
+        let (authed_user, ok, fail_reason): (Option<UserDef>, bool, &'static str) = match candidate
+        {
+            Some(u) if u.disabled => {
                 let _ = verify_async(dummy_hash().to_string(), req.password.clone()).await;
-                (None, false)
+                (None, false, "disabled")
+            }
+            Some(u) => {
+                let ok = verify_async(u.password_hash.clone(), req.password.clone()).await;
+                let reason = if ok { "ok" } else { "bad_password" };
+                (Some(u), ok, reason)
+            }
+            None => {
+                let _ = verify_async(dummy_hash().to_string(), req.password.clone()).await;
+                (None, false, "unknown_user")
             }
         };
 
         let Some(user) = authed_user.filter(|_| ok) else {
             self.throttle.record_failure(&email_key);
+            tracing::warn!(
+                class = celnet_observability::LogClass::Security.label(),
+                email = %email_key,
+                reason = fail_reason,
+                "login failed"
+            );
             return Err(Status::unauthenticated("invalid email or password"));
         };
         self.throttle.record_success(&email_key);
@@ -265,6 +302,16 @@ impl AuthService for AuthEdge {
                 role_base.clone(),
             ))
             .map_err(|e| Status::internal(format!("issue session: {e}")))?;
+        // Successful authentication is a security-relevant event. The session
+        // TOKEN is never logged (only its expiry); the resolved role is recorded
+        // so an operator can see which authority was minted.
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            email = %user.email,
+            role = role_label(user.role),
+            session_expires_nanos = issued.expires_nanos,
+            "login succeeded"
+        );
         Ok(Response::new(LoginResponse {
             session_token: issued.token,
             user: Some(user_to_wire(&user)),
@@ -283,7 +330,16 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+        // Resolve the actor before ending the session so the security log can
+        // attribute the logout by email; the token value itself is never logged.
+        let actor_email = self.sessions.validate(&req.session_token).map(|u| u.email);
         let ended = self.sessions.logout(&req.session_token);
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            email = actor_email.as_deref(),
+            ended,
+            "logout"
+        );
         Ok(Response::new(LogoutResponse {
             ended,
             correlation_id: req.correlation_id,
@@ -312,7 +368,7 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        let actor = self.require_admin(&req.session_token)?;
 
         let email = req.email.trim().to_string();
         if !valid_email(&email) {
@@ -360,6 +416,13 @@ impl AuthService for AuthEdge {
         let mut next = guard.clone();
         next.users.push(new_user.clone());
         self.persist_and_commit(&mut guard, next)?;
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            actor = %actor.email,
+            target_email = %new_user.email,
+            role = role_label(new_user.role),
+            "admin created user"
+        );
         Ok(Response::new(CreateUserResponse {
             user: Some(user_to_wire(&new_user)),
             correlation_id: req.correlation_id,
@@ -373,7 +436,7 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        let actor = self.require_admin(&req.session_token)?;
 
         let display_name = req.display_name.trim().to_string();
         if display_name.is_empty() {
@@ -429,6 +492,15 @@ impl AuthService for AuthEdge {
         if authority_changed {
             self.sessions.revoke_user(&updated.id);
         }
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            actor = %actor.email,
+            target_email = %updated.email,
+            role = role_label(updated.role),
+            disabled = updated.disabled,
+            authority_changed,
+            "admin updated user"
+        );
         Ok(Response::new(UpdateUserResponse {
             user: Some(user_to_wire(&updated)),
             correlation_id: req.correlation_id,
@@ -442,7 +514,7 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        let actor = self.require_admin(&req.session_token)?;
 
         let mut guard = self.lock();
         let Some(target) = guard.user(&req.id).cloned() else {
@@ -462,6 +534,13 @@ impl AuthService for AuthEdge {
         drop(guard);
 
         self.sessions.revoke_user(&req.id);
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            actor = %actor.email,
+            target_email = %target.email,
+            target_user_id = %req.id,
+            "admin deleted user"
+        );
         Ok(Response::new(DeleteUserResponse {
             removed: true,
             correlation_id: req.correlation_id,
@@ -475,13 +554,18 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        let actor = self.require_admin(&req.session_token)?;
 
         check_password_strength(&req.new_password)?;
-        // Confirm the target exists before paying for a hash.
-        if self.lock().user(&req.id).is_none() {
-            return Err(Status::not_found(format!("no user with id `{}`", req.id)));
-        }
+        // Confirm the target exists before paying for a hash, capturing its email
+        // for the security log (the new password is NEVER logged).
+        let target_email = {
+            let store = self.lock();
+            match store.user(&req.id) {
+                Some(u) => u.email.clone(),
+                None => return Err(Status::not_found(format!("no user with id `{}`", req.id))),
+            }
+        };
         let password_hash = hash_async(req.new_password.clone())
             .await
             .map_err(|e| Status::internal(format!("hash password: {e}")))?;
@@ -499,6 +583,12 @@ impl AuthService for AuthEdge {
 
         // Force re-login with the new credential everywhere.
         self.sessions.revoke_user(&req.id);
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            actor = %actor.email,
+            target_email = %target_email,
+            "admin reset user password"
+        );
         Ok(Response::new(ResetPasswordResponse {
             correlation_id: req.correlation_id,
         }))
@@ -1069,6 +1159,261 @@ impl AuthService for AuthEdge {
             correlation_id: req.correlation_id,
         }))
     }
+
+    // --- instrument reference data ---------------------------------------------
+
+    async fn list_instruments(
+        &self,
+        request: Request<ListInstrumentsRequest>,
+    ) -> Result<Response<ListInstrumentsResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Read-only roster: any authenticated caller may read it (curve-building and
+        // pricing resolve against it), so it is NOT admin-gated.
+        self.authenticate(&req.session_token)?;
+        let instruments = self
+            .lock()
+            .instruments
+            .iter()
+            .map(instrument_to_wire)
+            .collect();
+        Ok(Response::new(ListInstrumentsResponse {
+            instruments,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn get_instrument(
+        &self,
+        request: Request<GetInstrumentRequest>,
+    ) -> Result<Response<GetInstrumentResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.authenticate(&req.session_token)?;
+        let instrument = self
+            .lock()
+            .instrument_by_id(req.instrument_id.trim())
+            .map(instrument_to_wire);
+        Ok(Response::new(GetInstrumentResponse {
+            instrument,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn build_curve(
+        &self,
+        request: Request<BuildCurveRequest>,
+    ) -> Result<Response<CalibratedCurve>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Read-only against the reference-data registry, so — like `list_instruments`
+        // / `get_instrument` — any authenticated caller may build, but unauthenticated
+        // callers are rejected.
+        self.authenticate(&req.session_token)?;
+
+        if req.pillars.is_empty() && req.date_pillars.is_empty() {
+            return Err(Status::invalid_argument(
+                "build_curve requires at least one pillar",
+            ));
+        }
+        // The curve reference (spot-anchor / value) date the pillar schedules roll from.
+        let reference = req
+            .reference_date
+            .as_ref()
+            .ok_or_else(|| Status::invalid_argument("missing `reference_date`"))?;
+        let value_date = decode_broken_date(reference).ok_or_else(|| {
+            Status::invalid_argument("`reference_date` is not a real calendar date")
+        })?;
+
+        // Resolve every pillar id against the reference-data registry under a single
+        // store read, then release the lock before the (root-finding) bootstrap so the
+        // numeric solve never serializes other identity operations.
+        let resolved: Vec<(String, InstrumentDef, f64)> = {
+            let guard = self.lock();
+            let mut rows = Vec::with_capacity(req.pillars.len());
+            for pillar in &req.pillars {
+                let id = pillar.instrument_id.trim();
+                let def = guard
+                    .instrument_by_id(id)
+                    .ok_or_else(|| Status::not_found(format!("unknown instrument id `{id}`")))?;
+                rows.push((id.to_string(), def.clone(), pillar.quote));
+            }
+            rows
+        };
+
+        // Map each resolved definition + quote onto an engine calibration instrument.
+        // `calibration_set` preserves input order, so the resolved instrument pillars line
+        // up with `resolved`. Every `CurveCalibrationError` is a static input-shape failure
+        // (uncalibratable family, unknown convention label, currency mismatch, …).
+        let defs: Vec<(&InstrumentDef, f64)> =
+            resolved.iter().map(|(_, def, q)| (def, *q)).collect();
+        let instrument_calibs =
+            calibration_set(&defs, value_date).map_err(curve_calibration_status)?;
+
+        // Assemble the unified calibration ladder — registry-instrument pillars then
+        // standalone date-anchored pillars — keeping each pillar's display metadata
+        // (`(instrument_id, label)`) index-aligned with the engine instrument. Date
+        // pillars carry an empty instrument id (the client resolves names only by id) and
+        // a `Date YYYY-MM-DD` label; the bootstrap orders the ladder by maturity itself.
+        let pillar_count = resolved.len() + req.date_pillars.len();
+        let mut instruments: Vec<CalibrationInstrument> = Vec::with_capacity(pillar_count);
+        let mut meta: Vec<(String, String)> = Vec::with_capacity(pillar_count);
+        for ((id, _, _), inst) in resolved.iter().zip(instrument_calibs) {
+            meta.push((id.clone(), String::new()));
+            instruments.push(inst);
+        }
+        for dp in &req.date_pillars {
+            let md = dp.maturity_date.as_ref().ok_or_else(|| {
+                Status::invalid_argument("date pillar is missing `maturity_date`")
+            })?;
+            let maturity = decode_broken_date(md).ok_or_else(|| {
+                Status::invalid_argument("date pillar `maturity_date` is not a real calendar date")
+            })?;
+            let inst = date_pillar_instrument(value_date, maturity, dp.quote)
+                .map_err(curve_calibration_status)?;
+            let label = format!("Date {:04}-{:02}-{:02}", md.year, md.month, md.day);
+            meta.push((String::new(), label));
+            instruments.push(inst);
+        }
+
+        // Bootstrap the self-discounting curve. A failure here is a numeric fault on
+        // otherwise-valid input (mirrors the `price_rates` edge mapping it to internal).
+        let curve = bootstrap_curve(&instruments)
+            .map_err(|e| Status::internal(format!("curve bootstrap failed: {e}")))?;
+
+        // Sample each input instrument at its own pillar maturity, ordered short → long
+        // by maturity (the documented, deterministic point order).
+        let mut points: Vec<CalibratedCurvePoint> = instruments
+            .iter()
+            .zip(&meta)
+            .map(|(inst, (id, label))| {
+                let t = inst.maturity();
+                CalibratedCurvePoint {
+                    instrument_id: id.clone(),
+                    time_years: t.0,
+                    discount_factor: curve.discount_factor(t).0,
+                    zero_rate: curve.zero_rate(t).0,
+                    label: label.clone(),
+                }
+            })
+            .collect();
+        points.sort_by(|a, b| a.time_years.total_cmp(&b.time_years));
+
+        Ok(Response::new(CalibratedCurve {
+            request_id: req.request_id,
+            currency: req.currency,
+            reference_date: req.reference_date,
+            points,
+        }))
+    }
+
+    async fn create_instrument(
+        &self,
+        request: Request<CreateInstrumentRequest>,
+    ) -> Result<Response<CreateInstrumentResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let wire = req
+            .instrument
+            .ok_or_else(|| Status::invalid_argument("instrument is required"))?;
+        let mut def = instrument_from_wire(&wire)?;
+
+        let mut guard = self.lock();
+        // Mint the id from the name when blank; a provided id must be free.
+        if def.instrument_id.is_empty() {
+            def.instrument_id = mint_instrument_id(&def.name, &guard.instruments);
+        } else if guard.instrument_by_id(&def.instrument_id).is_some() {
+            return Err(Status::already_exists(format!(
+                "an instrument with id `{}` already exists",
+                def.instrument_id
+            )));
+        }
+
+        let mut next = guard.clone();
+        next.instruments.push(def.clone());
+        // Validate the whole candidate registry (id/external-id uniqueness + labels +
+        // required fields) before committing, so a bad write never persists.
+        validate_instruments(&next.instruments).map_err(Status::invalid_argument)?;
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(CreateInstrumentResponse {
+            instrument: Some(instrument_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_instrument(
+        &self,
+        request: Request<UpdateInstrumentRequest>,
+    ) -> Result<Response<UpdateInstrumentResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let wire = req
+            .instrument
+            .ok_or_else(|| Status::invalid_argument("instrument is required"))?;
+        let def = instrument_from_wire(&wire)?;
+        if def.instrument_id.is_empty() {
+            return Err(Status::invalid_argument(
+                "instrument_id is required to update an instrument",
+            ));
+        }
+
+        let mut guard = self.lock();
+        if guard.instrument_by_id(&def.instrument_id).is_none() {
+            return Err(Status::not_found(format!(
+                "no instrument with id `{}`",
+                def.instrument_id
+            )));
+        }
+        let mut next = guard.clone();
+        if let Some(slot) = next
+            .instruments
+            .iter_mut()
+            .find(|i| i.instrument_id == def.instrument_id)
+        {
+            *slot = def.clone();
+        }
+        validate_instruments(&next.instruments).map_err(Status::invalid_argument)?;
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(UpdateInstrumentResponse {
+            instrument: Some(instrument_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn delete_instrument(
+        &self,
+        request: Request<DeleteInstrumentRequest>,
+    ) -> Result<Response<DeleteInstrumentResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let id = req.instrument_id.trim();
+        let mut guard = self.lock();
+        if guard.instrument_by_id(id).is_none() {
+            return Ok(Response::new(DeleteInstrumentResponse {
+                removed: false,
+                correlation_id: req.correlation_id,
+            }));
+        }
+        let mut next = guard.clone();
+        next.instruments.retain(|i| i.instrument_id != id);
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(DeleteInstrumentResponse {
+            removed: true,
+            correlation_id: req.correlation_id,
+        }))
+    }
 }
 
 // --- wire ⇄ domain mapping -------------------------------------------------
@@ -1177,6 +1522,15 @@ fn book_to_wire(b: &BookDef) -> BookDesc {
     }
 }
 
+/// A stable, human-facing label for a [`Role`] — used as the `role` field in the
+/// security logs (never a bare enum discriminant).
+fn role_label(role: Role) -> &'static str {
+    match role {
+        Role::Admin => "admin",
+        Role::Trader => "trader",
+    }
+}
+
 /// The wire enum value for a domain [`Role`].
 fn role_to_wire(role: Role) -> i32 {
     match role {
@@ -1251,6 +1605,25 @@ fn dummy_hash() -> &'static str {
 }
 
 /// Run an Argon2 verification off the async worker (the hash is memory-hard).
+/// Decode a wire [`BrokenDate`] to a real [`time::Date`], or `None` if the triple
+/// is not a real civil date (the caller maps `None` to `invalid_argument`).
+fn decode_broken_date(d: &BrokenDate) -> Option<time::Date> {
+    let month = u8::try_from(d.month)
+        .ok()
+        .and_then(|m| time::Month::try_from(m).ok())?;
+    let day = u8::try_from(d.day).ok()?;
+    time::Date::from_calendar_date(d.year, month, day).ok()
+}
+
+/// Map a [`CurveCalibrationError`] to a `tonic::Status`. Every variant is a static
+/// (input-shape) failure — an uncalibratable family, an unresolvable tenor/label, a
+/// currency mismatch, or a rejected schedule coordinate — so all map to
+/// `invalid_argument`. Numeric (bootstrap) faults are handled separately as
+/// `internal`.
+fn curve_calibration_status(e: CurveCalibrationError) -> Status {
+    Status::invalid_argument(e.to_string())
+}
+
 async fn verify_async(stored_hash: String, candidate: String) -> bool {
     tokio::task::spawn_blocking(move || verify_password(&stored_hash, &candidate))
         .await
@@ -1376,6 +1749,475 @@ mod tests {
             path,
             sessions,
         )
+    }
+
+    // --- build_curve (Curves Part B inc.2): reference-data → bootstrapped curve ------
+
+    use crate::config::curve_calibration::calibration_instrument;
+    use crate::config::reference_data::{
+        BondDef, CivilDate, DepositDef, FraDef, InstrumentFamily, OisDef, StirFutureDef,
+        VanillaIrsDef,
+    };
+    use celnet_proto::InstrumentQuote;
+    use celnet_rates::{
+        CalibrationInstrument, Curve, deposit_par_rate, fixed_annuity, float_leg_value,
+        fra_par_rate, implied_forward_rate, ois_par_rate,
+    };
+    use celnet_types::{Df, Time};
+
+    /// The US business day used as the curve trade/value date (Monday 16 Jun 2025).
+    fn curve_value_date() -> time::Date {
+        time::Date::from_calendar_date(2025, time::Month::June, 16).expect("valid date")
+    }
+
+    /// The same value date as a wire `BrokenDate`.
+    fn curve_reference() -> BrokenDate {
+        BrokenDate {
+            year: 2025,
+            month: 6,
+            day: 16,
+        }
+    }
+
+    /// A USD instrument-definition header wrapping a family block.
+    fn cv_usd(id: &str, family: InstrumentFamily) -> InstrumentDef {
+        InstrumentDef {
+            instrument_id: id.to_string(),
+            name: id.to_string(),
+            description: String::new(),
+            currency: "USD".to_string(),
+            external_ids: Vec::new(),
+            definition: family,
+        }
+    }
+
+    fn cv_dep(id: &str, tenor: &str) -> InstrumentDef {
+        cv_usd(
+            id,
+            InstrumentFamily::Deposit(DepositDef {
+                index: "USD-SOFR".to_string(),
+                tenor: tenor.to_string(),
+                day_count: "act_360".to_string(),
+                business_day_convention: "modified_following".to_string(),
+                calendars: vec!["united_states".to_string()],
+                spot_lag_days: 2,
+            }),
+        )
+    }
+
+    fn cv_fra(id: &str, start: &str, end: &str) -> InstrumentDef {
+        cv_usd(
+            id,
+            InstrumentFamily::Fra(FraDef {
+                float_index: "USD-SOFR".to_string(),
+                start_tenor: start.to_string(),
+                end_tenor: end.to_string(),
+                accrual_day_count: "act_360".to_string(),
+                business_day_convention: "modified_following".to_string(),
+                calendars: vec!["united_states".to_string()],
+                spot_lag_days: 2,
+            }),
+        )
+    }
+
+    fn cv_stir(id: &str, ref_start: &str, ref_end: &str) -> InstrumentDef {
+        cv_usd(
+            id,
+            InstrumentFamily::StirFuture(StirFutureDef {
+                contract_code: "SR3".to_string(),
+                reference_start: ref_start.to_string(),
+                reference_end: ref_end.to_string(),
+                day_count: "act_360".to_string(),
+                calendars: vec!["united_states".to_string()],
+                convexity_vol: 0.005,
+                contract_size: 1_000_000.0,
+            }),
+        )
+    }
+
+    fn cv_ois(id: &str, tenor: &str) -> InstrumentDef {
+        cv_usd(
+            id,
+            InstrumentFamily::Ois(OisDef {
+                tenor: tenor.to_string(),
+                index: "USD-SOFR".to_string(),
+                fixed_frequency: "annual".to_string(),
+                fixed_day_count: "act_360".to_string(),
+                float_day_count: "act_360".to_string(),
+                business_day_convention: "modified_following".to_string(),
+                calendars: vec!["united_states".to_string()],
+                spot_lag_days: 2,
+            }),
+        )
+    }
+
+    fn cv_irs(id: &str, tenor: &str) -> InstrumentDef {
+        cv_usd(
+            id,
+            InstrumentFamily::VanillaIrs(VanillaIrsDef {
+                tenor: tenor.to_string(),
+                fixed_frequency: "annual".to_string(),
+                fixed_day_count: "thirty_360_bond_basis".to_string(),
+                float_index: "USD-SOFR".to_string(),
+                float_frequency: "quarterly".to_string(),
+                float_day_count: "act_360".to_string(),
+                business_day_convention: "modified_following".to_string(),
+                calendars: vec!["united_states".to_string()],
+                roll_convention: "none".to_string(),
+                spot_lag_days: 2,
+            }),
+        )
+    }
+
+    /// Build an edge over a temp identity file seeded with the default admin plus the
+    /// supplied instrument reference-data definitions.
+    fn curve_edge(tag: &str, instruments: Vec<InstrumentDef>) -> (AuthEdge, PathBuf) {
+        let dir = std::env::temp_dir().join("celnet-auth-edge");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!(
+            "identity-curve-{}-{}.json",
+            std::process::id(),
+            tag
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut store = IdentityStore::default();
+        store.ensure_seed_admin().unwrap();
+        store.instruments = instruments;
+        store.save(&path).unwrap();
+        let identity = Arc::new(Mutex::new(store));
+        let clock = Clock::system();
+        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
+        let gate = Arc::new(ReadinessGate::new());
+        gate.mark_ready();
+        (
+            AuthEdge::new(identity, path.clone(), sessions, gate, clock),
+            path,
+        )
+    }
+
+    /// Reprice a calibration instrument on `curve`, returning its model par rate
+    /// (or futures rate) — the quantity the bootstrap drove to the input quote.
+    fn model_quote(curve: &Curve, inst: &CalibrationInstrument) -> f64 {
+        match inst {
+            CalibrationInstrument::Deposit(d) => deposit_par_rate(curve, d).0,
+            CalibrationInstrument::Fra(f) => fra_par_rate(curve, f).0,
+            CalibrationInstrument::StirFuture(q) => {
+                // The futures quote is the curve's simple forward over the fixing window
+                // plus the (quote-implied) convexity bias the bootstrap debiased out.
+                let t1 = q.future.fixing_start();
+                let t2 = q.future.fixing_end();
+                let fwd = (curve.discount_factor(t1).0 / curve.discount_factor(t2).0 - 1.0)
+                    / (t2.0 - t1.0);
+                let convexity = q.futures_rate.0 - implied_forward_rate(q).0;
+                fwd + convexity
+            }
+            CalibrationInstrument::Ois(q) => ois_par_rate(curve, &q.schedule).0,
+            CalibrationInstrument::VanillaIrs(q) => {
+                float_leg_value(curve, &q.float_leg) / fixed_annuity(curve, &q.fixed_leg)
+            }
+        }
+    }
+
+    /// End-to-end oracle gate: a USD curve built from a registry-referenced ladder
+    /// (deposits + FRA + STIR future + OIS + vanilla IRS) reprices every calibrating
+    /// instrument back to its quote. The curve is reconstructed *purely* from the wire
+    /// `(time_years, discount_factor)` points and each instrument repriced via the
+    /// engine's par-rate identities — never by re-running `build_curve` as its own check.
+    #[tokio::test]
+    async fn build_curve_reprices_every_pillar_to_par() {
+        // Maturities are strictly increasing: 1M, 3M, 6M(FRA), 9M(STIR), 1Y, 2Y, 5Y, 10Y.
+        let set: Vec<(InstrumentDef, f64)> = vec![
+            (cv_dep("usd-depo-1m", "1M"), 0.0433),
+            (cv_dep("usd-depo-3m", "3M"), 0.0431),
+            (cv_fra("usd-fra-3x6", "3M", "6M"), 0.0429),
+            (cv_stir("usd-stir-6x9", "6M", "9M"), 0.0427),
+            (cv_ois("usd-ois-1y", "1Y"), 0.0425),
+            (cv_ois("usd-ois-2y", "2Y"), 0.0418),
+            (cv_irs("usd-irs-5y", "5Y"), 0.0410),
+            (cv_irs("usd-irs-10y", "10Y"), 0.0415),
+        ];
+
+        let instruments: Vec<InstrumentDef> = set.iter().map(|(d, _)| d.clone()).collect();
+        let (edge, path) = curve_edge("reprice", instruments);
+        let token = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+
+        // Submit the pillars out of maturity order to prove the server orders them.
+        let pillars: Vec<InstrumentQuote> = set
+            .iter()
+            .rev()
+            .map(|(d, q)| InstrumentQuote {
+                instrument_id: d.instrument_id.clone(),
+                quote: *q,
+            })
+            .collect();
+
+        let resp = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "curve-req-1".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars,
+                session_token: token,
+                date_pillars: Vec::new(),
+            }))
+            .await
+            .expect("build_curve should succeed")
+            .into_inner();
+
+        // Header echoed; one point per input; points strictly increasing in maturity.
+        assert_eq!(resp.request_id, "curve-req-1");
+        assert_eq!(resp.currency, "USD");
+        assert_eq!(resp.reference_date, Some(curve_reference()));
+        assert_eq!(resp.points.len(), set.len());
+        for w in resp.points.windows(2) {
+            assert!(
+                w[0].time_years < w[1].time_years,
+                "points not strictly increasing by maturity"
+            );
+        }
+
+        // Reconstruct the curve from the wire points, prepended with the definitional
+        // origin (DF = 1 at t = 0 — a curve invariant, not engine output).
+        let mut td: Vec<(Time, Df)> = vec![(Time(0.0), Df(1.0))];
+        td.extend(
+            resp.points
+                .iter()
+                .map(|p| (Time(p.time_years), Df(p.discount_factor))),
+        );
+        let curve = Curve::from_log_linear_dfs(&td).expect("curve reconstructs from wire points");
+
+        // The wire points are self-consistent log-linear pillars (DF gate, 1e-10).
+        for p in &resp.points {
+            let df = curve.discount_factor(Time(p.time_years)).0;
+            assert!(
+                (df - p.discount_factor).abs() < 1e-10,
+                "{}: DF {df} vs wire {} (resid {})",
+                p.instrument_id,
+                p.discount_factor,
+                (df - p.discount_factor).abs()
+            );
+        }
+
+        // Reprice-to-par gate (rate, 1e-8): every input instrument reprices to its quote.
+        let value_date = curve_value_date();
+        let mut worst = 0.0_f64;
+        for (def, quote) in &set {
+            let inst = calibration_instrument(def, *quote, value_date)
+                .expect("definition resolves to a calibration instrument");
+            let model = model_quote(&curve, &inst);
+            let resid = (model - quote).abs();
+            worst = worst.max(resid);
+            assert!(
+                resid < 1e-8,
+                "{}: repriced {model} vs quote {quote} (resid {resid})",
+                def.instrument_id
+            );
+        }
+        assert!(worst < 1e-8, "worst reprice-to-par residual {worst}");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A standalone date-anchored pillar calibrates alongside a registry instrument:
+    /// the response carries an empty-id, `Date YYYY-MM-DD`-labelled point, and the
+    /// synthetic deposit reprices to its quote on the wire-reconstructed curve.
+    #[tokio::test]
+    async fn build_curve_calibrates_a_standalone_date_pillar() {
+        let ois = (cv_ois("usd-ois-2y", "2Y"), 0.0418);
+        let (edge, path) = curve_edge("date-pillar", vec![ois.0.clone()]);
+        let token = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+
+        // A 2027-12-31 date pillar (a broken date no whole tenor names) at 4.15%.
+        let maturity = BrokenDate {
+            year: 2027,
+            month: 12,
+            day: 31,
+        };
+        let date_quote = 0.0415;
+
+        let resp = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "curve-date-1".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars: vec![InstrumentQuote {
+                    instrument_id: ois.0.instrument_id.clone(),
+                    quote: ois.1,
+                }],
+                session_token: token,
+                date_pillars: vec![celnet_proto::DatePillar {
+                    maturity_date: Some(maturity),
+                    quote: date_quote,
+                }],
+            }))
+            .await
+            .expect("build_curve should succeed")
+            .into_inner();
+
+        // Two pillars, ordered by maturity (the date pillar at ~1.5y precedes the 2Y OIS).
+        assert_eq!(resp.points.len(), 2);
+        for w in resp.points.windows(2) {
+            assert!(w[0].time_years < w[1].time_years);
+        }
+
+        // The date pillar carries an empty instrument id and its `Date …` display label.
+        let date_point = resp
+            .points
+            .iter()
+            .find(|p| p.instrument_id.is_empty())
+            .expect("a date-anchored point is present");
+        assert_eq!(date_point.label, "Date 2027-12-31");
+
+        // Reconstruct the curve from the wire points and reprice the synthetic deposit
+        // to its quote (1e-8) — the same oracle gate the registry ladder uses.
+        let mut td: Vec<(Time, Df)> = vec![(Time(0.0), Df(1.0))];
+        td.extend(
+            resp.points
+                .iter()
+                .map(|p| (Time(p.time_years), Df(p.discount_factor))),
+        );
+        let curve = Curve::from_log_linear_dfs(&td).expect("curve reconstructs from wire points");
+
+        let value_date = curve_value_date();
+        let date_maturity =
+            time::Date::from_calendar_date(2027, time::Month::December, 31).unwrap();
+        let deposit = crate::config::curve_calibration::date_pillar_instrument(
+            value_date,
+            date_maturity,
+            date_quote,
+        )
+        .expect("date pillar resolves to a calibration instrument");
+        let model = model_quote(&curve, &deposit);
+        assert!(
+            (model - date_quote).abs() < 1e-8,
+            "date pillar repriced {model} vs quote {date_quote}"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An unknown pillar instrument id is rejected with `NOT_FOUND`.
+    #[tokio::test]
+    async fn build_curve_rejects_unknown_instrument_id() {
+        let (edge, path) = curve_edge("notfound", vec![cv_ois("usd-ois-1y", "1Y")]);
+        let token = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let err = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "x".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars: vec![InstrumentQuote {
+                    instrument_id: "ghost".to_string(),
+                    quote: 0.04,
+                }],
+                session_token: token,
+                date_pillars: Vec::new(),
+            }))
+            .await
+            .expect_err("unknown id must be rejected");
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A non-calibratable family (a cash bond) is rejected with `INVALID_ARGUMENT`.
+    #[tokio::test]
+    async fn build_curve_rejects_non_calibratable_bond() {
+        let bond = cv_usd(
+            "usd-bond-5y",
+            InstrumentFamily::Bond(BondDef {
+                issuer: "US Treasury".to_string(),
+                coupon_rate: 0.04,
+                coupon_type: "fixed".to_string(),
+                coupon_frequency: "semi_annual".to_string(),
+                day_count: "act_365_fixed".to_string(),
+                issue_date: None,
+                dated_date: None,
+                first_coupon_date: None,
+                maturity_date: CivilDate {
+                    year: 2030,
+                    month: 6,
+                    day: 16,
+                },
+                redemption: 100.0,
+                calendars: vec!["united_states".to_string()],
+            }),
+        );
+        let (edge, path) = curve_edge("bond", vec![bond]);
+        let token = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let err = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "b".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars: vec![InstrumentQuote {
+                    instrument_id: "usd-bond-5y".to_string(),
+                    quote: 0.04,
+                }],
+                session_token: token,
+                date_pillars: Vec::new(),
+            }))
+            .await
+            .expect_err("a bond is not a curve pillar");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An empty pillar set is rejected with `INVALID_ARGUMENT`.
+    #[tokio::test]
+    async fn build_curve_rejects_empty_pillars() {
+        let (edge, path) = curve_edge("empty", vec![cv_ois("usd-ois-1y", "1Y")]);
+        let token = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let err = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "e".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars: Vec::new(),
+                session_token: token,
+                date_pillars: Vec::new(),
+            }))
+            .await
+            .expect_err("empty pillar set must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An absent/invalid session token is rejected with `UNAUTHENTICATED` before any
+    /// registry read — mirroring the `list_instruments` / `get_instrument` read RPCs.
+    #[tokio::test]
+    async fn build_curve_rejects_unauthenticated() {
+        let (edge, path) = curve_edge("unauth", vec![cv_ois("usd-ois-1y", "1Y")]);
+        let err = edge
+            .build_curve(Request::new(BuildCurveRequest {
+                request_id: "u".to_string(),
+                currency: "USD".to_string(),
+                reference_date: Some(curve_reference()),
+                pillars: vec![InstrumentQuote {
+                    instrument_id: "usd-ois-1y".to_string(),
+                    quote: 0.04,
+                }],
+                session_token: "not-a-token".to_string(),
+                date_pillars: Vec::new(),
+            }))
+            .await
+            .expect_err("an invalid token must be rejected");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+        let _ = std::fs::remove_file(&path);
     }
 
     async fn login(edge: &AuthEdge, email: &str, password: &str) -> Result<LoginResponse, Status> {
@@ -2022,6 +2864,115 @@ mod tests {
         assert!(removed);
         let reloaded = IdentityStore::load(&path).unwrap();
         assert!(reloaded.entity_by_key(ent.key).is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn instrument_registry_crud_capability_model_and_persistence() {
+        use celnet_proto::{InstrumentDefDesc, OisDef, instrument_def_desc::Definition};
+
+        let (edge, path, _s) = edge("instruments");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let tok = admin.session_token.clone();
+        let (_tid, trader_token) = make_trader(&edge, &tok, "inst@celnet.com").await;
+
+        let ois_desc = |id: &str, ticker: &str| InstrumentDefDesc {
+            instrument_id: id.to_string(),
+            name: format!("Test OIS {id}"),
+            description: "test".into(),
+            currency: "USD".into(),
+            external_ids: vec![celnet_proto::ExternalId {
+                scheme: "ticker".into(),
+                value: ticker.into(),
+            }],
+            definition: Some(Definition::Ois(OisDef {
+                tenor: "3Y".into(),
+                index: "sofr".into(),
+                fixed_frequency: "annual".into(),
+                fixed_day_count: "act_360".into(),
+                float_day_count: "act_360".into(),
+                business_day_convention: "modified_following".into(),
+                calendars: vec!["united_states".into()],
+                spot_lag_days: 2,
+            })),
+        };
+
+        // Admin creates an instrument (explicit id).
+        let created = edge
+            .create_instrument(Request::new(CreateInstrumentRequest {
+                session_token: tok.clone(),
+                instrument: Some(ois_desc("test-ois-3y", "TEST-OIS-3Y")),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .instrument
+            .unwrap();
+        assert_eq!(created.instrument_id, "test-ois-3y");
+
+        // A trader CAN list (curve-building needs it) and includes the seeded set.
+        let listed = edge
+            .list_instruments(Request::new(ListInstrumentsRequest {
+                session_token: trader_token.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .instruments;
+        assert!(listed.iter().any(|i| i.instrument_id == "test-ois-3y"));
+
+        // A trader CANNOT create (admin only).
+        let denied = edge
+            .create_instrument(Request::new(CreateInstrumentRequest {
+                session_token: trader_token.clone(),
+                instrument: Some(ois_desc("nope", "NOPE")),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+
+        // A duplicate external id is rejected (registry-wide uniqueness).
+        let dup = edge
+            .create_instrument(Request::new(CreateInstrumentRequest {
+                session_token: tok.clone(),
+                instrument: Some(ois_desc("test-ois-other", "TEST-OIS-3Y")),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(dup.code(), tonic::Code::InvalidArgument);
+
+        // Get resolves by id (trader-readable).
+        let got = edge
+            .get_instrument(Request::new(GetInstrumentRequest {
+                session_token: trader_token.clone(),
+                instrument_id: "test-ois-3y".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .instrument
+            .unwrap();
+        assert_eq!(got.name, "Test OIS test-ois-3y");
+
+        // Delete (admin), and confirm it survives a reload from disk.
+        let removed = edge
+            .delete_instrument(Request::new(DeleteInstrumentRequest {
+                session_token: tok.clone(),
+                instrument_id: "test-ois-3y".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .removed;
+        assert!(removed);
+        let reloaded = IdentityStore::load(&path).unwrap();
+        assert!(reloaded.instrument_by_id("test-ois-3y").is_none());
         let _ = std::fs::remove_file(&path);
     }
 

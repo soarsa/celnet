@@ -118,3 +118,12 @@
     owner: "{{ celnet_user }}"
     group: "{{ celnet_group }}"
     mode: "0755"
+
+- name: Install the fixsimctl FIX quote-simulator control script
+  ansible.builtin.template:
+    src: fixsimctl.sh.j2
+    dest: "{{ celnet_bin_dir }}/fixsimctl"
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0755"
+  when: celnet_fixsim_enabled | default(true) | bool

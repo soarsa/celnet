@@ -129,7 +129,8 @@ pub use frtb_params::{
     StandardFrtbParams, standard_curvature_buckets, standard_delta_buckets, standard_vega_buckets,
 };
 pub use nonadditive::{
-    PositionSensitivity, Scenario, VarEs, correlation_weighted_vega, historical_var_es, node_pnl,
+    PositionSensitivity, Scenario, ScenarioReprice, SerialReprice, VarEs,
+    correlation_weighted_vega, historical_var_es, historical_var_es_via, node_pnl,
     node_sensitivities, node_var_es_combined, node_var_es_sensitivity_combined, position_pnl,
     sbm_curvature_spot, sbm_curvature_spot_combined, sensitivity_var_es, shift_carry,
     vanilla_curvature_legs,

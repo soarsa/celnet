@@ -67,10 +67,89 @@ pub fn usd_ois_schedule_with_basis(
     let cal = us_settlement_calendar();
     let start = RollRule::Following.adjust(&cal, reference);
     let ends = period_end_dates(&cal, start, years);
+    schedule_from_ends(start, &ends, accrual_basis)
+}
 
+/// Build a spot-starting USD OIS fixed-leg schedule whose final period ends at an
+/// explicit `maturity` civil date — the generalisation that supports **custom
+/// (sub-/multi-year, broken-period) tenors and odd-dated ("broken date")
+/// pillars**, not just whole years.
+///
+/// Annual fixed-leg periods roll forward in 12-month steps from the spot origin;
+/// every annual roll strictly before the (modified-following adjusted) `maturity`
+/// is a full period, and a final stub period ends exactly at that adjusted
+/// maturity. When `maturity` is the roll-adjusted N-year date, the result is
+/// **byte-identical** to [`usd_ois_schedule_with_basis`]`(reference, N, basis)`
+/// (the loop emits the same N period ends), so the dated and tenor paths price a
+/// whole-year pillar identically. The payment discount-time coordinate stays
+/// ACT/365F from spot; the accrual uses `accrual_basis`.
+///
+/// # Errors
+///
+/// Returns [`ScheduleError::Empty`] if the adjusted `maturity` is not strictly
+/// after the adjusted spot start (a zero-/negative-length pillar).
+pub fn usd_ois_schedule_to_maturity(
+    reference: Date,
+    maturity: Date,
+    accrual_basis: AccrualBasis,
+) -> Result<OisSchedule, ScheduleError> {
+    let cal = us_settlement_calendar();
+    let start = RollRule::Following.adjust(&cal, reference);
+    let end = RollRule::ModifiedFollowing.adjust(&cal, maturity);
+    if end <= start {
+        return Err(ScheduleError::Empty);
+    }
+
+    // Full annual rolls strictly before the final maturity, then the maturity stub.
+    let mut ends = Vec::new();
+    let mut step = 1i32;
+    loop {
+        let roll = RollRule::ModifiedFollowing.adjust(&cal, add_months(start, step * 12));
+        if roll < end {
+            ends.push(roll);
+            step += 1;
+        } else {
+            break;
+        }
+    }
+    ends.push(end);
+    schedule_from_ends(start, &ends, accrual_basis)
+}
+
+/// Build a spot-starting USD OIS fixed-leg schedule of a `months`-month tenor
+/// (e.g. 3, 18, 30) — the month-tenor arm of a curve pillar. The maturity is the
+/// spot start advanced by `months` calendar months (end-of-month-aware) and rolled
+/// modified-following; the schedule then follows the same annual-roll-plus-final-stub
+/// shape as [`usd_ois_schedule_to_maturity`]. A `months` that is an exact multiple
+/// of 12 yields the same schedule as the equivalent whole-year tenor.
+///
+/// # Errors
+///
+/// Returns [`ScheduleError::Empty`] if `months` is zero.
+pub fn usd_ois_schedule_for_months(
+    reference: Date,
+    months: u32,
+    accrual_basis: AccrualBasis,
+) -> Result<OisSchedule, ScheduleError> {
+    if months == 0 {
+        return Err(ScheduleError::Empty);
+    }
+    let cal = us_settlement_calendar();
+    let start = RollRule::Following.adjust(&cal, reference);
+    let maturity = add_months(start, months as i32);
+    usd_ois_schedule_to_maturity(start, maturity, accrual_basis)
+}
+
+/// Turn a spot `start` plus its roll-adjusted period-end dates into the numeric
+/// [`OisSchedule`]: ACT/365F payment times from spot, `accrual_basis` accruals.
+fn schedule_from_ends(
+    start: Date,
+    ends: &[Date],
+    accrual_basis: AccrualBasis,
+) -> Result<OisSchedule, ScheduleError> {
     let mut periods = Vec::with_capacity(ends.len());
     let mut prev = start;
-    for end in ends {
+    for &end in ends {
         let accrual = accrual_basis.year_fraction(prev, end);
         let pay = year_fraction(DayCount::Act365Fixed, start, end);
         periods.push(FixedPeriod { pay, accrual });
@@ -90,6 +169,65 @@ mod tests {
     /// A reference spot date that is a US business day (Monday 16 Jun 2025).
     fn spot() -> Date {
         Date::from_calendar_date(2025, Month::June, 16).expect("valid date")
+    }
+
+    fn period_coords(s: &OisSchedule) -> Vec<(f64, f64)> {
+        s.periods().iter().map(|p| (p.pay.0, p.accrual.0)).collect()
+    }
+
+    /// Parity oracle: the dated builder reproduces the whole-year tenor builder
+    /// byte-for-byte. For each N, `usd_ois_schedule_to_maturity(spot, spot+N·12m)`
+    /// must equal `usd_ois_schedule_with_basis(spot, N)` in every period's `(pay,
+    /// accrual)` — so a curve pillar's `years` and equivalent dated arm price a
+    /// whole-year point identically (no drift introduced by the generalisation).
+    #[test]
+    fn dated_builder_matches_whole_year_tenor_builder() {
+        let cal = us_settlement_calendar();
+        let start = RollRule::Following.adjust(&cal, spot());
+        for years in 1u32..=30 {
+            let by_tenor =
+                usd_ois_schedule_with_basis(spot(), years, AccrualBasis::Act360).expect("tenor");
+            let maturity = add_months(start, (years as i32) * 12);
+            let by_date =
+                usd_ois_schedule_to_maturity(spot(), maturity, AccrualBasis::Act360).expect("date");
+            assert_eq!(
+                period_coords(&by_tenor),
+                period_coords(&by_date),
+                "tenor/date schedule mismatch at {years}Y"
+            );
+        }
+    }
+
+    /// A 12-month tenor resolves to the same schedule as the 1-year tenor, and a
+    /// 24-month to the 2-year — the month arm agrees with whole years on the grid.
+    #[test]
+    fn month_arm_matches_whole_year_on_grid() {
+        for (months, years) in [(12u32, 1u32), (24, 2), (36, 3)] {
+            let by_months =
+                usd_ois_schedule_for_months(spot(), months, AccrualBasis::Act360).expect("months");
+            let by_years =
+                usd_ois_schedule_with_basis(spot(), years, AccrualBasis::Act360).expect("years");
+            assert_eq!(period_coords(&by_months), period_coords(&by_years));
+        }
+    }
+
+    /// A broken (odd-dated) maturity yields a final stub whose ACT/365F payment
+    /// time equals the day-count from spot to the roll-adjusted maturity, and the
+    /// schedule has one period per elapsed year plus the stub.
+    #[test]
+    fn broken_date_stub_pays_at_day_count() {
+        // ~18 months out: 16 Jun 2025 spot → 18 Dec 2026 (a Friday business day).
+        let maturity = Date::from_calendar_date(2026, Month::December, 18).expect("valid");
+        let sched =
+            usd_ois_schedule_to_maturity(spot(), maturity, AccrualBasis::Act360).expect("dated");
+        // One full annual period (to ~Jun 2026) + the final stub to the maturity.
+        assert_eq!(sched.periods().len(), 2);
+        let cal = us_settlement_calendar();
+        let start = RollRule::Following.adjust(&cal, spot());
+        let end = RollRule::ModifiedFollowing.adjust(&cal, maturity);
+        let expected_pay = year_fraction(DayCount::Act365Fixed, start, end);
+        let last_pay = sched.periods().last().unwrap().pay;
+        assert!((last_pay.0 - expected_pay.0).abs() < 1e-12);
     }
 
     #[test]

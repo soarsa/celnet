@@ -1,0 +1,130 @@
+/* ReferenceDataWorkspace — instrument-definition registry: list + family form. */
+
+.familyTag {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: var(--hairline);
+  font-size: var(--type-micro, 0.65rem);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  background: var(--bg-inset);
+}
+
+.extIds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.extIdChip {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+.extIdScheme {
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  margin-right: 0.25rem;
+}
+
+.adminNote {
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+}
+
+/* The create / edit form. */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.fieldLabel {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+}
+.control {
+  padding: var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font-size: var(--type-body);
+  width: 100%;
+}
+.control:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.control:disabled {
+  opacity: 0.5;
+}
+
+.calendars {
+  min-height: 7rem;
+}
+
+.sectionTitle {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.dateRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+.dateCell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.dateInput {
+  width: 5.5rem;
+}
+
+.extIdEditor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.extIdRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.extIdValue {
+  flex: 1;
+}
+
+.formActions {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+.formError {
+  color: var(--danger, oklch(62% 0.2 25));
+  font-size: var(--type-caption);
+}

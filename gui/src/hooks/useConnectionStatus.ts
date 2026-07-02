@@ -21,12 +21,22 @@ import type { CelnetTransport } from "../data/transport";
 export const RECONNECT_WINDOW_MS = 30_000;
 
 /**
- * Grace before the overlay is shown after a disconnect (ms). A normal page-load
- * connect or a blue-green cutover completes well inside this, so the blocking
- * modal never flashes for a sub-second gap — the window deadline is still measured
- * from the moment the connection actually dropped.
+ * Grace before the overlay is shown after a disconnect (ms). The overlay is shown
+ * only when the socket is down *continuously* past this window; a transparent
+ * transport reconnect (which re-opens the socket and re-subscribes on its own)
+ * resets the timer the instant the socket is OPEN again, so a brief blip never
+ * flashes the blocking modal.
+ *
+ * Sized for a real WAN reconnect, not a localhost one: over TLS + a reverse proxy
+ * (and any fronting load balancer), a single drop→reconnect cycle — onclose,
+ * backoff, fresh TCP+TLS+HTTP-upgrade — routinely takes 1–3s, which is longer than
+ * a loopback reconnect. At the old 1.2s grace that transient cycle tripped the
+ * modal, so the desk saw "connection lost" flash and immediately clear even though
+ * the transport had already recovered. 4s covers a normal proxied reconnect (even
+ * a periodic LB connection-lifetime cut) without a flash, while a genuine outage
+ * still surfaces well inside the {@link RECONNECT_WINDOW_MS} hard-fail window.
  */
-export const OVERLAY_GRACE_MS = 1_200;
+export const OVERLAY_GRACE_MS = 4_000;
 
 /** Countdown refresh cadence while disconnected (ms). */
 const TICK_MS = 250;

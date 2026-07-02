@@ -117,8 +117,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod desk;
 mod error;
 mod idempotency;
+pub mod notify;
 pub mod rates;
 pub mod rfs;
 pub mod risk;
@@ -126,7 +128,16 @@ pub mod series;
 pub mod surface_vocab;
 pub mod vocab;
 
+pub use desk::{
+    Deal, DealFilter, DeskAcceptance, DeskClient, DeskQuote, DeskRequest, DeskRequestFilter,
+    DeskRequestKind, DeskRequestState, DeskRfq,
+};
 pub use error::{ClientError, ClientResult};
+pub use notify::{Notification, NotificationKind, NotificationScopeSpec, NotificationStream};
+pub use rates::{
+    CivilDate, KeyRateDv01, Ois, OisSide, RatesAggregateQuery, RatesPosition, RatesPositionQuery,
+    RatesPriced, RatesRiskAggregate, RatesRiskNode, RatesRiskScope, UsdSofrCurve,
+};
 pub use rfs::{
     ClickExecution, ExecuteOutcome, RejectReason, StreamEvent, StreamLine, StreamSession,
     Subscription, TradableLine,
@@ -718,6 +729,123 @@ impl Client {
             .await?
             .into_inner();
         risk::limit_status_from_wire(resp)
+    }
+
+    // ---- firm-scale linear-rates (fixed-income) risk ----------------------
+
+    /// Price a book of linear-rates positions against a calibrated curve and read the
+    /// firm rollup, netted per settlement currency SERVER-SIDE into
+    /// [`rates::RatesRiskAggregate`] (net PV / PV01 / DV01 + key-rate ladder). The
+    /// fixed-income analogue of [`Client::aggregate_risk`]: the client submits a book
+    /// (inline on the request) and reads the netted rollup — it never prices or sums
+    /// itself. Build the [`rates::RatesAggregateQuery`] with the curve + positions and
+    /// optionally a scope / entitlement principal.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure (e.g. `failed_precondition` for
+    /// a non-USD curve, `invalid_argument` for a degenerate curve) or a malformed
+    /// response.
+    pub async fn aggregate_rates_risk(
+        &self,
+        query: &rates::RatesAggregateQuery,
+    ) -> ClientResult<rates::RatesRiskAggregate> {
+        let mut svc = RiskServiceClient::new(self.channel.clone());
+        let resp = svc
+            .aggregate_rates_risk(query.to_wire(self.session_token.clone()))
+            .await?
+            .into_inner();
+        Ok(rates::RatesRiskAggregate::from_wire(resp))
+    }
+
+    /// Book one rates position into the firm rates position store (the linear-rates
+    /// analogue of the options booked book), returning it with its server-assigned
+    /// id (a fresh id when the position's `position_id` is `0`, an upsert otherwise).
+    ///
+    /// Booking carries the dedicated `Book·FixedIncome` capability, which resolves
+    /// ONLY from an authenticated session — attach a real `AuthService.Login` bearer
+    /// with [`Client::with_session_token`] first (a body principal cannot self-grant
+    /// it, and an absent principal is denied under the production `Enforce` edge).
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Status`] — `permission_denied` / `unauthenticated` without the
+    /// book capability, `failed_precondition` if the booking would breach a hard firm
+    /// limit — plus transport failures.
+    pub async fn book_rates_position(
+        &self,
+        position: &rates::RatesPosition,
+    ) -> ClientResult<rates::RatesPosition> {
+        let mut svc = RiskServiceClient::new(self.channel.clone());
+        let request = rates::book_rates_request(
+            position,
+            self.principal.as_ref(),
+            self.session_token.clone(),
+        );
+        let resp = svc.book_rates_position(request).await?.into_inner();
+        let booked = resp.position.ok_or(ClientError::MissingField(
+            "BookRatesPositionResponse.position",
+        ))?;
+        rates::RatesPosition::from_wire(&booked)
+    }
+
+    /// List the firm rates positions the booked flow populated (scoped +
+    /// entitlement-pruned) — the rates analogue of [`Client::list_positions`]. Build
+    /// the [`rates::RatesPositionQuery`] to scope the listing and/or apply an
+    /// entitlement principal.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a malformed response.
+    pub async fn list_rates_positions(
+        &self,
+        query: &rates::RatesPositionQuery,
+    ) -> ClientResult<Vec<rates::RatesPosition>> {
+        let mut svc = RiskServiceClient::new(self.channel.clone());
+        let resp = svc
+            .list_rates_positions(query.to_wire(self.session_token.clone()))
+            .await?
+            .into_inner();
+        rates::positions_from_wire(&resp.positions)
+    }
+
+    // ---- dealer desk + notifications --------------------------------------
+
+    /// A typed [`DeskClient`] handle over the dealer-side `RfqDeskService` (inbound
+    /// RFQ/IOI capture → response → acceptance, the inbox + received-deals reads),
+    /// sharing this client's connection, bearer token, and asserted principal. The
+    /// capability-gated desk actions (`respond`/`accept`) require an authenticated
+    /// session — attach a Login bearer with [`Client::with_session_token`].
+    #[must_use]
+    pub fn desk(&self) -> DeskClient {
+        DeskClient::new(
+            self.channel.clone(),
+            self.session_token.clone(),
+            self.principal.clone(),
+        )
+    }
+
+    /// Open a long-lived notification subscription scoped to `scope`'s desks: a typed
+    /// async [`NotificationStream`] of desk-lifecycle events (an RFQ/IOI landed, a
+    /// request withdrawn/expired, a quote accepted/rejected) the server pushes the
+    /// instant they occur. `ReadAny`-gated; the SDK asserts the audited grant-all
+    /// principal when none is pinned, so the subscription is admitted under the
+    /// production `Enforce` edge exactly as the risk reads are.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] if the notification stream cannot be opened.
+    pub async fn stream_notifications(
+        &self,
+        scope: &NotificationScopeSpec,
+    ) -> ClientResult<NotificationStream> {
+        notify::open_stream(
+            self.channel.clone(),
+            scope,
+            self.session_token.clone(),
+            self.principal.as_ref(),
+        )
+        .await
     }
 }
 

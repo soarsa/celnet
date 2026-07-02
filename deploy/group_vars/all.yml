@@ -49,6 +49,14 @@ celnet_build_packages:
 # rust-toolchain.toml automatically on first build. Set to override if needed.
 celnet_rust_profile: minimal
 
+# --- FIX quote simulator ----------------------------------------------------
+# When true, the release builds the celnet-fix RFQ client, ships it as
+# <release>/bin/fix-rfq-client, and installs the launcher + `fixsimctl` control
+# script. Run it on the host with:  fixsimctl start | once | stop | status | tail
+# It dials the managed FIX acceptor (registry "CELER_FXO_CELNET" @127.0.0.1:56001);
+# override with celnet_fixsim_host/port/sender/target if the GUI FIX admin changes it.
+celnet_fixsim_enabled: true
+
 # --- Runtime environment (templated into shared/config/celnet.env) ----------
 # The celnet-server binary reads these. WS mirror gets a FIXED port so HAProxy
 # can front it (see crates/celnet-server/src/main.rs : CELNET_WS_ADDR).
@@ -60,10 +68,15 @@ celnet_env:
   CELNET_DEPLOY:    "{{ celnet_deploy_name | default('uat') }}"
   CELNET_ACCESS_MODE: "enforce"
   RUST_LOG:         "info"
+  # FIX acceptors are NOT configured via this legacy env knob. The server binds its
+  # FIX 4.4 acceptors from the MANAGED registry (fix-connections.json, edited in the
+  # GUI FIX admin) — on this host that is "celer" (FX/options) at 127.0.0.1:51001 and
+  # an FI quote venue at 127.0.0.1:9100. Setting CELNET_FIX_ADDR here binds a SECOND,
+  # legacy acceptor that collides with the registry and aborts boot with EADDRINUSE
+  # (took the server down 2026-07-01). The quote simulator dials the managed acceptor
+  # directly — see deploy/start-fix-sim.sh. Do NOT re-enable CELNET_FIX_ADDR unless the
+  # managed registry is empty.
   # Optional integrations — uncomment / set per environment as needed:
-  # CELNET_FIX_ADDR:     "0.0.0.0:51001"
-  # CELNET_FIX_SENDER:   "CELNET-UAT"
-  # CELNET_FIX_TARGET:   "CELNET-CPTY"
   # CELNET_VENDOR_WS:    "wss://vendor.example/feed"
   # CELNET_FLEET_MODE:   ""
   # CELNET_FLEET_BACKENDS: ""

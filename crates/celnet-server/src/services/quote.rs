@@ -115,7 +115,7 @@ use crate::services::error_status::{link_error_to_status, price_error_to_status}
 use crate::services::forward::{Serve, route_underlying, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::services::risk::federate::Fleet;
-use crate::services::risk::store::PositionStore;
+use crate::services::risk::store::{BookedPosition, PositionStore, limit_breached_status};
 use crate::services::sessions::SessionRegistry;
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
@@ -277,6 +277,12 @@ struct QuoteRecord {
     /// bound to this requester when it was authenticated — a different authenticated
     /// principal is refused. An anonymous requester keeps idempotency-only accepts.
     requester: RequesterBinding,
+    /// The FX-vanilla pre-trade template captured at quote time (ADR-0016 A1): the
+    /// BUY-side [`BookedPosition`] this quote would book, so an `AcceptQuote` can run
+    /// the pre-trade limit gate against the shared position book without re-pricing (a
+    /// `Side=SELL` accept negates the notional). `None` for a non-vanilla / non-FX
+    /// instrument, which carries no canonical-vanilla risk leaf and so is never gated.
+    pre_trade: Option<BookedPosition>,
 }
 
 /// The in-memory RFQ store: idempotency-key → quote_id, and quote_id → record.
@@ -496,6 +502,138 @@ fn accept_key_mismatch(quote_id: u64) -> Status {
     ))
 }
 
+/// A stable, log-safe label for the caller that requested a quote: an
+/// authenticated user's email, else `anonymous` (the permissive demo path).
+/// **Never** logs a session token.
+fn requester_label(caller: &ResolvedCaller) -> String {
+    caller
+        .user()
+        .map(|u| u.email.clone())
+        .unwrap_or_else(|| "anonymous".to_owned())
+}
+
+/// A cheap, human-readable one-line instrument summary for the structured quote
+/// log — asset class + symbol + product family + tenor (+ the vanilla
+/// strike/type for the common FX case).
+///
+/// Built at the request EDGE where allocation is fine; it is never constructed on
+/// the pinned zero-alloc pricing hot core.
+fn summarize_instrument(instrument: Option<&celnet_proto::Instrument>) -> String {
+    let Some(inst) = instrument else {
+        return "<none>".to_owned();
+    };
+    let (asset, symbol) = underlying_label(inst.underlying.as_ref());
+    let product = inst
+        .product
+        .as_ref()
+        .map_or("<none>", crate::pricer::product_name);
+    let tenor = format!("{:.4}y", inst.expiry_years);
+    let detail = vanilla_detail(inst.product.as_ref());
+    format!("{asset}:{symbol} {product} {tenor}{detail}")
+}
+
+/// The asset-class tag + symbol of an instrument's underlying: rendered fully for
+/// the first-class FX arm, and coarsely (asset tag only) for the cross-asset arms
+/// (whose exact symbol is not needed to make a quote log investigable).
+fn underlying_label(underlying: Option<&celnet_proto::Underlying>) -> (&'static str, String) {
+    let Some(u) = underlying else {
+        return ("none", String::new());
+    };
+    if let Some(p) = u.as_fx() {
+        ("fx", format!("{}{}", p.base, p.quote))
+    } else if u.as_metal().is_some() {
+        ("metal", String::new())
+    } else if u.as_equity().is_some() {
+        ("equity", String::new())
+    } else if u.as_commodity().is_some() {
+        ("commodity", String::new())
+    } else if u.as_digital_asset().is_some() {
+        ("crypto", String::new())
+    } else {
+        ("?", String::new())
+    }
+}
+
+/// The ` type@strike` detail for a plain vanilla (the common FX case); empty for
+/// every other product family (whose shape the `product` family label already
+/// conveys). A delta-specified strike is not resolved here (that is the pricer's
+/// job) — the family label plus the `call`/`put` suffix keep the summary cheap.
+fn vanilla_detail(product: Option<&celnet_proto::instrument::Product>) -> String {
+    use celnet_proto::instrument::Product;
+    let Some(Product::Vanilla(v)) = product else {
+        return String::new();
+    };
+    let opt = match celnet_proto::OptionType::try_from(v.option_type) {
+        Ok(celnet_proto::OptionType::Call) => "call",
+        Ok(celnet_proto::OptionType::Put) => "put",
+        _ => "?",
+    };
+    match v.strike.as_ref().and_then(|s| s.spec.as_ref()) {
+        Some(celnet_proto::strike_or_delta::Spec::Strike(k)) => format!(" {opt}@{k}"),
+        _ => format!(" {opt}"),
+    }
+}
+
+/// Build the BUY-side FX-vanilla pre-trade template (ADR-0016 A1) a quote would book —
+/// the same risk leaf the RFS click-to-trade sink records: the pair + option + the
+/// marked [`VanillaInputs`](celnet_types::VanillaInputs) (the resolved strike + vol at
+/// the priced market) + the quoted conventions, at the instrument's base-currency
+/// notional (a quote-ccy notional converts to base at spot). `None` for a non-vanilla /
+/// non-FX / zero-notional instrument — which carries no canonical-vanilla risk leaf and
+/// so is never limit-gated (honest scope; guardrail #2 — never a faked vanilla leaf).
+fn fx_pre_trade_template(
+    instrument: &celnet_proto::Instrument,
+    market: &MarketContext,
+    conv: &ConventionSet,
+    priced: &crate::pricer::Priced,
+    surface_version: u64,
+) -> Option<BookedPosition> {
+    use celnet_proto::instrument::Product;
+
+    let Some(Product::Vanilla(vanilla)) = instrument.product.as_ref() else {
+        return None;
+    };
+    let option = celnet_types::OptionType::from(
+        celnet_proto::OptionType::try_from(vanilla.option_type).ok()?,
+    );
+    let wire_underlying = instrument.underlying.as_ref()?;
+    let pair = celnet_proto::convert::validate_fx_underlying(wire_underlying)
+        .ok()?
+        .as_fx()?;
+    let inputs = celnet_types::VanillaInputs::new(
+        market.spot,
+        priced.resolved_strike,
+        priced.vol,
+        instrument.expiry_years,
+        market.r_dom(),
+        market.r_for(),
+    );
+    // The absolute base-currency notional (a quote-ccy notional converts to base at
+    // spot); the traded side signs it at accept time.
+    let abs_base = instrument.quantity.as_ref().map_or(0.0, |q| {
+        if q.base_ccy {
+            q.notional
+        } else if market.spot != 0.0 {
+            q.notional / market.spot
+        } else {
+            0.0
+        }
+    });
+    if abs_base == 0.0 {
+        return None;
+    }
+    Some(BookedPosition {
+        position_id: 0,
+        pair,
+        option,
+        notional_base: abs_base.abs(),
+        inputs,
+        quoted_delta: conv.delta,
+        premium_style: conv.premium,
+        surface_version,
+    })
+}
+
 #[tonic::async_trait]
 impl QuoteService for QuoteEdge {
     async fn request_quote(
@@ -524,6 +662,19 @@ impl QuoteService for QuoteEdge {
             req.correlation_id,
         )?;
         let requester = caller_binding(&caller);
+
+        // Structured quote-request edge event (allocation-OK edge; never the hot
+        // core). Records WHO asked, the idempotency key, and a cheap instrument
+        // summary so LOGIN→QUOTE activity is investigable. No token is logged.
+        let requester_disp = requester_label(&caller);
+        let instrument_summary = summarize_instrument(req.instrument.as_ref());
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            requester = %requester_disp,
+            idempotency_key = %req.idempotency_key,
+            instrument = %instrument_summary,
+            "quote requested"
+        );
 
         // Distributed: forward RequestQuote to the backend that owns the instrument's
         // pair, record `quote_id → issuing backend` so the matching accept/reject
@@ -562,6 +713,21 @@ impl QuoteService for QuoteEdge {
                     req.instrument.as_ref(),
                     req.conventions.as_ref(),
                 ) {
+                    let (bid, offer) = rec
+                        .quote
+                        .price
+                        .as_ref()
+                        .map_or((f64::NAN, f64::NAN), |p| (p.bid, p.offer));
+                    tracing::info!(
+                        class = celnet_observability::LogClass::Security.label(),
+                        requester = %requester_disp,
+                        idempotency_key = %req.idempotency_key,
+                        quote_id = rec.quote.quote_id,
+                        bid,
+                        offer,
+                        replay = true,
+                        "quote returned"
+                    );
                     return Ok(Response::new(rec.quote.clone()));
                 }
                 return Err(idempotency_conflict(&req.idempotency_key));
@@ -589,8 +755,19 @@ impl QuoteService for QuoteEdge {
             &instrument,
             &market,
         )?;
-        let priced = price_instrument(&instrument, &effective_market, &conv)
-            .map_err(|e| price_error_to_status(&e))?;
+        let priced = match price_instrument(&instrument, &effective_market, &conv) {
+            Ok(priced) => priced,
+            Err(e) => {
+                tracing::warn!(
+                    class = celnet_observability::LogClass::Security.label(),
+                    requester = %requester_disp,
+                    idempotency_key = %req.idempotency_key,
+                    reason = %e,
+                    "quote rejected"
+                );
+                return Err(price_error_to_status(&e));
+            }
+        };
 
         let two_way = self.spread.two_way(priced.greeks.price, &priced.greeks);
 
@@ -617,6 +794,18 @@ impl QuoteService for QuoteEdge {
             // path discloses the same uncertainty the gRPC PriceResponse does.
             price_std_error: priced.std_error,
         };
+
+        // ADR-0016 A1: capture the FX-vanilla pre-trade template this quote would book
+        // (the BUY-side risk leaf), so a later `AcceptQuote` can run the pre-trade limit
+        // gate against the shared position book without re-pricing. A non-vanilla / non-FX
+        // instrument has no canonical-vanilla risk leaf, so it is never gated (`None`).
+        let pre_trade = fx_pre_trade_template(
+            &instrument,
+            &effective_market,
+            &conv,
+            &priced,
+            echo_version.unwrap_or(0),
+        );
 
         // Store under both keys (id always; idempotency key when present).
         {
@@ -645,6 +834,7 @@ impl QuoteService for QuoteEdge {
                     // Bind the requesting caller (item B §2): a later accept by a
                     // different authenticated principal is refused.
                     requester,
+                    pre_trade,
                 },
             );
             if !req.idempotency_key.is_empty() {
@@ -652,6 +842,19 @@ impl QuoteService for QuoteEdge {
             }
         }
 
+        let (bid, offer) = quote
+            .price
+            .as_ref()
+            .map_or((f64::NAN, f64::NAN), |p| (p.bid, p.offer));
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            requester = %requester_disp,
+            idempotency_key = %req.idempotency_key,
+            quote_id = quote.quote_id,
+            bid,
+            offer,
+            "quote returned"
+        );
         Ok(Response::new(quote))
     }
 
@@ -809,6 +1012,17 @@ impl QuoteService for QuoteEdge {
             correlation_id,
             surface_version: quote.surface_version,
         };
+        // Panel RESULT edge event: the inner `request_quote` already logged the
+        // "quote requested"/"quote returned" pair for the native line; this records
+        // the aggregated panel outcome (breadth + the ranked touch winners).
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            quote_id = multi.quote_id,
+            dealers = multi.dealers.len(),
+            best_bid_lp = %multi.best_bid_lp_id,
+            best_offer_lp = %multi.best_offer_lp_id,
+            "multi-dealer panel returned"
+        );
         Ok(Response::new(multi))
     }
 
@@ -1006,6 +1220,24 @@ impl QuoteService for QuoteEdge {
             Side::Sell => (Side::Sell, price.bid),
             _ => (Side::Buy, price.offer),
         };
+
+        // Pre-trade limit gate (ADR-0016 A1): an accept books the strongest FX write, so
+        // before pinning the execution consult the SAME limit tree + current-book
+        // aggregation the RFS click-to-trade sink enforces. A hard breach refuses the
+        // accept with a typed `failed_precondition` `LimitBreached` status (uniform with
+        // every FX booking front-end — guardrail #11) and books nothing; store state is
+        // never mutated on a reject. A non-vanilla / non-FX quote carries no pre-trade
+        // template, so there is nothing to gate.
+        if let Some(template) = rec.pre_trade {
+            let mut booked = template;
+            if traded_side == Side::Sell {
+                booked.notional_base = -booked.notional_base;
+            }
+            let result = self.access_store.evaluate_pre_trade(&booked)?;
+            if result.decision == celnet_limits::PreTradeDecision::Reject {
+                return Err(limit_breached_status(&result));
+            }
+        }
 
         let execution_id = self.next_execution_id.fetch_add(1, Ordering::Relaxed);
         let execution = Execution {
@@ -1450,6 +1682,69 @@ mod tests {
             }))
             .await
             .expect("the right idempotency key books an anonymous-requested quote")
+            .into_inner();
+        assert_eq!(exec.quote_id, quote.quote_id);
+    }
+
+    /// FRONT-END 3 (`QuoteService::AcceptQuote`, ADR-0016 A1): accepting a quote whose
+    /// booking would blow a hard firm-wide Delta limit is **rejected** with a
+    /// `failed_precondition` `LimitBreached` status, uniform with every other FX booking
+    /// front-end (guardrail #11). The check consults the same shared position book.
+    #[tokio::test]
+    async fn accept_quote_rejects_a_hard_limit_blown_booking() {
+        let (edge, _sessions, store) = edge_under(AccessMode::Permissive);
+        // A firm Delta cap of 1 base unit — the 1mm EURUSD call's delta blows it hard.
+        store.set_limit(
+            celnet_limits::LimitScope::Firm,
+            celnet_limits::LimitSpec::hard(celnet_limits::LimitMetric::Delta, 1.0),
+        );
+
+        let quote = edge
+            .request_quote(Request::new(quote_request("lim-key", None, None)))
+            .await
+            .expect("the quote prices")
+            .into_inner();
+
+        let err = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "lim-key".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect_err("a hard-limit-blown accept must be rejected");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("limit breached"),
+            "the reject carries the uniform LimitBreached reason, got {:?}",
+            err.message()
+        );
+    }
+
+    /// With no limit configured (the default) an accept books unchanged — the gate is
+    /// inert until a cap is set, so the pre-gate booking path is byte-identical.
+    #[tokio::test]
+    async fn accept_quote_without_limits_books_unchanged() {
+        let (edge, _sessions, _store) = edge_under(AccessMode::Permissive);
+        let quote = edge
+            .request_quote(Request::new(quote_request("ok-key", None, None)))
+            .await
+            .expect("the quote prices")
+            .into_inner();
+        let exec = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "ok-key".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect("a no-limit accept books")
             .into_inner();
         assert_eq!(exec.quote_id, quote.quote_id);
     }

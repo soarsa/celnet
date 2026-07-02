@@ -32,6 +32,8 @@ import type {
   EntityInput,
   BookDesc,
   BookInput,
+  InstrumentDef,
+  InstrumentInput,
   Deal,
   DealerQuote,
   DeskDesc,
@@ -71,6 +73,12 @@ import type {
   OisInstrument,
   Quote,
   RatesCurveSet,
+  BrokenDate,
+  PillarTenor,
+  BuildCurveRequest,
+  CalibratedCurve,
+  CalibratedCurvePoint,
+  DatePillar,
   RatesPosition,
   RatesPricingResult,
   RatesRiskNode,
@@ -98,9 +106,16 @@ import type {
   UserRole,
   VegaBucket,
 } from "./contract";
-import { CAPABILITY_ACTIONS, CAPABILITY_ASSETS } from "./contract";
+import { CAPABILITY_ACTIONS, CAPABILITY_ASSETS, pillarYears } from "./contract";
 import { forward, priceInstrument, strikeFromDelta } from "./pricing";
-import { DEFAULT_USD_SOFR_CURVE, priceRatesOffline } from "./ratesPricing";
+import {
+  DEFAULT_USD_SOFR_CURVE,
+  priceRatesOffline,
+  bootstrapCurveFromSet,
+  discountFactorAt,
+  zeroRateAt,
+  pillarMaturityYears,
+} from "./ratesPricing";
 import { Rng } from "./rng";
 import {
   brokerLadder,
@@ -123,11 +138,15 @@ const NS_PER_MS = 1_000_000n;
 
 /** A wall-clock source in nanoseconds since epoch, monotone within a session. */
 function nowNanos(): bigint {
-  return BigInt(Math.round(performance.timeOrigin + performance.now())) * NS_PER_MS;
+  return (
+    BigInt(Math.round(performance.timeOrigin + performance.now())) * NS_PER_MS
+  );
 }
 
 function findPair(pair: CcyPair): PairContext {
-  const found = PAIRS.find((p) => p.pair.base === pair.base && p.pair.quote === pair.quote);
+  const found = PAIRS.find(
+    (p) => p.pair.base === pair.base && p.pair.quote === pair.quote,
+  );
   return found ?? PAIRS[0]!;
 }
 
@@ -162,7 +181,11 @@ function syntheticLpId(k: number): string {
  * half-spread (odd dealers up, even dealers down), so the panel is reproducible
  * and the touch is never crossed.
  */
-function syntheticLpTwoWay(k: number, mid: number, halfSpread: number): TwoWayPrice {
+function syntheticLpTwoWay(
+  k: number,
+  mid: number,
+  halfSpread: number,
+): TwoWayPrice {
   const widen = 1 + 0.05 * k;
   const shade = 0.25 * halfSpread;
   const skew = k % 2 === 1 ? shade : -shade;
@@ -201,7 +224,10 @@ function rankSide(rows: readonly DealerQuote[], side: "BID" | "OFFER"): string {
 function percentileNs(samples: number[], q: number): bigint {
   if (samples.length === 0) return 0n;
   const sorted = [...samples].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1));
+  const idx = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil(q * sorted.length) - 1),
+  );
   return BigInt(Math.round(sorted[idx] ?? 0));
 }
 
@@ -279,7 +305,11 @@ class MockStreamSession implements StreamSession {
     return () => this.listeners.delete(listener);
   }
 
-  subscribe(instrument: Instrument, conventions: Conventions, label: string): bigint {
+  subscribe(
+    instrument: Instrument,
+    conventions: Conventions,
+    label: string,
+  ): bigint {
     const id = this.nextSubId;
     this.nextSubId += 1n;
     const ctx = findPair(instrument.pair);
@@ -314,20 +344,34 @@ class MockStreamSession implements StreamSession {
     }
   }
 
-  execute(subscriptionId: bigint, token: bigint, _idempotencyKey: string): void {
+  execute(
+    subscriptionId: bigint,
+    token: bigint,
+    _idempotencyKey: string,
+  ): void {
     const sub = this.subs.get(subscriptionId);
     const now = nowNanos();
     if (!sub) {
       this.emit({
         kind: "reject",
-        reject: { subscriptionId, token, reason: "UNKNOWN_TOKEN", epochNanos: now },
+        reject: {
+          subscriptionId,
+          token,
+          reason: "UNKNOWN_TOKEN",
+          epochNanos: now,
+        },
       });
       return;
     }
     if (this.consumedTokens.has(token)) {
       this.emit({
         kind: "reject",
-        reject: { subscriptionId, token, reason: "ALREADY_CONSUMED", epochNanos: now },
+        reject: {
+          subscriptionId,
+          token,
+          reason: "ALREADY_CONSUMED",
+          epochNanos: now,
+        },
       });
       return;
     }
@@ -335,7 +379,12 @@ class MockStreamSession implements StreamSession {
     if (!matched) {
       this.emit({
         kind: "reject",
-        reject: { subscriptionId, token, reason: "UNKNOWN_TOKEN", epochNanos: now },
+        reject: {
+          subscriptionId,
+          token,
+          reason: "UNKNOWN_TOKEN",
+          epochNanos: now,
+        },
       });
       return;
     }
@@ -366,7 +415,10 @@ class MockStreamSession implements StreamSession {
     // A short deterministic history (oldest → newest) seeds the snapshot so the
     // trend tile draws a line immediately rather than waiting for live points.
     const rng = new Rng(this.seed ^ (id * 0x51ed_0b5en));
-    const HISTORY = Math.min(48, params.historyLimit && params.historyLimit > 0 ? params.historyLimit : 24);
+    const HISTORY = Math.min(
+      48,
+      params.historyLimit && params.historyLimit > 0 ? params.historyLimit : 24,
+    );
     let value = anchor;
     const now = nowNanos();
     const stepNanos = 1_000_000_000n; // 1s spacing for the seeded history
@@ -416,7 +468,11 @@ class MockStreamSession implements StreamSession {
 
   unsubscribeMarketSeries(subscriptionId: bigint): void {
     this.series.delete(subscriptionId);
-    if (this.subs.size === 0 && this.series.size === 0 && this.timer !== undefined) {
+    if (
+      this.subs.size === 0 &&
+      this.series.size === 0 &&
+      this.timer !== undefined
+    ) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
@@ -436,16 +492,26 @@ class MockStreamSession implements StreamSession {
     const tenorYears = params.tenor ? tenorYearsOf(params.tenor) : 1 / 12;
     const ladder = brokerLadder(ctx);
     const nearest = ladder.reduce((best, q) =>
-      Math.abs(q.tenorYears - tenorYears) < Math.abs(best.tenorYears - tenorYears) ? q : best,
+      Math.abs(q.tenorYears - tenorYears) <
+      Math.abs(best.tenorYears - tenorYears)
+        ? q
+        : best,
     );
-    const wing10 = nearest.hasTenDelta && Math.abs(params.delta ?? 0.25) <= 0.18;
+    const wing10 =
+      nearest.hasTenDelta && Math.abs(params.delta ?? 0.25) <= 0.18;
     switch (params.observable) {
       case "ATM_VOL":
         return { anchor: nearest.atmVol, stepScale: 0.0006 };
       case "RISK_REVERSAL":
-        return { anchor: wing10 ? nearest.rr10 : nearest.rr25, stepScale: 0.0004 };
+        return {
+          anchor: wing10 ? nearest.rr10 : nearest.rr25,
+          stepScale: 0.0004,
+        };
       case "BUTTERFLY":
-        return { anchor: wing10 ? nearest.bf10 : nearest.bf25, stepScale: 0.0003 };
+        return {
+          anchor: wing10 ? nearest.bf10 : nearest.bf25,
+          stepScale: 0.0003,
+        };
       case "SPOT":
         return { anchor: ctx.market.spot, stepScale: ctx.market.spot * 0.0004 };
       case "FORWARD":
@@ -471,7 +537,10 @@ class MockStreamSession implements StreamSession {
     this.timer = setInterval(() => this.tick(), this.tickMs);
   }
 
-  private mintTokens(sub: LiveSubscription, price: TwoWayPrice): TradableToken[] {
+  private mintTokens(
+    sub: LiveSubscription,
+    price: TwoWayPrice,
+  ): TradableToken[] {
     const validUntil = nowNanos() + 6_000n * NS_PER_MS; // 6s last-look window
     const sell: TradableToken = {
       token: this.nextToken++,
@@ -489,15 +558,26 @@ class MockStreamSession implements StreamSession {
     return sub.tokens;
   }
 
-  private priceSub(sub: LiveSubscription): { price: TwoWayPrice; greeks: Greeks; strike: number } {
+  private priceSub(sub: LiveSubscription): {
+    price: TwoWayPrice;
+    greeks: Greeks;
+    strike: number;
+  } {
     const market: MarketContext = { ...sub.ctx.market, vol: sub.vol };
     const { greeks, resolvedStrike } = priceInstrument(sub.instrument, market);
     // Premium as percent-of-foreign: GK price is per unit base in domestic; for a
     // %-foreign display we normalize by spot. Strategies sum signed leg premia.
     const midPct = Math.abs(greeks.price / market.spot) * 100;
     // Spread scales with vega magnitude and tenor (wider for longer-dated/illiquid).
-    const spread = Math.max(0.004, Math.abs(greeks.vega) * 0.06 + sub.instrument.expiryYears * 0.02);
-    return { price: twoWayAround(midPct, spread), greeks, strike: resolvedStrike };
+    const spread = Math.max(
+      0.004,
+      Math.abs(greeks.vega) * 0.06 + sub.instrument.expiryYears * 0.02,
+    );
+    return {
+      price: twoWayAround(midPct, spread),
+      greeks,
+      strike: resolvedStrike,
+    };
   }
 
   private buildSnapshot(sub: LiveSubscription): Snapshot {
@@ -548,7 +628,10 @@ class MockStreamSession implements StreamSession {
       if (s.countdown > 0) continue;
       s.countdown = s.cadence;
       s.value += 0.05 * (s.anchor - s.value) + s.stepScale * s.rng.normal();
-      if (s.params.observable === "ATM_VOL" || s.params.observable === "BUTTERFLY") {
+      if (
+        s.params.observable === "ATM_VOL" ||
+        s.params.observable === "BUTTERFLY"
+      ) {
         s.value = Math.max(0.0001, s.value); // vols/flies stay positive
       }
       s.sequence += 1n;
@@ -575,7 +658,11 @@ class MockStreamSession implements StreamSession {
           // A resync re-baselines with a fresh snapshot at the next sequence.
           this.emit({ kind: "snapshot", snapshot: this.buildSnapshot(sub) });
         }
-        this.emit({ kind: "health", subscriptionId: sub.id, health: sub.health });
+        this.emit({
+          kind: "health",
+          subscriptionId: sub.id,
+          health: sub.health,
+        });
       }
       if (sub.health === "RESYNCING") continue;
 
@@ -604,7 +691,10 @@ class MockStreamSession implements StreamSession {
       // the server's per-subscription LatencyRecorder. Push into a bounded ring.
       const t0 = performance.now();
       const { price, greeks, strike } = this.priceSub(sub);
-      const elapsedNs = Math.max(0, Math.round((performance.now() - t0) * 1_000_000));
+      const elapsedNs = Math.max(
+        0,
+        Math.round((performance.now() - t0) * 1_000_000),
+      );
       sub.latencyRing.push(elapsedNs);
       if (sub.latencyRing.length > 256) sub.latencyRing.shift();
       sub.sequence += 1n;
@@ -714,6 +804,56 @@ export class MockTransport implements CelnetTransport {
     { key: 4, name: "Swaps", entityKey: 2 },
   ];
   /**
+   * The offline instrument reference-data registry (a GENUINE in-memory store,
+   * not a stub): seeded with one OIS and one bond definition so the Reference
+   * Data workspace is exercisable end-to-end with no server. Each carries a
+   * server-style minted `instrumentId` and real external identifiers.
+   */
+  private readonly mockInstruments: InstrumentDef[] = [
+    {
+      instrumentId: "usd-sofr-ois-5y",
+      name: "USD SOFR OIS 5Y",
+      description: "USD overnight-indexed swap vs SOFR, 5Y",
+      currency: "USD",
+      externalIds: [{ scheme: "ticker", value: "USOSFR5" }],
+      family: "ois",
+      ois: {
+        tenor: "5Y",
+        index: "SOFR",
+        fixedFrequency: "annual",
+        fixedDayCount: "act_360",
+        floatDayCount: "act_360",
+        businessDayConvention: "modified_following",
+        calendars: ["united_states"],
+        spotLagDays: 2,
+      },
+    },
+    {
+      instrumentId: "us-treasury-4-25-2035",
+      name: "US Treasury 4.25% 2035",
+      description: "US Treasury note, 4.25% semi-annual coupon, maturing 2035",
+      currency: "USD",
+      externalIds: [
+        { scheme: "isin", value: "US91282CHK24" },
+        { scheme: "cusip", value: "91282CHK2" },
+      ],
+      family: "bond",
+      bond: {
+        issuer: "US Treasury",
+        couponRate: 4.25,
+        couponType: "fixed",
+        couponFrequency: "semi_annual",
+        dayCount: "act_act",
+        issueDate: { year: 2025, month: 2, day: 15 },
+        datedDate: { year: 2025, month: 2, day: 15 },
+        firstCouponDate: { year: 2025, month: 8, day: 15 },
+        maturityDate: { year: 2035, month: 2, day: 15 },
+        redemption: 100,
+        calendars: ["united_states"],
+      },
+    },
+  ];
+  /**
    * The admin-editable per-role capability bundles (the role's base authority).
    * Only **non-admin** roles are ever stored (`ADMIN` is grant-all and immutable); a
    * role absent here resolves to {@link mockDefaultTraderBundle}, mirroring the
@@ -765,9 +905,15 @@ export class MockTransport implements CelnetTransport {
     market: MarketContext,
     conventions: Conventions,
   ): Promise<PriceResult> {
-    const { greeks, resolvedStrike, priceStdError } = priceInstrument(instrument, market);
+    const { greeks, resolvedStrike, priceStdError } = priceInstrument(
+      instrument,
+      market,
+    );
     const midPct = Math.abs(greeks.price / market.spot) * 100;
-    const spread = Math.max(0.004, Math.abs(greeks.vega) * 0.06 + instrument.expiryYears * 0.02);
+    const spread = Math.max(
+      0.004,
+      Math.abs(greeks.vega) * 0.06 + instrument.expiryYears * 0.02,
+    );
     const result: PriceResult = {
       greeks,
       resolvedStrike,
@@ -818,7 +964,8 @@ export class MockTransport implements CelnetTransport {
     };
     // Carry the MC standard error onto the quote for an MC-priced product (a
     // clamped cliquet); a closed-form product leaves it undefined.
-    if (result.priceStdError !== undefined) quote.priceStdError = result.priceStdError;
+    if (result.priceStdError !== undefined)
+      quote.priceStdError = result.priceStdError;
     this.quotes.set(quote.quoteId, { quote, instrument });
     this.idempotency.set(idempotencyKey, quote);
     return quote;
@@ -833,7 +980,11 @@ export class MockTransport implements CelnetTransport {
     // maker line is byte-identical to the `requestQuote` it mirrors — then fan
     // the deterministic synthetic demo dealers around the SAME mid (the server's
     // LpPanelConfig law) and rank them.
-    const quote = await this.requestQuote(instrument, conventions, idempotencyKey);
+    const quote = await this.requestQuote(
+      instrument,
+      conventions,
+      idempotencyKey,
+    );
     const mid = (quote.price.bid + quote.price.offer) / 2;
     const halfSpread = (quote.price.offer - quote.price.bid) / 2;
     const native: DealerQuote = {
@@ -843,7 +994,8 @@ export class MockTransport implements CelnetTransport {
       resolvedStrike: quote.resolvedStrike,
       validUntilNanos: quote.validUntilNanos,
     };
-    if (quote.priceStdError !== undefined) native.priceStdError = quote.priceStdError;
+    if (quote.priceStdError !== undefined)
+      native.priceStdError = quote.priceStdError;
     const dealers: DealerQuote[] = [native];
     for (let k = 1; k <= MOCK_SYNTHETIC_LPS; k += 1) {
       // A synthetic dealer discloses a price, not its greeks (honest absence).
@@ -869,7 +1021,8 @@ export class MockTransport implements CelnetTransport {
       conventions,
       epochNanos: quote.epochNanos,
     };
-    if (quote.surfaceVersion !== undefined) panel.surfaceVersion = quote.surfaceVersion;
+    if (quote.surfaceVersion !== undefined)
+      panel.surfaceVersion = quote.surfaceVersion;
     return panel;
   }
 
@@ -887,10 +1040,12 @@ export class MockTransport implements CelnetTransport {
     let line: { price: TwoWayPrice; validUntilNanos: bigint } = entry.quote;
     if (lpId !== undefined && lpId.length > 0 && lpId !== MAKER_LP_ID) {
       const row = entry.dealers?.find((d) => d.lpId === lpId);
-      if (!row) throw new Error(`unknown dealer line ${lpId} on quote ${quoteId}`);
+      if (!row)
+        throw new Error(`unknown dealer line ${lpId} on quote ${quoteId}`);
       line = row;
     }
-    if (line.validUntilNanos <= now) throw new Error("quote expired (last-look)");
+    if (line.validUntilNanos <= now)
+      throw new Error("quote expired (last-look)");
     const premium = side === "BUY" ? line.price.offer : line.price.bid;
     return {
       executionId: quoteId ^ 0xfacen,
@@ -910,11 +1065,18 @@ export class MockTransport implements CelnetTransport {
     return new MockStreamSession(this.seed, this.tickMs);
   }
 
-  async getSmile(pair: CcyPair, tenorYears: number, conventions: Conventions): Promise<Smile> {
+  async getSmile(
+    pair: CcyPair,
+    tenorYears: number,
+    conventions: Conventions,
+  ): Promise<Smile> {
     const ctx = findPair(pair);
     const ladder = brokerLadder(ctx);
     const nearest = ladder.reduce((best, q) =>
-      Math.abs(q.tenorYears - tenorYears) < Math.abs(best.tenorYears - tenorYears) ? q : best,
+      Math.abs(q.tenorYears - tenorYears) <
+      Math.abs(best.tenorYears - tenorYears)
+        ? q
+        : best,
     );
     return calibrateSmile(pair, nearest, conventions, nowNanos());
   }
@@ -961,11 +1123,17 @@ export class MockTransport implements CelnetTransport {
         const step = axis.steps[indices[ai]!] ?? 0;
         applied.push(step);
         market = applyShock(market, axis.factor, step, axis.relative);
-        if (axis.factor === "TIME") expiryYears = Math.max(1 / 365, expiryYears - step);
+        if (axis.factor === "TIME")
+          expiryYears = Math.max(1 / 365, expiryYears - step);
       });
       const shockedInstrument: Instrument = { ...fixed, expiryYears };
       const greeks = priceInstrument(shockedInstrument, market).greeks;
-      points.push({ appliedShocks: applied, shockedMarket: market, greeks, expiryYears });
+      points.push({
+        appliedShocks: applied,
+        shockedMarket: market,
+        greeks,
+        expiryYears,
+      });
       // Advance the mixed-radix index.
       for (let ai = axes.length - 1; ai >= 0; ai -= 1) {
         indices[ai] = (indices[ai]! + 1) % Math.max(1, axes[ai]!.steps.length);
@@ -985,7 +1153,10 @@ export class MockTransport implements CelnetTransport {
         expiryYears: p.tenorYears,
         product: {
           kind: "vanilla",
-          vanilla: { optionType: p.delta >= 0 ? "CALL" : "PUT", strike: { kind: "strike", strike } },
+          vanilla: {
+            optionType: p.delta >= 0 ? "CALL" : "PUT",
+            strike: { kind: "strike", strike },
+          },
         },
       };
       const vega = priceInstrument(bumped, baseMarket).greeks.vega;
@@ -1031,9 +1202,12 @@ export class MockTransport implements CelnetTransport {
   // has no finer org structure to fabricate. Limits have no offline tree, so
   // `limitStatus` returns an honest empty utilization set.
 
-  async listPositions(request: ListPositionsRequest): Promise<ListPositionsResponse> {
+  async listPositions(
+    request: ListPositionsRequest,
+  ): Promise<ListPositionsResponse> {
     const res: ListPositionsResponse = { positions: [] };
-    if (request.correlationId !== undefined) res.correlationId = request.correlationId;
+    if (request.correlationId !== undefined)
+      res.correlationId = request.correlationId;
     // The offline book has no canonical-vanilla leaf per booked structure (the
     // seed positions are multi-leg strategies/vanillas without server-side
     // canonicalisation), so we honestly report no flat `RiskPosition` rows rather
@@ -1042,14 +1216,17 @@ export class MockTransport implements CelnetTransport {
     return res;
   }
 
-  async aggregateRisk(request: AggregateRiskRequest): Promise<AggregateRiskResponse> {
+  async aggregateRisk(
+    request: AggregateRiskRequest,
+  ): Promise<AggregateRiskResponse> {
     const node = aggregateSeedBook(request.dimension, request.numeraire);
     const res: AggregateRiskResponse = {
       dimension: request.dimension,
       numeraire: request.numeraire.numeraire,
       nodes: node.positionCount > 0 ? [node] : [],
     };
-    if (request.correlationId !== undefined) res.correlationId = request.correlationId;
+    if (request.correlationId !== undefined)
+      res.correlationId = request.correlationId;
     return res;
   }
 
@@ -1105,8 +1282,12 @@ export class MockTransport implements CelnetTransport {
       // Zip each per-pillar DV01 onto its curve-pillar tenor and sum per bucket —
       // the same pillar alignment the server's `fact_from_position` performs.
       curve.pillars.forEach((pillar, i) => {
-        const prev = node.ladder.get(pillar.tenorYears) ?? 0;
-        node.ladder.set(pillar.tenorYears, prev + (priced.keyRateLadder[i] ?? 0));
+        // Month/broken-date pillars aren't whole-year-labelled, so they are not
+        // bucketed here — matching the server federation's deferred key-rate ladder.
+        const years = pillarYears(pillar.tenor);
+        if (years === undefined) return;
+        const prev = node.ladder.get(years) ?? 0;
+        node.ladder.set(years, prev + (priced.keyRateLadder[i] ?? 0));
       });
     }
 
@@ -1123,7 +1304,8 @@ export class MockTransport implements CelnetTransport {
       }));
 
     const res: AggregateRatesRiskResponse = { nodes };
-    if (request.correlationId !== undefined) res.correlationId = request.correlationId;
+    if (request.correlationId !== undefined)
+      res.correlationId = request.correlationId;
     return res;
   }
 
@@ -1135,10 +1317,12 @@ export class MockTransport implements CelnetTransport {
     const child = aggregateSeedBook(request.childDimension, request.numeraire);
     const res: DrillRiskResponse = {
       node: request.node,
-      children: request.includeChildren && child.positionCount > 0 ? [child] : [],
+      children:
+        request.includeChildren && child.positionCount > 0 ? [child] : [],
       positions: [],
     };
-    if (request.correlationId !== undefined) res.correlationId = request.correlationId;
+    if (request.correlationId !== undefined)
+      res.correlationId = request.correlationId;
     return res;
   }
 
@@ -1151,7 +1335,8 @@ export class MockTransport implements CelnetTransport {
       worst: "GREEN",
       hardBreach: false,
     };
-    if (request.correlationId !== undefined) res.correlationId = request.correlationId;
+    if (request.correlationId !== undefined)
+      res.correlationId = request.correlationId;
     return res;
   }
 
@@ -1167,7 +1352,10 @@ export class MockTransport implements CelnetTransport {
   }
 
   async createFixConnection(spec: FixConnectionSpec): Promise<FixConnection> {
-    const conn = this.fixFromSpec(spec, spec.id?.trim() || mockSlugify(spec.name));
+    const conn = this.fixFromSpec(
+      spec,
+      spec.id?.trim() || mockSlugify(spec.name),
+    );
     if (this.fixConnections.some((c) => c.id === conn.id)) {
       throw new Error(`a connection with id \`${conn.id}\` already exists`);
     }
@@ -1179,7 +1367,10 @@ export class MockTransport implements CelnetTransport {
     return { ...conn };
   }
 
-  async updateFixConnection(id: string, spec: FixConnectionSpec): Promise<FixConnection> {
+  async updateFixConnection(
+    id: string,
+    spec: FixConnectionSpec,
+  ): Promise<FixConnection> {
     const idx = this.fixConnections.findIndex((c) => c.id === id);
     if (idx < 0) throw new Error(`no connection with id \`${id}\``);
     if (this.fixConnections.some((c) => c.id !== id && c.name === spec.name)) {
@@ -1197,7 +1388,10 @@ export class MockTransport implements CelnetTransport {
     this.fixConnections.splice(idx, 1);
   }
 
-  async setFixConnectionEnabled(id: string, enabled: boolean): Promise<FixConnection> {
+  async setFixConnectionEnabled(
+    id: string,
+    enabled: boolean,
+  ): Promise<FixConnection> {
     const conn = this.fixConnections.find((c) => c.id === id);
     if (!conn) throw new Error(`no connection with id \`${id}\``);
     if (enabled) this.assertNoEnabledAddrConflict({ ...conn, enabled });
@@ -1228,7 +1422,9 @@ export class MockTransport implements CelnetTransport {
     const cap = limit > 0 ? limit : 500;
     const messages = this.fixMessages
       .filter((m) => m.seq > afterSeq)
-      .filter((m) => connectionId === undefined || m.connectionId === connectionId)
+      .filter(
+        (m) => connectionId === undefined || m.connectionId === connectionId,
+      )
       .slice(0, cap)
       .map((m) => ({ ...m }));
     return { messages, latestSeq: this.fixSeq };
@@ -1275,7 +1471,9 @@ export class MockTransport implements CelnetTransport {
     // (server parity: `def_from_spec` rejects a blank desk with `invalid_argument`).
     const desk = (spec.desk ?? "").trim();
     if (desk.length === 0) {
-      throw new Error("a FIX connection must belong to a desk (select the owning desk)");
+      throw new Error(
+        "a FIX connection must belong to a desk (select the owning desk)",
+      );
     }
     return {
       id,
@@ -1314,7 +1512,9 @@ export class MockTransport implements CelnetTransport {
 
   async login(email: string, password: string): Promise<LoginResult> {
     const key = email.trim().toLowerCase();
-    const found = this.mockUsers.find((u) => u.user.email.toLowerCase() === key);
+    const found = this.mockUsers.find(
+      (u) => u.user.email.toLowerCase() === key,
+    );
     // A single opaque error for every failure mode — never leak which factor failed.
     if (!found || found.user.disabled || found.password !== password) {
       throw new Error("invalid email or password");
@@ -1350,7 +1550,9 @@ export class MockTransport implements CelnetTransport {
     const email = input.email.trim();
     if (email.length === 0) throw new Error("email is required");
     if (input.password.length < MOCK_MIN_PASSWORD_LEN) {
-      throw new Error(`password must be at least ${MOCK_MIN_PASSWORD_LEN} characters`);
+      throw new Error(
+        `password must be at least ${MOCK_MIN_PASSWORD_LEN} characters`,
+      );
     }
     const key = email.toLowerCase();
     if (this.mockUsers.some((u) => u.user.email.toLowerCase() === key)) {
@@ -1364,7 +1566,12 @@ export class MockTransport implements CelnetTransport {
       disabled: false,
     };
     if (input.deskId && input.deskId.length > 0) user.deskId = input.deskId;
-    this.mockUsers.push({ user, password: input.password, grants: [], denies: [] });
+    this.mockUsers.push({
+      user,
+      password: input.password,
+      grants: [],
+      denies: [],
+    });
     return { ...user };
   }
 
@@ -1393,7 +1600,11 @@ export class MockTransport implements CelnetTransport {
     const idx = this.mockUsers.findIndex((u) => u.user.id === id);
     if (idx < 0) return false;
     const entry = this.mockUsers[idx]!;
-    if (entry.user.role === "ADMIN" && !entry.user.disabled && this.activeAdminCount() <= 1) {
+    if (
+      entry.user.role === "ADMIN" &&
+      !entry.user.disabled &&
+      this.activeAdminCount() <= 1
+    ) {
       throw new Error("cannot delete the last administrator");
     }
     this.mockUsers.splice(idx, 1);
@@ -1404,7 +1615,9 @@ export class MockTransport implements CelnetTransport {
     const entry = this.mockUsers.find((u) => u.user.id === id);
     if (!entry) throw new Error(`no user with id \`${id}\``);
     if (newPassword.length < MOCK_MIN_PASSWORD_LEN) {
-      throw new Error(`password must be at least ${MOCK_MIN_PASSWORD_LEN} characters`);
+      throw new Error(
+        `password must be at least ${MOCK_MIN_PASSWORD_LEN} characters`,
+      );
     }
     entry.password = newPassword;
   }
@@ -1434,7 +1647,10 @@ export class MockTransport implements CelnetTransport {
     // Server parity: an unknown action/asset label is rejected (invalid_argument),
     // never silently dropped — the overlay that lands is exactly what was sent.
     for (const cap of [...grants, ...denies]) {
-      if (!CAPABILITY_ACTIONS.includes(cap.action) || !CAPABILITY_ASSETS.includes(cap.asset)) {
+      if (
+        !CAPABILITY_ACTIONS.includes(cap.action) ||
+        !CAPABILITY_ASSETS.includes(cap.asset)
+      ) {
         throw new Error(`unknown capability \`${cap.action}/${cap.asset}\``);
       }
     }
@@ -1469,7 +1685,8 @@ export class MockTransport implements CelnetTransport {
 
   async getRoleCapabilities(role: UserRole): Promise<RoleCapabilities> {
     // ADMIN is grant-all and immutable; report the full surface, never a stored bundle.
-    const capabilities = role === "ADMIN" ? mockGrantAll() : this.mockRoleBase(role);
+    const capabilities =
+      role === "ADMIN" ? mockGrantAll() : this.mockRoleBase(role);
     return { capabilities: capabilities.map((c) => ({ ...c })) };
   }
 
@@ -1484,7 +1701,10 @@ export class MockTransport implements CelnetTransport {
     }
     // Server parity: an unknown action/asset label is rejected, never silently dropped.
     for (const cap of capabilities) {
-      if (!CAPABILITY_ACTIONS.includes(cap.action) || !CAPABILITY_ASSETS.includes(cap.asset)) {
+      if (
+        !CAPABILITY_ACTIONS.includes(cap.action) ||
+        !CAPABILITY_ASSETS.includes(cap.asset)
+      ) {
         throw new Error(`unknown capability \`${cap.action}/${cap.asset}\``);
       }
     }
@@ -1531,7 +1751,9 @@ export class MockTransport implements CelnetTransport {
 
   /** The number of enabled (non-disabled) administrators in the offline roster. */
   private activeAdminCount(): number {
-    return this.mockUsers.filter((u) => u.user.role === "ADMIN" && !u.user.disabled).length;
+    return this.mockUsers.filter(
+      (u) => u.user.role === "ADMIN" && !u.user.disabled,
+    ).length;
   }
 
   // --- legal-entity / netting-book registry (offline) ------------------------
@@ -1564,7 +1786,9 @@ export class MockTransport implements CelnetTransport {
     if (this.mockEntities.some((e) => e.code === code)) {
       throw new Error(`an entity with code \`${code}\` already exists`);
     }
-    const key = MockTransport.lowestFreeKey(this.mockEntities.map((e) => e.key));
+    const key = MockTransport.lowestFreeKey(
+      this.mockEntities.map((e) => e.key),
+    );
     const entity: EntityDesc = { key, name, code };
     this.mockEntities.push(entity);
     return { ...entity };
@@ -1642,6 +1866,244 @@ export class MockTransport implements CelnetTransport {
     return true;
   }
 
+  // --- instrument reference-data registry (offline) --------------------------
+
+  /** Mint a stable instrument id from a name (mirrors the server's slugify). */
+  private static slugifyInstrumentId(name: string): string {
+    return name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  async listInstruments(): Promise<InstrumentDef[]> {
+    return this.mockInstruments.map((d) => structuredClone(d));
+  }
+
+  async getInstrument(id: string): Promise<InstrumentDef | null> {
+    const found = this.mockInstruments.find((d) => d.instrumentId === id);
+    return found ? structuredClone(found) : null;
+  }
+
+  async createInstrument(input: InstrumentInput): Promise<InstrumentDef> {
+    const name = input.name.trim();
+    if (name.length === 0) throw new Error("instrument name is required");
+    if (this.mockInstruments.some((d) => d.name === name)) {
+      throw new Error(`an instrument named \`${name}\` already exists`);
+    }
+    const requested = input.instrumentId.trim();
+    const id =
+      requested.length > 0
+        ? requested
+        : MockTransport.slugifyInstrumentId(name);
+    if (id.length === 0) {
+      throw new Error("could not derive an instrument id from the name");
+    }
+    if (this.mockInstruments.some((d) => d.instrumentId === id)) {
+      throw new Error(`an instrument with id \`${id}\` already exists`);
+    }
+    const created = structuredClone(input);
+    created.instrumentId = id;
+    created.name = name;
+    this.mockInstruments.push(created);
+    return structuredClone(created);
+  }
+
+  async updateInstrument(input: InstrumentInput): Promise<InstrumentDef> {
+    const id = input.instrumentId.trim();
+    if (id.length === 0) throw new Error("instrument id is required");
+    const idx = this.mockInstruments.findIndex((d) => d.instrumentId === id);
+    if (idx < 0) throw new Error(`no instrument with id \`${id}\``);
+    const name = input.name.trim();
+    if (name.length === 0) throw new Error("instrument name is required");
+    if (
+      this.mockInstruments.some((d) => d.instrumentId !== id && d.name === name)
+    ) {
+      throw new Error(`an instrument named \`${name}\` already exists`);
+    }
+    const updated = structuredClone(input);
+    updated.instrumentId = id;
+    updated.name = name;
+    this.mockInstruments[idx] = updated;
+    return structuredClone(updated);
+  }
+
+  async deleteInstrument(id: string): Promise<boolean> {
+    const idx = this.mockInstruments.findIndex((d) => d.instrumentId === id);
+    if (idx < 0) return false;
+    this.mockInstruments.splice(idx, 1);
+    return true;
+  }
+
+  // --- curve bootstrap from registry-referenced instruments (offline) --------
+
+  /**
+   * Resolve every pillar against the registry, derive each instrument's maturity
+   * arm, order short→long, and bootstrap the SAME in-browser discount curve the
+   * OIS pricer uses — the offline mirror of the server's `BuildCurve`. The numbers
+   * are real (no fabricated curve): an unresolved id, a currency mismatch, or a
+   * degenerate pillar set surfaces the genuine error.
+   */
+  async buildCurve(request: BuildCurveRequest): Promise<CalibratedCurve> {
+    if (request.pillars.length === 0 && request.datePillars.length === 0) {
+      throw new Error("a curve needs at least one calibrating pillar");
+    }
+
+    // Registry-instrument pillars: resolve, order short→long, and bootstrap the SAME
+    // in-browser discount curve the OIS pricer uses (the offline mirror of the server).
+    const instrumentPoints: CalibratedCurvePoint[] = [];
+    if (request.pillars.length > 0) {
+      const resolved = request.pillars.map((p) => {
+        const def = this.mockInstruments.find(
+          (d) => d.instrumentId === p.instrumentId,
+        );
+        if (!def) throw new Error(`no instrument with id \`${p.instrumentId}\``);
+        if (def.currency !== request.currency) {
+          throw new Error(
+            `instrument \`${p.instrumentId}\` is ${def.currency}, not the curve currency ${request.currency}`,
+          );
+        }
+        const tenor = MockTransport.instrumentPillarTenor(
+          def,
+          request.referenceDate,
+        );
+        return {
+          instrumentId: p.instrumentId,
+          tenor,
+          parRate: p.quote,
+          timeYears: pillarMaturityYears(tenor, request.referenceDate),
+        };
+      });
+      const sorted = [...resolved].sort((a, b) => a.timeYears - b.timeYears);
+      const curveSet: RatesCurveSet = {
+        currency: request.currency,
+        referenceDate: request.referenceDate,
+        pillars: sorted.map((r) => ({ tenor: r.tenor, parRate: r.parRate })),
+      };
+      const discount = bootstrapCurveFromSet(curveSet);
+      for (const r of sorted) {
+        instrumentPoints.push({
+          instrumentId: r.instrumentId,
+          timeYears: r.timeYears,
+          discountFactor: discountFactorAt(discount, r.timeYears),
+          zeroRate: zeroRateAt(discount, r.timeYears),
+          label: "",
+        });
+      }
+    }
+
+    // Date-anchored pillars: each is a synthetic money-market cash deposit from the
+    // reference date to the chosen date, so its discount factor is the closed-form
+    // `DF = 1/(1 + r·τ)` (τ = ACT/360 fraction) — the SAME value the server's deposit
+    // pillar carries, independent of the other pillars. (The offline mirror omits the
+    // second-order coupling of a longer swap pillar onto a shorter date pillar; the
+    // live server bootstrap calibrates the mixed ladder jointly.)
+    const datePoints = request.datePillars.map((dp) =>
+      MockTransport.datePillarPoint(dp, request.referenceDate),
+    );
+
+    const points = [...instrumentPoints, ...datePoints].sort(
+      (a, b) => a.timeYears - b.timeYears,
+    );
+    return {
+      requestId: request.requestId,
+      currency: request.currency,
+      referenceDate: request.referenceDate,
+      points,
+    };
+  }
+
+  /**
+   * Resolve one date-anchored pillar to its calibrated point: a closed-form cash
+   * deposit `DF = 1/(1 + r·τ)` with ACT/360 accrual from the reference date, placed on
+   * the ACT/365F curve-time axis, labelled `Date YYYY-MM-DD`.
+   */
+  private static datePillarPoint(
+    dp: DatePillar,
+    referenceDate: BrokenDate,
+  ): CalibratedCurvePoint {
+    const t = pillarMaturityYears(
+      { kind: "date", maturityDate: dp.maturityDate },
+      referenceDate,
+    );
+    if (!(t > 0)) {
+      throw new Error("a date pillar maturity must be after the reference date");
+    }
+    // ACT/360 fraction from the ACT/365F time: both count actual days, so the ratio is
+    // exact (days = t·365 ⇒ τ_360 = t·365/360).
+    const tauAct360 = (t * 365) / 360;
+    const discountFactor = 1 / (1 + dp.quote * tauAct360);
+    const zeroRate = -Math.log(discountFactor) / t;
+    const { year, month, day } = dp.maturityDate;
+    const label = `Date ${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return { instrumentId: "", timeYears: t, discountFactor, zeroRate, label };
+  }
+
+  /** Derive the curve-pillar maturity arm for one registry instrument. */
+  private static instrumentPillarTenor(
+    def: InstrumentDef,
+    referenceDate: BrokenDate,
+  ): PillarTenor {
+    switch (def.family) {
+      case "deposit":
+        return MockTransport.tenorToPillar(def.deposit.tenor, referenceDate);
+      case "fra":
+        return MockTransport.tenorToPillar(def.fra.endTenor, referenceDate);
+      case "stir_future":
+        return MockTransport.tenorToPillar(
+          def.stirFuture.referenceEnd,
+          referenceDate,
+        );
+      case "vanilla_irs":
+        return MockTransport.tenorToPillar(def.vanillaIrs.tenor, referenceDate);
+      case "ois":
+        return MockTransport.tenorToPillar(def.ois.tenor, referenceDate);
+      case "bond":
+        return { kind: "date", maturityDate: def.bond.maturityDate };
+    }
+  }
+
+  /** Parse a `"<n><D|W|M|Y>"` tenor token to a {@link PillarTenor}. */
+  private static tenorToPillar(
+    tenor: string,
+    referenceDate: BrokenDate,
+  ): PillarTenor {
+    const m = /^(\d+)\s*([DWMY])$/i.exec(tenor.trim());
+    if (!m || m[1] === undefined || m[2] === undefined) {
+      throw new Error(`unsupported pillar tenor \`${tenor}\``);
+    }
+    const count = Number(m[1]);
+    switch (m[2].toUpperCase()) {
+      case "Y":
+        return { kind: "years", years: count };
+      case "M":
+        return { kind: "months", months: count };
+      case "W":
+        return {
+          kind: "date",
+          maturityDate: MockTransport.addDays(referenceDate, count * 7),
+        };
+      case "D":
+        return {
+          kind: "date",
+          maturityDate: MockTransport.addDays(referenceDate, count),
+        };
+      default:
+        throw new Error(`unsupported pillar tenor unit in \`${tenor}\``);
+    }
+  }
+
+  /** Add `days` calendar days to a civil date (UTC arithmetic, no clamping). */
+  private static addDays(ref: BrokenDate, days: number): BrokenDate {
+    const d = new Date(Date.UTC(ref.year, ref.month - 1, ref.day));
+    d.setUTCDate(d.getUTCDate() + days);
+    return {
+      year: d.getUTCFullYear(),
+      month: d.getUTCMonth() + 1,
+      day: d.getUTCDate(),
+    };
+  }
+
   // --- RfqDeskService (offline) ----------------------------------------------
 
   async submitDeskRequest(
@@ -1656,7 +2118,9 @@ export class MockTransport implements CelnetTransport {
     const existing = this.deskRequests.get(request.requestId);
     if (!existing) throw new Error(`unknown desk request ${request.requestId}`);
     if (existing.state !== "PENDING") {
-      throw new Error(`desk request ${request.requestId} is ${existing.state}, not PENDING`);
+      throw new Error(
+        `desk request ${request.requestId} is ${existing.state}, not PENDING`,
+      );
     }
     let updated: DeskRequest;
     if (request.response.kind === "quote") {
@@ -1681,7 +2145,9 @@ export class MockTransport implements CelnetTransport {
     return { request: updated };
   }
 
-  async acceptDeskQuote(request: AcceptDeskQuoteRequest): Promise<AcceptDeskQuoteResponse> {
+  async acceptDeskQuote(
+    request: AcceptDeskQuoteRequest,
+  ): Promise<AcceptDeskQuoteResponse> {
     const existing = this.deskRequests.get(request.requestId);
     if (!existing) throw new Error(`unknown desk request ${request.requestId}`);
     if (existing.state !== "QUOTED" || !existing.quote) {
@@ -1698,7 +2164,11 @@ export class MockTransport implements CelnetTransport {
       positionId,
       entity: 0,
       book: 0,
-      instrument: { ...existing.instrument, fixedRate: quote.price, notional: quote.notional },
+      instrument: {
+        ...existing.instrument,
+        fixedRate: quote.price,
+        notional: quote.notional,
+      },
     });
     const dealId = `deal-${this.dealSeq++}`;
     const deal: Deal = {
@@ -1744,7 +2214,8 @@ export class MockTransport implements CelnetTransport {
         const states = new Set<DeskRequestState>(scope.states);
         requests = requests.filter((r) => states.has(r.state));
       }
-      if (scope.desk !== undefined) requests = requests.filter((r) => r.desk === scope.desk);
+      if (scope.desk !== undefined)
+        requests = requests.filter((r) => r.desk === scope.desk);
     }
     return { requests };
   }
@@ -1764,7 +2235,8 @@ export class MockTransport implements CelnetTransport {
   ): Promise<BookRatesPositionResponse> {
     const incoming = request.position;
     // Mint a stable id when the caller books with a placeholder (0) id.
-    const positionId = incoming.positionId > 0n ? incoming.positionId : this.ratesPositionSeq++;
+    const positionId =
+      incoming.positionId > 0n ? incoming.positionId : this.ratesPositionSeq++;
     const position: RatesPosition = { ...incoming, positionId };
     this.ratesPositions.set(positionId, position);
     return { position };
@@ -1776,11 +2248,14 @@ export class MockTransport implements CelnetTransport {
     let positions = [...this.ratesPositions.values()];
     const scope = request.scope;
     if (scope) {
-      if (scope.entity !== undefined) positions = positions.filter((p) => p.entity === scope.entity);
-      if (scope.book !== undefined) positions = positions.filter((p) => p.book === scope.book);
+      if (scope.entity !== undefined)
+        positions = positions.filter((p) => p.entity === scope.entity);
+      if (scope.book !== undefined)
+        positions = positions.filter((p) => p.book === scope.book);
       // An OIS books in its curve currency (USD for the P0 arm); a non-USD ccy
       // filter matches nothing, exactly as the server narrows by settlement ccy.
-      if (scope.ccy !== undefined && scope.ccy.toUpperCase() !== "USD") positions = [];
+      if (scope.ccy !== undefined && scope.ccy.toUpperCase() !== "USD")
+        positions = [];
     }
     return { positions };
   }
@@ -1817,7 +2292,8 @@ export class MockTransport implements CelnetTransport {
       state: "PENDING",
     };
     this.deskRequests.set(requestId, desk);
-    const kind: NotificationKind = request.kind === "IOI" ? "IOI_RECEIVED" : "RFQ_RECEIVED";
+    const kind: NotificationKind =
+      request.kind === "IOI" ? "IOI_RECEIVED" : "RFQ_RECEIVED";
     this.emitNotification({
       notificationId: `ntf-${this.notificationSeq++}`,
       kind,
@@ -1835,7 +2311,12 @@ export class MockTransport implements CelnetTransport {
   /** Fan a notification out to every subscriber whose desk scope admits it. */
   private emitNotification(n: Notification): void {
     for (const sub of this.notificationSubs) {
-      if (sub.scope && sub.scope.desks.length > 0 && !sub.scope.desks.includes(n.desk)) continue;
+      if (
+        sub.scope &&
+        sub.scope.desks.length > 0 &&
+        !sub.scope.desks.includes(n.desk)
+      )
+        continue;
       sub.onNotification(n);
     }
   }
@@ -1849,7 +2330,8 @@ export class MockTransport implements CelnetTransport {
   private seedOfflineDesk(): void {
     const curve = DEFAULT_USD_SOFR_CURVE;
     const parOf = (tenorYears: number): number =>
-      curve.pillars.find((p) => p.tenorYears === tenorYears)?.parRate ?? 0.04;
+      curve.pillars.find((p) => pillarYears(p.tenor) === tenorYears)?.parRate ??
+      0.04;
 
     const bookSeeds: {
       tenorYears: number;
@@ -1859,9 +2341,30 @@ export class MockTransport implements CelnetTransport {
       direction: OisInstrument["direction"];
       offsetBp: number;
     }[] = [
-      { tenorYears: 2, entity: 1, book: 10, notionalMm: 50, direction: "RECEIVE_FIXED", offsetBp: -6 },
-      { tenorYears: 5, entity: 1, book: 10, notionalMm: 100, direction: "PAY_FIXED", offsetBp: 4 },
-      { tenorYears: 10, entity: 2, book: 20, notionalMm: 25, direction: "RECEIVE_FIXED", offsetBp: 9 },
+      {
+        tenorYears: 2,
+        entity: 1,
+        book: 10,
+        notionalMm: 50,
+        direction: "RECEIVE_FIXED",
+        offsetBp: -6,
+      },
+      {
+        tenorYears: 5,
+        entity: 1,
+        book: 10,
+        notionalMm: 100,
+        direction: "PAY_FIXED",
+        offsetBp: 4,
+      },
+      {
+        tenorYears: 10,
+        entity: 2,
+        book: 20,
+        notionalMm: 25,
+        direction: "RECEIVE_FIXED",
+        offsetBp: 9,
+      },
     ];
     for (const s of bookSeeds) {
       const positionId = this.ratesPositionSeq++;
@@ -1885,8 +2388,20 @@ export class MockTransport implements CelnetTransport {
       notionalMm: number;
       side: "BUY" | "SELL";
     }[] = [
-      { kind: "RFQ", counterparty: "Meridian Capital", tenorYears: 5, notionalMm: 75, side: "BUY" },
-      { kind: "IOI", counterparty: "Northwind AM", tenorYears: 10, notionalMm: 40, side: "SELL" },
+      {
+        kind: "RFQ",
+        counterparty: "Meridian Capital",
+        tenorYears: 5,
+        notionalMm: 75,
+        side: "BUY",
+      },
+      {
+        kind: "IOI",
+        counterparty: "Northwind AM",
+        tenorYears: 10,
+        notionalMm: 40,
+        side: "SELL",
+      },
     ];
     for (const s of inboxSeeds) {
       this.enqueueDeskRequest({
@@ -1997,7 +2512,9 @@ function aggregateSeedBook(
     if (ccy === numeraire.numeraire) return 1;
     const r = numeraire.rates.find((x) => x.ccy === ccy);
     if (!r || !(r.rate > 0) || !Number.isFinite(r.rate)) {
-      throw new Error(`reporting numeraire ${numeraire.numeraire} has no rate for ${ccy}`);
+      throw new Error(
+        `reporting numeraire ${numeraire.numeraire} has no rate for ${ccy}`,
+      );
     }
     return r.rate;
   };
@@ -2028,7 +2545,10 @@ function aggregateSeedBook(
     const baseRate = rateOf(instrument.pair.base);
     const quoteRate = rateOf(instrument.pair.quote);
     const baseDelta = notional * greeks.deltaSpot;
-    deltaByCcy.set(instrument.pair.base, (deltaByCcy.get(instrument.pair.base) ?? 0) + baseDelta);
+    deltaByCcy.set(
+      instrument.pair.base,
+      (deltaByCcy.get(instrument.pair.base) ?? 0) + baseDelta,
+    );
     deltaNumeraire += baseDelta * baseRate;
     // Vega / premium are premium-ccy (quote) amounts per unit notional.
     const wn = notional * quoteRate;
@@ -2086,14 +2606,19 @@ function freezeStrikes(instrument: Instrument, m: MarketContext): Instrument {
   const freezeStrike = (
     spec: { kind: "strike"; strike: number } | { kind: "delta"; delta: number },
   ): { kind: "strike"; strike: number } =>
-    spec.kind === "strike" ? spec : { kind: "strike", strike: strikeFromDelta(spec.delta, m, t) };
+    spec.kind === "strike"
+      ? spec
+      : { kind: "strike", strike: strikeFromDelta(spec.delta, m, t) };
 
   switch (instrument.product.kind) {
     case "vanilla": {
       const v = instrument.product.vanilla;
       return {
         ...instrument,
-        product: { kind: "vanilla", vanilla: { ...v, strike: freezeStrike(v.strike) } },
+        product: {
+          kind: "vanilla",
+          vanilla: { ...v, strike: freezeStrike(v.strike) },
+        },
       };
     }
     case "strategy": {
@@ -2104,7 +2629,10 @@ function freezeStrikes(instrument: Instrument, m: MarketContext): Instrument {
           kind: "strategy",
           strategy: {
             ...s,
-            legs: s.legs.map((leg) => ({ ...leg, strike: freezeStrike(leg.strike) })),
+            legs: s.legs.map((leg) => ({
+              ...leg,
+              strike: freezeStrike(leg.strike),
+            })),
           },
         },
       };
@@ -2211,10 +2739,22 @@ function crossGamma(
 ): number {
   const ha = a === "SPOT" ? m.spot * 0.01 : 0.005;
   const hb = b === "SPOT" ? m.spot * 0.01 : 0.005;
-  const pp = priceInstrument(instrument, applyShock(applyShock(m, a, ha, false), b, hb, false)).greeks.price;
-  const pm = priceInstrument(instrument, applyShock(applyShock(m, a, ha, false), b, -hb, false)).greeks.price;
-  const mp = priceInstrument(instrument, applyShock(applyShock(m, a, -ha, false), b, hb, false)).greeks.price;
-  const mm = priceInstrument(instrument, applyShock(applyShock(m, a, -ha, false), b, -hb, false)).greeks.price;
+  const pp = priceInstrument(
+    instrument,
+    applyShock(applyShock(m, a, ha, false), b, hb, false),
+  ).greeks.price;
+  const pm = priceInstrument(
+    instrument,
+    applyShock(applyShock(m, a, ha, false), b, -hb, false),
+  ).greeks.price;
+  const mp = priceInstrument(
+    instrument,
+    applyShock(applyShock(m, a, -ha, false), b, hb, false),
+  ).greeks.price;
+  const mm = priceInstrument(
+    instrument,
+    applyShock(applyShock(m, a, -ha, false), b, -hb, false),
+  ).greeks.price;
   return (pp - pm - mp + mm) / (4 * ha * hb);
 }
 

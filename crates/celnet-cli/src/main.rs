@@ -18,6 +18,7 @@ mod args;
 mod basket;
 mod cli;
 mod convention;
+mod desk;
 mod exotic;
 mod fix;
 mod future_option;

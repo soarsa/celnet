@@ -71,6 +71,23 @@ import type {
   EntityInput,
   BookDesc,
   BookInput,
+  InstrumentDef,
+  InstrumentInput,
+  ExternalIdEntry,
+  ExternalIdScheme,
+  BrokenDate,
+  Calendar,
+  RatesDayCount,
+  BusinessDayConvention,
+  Frequency,
+  RollConvention,
+  CouponType,
+  DepositDef,
+  FraDef,
+  StirFutureDef,
+  VanillaIrsDef,
+  OisDef,
+  BondDef,
   FixConnection,
   FixConnectionKind,
   FixConnectionSpec,
@@ -102,9 +119,12 @@ import type {
   OisInstrument,
   OrgKey,
   Owner,
+  PillarTenor,
   Quote,
   RatesCurveSet,
   RatesPricingResult,
+  BuildCurveRequest,
+  CalibratedCurve,
   ReportingNumeraire,
   RiskBucketRequest,
   RiskNode,
@@ -346,7 +366,10 @@ export function underlyingToWire(u: Underlying): WireObject {
     case "equity":
       return {
         equity: {
-          symbol: { ticker: u.equity.symbol.ticker, venue: u.equity.symbol.venue },
+          symbol: {
+            ticker: u.equity.symbol.ticker,
+            venue: u.equity.symbol.venue,
+          },
           currency: u.equity.currency,
         },
         settlement_ccy,
@@ -354,14 +377,20 @@ export function underlyingToWire(u: Underlying): WireObject {
     case "commodity":
       return {
         commodity: {
-          symbol: { ticker: u.commodity.symbol.ticker, venue: u.commodity.symbol.venue },
+          symbol: {
+            ticker: u.commodity.symbol.ticker,
+            venue: u.commodity.symbol.venue,
+          },
           currency: u.commodity.currency,
         },
         settlement_ccy,
       };
     case "digitalAsset":
       return {
-        digital_asset: { base: u.digitalAsset.base, quote: u.digitalAsset.quote },
+        digital_asset: {
+          base: u.digitalAsset.base,
+          quote: u.digitalAsset.quote,
+        },
         settlement_ccy,
       };
   }
@@ -532,7 +561,9 @@ export function instrumentToWire(i: Instrument): WireObject {
       base["variance_swap"] = { strike_vol: i.product.varianceSwap.strikeVol };
       break;
     case "volatilitySwap":
-      base["volatility_swap"] = { strike_vol: i.product.volatilitySwap.strikeVol };
+      base["volatility_swap"] = {
+        strike_vol: i.product.volatilitySwap.strikeVol,
+      };
       break;
     case "asianOption": {
       const a = i.product.asianOption;
@@ -791,7 +822,10 @@ export function instrumentToWire(i: Instrument): WireObject {
     case "listedFutureOption": {
       const o = i.product.listedFutureOption;
       base["listed_future_option"] = {
-        future_symbol: { ticker: o.futureSymbol.ticker, venue: o.futureSymbol.venue },
+        future_symbol: {
+          ticker: o.futureSymbol.ticker,
+          venue: o.futureSymbol.venue,
+        },
         future_expiry_years: o.futureExpiryYears,
         option_type: e.optionType.toWire(o.optionType),
         strike: o.strike,
@@ -833,6 +867,24 @@ export function ccyPairFromWire(o: WireObject): CcyPair {
 // (PAY_FIXED = SIDE_BUY = 0, RECEIVE_FIXED = SIDE_SELL = 1), exactly as the
 // server's `ois_instrument_from_json` decodes it.
 
+/** Encode a `PillarTenor` to its single-arm wire object `{ years | months | maturity_date }`. */
+function pillarTenorToWire(tenor: PillarTenor): WireObject {
+  switch (tenor.kind) {
+    case "years":
+      return { years: tenor.years };
+    case "months":
+      return { months: tenor.months };
+    case "date":
+      return {
+        maturity_date: {
+          year: tenor.maturityDate.year,
+          month: tenor.maturityDate.month,
+          day: tenor.maturityDate.day,
+        },
+      };
+  }
+}
+
 /** Encode a `RatesCurveSet` to the wire `curve_set` object. */
 export function ratesCurveSetToWire(curve: RatesCurveSet): WireObject {
   return {
@@ -843,7 +895,7 @@ export function ratesCurveSetToWire(curve: RatesCurveSet): WireObject {
       day: curve.referenceDate.day,
     },
     ois_pillars: curve.pillars.map((p) => ({
-      tenor_years: p.tenorYears,
+      tenor: pillarTenorToWire(p.tenor),
       par_rate: p.parRate,
     })),
   };
@@ -871,11 +923,15 @@ export function ratesPricingResultFromWire(o: WireObject): RatesPricingResult {
   const result = child(o, "result");
   const raw = result["key_rate_ladder"];
   if (!Array.isArray(raw)) {
-    throw new Error("`rates_price_response.result.key_rate_ladder` must be an array");
+    throw new Error(
+      "`rates_price_response.result.key_rate_ladder` must be an array",
+    );
   }
   const keyRateLadder = raw.map((v, i) => {
     if (typeof v !== "number" || !Number.isFinite(v)) {
-      throw new Error(`\`result.key_rate_ladder[${i}]\` must be a finite number`);
+      throw new Error(
+        `\`result.key_rate_ladder[${i}]\` must be a finite number`,
+      );
     }
     return v;
   });
@@ -914,7 +970,9 @@ function ratesRiskScopeToWire(s: RatesRiskScope): WireObject {
   return w;
 }
 
-export function aggregateRatesRiskRequestToWire(r: AggregateRatesRiskRequest): WireObject {
+export function aggregateRatesRiskRequestToWire(
+  r: AggregateRatesRiskRequest,
+): WireObject {
   const w: WireObject = {
     curve_set: ratesCurveSetToWire(r.curveSet),
     positions: r.positions.map(ratesPositionToWire),
@@ -979,15 +1037,90 @@ function ratesInstrumentFromWire(o: WireObject): OisInstrument {
   };
 }
 
+/** Decode a wire `PillarTenor` `{ years | months | maturity_date }` into its arm. */
+function pillarTenorFromWire(o: WireObject): PillarTenor {
+  const t = child(o, "tenor");
+  if ("years" in t) return { kind: "years", years: num(t, "years") };
+  if ("months" in t) return { kind: "months", months: num(t, "months") };
+  if ("maturity_date" in t) {
+    const d = child(t, "maturity_date");
+    return {
+      kind: "date",
+      maturityDate: {
+        year: num(d, "year"),
+        month: num(d, "month"),
+        day: num(d, "day"),
+      },
+    };
+  }
+  throw new Error(
+    "pillar tenor: expected a years, months, or maturity_date arm",
+  );
+}
+
 /** Decode a wire `CurveSet` into a `RatesCurveSet`. */
 function ratesCurveSetFromWire(o: WireObject): RatesCurveSet {
   const ref = child(o, "reference_date");
   return {
     currency: str(o, "currency"),
-    referenceDate: { year: num(ref, "year"), month: num(ref, "month"), day: num(ref, "day") },
+    referenceDate: {
+      year: num(ref, "year"),
+      month: num(ref, "month"),
+      day: num(ref, "day"),
+    },
     pillars: array(o, "ois_pillars").map((p) => ({
-      tenorYears: num(p, "tenor_years"),
+      tenor: pillarTenorFromWire(p),
       parRate: num(p, "par_rate"),
+    })),
+  };
+}
+
+/**
+ * Encode a {@link BuildCurveRequest} to the wire `build_curve` request body. The
+ * bearer `session_token` + framing `correlation_id` are auto-injected by
+ * `WsConnection.request`, so they are NOT set here (mirrors the other gated frames).
+ */
+export function buildCurveRequestToWire(req: BuildCurveRequest): WireObject {
+  return {
+    request_id: req.requestId,
+    currency: req.currency,
+    reference_date: {
+      year: req.referenceDate.year,
+      month: req.referenceDate.month,
+      day: req.referenceDate.day,
+    },
+    pillars: req.pillars.map((p) => ({
+      instrument_id: p.instrumentId,
+      quote: p.quote,
+    })),
+    date_pillars: req.datePillars.map((p) => ({
+      maturity_date: {
+        year: p.maturityDate.year,
+        month: p.maturityDate.month,
+        day: p.maturityDate.day,
+      },
+      quote: p.quote,
+    })),
+  };
+}
+
+/** Decode a wire `calibrated_curve` frame into a {@link CalibratedCurve}. */
+export function calibratedCurveFromWire(o: WireObject): CalibratedCurve {
+  const ref = child(o, "reference_date");
+  return {
+    requestId: str(o, "request_id"),
+    currency: str(o, "currency"),
+    referenceDate: {
+      year: num(ref, "year"),
+      month: num(ref, "month"),
+      day: num(ref, "day"),
+    },
+    points: array(o, "points").map((p) => ({
+      instrumentId: str(p, "instrument_id"),
+      timeYears: num(p, "time_years"),
+      discountFactor: num(p, "discount_factor"),
+      zeroRate: num(p, "zero_rate"),
+      label: str(p, "label"),
     })),
   };
 }
@@ -1004,7 +1137,12 @@ export function ratesPositionFromWire(o: WireObject): RatesPosition {
 
 /** Encode a `DeskQuote` to its wire object. */
 export function deskQuoteToWire(q: DeskQuote): WireObject {
-  return { price: q.price, notional: q.notional, valid_for_ms: q.validForMs, trader: q.trader };
+  return {
+    price: q.price,
+    notional: q.notional,
+    valid_for_ms: q.validForMs,
+    trader: q.trader,
+  };
 }
 
 /** Decode a presence-tracked wire `DeskQuote` (`null`/absent ⇒ undefined). */
@@ -1085,7 +1223,9 @@ export function notificationFromWire(o: WireObject): Notification {
 
 // --- desk request/response encoders + decoders ------------------------------
 
-export function submitDeskRequestToWire(r: SubmitDeskRequestRequest): WireObject {
+export function submitDeskRequestToWire(
+  r: SubmitDeskRequestRequest,
+): WireObject {
   return {
     kind: e.deskRequestKind.toWire(r.kind),
     counterparty: r.counterparty,
@@ -1099,11 +1239,15 @@ export function submitDeskRequestToWire(r: SubmitDeskRequestRequest): WireObject
   };
 }
 
-export function submitDeskRequestResponseFromWire(o: WireObject): SubmitDeskRequestResponse {
+export function submitDeskRequestResponseFromWire(
+  o: WireObject,
+): SubmitDeskRequestResponse {
   return { request: deskRequestFromWire(child(o, "request")) };
 }
 
-export function respondDeskRequestToWire(r: RespondDeskRequestRequest): WireObject {
+export function respondDeskRequestToWire(
+  r: RespondDeskRequestRequest,
+): WireObject {
   const w: WireObject = {
     request_id: r.requestId,
     principal: principalOrGrantAllToWire(r.principal),
@@ -1118,15 +1262,22 @@ export function respondDeskRequestToWire(r: RespondDeskRequestRequest): WireObje
   return w;
 }
 
-export function respondDeskRequestResponseFromWire(o: WireObject): RespondDeskRequestResponse {
+export function respondDeskRequestResponseFromWire(
+  o: WireObject,
+): RespondDeskRequestResponse {
   return { request: deskRequestFromWire(child(o, "request")) };
 }
 
 export function acceptDeskQuoteToWire(r: AcceptDeskQuoteRequest): WireObject {
-  return { request_id: r.requestId, principal: principalOrGrantAllToWire(r.principal) };
+  return {
+    request_id: r.requestId,
+    principal: principalOrGrantAllToWire(r.principal),
+  };
 }
 
-export function acceptDeskQuoteResponseFromWire(o: WireObject): AcceptDeskQuoteResponse {
+export function acceptDeskQuoteResponseFromWire(
+  o: WireObject,
+): AcceptDeskQuoteResponse {
   return {
     deal: dealFromWire(child(o, "deal")),
     request: deskRequestFromWire(child(o, "request")),
@@ -1149,7 +1300,9 @@ export function listDeskRequestsToWire(r: ListDeskRequestsRequest): WireObject {
   return w;
 }
 
-export function listDeskRequestsResponseFromWire(o: WireObject): ListDeskRequestsResponse {
+export function listDeskRequestsResponseFromWire(
+  o: WireObject,
+): ListDeskRequestsResponse {
   return { requests: array(o, "requests").map(deskRequestFromWire) };
 }
 
@@ -1169,24 +1322,32 @@ export function listDealsResponseFromWire(o: WireObject): ListDealsResponse {
 
 // --- rates Book/List encoders + decoders ------------------------------------
 
-export function bookRatesPositionToWire(r: BookRatesPositionRequest): WireObject {
+export function bookRatesPositionToWire(
+  r: BookRatesPositionRequest,
+): WireObject {
   return {
     position: ratesPositionToWire(r.position),
     principal: principalOrGrantAllToWire(r.principal),
   };
 }
 
-export function bookRatesPositionResponseFromWire(o: WireObject): BookRatesPositionResponse {
+export function bookRatesPositionResponseFromWire(
+  o: WireObject,
+): BookRatesPositionResponse {
   return { position: ratesPositionFromWire(child(o, "position")) };
 }
 
-export function listRatesPositionsToWire(r: ListRatesPositionsRequest): WireObject {
+export function listRatesPositionsToWire(
+  r: ListRatesPositionsRequest,
+): WireObject {
   const w: WireObject = { principal: principalOrGrantAllToWire(r.principal) };
   if (r.scope) w["scope"] = ratesRiskScopeToWire(r.scope);
   return w;
 }
 
-export function listRatesPositionsResponseFromWire(o: WireObject): ListRatesPositionsResponse {
+export function listRatesPositionsResponseFromWire(
+  o: WireObject,
+): ListRatesPositionsResponse {
   return { positions: array(o, "positions").map(ratesPositionFromWire) };
 }
 
@@ -1198,7 +1359,9 @@ export function listRatesPositionsResponseFromWire(o: WireObject): ListRatesPosi
  * principal exactly as the risk requests do, so the stream clears the server's
  * deny-by-default boundary.
  */
-export function subscribeNotificationsToWire(scope: NotificationScope | undefined): WireObject {
+export function subscribeNotificationsToWire(
+  scope: NotificationScope | undefined,
+): WireObject {
   const w: WireObject = { principal: principalOrGrantAllToWire(undefined) };
   if (scope) w["scope"] = { desks: [...scope.desks] };
   return w;
@@ -1216,7 +1379,12 @@ export function conventionsFromWire(o: WireObject): Conventions {
 }
 
 export function marketFromWire(o: WireObject): MarketContext {
-  return { spot: num(o, "spot"), vol: num(o, "vol"), rDom: num(o, "r_dom"), rFor: num(o, "r_for") };
+  return {
+    spot: num(o, "spot"),
+    vol: num(o, "vol"),
+    rDom: num(o, "r_dom"),
+    rFor: num(o, "r_for"),
+  };
 }
 
 export function greeksFromWire(o: WireObject): Greeks {
@@ -1269,7 +1437,8 @@ function ownerFromWire(o: WireObject): Owner | undefined {
   const v = o["owner"];
   if (!v || typeof v !== "object") return undefined;
   const ow = v as WireObject;
-  if (typeof ow["trader"] === "string") return { kind: "trader", trader: ow["trader"] };
+  if (typeof ow["trader"] === "string")
+    return { kind: "trader", trader: ow["trader"] };
   if (typeof ow["autoPricer"] === "string") {
     return { kind: "autoPricer", autoPricer: ow["autoPricer"] };
   }
@@ -1287,7 +1456,9 @@ function bookIdFromWire(o: WireObject, key: string): BookId | undefined {
 }
 
 /** Decode an optional `AttributionRecord` (`null`/absent ⇒ undefined). */
-export function attributionFromWire(o: WireObject): AttributionRecord | undefined {
+export function attributionFromWire(
+  o: WireObject,
+): AttributionRecord | undefined {
   const v = o["attribution"];
   if (!v || typeof v !== "object") return undefined;
   const a = v as WireObject;
@@ -1303,7 +1474,9 @@ export function attributionFromWire(o: WireObject): AttributionRecord | undefine
 }
 
 function ownerToWire(o: Owner): WireObject {
-  return o.kind === "trader" ? { trader: o.trader } : { autoPricer: o.autoPricer };
+  return o.kind === "trader"
+    ? { trader: o.trader }
+    : { autoPricer: o.autoPricer };
 }
 
 function bookIdToWire(b: BookId): WireObject {
@@ -1351,7 +1524,9 @@ export function quoteFromWire(o: WireObject): Quote {
   return q;
 }
 
-export function executionFromWire(o: WireObject): Omit<Execution, "instrument"> {
+export function executionFromWire(
+  o: WireObject,
+): Omit<Execution, "instrument"> {
   // The wire Execution carries no instrument echo; the caller pairs it with the
   // instrument it accepted from its own quote cache (mirrors the SDK).
   const ex: Omit<Execution, "instrument"> = {
@@ -1574,7 +1749,9 @@ export function marketSeriesSubscribeToWire(args: {
 }
 
 /** Encode a `MarketSeriesUnsubscribe` control frame body. */
-export function marketSeriesUnsubscribeToWire(subscriptionId: bigint): WireObject {
+export function marketSeriesUnsubscribeToWire(
+  subscriptionId: bigint,
+): WireObject {
   return { subscription: { value: Number(subscriptionId) } };
 }
 
@@ -1587,7 +1764,9 @@ export function marketSeriesPointFromWire(o: WireObject): MarketSeriesPoint {
   };
 }
 
-export function marketSeriesSnapshotFromWire(o: WireObject): MarketSeriesSnapshot {
+export function marketSeriesSnapshotFromWire(
+  o: WireObject,
+): MarketSeriesSnapshot {
   return {
     subscriptionId: subscriptionIdFromWire(o),
     sequence: numToBigInt(o, "sequence"),
@@ -1615,7 +1794,11 @@ function brokerQuoteSetFromWire(o: WireObject): BrokerQuoteSet {
 }
 
 function smilePointFromWire(o: WireObject): SmilePoint {
-  return { delta: num(o, "delta"), tenorYears: num(o, "tenor_years"), vol: num(o, "vol") };
+  return {
+    delta: num(o, "delta"),
+    tenorYears: num(o, "tenor_years"),
+    vol: num(o, "vol"),
+  };
 }
 
 export function arbReportFromWire(o: WireObject): ArbReport {
@@ -1679,7 +1862,11 @@ export function brokerQuoteSetToWire(b: BrokerQuoteSet): WireObject {
 // ---------------------------------------------------------------------------
 
 export function shockAxisToWire(a: ShockAxis): WireObject {
-  return { factor: e.shockFactor.toWire(a.factor), relative: a.relative, steps: a.steps };
+  return {
+    factor: e.shockFactor.toWire(a.factor),
+    relative: a.relative,
+    steps: a.steps,
+  };
 }
 
 /**
@@ -1692,7 +1879,10 @@ export function shockAxisToWire(a: ShockAxis): WireObject {
  */
 export function riskBucketRequestToWire(r: RiskBucketRequest): WireObject {
   return {
-    vega_pillars: r.vegaPillars.map((p) => ({ tenor_years: p.tenorYears, delta: p.delta })),
+    vega_pillars: r.vegaPillars.map((p) => ({
+      tenor_years: p.tenorYears,
+      delta: p.delta,
+    })),
     cross_gamma_pairs: r.crossGammaPairs.map((c) => ({
       factor_a: e.shockFactor.toWire(c.factorA),
       factor_b: e.shockFactor.toWire(c.factorB),
@@ -1712,11 +1902,17 @@ function scenarioPointFromWire(o: WireObject): ScenarioPoint {
 
 function numberArray(o: WireObject, key: string): number[] {
   const v = o[key];
-  return Array.isArray(v) ? v.filter((x): x is number => typeof x === "number") : [];
+  return Array.isArray(v)
+    ? v.filter((x): x is number => typeof x === "number")
+    : [];
 }
 
 function vegaBucketFromWire(o: WireObject): VegaBucket {
-  return { tenorYears: num(o, "tenor_years"), delta: num(o, "delta"), vega: num(o, "vega") };
+  return {
+    tenorYears: num(o, "tenor_years"),
+    delta: num(o, "delta"),
+    vega: num(o, "vega"),
+  };
 }
 
 function crossGammaFromWire(o: WireObject): CrossGamma {
@@ -1743,7 +1939,9 @@ export function scenarioResultFromWire(o: WireObject): ScenarioResult {
   // "not requested / no position" empty-state rather than a row of zeros.
   const br = o["bucketed_risk"];
   const bucketedRisk =
-    br && typeof br === "object" ? bucketedRiskFromWire(br as WireObject) : null;
+    br && typeof br === "object"
+      ? bucketedRiskFromWire(br as WireObject)
+      : null;
   return {
     points: array(o, "points").map(scenarioPointFromWire),
     bucketedRisk,
@@ -1795,7 +1993,9 @@ export function principalToWire(p: EntitlementPrincipal): WireObject {
  * absent request. A deployment's authenticating gateway injects/validates the real
  * principal in production.
  */
-export function principalOrGrantAllToWire(p: EntitlementPrincipal | undefined): WireObject {
+export function principalOrGrantAllToWire(
+  p: EntitlementPrincipal | undefined,
+): WireObject {
   return principalToWire(p ?? { grantAll: true, grants: [], denies: [] });
 }
 
@@ -1851,7 +2051,10 @@ function ccyExposureLegFromWire(o: WireObject): CcyExposureLeg {
 }
 
 function vegaLadderBucketFromWire(o: WireObject): VegaLadderBucket {
-  return { pillar: vegaPillarFromWire(child(o, "pillar")), vega: num(o, "vega") };
+  return {
+    pillar: vegaPillarFromWire(child(o, "pillar")),
+    vega: num(o, "vega"),
+  };
 }
 
 function additiveRiskFromWire(o: WireObject): AdditiveRisk {
@@ -1928,14 +2131,18 @@ function limitUtilizationFromWire(o: WireObject): LimitUtilization {
 
 // --- request encoders (GUI → wire body) ------------------------------------
 
-export function listPositionsRequestToWire(r: ListPositionsRequest): WireObject {
+export function listPositionsRequestToWire(
+  r: ListPositionsRequest,
+): WireObject {
   const w: WireObject = {};
   if (r.scope) w["scope"] = riskScopeToWire(r.scope);
   w["principal"] = principalOrGrantAllToWire(r.principal);
   return w;
 }
 
-export function aggregateRiskRequestToWire(r: AggregateRiskRequest): WireObject {
+export function aggregateRiskRequestToWire(
+  r: AggregateRiskRequest,
+): WireObject {
   const w: WireObject = {
     dimension: e.riskDimension.toWire(r.dimension),
     numeraire: numeraireToWire(r.numeraire),
@@ -1976,7 +2183,9 @@ export function limitStatusRequestToWire(r: LimitStatusRequest): WireObject {
 
 // --- response decoders (wire → GUI) ----------------------------------------
 
-export function listPositionsResponseFromWire(o: WireObject): ListPositionsResponse {
+export function listPositionsResponseFromWire(
+  o: WireObject,
+): ListPositionsResponse {
   const res: ListPositionsResponse = {
     positions: array(o, "positions").map(riskPositionFromWire),
   };
@@ -1985,7 +2194,9 @@ export function listPositionsResponseFromWire(o: WireObject): ListPositionsRespo
   return res;
 }
 
-export function aggregateRiskResponseFromWire(o: WireObject): AggregateRiskResponse {
+export function aggregateRiskResponseFromWire(
+  o: WireObject,
+): AggregateRiskResponse {
   const res: AggregateRiskResponse = {
     dimension: e.riskDimension.fromWire(enumNum(o, "dimension")),
     numeraire: str(o, "numeraire"),
@@ -2007,7 +2218,9 @@ export function drillRiskResponseFromWire(o: WireObject): DrillRiskResponse {
   return res;
 }
 
-export function limitStatusResponseFromWire(o: WireObject): LimitStatusResponse {
+export function limitStatusResponseFromWire(
+  o: WireObject,
+): LimitStatusResponse {
   const res: LimitStatusResponse = {
     scope: riskScopeFromWire(child(o, "scope")),
     limits: array(o, "limits").map(limitUtilizationFromWire),
@@ -2098,22 +2311,33 @@ export function listFixConnectionsRequestToWire(): WireObject {
   return { principal: adminPrincipal() };
 }
 
-export function listFixConnectionsResponseFromWire(o: WireObject): FixConnection[] {
+export function listFixConnectionsResponseFromWire(
+  o: WireObject,
+): FixConnection[] {
   const arr = o["connections"];
-  return Array.isArray(arr) ? (arr as WireObject[]).map(fixConnectionFromWire) : [];
+  return Array.isArray(arr)
+    ? (arr as WireObject[]).map(fixConnectionFromWire)
+    : [];
 }
 
 /** A single-connection response (`{ connection: {...} }`) from create/update/enable. */
 export function fixConnectionResponseFromWire(o: WireObject): FixConnection {
   const c = o["connection"];
-  return fixConnectionFromWire(c && typeof c === "object" ? (c as WireObject) : {});
+  return fixConnectionFromWire(
+    c && typeof c === "object" ? (c as WireObject) : {},
+  );
 }
 
-export function createFixConnectionRequestToWire(spec: FixConnectionSpec): WireObject {
+export function createFixConnectionRequestToWire(
+  spec: FixConnectionSpec,
+): WireObject {
   return { spec: fixSpecToWire(spec), principal: adminPrincipal() };
 }
 
-export function updateFixConnectionRequestToWire(id: string, spec: FixConnectionSpec): WireObject {
+export function updateFixConnectionRequestToWire(
+  id: string,
+  spec: FixConnectionSpec,
+): WireObject {
   return { id, spec: fixSpecToWire(spec), principal: adminPrincipal() };
 }
 
@@ -2121,7 +2345,10 @@ export function deleteFixConnectionRequestToWire(id: string): WireObject {
   return { id, principal: adminPrincipal() };
 }
 
-export function setFixConnectionEnabledRequestToWire(id: string, enabled: boolean): WireObject {
+export function setFixConnectionEnabledRequestToWire(
+  id: string,
+  enabled: boolean,
+): WireObject {
   return { id, enabled, principal: adminPrincipal() };
 }
 
@@ -2158,14 +2385,17 @@ export function listFixMessagesRequestToWire(
     limit,
     principal: adminPrincipal(),
   };
-  if (connectionId && connectionId.length > 0) body.connection_id = connectionId;
+  if (connectionId && connectionId.length > 0)
+    body.connection_id = connectionId;
   return body;
 }
 
 export function listFixMessagesResponseFromWire(o: WireObject): FixMessagePage {
   const arr = o["messages"];
   return {
-    messages: Array.isArray(arr) ? (arr as WireObject[]).map(fixMessageFromWire) : [],
+    messages: Array.isArray(arr)
+      ? (arr as WireObject[]).map(fixMessageFromWire)
+      : [],
     latestSeq: numToBigInt(o, "latest_seq"),
   };
 }
@@ -2212,7 +2442,10 @@ export function deskDescFromWire(o: WireObject): DeskDesc {
 
 // login / logout -------------------------------------------------------------
 
-export function loginRequestToWire(email: string, password: string): WireObject {
+export function loginRequestToWire(
+  email: string,
+  password: string,
+): WireObject {
   return { email, password };
 }
 
@@ -2259,7 +2492,10 @@ export function createUserRequestToWire(input: CreateUserInput): WireObject {
   return body;
 }
 
-export function updateUserRequestToWire(id: string, input: UpdateUserInput): WireObject {
+export function updateUserRequestToWire(
+  id: string,
+  input: UpdateUserInput,
+): WireObject {
   const body: WireObject = {
     id,
     display_name: input.displayName,
@@ -2280,7 +2516,10 @@ export function deleteUserRequestToWire(id: string): WireObject {
   return { id };
 }
 
-export function resetPasswordRequestToWire(id: string, newPassword: string): WireObject {
+export function resetPasswordRequestToWire(
+  id: string,
+  newPassword: string,
+): WireObject {
   return { id, new_password: newPassword };
 }
 
@@ -2304,7 +2543,9 @@ function capabilityToWire(cap: Capability): WireObject {
 
 function capabilityListFromWire(o: WireObject, key: string): Capability[] {
   const arr = o[key];
-  return Array.isArray(arr) ? (arr as WireObject[]).map(capabilityFromWire) : [];
+  return Array.isArray(arr)
+    ? (arr as WireObject[]).map(capabilityFromWire)
+    : [];
 }
 
 export function getUserCapabilitiesRequestToWire(id: string): WireObject {
@@ -2398,7 +2639,11 @@ export function entityDescFromWire(o: WireObject): EntityDesc {
 
 /** A netting book from its wire form (maps `entity_key` → `entityKey`). */
 export function bookDescFromWire(o: WireObject): BookDesc {
-  return { key: num(o, "key"), name: str(o, "name"), entityKey: num(o, "entity_key") };
+  return {
+    key: num(o, "key"),
+    name: str(o, "name"),
+    entityKey: num(o, "entity_key"),
+  };
 }
 
 export function listEntitiesRequestToWire(): WireObject {
@@ -2407,7 +2652,9 @@ export function listEntitiesRequestToWire(): WireObject {
 
 export function entitiesResponseFromWire(o: WireObject): EntityDesc[] {
   const arr = o["entities"];
-  return Array.isArray(arr) ? (arr as WireObject[]).map(entityDescFromWire) : [];
+  return Array.isArray(arr)
+    ? (arr as WireObject[]).map(entityDescFromWire)
+    : [];
 }
 
 export function createEntityRequestToWire(input: EntityInput): WireObject {
@@ -2415,14 +2662,19 @@ export function createEntityRequestToWire(input: EntityInput): WireObject {
   return { name: input.name, code: input.code, key: 0 };
 }
 
-export function updateEntityRequestToWire(key: number, input: EntityInput): WireObject {
+export function updateEntityRequestToWire(
+  key: number,
+  input: EntityInput,
+): WireObject {
   return { key, name: input.name, code: input.code };
 }
 
 /** A single-entity response (`{ entity: {...} }`) from create / update. */
 export function entityResponseFromWire(o: WireObject): EntityDesc {
   const e = o["entity"];
-  return entityDescFromWire(e && typeof e === "object" ? (e as WireObject) : {});
+  return entityDescFromWire(
+    e && typeof e === "object" ? (e as WireObject) : {},
+  );
 }
 
 export function deleteEntityRequestToWire(key: number): WireObject {
@@ -2443,7 +2695,10 @@ export function createBookRequestToWire(input: BookInput): WireObject {
   return { name: input.name, entity_key: input.entityKey, key: 0 };
 }
 
-export function updateBookRequestToWire(key: number, input: BookInput): WireObject {
+export function updateBookRequestToWire(
+  key: number,
+  input: BookInput,
+): WireObject {
   return { key, name: input.name, entity_key: input.entityKey };
 }
 
@@ -2455,4 +2710,345 @@ export function bookResponseFromWire(o: WireObject): BookDesc {
 
 export function deleteBookRequestToWire(key: number): WireObject {
   return { key };
+}
+
+// --- instrument reference-data registry (instrument admin) -----------------
+//
+// The WS mirror of `AuthService.{List,Get,Create,Update,Delete}Instrument`. A
+// definition carries exactly ONE family sub-object keyed by its family token;
+// the wire key is snake_case (`stir_future`, `vanilla_irs`) while the GUI holds
+// it under a camelCase key (`stirFuture`, `vanillaIrs`). Every scalar field is
+// snake_case on the wire (`day_count`, `spot_lag_days`, `external_ids`). Bond
+// dates are `{ year, month, day }`; the optional ones are omitted on the wire
+// when absent. `session_token` is auto-injected by `WsConnection.request`, so
+// these encoders carry only the business body.
+
+function strArray(o: WireObject, key: string): string[] {
+  const v = o[key];
+  return Array.isArray(v)
+    ? v.filter((x): x is string => typeof x === "string")
+    : [];
+}
+
+function externalIdsToWire(ids: ExternalIdEntry[]): WireObject[] {
+  return ids.map((id) => ({ scheme: id.scheme, value: id.value }));
+}
+
+function externalIdsFromWire(o: WireObject): ExternalIdEntry[] {
+  const arr = o["external_ids"];
+  if (!Array.isArray(arr)) return [];
+  return (arr as WireObject[]).map((entry) => ({
+    scheme: str(entry, "scheme") as ExternalIdScheme,
+    value: str(entry, "value"),
+  }));
+}
+
+function brokenDateToWire(d: BrokenDate): WireObject {
+  return { year: d.year, month: d.month, day: d.day };
+}
+
+function brokenDateFromWire(o: WireObject): BrokenDate {
+  return { year: num(o, "year"), month: num(o, "month"), day: num(o, "day") };
+}
+
+/** An optional bond date: present ⇒ decoded, `null`/absent ⇒ undefined. */
+function optBrokenDate(o: WireObject, key: string): BrokenDate | undefined {
+  const v = o[key];
+  if (!v || typeof v !== "object") return undefined;
+  return brokenDateFromWire(v as WireObject);
+}
+
+function depositToWire(d: DepositDef): WireObject {
+  return {
+    index: d.index,
+    tenor: d.tenor,
+    day_count: d.dayCount,
+    business_day_convention: d.businessDayConvention,
+    calendars: d.calendars,
+    spot_lag_days: d.spotLagDays,
+  };
+}
+
+function depositFromWire(o: WireObject): DepositDef {
+  return {
+    index: str(o, "index"),
+    tenor: str(o, "tenor"),
+    dayCount: str(o, "day_count") as RatesDayCount,
+    businessDayConvention: str(
+      o,
+      "business_day_convention",
+    ) as BusinessDayConvention,
+    calendars: strArray(o, "calendars") as Calendar[],
+    spotLagDays: num(o, "spot_lag_days"),
+  };
+}
+
+function fraToWire(d: FraDef): WireObject {
+  return {
+    float_index: d.floatIndex,
+    start_tenor: d.startTenor,
+    end_tenor: d.endTenor,
+    accrual_day_count: d.accrualDayCount,
+    business_day_convention: d.businessDayConvention,
+    calendars: d.calendars,
+    spot_lag_days: d.spotLagDays,
+  };
+}
+
+function fraFromWire(o: WireObject): FraDef {
+  return {
+    floatIndex: str(o, "float_index"),
+    startTenor: str(o, "start_tenor"),
+    endTenor: str(o, "end_tenor"),
+    accrualDayCount: str(o, "accrual_day_count") as RatesDayCount,
+    businessDayConvention: str(
+      o,
+      "business_day_convention",
+    ) as BusinessDayConvention,
+    calendars: strArray(o, "calendars") as Calendar[],
+    spotLagDays: num(o, "spot_lag_days"),
+  };
+}
+
+function stirFutureToWire(d: StirFutureDef): WireObject {
+  return {
+    contract_code: d.contractCode,
+    reference_start: d.referenceStart,
+    reference_end: d.referenceEnd,
+    day_count: d.dayCount,
+    calendars: d.calendars,
+    convexity_vol: d.convexityVol,
+    contract_size: d.contractSize,
+  };
+}
+
+function stirFutureFromWire(o: WireObject): StirFutureDef {
+  return {
+    contractCode: str(o, "contract_code"),
+    referenceStart: str(o, "reference_start"),
+    referenceEnd: str(o, "reference_end"),
+    dayCount: str(o, "day_count") as RatesDayCount,
+    calendars: strArray(o, "calendars") as Calendar[],
+    convexityVol: num(o, "convexity_vol"),
+    contractSize: num(o, "contract_size"),
+  };
+}
+
+function vanillaIrsToWire(d: VanillaIrsDef): WireObject {
+  return {
+    tenor: d.tenor,
+    fixed_frequency: d.fixedFrequency,
+    fixed_day_count: d.fixedDayCount,
+    float_index: d.floatIndex,
+    float_frequency: d.floatFrequency,
+    float_day_count: d.floatDayCount,
+    business_day_convention: d.businessDayConvention,
+    calendars: d.calendars,
+    roll_convention: d.rollConvention,
+    spot_lag_days: d.spotLagDays,
+  };
+}
+
+function vanillaIrsFromWire(o: WireObject): VanillaIrsDef {
+  return {
+    tenor: str(o, "tenor"),
+    fixedFrequency: str(o, "fixed_frequency") as Frequency,
+    fixedDayCount: str(o, "fixed_day_count") as RatesDayCount,
+    floatIndex: str(o, "float_index"),
+    floatFrequency: str(o, "float_frequency") as Frequency,
+    floatDayCount: str(o, "float_day_count") as RatesDayCount,
+    businessDayConvention: str(
+      o,
+      "business_day_convention",
+    ) as BusinessDayConvention,
+    calendars: strArray(o, "calendars") as Calendar[],
+    rollConvention: str(o, "roll_convention") as RollConvention,
+    spotLagDays: num(o, "spot_lag_days"),
+  };
+}
+
+function oisToWire(d: OisDef): WireObject {
+  return {
+    tenor: d.tenor,
+    index: d.index,
+    fixed_frequency: d.fixedFrequency,
+    fixed_day_count: d.fixedDayCount,
+    float_day_count: d.floatDayCount,
+    business_day_convention: d.businessDayConvention,
+    calendars: d.calendars,
+    spot_lag_days: d.spotLagDays,
+  };
+}
+
+function oisFromWire(o: WireObject): OisDef {
+  return {
+    tenor: str(o, "tenor"),
+    index: str(o, "index"),
+    fixedFrequency: str(o, "fixed_frequency") as Frequency,
+    fixedDayCount: str(o, "fixed_day_count") as RatesDayCount,
+    floatDayCount: str(o, "float_day_count") as RatesDayCount,
+    businessDayConvention: str(
+      o,
+      "business_day_convention",
+    ) as BusinessDayConvention,
+    calendars: strArray(o, "calendars") as Calendar[],
+    spotLagDays: num(o, "spot_lag_days"),
+  };
+}
+
+function bondToWire(b: BondDef): WireObject {
+  const w: WireObject = {
+    issuer: b.issuer,
+    coupon_rate: b.couponRate,
+    coupon_type: b.couponType,
+    coupon_frequency: b.couponFrequency,
+    day_count: b.dayCount,
+    maturity_date: brokenDateToWire(b.maturityDate),
+    redemption: b.redemption,
+    calendars: b.calendars,
+  };
+  if (b.issueDate) w.issue_date = brokenDateToWire(b.issueDate);
+  if (b.datedDate) w.dated_date = brokenDateToWire(b.datedDate);
+  if (b.firstCouponDate)
+    w.first_coupon_date = brokenDateToWire(b.firstCouponDate);
+  return w;
+}
+
+function bondFromWire(o: WireObject): BondDef {
+  const def: BondDef = {
+    issuer: str(o, "issuer"),
+    couponRate: num(o, "coupon_rate"),
+    couponType: str(o, "coupon_type") as CouponType,
+    couponFrequency: str(o, "coupon_frequency") as Frequency | "",
+    dayCount: str(o, "day_count") as RatesDayCount,
+    maturityDate: brokenDateFromWire(child(o, "maturity_date")),
+    redemption: num(o, "redemption"),
+    calendars: strArray(o, "calendars") as Calendar[],
+  };
+  const issue = optBrokenDate(o, "issue_date");
+  const dated = optBrokenDate(o, "dated_date");
+  const firstCoupon = optBrokenDate(o, "first_coupon_date");
+  if (issue) def.issueDate = issue;
+  if (dated) def.datedDate = dated;
+  if (firstCoupon) def.firstCouponDate = firstCoupon;
+  return def;
+}
+
+/** An instrument definition → its wire form (single family sub-object). */
+export function instrumentDefToWire(def: InstrumentDef): WireObject {
+  const wire: WireObject = {
+    instrument_id: def.instrumentId,
+    name: def.name,
+    description: def.description,
+    currency: def.currency,
+    external_ids: externalIdsToWire(def.externalIds),
+  };
+  switch (def.family) {
+    case "deposit":
+      wire.deposit = depositToWire(def.deposit);
+      break;
+    case "fra":
+      wire.fra = fraToWire(def.fra);
+      break;
+    case "stir_future":
+      wire.stir_future = stirFutureToWire(def.stirFuture);
+      break;
+    case "vanilla_irs":
+      wire.vanilla_irs = vanillaIrsToWire(def.vanillaIrs);
+      break;
+    case "ois":
+      wire.ois = oisToWire(def.ois);
+      break;
+    case "bond":
+      wire.bond = bondToWire(def.bond);
+      break;
+  }
+  return wire;
+}
+
+/** An instrument definition from its wire form (detects the family sub-object). */
+export function instrumentDefFromWire(o: WireObject): InstrumentDef {
+  const base = {
+    instrumentId: str(o, "instrument_id"),
+    name: str(o, "name"),
+    description: str(o, "description"),
+    currency: str(o, "currency"),
+    externalIds: externalIdsFromWire(o),
+  };
+  const has = (key: string): boolean =>
+    Boolean(o[key]) && typeof o[key] === "object";
+  if (has("deposit")) {
+    return {
+      ...base,
+      family: "deposit",
+      deposit: depositFromWire(child(o, "deposit")),
+    };
+  }
+  if (has("fra")) {
+    return { ...base, family: "fra", fra: fraFromWire(child(o, "fra")) };
+  }
+  if (has("stir_future")) {
+    return {
+      ...base,
+      family: "stir_future",
+      stirFuture: stirFutureFromWire(child(o, "stir_future")),
+    };
+  }
+  if (has("vanilla_irs")) {
+    return {
+      ...base,
+      family: "vanilla_irs",
+      vanillaIrs: vanillaIrsFromWire(child(o, "vanilla_irs")),
+    };
+  }
+  if (has("ois")) {
+    return { ...base, family: "ois", ois: oisFromWire(child(o, "ois")) };
+  }
+  // Exactly one family is always present; bond is the remaining case.
+  return { ...base, family: "bond", bond: bondFromWire(child(o, "bond")) };
+}
+
+export function listInstrumentsRequestToWire(): WireObject {
+  return {};
+}
+
+export function instrumentsResponseFromWire(o: WireObject): InstrumentDef[] {
+  const arr = o["instruments"];
+  return Array.isArray(arr)
+    ? (arr as WireObject[]).map(instrumentDefFromWire)
+    : [];
+}
+
+export function getInstrumentRequestToWire(id: string): WireObject {
+  return { instrument_id: id };
+}
+
+/** A single-instrument response (`{ instrument: {...} | null }`). */
+export function instrumentResponseFromWire(
+  o: WireObject,
+): InstrumentDef | null {
+  const v = o["instrument"];
+  if (!v || typeof v !== "object") return null;
+  return instrumentDefFromWire(v as WireObject);
+}
+
+export function createInstrumentRequestToWire(
+  input: InstrumentInput,
+): WireObject {
+  return { instrument: instrumentDefToWire(input) };
+}
+
+export function updateInstrumentRequestToWire(
+  input: InstrumentInput,
+): WireObject {
+  return { instrument: instrumentDefToWire(input) };
+}
+
+export function deleteInstrumentRequestToWire(id: string): WireObject {
+  return { instrument_id: id };
+}
+
+/** A delete response (`{ removed: boolean }`). */
+export function deleteInstrumentResponseFromWire(o: WireObject): boolean {
+  return o["removed"] === true;
 }

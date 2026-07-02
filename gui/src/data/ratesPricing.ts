@@ -33,6 +33,7 @@
 import type {
   BrokenDate,
   OisInstrument,
+  PillarTenor,
   RatesCurveSet,
   RatesPricingResult,
 } from "./contract";
@@ -70,7 +71,8 @@ function dayNumber(date: BrokenDate): number {
   const era = Math.floor((y >= 0 ? y : y - 399) / 400);
   const yoe = y - era * 400; // [0, 399]
   const m = date.month;
-  const doy = Math.floor((153 * (m > 2 ? m - 3 : m + 9) + 2) / 5) + date.day - 1; // [0, 365]
+  const doy =
+    Math.floor((153 * (m > 2 ? m - 3 : m + 9) + 2) / 5) + date.day - 1; // [0, 365]
   const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy; // [0, 146096]
   return era * 146097 + doe - 719468;
 }
@@ -80,7 +82,13 @@ function civilFromDayNumber(z: number): BrokenDate {
   const zz = z + 719468;
   const era = Math.floor((zz >= 0 ? zz : zz - 146096) / 146097);
   const doe = zz - era * 146097; // [0, 146096]
-  const yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365); // [0, 399]
+  const yoe = Math.floor(
+    (doe -
+      Math.floor(doe / 1460) +
+      Math.floor(doe / 36524) -
+      Math.floor(doe / 146096)) /
+      365,
+  ); // [0, 399]
   const y = yoe + era * 400;
   const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100)); // [0, 365]
   const mp = Math.floor((5 * doy + 2) / 153); // [0, 11]
@@ -133,10 +141,15 @@ function addMonths(date: BrokenDate, months: number): BrokenDate {
 // the server's `BusinessCalendar::single(UnitedStates)` does.
 
 /** The `n`-th `weekday` (Mon=0..Sun=6) of `(year, month)` — e.g. the 3rd Monday. */
-function nthWeekday(year: number, month: number, weekday: number, n: number): BrokenDate {
+function nthWeekday(
+  year: number,
+  month: number,
+  weekday: number,
+  n: number,
+): BrokenDate {
   const first: BrokenDate = { year, month, day: 1 };
   const firstWd = weekdayFromMonday(first);
-  const offset = ((weekday - firstWd) % 7 + 7) % 7;
+  const offset = (((weekday - firstWd) % 7) + 7) % 7;
   return addDays(first, offset + 7 * (n - 1));
 }
 
@@ -144,7 +157,7 @@ function nthWeekday(year: number, month: number, weekday: number, n: number): Br
 function lastWeekday(year: number, month: number, weekday: number): BrokenDate {
   const last: BrokenDate = { year, month, day: monthLength(year, month) };
   const lastWd = weekdayFromMonday(last);
-  const back = ((lastWd - weekday) % 7 + 7) % 7;
+  const back = (((lastWd - weekday) % 7) + 7) % 7;
   return addDays(last, -back);
 }
 
@@ -248,7 +261,10 @@ function act365f(start: BrokenDate, end: BrokenDate): number {
  * rolled modified-following on the US calendar; the fixed-leg accrual is ACT/360
  * and each payment's discount-time coordinate is ACT/365F from the start.
  */
-function usdSofrOisSchedule(reference: BrokenDate, years: number): FixedPeriod[] {
+function usdSofrOisSchedule(
+  reference: BrokenDate,
+  years: number,
+): FixedPeriod[] {
   const start = rollFollowing(reference);
   const periods: FixedPeriod[] = [];
   let prev = start;
@@ -258,6 +274,65 @@ function usdSofrOisSchedule(reference: BrokenDate, years: number): FixedPeriod[]
     prev = end;
   }
   return periods;
+}
+
+/**
+ * Spot-starting USD-SOFR schedule whose final period ends at an explicit
+ * `maturity` civil date — the generalisation for custom (broken-period) tenors and
+ * odd-dated ("broken date") pillars. Annual periods roll forward in 12-month steps
+ * from spot; a final stub ends at the modified-following adjusted maturity. For a
+ * whole-year N this reproduces `usdSofrOisSchedule(reference, N)` exactly (mirrors
+ * the server `usd_ois_schedule_to_maturity`).
+ */
+function usdSofrOisScheduleToMaturity(
+  reference: BrokenDate,
+  maturity: BrokenDate,
+): FixedPeriod[] {
+  const start = rollFollowing(reference);
+  const end = rollModifiedFollowing(maturity);
+  if (dayNumber(end) <= dayNumber(start)) {
+    throw new RatesPricingError(
+      "pillar maturity must be after the curve spot date",
+    );
+  }
+  const periods: FixedPeriod[] = [];
+  let prev = start;
+  for (let i = 1; ; i += 1) {
+    const roll = rollModifiedFollowing(addMonths(start, 12 * i));
+    if (dayNumber(roll) >= dayNumber(end)) break;
+    periods.push({ pay: act365f(start, roll), accrual: act360(prev, roll) });
+    prev = roll;
+  }
+  periods.push({ pay: act365f(start, end), accrual: act360(prev, end) });
+  return periods;
+}
+
+/** Spot-starting USD-SOFR schedule of a `months`-month tenor (the month arm). */
+function usdSofrOisScheduleForMonths(
+  reference: BrokenDate,
+  months: number,
+): FixedPeriod[] {
+  const start = rollFollowing(reference);
+  return usdSofrOisScheduleToMaturity(reference, addMonths(start, months));
+}
+
+/** Resolve a pillar's `PillarTenor` to its spot-starting USD-SOFR schedule. */
+function pillarSchedule(
+  tenor: PillarTenor,
+  reference: BrokenDate,
+): FixedPeriod[] {
+  switch (tenor.kind) {
+    case "years":
+      if (tenor.years < 1)
+        throw new RatesPricingError("pillar year tenor must be >= 1");
+      return usdSofrOisSchedule(reference, tenor.years);
+    case "months":
+      if (tenor.months < 1)
+        throw new RatesPricingError("pillar month tenor must be >= 1");
+      return usdSofrOisScheduleForMonths(reference, tenor.months);
+    case "date":
+      return usdSofrOisScheduleToMaturity(reference, tenor.maturityDate);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +361,9 @@ export interface DiscountCurve {
 }
 
 /** Build a curve from ascending `(time, discount factor)` pillars (origin prepended-aware). */
-function curveFromDiscountFactors(pillars: ReadonlyArray<{ t: number; df: number }>): DiscountCurve {
+function curveFromDiscountFactors(
+  pillars: ReadonlyArray<{ t: number; df: number }>,
+): DiscountCurve {
   const nodes = pillars.map((p) => ({ t: p.t, lnDf: Math.log(p.df) }));
   return { nodes };
 }
@@ -326,7 +403,10 @@ function discountFactor(curve: DiscountCurve, t: number): number {
 // `DF(0) = 1`.
 
 /** The fixed-leg annuity `A = Σ δ_i · DF(pay_i)` (per unit notional). */
-function oisAnnuity(curve: DiscountCurve, schedule: readonly FixedPeriod[]): number {
+function oisAnnuity(
+  curve: DiscountCurve,
+  schedule: readonly FixedPeriod[],
+): number {
   let annuity = 0;
   for (const p of schedule) annuity += p.accrual * discountFactor(curve, p.pay);
   return annuity;
@@ -338,7 +418,10 @@ function maturity(schedule: readonly FixedPeriod[]): number {
 }
 
 /** The par (fair fixed) rate `K* = (1 − DF(T)) / annuity`. */
-function oisParRate(curve: DiscountCurve, schedule: readonly FixedPeriod[]): number {
+function oisParRate(
+  curve: DiscountCurve,
+  schedule: readonly FixedPeriod[],
+): number {
   const dfT = discountFactor(curve, maturity(schedule));
   return (1 - dfT) / oisAnnuity(curve, schedule);
 }
@@ -462,12 +545,16 @@ function bootstrapOis(quotes: readonly OisQuote[]): DiscountCurve {
   for (const quote of quotes) {
     const t = maturity(quote.schedule);
     if (t <= prevMaturity) {
-      throw new RatesPricingError("quote maturities must be strictly increasing");
+      throw new RatesPricingError(
+        "quote maturities must be strictly increasing",
+      );
     }
     const target = quote.parRate;
     const residual = (z: number): number => {
       const candidate = [...pillars, { t, df: Math.exp(-z * t) }];
-      return oisParRate(curveFromDiscountFactors(candidate), quote.schedule) - target;
+      return (
+        oisParRate(curveFromDiscountFactors(candidate), quote.schedule) - target
+      );
     };
     const z = brentRoot(residual, Z_LO, Z_HI);
     pillars.push({ t, df: Math.exp(-z * t) });
@@ -516,12 +603,15 @@ function oisRisk(
   // Parallel DV01: every calibrating quote bumped +1bp.
   const parallel = quotes.map((q) => bumpQuote(q, ONE_BP));
   const bumpedCurve = bootstrapOis(parallel);
-  const dv01 = oisReceiveFixedPv(bumpedCurve, schedule, fixedRate, notional) - pv;
+  const dv01 =
+    oisReceiveFixedPv(bumpedCurve, schedule, fixedRate, notional) - pv;
 
   // Key-rate ladder: each calibrating quote bumped +1bp in isolation.
   const keyRate: number[] = [];
   for (let target = 0; target < quotes.length; target += 1) {
-    const single = quotes.map((q, j) => (j === target ? bumpQuote(q, ONE_BP) : q));
+    const single = quotes.map((q, j) =>
+      j === target ? bumpQuote(q, ONE_BP) : q,
+    );
     const curve = bootstrapOis(single);
     keyRate.push(oisReceiveFixedPv(curve, schedule, fixedRate, notional) - pv);
   }
@@ -552,15 +642,15 @@ export const DEFAULT_USD_SOFR_CURVE: RatesCurveSet = {
   currency: SUPPORTED_CURRENCY,
   referenceDate: { year: 2026, month: 6, day: 25 },
   pillars: [
-    { tenorYears: 1, parRate: 0.0432 },
-    { tenorYears: 2, parRate: 0.0418 },
-    { tenorYears: 3, parRate: 0.0409 },
-    { tenorYears: 5, parRate: 0.0405 },
-    { tenorYears: 7, parRate: 0.0408 },
-    { tenorYears: 10, parRate: 0.0415 },
-    { tenorYears: 15, parRate: 0.0421 },
-    { tenorYears: 20, parRate: 0.0424 },
-    { tenorYears: 30, parRate: 0.0423 },
+    { tenor: { kind: "years", years: 1 }, parRate: 0.0432 },
+    { tenor: { kind: "years", years: 2 }, parRate: 0.0418 },
+    { tenor: { kind: "years", years: 3 }, parRate: 0.0409 },
+    { tenor: { kind: "years", years: 5 }, parRate: 0.0405 },
+    { tenor: { kind: "years", years: 7 }, parRate: 0.0408 },
+    { tenor: { kind: "years", years: 10 }, parRate: 0.0415 },
+    { tenor: { kind: "years", years: 15 }, parRate: 0.0421 },
+    { tenor: { kind: "years", years: 20 }, parRate: 0.0424 },
+    { tenor: { kind: "years", years: 30 }, parRate: 0.0423 },
   ],
 };
 
@@ -575,19 +665,30 @@ function buildQuotes(curve: RatesCurveSet): OisQuote[] {
     throw new RatesPricingError("curve set carries no OIS pillars");
   }
   const quotes: OisQuote[] = [];
-  let prevTenor = 0;
+  // Order by final ACT/365F pay-time from spot — strictly increasing iff the
+  // resolved maturities are, regardless of which arm located each pillar.
+  let prevPay = 0;
   for (const pillar of curve.pillars) {
-    if (pillar.tenorYears < 1) throw new RatesPricingError("pillar tenor_years must be >= 1");
-    if (pillar.tenorYears <= prevTenor) {
-      throw new RatesPricingError("curve pillar tenors must be strictly increasing");
+    const schedule = pillarSchedule(pillar.tenor, curve.referenceDate);
+    const lastPay = schedule[schedule.length - 1]!.pay;
+    if (lastPay <= prevPay) {
+      throw new RatesPricingError(
+        "curve pillar maturities must be strictly increasing",
+      );
     }
-    prevTenor = pillar.tenorYears;
-    quotes.push({
-      schedule: usdSofrOisSchedule(curve.referenceDate, pillar.tenorYears),
-      parRate: pillar.parRate,
-    });
+    prevPay = lastPay;
+    quotes.push({ schedule, parRate: pillar.parRate });
   }
   return quotes;
+}
+
+/** A pillar's maturity in year-fraction (ACT/365F) from the curve spot date. */
+export function pillarMaturityYears(
+  tenor: PillarTenor,
+  reference: BrokenDate,
+): number {
+  const schedule = pillarSchedule(tenor, reference);
+  return schedule[schedule.length - 1]!.pay;
 }
 
 /** The receive-fixed sign for an OIS direction: receive = +1, pay = −1. */
@@ -609,11 +710,21 @@ export function priceRatesOffline(
   instrument: OisInstrument,
 ): RatesPricingResult {
   const quotes = buildQuotes(curve);
-  if (instrument.tenorYears < 1) throw new RatesPricingError("tenor_years must be >= 1");
-  if (instrument.notional <= 0) throw new RatesPricingError("notional must be > 0");
+  if (instrument.tenorYears < 1)
+    throw new RatesPricingError("tenor_years must be >= 1");
+  if (instrument.notional <= 0)
+    throw new RatesPricingError("notional must be > 0");
 
-  const schedule = usdSofrOisSchedule(curve.referenceDate, instrument.tenorYears);
-  const risk = oisRisk(quotes, schedule, instrument.fixedRate, instrument.notional);
+  const schedule = usdSofrOisSchedule(
+    curve.referenceDate,
+    instrument.tenorYears,
+  );
+  const risk = oisRisk(
+    quotes,
+    schedule,
+    instrument.fixedRate,
+    instrument.notional,
+  );
   const par = oisParRate(bootstrapOis(quotes), schedule);
   const sign = directionSign(instrument);
 
@@ -680,7 +791,10 @@ export function zeroRateAt(curve: DiscountCurve, t: number): number {
  * pillar (where the flat forward steps). `lnDiscount` flat-forward-extrapolates
  * below `t = 0`, so `f(0)` is the first segment's forward.
  */
-export function instantaneousForwardAt(curve: DiscountCurve, t: number): number {
+export function instantaneousForwardAt(
+  curve: DiscountCurve,
+  t: number,
+): number {
   const lo = lnDiscount(curve, t - FORWARD_DT);
   const hi = lnDiscount(curve, t + FORWARD_DT);
   return -(hi - lo) / (2 * FORWARD_DT);
@@ -719,7 +833,9 @@ export function sampleCurve(
   opts: CurveSampleOptions = {},
 ): CurveSamplePoint[] {
   const discount = bootstrapCurveFromSet(curve);
-  const span = opts.maxTenor ?? curve.pillars[curve.pillars.length - 1]!.tenorYears;
+  const lastPillar = curve.pillars[curve.pillars.length - 1]!;
+  const span =
+    opts.maxTenor ?? pillarMaturityYears(lastPillar.tenor, curve.referenceDate);
   const n = Math.max(2, Math.trunc(opts.samples ?? DEFAULT_CURVE_SAMPLES));
   const out: CurveSamplePoint[] = new Array(n);
   for (let i = 0; i < n; i += 1) {

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::dialect_fx::{self, MarketSnapshot};
+use crate::dialect_fx::{self, MarketSnapshot, SecurityDef};
 use crate::dictionary::MsgType;
 use crate::framing::FrameCursor;
 use crate::messages::{self, EXEC_FILLED, EXEC_REJECTED, ExecReportParams, QuoteParams};
@@ -44,6 +44,11 @@ pub trait QuoteSource {
     fn validity_ticks(&self) -> u64;
     /// The vanilla pricer the venue uses to value the option off the snapshot.
     fn pricer(&self) -> dialect_fx::VanillaPricer;
+    /// The venue's authoritative projection of the tradable-securities universe
+    /// it can quote. Answered verbatim to a `SecurityListRequest(x)` as a
+    /// `SecurityList(y)`, so a client can download exactly what the venue
+    /// prices before it ever sends an RFQ.
+    fn securities(&self) -> Vec<SecurityDef>;
 }
 
 /// The acceptor state machine driving a session and a live-quote table.
@@ -124,6 +129,9 @@ impl<S: MessageStore, Q: QuoteSource> Acceptor<S, Q> {
                 MsgType::QuoteRequest => self.on_quote_request(&frame, sending_time, &mut out),
                 MsgType::NewOrderSingle => self.on_new_order(&frame, sending_time, &mut out),
                 MsgType::NewOrderMultileg => self.on_new_order(&frame, sending_time, &mut out),
+                MsgType::SecurityListRequest => {
+                    self.on_security_list_request(&frame, sending_time, &mut out);
+                }
                 _ => {}
             }
         }
@@ -234,6 +242,30 @@ impl<S: MessageStore, Q: QuoteSource> Acceptor<S, Q> {
         out.push(frame_out);
     }
 
+    /// Answer a `SecurityListRequest(x)`: echo the `SecurityReqID(320)` and
+    /// stream the venue's authoritative tradable-securities universe (from
+    /// [`QuoteSource::securities`]) back as a single `SecurityList(y)` fragment.
+    fn on_security_list_request(
+        &mut self,
+        frame: &FrameCursor<'_>,
+        st: &[u8],
+        out: &mut Vec<Vec<u8>>,
+    ) {
+        let req_id = match frame.get(320) {
+            Some(v) => v.to_vec(),
+            None => return,
+        };
+        let securities = self.quote_source.securities();
+        let frame_out = self.session.send_app(st, |h, e| {
+            let p = dialect_fx::SecurityListParams {
+                security_req_id: &req_id,
+                securities: &securities,
+            };
+            dialect_fx::build_security_list(h, &p, e)
+        });
+        out.push(frame_out);
+    }
+
     /// Borrow the underlying session (state introspection / tests).
     pub fn session(&self) -> &Session<S> {
         &self.session
@@ -247,7 +279,7 @@ impl<S: MessageStore, Q: QuoteSource> Acceptor<S, Q> {
 
 /// A simple [`QuoteSource`] backed by a fixed snapshot and spread — the real
 /// pricing inputs a surface would supply, with no acceptor behaviour faked.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct FixedQuoteSource {
     /// The market snapshot used for every request.
     pub snapshot: MarketSnapshot,
@@ -259,6 +291,9 @@ pub struct FixedQuoteSource {
     pub validity_ticks: u64,
     /// The injected vanilla pricer (the async edge supplies `celnet_vanilla::price`).
     pub pricer: dialect_fx::VanillaPricer,
+    /// The tradable-securities universe this venue advertises on a
+    /// `SecurityListRequest(x)` — the securities it can quote.
+    pub securities: Vec<SecurityDef>,
 }
 
 impl QuoteSource for FixedQuoteSource {
@@ -273,5 +308,8 @@ impl QuoteSource for FixedQuoteSource {
     }
     fn pricer(&self) -> dialect_fx::VanillaPricer {
         self.pricer
+    }
+    fn securities(&self) -> Vec<SecurityDef> {
+        self.securities.clone()
     }
 }

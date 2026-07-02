@@ -23,6 +23,7 @@
 //! refuses new work with `UNAVAILABLE` while the edge is starting or draining.
 
 pub mod access;
+pub mod consensus;
 pub mod desk;
 pub mod error_status;
 pub mod pricing;
@@ -41,6 +42,9 @@ pub mod fix;
 pub mod fix_admin;
 pub mod fix_monitor;
 pub mod fix_registry;
+/// Wire ⇄ domain mapping for the instrument reference-data registry (`AuthService`
+/// instrument RPCs), kept out of [`auth`] to bound that file's size.
+pub mod instrument_wire;
 
 mod attribution;
 pub(crate) mod clicktrade;

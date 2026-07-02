@@ -288,6 +288,74 @@ impl RfqDeskEdge {
         self.notify.publish(&notification);
     }
 
+    /// Ingest an externally-originated (FIX venue) rates RFQ into the desk inbox
+    /// **without** the RPC authorization boundary: a managed FIX acceptor has already
+    /// authenticated the counterparty at the transport (CompID) layer, so this is the
+    /// venue recording what it received — not an unauthenticated RPC caller.
+    ///
+    /// When `quote` is `Some` the venue auto-quoted the RFQ, so it is stored
+    /// [`DeskRequestState::Quoted`] at that firm level (processed history the GUI shows
+    /// alongside live work); otherwise it is stored [`DeskRequestState::Pending`] for a
+    /// human trader to price. Either way the SAME notification the RPC submit path emits
+    /// is published, so a subscribed desk sees the inbound RFQ instantly.
+    ///
+    /// Returns the stored [`DeskRequest`] (for logging/tests).
+    #[allow(clippy::too_many_arguments)] // the request's identifying fields, no natural sub-struct.
+    pub fn ingest_fix_rfq(
+        &self,
+        desk: &str,
+        counterparty: &str,
+        instrument: RatesInstrument,
+        curve_set: CurveSet,
+        side: Side,
+        notional: f64,
+        quote: Option<DeskQuote>,
+    ) -> DeskRequest {
+        let now = self.clock.now_nanos();
+        let expires_at = now.saturating_add(i64::from(DEFAULT_TTL_MS).saturating_mul(1_000_000));
+        let state = if quote.is_some() {
+            DeskRequestState::Quoted
+        } else {
+            DeskRequestState::Pending
+        };
+        let stored = DeskRequest {
+            request_id: self.requests.next_request_id(),
+            kind: DeskRequestKind::Rfq as i32,
+            counterparty: counterparty.to_owned(),
+            desk: desk.to_owned(),
+            instrument: Some(instrument),
+            curve_set: Some(curve_set),
+            side: side as i32,
+            notional,
+            received_at_nanos: now,
+            expires_at_nanos: expires_at,
+            state: state as i32,
+            quote,
+            correlation_id: None,
+        };
+        self.requests.insert(stored.clone());
+
+        // Notify the desk: an auto-quoted RFQ is history (QUOTE_ACCEPTED reads as "the
+        // venue showed a price"); a routed RFQ needs a human (RFQ_RECEIVED).
+        let (kind, headline, detail) = if stored.quote.is_some() {
+            (
+                NotificationKind::QuoteAccepted,
+                format!("Auto-quoted RFQ from {counterparty}"),
+                Some(format!(
+                    "{notional:.0} notional on desk {desk} — auto-quoted"
+                )),
+            )
+        } else {
+            (
+                NotificationKind::RfqReceived,
+                format!("New RFQ from {counterparty} — needs pricing"),
+                Some(format!("{notional:.0} notional on desk {desk}")),
+            )
+        };
+        self.publish_notification(kind, &stored, headline, detail);
+        stored
+    }
+
     /// A deterministic, broker-scoped notification id.
     fn notify_id(&self) -> String {
         // The broker owns no id space (it is a pure fan-out); deals/requests own
@@ -525,7 +593,7 @@ impl RfqDeskService for RfqDeskEdge {
             entity: 0,
             book: 0,
             instrument: Some(booked_instrument),
-        });
+        })?;
 
         let now = self.clock.now_nanos();
         let deal = Deal {
@@ -671,6 +739,7 @@ impl celnet_proto::notification_service_server::NotificationService for RfqDeskE
 mod tests {
     use super::*;
     use crate::services::rates_book::RatesPositionStore;
+    use celnet_limits::{LimitScope, LimitSpec};
     use celnet_proto::{CurveSet, RatesInstrument};
 
     fn curve() -> CurveSet {
@@ -831,6 +900,87 @@ mod tests {
         let booked_ois = ois_of(pos.instrument.as_ref()).unwrap();
         assert_eq!(booked_ois.side, Side::Sell as i32);
         assert_eq!(booked_ois.fixed_rate.to_bits(), 0.0411_f64.to_bits());
+    }
+
+    /// FRONT-END 4 (`RfqDeskService::AcceptDeskQuote`, ADR-0016 A1): accepting a desk
+    /// quote whose booking would blow a hard firm-wide limit is **rejected** with a
+    /// `failed_precondition` `LimitBreached` status at the rates position sink, and
+    /// nothing is booked — neither a rates position nor a deal.
+    #[tokio::test]
+    async fn accept_desk_quote_rejects_a_hard_limit_blown_booking() {
+        // A desk edge over a rates book with a hard firm Delta cap of 1 base unit — a
+        // 25mm 5y OIS charges `25mm · 5 · 1bp = 12500` against it, a hard breach.
+        let rates = Arc::new(RatesPositionStore::new());
+        rates.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Delta, 1.0),
+        );
+        let gate = Arc::new(ReadinessGate::new());
+        gate.mark_ready();
+        let edge = RfqDeskEdge::new(
+            Arc::new(PositionStore::new()),
+            Arc::new(SessionRegistry::new(Clock::manual(0))),
+            gate,
+            Arc::new(DeskRequestStore::new()),
+            Arc::new(DealStore::new()),
+            Arc::clone(&rates),
+            Arc::new(NotificationBroker::new()),
+            Clock::manual(1_000),
+        );
+        let token = trader_token(&edge);
+
+        let id = edge
+            .submit_desk_request(Request::new(submit_req(DeskRequestKind::Rfq, Side::Buy)))
+            .await
+            .expect("submit")
+            .into_inner()
+            .request
+            .expect("request")
+            .request_id;
+        edge.respond_desk_request(Request::new(RespondDeskRequestRequest {
+            session_token: Some(token.clone()),
+            request_id: id.clone(),
+            principal: Some(celnet_proto::EntitlementPrincipal {
+                grant_all: true,
+                grants: vec![],
+                denies: vec![],
+            }),
+            correlation_id: None,
+            response: Some(RespondArm::Quote(DeskQuote {
+                price: 0.0411,
+                notional: 25_000_000.0,
+                valid_for_ms: 30_000,
+                trader: "alice".to_owned(),
+            })),
+        }))
+        .await
+        .expect("respond");
+
+        let err = edge
+            .accept_desk_quote(Request::new(AcceptDeskQuoteRequest {
+                session_token: Some(token),
+                request_id: id,
+                principal: Some(celnet_proto::EntitlementPrincipal {
+                    grant_all: true,
+                    grants: vec![],
+                    denies: vec![],
+                }),
+                correlation_id: None,
+            }))
+            .await
+            .expect_err("a hard-limit-blown desk accept must be rejected");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("limit breached"),
+            "the reject carries the uniform LimitBreached reason, got {:?}",
+            err.message()
+        );
+        assert_eq!(
+            rates.len(),
+            0,
+            "a rejected desk accept books no rates position"
+        );
+        assert_eq!(edge.deals.len(), 0, "a rejected desk accept books no deal");
     }
 
     /// submit → respond(reject) sets REJECTED and never books anything.
@@ -995,6 +1145,65 @@ mod tests {
             .try_recv()
             .expect("the g10 subscriber receives the RFQ");
         assert_eq!(n.desk, "g10");
+    }
+
+    /// A FIX venue ingesting an inbound RFQ records it into the inbox WITHOUT the RPC
+    /// auth boundary: an auto-quoted RFQ lands QUOTED (with the firm quote) as processed
+    /// history, a routed one lands PENDING for a human — and both fan a notification and
+    /// appear in the snapshot the GUI reads.
+    #[tokio::test]
+    async fn ingest_fix_rfq_records_auto_and_manual() {
+        let edge = edge();
+        let mut sub = edge.notify.subscribe(DeskFilter::All);
+
+        // Auto-quoted: carries a firm quote ⇒ QUOTED history.
+        let auto = edge.ingest_fix_rfq(
+            "g10-rates",
+            "CELER_RATES",
+            ois_instrument(Side::Buy),
+            curve(),
+            Side::Buy,
+            10_000_000.0,
+            Some(DeskQuote {
+                price: 0.0405,
+                notional: 10_000_000.0,
+                valid_for_ms: 30_000,
+                trader: "auto".to_owned(),
+            }),
+        );
+        assert_eq!(auto.state, DeskRequestState::Quoted as i32);
+        assert_eq!(auto.desk, "g10-rates");
+        assert_eq!(auto.counterparty, "CELER_RATES");
+        assert!(auto.quote.is_some());
+        let n = sub.rx.try_recv().expect("auto-quote fans a notification");
+        assert_eq!(n.kind, NotificationKind::QuoteAccepted as i32);
+
+        // Routed: no quote ⇒ PENDING for a human.
+        let manual = edge.ingest_fix_rfq(
+            "g10-rates",
+            "CELER_RATES",
+            ois_instrument(Side::Sell),
+            curve(),
+            Side::Sell,
+            50_000_000.0,
+            None,
+        );
+        assert_eq!(manual.state, DeskRequestState::Pending as i32);
+        assert!(manual.quote.is_none());
+        let n = sub.rx.try_recv().expect("a routed RFQ fans a notification");
+        assert_eq!(n.kind, NotificationKind::RfqReceived as i32);
+
+        // Both are in the snapshot the GUI reads (history + live), newest-first.
+        let all = edge.requests.snapshot();
+        assert_eq!(all.len(), 2);
+        assert!(
+            all.iter()
+                .any(|r| r.state == DeskRequestState::Quoted as i32)
+        );
+        assert!(
+            all.iter()
+                .any(|r| r.state == DeskRequestState::Pending as i32)
+        );
     }
 
     /// `effective_desk_filter` intersects requested desks with the caller's scope.

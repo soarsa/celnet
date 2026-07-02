@@ -464,3 +464,54 @@ async fn fix_stale_token_is_rejected() {
     .await
     .expect("test timed out");
 }
+
+/// FRONT-END 2 (FIX `on_new_order`, ADR-0016 A1): with a hard firm-wide Delta cap set on
+/// the shared position book, a `NewOrderSingle(D)` lift of a live FX quote is refused
+/// with a rejected `ExecutionReport(ExecType=8)` carrying a `Text(58) = "limit breached:
+/// …"` reason — the SAME shared limit tree the RFS click-to-trade sink enforces, so the
+/// FIX venue cannot book a hard-limit-blown fill. A valid, unforged, unexpired token that
+/// would otherwise FILL (proven by `fix_rfq_quote_reprices_to_golden_and_lift_fills`) is
+/// stopped solely by the limit gate.
+#[tokio::test]
+async fn fix_hard_limit_blown_lift_is_rejected() {
+    tokio::time::timeout(DEADLINE, async {
+        use celnet_limits::{LimitMetric, LimitScope, LimitSpec};
+
+        let clock = Clock::system();
+        let (edge, fix_addr) = boot_edge_with_fix(clock).await;
+        // A firm Delta cap of 1 base unit — a 1mm EURUSD call's delta (hundreds of
+        // thousands of base) blows it hard, so an otherwise-fillable lift is refused.
+        edge.store()
+            .set_limit(LimitScope::Firm, LimitSpec::hard(LimitMetric::Delta, 1.0));
+
+        let mut drv = Driver::connect(fix_addr).await;
+        drv.send_app(build_quote_request(b"REQ-L", 1.10, 1.0)).await;
+        let quote_raw = drv.next_app(MsgType::Quote).await;
+        let quote_id = QuoteView::new(FrameCursor::parse(&quote_raw).unwrap())
+            .quote_id()
+            .expect("the quote carries a QuoteID")
+            .to_vec();
+
+        // A BUY lift now blows the hard firm Delta limit → a rejected ExecutionReport.
+        drv.send_app(build_lift(b"ORD-L", &quote_id, b'1')).await;
+        let exec_raw = drv.next_app(MsgType::ExecutionReport).await;
+        let exec = FrameCursor::parse(&exec_raw).expect("a well-formed ExecutionReport");
+        assert_eq!(
+            ExecReportView::new(exec).exec_type(),
+            Some(EXEC_REJECTED),
+            "a hard-limit-blown FIX lift books nothing"
+        );
+        let text = exec
+            .get(58)
+            .expect("a limit-rejected lift carries a Text(58) reason");
+        let text_str = std::str::from_utf8(text).unwrap_or("");
+        assert!(
+            text_str.contains("limit breached"),
+            "the FIX reject carries the uniform LimitBreached reason, got {text_str:?}"
+        );
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test timed out");
+}
