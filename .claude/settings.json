@@ -37,6 +37,9 @@
       "Bash(git fetch:*)",
       "Bash(git ls-remote:*)",
       "Bash(gh:*)",
+      "Bash(lodestar:*)",
+      "Bash(python3 tools/lodestar/replay-knowledge.py:*)",
+      "Bash(bash tools/lodestar/sync-knowledge.sh:*)",
       "mcp__lodestar"
     ],
     "deny": [],
@@ -76,6 +79,10 @@
           {
             "type": "command",
             "command": "nohup sh -c 'bash tools/celnet-memory-sync.sh restore >> .lodestar/memory-sync.log 2>&1' >/dev/null 2>&1 & exit 0"
+          },
+          {
+            "type": "command",
+            "command": "nohup sh -c 'lodestar doctor --json >> .lodestar/doctor.log 2>&1' >/dev/null 2>&1 & exit 0"
           }
         ]
       },
