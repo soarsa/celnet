@@ -95,6 +95,7 @@ pub mod additive;
 pub mod cube;
 pub mod dimension;
 pub mod exotic;
+pub mod fi;
 pub mod frtb;
 pub mod frtb_params;
 pub mod nonadditive;
@@ -119,6 +120,13 @@ pub use dimension::{
 // path for every existing consumer (server / parity / cli).
 pub use celnet_types::ExoticKind;
 pub use exotic::{ExoticLeg, exotic_curvature_legs, exotic_node_pnl};
+// Central-core Phase C2c — the linear-FI fold into the non-additive path: the joint
+// options-spot/vol + FI-rate tail, the FRTB SbM GIRR delta cross-risk-class fold, and
+// the FI key-rate axis surfaced through the cube's output.
+pub use fi::{
+    CombinedTailRisk, FiBook, JointScenario, KeyRateLadder, KeyRatePoint, combined_tail_risk,
+    frtb_with_girr_delta, girr_delta_sbm, node_var_es_joint,
+};
 pub use frtb::{
     CorrelationScenario, CurvatureBucket, FrtbCapital, ResidualInstrument, ResidualKind,
     RiskBucket, SbmCharge, SbmParams, assemble_capital, curvature_class, curvature_legs,

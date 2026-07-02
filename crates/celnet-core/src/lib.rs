@@ -11,6 +11,7 @@
 pub mod carry;
 pub mod contract;
 pub mod math;
+pub mod tail;
 
 mod compare;
 pub use carry::{
@@ -22,6 +23,7 @@ pub use compare::{DEFAULT_ABS, DEFAULT_REL, is_close};
 pub use contract::{
     FlatDiscountCurve, MarketResolver, Priceable, RateLadder, ResolvedMarket, RiskMeasure,
 };
+pub use tail::{TailVarEs, tail_var_es};
 
 use celnet_types::Vol;
 

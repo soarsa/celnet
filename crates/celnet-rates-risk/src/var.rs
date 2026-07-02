@@ -41,25 +41,19 @@ pub struct RateRiskReport {
 /// ES; both are floored at zero. The tail count is `⌊(1 − alpha)·n⌋`, floored at one and capped at
 /// `n`, so at least the single worst scenario always contributes.
 ///
-/// This reduction is intentionally **byte-identical in convention** to `celnet-risk-cube`'s private
-/// `quantile_var_es` (same sort, same tail index `⌊(1−α)n⌋.max(1).min(n)`, same VaR/ES sign and
-/// zero-floor), so Phase C2c can unify the two into a single shared primitive when it wires FI into
-/// the cube. It is re-homed here (not imported) only because the cube's function is not public and
-/// C2a must not modify the cube's non-additive path.
+/// The reduction is the one platform-wide primitive [`celnet_core::tail_var_es`]
+/// (central-core Phase C2c): the cube's non-additive path, this FI rate-scenario engine, and the
+/// joint cross-risk-class fold all reduce through the same function — there is literally one VaR/ES
+/// reducer for the whole platform. The result is mapped into this crate's public [`RateVarEs`] view
+/// type; the arithmetic (same sort, same tail index `⌊(1−α)n⌋.max(1).min(n)`, same VaR/ES sign and
+/// zero-floor) is byte-identical to the former in-crate body, so the fold is ≤1e-12-faithful to the
+/// standalone C2a results.
 #[must_use]
 pub fn rate_var_es(pnl: &mut [f64], alpha: f64) -> RateVarEs {
-    if pnl.is_empty() {
-        return RateVarEs { var: 0.0, es: 0.0 };
-    }
-    pnl.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
-    let n = pnl.len();
-    let tail = (((1.0 - alpha) * n as f64).floor() as usize).max(1).min(n);
-    let tail_sum: f64 = pnl[..tail].iter().sum();
-    let es = -(tail_sum / tail as f64);
-    let var = -pnl[tail - 1];
+    let t = celnet_core::tail_var_es(pnl, alpha);
     RateVarEs {
-        var: var.max(0.0),
-        es: es.max(0.0),
+        var: t.var,
+        es: t.es,
     }
 }
 

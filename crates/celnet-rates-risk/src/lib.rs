@@ -36,11 +36,14 @@
 //!   the prescribed MAR21 risk-weight and correlation tables, vertex mapping of the key-rate ladder,
 //!   intra-bucket `K_b`, and cross-bucket aggregation with the `S_b` cap/floor, under all three
 //!   correlation scenarios; oracle-validated against the published tables and a hand computation.
-//! - **Deferred:** the GIRR **vega** and **curvature** charges (C2b-extension); integration into the
-//!   `celnet-risk-cube` non-additive path — including sign-normalizing the OIS receive-fixed vs
-//!   bond-positive P&L conventions and exposing the key-rate axis (C2c). The VaR/ES reduction here
-//!   ([`rate_var_es`]) deliberately matches `celnet-risk-cube`'s tail convention so C2c can unify
-//!   the two into one shared primitive.
+//! - **In scope (C2c):** the sign-normalized **key-rate axis** ([`ladder`]) — the per-tenor signed
+//!   DV01 ladder that reconciles the OIS receive-fixed (signed) vs bond (positive-magnitude) P&L
+//!   conventions into the one signed convention before aggregation — and the VaR/ES reduction
+//!   ([`rate_var_es`]) delegating to the one platform-wide primitive [`celnet_core::tail_var_es`],
+//!   which the risk cube also reduces through. The cube folds these into its non-additive path
+//!   ([`celnet_risk_cube::fi`]) so a portfolio's FI rate scenarios ride alongside the options
+//!   spot/vol scenarios in one joint tail.
+//! - **Deferred:** the GIRR **vega** and **curvature** charges (C2b-extension).
 //!
 //! ## Determinism
 //!
@@ -53,6 +56,7 @@
 pub mod curve_shock;
 pub mod error;
 pub mod girr;
+pub mod ladder;
 pub mod position;
 pub mod var;
 
@@ -63,6 +67,10 @@ pub use girr::{
     GIRR_CROSS_BUCKET_GAMMA, GIRR_DELTA_RISK_WEIGHTS, GIRR_DIFFERENT_CURVE_FACTOR, GIRR_VERTICES,
     GirrBucketCharge, GirrDeltaCharge, GirrError, GirrSensitivity, LadderPoint, girr_delta_charge,
     girr_delta_charges_all, map_ladder_to_vertices,
+};
+pub use ladder::{
+    KeyRateLadder, KeyRatePoint, key_rate_ladder, normalize_bond_dv01, normalize_ois_dv01,
+    signed_parallel_dv01,
 };
 pub use position::FiPosition;
 pub use var::{RateRiskReport, RateVarEs, rate_scenario_var_es, rate_var_es, scenario_pnls};

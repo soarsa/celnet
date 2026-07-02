@@ -21,6 +21,11 @@ celnet-rates.workspace = true
 # `price_from_curve` (never re-deriving the discounted-cashflow sum).
 celnet-bond.workspace = true
 celnet-types.workspace = true
+# The one platform-wide VaR/ES tail reducer (`celnet_core::tail_var_es`) this crate's
+# `rate_var_es` delegates to (central-core Phase C2c) — the single primitive the risk
+# cube also reduces through, so the two behaviours are byte-identical by construction.
+# celnet-core depends only on -types/libm, so this is a one-way edge (no cycle).
+celnet-core.workspace = true
 
 [dev-dependencies]
 # Civil dates for constructing `Bond` fixtures in the oracle tests (the pricing

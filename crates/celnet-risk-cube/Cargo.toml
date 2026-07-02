@@ -28,6 +28,13 @@ celnet-core.workspace = true
 # one-way edge (no cycle).
 celnet-vanilla.workspace = true
 celnet-risk-normalize.workspace = true
+# The linear-FI rate-scenario VaR/ES + FRTB GIRR engine (central-core Phase C2a/b). C2c
+# folds it into the cube's non-additive path so a portfolio's FI rate scenarios ride
+# ALONGSIDE the options spot/vol scenarios in one joint tail. celnet-rates-risk depends
+# only on -rates/-bond/-core/-types (never on the cube), so this is a one-way, acyclic
+# edge (gate: `cargo tree -p celnet-risk-cube` shows no back-edge). It stays lean — the
+# cube still pulls NEITHER celnet-exotics NOR celnet-gpu.
+celnet-rates-risk.workspace = true
 # NOTE: the cube depends on NEITHER celnet-exotics NOR celnet-gpu. The concrete
 # exotic closed forms are injected through the `celnet_core::ExoticLegPricer` seam
 # (implemented by the server over celnet-exotics), and the batched-GPU scenario grid
@@ -43,6 +50,11 @@ celnet-risk-normalize.workspace = true
 # seam path), the independent non-circular oracle the cube is gated against.
 celnet-equity-vanilla.workspace = true
 celnet-commodity-vanilla.workspace = true
+# The FI curve/OIS leaf — used ONLY by the C2c `fi` module tests to construct the
+# linear-FI fixtures (`OisSchedule`/`FixedPeriod`) the joint-tail path folds in. A
+# dev-dependency only; the cube's runtime surface stays FI-fixture-free (the production
+# path takes already-built `celnet_rates_risk::FiPosition`s).
+celnet-rates.workspace = true
 # Proptest + libm for the scenario-algebra fuzz mirror.
 proptest.workspace = true
 libm.workspace = true

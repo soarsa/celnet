@@ -765,6 +765,7 @@ name = "celnet-rates-risk"
 version = "0.0.0"
 dependencies = [
  "celnet-bond",
+ "celnet-core",
  "celnet-rates",
  "celnet-types",
  "time",
@@ -810,6 +811,8 @@ dependencies = [
  "celnet-commodity-vanilla",
  "celnet-core",
  "celnet-equity-vanilla",
+ "celnet-rates",
+ "celnet-rates-risk",
  "celnet-risk-normalize",
  "celnet-types",
  "celnet-vanilla",

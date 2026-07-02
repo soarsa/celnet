@@ -571,23 +571,21 @@ pub fn sensitivity_var_es<P: CarryPricer>(
 }
 
 /// The shared VaR/ES tail reduction over a P&L vector (a loss is a negative P&L).
-/// Sorts ascending, takes the `alpha`-tail boundary as VaR and the mean tail loss
-/// as ES. This is the exact reduction [`historical_var_es`] uses, factored out so
-/// the bump-and-revalue oracle and the AAD sensitivity lens are guaranteed to apply
-/// **identical** quantile logic — only their per-scenario valuation differs.
+/// This is the exact reduction [`historical_var_es`] uses, so the bump-and-revalue
+/// oracle and the AAD sensitivity lens apply **identical** quantile logic — only
+/// their per-scenario valuation differs.
+///
+/// The reduction itself is the one platform-wide primitive
+/// [`celnet_core::tail_var_es`] (central-core Phase C2c): the cube, the FI
+/// rate-scenario engine (`celnet-rates-risk`), and the joint cross-risk-class path
+/// ([`crate::fi`]) all reduce through the same function, so there is literally one
+/// VaR/ES reducer for the whole platform. The result is mapped into the cube's public
+/// [`VarEs`] view type; the arithmetic is byte-identical to the former in-crate body.
 fn quantile_var_es(pnl: &mut [f64], alpha: f64) -> VarEs {
-    if pnl.is_empty() {
-        return VarEs { var: 0.0, es: 0.0 };
-    }
-    pnl.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
-    let n = pnl.len();
-    let tail = (((1.0 - alpha) * n as f64).floor() as usize).max(1).min(n);
-    let tail_sum: f64 = pnl[..tail].iter().sum();
-    let es = -(tail_sum / tail as f64);
-    let var = -pnl[tail - 1];
+    let t = celnet_core::tail_var_es(pnl, alpha);
     VarEs {
-        var: var.max(0.0),
-        es: es.max(0.0),
+        var: t.var,
+        es: t.es,
     }
 }
 
