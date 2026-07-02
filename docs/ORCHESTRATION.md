@@ -165,3 +165,29 @@ active yet, so `done` correctly refuses them until they ship and the knowledge l
   remotely; thereafter the branch carries only manifest churn (it never races code merges on `main`).
 - To watch the board without claiming: `tools/celnet-task digest`.
 - To dry-run the whole flow without touching the remote: `CELNET_TASK_DRY_RUN=1 tools/celnet-task …`.
+
+## 8. Agent teams per session (how a session burns down its claim)
+
+After the SessionStart selector hands a session its claim, the session IMPLEMENTS that task with an
+**agent team** — not by hand, one file at a time:
+
+1. **Fan out** a Workflow (or parallel `Agent` calls) scoped to the claim's **disjoint scope**.
+   Right-size it: broad decomposable work (mapping, drafting, per-lane builds, verification) fans
+   out; a small/precise edit stays in-session. Reference files by path — don't paste corpora
+   (see the `token-and-context-discipline` memory).
+2. **Adversarially verify** the team's output independently (hidden mocks/placeholders, contract
+   drift, byte-identity, "is it actually done") before trusting it.
+3. **Gate at the task's tier** — T0 (`cargo check -p`) per edit, ONE T1 per accumulated batch, T2
+   only at a landing milestone. Never gate per-fix; accumulate.
+4. **`tools/celnet-task done <id>`** (lodestar roll-up gate; coordinator `--attest` for
+   deliverable-less tasks), then **re-run `tools/celnet-task selector`** for the next task —
+   continuous collaborative burn-down across all sessions.
+
+**Exactly one coordinator.** Precisely one session sets `CELNET_ROLE=coordinator`; it owns
+merges-to-`main`, the T2 gate, the `batch_window`, and flipping terminal `done`. Every other
+session runs as a worker (the default) on its disjoint claim and pushes a branch / marks
+`in_review`; the coordinator lands it. Two coordinators ⇒ racing merges — don't.
+
+**Single-machine cargo.** Co-located sessions share the `cargo_lane` mutex (one heavy build at a
+time); non-cargo lanes (docs / viz / knowledge / front-end) run fully in parallel around it.
+Cross-*machine* sessions parallelize cargo via separate lanes off the shared board.

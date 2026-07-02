@@ -650,6 +650,8 @@ directive_for() { # <manifest> <id> <RESUME|CLAIMED>
     printf 'ACT NOW: continue %s on branch %s. Run `tools/celnet-task progress %s` when you start real work; the Stop/PreCompact hooks heartbeat + checkpoint automatically; run `tools/celnet-task done %s` (lodestar roll-up gate) when the acceptance target verifies. Read docs/acceptance/%s.acceptance.json for the done-criteria.\n' \
         "$id" "$(printf '%s' "$t" | jq -r '.branch // "-"')" "$id" "$id" \
         "$(printf '%s' "$t" | jq -r '.deliverable // "unknown"')"
+    # shellcheck disable=SC2016  # intentional literal backticks in the directive text
+    printf 'AGENT TEAM: implement this in THIS session with an agent team — fan out a Workflow (or parallel Agent calls) scoped to the disjoint scope above, adversarially verify the result, and gate at gate_tier (T0 `cargo check -p` per edit, ONE T1 per accumulated batch, T2 only at landing; never per-fix). When it passes, `tools/celnet-task done %s` then re-run `tools/celnet-task selector` for the next task (continuous collaborative burn-down). Right-size the fan-out: small/precise edits stay in-session. Exactly ONE session runs CELNET_ROLE=coordinator (owns merges-to-main + T2 + terminal done); every other session is a worker on its disjoint claim (push a branch / mark in_review; the coordinator lands it).\n' "$id"
     if [ "$(printf '%s' "$t" | jq -r '.requires_cargo // false')" = "true" ]; then
         # shellcheck disable=SC2016  # intentional literal backticks in the directive text
         printf 'CARGO DISCIPLINE: this is a requires_cargo task — hold the cargo lane (`tools/celnet-task cargo-lane acquire --purpose %s`) before heavy builds; one T1 per batch, T2 only at landing; respect any open batch_window.\n' "$id"
