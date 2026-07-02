@@ -1,10 +1,14 @@
 /**
  * SurfaceWorkspace — the "show me why" (GUI-DESIGN §4.3). Three linked views of
- * one marked surface: the 3D WebGPU-ready mesh, the per-tenor smile overlay, and
- * the broker marking panel (ATM / 25Δ&10Δ RR&BF). Selecting a point anywhere
- * cross-highlights everywhere and opens provenance (calibration inputs + arb
- * report) in the Inspector. Editing ATM/RR/BF reprices live with an arb banner
- * if a butterfly constraint breaks.
+ * one marked surface: the rotatable 3D vol surface (the `VolSurface3D` lib chart,
+ * three.js — height + Viridis colour both encode vol, arb-flagged tenors carry
+ * danger markers), the per-tenor smile family (the `VolSmile` lib chart, visx —
+ * the selected tenor is focused with pillar marks + RR/BF read-out, the rest
+ * overlay as the ramp-ordered family), and the broker marking panel
+ * (ATM / 25Δ&10Δ RR&BF). Selecting a wing chip or a marking row cross-highlights
+ * and opens provenance (calibration inputs + arb report) in the Inspector.
+ * Editing ATM/RR/BF reprices live with an arb banner if a butterfly constraint
+ * breaks.
  *
  * Comparison note (positioning, not a product identifier): matches the
  * broker-vol marking workflow of incumbent vol terminals, and additionally
@@ -18,10 +22,10 @@ import type { BrokerQuoteSet, SmileModel } from "../data/contract";
 import { Panel } from "../components/Panel";
 import { Button } from "../components/Button";
 import { ArbBanner } from "../components/ArbBanner";
-import { SurfaceMesh } from "../viz/SurfaceMesh";
-import { SmileChart } from "../viz/SmileChart";
+import { ParentSize } from "@visx/responsive";
+import { VolSurface3D, type VolSurfaceMarker } from "../viz/VolSurface3D";
+import { VolSmile, type SmileTenor } from "../viz/VolSmile";
 import { calibrateLadder } from "../data/surface";
-import { rampGradient } from "../viz/ramp";
 import { fmtVol, fmtVolPoint, fmtClock } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
 import { nowNanos } from "../hooks/useClock";
@@ -101,6 +105,18 @@ function modelProvenance(model: SmileModel): string {
 const tkey = (t: number): string => t.toFixed(8);
 /** Snap a signed delta to a stable integer key (pillars are coarse: 0.10/0.25/0.50…). */
 const deltaKey = (d: number): number => Math.round(d * 1e4);
+
+/**
+ * Wing-axis plotting coordinate for a signed convention delta — puts left, ATM
+ * centre, calls right: `x = sign(Δ)·(0.5 − |Δ|)`, so 10ΔP → −0.40, 25ΔP → −0.25,
+ * ATM (Δ = 0.5) → 0, 25ΔC → +0.25, 10ΔC → +0.40. Monotone left→right in strike,
+ * matching the desk's smile reading order (the lib charts' delta axis).
+ */
+const wingX = (delta: number): number => Math.sign(delta) * (0.5 - Math.abs(delta));
+
+/** Canonical wing label for a signed convention delta ("10ΔP" / "ATM" / "25ΔC"). */
+const wingLabel = (delta: number): string =>
+  Math.abs(delta) >= 0.49 ? "ATM" : `${Math.round(Math.abs(delta) * 100)}Δ${delta < 0 ? "P" : "C"}`;
 
 export function SurfaceWorkspace(): React.ReactElement {
   const app = useApp();
@@ -190,22 +206,59 @@ export function SurfaceWorkspace(): React.ReactElement {
     return best ?? null;
   }, [preview, selTenorYears]);
 
-  // STABLE surface-wide vol band (P0-9): the min/max calibrated vol across EVERY
-  // smile point of the working preview. Passed to SmileChart so its y-axis stays
-  // fixed across tenor switches and edits — smiles stay visually comparable rather
-  // than the axis re-fitting to each curve. Recomputes only when the preview does.
-  const volRange = useMemo(() => {
-    if (!preview) return undefined;
-    let min = Infinity;
-    let max = -Infinity;
-    for (const s of preview.smiles) {
-      for (const p of s.points) {
-        if (p.vol < min) min = p.vol;
-        if (p.vol > max) max = p.vol;
-      }
-    }
-    return Number.isFinite(min) && Number.isFinite(max) && max > min ? { min, max } : undefined;
+  // The (tenor × delta) grid for the 3D surface lib chart: vols in vol POINTS
+  // (the contract's vols are absolute, 0.10 = 10 vol), rows in tenor order,
+  // columns in wing order (10ΔP … ATM … 10ΔC). An arb-violating tenor surfaces
+  // as danger markers across its whole row — the arb report is per-smile, so a
+  // single-vertex attribution would be fabricated (CLAUDE.md rule 2).
+  const surfaceViz = useMemo(() => {
+    if (!preview) return null;
+    const rows = preview.smiles.map((s) => ({
+      smile: s,
+      points: [...s.points].sort((a, b) => wingX(a.delta) - wingX(b.delta)),
+    }));
+    const first = rows[0];
+    if (!first || first.points.length === 0) return null;
+    const markers: VolSurfaceMarker[] = [];
+    rows.forEach((r, tenorIndex) => {
+      const arb = r.smile.arbitrage;
+      if (arb.butterflyArbitrageFree && arb.calendarArbitrageFree) return;
+      const kinds = [
+        ...(arb.butterflyArbitrageFree ? [] : ["butterfly"]),
+        ...(arb.calendarArbitrageFree ? [] : ["calendar"]),
+      ].join(" + ");
+      const reason = `${tenorLabel(r.smile.tenorYears)} ${kinds} arbitrage${arb.note ? ` — ${arb.note}` : ""}`;
+      r.points.forEach((_, deltaIndex) => markers.push({ tenorIndex, deltaIndex, reason }));
+    });
+    return {
+      vols: rows.map((r) => r.points.map((p) => p.vol * 100)),
+      tenors: rows.map((r) => tenorLabel(r.smile.tenorYears)),
+      deltas: first.points.map((p) => wingLabel(p.delta)),
+      markers,
+    };
   }, [preview]);
+
+  // The WHOLE preview family feeds the smile lib chart — VolSmile shares one
+  // x/y domain across every tenor it is given, so the y-axis stays fixed across
+  // tenor switches (the P0-9 stable-axis behavior volRange used to provide) and
+  // the family overlays ramp-ordered. The selected tenor is the focused one
+  // (pillar marks + the RR/BF read-out); the calibrated pillar points ARE the
+  // fit geometry — nothing is densified or invented between pillars.
+  const smileTenors = useMemo<readonly SmileTenor[]>(() => {
+    if (!preview || !selectedSmile) return [];
+    const focusKey = tkey(selectedSmile.tenorYears);
+    return preview.smiles.map((s) => {
+      const pillars = [...s.points]
+        .sort((a, b) => wingX(a.delta) - wingX(b.delta))
+        .map((p) => ({ x: wingX(p.delta), mid: p.vol * 100, label: wingLabel(p.delta) }));
+      return {
+        tenor: tenorLabel(s.tenorYears),
+        pillars,
+        fit: pillars.map((p) => ({ x: p.x, y: p.mid })),
+        focus: tkey(s.tenorYears) === focusKey,
+      };
+    });
+  }, [preview, selectedSmile]);
 
   // The asset-class family gate: the families marked for the ACTIVE underlier's
   // class. FX → the five delta-space families (everything below renders exactly
@@ -247,7 +300,7 @@ export function SurfaceWorkspace(): React.ReactElement {
     );
   }
 
-  if (!surface || !preview || !selectedSmile) {
+  if (!surface || !preview || !selectedSmile || !surfaceViz) {
     return (
       <div className={styles.cubeShell}>
         <div className={styles.cubeBar}>{viewToggle}</div>
@@ -266,7 +319,6 @@ export function SurfaceWorkspace(): React.ReactElement {
   const surfaceArbFree = preview.smiles.every(
     (s) => s.arbitrage.butterflyArbitrageFree && s.arbitrage.calendarArbitrageFree,
   );
-  const previewSurface = { ...surface, smiles: preview.smiles };
   const arb = selectedSmile.arbitrage;
   const nextVersion = (surface.surfaceVersion + 1n).toString();
 
@@ -281,19 +333,48 @@ export function SurfaceWorkspace(): React.ReactElement {
     <div className={styles.grid}>
       <Panel glyph="◷" title={`Surface · ${surface.pair.base}/${surface.pair.quote}`} className={styles.surfacePanel} noPadding actions={viewToggle}>
         <div className={styles.meshHolder}>
-          <SurfaceMesh surface={previewSurface} selected={{ tenorYears: selTenorYears, delta: selDelta ?? 0.5 }} />
+          {/* The lib 3D surface chart fills the holder; ParentSize (debounced —
+              a resize rebuilds the GL scene) supplies the concrete px box the
+              WebGL canvas needs. Its Viridis legend + axis cues are built in. */}
+          <ParentSize debounceTime={80}>
+            {({ width, height }) =>
+              width < 40 || height < 40 ? null : (
+                <VolSurface3D
+                  vols={surfaceViz.vols}
+                  tenors={surfaceViz.tenors}
+                  deltas={surfaceViz.deltas}
+                  markers={surfaceViz.markers}
+                  width={Math.floor(width)}
+                  height={Math.floor(height)}
+                />
+              )
+            }
+          </ParentSize>
         </div>
         <div className={styles.smileHolder}>
-          <SmileChart
-            smile={selectedSmile}
-            selectedDelta={selDelta}
-            onSelect={setSelDelta}
-            volRange={volRange}
-          />
-          <div className={styles.legend}>
-            <span className={styles.legendLabel}>low</span>
-            <span className={styles.legendBar} style={{ background: rampGradient() }} />
-            <span className={styles.legendLabel}>high</span>
+          <VolSmile tenors={smileTenors} height={200} />
+          {/* Wing selection — the smile slice's cross-highlight control: picking a
+              wing drives the Inspector read-out (and survives a cube drill-in),
+              keyboard-reachable where the old canvas click was not. */}
+          <div className={styles.wingChips} role="group" aria-label="smile wing selection">
+            <span className={styles.provLabel}>wing</span>
+            {[...selectedSmile.points]
+              .sort((a, b) => wingX(a.delta) - wingX(b.delta))
+              .map((p) => {
+                const active = selDelta !== null && deltaKey(p.delta) === deltaKey(selDelta);
+                return (
+                  <button
+                    key={deltaKey(p.delta)}
+                    type="button"
+                    className={`${styles.wingChip} ${active ? styles.wingChipActive : ""}`}
+                    aria-pressed={active}
+                    onClick={() => setSelDelta(p.delta)}
+                    title={`Inspect ${wingLabel(p.delta)} — ${fmtVol(p.vol)}`}
+                  >
+                    {wingLabel(p.delta)}
+                  </button>
+                );
+              })}
           </div>
         </div>
       </Panel>

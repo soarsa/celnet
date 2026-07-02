@@ -12,6 +12,12 @@
  * server's `celnet-rates::curve`. Editing a pillar re-bootstraps the curve and
  * re-samples every view; a malformed edit surfaces the real validation error rather
  * than a fabricated curve.
+ *
+ * The term structure is drawn by the design-system `YieldCurve` chart (mockup 14):
+ * the bootstrapped pillar zero rates feed its `CurveNode` contract, and because it
+ * interpolates ln(DF) log-linearly from those nodes — the same scheme as the
+ * bootstrap — the drawn zero / forward / DF overlays reproduce the workspace's real
+ * curve, with an on-chart hover readout off the identical math.
  */
 
 import { useCallback, useMemo, useState } from "react";
@@ -19,7 +25,7 @@ import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
 import { DataGrid } from "../components/DataGrid";
 import { Sparkline } from "../components/Sparkline";
-import { CurveChart, type CurveSeries } from "../viz/CurveChart";
+import { YieldCurve, type CurveNode } from "../viz/YieldCurve";
 import type { ColumnDef } from "../lib/grid";
 import type { RatesCurveSet } from "../data/contract";
 import {
@@ -65,14 +71,22 @@ function fmtDf(df: number): string {
   return df.toFixed(6);
 }
 
-/** Axis tick: a decimal rate as bare percent points (0.0405 → "4.05"). */
-function fmtRateAxis(rate: number): string {
-  return (rate * 100).toFixed(2);
-}
-
-/** Axis tick: a year-fraction time as a compact tenor (5 → "5y"). */
-function fmtTenorAxis(t: number): string {
-  return `${t.toFixed(t < 1 ? 1 : 0)}y`;
+/**
+ * Map the bootstrapped pillar ladder onto the `YieldCurve` pillar-node contract:
+ * one dated node per pillar carrying the continuously-compounded zero rate the
+ * SAME bootstrap produced there. The chart reconstructs ln DF(t_i) = −z_i·t_i from
+ * these nodes, so its curve reproduces the workspace's real discount factors at
+ * every pillar, and its log-linear-in-ln(DF) interpolation matches the shipping
+ * default between them. Exported for the wiring test.
+ */
+export function curvePillarNodes(
+  ladder: readonly Pick<LadderRow, "tenorYears" | "zero">[],
+): CurveNode[] {
+  return ladder.map((r) => ({
+    label: `${r.tenorYears}y`,
+    tenorYears: r.tenorYears,
+    zeroRate: r.zero,
+  }));
 }
 
 const LADDER_COLUMNS: readonly ColumnDef<LadderRow>[] = [
@@ -142,19 +156,6 @@ export function CurveWorkspace(): React.ReactElement {
 
   const { discount, samples, error } = built;
 
-  // The three term-structure series, sharing the sampled time grid.
-  const dfSeries = useMemo<CurveSeries[]>(
-    () => [{ label: "DF(t)", tone: "offer", points: samples.map((s) => ({ x: s.t, y: s.df })) }],
-    [samples],
-  );
-  const rateSeries = useMemo<CurveSeries[]>(
-    () => [
-      { label: "zero z(t)", tone: "accent", points: samples.map((s) => ({ x: s.t, y: s.zero })) },
-      { label: "forward f(t)", tone: "bid", points: samples.map((s) => ({ x: s.t, y: s.forward })) },
-    ],
-    [samples],
-  );
-
   // Compact echoes for the headline cards (reuses the shared Sparkline primitive).
   const dfTrace = useMemo(() => samples.map((s) => s.df), [samples]);
   const zeroTrace = useMemo(() => samples.map((s) => s.zero), [samples]);
@@ -179,6 +180,9 @@ export function CurveWorkspace(): React.ReactElement {
       df: discountFactorAt(discount, p.tenorYears),
     }));
   }, [discount, pillars]);
+
+  // The YieldCurve pillar nodes, mapped off the SAME bootstrapped ladder.
+  const curveNodes = useMemo<CurveNode[]>(() => curvePillarNodes(ladder), [ladder]);
 
   const ladderGroups = useMemo(
     () => [
@@ -304,25 +308,8 @@ export function CurveWorkspace(): React.ReactElement {
             </dl>
 
             <div className={styles.chart}>
-              <h3 className={styles.chartTitle}>Discount factor</h3>
-              <CurveChart
-                series={dfSeries}
-                xLabel="tenor (years)"
-                formatX={fmtTenorAxis}
-                formatY={(v) => v.toFixed(3)}
-                markerX={horizon}
-              />
-            </div>
-
-            <div className={styles.chart}>
-              <h3 className={styles.chartTitle}>Zero & instantaneous forward · %</h3>
-              <CurveChart
-                series={rateSeries}
-                xLabel="tenor (years)"
-                formatX={fmtTenorAxis}
-                formatY={fmtRateAxis}
-                markerX={horizon}
-              />
+              <h3 className={styles.chartTitle}>Term structure · zero & forward (%) · discount factor</h3>
+              <YieldCurve nodes={curveNodes} interpolation="log-linear" height={300} />
             </div>
 
             <div className={styles.ladder}>

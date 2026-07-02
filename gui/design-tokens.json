@@ -353,7 +353,8 @@
     "$description": "Materials — shadows, hairline, and backdrop blur. Shadow $values are emitted verbatim; in the light appearance the shadow opacities lighten (see themes.light).",
     "shadow-panel": {
       "$type": "shadow",
-      "$value": "0 1px 2px oklch(0 0 0 / 0.18), 0 0 0 0.5px oklch(0 0 0 / 0.28)",
+      "$value": "0 2px 8px oklch(0 0 0 / 0.3), 0 0 0 0.5px oklch(0 0 0 / 0.32), inset 0 0.5px 0 oklch(1 0 0 / 0.06)",
+      "$description": "Tight-dark-stack panel elevation (July-2026, mockups/celer.css): deeper ambient + inset top-light hairline; elevation reads from hairline+shadow, not lightness steps.",
       "$extensions": {
         "com.celer.celnet": {
           "cssVar": "--shadow-panel",
@@ -389,7 +390,8 @@
     },
     "hairline": {
       "$type": "border",
-      "$value": "0.5px solid oklch(1 0 0 / 0.08)",
+      "$value": "1px solid oklch(1 0 0 / 0.07)",
+      "$description": "Strengthened to a full 1px at 7% white for the tight dark surface stack (mockups/celer.css); light appearance keeps 0.5px.",
       "$extensions": {
         "com.celer.celnet": {
           "cssVar": "--hairline",
@@ -421,10 +423,10 @@
   "color": {
     "$description": "All color is OKLCH for perceptual uniformity. The $value of every token is its DARK / normal-contrast value (`:root` default). Light, increased-contrast, and combined overrides — verbatim from the source selectors — are in each token's $extensions.themes (light / contrast-high / light-contrast-high).",
     "bg": {
-      "$description": "Surfaces. Celer navy: base ≈ #1B1F2A, raised ≈ #282C3E, hue ~264 under the indigo accent.",
+      "$description": "Surfaces — tight dark stack (July-2026 SOTA, mockups/celer.css): inset 0.165 < base 0.2 < raised 0.255 < overlay 0.29, hue ~264 under the indigo accent. Darkened below the Celer brand-kit navy anchors (#1B1F2A / #282C3E) so hairline+shadow elevation carries the depth. A11Y GATE: the darkening changes every text-on-surface contrast pair — the axe a11y e2e (gui/e2e/a11y.e2e.ts) MUST re-verify at t2.",
       "base": {
         "$type": "color",
-        "$value": "oklch(0.255 0.018 264)",
+        "$value": "oklch(0.2 0.015 264)",
         "$extensions": {
           "com.celer.celnet": {
             "cssVar": "--bg-base",
@@ -434,7 +436,7 @@
       },
       "raised": {
         "$type": "color",
-        "$value": "oklch(0.315 0.022 264)",
+        "$value": "oklch(0.255 0.02 264)",
         "$extensions": {
           "com.celer.celnet": {
             "cssVar": "--bg-raised",
@@ -444,7 +446,7 @@
       },
       "overlay": {
         "$type": "color",
-        "$value": "oklch(0.345 0.026 264 / 0.82)",
+        "$value": "oklch(0.29 0.024 264 / 0.7)",
         "$description": "Translucent overlay; collapses to bg-overlay-solid under increased-contrast and reduced-transparency.",
         "$extensions": {
           "com.celer.celnet": {
@@ -459,7 +461,7 @@
       },
       "overlay-solid": {
         "$type": "color",
-        "$value": "oklch(0.345 0.026 264)",
+        "$value": "oklch(0.29 0.024 264)",
         "$extensions": {
           "com.celer.celnet": {
             "cssVar": "--bg-overlay-solid",
@@ -469,7 +471,7 @@
       },
       "inset": {
         "$type": "color",
-        "$value": "oklch(0.21 0.016 264)",
+        "$value": "oklch(0.165 0.013 264)",
         "$extensions": {
           "com.celer.celnet": {
             "cssVar": "--bg-inset",
@@ -479,7 +481,7 @@
       }
     },
     "text": {
-      "$description": "Text hierarchy. secondary > tertiary always preserved; tertiary tuned to clear WCAG AA 4.5:1 at 9–12px (axe a11y e2e).",
+      "$description": "Text hierarchy. secondary > tertiary always preserved; tertiary tuned to clear WCAG AA 4.5:1 at 9–12px (axe a11y e2e). Re-derived (computed OKLCH→sRGB→WCAG) for the tight dark surface stack: tertiary 0.74 ⇒ 6.82:1 on raised(0.255), 6.14:1 on overlay-solid(0.29), 4.78:1 worst composite (white-8% kbd tint over overlay) — all clear AA; value unchanged. Axe e2e must re-verify at t2.",
       "primary": {
         "$type": "color",
         "$value": "oklch(0.97 0.008 264)",

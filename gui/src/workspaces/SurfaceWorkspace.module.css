@@ -96,7 +96,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .viewChip {
+  .viewChip,
+  .wingChip,
+  .modelChip {
     transition: none;
   }
 }
@@ -119,20 +121,39 @@
   padding: var(--space-5);
 }
 
-.legend {
+/* Wing selection chips under the smile lib chart — the smile slice's
+   cross-highlight control (drives the Inspector read-out). Chip family matches
+   .modelChip; the active cue is the accent border + soft fill, label stays
+   primary text for AA contrast. */
+.wingChips {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  flex-wrap: wrap;
+  gap: var(--space-2);
   margin-top: var(--space-3);
 }
-.legendBar {
-  flex: 1;
-  height: 8px;
-  border-radius: var(--r-full);
-}
-.legendLabel {
+.wingChip {
+  font-family: var(--font-mono);
   font-size: var(--type-micro);
-  color: var(--text-tertiary);
+  letter-spacing: 0.03em;
+  padding: 2px var(--space-3);
+  border-radius: var(--r-full);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.wingChip:hover:not(.wingChipActive) {
+  border-color: var(--text-tertiary);
+  color: var(--text-primary);
+}
+.wingChipActive {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
 }
 
 /* surface panel uses noPadding; lay out body as a column */
