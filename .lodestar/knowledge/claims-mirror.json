@@ -14001,5 +14001,175 @@
    "github.com-soarsa-celnet.crates.celnet-server.src.xva_pricing.price_xva"
   ],
   "text": "CAPABILITY (D-xva — PriceXva RPC serving path / dormant-crate activation, previously unanchored). D-xva activates celnet-xva behind the one contract via the PriceXva RPC: the auth-gated PricingEdge::price_xva handler delegates to the celnet-server xva_pricing::price_xva adapter, which validates the PriceXvaRequest (non-positive strike/expiry/vol/notional -> typed XvaPriceError), builds the NettingSet and counterparty/own survival curves, and calls celnet_xva::compute_xva; a NonFiniteResult maps to Status::internal. This wires the previously-unserved XVA engine into the serving path (dormant-crate-activation acceptance, arch item D). Draft: serving-path decision (auth + validation + I/O)."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.price_with_margining"
+  ],
+  "text": "price_with_margining is a pure dispatch: for Margining::EquityStyle it delegates to price(opt, i) (discounted Black-Scholes-Merton with cost-of-carry b — which under ADR-0012 routes through the unified gbsm_carry_price kernel), and for Margining::FuturesStyle it delegates to futures_style_price(opt, i) (undiscounted Black-76, an in-crate closed form). No arithmetic is performed; the function is a zero-cost match-arm selector over the Margining enum. Pure: no writes."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.inputs.carry_vanilla_price_at"
+  ],
+  "text": "CAPABILITY (cross-asset carry-seam reach): carry_vanilla_price_at is the exotics-crate adapter to the generalized closed-form pricing kernel of the cross-asset carry seam — a pure, side-effect-free generalized-Black-Scholes-Merton evaluation parameterized by a generalized Carry (net cost-of-carry b = carry.carry_rate(), discount r = carry.discount_rate()). Under ADR-0012 it delegates to the ONE unified forward-space kernel celnet_core::carry::gbsm_carry_price(opt, b, r, spot, strike, vol, t); the d1/d2 and discounted forward/strike are computed inside that kernel and one branch on OptionType returns the price. Because every asset family lowers onto this one Carry-parameterized kernel (FX as r_dom/r_for ⇒ b = r_dom − r_for, equity as r/dividend-yield, commodity as Black-76 r/b, crypto-linear as r/funding), the SAME pure kernel reaches vanilla/exotics/surface/risk across the FX, equity, commodity and crypto/digital-asset leaves; every synthetic-recast site in celnet-exotics (geometric-Asian control variate, forward-start/cliquet unit-spot legs, variance-swap replication strip, quanto) prices through it. For a genuine Carry::FxRates the carry-seam vanilla is byte-for-byte identical to the FX (Garman-Kohlhagen) leaf (carry_rate() and r_dom − r_for are the same subtraction) — restoring the ADR-0008 byte-identity on the unified kernel; synthetic CostOfCarry paths agree to 1e-12. It performs no I/O, allocation, logging, or mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.price"
+  ],
+  "text": "GUARDRAIL/HOT-CORE (re-verified after ADR-0012 gBSM unification, origin/main 4371f17) — celnet_vanilla::price (the FX vanilla pricing entry) is allocation-free and lock-free by construction. It is now a THIN ADAPTER: it forms the cost-of-carry (b = r_dom − r_for) and delegates to celnet_core::carry::gbsm_carry_price (the single forward-space closed-form kernel, F = S·e^{bt}); no allocation (no Vec/Box, alloc_in_loop=0), no loop (loop_depth=0), no I/O, no logging, no locks. It reads &VanillaInputs + OptionType and returns the f64 price, mutating nothing. It remains the pinned zero-alloc hot core — the engine's hot_pricing_loop_allocates_zero / hot_pricing_under_concurrent_publish_allocates_zero counting-global-allocator tests still assert ZERO allocations on the hot path through the unified kernel (verified GREEN in the 4371f17 full t2). Telemetry/logging is offloaded off this path, never inlined. Supersedes the pre-unification claim whose mechanism description (df_for()/df_dom() + inline d1/d2 aux) predates the kernel delegation; the invariant is unchanged, only the mechanism moved into gbsm_carry_price."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.market_hedge_overlay.hedge_smile_cost"
+  ],
+  "text": "DELIVERABLE exotics/vanna-volga-overlay-magnitude-unvalidated = LANDED (backlog tracker still lists it OPEN as a Round-2 P2/M finding; reconciled against the live graph). `hedge_smile_cost` is the pure (side-effect-free) vanna-volga market-hedge smile-overlay cost: it reads ExoticSensitivities + the broker RR/BF marks and returns raw = vanna·market.vanna_price + volga·market.volga_price with no external writes. The Round-2 gap (only flat-smile/sign/scaling tests) is CLOSED: celnet-parity::vv_magnitude::engine_overlay_matches_replicating_portfolio_oracle_in_magnitude pins the engine overlay against a CODE-DISJOINT replicating-portfolio oracle within a derived 20% magnitude band, with ≤1% relative agreement on the cross-Greeks (vanna/volga) and a materiality floor + sign-agreement guard, backed by the golden oracle hedge_smile_overlay_cost. SELF-INVALIDATING: any edit to the overlay arithmetic shifts this anchor and flips the claim stale."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_carry_inputs_byte_identical"
+  ],
+  "text": "The carry-seam FX byte-identity is enforced by fx_carry_inputs_byte_identical: the FX arm of Carry (FxRates) lowers to VanillaInputs with forward/df_dom/df_for bit-identical (to_bits) to the native FX leaf (both via the generalized CarryInputs accessors and via the lowering to VanillaInputs); the sibling fx_lowering_rejects_cost_of_carry test pins that the CostOfCarry arm is rejected (UnsupportedCarry). This is a pure byte-identity gate over the carry seam (ADR-0008). Supersedes a withdrawn spec:satisfies probe whose design-target sentinel did not resolve in this build."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.mc.price_asian"
+  ],
+  "text": "price_asian prices an arithmetic Asian option by Monte Carlo with a geometric-average control variate. It runs two passes: the first collects antithetic-pair (arithmetic, geometric) samples and accumulates online covariance via Welford to estimate the regression coefficient β = Cov(arith, geo)/Var(geo). The second pass applies the control correction Y = arith_sample − β·(geo_sample − E[geo]) where E[geo] is `geometric_asian_price / df` (the undiscounted analytic geometric mean; geometric_asian_price reaches the carry-seam vanilla, whose ADR-0012 kernel re-route shifts it by ≤1e-12, mechanism unchanged). The final price is `df·E[Y]`."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.aux"
+  ],
+  "text": "`inverse::aux(i)` precomputes the shared scalars for the coin-margined closed form: `sqt=√t`, `vsqt=σ√t`, `f=S·e^{b·t}` (forward), `df=e^{-r·t}` (discount factor), `s2t=σ²·t`, and the three log-moneyness distances `d1=(ln(F/K)+½σ²t)/(σ√t)`, `d2=d1-σ√t`, `d3=d1-2σ√t`, plus `es2t=e^{σ²t}`. The inverse formula uses d2 and d3 (not d1) as the CDF arguments — d3 = d1 - 2σ√t is specific to the coin-margined payoff, absent from both the FX/linear and the standard Black-Scholes aux. This in-crate aux is retained (the inverse 1/S_T payoff is not covered by the unified gBSM kernel). Pure: reads `&InverseInputs`, returns `Aux`, no WRITES."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.double_knock_out_price"
+  ],
+  "text": "double_knock_out_price prices a double-knock-out option using the Ikeda-Kunitomo (Kunitomo-Ikeda) reflection-image series (summed over n = −DKO_TERMS..=DKO_TERMS). For each image term it evaluates two scaled CDF differences — one for the direct image (weight `(U/L)^{n·μ₁}`) and one for the lower-wall mirror (weight base `L^{n+1}/(Uⁿ·S)`) — via `scaled_cdf_diff` which evaluates the product `exp(ln_scale + ln|ΔΦ|)` in log-space to prevent Inf×0 NaN. The payoff is oriented by `phi = option.sign()` applied inside each CDF argument, so the raw `sum` is the put/call value directly and only the payoff floor `.max(0.0)` is applied on return. Pure: no WRITES."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.forward_delta",
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.forward_delta_helper_matches_strip"
+  ],
+  "text": "forward_delta returns the driftless (forward) delta ∂V/∂F = df·Φ(d1) for a Call and df·(Φ(d1)−1) for a Put — the Black-76 forward-space sensitivity used as the standardised delta quote for commodity options (hedging via the futures contract, not the spot). It reads this crate's in-crate aux and is unchanged by ADR-0012. It is distinct from the spot delta in greeks which carries the additional e^{bt} factor. Under ADR-0012 greeks().delta_forward is produced by the unified kernel (driftless Φ) then rescaled by df, so it stays bitwise identical to df·Φ; the test forward_delta_helper_matches_strip still asserts forward_delta is to_bits-identical to greeks().delta_forward for both EquityStyle variants. Pure: reads (OptionType, &CommodityInputs), returns f64, no writes/allocation/IO."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.hull_index_option_reference"
+  ],
+  "text": "hull_index_option_reference() is the externally-pinned numerical oracle for the generalized-BSM equity pricer: for S=930, K=900, r=0.08, q=0.03, σ=0.20, T=1/6 yr, repo=0 it asserts call=51.832956796490860 and put=14.550996773772400 (both to 1e-9 relative and absolute). This is an independently-computed full-precision result — not round-tripped from the crate under test — providing a ground-truth anchor that is source-stable (the specific reference values appear in the test source verbatim). Under ADR-0012 the pricer delegates to the unified forward-space kernel; this oracle still holds at ≤1e-9 (the sub-1e-12 forward-vs-spot reassociation is far under the bar). Validated by assert_close! to 9 decimal places."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.price"
+  ],
+  "text": "CAPABILITY (crypto inverse/coin-margined leaf): celnet-crypto-vanilla::inverse::price is the inverse (coin-margined, 1/S_T payoff) crypto vanilla pricing entry — a pure, side-effect-free closed form taking (OptionType, &InverseInputs) whose value is expressed in the coin numeraire via the k/F and e^{sigma^2 t} convexity terms (norm_cdf of d2/d3), reconciled to an independent oracle with a signed convexity sandwich. It keeps its own in-crate closed form (the 1/S_T measure correction is a genuinely new payoff shape the unified gBSM kernel does not cover). It is the crypto inverse capability's projection target on the carry seam through the one contract; the sibling linear (USDT-margined) crypto path collapses to the Black-76 forward limit at zero carry. No I/O, allocation, logging, or mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.tarf.tarf_price"
+  ],
+  "text": "DELIVERABLE exotics/qmc-pathwise-wiring = OPEN (Round-2 P2/M finding; reconciled against the live graph — still genuinely open at this round). `tarf_price` is a pure (side-effect-free) Monte-Carlo TARF valuation: it reads ExoticInputs/Tarf/TarfMcConfig, builds local per-fixing buffers, and returns a TarfResult with no external writes. The OPEN gap: the path generator is STILL the plain `CounterRng` antithetic Philox stream (`CounterRng::new(cfg.seed, 0, pair, 0)` + inverse_cdf), NOT the scrambled-Sobol / Brownian-bridge QMC stack in celnet-qmc that already feeds american.rs/multiasset.rs. The path-dependent pricers (tarf/accumulator/lookback/quanto/pivot) therefore forgo the low-discrepancy variance reduction the QMC crate provides. SELF-INVALIDATING: when this pricer is rewired onto celnet-qmc (Sobol/bridge) the function body changes and this claim flips stale; a write-introducing regression also flips it."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.touch.one_touch_price"
+  ],
+  "text": "DELIVERABLE exotics/one-touch-at-hit-pairing-flip = LANDED (backlog tracker still lists it OPEN as the Round-2 P0; reconciled against the live graph). `one_touch_price` (-> one_touch_with_side) is a pure (side-effect-free) closed-form one-touch valuation: it reads ExoticInputs/barrier/rebate/timing and returns a price with no external writes. The Round-2 P0 (~28% high / 2x-on-far-barriers at-hit pairing flip + circular golden oracle) is FIXED-AT-ROOT: the at-hit branch is pinned to an INDEPENDENT first-passage quadrature reference (at_hit_matches_independent_first_passage_quadrature, 1e-12) and guarded by a non-circular family — discounted-hit-probability sandwich, t->inf perpetual-discounted-hit limit, barrier continuity, zero-rate collapse to deferred, and barrier monotonicity (all present in touch.rs at the documented tolerances, re-verified unchanged by ADR-0012). SELF-INVALIDATING: a regression re-introducing a WRITES side effect, or any re-pairing edit that shifts these anchors, flips this claim stale."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-vanilla.src.adjoint.adjoint_greeks"
+  ],
+  "text": "`adjoint_greeks` computes the full 14-field Greeks via AAD (Algorithmic Adjoint Differentiation). The forward pass records a `Tape` of the genuine SPOT-SPACE Garman-Kohlhagen graph (df_for/df_dom, s_disc/k_disc, d1/d2); the first reverse pass (`reverse(&tp, 1.0)`) produces the first-order adjoints — delta_spot=∂V/∂S, vega=∂V/∂σ, theta=−∂V/∂T, rho_dom=∂V/∂r_dom, rho_for=∂V/∂r_for — in a single backward sweep. Second-order gamma and vanna are obtained by hand-composing a second reverse pass over the delta_spot expression (genuine reverse-over-reverse), using tape edges: gamma=df_for·φ(d1)·(1/(S·vsqt)), vanna=df_for·φ(d1)·((σT)/vsqt−d1/σ), volga=vega·(−d1)·∂d1/∂σ. The mixed/higher-order tail (charm, speed, zomma, color) is taken from the analytic `greeks` path. Under ADR-0012 the AAD tape stays spot-space while `price()` now delegates to the unified FORWARD-space kernel, so the AAD price agrees with `price()` to 1e-12 (pinned by aad_price_matches_within_1e12, replacing the former bit-identical aad_price_bit_identical) — the residual is pure last-bit forward-vs-spot rounding (~1e-15); aad_matches_analytic and the independent FD oracle remain exact-to-tolerance. Pure: reads (OptionType, &VanillaInputs), returns Greeks, no writes."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.aux"
+  ],
+  "text": "aux is the shared Black-76 precomputation kernel: given CommodityInputs it computes σ√t, the carry-adjusted forward F = S·e^{b·t} (via CommodityInputs::forward), the discount factor df = e^{−r·t} (via CommodityInputs::discount_df), and the forward-space log-moneyness d1 = [ln(F/K) + ½σ²t]/(σ√t), d2 = d1 − σ√t (libm-routed ln/sqrt for cross-platform determinism). Under ADR-0012 the DISCOUNTED price()/greeks() now delegate to the unified core kernel celnet_core::carry::gbsm_carry_price/greeks (which recomputes the same intermediates in its own celnet_core::carry::carry_aux); this crate's aux now feeds the THREE remaining in-crate closed forms — forward_delta, futures_style_price and futures_style_greeks (the undiscounted, daily-margined leg the core kernel does not cover). Pure: reads &CommodityInputs, returns Aux, no writes/allocation/IO."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.asian.geometric_average_price"
+  ],
+  "text": "geometric_average_price prices a geometric-average Asian option analytically. For discrete schedules with n future observations it computes the effective volatility σ_G²= σ²(n+1)(2n+1)/(6n²) and effective cost-of-carry b_G = ½(b − ½σ²)(n+1)/n + ½σ_G², constructs a synthetic ExoticInputs with these parameters, and delegates to carry_vanilla_price (which under ADR-0012 routes through the unified gbsm_carry_price kernel — the synthetic CostOfCarry path may differ by ≤1e-12 from the pre-refactor value, formulas unchanged). For continuous averaging it delegates to continuous_geometric_price which uses σ_G²=σ²/3 and the corresponding carry adjustment. Both paths are asset-class-agnostic via the carry-seam ExoticInputs representation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.settlement.route_price"
+  ],
+  "text": "CAPABILITY (carry-seam deliverable, crypto leaf reach): route_price is the pure crypto settlement-style dispatcher that reaches both crypto vanilla leaves on the shared Carry seam — SettlementStyle::Linear → linear::price (GK-funding, USDT/coin-quoted, which under ADR-0012 delegates to the unified gbsm_carry_price kernel) and SettlementStyle::InverseCoin → inverse::price (inverse/coin-margined 1/S_T payoff, its own in-crate closed form) — selecting the leaf by settlement style and forwarding the same (spot, strike, vol, t, Carry). Pure: returns the leaf price from value/ref args with no WRITES; self-invalidates if either leaf arm gains a side effect."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.funding.funding_carry"
+  ],
+  "text": "`funding_carry(r, funding) -> Carry` is the canonical Carry constructor for crypto: it builds `Carry::CostOfCarry { r, b: r - funding }` so the net cost-of-carry b equals the difference between the risk-free rate and the perpetual funding rate. When funding == r the carry rate is zero and the forward equals spot (zero-drift, Black-76 limit). It is the standard entry point for both the inverse and linear crypto inputs (LinearInputs::funded / InverseInputs::funded). Pure: returns a new `Carry` from two `f64` scalars with no WRITES, no allocation, no I/O."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.forward_start.cliquet_price_plain",
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.forward_start.forward_start_price"
+  ],
+  "text": "forward_start_price prices a forward-starting option as S·e^{−q·t₁}·unit_spot_value(i, option, moneyness, residual), where t₁=spec.reset is the reset date, q is read via i.carry_df_at(spec.reset) (the yield/foreign discount factor to reset, stored r_for verbatim for FX — byte-identical to e^{−r_for·t₁}), and residual = spec.expiry − spec.reset is the remaining tenor. unit_spot_value gives the normalized option value per unit spot at a moneyness strike (reaching the carry-seam vanilla, whose ADR-0012 kernel re-route shifts it by ≤1e-12, mechanism unchanged). cliquet_price_plain sums n forward-start legs over consecutive schedule intervals for an uncapped ratchet cliquet — valid only when Cliquet::is_plain() holds (debug_assert). Pure: reads ExoticInputs, no WRITES."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.price"
+  ],
+  "text": "CAPABILITY (equity cross-asset leaf): celnet-equity-vanilla::price is the generalized-BSM equity vanilla pricing entry on the carry seam — a pure, side-effect-free closed form taking (OptionType, &EquityInputs) where the dividend yield enters as the net carry b = r − q − repo. Under ADR-0012 it is now a THIN ADAPTER that delegates to the ONE unified forward-space kernel celnet_core::carry::gbsm_carry_price(opt, b=carry(), r, spot, strike, vol, t); the former in-crate spot-space closed form was deleted. The no-dividend limit still collapses to standard Black-Scholes (no_dividend_limit_is_standard_bsm) and the leaf reconciles to an independent QuantLib-pinned BSM oracle (hull_index_option_reference / repo_spread_reference) at ≤1e-9. Correctness is carried by those independent oracles; the earlier spot-vs-forward byte-identity was intentionally retired for the forward-space reassociation (operator-approved option C; residual ~1e-15). It remains the equity capability's projection target through the one contract. No I/O, allocation, logging, or mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.price"
+  ],
+  "text": "CAPABILITY (commodity cross-asset leaf): celnet-commodity-vanilla::price is the Black-76 commodity/future-option pricing entry on the carry seam — a pure, side-effect-free closed form taking (OptionType, &CommodityInputs) that prices off the outright forward with numeraire discount (b = carry.carry_rate(): 0 on a listed future, r−convenience on spot). Under ADR-0012 it delegates to the ONE unified forward-space kernel celnet_core::carry::gbsm_carry_price(opt, b, r, spot, strike, vol, t) — byte-for-byte identical to the former in-crate Black-76 form (identical forward-space op sequence). Reconciled to Haug's published Black-76 reference and an independent QuantLib-pinned oracle. It is the commodity capability's projection target through the one contract. No I/O, allocation, logging, or mutation."
  }
 ]
