@@ -94,7 +94,10 @@ pub use core_link::{
     BarrierTopology, CoreLink, CoreLinkError, ExoticQuery, MarketSnapshot, Observable,
     ObservableQuery, SurfaceQuery, SurfaceVol,
 };
-pub use pricer::{ConventionSet, PriceError, Priced, price_instrument, price_vanilla_via_contract};
+pub use pricer::{
+    ConventionSet, PriceError, Priced, price_cross_asset_via_contract, price_instrument,
+    price_vanilla_via_contract,
+};
 pub use readiness::{ReadinessGate, ServiceState};
 pub use services::pricefanout::{PriceTick, pair_seed, spot_at, underlying_seed};
 pub use services::quote::LpPanelConfig;

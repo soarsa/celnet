@@ -685,6 +685,35 @@ fn cost_of_carry(market: &WireMarketContext) -> Result<Carry, PriceError> {
     }
 }
 
+/// Decode a cross-asset vanilla's option type and its **absolute** strike, refusing
+/// an FX delta key. A cross-asset (equity / commodity / digital-asset) option
+/// carries an absolute strike, never an FX delta convention (there is no
+/// cross-asset delta solver) — a delta key is a clear input error surfaced as
+/// `INVALID_ARGUMENT` at the boundary.
+///
+/// The single source of that decode/refusal shared by the Phase-A2 [`contract`]
+/// leaf engines; [`price_cross_asset`] keeps its established inline form and the
+/// byte-identity gate (`contract::tests::cross_asset_reseat_is_byte_identical`)
+/// proves the two agree.
+fn cross_asset_vanilla_terms(v: &celnet_proto::Vanilla) -> Result<(OptionType, f64), PriceError> {
+    let option_type = decode_option_type(v.option_type)?;
+    let spec = v
+        .strike
+        .as_ref()
+        .and_then(|s| s.spec.as_ref())
+        .ok_or(PriceError::MissingField("vanilla.strike"))?;
+    let strike = match spec {
+        strike_or_delta::Spec::Strike(k) => *k,
+        strike_or_delta::Spec::Delta(_) => {
+            return Err(PriceError::Domain(
+                "a cross-asset (equity/commodity/digital-asset) option requires an \
+                 absolute strike, not an FX delta key",
+            ));
+        }
+    };
+    Ok((option_type, strike))
+}
+
 /// Build the wire-facing [`Greeks`] strip from a leaf [`celnet_core::carry::CarryGreeks`]
 /// strip. The leaf reports the rate sensitivities as
 /// [`RateSensitivities::Carry`] (discount-rho `∂V/∂r`, carry-rho `∂V/∂b`); these
@@ -903,6 +932,103 @@ fn price_cross_asset(
         Underlying::Fx(_) | Underlying::Metal(_) => Err(PriceError::Domain(
             "internal: FX/metal underlying routed to the cross-asset path",
         )),
+    }
+}
+
+/// Price a cross-asset (equity / commodity / digital-asset) instrument through the
+/// unified pricing **contract** ([`celnet_core::contract`]) — the leaf-level
+/// re-seat of the cross-asset arms (ADR-0017 **Phase A2**,
+/// `docs/plan/CENTRAL-CORE-UNIFICATION.md`); the cross-asset companion of
+/// [`price_vanilla_via_contract`].
+///
+/// The market is resolved by [`contract::CrossAssetCarryResolver`] into a
+/// cross-asset [`celnet_core::contract::ResolvedMarket`] — a single discount leg
+/// `r` and **no foreign leg** (the net carry `b` is a scalar on the generalized
+/// carry arm, not a second discount curve), plus the resolved scalar spot + vol —
+/// and the arm's [`celnet_core::contract::Priceable`] leaf engine
+/// ([`contract::EquityVanillaEngine`] / [`contract::CommodityVanillaEngine`] /
+/// [`contract::CryptoLinearEngine`] / [`contract::CryptoInverseEngine`] /
+/// [`contract::CrossAssetPerpetualEngine`] / [`contract::CrossAssetListedFutureEngine`])
+/// prices it.
+///
+/// This is **byte-identical** to the cross-asset path of [`price_instrument`]
+/// (which dispatches through [`price_cross_asset`]), gated by
+/// `contract::tests::cross_asset_reseat_is_byte_identical`: it selects the same
+/// leaf per arm, sourcing the net carry from `market` via [`cost_of_carry`] (the
+/// frozen cost-of-carry arithmetic — the `ResolvedMarket` carries only the single
+/// discount leg, mirroring the A1 FX byte-identity rationale) and the resolved
+/// scalar spot + vol from the resolved market.
+///
+/// [`price_cross_asset`]'s guard cascade — the per-arm product routing, the
+/// cross-asset delta-key refusal, the crypto settlement-style selection, and the
+/// exotic / FX-metal refusals — is preserved as pre-dispatch; routing is unchanged,
+/// only the leaf gains the contract seam (critique F2).
+///
+/// # Errors
+///
+/// [`PriceError`] if the instrument does not carry a cross-asset underlying /
+/// product or carries an out-of-domain input.
+pub fn price_cross_asset_via_contract(
+    instrument: &Instrument,
+    market: &WireMarketContext,
+    conv: &ConventionSet,
+) -> Result<Priced, PriceError> {
+    use celnet_core::contract::{MarketResolver, Priceable};
+
+    let expiry = instrument.expiry_years;
+    let wire_underlying = instrument
+        .underlying
+        .as_ref()
+        .ok_or(PriceError::MissingField("instrument.underlying"))?;
+    let underlying = celnet_types::Underlying::try_from(wire_underlying.clone())
+        .map_err(|_| PriceError::Domain("instrument.underlying is malformed"))?;
+    let product = instrument
+        .product
+        .as_ref()
+        .ok_or(PriceError::EmptyProduct)?;
+
+    // The cross-asset ResolvedMarket the leaf engines price against: a single
+    // discount leg `r`, no foreign leg, the resolved scalar spot + vol.
+    let resolver = contract::CrossAssetCarryResolver::from_market(market, conv);
+    let resolved = resolver.resolve(&())?;
+    let ctx = engines::EngineCtx {
+        instrument,
+        market,
+        expiry,
+        conv,
+        plugin_models: None,
+    };
+
+    // Mirror `price_cross_asset`'s product/underlying routing leaf-by-leaf through
+    // the `Priceable` seam; the guard/refusals are the verbatim pre-dispatch cascade.
+    match product {
+        instrument::Product::Vanilla(_) => match underlying {
+            Underlying::Equity(_) => contract::EquityVanillaEngine.price(&resolved, &ctx),
+            Underlying::Commodity(_) => contract::CommodityVanillaEngine.price(&resolved, &ctx),
+            Underlying::DigitalAsset(_) => {
+                match decode_settlement_style(instrument.settlement_style)? {
+                    CryptoSettlementStyle::Linear => {
+                        contract::CryptoLinearEngine.price(&resolved, &ctx)
+                    }
+                    CryptoSettlementStyle::InverseCoin => {
+                        contract::CryptoInverseEngine.price(&resolved, &ctx)
+                    }
+                }
+            }
+            Underlying::Fx(_) | Underlying::Metal(_) => Err(PriceError::Domain(
+                "internal: FX/metal underlying routed to the cross-asset path",
+            )),
+        },
+        instrument::Product::PerpetualOption(_) => {
+            contract::CrossAssetPerpetualEngine.price(&resolved, &ctx)
+        }
+        instrument::Product::ListedFutureOption(_) => {
+            contract::CrossAssetListedFutureEngine.price(&resolved, &ctx)
+        }
+        other => Err(PriceError::UnsupportedModel {
+            model: "DEFAULT",
+            product: product_name(other),
+        }),
     }
 }
 
