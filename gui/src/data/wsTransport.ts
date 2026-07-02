@@ -83,6 +83,8 @@ import type {
   UserRole,
   UserDesc,
   Capability,
+  XvaPricingRequest,
+  XvaResult,
 } from "./contract";
 import {
   acceptDeskQuoteToWire,
@@ -180,10 +182,12 @@ import {
   parseFrame,
   quoteAcceptToWire,
   quoteFromWire,
+  priceXvaRequestToWire,
   ratesCurveSetToWire,
   ratesInstrumentToWire,
   ratesPricingResultFromWire,
   riskBucketRequestToWire,
+  xvaResultFromWire,
   scenarioResultFromWire,
   serializeFrame,
   setFixConnectionEnabledRequestToWire,
@@ -994,6 +998,21 @@ export class WsTransport implements CelnetTransport {
       PRICING_REQUEST_TIMEOUT_MS,
     );
     return ratesPricingResultFromWire(reply);
+  }
+
+  async priceXva(request: XvaPricingRequest): Promise<XvaResult> {
+    // The `price_xva` RPC over the WS mirror: send the netting set + exposure
+    // model + survival curves and decode the four scalar adjustments the server
+    // returns. One unversioned contract, so the WS-priced result is byte-identical
+    // to the gRPC edge. The exposure profile is a server-internal — the reply
+    // carries only { cva, dva, fva, total_adjustment }.
+    const reply = await this.conn.request(
+      "price_xva",
+      priceXvaRequestToWire(request),
+      "price_xva_response",
+      PRICING_REQUEST_TIMEOUT_MS,
+    );
+    return xvaResultFromWire(reply);
   }
 
   async requestQuote(

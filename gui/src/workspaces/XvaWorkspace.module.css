@@ -1,0 +1,307 @@
+/*
+ * XvaWorkspace — the counterparty valuation-adjustment surface: an editable
+ * netting-set + credit/funding builder on the left, the priced CVA/DVA/FVA figures
+ * and the (illustrative, seeded) counterparty exposure fan on the right.
+ * Layout-only; all colour, type, spacing and radius come from the design tokens
+ * (no hardcoded palette — `rules/web/coding-style`).
+ */
+
+.wrap {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(380px, 1.15fr);
+  gap: var(--space-5);
+  padding: var(--space-5);
+  height: 100%;
+  box-sizing: border-box;
+  align-content: start;
+}
+
+@media (max-width: 880px) {
+  .wrap {
+    grid-template-columns: 1fr;
+  }
+}
+
+.builder,
+.results {
+  min-width: 0;
+}
+
+/* --- netting-set editor --------------------------------------------------- */
+
+.nettingHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.tradeList {
+  list-style: none;
+  margin: 0 0 var(--space-5);
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-2);
+}
+
+.tradeItem {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-inset);
+  border-radius: var(--r-sm);
+}
+
+.tradeType {
+  appearance: none;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-callout);
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  cursor: pointer;
+}
+
+.tradeType:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-soft);
+}
+
+.tradeRemove {
+  appearance: none;
+  margin-left: auto;
+  width: var(--control-h);
+  height: var(--control-h);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-raised);
+  color: var(--text-tertiary);
+  font-size: var(--type-callout);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color var(--ease-out),
+    border-color var(--ease-out);
+}
+
+.tradeRemove:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.tradeRemove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* --- grouped fields (market + credit) ------------------------------------- */
+
+.group {
+  border: 0;
+  margin: 0 0 var(--space-5);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.group legend {
+  padding: 0 0 var(--space-2);
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* --- inline numeric inputs ------------------------------------------------ */
+
+.inlineInput {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  padding: 0 var(--space-2);
+  height: var(--control-h);
+}
+
+.inlineInput input {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  width: 6ch;
+  text-align: right;
+  padding: 0;
+}
+
+.inlineInput input:focus {
+  outline: none;
+}
+
+.inlineLabel {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.inputUnit {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+/* --- price action + honesty notes ----------------------------------------- */
+
+.priceRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.staleHint {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.scopeNote {
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+.error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--danger) 14%, transparent);
+  color: var(--danger);
+  font-size: var(--type-caption);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--type-callout);
+}
+
+/* --- results: headline adjustments + exposure fan ------------------------- */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-inset);
+  border-radius: var(--r-md);
+  border-top: 2px solid var(--hairline);
+}
+
+/* Leg-tinted top rules — sequential ramp for cost legs, diverging pole for the
+ * benefit (DVA). Quantitative colour only (never brand hues). */
+.metric[data-tone="cva"] {
+  border-top-color: var(--seq-3);
+}
+
+.metric[data-tone="fva"] {
+  border-top-color: var(--seq-5);
+}
+
+.metric[data-tone="dva"] {
+  border-top-color: var(--div-neg1);
+}
+
+.metricEmphatic {
+  grid-column: 1 / -1;
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-panel);
+  border-top-color: var(--accent);
+}
+
+.metricLabel {
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+.metricValue {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-title);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+.metricEmphatic .metricValue {
+  font-size: var(--type-display);
+}
+
+.identityNote {
+  margin: 0 0 var(--space-5);
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.chartTitle {
+  margin: 0;
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-header);
+}
+
+.fanNote {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}

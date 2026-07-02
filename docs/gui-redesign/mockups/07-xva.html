@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — XVA (mockup 07)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+  /* ===== screen-07 (XVA) local styles — tokens only, no brand hues on quantitative scales ===== */
+  .xhead { display:flex; align-items:center; gap:var(--space-4); flex-wrap:wrap; }
+  .coming { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-caption); font-weight:700;
+    padding:3px 10px; border-radius:var(--r-full); background:var(--accent-soft); color:var(--accent);
+    border:1px dashed var(--accent); white-space:nowrap; }
+  .honest { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; padding:7px 12px;
+    border-radius:var(--r-md); background:var(--bg-inset); border:1px dashed var(--grid-line); font-size:var(--type-caption); color:var(--text-secondary); }
+  .lk { display:inline-flex; align-items:center; gap:5px; font-size:var(--type-micro); font-weight:600;
+    padding:2px 7px; border-radius:var(--r-sm); background:oklch(1 0 0 / 0.05); border:var(--hairline); color:var(--text-secondary); }
+  .lk .tg { font-size:8px; text-transform:uppercase; letter-spacing:0.05em; font-weight:700; padding:1px 5px; border-radius:3px; }
+  .lk .tg.live { background:oklch(0.78 0.16 155 / 0.16); color:var(--bid); }
+  .lk .tg.tgt  { background:var(--accent-soft); color:var(--accent); }
+
+  /* KPI strip — two metric families, each captioned + divided so scanning never conflates them */
+  .tilewrap { display:flex; flex-direction:column; gap:var(--space-3); }
+  .tggrp { display:flex; flex-direction:column; gap:6px; }
+  .tglabel { display:flex; align-items:center; gap:var(--space-3); font-size:var(--type-micro); text-transform:uppercase;
+    letter-spacing:0.06em; color:var(--text-tertiary); font-weight:700; }
+  .tglabel::after { content:""; flex:1; height:1px; background:var(--grid-line); }
+  .tiles { display:grid; gap:var(--space-3); }
+  .tiles.va  { grid-template-columns:1.35fr 1fr 1fr 1fr; }
+  .tiles.exp { grid-template-columns:repeat(4,1fr); }
+  .tile { background:var(--bg-inset); border:var(--hairline); border-radius:var(--r-md); padding:9px 12px; position:relative; }
+  .tile .tk { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.05em; color:var(--text-tertiary); font-weight:600; }
+  .tile .tv { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:19px; font-weight:600; margin-top:2px; line-height:1.15; }
+  .tile .ts2 { font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); margin-top:1px; }
+  /* hero = the headline net adjustment: reads first (raised surface, diverging-neg accent bar, oversized value) */
+  .tile.hero { background:var(--bg-raised); box-shadow:inset 3px 0 0 var(--div-neg2), var(--shadow-panel); padding:11px 14px; }
+  .tile.hero .tk { color:var(--text-secondary); }
+  .tile.hero .tv { font-size:27px; margin-top:3px; }
+  .tile.hero .ts2 { font-size:var(--type-caption); }
+  .tag { font-size:8px; text-transform:uppercase; letter-spacing:0.05em; font-weight:700; padding:1px 5px; border-radius:3px; }
+  .tag.charge { background:oklch(0.58 0.13 248 / 0.18); color:var(--div-neg2); }
+  .tag.benefit{ background:oklch(0.72 0.11 62 / 0.20); color:var(--div-pos1); }
+
+  /* keep header/model controls single-line down to ≤1440-wide (the long .meta string stays free to reflow) */
+  .xhead .field, .model .selctl, .model .sel { white-space:nowrap; }
+
+  /* fan chart — quantile bands carry a boundary stroke so 5–95% vs 25–75% read as distinct (not a muddy overlap) */
+  #fan .fan-outer { fill:oklch(0.44 0.11 262 / 0.18); stroke:oklch(0.44 0.11 262 / 0.55); stroke-width:0.75; }
+  #fan .fan-inner { fill:oklch(0.66 0.11 168 / 0.34); stroke:oklch(0.66 0.11 168 / 0.72); stroke-width:0.75; }
+  #fan .fan-ee   { fill:none; stroke:var(--seq-5); stroke-width:2.2; stroke-linejoin:round; }
+  #fan .fan-pfe  { fill:none; stroke:var(--seq-3); stroke-width:1.5; stroke-dasharray:5 3; stroke-linejoin:round; }
+  #fan .fan-ene  { fill:none; stroke:var(--div-neg1); stroke-width:2; stroke-linejoin:round; }
+  #fan .fan-eneband { fill:oklch(0.58 0.13 248 / 0.20); stroke:oklch(0.70 0.07 240 / 0.42); stroke-width:0.6; }
+  #fan .fan-epe  { stroke:var(--seq-6); stroke-dasharray:6 4; stroke-width:1.2; }
+  #fan .fan-een  { stroke:var(--div-neg1); stroke-dasharray:4 4; stroke-width:1; opacity:0.8; }
+  #fan .zeroln   { stroke:var(--text-secondary); stroke-width:1; opacity:0.55; }
+  #fan .eedot    { fill:var(--seq-5); }
+  #fan .peakdot  { fill:var(--seq-3); }
+  #fan[data-m="ee"]  .fan-ee  { stroke-width:3.2; }
+  #fan[data-m="pfe"] .fan-pfe { stroke-width:2.6; stroke-dasharray:none; opacity:1; }
+  #fan[data-m="pfe"] .fan-outer { fill:oklch(0.44 0.11 262 / 0.32); stroke-width:1; }
+  #fan[data-m="epe"] .fan-epe { stroke-width:2.6; }
+
+  /* waterfall */
+  .wf .zerobase { stroke:var(--text-secondary); stroke-width:1; opacity:0.55; }
+  .wf .conn { stroke:var(--text-tertiary); stroke-dasharray:2 3; stroke-width:1; opacity:0.6; }
+  .wf .b-cva { fill:var(--div-neg2); } .wf .b-fva { fill:var(--div-neg1); }
+  .wf .b-dva { fill:var(--div-pos1); } .wf .b-tot { fill:var(--seq-3); opacity:0.85; }
+  .wf .blab  { fill:var(--text-secondary); font-size:8px; }
+  .wf .bval  { fill:var(--text-primary); font-size:9px; font-weight:600; }
+
+  /* cds mini */
+  .cds .cln { fill:none; stroke:var(--seq-4); stroke-width:2; stroke-linejoin:round; }
+  .cds .carea { fill:var(--seq-4); opacity:0.10; }
+  .cds .cdot { fill:var(--seq-5); }
+
+  /* drill */
+  .crumb { display:flex; align-items:center; gap:var(--space-3); font-size:var(--type-callout); }
+  .crumb .c { color:var(--text-tertiary); cursor:pointer; padding:2px 8px; border-radius:var(--r-sm); }
+  .crumb .c:hover { background:oklch(1 0 0 / 0.04); color:var(--text-primary); }
+  .crumb .c.on { color:var(--text-primary); font-weight:600; background:var(--bg-raised); box-shadow:var(--shadow-panel); }
+  .crumb .sep { color:var(--text-tertiary); opacity:0.5; }
+  .drillrow { cursor:pointer; }
+  .cbar { display:inline-block; height:6px; border-radius:var(--r-full); background:var(--seq-3); vertical-align:middle; }
+  .cbartrk { display:inline-block; width:64px; height:6px; border-radius:var(--r-full); background:oklch(1 0 0 / 0.06); vertical-align:middle; overflow:hidden; }
+  .ratel { font-family:var(--font-mono); font-size:var(--type-caption); }
+  .csatag { font-size:8px; text-transform:uppercase; letter-spacing:0.04em; font-weight:700; padding:1px 6px; border-radius:3px; }
+  .csatag.unc { background:oklch(0.58 0.13 248 / 0.16); color:var(--div-neg2); }
+  .csatag.col { background:oklch(1 0 0 / 0.05); color:var(--text-tertiary); }
+  .xgrid2 { display:grid; grid-template-columns:1.15fr 0.85fr; gap:var(--space-4); grid-auto-rows:min-content; }
+  .backlnk { font-size:var(--type-caption); color:var(--accent); cursor:pointer; }
+  .miniax { fill:var(--text-tertiary); font-size:8px; font-family:var(--font-mono); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR (verbatim from 00-shell) ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL (verbatim; 'on' moved to XVA) ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a class="on"><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — XVA ============ -->
+  <main class="main" style="gap:var(--space-4)">
+
+    <!-- header row -->
+    <div class="xhead">
+      <span class="title" style="font-size:20px" title="Portfolio credit &amp; funding valuation adjustments · post-trade">XVA</span>
+      <span class="coming" title="celnet-xva::compute_xva is a scaffold — no proto/WS wire surface yet (D-xva activation)">◷ TARGET · coming</span>
+      <span style="flex:1"></span>
+      <span class="field"><span class="lbl">netting sets</span> All · 5 <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">ccy</span> USD <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">as-of</span> 01 Jul 12:04 <span class="car">▾</span></span>
+    </div>
+
+    <!-- honesty / integration strip (per KNOWLEDGE-flow-links) -->
+    <div class="honest">
+      <span title="Engine present, callers 0 — exposure = Sobol-LSMC (Owen-scramble, bit-reproducible)"><b class="muted">Engine</b> <span class="num">celnet-xva::compute_xva</span> · <span class="dim">illustrative figures</span></span>
+      <span style="flex:1"></span>
+      <span class="lk"><span class="tg tgt">target</span> exposures ← book</span>
+      <span class="lk"><span class="tg tgt">target</span> XVA → pricing skew</span>
+      <span class="lk"><span class="tg tgt">target</span> risk push (pull-on-read today)</span>
+      <span class="lk"><span class="tg live">live</span> one versioned SurfaceBook</span>
+    </div>
+
+    <!-- exposure-model hero row (grounds ExposureConfig) -->
+    <div class="model">
+      <span class="sel title" style="font-size:15px">Exposure model · Sobol-LSMC <span class="car" style="font-size:11px">▾</span></span>
+      <span class="meta">32,768 paths · σ<sub>exp</sub> <span class="num">9.4%</span> · seed-locked <span class="ok">✓ bit-reproducible</span> · horizon <span class="num">2Y</span> (longest expiry) · steps 96</span>
+      <span class="selctl"><span class="lbl">measure</span> risk-neutral <span class="car">▾</span></span>
+      <span style="flex:1"></span>
+      <button class="btn ghost" title="Compute not wired to a live book — scaffold">Recompute ◷</button>
+      <button class="btn ghost">Export CVA ledger</button>
+    </div>
+
+    <!-- KPI tiles — grouped by metric family (valuation adjustments vs exposure/capital) -->
+    <div class="tilewrap">
+      <div class="tggrp">
+        <div class="tglabel">Valuation adjustments</div>
+        <div class="tiles va">
+          <div class="tile hero">
+            <div class="tk">Total XVA (net)</div>
+            <div class="tv neg">−$1.44mm</div>
+            <div class="ts2">MtM 41.80 → adj 40.36 · −3.4%</div>
+          </div>
+          <div class="tile">
+            <div class="tk">CVA <span class="tag charge">charge</span></div>
+            <div class="tv">$1.86mm</div>
+            <div class="ts2">LGD 60% · 5 counterparties</div>
+          </div>
+          <div class="tile">
+            <div class="tk">DVA <span class="tag benefit">benefit</span></div>
+            <div class="tv">$0.71mm</div>
+            <div class="ts2">own LGD 60% · λ<sub>own</sub> 0.9%</div>
+          </div>
+          <div class="tile">
+            <div class="tk">FVA <span class="tag charge">charge</span></div>
+            <div class="tv">$0.29mm</div>
+            <div class="ts2">spread 34bp · joint-survival</div>
+          </div>
+        </div>
+      </div>
+      <div class="tggrp">
+        <div class="tglabel">Exposure &amp; regulatory capital</div>
+        <div class="tiles exp">
+          <div class="tile">
+            <div class="tk">EPE (netted)</div>
+            <div class="tv">$3.90mm</div>
+            <div class="ts2">gross 6.24 · netting −37%</div>
+          </div>
+          <div class="tile">
+            <div class="tk">Peak PFE 95%</div>
+            <div class="tv">$11.2mm</div>
+            <div class="ts2">@ 6M · profile hump</div>
+          </div>
+          <div class="tile">
+            <div class="tk">EEPE</div>
+            <div class="tv">$4.62mm</div>
+            <div class="ts2">effective EPE · reg horizon 1Y</div>
+          </div>
+          <div class="tile">
+            <div class="tk">SA-CCR EAD</div>
+            <div class="tv">$18.4mm</div>
+            <div class="ts2">α 1.4 · RWA input</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- signature charts row -->
+    <div class="xgrid2">
+
+      <!-- FAN chart — EE / EPE / PFE(95%) + mirrored ENE -->
+      <section class="panel">
+        <header>
+          <span style="display:flex; align-items:baseline; gap:var(--space-3); min-width:0">
+            <span class="headline">Exposure profile</span>
+            <span class="muted" style="font-size:11px; white-space:nowrap">EPE · EE · PFE fan &amp; mirrored ENE</span>
+          </span>
+          <span class="seg" id="measure" role="tablist" aria-label="Exposure measure">
+            <button data-m="epe">EPE</button>
+            <button data-m="ee" class="on">EE</button>
+            <button data-m="pfe">PFE 95%</button>
+          </span>
+        </header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg id="fan" class="chart" data-m="ee" viewBox="0 0 720 300" height="288" aria-label="Exposure-profile fan chart with expected exposure, EPE, PFE(95%) band and mirrored ENE">
+            <!-- vertical tenor gridlines -->
+            <line class="gl" x1="60"  y1="24" x2="60"  y2="272"/>
+            <line class="gl" x1="109" y1="24" x2="109" y2="272"/>
+            <line class="gl" x1="159" y1="24" x2="159" y2="272"/>
+            <line class="gl" x1="232" y1="24" x2="232" y2="272"/>
+            <line class="gl" x1="306" y1="24" x2="306" y2="272"/>
+            <line class="gl" x1="399" y1="24" x2="399" y2="272"/>
+            <line class="gl" x1="491" y1="24" x2="491" y2="272"/>
+            <line class="gl" x1="584" y1="24" x2="584" y2="272"/>
+            <line class="gl" x1="676" y1="24" x2="676" y2="272"/>
+            <!-- horizontal exposure gridlines -->
+            <line class="gl" x1="60" y1="24"  x2="676" y2="24"/>
+            <line class="gl" x1="60" y1="66"  x2="676" y2="66"/>
+            <line class="gl" x1="60" y1="107" x2="676" y2="107"/>
+            <line class="gl" x1="60" y1="148" x2="676" y2="148"/>
+            <line class="gl" x1="60" y1="237" x2="676" y2="237"/>
+
+            <!-- positive fan bands (Viridis sequential) -->
+            <path class="fan-outer" d="M60,157 L109,121 L159,90 L232,57 L306,35 L399,43 L491,70 L584,108 L676,154 L676,183 L584,173 L491,165 L399,160 L306,157 L232,160 L159,164 L109,168 L60,173 Z"/>
+            <path class="fan-inner" d="M60,161 L109,135 L159,113 L232,89 L306,72 L399,79 L491,100 L584,129 L676,164 L676,178 L584,160 L491,144 L399,133 L306,129 L232,136 L159,147 L109,157 L60,169 Z"/>
+            <!-- mirrored ENE band + line -->
+            <path class="fan-eneband" d="M60,211 L109,228 L159,242 L232,256 L306,263 L399,256 L491,242 L584,223 L676,202 L676,190 L60,190 Z"/>
+            <path class="fan-ene" d="M60,204 L109,214 L159,223 L232,232 L306,237 L399,232 L491,223 L584,211 L676,197"/>
+
+            <!-- zero exposure line -->
+            <line class="zeroln" x1="60" y1="190" x2="676" y2="190"/>
+
+            <!-- PFE(95%) envelope + EE median -->
+            <path class="fan-pfe" d="M60,157 L109,121 L159,90 L232,57 L306,35 L399,43 L491,70 L584,108 L676,154"/>
+            <path class="fan-ee"  d="M60,165 L109,147 L159,132 L232,115 L306,106 L399,111 L491,126 L584,149 L676,173"/>
+
+            <!-- EPE / EEN time-average reference lines -->
+            <line class="fan-epe" x1="60" y1="136" x2="676" y2="136"/>
+            <line class="fan-een" x1="60" y1="219" x2="676" y2="219"/>
+
+            <!-- EE node dots -->
+            <circle class="eedot" cx="60"  cy="165" r="2.4"/><circle class="eedot" cx="109" cy="147" r="2.4"/>
+            <circle class="eedot" cx="159" cy="132" r="2.4"/><circle class="eedot" cx="232" cy="115" r="2.4"/>
+            <circle class="eedot" cx="306" cy="106" r="2.4"/><circle class="eedot" cx="399" cy="111" r="2.4"/>
+            <circle class="eedot" cx="491" cy="126" r="2.4"/><circle class="eedot" cx="584" cy="149" r="2.4"/>
+            <circle class="eedot" cx="676" cy="173" r="2.4"/>
+
+            <!-- peak PFE marker -->
+            <circle class="peakdot" cx="306" cy="35" r="3.2"/>
+            <text class="axlbl b" x="312" y="33">peak PFE95 11.2mm · 6M</text>
+
+            <!-- inline labels -->
+            <text class="axlbl b" x="666" y="150" text-anchor="end" fill="var(--seq-3)">PFE 95%</text>
+            <text class="axlbl b" x="666" y="171" text-anchor="end" fill="var(--seq-5)">EE</text>
+            <text class="axlbl" x="64" y="133" fill="var(--seq-6)">EPE 3.90mm</text>
+            <text class="axlbl" x="64" y="216" fill="var(--div-neg1)">EEN 1.24mm</text>
+            <text class="axlbl" x="666" y="205" text-anchor="end" fill="var(--div-neg1)">ENE (mirrored)</text>
+
+            <!-- y axis labels ($mm) -->
+            <text class="axlbl" x="52" y="27"  text-anchor="end">12</text>
+            <text class="axlbl" x="52" y="69"  text-anchor="end">9</text>
+            <text class="axlbl" x="52" y="110" text-anchor="end">6</text>
+            <text class="axlbl" x="52" y="151" text-anchor="end">3</text>
+            <text class="axlbl b" x="52" y="193" text-anchor="end">0</text>
+            <text class="axlbl" x="52" y="240" text-anchor="end">−3</text>
+            <text class="axlbl" x="30" y="120" transform="rotate(-90 30 120)" text-anchor="middle">exposure $mm</text>
+
+            <!-- x axis (tenors to horizon) -->
+            <text class="axlbl" x="60"  y="285" text-anchor="middle">0</text>
+            <text class="axlbl" x="109" y="285" text-anchor="middle">1W</text>
+            <text class="axlbl" x="159" y="285" text-anchor="middle">1M</text>
+            <text class="axlbl" x="232" y="285" text-anchor="middle">3M</text>
+            <text class="axlbl b" x="306" y="285" text-anchor="middle">6M</text>
+            <text class="axlbl" x="399" y="285" text-anchor="middle">9M</text>
+            <text class="axlbl" x="491" y="285" text-anchor="middle">1Y</text>
+            <text class="axlbl" x="584" y="285" text-anchor="middle">18M</text>
+            <text class="axlbl b" x="676" y="285" text-anchor="middle">2Y·H</text>
+          </svg>
+          <div class="dim" style="font-size:var(--type-micro); margin-top:2px; text-align:right" title="Line = expected exposure · dashed = time-average EPE">
+            band 5–95% · inner 25–75% quantiles
+          </div>
+        </div>
+      </section>
+
+      <!-- WATERFALL — stacked CVA / DVA / FVA -->
+      <section class="panel">
+        <header>
+          <span class="headline">XVA decomposition</span>
+          <span class="muted" style="font-size:11px">$mm · cost ↔ benefit</span>
+        </header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg class="chart wf" viewBox="0 0 360 240" height="222" aria-label="Waterfall of CVA, DVA, FVA into net XVA">
+            <!-- gridlines -->
+            <line class="gl" x1="40" y1="30"  x2="340" y2="30"/>
+            <line class="gl" x1="40" y1="115" x2="340" y2="115"/>
+            <line class="gl" x1="40" y1="200" x2="340" y2="200"/>
+            <!-- zero baseline -->
+            <line class="zerobase" x1="40" y1="30" x2="340" y2="30"/>
+            <!-- y labels -->
+            <text class="blab" x="34" y="33"  text-anchor="end">0</text>
+            <text class="blab" x="34" y="118" text-anchor="end">−1</text>
+            <text class="blab" x="34" y="203" text-anchor="end">−2</text>
+
+            <!-- CVA: 0 → −1.86 -->
+            <rect class="b-cva" x="44" y="30" width="52" height="158" rx="2"/>
+            <text class="bval" x="70" y="46"  text-anchor="middle" fill="oklch(0.97 0.008 264)">−1.86</text>
+            <!-- connector CVA→DVA -->
+            <line class="conn" x1="96" y1="188" x2="124" y2="188"/>
+            <!-- DVA: −1.86 → −1.15 (benefit, up) -->
+            <rect class="b-dva" x="124" y="128" width="52" height="60" rx="2"/>
+            <text class="bval" x="150" y="122" text-anchor="middle">+0.71</text>
+            <!-- connector DVA→FVA -->
+            <line class="conn" x1="176" y1="128" x2="204" y2="128"/>
+            <!-- FVA: −1.15 → −1.44 (charge, down) -->
+            <rect class="b-fva" x="204" y="128" width="52" height="24" rx="2"/>
+            <text class="bval" x="230" y="122" text-anchor="middle">−0.29</text>
+            <!-- connector FVA→TOTAL -->
+            <line class="conn" x1="256" y1="152" x2="286" y2="152"/>
+            <!-- TOTAL: 0 → −1.44 -->
+            <rect class="b-tot" x="286" y="30" width="44" height="122" rx="2"/>
+            <text class="bval" x="308" y="46" text-anchor="middle" fill="oklch(0.97 0.008 264)">−1.44</text>
+
+            <!-- column labels -->
+            <text class="blab" x="70"  y="214" text-anchor="middle">CVA</text>
+            <text class="blab" x="150" y="214" text-anchor="middle">DVA</text>
+            <text class="blab" x="230" y="214" text-anchor="middle">FVA</text>
+            <text class="blab" x="308" y="214" text-anchor="middle" fill="var(--text-primary)">XVA</text>
+            <text class="blab" x="200" y="232" text-anchor="middle" fill="var(--text-tertiary)">MVA · KVA — not modelled</text>
+          </svg>
+        </div>
+      </section>
+
+      <!-- CREDIT & COLLATERAL (survival/hazard grounding) -->
+      <section class="panel" style="grid-column:1 / -1">
+        <header>
+          <span class="headline" title="Drives CVA (counterparty survival) and FVA (funding on net EE)">Credit &amp; collateral · <span id="credit-name">Halcyon Asset Mgmt</span></span>
+        </header>
+        <div class="body" style="display:grid; grid-template-columns:320px 1fr; gap:var(--space-5); align-items:center">
+          <!-- CDS term structure mini -->
+          <svg class="chart cds" viewBox="0 0 300 118" height="118" aria-label="CDS spread term structure">
+            <line class="gl" x1="30" y1="24" x2="290" y2="24"/>
+            <line class="gl" x1="30" y1="46" x2="290" y2="46"/>
+            <line class="gl" x1="30" y1="68" x2="290" y2="68"/>
+            <line class="gl" x1="30" y1="90" x2="290" y2="90"/>
+            <path class="carea" d="M30,82 L95,69 L160,52 L225,40 L285,29 L285,90 L30,90 Z"/>
+            <path class="cln"   d="M30,82 L95,69 L160,52 L225,40 L285,29"/>
+            <circle class="cdot" cx="30"  cy="82" r="2.6"/><circle class="cdot" cx="95"  cy="69" r="2.6"/>
+            <circle class="cdot" cx="160" cy="52" r="2.6"/><circle class="cdot" cx="225" cy="40" r="2.6"/>
+            <circle class="cdot" cx="285" cy="29" r="2.6"/>
+            <text class="miniax" x="26" y="27"  text-anchor="end">250</text>
+            <text class="miniax" x="26" y="49"  text-anchor="end">200</text>
+            <text class="miniax" x="26" y="71"  text-anchor="end">150</text>
+            <text class="miniax" x="26" y="103" text-anchor="middle">bp</text>
+            <text class="miniax" x="30"  y="104" text-anchor="middle">6M</text>
+            <text class="miniax" x="95"  y="104" text-anchor="middle">1Y</text>
+            <text class="miniax" x="160" y="104" text-anchor="middle">2Y</text>
+            <text class="miniax" x="225" y="104" text-anchor="middle">3Y</text>
+            <text class="miniax" x="285" y="104" text-anchor="middle">5Y</text>
+          </svg>
+          <!-- terms -->
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:0 var(--space-6)">
+            <div class="kv"><span class="k">Rating</span><span class="v">BBB <span class="dim">· stable</span></span></div>
+            <div class="kv"><span class="k">5Y CDS</span><span class="v num">240 bp</span></div>
+            <div class="kv"><span class="k">Implied hazard λ</span><span class="v num">4.00%</span></div>
+            <div class="kv"><span class="k">LGD (1−R)</span><span class="v num">60%</span></div>
+            <div class="kv"><span class="k">1Y PD</span><span class="v num">3.92%</span></div>
+            <div class="kv"><span class="k">Survival S(2Y)</span><span class="v num">0.923</span></div>
+            <div class="kv"><span class="k">CSA</span><span class="v"><span class="csatag unc">uncollateralised</span></span></div>
+            <div class="kv"><span class="k">Threshold / MTA</span><span class="v num dim">n/a · n/a</span></div>
+            <div class="kv"><span class="k">Wrong-way risk</span><span class="v"><span class="rag a"></span><span class="num">ρ<sub>drv,cr</sub> +0.35</span> <span class="dim">· elevated</span></span></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- DRILL — netting-set → counterparty → trade -->
+    <section class="panel">
+      <header>
+        <div class="crumb" id="crumb">
+          <span class="c on" data-lvl="pf">Portfolio · G10-A</span>
+          <span class="sep" id="crumb-sep" hidden>▸</span>
+          <span class="c" id="crumb-cpty" data-lvl="cpty" hidden></span>
+        </div>
+        <span class="muted" id="drill-hint" style="font-size:11px">5 netting sets · click a row to drill to trades</span>
+      </header>
+      <div class="body" style="padding:0">
+        <table class="grid" id="drill">
+          <thead id="drill-head"></thead>
+          <tbody id="drill-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ============ CONTEXT RAIL (verbatim from 00-shell) ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (verbatim from 00-shell) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+/* ---- exposure-measure segment control: emphasise EE / EPE / PFE on the fan ---- */
+(function () {
+  const seg = document.getElementById('measure');
+  const fan = document.getElementById('fan');
+  seg.addEventListener('click', function (e) {
+    const b = e.target.closest('button'); if (!b) return;
+    seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    fan.setAttribute('data-m', b.dataset.m);
+  });
+})();
+
+/* ---- netting-set → counterparty → trade drill (client-side illustrative data) ---- */
+(function () {
+  // per-counterparty netting sets; component sums are internally consistent
+  const cptys = [
+    { id:'halcyon',  name:'Halcyon Asset Mgmt',  rating:'BBB',  cds:240, csa:'unc', csaTxt:'Uncollateralised',       trades:14, epe:2.10, pfe:3.90, cva:0.64, dva:0.02, fva:0.19, u:0.86 },
+    { id:'sakura',   name:'Sakura Securities Co', rating:'BBB+', cds:168, csa:'col', csaTxt:'CSA · Thr $2mm',          trades:9,  epe:1.60, pfe:3.10, cva:0.48, dva:0.05, fva:0.06, u:0.71 },
+    { id:'nordkap',  name:'Nordkap Bank AG',      rating:'A−',   cds:118, csa:'col', csaTxt:'CSA · Thr $5mm',          trades:22, epe:1.20, pfe:2.40, cva:0.39, dva:0.18, fva:0.03, u:0.54 },
+    { id:'meridian', name:'Meridian Capital Mkts',rating:'A',    cds:82,  csa:'col', csaTxt:'CSA · Thr $10mm',         trades:31, epe:0.90, pfe:1.80, cva:0.24, dva:0.27, fva:0.01, u:0.41 },
+    { id:'atlantic', name:'Atlantic Trust NA',    rating:'AA−',  cds:47,  csa:'col', csaTxt:'CSA · daily · Thr 0',     trades:18, epe:0.44, pfe:0.90, cva:0.11, dva:0.19, fva:0.00, u:0.23 },
+  ];
+  const trades = {
+    halcyon: [
+      { d:'25Δ Call',          pair:'EUR/USD', t:'3M', mtm:412, epe:0.82, cva:240, wwr:'—' },
+      { d:'ATM Straddle',      pair:'USD/JPY', t:'6M', mtm:286, epe:0.61, cva:190, wwr:'low' },
+      { d:'10Δ Risk Reversal', pair:'GBP/USD', t:'1Y', mtm:-94, epe:0.34, cva:110, wwr:'—' },
+      { d:'Butterfly',         pair:'AUD/USD', t:'9M', mtm:148, epe:0.21, cva:70,  wwr:'—' },
+      { d:'Call Spread',       pair:'EUR/GBP', t:'2Y', mtm:72,  epe:0.12, cva:30,  wwr:'elevated' },
+    ],
+    sakura: [
+      { d:'25Δ Put',      pair:'EUR/USD', t:'6M', mtm:300, epe:0.70, cva:220, wwr:'—' },
+      { d:'ATM Straddle', pair:'USD/CHF', t:'1Y', mtm:180, epe:0.52, cva:160, wwr:'low' },
+      { d:'Call',         pair:'NZD/USD', t:'3M', mtm:-40, epe:0.30, cva:100, wwr:'—' },
+    ],
+    nordkap: [
+      { d:'Risk Reversal', pair:'USD/JPY', t:'1Y', mtm:210, epe:0.50, cva:180, wwr:'—' },
+      { d:'Call',          pair:'EUR/USD', t:'2Y', mtm:260, epe:0.42, cva:140, wwr:'low' },
+      { d:'Butterfly',     pair:'GBP/JPY', t:'6M', mtm:60,  epe:0.20, cva:70,  wwr:'—' },
+    ],
+    meridian: [
+      { d:'ATM Straddle', pair:'EUR/USD', t:'1Y', mtm:320, epe:0.40, cva:120, wwr:'—' },
+      { d:'25Δ Call',     pair:'USD/CAD', t:'3M', mtm:90,  epe:0.30, cva:80,  wwr:'—' },
+      { d:'10Δ Put',      pair:'AUD/JPY', t:'9M', mtm:-30, epe:0.20, cva:40,  wwr:'low' },
+    ],
+    atlantic: [
+      { d:'25Δ Call', pair:'EUR/USD', t:'3M', mtm:140, epe:0.24, cva:70, wwr:'—' },
+      { d:'Call',     pair:'USD/JPY', t:'6M', mtm:60,  epe:0.15, cva:40, wwr:'—' },
+    ],
+  };
+
+  const head = document.getElementById('drill-head');
+  const body = document.getElementById('drill-body');
+  const hint = document.getElementById('drill-hint');
+  const sep  = document.getElementById('crumb-sep');
+  const crCp = document.getElementById('crumb-cpty');
+  const crPf = document.querySelector('.crumb .c[data-lvl="pf"]');
+  const creditName = document.getElementById('credit-name');
+
+  const money = v => (v < 0 ? '−$' : '$') + Math.abs(v).toFixed(2) + 'mm';
+  const csaBadge = c => c.csa === 'unc'
+    ? '<span class="csatag unc">unc</span>'
+    : '<span class="csatag col">csa</span>';
+  const ragU = u => u >= 0.9 ? 'r' : (u >= 0.75 ? 'a' : 'g');
+
+  function renderPortfolio() {
+    head.innerHTML =
+      '<tr><th>Netting set · counterparty</th><th>Rating</th><th>5Y CDS</th><th>CSA</th>' +
+      '<th>Trades</th><th>EPE $mm</th><th>Peak PFE95</th><th>CVA</th><th>DVA</th><th>FVA</th>' +
+      '<th style="width:120px; white-space:nowrap">of total CVA</th><th style="width:64px"></th></tr>';
+    body.innerHTML = cptys.map(c => {
+      const share = Math.round((c.cva / 1.86) * 100);
+      return '<tr class="drillrow" data-id="' + c.id + '">' +
+        '<td><span class="rag ' + ragU(c.u) + '"></span>' + c.name + '</td>' +
+        '<td class="n ratel">' + c.rating + '</td>' +
+        '<td class="n">' + c.cds + ' bp</td>' +
+        '<td>' + csaBadge(c) + ' <span class="dim" style="font-size:10px">' + c.csaTxt + '</span></td>' +
+        '<td class="n">' + c.trades + '</td>' +
+        '<td class="n">' + c.epe.toFixed(2) + '</td>' +
+        '<td class="n">' + c.pfe.toFixed(2) + '</td>' +
+        '<td class="n">' + c.cva.toFixed(2) + '</td>' +
+        '<td class="n">' + c.dva.toFixed(2) + '</td>' +
+        '<td class="n">' + c.fva.toFixed(2) + '</td>' +
+        '<td class="n" style="white-space:nowrap">' + share + '% <span class="cbartrk"><span class="cbar" style="width:' + share + '%"></span></span></td>' +
+        '<td class="n" style="white-space:nowrap; width:64px"><span class="dim">drill →</span></td>' +
+        '</tr>';
+    }).join('');
+    sep.hidden = true; crCp.hidden = true;
+    crPf.classList.add('on'); crCp.classList.remove('on');
+    hint.textContent = '5 netting sets · click a row to drill to trades';
+    body.querySelectorAll('.drillrow').forEach(r =>
+      r.addEventListener('click', () => renderTrades(r.dataset.id)));
+  }
+
+  function renderTrades(id) {
+    const c = cptys.find(x => x.id === id);
+    const rows = trades[id] || [];
+    head.innerHTML =
+      '<tr><th>Trade</th><th>Pair</th><th>Tenor</th><th>MtM $k</th>' +
+      '<th>EPE $mm</th><th>CVA $k</th><th>WWR</th><th></th></tr>';
+    body.innerHTML = rows.map(r =>
+      '<tr>' +
+      '<td>' + r.d + '</td>' +
+      '<td class="n">' + r.pair + '</td>' +
+      '<td class="n">' + r.t + '</td>' +
+      '<td class="n' + (r.mtm < 0 ? ' neg' : '') + '">' + (r.mtm < 0 ? '−' : '') + Math.abs(r.mtm) + '</td>' +
+      '<td class="n">' + r.epe.toFixed(2) + '</td>' +
+      '<td class="n">' + r.cva + '</td>' +
+      '<td class="n">' + (r.wwr === 'elevated' ? '<span class="offer">elevated</span>' : (r.wwr === 'low' ? '<span class="dim">low</span>' : r.wwr)) + '</td>' +
+      '<td></td>' +
+      '</tr>').join('');
+    sep.hidden = false; crCp.hidden = false;
+    crCp.textContent = c.name + ' · netting set';
+    crCp.classList.add('on'); crPf.classList.remove('on');
+    hint.textContent = c.trades + ' trades · CVA $' + c.cva.toFixed(2) + 'mm · EPE $' + c.epe.toFixed(2) + 'mm · ' + c.csaTxt;
+    creditName.textContent = c.name;
+  }
+
+  crPf.addEventListener('click', renderPortfolio);
+  renderPortfolio();
+})();
+</script>
+</body>
+</html>

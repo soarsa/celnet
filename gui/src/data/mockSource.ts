@@ -105,6 +105,8 @@ import type {
   UserDesc,
   UserRole,
   VegaBucket,
+  XvaPricingRequest,
+  XvaResult,
 } from "./contract";
 import { CAPABILITY_ACTIONS, CAPABILITY_ASSETS, pillarYears } from "./contract";
 import { forward, priceInstrument, strikeFromDelta } from "./pricing";
@@ -116,6 +118,7 @@ import {
   zeroRateAt,
   pillarMaturityYears,
 } from "./ratesPricing";
+import { computeXvaOffline } from "./xvaPricing";
 import { Rng } from "./rng";
 import {
   brokerLadder,
@@ -939,6 +942,18 @@ export class MockTransport implements CelnetTransport {
     // curve/instrument throws (mirroring the server refusal), surfaced by the
     // workspace exactly as a live transport error would be.
     return priceRatesOffline(curve, instrument);
+  }
+
+  async priceXva(request: XvaPricingRequest): Promise<XvaResult> {
+    // A GENUINE in-browser XVA computation: reproduce the server's `compute_xva`
+    // aggregation (discounted expected exposure × marginal default probability ×
+    // LGD, plus funding on the net exposure) over a deterministic-quadrature
+    // exposure profile that reproduces `celnet_vanilla::price` marks and the
+    // hazard-curve survival exactly. A malformed request throws (mirroring the
+    // server refusal), surfaced by the workspace as a live transport error would
+    // be. Honest boundary (see xvaPricing.ts): the offline estimator is quadrature,
+    // the edge is Monte-Carlo — the two converge but are not bit-identical.
+    return computeXvaOffline(request);
   }
 
   async requestQuote(

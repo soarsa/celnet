@@ -153,6 +153,9 @@ import type {
   VanillaInputs,
   VegaBucket,
   VegaLadderBucket,
+  XvaPricingRequest,
+  XvaResult,
+  XvaSurvivalCurve,
 } from "./contract";
 import * as e from "./enums";
 
@@ -941,6 +944,56 @@ export function ratesPricingResultFromWire(o: WireObject): RatesPricingResult {
     pv01: num(result, "pv01"),
     dv01: num(result, "dv01"),
     keyRateLadder,
+  };
+}
+
+// --- XVA (PricingService.PriceXva) -------------------------------------------
+// Byte-compatible with the server `ws::codec` XVA codec (`price_xva_request_from_json`
+// / `price_xva_response_to_json`): the request is the snake_case, numeric-enum
+// netting-set body the server decodes; the response reads the `result` object the
+// server encodes ({ cva, dva, fva, total_adjustment }). One unversioned contract.
+
+/** Encode one `XvaSurvivalCurve` (`{ pillar_times, hazard_rates }`). */
+function xvaSurvivalCurveToWire(c: XvaSurvivalCurve): WireObject {
+  return {
+    pillar_times: [...c.pillarTimes],
+    hazard_rates: [...c.hazardRates],
+  };
+}
+
+/** Encode a `PriceXvaRequest` to the wire body the server's `price_xva` decodes. */
+export function priceXvaRequestToWire(r: XvaPricingRequest): WireObject {
+  return {
+    trades: r.trades.map((t) => ({
+      option_type: e.optionType.toWire(t.optionType),
+      strike: t.strike,
+      expiry_years: t.expiryYears,
+      vol: t.vol,
+      notional: t.notional,
+    })),
+    r_dom: r.rDom,
+    r_for: r.rFor,
+    spot0: r.spot0,
+    sigma: r.sigma,
+    paths: r.paths,
+    seed: r.seed,
+    exposure_steps: r.exposureSteps,
+    counterparty: xvaSurvivalCurveToWire(r.counterparty),
+    own: xvaSurvivalCurveToWire(r.own),
+    lgd_counterparty: r.lgdCounterparty,
+    lgd_own: r.lgdOwn,
+    funding_spread: r.fundingSpread,
+  };
+}
+
+/** Decode the `price_xva_response` frame's `result` into an `XvaResult`. */
+export function xvaResultFromWire(o: WireObject): XvaResult {
+  const result = child(o, "result");
+  return {
+    cva: num(result, "cva"),
+    dva: num(result, "dva"),
+    fva: num(result, "fva"),
+    totalAdjustment: num(result, "total_adjustment"),
   };
 }
 

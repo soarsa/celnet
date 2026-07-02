@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { RatesCurveSet } from "../src/data/contract";
@@ -12,6 +14,7 @@ import {
   sampleCurve,
   zeroRateAt,
 } from "../src/data/ratesPricing";
+import { CurveWorkspace, curvePillarNodes } from "../src/workspaces/CurveWorkspace";
 
 /** The reference (spot) date the DEFAULT curve's pillar schedules roll from. */
 const REF = DEFAULT_USD_SOFR_CURVE.referenceDate;
@@ -141,5 +144,85 @@ describe("bootstrapCurveFromSet — rejects a malformed curve exactly as the pri
       ],
     };
     expect(reject(curve)).toThrow(RatesPricingError);
+  });
+});
+
+describe("curvePillarNodes — the YieldCurve wiring off the real bootstrap", () => {
+  const curve = bootstrapCurveFromSet(DEFAULT_USD_SOFR_CURVE);
+  // Each pillar's curve-time is its `PillarTenor` resolved to a year-fraction from
+  // the reference (spot) date — the SAME coordinate the workspace places it at.
+  const ladder = DEFAULT_USD_SOFR_CURVE.pillars.map((p) => {
+    const tenorYears = pillarMaturityYears(p.tenor, REF);
+    return { tenorYears, zero: zeroRateAt(curve, tenorYears) };
+  });
+
+  it("maps one dated node per pillar, carrying the bootstrapped zero rate", () => {
+    const nodes = curvePillarNodes(ladder);
+    expect(nodes.length).toBe(DEFAULT_USD_SOFR_CURVE.pillars.length);
+    for (let i = 0; i < nodes.length; i += 1) {
+      expect(nodes[i]!.label).toBe(`${ladder[i]!.tenorYears}y`);
+      expect(nodes[i]!.tenorYears).toBe(ladder[i]!.tenorYears);
+      expect(nodes[i]!.zeroRate).toBe(ladder[i]!.zero);
+    }
+  });
+
+  it("feeds nodes whose ln DF reconstruction reproduces the real discount factors", () => {
+    // YieldCurve rebuilds ln DF(t_i) = −zeroRate·tenorYears from each node; that
+    // must round-trip to the SAME discount factor the workspace bootstrap produced,
+    // so the drawn curve is the curve that prices.
+    for (const node of curvePillarNodes(ladder)) {
+      const reconstructedDf = Math.exp(-node.zeroRate * node.tenorYears);
+      expect(reconstructedDf).toBeCloseTo(discountFactorAt(curve, node.tenorYears), 12);
+    }
+  });
+});
+
+describe("CurveWorkspace — model honesty: affordances match the shipped math", () => {
+  // Grounded (celnet graph, 2026-07-01): the in-browser bootstrap implements ONLY
+  // log-linear-on-log-DF; monotone-convex + turn jumps exist server-engine-side
+  // (celnet-rates curve.rs / turns.rs) but are absent from the wire `CurveSet`;
+  // and NO curve publish/versioning exists anywhere (zero hits for CurveBook /
+  // publish_curve / curve_version). The workspace must say exactly that.
+
+  it("offers log-linear DF as the only enabled, selected interpolation — the real bootstrap", () => {
+    render(createElement(CurveWorkspace));
+    const logLinear = screen.getByRole("radio", { name: /log-linear df/i });
+    expect(logLinear).toBeChecked();
+    expect(logLinear).toBeEnabled();
+  });
+
+  it("renders monotone-convex and turn/meeting jumps DISABLED and Target-tagged — never fabricated", () => {
+    render(createElement(CurveWorkspace));
+    const monotone = screen.getByRole("radio", { name: /monotone convex/i });
+    expect(monotone).toBeDisabled();
+    expect(monotone).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /turn \/ meeting jumps/i })).toBeDisabled();
+    // The note carries the WHY: real server-engine capability, wire + browser pending.
+    expect(screen.getByText(/not yet on the wire CurveSet/i)).toBeInTheDocument();
+  });
+
+  it("ships NO publish/version affordance and states the request-scoped truth", () => {
+    render(createElement(CurveWorkspace));
+    expect(screen.queryByRole("button", { name: /publish/i })).toBeNull();
+    // Mockup 14's honesty inversion (draft-v207 / live-v206) must NOT leak here.
+    expect(screen.queryByText(/(draft|live)\s*v\d+/i)).toBeNull();
+    expect(
+      screen.getByText(/no server-side curve publish or versioning/i),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("CurveWorkspace — renders the YieldCurve term structure", () => {
+  it("mounts the YieldCurve chart with its zero / forward / DF overlay legend", () => {
+    render(createElement(CurveWorkspace));
+    // The three per-overlay legend toggles are the YieldCurve's own controls —
+    // their presence proves the workspace wired real (≥2-pillar) nodes into it,
+    // since the chart renders an explicit empty state otherwise.
+    expect(screen.getByRole("button", { name: /^Zero/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /^Fwd/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /^DF/ })).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.queryByRole("img", { name: /yield curve unavailable/i }),
+    ).toBeNull();
   });
 });

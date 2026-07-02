@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — RFQ Desk (mockup 04)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+  /* ===== screen-scoped only (celer.css is shared — never edited) ===== */
+  .toolbar { display:flex; align-items:center; gap:var(--space-4); flex-wrap:wrap; }
+  .lens { display:inline-flex; align-items:center; gap:8px; height:26px; padding:0 12px; border-radius:var(--r-full);
+    background:var(--accent-soft); border:1px solid oklch(0.62 0.19 280/.35); color:var(--text-primary); font-size:var(--type-caption); }
+  .lens b { color:var(--accent); font-weight:600; }
+  .lens .caps { color:var(--text-tertiary); font-family:var(--font-mono); font-size:var(--type-micro); }
+
+  .kpis { display:grid; grid-template-columns:repeat(5,1fr); gap:var(--space-3); }
+  .kpi { background:var(--bg-inset); border:var(--hairline); border-radius:var(--r-md); padding:8px 12px; }
+  .kpi .l { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:.05em; color:var(--text-tertiary); }
+  .kpi .n { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:19px; font-weight:600; margin-top:2px; }
+  .kpi .s { font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); }
+
+  /* honesty tags — the ONE shared .htag vocab (celer.css); only a compact ladder-header variant here */
+  .qhead .htag { padding:0 4px; }
+  .prov { display:flex; gap:12px; flex-wrap:wrap; align-items:center; font-size:var(--type-caption); color:var(--text-tertiary);
+    padding-top:8px; margin-top:10px; border-top:1px solid var(--grid-line); }
+
+  /* inbox table */
+  table.inbox td { cursor:pointer; }
+  table.inbox tr.sel td { background:var(--accent-soft); box-shadow:inset 2px 0 0 var(--accent); }
+  table.inbox tr.hidden { display:none; }
+  .kind { font-size:9px; font-weight:700; padding:1px 6px; border-radius:4px; letter-spacing:.04em; }
+  /* kind is already encoded by the Flow column — chips stay NEUTRAL (indigo is reserved
+     for the single armed/selected row + the primary action; §1 rationed-accent rule) */
+  .kind.rfq { background:oklch(1 0 0/.06); color:var(--text-secondary); }
+  .kind.ioi { background:transparent; border:1px solid var(--grid-line); color:var(--text-tertiary); }
+  /* per-row routing tag — makes genuinely cross-asset (non-FX-vol) flow explicit */
+  .rtag { font-family:var(--font-mono); font-size:9px; color:var(--text-tertiary);
+    border:1px solid var(--grid-line); border-radius:4px; padding:0 5px; margin-left:6px; white-space:nowrap; }
+  .st { font-size:9px; font-weight:700; padding:2px 7px; border-radius:var(--r-full); letter-spacing:.04em; text-transform:uppercase; white-space:nowrap; }
+  .st.new  { background:var(--brand-soft); color:var(--brand); }
+  .st.work { background:oklch(0.82 0.16 75/.16); color:var(--warn); }
+  .st.quote{ background:oklch(0.78 0.16 155/.16); color:var(--bid); }
+  .st.done { background:oklch(1 0 0/.06); color:var(--text-tertiary); }
+  .st.pass { background:oklch(1 0 0/.04); color:var(--text-tertiary); }
+  .ttl { display:inline-flex; flex-direction:column; gap:3px; min-width:44px; }
+  .ttl .t { font-family:var(--font-mono); font-size:var(--type-caption); font-variant-numeric:tabular-nums; }
+  .ttl .bar { height:3px; border-radius:2px; background:oklch(1 0 0/.08); overflow:hidden; }
+  .ttl .bar>i { display:block; height:100%; border-radius:2px; }
+  .cpty .sub { font-size:var(--type-micro); color:var(--text-tertiary); }
+
+  /* respond panel */
+  .reqhead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:2px; }
+  .reqhead .who { color:var(--text-secondary); font-size:var(--type-callout); }
+  .dkv { display:grid; grid-template-columns:1fr 1fr; gap:0 18px; margin:10px 0 4px; }
+  .sla { display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; padding:6px 0; }
+  .sla .bar { height:5px; border-radius:var(--r-full); background:oklch(1 0 0/.08); overflow:hidden; }
+  .sla .bar>i { display:block; height:100%; background:var(--warn); border-radius:var(--r-full); }
+
+  .qlad { display:flex; flex-direction:column; gap:2px; margin-top:4px; }
+  .qhead, .qrow { display:grid; grid-template-columns:18px 1.55fr .72fr .72fr .62fr .62fr .92fr; gap:6px; align-items:center; }
+  .qhead { padding:0 8px 5px; font-size:var(--type-micro); text-transform:uppercase; letter-spacing:.05em; color:var(--text-tertiary); }
+  .qhead span:nth-child(n+3) { text-align:right; }
+  .qrow { padding:6px 8px; border-radius:var(--r-sm); border:1px solid transparent; cursor:pointer; }
+  .qrow:hover { background:oklch(1 0 0/.03); }
+  .qrow.armed { background:var(--accent-soft); border-color:oklch(0.62 0.19 280/.4); }
+  .qrow .qn { font-family:var(--font-mono); font-variant-numeric:tabular-nums; text-align:right; font-size:var(--type-callout); }
+  .qrow .qn.bid { color:var(--bid); } .qrow .qn.off { color:var(--offer); }
+  /* blanked-ladder state — shown when the selected request has no live firm quote
+     (IOI / held / booked / passed) so the body never contradicts the header */
+  .laddernote { padding:14px 10px; border:1px dashed var(--grid-line); border-radius:var(--r-sm);
+    color:var(--text-tertiary); font-size:var(--type-caption); display:flex; gap:8px; align-items:center; }
+  .laddernote .lv { font-family:var(--font-mono); color:var(--text-secondary); }
+  .rad { width:13px; height:13px; border-radius:50%; border:2px solid var(--text-tertiary); display:inline-block; }
+  .qrow.armed .rad { border-color:var(--accent); box-shadow:inset 0 0 0 2px var(--accent); }
+  .src { font-size:var(--type-callout); font-weight:600; white-space:nowrap; }
+  .src .tag { font-weight:500; color:var(--text-tertiary); font-size:var(--type-micro); text-transform:uppercase; letter-spacing:.04em; margin-left:5px; }
+  .win { display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; }
+  .wbar { display:inline-block; width:30px; height:4px; border-radius:2px; background:oklch(1 0 0/.08); overflow:hidden; }
+  .wbar>i { display:block; height:100%; border-radius:2px; background:var(--seq-4); }
+  .actions { display:flex; gap:6px; margin-top:12px; flex-wrap:wrap; }
+
+  /* win-rate + LP charts */
+  .leg { display:flex; gap:12px; align-items:center; font-size:var(--type-caption); color:var(--text-secondary); }
+  .sw { width:9px; height:9px; border-radius:2px; display:inline-block; margin-right:5px; vertical-align:middle; }
+  .swl { width:14px; height:0; border-top:2px solid var(--seq-6); display:inline-block; margin-right:5px; vertical-align:middle; }
+  .statline { display:flex; gap:16px; flex-wrap:wrap; font-size:var(--type-caption); color:var(--text-tertiary); margin-top:8px; }
+  .statline b { color:var(--text-primary); font-family:var(--font-mono); }
+
+  .wr-won  { fill:var(--seq-5); } .wr-cov { fill:var(--seq-3); } .wr-miss { fill:var(--seq-1); }
+  .wrline  { fill:none; stroke:var(--seq-6); stroke-width:2; stroke-linejoin:round; }
+  .wrdot   { fill:var(--seq-6); stroke:var(--bg-raised); stroke-width:1; }
+  .wrband  { fill:var(--seq-4); opacity:.12; }
+  .ax { fill:var(--text-tertiary); font-size:8px; font-family:var(--font-mono); }
+  .ax.b { fill:var(--text-secondary); }
+
+  .lpspan { stroke:oklch(1 0 0/.10); stroke-width:6; stroke-linecap:round; }
+  .bidt { fill:var(--bid); } .offt { fill:var(--offer); }
+  .lprow-native { fill:oklch(1 0 0/.05); }
+  /* touch window is a data-derived region — NEUTRAL white-alpha, never a brand hue (§1) */
+  .bexwin { fill:oklch(1 0 0/.05); }
+  .ring-bid { fill:none; stroke:var(--bid); stroke-width:1.6; }
+  .ring-off { fill:none; stroke:var(--offer); stroke-width:1.6; }
+  .lplab { fill:var(--text-secondary); font-size:9px; font-family:var(--font-mono); }
+  /* VWAP-to-hedge-size guides — the price at which the FULL 50mm actually fills */
+  .vwapg { stroke:oklch(1 0 0/.34); stroke-width:1.2; stroke-dasharray:3 3; }
+  .vwaplab { fill:var(--text-tertiary); font-size:8px; font-family:var(--font-mono); }
+  /* size-below-hedge flag on LP rows whose quoted Size < the 50mm hedge notional */
+  .szf { font-size:8px; font-family:var(--font-mono); color:var(--warn); margin-left:4px; }
+  .tch { font-size:8px; font-family:var(--font-mono); color:var(--text-tertiary); margin-left:5px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR (shell — verbatim) ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL (shell — verbatim, RFQ Desk active) ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a class="on"><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — RFQ DESK ============ -->
+  <main class="main" style="gap:var(--space-5)">
+
+    <!-- toolbar + lens -->
+    <div class="toolbar">
+      <span class="title" style="font-size:19px">RFQ Desk</span>
+      <span class="lens" title="Capability-overlay preset over the Trader base — no server role variant">
+        <b>Sales-Trader</b> lens <span class="caps">View · RfqRespond · IoiRespond</span>
+      </span>
+      <span style="flex:1"></span>
+      <div class="seg" id="flowfilter" role="tablist" aria-label="Inbox filter">
+        <button class="on" data-f="all">All</button>
+        <button data-f="rfq">RFQ</button>
+        <button data-f="ioi">IOI</button>
+        <button data-f="working">Working</button>
+        <button data-f="quote">Quoted</button>
+      </div>
+      <span class="selctl"><span class="lbl">group</span> counterparty <span class="car">▾</span></span>
+    </div>
+
+    <!-- KPI strip -->
+    <div class="kpis">
+      <div class="kpi"><div class="l">Live requests</div><div class="n">5</div><div class="s">4 RFQ · 1 IOI</div></div>
+      <div class="kpi"><div class="l">Median response</div><div class="n">2.4<span style="font-size:12px">s</span></div><div class="s">SLA 15s · 0 breach</div></div>
+      <div class="kpi"><div class="l">Win-rate · 7d</div><div class="n">54<span style="font-size:12px">%</span></div><div class="s">▲ from 49%</div></div>
+      <div class="kpi"><div class="l">In-competition</div><div class="n">82<span style="font-size:12px">%</span></div><div class="s">avg 3.1 dealers</div></div>
+      <div class="kpi"><div class="l">Quoted today</div><div class="n">124</div><div class="s">notional 2.8bn</div></div>
+    </div>
+
+    <!-- ===== ROW 1 — inbound flow (full width) ===== -->
+
+      <!-- SIGNATURE 1 — inbound client RFQ / IOI inbox -->
+      <section class="panel">
+        <header>
+          <span class="headline">Inbound client flow — RFQ &amp; IOI <span style="font-weight:400;font-size:var(--type-caption);color:var(--text-tertiary)">· 7 recent · 5 live · 2 closed</span></span>
+          <span style="display:inline-flex;gap:6px;align-items:center;font-size:var(--type-micro);color:var(--text-tertiary)"><span class="htag live" title="RfqDeskService lifecycle — submit / respond / accept over FIX, SDK &amp; GUI; rates-OIS desk today (DeskRequest.instrument = RatesInstrument). IOI is a first-class desk concept, distinct from a tradeable quote">LIVE</span> OIS lifecycle <span class="htag target" title="FX-options desk inbox — the FX-vol flow shown needs an FX instrument arm on the desk seam">TARGET</span> FX inbox</span>
+        </header>
+        <div class="body" style="padding:var(--space-2) 0 0">
+          <table class="grid inbox" id="inbox">
+            <thead>
+              <tr>
+                <th>Time</th><th>Counterparty</th><th>Structure</th><th>Tenor</th>
+                <th>Notional</th><th>Ch</th><th style="text-align:center">Flow</th>
+                <th style="text-align:center">TTL</th><th style="text-align:center">State</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-kind="rfq" data-state="new"
+                  data-cpty="Ashwin Capital" data-tier="Tier-1 · relationship"
+                  data-struct="EUR/USD 25Δ Risk-Reversal" data-tenor="1M · 01 Aug" data-notl="50.0mm EUR"
+                  data-ch="FIX · desk-gateway" data-side="client sells vol (indicative)"
+                  data-sla="0:38 left" data-slapct="63" data-model="LSV · surface v.418" data-dconv="spot · premium-adj"
+                  data-quotes='[{"s":"AUTO","t":"SpreadModel","b":"0.44","o":"0.56","sp":"0.12v","e":"+0.0","w":66,"a":true},{"s":"AUTO · risk-lean","t":"inv-skew","b":"0.46","o":"0.60","sp":"0.14v","e":"+0.02v","w":58},{"s":"MANUAL · tighten","t":"defend axe","b":"0.47","o":"0.55","sp":"0.08v","e":"−0.03v","w":78},{"s":"MANUAL · wide","t":"low priority","b":"0.41","o":"0.62","sp":"0.21v","e":"+0.05v","w":41}]'>
+                <td class="n">12:04:41</td>
+                <td class="cpty">Ashwin Capital<div class="sub">Tier-1</div></td>
+                <td>EUR/USD 25Δ Risk-Reversal</td>
+                <td class="n">1M</td>
+                <td class="n">50.0mm</td>
+                <td>FIX</td>
+                <td style="text-align:center"><span class="kind rfq">RFQ</span></td>
+                <td><span class="ttl"><span class="t neg">0:38</span><span class="bar"><i style="width:63%;background:var(--warn)"></i></span></span></td>
+                <td style="text-align:center"><span class="st new">new</span></td>
+              </tr>
+              <tr data-kind="rfq" data-state="work"
+                  data-cpty="Meridian AM" data-tier="Tier-1 · asset manager"
+                  data-struct="USD/JPY ATM Straddle" data-tenor="3M · 03 Oct" data-notl="25.0mm USD"
+                  data-ch="GUI · trader relay" data-side="client buys vol"
+                  data-sla="1:12 left" data-slapct="80" data-model="LSV · surface v.418" data-dconv="fwd delta-neutral · unadj"
+                  data-quotes='[{"s":"AUTO","t":"SpreadModel","b":"9.05","o":"9.35","sp":"0.30v","e":"+0.0","w":64,"a":true},{"s":"AUTO · risk-lean","t":"inv-skew","b":"9.08","o":"9.40","sp":"0.32v","e":"+0.03v","w":57},{"s":"MANUAL · tighten","t":"defend axe","b":"9.12","o":"9.30","sp":"0.18v","e":"−0.04v","w":80},{"s":"MANUAL · wide","t":"low priority","b":"9.00","o":"9.44","sp":"0.44v","e":"+0.08v","w":39}]'>
+                <td class="n">12:04:22</td>
+                <td class="cpty">Meridian AM<div class="sub">Tier-1</div></td>
+                <td>USD/JPY ATM Straddle</td>
+                <td class="n">3M</td>
+                <td class="n">25.0mm</td>
+                <td>GUI</td>
+                <td style="text-align:center"><span class="kind rfq">RFQ</span></td>
+                <td><span class="ttl"><span class="t">1:12</span><span class="bar"><i style="width:80%;background:var(--bid)"></i></span></span></td>
+                <td style="text-align:center"><span class="st work">working</span></td>
+              </tr>
+              <tr class="sel" data-kind="rfq" data-state="work"
+                  data-cpty="Northwind Global" data-tier="Tier-1 · macro fund"
+                  data-struct="GBP/USD 25Δ Call" data-tenor="2W · 15 Jul" data-notl="15.0mm GBP"
+                  data-ch="API · SDK client" data-side="client buys (indicative)"
+                  data-sla="0:47 left" data-slapct="70" data-model="LSV · surface v.418" data-dconv="spot · premium-adj"
+                  data-quotes='[{"s":"AUTO","t":"SpreadModel","b":"7.88","o":"8.12","sp":"0.24v","e":"+0.0","w":70,"a":true},{"s":"AUTO · risk-lean","t":"inv-skew","b":"7.90","o":"8.16","sp":"0.26v","e":"+0.02v","w":63},{"s":"MANUAL · tighten","t":"defend axe","b":"7.92","o":"8.10","sp":"0.18v","e":"−0.03v","w":81},{"s":"MANUAL · wide","t":"low priority","b":"7.85","o":"8.18","sp":"0.33v","e":"+0.06v","w":44}]'>
+                <td class="n">12:03:58</td>
+                <td class="cpty">Northwind Global<div class="sub">Tier-1</div></td>
+                <td>GBP/USD 25Δ Call</td>
+                <td class="n">2W</td>
+                <td class="n">15.0mm</td>
+                <td>API</td>
+                <td style="text-align:center"><span class="kind rfq">RFQ</span></td>
+                <td><span class="ttl"><span class="t">0:47</span><span class="bar"><i style="width:70%;background:var(--warn)"></i></span></span></td>
+                <td style="text-align:center"><span class="st work">working</span></td>
+              </tr>
+              <tr data-kind="ioi" data-state="work"
+                  data-cpty="Halcyon Macro" data-tier="Tier-2 · hedge fund"
+                  data-struct="EUR/USD vol — 1M/3M switch" data-tenor="indicative" data-notl="100.0mm EUR"
+                  data-ch="FIX · desk-gateway" data-side="indication of interest"
+                  data-sla="indicative" data-slapct="0" data-model="LSV · surface v.418" data-dconv="spot · premium-adj"
+                  data-note="IOI — no firm RFQ yet"
+                  data-lv="indic. 1M/3M vega switch ≈ −0.15v">
+                <td class="n">12:03:30</td>
+                <td class="cpty">Halcyon Macro<div class="sub">Tier-2</div></td>
+                <td>EUR/USD vol — 1M/3M switch</td>
+                <td class="n">—</td>
+                <td class="n">100.0mm</td>
+                <td>FIX</td>
+                <td style="text-align:center"><span class="kind ioi">IOI</span></td>
+                <td><span class="ttl"><span class="t dim">—</span><span class="bar"><i style="width:0"></i></span></span></td>
+                <td style="text-align:center"><span class="st work">working</span></td>
+              </tr>
+              <tr data-kind="rfq" data-state="quote"
+                  data-cpty="Kestrel FX" data-tier="Tier-2 · bank"
+                  data-struct="AUD/USD 10Δ Put" data-tenor="1M · 01 Aug" data-notl="30.0mm AUD"
+                  data-ch="FIX · desk-gateway" data-side="client buys downside"
+                  data-sla="held · sent 12:03" data-slapct="100" data-model="LSV · surface v.418" data-dconv="spot · premium-adj"
+                  data-note="Quote sent — awaiting client"
+                  data-lv="held 12.05 / 12.45v @ 30mm">
+                <td class="n">12:02:55</td>
+                <td class="cpty">Kestrel FX<div class="sub">Tier-2</div></td>
+                <td>AUD/USD 10Δ Put</td>
+                <td class="n">1M</td>
+                <td class="n">30.0mm</td>
+                <td>FIX</td>
+                <td style="text-align:center"><span class="kind rfq">RFQ</span></td>
+                <td><span class="ttl"><span class="t dim">held</span><span class="bar"><i style="width:100%;background:var(--bid)"></i></span></span></td>
+                <td style="text-align:center"><span class="st quote">quoted</span></td>
+              </tr>
+              <tr data-kind="rfq" data-state="done"
+                  data-cpty="Solstice Capital" data-tier="Tier-1 · real-money"
+                  data-struct="EUR/GBP 25Δ Strangle" data-tenor="3M · 03 Oct" data-notl="120.0mm EUR"
+                  data-ch="FIX · desk-gateway" data-side="client buys vol"
+                  data-sla="booked · 11:58" data-slapct="100" data-model="LSV · surface v.418" data-dconv="spot · premium-adj"
+                  data-note="Booked ▸ G10-A"
+                  data-lv="filled 8.62 / 8.78v @ 120mm · CT-40912">
+                <td class="n">12:01:40</td>
+                <td class="cpty">Solstice Capital<div class="sub">Tier-1</div></td>
+                <td>EUR/GBP 25Δ Strangle</td>
+                <td class="n">3M</td>
+                <td class="n">120.0mm</td>
+                <td>FIX</td>
+                <td style="text-align:center"><span class="kind rfq">RFQ</span></td>
+                <td><span class="ttl"><span class="t dim">—</span><span class="bar"><i style="width:100%;background:var(--bid)"></i></span></span></td>
+                <td style="text-align:center"><span class="st done">booked</span></td>
+              </tr>
+              <tr data-kind="ioi" data-state="pass"
+                  data-cpty="Ashwin Capital" data-tier="Tier-1 · relationship"
+                  data-struct="XAU/USD 25Δ Risk-Reversal" data-tenor="2M · 03 Sep" data-notl="20.0mm USD"
+                  data-ch="GUI · trader relay" data-side="indication of interest"
+                  data-sla="passed" data-slapct="0" data-model="metals surface v.212" data-dconv="spot · unadj"
+                  data-note="Passed — metals vega budget"
+                  data-lv="">
+                <td class="n">12:00:12</td>
+                <td class="cpty">Ashwin Capital<div class="sub">Tier-1</div></td>
+                <td>XAU/USD 25Δ Risk-Reversal <span class="rtag" title="routed to the metals sub-book — in-license">XAU · Metals-A</span></td>
+                <td class="n">2M</td>
+                <td class="n">20.0mm</td>
+                <td>GUI</td>
+                <td style="text-align:center"><span class="kind ioi">IOI</span></td>
+                <td><span class="ttl"><span class="t dim">—</span><span class="bar"><i style="width:0"></i></span></span></td>
+                <td style="text-align:center"><span class="st pass">passed</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    <!-- ===== ROW 2 — construct response + win-rate ===== -->
+    <div class="cols c2">
+
+      <!-- SIGNATURE 2 — ranked auto-quote response (AUTO + manual, trader-in-control) -->
+      <section class="panel">
+        <header>
+          <span class="headline">Construct response</span>
+          <span class="st work" id="respState">working</span>
+        </header>
+        <div class="body">
+          <div class="reqhead">
+            <span class="headline" id="respStruct" style="font-size:15px">GBP/USD 25Δ Call</span>
+            <span class="who" id="respWho">Northwind Global · 15.0mm GBP · 2W</span>
+          </div>
+
+          <div class="dkv">
+            <div class="kv"><span class="k">Client interest</span><span class="v" id="respSide" style="font-family:var(--font-ui)">client buys (indicative)</span></div>
+            <div class="kv"><span class="k">Channel</span><span class="v" id="respCh" style="font-family:var(--font-ui)">API · SDK client</span></div>
+            <div class="kv"><span class="k">Pricing model</span><span class="v" id="respModel" style="font-family:var(--font-ui)">LSV · surface v.418 <span class="ok" style="color:var(--bid)">✓ arb-free</span></span></div>
+            <div class="kv"><span class="k">Δ convention</span><span class="v" id="respDconv" style="font-family:var(--font-ui)">spot · premium-adj</span></div>
+          </div>
+          <div class="sla">
+            <span class="label" style="letter-spacing:.04em">SLA</span>
+            <span class="bar"><i id="slaBar" style="width:70%"></i></span>
+            <span class="num" id="slaTxt" style="font-size:var(--type-caption)">0:47 left</span>
+          </div>
+
+          <div class="label" style="margin:12px 0 2px" title="select a line to arm it">Ranked quote lines — <span style="color:var(--accent)">AUTO</span> + manual</div>
+          <div class="qlad" id="qlad">
+            <div class="qhead">
+              <span></span><span>Source</span><span>Your bid</span><span>Your offer</span><span>Spread</span><span>Edge</span><span>Est. win <span class="htag target" title="needs the quote-elasticity estimator">TARGET</span></span>
+            </div>
+            <div class="qrow armed">
+              <span class="rad"></span>
+              <span class="src">AUTO <span class="tag">SpreadModel</span></span>
+              <span class="qn bid">7.88</span><span class="qn off">8.12</span>
+              <span class="qn">0.24v</span><span class="qn">+0.0</span>
+              <span class="qn win"><span>70%</span><span class="wbar"><i style="width:70%"></i></span></span>
+            </div>
+            <div class="qrow">
+              <span class="rad"></span>
+              <span class="src">AUTO · risk-lean <span class="tag">inv-skew</span></span>
+              <span class="qn bid">7.90</span><span class="qn off">8.16</span>
+              <span class="qn">0.26v</span><span class="qn">+0.02v</span>
+              <span class="qn win"><span>63%</span><span class="wbar"><i style="width:63%"></i></span></span>
+            </div>
+            <div class="qrow">
+              <span class="rad"></span>
+              <span class="src">MANUAL · tighten <span class="tag">defend axe</span></span>
+              <span class="qn bid">7.92</span><span class="qn off">8.10</span>
+              <span class="qn">0.18v</span><span class="qn">−0.03v</span>
+              <span class="qn win"><span>81%</span><span class="wbar"><i style="width:81%"></i></span></span>
+            </div>
+            <div class="qrow">
+              <span class="rad"></span>
+              <span class="src">MANUAL · wide <span class="tag">low priority</span></span>
+              <span class="qn bid">7.85</span><span class="qn off">8.18</span>
+              <span class="qn">0.33v</span><span class="qn">+0.06v</span>
+              <span class="qn win"><span>44%</span><span class="wbar"><i style="width:44%"></i></span></span>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="btn primary">Show price ▸ RfqRespond</button>
+            <button class="btn ghost">Route to desk trader</button>
+            <button class="btn ghost">Pass</button>
+          </div>
+
+          <div class="prov">
+            <span><span class="htag live" title="maker respond ▸ accept lifecycle — on client lift the desk books the rates book (RatesPositionStore)">LIVE</span> respond ▸ accept</span>
+            <span><span class="htag target" title="FX book-on-lift — accept writes the rates store only, never the FX book (G10-A); book-on-lift is the desk trader's Execute (sales relays the price) · Est. win needs the quote-elasticity estimator · inventory → skew risk-lean not yet wired">TARGET</span> FX book-on-lift · est-win · risk-lean</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- SIGNATURE 3 — win-rate & competitiveness -->
+      <section class="panel">
+        <header>
+          <span class="headline">Win-rate &amp; competitiveness</span>
+          <span class="leg">
+            <span><span class="sw" style="background:var(--seq-5)"></span>won</span>
+            <span><span class="sw" style="background:var(--seq-3)"></span>covered</span>
+            <span><span class="sw" style="background:var(--seq-1)"></span>missed</span>
+            <span><span class="swl"></span>win-rate</span>
+          </span>
+        </header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <svg class="chart" viewBox="0 0 360 184" height="188" role="img" aria-label="Weekly quote outcomes with win-rate trend">
+            <!-- target win-rate band 48–52% + 50% guide -->
+            <rect class="wrband" x="42" y="72.5" width="302" height="15.6"/>
+            <line class="mk" x1="42" y1="80.3" x2="344" y2="80.3"/>
+            <!-- count gridlines (left axis) / win-rate ticks (right axis) -->
+            <line class="gl" x1="42" y1="158" x2="344" y2="158"/>
+            <line class="gl" x1="42" y1="119.1" x2="344" y2="119.1"/>
+            <line class="gl" x1="42" y1="80.3" x2="344" y2="80.3"/>
+            <line class="gl" x1="42" y1="41.4" x2="344" y2="41.4"/>
+            <!-- left axis: request count -->
+            <text class="ax" x="38" y="160" text-anchor="end">0</text>
+            <text class="ax" x="38" y="121.5" text-anchor="end">20</text>
+            <text class="ax" x="38" y="82.7" text-anchor="end">40</text>
+            <text class="ax" x="38" y="43.8" text-anchor="end">60</text>
+            <text class="ax" x="14" y="30" transform="rotate(-90 14 30)" text-anchor="middle">requests</text>
+            <!-- right axis: win-rate % -->
+            <text class="ax" x="348" y="160">30</text>
+            <text class="ax" x="348" y="121.5">40</text>
+            <text class="ax b" x="348" y="82.7">50</text>
+            <text class="ax" x="348" y="43.8">60</text>
+
+            <!-- stacked bars: won(bottom) / covered / missed -->
+            <g>
+              <rect class="wr-won"  x="49.9"  y="123.0" width="22" height="35.0"/><rect class="wr-cov" x="49.9"  y="95.8"  width="22" height="27.2"/><rect class="wr-miss" x="49.9"  y="76.4"  width="22" height="19.4"/>
+              <rect class="wr-won"  x="87.6"  y="128.9" width="22" height="29.1"/><rect class="wr-cov" x="87.6"  y="103.6" width="22" height="25.3"/><rect class="wr-miss" x="87.6"  y="84.2"  width="22" height="19.4"/>
+              <rect class="wr-won"  x="125.4" y="111.4" width="22" height="46.6"/><rect class="wr-cov" x="125.4" y="80.3"  width="22" height="31.1"/><rect class="wr-miss" x="125.4" y="58.9"  width="22" height="21.4"/>
+              <rect class="wr-won"  x="163.1" y="117.2" width="22" height="40.8"/><rect class="wr-cov" x="163.1" y="88.1"  width="22" height="29.1"/><rect class="wr-miss" x="163.1" y="66.7"  width="22" height="21.4"/>
+              <rect class="wr-won"  x="200.9" y="105.5" width="22" height="52.5"/><rect class="wr-cov" x="200.9" y="72.5"  width="22" height="33.0"/><rect class="wr-miss" x="200.9" y="51.1"  width="22" height="21.4"/>
+              <rect class="wr-won"  x="238.6" y="107.5" width="22" height="50.5"/><rect class="wr-cov" x="238.6" y="80.3"  width="22" height="27.2"/><rect class="wr-miss" x="238.6" y="62.8"  width="22" height="17.5"/>
+              <rect class="wr-won"  x="276.4" y="93.9"  width="22" height="64.1"/><rect class="wr-cov" x="276.4" y="58.9"  width="22" height="35.0"/><rect class="wr-miss" x="276.4" y="39.5"  width="22" height="19.4"/>
+              <rect class="wr-won"  x="314.1" y="91.9"  width="22" height="66.1"/><rect class="wr-cov" x="314.1" y="60.9"  width="22" height="31.1"/><rect class="wr-miss" x="314.1" y="45.3"  width="22" height="15.5"/>
+            </g>
+
+            <!-- win-rate trend (right axis, 30–65% compressed) -->
+            <polyline class="wrline" points="60.9,107.9 98.6,121.1 136.4,91.6 174.1,100.9 211.9,83.8 249.6,68.3 287.4,64.4 325.1,46.9"/>
+            <circle class="wrdot" cx="60.9"  cy="107.9" r="2.6"/><circle class="wrdot" cx="98.6"  cy="121.1" r="2.6"/>
+            <circle class="wrdot" cx="136.4" cy="91.6"  r="2.6"/><circle class="wrdot" cx="174.1" cy="100.9" r="2.6"/>
+            <circle class="wrdot" cx="211.9" cy="83.8"  r="2.6"/><circle class="wrdot" cx="249.6" cy="68.3"  r="2.6"/>
+            <circle class="wrdot" cx="287.4" cy="64.4"  r="2.6"/><circle class="wrdot" cx="325.1" cy="46.9"  r="3.2" style="stroke:var(--brand);stroke-width:1.5"/>
+
+            <!-- x labels -->
+            <text class="ax" x="60.9"  y="170" text-anchor="middle">W-7</text>
+            <text class="ax" x="98.6"  y="170" text-anchor="middle">W-6</text>
+            <text class="ax" x="136.4" y="170" text-anchor="middle">W-5</text>
+            <text class="ax" x="174.1" y="170" text-anchor="middle">W-4</text>
+            <text class="ax" x="211.9" y="170" text-anchor="middle">W-3</text>
+            <text class="ax" x="249.6" y="170" text-anchor="middle">W-2</text>
+            <text class="ax" x="287.4" y="170" text-anchor="middle">W-1</text>
+            <text class="ax b" x="325.1" y="170" text-anchor="middle">this wk</text>
+          </svg>
+          <div class="statline">
+            <span>this wk <b>58.6%</b></span>
+            <span>7-day <b>54%</b></span>
+            <span>avg cover <b>+1.4bp</b></span>
+            <span>in-competition <b>82%</b></span>
+            <span>sample <b>401</b> RFQ</span>
+          </div>
+          <div class="prov">
+            <span><span class="htag live" title="outcomes derived from booked deal history (Deal store)">LIVE</span> booked outcomes</span>
+            <span><span class="htag target" title="cover-margin needs winning-away levels — partial from FIX cover tags">TARGET</span> cover-margin</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===== ROW 3 — LP-take (separate, full width) ===== -->
+    <!-- SIGNATURE 4 — SEPARATE LP-take panel (external LP aggregation for hedge / best-ex) -->
+    <section class="panel">
+        <header>
+          <span class="headline" title="aggregates EXTERNAL liquidity — distinct from the client-facing panel">LP-take — hedge &amp; best-ex</span>
+          <span class="pill" style="border-color:oklch(0.62 0.19 280/.35)">MultiDealerEngine · fan-out</span>
+        </header>
+        <div class="body" style="padding-bottom:var(--space-3)">
+          <div style="display:flex; gap:14px; align-items:baseline; margin-bottom:4px">
+            <span class="muted" style="font-size:var(--type-caption)">EUR/USD 1M · 50mm hedge · ranked across native + external LPs</span>
+            <span style="flex:1"></span>
+            <span class="num" style="font-size:var(--type-caption)" title="quoted sizes 10–30mm — no single LP fills the 50mm hedge; offer sweep LP γ → AUTO → LP δ · bid sweep LP ε → LP γ → AUTO; touch fillable ≤15mm">top-of-book <span class="bid">7.95</span> / <span class="offer">8.08</span> <span class="dim">Δ0.13v · ≤15mm</span> &nbsp;·&nbsp; fill 50mm <span class="bid">7.92</span> / <span class="offer">8.10</span> <span class="dim">Δ0.18v vwap</span></span>
+          </div>
+
+          <div class="cols c2" style="align-items:start">
+          <div>
+          <svg class="chart" viewBox="0 0 360 200" height="196" role="img" aria-label="External LP quote dispersion for the hedge">
+            <!-- best-ex window (best bid → best offer) -->
+            <rect class="bexwin" x="161.25" y="30" width="87.75" height="146"/>
+            <!-- mid guide -->
+            <line class="mk" x1="195" y1="30" x2="195" y2="176"/>
+            <text class="ax b" x="195" y="26" text-anchor="middle">mid 8.00</text>
+            <!-- VWAP-to-50mm guides — where the FULL hedge actually clears (outside the touch window) -->
+            <line class="vwapg" x1="141" y1="30" x2="141" y2="176"/>
+            <line class="vwapg" x1="262.5" y1="30" x2="262.5" y2="176"/>
+            <text class="vwaplab" x="141" y="14" text-anchor="middle">vwap 7.92</text>
+            <text class="vwaplab" x="262.5" y="14" text-anchor="middle">vwap 8.10</text>
+            <!-- native row highlight -->
+            <rect class="lprow-native" x="56" y="29" width="286" height="22" rx="4"/>
+
+            <!-- LP rows: span (spread) + bid/offer ticks -->
+            <!-- AUTO native 7.90/8.10 -->
+            <line class="lpspan" x1="127.5" y1="40" x2="262.5" y2="40"/>
+            <circle class="bidt" cx="127.5" cy="40" r="3.2"/><circle class="offt" cx="262.5" cy="40" r="3.2"/>
+            <!-- LP β 7.88/8.14 -->
+            <line class="lpspan" x1="114"   y1="70" x2="289.5" y2="70"/>
+            <circle class="bidt" cx="114"   cy="70" r="3.2"/><circle class="offt" cx="289.5" cy="70" r="3.2"/>
+            <!-- LP γ 7.93/8.08 (best offer) -->
+            <line class="lpspan" x1="147.75" y1="100" x2="249" y2="100"/>
+            <circle class="bidt" cx="147.75" cy="100" r="3.2"/><circle class="offt" cx="249" cy="100" r="3.2"/>
+            <circle class="ring-off" cx="249" cy="100" r="6.4"/>
+            <!-- LP δ 7.85/8.12 -->
+            <line class="lpspan" x1="93.75" y1="130" x2="276" y2="130"/>
+            <circle class="bidt" cx="93.75" cy="130" r="3.2"/><circle class="offt" cx="276" cy="130" r="3.2"/>
+            <!-- LP ε 7.95/8.16 (best bid) -->
+            <line class="lpspan" x1="161.25" y1="160" x2="303" y2="160"/>
+            <circle class="bidt" cx="161.25" cy="160" r="3.2"/><circle class="offt" cx="303" cy="160" r="3.2"/>
+            <circle class="ring-bid" cx="161.25" cy="160" r="6.4"/>
+
+            <!-- LP labels -->
+            <text class="lplab" x="8" y="43">AUTO<tspan fill="var(--accent)">*</tspan></text>
+            <text class="lplab" x="8" y="73">LP β</text>
+            <text class="lplab" x="8" y="103">LP γ</text>
+            <text class="lplab" x="8" y="133">LP δ</text>
+            <text class="lplab" x="8" y="163">LP ε</text>
+
+            <!-- best markers -->
+            <text class="ax" x="249" y="92" text-anchor="middle" fill="var(--offer)">best offer</text>
+            <text class="ax" x="161.25" y="180" text-anchor="middle" fill="var(--bid)">best bid</text>
+
+            <!-- price axis -->
+            <line class="gl" x1="56" y1="182" x2="336" y2="182"/>
+            <text class="ax" x="60"  y="194" text-anchor="middle">7.80</text>
+            <text class="ax" x="127.5" y="194" text-anchor="middle">7.90</text>
+            <text class="ax b" x="195" y="194" text-anchor="middle">8.00</text>
+            <text class="ax" x="262.5" y="194" text-anchor="middle">8.10</text>
+            <text class="ax" x="330" y="194" text-anchor="middle">8.20</text>
+          </svg>
+          </div>
+
+          <div>
+          <table class="grid" style="margin-top:0; font-size:var(--type-micro)">
+            <thead>
+              <tr><th>LP</th><th>Bid</th><th>Offer</th><th>Size <span class="dim">/50mm</span></th><th>Last-look</th><th style="text-align:right">Rank</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>AUTO <span class="dim">native</span></td><td class="n bid">7.90</td><td class="n offer">8.10</td><td class="n">25 <span class="szf" title="below the 50mm hedge — partial fill">‹50</span></td><td class="n">180ms</td><td class="n dim">—</td></tr>
+              <tr><td>LP β <span class="dim">demo</span></td><td class="n bid">7.88</td><td class="n offer">8.14</td><td class="n">20 <span class="szf" title="below the 50mm hedge — partial fill">‹50</span></td><td class="n">240ms</td><td class="n dim">4 / 5</td></tr>
+              <tr><td>LP γ <span class="dim">demo</span></td><td class="n bid">7.93</td><td class="n offer">8.08</td><td class="n">15 <span class="szf" title="below the 50mm hedge — partial fill">‹50</span></td><td class="n">300ms</td><td class="n" style="color:var(--offer)">best offer <span class="tch">≤15mm</span></td></tr>
+              <tr><td>LP δ <span class="dim">demo</span></td><td class="n bid">7.85</td><td class="n offer">8.12</td><td class="n">30 <span class="szf" title="below the 50mm hedge — partial fill">‹50</span></td><td class="n">210ms</td><td class="n dim">5 / 5</td></tr>
+              <tr><td>LP ε <span class="dim">demo</span></td><td class="n bid">7.95</td><td class="n offer">8.16</td><td class="n">10 <span class="szf" title="below the 50mm hedge — partial fill">‹50</span></td><td class="n">260ms</td><td class="n" style="color:var(--bid)">best bid <span class="tch">≤10mm</span></td></tr>
+            </tbody>
+          </table>
+
+          <div class="actions">
+            <button class="btn ghost" title="Route the hedge to best-ex LP — currently unbooked">Best-ex ▸ route hedge <span class="htag target" style="margin-left:6px">TARGET</span></button>
+            <button class="btn ghost">Re-request panel</button>
+          </div>
+          <div class="prov">
+            <span><span class="htag live" title="engine ranks native + synthetic LPs · best-bid/offer · deterministic tie-break · last-look">LIVE</span> panel ranking</span>
+            <span><span class="htag target" title="depth-aware best-ex (VWAP-to-hedge-size) — engine ranks top-of-book; the 50mm sweep is derived here · hedge fills unbooked — accept writes an ephemeral Execution, no position store">TARGET</span> depth best-ex · booking</span>
+          </div>
+          </div>
+          </div>
+        </div>
+      </section>
+  </main>
+
+  <!-- ============ CONTEXT RAIL (shell — verbatim) ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (shell — verbatim) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+  // ----- inbox filter (segmented control) -----
+  const filter = document.getElementById('flowfilter');
+  const rows = Array.from(document.querySelectorAll('#inbox tbody tr'));
+  filter.addEventListener('click', (e) => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    filter.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+    const f = btn.dataset.f;
+    rows.forEach(r => {
+      const show = f === 'all'
+        || (f === 'rfq' && r.dataset.kind === 'rfq')
+        || (f === 'ioi' && r.dataset.kind === 'ioi')
+        || (f === 'working' && (r.dataset.state === 'work' || r.dataset.state === 'new'))
+        || (f === 'quote' && r.dataset.state === 'quote');
+      r.classList.toggle('hidden', !show);
+    });
+  });
+
+  // ----- select an inbound request → drive the WHOLE response panel -----
+  // (header + SLA + pricing-model + Δ-convention + the ranked quote ladder ALL follow the
+  //  selected request, so the body can never contradict the header)
+  const stateChip = { new:['new','new'], work:['work','working'], quote:['quote','quoted'], done:['done','booked'], pass:['pass','passed'] };
+  const QHEAD = '<div class="qhead"><span></span><span>Source</span><span>Your bid</span><span>Your offer</span><span>Spread</span><span>Edge</span><span>Est. win <span class="htag target" title="needs the quote-elasticity estimator">TARGET</span></span></div>';
+  const esc = s => String(s).replace(/[&<>]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]));
+  const qlad = document.getElementById('qlad');
+
+  function renderLadder(r) {
+    if (r.dataset.quotes) {
+      const body = JSON.parse(r.dataset.quotes).map(q => `
+        <div class="qrow${q.a ? ' armed' : ''}">
+          <span class="rad"></span>
+          <span class="src">${esc(q.s)} <span class="tag">${esc(q.t)}</span></span>
+          <span class="qn bid">${esc(q.b)}</span><span class="qn off">${esc(q.o)}</span>
+          <span class="qn">${esc(q.sp)}</span><span class="qn">${esc(q.e)}</span>
+          <span class="qn win"><span>${q.w}%</span><span class="wbar"><i style="width:${q.w}%"></i></span></span>
+        </div>`).join('');
+      qlad.innerHTML = QHEAD + body;
+    } else {
+      const lv = r.dataset.lv ? ` <span class="lv">${esc(r.dataset.lv)}</span>` : '';
+      qlad.innerHTML = `<div class="laddernote"><span>▪</span><span>${esc(r.dataset.note || 'No live firm quote for this request.')}</span>${lv}</div>`;
+    }
+  }
+
+  function selectRow(r) {
+    rows.forEach(x => x.classList.toggle('sel', x === r));
+    document.getElementById('respStruct').textContent = r.dataset.struct;
+    document.getElementById('respWho').textContent = `${r.dataset.cpty} · ${r.dataset.notl} · ${r.dataset.tenor}`;
+    document.getElementById('respSide').textContent = r.dataset.side;
+    document.getElementById('respCh').textContent = r.dataset.ch;
+    document.getElementById('respModel').innerHTML = `${esc(r.dataset.model || '')} <span class="ok" style="color:var(--bid)">✓ arb-free</span>`;
+    document.getElementById('respDconv').textContent = r.dataset.dconv || '—';
+    document.getElementById('slaBar').style.width = (r.dataset.slapct || '0') + '%';
+    document.getElementById('slaTxt').textContent = r.dataset.sla || '—';
+    const rs = document.getElementById('respState');
+    const [cls, txt] = stateChip[r.dataset.state] || ['work','working'];
+    rs.className = 'st ' + cls; rs.textContent = txt;
+    renderLadder(r);
+  }
+  rows.forEach(r => r.addEventListener('click', () => selectRow(r)));
+
+  // ----- arm a quote line (radio behaviour, trader-in-control) -----
+  qlad.addEventListener('click', (e) => {
+    const row = e.target.closest('.qrow'); if (!row) return;
+    qlad.querySelectorAll('.qrow').forEach(x => x.classList.toggle('armed', x === row));
+  });
+</script>
+</body>
+</html>

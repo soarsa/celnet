@@ -77,6 +77,7 @@ export type WorkspaceId =
   | "stream"
   | "surface"
   | "risk"
+  | "xva"
   | "book"
   | "connections"
   | "admin"

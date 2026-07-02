@@ -96,9 +96,245 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .viewChip {
+  .viewChip,
+  .wingChip,
+  .modelChip,
+  .evChevron {
     transition: none;
   }
+}
+
+/* ============ publish-evidence trail (residuals · ATM term · arb gate) ======
+   The "show me WHY" region under the ArbBanner. Quantitative colour comes ONLY
+   from the --div-* diverging tokens (centred 0) and the --seq-* line token —
+   never a brand hue; status pass/fail uses the status tokens (--bid/--danger). */
+.evidence {
+  margin-top: var(--space-2);
+  border: var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--bg-inset);
+}
+
+.evToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: var(--type-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  text-align: left;
+}
+.evToggle:hover {
+  color: var(--text-primary);
+}
+
+.evChevron {
+  display: inline-block;
+  transition: transform 0.12s ease;
+  color: var(--text-tertiary);
+}
+.evChevron[data-open] {
+  transform: rotate(90deg);
+}
+
+.evHint {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+}
+
+.evBody {
+  padding: 0 var(--space-3) var(--space-3);
+  max-height: 44vh;
+  overflow-y: auto;
+}
+
+.evEmpty {
+  margin: 0;
+  padding: var(--space-2) 0;
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.evTitle {
+  margin: var(--space-3) 0 var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--type-micro);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+/* --- residual mini-heatmap (tenor × wing, diverging centred 0) --- */
+.residTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-micro);
+}
+.residTable th {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  padding: 2px var(--space-1);
+  text-align: right;
+}
+.residTable th[scope="row"] {
+  font-family: var(--font-mono);
+  text-align: left;
+}
+.residCell,
+.residNa {
+  padding: 3px var(--space-1);
+  text-align: right;
+  font-size: var(--type-micro);
+}
+.residCell {
+  color: var(--text-primary);
+  /* A halo so the number reads on any diverging band, in any appearance. */
+  text-shadow:
+    0 0 2px var(--bg-base),
+    0 0 2px var(--bg-base);
+}
+.residNa {
+  color: var(--text-tertiary);
+  text-align: center;
+}
+.bandN2 {
+  background: var(--div-neg2);
+}
+.bandN1 {
+  background: var(--div-neg1);
+}
+.bandMid {
+  background: var(--div-mid);
+}
+.bandP1 {
+  background: var(--div-pos1);
+}
+.bandP2 {
+  background: var(--div-pos2);
+}
+
+.residLegend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+.legendRamp {
+  flex: 1;
+  height: 8px;
+  border-radius: var(--r-full);
+  background: linear-gradient(
+    to right,
+    var(--div-neg2),
+    var(--div-neg1),
+    var(--div-mid),
+    var(--div-pos1),
+    var(--div-pos2)
+  );
+}
+.legendCaption {
+  white-space: nowrap;
+}
+
+.worstLine {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+/* --- ATM term-structure slice (inline SVG, tokens cascade natively) --- */
+.termSvg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.termGrid {
+  stroke: var(--grid-line);
+  stroke-width: 0.5;
+}
+.termTick {
+  fill: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+.termLine {
+  fill: none;
+  stroke: var(--seq-5);
+  stroke-width: 1.5;
+}
+.termDot {
+  fill: var(--seq-5);
+}
+.termDotDanger {
+  fill: var(--danger);
+}
+
+/* --- per-tenor arb-gate table --- */
+.gateTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-micro);
+}
+.gateTable th {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  text-align: left;
+  padding: 2px var(--space-1);
+}
+.gateTable th[scope="row"] {
+  font-family: var(--font-mono);
+  text-transform: none;
+  color: var(--text-secondary);
+}
+.gateTable td {
+  padding: 2px var(--space-1);
+  vertical-align: baseline;
+}
+.gateFailRow {
+  background: var(--bg-base);
+}
+.gatePass {
+  color: var(--bid);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.gateFail {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-emphasis);
+  white-space: nowrap;
+}
+.gateNote {
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .surfacePanel {
@@ -119,20 +355,39 @@
   padding: var(--space-5);
 }
 
-.legend {
+/* Wing selection chips under the smile lib chart — the smile slice's
+   cross-highlight control (drives the Inspector read-out). Chip family matches
+   .modelChip; the active cue is the accent border + soft fill, label stays
+   primary text for AA contrast. */
+.wingChips {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  flex-wrap: wrap;
+  gap: var(--space-2);
   margin-top: var(--space-3);
 }
-.legendBar {
-  flex: 1;
-  height: 8px;
-  border-radius: var(--r-full);
-}
-.legendLabel {
+.wingChip {
+  font-family: var(--font-mono);
   font-size: var(--type-micro);
-  color: var(--text-tertiary);
+  letter-spacing: 0.03em;
+  padding: 2px var(--space-3);
+  border-radius: var(--r-full);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.wingChip:hover:not(.wingChipActive) {
+  border-color: var(--text-tertiary);
+  color: var(--text-primary);
+}
+.wingChipActive {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
 }
 
 /* surface panel uses noPadding; lay out body as a column */

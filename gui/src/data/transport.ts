@@ -90,6 +90,8 @@ import type {
   Update,
   UpdateUserInput,
   UserDesc,
+  XvaPricingRequest,
+  XvaResult,
 } from "./contract";
 
 /** A priced result for a single instrument (PricingService.Price). */
@@ -203,6 +205,22 @@ export interface CelnetTransport {
     curve: RatesCurveSet,
     instrument: OisInstrument,
   ): Promise<RatesPricingResult>;
+
+  /**
+   * PricingService.PriceXva — price a netting set's all-in counterparty valuation
+   * adjustments (CVA / DVA / FVA + their signed total) against the request's
+   * exposure-model market, survival curves, LGDs and funding spread. Satisfied
+   * identically by both transports — the offline source runs a deterministic
+   * quadrature exposure model in-browser; the live transport issues the
+   * `price_xva` RPC to celnet-server.
+   *
+   * Honest contract boundary: the wire result carries ONLY the four scalar
+   * adjustments. The simulated exposure PROFILE (EPE/ENE per bucket) is a
+   * server-internal of the estimator and is NOT on the contract, so no client can
+   * render a LIVE exposure fan from this reply — the workspace draws an explicitly
+   * illustrative, seeded profile for the fan and never presents it as a valuation.
+   */
+  priceXva(request: XvaPricingRequest): Promise<XvaResult>;
 
   /** QuoteService.RequestQuote (idempotent on key). */
   requestQuote(

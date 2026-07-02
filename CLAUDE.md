@@ -16,29 +16,40 @@ Greenfield, started 30 May 2026.
 2. **No mocks, no placeholders, no `todo!()`.** Only 100% complete, state-of-the-art
    implementations. If scope can't be finished, narrow it — never fake depth. Split large
    implementations across files/crates instead of abbreviating.
-3. **lodestar first** for code discovery (`search_graph`, `trace_path`, `get_code_snippet`,
-   `query_graph`, `get_architecture`, `detect_changes`, `manage_adr`) **and the verified
-   "why" layer** (`knowledge_get`/`knowledge_put`, `evidence_pack`); fall back to Grep/Read
-   only for non-code text. The graph **auto-indexes** (lodestar's native filesystem watcher
-   + `SessionStart`/`Stop` `lodestar index` hooks in `.claude/settings.json`), so its scope
-   always covers new files. The stable project key is **`github.com-soarsa-celnet`** (pinned
-   in `.lodestar/project-id`, git-remote-derived → identical on every clone — **but a `git
-   worktree` does NOT inherit the pin: every parallel-session worktree must carry its own
+3. **lodestar-first for ALL code work — planning, architecture, design, search, citation**
+   (not just discovery). Use the graph/knowledge tools INSTEAD OF the default tool; fall
+   back to Grep/Read ONLY for non-code text (Dockerfiles, CI yaml, shell, `docs/*.md` prose)
+   and for reading a file immediately before you Edit it. Never `Bash find/cat/sed` or
+   whole-file Read to understand code structure.
+   - **Plan / understand architecture** → `get_architecture` (packages/layers/hotspots/Leiden
+     clusters) + `detect_changes` (blast radius) + `knowledge_coverage` — not tree/find sweeps.
+   - **Design / decisions** → `knowledge_get` + `manage_adr` (an ADR binds to a Deliverable) —
+     not re-reading `docs/adr/*`.
+   - **Find a symbol** → `search_graph` (name/regex/semantic), not Grep/Glob. **Find literal
+     text** → `search_code`, not Grep.
+   - **Read one symbol** → `get_code_snippet` (by qualified_name), not whole-file Read.
+     **Callers / impact / data-flow** → `trace_path`. **Multi-hop / relationship** →
+     `query_graph` Cypher (grammar via `get_graph_schema`).
+   - **Cite the "why"** → `knowledge_get` / `evidence_pack` (~21× fewer tokens), not
+     re-derivation. **Author the "why"** → `knowledge_put`. **Cross-service done-ness** →
+     `knowledge_get deliverable=<slug>` (judge=off ⇒ roll-ups stay `draft`; coordinator
+     `--attest` only after independent verify).
+   The graph **auto-indexes** the entirety of CelNet across every crate (native watcher +
+   `SessionStart`/`Stop` `lodestar index "$PWD"` hooks in `.claude/settings.json`). Stable
+   project key **`github.com-soarsa-celnet`** (pinned in `.lodestar/project-id`,
+   git-remote-derived → identical on every clone — **but a `git worktree` does NOT inherit
+   the pin: every parallel-session worktree must carry its own
    `.lodestar/project-id`=`github.com-soarsa-celnet` or it fragments into an empty per-path
-   project and shares no knowledge**). **Health probe before trusting it:** `lodestar doctor
-   --json` must report `ok:true`/`problems:0` and the hot symbol `price_instrument` must
-   resolve (graph ≈23k nodes on lodestar 0.9.0); a sharp drop ⇒ `lodestar index --full
-   <ABSOLUTE-repo-path>` (~5s, deterministic & byte-identical — **never `.`: that records
-   `root_path="."` and auto-deletes the db**). **CAUTION: `--full` WIPES the verified-knowledge
-   projection** (lodestar#18) — it keeps only already-active claims and drops drafts, or
-   leaves the store empty if the projection was already lost. **After any `--full`, run
-   `python3 tools/lodestar/replay-knowledge.py`** to rebuild the live "why" from the committed
+   project and shares no knowledge**). **Health probe:** `lodestar doctor --json` →
+   `ok:true`/`problems:0` and `price_instrument` resolves (`crates/celnet-server/src/pricer.rs`;
+   graph ≈**26k** nodes on lodestar 0.9.0); a sharp drop ⇒ `lodestar index --full
+   <ABSOLUTE-repo-path>` (**never `.`** — records `root_path="."` and auto-deletes the db).
+   **`--full` WIPES the verified-knowledge projection** (lodestar#18) → after any `--full`
+   run `python3 tools/lodestar/replay-knowledge.py` to rebuild from the committed
    `claims-mirror.json`; prefer incremental `lodestar index <ABSOLUTE-path>` (preserves
-   knowledge). Use `detect_changes` to
-   scope builds/tests; keep ADRs current via `manage_adr`. The structural graph
-   (`~/.cache/lodestar/`) is machine-local & regenerable; the verified-knowledge log
-   (`.lodestar/knowledge/`) is git-committed and shared across machines. Saves tokens, stays
-   exact, self-invalidates.
+   knowledge). Structural graph (`~/.cache/lodestar/`) is machine-local & regenerable; the
+   verified-knowledge log (`.lodestar/knowledge/`) is git-committed + shared. Saves tokens,
+   stays exact, self-invalidates. Full 35-tool catalog + replaces-table: `[[lodestar-first]]`.
 4. **LSP for code intel.** Use the LSP tool (rust-analyzer) for goToDefinition,
    findReferences, hover, document/workspace symbols, call hierarchy — not guesswork.
 5. **Every change passes the gates** before it's "done": `just check` (fmt, clippy -D

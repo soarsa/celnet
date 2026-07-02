@@ -20,7 +20,7 @@ import type {
 import { Panel } from "../components/Panel";
 import { Button } from "../components/Button";
 import { strategyInstrument } from "../data/seed";
-import { rampColor } from "../viz/ramp";
+import { ScenarioHeatmap } from "../viz/ScenarioHeatmap";
 import { fmtPnlAdaptive, fmtSigned } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
 import styles from "./RiskWorkspace.module.css";
@@ -171,9 +171,14 @@ export function RiskWorkspace(): React.ReactElement {
     }
   };
 
-  // Magnitude normalization for the diverging tint.
-  let maxAbs = 1e-9;
-  for (const s of rowSteps) for (const v of colSteps) maxAbs = Math.max(maxAbs, Math.abs(cellValue(s, v)));
+  // Map the swept grid onto the ScenarioHeatmap's props (mockup 06): the column
+  // factor is the x-axis (spot-shock columns), the row factor the y-axis (vol-shock
+  // rows), and pnl[volIndex][spotIndex] the selected metric at that joint shock.
+  // Row 0 renders at the bottom, matching the component's category convention.
+  const spotLabels = colSteps.map((v) => colSpec.fmtStep(v));
+  const volLabels = rowSteps.map((s) => rowSpec.fmtStep(s));
+  const heatmapPnl = rowSteps.map((s) => colSteps.map((v) => cellValue(s, v)));
+  const heatmapUnit = metric === "pnl" ? instrument.pair.quote : "";
 
   const fmtCell = (v: number): string => {
     if (metric === "pnl") return fmtPnlAdaptive(v);
@@ -250,41 +255,14 @@ export function RiskWorkspace(): React.ReactElement {
         </div>
 
         <div className={styles.gridArea}>
-          <div className={styles.axisLabel}>{colSpec.label.toLowerCase()} →</div>
-          <table className={styles.matrix}>
-            <thead>
-              <tr>
-                <th className={styles.corner}>{rowSpec.label.toLowerCase()} ↓</th>
-                {colSteps.map((v) => (
-                  <th key={v} className="num">
-                    {colSpec.fmtStep(v)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rowSteps.map((s) => (
-                <tr key={s}>
-                  <th className={`num ${styles.rowHead}`}>{rowSpec.fmtStep(s)}</th>
-                  {colSteps.map((v) => {
-                    const val = cellValue(s, v);
-                    const anchored = s === 0 && v === 0;
-                    const t = 0.5 + (val / maxAbs) * 0.5;
-                    return (
-                      <td
-                        key={v}
-                        className={`num ${styles.cell} ${anchored ? styles.anchored : ""}`}
-                        style={{ background: rampColor(t, anchored ? 1 : 0.92) }}
-                      >
-                        {anchored && <span className={styles.nowMark}>▣</span>}
-                        {fmtCell(val)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ScenarioHeatmap
+            pnl={heatmapPnl}
+            spotLabels={spotLabels}
+            volLabels={volLabels}
+            unit={heatmapUnit}
+            formatValue={fmtCell}
+            ariaLabel={`${rowSpec.label} by ${colSpec.label} ${metric} scenario heatmap, diverging colour centred at zero`}
+          />
           <div className={styles.provLine}>
             sweeping <strong>{rowSpec.label}</strong> × <strong>{colSpec.label}</strong> ·
             real reprice via SurfaceService.Scenario at this structure&apos;s pair market
@@ -310,16 +288,6 @@ export function RiskWorkspace(): React.ReactElement {
               </span>
             ))}
           </div>
-          <span className={styles.legendWrap}>
-            <span className={styles.legLabel}>−</span>
-            <span
-              className={styles.legBar}
-              style={{
-                background: `linear-gradient(90deg, ${rampColor(0)}, ${rampColor(0.5)}, ${rampColor(1)})`,
-              }}
-            />
-            <span className={styles.legLabel}>+</span>
-          </span>
         </div>
       </Panel>
 

@@ -1,0 +1,836 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Curve Workbench (mockup 14)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+  /* ===== screen-specific: FI Curve Workbench (not in shared celer.css) ===== */
+
+  /* Same fixed-height flex-column .main as the vol surface: stacked panels keep their
+     natural height and .main scrolls (see 01-vol-surface FIX-1). */
+  .main > * { flex-shrink: 0; }
+
+  /* ---- publish-gate spine (mark → bootstrap → no-arb/monotone → publish) — ported from 01 ---- */
+  .gate { display:flex; align-items:center; gap:var(--space-4); padding:var(--space-3) var(--space-5);
+    border-radius:var(--r-md); background:var(--bg-inset); border:var(--hairline); flex-wrap:wrap; }
+  .steps { display:flex; align-items:center; gap:var(--space-2); }
+  .steps .step { display:inline-flex; align-items:center; gap:7px; padding:5px 12px; border-radius:var(--r-full);
+    font-size:var(--type-callout); color:var(--text-tertiary); cursor:pointer; border:1px solid transparent; white-space:nowrap; }
+  .steps .step .no { font-family:var(--font-mono); font-size:10px; width:16px; height:16px; border-radius:var(--r-full);
+    display:grid; place-items:center; background:oklch(1 0 0 / 0.08); color:var(--text-tertiary); }
+  /* the WHOLE spine is TARGET (no server-side curve versioning/publish exists) — every state
+     stays grey/dashed target styling; only the no-arb VETO (honest local math) may go danger */
+  .steps .step.done { color:var(--text-secondary); }
+  .steps .step.done .no { background:oklch(1 0 0 / 0.14); color:var(--text-secondary); }
+  .steps .step.on { background:var(--bg-raised); color:var(--text-secondary); font-weight:600; border:1px dashed var(--grid-line); }
+  .steps .step.on .no { background:oklch(1 0 0 / 0.14); color:var(--text-secondary); }
+  .steps .step.blocked.on { border-color:var(--danger); }
+  .steps .step.blocked.on .no { background:var(--danger); color:#fff; }
+  .steps .sep { color:var(--text-tertiary); opacity:0.4; }
+  .gatever { font-family:var(--font-mono); font-size:var(--type-caption); color:var(--text-tertiary); }
+  .gatever b { color:var(--text-secondary); }
+  .invariant { font-size:var(--type-caption); color:var(--text-tertiary); display:inline-flex; align-items:center; gap:5px; }
+  .invariant .lk { color:var(--text-tertiary); }
+  .btn.okpub { background:oklch(1 0 0 / 0.05); border:1px dashed var(--grid-line); color:var(--text-secondary); font-weight:600; cursor:default; }
+  .btn.okpub:hover { border-color:var(--text-tertiary); color:var(--text-primary); }
+  .btn.okpub .pp, .btn.blocked .pp { font-size:9px; font-weight:600; letter-spacing:0.03em; color:var(--text-tertiary); }
+  .btn.blocked { background:var(--danger); border-color:var(--danger); color:#fff; cursor:not-allowed; font-weight:600; }
+  .btn.blocked:hover { filter:brightness(1.06); }
+  .btn.blocked .lk, .btn.okpub .lk { font-weight:700; }
+  .btn.blocked .pp { color:oklch(1 0 0 / 0.75); }
+
+  /* ---- curve-set picker (analog of 01's 5-smile model picker) ---- */
+  .model { flex-wrap:wrap; row-gap:var(--space-3); }
+  .modelseg { display:inline-flex; background:var(--bg-base); border-radius:var(--r-full); padding:2px; gap:2px; border:var(--hairline); }
+  .modelseg button { border:0; background:transparent; color:var(--text-tertiary); font-family:var(--font-display);
+    font-size:var(--type-caption); font-weight:600; padding:5px 12px; border-radius:var(--r-full); cursor:pointer; letter-spacing:0.01em; }
+  .modelseg button .tag { display:block; font-family:var(--font-mono); font-size:8px; font-weight:400; opacity:0.7; letter-spacing:0; }
+  .modelseg button.on { background:var(--accent); color:#fff; }
+  .modelseg button.on .tag { opacity:0.85; }
+
+  /* ---- segmented buttons (interpolation / turns / risk-view) — ported from 01 ---- */
+  .segbtn { display:inline-flex; gap:3px; }
+  .segbtn button { border:var(--hairline); background:oklch(1 0 0 / 0.04); color:var(--text-tertiary);
+    font-size:var(--type-caption); padding:3px 10px; border-radius:var(--r-sm); cursor:pointer; font-weight:600; }
+  .segbtn button.on { background:var(--bg-raised); color:var(--text-primary); box-shadow:var(--shadow-panel); }
+
+  /* ---- SIGNATURE curve stage: chart + side legend ---- */
+  .curvestage { display:grid; grid-template-columns:1fr 172px; gap:var(--space-4); align-items:stretch; }
+  .curvewrap { position:relative; }
+  .curvewrap svg { display:block; width:100%; }
+  .zline  { fill:none; stroke:var(--seq-4); stroke-width:2.4; stroke-linejoin:round; stroke-linecap:round; }
+  .fline  { fill:none; stroke:var(--seq-6); stroke-width:2;   stroke-linejoin:round; stroke-linecap:round; }
+  .dfline { fill:none; stroke:var(--seq-2); stroke-width:2;   stroke-linejoin:round; stroke-linecap:round; }
+  .projline { fill:none; stroke:var(--seq-4); stroke-width:1.4; stroke-dasharray:5 4; opacity:0.5; stroke-linejoin:round; }
+  .pildot { fill:var(--seq-4); stroke:var(--bg-raised); stroke-width:1; }
+  .cvtick { stroke:var(--grid-line); stroke-width:1; }
+  .axguide { fill:var(--text-secondary); font-size:9px; font-family:var(--font-display); letter-spacing:0.06em; text-transform:uppercase; }
+  .turnmk .ln { stroke:var(--warn); stroke-width:1; stroke-dasharray:3 3; opacity:0.8; }
+  .turnmk .tg { fill:var(--warn); font-size:8px; font-family:var(--font-display); font-weight:700; letter-spacing:0.03em; }
+  /* hover crosshair + readout */
+  .hvln { stroke:var(--accent); stroke-width:1; stroke-dasharray:3 3; opacity:0.85; }
+  .hvz  { fill:var(--seq-4); } .hvf { fill:var(--seq-6); } .hvdf { fill:var(--seq-2); }
+  .hvbg { fill:oklch(0.165 0.013 264 / 0.94); stroke:var(--grid-line); stroke-width:1; }
+  .hvttl{ fill:var(--text-secondary); font-size:9px; font-family:var(--font-display); font-weight:600; letter-spacing:0.04em; }
+  .hvkv { fill:var(--text-primary); font-size:9px; font-family:var(--font-mono); }
+  .hvk  { fill:var(--text-tertiary); font-size:8px; font-family:var(--font-display); text-transform:uppercase; letter-spacing:0.04em; }
+
+  /* curve legend (analog of 01's viridis legend) */
+  .clegend { display:flex; flex-direction:column; gap:8px; padding:var(--space-3); border-radius:var(--r-md);
+    background:var(--bg-inset); border:var(--hairline); align-self:start; }
+  .clegend .ttl { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.06em; color:var(--text-tertiary); font-weight:600; }
+  .clegend .ln { display:flex; align-items:center; gap:7px; font-size:var(--type-caption); color:var(--text-secondary); }
+  .clegend .ln .sw { width:18px; height:0; border-top:3px solid; border-radius:2px; display:inline-block; }
+  .clegend .ln .ax { margin-left:auto; font-family:var(--font-mono); font-size:8px; color:var(--text-tertiary); }
+  .clegend .div { border-top:1px solid var(--grid-line); margin-top:2px; padding-top:6px; }
+  .clegend .note { font-size:var(--type-micro); color:var(--text-tertiary); line-height:1.5; }
+
+  /* clickable line-visibility legend in the chart header */
+  .linetog { display:inline-flex; gap:3px; }
+  .linetog button { border:var(--hairline); background:oklch(1 0 0 / 0.04); color:var(--text-tertiary);
+    font-size:var(--type-caption); padding:3px 9px; border-radius:var(--r-sm); cursor:pointer; font-weight:600; display:inline-flex; align-items:center; gap:5px; }
+  .linetog button .sw { width:12px; height:0; border-top:3px solid; border-radius:2px; display:inline-block; }
+  .linetog button.off { opacity:0.4; text-decoration:line-through; }
+
+  /* ---- honesty tags: the ONE shared .htag live/target vocabulary lives in celer.css ---- */
+
+  /* scoped capability-rail sub-label — the active item reads "Vol Surface ▸ Curves" under the
+     Rates scope so an FI user is never shown the FX vol surface as the active capability */
+  .rail a.on { height:auto; padding-top:5px; padding-bottom:5px; }
+  .railsub { display:block; font-size:9px; font-family:var(--font-display); font-weight:600;
+    letter-spacing:0.04em; color:var(--accent); margin-top:1px; }
+
+  /* ---- editable par-pillar bootstrap table ---- */
+  .booktbl .qedit { display:inline-block; min-width:56px; text-align:right; background:oklch(1 0 0 / 0.06);
+    border:1px solid var(--grid-line); border-radius:var(--r-sm); padding:1px 6px; cursor:text; outline:none;
+    font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+  .booktbl .qedit:hover, .booktbl .qedit:focus { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
+  .booktbl tr.bad td { background:oklch(0.65 0.21 25 / 0.09); }
+  .booktbl .fam { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.04em; color:var(--text-tertiary); }
+  .booktbl td .sub { color:var(--text-tertiary); font-size:var(--type-micro); }
+
+  /* ---- key-rate DV01 ladder (diverging, signed) ---- */
+  .ladrow { display:grid; grid-template-columns:46px 1fr 78px; gap:var(--space-3); align-items:center; height:26px; }
+  .ladrow .lab { font-family:var(--font-mono); font-size:var(--type-caption); color:var(--text-secondary); }
+  .ladrow .track { position:relative; height:15px; border-radius:3px; background:oklch(1 0 0 / 0.03); }
+  .ladrow .track::before { content:""; position:absolute; left:50%; top:-2px; bottom:-2px; width:1px; background:var(--grid-line); }
+  .ladrow .bar { position:absolute; top:2px; bottom:2px; border-radius:2px; }
+  .ladrow .bar.pos { left:50%; background:var(--div-pos2); }
+  .ladrow .bar.neg { right:50%; background:var(--div-neg2); }
+  .ladrow .val { text-align:right; font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:var(--type-caption); }
+
+  /* ---- bootstrap Jacobian heatmap ∂z/∂q ---- */
+  .jac { width:100%; border-collapse:collapse; }
+  .jac th { font-size:7px; color:var(--text-tertiary); font-weight:600; padding-bottom:2px; text-align:center; font-family:var(--font-mono); }
+  .jac td { text-align:center; font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:7px;
+    height:19px; color:oklch(0.98 0.01 264); border:1px solid var(--bg-raised); }
+  .jac td.lab { background:transparent!important; color:var(--text-secondary); font-weight:600; text-align:right; padding-right:5px; border:0; }
+  .divramp { display:flex; align-items:center; gap:9px; font-size:var(--type-micro); color:var(--text-tertiary); }
+  .divramp .r { flex:1; height:8px; border-radius:var(--r-full);
+    background:linear-gradient(to right,var(--div-neg2),var(--div-neg1),var(--div-mid),var(--div-pos1),var(--div-pos2)); }
+  .legdot { width:18px; height:0; border-top:2px solid; display:inline-block; vertical-align:middle; margin-right:4px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR (verbatim from shell) ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>Rates</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>USD-OIS</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Rates Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL (scoped: Vol Surface ▸ Curves active under the Rates scope —
+       the FI curve analog of the surface workbench, NOT the FX vol surface) ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a class="on" aria-current="page"><span class="ic">◆</span><span>Vol Surface<span class="railsub">▸ Curves · Rates scope</span></span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="gate"><span class="ic">◆</span><span>Models &amp; Plugins</span><span class="lock">⊘</span></a>
+  </nav>
+
+  <!-- ============ MAIN — FI CURVE WORKBENCH ============ -->
+  <main class="main" style="gap:var(--space-4)">
+
+    <!-- curve context line -->
+    <div class="ticketline">
+      <span class="field"><span class="lbl">class</span> Rates/FI · Linear <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">curve</span> USD-SOFR <span class="car">▾</span></span>
+      <span class="field"><span class="lbl">ref date</span> 2026-07-01</span>
+      <span class="field"><span class="lbl">spot lag</span> T+2</span>
+      <span class="field"><span class="lbl">o/n fixing</span> SOFR 5.31</span>
+      <span class="selctl"><span class="lbl">calendar</span> US · mod-follow <span class="car">▾</span></span>
+      <span class="selctl"><span class="lbl">pillars</span> 10 · ON–30Y <span class="car">▾</span></span>
+      <span style="flex:1"></span>
+      <span class="pill" title="No FI composite feed yet — par marks are user-supplied quotes in the request-scoped CurveSet"><span class="htag target">TARGET</span> CCP/ICE composite · as-of <span class="num">12:04:07</span></span>
+    </div>
+
+    <!-- curve-set hero: OIS / SOFR-proj / multi-curve (analog of the smile-model picker) -->
+    <div class="model">
+      <span class="label" style="margin-right:2px">Curve set</span>
+      <div class="modelseg" id="curveseg" role="tablist" aria-label="Curve set">
+        <button role="tab" class="on" aria-selected="true" data-set="ois"><span>SOFR · OIS</span><span class="tag">self-disc · LIVE</span></button>
+        <button role="tab" data-set="proj"><span>SOFR · 3M</span><span class="tag">projection · TARGET</span></button>
+        <button role="tab" data-set="multi"><span>Multi-curve</span><span class="tag">disc + proj · TARGET</span></button>
+      </div>
+      <span class="meta" id="curvemeta">self-discounting OIS · <span class="num">bootstrap_ois</span> · <span class="htag live">LIVE</span> · 10 nodes · max reprice <span class="num">&lt;1e-12</span></span>
+      <span style="flex:1"></span>
+      <span class="selctl"><span class="lbl">accrual</span> ACT/360 <span class="car">▾</span></span>
+      <button class="btn" id="rebootBtn">Re-bootstrap</button>
+      <button class="btn ghost" title="TARGET — needs the server-side versioned curve store">Diff vs v206 ◷</button>
+    </div>
+
+    <!-- publish gate — TARGET spine: mark → bootstrap → no-arb/monotone → publish (versioned).
+         No server-side curve versioning/publish exists (lodestar: zero hits for curve_version /
+         CurveBook / publish_curve); curve sets are request-scoped payloads on PriceRates /
+         AggregateRatesRisk. This spine is the vol-surface SurfaceBook pattern, port pending. -->
+    <div class="gate">
+      <span class="htag target" title="No server-side curve publish today — CurveSet is a request-scoped payload on PriceRates / AggregateRatesRisk; this publish spine is a pending port of the vol-surface pattern">TARGET</span>
+      <div class="steps" id="steps">
+        <span class="step done" data-i="0"><span class="no">1</span> Mark</span><span class="sep">→</span>
+        <span class="step done" data-i="1"><span class="no">2</span> Bootstrap</span><span class="sep">→</span>
+        <span class="step done" data-i="2"><span class="no">3</span> No-arb / monotone</span><span class="sep">→</span>
+        <span class="step on" data-i="3"><span class="no">4</span> Publish</span>
+      </div>
+      <span class="invariant" title="Published curves are immutable — pricing/risk/FIX reference only a published CurveSet version, never an in-flight mark edit">
+        <span class="lk">⛭</span> published-curve-immutable</span>
+      <span style="flex:1"></span>
+      <span class="gatever" title="Versioned curve store pending — v0 = unbootstrapped sentinel"><span class="htag target">TARGET</span> draft <b class="num">v207</b> <span class="dim">· prev</span> <b class="num">v206</b></span>
+      <span class="pill" title="CurveSet is sent per call today; a publish pinning one version across pricing, risk and FIX is pending">
+        <span class="htag target">TARGET</span> CurveSet ▸ price · risk · FIX</span>
+      <button class="btn okpub" id="publishBtn" title="TARGET — gate passes (DF strictly decreasing, all forwards positive); a publish would stamp v207 across pricing, risk and FIX">
+        <span class="lk">✓</span> Publish v207 <span class="pp">◷ port pending</span></button>
+    </div>
+
+    <!-- SIGNATURE: overlaid zero / instantaneous-forward / discount-factor term structure -->
+    <section class="panel">
+      <header>
+        <span class="headline">USD-SOFR term structure</span>
+        <span style="display:flex; gap:var(--space-4); align-items:center">
+          <span class="linetog" id="lineToggle" title="Toggle each curve overlay">
+            <button class="on" data-l="z"><span class="sw" style="border-color:var(--seq-4)"></span>Zero</button>
+            <button class="on" data-l="f"><span class="sw" style="border-color:var(--seq-6)"></span>Fwd</button>
+            <button class="on" data-l="df"><span class="sw" style="border-color:var(--seq-2)"></span>DF</button>
+          </span>
+        </span>
+      </header>
+      <div class="body">
+        <div class="curvestage">
+          <div class="curvewrap" id="curvewrap">
+            <!-- axes, gridlines, curves, pillar dots, turn markers and the hover crosshair are ALL
+                 rendered from the ONE shared bootstrap below: forward = −d/dt ln DF under the chosen
+                 interpolation, zero = −ln DF / t, so the three overlays are mutually consistent. -->
+            <svg id="curveSvg" class="chart" viewBox="0 0 600 344" height="332" aria-label="USD-SOFR zero, instantaneous-forward and discount-factor curves versus tenor">
+              <g id="cvGrid"></g>
+              <g id="cvTurns" class="turnmk"></g>
+              <polyline id="cvDF"   class="dfline"  points=""/>
+              <polyline id="cvProj" class="projline" points=""/>
+              <polyline id="cvFwd"  class="fline"   points=""/>
+              <polyline id="cvZero" class="zline"   points=""/>
+              <g id="cvPillars"></g>
+              <g id="cvAxisLbl"></g>
+              <g id="cvHover" style="display:none"></g>
+            </svg>
+          </div>
+          <div class="clegend">
+            <span class="ttl">Overlays</span>
+            <div class="ln"><span class="sw" style="border-color:var(--seq-4)"></span>Zero rate<span class="ax">L · %</span></div>
+            <div class="ln"><span class="sw" style="border-color:var(--seq-6)"></span>Inst. forward<span class="ax">L · %</span></div>
+            <div class="ln"><span class="sw" style="border-color:var(--seq-2)"></span>Discount factor<span class="ax">R · 0–1</span></div>
+            <div class="ln div"><span class="pildot" style="width:8px;height:8px;border-radius:50%;background:var(--seq-4);border:1px solid var(--bg-raised)"></span>calibrating pillar</div>
+            <div class="ln"><span style="width:18px;border-top:1px dashed var(--warn);display:inline-block"></span>turn / meeting jump</div>
+            <div class="div note">
+              <span class="htag live" title="OIS self-discounting curve wired end-to-end — request-scoped CurveSet on PriceRates ▸ 5 clients">LIVE</span> OIS ·
+              <span class="htag target" title="FRA / STIR / swap strip engine-complete (bootstrap_futures_strip); wire pending">TARGET</span> FRA/STIR/swap
+            </div>
+            <div class="div note" id="hoverHint">hover ▸ zero / fwd / DF</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAR-PILLAR bootstrap instruments (editable) + interpolation + turns -->
+    <section class="panel">
+      <header>
+        <span class="headline" title="Sequential bootstrap — each dated pillar solves one discount factor (bootstrap_ois); futures/FRA feed the short-end strip (bootstrap_futures_strip)">Par-pillar bootstrap instruments <span class="dim" style="font-size:11px">— edit a quote to re-bootstrap</span></span>
+        <span style="display:flex; gap:var(--space-4); align-items:center; flex-wrap:wrap">
+          <span class="segbtn" id="interpseg" title="log-linear·logDF = wire default; monotone-convex engine-complete (from_monotone_convex_dfs), wire selector pending">
+            <button class="on" data-i="loglin">log-linear · logDF</button><button data-i="mono">monotone-convex</button>
+          </span>
+          <span class="segbtn" id="turnseg" title="Overlay turn-of-year / FOMC meeting forward-jump markers">
+            <button class="on" data-t="off">turns off</button><button data-t="on">turn / meeting jumps</button>
+          </span>
+        </span>
+      </header>
+      <div class="body" style="padding:0; overflow-x:auto">
+        <table class="grid booktbl" style="min-width:940px">
+          <thead>
+            <tr><th>Instrument</th><th>Contract</th><th>Start</th><th>Maturity</th><th>Quote</th><th>Implied</th><th>Solved zero</th><th>Solved DF</th><th>Wt</th><th>Wire</th></tr>
+          </thead>
+          <tbody id="bookBody"></tbody>
+        </table>
+        <div style="display:flex; gap:var(--space-5); padding:var(--space-3) var(--space-5); border-top:var(--hairline); font-size:var(--type-caption); color:var(--text-tertiary); flex-wrap:wrap">
+          <span style="flex:1"></span>
+          <span><span class="htag live">LIVE</span> OIS · <span class="htag target" title="FRA/STIR/swap engine-complete; wire pending">TARGET</span> FRA/STIR/swap</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- KEY-RATE DV01 JACOBIAN ladder  +  no-arb / monotonicity gate detail -->
+    <div class="cols c2">
+
+      <!-- pillar Jacobian: bar ladder ↔ ∂z/∂q heatmap -->
+      <section class="panel">
+        <header>
+          <span class="headline" title="Key-rate DV01 (USD/bp) of book USD-OIS per calibrating pillar — ois_risk · key_rate_ladder">Key-rate DV01 · pillar Jacobian</span>
+          <span class="segbtn" id="riskview">
+            <button class="on" data-v="ladder">Ladder</button><button data-v="jac">∂z/∂q Jacobian</button>
+          </span>
+        </header>
+        <div class="body">
+          <div id="dv01Ladder">
+            <div class="label" style="margin-bottom:6px">USD /bp · book USD-OIS</div>
+            <div id="ladBody"></div>
+            <div class="divramp" style="margin-top:10px">
+              <span class="num">receive −</span>
+              <span class="r"></span>
+              <span class="num">+ pay</span>
+            </div>
+            <div class="kv" style="margin-top:8px"><span class="k">Net (∥-shift) DV01</span><span class="v num" id="netDv01">—</span></div>
+            <div class="kv"><span class="k">Largest key-rate bucket</span><span class="v num" id="maxBucket">—</span></div>
+            <div class="kv"><span class="k">RPC</span><span class="v"><span class="htag live">LIVE</span> <span class="num">AggregateRatesRisk</span></span></div>
+          </div>
+          <div id="jacHeat" style="display:none">
+            <div class="label" style="margin-bottom:6px" title="Near-diagonal, lower-triangular — each solved zero depends only on its own quote and the shorter pillars; diverging, centred 0">∂z<sub>i</sub> / ∂q<sub>j</sub></div>
+            <table class="jac" id="jacTbl" aria-label="Bootstrap Jacobian dz/dq, diverging centred at zero"></table>
+            <div class="divramp" style="margin-top:10px">
+              <span class="num">−0.4</span><span class="r"></span><span class="num">+1.0</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- no-arb / monotonicity gate detail (feeds publish step 3) -->
+      <section class="panel">
+        <header><span class="headline">No-arbitrage &amp; monotonicity gate</span><span class="muted" style="font-size:11px">per-pillar · feeds publish</span></header>
+        <div class="body">
+          <div class="kv"><span class="k"><span class="rag g" id="ragMono"></span>Discount factors ↓ monotone</span><span class="v"><span class="num" id="chkMono">strict ↓</span></span></div>
+          <div class="kv"><span class="k"><span class="rag g" id="ragFwd"></span>Instantaneous forward &gt; 0</span><span class="v"><span class="num" id="chkFwd">all &gt; 0</span></span></div>
+          <div class="kv"><span class="k">Min inst. forward</span><span class="v num" id="minFwd">—</span></div>
+          <div class="kv"><span class="k">DF @ 30Y</span><span class="v num" id="df30">—</span></div>
+          <div class="kv"><span class="k">Max pillar reprice error</span><span class="v num">&lt; 1e-12</span></div>
+          <div class="kv"><span class="k">Interpolation</span><span class="v num" id="interpEcho">log-linear · logDF</span></div>
+          <div class="kv"><span class="k">Fwd continuity</span><span class="v num" id="fwdCont">piecewise-flat</span></div>
+          <div class="kv"><span class="k">Turn overlay</span><span class="v num" id="turnEcho">off</span></div>
+          <div style="margin-top:10px; padding:var(--space-3) var(--space-4); border-radius:var(--r-sm); background:var(--bg-inset); border:var(--hairline); font-size:var(--type-caption); color:var(--text-tertiary)" id="gateNote" title="Marking a long pillar through a shorter one vetoes the publish">
+            <span class="pos">✓ gate clear</span> — v207 eligible to publish
+          </div>
+        </div>
+      </section>
+    </div>
+
+  </main>
+
+  <!-- ============ CONTEXT RAIL (scope-bus: rates book, matching 15-rates-ticket) ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution · rates RFS</span><span class="htag target" title="No rates RFS/streaming contract on the wire yet — FX-style tiered OIS-rate streaming is the design target">TARGET</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.4bp</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.7bp</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">1.1bp</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Rates book · USD-OIS</span><span class="htag live" title="RiskService.AggregateRatesRisk → celnet-risk-fleet::rates additive fan-in">LIVE</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net PV (USD)</span><span class="v num pos">+1.86mm</span></div>
+      <div class="kv"><span class="k">DV01 (USD/bp)</span><span class="v num neg">−1.7k</span></div>
+      <div class="kv"><span class="k">Key-rate peak</span><span class="v num">10Y · −3.1k</span></div>
+      <div class="kv"><span class="k">DV01 limit</span><span class="v"><span class="rag g"></span>within</span></div>
+      <div class="kv"><span class="k">1d rates VaR</span><span class="v"><span class="htag target" title="No VaR measure on the rates wire yet">TARGET</span> <span class="num dim">—</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>re-bootstrapped USD-SOFR · 10 pillars</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>desk RFQ ▸ USD-SOFR 2Y OIS · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>client accept ▸ 10Y OIS · booked to store</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>booked USD-SOFR 5Y OIS ▸ rates blotter</span><span class="pos">▲</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (verbatim from shell) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  /* ===================== curve data model ===================== */
+  var LBL = ['ON','1W','1M','3M','6M','1Y','2Y','5Y','10Y','30Y'];
+  var T   = [1/365, 7/365, 1/12, 0.25, 0.5, 1, 2, 5, 10, 30];  // pillar tenors (years)
+  var N   = T.length;                                           // 10 pillars
+
+  // par-pillar bootstrap instruments (row → pillar). type: 'ois' rate quote, 'fra' rate, 'fut' price.
+  var ROWS = [
+    { fam:'Depo',   ct:'SOFR O/N',  st:'T+0', mt:'O/N', type:'ois', q:5.320, pi:0, wire:'live' },
+    { fam:'OIS',    ct:'SOFR OIS',  st:'T+2', mt:'1W',  type:'ois', q:5.310, pi:1, wire:'live' },
+    { fam:'OIS',    ct:'SOFR OIS',  st:'T+2', mt:'1M',  type:'ois', q:5.300, pi:2, wire:'live' },
+    { fam:'OIS',    ct:'SOFR OIS',  st:'T+2', mt:'3M',  type:'ois', q:5.100, pi:3, wire:'live' },
+    { fam:'FRA',    ct:'SOFR 3×6',  st:'3M',  mt:'6M',  type:'fra', q:4.850, pi:4, wire:'target' },
+    { fam:'Future', ct:'SR3Z6',     st:'9M',  mt:'12M', type:'fut', q:95.550,pi:5, wire:'target' },
+    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'2Y',  type:'ois', q:4.020, pi:6, wire:'target' },
+    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'5Y',  type:'ois', q:3.780, pi:7, wire:'target' },
+    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'10Y', type:'ois', q:3.920, pi:8, wire:'target' },
+    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'30Y', type:'ois', q:4.050, pi:9, wire:'target' }
+  ];
+  // multi-curve projection basis spread over the discount pillars (bp → %)
+  var PROJSPREAD = [0.02,0.02,0.03,0.05,0.07,0.08,0.07,0.05,0.04,0.03];
+
+  // pillar zeros (%) — derived from the editable quotes
+  var pillarZ = new Array(N);
+  function quoteToZero(r){ return r.type==='fut' ? (100 - r.q) : r.q; }
+  function syncPillarsFromRows(){ ROWS.forEach(function(r){ pillarZ[r.pi] = quoteToZero(r); }); }
+
+  var curSet = 'ois', interp = 'loglin', turnsOn = false;
+  var lineVis = { z:true, f:true, df:true };
+
+  function activeZeros(){
+    var main = pillarZ.slice(), proj = null;
+    if(curSet==='proj') main = pillarZ.map(function(z,i){ return z + PROJSPREAD[i]; });
+    if(curSet==='multi') proj = pillarZ.map(function(z,i){ return z + PROJSPREAD[i]; });
+    return { main:main, proj:proj };
+  }
+
+  /* ===================== interpolation on ln(DF) ===================== */
+  // Nodes include the origin (t=0, lnDF=0). forward = −d/dt lnDF ; zero = −lnDF/t.
+  var curNX, curNY, curDelta, curMt;   // set by buildNodes()
+  function buildNodes(zeros){
+    curNX = [0]; curNY = [0];
+    for(var i=0;i<N;i++){ curNX.push(T[i]); curNY.push(-zeros[i]/100*T[i]); }
+    var n = curNX.length;
+    curDelta = new Array(n-1);
+    for(var k=0;k<n-1;k++) curDelta[k] = (curNY[k+1]-curNY[k])/(curNX[k+1]-curNX[k]);
+    // Fritsch–Carlson monotone tangents (for the monotone-convex scheme)
+    curMt = new Array(n);
+    curMt[0] = curDelta[0]; curMt[n-1] = curDelta[n-2];
+    for(var j=1;j<n-1;j++) curMt[j] = (curDelta[j-1]+curDelta[j])/2;
+    for(var m=0;m<n-1;m++){
+      if(curDelta[m]===0){ curMt[m]=0; curMt[m+1]=0; }
+      else { var a=curMt[m]/curDelta[m], b=curMt[m+1]/curDelta[m];
+        if(a*a+b*b>9){ var tau=3/Math.sqrt(a*a+b*b); curMt[m]=tau*a*curDelta[m]; curMt[m+1]=tau*b*curDelta[m]; } }
+    }
+  }
+  function segOf(t){ var k=0; while(k<curNX.length-2 && t>curNX[k+1]) k++; return k; }
+  function lnDF(t){
+    var k=segOf(t), h=curNX[k+1]-curNX[k], s=(t-curNX[k])/h;
+    if(interp==='loglin') return curNY[k] + (curNY[k+1]-curNY[k])*s;
+    var s2=s*s, s3=s2*s;
+    return (2*s3-3*s2+1)*curNY[k] + (s3-2*s2+s)*h*curMt[k] + (-2*s3+3*s2)*curNY[k+1] + (s3-s2)*h*curMt[k+1];
+  }
+  function dLnDF(t){
+    var k=segOf(t), h=curNX[k+1]-curNX[k], s=(t-curNX[k])/h;
+    if(interp==='loglin') return curDelta[k];
+    var s2=s*s;
+    return ((6*s2-6*s)*curNY[k] + (-6*s2+6*s)*curNY[k+1])/h + (3*s2-4*s+1)*curMt[k] + (3*s2-2*s)*curMt[k+1];
+  }
+  function fwdPct(t){ return -dLnDF(t)*100; }         // instantaneous forward %
+  function zeroPct(t){ return -lnDF(t)/t*100; }        // continuously-comp. zero %
+  function dfOf(t){ return Math.exp(lnDF(t)); }
+
+  /* ===================== chart geometry ===================== */
+  var xL=48, xR=552, yT=18, yB=298;
+  var tmin=T[0], tmax=T[N-1], lnTmin=Math.log(tmin), lnTmax=Math.log(tmax);
+  var rmin=3.25, rmax=5.55;                            // left rate axis (%)
+  function X(t){ return xL + (xR-xL)*(Math.log(t)-lnTmin)/(lnTmax-lnTmin); }
+  function invX(x){ return Math.exp(lnTmin + (x-xL)/(xR-xL)*(lnTmax-lnTmin)); }
+  function Yr(r){ return yB - (yB-yT)*(r-rmin)/(rmax-rmin); }        // rate → y
+  function Ydf(d){ return yB - (yB-yT)*d; }                          // DF (0..1) → y
+  function esc(s){ return String(s); }
+
+  // FOMC / turn-of-year jump markers (tenor in years)
+  var TURNS = [ {t:0.42, lab:'turn'}, {t:0.30, lab:'FOMC'}, {t:0.88, lab:'FOMC'} ];
+
+  /* ===================== render the signature chart ===================== */
+  function renderChart(){
+    var az = activeZeros();
+    buildNodes(az.main);
+
+    // --- grid: horizontal rate gridlines + left rate ticks + right DF ticks ---
+    var g='';
+    var rTicks=[3.5,4.0,4.5,5.0,5.5];
+    rTicks.forEach(function(r){ var y=Yr(r).toFixed(1);
+      g+='<line class="gl" x1="'+xL+'" y1="'+y+'" x2="'+xR+'" y2="'+y+'"/>';
+      g+='<text class="axlbl" x="'+(xL-7)+'" y="'+(Yr(r)+3).toFixed(1)+'" text-anchor="end">'+r.toFixed(1)+'</text>';
+    });
+    var dfTicks=[0,0.25,0.5,0.75,1.0];
+    dfTicks.forEach(function(d){ var y=Ydf(d).toFixed(1);
+      g+='<text class="axlbl" x="'+(xR+7)+'" y="'+(Ydf(d)+3).toFixed(1)+'" text-anchor="start">'+d.toFixed(2)+'</text>';
+    });
+    // baseline + x tenor ticks
+    g+='<line class="gl" x1="'+xL+'" y1="'+yB+'" x2="'+xR+'" y2="'+yB+'"/>';
+    for(var i=0;i<N;i++){ var x=X(T[i]).toFixed(1);
+      g+='<line class="cvtick" x1="'+x+'" y1="'+yT+'" x2="'+x+'" y2="'+yB+'" opacity="0.35"/>';
+      g+='<text class="axlbl'+(i===0||i===N-1?' b':'')+'" x="'+x+'" y="'+(yB+15)+'" text-anchor="middle">'+LBL[i]+'</text>';
+    }
+    document.getElementById('cvGrid').innerHTML=g;
+
+    // axis titles
+    document.getElementById('cvAxisLbl').innerHTML=
+      '<text class="axguide" x="'+xL+'" y="'+(yT-6)+'" text-anchor="start">zero / fwd %</text>'+
+      '<text class="axguide" x="'+xR+'" y="'+(yT-6)+'" text-anchor="end">discount factor</text>'+
+      '<text class="axguide" x="'+((xL+xR)/2).toFixed(0)+'" y="'+(yB+30)+'" text-anchor="middle">tenor · log-time · ON → 30Y</text>';
+
+    // --- sampled zero + DF polylines ---
+    var NS=170, zP='', dP='';
+    for(var s=0;s<=NS;s++){
+      var t=Math.exp(lnTmin + (lnTmax-lnTmin)*s/NS);
+      zP += X(t).toFixed(1)+','+Yr(zeroPct(t)).toFixed(1)+' ';
+      dP += X(t).toFixed(1)+','+Ydf(dfOf(t)).toFixed(1)+' ';
+    }
+    document.getElementById('cvZero').setAttribute('points', zP.trim());
+    document.getElementById('cvDF').setAttribute('points', dP.trim());
+
+    // --- forward: piecewise-flat steps (log-linear) OR smooth quadratic (monotone-convex) ---
+    var fP='';
+    if(interp==='loglin'){
+      fP += xL.toFixed(1)+','+Yr(-curDelta[1]*100).toFixed(1)+' ';
+      for(var k=1;k<curNX.length-1;k++){
+        var lvl=Yr(-curDelta[k]*100).toFixed(1);
+        fP += X(curNX[k]).toFixed(1)+','+lvl+' '+X(curNX[k+1]).toFixed(1)+','+lvl+' ';
+      }
+      document.getElementById('fwdCont').textContent='piecewise-flat';
+    } else {
+      for(var s2=0;s2<=NS;s2++){ var t2=Math.exp(lnTmin+(lnTmax-lnTmin)*s2/NS);
+        fP += X(t2).toFixed(1)+','+Yr(fwdPct(t2)).toFixed(1)+' '; }
+      document.getElementById('fwdCont').textContent='piecewise-quadratic';
+    }
+    document.getElementById('cvFwd').setAttribute('points', fP.trim());
+
+    // --- multi-curve projection overlay (faint) ---
+    var proj=document.getElementById('cvProj');
+    if(az.proj){
+      var savedNX=curNX,savedNY=curNY,savedD=curDelta,savedM=curMt;   // build proj nodes separately
+      buildNodes(az.proj);
+      var pP='';
+      for(var s3=0;s3<=NS;s3++){ var t3=Math.exp(lnTmin+(lnTmax-lnTmin)*s3/NS);
+        pP += X(t3).toFixed(1)+','+Yr(zeroPct(t3)).toFixed(1)+' '; }
+      proj.setAttribute('points', pP.trim()); proj.style.display='';
+      curNX=savedNX; curNY=savedNY; curDelta=savedD; curMt=savedM;    // restore discount nodes
+    } else { proj.style.display='none'; }
+
+    // --- pillar dots on the zero curve ---
+    var pd='';
+    for(var p=0;p<N;p++){ pd+='<circle class="pildot" cx="'+X(T[p]).toFixed(1)+'" cy="'+Yr(az.main[p]).toFixed(1)+'" r="3"/>'; }
+    document.getElementById('cvPillars').innerHTML=pd;
+
+    // --- turn / meeting markers ---
+    var tm='';
+    if(turnsOn){ TURNS.forEach(function(mk){ var x=X(mk.t).toFixed(1);
+      tm+='<line class="ln" x1="'+x+'" y1="'+yT+'" x2="'+x+'" y2="'+yB+'"/>';
+      tm+='<text class="tg" x="'+x+'" y="'+(yT+9)+'" text-anchor="middle">⟂ '+mk.lab+'</text>'; }); }
+    document.getElementById('cvTurns').innerHTML=tm;
+
+    applyLineVis();
+    renderDiagnostics(az.main);
+    renderBookSolved(az.main);
+    checkArbGate(az.main);
+  }
+
+  function applyLineVis(){
+    document.getElementById('cvZero').style.display = lineVis.z?'':'none';
+    document.getElementById('cvPillars').style.display = lineVis.z?'':'none';
+    document.getElementById('cvFwd').style.display  = lineVis.f?'':'none';
+    document.getElementById('cvDF').style.display   = lineVis.df?'':'none';
+  }
+
+  /* ===================== diagnostics + no-arb gate ===================== */
+  function scanCurve(main){
+    buildNodes(main);
+    var minF=1e9, minFt=0, mono=true, badPi=-1;
+    var prevDF=1;
+    for(var i=0;i<N;i++){
+      var df=Math.exp(-main[i]/100*T[i]);
+      if(df>=prevDF){ mono=false; if(badPi<0) badPi=i; }
+      prevDF=df;
+    }
+    for(var s=0;s<=120;s++){ var t=Math.exp(lnTmin+(lnTmax-lnTmin)*s/120); var f=fwdPct(t);
+      if(f<minF){ minF=f; minFt=t; } }
+    return { minF:minF, minFt:minFt, mono:mono, fwdPos:minF>0, badPi:badPi, df30:Math.exp(-main[N-1]/100*T[N-1]) };
+  }
+  function fmtT(t){ if(t<0.077) return Math.round(t*365)+'d'; if(t<0.92) return Math.round(t*12)+'m'; return (t<9.95? t.toFixed(1): Math.round(t))+'y'; }
+  function renderDiagnostics(main){
+    var d=scanCurve(main);
+    document.getElementById('minFwd').textContent = d.minF.toFixed(2)+'% @ '+fmtT(d.minFt);
+    document.getElementById('df30').textContent  = d.df30.toFixed(4);
+    document.getElementById('interpEcho').textContent = (interp==='loglin'?'log-linear · logDF':'monotone-convex');
+    document.getElementById('turnEcho').textContent = turnsOn?'on · 3 jumps':'off';
+    var mOk=d.mono, fOk=d.fwdPos;
+    document.getElementById('ragMono').className='rag '+(mOk?'g':'r');
+    document.getElementById('ragFwd').className='rag '+(fOk?'g':'r');
+    document.getElementById('chkMono').textContent = mOk?'strict ↓':'VIOLATED';
+    document.getElementById('chkFwd').textContent  = fOk?'all > 0':'NEGATIVE fwd';
+  }
+  function checkArbGate(main){
+    var d=scanCurve(main), ok=d.mono && d.fwdPos;
+    var steps=document.querySelectorAll('#steps .step');
+    var pub=document.getElementById('publishBtn');
+    var note=document.getElementById('gateNote');
+    // mark flagged instrument row
+    [].forEach.call(document.querySelectorAll('#bookBody tr'), function(tr){ tr.classList.remove('bad'); });
+    if(ok){
+      steps[2].classList.remove('blocked'); steps[2].classList.remove('on'); steps[2].classList.add('done');
+      steps[3].classList.add('on');
+      pub.className='btn okpub'; pub.innerHTML='<span class="lk">✓</span> Publish v207 <span class="pp">◷ port pending</span>';
+      pub.title='TARGET — gate passes (DF strictly decreasing, all forwards positive); a publish would stamp v207 across pricing, risk and FIX';
+      note.innerHTML='<span class="pos">✓ gate clear</span> — v207 eligible to publish';
+    } else {
+      steps[2].classList.remove('done'); steps[2].classList.add('blocked'); steps[2].classList.add('on');
+      steps[3].classList.remove('on');
+      pub.className='btn blocked'; pub.innerHTML='<span class="lk">⊘</span> blocked · negative forward';
+      pub.title='VETOED — curve not arbitrage-free (non-monotone DF → negative forward); re-mark the offending pillar';
+      var pi=d.badPi;
+      note.innerHTML='<span class="neg">⊘ no-arb VETO</span> — pillar <b class="num">'+(pi>=0?LBL[pi]:'?')+'</b> pierces a shorter pillar → DF non-monotone / fwd &lt; 0 · publish blocked';
+      var row=document.querySelector('#bookBody tr[data-pi="'+pi+'"]'); if(row) row.classList.add('bad');
+    }
+  }
+
+  /* ===================== editable par-pillar table ===================== */
+  function renderBook(){
+    var html='';
+    ROWS.forEach(function(r,idx){
+      html+='<tr data-pi="'+r.pi+'" data-idx="'+idx+'">'+
+        '<td><span class="fam">'+r.fam+'</span></td>'+
+        '<td>'+r.ct+'</td>'+
+        '<td class="n"><span class="sub">'+r.st+'</span></td>'+
+        '<td class="n">'+r.mt+'</td>'+
+        '<td class="n"><span class="qedit" contenteditable="true" data-idx="'+idx+'">'+r.q.toFixed(3)+'</span></td>'+
+        '<td class="n imp" data-idx="'+idx+'"></td>'+
+        '<td class="n z"   data-idx="'+idx+'"></td>'+
+        '<td class="n df"  data-idx="'+idx+'"></td>'+
+        '<td class="n">1.00</td>'+
+        '<td><span class="htag '+r.wire+'">'+(r.wire==='live'?'LIVE':'TARGET')+'</span></td>'+
+      '</tr>';
+    });
+    document.getElementById('bookBody').innerHTML=html;
+    // wire the editable quote cells
+    [].forEach.call(document.querySelectorAll('#bookBody .qedit'), function(cell){
+      cell.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); cell.blur(); } });
+      cell.addEventListener('blur', function(){
+        var idx=+cell.dataset.idx, v=parseFloat(cell.textContent.replace(/[^0-9.\-]/g,''));
+        if(!isNaN(v)){ ROWS[idx].q=v; }
+        cell.textContent=ROWS[idx].q.toFixed(3);
+        syncPillarsFromRows(); renderChart();
+      });
+    });
+  }
+  function renderBookSolved(main){
+    ROWS.forEach(function(r,idx){
+      var t=T[r.pi], z=main[r.pi], df=Math.exp(-z/100*t);
+      var imp = document.querySelector('#bookBody .imp[data-idx="'+idx+'"]');
+      var zc  = document.querySelector('#bookBody .z[data-idx="'+idx+'"]');
+      var dfc = document.querySelector('#bookBody .df[data-idx="'+idx+'"]');
+      if(imp) imp.textContent = r.type==='fut' ? (100-r.q).toFixed(3) : (r.type==='fra'?r.q.toFixed(3):'—');
+      if(zc)  zc.textContent  = z.toFixed(3);
+      if(dfc) dfc.textContent = df.toFixed(5);
+    });
+  }
+
+  /* ===================== key-rate DV01 ladder + Jacobian ===================== */
+  var DV = [4, 9, 35, 210, 340, 610, -1180, 540, -3120, 880];  // USD /bp per pillar
+  function renderLadder(){
+    var maxAbs=0; DV.forEach(function(v){ if(Math.abs(v)>maxAbs) maxAbs=Math.abs(v); });
+    var html='', net=0;
+    for(var i=0;i<N;i++){ var v=DV[i]; net+=v;
+      var w=(Math.abs(v)/maxAbs*50).toFixed(1);
+      var bar = v>=0 ? '<i class="bar pos" style="width:'+w+'%"></i>' : '<i class="bar neg" style="width:'+w+'%"></i>';
+      html+='<div class="ladrow"><span class="lab">'+LBL[i]+'</span>'+
+        '<div class="track">'+bar+'</div>'+
+        '<span class="val '+(v>=0?'pos':'neg')+'">'+(v>=0?'+':'−')+Math.abs(v)+'</span></div>';
+    }
+    document.getElementById('ladBody').innerHTML=html;
+    document.getElementById('netDv01').textContent = (net>=0?'+':'−')+Math.abs(net)+' /bp';
+    document.getElementById('netDv01').className = 'v num '+(net>=0?'pos':'neg');
+    var mb=0, mbi=0; DV.forEach(function(v,i){ if(Math.abs(v)>Math.abs(mb)){ mb=v; mbi=i; } });
+    var mbEl=document.getElementById('maxBucket');
+    mbEl.textContent = (mb>=0?'+':'−')+Math.abs(mb)+' /bp · '+LBL[mbi];
+    mbEl.className = 'v num '+(mb>=0?'pos':'neg');
+  }
+  function divFillJ(v){ // v in [-0.4, 1]
+    if(v<=-0.2) return 'var(--div-neg2)';
+    if(v<=-0.05) return 'var(--div-neg1)';
+    if(v<0.05) return 'var(--div-mid)';
+    if(v<0.5) return 'var(--div-pos1)';
+    return 'var(--div-pos2)';
+  }
+  function renderJacobian(){
+    // ∂z_i/∂q_j — near-diagonal, lower-triangular sequential-bootstrap structure
+    var head='<thead><tr><th></th>';
+    for(var j=0;j<N;j++) head+='<th>'+LBL[j]+'</th>';
+    head+='</tr></thead>';
+    var body='<tbody>';
+    for(var i=0;i<N;i++){
+      body+='<tr><td class="lab">'+LBL[i]+'</td>';
+      for(var jj=0;jj<N;jj++){
+        var v=0;
+        if(jj===i) v=1.0; else if(jj===i-1) v=-0.34; else if(jj===i-2) v=-0.07; else if(jj===i-3) v=-0.015;
+        var disp = v===0 ? '·' : v.toFixed(2);
+        body+='<td style="background:'+divFillJ(v)+'">'+disp+'</td>';
+      }
+      body+='</tr>';
+    }
+    body+='</tbody>';
+    document.getElementById('jacTbl').innerHTML=head+body;
+  }
+
+  /* ===================== hover crosshair ===================== */
+  var svg=document.getElementById('curveSvg'), wrap=document.getElementById('curvewrap');
+  var hoverG=document.getElementById('cvHover'), hint=document.getElementById('hoverHint');
+  function onMove(e){
+    var rect=svg.getBoundingClientRect();
+    var xv=(e.clientX-rect.left)/rect.width*600;
+    if(xv<xL || xv>xR){ hoverG.style.display='none'; return; }
+    var t=Math.max(tmin,Math.min(tmax,invX(xv)));
+    var az=activeZeros(); buildNodes(az.main);
+    var z=zeroPct(t), f=fwdPct(t), df=dfOf(t), x=X(t);
+    var yz=Yr(z), yf=Yr(f), ydf=Ydf(df);
+    // tooltip box, flipped near the right edge
+    var bw=118, bh=58, bx=(x+12+bw>xR)? x-12-bw : x+12, by=Math.max(yT, Math.min(yB-bh, yz-bh-6));
+    var g='';
+    g+='<line class="hvln" x1="'+x.toFixed(1)+'" y1="'+yT+'" x2="'+x.toFixed(1)+'" y2="'+yB+'"/>';
+    if(lineVis.z)  g+='<circle class="hvz"  cx="'+x.toFixed(1)+'" cy="'+yz.toFixed(1)+'" r="3.2"/>';
+    if(lineVis.f)  g+='<circle class="hvf"  cx="'+x.toFixed(1)+'" cy="'+yf.toFixed(1)+'" r="3.2"/>';
+    if(lineVis.df) g+='<circle class="hvdf" cx="'+x.toFixed(1)+'" cy="'+ydf.toFixed(1)+'" r="3.2"/>';
+    g+='<rect class="hvbg" x="'+bx.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw+'" height="'+bh+'" rx="5"/>';
+    g+='<text class="hvttl" x="'+(bx+9).toFixed(1)+'" y="'+(by+14).toFixed(1)+'">'+fmtT(t)+' · '+t.toFixed(2)+'y</text>';
+    g+='<text class="hvk"  x="'+(bx+9).toFixed(1)+'" y="'+(by+27).toFixed(1)+'">ZERO</text><text class="hvkv" x="'+(bx+bw-9).toFixed(1)+'" y="'+(by+27).toFixed(1)+'" text-anchor="end">'+z.toFixed(3)+'%</text>';
+    g+='<text class="hvk"  x="'+(bx+9).toFixed(1)+'" y="'+(by+39).toFixed(1)+'">FWD</text><text class="hvkv" x="'+(bx+bw-9).toFixed(1)+'" y="'+(by+39).toFixed(1)+'" text-anchor="end">'+f.toFixed(3)+'%</text>';
+    g+='<text class="hvk"  x="'+(bx+9).toFixed(1)+'" y="'+(by+51).toFixed(1)+'">DF</text><text class="hvkv" x="'+(bx+bw-9).toFixed(1)+'" y="'+(by+51).toFixed(1)+'" text-anchor="end">'+df.toFixed(5)+'</text>';
+    hoverG.innerHTML=g; hoverG.style.display='';
+    if(hint) hint.innerHTML='<span class="num">'+fmtT(t)+'</span> · zero <span class="num">'+z.toFixed(3)+'%</span> · fwd <span class="num">'+f.toFixed(3)+'%</span> · DF <span class="num">'+df.toFixed(5)+'</span>';
+  }
+  wrap.addEventListener('mousemove', onMove);
+  wrap.addEventListener('mouseleave', function(){ hoverG.style.display='none';
+    if(hint) hint.textContent='hover ▸ zero / fwd / DF'; });
+
+  /* ===================== interactions ===================== */
+  // curve-set picker
+  [].forEach.call(document.querySelectorAll('#curveseg button'), function(b){
+    b.addEventListener('click', function(){
+      [].forEach.call(document.querySelectorAll('#curveseg button'), function(x){ x.classList.remove('on'); x.removeAttribute('aria-selected'); });
+      b.classList.add('on'); b.setAttribute('aria-selected','true');
+      curSet=b.dataset.set;
+      var badge = curSet==='ois'?'self-discounting OIS · <span class="num">bootstrap_ois</span> · <span class="htag live">LIVE</span>'
+                : curSet==='proj'?'3M projection · <span class="htag target" title="Single OIS curve on the wire today">TARGET</span>'
+                : 'discount + projection · <span class="htag target" title="Single OIS curve on the wire today">TARGET</span>';
+      document.getElementById('curvemeta').innerHTML=badge+' · 10 nodes · max reprice <span class="num">&lt;1e-12</span>';
+      renderChart();
+    });
+  });
+  // interpolation picker
+  [].forEach.call(document.querySelectorAll('#interpseg button'), function(b){
+    b.addEventListener('click', function(){
+      [].forEach.call(document.querySelectorAll('#interpseg button'), function(x){ x.classList.remove('on'); });
+      b.classList.add('on'); interp=b.dataset.i; renderChart();
+    });
+  });
+  // turns toggle
+  [].forEach.call(document.querySelectorAll('#turnseg button'), function(b){
+    b.addEventListener('click', function(){
+      [].forEach.call(document.querySelectorAll('#turnseg button'), function(x){ x.classList.remove('on'); });
+      b.classList.add('on'); turnsOn=(b.dataset.t==='on'); renderChart();
+    });
+  });
+  // line-visibility legend
+  [].forEach.call(document.querySelectorAll('#lineToggle button'), function(b){
+    b.addEventListener('click', function(){
+      var l=b.dataset.l; lineVis[l]=!lineVis[l]; b.classList.toggle('off', !lineVis[l]); applyLineVis();
+      if(hoverG.style.display!=='none') hoverG.style.display='none';
+    });
+  });
+  // risk-view toggle (ladder ↔ Jacobian)
+  [].forEach.call(document.querySelectorAll('#riskview button'), function(b){
+    b.addEventListener('click', function(){
+      [].forEach.call(document.querySelectorAll('#riskview button'), function(x){ x.classList.remove('on'); });
+      b.classList.add('on');
+      var jac=b.dataset.v==='jac';
+      document.getElementById('jacHeat').style.display=jac?'':'none';
+      document.getElementById('dv01Ladder').style.display=jac?'none':'';
+    });
+  });
+  // publish-gate stepper (click to walk; blocked step stays blocked)
+  [].forEach.call(document.querySelectorAll('#steps .step'), function(b){
+    b.addEventListener('click', function(){
+      if(b.classList.contains('blocked')) return;
+      var i=+b.dataset.i;
+      [].forEach.call(document.querySelectorAll('#steps .step'), function(x,xi){
+        if(x.classList.contains('blocked')) return;
+        x.classList.toggle('on', xi===i); x.classList.toggle('done', xi<i);
+      });
+    });
+  });
+  // publish action
+  document.getElementById('publishBtn').addEventListener('click', function(){
+    if(this.classList.contains('blocked')){
+      var s=this; s.innerHTML='<span class="lk">⊘</span> re-mark the flagged pillar';
+      setTimeout(function(){ s.innerHTML='<span class="lk">⊘</span> blocked · negative forward'; }, 1500); return;
+    }
+    var s2=this; s2.innerHTML='<span class="lk">✓</span> published v207 <span class="pp">◷ preview</span>'; s2.className='btn okpub';
+    document.getElementById('gateNote').innerHTML='<span class="dim">◷ publish previewed — TARGET · nothing stamped</span>';
+    setTimeout(function(){ s2.innerHTML='<span class="lk">✓</span> Publish v208 <span class="pp">◷ port pending</span>'; }, 1600);
+  });
+  // re-bootstrap
+  document.getElementById('rebootBtn').addEventListener('click', function(){ syncPillarsFromRows(); renderChart(); });
+
+  /* ===================== init ===================== */
+  syncPillarsFromRows();
+  renderBook();
+  renderLadder();
+  renderJacobian();
+  renderChart();
+})();
+</script>
+</body>
+</html>

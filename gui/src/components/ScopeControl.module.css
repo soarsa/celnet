@@ -1,3 +1,10 @@
+/*
+ * ScopeControl — restyled toward the redesign's compact Desk ▸ Book SELECTOR
+ * (DEC-license-gating-and-scope §2): the drill breadcrumb + drill-down live in one
+ * pill; the group-by is a slim adjacent selector. The drill + group-by BEHAVIOUR
+ * is unchanged — this is a visual re-skin only (same roles, labels, aria).
+ */
+
 .root {
   display: flex;
   align-items: center;
@@ -5,12 +12,23 @@
   flex: none;
 }
 
+/* The scope PILL: the breadcrumb path, the drill-down, and the implied-scope hint
+ * gathered into one compact inset selector (Desk ▸ Book). */
 .crumbs {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  border-radius: var(--r-md);
   font-family: var(--font-brand);
   font-size: var(--type-callout);
+  transition: border-color 140ms var(--ease-out);
+}
+.crumbs:hover {
+  border-color: oklch(from var(--accent) l c h / 0.5);
 }
 
 .crumbWrap {
@@ -21,7 +39,7 @@
 
 .sep {
   color: var(--text-tertiary);
-  opacity: 0.6;
+  opacity: 0.7;
 }
 
 .crumb {
@@ -50,32 +68,35 @@
   background: oklch(from var(--brand) l c h / 0.12);
 }
 
+/* The drill-down affordance now reads as an inline chevron control INSIDE the pill
+ * (no nested border) — a compact "go deeper" cue rather than a bordered chip. */
 .drill {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  margin-left: var(--space-1);
   color: var(--text-tertiary);
-  border: var(--hairline);
   border-radius: var(--r-sm);
   padding: 1px var(--space-2);
   font-size: var(--type-micro);
-  transition: color 140ms var(--ease-out), border-color 140ms var(--ease-out);
+  transition: color 140ms var(--ease-out), background-color 140ms var(--ease-out);
 }
 .drill:hover {
   color: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 .drillLabel {
   letter-spacing: 0.02em;
 }
 
 .implied {
-  margin-left: var(--space-2);
+  margin-left: var(--space-1);
   color: var(--text-tertiary);
   font-size: var(--type-micro);
   letter-spacing: 0.02em;
 }
 
+/* The secondary group-by axis — a slim selector sitting beside the scope pill. */
 .groupBy {
   display: inline-flex;
   align-items: center;
@@ -89,9 +110,14 @@
 }
 .groupBySelect {
   font: inherit;
+  height: 24px;
   color: var(--text-secondary);
   background: var(--bg-inset);
   border: var(--hairline);
   border-radius: var(--r-sm);
-  padding: 1px var(--space-2);
+  padding: 0 var(--space-2);
+  transition: border-color 140ms var(--ease-out);
+}
+.groupBySelect:hover {
+  border-color: oklch(from var(--accent) l c h / 0.5);
 }

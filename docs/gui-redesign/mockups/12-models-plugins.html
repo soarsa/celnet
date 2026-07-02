@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="en" data-appearance="dark" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Models &amp; Plugins (mockup 12)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="celer.css" />
+<style>
+  /* ===== screen-12 only — Models & Plugins (QUANT lens) ===== */
+  .lensbar { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; }
+  .lensbar .headline { margin-right:var(--space-2); }
+  .lenschip { display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 10px; border-radius:var(--r-full);
+    background:var(--accent-soft); color:var(--accent); font-size:var(--type-caption); font-weight:600; }
+  .chip.target { background:var(--accent-soft); color:var(--accent); }
+  .chip.live   { background:var(--brand-soft); color:var(--brand); }
+  .chip.native { background:var(--accent-soft); color:var(--accent); }
+  .chip.wasm   { background:oklch(0.82 0.16 75 / 0.16); color:var(--warn); }
+
+  /* segmented kind filter (extends .seg) */
+  .seg.kind button.on { background:var(--accent); color:#fff; }
+
+  /* the registry is a direct flex-column child of main.main; main scrolls (overflow-y:auto), so keep
+     the panel from flex-shrinking to zero (its overflow:hidden zeroes the flex min-height otherwise) */
+  main.main > section.panel { flex-shrink:0; }
+  /* the wide governance registry scrolls horizontally inside its own panel on narrow windows
+     (at desk width it fits with room to spare) rather than being clipped */
+  main.main > section.panel > .body { overflow-x:auto; }
+
+  /* registry table density */
+  .reg { width:100%; border-collapse:collapse; font-size:var(--type-callout); }
+  .reg th { text-align:right; font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.05em;
+    color:var(--text-tertiary); font-weight:600; padding:var(--space-2) var(--space-3); border-bottom:var(--hairline); white-space:nowrap; }
+  .reg th:first-child, .reg td:first-child { text-align:left; }
+  .reg td { padding:0 var(--space-3); height:40px; border-bottom:1px solid var(--grid-line); vertical-align:middle; white-space:nowrap; }
+  .reg td.n { text-align:right; font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+  .reg tbody tr { cursor:pointer; }
+  .reg tbody tr:hover td { background:oklch(1 0 0 / 0.03); }
+  .reg tbody tr.sel td { background:var(--accent-soft); }
+  .reg tbody tr.sel td:first-child { box-shadow:inset 2px 0 0 var(--accent); }
+  .mid { display:flex; flex-direction:column; line-height:1.15; }
+  .mid .id { font-weight:600; font-family:var(--font-mono); font-size:var(--type-callout); }
+  .mid .prov { font-size:var(--type-micro); color:var(--text-tertiary); }
+  .pips { display:inline-flex; gap:3px; }
+  .pips i { width:6px; height:6px; border-radius:2px; background:var(--grid-line); display:inline-block; }
+  .pips i.on { background:var(--text-secondary); }
+  .st { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-caption); color:var(--text-secondary); }
+  .st .dot { width:7px; height:7px; border-radius:var(--r-full); }
+  .st .dot.live { background:var(--brand); box-shadow:0 0 7px var(--brand); }
+  .st .dot.sbx  { background:var(--warn); }
+  .st .dot.load { background:var(--text-tertiary); }
+  .ok { color:var(--bid); }
+
+  /* fuel micro-bar inside the registry */
+  .fuelmini { display:inline-grid; grid-template-columns:46px auto; gap:6px; align-items:center; justify-content:end; }
+  .fuelmini .track { width:46px; height:6px; border-radius:var(--r-full); background:var(--bg-inset); border:var(--hairline); position:relative; overflow:hidden; }
+  .fuelmini .track > i { position:absolute; inset:0 auto 0 0; display:block; border-radius:var(--r-full); }
+
+  /* diagnostics */
+  .diaghdr { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; }
+  .tabs { display:inline-flex; background:var(--bg-inset); border-radius:var(--r-full); padding:2px; gap:2px; }
+  .tabs button { border:0; background:transparent; color:var(--text-tertiary); font-size:var(--type-caption);
+    padding:3px 10px; border-radius:var(--r-full); cursor:pointer; font-weight:600; font-family:var(--font-mono); }
+  .tabs button.on { background:var(--bg-raised); color:var(--text-primary); box-shadow:var(--shadow-panel); }
+  .statgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-3) var(--space-5); margin-top:var(--space-3); }
+  .statgrid .s .k { font-size:var(--type-micro); text-transform:uppercase; letter-spacing:0.05em; color:var(--text-tertiary); }
+  .statgrid .s .v { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:var(--type-callout); }
+  .subgrid { display:grid; grid-template-columns:1.1fr 0.9fr; gap:var(--space-4); align-items:start; }
+
+  /* sandbox cards */
+  .tiercards { display:grid; grid-template-columns:1fr 1fr; gap:var(--space-3); }
+  .tier { border:var(--hairline); border-radius:var(--r-md); padding:var(--space-3) var(--space-4); background:var(--bg-inset); }
+  .tier .h { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
+  .tier .big { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:20px; font-weight:600; }
+  .gauge { display:grid; grid-template-columns:1fr auto; gap:5px 10px; align-items:center; margin:6px 0; }
+  .gauge .lab { font-family:var(--font-mono); font-size:var(--type-caption); }
+  .gauge .lab small { color:var(--text-tertiary); }
+  .gauge .val { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:var(--type-caption); text-align:right; }
+  .fuelbar { grid-column:1 / -1; height:8px; border-radius:var(--r-full); background:var(--bg-inset); border:var(--hairline); position:relative; overflow:hidden; }
+  .fuelbar > i { position:absolute; inset:0 auto 0 0; display:block; border-radius:var(--r-full); }
+  .cfg { display:grid; grid-template-columns:1fr 1fr; gap:2px 14px; margin-top:var(--space-2); }
+  .cfg .r { display:flex; align-items:center; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--grid-line); font-size:var(--type-caption); }
+  .cfg .r .k { color:var(--text-tertiary); font-family:var(--font-mono); }
+  .cfg .yes { color:var(--bid); } .cfg .no { color:var(--text-tertiary); }
+  .abi { display:flex; flex-wrap:wrap; gap:6px; margin-top:var(--space-3); }
+  .abi span { font-family:var(--font-mono); font-size:var(--type-micro); padding:2px 7px; border-radius:var(--r-sm);
+    background:var(--bg-inset); border:var(--hairline); color:var(--text-secondary); }
+  .abi span b { color:var(--text-primary); }
+  .verline { display:flex; align-items:center; gap:6px; margin-top:var(--space-3); font-size:var(--type-caption); color:var(--text-secondary); }
+
+  /* kind chips — low-chroma QUALITATIVE palette (categorical metadata, NOT a quantitative scale;
+     deliberately avoids brand coral / action indigo so hue carries only the kind) */
+  .chip.k-pricing     { background:oklch(0.60 0.05 210 / 0.18); color:oklch(0.82 0.07 210); }
+  .chip.k-smile       { background:oklch(0.60 0.05 305 / 0.18); color:oklch(0.83 0.07 305); }
+  .chip.k-calibration { background:oklch(0.60 0.05 140 / 0.18); color:oklch(0.80 0.07 140); }
+
+  /* governance / supply-chain integrity cell: native = reproducible build, wasm = content digest + signature */
+  .gov { display:inline-flex; flex-direction:column; line-height:1.2; align-items:flex-start; gap:1px; }
+  .gov .dg  { font-family:var(--font-mono); font-size:var(--type-micro); color:var(--text-tertiary); letter-spacing:0.02em; }
+  .gov .sig { font-size:var(--type-micro); font-weight:600; letter-spacing:0.02em; }
+  .gov .sig.ok   { color:var(--bid); }
+  .gov .sig.warn { color:var(--warn); }
+
+  /* closed-form empty-state for the diagnostics panel */
+  .emptyfit { display:none; flex-direction:column; align-items:center; justify-content:center; text-align:center;
+    gap:8px; padding:var(--space-6) var(--space-5); min-height:250px; }
+  .emptyfit .glyph { font-size:30px; color:var(--text-tertiary); line-height:1; }
+  .emptyfit .h { font-size:15px; font-weight:600; color:var(--text-secondary); }
+  .emptyfit .d { font-size:var(--type-caption); color:var(--text-tertiary); max-width:54ch; line-height:1.55; }
+  .emptyfit .d .num { color:var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP COMMAND BAR (verbatim from 00-shell) ============ -->
+  <header class="topbar">
+    <div class="brandlockup">
+      <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+      <span class="wm">Celnet</span>
+    </div>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <div class="cmd">
+      <span class="glyph num">⌘K</span>
+      <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
+    </div>
+    <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
+    <span class="pill">A. Marchetti · Vol Desk</span>
+  </header>
+
+  <!-- ============ CAPABILITY RAIL (verbatim; on=Models & Plugins) ============ -->
+  <nav class="rail" aria-label="Capabilities">
+    <div class="grp label">Price</div>
+    <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
+    <a><span class="ic">◆</span><span>Structure</span><span></span></a>
+    <a><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <div class="grp label">Market data</div>
+    <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
+    <div class="grp label">Distribute</div>
+    <a><span class="ic">◆</span><span>Contribute</span><span></span></a>
+    <a><span class="ic">◆</span><span>RFQ Desk</span><span></span></a>
+    <div class="grp label">Risk</div>
+    <a><span class="ic">◆</span><span>Risk &amp; Scenario</span><span></span></a>
+    <a><span class="ic">◆</span><span>XVA</span><span></span></a>
+    <a><span class="ic">◆</span><span>Books &amp; Positions</span><span></span></a>
+    <div class="grp label">Operate</div>
+    <a><span class="ic">◆</span><span>Reporting</span><span></span></a>
+    <a><span class="ic">◆</span><span>Admin &amp; License</span><span></span></a>
+    <a><span class="ic">◆</span><span>Ops &amp; Connectivity</span><span></span></a>
+    <a class="on"><span class="ic">◆</span><span>Models &amp; Plugins</span><span></span></a>
+  </nav>
+
+  <!-- ============ MAIN — MODELS & PLUGINS ============ -->
+  <main class="main" style="gap:var(--space-5)">
+
+    <!-- lens + honesty banner + kind filter -->
+    <div class="lensbar">
+      <span class="headline">Models &amp; Plugins</span>
+      <span class="lenschip" title="Model &amp; plugin-host registry — inspect / calibrate / validate, no dealing">◇ QUANT lens</span>
+      <span class="chip live" title="celnet-plugin-host registry is wired into pricing — every registered Tier-0/Tier-2 model resolves through ModelRegistry on the hot path">● HOST LIVE</span>
+      <span class="chip target" title="This management surface (register · recalibrate · promote · sandbox admin) is not yet a shipped UI">◇ TARGET · management UI</span>
+      <span style="flex:1"></span>
+      <span class="seg kind" role="tablist" aria-label="Filter by model kind">
+        <button class="on" data-kind="all">All</button>
+        <button data-kind="Pricing">Pricing</button>
+        <button data-kind="Smile">Smile</button>
+        <button data-kind="Calibration">Calibration</button>
+      </span>
+    </div>
+
+    <!-- ===== MODEL REGISTRY ===== -->
+    <section class="panel">
+      <header>
+        <span class="headline">Model registry</span>
+        <span class="muted" style="font-size:11px"><span class="num" id="regCount">13</span> models · <span class="num">10</span> Tier-0 native · <span class="num">3</span> Tier-2 wasmi</span>
+      </header>
+      <div class="body" style="padding:0 var(--space-2) var(--space-2)">
+        <table class="reg">
+          <thead>
+            <tr>
+              <th>Model · provenance</th><th>Kind</th><th>Tier</th><th>Integrity</th><th>Greeks</th>
+              <th>Calibrated</th><th>RMSE</th><th>Arb</th><th>Δ oracle</th><th>Fuel p99 / budget</th><th>State</th>
+            </tr>
+          </thead>
+          <tbody id="regBody">
+            <!-- ---------- PRICING ---------- -->
+            <tr data-kind="Pricing" data-model="fx-vanilla" data-prov="Garman–Kohlhagen closed-form" data-tier="Tier-0 native" data-rmse="analytic" data-arb="✓" data-orc="3.1e-14">
+              <td><span class="mid"><span class="id">fx-vanilla</span><span class="prov">Garman–Kohlhagen closed-form</span></span></td>
+              <td><span class="chip k-pricing">Pricing</span></td>
+              <td><span class="chip native">Tier-0 native</span></td>
+              <td><span class="gov"><span class="dg">build b0da3eeb</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips"><i class="on"></i><i class="on"></i><i class="on"></i></span></td>
+              <td class="n dim">analytic</td><td class="n dim">—</td><td class="n ok">✓</td><td class="n">3.1e-14</td>
+              <td class="dim" style="text-align:center">·</td>
+              <td><span class="st"><span class="dot live"></span>active</span></td>
+            </tr>
+            <tr data-kind="Pricing" data-model="local-stochastic-vol" data-prov="LSV · particle calibration" data-tier="Tier-0 native" data-rmse="0.031v" data-arb="✓" data-orc="7.0e-5">
+              <td><span class="mid"><span class="id">local-stochastic-vol</span><span class="prov">LSV · particle calibration</span></span></td>
+              <td><span class="chip k-pricing">Pricing</span></td>
+              <td><span class="chip native">Tier-0 native</span></td>
+              <td><span class="gov"><span class="dg">build b0da3eeb</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips"><i class="on"></i><i class="on"></i><i class="on"></i></span></td>
+              <td class="n">2m ago</td><td class="n">0.031v</td><td class="n ok">✓</td><td class="n">7.0e-5</td>
+              <td class="dim" style="text-align:center">·</td>
+              <td><span class="st"><span class="dot live"></span>active</span></td>
+            </tr>
+            <tr data-kind="Pricing" data-model="equity-cost-of-carry" data-prov="generalized-BSM · SDK guest" data-tier="Tier-2 wasmi" data-rmse="analytic" data-arb="✓" data-orc="4.2e-13">
+              <td><span class="mid"><span class="id">equity-cost-of-carry</span><span class="prov">generalized-BSM · SDK guest plugin</span></span></td>
+              <td><span class="chip k-pricing">Pricing</span></td>
+              <td><span class="chip wasm">Tier-2 wasmi</span></td>
+              <td><span class="gov"><span class="dg">sha256 3f9a·c1</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips"><i class="on"></i><i class="on"></i><i></i></span></td>
+              <td class="n dim">analytic</td><td class="n dim">—</td><td class="n ok">✓</td><td class="n">4.2e-13</td>
+              <td class="n"><span class="fuelmini"><span class="track"><i style="width:82%;background:var(--seq-6)"></i></span><span>41.2M/50M</span></span></td>
+              <td><span class="st"><span class="dot sbx"></span>sandboxed</span></td>
+            </tr>
+            <tr data-kind="Pricing" data-model="barrier-lv-pde" data-prov="Dupire local-vol · ADI-PDE" data-tier="Tier-0 native" data-rmse="0.040v" data-arb="✓" data-orc="6.8e-5">
+              <td><span class="mid"><span class="id">barrier-lv-pde</span><span class="prov">Dupire local-vol · ADI-PDE</span></span></td>
+              <td><span class="chip k-pricing">Pricing</span></td>
+              <td><span class="chip native">Tier-0 native</span></td>
+              <td><span class="gov"><span class="dg">build b0da3eeb</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips"><i class="on"></i><i class="on"></i><i></i></span></td>
+              <td class="n">4m ago</td><td class="n">0.040v</td><td class="n ok">✓</td><td class="n">6.8e-5</td>
+              <td class="dim" style="text-align:center">·</td>
+              <td><span class="st"><span class="dot load"></span>loaded</span></td>
+            </tr>
+            <!-- ---------- SMILE (the 5 families via build_model_smile) ---------- -->
+            <tr data-kind="Smile" data-model="market-hedge" data-prov="vanna–volga broker-pillar" data-tier="Tier-0 native" data-rmse="0.020v" data-arb="✓" data-orc="1.0e-6">
+              <td><span class="mid"><span class="id">market-hedge</span><span class="prov">vanna–volga broker-pillar · default</span></span></td>
+              <td><span class="chip k-smile">Smile</span></td>
+              <td><span class="chip native">Tier-0 native</span></td>
+              <td><span class="gov"><span class="dg">build b0da3eeb</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips dim"><i></i><i></i><i></i></span></td>
+              <td class="n">2m ago</td><td class="n">0.020v</td><td class="n ok">✓</td><td class="n">1.0e-6</td>
+              <td class="dim" style="text-align:center">·</td>
+              <td><span class="st"><span class="dot load"></span>loaded</span></td>
+            </tr>
+            <tr data-kind="Smile" data-model="stochastic-vol" data-prov="SABR" data-tier="Tier-0 native" data-rmse="0.035v" data-arb="✓" data-orc="3.0e-7">
+              <td><span class="mid"><span class="id">stochastic-vol</span><span class="prov">SABR · α β ρ ν</span></span></td>
+              <td><span class="chip k-smile">Smile</span></td>
+              <td><span class="chip native">Tier-0 native</span></td>
+              <td><span class="gov"><span class="dg">build b0da3eeb</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips dim"><i></i><i></i><i></i></span></td>
+              <td class="n">2m ago</td><td class="n">0.035v</td><td class="n ok">✓</td><td class="n">3.0e-7</td>
+              <td class="dim" style="text-align:center">·</td>
+              <td><span class="st"><span class="dot load"></span>loaded</span></td>
+            </tr>
+            <tr data-kind="Smile" data-model="parametric" data-prov="SVI slice" data-tier="Tier-0 native" data-rmse="0.028v" data-arb="✓" data-orc="2.0e-6">
+              <td><span class="mid"><span class="id">parametric</span><span class="prov">SVI single-slice total variance</span></span></td>
+              <td><span class="chip k-smile">Smile</span></td>
+              <td><span class="chip native">Tier-0 native</span></td>
+              <td><span class="gov"><span class="dg">build b0da3eeb</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips dim"><i></i><i></i><i></i></span></td>
+              <td class="n">3m ago</td><td class="n">0.028v</td><td class="n ok">✓</td><td class="n">2.0e-6</td>
+              <td class="dim" style="text-align:center">·</td>
+              <td><span class="st"><span class="dot load"></span>loaded</span></td>
+            </tr>
+            <tr data-kind="Smile" data-model="parametric-surface" data-prov="SSVI · closed-form arb-free" data-tier="Tier-0 native" data-rmse="0.033v" data-arb="✓" data-orc="5.0e-7">
+              <td><span class="mid"><span class="id">parametric-surface</span><span class="prov">SSVI · closed-form arb-free</span></span></td>
+              <td><span class="chip k-smile">Smile</span></td>
+              <td><span class="chip native">Tier-0 native</span></td>
+              <td><span class="gov"><span class="dg">build b0da3eeb</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips dim"><i></i><i></i><i></i></span></td>
+              <td class="n">3m ago</td><td class="n">0.033v</td><td class="n ok">✓</td><td class="n">5.0e-7</td>
+              <td class="dim" style="text-align:center">·</td>
+              <td><span class="st"><span class="dot load"></span>loaded</span></td>
+            </tr>
+            <tr class="sel" data-kind="Smile" data-model="extended-surface" data-prov="eSSVI · maturity-dep ρ" data-tier="Tier-0 native" data-rmse="0.013v" data-arb="✓" data-orc="5.6e-8">
+              <td><span class="mid"><span class="id">extended-surface</span><span class="prov">eSSVI · maturity-dependent ρ · surface fit</span></span></td>
+              <td><span class="chip k-smile">Smile</span></td>
+              <td><span class="chip native">Tier-0 native</span></td>
+              <td><span class="gov"><span class="dg">build b0da3eeb</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips dim"><i></i><i></i><i></i></span></td>
+              <td class="n">2m ago</td><td class="n">0.013v</td><td class="n ok">✓</td><td class="n">5.6e-8</td>
+              <td class="dim" style="text-align:center">·</td>
+              <td><span class="st"><span class="dot live"></span>active</span></td>
+            </tr>
+            <tr data-kind="Smile" data-model="skew-overlay" data-prov="risk-reversal skew overlay · SDK user plugin" data-tier="Tier-2 wasmi" data-rmse="0.024v" data-arb="✓" data-orc="8.0e-13">
+              <td><span class="mid"><span class="id">skew-overlay</span><span class="prov">risk-reversal skew overlay · SDK user plugin</span></span></td>
+              <td><span class="chip k-smile">Smile</span></td>
+              <td><span class="chip wasm">Tier-2 wasmi</span></td>
+              <td><span class="gov"><span class="dg">sha256 7b2e·9f</span><span class="sig warn">unsigned ⚠</span></span></td>
+              <td><span class="pips dim"><i></i><i></i><i></i></span></td>
+              <td class="n">1m ago</td><td class="n">0.024v</td><td class="n ok">✓</td><td class="n">8.0e-13</td>
+              <td class="n"><span class="fuelmini"><span class="track"><i style="width:25%;background:var(--seq-4)"></i></span><span>12.6M/50M</span></span></td>
+              <td><span class="st"><span class="dot sbx"></span>sandboxed</span></td>
+            </tr>
+            <!-- ---------- CALIBRATION ---------- -->
+            <tr data-kind="Calibration" data-model="extended-surface-fit" data-prov="Levenberg–Marquardt · fit_essvi" data-tier="Tier-0 native" data-rmse="0.013v" data-arb="✓" data-orc="—">
+              <td><span class="mid"><span class="id">extended-surface-fit</span><span class="prov">Levenberg–Marquardt · fit_essvi</span></span></td>
+              <td><span class="chip k-calibration">Calibration</span></td>
+              <td><span class="chip native">Tier-0 native</span></td>
+              <td><span class="gov"><span class="dg">build b0da3eeb</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips dim"><i></i><i></i><i></i></span></td>
+              <td class="n">2m ago</td><td class="n">0.013v</td><td class="n ok">✓</td><td class="n dim">—</td>
+              <td class="dim" style="text-align:center">·</td>
+              <td><span class="st"><span class="dot live"></span>active</span></td>
+            </tr>
+            <tr data-kind="Calibration" data-model="stochastic-vol-fit" data-prov="fit_sabr · least-squares" data-tier="Tier-0 native" data-rmse="0.035v" data-arb="✓" data-orc="—">
+              <td><span class="mid"><span class="id">stochastic-vol-fit</span><span class="prov">fit_sabr · least-squares</span></span></td>
+              <td><span class="chip k-calibration">Calibration</span></td>
+              <td><span class="chip native">Tier-0 native</span></td>
+              <td><span class="gov"><span class="dg">build b0da3eeb</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips dim"><i></i><i></i><i></i></span></td>
+              <td class="n">2m ago</td><td class="n">0.035v</td><td class="n ok">✓</td><td class="n dim">—</td>
+              <td class="dim" style="text-align:center">·</td>
+              <td><span class="st"><span class="dot load"></span>loaded</span></td>
+            </tr>
+            <tr data-kind="Calibration" data-model="flat-smile-ref" data-prov="SDK reference example" data-tier="Tier-2 wasmi" data-rmse="flat" data-arb="✓" data-orc="—">
+              <td><span class="mid"><span class="id">flat-smile-ref</span><span class="prov">SDK reference example · guest</span></span></td>
+              <td><span class="chip k-calibration">Calibration</span></td>
+              <td><span class="chip wasm">Tier-2 wasmi</span></td>
+              <td><span class="gov"><span class="dg">sha256 a7e0·4d</span><span class="sig ok">signed ✓</span></span></td>
+              <td><span class="pips dim"><i></i><i></i><i></i></span></td>
+              <td class="n dim">flat</td><td class="n dim">—</td><td class="n ok">✓</td><td class="n dim">—</td>
+              <td class="n"><span class="fuelmini"><span class="track"><i style="width:6%;background:var(--seq-3)"></i></span><span>3.1M/50M</span></span></td>
+              <td><span class="st"><span class="dot sbx"></span>sandboxed</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== DIAGNOSTICS  ‖  SANDBOX ===== -->
+    <div class="cols c2">
+
+      <!-- left column: calibration diagnostics + golden-oracle validation -->
+      <div style="display:flex; flex-direction:column; gap:var(--space-5)">
+
+        <section class="panel">
+          <header>
+            <span class="diaghdr">
+              <span class="headline">Calibration diagnostics</span>
+              <span class="chip acc" id="diagName">extended-surface</span>
+              <span class="muted" style="font-size:11px" id="diagMethod">eSSVI · maturity-dependent ρ</span>
+            </span>
+            <span class="tabs" id="tenorTabs" role="tablist" aria-label="Tenor slice">
+              <button class="on" data-tenor="1M">1M</button>
+              <button data-tenor="3M">3M</button>
+              <button data-tenor="1Y">1Y</button>
+            </span>
+          </header>
+          <div class="body">
+
+            <!-- calibrated models: residual ladder + convergence + stats (all keyed by selected model) -->
+            <div id="diagCalib">
+            <div class="label" style="margin-bottom:6px" title="Fitted − market broker marks; shaded band = ±0.05v tolerance; axis auto-scales">Fit residuals · vol points</div>
+            <svg class="chart" viewBox="0 0 520 200" height="196" aria-label="Calibration residuals by delta pillar">
+              <!-- fixed ±0.05v tolerance band around zero (y=87); position set by script for the auto-scaled axis -->
+              <rect id="resBand" x="52" y="34.5" width="448" height="105" fill="oklch(0.66 0.11 168 / 0.10)"/>
+              <!-- chart frame gridlines -->
+              <line class="gl" x1="52" y1="34.5" x2="500" y2="34.5"/>
+              <line class="gl" x1="52" y1="139.5" x2="500" y2="139.5"/>
+              <line class="mk" x1="52" y1="87" x2="500" y2="87"/>
+              <!-- y labels (auto-scaled range set by script) -->
+              <text class="axlbl" id="resYTop" x="46" y="37" text-anchor="end">+0.05</text>
+              <text class="axlbl b" x="46" y="90" text-anchor="end">0</text>
+              <text class="axlbl" id="resYBot" x="46" y="142" text-anchor="end">−0.05</text>
+              <!-- residual bars + tip dots (rendered by script) -->
+              <g id="resBars"></g>
+              <!-- x labels (rendered by script) -->
+              <g id="resLabels"></g>
+              <text class="axlbl b" x="500" y="20" text-anchor="end" id="resRmse">RMSE 0.013v · 1M slice · 9 pillars</text>
+            </svg>
+
+            <div class="subgrid" style="margin-top:var(--space-4)">
+              <div>
+                <div class="label" style="margin-bottom:4px">RMSE convergence · Levenberg–Marquardt <span class="dim">(log scale)</span></div>
+                <svg class="chart" viewBox="0 0 250 142" height="134" aria-label="RMSE convergence over Levenberg–Marquardt iterations, log scale">
+                  <!-- log-decade gridlines: 1v / 0.1v / 0.01v -->
+                  <line class="gl" x1="34" y1="20" x2="238" y2="20"/>
+                  <line class="gl" x1="34" y1="68" x2="238" y2="68"/>
+                  <line class="gl" x1="34" y1="116" x2="238" y2="116"/>
+                  <text class="axlbl" x="30" y="23" text-anchor="end">1v</text>
+                  <text class="axlbl" x="30" y="71" text-anchor="end">0.1</text>
+                  <text class="axlbl" x="30" y="119" text-anchor="end">0.01</text>
+                  <text class="axlbl" x="9" y="70" transform="rotate(-90 9 70)" text-anchor="middle">RMSE (log)</text>
+                  <!-- area fill · decay curve · target line · step markers (rendered by script) -->
+                  <g id="convArea"></g>
+                  <g id="convTarget"></g>
+                  <g id="convLine"></g>
+                  <g id="convDots"></g>
+                  <text class="axlbl" x="88" y="136" text-anchor="middle">iteration →</text>
+                  <text class="axlbl b" x="238" y="136" text-anchor="end" id="convLbl">converged · 11 iter</text>
+                </svg>
+              </div>
+              <div class="statgrid">
+                <div class="s"><div class="k">Iterations</div><div class="v" id="statIter">11</div></div>
+                <div class="s"><div class="k">RMSE · slice</div><div class="v" id="statRmse">0.013v</div></div>
+                <div class="s"><div class="k">Max resid</div><div class="v" id="statMax">0.021v</div></div>
+                <div class="s"><div class="k">Arb-free</div><div class="v ok" id="statArb">✓ bf·cal</div></div>
+                <div class="s"><div class="k">Params</div><div class="v" id="statParams">5</div></div>
+                <div class="s"><div class="k">cond κ</div><div class="v" id="statCond">42</div></div>
+              </div>
+            </div>
+            </div>
+
+            <!-- closed-form models: no iterative calibration → explicit empty-state -->
+            <div id="diagEmpty" class="emptyfit">
+              <div class="glyph">∮</div>
+              <div class="headline h">closed-form · no calibration residuals</div>
+              <div class="d" title="Priced analytically in a single evaluation — no iterative fit, so no residual ladder or convergence trace; correctness is validated directly against the golden oracle"><span class="num" id="emptyName">fx-vanilla</span> — <span id="emptyProv">Garman–Kohlhagen closed-form</span> · golden-oracle <span class="num" id="emptyOrc">3.1e-14</span> rel</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header>
+            <span class="headline">Golden-oracle validation</span>
+            <span class="muted" style="font-size:11px" title="celnet-golden frozen tables">|model − QuantLib 1.42.1| rel · <span class="ok">128/128 within tol</span></span>
+          </header>
+          <div class="body">
+            <svg class="chart" viewBox="0 0 520 198" height="190" aria-label="Golden-oracle relative difference by instrument">
+              <!-- log gridlines: 1e-3 .. 1e-12 -->
+              <line class="gl" x1="60" y1="28" x2="504" y2="28"/>
+              <line class="gl" x1="60" y1="61.3" x2="504" y2="61.3"/>
+              <line class="gl" x1="60" y1="94.6" x2="504" y2="94.6"/>
+              <line class="gl" x1="60" y1="127.9" x2="504" y2="127.9"/>
+              <text class="axlbl" x="56" y="31" text-anchor="end">1e-3</text>
+              <text class="axlbl" x="56" y="64" text-anchor="end">1e-6</text>
+              <text class="axlbl" x="56" y="97" text-anchor="end">1e-9</text>
+              <text class="axlbl" x="56" y="131" text-anchor="end">1e-12</text>
+              <!-- y-axis title -->
+              <text class="axlbl" x="15" y="80" transform="rotate(-90 15 80)" text-anchor="middle">rel diff (log)</text>
+              <!-- tolerance line 1e-4 rel -->
+              <line x1="60" y1="39.1" x2="504" y2="39.1" stroke="var(--warn)" stroke-width="1.25" stroke-dasharray="5 3"/>
+              <text class="axlbl" x="504" y="36" text-anchor="end" fill="var(--warn)">tol 1e-4 rel</text>
+              <!-- bars: analytic (machine eps) → PDE/QMC (near tol). floor y=150 -->
+              <!-- 8 instruments; Viridis |Δ| magnitude ramp seq-2 (deep pass) → seq-6 (near tol) -->
+              <rect x="72"  y="144.5" width="20" height="5.5"  fill="var(--seq-2)"/>
+              <rect x="128" y="149.2" width="20" height="0.8"  fill="var(--seq-2)"/>
+              <rect x="184" y="143.0" width="20" height="7.0"  fill="var(--seq-2)"/>
+              <rect x="240" y="75.1"  width="20" height="74.9" fill="var(--seq-3)"/>
+              <rect x="296" y="72.8"  width="20" height="77.2" fill="var(--seq-3)"/>
+              <rect x="352" y="57.1"  width="20" height="92.9" fill="var(--seq-4)"/>
+              <rect x="408" y="41.0"  width="20" height="109"  fill="var(--seq-5)"/>
+              <rect x="464" y="40.7"  width="20" height="109.3" fill="var(--seq-6)"/>
+              <!-- x labels -->
+              <text class="axlbl" x="82"  y="162" text-anchor="middle">EURUSD·1M·25C</text>
+              <text class="axlbl" x="138" y="162" text-anchor="middle">EURUSD·3M·ATM</text>
+              <text class="axlbl" x="194" y="162" text-anchor="middle">USDJPY·6M·10P</text>
+              <text class="axlbl" x="250" y="162" text-anchor="middle">EURUSD·1Y·RR</text>
+              <text class="axlbl" x="306" y="162" text-anchor="middle">GBPUSD·3M·BF</text>
+              <text class="axlbl" x="362" y="162" text-anchor="middle">DKO·6M·PDE</text>
+              <text class="axlbl" x="418" y="162" text-anchor="middle">VarSw·1Y·rep</text>
+              <text class="axlbl b" x="474" y="162" text-anchor="middle">Asian·1Y·QMC</text>
+              <text class="axlbl b" x="60" y="20">max |Δ| 7.3e-5 · Asian 1Y (QMC)</text>
+              <!-- Viridis |Δ|-magnitude colorbar legend -->
+              <g transform="translate(60,182)">
+                <text class="axlbl" x="0" y="8">|Δ| magnitude</text>
+                <rect x="82"  y="1" width="14" height="8" fill="var(--seq-1)"/>
+                <rect x="96"  y="1" width="14" height="8" fill="var(--seq-2)"/>
+                <rect x="110" y="1" width="14" height="8" fill="var(--seq-3)"/>
+                <rect x="124" y="1" width="14" height="8" fill="var(--seq-4)"/>
+                <rect x="138" y="1" width="14" height="8" fill="var(--seq-5)"/>
+                <rect x="152" y="1" width="14" height="8" fill="var(--seq-6)"/>
+                <text class="axlbl" x="172" y="8">machine-eps → near-tol</text>
+              </g>
+            </svg>
+          </div>
+        </section>
+      </div>
+
+      <!-- right column: plugin sandbox status -->
+      <section class="panel">
+        <header>
+          <span class="headline" title="celnet-plugin-host — one registry, two tiers">Plugin sandbox</span>
+        </header>
+        <div class="body">
+          <div class="tiercards">
+            <div class="tier" title="Compiled-in, in-process; full f64; zero sandbox overhead — trusted, no fuel metering">
+              <div class="h"><span class="chip native">Tier-0 native</span><span class="big">10</span></div>
+            </div>
+            <div class="tier" title="Fuel-metered guest sandbox; deterministic (wasmi R1 instruction cost); memory-capped, trap-guarded">
+              <div class="h"><span class="chip wasm">Tier-2 wasmi</span><span class="big">3</span></div>
+            </div>
+          </div>
+
+          <div class="label" style="margin:var(--space-4) 0 2px">Tier-2 fuel · per-call budget <span class="num">50,000,000</span></div>
+
+          <div class="gauge">
+            <span class="lab">equity-cost-of-carry <small>· Pricing guest</small></span>
+            <span class="val">41.2M · 82%</span>
+            <span class="fuelbar"><i style="width:82%;background:var(--seq-6)"></i></span>
+          </div>
+          <div class="gauge">
+            <span class="lab">skew-overlay <small>· SDK user plugin</small></span>
+            <span class="val">12.6M · 25%</span>
+            <span class="fuelbar"><i style="width:25%;background:var(--seq-4)"></i></span>
+          </div>
+          <div class="gauge">
+            <span class="lab">flat-smile-ref <small>· reference example</small></span>
+            <span class="val">3.1M · 6%</span>
+            <span class="fuelbar"><i style="width:6%;background:var(--seq-3)"></i></span>
+          </div>
+
+          <div class="label" style="margin:var(--space-4) 0 2px">Sandbox config · narrowed ABI feature set</div>
+          <div class="cfg">
+            <div class="r"><span class="k">consume_fuel</span><span class="yes">on ✓</span></div>
+            <div class="r"><span class="k">memory64</span><span class="no">off</span></div>
+            <div class="r"><span class="k">bulk_memory</span><span class="no">off</span></div>
+            <div class="r"><span class="k">reference_types</span><span class="no">off</span></div>
+            <div class="r"><span class="k">tail_call</span><span class="no">off</span></div>
+            <div class="r"><span class="k">mem-grow</span><span class="yes">→ traps</span></div>
+          </div>
+
+          <div class="label" style="margin:var(--space-4) 0 2px">Guest ABI status codes</div>
+          <div class="abi">
+            <span><b>0</b> ok</span>
+            <span><b>−1</b> invalid input</span>
+            <span><b>−2</b> unsupported (no greeks)</span>
+            <span><b>−3</b> did-not-converge</span>
+          </div>
+
+          <div class="verline" title="Native ⇔ wasm twins agree bit-for-bit through one registry"><span class="ok">✓</span> twins bit-identical</div>
+          <div class="verline" title="Fuel exhaustion traps within budget — a runaway guest is always bounded"><span class="ok">✓</span> fuel-trap bounded</div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- ============ CONTEXT RAIL (verbatim from 00-shell) ============ -->
+  <aside class="ctx" aria-label="Desk context">
+    <section>
+      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Feed health</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>EBS</span><span class="v num">12ms</span></div>
+      <div class="kv"><span class="k"><span class="rag g"></span>Reuters</span><span class="v num">40ms</span></div>
+      <div class="kv"><span class="k"><span class="rag a"></span>Vendor-C</span><span class="v num warn">stale 4s</span></div>
+      <div class="kv"><span class="k">Divergence</span><span class="v num">0.02v <span class="dim">in band</span></span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
+      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
+      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
+      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+    </section>
+
+    <section>
+      <div class="grouphdr"><span class="label">Activity</span></div>
+      <div class="tape">
+        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STATUS BAR (verbatim from 00-shell) ============ -->
+  <footer class="statusbar">
+    <span>Entitlements <b>Enforce</b></span>
+    <span style="flex:1"></span>
+    <span class="num">contributing 8,412 upd/s</span><span class="dim">·</span>
+    <span class="num">p50 42µs · p99 180µs · p99.9 410µs</span><span class="dim">·</span>
+    <span class="num">3 feeds ok</span>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  var SVGNS = "http://www.w3.org/2000/svg";
+  function el(name, attrs, text) {
+    var n = document.createElementNS(SVGNS, name);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function clr(g) { while (g.firstChild) g.removeChild(g.firstChild); }
+  function $(id) { return document.getElementById(id); }
+
+  /* ---- residual chart geometry ---- */
+  var PILLARS = ["10ΔP","15ΔP","25ΔP","35ΔP","ATM","35ΔC","25ΔC","15ΔC","10ΔC"];
+  var SHAPE   = [0.86,-0.43,0.29,-0.19,0.10,-0.24,0.52,-0.67,1.00]; /* normalised wing pattern, max=1 */
+  var TF = { "1M": 1.00, "3M": 0.69, "1Y": 1.31 };                  /* per-tenor magnitude factor */
+  var ZERO = 87, HALFPX = 52.5, X0 = 84, STEP = 46;
+
+  /* ---- per-model calibration datasets, keyed by data-model (rmse = 1M surface-slice base) ---- */
+  var MODELS = {
+    "local-stochastic-vol": { rmse:0.031, iter:24, params:8,  cond:78, arb:"✓ bf·cal"  },
+    "barrier-lv-pde":       { rmse:0.040, iter:16, params:12, cond:96, arb:"✓ bf·cal"  },
+    "market-hedge":         { rmse:0.020, iter:3,  params:3,  cond:12, arb:"✓ pillars" },
+    "stochastic-vol":       { rmse:0.035, iter:14, params:4,  cond:31, arb:"✓ bf·cal"  },
+    "parametric":           { rmse:0.028, iter:9,  params:5,  cond:22, arb:"✓ bf·cal"  },
+    "parametric-surface":   { rmse:0.033, iter:12, params:4,  cond:27, arb:"✓ bf·cal"  },
+    "extended-surface":     { rmse:0.013, iter:11, params:5,  cond:42, arb:"✓ bf·cal"  },
+    "extended-surface-fit": { rmse:0.013, iter:11, params:5,  cond:42, arb:"✓ bf·cal"  },
+    "stochastic-vol-fit":   { rmse:0.035, iter:14, params:4,  cond:31, arb:"✓ bf·cal"  },
+    "skew-overlay":         { rmse:0.024, iter:6,  params:2,  cond:14, arb:"✓ overlay" }
+  };
+
+  var cur = { model: "extended-surface", tenor: "1M" };
+  var f3 = function (v) { return v.toFixed(3); };
+
+  /* ---- residual ladder (diverging bars, fixed ±0.05 tol band, auto-scaled axis) ---- */
+  function renderResiduals() {
+    var m = MODELS[cur.model]; if (!m) return;
+    var tf = TF[cur.tenor];
+    var rmseT = m.rmse * tf;
+    var maxrT = m.rmse * 1.6 * tf;                         /* largest-wing residual */
+    var hr = Math.max(0.05, Math.ceil(maxrT * 1.15 / 0.05) * 0.05); /* nice half-range */
+    var pxv = HALFPX / hr;
+
+    $("resYTop").textContent = "+" + hr.toFixed(2);
+    $("resYBot").textContent = "−" + hr.toFixed(2);
+    var band = $("resBand");
+    band.setAttribute("y", (ZERO - 0.05 * pxv).toFixed(2));
+    band.setAttribute("height", (0.10 * pxv).toFixed(2));
+
+    var bars = $("resBars"); clr(bars);
+    var labs = $("resLabels"); clr(labs);
+    for (var i = 0; i < SHAPE.length; i++) {
+      var x = X0 + i * STEP;
+      var v = SHAPE[i] * maxrT;
+      var yTip = ZERO - v * pxv;
+      var top = Math.min(ZERO, yTip), h = Math.abs(ZERO - yTip);
+      var col = v >= 0 ? "var(--div-pos2)" : "var(--div-neg2)";
+      bars.appendChild(el("rect", { x: x - 5, y: top, width: 10, height: h, rx: 1.5, fill: col }));
+      bars.appendChild(el("circle", { cx: x, cy: yTip, r: 2.4, fill: col }));
+      labs.appendChild(el("text", { x: x, y: 172, "text-anchor": "middle", "class": "axlbl" + (i === 4 ? " b" : "") }, PILLARS[i]));
+    }
+    $("resRmse").textContent = "RMSE " + f3(rmseT) + "v · " + cur.tenor + " slice · 9 pillars";
+    $("statRmse").textContent = f3(rmseT) + "v";
+    $("statMax").textContent = f3(maxrT) + "v";
+  }
+
+  /* ---- LM convergence: log axis 1v..0.01v, area fill, per-iter markers, target line ---- */
+  function yLog(v) { v = Math.max(0.01, Math.min(1, v)); return 20 - 48 * (Math.log(v) / Math.LN10); }
+  function renderConvergence() {
+    var m = MODELS[cur.model]; if (!m) return;
+    var n = m.iter, start = 0.9, final = m.rmse, pts = [];
+    for (var i = 0; i < n; i++) {
+      var r = (i === n - 1) ? final : final + (start - final) * Math.exp(-3 * i / (n - 1));
+      pts.push([34 + 204 * (n <= 1 ? 0 : i / (n - 1)), yLog(r)]);
+    }
+    var poly = pts.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
+
+    var area = $("convArea"); clr(area);
+    var d = "M" + pts[0][0].toFixed(1) + ",116 ";
+    pts.forEach(function (p) { d += "L" + p[0].toFixed(1) + "," + p[1].toFixed(1) + " "; });
+    d += "L" + pts[n - 1][0].toFixed(1) + ",116 Z";
+    area.appendChild(el("path", { d: d, fill: "var(--seq-4)", "fill-opacity": "0.13" }));
+
+    var line = $("convLine"); clr(line);
+    line.appendChild(el("polyline", { points: poly, fill: "none", stroke: "var(--seq-4)", "stroke-width": "2", "stroke-linejoin": "round" }));
+
+    var dots = $("convDots"); clr(dots);
+    pts.forEach(function (p, ix) {
+      var last = ix === n - 1;
+      dots.appendChild(el("circle", { cx: p[0].toFixed(1), cy: p[1].toFixed(1), r: last ? 3 : 1.9, fill: last ? "var(--brand)" : "var(--seq-4)" }));
+    });
+
+    var tg = $("convTarget"); clr(tg);
+    var ty = yLog(final);
+    tg.appendChild(el("line", { x1: 34, y1: ty.toFixed(1), x2: 238, y2: ty.toFixed(1), stroke: "var(--warn)", "stroke-width": "1.1", "stroke-dasharray": "4 3" }));
+    tg.appendChild(el("text", { x: 236, y: (ty - 3).toFixed(1), "text-anchor": "end", "class": "axlbl", fill: "var(--warn)" }, "target " + f3(final) + "v"));
+
+    $("convLbl").textContent = "converged · " + n + " iter";
+  }
+
+  function renderStats() {
+    var m = MODELS[cur.model]; if (!m) return;
+    $("statIter").textContent = m.iter;
+    $("statParams").textContent = m.params;
+    $("statCond").textContent = m.cond;
+    $("statArb").textContent = m.arb;
+  }
+
+  var tenorTabs = $("tenorTabs");
+  function showEmpty(row) {
+    $("diagCalib").style.display = "none";
+    $("diagEmpty").style.display = "flex";
+    $("emptyName").textContent = row.getAttribute("data-model");
+    $("emptyProv").textContent = row.getAttribute("data-prov");
+    $("emptyOrc").textContent = row.getAttribute("data-orc");
+    tenorTabs.style.opacity = "0.35";
+    tenorTabs.style.pointerEvents = "none";
+  }
+  function showCalib() {
+    $("diagCalib").style.display = "";
+    $("diagEmpty").style.display = "none";
+    tenorTabs.style.opacity = "";
+    tenorTabs.style.pointerEvents = "";
+    renderResiduals(); renderConvergence(); renderStats();
+  }
+
+  function selectRow(row) {
+    cur.model = row.getAttribute("data-model");
+    $("diagName").textContent = cur.model;
+    $("diagMethod").textContent = row.getAttribute("data-prov") + " · " + row.getAttribute("data-tier");
+    var rmse = row.getAttribute("data-rmse");
+    if (rmse === "analytic" || rmse === "flat") showEmpty(row); else showCalib();
+  }
+
+  /* ---- tenor tabs (residual slice) ---- */
+  var ttabs = document.querySelectorAll("#tenorTabs button");
+  ttabs.forEach(function (b) {
+    b.addEventListener("click", function () {
+      ttabs.forEach(function (x) { x.classList.remove("on"); });
+      b.classList.add("on");
+      cur.tenor = b.getAttribute("data-tenor");
+      if (MODELS[cur.model]) renderResiduals();
+    });
+  });
+
+  /* ---- kind filter ---- */
+  var kbtns = document.querySelectorAll(".seg.kind button");
+  var rows = Array.prototype.slice.call(document.querySelectorAll("#regBody tr"));
+  kbtns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      kbtns.forEach(function (x) { x.classList.remove("on"); });
+      b.classList.add("on");
+      var kind = b.getAttribute("data-kind"), shown = 0;
+      rows.forEach(function (r) {
+        var ok = kind === "all" || r.getAttribute("data-kind") === kind;
+        r.style.display = ok ? "" : "none";
+        if (ok) shown++;
+      });
+      $("regCount").textContent = shown;
+    });
+  });
+
+  /* ---- row selection → drive the diagnostics panel ---- */
+  rows.forEach(function (r) {
+    r.addEventListener("click", function () {
+      rows.forEach(function (x) { x.classList.remove("sel"); });
+      r.classList.add("sel");
+      selectRow(r);
+    });
+  });
+
+  /* initial render — the active eSSVI surface fit */
+  selectRow(document.querySelector('#regBody tr[data-model="extended-surface"]'));
+})();
+</script>
+</body>
+</html>

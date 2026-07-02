@@ -49,6 +49,7 @@ import {
   type ProductBuildCtx,
 } from "../products";
 import { crossAssetInputsFor, crossAssetSpec } from "../products/crossAsset";
+import { PayoffDiagram, type PayoffLeg } from "../viz/PayoffDiagram";
 import { forward as forwardRate } from "../data/pricing";
 import { impliedVolForInstrument, sampleSurface } from "../data/surface";
 import {
@@ -205,6 +206,36 @@ function netStructureLegs(instrument: Instrument): NetStructureLeg[] {
     ratio: leg.ratio,
     side: leg.side === "SELL" ? "SELL" : "BUY",
   }));
+}
+
+/**
+ * The typed leg set the multi-leg {@link PayoffDiagram} can honestly draw:
+ * available only when the built instrument is a multi-leg strategy whose EVERY
+ * leg carries an ABSOLUTE strike level (a typed K on the ladder). Delta-keyed
+ * legs (25dC / 25dP / ATM) resolve to a level server-side under the request
+ * conventions, so no honest client-side kink location exists for them — those
+ * ladders (and the single-payoff families) keep the compact {@link PayoffChart}
+ * shape preview. Per-leg premiums are deliberately LEFT ABSENT (they price
+ * server-side off the marked surface), so the diagram draws the intrinsic
+ * payoff-at-expiry shape — its own header/legend label the today curve as
+ * illustrative, never a priced P&L.
+ */
+function payoffDiagramLegs(instrument: Instrument): PayoffLeg[] | null {
+  if (instrument.product.kind !== "strategy") return null;
+  const legs = instrument.product.strategy.legs;
+  if (legs.length < 2) return null;
+  const out: PayoffLeg[] = [];
+  for (const leg of legs) {
+    const k = leg.strike;
+    if (k.kind !== "strike" || !Number.isFinite(k.strike) || k.strike <= 0) return null;
+    out.push({
+      kind: leg.optionType === "CALL" ? "call" : "put",
+      side: leg.side === "SELL" ? "short" : "long",
+      strike: k.strike,
+      quantity: leg.ratio,
+    });
+  }
+  return out;
 }
 
 /**
@@ -608,6 +639,7 @@ export function TicketWorkspace(): React.ReactElement {
 
   const strikePreview = previewStrike(inputs, atmForward);
   const netLegs = netStructureLegs(instrument);
+  const diagramLegs = payoffDiagramLegs(instrument);
 
   return (
     <div className={styles.wrap}>
@@ -832,7 +864,11 @@ export function TicketWorkspace(): React.ReactElement {
         <spec.InputBlock value={inputs as never} onChange={updateInputs} ctx={effectiveCtx} />
 
         <div className={styles.payoffPreview}>
-          <PayoffChart structureId={structure} strike={strikePreview} spot={spot} />
+          {diagramLegs !== null ? (
+            <PayoffDiagram legs={diagramLegs} spot={spot} height={240} />
+          ) : (
+            <PayoffChart structureId={structure} strike={strikePreview} spot={spot} />
+          )}
         </div>
 
         {netLegs.length > 0 && (

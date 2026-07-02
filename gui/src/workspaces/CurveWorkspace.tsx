@@ -17,6 +17,16 @@
  * server's `celnet-rates::curve`. Editing a pillar re-bootstraps the curve and
  * re-samples every view; a malformed edit surfaces the real validation error rather
  * than a fabricated curve.
+ *
+ * The pillar-editor term structure is drawn by the design-system `YieldCurve` chart
+ * (mockup 14): the bootstrapped pillar zero rates feed its `CurveNode` contract, and
+ * because it interpolates ln(DF) log-linearly from those nodes — the same scheme as
+ * the bootstrap — the drawn zero / forward / DF overlays reproduce the workspace's
+ * real curve, with an on-chart hover readout off the identical math. The curve model
+ * is stated honestly: only log-linear-on-log-DF is wired here; monotone-convex and
+ * turn / meeting jumps exist server-engine-side but are not on the wire `CurveSet`,
+ * so they render as DISABLED Target affordances, never as fabricated curve math; and
+ * there is no server-side curve publish/versioning, so this surface ships none.
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -25,6 +35,7 @@ import { Panel } from "../components/Panel";
 import { DataGrid } from "../components/DataGrid";
 import { Sparkline } from "../components/Sparkline";
 import { CurveChart, type CurveSeries } from "../viz/CurveChart";
+import { YieldCurve, type CurveNode } from "../viz/YieldCurve";
 import type { ColumnDef } from "../lib/grid";
 import type {
   BrokenDate,
@@ -153,6 +164,24 @@ function switchKind(
   }
 }
 
+/**
+ * Map the bootstrapped pillar ladder onto the `YieldCurve` pillar-node contract:
+ * one dated node per pillar carrying the continuously-compounded zero rate the
+ * SAME bootstrap produced there. The chart reconstructs ln DF(t_i) = −z_i·t_i from
+ * these nodes, so its curve reproduces the workspace's real discount factors at
+ * every pillar, and its log-linear-in-ln(DF) interpolation matches the shipping
+ * default between them. Exported for the wiring test.
+ */
+export function curvePillarNodes(
+  ladder: readonly { readonly tenorYears: number; readonly zero: number }[],
+): CurveNode[] {
+  return ladder.map((r) => ({
+    label: `${r.tenorYears}y`,
+    tenorYears: r.tenorYears,
+    zeroRate: r.zero,
+  }));
+}
+
 const LADDER_COLUMNS: readonly ColumnDef<LadderRow>[] = [
   {
     key: "pillar",
@@ -272,33 +301,6 @@ function PillarEditorMode(): React.ReactElement {
 
   const { discount, samples, error } = built;
 
-  // The three term-structure series, sharing the sampled time grid.
-  const dfSeries = useMemo<CurveSeries[]>(
-    () => [
-      {
-        label: "DF(t)",
-        tone: "offer",
-        points: samples.map((s) => ({ x: s.t, y: s.df })),
-      },
-    ],
-    [samples],
-  );
-  const rateSeries = useMemo<CurveSeries[]>(
-    () => [
-      {
-        label: "zero z(t)",
-        tone: "accent",
-        points: samples.map((s) => ({ x: s.t, y: s.zero })),
-      },
-      {
-        label: "forward f(t)",
-        tone: "bid",
-        points: samples.map((s) => ({ x: s.t, y: s.forward })),
-      },
-    ],
-    [samples],
-  );
-
   // Compact echoes for the headline cards (reuses the shared Sparkline primitive).
   const dfTrace = useMemo(() => samples.map((s) => s.df), [samples]);
   const zeroTrace = useMemo(() => samples.map((s) => s.zero), [samples]);
@@ -323,6 +325,18 @@ function PillarEditorMode(): React.ReactElement {
       df: discountFactorAt(discount, pillarTimes[i]!),
     }));
   }, [discount, pillars, pillarTimes]);
+
+  // The YieldCurve pillar nodes, mapped off the SAME bootstrapped ladder: each
+  // pillar's curve-time (year-fraction from spot) carries the bootstrapped zero
+  // rate, so the drawn zero / forward / DF overlays reproduce the workspace's real
+  // curve under the identical log-linear-in-ln(DF) scheme.
+  const curveNodes = useMemo<CurveNode[]>(
+    () =>
+      curvePillarNodes(
+        ladder.map((r, i) => ({ tenorYears: pillarTimes[i]!, zero: r.zero })),
+      ),
+    [ladder, pillarTimes],
+  );
 
   const ladderGroups = useMemo(
     () => [
@@ -390,6 +404,44 @@ function PillarEditorMode(): React.ReactElement {
             log-linear-on-log-DF
           </span>
         </div>
+
+        {/*
+         * Curve model — the ONLY interpolation this workspace's in-browser
+         * bootstrap implements is log-linear-on-log-DF (`src/data/ratesPricing.ts`),
+         * the server's shipping default. Monotone-convex and turn/meeting jumps are
+         * real server-engine capabilities not yet reachable from here, so they
+         * render disabled + Target-tagged — honest, not faked.
+         */}
+        <fieldset className={styles.modelField}>
+          <legend className={styles.fieldLabel}>Curve model</legend>
+          <div className={styles.modelChoices}>
+            <label className={styles.modelChoice}>
+              <input type="radio" name="curve-interpolation" defaultChecked />
+              <span>Log-linear DF</span>
+              <span className={styles.tagLive}>Live</span>
+            </label>
+            <label className={`${styles.modelChoice} ${styles.modelOff}`}>
+              <input
+                type="radio"
+                name="curve-interpolation"
+                disabled
+                aria-describedby="curve-model-note"
+              />
+              <span>Monotone convex</span>
+              <span className={styles.tagTarget}>Target</span>
+            </label>
+            <label className={`${styles.modelChoice} ${styles.modelOff}`}>
+              <input type="checkbox" disabled aria-describedby="curve-model-note" />
+              <span>Turn / meeting jumps</span>
+              <span className={styles.tagTarget}>Target</span>
+            </label>
+          </div>
+          <p id="curve-model-note" className={styles.modelNote}>
+            Monotone-convex interpolation and turn / meeting-date jumps exist in the
+            server engine (celnet-rates) but are not yet on the wire CurveSet or in
+            this in-browser bootstrap — shown disabled, never approximated.
+          </p>
+        </fieldset>
 
         <div className={styles.pillarHead}>
           <span className={styles.fieldLabel}>Par-OIS pillars</span>
@@ -502,6 +554,18 @@ function PillarEditorMode(): React.ReactElement {
             {error}
           </p>
         )}
+
+        {/*
+         * Scope honesty: curve sets are request-scoped payloads (PriceRates /
+         * AggregateRatesRisk) — celnet has no server-side curve publish/versioning
+         * (the vol-surface SurfaceBook has no curve analog), so this surface ships
+         * no publish/version affordance and states its true scope instead.
+         */}
+        <p className={styles.scopeNote}>
+          Request-scoped curve set: pillar edits reprice this workspace and ride each
+          pricing request — there is no server-side curve publish or versioning
+          (Target: the vol-surface marked-version book has no curve analog yet).
+        </p>
       </Panel>
 
       <Panel className={styles.results} title="Discount curve">
@@ -530,26 +594,13 @@ function PillarEditorMode(): React.ReactElement {
             </dl>
 
             <div className={styles.chart}>
-              <h3 className={styles.chartTitle}>Discount factor</h3>
-              <CurveChart
-                series={dfSeries}
-                xLabel="tenor (years)"
-                formatX={fmtTenorAxis}
-                formatY={(v) => v.toFixed(3)}
-                markerX={horizon}
-              />
-            </div>
-
-            <div className={styles.chart}>
               <h3 className={styles.chartTitle}>
-                Zero & instantaneous forward · %
+                Term structure · zero &amp; forward (%) · discount factor
               </h3>
-              <CurveChart
-                series={rateSeries}
-                xLabel="tenor (years)"
-                formatX={fmtTenorAxis}
-                formatY={fmtRateAxis}
-                markerX={horizon}
+              <YieldCurve
+                nodes={curveNodes}
+                interpolation="log-linear"
+                height={300}
               />
             </div>
 

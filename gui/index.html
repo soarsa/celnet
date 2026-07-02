@@ -4,13 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
-    <!-- Celer brand typeface (Anaheim, 400..800). Preconnect first so the brand
-         face is fetched in parallel; --font-ui is the no-shift fallback. -->
+    <!-- Celer brand typeface (Anaheim, 400..800) + Space Grotesk (display headings/
+         labels, 400;500;600;700) + JetBrains Mono (numerics, 400;500;600). Preconnect
+         first so the faces are fetched in parallel; --font-ui/--font-mono fallbacks
+         avoid layout shift. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Anaheim:wght@400..800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Anaheim:wght@400..800&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
     />
     <!-- Favicon: the Celer pinwheel "C" mark, four coral quadrant petals. -->
     <link

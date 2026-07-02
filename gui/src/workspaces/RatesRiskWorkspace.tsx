@@ -26,7 +26,7 @@ import { Panel } from "../components/Panel";
 import { principalForScope } from "../data/riskView";
 import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import { fmtPnlAdaptive } from "../lib/format";
-import { rampColor } from "../viz/ramp";
+import { KeyRateLadder } from "../viz/KeyRateLadder";
 import type {
   AggregateRatesRiskRequest,
   EntitlementPrincipal,
@@ -614,8 +614,14 @@ function NodeCard({
   node: RatesRiskNode;
   curve: RatesCurveSet;
 }): React.ReactElement {
-  const maxAbs = ladderMaxAbs(node);
-  const ladderSum = node.keyRateLadder.reduce((a, k) => a + k.dv01, 0);
+  // Project the node's wire ladder onto the KeyRateLadder viz: one signed rung per
+  // calibrating pillar, reconciled against the node's parallel net DV01 (the same
+  // additive identity the offline core is held to). The lib component owns the band
+  // scale, the diverging-ramp colour, and the Σ reconciliation annotation.
+  const pillars = node.keyRateLadder.map((bucket) => ({
+    pillar: `${bucket.tenorYears}y`,
+    dv01: bucket.dv01,
+  }));
 
   return (
     <article className={styles.nodeCard}>
@@ -645,39 +651,11 @@ function NodeCard({
         />
       </dl>
 
-      <div className={styles.ladder}>
-        <div className={styles.ladderHead}>
-          <span className={styles.ladderTitle}>Key-rate DV01 ladder</span>
-          <span
-            className={styles.ladderRecon}
-            title="ladder buckets sum to the net DV01 to first order"
-          >
-            Σ {fmtPnlAdaptive(ladderSum)}
-          </span>
-        </div>
-        {node.keyRateLadder.map((bucket) => {
-          // Diverging tint + a centre-anchored bar: positive DV01 grows right of the
-          // zero rail, negative left, magnitude ∝ |dv01| / the node's peak bucket.
-          const frac = Math.abs(bucket.dv01) / maxAbs;
-          const t = 0.5 + (bucket.dv01 / maxAbs) * 0.5;
-          const positive = bucket.dv01 >= 0;
-          return (
-            <div key={bucket.tenorYears} className={styles.ladderRow}>
-              <span className={styles.bucketTenor}>{bucket.tenorYears}y</span>
-              <span className={styles.barTrack}>
-                <span className={styles.barRail} aria-hidden />
-                <span
-                  className={`${styles.barFill} ${positive ? styles.barPos : styles.barNeg}`}
-                  style={{ width: `${frac * 50}%`, background: rampColor(t) }}
-                />
-              </span>
-              <span className={styles.bucketVal}>
-                {fmtPnlAdaptive(bucket.dv01)}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+      <KeyRateLadder
+        data={pillars}
+        parallelDv01={node.netDv01}
+        unit={`${node.ccy}/bp`}
+      />
     </article>
   );
 }
