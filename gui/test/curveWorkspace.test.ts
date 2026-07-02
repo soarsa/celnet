@@ -161,6 +161,41 @@ describe("curvePillarNodes — the YieldCurve wiring off the real bootstrap", ()
   });
 });
 
+describe("CurveWorkspace — model honesty: affordances match the shipped math", () => {
+  // Grounded (celnet graph, 2026-07-01): the in-browser bootstrap implements ONLY
+  // log-linear-on-log-DF; monotone-convex + turn jumps exist server-engine-side
+  // (celnet-rates curve.rs / turns.rs) but are absent from the wire `CurveSet`;
+  // and NO curve publish/versioning exists anywhere (zero hits for CurveBook /
+  // publish_curve / curve_version). The workspace must say exactly that.
+
+  it("offers log-linear DF as the only enabled, selected interpolation — the real bootstrap", () => {
+    render(createElement(CurveWorkspace));
+    const logLinear = screen.getByRole("radio", { name: /log-linear df/i });
+    expect(logLinear).toBeChecked();
+    expect(logLinear).toBeEnabled();
+  });
+
+  it("renders monotone-convex and turn/meeting jumps DISABLED and Target-tagged — never fabricated", () => {
+    render(createElement(CurveWorkspace));
+    const monotone = screen.getByRole("radio", { name: /monotone convex/i });
+    expect(monotone).toBeDisabled();
+    expect(monotone).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /turn \/ meeting jumps/i })).toBeDisabled();
+    // The note carries the WHY: real server-engine capability, wire + browser pending.
+    expect(screen.getByText(/not yet on the wire CurveSet/i)).toBeInTheDocument();
+  });
+
+  it("ships NO publish/version affordance and states the request-scoped truth", () => {
+    render(createElement(CurveWorkspace));
+    expect(screen.queryByRole("button", { name: /publish/i })).toBeNull();
+    // Mockup 14's honesty inversion (draft-v207 / live-v206) must NOT leak here.
+    expect(screen.queryByText(/(draft|live)\s*v\d+/i)).toBeNull();
+    expect(
+      screen.getByText(/no server-side curve publish or versioning/i),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("CurveWorkspace — renders the YieldCurve term structure", () => {
   it("mounts the YieldCurve chart with its zero / forward / DF overlay legend", () => {
     render(createElement(CurveWorkspace));

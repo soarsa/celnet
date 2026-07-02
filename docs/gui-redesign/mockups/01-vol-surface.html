@@ -123,6 +123,14 @@
     font-size:var(--type-caption); padding:3px 10px; border-radius:var(--r-sm); cursor:pointer; font-weight:600; }
   .segbtn button.on { background:var(--bg-raised); color:var(--text-primary); box-shadow:var(--shadow-panel); }
   .legdot { width:18px; height:0; border-top:2px solid; display:inline-block; vertical-align:middle; margin-right:4px; }
+
+  /* surface-family toggle — implied ↔ Dupire local-vol (LIVE) + deferred crypto strike-axis (TARGET).
+     Uses the ONE shared .htag vocab (celer.css) — no local honesty-tag variants. */
+  .surfview { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; margin-bottom:var(--space-3); }
+  .surfview .sepv { width:1px; height:16px; background:var(--grid-line); }
+  .segbtn button[disabled] { opacity:0.5; cursor:not-allowed; }
+  .surffoot { display:flex; flex-direction:column; gap:4px; margin-top:var(--space-3); font-size:var(--type-caption); color:var(--text-tertiary); }
+  .surffoot .num { color:var(--text-secondary); }
 </style>
 </head>
 <body data-surf="shaded">
@@ -219,7 +227,7 @@
     <!-- SIGNATURE: 3D vol-surface mesh -->
     <section class="panel">
       <header>
-        <span class="headline">Vol surface · EUR/USD <span class="dim" style="font-size:11px">— tenor × delta, height &amp; Viridis = implied vol</span></span>
+        <span class="headline">Vol surface · EUR/USD <span class="dim" id="surfHeadDim" style="font-size:11px">— tenor × delta, height &amp; Viridis = implied vol</span></span>
         <span style="display:flex; gap:var(--space-4); align-items:center">
           <span class="slicepick" id="slicepick" title="Pick the tenor slice — brushes the surface, the smile panel and the residual heatmap">
             <button data-t="0">1W</button><button data-t="1">2W</button><button data-t="2" class="on">1M</button><button data-t="3">3M</button><button data-t="4">6M</button><button data-t="5">1Y</button><button data-t="6">2Y</button>
@@ -230,12 +238,29 @@
         </span>
       </header>
       <div class="body">
+        <!-- surface-family toggle: the Dupire LOCAL-VOL view is LIVE (CAPABILITY-MAP §B2 — FX/metal,
+             celnet-exotics/src/leverage.rs LocalVolSurface::local_vol, backs the LSV leverage);
+             the crypto STRIKE-AXIS surface is a DEFERRED TARGET (no marked crypto smile — flat vol),
+             so its entry is disabled and NEVER rendered with fabricated marks. -->
+        <div class="surfview" role="group" aria-label="Surface family">
+          <span class="label">Surface</span>
+          <span class="segbtn" id="surfview">
+            <button class="on" data-v="implied" aria-pressed="true" title="Marked implied-vol surface — the calibrated delta-space smile families above">Implied σ</button>
+            <button data-v="local" aria-pressed="false" title="Dupire local-vol extraction from THIS marked smile — LocalVolSurface::local_vol (celnet-exotics/src/leverage.rs), gated by dupire_matches_hand_derived_smile_closed_form; the LSV leverage calibrates on it (lsv.rs calibrates_to_celnet_surface_and_reprices)">Local σ · Dupire</button>
+          </span>
+          <span class="htag live" title="CAPABILITY-MAP §B2 — Dupire LIVE (FX/metal): celnet-exotics/src/leverage.rs LocalVolSurface::local_vol; backs the LSV leverage">LIVE</span>
+          <span class="sepv" aria-hidden="true"></span>
+          <span class="segbtn"><button disabled aria-disabled="true" title="DEFERRED (CAPABILITY-MAP §C6) — crypto has NO marked smile and prices off flat vol today; the planned surface is strike-pillar (not Δ-space)">BTC/USD · strike-axis</button></span>
+          <span class="htag target" title="Crypto strike-axis surface — deferred fast-follow (CAPABILITY-MAP §C6); entry stays disabled rather than rendering a fabricated crypto smile">TARGET</span>
+          <span style="flex:1"></span>
+          <span class="muted" id="surfviewnote" style="font-size:11px">σ_imp(Δ,T) · marked delta-space pillars</span>
+        </div>
         <div class="surfstage">
           <div class="surfwrap">
             <!-- Mesh, wireframe, vertices, term/smile slices, arb badge and axes are ALL rendered from the
                  ONE shared smile generator below (fix-4) — the surface's visual relief is a display gain on
                  the z(vol) term in isoRaw(), never inflated smile curvature. -->
-            <svg class="chart" viewBox="0 0 582 400" height="384" aria-label="3D implied-volatility surface, tenor by delta, coloured by Viridis">
+            <svg class="chart" id="surfSvg" viewBox="0 0 582 400" height="384" aria-label="3D implied-volatility surface, tenor by delta, coloured by Viridis">
               <g id="surfMesh"></g>
               <g id="surfWire"></g>
               <g id="surfVtx"></g>
@@ -248,7 +273,7 @@
             </svg>
           </div>
           <div class="vlegend">
-            <span class="ttl">Implied vol %</span>
+            <span class="ttl" id="vlegTitle">Implied vol %</span>
             <div class="ramp">
               <div class="bar"></div>
               <div class="scale" id="vlegScale"><span>9.9</span><span>9.2</span><span>8.6</span><span>7.9</span><span>7.2</span></div>
@@ -257,6 +282,10 @@
             <div class="lk"><span class="legdot" style="border-color:var(--accent); border-top-style:dashed"></span><i>term ATM</i></div>
             <div class="lk" style="color:var(--danger)">▧ arb-flagged cell · 1W wing</div>
           </div>
+        </div>
+        <div class="surffoot">
+          <span><span class="htag live">LIVE</span> Dupire local vol — <span class="num">LocalVolSurface::local_vol</span> (celnet-exotics/leverage.rs) extracts σ_loc from the marked smile; the LSV leverage calibrates on it (<span class="num">lsv.rs</span> particle method) · FX &amp; metals</span>
+          <span><span class="htag target">TARGET</span> Crypto strike-axis surface — deferred: no marked crypto smile, prices off flat vol today; strike-pillar axis (not Δ-space) once marked</span>
         </div>
       </div>
     </section>
@@ -417,6 +446,7 @@
   var DLT = ["10ΔP","25ΔP","35ΔP","ATM","35ΔC","25ΔC","10ΔC"];
   var ND  = 7;                 // 7 delta pillars
   var curTenor = 2;           // 1M selected
+  var curView = 'implied';    // 'implied' | 'local' (Dupire) — surface-family toggle
 
   /* ===== ONE shared smile generator — drives BOTH the 3D surface AND the 2D smile (fix-4).
      atm/curv/skew are the single source of smile shape; the surface only exaggerates HEIGHT
@@ -428,6 +458,15 @@
   var hs   = [0.16,0.12,0.10,0.09,0.10,0.12,0.17];          // market half-spread band
   function kk(j){ return -1 + 2*j/(ND-1); }
   function smileVol(t,j){ return atm[t] + curv[t]*kk(j)*kk(j) - skew[t]*kk(j); }
+
+  /* Dupire LOCAL-VOL view (LIVE — CAPABILITY-MAP §B2, FX/metal): in code the extraction is
+     LocalVolSurface::local_vol (celnet-exotics/src/leverage.rs, gated by
+     dupire_matches_hand_derived_smile_closed_form) and it backs the LSV leverage
+     (lsv.rs calibrates_to_celnet_surface_and_reprices). The mockup's display transform stays on
+     the ONE shared generator — σ_loc ≈ atm + 2·(σ_imp − atm), the short-dated "local skew ≈ 2×
+     implied skew" rule (Gatheral, The Volatility Surface) — derived, never separately fabricated. */
+  function localVol(t,j){ return atm[t] + 2*(smileVol(t,j)-atm[t]); }
+  function surfVol(t,j){ return curView==='local' ? localVol(t,j) : smileVol(t,j); }
 
   /* residuals implied − model (vol pts), per tenor × delta — SSVI baseline.
      Ground truth: the 1W wings (10ΔP,25ΔP) carry the biggest positive residual → butterfly<0. */
@@ -531,17 +570,22 @@
   /* ============ FIX-4: 3D surface — data-driven from smileVol, height gain in the projection ============ */
   var SNX=7,SNZ=7;                 // tenors × deltas
   var SURF_GAIN=1.7;              // display-only z(vol) exaggeration — NOT a curvature change
-  function isoRaw(i,j){ var u=i/(SNX-1), v=j/(SNZ-1); return [u-v, 0.52*(u+v) - SURF_GAIN*smileVol(i,j)]; }
-  var SXS=[],SYS=[];
-  for(var _i=0;_i<SNX;_i++) for(var _j=0;_j<SNZ;_j++){ var _p=isoRaw(_i,_j); SXS.push(_p[0]); SYS.push(_p[1]); }
-  var sminx=Math.min.apply(0,SXS), smaxx=Math.max.apply(0,SXS), sminy=Math.min.apply(0,SYS), smaxy=Math.max.apply(0,SYS);
+  function isoRaw(i,j){ var u=i/(SNX-1), v=j/(SNZ-1); return [u-v, 0.52*(u+v) - SURF_GAIN*surfVol(i,j)]; }
+  var SXS=[],SYS=[],sminx=0,smaxx=1,sminy=0,smaxy=1;
   var SVBW=560,SVBH=400,smL=58,smR=44,smT=34,smB=54;
   function SP(i,j){ var p=isoRaw(i,j);
     return [ smL+(p[0]-sminx)/(smaxx-sminx)*(SVBW-smL-smR),
              smT+(p[1]-sminy)/(smaxy-sminy)*(SVBH-smT-smB) ]; }
-  // Viridis colour = TRUE implied vol (height uses the gain, colour uses raw vol)
+  // Viridis colour = TRUE vol of the ACTIVE view (height uses the gain, colour uses raw vol);
+  // the projection + colour range re-derive per view — slices/axes/badge all ride SP().
   var VMIN=Infinity,VMAX=-Infinity;
-  for(var a0=0;a0<SNX;a0++) for(var b0=0;b0<SNZ;b0++){ var vv0=smileVol(a0,b0); if(vv0<VMIN)VMIN=vv0; if(vv0>VMAX)VMAX=vv0; }
+  function recomputeProjection(){
+    SXS=[]; SYS=[];
+    for(var i=0;i<SNX;i++) for(var j=0;j<SNZ;j++){ var p=isoRaw(i,j); SXS.push(p[0]); SYS.push(p[1]); }
+    sminx=Math.min.apply(0,SXS); smaxx=Math.max.apply(0,SXS); sminy=Math.min.apply(0,SYS); smaxy=Math.max.apply(0,SYS);
+    VMIN=Infinity; VMAX=-Infinity;
+    for(var a0=0;a0<SNX;a0++) for(var b0=0;b0<SNZ;b0++){ var vv0=surfVol(a0,b0); if(vv0<VMIN)VMIN=vv0; if(vv0>VMAX)VMAX=vv0; }
+  }
   var SEQ=['--seq-1','--seq-2','--seq-3','--seq-4','--seq-5','--seq-6'];
   function seqFill(v){ var f=(v-VMIN)/(VMAX-VMIN); var b=Math.floor(f*5.999); if(b<0)b=0; if(b>5)b=5; return 'var('+SEQ[b]+')'; }
 
@@ -550,7 +594,7 @@
     var quads=[];
     for(var i=0;i<SNX-1;i++) for(var j=0;j<SNZ-1;j++){
       var A=SP(i,j),B=SP(i+1,j),C=SP(i+1,j+1),D=SP(i,j+1);
-      var vavg=(smileVol(i,j)+smileVol(i+1,j)+smileVol(i+1,j+1)+smileVol(i,j+1))/4;
+      var vavg=(surfVol(i,j)+surfVol(i+1,j)+surfVol(i+1,j+1)+surfVol(i,j+1))/4;
       quads.push({pp:[A,B,C,D], f:seqFill(vavg), y:(A[1]+B[1]+C[1]+D[1])/4, i:i, j:j});
     }
     quads.sort(function(m,n){ return m.y-n.y; });
@@ -590,11 +634,14 @@
     document.getElementById('surfSlice').setAttribute('points', pts.trim());
     document.getElementById('surfSliceDots').innerHTML=dots;
   }
-  /* FIX-5: real danger badge with a leader line to the flagged 1W wing */
+  /* FIX-5: real danger badge with a leader line to the flagged 1W wing.
+     The same wing is flagged in BOTH views: butterfly < 0 (negative implied density) is exactly
+     where the Dupire local variance goes negative/undefined. */
   function buildArbBadge(){
     var wing=SP(0,0);                               // 1W 10ΔP wing apex
-    var label='⚠ butterfly &lt; 0 · 1W 10ΔP/25ΔP';
-    var w=190,h=18,padX=8;
+    var isLoc=curView==='local';
+    var label=isLoc ? '⚠ local var &lt; 0 · 1W 10ΔP/25ΔP' : '⚠ butterfly &lt; 0 · 1W 10ΔP/25ΔP';
+    var w=212,h=18,padX=8;
     var bx=Math.min(wing[0]+24, SVBW+22-w), by=Math.max(wing[1]-32, 6);
     var g='';
     g+='<line class="arblead" x1="'+(bx+12).toFixed(1)+'" y1="'+(by+h).toFixed(1)+'" x2="'+wing[0].toFixed(1)+'" y2="'+wing[1].toFixed(1)+'"/>';
@@ -627,6 +674,31 @@
       [].forEach.call(document.querySelectorAll('#surfmode button'), function(x){ x.classList.remove('on'); });
       b.classList.add('on'); document.body.setAttribute('data-surf', b.dataset.m);
     });
+  });
+
+  // surface-family toggle — implied ↔ Dupire local-vol (LIVE). The crypto strike-axis entry is a
+  // disabled TARGET outside this group (no marked crypto smile — nothing honest to render).
+  var VIEWNOTE={
+    implied:'σ_imp(Δ,T) · marked delta-space pillars',
+    local:'σ_loc(K,T) at Δ-pillar strikes · extracted from THIS marked smile · backs LSV leverage'
+  };
+  var VIEWDIM={
+    implied:'— tenor × delta, height & Viridis = implied vol',
+    local:'— tenor × delta, height & Viridis = Dupire local vol (from the marked smile)'
+  };
+  function setView(v){
+    curView=v;
+    recomputeProjection(); buildSurface(); moveSurfSlice(curTenor); renderLegend();
+    var dim=document.getElementById('surfHeadDim'); if(dim) dim.textContent=VIEWDIM[v];
+    var note=document.getElementById('surfviewnote'); if(note) note.textContent=VIEWNOTE[v];
+    var svg=document.getElementById('surfSvg');
+    if(svg) svg.setAttribute('aria-label', (v==='local'?'3D Dupire local-volatility surface':'3D implied-volatility surface')+', tenor by delta, coloured by Viridis');
+    [].forEach.call(document.querySelectorAll('#surfview button'), function(b){
+      var on=b.dataset.v===v; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on?'true':'false');
+    });
+  }
+  [].forEach.call(document.querySelectorAll('#surfview button'), function(b){
+    b.addEventListener('click', function(){ if(!b.disabled && b.dataset.v!==curView) setView(b.dataset.v); });
   });
 
   // model picker — re-fit residuals/RMSE so the heatmap AND smile move with the model (fix-3)
@@ -682,12 +754,19 @@
     });
   });
 
-  // legend scale from the true vol range
-  (function(){ var el=document.getElementById('vlegScale'); if(el){ var s=''; for(var k=0;k<5;k++){ var v=VMAX-(VMAX-VMIN)*k/4; s+='<span>'+v.toFixed(1)+'</span>'; } el.innerHTML=s; } })();
+  // legend scale + title from the ACTIVE view's true vol range
+  function renderLegend(){
+    var el=document.getElementById('vlegScale');
+    if(el){ var s=''; for(var k=0;k<5;k++){ var v=VMAX-(VMAX-VMIN)*k/4; s+='<span>'+v.toFixed(1)+'</span>'; } el.innerHTML=s; }
+    var tt=document.getElementById('vlegTitle');
+    if(tt) tt.textContent = curView==='local' ? 'Local vol % · Dupire' : 'Implied vol %';
+  }
 
   // init
   recomputeModel();
+  recomputeProjection();
   buildSurface();
+  renderLegend();
   renderDiff();
   refreshMeta('calibrated 2m ago');
   document.getElementById('modelmeta').setAttribute('title', MODELDESC[curModel]);

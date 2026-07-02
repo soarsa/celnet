@@ -72,6 +72,84 @@
   color: var(--text-tertiary);
 }
 
+/* --- curve model: the LIVE scheme + disabled TARGET affordances ------------ */
+
+.modelField {
+  border: 0;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.modelField legend {
+  padding: 0;
+}
+
+.modelChoices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.modelChoice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  font-size: var(--type-callout);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.modelOff,
+.modelOff input {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+
+.tagLive,
+.tagTarget {
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0 var(--space-1);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hairline);
+}
+
+.tagLive {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+}
+
+.tagTarget {
+  color: var(--text-tertiary);
+  border-style: dashed;
+}
+
+.modelNote {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+/* --- request-scoped honesty note (no publish/versioning exists) ------------ */
+
+.scopeNote {
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
 /* --- editable pillar ladder ----------------------------------------------- */
 
 .pillarHead {

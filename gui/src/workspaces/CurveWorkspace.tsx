@@ -18,6 +18,20 @@
  * interpolates ln(DF) log-linearly from those nodes — the same scheme as the
  * bootstrap — the drawn zero / forward / DF overlays reproduce the workspace's real
  * curve, with an on-chart hover readout off the identical math.
+ *
+ * HONESTY AFFORDANCES (grounded in the celnet graph, 2026-07-01, per
+ * CRITIQUE-ROUND2): (a) there is NO curve publish/versioning anywhere in celnet —
+ * zero graph hits for `CurveBook` / `publish_curve` / `curve_version`; the
+ * server-side versioned book exists only for vol surfaces
+ * (`celnet-server/src/surface_book.rs`, `SurfaceBook`/`MarkedVersion`) with no curve
+ * analog — so this surface deliberately ships NO publish/version affordance and
+ * says so in a scope note. (b) Monotone-convex interpolation
+ * (`celnet-rates/src/curve.rs`, Hagan–West family) and turn / meeting-date jumps
+ * (`celnet-rates/src/turns.rs`) DO exist in the server engine, but the wire
+ * `CurveSet` message carries only currency + reference date + OIS pillars — no
+ * interpolation or turn fields — and this in-browser bootstrap implements
+ * log-linear-on-log-DF only; both options are therefore rendered as DISABLED
+ * Target affordances, never as fabricated curve math.
  */
 
 import { useCallback, useMemo, useState } from "react";
@@ -219,6 +233,44 @@ export function CurveWorkspace(): React.ReactElement {
           </span>
         </div>
 
+        {/*
+         * Curve model — the ONLY interpolation this workspace's in-browser
+         * bootstrap implements is log-linear-on-log-DF (`src/data/ratesPricing.ts`),
+         * the server's shipping default. Monotone-convex and turn/meeting jumps are
+         * real server-engine capabilities not yet reachable from here (see the
+         * header doc), so they render disabled + Target-tagged — honest, not faked.
+         */}
+        <fieldset className={styles.modelField}>
+          <legend className={styles.fieldLabel}>Curve model</legend>
+          <div className={styles.modelChoices}>
+            <label className={styles.modelChoice}>
+              <input type="radio" name="curve-interpolation" defaultChecked />
+              <span>Log-linear DF</span>
+              <span className={styles.tagLive}>Live</span>
+            </label>
+            <label className={`${styles.modelChoice} ${styles.modelOff}`}>
+              <input
+                type="radio"
+                name="curve-interpolation"
+                disabled
+                aria-describedby="curve-model-note"
+              />
+              <span>Monotone convex</span>
+              <span className={styles.tagTarget}>Target</span>
+            </label>
+            <label className={`${styles.modelChoice} ${styles.modelOff}`}>
+              <input type="checkbox" disabled aria-describedby="curve-model-note" />
+              <span>Turn / meeting jumps</span>
+              <span className={styles.tagTarget}>Target</span>
+            </label>
+          </div>
+          <p id="curve-model-note" className={styles.modelNote}>
+            Monotone-convex interpolation and turn / meeting-date jumps exist in the
+            server engine (celnet-rates) but are not yet on the wire CurveSet or in
+            this in-browser bootstrap — shown disabled, never approximated.
+          </p>
+        </fieldset>
+
         <div className={styles.pillarHead}>
           <span className={styles.fieldLabel}>Par-OIS pillars</span>
           {isDirty && (
@@ -280,6 +332,18 @@ export function CurveWorkspace(): React.ReactElement {
             {error}
           </p>
         )}
+
+        {/*
+         * Scope honesty: curve sets are request-scoped payloads (PriceRates /
+         * AggregateRatesRisk) — celnet has no server-side curve publish/versioning
+         * (the vol-surface SurfaceBook has no curve analog), so this surface ships
+         * no publish/version affordance and states its true scope instead.
+         */}
+        <p className={styles.scopeNote}>
+          Request-scoped curve set: pillar edits reprice this workspace and ride each
+          pricing request — there is no server-side curve publish or versioning
+          (Target: the vol-surface marked-version book has no curve analog yet).
+        </p>
       </Panel>
 
       <Panel className={styles.results} title="Discount curve">

@@ -22,21 +22,26 @@
     font-size:var(--type-callout); color:var(--text-tertiary); cursor:pointer; border:1px solid transparent; white-space:nowrap; }
   .steps .step .no { font-family:var(--font-mono); font-size:10px; width:16px; height:16px; border-radius:var(--r-full);
     display:grid; place-items:center; background:oklch(1 0 0 / 0.08); color:var(--text-tertiary); }
+  /* the WHOLE spine is TARGET (no server-side curve versioning/publish exists) — every state
+     stays grey/dashed target styling; only the no-arb VETO (honest local math) may go danger */
   .steps .step.done { color:var(--text-secondary); }
-  .steps .step.done .no { background:var(--bid); color:oklch(0.2 0.02 160); }
-  .steps .step.on { background:var(--bg-raised); color:var(--text-primary); font-weight:600; box-shadow:var(--shadow-panel); border-color:var(--grid-line); }
-  .steps .step.on .no { background:var(--accent); color:#fff; }
+  .steps .step.done .no { background:oklch(1 0 0 / 0.14); color:var(--text-secondary); }
+  .steps .step.on { background:var(--bg-raised); color:var(--text-secondary); font-weight:600; border:1px dashed var(--grid-line); }
+  .steps .step.on .no { background:oklch(1 0 0 / 0.14); color:var(--text-secondary); }
   .steps .step.blocked.on { border-color:var(--danger); }
-  .steps .step.blocked.on .no { background:var(--danger); }
+  .steps .step.blocked.on .no { background:var(--danger); color:#fff; }
   .steps .sep { color:var(--text-tertiary); opacity:0.4; }
-  .gatever { font-family:var(--font-mono); font-size:var(--type-caption); }
+  .gatever { font-family:var(--font-mono); font-size:var(--type-caption); color:var(--text-tertiary); }
+  .gatever b { color:var(--text-secondary); }
   .invariant { font-size:var(--type-caption); color:var(--text-tertiary); display:inline-flex; align-items:center; gap:5px; }
-  .invariant .lk { color:var(--accent); }
-  .btn.okpub { background:var(--bid); border-color:transparent; color:oklch(0.2 0.02 160); font-weight:600; }
-  .btn.okpub:hover { filter:brightness(1.05); }
+  .invariant .lk { color:var(--text-tertiary); }
+  .btn.okpub { background:oklch(1 0 0 / 0.05); border:1px dashed var(--grid-line); color:var(--text-secondary); font-weight:600; cursor:default; }
+  .btn.okpub:hover { border-color:var(--text-tertiary); color:var(--text-primary); }
+  .btn.okpub .pp, .btn.blocked .pp { font-size:9px; font-weight:600; letter-spacing:0.03em; color:var(--text-tertiary); }
   .btn.blocked { background:var(--danger); border-color:var(--danger); color:#fff; cursor:not-allowed; font-weight:600; }
   .btn.blocked:hover { filter:brightness(1.06); }
   .btn.blocked .lk, .btn.okpub .lk { font-weight:700; }
+  .btn.blocked .pp { color:oklch(1 0 0 / 0.75); }
 
   /* ---- curve-set picker (analog of 01's 5-smile model picker) ---- */
   .model { flex-wrap:wrap; row-gap:var(--space-3); }
@@ -139,13 +144,13 @@
       <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
       <span class="wm">Celnet</span>
     </div>
-    <span class="scope" title="Scope everything to a desk & book">Desk <b>FX Vol</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>G10-A</b> <span class="car">▾</span></span>
+    <span class="scope" title="Scope everything to a desk & book — the scope bus propagates the asset class to every panel and the context rail">Desk <b>Rates</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>USD-OIS</b> <span class="car">▾</span></span>
     <div class="cmd">
       <span class="glyph num">⌘K</span>
       <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
     </div>
     <span class="lic" title="Licensed asset classes for this desk"><span class="t">FX</span><span class="t">Metal</span><span class="t">Rates</span><span class="t off" title="Not licensed — request access">Eq</span><span class="t off" title="Not licensed — request access">Cmdty</span><span class="t off" title="Not licensed — request access">Crypto</span></span>
-    <span class="pill">A. Marchetti · Vol Desk</span>
+    <span class="pill">A. Marchetti · Rates Desk</span>
   </header>
 
   <!-- ============ CAPABILITY RAIL (scoped: Vol Surface ▸ Curves active under the Rates scope —
@@ -217,11 +222,11 @@
       <span class="invariant" title="TARGET invariant, ported from the vol-surface SurfaceBook: every bootstrapped curve is stamped and immutable; live pricing/risk/FIX may only reference a PUBLISHED CurveSet version — never an in-flight par-mark edit.">
         <span class="lk">⛭</span> published-curve-immutable invariant</span>
       <span style="flex:1"></span>
-      <span class="gatever">draft <b class="num">v207</b> <span class="dim">· prev</span> <b class="num">v206</b> <span class="dim">· sentinel v0=unbootstrapped</span></span>
+      <span class="gatever" title="TARGET versioning — no server-side versioned curve store exists; draft/prev-live numbering is the SurfaceBook pattern, port pending."><span class="htag target">TARGET</span> draft <b class="num">v207</b> <span class="dim">· prev</span> <b class="num">v206</b> <span class="dim">· sentinel v0=unbootstrapped · versioned store port pending</span></span>
       <span class="pill" title="TARGET — today the CurveSet is a request-scoped payload sent per PriceRates / AggregateRatesRisk call; a publish that pins ONE version across pricing, risk and FIX is the SurfaceBook pattern, port pending.">
         <span class="htag target">TARGET</span> CurveSet ▸ price · risk · FIX</span>
-      <button class="btn okpub" id="publishBtn" title="TARGET publish flow (SurfaceBook pattern, port pending). No-arb / monotonicity gate PASSES — discount factors strictly decreasing, all instantaneous forwards positive. Publish would stamp v207 across pricing, risk and FIX.">
-        <span class="lk">✓</span> Publish v207</button>
+      <button class="btn okpub" id="publishBtn" title="TARGET publish flow (SurfaceBook pattern, port pending) — not a live control. No-arb / monotonicity gate PASSES — discount factors strictly decreasing, all instantaneous forwards positive. A publish would stamp v207 across pricing, risk and FIX once the versioned curve store is ported.">
+        <span class="lk">✓</span> Publish v207 <span class="pp">◷ port pending</span></button>
     </div>
 
     <!-- SIGNATURE: overlaid zero / instantaneous-forward / discount-factor term structure -->
@@ -313,7 +318,7 @@
         <div class="body">
           <div id="dv01Ladder">
             <div class="muted" style="font-size:11px; margin-bottom:8px">
-              FI risk is a <b>pillar Jacobian</b> — key-rate DV01 (USD /bp) of book <span class="num">G10-A</span> to each
+              FI risk is a <b>pillar Jacobian</b> — key-rate DV01 (USD /bp) of book <span class="num">USD-OIS</span> to each
               calibrating node, not a single Greek vector. <span class="num">ois_risk</span> · <span class="num">key_rate_ladder</span>.
             </div>
             <div id="ladBody"></div>
@@ -360,14 +365,14 @@
 
   </main>
 
-  <!-- ============ CONTEXT RAIL (verbatim from shell) ============ -->
+  <!-- ============ CONTEXT RAIL (scope-bus: rates book, matching 15-rates-ticket) ============ -->
   <aside class="ctx" aria-label="Desk context">
     <section>
-      <div class="grouphdr"><span class="label">Contribution</span></div>
-      <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
-      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
-      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>
-      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">0.26v</span></div>
+      <div class="grouphdr"><span class="label">Contribution · rates RFS</span><span class="htag target">TARGET</span></div>
+      <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.4bp</span></div>
+      <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.7bp</span></div>
+      <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">1.1bp</span></div>
+      <div class="dim" style="font-size:var(--type-micro); margin-top:4px">No rates RFS/streaming contract on the wire yet — FX-style tiered OIS-rate streaming is the design target.</div>
     </section>
 
     <section>
@@ -379,20 +384,22 @@
     </section>
 
     <section>
-      <div class="grouphdr"><span class="label">Book risk · G10-A</span><a>drill →</a></div>
-      <div class="kv"><span class="k">Net Δ (USD)</span><span class="v num">+1.28mm</span></div>
-      <div class="kv"><span class="k">Vega (/vol)</span><span class="v num">+184k</span></div>
-      <div class="kv"><span class="k">1d VaR 99%</span><span class="v num neg">−312k</span></div>
-      <div class="kv"><span class="k">Limits</span><span class="v"><span class="rag g"></span>within</span></div>
+      <div class="grouphdr"><span class="label">Rates book · USD-OIS</span><span class="htag live" title="RiskService.AggregateRatesRisk → celnet-risk-fleet::rates additive fan-in">LIVE</span><a>drill →</a></div>
+      <div class="kv"><span class="k">Net PV (USD)</span><span class="v num pos">+1.86mm</span></div>
+      <div class="kv"><span class="k">DV01 (USD/bp)</span><span class="v num neg">−1.7k</span></div>
+      <div class="kv"><span class="k">Key-rate peak</span><span class="v num">10Y · −3.1k</span></div>
+      <div class="kv"><span class="k">DV01 limit</span><span class="v"><span class="rag g"></span>within</span></div>
+      <div class="kv"><span class="k">1d rates VaR</span><span class="v"><span class="htag target">TARGET</span> <span class="num dim">—</span></span></div>
+      <div class="dim" style="font-size:var(--type-micro); margin-top:4px"><span class="num">AggregateRatesRisk</span> · net PV/PV01/DV01 + key-rate ladder over the booked netting set (reconciles to the ladder at left); no VaR measure on the rates wire yet.</div>
     </section>
 
     <section>
       <div class="grouphdr"><span class="label">Activity</span></div>
       <div class="tape">
-        <div class="ev"><span class="ts">12:04:07</span><span>published EUR/USD 1M ▸ T1–3</span><span class="pos">▲</span></div>
-        <div class="ev"><span class="ts">12:04:03</span><span>RFQ ▸ USD/JPY 3M · quoted</span><span class="dim">✓</span></div>
-        <div class="ev"><span class="ts">12:03:58</span><span>auto-quote GBP/USD 2W</span><span class="dim">✓</span></div>
-        <div class="ev"><span class="ts">12:03:44</span><span>pull XAU/USD · feed stale</span><span class="neg">▼</span></div>
+        <div class="ev"><span class="ts">12:04:07</span><span>re-bootstrapped USD-SOFR · 10 pillars</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:04:03</span><span>desk RFQ ▸ USD-SOFR 2Y OIS · quoted</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:58</span><span>client accept ▸ 10Y OIS · booked to store</span><span class="dim">✓</span></div>
+        <div class="ev"><span class="ts">12:03:44</span><span>booked USD-SOFR 5Y OIS ▸ rates blotter</span><span class="pos">▲</span></div>
       </div>
     </section>
   </aside>
@@ -625,8 +632,8 @@
     if(ok){
       steps[2].classList.remove('blocked'); steps[2].classList.remove('on'); steps[2].classList.add('done');
       steps[3].classList.add('on');
-      pub.className='btn okpub'; pub.innerHTML='<span class="lk">✓</span> Publish v207';
-      pub.title='TARGET publish flow (SurfaceBook pattern, port pending). No-arb / monotonicity gate PASSES — DF strictly decreasing, all forwards positive. Publish would stamp v207 across pricing, risk and FIX.';
+      pub.className='btn okpub'; pub.innerHTML='<span class="lk">✓</span> Publish v207 <span class="pp">◷ port pending</span>';
+      pub.title='TARGET publish flow (SurfaceBook pattern, port pending) — not a live control. No-arb / monotonicity gate PASSES — DF strictly decreasing, all forwards positive. A publish would stamp v207 across pricing, risk and FIX once the versioned curve store is ported.';
       note.innerHTML='<span class="pos">✓ gate clear</span> — v207 eligible to publish <span class="dim">(TARGET flow — SurfaceBook pattern, port pending)</span>. Break monotonicity by marking a long pillar through a shorter one and the gate vetoes the publish (analog of the vol-surface butterfly veto).';
     } else {
       steps[2].classList.remove('done'); steps[2].classList.add('blocked'); steps[2].classList.add('on');
@@ -819,9 +826,9 @@
       var s=this; s.innerHTML='<span class="lk">⊘</span> re-mark the flagged pillar';
       setTimeout(function(){ s.innerHTML='<span class="lk">⊘</span> blocked · negative forward'; }, 1500); return;
     }
-    var s2=this; s2.innerHTML='<span class="lk">✓</span> published v207'; s2.className='btn okpub';
-    document.getElementById('gateNote').innerHTML='<span class="pos">✓ published v207</span> <span class="dim">(TARGET flow — SurfaceBook pattern, port pending)</span> — pinned across pricing · risk · FIX. Draft advances to v208.';
-    setTimeout(function(){ s2.innerHTML='<span class="lk">✓</span> Publish v208'; }, 1600);
+    var s2=this; s2.innerHTML='<span class="lk">✓</span> published v207 <span class="pp">◷ preview</span>'; s2.className='btn okpub';
+    document.getElementById('gateNote').innerHTML='<span class="dim">◷ publish previewed — TARGET flow (SurfaceBook pattern, port pending); nothing was stamped.</span> A real publish would pin v207 across pricing · risk · FIX and advance the draft to v208.';
+    setTimeout(function(){ s2.innerHTML='<span class="lk">✓</span> Publish v208 <span class="pp">◷ port pending</span>'; }, 1600);
   });
   // re-bootstrap
   document.getElementById('rebootBtn').addEventListener('click', function(){ syncPillarsFromRows(); renderChart(); });
