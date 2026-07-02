@@ -39,14 +39,25 @@ use celnet_exotics::{PerpetualInputs, VarSwapContext, perpetual_greeks, perpetua
 use celnet_linear::{LinearInputs, LinearTerms, Side as LinearSide, ndf::Ndf as LinearNdf, swap};
 
 use celnet_commodity_vanilla::{CommodityInputs, Margining as CommodityMargining};
+use celnet_crypto_vanilla::SettlementStyle as CryptoSettlementStyle;
+// The equity + crypto option-input types are used only by the frozen `price_cross_asset`
+// C1 byte-identity oracle (see below). The production cross-asset path prices through
+// the `Priceable` leaves in `contract.rs`, which carry their own leaf imports.
+#[cfg(test)]
 use celnet_crypto_vanilla::{
     InverseInputs as CryptoInverseInputs, LinearInputs as CryptoLinearInputs,
-    SettlementStyle as CryptoSettlementStyle, inverse as crypto_inverse, linear as crypto_linear,
+    inverse as crypto_inverse, linear as crypto_linear,
 };
+#[cfg(test)]
 use celnet_equity_vanilla::EquityInputs;
 
 mod contract;
+mod engine;
 mod engines;
+
+/// The unified pricing dispatch (ADR-0017 Phase C1) — the one internal engine every
+/// edge RPC and internal caller routes through. See [`engine`].
+pub use engine::PricingEngine;
 
 /// Activate user-extensible analytics on this pricing worker (architecture item D
 /// — dormant-crate activation): install the worker's house-model
@@ -486,8 +497,12 @@ fn exotic_greeks(
 
 /// Price a wire [`Instrument`] against a market context and conventions.
 ///
-/// Resolves a delta-keyed strike to an absolute strike, dispatches the product
-/// oneof, and returns the full Greek set with the resolved strike and vol.
+/// A thin façade over the unified [`PricingEngine::price`] (ADR-0017 Phase C1) — the
+/// single internal dispatch that runs the options guard cascade and routes each
+/// instrument to its [`Priceable`](celnet_core::contract::Priceable) leaf through the
+/// correct market resolver. Retained as the shared entry the RFQ / RFS / scenario /
+/// FIX edges (and the pricing test suite) call; the `Price` edge RPC calls the engine
+/// directly.
 ///
 /// # Errors
 ///
@@ -498,142 +513,7 @@ pub fn price_instrument(
     market: &WireMarketContext,
     conv: &ConventionSet,
 ) -> Result<Priced, PriceError> {
-    let expiry = instrument.expiry_years;
-    // Term-shape guard. Every product needs a positive finite expiry EXCEPT the
-    // perpetual arm, which has NO expiry by construction: its arm requires
-    // `expiry_years == 0` exactly, enforced by the contract's canonical
-    // validator (`celnet_proto::convert::validate_perpetual_terms`) and mapped
-    // to `INVALID_ARGUMENT` at the boundary — never silently ignored.
-    if matches!(
-        instrument.product.as_ref(),
-        Some(instrument::Product::PerpetualOption(_))
-    ) {
-        celnet_proto::convert::validate_perpetual_terms(expiry)
-            .map_err(wire_error_to_price_error)?;
-    } else if expiry <= 0.0 || !expiry.is_finite() {
-        return Err(PriceError::Domain("expiry_years must be positive"));
-    }
-
-    // Asset-class routing FIRST (ADR-0008): branch on the decoded underlying before
-    // the FX carry guard. An equity / commodity / digital-asset underlying is priced
-    // by the cross-asset cost-of-carry leaves (`celnet-{equity,commodity,crypto}-
-    // vanilla`), which ACCEPT the generalized `CostOfCarry { b }` carry; that path
-    // never touches the FX two-rate guard below. An FX / metal underlying (or an
-    // absent underlying, as a pure-context price request carries) falls through to
-    // the UNCHANGED FX path + its guard, so the FX/metal contract stays
-    // byte-identical. The underlying is decoded for routing only — the FX path's own
-    // FX-option validity guard (`validate_fx_underlying`) is unaffected.
-    if let Some(wire_underlying) = instrument.underlying.as_ref()
-        && let Ok(underlying) = celnet_types::Underlying::try_from(wire_underlying.clone())
-        && is_cross_asset(&underlying)
-    {
-        let product = instrument
-            .product
-            .as_ref()
-            .ok_or(PriceError::EmptyProduct)?;
-        // The LSV booking model is the FX vol-surface engine (local-stochastic vol
-        // calibrated to the FX smile); it does not apply to a cross-asset
-        // cost-of-carry leaf. Selecting it for a cross-asset underlying is refused
-        // with a typed error, never silently downgraded to the analytic leaf.
-        let model =
-            celnet_proto::PricingModel::try_from(instrument.pricing_model).map_err(|_| {
-                PriceError::UnknownEnum {
-                    kind: "PricingModel",
-                    tag: instrument.pricing_model,
-                }
-            })?;
-        if matches!(model, celnet_proto::PricingModel::LocalStochVol) {
-            return Err(PriceError::UnsupportedModel {
-                model: "LOCAL_STOCH_VOL",
-                product: product_name(product),
-            });
-        }
-        return price_cross_asset(&underlying, instrument, product, market, expiry);
-    }
-
-    // Carry-producing-market architecture (no silent fallback): the FX pricing path
-    // prices the FX two-rate carry only. An explicitly-supplied generalized
-    // (cost-of-carry) carry is refused here with a typed error — never read as FX
-    // with r_for = 0 and a wrong forward. (An absent carry stays the FX default,
-    // exactly as before; this guard also covers the LSV path it dispatches to.)
-    if market
-        .carry
-        .as_ref()
-        .is_some_and(|c| c.fx_r_for().is_none())
-    {
-        return Err(PriceError::Domain(
-            "market carry must be the FX two-rate arm",
-        ));
-    }
-    let product = instrument
-        .product
-        .as_ref()
-        .ok_or(PriceError::EmptyProduct)?;
-
-    // Booking-model selector (CLAUDE.md rule 9: a pricing directive, not an API
-    // version). An absent or DEFAULT model takes the analytic path below
-    // byte-identically; LOCAL_STOCH_VOL routes the supported products through the
-    // LSV engine and rejects every other product clearly.
-    let model = celnet_proto::PricingModel::try_from(instrument.pricing_model).map_err(|_| {
-        PriceError::UnknownEnum {
-            kind: "PricingModel",
-            tag: instrument.pricing_model,
-        }
-    })?;
-    if matches!(model, celnet_proto::PricingModel::LocalStochVol) {
-        return price_instrument_lsv(product, market, expiry);
-    }
-
-    // Decode → guard → DISPATCH (architecture item C): the FX/analytic product
-    // path is a single static dispatch into the per-family `ProductEngine`
-    // registry (`engines.rs`). `dispatch_live` threads the calling worker's
-    // installed house-model registry onto the engine context (architecture item D
-    // — dormant-crate activation): when a pricing model is registered the analytic
-    // vanilla arm prices through the plugin-host registry, otherwise every arm is
-    // the verbatim native static dispatch, byte-identical to the former product
-    // `match`.
-    engines::dispatch_live(product, instrument, market, expiry, conv)
-}
-
-/// Price an FX/metal **vanilla** instrument through the unified pricing **contract**
-/// ([`celnet_core::contract`]) — the leaf-level re-seat of the vanilla arm
-/// (ADR-0017 Phase A1, `docs/plan/CENTRAL-CORE-UNIFICATION.md`). The market is
-/// resolved by [`contract::FxSurfaceResolver`] (wrapping the marked-surface
-/// snapshot) into a [`celnet_core::contract::ResolvedMarket`], and the FX
-/// [`engines::VanillaEngine`] prices it via [`celnet_core::contract::Priceable`].
-///
-/// This is **byte-identical** to the vanilla arm of [`price_instrument`] (gated by
-/// `contract::tests::fx_vanilla_reseat_is_byte_identical`): it calls the identical
-/// [`resolve_strike`] + [`price_vanilla_leg`], sourcing the FX two rates + resolved
-/// scalar vol from `market` (the frozen-pin single-`exp` arithmetic) and the
-/// delta-key solver's conventions from the resolved market (critique F4).
-///
-/// `price_instrument`'s full pre-dispatch guard cascade is unchanged; this is the
-/// leaf contract entry the platform migrates the remaining leaves onto in later
-/// phases (A2: cross-asset; B: linear FI). `market` is the resolved context the
-/// edge produces (for a pinned request, after `resolve_pinned_vol` has stamped the
-/// marked-surface vol).
-///
-/// # Errors
-///
-/// [`PriceError`] if the instrument does not carry an FX vanilla product or carries
-/// an out-of-domain input.
-pub fn price_vanilla_via_contract(
-    instrument: &Instrument,
-    market: &WireMarketContext,
-    conv: &ConventionSet,
-) -> Result<Priced, PriceError> {
-    use celnet_core::contract::{MarketResolver, Priceable};
-    let resolver = contract::FxSurfaceResolver::from_market(market, conv);
-    let resolved = resolver.resolve(&())?;
-    let ctx = engines::EngineCtx {
-        instrument,
-        market,
-        expiry: instrument.expiry_years,
-        conv,
-        plugin_models: None,
-    };
-    <engines::VanillaEngine as Priceable>::price(&engines::VanillaEngine, &resolved, &ctx)
+    PricingEngine::price(instrument, market, conv)
 }
 
 // ===========================================================================
@@ -798,15 +678,20 @@ pub(crate) fn streamed_rate_sensitivities(
     }
 }
 
-/// Route a cross-asset (equity / commodity / digital-asset) instrument to its
-/// generalized cost-of-carry leaf. The cross-asset option products are the
-/// vanilla (equity/commodity/crypto options are `Product::Vanilla` over a
-/// non-FX underlying), the perpetual American (same carry seam, no expiry) and
-/// the listed-future option (asset-class-agnostic Black-76 on the quoted
-/// future); every other product on a cross-asset underlying is refused with a
-/// typed error rather than silently mispriced on the FX exotic path. The
-/// caller has already rejected the LSV booking model (the FX vol-surface
-/// engine) for cross-asset underlyings.
+/// The **frozen pre-C1 cross-asset dispatch**, preserved as the independent
+/// byte-identity oracle for the unified engine's cross-asset arm (ADR-0017 Phase C1).
+///
+/// This is the exact native routing that `price_instrument` used before C1: it routes
+/// a cross-asset (equity / commodity / digital-asset) instrument to its generalized
+/// cost-of-carry leaf directly (the vanilla over a non-FX underlying, the perpetual
+/// American, and the listed-future Black-76), refusing every other product / a
+/// cross-asset delta key / an FX-metal underlying with a typed error. Production now
+/// routes this through the [`PricingEngine`]'s cost-of-carry [`Priceable`] leaves; this
+/// frozen copy is retained ONLY as the `#[cfg(test)]` oracle those leaves are asserted
+/// `to_bits`-identical against (`engine::tests::unified_engine_matches_pre_c1_dispatch`
+/// and `contract::tests::cross_asset_reseat_is_byte_identical`) — never re-running the
+/// production engine as its own check.
+#[cfg(test)]
 fn price_cross_asset(
     underlying: &Underlying,
     instrument: &Instrument,
@@ -935,127 +820,22 @@ fn price_cross_asset(
     }
 }
 
-/// Price a cross-asset (equity / commodity / digital-asset) instrument through the
-/// unified pricing **contract** ([`celnet_core::contract`]) — the leaf-level
-/// re-seat of the cross-asset arms (ADR-0017 **Phase A2**,
-/// `docs/plan/CENTRAL-CORE-UNIFICATION.md`); the cross-asset companion of
-/// [`price_vanilla_via_contract`].
+/// Price an FX/metal **exotic** instrument through the FX exotic **contract seam** —
+/// the [`Priceable`](celnet_core::contract::Priceable) leaf dispatch (ADR-0017 Phase
+/// A2b), retained as the entry that keeps the FX exotic `Priceable` leaves +
+/// [`contract::FxSurfaceResolver`] live and proven (they are the Phase-C2
+/// [`RiskMeasure`](celnet_core::contract::RiskMeasure) risk seam).
 ///
-/// The market is resolved by [`contract::CrossAssetCarryResolver`] into a
-/// cross-asset [`celnet_core::contract::ResolvedMarket`] — a single discount leg
-/// `r` and **no foreign leg** (the net carry `b` is a scalar on the generalized
-/// carry arm, not a second discount curve), plus the resolved scalar spot + vol —
-/// and the arm's [`celnet_core::contract::Priceable`] leaf engine
-/// ([`contract::EquityVanillaEngine`] / [`contract::CommodityVanillaEngine`] /
-/// [`contract::CryptoLinearEngine`] / [`contract::CryptoInverseEngine`] /
-/// [`contract::CrossAssetPerpetualEngine`] / [`contract::CrossAssetListedFutureEngine`])
-/// prices it.
-///
-/// This is **byte-identical** to the cross-asset path of [`price_instrument`]
-/// (which dispatches through [`price_cross_asset`]), gated by
-/// `contract::tests::cross_asset_reseat_is_byte_identical`: it selects the same
-/// leaf per arm, sourcing the net carry from `market` via [`cost_of_carry`] (the
-/// frozen cost-of-carry arithmetic — the `ResolvedMarket` carries only the single
-/// discount leg, mirroring the A1 FX byte-identity rationale) and the resolved
-/// scalar spot + vol from the resolved market.
-///
-/// [`price_cross_asset`]'s guard cascade — the per-arm product routing, the
-/// cross-asset delta-key refusal, the crypto settlement-style selection, and the
-/// exotic / FX-metal refusals — is preserved as pre-dispatch; routing is unchanged,
-/// only the leaf gains the contract seam (critique F2).
-///
-/// # Errors
-///
-/// [`PriceError`] if the instrument does not carry a cross-asset underlying /
-/// product or carries an out-of-domain input.
-pub fn price_cross_asset_via_contract(
-    instrument: &Instrument,
-    market: &WireMarketContext,
-    conv: &ConventionSet,
-) -> Result<Priced, PriceError> {
-    use celnet_core::contract::{MarketResolver, Priceable};
-
-    let expiry = instrument.expiry_years;
-    let wire_underlying = instrument
-        .underlying
-        .as_ref()
-        .ok_or(PriceError::MissingField("instrument.underlying"))?;
-    let underlying = celnet_types::Underlying::try_from(wire_underlying.clone())
-        .map_err(|_| PriceError::Domain("instrument.underlying is malformed"))?;
-    let product = instrument
-        .product
-        .as_ref()
-        .ok_or(PriceError::EmptyProduct)?;
-
-    // The cross-asset ResolvedMarket the leaf engines price against: a single
-    // discount leg `r`, no foreign leg, the resolved scalar spot + vol.
-    let resolver = contract::CrossAssetCarryResolver::from_market(market, conv);
-    let resolved = resolver.resolve(&())?;
-    let ctx = engines::EngineCtx {
-        instrument,
-        market,
-        expiry,
-        conv,
-        plugin_models: None,
-    };
-
-    // Mirror `price_cross_asset`'s product/underlying routing leaf-by-leaf through
-    // the `Priceable` seam; the guard/refusals are the verbatim pre-dispatch cascade.
-    match product {
-        instrument::Product::Vanilla(_) => match underlying {
-            Underlying::Equity(_) => contract::EquityVanillaEngine.price(&resolved, &ctx),
-            Underlying::Commodity(_) => contract::CommodityVanillaEngine.price(&resolved, &ctx),
-            Underlying::DigitalAsset(_) => {
-                match decode_settlement_style(instrument.settlement_style)? {
-                    CryptoSettlementStyle::Linear => {
-                        contract::CryptoLinearEngine.price(&resolved, &ctx)
-                    }
-                    CryptoSettlementStyle::InverseCoin => {
-                        contract::CryptoInverseEngine.price(&resolved, &ctx)
-                    }
-                }
-            }
-            Underlying::Fx(_) | Underlying::Metal(_) => Err(PriceError::Domain(
-                "internal: FX/metal underlying routed to the cross-asset path",
-            )),
-        },
-        instrument::Product::PerpetualOption(_) => {
-            contract::CrossAssetPerpetualEngine.price(&resolved, &ctx)
-        }
-        instrument::Product::ListedFutureOption(_) => {
-            contract::CrossAssetListedFutureEngine.price(&resolved, &ctx)
-        }
-        other => Err(PriceError::UnsupportedModel {
-            model: "DEFAULT",
-            product: product_name(other),
-        }),
-    }
-}
-
-/// Price an FX/metal **exotic** (every non-vanilla FX product family) instrument
-/// through the unified pricing **contract** ([`celnet_core::contract`]) — the
-/// leaf-level re-seat of the exotic arms (ADR-0017 **Phase A2b**,
-/// `docs/plan/CENTRAL-CORE-UNIFICATION.md`); the exotic companion of
-/// [`price_vanilla_via_contract`], completing the OPTIONS side of the contract.
-///
-/// The market is resolved by [`contract::FxSurfaceResolver`] into an FX two-rate
-/// [`celnet_core::contract::ResolvedMarket`] (the same handle the A1 vanilla entry
-/// builds), and each product oneof arm is dispatched to its
-/// [`celnet_core::contract::Priceable`] leaf engine in [`engines`]. This is the
-/// **contract-native twin of [`engines::dispatch`]**: it mirrors that FX/analytic
-/// registry arm-for-arm through the `Priceable` seam, so every exotic price/greek
-/// is **byte-identical** to the [`price_instrument`] dispatch route (gated by
-/// `tests::exotic_reseat_is_byte_identical`) — each leaf calls the identical
-/// [`ProductEngine::price`] against the same [`engines::EngineCtx`].
-///
-/// Like [`engines::dispatch`], this is the **post-routing** FX-path dispatcher: the
-/// caller performs the asset-class / term-shape / booking-model routing exactly as
-/// [`price_instrument`] does before [`engines::dispatch_live`] (a cross-asset
-/// underlying belongs on [`price_cross_asset_via_contract`]; a window barrier under
-/// the DEFAULT model is refused identically through both routes). The `Vanilla` arm
-/// routes to the native [`engines::VanillaEngine`] — the plugin-host model override
-/// is A1's concern — so the dispatch stays total and mirrors the registry. The
-/// `ExoticLegPricer` VaR seam and plugin-host dispatch are untouched.
+/// The production FX/analytic price path is the plugin-host [`engines::dispatch_live`]
+/// terminal (preserved verbatim by [`PricingEngine::price`]); this seam mirrors
+/// `engines::dispatch` arm-for-arm through the `Priceable` leaves, each calling the
+/// identical [`ProductEngine::price`](engines::ProductEngine) against the same
+/// [`engines::EngineCtx`], so every exotic price/greek is **byte-identical** to that
+/// dispatch (gated by `tests::exotic_reseat_is_byte_identical`). The `Vanilla` arm
+/// routes to the native [`engines::VanillaEngine`]; the
+/// [`celnet_core::carry::ExoticLegPricer`] VaR seam and plugin-host dispatch are
+/// untouched. Retiring this seam is deferred to C2, which wires the leaves' `risk`
+/// into the risk cube (until then it would orphan them).
 ///
 /// # Errors
 ///

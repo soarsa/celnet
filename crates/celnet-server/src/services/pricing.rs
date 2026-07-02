@@ -20,8 +20,8 @@ use celnet_proto::{
 };
 use tonic::{Request, Response, Status};
 
-use crate::pricer::{ConventionSet, price_instrument};
-use crate::rates_pricing::{RatesPriceError, price_rates};
+use crate::pricer::{ConventionSet, PricingEngine};
+use crate::rates_pricing::RatesPriceError;
 use crate::readiness::ReadinessGate;
 use crate::services::forward::{Serve, route_underlying, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
@@ -133,7 +133,7 @@ impl PricingService for PricingEdge {
             &market,
         )?;
 
-        let priced = price_instrument(&instrument, &effective_market, &conv)
+        let priced = PricingEngine::price(&instrument, &effective_market, &conv)
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         Ok(Response::new(PriceResponse {
@@ -158,7 +158,7 @@ impl PricingService for PricingEdge {
         // Linear-rates pricing is a pure calculation against the caller-supplied
         // `CurveSet` — there is no per-pair market read to route — so every
         // replica computes the identical result; no fleet forwarding is needed.
-        let result = price_rates(&req).map_err(|e| match e {
+        let result = PricingEngine::price_rates(&req).map_err(|e| match e {
             // A bootstrap failure on otherwise-valid input is an internal numeric
             // fault; every other variant is a malformed request.
             RatesPriceError::Bootstrap(_) => Status::internal(e.to_string()),
