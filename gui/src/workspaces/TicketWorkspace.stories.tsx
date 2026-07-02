@@ -12,22 +12,24 @@
  * src/design/tokens.css via the Aurora cascade that preview.ts layers in.
  */
 
-import type { Decorator, Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react";
 import { AppProvider } from "../app/AppContext";
 import { createMockTransport } from "../data/mockSource";
 import { TicketWorkspace } from "./TicketWorkspace";
 
-/** Wrap every story in the real app context against the deterministic mock. */
-const withAppContext: Decorator = (Story) => (
-  <AppProvider transport={createMockTransport()}>
-    <Story />
-  </AppProvider>
-);
-
 const meta = {
   title: "Workspaces/TicketWorkspace",
   component: TicketWorkspace,
-  decorators: [withAppContext],
+  // Wrap every story in the real app context against the deterministic mock.
+  // Inlined (not a typed `Decorator` const) so it infers against the ticket's own
+  // optional props (`initialStructure`) without a StrictArgs conflict.
+  decorators: [
+    (Story) => (
+      <AppProvider transport={createMockTransport()}>
+        <Story />
+      </AppProvider>
+    ),
+  ],
   tags: ["autodocs"],
   parameters: {
     // The ticket card fills ~640px of vertical space at rest; give it room.
@@ -47,7 +49,7 @@ const meta = {
 
 export default meta;
 
-type Story = StoryObj<typeof meta>;
+type Story = StoryObj<typeof TicketWorkspace>;
 
 /**
  * Resting state — the ticket at startup, EUR/USD pair, 1M tenor, Risk Reversal.

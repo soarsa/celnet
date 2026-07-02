@@ -39,7 +39,7 @@ import {
 } from "../../src/data/seed";
 import { instrumentToWire } from "../../src/data/wsCodec";
 import type { Instrument, StrategyKind } from "../../src/data/contract";
-import type { AnyProductSpec, ProductBuildCtx } from "../../src/products";
+import type { ProductBuildCtx, ProductSpec } from "../../src/products";
 
 const CTX: ProductBuildCtx = {
   pair: { base: "EUR", quote: "USD" },
@@ -53,7 +53,7 @@ const CTX: ProductBuildCtx = {
   today: { year: 2026, month: 6, day: 8 },
 };
 
-const SPECS: readonly AnyProductSpec[] = [
+const SPECS: readonly ProductSpec<StrategyInputs>[] = [
   vanillaSpec,
   riskReversalSpec,
   strangleSpec,

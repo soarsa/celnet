@@ -38,6 +38,22 @@ test.describe("Celnet GUI — axe a11y (zero serious/critical)", () => {
     });
   }
 
+  test("Fixed-income OIS ticket (the FI pricing fold) has no serious/critical a11y violations", async ({
+    page,
+  }) => {
+    await openLive(page);
+    // fe-fi-migration #3: the `rates` rail opens the SHARED ticket in the OIS
+    // family. Price it so axe scans the priced result (PV / par / PV01 / DV01 + the
+    // key-rate DV01 ladder) and the new direction/tenor selectors, whose active
+    // state uses the axe-AA high-contrast pattern (text-primary + accent underline),
+    // NOT the resting inputs alone.
+    const pane = await gotoWorkspace(page, "rates");
+    await pane.getByRole("button", { name: "Price OIS" }).click();
+    await pane.getByText("Key-rate DV01 ladder").waitFor();
+    await page.waitForTimeout(500);
+    await expectNoSeriousA11y(page, "Fixed-income OIS ticket");
+  });
+
   test("Cube heatmap view has no serious/critical a11y violations", async ({ page }) => {
     await openLive(page);
     await gotoCube(page);

@@ -248,7 +248,9 @@ export function StructureGallery({
                       >
                         <div className={styles.cardHead}>
                           <span className={styles.cardLabel}>{spec.label}</span>
-                          <span className={styles.chip}>{spec.assetClass}</span>
+                          <span className={styles.chip}>
+                            {spec.family === "rates" ? "FI" : spec.assetClass}
+                          </span>
                         </div>
                         <span className={styles.cardSummary}>
                           {dimmed ? st.reason : spec.summary}

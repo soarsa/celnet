@@ -16,6 +16,9 @@ const RAIL_LABEL: Record<string, string> = {
   risk: "Risk",
   book: "Book",
   curve: "Curve",
+  // fe-fi-migration #3: the `rates` rail opens the SHARED ticket seeded to the
+  // fixed-income (OIS) family (the standalone RatesWorkspace was folded in).
+  rates: "Rates",
 };
 
 /**
@@ -73,6 +76,7 @@ const RAIL_DOMAIN: Record<keyof typeof RAIL_LABEL, string> = {
   risk: "FX Options",
   book: "Fixed Income",
   curve: "Fixed Income",
+  rates: "Fixed Income",
 };
 
 /**

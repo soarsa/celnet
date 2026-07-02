@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
+import { configuredLicense } from "../lib/commands";
 import type {
   BrokenDate,
   Instrument,
@@ -30,17 +31,22 @@ import type {
   MultiDealerQuote,
   PricingModel,
   Quote,
+  RatesCurveSet,
+  RatesPricingResult,
   Tenor,
 } from "../data/contract";
+import { pillarTenorLabel } from "../data/contract";
 import { Panel } from "../components/Panel";
 import { Button } from "../components/Button";
 import { DatePicker } from "../components/DatePicker";
 import { DealerPanel } from "../components/DealerPanel";
+import { DataGrid } from "../components/DataGrid";
 import { TwoWayQuote } from "../components/TwoWayQuote";
 import { GreeksStrip } from "../components/GreeksStrip";
 import { ConventionRow } from "../components/ConventionChip";
 import {
   PRODUCT_REGISTRY,
+  isRatesSpec,
   specById,
   StructureGallery,
   PayoffChart,
@@ -49,17 +55,23 @@ import {
   type ProductBuildCtx,
 } from "../products";
 import { crossAssetInputsFor, crossAssetSpec } from "../products/crossAsset";
+import type { OisInputs } from "../products/ois";
 import { PayoffDiagram, type PayoffLeg } from "../viz/PayoffDiagram";
 import { forward as forwardRate } from "../data/pricing";
 import { impliedVolForInstrument, sampleSurface } from "../data/surface";
 import {
+  fmtPnlAdaptive,
   fmtPremiumPct,
   fmtVol,
   sideVerb,
 } from "../lib/format";
+import type { ColumnDef } from "../lib/grid";
 import { nowNanos } from "../hooks/useClock";
 import { samePair } from "../lib/universe";
 import styles from "./TicketWorkspace.module.css";
+
+/** The resting booking-model set — the fixed-income family has no option booking model. */
+const DEFAULT_ALLOWED_MODELS: readonly PricingModel[] = ["DEFAULT"];
 
 /** A trader-facing label for a booking model (purpose-named; provenance in docs only). */
 function pricingModelLabel(m: PricingModel): string {
@@ -269,9 +281,30 @@ function previewStrike(inputs: unknown, atmForward: number): number {
   return atmForward;
 }
 
-export function TicketWorkspace(): React.ReactElement {
+/** Props for the shared ticket. */
+export interface TicketWorkspaceProps {
+  /**
+   * The structure the ticket opens seeded to. Absent ⇒ the default FX structure
+   * (a 25Δ risk reversal). The Fixed-Income rail entry-point passes the OIS id so
+   * the `rates` row opens the SHARED ticket in the fixed-income family (the pricing
+   * analogue of the #1 Risk / #2 Market-Data lens entry-points), rather than a
+   * separate FI pricing silo. Clamped by the gallery to an available family.
+   */
+  readonly initialStructure?: string;
+}
+
+export function TicketWorkspace({
+  initialStructure,
+}: TicketWorkspaceProps = {}): React.ReactElement {
   const app = useApp();
-  const [structure, setStructure] = useState<string>("RISK_REVERSAL");
+  // The primary ticket is the default (FX/cross-asset) `ticket` rail — the one that
+  // owns the shell-global grammar: it consumes the one-shot cross-asset ticket target
+  // (a universe underlier drill) and the ⏎/⌘⏎ keyboard. A FAMILY entry-point mount
+  // (the `rates` rail, seeded to OIS) is a focused surface: it must NOT hijack a
+  // cross-asset target away to the FX vanilla, and must not double-bind the global
+  // keyboard (both ticket panes are persistently mounted at once).
+  const isPrimaryTicket = initialStructure === undefined;
+  const [structure, setStructure] = useState<string>(initialStructure ?? "RISK_REVERSAL");
   const [expiryMode, setExpiryMode] = useState<ExpiryMode>("TENOR");
   // Standard-tenor selection (index into TENOR_CHOICES); default 1M.
   const [tenorIdx, setTenorIdx] = useState(5);
@@ -282,6 +315,10 @@ export function TicketWorkspace(): React.ReactElement {
   // panel and the single-dealer quote are mutually exclusive priced states).
   const [rfqMode, setRfqMode] = useState<RfqMode>("SINGLE");
   const [dealerPanel, setDealerPanel] = useState<MultiDealerQuote | null>(null);
+  // The fixed-income (rates) priced result — the OIS PV / par rate / PV01 / DV01 /
+  // key-rate ladder from `priceRates`. Mutually exclusive with the option quote/panel
+  // (a given active family produces exactly one of these).
+  const [ratesResult, setRatesResult] = useState<RatesPricingResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [fill, setFill] = useState<string | null>(null);
   // The per-family input state, keyed by structure id and seeded from each spec's
@@ -298,11 +335,12 @@ export function TicketWorkspace(): React.ReactElement {
   // own `toInstrument`.
   const [pricingModel, setPricingModel] = useState<PricingModel>("DEFAULT");
 
-  // Drop any priced state (single-dealer quote AND multi-dealer panel) — every
-  // contract edit (structure/expiry/inputs/model) invalidates both equally.
+  // Drop any priced state (option quote, multi-dealer panel AND the rates result) —
+  // every contract edit (structure/expiry/inputs/model) invalidates all equally.
   const clearPriced = useCallback(() => {
     setQuote(null);
     setDealerPanel(null);
+    setRatesResult(null);
   }, []);
 
   // Universe → ticket pre-target: a non-FX underlier selection arms a one-shot
@@ -312,6 +350,11 @@ export function TicketWorkspace(): React.ReactElement {
   // the inverse of `crossAssetUnderlying`; no duplicated wire-building) — then
   // consume the target. FX selections never arm it, so FX flows are untouched.
   useEffect(() => {
+    // Only the primary ticket consumes the cross-asset target — a family entry-point
+    // (the OIS-seeded `rates` ticket) leaves it for the FX ticket, so a metal/crypto
+    // universe drill re-points the FX ticket (not the FI one) and the target is
+    // consumed exactly once across the two persistently-mounted ticket panes.
+    if (!isPrimaryTicket) return;
     const target = app.ticketTarget;
     if (!target) return;
     const seeded = crossAssetInputsFor(target.underlying, target.settlementStyle);
@@ -321,7 +364,7 @@ export function TicketWorkspace(): React.ReactElement {
       clearPriced();
     }
     app.clearTicketTarget();
-  }, [app, app.ticketTarget, clearPriced]);
+  }, [app, app.ticketTarget, clearPriced, isPrimaryTicket]);
 
   const today = useMemo(() => todayUtc(), []);
   // Selectable broken-date window: from spot (~2 calendar days) out to ~3 years.
@@ -390,13 +433,21 @@ export function TicketWorkspace(): React.ReactElement {
     ],
   );
 
-  // The active product family and its current inputs. `effectiveCtx` clamps the
-  // trader's booking-model selection into the family's allowed set, so switching
-  // to a product that does not support LSV silently falls back to DEFAULT (never
-  // sends a model the server would reject with `UnsupportedModel`).
+  // The active product family and its current inputs. The registry is a discriminated
+  // union: the FX/cross-asset OPTIONS family (`optionSpec`) builds a wire `Instrument`
+  // priced via `requestQuote`; the fixed-income RATES family (`ratesSpec`) builds an
+  // `OisInstrument` priced via `priceRates`. Every family-specific read below narrows
+  // to one arm — the option pricing flow is byte-identical, the rates flow is additive.
   const spec = specById(structure)!;
   const inputs = inputsByStructure[structure];
-  const allowedModels = spec.allowedModels;
+  const ratesSpec = isRatesSpec(spec) ? spec : null;
+  const optionSpec = isRatesSpec(spec) ? null : spec;
+  const isRates = ratesSpec !== null;
+  // `effectiveCtx` clamps the trader's booking-model selection into the option
+  // family's allowed set (the rates family has no booking model — DEFAULT), so
+  // switching to a product that does not support LSV silently falls back to DEFAULT
+  // (never sends a model the server would reject with `UnsupportedModel`).
+  const allowedModels = optionSpec?.allowedModels ?? DEFAULT_ALLOWED_MODELS;
   const effectiveModel: PricingModel = allowedModels.includes(pricingModel)
     ? pricingModel
     : allowedModels[0]!;
@@ -421,19 +472,42 @@ export function TicketWorkspace(): React.ReactElement {
   const executeDeniedTitle = capabilityDenialTitle("execute", "fx_options");
   const streamDeniedTitle = capabilityDenialTitle("stream", "fx_options");
 
+  // Fixed-income (rates) gating (fe-fi-migration #3): the OIS family is gated on
+  // `fixed_income` exactly as the standalone rates surface + the FI rail were —
+  // discoverable only when the class is viewable AND licensed (`view` +
+  // `configuredLicense`, the #1/#2 lens-gate order), priced only with `price`.
+  // license×entitlement decides whether the OIS card appears in the gallery; the
+  // `price` capability disables the price button with the honest denial tooltip
+  // (never hidden — the server still enforces).
+  const licensed = useMemo(() => configuredLicense(), []);
+  const fiVisible = app.auth.can("view", "fixed_income") && licensed("fixed_income");
+  const canPriceFi = app.auth.can("price", "fixed_income");
+  const priceFiDeniedTitle = capabilityDenialTitle("price", "fixed_income");
+  // The gallery catalogue: the FX/cross-asset families always, plus the fixed-income
+  // families only when the class is viewable + licensed (so a non-FI session never
+  // sees an OIS card it cannot reach — the nav layer already hides the FI rail).
+  const galleryCatalogue = useMemo(
+    () => (fiVisible ? PRODUCT_REGISTRY : PRODUCT_REGISTRY.filter((s) => !isRatesSpec(s))),
+    [fiVisible],
+  );
+
   // A trader-facing expiry label that is honest for every mode: a declared
   // no-expiry family (the perpetual) reads "PERP" (it has no expiry date to
   // label); a broken date reads as its calendar date, never coerced into a
   // tenor band.
-  const expiryLabel = spec.noExpiry
-    ? "PERP"
-    : expiryMode === "DATE" && brokenDate
-      ? fmtBrokenDate(brokenDate)
-      : tenorChoice.label;
+  const expiryLabel = isRates
+    ? "OIS"
+    : optionSpec?.noExpiry
+      ? "PERP"
+      : expiryMode === "DATE" && brokenDate
+        ? fmtBrokenDate(brokenDate)
+        : tenorChoice.label;
 
   // In DATE mode the trader must pick a date before there is a horizon to
-  // price; a no-expiry family has no horizon to pick, so it is always ready.
-  const expiryReady = spec.noExpiry !== undefined || expiryMode === "TENOR" || brokenDate !== null;
+  // price; a no-expiry family (and the rates family, whose tenor is an input, not
+  // a shell expiry) has no horizon to pick, so it is always ready.
+  const expiryReady =
+    isRates || optionSpec?.noExpiry !== undefined || expiryMode === "TENOR" || brokenDate !== null;
 
   // Offline (the in-app mock) the LSV engine is NOT available — it is a server-side
   // model (CLAUDE.md: no faked LSV numbers). Detect offline via the documented
@@ -442,7 +516,12 @@ export function TicketWorkspace(): React.ReactElement {
   const isOffline = !app.transport.label.startsWith("live");
   const lsvUnavailableOffline = isOffline && effectiveModel === "LOCAL_STOCH_VOL";
 
-  const instrument = spec.toInstrument(inputs as never, effectiveCtx);
+  // The option family's wire instrument (null for the rates family, which prices
+  // an `OisInstrument` via `priceRates` instead — see `requestQuote`). Every
+  // option-only consumer below is guarded on it, so the FX flow is unchanged.
+  const instrument = optionSpec
+    ? optionSpec.toInstrument(inputs as never, effectiveCtx)
+    : null;
 
   // Total-variance interpolation in time of the marked surface's ATM term
   // structure at the (broken) expiry — σ²(t)·t linear in t, the standard
@@ -486,11 +565,38 @@ export function TicketWorkspace(): React.ReactElement {
   // legs — not a flat ATM. Falls back to the pair's ATM only when the surface
   // has not been marked yet. Uses the ticket's own tenor (expiryYears) so the
   // face reflects the selected expiry's smile, not the surface's default tenor.
-  const faceVol = app.surface
-    ? impliedVolForInstrument(app.surface, instrument, app.pairCtx.market)
-    : app.pairCtx.market.vol;
+  const faceVol =
+    instrument && app.surface
+      ? impliedVolForInstrument(app.surface, instrument, app.pairCtx.market)
+      : app.pairCtx.market.vol;
 
   const requestQuote = useCallback(async () => {
+    // Fixed-income (rates) path: build the OIS + price it via `priceRates` against
+    // the family's calibrated curve (PV / par / PV01 / DV01 / key-rate ladder). The
+    // SAME transport seam the standalone rates surface used — one contract, two
+    // transports (offline in-app bootstrap ≡ the live `price_rates` mirror).
+    if (ratesSpec) {
+      // Capability guard (the button is disabled and the server enforces).
+      if (!canPriceFi) return;
+      if (!structureLawful) return;
+      setBusy(true);
+      setFill(null);
+      const ois = ratesSpec.toOisInstrument(inputs as never, effectiveCtx);
+      try {
+        const priced = await app.transport.priceRates(ratesSpec.curve, ois);
+        setRatesResult(priced);
+        setQuote(null);
+        setDealerPanel(null);
+      } catch (err) {
+        // A pricing failure (server refusal, transport deadline, or an offline
+        // validation throw) is a real, surfaced error — never a fabricated price.
+        setRatesResult(null);
+        setFill(`Pricing failed — ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     // Capability guard (belt-and-suspenders; the button is disabled and the
     // server enforces): never dial a price the signed-in user may not request.
     if (!canPrice) return;
@@ -505,9 +611,12 @@ export function TicketWorkspace(): React.ReactElement {
     // inline by the family's input block (and the button is disabled), so a
     // race-through here simply never dials.
     if (!structureLawful) return;
+    // The rates family returned above; from here the active family is the option
+    // family, which builds a wire `Instrument` (never reached for a rates spec).
+    if (!optionSpec) return;
     setBusy(true);
     setFill(null);
-    const inst = spec.toInstrument(inputs as never, effectiveCtx);
+    const inst = optionSpec.toInstrument(inputs as never, effectiveCtx);
     try {
       if (rfqMode === "PANEL") {
         // Fan the RFQ across the edge's LP panel; the reply is the ranked lines.
@@ -539,12 +648,15 @@ export function TicketWorkspace(): React.ReactElement {
   }, [
     app,
     spec,
+    ratesSpec,
+    optionSpec,
     inputs,
     effectiveCtx,
     lsvUnavailableOffline,
     rfqMode,
     structureLawful,
     canPrice,
+    canPriceFi,
   ]);
 
   const accept = useCallback(
@@ -609,8 +721,11 @@ export function TicketWorkspace(): React.ReactElement {
     [app, dealerPanel, canExecute],
   );
 
-  // ⏎ requests, ⌘⏎ accepts the offered side (keyboard-first, §4.1).
+  // ⏎ requests, ⌘⏎ accepts the offered side (keyboard-first, §4.1). Bound only by
+  // the primary ticket — the shell mounts both ticket panes at once, so a family
+  // entry-point mount must not double-fire the window keyboard grammar.
   useEffect(() => {
+    if (!isPrimaryTicket) return;
     const onKey = (e: KeyboardEvent) => {
       if (app.paletteOpen) return;
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -626,7 +741,7 @@ export function TicketWorkspace(): React.ReactElement {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [accept, requestQuote, app.paletteOpen, expiryReady, structureLawful]);
+  }, [accept, requestQuote, app.paletteOpen, expiryReady, structureLawful, isPrimaryTicket]);
 
   /** Replace the active family's inputs and clear any stale quote/panel against them. */
   const updateInputs = useCallback(
@@ -637,36 +752,52 @@ export function TicketWorkspace(): React.ReactElement {
     [structure, clearPriced],
   );
 
+  // Set the OIS fixed rate to the par (zero-PV breakeven) rate just priced (the
+  // rates family's analogue of the FX inline strike solve). Editing the inputs
+  // clears the now-stale price, so the trader re-prices at par.
+  const setRatesToPar = useCallback(() => {
+    if (!ratesResult) return;
+    const cur = inputsByStructure[structure] as OisInputs;
+    updateInputs({ ...cur, fixedRatePct: Number((ratesResult.parRate * 100).toFixed(4)) });
+  }, [ratesResult, inputsByStructure, structure, updateInputs]);
+
   const strikePreview = previewStrike(inputs, atmForward);
-  const netLegs = netStructureLegs(instrument);
-  const diagramLegs = payoffDiagramLegs(instrument);
+  const netLegs = instrument ? netStructureLegs(instrument) : [];
+  const diagramLegs = instrument ? payoffDiagramLegs(instrument) : null;
 
   return (
     <div className={styles.wrap}>
       <Panel material="float" className={styles.ticket} noPadding>
         <div className={styles.head}>
           <span className={`num ${styles.pair}`}>
-            {app.pairCtx.pair.base}/{app.pairCtx.pair.quote}
+            {isRates && ratesSpec
+              ? `${ratesSpec.curve.currency}-SOFR`
+              : `${app.pairCtx.pair.base}/${app.pairCtx.pair.quote}`}
           </span>
           <span className={styles.dot}>·</span>
           <span className={styles.headStructure}>{spec.label}</span>
           <div className={styles.headRight}>
-            <label className={styles.notional}>
-              <span>notional</span>
-              <input
-                className="num"
-                type="number"
-                min={1}
-                value={notionalMm}
-                onChange={(e) => setNotionalMm(Math.max(1, Number(e.target.value)))}
-              />
-              <span>mm {instrument.quantity.baseCcy ? app.pairCtx.pair.base : app.pairCtx.pair.quote}</span>
-            </label>
+            {/* The FX notional field is option-only — the rates family owns its own
+              * notional (in the curve currency) in its InputBlock. */}
+            {optionSpec && instrument && (
+              <label className={styles.notional}>
+                <span>notional</span>
+                <input
+                  className="num"
+                  type="number"
+                  min={1}
+                  value={notionalMm}
+                  onChange={(e) => setNotionalMm(Math.max(1, Number(e.target.value)))}
+                />
+                <span>mm {instrument.quantity.baseCcy ? app.pairCtx.pair.base : app.pairCtx.pair.quote}</span>
+              </label>
+            )}
           </div>
         </div>
 
         <StructureGallery
           value={structure}
+          specs={galleryCatalogue}
           assetClass={app.underlier.assetClass}
           onSelect={(id) => {
             setStructure(id);
@@ -674,7 +805,7 @@ export function TicketWorkspace(): React.ReactElement {
           }}
         />
 
-        {allowedModels.length > 1 || structure === "WINDOW_BARRIER" ? (
+        {!isRates && (allowedModels.length > 1 || structure === "WINDOW_BARRIER") ? (
           <div className={styles.modelBlock}>
             <div className={styles.modelRow}>
               <span className={styles.modelLabel}>Booking model</span>
@@ -709,46 +840,49 @@ export function TicketWorkspace(): React.ReactElement {
           </div>
         ) : null}
 
-        <div className={styles.modelBlock}>
-          <div className={styles.modelRow}>
-            <span className={styles.modelLabel}>RFQ mode</span>
-            <div className={styles.modeToggle} role="tablist" aria-label="rfq mode">
-              <button
-                role="tab"
-                aria-selected={rfqMode === "SINGLE"}
-                className={`${styles.modeTab} ${rfqMode === "SINGLE" ? styles.modeActive : ""}`}
-                onClick={() => {
-                  setRfqMode("SINGLE");
-                  clearPriced();
-                }}
-              >
-                Single-dealer
-              </button>
-              <button
-                role="tab"
-                aria-selected={rfqMode === "PANEL"}
-                className={`${styles.modeTab} ${rfqMode === "PANEL" ? styles.modeActive : ""}`}
-                onClick={() => {
-                  setRfqMode("PANEL");
-                  clearPriced();
-                }}
-              >
-                LP panel
-              </button>
+        {!isRates && (
+          <div className={styles.modelBlock}>
+            <div className={styles.modelRow}>
+              <span className={styles.modelLabel}>RFQ mode</span>
+              <div className={styles.modeToggle} role="tablist" aria-label="rfq mode">
+                <button
+                  role="tab"
+                  aria-selected={rfqMode === "SINGLE"}
+                  className={`${styles.modeTab} ${rfqMode === "SINGLE" ? styles.modeActive : ""}`}
+                  onClick={() => {
+                    setRfqMode("SINGLE");
+                    clearPriced();
+                  }}
+                >
+                  Single-dealer
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={rfqMode === "PANEL"}
+                  className={`${styles.modeTab} ${rfqMode === "PANEL" ? styles.modeActive : ""}`}
+                  onClick={() => {
+                    setRfqMode("PANEL");
+                    clearPriced();
+                  }}
+                >
+                  LP panel
+                </button>
+              </div>
             </div>
+            {rfqMode === "PANEL" && (
+              <p className={styles.modelNote}>
+                Fans the RFQ across the edge's LP panel and ranks the lines (best bid /
+                best offer); book a row to trade exactly that dealer's price. In-repo
+                dealers are the native maker plus deterministic synthetic demo LPs
+                (SYNTH-LP-k) — live bank LP connectivity is environment-provisioned.
+              </p>
+            )}
           </div>
-          {rfqMode === "PANEL" && (
-            <p className={styles.modelNote}>
-              Fans the RFQ across the edge's LP panel and ranks the lines (best bid /
-              best offer); book a row to trade exactly that dealer's price. In-repo
-              dealers are the native maker plus deterministic synthetic demo LPs
-              (SYNTH-LP-k) — live bank LP connectivity is environment-provisioned.
-            </p>
-          )}
-        </div>
+        )}
 
+        {!isRates && optionSpec && (
         <div className={styles.expiryBlock}>
-          {spec.noExpiry ? (
+          {optionSpec.noExpiry ? (
             // The declared no-expiry family (the perpetual): the expiry controls
             // are not applicable — show the honest reason instead of offering a
             // tenor the contract cannot carry (the booked instrument is
@@ -760,7 +894,7 @@ export function TicketWorkspace(): React.ReactElement {
                   — none
                 </span>
               </div>
-              <p className={styles.resolveEmpty}>{spec.noExpiry.reason}</p>
+              <p className={styles.resolveEmpty}>{optionSpec.noExpiry.reason}</p>
             </>
           ) : (
             <>
@@ -860,16 +994,19 @@ export function TicketWorkspace(): React.ReactElement {
             </>
           )}
         </div>
+        )}
 
         <spec.InputBlock value={inputs as never} onChange={updateInputs} ctx={effectiveCtx} />
 
-        <div className={styles.payoffPreview}>
-          {diagramLegs !== null ? (
-            <PayoffDiagram legs={diagramLegs} spot={spot} height={240} />
-          ) : (
-            <PayoffChart structureId={structure} strike={strikePreview} spot={spot} />
-          )}
-        </div>
+        {!isRates && instrument && (
+          <div className={styles.payoffPreview}>
+            {diagramLegs !== null ? (
+              <PayoffDiagram legs={diagramLegs} spot={spot} height={240} />
+            ) : (
+              <PayoffChart structureId={structure} strike={strikePreview} spot={spot} />
+            )}
+          </div>
+        )}
 
         {netLegs.length > 0 && (
           <NetStructureStrip
@@ -879,7 +1016,18 @@ export function TicketWorkspace(): React.ReactElement {
           />
         )}
 
-        {dealerPanel ? (
+        {ratesSpec &&
+          (ratesResult ? (
+            <RatesResult result={ratesResult} curve={ratesSpec.curve} />
+          ) : (
+            <p className={styles.ratesEmpty}>
+              Build an OIS and price it to see the PV, par (fair fixed) rate, PV01, DV01
+              and the key-rate DV01 ladder.
+            </p>
+          ))}
+
+        {!isRates &&
+          (dealerPanel ? (
           <div className={styles.dealerPanelBlock}>
             <DealerPanel
               panel={dealerPanel}
@@ -905,7 +1053,8 @@ export function TicketWorkspace(): React.ReactElement {
             <span className={styles.unit}>
               {structure === "ASIAN" ? `% ${app.pairCtx.pair.base} prem (avg-rate)` : `% ${app.pairCtx.pair.base} prem`}
             </span>
-            {(instrument.product.kind === "vanilla" || instrument.product.kind === "strategy") &&
+            {instrument &&
+              (instrument.product.kind === "vanilla" || instrument.product.kind === "strategy") &&
               quote.resolvedStrike > 0 && (
                 // The inline strike solve, made visible: a delta-keyed leg (25dC /
                 // ATM) was solved to this level server-side (the first leg's K is
@@ -940,52 +1089,87 @@ export function TicketWorkspace(): React.ReactElement {
               <span className={styles.unit}>% {app.pairCtx.pair.base} prem</span>
             </div>
           </div>
-        )}
+          ))}
 
-        {quote && !isSwap(structure) && (
+        {!isRates && quote && !isSwap(structure) && (
           <div className={styles.greeksRow}>
             <GreeksStrip greeks={quote.greeks} assetClass={app.underlier.assetClass} />
           </div>
         )}
 
-        <div className={styles.convRow}>
-          {!quote && <ConventionRow conventions={app.conventions} />}
-          {quote && (
-            <span className={`num ${styles.volFace}`}>
-              vol {fmtVol(faceVol)}
-            </span>
-          )}
-        </div>
+        {!isRates && (
+          <div className={styles.convRow}>
+            {!quote && <ConventionRow conventions={app.conventions} />}
+            {quote && (
+              <span className={`num ${styles.volFace}`}>
+                vol {fmtVol(faceVol)}
+              </span>
+            )}
+          </div>
+        )}
 
         {fill && <div className={styles.fill}>{fill}</div>}
 
         <div className={styles.actions}>
-          <Button
-            variant="primary"
-            size="lg"
-            onClick={requestQuote}
-            kbd="⏎"
-            disabled={
-              busy || !expiryReady || lsvUnavailableOffline || !structureLawful || !canPrice
-            }
-            title={canPrice ? undefined : priceDeniedTitle}
-          >
-            {!canPrice
-              ? "Not permitted"
-              : busy
-                ? "Pricing…"
-                : !expiryReady
-                  ? "Pick a date"
+          {isRates ? (
+            // The fixed-income request button: price the OIS via `priceRates`. Gated
+            // on `price·fixed_income` (disabled + honest tooltip, never hidden — the
+            // server still enforces), exactly as the standalone rates surface was.
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={requestQuote}
+              kbd="⏎"
+              disabled={busy || !structureLawful || !canPriceFi}
+              title={canPriceFi ? undefined : priceFiDeniedTitle}
+            >
+              {!canPriceFi
+                ? "Not permitted"
+                : busy
+                  ? "Pricing…"
                   : !structureLawful
-                    ? "Fix structure"
-                    : lsvUnavailableOffline
-                      ? "LSV — live server only"
-                      : quote || dealerPanel
-                        ? "Re-request"
-                        : rfqMode === "PANEL"
-                          ? "Request panel"
-                          : "Request quote"}
-          </Button>
+                    ? "Fix inputs"
+                    : ratesResult
+                      ? "Re-price"
+                      : "Price OIS"}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={requestQuote}
+              kbd="⏎"
+              disabled={
+                busy || !expiryReady || lsvUnavailableOffline || !structureLawful || !canPrice
+              }
+              title={canPrice ? undefined : priceDeniedTitle}
+            >
+              {!canPrice
+                ? "Not permitted"
+                : busy
+                  ? "Pricing…"
+                  : !expiryReady
+                    ? "Pick a date"
+                    : !structureLawful
+                      ? "Fix structure"
+                      : lsvUnavailableOffline
+                        ? "LSV — live server only"
+                        : quote || dealerPanel
+                          ? "Re-request"
+                          : rfqMode === "PANEL"
+                            ? "Request panel"
+                            : "Request quote"}
+            </Button>
+          )}
+          {isRates && ratesResult && (
+            <Button
+              variant="ghost"
+              onClick={setRatesToPar}
+              title="set the fixed rate to the par (breakeven) rate"
+            >
+              Set to par
+            </Button>
+          )}
           {quote && (
             <>
               <Button
@@ -1009,39 +1193,40 @@ export function TicketWorkspace(): React.ReactElement {
               </Button>
             </>
           )}
-          <span className={styles.promote}>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                if (!canStream) return;
-                app.stream.subscribe(instrument, app.conventions, structureLabel(structure));
-                app.setWorkspace("stream");
-              }}
-              disabled={!canStream}
-              title={canStream ? undefined : streamDeniedTitle}
-            >
-              Stream this ≋
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() =>
-                app.drillToRisk(
-                  instrument,
-                  `${app.pairCtx.pair.base}/${app.pairCtx.pair.quote} ${expiryLabel} ${structureLabel(structure)}`,
-                )
-              }
-            >
-              Add to risk ⊞
-            </Button>
-          </span>
+          {optionSpec && instrument && (
+            <span className={styles.promote}>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  if (!canStream) return;
+                  app.stream.subscribe(instrument, app.conventions, structureLabel(structure));
+                  app.setWorkspace("stream");
+                }}
+                disabled={!canStream}
+                title={canStream ? undefined : streamDeniedTitle}
+              >
+                Stream this ≋
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() =>
+                  app.drillToRisk(
+                    instrument,
+                    `${app.pairCtx.pair.base}/${app.pairCtx.pair.quote} ${expiryLabel} ${structureLabel(structure)}`,
+                  )
+                }
+              >
+                Add to risk ⊞
+              </Button>
+            </span>
+          )}
         </div>
       </Panel>
 
       <p className={styles.caption}>
-        One card = analytics + executable. Conventions on the face, the strike solve
-        inline (25dC / 25dP / ATM legs price to a server-solved K, echoed on the
-        quote), last-look visible. Promote the exact structure to the blotter or the
-        risk grid — same Instrument, no re-keying.
+        {isRates
+          ? "One ticket, every asset. The fixed-income OIS is priced through the SAME card as FX and cross-asset — the same workflow, one canonical contract (the live `price_rates` seam), no separate rates silo."
+          : "One card = analytics + executable. Conventions on the face, the strike solve inline (25dC / 25dP / ATM legs price to a server-solved K, echoed on the quote), last-look visible. Promote the exact structure to the blotter or the risk grid — same Instrument, no re-keying."}
       </p>
     </div>
   );
@@ -1072,6 +1257,96 @@ function SwapResult(props: { structure: string; quote: Quote }): React.ReactElem
       <span className={styles.swapHead}>Fair volatility strike</span>
       <span className={`num ${styles.swapStrike}`}>K_vol {fmtVol(fair)}</span>
       <span className={`num ${styles.swapSub}`}>convexity-adjusted</span>
+    </div>
+  );
+}
+
+/** One row of the key-rate DV01 ladder (a curve pillar's bucketed DV01). */
+interface LadderRow {
+  readonly tenorLabel: string;
+  readonly dv01: number;
+  /** This bucket's share of the total DV01 (percent); `0` when DV01 is ~0. */
+  readonly sharePct: number;
+}
+
+const RATES_LADDER_COLUMNS: readonly ColumnDef<LadderRow>[] = [
+  { key: "pillar", header: "Pillar", width: 96, align: "left", accessor: (r) => r.tenorLabel },
+  {
+    key: "dv01",
+    header: "Key-rate DV01",
+    unit: "/bp",
+    width: 160,
+    accessor: (r) => fmtPnlAdaptive(r.dv01),
+  },
+  { key: "share", header: "% of DV01", width: 120, accessor: (r) => `${r.sharePct.toFixed(1)}%` },
+];
+
+/** Format a decimal rate as a percentage with bp precision (0.0405 → "4.0500%"). */
+function fmtRatePct(rate: number): string {
+  return `${(rate * 100).toFixed(4)}%`;
+}
+
+/**
+ * The fixed-income (OIS) priced result — the PV / par (fair fixed) rate / PV01 /
+ * DV01 headline metrics + the key-rate DV01 ladder, over the SAME `priceRates`
+ * result the standalone rates surface rendered (capability preserved by the
+ * fold, not a reimplementation). Each ladder bucket maps to a curve pillar and
+ * sums (to first order) to the parallel DV01. All measures are in the curve
+ * currency and already carry the instrument direction sign.
+ */
+function RatesResult({
+  result,
+  curve,
+}: {
+  result: RatesPricingResult;
+  curve: RatesCurveSet;
+}): React.ReactElement {
+  const ladder: LadderRow[] = curve.pillars.map((p, i) => {
+    const dv01 = result.keyRateLadder[i] ?? 0;
+    return {
+      tenorLabel: pillarTenorLabel(p.tenor),
+      dv01,
+      sharePct: result.dv01 !== 0 ? (dv01 / result.dv01) * 100 : 0,
+    };
+  });
+  const ladderGroups = [
+    { key: "", label: "", rows: ladder.map((r) => ({ key: r.tenorLabel, datum: r })) },
+  ];
+  return (
+    <div className={styles.ratesResult}>
+      <dl className={styles.ratesMetrics}>
+        <RatesMetric label="PV" value={fmtPnlAdaptive(result.pv)} unit={curve.currency} emphatic />
+        <RatesMetric label="Par rate" value={fmtRatePct(result.parRate)} />
+        <RatesMetric label="PV01" value={fmtPnlAdaptive(result.pv01)} unit={`${curve.currency}/bp`} />
+        <RatesMetric label="DV01" value={fmtPnlAdaptive(result.dv01)} unit={`${curve.currency}/bp`} />
+      </dl>
+      <div className={styles.ratesLadder}>
+        <h3 className={styles.ratesLadderTitle}>Key-rate DV01 ladder</h3>
+        <DataGrid label="key-rate DV01 ladder" columns={RATES_LADDER_COLUMNS} groups={ladderGroups} />
+      </div>
+    </div>
+  );
+}
+
+/** One headline OIS measure: a labelled term/value pair in the rates result strip. */
+function RatesMetric({
+  label,
+  value,
+  unit,
+  emphatic,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  emphatic?: boolean;
+}): React.ReactElement {
+  return (
+    <div className={`${styles.ratesMetric} ${emphatic ? styles.ratesMetricEmphatic : ""}`}>
+      <dt className={styles.ratesMetricLabel}>{label}</dt>
+      <dd className={styles.ratesMetricValue}>
+        {value}
+        {unit && <span className={styles.ratesMetricUnit}>{unit}</span>}
+      </dd>
     </div>
   );
 }

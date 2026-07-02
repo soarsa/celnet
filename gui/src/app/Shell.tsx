@@ -19,8 +19,8 @@ import { CommandPalette } from "../components/CommandPalette";
 import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
 import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
-import { RatesWorkspace } from "../workspaces/RatesWorkspace";
 import { MarketDataWorkspace } from "../workspaces/MarketDataWorkspace";
+import { OIS_STRUCTURE_ID } from "../products/ois";
 import { QuotingWorkspace } from "../workspaces/QuotingWorkspace";
 import { DealsBlotterWorkspace } from "../workspaces/DealsBlotterWorkspace";
 import { RatesBookWorkspace } from "../workspaces/RatesBookWorkspace";
@@ -65,7 +65,13 @@ import styles from "./Shell.module.css";
 /** The workspace components, keyed by id, for the persistent-mount canvas. */
 const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   ticket: TicketWorkspace,
-  rates: RatesWorkspace,
+  // fe-fi-migration #3: the standalone FI PRICING silo is folded into the ONE
+  // shared ticket. The `rates` rail row is now an ENTRY POINT that opens the shared
+  // TicketWorkspace seeded to the fixed-income (OIS) family — a rates instrument is
+  // priced through the SAME card as FX/cross-asset (calling `priceRates`), rather
+  // than a separate `RatesWorkspace`. The pricing analogue of the #1 Risk / #2
+  // Market-Data lens entry-points; `ticket` opens the default FX structure.
+  rates: () => <TicketWorkspace initialStructure={OIS_STRUCTURE_ID} />,
   // fe-fi-migration #2: the FX/FI market-data silo is folded into the ONE
   // class-parametric MarketDataWorkspace. The `curve` rail row is now an ENTRY
   // POINT that opens the shared Market Data workspace on its Fixed-Income (rates

@@ -213,11 +213,17 @@ describe("crossAssetSpec — toInstrument over the asset-class selector", () => 
 // ---------------------------------------------------------------------------
 
 describe("cross-asset gallery group", () => {
-  it("the cross-asset spec appears under the new 'Cross-asset' group, last in canonical order", () => {
+  it("the cross-asset spec appears under its own group, ordered ahead of the fixed-income fold", () => {
     const grouped = registryByGroup();
+    const groupOrder = grouped.map((g) => g.group);
     const xasset = grouped.find((g) => g.group === "Cross-asset (equity / commodity / crypto)");
     expect(xasset).toBeDefined();
     expect(xasset!.specs.map((s) => s.id)).toContain("CROSS_ASSET_VANILLA");
-    expect(grouped[grouped.length - 1]!.group).toBe("Cross-asset (equity / commodity / crypto)");
+    // fe-fi-migration #3 appended the fixed-income (rates) family LAST in canonical
+    // order, so cross-asset now sits immediately before it (not the terminal group).
+    const xassetIdx = groupOrder.indexOf("Cross-asset (equity / commodity / crypto)");
+    const fiIdx = groupOrder.indexOf("Fixed income (rates)");
+    expect(fiIdx).toBeGreaterThan(xassetIdx);
+    expect(groupOrder[groupOrder.length - 1]).toBe("Fixed income (rates)");
   });
 });
