@@ -27,11 +27,15 @@ import type {
   BasketLeg,
   BasketOption,
   BrokenDate,
+  BuildCurveRequest,
+  CalibratedCurve,
+  CalibratedCurvePoint,
   CcyPair,
   Cliquet,
   CommodityRef,
   Conventions,
   CryptoPair,
+  DatePillar,
   Digital,
   DigitalStyle,
   DoubleBarrier,
@@ -42,6 +46,7 @@ import type {
   Greeks,
   Heartbeat,
   Instrument,
+  InstrumentQuote,
   Leg,
   Lookback,
   LookbackMonitoring,
@@ -3969,6 +3974,106 @@ export function formatRatesSpill(
   result.keyRateLadder.forEach((value, i) => {
     const label = tenorLabelled ? `kr_dv01[${pillars[i]!.tenorYears}Y]` : `kr_dv01[${i}]`;
     rows.push([label, value]);
+  });
+  return rectangular(rows);
+}
+
+// ---------------------------------------------------------------------------
+// curve bootstrap (`build_curve` / `AuthService.BuildCurve`) — the CELNET.CURVE
+// add-in path. Shape a pillar range into a `BuildCurveRequest` (registry-
+// instrument OR date-anchored pillars) and lay out the server-bootstrapped
+// `CalibratedCurve` as a spill. The add-in holds NO bootstrap math: the live
+// `celnet-rates` engine resolves each registry pillar, decodes the schedule, and
+// runs the sequential discount-curve bootstrap — this only shapes the inputs and
+// lays out the reply (the same one unversioned contract the GUI CurveWorkspace
+// consumes over `build_curve`).
+// ---------------------------------------------------------------------------
+
+/** The pillar-range + reference-date + currency a CELNET.CURVE call shapes into a `BuildCurveRequest`. */
+export interface BuildCurveArgs {
+  /**
+   * The 2-column `[pillar, quote]` range. Each pillar (first column) is EITHER a
+   * reference-data registry instrument id (a non-date string, e.g.
+   * `usd-sofr-irs-10y`) OR a maturity date (an Excel date cell or `YYYY-MM-DD`);
+   * the quote (second column) is the observed rate as a decimal (0.0431 = 4.31%).
+   */
+  readonly pillars: readonly (readonly (string | number | boolean)[])[];
+  /** The curve reference (spot-anchor) civil date (Excel date serial or `YYYY-MM-DD`). */
+  readonly referenceDate: number | string;
+  /** ISO-4217 currency; defaults to USD (the USD-SOFR P0 arm). */
+  readonly currency?: string | undefined;
+}
+
+/** True when a first-column cell denotes a maturity DATE (Excel serial or `YYYY-MM-DD`) rather than a registry id. */
+function isDatePillarCell(cell: string | number | boolean): boolean {
+  if (typeof cell === "number") return true;
+  if (typeof cell === "string") return /^\d{4}-\d{2}-\d{2}$/.test(cell.trim());
+  return false;
+}
+
+/**
+ * Shape a `[pillar, quote]` range + reference date into the typed
+ * `BuildCurveRequest`. Blank trailing rows are ignored; each non-blank row is
+ * classified per its first cell — a date (Excel serial / `YYYY-MM-DD`) becomes a
+ * date-anchored `datePillars` entry, any other non-empty string becomes a
+ * registry-instrument `pillars` entry. At least one pillar (across both lists) is
+ * required, exactly as the `BuildCurve` contract demands. The `requestId` is a
+ * client tag the server echoes back verbatim (mirrors the GUI CurveWorkspace).
+ */
+export function shapeBuildCurveRequest(args: BuildCurveArgs): BuildCurveRequest {
+  const pillars: InstrumentQuote[] = [];
+  const datePillars: DatePillar[] = [];
+  for (const row of args.pillars) {
+    if (isEmptyCurveRow(row)) continue;
+    if (row.length < 2) {
+      throw new ShapingError(
+        "each curve pillar row must have 2 columns: [instrumentId | maturityDate, quote]",
+      );
+    }
+    const head = row[0]!;
+    const quote = ratesCell(row[1]!, "pillar quote");
+    if (isDatePillarCell(head)) {
+      datePillars.push({ maturityDate: parseBrokenDate(head as number | string), quote });
+    } else if (typeof head === "boolean") {
+      throw new ShapingError(
+        "a curve pillar must be an instrument id or a maturity date, not a boolean",
+      );
+    } else {
+      const instrumentId = String(head).trim();
+      if (instrumentId === "") {
+        throw new ShapingError("a registry curve pillar needs a non-empty instrument id");
+      }
+      pillars.push({ instrumentId, quote });
+    }
+  }
+  if (pillars.length === 0 && datePillars.length === 0) {
+    throw new ShapingError(
+      "the curve needs at least one pillar (a registry instrument or a date pillar)",
+    );
+  }
+  return {
+    requestId: `curve-${Date.now()}`,
+    currency: parseCurveCurrency(args.currency),
+    referenceDate: parseBrokenDate(args.referenceDate),
+    pillars,
+    datePillars,
+  };
+}
+
+/**
+ * Format a `CalibratedCurve` as a labelled spill: a header row then one row per
+ * bootstrapped pillar — `[pillar, time_years, discount_factor, zero_rate]`, in the
+ * server's short→long maturity order. The pillar label is the server's display
+ * `label` (e.g. `Date 2027-12-31`) when present, else the resolving instrument id,
+ * else a positional `pillar[i]` tag (never silently blank). Returns a rectangular
+ * `(1 + points)×4` matrix.
+ */
+export function formatCalibratedCurveSpill(curve: CalibratedCurve): SpillMatrix {
+  const rows: SpillMatrix = [["pillar", "time_years", "discount_factor", "zero_rate"]];
+  curve.points.forEach((p: CalibratedCurvePoint, i) => {
+    const label =
+      p.label.trim() !== "" ? p.label : p.instrumentId.trim() !== "" ? p.instrumentId : `pillar[${i}]`;
+    rows.push([label, p.timeYears, p.discountFactor, p.zeroRate]);
   });
   return rectangular(rows);
 }

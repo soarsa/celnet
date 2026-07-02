@@ -177,6 +177,7 @@ export type EntryPointId =
   | "subscribe"
   | "series"
   | "rates"
+  | "curve"
   | "marksurface"
   | "mark";
 
@@ -284,6 +285,15 @@ export const ENTRY_POINTS: Record<EntryPointId, EntryPoint> = {
     asset: "fixed_income",
     requiresSignIn: false,
     signInLabel: "price rates",
+  },
+  curve: {
+    id: "curve",
+    label: "CELNET.CURVE",
+    surface: "cell",
+    action: "price",
+    asset: "fixed_income",
+    requiresSignIn: false,
+    signInLabel: "bootstrap curves",
   },
   marksurface: {
     id: "marksurface",

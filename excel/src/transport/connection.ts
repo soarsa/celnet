@@ -26,6 +26,8 @@
  */
 
 import type {
+  BuildCurveRequest,
+  CalibratedCurve,
   CcyPair,
   Conventions,
   Executed,
@@ -47,6 +49,8 @@ import type {
   Update,
 } from "../contract/contract";
 import {
+  buildCurveRequestToWire,
+  calibratedCurveFromWire,
   ccyPairToWire,
   conventionsToWire,
   executedFromWire,
@@ -858,6 +862,28 @@ export class Connection {
       "rates_price_response",
     );
     return ratesPricingResultFromWire(reply);
+  }
+
+  /**
+   * Bootstrap a single-currency discount curve over the `build_curve` RPC (the WS
+   * mirror of `AuthService.BuildCurve`): send the registry-referenced + date-anchored
+   * pillars and decode the server-bootstrapped `calibrated_curve` (per-pillar time,
+   * discount factor, continuously-compounded zero rate). The add-in carries no
+   * bootstrap math — the live `celnet-rates` engine resolves every pillar id against
+   * the reference-data registry and runs the sequential calibration; the one
+   * unversioned contract makes the result authoritative and bit-identical to the GUI
+   * CurveWorkspace.
+   */
+  async buildCurve(request: BuildCurveRequest): Promise<CalibratedCurve> {
+    const body = buildCurveRequestToWire(request);
+    // `AuthService.BuildCurve` authenticates the caller from the bearer token
+    // (`session_token` is REQUIRED on the wire): any authenticated caller may build,
+    // an unauthenticated one is rejected. The Excel `request` helper does not
+    // auto-inject the token (unlike the GUI's `WsConnection.request`), so ride the
+    // held session token explicitly here — exactly like `logout`/the quote frames.
+    if (this.sessionToken !== null) body["session_token"] = this.sessionToken;
+    const reply = await this.request("build_curve", body, "calibrated_curve");
+    return calibratedCurveFromWire(reply);
   }
 
   async requestQuote(

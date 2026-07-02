@@ -39,6 +39,7 @@ import {
   ShapingError,
   americanIsMonteCarlo,
   cliquetIsMonteCarlo,
+  formatCalibratedCurveSpill,
   formatCalibratedSmileSpill,
   formatGreeksSpill,
   formatLimitsSpill,
@@ -62,6 +63,7 @@ import {
   parseRiskScope,
   parseSmileModel,
   parseTenor,
+  shapeBuildCurveRequest,
   shapeCalibration,
   shapeOisInstrument,
   shapeRatesCurve,
@@ -413,6 +415,45 @@ export async function RATES(
     const instrument = shapeOisInstrument({ tenor, fixedRate, direction, notional });
     const result = await getConnection().priceRates(curveSet, instrument);
     return formatRatesSpill(result, curveSet.pillars);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Bootstrap a single-currency discount curve from its market pillars via the live
+ * `build_curve` engine RPC (the WS mirror of `AuthService.BuildCurve`), and spill
+ * the calibrated curve. The add-in carries NO bootstrap math: each pillar and the
+ * reference date are sent to the `celnet-rates` engine, which resolves every
+ * registry instrument id, decodes the schedule, and runs the sequential
+ * discount-curve calibration; this cell only shapes the inputs and lays out the
+ * authoritative reply — bit-identical to the GUI CurveWorkspace over the one
+ * unversioned contract.
+ *
+ * The `pillars` range is 2-column `[pillar, quote]`: each pillar (first column) is
+ * EITHER a reference-data registry instrument id (a non-date string, e.g.
+ * `usd-sofr-irs-10y`) OR a maturity date (an Excel date cell or "YYYY-MM-DD"), and
+ * the quote (second column) is the observed rate as a decimal (0.0431 = 4.31%).
+ * The spill is a labelled `(1 + pillars)×4` matrix: a header then one row per
+ * bootstrapped pillar — `[pillar, time_years, discount_factor, zero_rate]` — in the
+ * server's short→long maturity order. The pillar label is the server's display
+ * label (e.g. `Date 2027-12-31`) or the resolving instrument id.
+ * @customfunction CURVE
+ * @param pillars The 2-column `[pillar, quote]` range — one row per calibrating pillar (registry instrument id OR maturity date, then its observed rate as a decimal).
+ * @param referenceDate The curve reference (spot-anchor) date — an Excel date cell or "YYYY-MM-DD".
+ * @param currency Optional ISO-4217 curve currency (defaults to USD).
+ * @returns A `(1 + pillars)×4` spill: header, then pillar/time_years/discount_factor/zero_rate per bootstrapped pillar.
+ */
+export async function CURVE(
+  pillars: (string | number | boolean)[][],
+  referenceDate: number | string,
+  currency?: string,
+): Promise<SpillMatrix> {
+  try {
+    denyIfUngated("curve");
+    const request = shapeBuildCurveRequest({ pillars, referenceDate, currency });
+    const curve = await getConnection().buildCurve(request);
+    return formatCalibratedCurveSpill(curve);
   } catch (err) {
     throw toCfError(err);
   }
@@ -943,6 +984,8 @@ function registerAll(): void {
   cf.associate("INSTRUMENT", INSTRUMENT as (...a: never[]) => unknown);
   cf.associate("PRICE", PRICE as (...a: never[]) => unknown);
   cf.associate("GREEKS", GREEKS as (...a: never[]) => unknown);
+  cf.associate("RATES", RATES as (...a: never[]) => unknown);
+  cf.associate("CURVE", CURVE as (...a: never[]) => unknown);
   cf.associate("RFQ", RFQ as (...a: never[]) => unknown);
   cf.associate("SUBSCRIBE", SUBSCRIBE as (...a: never[]) => unknown);
   cf.associate("SURFACE", SURFACE as (...a: never[]) => unknown);
