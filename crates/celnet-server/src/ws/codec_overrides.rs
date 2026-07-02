@@ -66,6 +66,20 @@ pub(crate) fn field_rule(message: &str, proto_name: &str) -> FieldRule {
     }
 }
 
+/// Whether a real-oneof `group` on `message` is **required** — i.e. the hand
+/// decoder errors if the JSON carries no live arm (rather than leaving the oneof
+/// `None`). The decode override the descriptor cannot express: proto3 says nothing
+/// about whether a oneof must be set. Keyed on the message's **simple** type name
+/// and the oneof group name; the default is `false` (an absent oneof decodes to
+/// `None`), so only the genuinely-mandatory oneofs are listed.
+///
+/// `StrikeOrDelta.spec` is the archetype: `strike_or_delta_from_json` errors with
+/// "strike must carry exactly one of `strike` or `delta`" when neither arm is
+/// present, so the generated decoder must reject the same body identically.
+pub(crate) fn oneof_required(message: &str, group: &str) -> bool {
+    matches!((message, group), ("StrikeOrDelta", "spec"))
+}
+
 // Message-level synthesized keys — the cases where a JSON key is *derived* from an
 // accessor rather than being a straight field projection (quirks b and c). There is
 // no free-function dispatch on `message` here: synthesis needs the concrete typed

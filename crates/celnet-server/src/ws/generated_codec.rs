@@ -35,11 +35,13 @@
 
 use celnet_proto::wire_contract::{self, WireField, WireLabel};
 use celnet_proto::{
-    BrokenDate, CcyPair, Greeks, Leg, MarketContext, RateSensitivities, Strategy, StrikeOrDelta,
-    Tenor, Underlying, rate_sensitivities, strike_or_delta,
+    BrokenDate, CcyPair, CommodityRef, Conventions, CryptoPair, EquityRef, Greeks, Leg,
+    MarketContext, MetalPair, Quantity, RateSensitivities, Solve, Strategy, StrikeOrDelta, Symbol,
+    Tenor, Underlying, Vanilla, rate_sensitivities, strike_or_delta,
 };
 use serde_json::{Map, Value, json};
 
+use super::codec::CodecError;
 use super::codec_overrides::{self, FieldRule};
 
 // ---------------------------------------------------------------------------
@@ -391,4 +393,563 @@ impl WireAdapter for StrikeOrDelta {
             _ => None,
         }
     }
+}
+
+// ===========================================================================
+// DECODE (arch item G — `ws-codec-from-proto`, increment 3)
+// ===========================================================================
+//
+// The input-side mirror of the encoder above: decode a WS JSON body to the proto
+// message, purely from the same descriptor-derived field tables
+// ([`celnet_proto::wire_contract::fields_for`]) plus the curated
+// [override table](super::codec_overrides). It is an **independent code path** that
+// does **not** call the hand codec; the differential harness
+// (`tests/ws_codec_differential.rs`) proves, message-by-message, that
+// `generated_decode(json)` produces the **byte-identical** proto message the hand
+// decoder ([`super::codec`]) produces over the client conformance corpus, before
+// `handle_unary` is ever swapped onto it.
+//
+// ## How it is descriptor-driven (symmetric to `encode`)
+//
+// [`decode`] iterates [`fields_for`] for the message and, for each [`WireField`],
+// decides the JSON key (the field table's `json_key` as remapped by
+// [`super::codec_overrides::field_rule`] — the very same override the encoder
+// reads, so encode and decode never disagree on a key) and the oneof-arm
+// precedence (first present arm in descriptor declaration order, mirroring the
+// hand codec's `if / else if` cascade) — all from the table. The per-message
+// [`WireBuilder`] then does the mechanical conversion + placement of one field's
+// value onto a `Default`-constructed message, recursing into nested messages via
+// the typed `decode_*` entry points. Per-field **presence policy**
+// (required-erroring vs proto3-default vs `Option`-`None`) — which the descriptor
+// cannot express (proto3 has no `required`) — lives in that mechanical placement
+// via the [presence helpers](self) (`req_*` error on absence, the rest default),
+// exactly reproducing the hand codec's field-by-field choice. The three FX-legacy
+// **message-level** decode projections the field table cannot express
+// (`MarketContext` → the `fx` constructor; `Underlying` → the legacy `{base,quote}`
+// pair / the richer `underlying` oneof) short-circuit the generic walk, symmetric
+// to the encoder's [`WireAdapter::message_projection`].
+
+/// The decode result alias — the hand codec's [`CodecError`] is the shared error.
+type DResult<T> = std::result::Result<T, CodecError>;
+
+/// The object body of a JSON value, or a codec error if it is not an object.
+/// Mirrors the hand codec's private `obj` primitive (byte-identical result).
+fn obj<'a>(v: &'a Value, what: &str) -> DResult<&'a Map<String, Value>> {
+    v.as_object()
+        .ok_or_else(|| CodecError(format!("{what} must be a JSON object")))
+}
+
+// --- presence-aware scalar conversions (the per-field decode policy) --------
+// Each mirrors exactly one hand-codec primitive (`codec.rs` "scalar field
+// accessors"): the `req_*` helpers reproduce the required accessors that error on
+// absence (`f64_field` / `string_field`), the rest reproduce the proto3-default
+// accessors (`*_or_zero` / `*_or_empty` / `enum_or_zero`). `value` is the field's
+// JSON value if present-and-non-null (as resolved by [`decode`]), else `None`.
+
+/// A required `f64` (mirrors `f64_field`): error on absence or a non-numeric value.
+fn req_f64(value: Option<&Value>, field: &str) -> DResult<f64> {
+    value
+        .and_then(Value::as_f64)
+        .ok_or_else(|| CodecError(format!("missing or non-numeric field `{field}`")))
+}
+
+/// An `f64` defaulting to `0.0` (mirrors `f64_or_zero`).
+fn f64_or_zero(value: Option<&Value>) -> f64 {
+    value.and_then(Value::as_f64).unwrap_or(0.0)
+}
+
+/// A required `String` (mirrors `string_field`): error on absence or a non-string.
+fn req_string(value: Option<&Value>, field: &str) -> DResult<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| CodecError(format!("missing or non-string field `{field}`")))
+}
+
+/// A `String` defaulting to empty (mirrors `string_or_empty`).
+fn string_or_empty(value: Option<&Value>) -> String {
+    value.and_then(Value::as_str).unwrap_or_default().to_owned()
+}
+
+/// A `bool` defaulting to `false` (mirrors `bool_or_false`).
+fn bool_or_false(value: Option<&Value>) -> bool {
+    value.and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// An i32 enum-tag defaulting to the proto3 zero value (mirrors `enum_or_zero`).
+fn enum_or_zero(value: Option<&Value>) -> i32 {
+    value
+        .and_then(Value::as_i64)
+        .and_then(|n| i32::try_from(n).ok())
+        .unwrap_or(0)
+}
+
+/// A `u32` count defaulting to `0` (mirrors `u32::try_from(u64_or_zero(..))`).
+fn u32_or_zero(value: Option<&Value>) -> u32 {
+    u32::try_from(value.and_then(Value::as_u64).unwrap_or(0)).unwrap_or(0)
+}
+
+/// An i32 (signed year) defaulting to `0` (mirrors the `BrokenDate.year` decode).
+fn i32_or_zero(value: Option<&Value>) -> i32 {
+    value
+        .and_then(Value::as_i64)
+        .and_then(|n| i32::try_from(n).ok())
+        .unwrap_or(0)
+}
+
+/// A required nested message (mirrors `nested`): error on absence, else decode it
+/// from its object body via `T`'s [`WireBuilder`].
+fn req_msg<T: WireBuilder>(value: Option<&Value>, what: &str) -> DResult<T> {
+    let v = value.ok_or_else(|| CodecError(format!("missing nested field `{what}`")))?;
+    decode(T::MESSAGE, obj(v, what)?)
+}
+
+/// An optional nested message (mirrors `opt_nested`): `None` on absence, else
+/// decode it via `T`'s [`WireBuilder`].
+fn opt_msg<T: WireBuilder>(value: Option<&Value>, what: &str) -> DResult<Option<T>> {
+    match value {
+        None => Ok(None),
+        Some(v) => decode(T::MESSAGE, obj(v, what)?).map(Some),
+    }
+}
+
+/// A required repeated message (mirrors `strategy_from_json`'s `legs` decode): the
+/// value must be a JSON array; each element is decoded via `T`'s [`WireBuilder`].
+fn req_repeated<T: WireBuilder>(value: Option<&Value>, what: &str) -> DResult<Vec<T>> {
+    value
+        .and_then(Value::as_array)
+        .ok_or_else(|| CodecError(format!("field `{what}` must be a JSON array")))?
+        .iter()
+        .map(|v| decode(T::MESSAGE, obj(v, what)?))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// the reflection bridge + the generic, table-driven decoder
+// ---------------------------------------------------------------------------
+
+/// The decode reflection bridge — the input-side mirror of [`WireAdapter`]. A
+/// per-message builder that places one field's value onto a `Default`-constructed
+/// message. [`decode`] (the generic, table-driven walk) has already resolved the
+/// JSON key (via the shared override) and, for a oneof, selected the single live
+/// arm; the builder only converts the raw JSON value to the field's concrete Rust
+/// type and places it — recursing into nested messages via [`req_msg`] /
+/// [`opt_msg`] / [`req_repeated`]. It carries the per-field **presence policy**
+/// (which of the `req_*` vs defaulting helpers to use) — the one thing the proto3
+/// descriptor cannot express — and nothing else; the JSON key, oneof precedence
+/// and field set are all the descriptor's, decided in [`decode`].
+trait WireBuilder: Default {
+    /// The simple message type name — the key its field table is registered under
+    /// in [`celnet_proto::wire_contract::MESSAGE_FIELDS`].
+    const MESSAGE: &'static str;
+
+    /// Place `field`'s value onto `self`. `value` is the field's JSON value when
+    /// present-and-non-null, else `None`; the builder applies the required-vs-
+    /// default policy (mirroring the hand codec's per-field accessor choice).
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()>;
+}
+
+/// Decode `message` (by its simple type name) from its already-unwrapped object
+/// body, driven by the descriptor field table + the curated override rules,
+/// building the concrete `T` through its [`WireBuilder`]. The single
+/// descriptor-driven decode entry point; recurses (via the `req_*`/`opt_*` helpers
+/// the builders call) for nested messages.
+fn decode<T: WireBuilder>(message: &str, o: &Map<String, Value>) -> DResult<T> {
+    let mut builder = T::default();
+    let Some(fields) = wire_contract::fields_for(message) else {
+        // A message with no field table (none in the current contract reach here)
+        // decodes to its default — nothing to read.
+        return Ok(builder);
+    };
+
+    // Real-oneof groups whose live arm has already been placed — later arms of the
+    // same group are ignored (the hand codec's `if / else if` arm precedence).
+    let mut oneof_placed: Vec<&str> = Vec::new();
+
+    for field in fields {
+        // Resolve the JSON key through the SAME curated override the encoder reads,
+        // so encode and decode can never disagree on a key.
+        let key = match codec_overrides::field_rule(message, field.proto_name) {
+            FieldRule::Keep => field.json_key,
+            FieldRule::Rename(k) => k,
+            // Suppressed fields are encode-only synthesis (no JSON source to read).
+            FieldRule::Suppress => continue,
+        };
+        let value = o.get(key).filter(|v| !v.is_null());
+
+        match field.oneof_group {
+            Some(group) => {
+                // First present arm in declaration order wins; skip the rest.
+                if oneof_placed.contains(&group) {
+                    continue;
+                }
+                if value.is_some() {
+                    builder.set(field, value)?;
+                    oneof_placed.push(group);
+                }
+            }
+            // A plain (or proto3-`optional`) field: the builder's presence policy
+            // turns `None` into an error (required) or the proto3 default.
+            None => builder.set(field, value)?,
+        }
+    }
+
+    // A required oneof with no live arm errors (mirrors e.g. `strike_or_delta_from_json`
+    // "must carry exactly one of `strike` or `delta`").
+    for field in fields {
+        if let Some(group) = field.oneof_group
+            && codec_overrides::oneof_required(message, group)
+            && !oneof_placed.contains(&group)
+        {
+            return Err(CodecError(format!(
+                "`{message}` needs exactly one `{group}` arm"
+            )));
+        }
+    }
+
+    Ok(builder)
+}
+
+// ---------------------------------------------------------------------------
+// public typed decode entry points (the request-side surface this increment
+// proves byte-identical to the hand codec)
+// ---------------------------------------------------------------------------
+
+/// Decode a WS `{base, quote}` pair into a [`CcyPair`] — descriptor-driven
+/// (mirrors the hand `ccy_pair_from_json`).
+///
+/// # Errors
+/// Malformed body (missing `base`/`quote`), as a [`CodecError`].
+pub fn decode_ccy_pair(v: &Value) -> DResult<CcyPair> {
+    decode(CcyPair::MESSAGE, obj(v, "pair")?)
+}
+
+/// Decode a WS `{base, quote}` pair into an FX [`Underlying`] via the byte-identical
+/// `fx` constructor (mirrors the hand `underlying_from_json`, quirk a).
+///
+/// # Errors
+/// Malformed pair body, as a [`CodecError`].
+pub fn decode_underlying_fx(v: &Value) -> DResult<Underlying> {
+    Ok(Underlying::fx(decode_ccy_pair(v)?))
+}
+
+/// Decode the richer cross-asset `underlying` oneof object into an [`Underlying`]
+/// — exactly one arm (`fx` / `metal` / `equity` / `commodity` / `digital_asset`),
+/// mirroring the hand `underlying_object_from_json` arm precedence (quirk a).
+///
+/// # Errors
+/// Malformed body or no/unknown arm, as a [`CodecError`].
+pub fn decode_underlying_object(v: &Value) -> DResult<Underlying> {
+    let o = obj(v, "underlying")?;
+    if let Some(fx) = o.get("fx") {
+        Ok(Underlying::fx(decode_ccy_pair(fx)?))
+    } else if let Some(m) = o.get("metal") {
+        Ok(Underlying::metal(decode(
+            MetalPair::MESSAGE,
+            obj(m, "metal")?,
+        )?))
+    } else if let Some(e) = o.get("equity") {
+        Ok(Underlying::equity(decode(
+            EquityRef::MESSAGE,
+            obj(e, "equity")?,
+        )?))
+    } else if let Some(c) = o.get("commodity") {
+        Ok(Underlying::commodity(decode(
+            CommodityRef::MESSAGE,
+            obj(c, "commodity")?,
+        )?))
+    } else if let Some(d) = o.get("digital_asset") {
+        Ok(Underlying::digital_asset(decode(
+            CryptoPair::MESSAGE,
+            obj(d, "digital_asset")?,
+        )?))
+    } else {
+        Err(CodecError(
+            "underlying needs exactly one arm (fx / metal / equity / commodity / digital_asset)"
+                .to_owned(),
+        ))
+    }
+}
+
+/// Decode a WS `{spot, vol, r_dom, r_for}` market body into a [`MarketContext`] via
+/// the byte-identical `fx` constructor (mirrors the hand `market_context_from_json`,
+/// quirk b: the FX `r_dom`/`r_for` keys, not the generalized `{discount_rate, carry}`).
+///
+/// # Errors
+/// Missing/non-numeric `spot` or `vol`, as a [`CodecError`].
+pub fn decode_market_context(v: &Value) -> DResult<MarketContext> {
+    let o = obj(v, "market")?;
+    Ok(MarketContext::fx(
+        req_f64(o.get("spot"), "spot")?,
+        req_f64(o.get("vol"), "vol")?,
+        f64_or_zero(o.get("r_dom")),
+        f64_or_zero(o.get("r_for")),
+    ))
+}
+
+/// Decode a WS `tenor` body into a [`Tenor`] (mirrors `tenor_from_json`; the
+/// camelCase `brokenDate` key is resolved by the shared override, quirk d).
+///
+/// # Errors
+/// Malformed `tenor` / `brokenDate` body, as a [`CodecError`].
+pub fn decode_tenor(v: &Value) -> DResult<Tenor> {
+    decode(Tenor::MESSAGE, obj(v, "tenor")?)
+}
+
+/// Decode a WS `conventions` body into a [`Conventions`] (mirrors
+/// `conventions_from_json`).
+///
+/// # Errors
+/// Non-object `conventions` body, as a [`CodecError`].
+pub fn decode_conventions(v: &Value) -> DResult<Conventions> {
+    decode(Conventions::MESSAGE, obj(v, "conventions")?)
+}
+
+/// Decode a WS `quantity` body into a [`Quantity`] (mirrors `quantity_from_json`).
+///
+/// # Errors
+/// Non-object `quantity` body, as a [`CodecError`].
+pub fn decode_quantity(v: &Value) -> DResult<Quantity> {
+    decode(Quantity::MESSAGE, obj(v, "quantity")?)
+}
+
+/// Decode a WS `solve` body into a [`Solve`] (mirrors `solve_from_json`).
+///
+/// # Errors
+/// Non-object `solve` body, as a [`CodecError`].
+pub fn decode_solve(v: &Value) -> DResult<Solve> {
+    decode(Solve::MESSAGE, obj(v, "solve")?)
+}
+
+/// Decode a WS `strike` body into a [`StrikeOrDelta`] — the `strike`/`delta` oneof
+/// (mirrors `strike_or_delta_from_json`).
+///
+/// # Errors
+/// Neither `strike` nor `delta` present, as a [`CodecError`].
+pub fn decode_strike_or_delta(v: &Value) -> DResult<StrikeOrDelta> {
+    decode(StrikeOrDelta::MESSAGE, obj(v, "strike")?)
+}
+
+/// Decode a WS `vanilla` body into a [`Vanilla`] (mirrors `vanilla_from_json`).
+///
+/// # Errors
+/// Missing `strike`, as a [`CodecError`].
+pub fn decode_vanilla(v: &Value) -> DResult<Vanilla> {
+    decode(Vanilla::MESSAGE, obj(v, "vanilla")?)
+}
+
+/// Decode a WS `strategy` body into a [`Strategy`] — the `kind` + the repeated
+/// `legs` array (mirrors `strategy_from_json`).
+///
+/// # Errors
+/// Missing `legs` array, as a [`CodecError`].
+pub fn decode_strategy(v: &Value) -> DResult<Strategy> {
+    decode(Strategy::MESSAGE, obj(v, "strategy")?)
+}
+
+// ---------------------------------------------------------------------------
+// per-message reflection builders (mechanical convert + place only)
+// ---------------------------------------------------------------------------
+
+impl WireBuilder for CcyPair {
+    const MESSAGE: &'static str = "CcyPair";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "base" => self.base = req_string(value, "base")?,
+            "quote" => self.quote = req_string(value, "quote")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for MetalPair {
+    const MESSAGE: &'static str = "MetalPair";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "metal" => self.metal = enum_or_zero(value),
+            "quote" => self.quote = req_string(value, "quote")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Symbol {
+    const MESSAGE: &'static str = "Symbol";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "ticker" => self.ticker = req_string(value, "ticker")?,
+            "venue" => self.venue = string_or_empty(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for EquityRef {
+    const MESSAGE: &'static str = "EquityRef";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "symbol" => self.symbol = Some(req_msg::<Symbol>(value, "symbol")?),
+            "currency" => self.currency = req_string(value, "currency")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CommodityRef {
+    const MESSAGE: &'static str = "CommodityRef";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "symbol" => self.symbol = Some(req_msg::<Symbol>(value, "symbol")?),
+            "currency" => self.currency = req_string(value, "currency")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CryptoPair {
+    const MESSAGE: &'static str = "CryptoPair";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "base" => self.base = req_string(value, "base")?,
+            "quote" => self.quote = req_string(value, "quote")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Tenor {
+    const MESSAGE: &'static str = "Tenor";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "unit" => self.unit = enum_or_zero(value),
+            "count" => self.count = u32_or_zero(value),
+            // The camelCase `brokenDate` key was resolved by the shared override
+            // in `decode`; here it is a plain optional nested message.
+            "broken_date" => self.broken_date = opt_msg::<BrokenDate>(value, "brokenDate")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for BrokenDate {
+    const MESSAGE: &'static str = "BrokenDate";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "year" => self.year = i32_or_zero(value),
+            "month" => self.month = u32_or_zero(value),
+            "day" => self.day = u32_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Quantity {
+    const MESSAGE: &'static str = "Quantity";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "notional" => self.notional = f64_or_zero(value),
+            "base_ccy" => self.base_ccy = bool_or_false(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Solve {
+    const MESSAGE: &'static str = "Solve";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "target" => self.target = enum_or_zero(value),
+            "target_premium" => self.target_premium = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Conventions {
+    const MESSAGE: &'static str = "Conventions";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "delta_convention" => self.delta_convention = enum_or_zero(value),
+            "atm_convention" => self.atm_convention = enum_or_zero(value),
+            "premium_style" => self.premium_style = enum_or_zero(value),
+            "cut" => self.cut = enum_or_zero(value),
+            "day_count" => self.day_count = enum_or_zero(value),
+            "settlement" => self.settlement = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for StrikeOrDelta {
+    const MESSAGE: &'static str = "StrikeOrDelta";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        use strike_or_delta::Spec;
+        // `decode` calls `set` only for the single live oneof arm it selected.
+        match field.proto_name {
+            "strike" => self.spec = Some(Spec::Strike(req_f64(value, "strike")?)),
+            "delta" => self.spec = Some(Spec::Delta(req_f64(value, "delta")?)),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Vanilla {
+    const MESSAGE: &'static str = "Vanilla";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = Some(req_msg::<StrikeOrDelta>(value, "strike")?),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Leg {
+    const MESSAGE: &'static str = "Leg";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = Some(req_msg::<StrikeOrDelta>(value, "strike")?),
+            "side" => self.side = enum_or_zero(value),
+            "ratio" => self.ratio = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Strategy {
+    const MESSAGE: &'static str = "Strategy";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "kind" => self.kind = enum_or_zero(value),
+            "legs" => self.legs = req_repeated::<Leg>(value, "leg")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+/// A field present in the descriptor table but not handled by a builder — a
+/// contract change the codec has not caught up with. The `MESSAGE_FIELDS`
+/// alignment tests + the differential harness fail loudly if this is ever hit, so
+/// the generated decoder can never silently drop a newly-added field.
+fn unhandled(message: &str, field: &str) -> CodecError {
+    CodecError(format!(
+        "generated decoder for `{message}` has no builder arm for field `{field}` \
+         (contract drifted — update the WireBuilder)"
+    ))
 }

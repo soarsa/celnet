@@ -3667,7 +3667,9 @@ const _: fn() = || {
 #[doc(hidden)]
 pub mod diff_support {
     use celnet_proto::{
-        CcyPair, Greeks, MarketContext, RateSensitivities, Strategy, Tenor, Underlying,
+        CcyPair, CommodityRef, Conventions, CryptoPair, EquityRef, Greeks, MarketContext,
+        MetalPair, Quantity, RateSensitivities, Solve, Strategy, StrikeOrDelta, Symbol, Tenor,
+        Underlying, Vanilla,
     };
     use serde_json::Value;
 
@@ -3721,6 +3723,125 @@ pub mod diff_support {
     /// Propagates the hand codec's [`CodecError`] on a malformed body.
     pub fn hand_strategy_from_json(v: &Value) -> Result<Strategy, CodecError> {
         super::strategy_from_json(v)
+    }
+
+    // --- decode references (increment 3): the request-side leaf bodies the
+    // generated decoder must produce byte-identically. Each is a thin `pub`
+    // wrapper around the module-private hand decoder the generated path is
+    // compared against. Comparing the DECODED proto (via `PartialEq`) is the
+    // byte-identity contract: two encoders/decoders agree iff the message they
+    // produce is the same, i.e. re-encodes to the identical protobuf bytes.
+
+    /// Hand-codec `CcyPair` decoder (byte-identity target).
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_ccy_pair_from_json(v: &Value) -> Result<CcyPair, CodecError> {
+        super::ccy_pair_from_json(v)
+    }
+
+    /// Hand-codec FX-legacy `Underlying` decoder (the `{base, quote}` pair → FX arm).
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_underlying_from_json(v: &Value) -> Result<Underlying, CodecError> {
+        super::underlying_from_json(v)
+    }
+
+    /// Hand-codec richer cross-asset `underlying` oneof decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_underlying_object_from_json(v: &Value) -> Result<Underlying, CodecError> {
+        super::underlying_object_from_json(v)
+    }
+
+    /// Hand-codec FX-legacy `MarketContext` decoder (`{spot, vol, r_dom, r_for}`).
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_market_context_from_json(v: &Value) -> Result<MarketContext, CodecError> {
+        super::market_context_from_json(v)
+    }
+
+    /// Hand-codec `Conventions` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_conventions_from_json(v: &Value) -> Result<Conventions, CodecError> {
+        super::conventions_from_json(v)
+    }
+
+    /// Hand-codec `Quantity` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_quantity_from_json(v: &Value) -> Result<Quantity, CodecError> {
+        super::quantity_from_json(v)
+    }
+
+    /// Hand-codec `Solve` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_solve_from_json(v: &Value) -> Result<Solve, CodecError> {
+        super::solve_from_json(v)
+    }
+
+    /// Hand-codec `StrikeOrDelta` decoder (the `strike`/`delta` oneof).
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_strike_or_delta_from_json(v: &Value) -> Result<StrikeOrDelta, CodecError> {
+        super::strike_or_delta_from_json(v)
+    }
+
+    /// Hand-codec `Vanilla` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_vanilla_from_json(v: &Value) -> Result<Vanilla, CodecError> {
+        super::vanilla_from_json(v)
+    }
+
+    /// Hand-codec `MetalPair` decoder (the `metal` cross-asset arm).
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_metal_pair_from_json(v: &Value) -> Result<MetalPair, CodecError> {
+        super::metal_pair_from_json(v)
+    }
+
+    /// Hand-codec `Symbol` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_symbol_from_json(v: &Value) -> Result<Symbol, CodecError> {
+        super::symbol_from_json(v)
+    }
+
+    /// Hand-codec `EquityRef` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_equity_ref_from_json(v: &Value) -> Result<EquityRef, CodecError> {
+        super::equity_ref_from_json(v)
+    }
+
+    /// Hand-codec `CommodityRef` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_commodity_ref_from_json(v: &Value) -> Result<CommodityRef, CodecError> {
+        super::commodity_ref_from_json(v)
+    }
+
+    /// Hand-codec `CryptoPair` decoder (the `digital_asset` cross-asset arm).
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_crypto_pair_from_json(v: &Value) -> Result<CryptoPair, CodecError> {
+        super::crypto_pair_from_json(v)
     }
 }
 

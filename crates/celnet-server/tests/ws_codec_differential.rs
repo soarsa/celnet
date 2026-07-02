@@ -37,7 +37,7 @@ use celnet_proto::{
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
 use celnet_server::ws::generated_codec as generated;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// Serialize to the exact JSON text — the byte string the WS mirror puts on the
 /// wire. Byte-for-byte equality of these strings is the byte-identity contract.
@@ -313,4 +313,242 @@ fn strategy_roundtrips_through_the_hand_decoder() {
     let decoded =
         hand::hand_strategy_from_json(&encoded).expect("hand decoder accepts generated JSON");
     assert_eq!(decoded, s, "Strategy round-trips byte-identically");
+}
+
+// ===========================================================================
+// DECODE byte-identity (increment 3): the descriptor-driven decoder produces the
+// byte-identical proto message the hand decoder produces, over the request-side
+// leaf bodies of the Instrument / Price family.
+// ===========================================================================
+//
+// Equality of the DECODED proto messages IS the decode byte-identity contract:
+// two decoders agree on a body iff they build the same message — which re-encodes
+// to the identical protobuf bytes. Each assertion checks BOTH: `PartialEq` of the
+// messages AND equality of their re-serialized protobuf bytes (the literal wire
+// form), so a divergence in any field — value, presence, or oneof arm — fails
+// loudly. The inputs are the exact JSON bodies a browser / Excel client sends
+// (the `ws_mirror` conformance corpus shapes).
+
+use prost::Message;
+
+/// Assert the generated decoder and the hand decoder both accept `label`'s body and
+/// build the byte-identical proto message (equal by `PartialEq` AND re-encoding to
+/// identical protobuf bytes).
+#[track_caller]
+fn assert_decode_eq<T, E>(label: &str, generated: Result<T, E>, hand: Result<T, E>)
+where
+    T: Message + PartialEq + Default,
+    E: std::fmt::Display,
+{
+    let g = generated.unwrap_or_else(|e| panic!("[{label}] generated decode failed: {e}"));
+    let h = hand.unwrap_or_else(|e| panic!("[{label}] hand decode failed: {e}"));
+    assert_eq!(
+        g, h,
+        "[{label}] generated decoder built a different message than the hand codec"
+    );
+    assert_eq!(
+        g.encode_to_vec(),
+        h.encode_to_vec(),
+        "[{label}] decoded protobuf bytes differ (not byte-identical)"
+    );
+}
+
+#[test]
+fn ccy_pair_decode_is_byte_identical() {
+    let v = json!({ "base": "EUR", "quote": "USD" });
+    assert_decode_eq(
+        "CcyPair",
+        generated::decode_ccy_pair(&v),
+        hand::hand_ccy_pair_from_json(&v),
+    );
+}
+
+#[test]
+fn underlying_fx_decode_is_byte_identical() {
+    // The FX-legacy `{base, quote}` pair → the FX `Underlying` arm (quirk a).
+    let v = json!({ "base": "GBP", "quote": "JPY" });
+    assert_decode_eq(
+        "Underlying(fx)",
+        generated::decode_underlying_fx(&v),
+        hand::hand_underlying_from_json(&v),
+    );
+}
+
+#[test]
+fn underlying_object_arms_decode_are_byte_identical() {
+    // Every cross-asset `underlying` oneof arm decodes to the identical proto.
+    let cases = [
+        ("fx", json!({ "fx": { "base": "EUR", "quote": "USD" } })),
+        ("metal", json!({ "metal": { "metal": 1, "quote": "USD" } })),
+        (
+            "equity",
+            json!({ "equity": { "symbol": { "ticker": "AAPL", "venue": "XNAS" }, "currency": "USD" } }),
+        ),
+        (
+            "commodity",
+            json!({ "commodity": { "symbol": { "ticker": "CL", "venue": "NYMEX" }, "currency": "USD" } }),
+        ),
+        (
+            "digital_asset",
+            json!({ "digital_asset": { "base": "BTC", "quote": "USDT" } }),
+        ),
+    ];
+    for (arm, v) in cases {
+        assert_decode_eq(
+            &format!("Underlying(object/{arm})"),
+            generated::decode_underlying_object(&v),
+            hand::hand_underlying_object_from_json(&v),
+        );
+    }
+}
+
+#[test]
+fn market_context_decode_is_byte_identical() {
+    // The FX `r_dom`/`r_for` keys → the byte-identical `fx` constructor (quirk b).
+    let v = json!({ "spot": 1.082_53, "vol": 0.091_25, "r_dom": 0.042_10, "r_for": 0.018_70 });
+    assert_decode_eq(
+        "MarketContext",
+        generated::decode_market_context(&v),
+        hand::hand_market_context_from_json(&v),
+    );
+    // r_dom / r_for absent ⇒ proto3 default 0.0 on both paths.
+    let v0 = json!({ "spot": 1.10, "vol": 0.08 });
+    assert_decode_eq(
+        "MarketContext(no rates)",
+        generated::decode_market_context(&v0),
+        hand::hand_market_context_from_json(&v0),
+    );
+}
+
+#[test]
+fn tenor_decode_is_byte_identical() {
+    // Plain tenor.
+    let months = json!({ "unit": 3, "count": 1 });
+    assert_decode_eq(
+        "Tenor(months)",
+        generated::decode_tenor(&months),
+        hand::hand_tenor_from_json(&months),
+    );
+    // camelCase `brokenDate` (quirk d) decoded identically.
+    let broken =
+        json!({ "unit": 8, "count": 0, "brokenDate": { "year": 2026, "month": 9, "day": 18 } });
+    assert_decode_eq(
+        "Tenor(brokenDate)",
+        generated::decode_tenor(&broken),
+        hand::hand_tenor_from_json(&broken),
+    );
+}
+
+#[test]
+fn conventions_decode_is_byte_identical() {
+    let v = json!({
+        "delta_convention": 1, "atm_convention": 2, "premium_style": 1,
+        "cut": 3, "day_count": 1, "settlement": 1
+    });
+    assert_decode_eq(
+        "Conventions",
+        generated::decode_conventions(&v),
+        hand::hand_conventions_from_json(&v),
+    );
+    // All-absent ⇒ all proto3-zero on both paths.
+    let z = json!({});
+    assert_decode_eq(
+        "Conventions(default)",
+        generated::decode_conventions(&z),
+        hand::hand_conventions_from_json(&z),
+    );
+}
+
+#[test]
+fn quantity_and_solve_decode_are_byte_identical() {
+    let q = json!({ "notional": 1_000_000.0, "base_ccy": true });
+    assert_decode_eq(
+        "Quantity",
+        generated::decode_quantity(&q),
+        hand::hand_quantity_from_json(&q),
+    );
+    let s = json!({ "target": 1, "target_premium": 0.021_4 });
+    assert_decode_eq(
+        "Solve",
+        generated::decode_solve(&s),
+        hand::hand_solve_from_json(&s),
+    );
+}
+
+#[test]
+fn strike_or_delta_decode_arms_are_byte_identical() {
+    let strike = json!({ "strike": 1.082_53 });
+    assert_decode_eq(
+        "StrikeOrDelta(strike)",
+        generated::decode_strike_or_delta(&strike),
+        hand::hand_strike_or_delta_from_json(&strike),
+    );
+    let delta = json!({ "delta": 0.25 });
+    assert_decode_eq(
+        "StrikeOrDelta(delta)",
+        generated::decode_strike_or_delta(&delta),
+        hand::hand_strike_or_delta_from_json(&delta),
+    );
+}
+
+#[test]
+fn vanilla_and_strategy_decode_are_byte_identical() {
+    let vanilla = json!({ "option_type": 0, "strike": { "strike": 1.12 } });
+    assert_decode_eq(
+        "Vanilla",
+        generated::decode_vanilla(&vanilla),
+        hand::hand_vanilla_from_json(&vanilla),
+    );
+    let strategy = json!({
+        "kind": 1,
+        "legs": [
+            { "option_type": 0, "strike": { "delta": 0.25 }, "side": 1, "ratio": 1.0 },
+            { "option_type": 1, "strike": { "strike": 1.082_53 }, "side": 2, "ratio": 2.0 }
+        ]
+    });
+    assert_decode_eq(
+        "Strategy",
+        generated::decode_strategy(&strategy),
+        hand::hand_strategy_from_json(&strategy),
+    );
+}
+
+/// The exact instrument leaf bodies from the `ws_mirror` conformance corpus
+/// (`vanilla_call_json` / `conventions_json`) decode byte-identically through the
+/// generated path — the browser/Excel wire shapes, not synthetic values.
+#[test]
+fn ws_mirror_corpus_leaf_bodies_decode_byte_identical() {
+    let pair = json!({ "base": "EUR", "quote": "USD" });
+    assert_decode_eq(
+        "corpus/pair",
+        generated::decode_ccy_pair(&pair),
+        hand::hand_ccy_pair_from_json(&pair),
+    );
+    let tenor = json!({ "unit": 3, "count": 1 });
+    assert_decode_eq(
+        "corpus/tenor",
+        generated::decode_tenor(&tenor),
+        hand::hand_tenor_from_json(&tenor),
+    );
+    let quantity = json!({ "notional": 1_000_000.0, "base_ccy": true });
+    assert_decode_eq(
+        "corpus/quantity",
+        generated::decode_quantity(&quantity),
+        hand::hand_quantity_from_json(&quantity),
+    );
+    let vanilla = json!({ "option_type": 0, "strike": { "strike": 1.12 } });
+    assert_decode_eq(
+        "corpus/vanilla",
+        generated::decode_vanilla(&vanilla),
+        hand::hand_vanilla_from_json(&vanilla),
+    );
+    let conventions = json!({
+        "delta_convention": 0, "atm_convention": 0, "premium_style": 0,
+        "cut": 0, "day_count": 0, "settlement": 0
+    });
+    assert_decode_eq(
+        "corpus/conventions",
+        generated::decode_conventions(&conventions),
+        hand::hand_conventions_from_json(&conventions),
+    );
 }
