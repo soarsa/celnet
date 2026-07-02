@@ -1,7 +1,7 @@
 //! Fixed-income cash-bond analytics — the pure numeric leaf for a fixed-coupon bond.
 //!
 //! This crate is step 1 of the FI pricing engine (`docs/FI-PRICING-ENGINE-DESIGN.md` §6.1,
-//! `docs/adr/ADR-0012-fixed-income-as-a-new-asset-class-leaf.md`): a **settlement-aware** cash-bond
+//! `docs/adr/ADR-0018-fixed-income-as-a-new-asset-class-leaf.md`): a **settlement-aware** cash-bond
 //! analytics leaf that complements the *spot-starting* relative-value analytics already in
 //! [`celnet_rates::bond`] (yield / Z-spread / G-spread / asset-swap spread, which deliberately price
 //! at the curve origin with zero accrued). Here we add the pieces a bond desk needs at a real

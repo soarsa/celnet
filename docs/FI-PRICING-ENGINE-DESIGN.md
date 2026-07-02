@@ -3,7 +3,7 @@
 - **Status:** Proposed design direction (2026-06-30). Synthesises an external
   fixed-income pricing/RFQ-engine blueprint against celnet's actual architecture and
   records the target shape + fit. **Not yet implemented.** Companion: `docs/adr/
-  ADR-0012-fixed-income-as-a-new-asset-class-leaf.md`. Extends ADR-0008 (multi-asset
+  ADR-0018-fixed-income-as-a-new-asset-class-leaf.md`. Extends ADR-0008 (multi-asset
   carry), ADR-0010 (FI rates onto the carry seam); honours ADR-0007 (one unversioned
   contract) and CLAUDE.md guardrails #6 (scale/latency), #8 (vendor-neutral naming),
   #11 (trader-centric, zero-cost observability).
@@ -97,7 +97,7 @@ HdrHistogram) offloads over a bounded queue so the hot core stays log/lock/alloc
 - **Asset-class router (`price_instrument` -> `ProductEngine`).** FI is registered as a new
   asset class beside FX/metal/equity/commodity/crypto. A bond/credit `Instrument` arm
   decodes, routes to the FI leaf, and returns the same `Priced` shape. No new top-level
-  service, no second contract (ADR-0007). See ADR-0012.
+  service, no second contract (ADR-0007). See ADR-0018.
 - **Curve substrate.** Bond/credit pricing consumes the existing `celnet-rates::Curve`
   (the benchmark discount/forward curve) — the bootstrap already shipped. Per ADR-0010,
   `Carry` is the flat degenerate of a term structure; the bond leaf is a pure consumer of
@@ -164,7 +164,7 @@ infra. Bond-leaf math is us per instrument; the ms-scale budgets are book-level 
 1. **`celnet-bond`** — DCF / YTM (Newton-Raphson) / DV01 / duration / convexity, validated vs
    QuantLib. (Analytics first; unblocked today.)
 2. **`celnet-credit`** — spread curve + CR01; new credit dimension in the risk cube.
-3. **FI leaf registration** — bond/credit `Instrument` arm + `ProductEngine` entry (ADR-0012);
+3. **FI leaf registration** — bond/credit `Instrument` arm + `ProductEngine` entry (ADR-0018);
    contract + WS mirror + SDK + GUI/Excel views.
 4. **Quote construction** — mid -> skew -> client-tier -> two-way (on `Book` + entitlements).
 5. **Auto-hedge loop** — fill -> inventory -> DV01/CR01 -> limit -> `HedgeInstruction`.
@@ -180,7 +180,7 @@ infra. Bond-leaf math is us per instrument; the ms-scale budgets are book-level 
 
 ## 11. References
 - `docs/adr/ADR-0008-*` (multi-asset carry), `docs/adr/ADR-0010-converge-fi-rates-onto-carry-seam.md`,
-  `docs/adr/ADR-0012-fixed-income-as-a-new-asset-class-leaf.md`
+  `docs/adr/ADR-0018-fixed-income-as-a-new-asset-class-leaf.md`
 - `docs/CURVES-AND-INSTRUMENT-REFERENCE-DATA-REVIEW.md`, `docs/FI-BOND-DEAL-CAPTURE-GAP-ANALYSIS.md`,
   `docs/FIXED-INCOME-EXCEL-INTEGRATION-REVIEW.md`, `docs/W4-STRUCTURED-RFQ-PLAN.md`
 - `docs/ARCHITECTURE.md` §1.2 (latency/throughput budgets), `docs/SCALE-OUT.md`

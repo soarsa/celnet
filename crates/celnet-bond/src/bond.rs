@@ -1,7 +1,7 @@
 //! The decoupled bond definition and the crate's error type.
 //!
 //! [`Bond`] is a self-contained analytics input — deliberately **not** the server's reference-data
-//! `BondDef` — so this leaf compiles and is validated in isolation (ADR-0012's one-way dependency).
+//! `BondDef` — so this leaf compiles and is validated in isolation (ADR-0018's one-way dependency).
 
 use celnet_rates::{AccrualBasis, PaymentFrequency};
 use time::Date;

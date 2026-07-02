@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Celnet fixed-income cash-bond analytics leaf — settlement-aware dirty/clean pricing (DCF and flat-yield), accrued interest with the shared day-count/calendar, yield-to-maturity by safeguarded Newton-Raphson, and DV01/duration/convexity. A pure, oracle-validated numeric leaf that consumes the celnet-rates discount curve; it never touches IO or the wire (docs/FI-PRICING-ENGINE-DESIGN.md §6.1, docs/adr/ADR-0012)."
+description = "Celnet fixed-income cash-bond analytics leaf — settlement-aware dirty/clean pricing (DCF and flat-yield), accrued interest with the shared day-count/calendar, yield-to-maturity by safeguarded Newton-Raphson, and DV01/duration/convexity. A pure, oracle-validated numeric leaf that consumes the celnet-rates discount curve; it never touches IO or the wire (docs/FI-PRICING-ENGINE-DESIGN.md §6.1, docs/adr/ADR-0018)."
 publish = false
 
 [lints]

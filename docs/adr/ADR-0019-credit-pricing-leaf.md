@@ -1,20 +1,22 @@
-# ADR-0013: Credit (survival curves + CDS + credit-risky bonds) is a leaf on the FI branch
+# ADR-0019: Credit (survival curves + CDS + credit-risky bonds) is a leaf on the FI branch
+
+> **Renumbered 2026-07-01:** was ADR-0013; the number collided with ADR-0013 (single sell-side front-end, the canonical/heavily-referenced decision). Moved to the next free number, kept consecutive with its FI sibling ADR-0018 (fixed income). Internal references to the fixed-income ADR now read ADR-0018.
 
 - **Status:** Proposed (2026-07-01)
-- **Relates to:** ADR-0012 (fixed income as a new asset-class leaf), ADR-0010 (FI rates onto
+- **Relates to:** ADR-0018 (fixed income as a new asset-class leaf), ADR-0010 (FI rates onto
   the carry seam), ADR-0008 (multi-asset carry / asset-class routing), ADR-0007 (one
   unversioned contract).
 - **Context doc:** `docs/FI-CREDIT-ENGINE-DESIGN.md`.
 - **Branch:** drafted on `feature/fi-reference-data`. The analytics leaf builds on the FI
-  branch; the contract/registration step targets `main`'s pricing core, exactly as ADR-0012
+  branch; the contract/registration step targets `main`'s pricing core, exactly as ADR-0018
   prescribes for `celnet-bond`.
 
 ## Context
 
-ADR-0012 admitted fixed income as a new asset-class leaf on the cross-asset `ProductEngine`
+ADR-0018 admitted fixed income as a new asset-class leaf on the cross-asset `ProductEngine`
 router, with `celnet-bond` as the first pure analytics leaf. Credit — single-name CDS,
 credit-risky bonds, issuer survival curves, and credit risk (CR01 / jump-to-default) — is the
-next FI capability. The structural question is the same one ADR-0012 answered for bonds: does
+next FI capability. The structural question is the same one ADR-0018 answered for bonds: does
 credit price through the existing core, or as a parallel credit service with its own curve store
 and risk silo?
 
@@ -38,7 +40,7 @@ parallel credit pricing system, and not bolted onto `celnet-rates`.**
    is one `ProductEngine` registry entry returning the standard `Priced`.
 3. **CR01 and JTD are new dimensions of the existing risk cube**, not a credit-only store —
    credit positions roll up firm-wide alongside rates/FX, and a credit instrument's IR DV01 nets
-   with the rates desk automatically (extends ADR-0010's projection, honours ADR-0012 §3).
+   with the rates desk automatically (extends ADR-0010's projection, honours ADR-0018 §3).
 4. Quote construction (client-tier credit spread + inventory skew) and the fill→inventory→hedge
    loop for CR01/JTD are server services over the shipped `Book` / `celnet-limits` / entitlements
    — no new authz model, no second risk store.
@@ -66,7 +68,7 @@ parallel credit pricing system, and not bolted onto `celnet-rates`.**
 
 **Neutral**
 - Latency: survival math is cheap (µs per instrument on a fine time grid) and rides the existing
-  zero-alloc core; no new infra (no JVM/off-heap ceremony — consistent with ADR-0012).
+  zero-alloc core; no new infra (no JVM/off-heap ceremony — consistent with ADR-0018).
 
 ## Alternatives considered
 

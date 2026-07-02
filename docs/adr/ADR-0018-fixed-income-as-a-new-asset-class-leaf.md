@@ -1,4 +1,6 @@
-# ADR-0012: Fixed income (cash bonds + credit) enters as a new asset-class leaf
+# ADR-0018: Fixed income (cash bonds + credit) enters as a new asset-class leaf
+
+> **Renumbered 2026-07-01:** was ADR-0012; the number collided with ADR-0012 (unified gBSM kernel, the canonical/heavily-referenced decision). Moved to the next free number. Prior references to "ADR-0012" meaning fixed income now read ADR-0018.
 
 - **Status:** Proposed (2026-06-30)
 - **Relates to:** ADR-0008 (multi-asset carry / asset-class routing), ADR-0010 (FI rates

@@ -2,14 +2,14 @@
 
 - **Status:** Proposed design (2026-07-01). **Design only — no credit code yet.**
 - **Relates to:** `docs/FI-PRICING-ENGINE-DESIGN.md` (the cash-bond/credit engine design
-  this refines for the credit leg), ADR-0012 (fixed income as a new asset-class leaf),
+  this refines for the credit leg), ADR-0018 (fixed income as a new asset-class leaf),
   ADR-0010 (FI rates on the carry seam), ADR-0008 (multi-asset carry / asset-class routing).
 - **Build home when scheduled:** on the FI feature line (`feature/fi-reference-data`) for the
   pure analytics leaf; the *contract/registration* step targets `main`'s pricing core exactly
-  as ADR-0012 prescribes for `celnet-bond`.
+  as ADR-0018 prescribes for `celnet-bond`.
 - **Reuses:** `celnet-rates::Curve` (the risk-free discount substrate), `celnet-bond` (the
   risk-free cashflow/DCF machinery), `celnet-calendar` (schedules/day-counts), the risk cube
-  (CR01 as a new dimension, per ADR-0012 §3), and the shipped RFQ / FIX / `Book` / limits /
+  (CR01 as a new dimension, per ADR-0018 §3), and the shipped RFQ / FIX / `Book` / limits /
   entitlements — all unchanged.
 
 ## 1. Purpose
@@ -40,10 +40,10 @@ identifiers — those are reference-data symbols, not code identifiers.
 - **`celnet-calendar`** — CDS premium schedules (quarterly, standard roll), accrual, business-day
   adjustment. Reused wholesale.
 - **The risk cube** — already asset-keyed and DV01-carrying (ADR-0010); CR01 enters as a new
-  dimension, not a credit-only silo (ADR-0012 §3).
+  dimension, not a credit-only silo (ADR-0018 §3).
 - **RFQ / FIX / `Book` / `celnet-limits` / entitlements** — the dealer-quoting slice already
   shipped; credit rides it unchanged. Quote construction (inventory skew + client-tier spread)
-  and the fill→inventory→hedge loop are server services over these, per ADR-0012 §4.
+  and the fill→inventory→hedge loop are server services over these, per ADR-0018 §4.
 
 So `celnet-credit` is a **pure numerics leaf** plus the standard contract ripple — mirroring how
 `celnet-bond` entered.
@@ -151,7 +151,7 @@ independent oracles are:
 6. **Published single-name CDS example** (a worked flat-curve upfront) as a literal with its
    derivation in-comment.
 
-## 6. Contract & registration (targets `main`, per ADR-0012)
+## 6. Contract & registration (targets `main`, per ADR-0018)
 
 1. Credit `Instrument` arms added to the one canonical contract: `CreditDefaultSwap` and
    `CreditRiskyBond`; the asset-class router gains a credit branch beside FX/metal/equity/
@@ -159,7 +159,7 @@ independent oracles are:
 2. Each arm is a `ProductEngine` registry entry whose engine calls `celnet-credit` and returns
    the standard `Priced`. Adding a credit product = one registry entry (the proven pattern).
 3. **CR01 + JTD are new risk-cube dimensions** — credit positions roll up firm-wide alongside
-   rates/FX; no credit-only store (extends ADR-0010's projection, honours ADR-0012 §3).
+   rates/FX; no credit-only store (extends ADR-0010's projection, honours ADR-0018 §3).
 4. Every new RPC gets the standard gRPC + WS-mirror frame; the GUI/Excel gain a credit-curve /
    CDS view and a CR01/JTD column (the standard ripple, paid once). Reference data (issuer,
    seniority, recovery, restructuring clause, standard coupon) rides the existing instrument
@@ -192,7 +192,7 @@ independent oracles are:
 
 ## 9. References
 
-- `docs/FI-PRICING-ENGINE-DESIGN.md`, `docs/adr/ADR-0012-fixed-income-as-a-new-asset-class-leaf.md`,
+- `docs/FI-PRICING-ENGINE-DESIGN.md`, `docs/adr/ADR-0018-fixed-income-as-a-new-asset-class-leaf.md`,
   `docs/adr/ADR-0010-converge-fi-rates-onto-carry-seam.md`.
 - `crates/celnet-bond/` (risk-free DCF/risk this leaf composes with), `crates/celnet-rates/src/curve.rs`
   (the discount substrate), `crates/celnet-calendar/`.
