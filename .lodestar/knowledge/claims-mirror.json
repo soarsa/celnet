@@ -13923,5 +13923,83 @@
    "github.com-soarsa-celnet.crates.celnet-client.src.lib.Client.list_rates_positions"
   ],
   "text": "The Rust SDK+CLI reach client-parity over EXISTING RPCs (no proto change): DeskClient exposes the 5 RfqDeskService RPCs, Client::stream_notifications drives the NotificationStream, and Client::aggregate_rates_risk / book_rates_position / list_rates_positions cover RiskService FI-risk — each mirrored by a celnet-cli command. This closes the ADR-0014 api-first parity gap where these capabilities were GUI-only, restoring the invariant that every capability lives in the one canonical API and is consumed identically by GUI/SDK/CLI. (ADR-0014)"
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-bond.src.risk.bond_risk",
+   "github.com-soarsa-celnet.crates.celnet-bond.src.price.price_from_curve",
+   "github.com-soarsa-celnet.crates.celnet-bond.src.yield_solve.yield_to_maturity"
+  ],
+  "text": "CAPABILITY (FI wave — celnet-bond analytics, previously unanchored). celnet-bond's fixed-income analytics are pure curve/yield-driven closed forms. `price_from_curve` builds the bond's CashflowSchedule and discounts every cashflow on a supplied discount curve (CashflowSchedule::price_on_curve) to a dirty price. `yield_to_maturity` is a guarded Newton solver with bisection bracketing and MAX_EXPANSIONS/MAX_ITER/YIELD_TOL/PRICE_TOL halts, returning Result<Rate,BondError> (YieldDidNotConverge / YieldOutOfRange) — never panics, never silently truncates. `bond_risk` solves the YTM at the market dirty price then derives the full risk vector from the schedule's analytic price derivatives: modified_duration = -P'/P, dv01 = -P'·ONE_BP, macaulay_duration = modified·(1+y/freq), convexity = P''/P, and clean_price = dirty − accrued. All three read only their inputs and return by value — no I/O, no mutation, no WRITES edges."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rates.src.bootstrap.bootstrap_curve",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.bootstrap.bootstrap_ois",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.discount_factor"
+  ],
+  "text": "CAPABILITY (FI wave — celnet-rates discount-curve engine, previously unanchored). celnet-rates is a pure multi-instrument discount-curve engine. `bootstrap_curve` calibrates a Curve from an ordered CalibrationInstrument pillar slice by walking short-to-long and solving each pillar's discount factor (solve_pillar → solve_pillar_zero). `bootstrap_ois` is a thin OIS wrapper whose result is byte-identical to the generalized path (pinned by ois_wrapper_is_byte_identical_to_generalised_path). `Curve::discount_factor(t)` interpolates the stored log-discount-factor grid and returns exp(ln_df(t)) = P(0,t). All are deterministic pure functions of their inputs — the bootstraps build and return a local Curve; discount_factor is a read-only accessor — no I/O, no external mutation, no WRITES edges."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rates.src.risk.ois_risk"
+  ],
+  "text": "CAPABILITY (FI wave — celnet-rates OIS risk, previously unanchored). `ois_risk` computes an OIS swap's PV, parallel PV01, parallel DV01, and a per-pillar key-rate DV01 ladder by bump-and-rebootstrap: it bootstraps a base OIS curve, prices PV = ois_pv(base), then for the parallel DV01 bumps every calibrating quote by +ONE_BP, re-bootstraps, and takes the PV delta; the key_rate vector re-bootstraps once per pillar with only that pillar bumped +ONE_BP in isolation and records each PV delta. Any BootstrapError from the base or bumped builds is propagated. Pure: it reads &[OisQuote]/&OisSchedule, allocates only its local bumped-quote vectors and the returned OisRisk, and mutates no external state — no WRITES edges."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-fix.src.dialect_fx.build_security_list",
+   "github.com-soarsa-celnet.crates.celnet-fix.src.dialect_fx.build_security_list_request"
+  ],
+  "text": "CAPABILITY (FI wave — celnet-fix security-reference builders, previously unanchored). The celnet-fix FX dialect encodes the FIX security-reference exchange as pure message builders: `build_security_list_request` composes an outbound SecurityListRequest (35=x) and `build_security_list` composes the outbound SecurityList (35=y) response enumerating the tradable instruments. Both are side-effect-free builders that construct and return the encoded message from their inputs — no I/O, no session mutation, no WRITES edges. (The stateful acceptor path Acceptor::on_security_list_request, which decodes an inbound 35=x and emits 35=y onto the session output queue, is a distinct non-pure symbol.)"
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.cva.compute_xva"
+  ],
+  "text": "CAPABILITY (D-xva — celnet_xva::compute_xva core, re-verified on main 9d5642d). compute_xva is the pure discrete unilateral CVA/DVA/FVA integrator over the exposure-profile grid. It asserts both LGDs ∈ [0,1] (panics otherwise), then over intervals k=1..n accumulates CVA += lgd_counterparty·disc[k]·EPE[k]·(S_c(t_{k-1})−S_c(t_k)); DVA += lgd_own·disc[k]·ENE[k]·(S_o(t_{k-1})−S_o(t_k)); and FVA += funding_spread·disc[k]·(EPE[k]−ENE[k])·Δt_k·S_c(t_k)·S_o(t_k) — the counterparty/own marginal default probabilities come from the survival curves and FVA funds the net expected exposure on the joint-survival measure. It reads only &XvaInputs and returns XvaResult{cva,dva,fva}; no mutation, no I/O, no allocation in the loop — no WRITES edges."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.auth.AuthEdge.build_curve"
+  ],
+  "text": "CAPABILITY (FI wave — BuildCurve RPC serving path, arch item D / ADR-0010, previously unanchored in knowledge). The BuildCurve capability serves discount-curve calibration over the one contract: the WS unary dispatcher (celnet-server ws::handle_unary) routes the \"BuildCurve\" verb — decoded by build_curve_request_from_json — to the auth-gated AuthEdge::build_curve, which resolves each pillar's instrument id against the refdata IdentityStore, converts tenor-token or ISO-date pillars to time-in-years (tenor_to_date / parse_iso_date -> date_to_time), passes the resulting CalibrationInstrument slice to celnet_rates::bootstrap_curve, and returns the CalibratedCurve. Date-anchored pillars are the wire contract for term-structure calibration. Draft: serving-path decision (auth + decode + I/O), not a pure invariant — reaches active only under a Stage-2 cross-family verdict (transport currently unavailable)."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.config.identity.IdentityStore"
+  ],
+  "text": "CAPABILITY (FI wave — reference-data instrument repository, previously unanchored). celnet-server IdentityStore is the reference-data instrument repository backing FI/curve calibration: an in-memory registry seeded by ensure_seed_registry and schema-validated by validate_registry, exposing instrument_by_id and instrument_by_external_id lookups that resolve BuildCurve pillar ids and rates-instrument references to their canonical InstrumentDef (loaded from the JSON reference-data set in config/reference_data.rs). It is the single source binding wire instrument ids to typed instruments across the FI serving path. Draft: capability/decision over a mutable registry (not a pure invariant)."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.pricing.PricingEdge.price_rates"
+  ],
+  "text": "CAPABILITY (FI wave — rates pricing / RFQ serving path, arch item H / ADR-0007, previously unanchored). The rates pricing path serves FI pricing/RFQ over the one contract: the auth-gated PricingEdge::price_rates handler extracts a RatesPriceRequest, invokes the core celnet-rates pricer, and maps the canonical error taxonomy RatesPriceError::Bootstrap -> Status::internal, other errors -> Status::invalid_argument. The sensitivities surfaced are the celnet_rates::risk key-rate DV01 ladder and ois_risk. State: FRA/IRS/OIS/bond PV + key-rate DV01 LIVE; broader rates breadth (STIR futures, quoting/booking) is TARGET. Draft: serving-path decision."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.pricing.PricingEdge.price_xva",
+   "github.com-soarsa-celnet.crates.celnet-server.src.xva_pricing.price_xva"
+  ],
+  "text": "CAPABILITY (D-xva — PriceXva RPC serving path / dormant-crate activation, previously unanchored). D-xva activates celnet-xva behind the one contract via the PriceXva RPC: the auth-gated PricingEdge::price_xva handler delegates to the celnet-server xva_pricing::price_xva adapter, which validates the PriceXvaRequest (non-positive strike/expiry/vol/notional -> typed XvaPriceError), builds the NettingSet and counterparty/own survival curves, and calls celnet_xva::compute_xva; a NonFiniteResult maps to Status::internal. This wires the previously-unserved XVA engine into the serving path (dormant-crate-activation acceptance, arch item D). Draft: serving-path decision (auth + validation + I/O)."
  }
 ]
