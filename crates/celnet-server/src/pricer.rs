@@ -45,6 +45,7 @@ use celnet_crypto_vanilla::{
 };
 use celnet_equity_vanilla::EquityInputs;
 
+mod contract;
 mod engines;
 
 /// Activate user-extensible analytics on this pricing worker (architecture item D
@@ -592,6 +593,47 @@ pub fn price_instrument(
     // the verbatim native static dispatch, byte-identical to the former product
     // `match`.
     engines::dispatch_live(product, instrument, market, expiry, conv)
+}
+
+/// Price an FX/metal **vanilla** instrument through the unified pricing **contract**
+/// ([`celnet_core::contract`]) — the leaf-level re-seat of the vanilla arm
+/// (ADR-0017 Phase A1, `docs/plan/CENTRAL-CORE-UNIFICATION.md`). The market is
+/// resolved by [`contract::FxSurfaceResolver`] (wrapping the marked-surface
+/// snapshot) into a [`celnet_core::contract::ResolvedMarket`], and the FX
+/// [`engines::VanillaEngine`] prices it via [`celnet_core::contract::Priceable`].
+///
+/// This is **byte-identical** to the vanilla arm of [`price_instrument`] (gated by
+/// `contract::tests::fx_vanilla_reseat_is_byte_identical`): it calls the identical
+/// [`resolve_strike`] + [`price_vanilla_leg`], sourcing the FX two rates + resolved
+/// scalar vol from `market` (the frozen-pin single-`exp` arithmetic) and the
+/// delta-key solver's conventions from the resolved market (critique F4).
+///
+/// `price_instrument`'s full pre-dispatch guard cascade is unchanged; this is the
+/// leaf contract entry the platform migrates the remaining leaves onto in later
+/// phases (A2: cross-asset; B: linear FI). `market` is the resolved context the
+/// edge produces (for a pinned request, after `resolve_pinned_vol` has stamped the
+/// marked-surface vol).
+///
+/// # Errors
+///
+/// [`PriceError`] if the instrument does not carry an FX vanilla product or carries
+/// an out-of-domain input.
+pub fn price_vanilla_via_contract(
+    instrument: &Instrument,
+    market: &WireMarketContext,
+    conv: &ConventionSet,
+) -> Result<Priced, PriceError> {
+    use celnet_core::contract::{MarketResolver, Priceable};
+    let resolver = contract::FxSurfaceResolver::from_market(market, conv);
+    let resolved = resolver.resolve(&())?;
+    let ctx = engines::EngineCtx {
+        instrument,
+        market,
+        expiry: instrument.expiry_years,
+        conv,
+        plugin_models: None,
+    };
+    <engines::VanillaEngine as Priceable>::price(&engines::VanillaEngine, &resolved, &ctx)
 }
 
 // ===========================================================================

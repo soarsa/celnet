@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod carry;
+pub mod contract;
 pub mod math;
 
 mod compare;
@@ -18,6 +19,9 @@ pub use carry::{
     gbsm_carry_greeks, gbsm_carry_price,
 };
 pub use compare::{DEFAULT_ABS, DEFAULT_REL, is_close};
+pub use contract::{
+    FlatDiscountCurve, MarketResolver, Priceable, RateLadder, ResolvedMarket, RiskMeasure,
+};
 
 use celnet_types::Vol;
 

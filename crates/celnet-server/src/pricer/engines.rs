@@ -127,12 +127,24 @@ impl ProductEngine for VanillaEngine {
 /// For the reference FX model this is byte-identical to the native Garman-
 /// Kohlhagen strip; a desk's own model legitimately differs. Selecting a house
 /// model touches only this arm — the other product arms stay static dispatch.
-struct PluginModelEngine<'r> {
+pub(super) struct PluginModelEngine<'r> {
     /// The resolved house pricing-model handle (tier-blind: native or sandboxed).
     model: &'r dyn HostModel,
     /// The decoded FX/metal underlying handed to the model so it can confirm the
     /// asset class it prices (the FX two-rate arm).
     underlying: celnet_types::Underlying,
+}
+
+// Production builds construct `PluginModelEngine` inline in [`dispatch`]; this
+// constructor exists only so the `Priceable` re-seat test ([`super::contract`])
+// can instantiate the plugin engine directly.
+#[cfg(test)]
+impl<'r> PluginModelEngine<'r> {
+    /// Build a plugin-model engine over a resolved house-model handle and the
+    /// decoded FX/metal underlying the model prices.
+    pub(super) fn new(model: &'r dyn HostModel, underlying: celnet_types::Underlying) -> Self {
+        Self { model, underlying }
+    }
 }
 
 impl ProductEngine for PluginModelEngine<'_> {

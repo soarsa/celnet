@@ -701,6 +701,59 @@ mod tests {
         assert!(!pin_current_thread_to_core(usize::MAX));
     }
 
+    /// ADR-0016 hot-core embargo (the central-core-unification Phase-A1 deliverable,
+    /// critique F5): the pinned streaming [`MarketState`] must NEVER gain a
+    /// request/batch-tier curve handle — no `celnet_core::contract::ResolvedMarket`,
+    /// no borrowed `&dyn DiscountCurve` / `celnet_core::CurveCarry`, and no owned
+    /// term-structure handle (`Arc<celnet_rates::curve::Curve>`). The unified
+    /// pricing contract deliberately homes those at the request tier; the flat-`f64`
+    /// hot state stays exactly its market scalars + resolved conventions + smile.
+    ///
+    /// This is enforced structurally by three independent facts.
+    ///
+    /// The `'static` bound: `MarketState` is published as `Arc<ArcSwap<MarketState>>`
+    /// and read lock-free on the hot path, so it is `'static`. Every request-tier
+    /// curve handle is a BORROWED value — `ResolvedMarket<'a>`, `CurveCarry<'a>`, or
+    /// a bare `&'a dyn DiscountCurve` — carrying a non-`'static` lifetime; adding one
+    /// as a field would make `MarketState` lifetime-parameterised and fail this bound
+    /// (a compile error — the embargo biting), and would also break the existing
+    /// `ArcSwap` publication.
+    ///
+    /// The size pin: `MarketState` is EXACTLY its four flat `f64` market scalars plus
+    /// the resolved `ConventionRecord` plus the calibrated `MarketHedgeSmile` —
+    /// proven against an independently-declared shadow with the identical field set.
+    /// Smuggling in any extra field (e.g. an owned `Arc<dyn DiscountCurve>`, 8 bytes)
+    /// grows the size and trips this pin.
+    ///
+    /// The absent `celnet-rates` edge: the general bootstrapped `Curve` lives in
+    /// `celnet-rates`, which `celnet-engine` does not depend on (gate: `cargo tree -p
+    /// celnet-engine` lists no `celnet-rates`), so a term-structure curve handle is
+    /// not even nameable in the hot core.
+    #[test]
+    fn hot_core_embargoes_request_tier_curve_handles() {
+        // (1) Borrowed handles are barred by the `'static` bound.
+        fn assert_static<T: 'static>() {}
+        assert_static::<MarketState>();
+
+        // (2) No extra (owned) field may be smuggled in: the layout matches the
+        // exact declared field set. Any curve handle added to `MarketState` without
+        // mirroring it here (a glaring, review-visible edit) trips this pin.
+        struct HotStateShadow {
+            _spot: f64,
+            _r_dom: f64,
+            _r_for: f64,
+            _t: f64,
+            _conventions: ConventionRecord,
+            _smile: MarketHedgeSmile,
+        }
+        assert_eq!(
+            core::mem::size_of::<MarketState>(),
+            core::mem::size_of::<HotStateShadow>(),
+            "MarketState must stay flat: no ResolvedMarket / Arc<Curve> / DiscountCurve \
+             handle field may enter the hot core (ADR-0016)"
+        );
+    }
+
     #[test]
     fn state_handle_publishes_atomically() {
         let pair = celnet_types::CcyPair::parse("EURUSD").unwrap();
