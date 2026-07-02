@@ -17,8 +17,8 @@
  *   4. Sign out; sign back in AS the trader (re-deriving their effective set).
  *   5. Confirm the trader's Rates-Book "Book position" is DISABLED and carries
  *      the denial tooltip, while still VISIBLE (never hidden) — (a).
- *   6. Confirm a sibling FI affordance they DO hold — Rates "Request quote"
- *      (price·FI) — stays ENABLED — (b).
+ *   6. Confirm a sibling FI affordance they DO hold — the rates ticket's
+ *      "Price OIS" control (price·FI) — stays ENABLED — (b).
  *   7. Screenshot the trader's gated view at 1440 + an axe pass (0 serious).
  *
  * `book·fixed_income` is the denied capability because the Rates-Book "Book
@@ -73,7 +73,8 @@ async function gotoRatesBook(page: Page) {
 async function gotoRatesTicket(page: Page) {
   await railClick(page, "Ticket");
   const pane = page.locator('[aria-hidden="false"]:not([inert])').last();
-  await pane.getByRole("combobox", { name: "search structures" }).fill("OIS");
+  // The gallery search is an `<input type="search">` → the ARIA `searchbox` role.
+  await pane.getByRole("searchbox", { name: "search structures" }).fill("OIS");
   await pane.getByRole("option", { name: /OIS|Overnight/i }).first().click();
   return pane;
 }
@@ -130,10 +131,12 @@ test("a denied capability disables exactly that affordance for the trader", asyn
   await expect(bookBtn).toBeDisabled(); // gated off
   await expect(bookBtn).toHaveAttribute("title", BOOK_DENIED_TITLE);
 
-  // 6) A sibling FI affordance they DO hold — the rates ticket's "Request quote"
-  // (price·FI) — stays ENABLED.
+  // 6) A sibling FI affordance they DO hold — the rates ticket's price control
+  // (price·FI) — stays ENABLED. fe-fi-migration #3: the OIS prices through the
+  // shared ticket via the `price_rates` seam, so its primary action reads
+  // "Price OIS" (not the option ticket's "Request quote").
   const ratesTicket = await gotoRatesTicket(page);
-  const priceBtn = ratesTicket.getByRole("button", { name: /Request quote|Pricing…/ });
+  const priceBtn = ratesTicket.getByRole("button", { name: /Price OIS|Pricing…/ });
   await expect(priceBtn).toBeVisible();
   await expect(priceBtn).toBeEnabled();
 

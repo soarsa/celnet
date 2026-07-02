@@ -60,8 +60,15 @@ import { readWsUrl } from "./wsUrl";
 // the GUI-bookable structure catalogue (pinned to the live gallery by a law test)
 // ---------------------------------------------------------------------------
 
-/** What a successful live quote renders for a family on the ticket face. */
-type PricedMarker = "greeks" | "fair-variance" | "fair-volatility";
+/**
+ * What a successful live quote renders for a family on the ticket face:
+ *  - `greeks`          — the option premium two-way + Greeks strip (delta cell).
+ *  - `fair-variance` / `fair-volatility` — the swap fair-strike panel.
+ *  - `rates`           — the fixed-income (OIS) `RatesResult`: PV / par / PV01 /
+ *    DV01 + the key-rate DV01 ladder (priced via the `price_rates` seam, not a
+ *    premium two-way — no Greeks, no premium unit).
+ */
+type PricedMarker = "greeks" | "fair-variance" | "fair-volatility" | "rates";
 
 /**
  * Every registered `ProductSpec` (id + trader-facing gallery label, in catalogue
@@ -148,6 +155,19 @@ const GUI_STRUCTURES: readonly {
     label: "Cross-asset vanilla",
     corpusFamilies: ["equity_option", "commodity_option", "crypto_option"],
     marker: "greeks",
+  },
+  {
+    // fe-fi-migration #3: the fixed-income OIS folded into the SHARED ticket as a
+    // `RatesProductSpec` (`src/products/ois.tsx`), reached through the same gallery
+    // (the "Fixed income (rates)" group). It prices via the `price_rates` seam —
+    // no option `Instrument`, no golden-corpus family — so `corpusFamilies` is
+    // empty (its numerical conformance is gated on the rates-pricing seam, not the
+    // option WS golden corpus); the browser half proves it quotes live from the
+    // gallery via the `rates` marker below.
+    id: "OIS",
+    label: "OIS (SOFR swap)",
+    corpusFamilies: [],
+    marker: "rates",
   },
 ];
 
@@ -249,6 +269,26 @@ test.describe("gallery → ticket → live RFQ: every registered family quotes o
       await expect(pane.getByTitle("delta (spot)")).toHaveCount(0);
       await expect(pane.getByText("Fair variance strike", { exact: true })).toHaveCount(0);
       await expect(pane.getByText("Fair volatility strike", { exact: true })).toHaveCount(0);
+
+      // Fixed income (OIS): the registry `RatesProductSpec` prices through the
+      // SAME ticket via the `price_rates` seam — its primary action reads "Price
+      // OIS" (not the option "Request quote"), and a `RatesResult` (PV / par /
+      // PV01 / DV01 + the key-rate DV01 ladder) REPLACES the premium two-way +
+      // Greeks strip: no `delta (spot)` cell, no premium-unit label. This proves
+      // the FI family quotes live from the shared gallery, same as every option
+      // family below.
+      if (s.marker === "rates") {
+        await pane.getByRole("button", { name: /Price OIS|Re-price/ }).click();
+        // The ladder TITLE is the `<h3>` heading (the OIS input-form note also
+        // contains the phrase, so match the heading by role, not free text).
+        await expect(
+          pane.getByRole("heading", { name: "Key-rate DV01 ladder" }),
+        ).toBeVisible({ timeout: renderTimeoutMs });
+        await expect(pane.getByText("Par rate", { exact: true })).toBeVisible();
+        await expect(pane.getByTitle("delta (spot)")).toHaveCount(0);
+        await expect(pane.getByText(/% .* prem/)).toHaveCount(0);
+        return;
+      }
 
       // RFQ the registry-default structure against the live edge.
       await pane.getByRole("button", { name: /Request quote/ }).click();

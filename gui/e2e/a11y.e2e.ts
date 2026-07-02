@@ -51,10 +51,14 @@ test.describe("Celnet GUI — axe a11y (zero serious/critical)", () => {
     // the key-rate DV01 ladder) and the direction/tenor selectors, whose active state
     // uses the axe-AA high-contrast pattern (text-primary + accent underline).
     const pane = await gotoWorkspace(page, "ticket");
-    await pane.getByRole("combobox", { name: "search structures" }).fill("OIS");
+    // The gallery search is an `<input type="search">` → the ARIA `searchbox`
+    // role (a plain search field, not a `list`-backed `combobox`).
+    await pane.getByRole("searchbox", { name: "search structures" }).fill("OIS");
     await pane.getByRole("option", { name: /OIS|Overnight/i }).first().click();
     await pane.getByRole("button", { name: "Price OIS" }).click();
-    await pane.getByText("Key-rate DV01 ladder").waitFor();
+    // The ladder TITLE is the `<h3>` heading — the OIS input-form note also
+    // contains the phrase ("…and the key-rate DV01 ladder."), so match by role.
+    await pane.getByRole("heading", { name: "Key-rate DV01 ladder" }).waitFor();
     await page.waitForTimeout(500);
     await expectNoSeriousA11y(page, "Fixed-income OIS ticket");
   });
