@@ -14171,5 +14171,13 @@
    "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.price"
   ],
   "text": "CAPABILITY (commodity cross-asset leaf): celnet-commodity-vanilla::price is the Black-76 commodity/future-option pricing entry on the carry seam — a pure, side-effect-free closed form taking (OptionType, &CommodityInputs) that prices off the outright forward with numeraire discount (b = carry.carry_rate(): 0 on a listed future, r−convenience on spot). Under ADR-0012 it delegates to the ONE unified forward-space kernel celnet_core::carry::gbsm_carry_price(opt, b, r, spot, strike, vol, t) — byte-for-byte identical to the former in-crate Black-76 form (identical forward-space op sequence). Reconciled to Haug's published Black-76 reference and an independent QuantLib-pinned oracle. It is the commodity capability's projection target through the one contract. No I/O, allocation, logging, or mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.price"
+  ],
+  "text": "`linear::price(opt, i)` — the USDT/coin-quoted (linear-margined) crypto vanilla closed form — is a thin delegation to the unified generalized-BSM kernel `gbsm_carry_price`, passing the option type together with the carry rate `i.carry.carry_rate()` and discount rate `i.carry.discount_rate()` extracted from the `Carry`, plus spot/strike/vol/t. Post-ADR-0012 gBSM unification the leaf holds no inline closed form of its own (the former `aux`/`fx_equiv_rates` precompute was removed), so it is bit-identical to every other carry-seam leaf under matching rates. Pure: reads `(OptionType, &LinearInputs)`, returns `f64`, no WRITES, allocation, or I/O."
  }
 ]
