@@ -135,7 +135,13 @@ validated in CI/containers on Linux. **GPU strategy:** `wgpu` (Metal/Vulkan/DX12
 
 Cross-session durable facts/decisions live in the Claude Code per-project auto-memory
 (`~/.claude/projects/<repo-path-slug>/memory/`, index `MEMORY.md`) — the slug is derived
-from each machine's local checkout path, so it is per-developer, not shared.
+from each machine's local checkout path, so the live dir is per-machine. It is made durable
++ shared by a git-committed mirror at **`.celnet/memory/`** synced via
+**`tools/celnet-memory-sync.sh`**: the SessionStart hook runs `restore` (bootstraps a fresh
+clone/machine without clobbering local-newer files), and `snapshot` mirrors the live dir
+back for committing. Run `tools/celnet-memory-sync.sh snapshot && git add .celnet/memory &&
+git commit && git push` at milestones so new memories survive /clear·terminate·restart and
+propagate across developer PCs via the private `origin` repo.
 
 ## Parallel multi-session model
 
