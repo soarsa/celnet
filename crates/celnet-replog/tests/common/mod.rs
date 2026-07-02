@@ -6,7 +6,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Hard upper bound on any single test body — a regression fails loudly here.
-pub(crate) const TEST_DEADLINE: Duration = Duration::from_secs(15);
+///
+/// Raised 15 s → 45 s: loaded-t2 M4 contention starves multi-node Raft
+/// election/convergence past the original limit (not a real break — passes
+/// uncontended; mirrors the celnet-client TEST_DEADLINE fix).
+pub(crate) const TEST_DEADLINE: Duration = Duration::from_secs(45);
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 

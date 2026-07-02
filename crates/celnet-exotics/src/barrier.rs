@@ -67,6 +67,11 @@ struct RrBlocks {
     pow_2mu2: f64,
     /// `(H/S)^{2μ}` power weight.
     pow_2mu: f64,
+    /// `ln (H/S)^{2(μ+1)} = 2(μ+1)·ln(H/S)`; finite even when `pow_2mu2`
+    /// overflows, so the image terms can recombine in log-space.
+    ln_pow_2mu2: f64,
+    /// `ln (H/S)^{2μ} = 2μ·ln(H/S)`; finite even when `pow_2mu` overflows.
+    ln_pow_2mu: f64,
     s_disc: f64,
     k_disc: f64,
     x1: f64,
@@ -92,12 +97,22 @@ impl RrBlocks {
         let hs = h / s;
         let pow_2mu2 = pow(hs, 2.0 * (mu + 1.0));
         let pow_2mu = pow(hs, 2.0 * mu);
+        // Log of each image weight, computed from the exponent directly (not via
+        // `ln(pow_*)`) so it stays finite when the weight overflows f64 — the
+        // log-space fallback in `weighted_image` needs the true log-magnitude.
+        // `pow(base, e)` is `exp(e·dlog(base))`, so these are byte-consistent
+        // with the exponents used just above.
+        let ln_hs = dlog(hs);
+        let ln_pow_2mu2 = 2.0 * (mu + 1.0) * ln_hs;
+        let ln_pow_2mu = 2.0 * mu * ln_hs;
 
         Self {
             phi: option.sign(),
             eta: if up { -1.0 } else { 1.0 },
             pow_2mu2,
             pow_2mu,
+            ln_pow_2mu2,
+            ln_pow_2mu,
             s_disc: s * l.df_for(),
             k_disc: k * l.df_dom(),
             x1,
@@ -122,15 +137,77 @@ impl RrBlocks {
             - self.phi * self.k_disc * norm_cdf(self.phi * (self.x2 - vsqt))
     }
     /// C = φ·S·e^{−r_f T}·(H/S)^{2(μ+1)}·Φ(η y1) − φ·K·e^{−r_d T}·(H/S)^{2μ}·Φ(η(y1−σ√T)).
+    ///
+    /// The two `(H/S)^{…}·Φ(…)` image products are routed through
+    /// [`weighted_image`] so they stay finite when the reflection weight
+    /// overflows f64 (see that fn); when the weight is finite the result is
+    /// byte-identical to the direct product.
     fn c(&self, vsqt: f64) -> f64 {
-        self.phi * self.s_disc * self.pow_2mu2 * norm_cdf(self.eta * self.y1)
-            - self.phi * self.k_disc * self.pow_2mu * norm_cdf(self.eta * (self.y1 - vsqt))
+        self.phi
+            * weighted_image(
+                self.s_disc,
+                self.pow_2mu2,
+                self.ln_pow_2mu2,
+                self.eta * self.y1,
+            )
+            - self.phi
+                * weighted_image(
+                    self.k_disc,
+                    self.pow_2mu,
+                    self.ln_pow_2mu,
+                    self.eta * (self.y1 - vsqt),
+                )
     }
     /// D uses y2 in place of y1.
     fn d(&self, vsqt: f64) -> f64 {
-        self.phi * self.s_disc * self.pow_2mu2 * norm_cdf(self.eta * self.y2)
-            - self.phi * self.k_disc * self.pow_2mu * norm_cdf(self.eta * (self.y2 - vsqt))
+        self.phi
+            * weighted_image(
+                self.s_disc,
+                self.pow_2mu2,
+                self.ln_pow_2mu2,
+                self.eta * self.y2,
+            )
+            - self.phi
+                * weighted_image(
+                    self.k_disc,
+                    self.pow_2mu,
+                    self.ln_pow_2mu,
+                    self.eta * (self.y2 - vsqt),
+                )
     }
+}
+
+/// One Reiner-Rubinstein image term `disc · (H/S)^p · Φ(arg)`, where `disc ≥ 0`
+/// is the discounted spot/strike and `ln_pow = p · ln(H/S)` is the log of the
+/// image (reflection) weight.
+///
+/// In the ordinary regime this is the plain product — byte-identical to the
+/// direct `disc · pow · Φ(arg)` form, so the frozen single-barrier golden grid
+/// is untouched.
+///
+/// In the degenerate high-|carry|/low-vol regime the weight `(H/S)^{2μ}`
+/// overflows f64: `μ = b/σ² − ½` is unbounded when `σ` is tiny relative to the
+/// carry `b = r_d − r_f`. That overflow only ever occurs when the drift pushes
+/// the spot *into* the barrier (weight `(H/S)^{2μ} → ∞` requires `2μ·ln(H/S) →
+/// +∞`), and in exactly that limit the paired normal tail `Φ(arg)` is in its far
+/// tail (`arg → −∞`, `Φ → 0`), so the true product `pow·Φ → 0`. Evaluated
+/// literally the product is `∞·0 = NaN`; recombining in log-space
+/// (`exp(ln_pow + ln Φ)`) recovers the finite limit. This is the same
+/// tail-stable device as [`scaled_cdf_diff`] (double barrier) and
+/// [`crate::touch::pow_cdf`] (touch reflection). A non-finite combination
+/// (unreachable inside the formula's convergence domain) is clamped to `0`.
+#[inline]
+fn weighted_image(disc: f64, pow: f64, ln_pow: f64, arg: f64) -> f64 {
+    let cdf = norm_cdf(arg);
+    let direct = disc * pow * cdf;
+    if direct.is_finite() {
+        return direct;
+    }
+    if cdf <= 0.0 {
+        return 0.0;
+    }
+    let v = disc * exp(ln_pow + dlog(cdf));
+    if v.is_finite() { v } else { 0.0 }
 }
 
 /// Deterministic power for positive `base`.

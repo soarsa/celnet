@@ -40,7 +40,10 @@ use celnet_server::services::rates_book::RatesPositionStore;
 use celnet_server::services::risk::store::{BookedPosition, PositionStore};
 
 /// The hard per-test wall-clock bound (leader election + replication over loopback).
-const DEADLINE: Duration = Duration::from_secs(20);
+///
+/// Raised 20 s → 45 s: loaded-t2 M4 contention can starve the multi-node Raft
+/// convergence past the original limit (not a real regression — passes uncontended).
+const DEADLINE: Duration = Duration::from_secs(45);
 
 fn eurusd() -> CcyPair {
     CcyPair::new(Ccy::EUR, Ccy::USD)
@@ -160,12 +163,15 @@ fn establish_stable_leader(start: Instant, nodes: &[Arc<RaftNode>]) -> usize {
 
 /// Build a shared consensus handle from an already-established leader node with the given
 /// Strong policy (generous deadlines for the loopback cluster).
+///
+/// Commit-wait 10 s → 30 s, I/O 5 s → 15 s: loaded-t2 M4 contention can delay Raft
+/// RPCs past the original limits.
 fn handle_on_leader(leader: Arc<RaftNode>, policy: ConsistencyPolicy) -> Arc<ConsensusHandle> {
     Arc::new(ConsensusHandle::new(
         leader,
         policy,
-        Duration::from_secs(10),
-        Duration::from_secs(5),
+        Duration::from_secs(30),
+        Duration::from_secs(15),
     ))
 }
 

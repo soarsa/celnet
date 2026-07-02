@@ -44,8 +44,10 @@ use tokio::net::TcpStream;
 
 use common::{live_market, start_edge_with};
 
-const DEADLINE: Duration = Duration::from_secs(10);
-const STEP: Duration = Duration::from_secs(5);
+/// Raised 10 s → 45 s: loaded-t2 M4 contention starves edge-boot past the old limit.
+const DEADLINE: Duration = Duration::from_secs(45);
+/// Raised 5 s → 20 s: matches celnet-client STEP_DEADLINE under loaded-t2 contention.
+const STEP: Duration = Duration::from_secs(20);
 const T: &[u8] = b"20260605-12:00:00.000";
 
 /// The pre-agreed CompIDs for the e2e (the venue and its counterparty).

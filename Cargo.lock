@@ -846,6 +846,7 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "blake3",
+ "celnet-bond",
  "celnet-calendar",
  "celnet-client",
  "celnet-commodity-vanilla",

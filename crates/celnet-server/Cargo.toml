@@ -24,6 +24,12 @@ celnet-surface.workspace = true
 celnet-exotics.workspace = true
 celnet-linear.workspace = true
 celnet-rates.workspace = true
+# Fixed-income cash-bond analytics leaf — wrapped (never reimplemented) by the
+# central-core Phase-B contract seam (`rates_pricing::contract::BondEngine`) so a
+# bond speaks the same `Priceable`/`MarketResolver`/`RiskMeasure` contract as the
+# options families. One-way edge (server → bond); bond's leaf graph is
+# {rates, types, calendar}, all already in the server tree, so no cycle.
+celnet-bond.workspace = true
 # Instrument reference-data convention labels (config/reference_data.rs) reuse the
 # shared calendar vocabularies (RollRule business-day convention, CentreId
 # settlement centres) so the registry can never drift from what the engine resolves.

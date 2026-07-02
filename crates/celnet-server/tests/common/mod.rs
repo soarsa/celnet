@@ -25,10 +25,17 @@ use tempfile::TempDir;
 
 /// The hard wall-clock ceiling for any single edge integration test. A correctness
 /// failure must surface as a *fast* failure, never an infinite hang.
-pub const TEST_DEADLINE: Duration = Duration::from_secs(10);
+///
+/// Raised from 10 s → 45 s to accommodate loaded-t2 contention on the single M4
+/// (mirrors the celnet-client TEST_DEADLINE fix — same root cause: OS scheduling
+/// starves a heavy test past the original deadline, not a real regression).
+pub const TEST_DEADLINE: Duration = Duration::from_secs(45);
 
 /// Bound a single network / response await so a never-arriving reply fails fast.
-pub const STEP_DEADLINE: Duration = Duration::from_secs(5);
+///
+/// Raised from 5 s → 20 s to match the celnet-client STEP_DEADLINE precedent
+/// under loaded-t2 contention on the single M4.
+pub const STEP_DEADLINE: Duration = Duration::from_secs(20);
 
 /// The resolved EURUSD 1Y convention record the fixture is built on.
 #[must_use]
