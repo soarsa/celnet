@@ -1,16 +1,30 @@
 /**
- * RiskWorkspace — the scenario / what-if grid (GUI-DESIGN §4.4). A spot×vol
- * shock grid driven by SurfaceService.Scenario (ShockAxis abs/rel) for the
- * selected structure. Each cell is a P&L under the shock, tinted on the
- * perceptual diverging ramp (reads magnitude honestly, no rainbow); the
- * spot/vol "today" cell is anchored. Vega/gamma ladders are a disclosure, not a
- * separate screen. Pin scenarios for compare. One click from the ticket/blotter
- * (same Instrument), never re-keyed.
+ * RiskWorkspace — the ONE class-parametric RISK workspace (`fe-fi-migration`).
+ *
+ * There is no FX-vs-FI risk split any more: a single workspace renders the risk
+ * LENS for the active asset class — FX/options → the spot×vol scenario grid
+ * (`FxScenarioLens` below); fixed-income → the rates netted-risk panel
+ * (`RatesRiskPanel`, folded in from the former standalone `RatesRisk` silo). The
+ * lens toggle is offered only for the classes the signed-in identity can `view`
+ * AND the firm is licensed for (the entitlement×license gate the rail uses), so a
+ * rates desk risks its book here under a fixed-income license and an FX desk
+ * never sees a lens it cannot use. `initialLens` is the entry-point default (the
+ * `ratesrisk` rail row opens the FI lens); a single available lens renders
+ * directly, with no toggle.
+ *
+ * FX scenario lens (`FxScenarioLens`, GUI-DESIGN §4.4): a spot×vol shock grid
+ * driven by SurfaceService.Scenario (ShockAxis abs/rel) for the selected
+ * structure. Each cell is a P&L under the shock, tinted on the perceptual
+ * diverging ramp (reads magnitude honestly, no rainbow); the spot/vol "today"
+ * cell is anchored. Vega/gamma ladders are a disclosure, not a separate screen.
+ * Pin scenarios for compare. One click from the ticket/blotter (same Instrument),
+ * never re-keyed.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type {
+  CapabilityAsset,
   Instrument,
   RiskBucketRequest,
   ScenarioResult,
@@ -23,6 +37,8 @@ import { strategyInstrument } from "../data/seed";
 import { ScenarioHeatmap } from "../viz/ScenarioHeatmap";
 import { fmtPnlAdaptive, fmtSigned } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
+import { configuredLicense, type LicensePredicate } from "../lib/commands";
+import { RatesRiskPanel } from "./RatesRiskWorkspace";
 import styles from "./RiskWorkspace.module.css";
 
 /**
@@ -68,7 +84,80 @@ const METRICS = [
 ] as const;
 type Metric = (typeof METRICS)[number]["id"];
 
-export function RiskWorkspace(): React.ReactElement {
+/** The asset-class lens the shared Risk workspace renders under. */
+export type RiskLens = "fx" | "rates";
+
+/** One row per class the workspace spans: its lens id, capability asset, label. */
+const LENSES: readonly { lens: RiskLens; asset: CapabilityAsset; label: string }[] = [
+  { lens: "fx", asset: "fx_options", label: "FX Options" },
+  { lens: "rates", asset: "fixed_income", label: "Fixed Income" },
+];
+
+export function RiskWorkspace({
+  initialLens = "fx",
+}: {
+  initialLens?: RiskLens;
+} = {}): React.ReactElement {
+  const app = useApp();
+  const licensed: LicensePredicate = useMemo(() => configuredLicense(), []);
+  // A lens is available iff the identity can VIEW its asset class AND the firm is
+  // licensed for it — the same entitlement-first, license-second gate the rail
+  // applies (lib/commands). Signed out, `can` is permissive ⇒ both lenses show.
+  const available = useMemo(
+    () => LENSES.filter((l) => app.auth.can("view", l.asset) && licensed(l.asset)),
+    [app.auth, licensed],
+  );
+
+  const [lens, setLens] = useState<RiskLens>(() =>
+    available.some((l) => l.lens === initialLens) ? initialLens : (available[0]?.lens ?? "fx"),
+  );
+
+  // If entitlement/license narrows at runtime so the active lens is gone, clamp to
+  // an available one (never strand on a lens the identity cannot use). The Shell
+  // unmounts the pane when its class is fully gated, so this is a defensive
+  // re-sync, not the primary gate.
+  useEffect(() => {
+    if (available.length > 0 && !available.some((l) => l.lens === lens)) {
+      setLens(available[0]!.lens);
+    }
+  }, [available, lens]);
+
+  if (available.length === 0) {
+    // Defensive: the Shell hides the pane when the class is gated, so this is only
+    // reachable in a degenerate mid-transition — shown honestly, never faked.
+    return <div className={styles.loading}>No risk lens available for your entitlements.</div>;
+  }
+
+  return (
+    <div className={styles.classShell}>
+      {available.length > 1 && (
+        <div className={styles.lensBar} role="group" aria-label="risk asset class">
+          {available.map((l) => (
+            <button
+              key={l.lens}
+              type="button"
+              className={`${styles.lensTab} ${lens === l.lens ? styles.lensTabActive : ""}`}
+              aria-pressed={lens === l.lens}
+              onClick={() => setLens(l.lens)}
+            >
+              {l.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className={styles.lensBody}>
+        {lens === "fx" ? <FxScenarioLens /> : <RatesRiskPanel />}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The FX/options risk lens — the spot×vol scenario what-if grid + vega ladder
+ * (unchanged; see the file header). Mounted only while the FX lens is active, so
+ * its Scenario RPC fires only when this lens is shown.
+ */
+function FxScenarioLens(): React.ReactElement {
   const app = useApp();
   const [metric, setMetric] = useState<Metric>("pnl");
   const [result, setResult] = useState<ScenarioResult | null>(null);

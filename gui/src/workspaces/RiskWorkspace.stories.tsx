@@ -17,21 +17,21 @@
  * anchor cell uses var(--surface-3). No inline hex anywhere in the component.
  */
 
-import type { Decorator, Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react";
 import { AppProvider } from "../app/AppContext";
 import { createMockTransport } from "../data/mockSource";
 import { RiskWorkspace } from "./RiskWorkspace";
 
-const withAppContext: Decorator = (Story) => (
-  <AppProvider transport={createMockTransport()}>
-    <Story />
-  </AppProvider>
-);
-
 const meta = {
   title: "Workspaces/RiskWorkspace",
   component: RiskWorkspace,
-  decorators: [withAppContext],
+  decorators: [
+    (Story) => (
+      <AppProvider transport={createMockTransport()}>
+        <Story />
+      </AppProvider>
+    ),
+  ],
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
@@ -50,7 +50,7 @@ const meta = {
 
 export default meta;
 
-type Story = StoryObj<typeof meta>;
+type Story = StoryObj<typeof RiskWorkspace>;
 
 /**
  * Default scenario grid — SPOT (rows) × VOL (cols), P&L metric, seeded 25Δ RR

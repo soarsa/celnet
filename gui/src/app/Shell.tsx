@@ -21,7 +21,6 @@ import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
 import { RatesWorkspace } from "../workspaces/RatesWorkspace";
 import { CurveWorkspace } from "../workspaces/CurveWorkspace";
-import { RatesRiskWorkspace } from "../workspaces/RatesRiskWorkspace";
 import { QuotingWorkspace } from "../workspaces/QuotingWorkspace";
 import { DealsBlotterWorkspace } from "../workspaces/DealsBlotterWorkspace";
 import { RatesBookWorkspace } from "../workspaces/RatesBookWorkspace";
@@ -69,7 +68,12 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   ticket: TicketWorkspace,
   rates: RatesWorkspace,
   curve: CurveWorkspace,
-  ratesrisk: RatesRiskWorkspace,
+  // fe-fi-migration: the FI risk silo is folded into the ONE class-parametric
+  // RiskWorkspace. The `ratesrisk` rail row is now an ENTRY POINT that opens the
+  // shared Risk workspace on its Fixed-Income lens (`risk` opens the FX lens);
+  // both mount the same component, so a rates book is risked through the same
+  // workflow as FX under a fixed-income license — no FX-vs-FI split.
+  ratesrisk: () => <RiskWorkspace initialLens="rates" />,
   quoting: QuotingWorkspace,
   deals: DealsBlotterWorkspace,
   ratesbook: RatesBookWorkspace,

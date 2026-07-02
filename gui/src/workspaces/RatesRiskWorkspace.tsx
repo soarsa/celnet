@@ -1,11 +1,21 @@
 /**
- * RatesRiskWorkspace — the fixed-income portfolio curve-risk view. A trader
+ * RatesRiskPanel — the fixed-income (rates) LENS of the shared, class-parametric
+ * RiskWorkspace (`fe-fi-migration`). This is the former standalone `RatesRisk`
+ * silo, folded into the ONE Risk workspace as an asset-class lens rather than a
+ * peer FI-only workspace — a rates book is now RISKED through the same workflow
+ * as FX/options, under a fixed-income license (per claim cl_1f5e26efffee1360: FI
+ * is integrated, not a peer). The panel is unchanged in behaviour: a trader
  * assembles a small book of overnight-indexed swaps (an editable position table)
  * and the desk's netted rates risk rolls up live: one card per settlement
  * currency with net PV / PV01 / DV01 and a key-rate DV01 ladder across the curve
  * pillars.
  *
- * One contract, two transports (GUI-DESIGN §6.2): the workspace talks ONLY to the
+ * The pure request/scope/seed helpers below stay exported (the wire is UNCHANGED
+ * by central-core Phase-B — `price_rates_via_contract == price_rates` byte-for-
+ * byte — so the `aggregateRatesRisk` seam and its `test/ratesRiskWorkspace.test.ts`
+ * are untouched by this move).
+ *
+ * One contract, two transports (GUI-DESIGN §6.2): the panel talks ONLY to the
  * `CelnetTransport.aggregateRatesRisk` seam, so the SAME portfolio rolls up
  * through the deterministic in-app source (a genuine in-browser OIS bootstrap +
  * additive per-ccy netting, `src/data/mockSource.ts` → `src/data/ratesPricing.ts`)
@@ -240,7 +250,7 @@ export function ladderMaxAbs(node: RatesRiskNode): number {
 /** Debounce (ms) before re-aggregating after a portfolio edit. */
 const REPRICE_DEBOUNCE_MS = 220;
 
-export function RatesRiskWorkspace(): React.ReactElement {
+export function RatesRiskPanel(): React.ReactElement {
   const app = useApp();
   const curve = DEFAULT_USD_SOFR_CURVE;
 
