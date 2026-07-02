@@ -83,7 +83,6 @@
   .clegend .ln .ax { margin-left:auto; font-family:var(--font-mono); font-size:8px; color:var(--text-tertiary); }
   .clegend .div { border-top:1px solid var(--grid-line); margin-top:2px; padding-top:6px; }
   .clegend .note { font-size:var(--type-micro); color:var(--text-tertiary); line-height:1.5; }
-  .clegend .note b { color:var(--bid); } .clegend .note i { color:var(--warn); font-style:normal; }
 
   /* clickable line-visibility legend in the chart header */
   .linetog { display:inline-flex; gap:3px; }
@@ -92,11 +91,13 @@
   .linetog button .sw { width:12px; height:0; border-top:3px solid; border-radius:2px; display:inline-block; }
   .linetog button.off { opacity:0.4; text-decoration:line-through; }
 
-  /* ---- wire-honesty badges ---- */
-  .wire { font-family:var(--font-display); font-size:8px; font-weight:700; text-transform:uppercase;
-    letter-spacing:0.04em; padding:1px 6px; border-radius:var(--r-sm); white-space:nowrap; }
-  .wire.live { background:oklch(0.78 0.16 155 / 0.16); color:var(--bid); }
-  .wire.tgt  { background:oklch(0.82 0.16 75 / 0.14); color:var(--warn); }
+  /* ---- honesty tags: the ONE shared .htag live/target vocabulary lives in celer.css ---- */
+
+  /* scoped capability-rail sub-label — the active item reads "Vol Surface ▸ Curves" under the
+     Rates scope so an FI user is never shown the FX vol surface as the active capability */
+  .rail a.on { height:auto; padding-top:5px; padding-bottom:5px; }
+  .railsub { display:block; font-size:9px; font-family:var(--font-display); font-weight:600;
+    letter-spacing:0.04em; color:var(--accent); margin-top:1px; }
 
   /* ---- editable par-pillar bootstrap table ---- */
   .booktbl .qedit { display:inline-block; min-width:56px; text-align:right; background:oklch(1 0 0 / 0.06);
@@ -147,12 +148,13 @@
     <span class="pill">A. Marchetti · Vol Desk</span>
   </header>
 
-  <!-- ============ CAPABILITY RAIL (verbatim; Vol Surface = on, FI's curve analog) ============ -->
+  <!-- ============ CAPABILITY RAIL (scoped: Vol Surface ▸ Curves active under the Rates scope —
+       the FI curve analog of the surface workbench, NOT the FX vol surface) ============ -->
   <nav class="rail" aria-label="Capabilities">
     <div class="grp label">Price</div>
     <a><span class="ic">◆</span><span>Price &amp; Model</span><span></span></a>
     <a><span class="ic">◆</span><span>Structure</span><span></span></a>
-    <a class="on"><span class="ic">◆</span><span>Vol Surface</span><span></span></a>
+    <a class="on" aria-current="page"><span class="ic">◆</span><span>Vol Surface<span class="railsub">▸ Curves · Rates scope</span></span><span></span></a>
     <div class="grp label">Market data</div>
     <a><span class="ic">◆</span><span>Feed Manage</span><span></span></a>
     <div class="grp label">Distribute</div>
@@ -182,7 +184,7 @@
       <span class="selctl"><span class="lbl">calendar</span> US · mod-follow <span class="car">▾</span></span>
       <span class="selctl"><span class="lbl">pillars</span> 10 · ON–30Y <span class="car">▾</span></span>
       <span style="flex:1"></span>
-      <span class="pill"><span class="dot live"></span> CCP/ICE composite · as-of <span class="num">12:04:07</span></span>
+      <span class="pill" title="TARGET — no FI market-data composite feed exists yet; par marks are user-supplied quotes carried in the request-scoped CurveSet payload."><span class="htag target">TARGET</span> CCP/ICE composite · as-of <span class="num">12:04:07</span></span>
     </div>
 
     <!-- curve-set hero: OIS / SOFR-proj / multi-curve (analog of the smile-model picker) -->
@@ -193,28 +195,32 @@
         <button role="tab" data-set="proj"><span>SOFR · 3M</span><span class="tag">projection · TARGET</span></button>
         <button role="tab" data-set="multi"><span>Multi-curve</span><span class="tag">disc + proj · TARGET</span></button>
       </div>
-      <span class="meta" id="curvemeta">bootstrapped 40s ago · <span class="num">bootstrap_ois</span> · 10 nodes · max reprice <span class="num">&lt;1e-12</span></span>
+      <span class="meta" id="curvemeta">self-discounting OIS · <span class="num">bootstrap_ois</span> · <span class="htag live">LIVE</span> · 10 nodes · max reprice <span class="num">&lt;1e-12</span></span>
       <span style="flex:1"></span>
       <span class="selctl"><span class="lbl">accrual</span> ACT/360 <span class="car">▾</span></span>
       <button class="btn" id="rebootBtn">Re-bootstrap</button>
-      <button class="btn ghost">Diff vs v206 ◷</button>
+      <button class="btn ghost" title="TARGET — diffing against a previous published version needs the server-side versioned curve store (SurfaceBook pattern), port pending.">Diff vs v206 ◷</button>
     </div>
 
-    <!-- publish gate: mark → bootstrap → no-arb/monotone → publish (versioned) -->
+    <!-- publish gate — TARGET spine: mark → bootstrap → no-arb/monotone → publish (versioned).
+         No server-side curve versioning/publish exists (lodestar: zero hits for curve_version /
+         CurveBook / publish_curve); curve sets are request-scoped payloads on PriceRates /
+         AggregateRatesRisk. This spine is the vol-surface SurfaceBook pattern, port pending. -->
     <div class="gate">
+      <span class="htag target" title="No server-side versioned curve publish exists today — CurveSet is a request-scoped payload on the PriceRates / AggregateRatesRisk RPCs. This whole mark→bootstrap→no-arb→publish spine is the vol-surface SurfaceBook pattern, port pending.">TARGET · SurfaceBook pattern — port pending</span>
       <div class="steps" id="steps">
         <span class="step done" data-i="0"><span class="no">1</span> Mark</span><span class="sep">→</span>
         <span class="step done" data-i="1"><span class="no">2</span> Bootstrap</span><span class="sep">→</span>
         <span class="step done" data-i="2"><span class="no">3</span> No-arb / monotone</span><span class="sep">→</span>
         <span class="step on" data-i="3"><span class="no">4</span> Publish</span>
       </div>
-      <span class="invariant" title="Every bootstrapped curve is stamped and immutable; live pricing/risk/FIX may only reference a PUBLISHED CurveSet version — never an in-flight par-mark edit.">
+      <span class="invariant" title="TARGET invariant, ported from the vol-surface SurfaceBook: every bootstrapped curve is stamped and immutable; live pricing/risk/FIX may only reference a PUBLISHED CurveSet version — never an in-flight par-mark edit.">
         <span class="lk">⛭</span> published-curve-immutable invariant</span>
       <span style="flex:1"></span>
-      <span class="gatever">draft <b class="num">v207</b> <span class="dim">· prev live</span> <b class="num" style="color:var(--bid)">v206</b> <span class="dim">· sentinel v0=unbootstrapped</span></span>
-      <span class="pill" title="One versioned CurveSet is visible to pricing, risk and FIX at once — a publish pins across all three (LIVE for the self-discounting OIS curve).">
-        <span class="dot live"></span> CurveSet ▸ price · risk · FIX</span>
-      <button class="btn okpub" id="publishBtn" title="No-arb / monotonicity gate PASSES — discount factors strictly decreasing, all instantaneous forwards positive. Publish stamps v207 across pricing, risk and FIX.">
+      <span class="gatever">draft <b class="num">v207</b> <span class="dim">· prev</span> <b class="num">v206</b> <span class="dim">· sentinel v0=unbootstrapped</span></span>
+      <span class="pill" title="TARGET — today the CurveSet is a request-scoped payload sent per PriceRates / AggregateRatesRisk call; a publish that pins ONE version across pricing, risk and FIX is the SurfaceBook pattern, port pending.">
+        <span class="htag target">TARGET</span> CurveSet ▸ price · risk · FIX</span>
+      <button class="btn okpub" id="publishBtn" title="TARGET publish flow (SurfaceBook pattern, port pending). No-arb / monotonicity gate PASSES — discount factors strictly decreasing, all instantaneous forwards positive. Publish would stamp v207 across pricing, risk and FIX.">
         <span class="lk">✓</span> Publish v207</button>
     </div>
 
@@ -256,8 +262,8 @@
             <div class="ln div"><span class="pildot" style="width:8px;height:8px;border-radius:50%;background:var(--seq-4);border:1px solid var(--bg-raised)"></span>calibrating pillar</div>
             <div class="ln"><span style="width:18px;border-top:1px dashed var(--warn);display:inline-block"></span>turn / meeting jump</div>
             <div class="div note">
-              <b>LIVE</b> = OIS self-discounting curve wired end-to-end (<span class="num">CurveSet</span> ▸ 5 clients).<br>
-              <i>TARGET</i> = FRA / STIR / swap strip engine-complete (<span class="num">bootstrap_futures_strip</span>), wire pending.
+              <span class="htag live">LIVE</span> OIS self-discounting curve wired end-to-end — request-scoped <span class="num">CurveSet</span> on <span class="num">PriceRates</span> ▸ 5 clients.<br>
+              <span class="htag target">TARGET</span> FRA / STIR / swap strip engine-complete (<span class="num">bootstrap_futures_strip</span>), wire pending.
             </div>
             <div class="div note" id="hoverHint">Hover the chart for zero / fwd / DF at any tenor.</div>
           </div>
@@ -270,7 +276,7 @@
       <header>
         <span class="headline">Par-pillar bootstrap instruments <span class="dim" style="font-size:11px">— edit a quote to re-bootstrap</span></span>
         <span style="display:flex; gap:var(--space-4); align-items:center; flex-wrap:wrap">
-          <span class="segbtn" id="interpseg" title="Curve interpolation scheme — sets the shape of the instantaneous forward">
+          <span class="segbtn" id="interpseg" title="Curve interpolation scheme — sets the shape of the instantaneous forward. log-linear·logDF is the shipping wire default; monotone-convex is engine-complete (from_monotone_convex_dfs) but a wire selector is pending.">
             <button class="on" data-i="loglin">log-linear · logDF</button><button data-i="mono">monotone-convex</button>
           </span>
           <span class="segbtn" id="turnseg" title="Overlay turn-of-year / FOMC meeting forward-jump markers">
@@ -288,7 +294,7 @@
         <div style="display:flex; gap:var(--space-5); padding:var(--space-3) var(--space-5); border-top:var(--hairline); font-size:var(--type-caption); color:var(--text-tertiary); flex-wrap:wrap">
           <span><b style="color:var(--text-secondary)">Sequential bootstrap</b> — each dated pillar solves one discount factor (<span class="num">bootstrap_ois</span>); futures/FRA feed the short-end strip (<span class="num">bootstrap_futures_strip</span>).</span>
           <span style="flex:1"></span>
-          <span><span class="wire live" style="padding:0 5px">LIVE</span> OIS on wire · <span class="wire tgt" style="padding:0 5px">TARGET</span> FRA/STIR/swap engine-complete, wire pending</span>
+          <span><span class="htag live">LIVE</span> OIS on wire · <span class="htag target">TARGET</span> FRA/STIR/swap engine-complete, wire pending</span>
         </div>
       </div>
     </section>
@@ -318,7 +324,7 @@
             </div>
             <div class="kv" style="margin-top:8px"><span class="k">Net (∥-shift) DV01</span><span class="v num" id="netDv01">—</span></div>
             <div class="kv"><span class="k">Largest key-rate bucket</span><span class="v num" id="maxBucket">—</span></div>
-            <div class="kv"><span class="k">RPC</span><span class="v"><span class="wire live" style="padding:0 5px">LIVE</span> <span class="num">AggregateRatesRisk</span></span></div>
+            <div class="kv"><span class="k">RPC</span><span class="v"><span class="htag live">LIVE</span> <span class="num">AggregateRatesRisk</span></span></div>
           </div>
           <div id="jacHeat" style="display:none">
             <div class="muted" style="font-size:11px; margin-bottom:8px">
@@ -415,12 +421,12 @@
     { fam:'OIS',    ct:'SOFR OIS',  st:'T+2', mt:'1W',  type:'ois', q:5.310, pi:1, wire:'live' },
     { fam:'OIS',    ct:'SOFR OIS',  st:'T+2', mt:'1M',  type:'ois', q:5.300, pi:2, wire:'live' },
     { fam:'OIS',    ct:'SOFR OIS',  st:'T+2', mt:'3M',  type:'ois', q:5.100, pi:3, wire:'live' },
-    { fam:'FRA',    ct:'SOFR 3×6',  st:'3M',  mt:'6M',  type:'fra', q:4.850, pi:4, wire:'tgt'  },
-    { fam:'Future', ct:'SR3Z6',     st:'9M',  mt:'12M', type:'fut', q:95.550,pi:5, wire:'tgt'  },
-    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'2Y',  type:'ois', q:4.020, pi:6, wire:'tgt'  },
-    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'5Y',  type:'ois', q:3.780, pi:7, wire:'tgt'  },
-    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'10Y', type:'ois', q:3.920, pi:8, wire:'tgt'  },
-    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'30Y', type:'ois', q:4.050, pi:9, wire:'tgt'  }
+    { fam:'FRA',    ct:'SOFR 3×6',  st:'3M',  mt:'6M',  type:'fra', q:4.850, pi:4, wire:'target' },
+    { fam:'Future', ct:'SR3Z6',     st:'9M',  mt:'12M', type:'fut', q:95.550,pi:5, wire:'target' },
+    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'2Y',  type:'ois', q:4.020, pi:6, wire:'target' },
+    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'5Y',  type:'ois', q:3.780, pi:7, wire:'target' },
+    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'10Y', type:'ois', q:3.920, pi:8, wire:'target' },
+    { fam:'Swap',   ct:'SOFR IRS',  st:'T+2', mt:'30Y', type:'ois', q:4.050, pi:9, wire:'target' }
   ];
   // multi-curve projection basis spread over the discount pillars (bp → %)
   var PROJSPREAD = [0.02,0.02,0.03,0.05,0.07,0.08,0.07,0.05,0.04,0.03];
@@ -620,8 +626,8 @@
       steps[2].classList.remove('blocked'); steps[2].classList.remove('on'); steps[2].classList.add('done');
       steps[3].classList.add('on');
       pub.className='btn okpub'; pub.innerHTML='<span class="lk">✓</span> Publish v207';
-      pub.title='No-arb / monotonicity gate PASSES — DF strictly decreasing, all forwards positive. Publish stamps v207 across pricing, risk and FIX.';
-      note.innerHTML='<span class="pos">✓ gate clear</span> — v207 eligible to publish. Break monotonicity by marking a long pillar through a shorter one and the gate vetoes the publish (analog of the vol-surface butterfly veto).';
+      pub.title='TARGET publish flow (SurfaceBook pattern, port pending). No-arb / monotonicity gate PASSES — DF strictly decreasing, all forwards positive. Publish would stamp v207 across pricing, risk and FIX.';
+      note.innerHTML='<span class="pos">✓ gate clear</span> — v207 eligible to publish <span class="dim">(TARGET flow — SurfaceBook pattern, port pending)</span>. Break monotonicity by marking a long pillar through a shorter one and the gate vetoes the publish (analog of the vol-surface butterfly veto).';
     } else {
       steps[2].classList.remove('done'); steps[2].classList.add('blocked'); steps[2].classList.add('on');
       steps[3].classList.remove('on');
@@ -647,7 +653,7 @@
         '<td class="n z"   data-idx="'+idx+'"></td>'+
         '<td class="n df"  data-idx="'+idx+'"></td>'+
         '<td class="n">1.00</td>'+
-        '<td><span class="wire '+r.wire+'">'+(r.wire==='live'?'● LIVE':'◷ TARGET')+'</span></td>'+
+        '<td><span class="htag '+r.wire+'">'+(r.wire==='live'?'LIVE':'TARGET')+'</span></td>'+
       '</tr>';
     });
     document.getElementById('bookBody').innerHTML=html;
@@ -758,9 +764,9 @@
       [].forEach.call(document.querySelectorAll('#curveseg button'), function(x){ x.classList.remove('on'); x.removeAttribute('aria-selected'); });
       b.classList.add('on'); b.setAttribute('aria-selected','true');
       curSet=b.dataset.set;
-      var badge = curSet==='ois'?'self-discounting OIS · <span class="num">bootstrap_ois</span> · <span class="wire live" style="padding:0 5px">LIVE</span>'
-                : curSet==='proj'?'3M projection curve · <span class="wire tgt" style="padding:0 5px">TARGET</span> (single OIS curve on wire today)'
-                : 'discount + per-tenor projection container · <span class="wire tgt" style="padding:0 5px">TARGET</span>';
+      var badge = curSet==='ois'?'self-discounting OIS · <span class="num">bootstrap_ois</span> · <span class="htag live">LIVE</span>'
+                : curSet==='proj'?'3M projection curve · <span class="htag target">TARGET</span> (single OIS curve on wire today)'
+                : 'discount + per-tenor projection container · <span class="htag target">TARGET</span>';
       document.getElementById('curvemeta').innerHTML=badge+' · 10 nodes · max reprice <span class="num">&lt;1e-12</span>';
       renderChart();
     });
@@ -814,7 +820,7 @@
       setTimeout(function(){ s.innerHTML='<span class="lk">⊘</span> blocked · negative forward'; }, 1500); return;
     }
     var s2=this; s2.innerHTML='<span class="lk">✓</span> published v207'; s2.className='btn okpub';
-    document.getElementById('gateNote').innerHTML='<span class="pos">✓ published v207</span> — pinned across pricing · risk · FIX. Draft advances to v208.';
+    document.getElementById('gateNote').innerHTML='<span class="pos">✓ published v207</span> <span class="dim">(TARGET flow — SurfaceBook pattern, port pending)</span> — pinned across pricing · risk · FIX. Draft advances to v208.';
     setTimeout(function(){ s2.innerHTML='<span class="lk">✓</span> Publish v208'; }, 1600);
   });
   // re-bootstrap

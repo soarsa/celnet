@@ -292,6 +292,12 @@ a { color: var(--accent); text-decoration: none; }
 .state.live { background: oklch(0.78 0.16 155 / 0.16); color: var(--bid); }
 .state.draft { background: oklch(1 0 0 / 0.06); color: var(--text-tertiary); }
 
+/* honesty tag — the ONE shared LIVE/TARGET grammar across every mockup.
+   LIVE = the capability exists in celnet code today; TARGET = design intent, not yet in code. */
+.htag { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; padding: 1px 6px; border-radius: var(--r-sm); display: inline-flex; align-items: center; gap: 4px; }
+.htag.live { background: oklch(0.78 0.16 155 / 0.16); color: var(--bid); }
+.htag.target { background: oklch(1 0 0 / 0.06); color: var(--text-tertiary); border: 1px solid var(--grid-line); }
+
 /* master kill switch */
 .kill { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-radius: var(--r-sm); background: oklch(0.78 0.16 155 / 0.12); border: 1px solid oklch(0.78 0.16 155 / 0.3); }
 .kill .pull { font-size: var(--type-caption); font-weight: 700; color: var(--offer); cursor: pointer; padding: 2px 8px; border-radius: var(--r-sm); border: 1px solid oklch(0.64 0.226 23 / 0.4); }

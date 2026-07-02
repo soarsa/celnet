@@ -22,7 +22,7 @@
   .classseg button.on{background:var(--accent);color:#fff;}
   .classseg button.lic-off::before{content:"⊘ ";opacity:.75;}
 
-  /* auto-name recognition strip */
+  /* strategy identity strip — declared template kind or custom leg sum */
   .anwrap{padding:var(--space-3) var(--space-4);border-bottom:var(--hairline);background:var(--bg-inset);}
   .an{display:none;flex-wrap:wrap;align-items:center;gap:var(--space-3) var(--space-5);}
   .an.active{display:flex;}
@@ -104,7 +104,7 @@
   .scard .nm{font-weight:600;font-size:var(--type-callout);}
   .scard .leg-n{font-size:var(--type-micro);color:var(--text-tertiary);}
   .scard .tag{font-size:8px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;padding:2px 5px;border-radius:var(--r-sm);white-space:nowrap;}
-  .tag.auto{background:var(--brand-soft);color:var(--brand);}
+  .tag.kind{background:var(--brand-soft);color:var(--brand);}
   .tag.custom{background:oklch(1 0 0 / .06);color:var(--text-tertiary);}
   .tag.any{background:oklch(0.78 0.16 155 / .16);color:var(--bid);}
   .tplnote{margin-top:var(--space-3);padding:var(--space-3);border-radius:var(--r-sm);background:var(--bg-inset);border:var(--hairline);font-size:var(--type-caption);color:var(--text-secondary);line-height:1.5;}
@@ -120,10 +120,15 @@
   .gatemask{display:none;}
   .sworkspace.gated .payoff-panel .gatemask{display:flex;position:absolute;inset:0;align-items:center;justify-content:center;background:oklch(0.165 0.013 264 / .62);border-radius:var(--r-md);z-index:3;font-size:var(--type-caption);color:var(--text-secondary);text-align:center;padding:var(--space-7);line-height:1.6;}
 
-  /* cross-capability flow tags — honest LIVE / TARGET wiring state */
-  .flowtag{font-size:8px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;padding:1px 4px;border-radius:3px;margin-left:5px;}
-  .flowtag.live{background:var(--brand-soft);color:var(--brand);}
-  .flowtag.target{background:oklch(1 0 0 / .07);color:var(--text-tertiary);border:1px solid var(--grid-line);}
+  /* honesty tags — the ONE shared vocabulary (.htag.live / .htag.target) is defined in celer.css */
+
+  /* exotics gallery — the FX/Metal engine catalogue (gui/src/products PRODUCT_REGISTRY) */
+  .exohdr{display:flex;align-items:center;gap:7px;margin:var(--space-6) 0 0;padding-top:var(--space-4);border-top:var(--hairline);}
+  .exohdr .t{font-family:var(--font-display);font-weight:600;font-size:var(--type-callout);}
+  .exohdr .n{margin-left:auto;font-family:var(--font-mono);font-size:var(--type-micro);color:var(--text-tertiary);}
+  .exogate{margin-top:var(--space-3);padding:var(--space-3);border-radius:var(--r-sm);background:oklch(0.65 0.21 25 / .07);border:1px solid oklch(0.65 0.21 25 / .28);font-size:var(--type-caption);color:var(--text-secondary);line-height:1.55;}
+  .exogate .rj,.tplnote .rj{font-family:var(--font-mono);font-size:10px;color:var(--danger);}
+  .sworkspace.gated .exo{opacity:.3;pointer-events:none;filter:saturate(.35);}
 </style>
 </head>
 <body>
@@ -223,7 +228,7 @@
             </span>
           </header>
 
-          <!-- auto-name recognition strip -->
+          <!-- strategy identity strip — the kind is DECLARED with the template (proto StrategyKind); custom leg sets carry no kind -->
           <div class="anwrap">
             <div class="an active" data-strat="seagull">
               <span class="nm">Seagull</span><span class="kindchip">kind · SEAGULL</span>
@@ -526,26 +531,26 @@
           <div class="body">
             <input class="gsearch" id="gsearch" placeholder="Filter structures…  straddle · seagull · butterfly" />
 
-            <div class="ggrp label multileg">Recognized · engine auto-names</div>
+            <div class="ggrp label multileg" title="The template declares the proto StrategyKind enum (RISK_REVERSAL / STRANGLE / STRADDLE / SEAGULL) — the engine prices the leg sum and books that declared kind; it never infers a name from arbitrary legs.">Strategy templates · StrategyKind declared, not inferred</div>
             <div class="scard multileg" data-strat="rr" data-name="risk reversal">
               <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,20 14,12 30,12 41,4" fill="none" stroke="var(--seq-4)" stroke-width="1.6"/></svg>
               <span><span class="nm">Risk Reversal</span><br><span class="leg-n">2 legs · long call / short put</span></span>
-              <span class="tag auto">auto</span>
+              <span class="tag kind">kind</span>
             </div>
             <div class="scard multileg" data-strat="strangle" data-name="strangle">
               <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,5 13,19 31,19 41,5" fill="none" stroke="var(--seq-4)" stroke-width="1.6"/></svg>
               <span><span class="nm">Strangle</span><br><span class="leg-n">2 legs · OTM put + OTM call</span></span>
-              <span class="tag auto">auto</span>
+              <span class="tag kind">kind</span>
             </div>
             <div class="scard multileg" data-strat="straddle" data-name="straddle">
               <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,5 22,20 41,5" fill="none" stroke="var(--seq-4)" stroke-width="1.6"/></svg>
               <span><span class="nm">Straddle</span><br><span class="leg-n">2 legs · ATM call + put</span></span>
-              <span class="tag auto">auto</span>
+              <span class="tag kind">kind</span>
             </div>
             <div class="scard multileg active" data-strat="seagull" data-name="seagull">
               <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,20 13,13 24,13 34,5 41,5" fill="none" stroke="var(--seq-4)" stroke-width="1.6"/></svg>
               <span><span class="nm">Seagull</span><br><span class="leg-n">3 legs · call spread + short put</span></span>
-              <span class="tag auto">auto</span>
+              <span class="tag kind">kind</span>
             </div>
 
             <div class="ggrp label multileg">Custom multi-leg · signed leg sum</div>
@@ -601,6 +606,89 @@
               <span><span class="nm">Listed Future Option</span><br><span class="leg-n">1 leg · option on a future (arm 31)</span></span>
               <span class="tag any">all</span>
             </div>
+
+            <!-- ===== EXOTICS — the shipped PRODUCT_REGISTRY catalogue (17 families, real gallery grouping);
+                 FX & Metal route to the one full engine (a metal's lease rate is the FX foreign rate);
+                 Equity/Commodity/Crypto are engine-rejected: price_cross_asset → PriceError::UnsupportedModel ===== -->
+            <div class="exohdr exo"><span class="t">Exotics · FX / Metal</span><span class="htag live">LIVE</span><span class="n">17 families · engine-priced</span></div>
+
+            <div class="ggrp label exo">Barriers &amp; digitals</div>
+            <div class="scard exo" data-exo data-title="Single Barrier" data-grp="barrier" data-name="single barrier exotic ko ki">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 22,17 34,8 41,8" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/><line x1="34" y1="3" x2="34" y2="21" stroke="var(--seq-6)" stroke-width="1" stroke-dasharray="2 2" opacity=".6"/></svg>
+              <span><span class="nm">Single Barrier</span><br><span class="leg-n">KO / KI · rebate</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Double Barrier" data-grp="barrier" data-name="double barrier exotic corridor">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 22,7 41,17" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/><line x1="10" y1="3" x2="10" y2="21" stroke="var(--seq-6)" stroke-width="1" stroke-dasharray="2 2" opacity=".6"/><line x1="34" y1="3" x2="34" y2="21" stroke="var(--seq-6)" stroke-width="1" stroke-dasharray="2 2" opacity=".6"/></svg>
+              <span><span class="nm">Double Barrier</span><br><span class="leg-n">corridor KO / KI</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Window Barrier" data-grp="barrier" data-name="window barrier exotic partial">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><rect x="16" y="4" width="12" height="16" fill="oklch(1 0 0 / .06)"/><polyline points="3,17 22,17 41,6" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/></svg>
+              <span><span class="nm">Window Barrier</span><br><span class="leg-n">barrier live in a window</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Touch" data-grp="barrier" data-name="touch one-touch no-touch dnt double">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,18 26,18 26,6 41,6" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/><circle cx="26" cy="6" r="2" fill="var(--seq-6)"/></svg>
+              <span><span class="nm">Touch</span><br><span class="leg-n">one-touch / no-touch / DNT</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Digital" data-grp="barrier" data-name="digital binary cash-or-nothing">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,18 22,18 22,7 41,7" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/></svg>
+              <span><span class="nm">Digital</span><br><span class="leg-n">cash-or-nothing payout</span></span>
+            </div>
+
+            <div class="ggrp label exo">Volatility</div>
+            <div class="scard exo" data-exo data-title="Variance Swap" data-grp="volatility" data-name="variance swap exotic realized">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><path d="M3,12 C6,4 10,4 13,12 C16,20 20,20 23,12 C26,4 30,4 33,12 C36,20 40,20 43,12" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/></svg>
+              <span><span class="nm">Variance Swap</span><br><span class="leg-n">realized variance vs strike</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Volatility Swap" data-grp="volatility" data-name="volatility swap exotic realized vol">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><path d="M3,12 C6,8 10,8 13,12 C16,16 20,16 23,12 C26,8 30,8 33,12 C36,16 40,16 43,12" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/></svg>
+              <span><span class="nm">Volatility Swap</span><br><span class="leg-n">realized vol vs strike</span></span>
+            </div>
+
+            <div class="ggrp label exo">Path-dependent</div>
+            <div class="scard exo" data-exo data-title="Asian (average-rate)" data-grp="path-dependent" data-name="asian average rate fixings">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,14 9,10 15,16 21,9 27,13 33,8 41,11" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/><line x1="3" y1="11.5" x2="41" y2="11.5" stroke="var(--seq-6)" stroke-width="1" stroke-dasharray="3 2" opacity=".55"/></svg>
+              <span><span class="nm">Asian (average-rate)</span><br><span class="leg-n">averaged fixings</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Lookback" data-grp="path-dependent" data-name="lookback max min extreme">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,16 10,9 16,13 24,5 32,12 41,10" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/><circle cx="24" cy="5" r="2" fill="var(--seq-6)"/></svg>
+              <span><span class="nm">Lookback</span><br><span class="leg-n">path max / min</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Forward Start" data-grp="path-dependent" data-name="forward start strike-set">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 20,17" fill="none" stroke="var(--seq-6)" stroke-width="1.5" stroke-dasharray="2 2" opacity=".6"/><polyline points="20,17 30,17 41,7" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/></svg>
+              <span><span class="nm">Forward Start</span><br><span class="leg-n">strike fixes forward</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Cliquet" data-grp="path-dependent" data-name="cliquet ratchet reset">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,19 11,19 11,14 19,14 19,9 27,9 27,13 35,13 35,7 41,7" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/></svg>
+              <span><span class="nm">Cliquet</span><br><span class="leg-n">reset ratchet series</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="American / Bermudan" data-grp="path-dependent" data-name="american bermudan early exercise">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 22,17 41,5" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/><circle cx="27" cy="14" r="1.6" fill="var(--seq-6)"/><circle cx="33" cy="10" r="1.6" fill="var(--seq-6)"/></svg>
+              <span><span class="nm">American / Bermudan</span><br><span class="leg-n">early exercise</span></span>
+            </div>
+
+            <div class="ggrp label exo">Structured</div>
+            <div class="scard exo" data-exo data-title="TARF" data-grp="structured" data-name="tarf target redemption forward">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,20 10,17 17,14 24,11 31,8 38,5" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/><line x1="3" y1="5" x2="41" y2="5" stroke="var(--seq-6)" stroke-width="1" stroke-dasharray="2 2" opacity=".6"/></svg>
+              <span><span class="nm">TARF</span><br><span class="leg-n">target redemption forward</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Pivot TRA" data-grp="structured" data-name="pivot tra target redemption accrual">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,7 22,15 41,7" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/><line x1="22" y1="3" x2="22" y2="21" stroke="var(--seq-6)" stroke-width="1" stroke-dasharray="2 2" opacity=".6"/></svg>
+              <span><span class="nm">Pivot TRA</span><br><span class="leg-n">two-sided target accrual</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Accumulator" data-grp="structured" data-name="accumulator accrual knock-out">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,19 9,19 9,16 15,16 15,13 21,13 21,10 27,10 27,7 33,7" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/><line x1="36" y1="3" x2="36" y2="21" stroke="var(--seq-6)" stroke-width="1" stroke-dasharray="2 2" opacity=".6"/></svg>
+              <span><span class="nm">Accumulator</span><br><span class="leg-n">accrual · knock-out</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Quanto" data-grp="structured" data-name="quanto fixed fx payout ccy">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 22,17 41,6" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/><polyline points="3,20 22,20 41,9" fill="none" stroke="var(--seq-6)" stroke-width="1.2" stroke-dasharray="2 2" opacity=".55"/></svg>
+              <span><span class="nm">Quanto</span><br><span class="leg-n">payout ccy at a fixed rate</span></span>
+            </div>
+            <div class="scard exo" data-exo data-title="Basket / Best-of / Worst-of" data-grp="structured" data-name="basket best-of worst-of multi">
+              <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,15 15,10 28,13 41,7" fill="none" stroke="var(--seq-6)" stroke-width="1.5"/><polyline points="3,18 15,14 28,16 41,11" fill="none" stroke="var(--seq-6)" stroke-width="1.2" opacity=".6"/><polyline points="3,12 15,7 28,10 41,4" fill="none" stroke="var(--seq-6)" stroke-width="1.2" opacity=".35"/></svg>
+              <span><span class="nm">Basket / Best-of / Worst-of</span><br><span class="leg-n">multi-underlier payoff</span></span>
+            </div>
+
+            <div class="exogate">⊘ <b>Equity · Commodity · Crypto</b> — exotics stay FX / Metal. Those classes are not licensed for this desk, and even once granted the engine rejects every exotic on a cross-asset underlier: <span class="rj">price_cross_asset → PriceError::UnsupportedModel</span> (<span class="rj">cross_asset_non_vanilla_product_is_rejected</span>). Cross-asset pricing is single-leg <b>Vanilla / Perpetual / Listed-future</b> only.</div>
 
             <div class="tplnote" id="tplnote" style="display:none"></div>
           </div>
@@ -721,8 +809,8 @@
             <span class="headline">Net structure — Greeks &amp; premium</span>
             <span style="display:flex;gap:6px;align-items:center">
               <span class="muted" style="font-size:11px">signed leg sum · books as one contract</span>
-              <button class="btn ghost">Open in Price &amp; Model <span class="flowtag live">live</span></button>
-              <button class="btn ghost">Send to RFQ desk <span class="flowtag target">target</span></button>
+              <button class="btn ghost">Open in Price &amp; Model <span class="htag live">LIVE</span></button>
+              <button class="btn ghost">Send to RFQ desk <span class="htag target">TARGET</span></button>
             </span>
           </header>
           <div class="body">
@@ -908,17 +996,17 @@
   // class code → full name so the entitlement gate never reads a code where prose expects a name
   const classNames = { FX:'FX', Metal:'Metal', Rates:'Rates', Eq:'Equity', Cmdty:'Commodity', Crypto:'Crypto' };
 
-  // switch the working structure across payoff / auto-name / ladder / net-strip
+  // switch the working structure across payoff / identity strip / ladder / net-strip
   function setStruct(name){
     document.querySelectorAll('[data-strat]').forEach(el=>{
       el.classList.toggle('active', el.getAttribute('data-strat') === name);
     });
-    document.querySelectorAll('.scard[data-tpl]').forEach(c=>c.classList.remove('active'));
+    document.querySelectorAll('.scard[data-tpl],.scard[data-exo]').forEach(c=>c.classList.remove('active'));
     document.getElementById('ptitle').textContent = 'Payoff · ' + titleMap[name];
     document.getElementById('tplnote').style.display = 'none';
   }
 
-  // auto-named AND custom multi-leg families both re-render the canvas + ladder + net-strip
+  // template AND custom multi-leg families both re-render the canvas + ladder + net-strip
   document.querySelectorAll('.scard[data-strat]').forEach(c=>{
     c.addEventListener('click', ()=>{ if(ws.classList.contains('gated')) return; setStruct(c.getAttribute('data-strat')); });
   });
@@ -927,7 +1015,7 @@
   document.querySelectorAll('.scard[data-tpl]').forEach(c=>{
     c.addEventListener('click', ()=>{
       if(ws.classList.contains('gated') && c.classList.contains('multileg')) return;
-      document.querySelectorAll('.scard[data-tpl]').forEach(x=>x.classList.remove('active'));
+      document.querySelectorAll('.scard[data-tpl],.scard[data-exo]').forEach(x=>x.classList.remove('active'));
       c.classList.add('active');
       const tn = document.getElementById('tplnote');
       tn.style.display = 'block';
@@ -935,6 +1023,19 @@
       tn.innerHTML = single
         ? '<b>' + c.getAttribute('data-name') + '</b> · single-leg · priced directly by the class engine. Load replaces the ladder with one leg; single-leg vanilla / perpetual / listed-future price on every licensed class.'
         : '<b>' + c.getAttribute('data-name') + '</b> · ' + c.getAttribute('data-legs') + '-leg custom across two expiries — priced as a <b>signed leg sum</b>. A single-expiry payoff diagram can\'t represent a time spread, so loading builds its legs into the ladder while the live preview stays on the single-expiry structures.';
+    });
+  });
+
+  // exotic families (FX/Metal engine catalogue): honest note — a single-contract family ticket, not a leg structure
+  document.querySelectorAll('.scard[data-exo]').forEach(c=>{
+    c.addEventListener('click', ()=>{
+      if(ws.classList.contains('gated')) return;
+      document.querySelectorAll('.scard[data-tpl],.scard[data-exo]').forEach(x=>x.classList.remove('active'));
+      c.classList.add('active');
+      const tn = document.getElementById('tplnote');
+      tn.style.display = 'block';
+      tn.innerHTML = '<b>' + c.getAttribute('data-title') + '</b> · ' + c.getAttribute('data-grp')
+        + ' exotic — a single-contract family, not a leg structure: loading opens its family ticket (own input block; FX and Metal price on the one full engine path). The payoff preview above stays on the multi-leg vanilla structures — a single-expiry P&amp;L line can\'t represent a path-dependent contract. Equity / Commodity / Crypto: engine-rejected — <span class="rj">price_cross_asset → PriceError::UnsupportedModel</span>.';
     });
   });
 

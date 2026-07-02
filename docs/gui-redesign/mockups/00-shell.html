@@ -73,8 +73,8 @@
       <!-- PRICE (tall) -->
       <section class="panel" style="grid-row: span 2">
         <header>
-          <span class="headline">Price · EUR/USD 1M 25Δ Call</span>
-          <span class="state live">● LIVE ▸ T1–3 <span class="car">▾</span></span>
+          <span class="headline">Price · EUR/USD 1M 25Δ Call <span class="htag live">LIVE</span></span>
+          <span class="state live">● LIVE ▸ T1–3 <span class="car">▾</span> <span class="htag target">TARGET</span></span>
         </header>
         <div class="body">
           <div class="quote2">
@@ -82,11 +82,11 @@
             <div class="q sell"><div class="side">Your offer</div><div class="val">8.12</div><div class="conv">0.00415 USD · 10.0mm · size 25</div></div>
           </div>
           <div class="kv"><span class="k">Mid</span><span class="v num">8.00v <span class="dim">· 25ΔC smile · as-of 12:04:07 ● tick</span></span></div>
-          <div class="kv"><span class="k">Spread</span><span class="v num">0.24v · 2.1 pips · 18 bps</span></div>
-          <div class="kv"><span class="k">½-spread</span><span class="v num">0.12v <span class="selctl" style="height:20px">risk-based <span class="car">▾</span></span></span></div>
-          <div class="kv"><span class="k">Skew</span><span class="v num">+0.03v · <span class="offer">offer-lean</span> <span class="selctl" style="height:20px">nudge − +</span></span></div>
+          <div class="kv"><span class="k">Spread</span><span class="v num">0.24v · 2.1 pips · 18 bps <span class="htag live">LIVE</span></span></div>
+          <div class="kv"><span class="k">½-spread</span><span class="v num">0.12v <span class="selctl" style="height:20px">risk-based <span class="car">▾</span></span> <span class="htag target">TARGET</span></span></div>
+          <div class="kv"><span class="k">Skew</span><span class="v num">+0.03v · <span class="offer">offer-lean</span> <span class="selctl" style="height:20px">nudge − +</span> <span class="htag target">TARGET</span></span></div>
 
-          <div style="margin:12px 0 6px" class="label">Greeks · USD / per-1v / per-day</div>
+          <div style="margin:12px 0 6px" class="label">Greeks · USD / per-1v / per-day <span class="htag live">LIVE</span></div>
           <div class="greeks">
             <div class="g"><div class="k">Δ</div><div class="v">0.251</div><div class="sub">+2.51mm</div></div>
             <div class="g"><div class="k">Γ</div><div class="v">0.043</div><div class="sub">0.43/%</div></div>
@@ -97,8 +97,8 @@
             <div class="g"><div class="k">ρf</div><div class="v neg">−0.058</div><div class="sub">−$5.8k</div></div>
           </div>
 
-          <div style="display:flex; gap:6px; margin-top:16px">
-            <button class="btn primary">Update live ▸ T1–3</button>
+          <div style="display:flex; gap:6px; margin-top:16px; align-items:center">
+            <button class="btn primary">Update live ▸ T1–3</button><span class="htag target">TARGET</span>
             <button class="btn sell">Pull</button>
             <button class="btn ghost">Send to RFQ desk</button>
           </div>
@@ -130,7 +130,7 @@
 
       <!-- VOL SMILE chart -->
       <section class="panel">
-        <header><span class="headline">Vol smile · EUR/USD</span><span class="muted" style="font-size:11px">1M ● &nbsp; 3M – –</span></header>
+        <header><span class="headline">Vol smile · EUR/USD <span class="htag live">LIVE</span></span><span class="muted" style="font-size:11px">1M ● &nbsp; 3M – –</span></header>
         <div class="body" style="padding-bottom:var(--space-3)">
           <svg class="chart" viewBox="0 0 340 158" height="150" aria-label="Vol smile">
             <line class="gl" x1="40" y1="24" x2="320" y2="24"/><line class="gl" x1="40" y1="64" x2="320" y2="64"/><line class="gl" x1="40" y1="104" x2="320" y2="104"/>
@@ -150,7 +150,7 @@
   <!-- ============ CONTEXT RAIL ============ -->
   <aside class="ctx" aria-label="Desk context">
     <section>
-      <div class="grouphdr"><span class="label">Contribution</span></div>
+      <div class="grouphdr"><span class="label">Contribution</span><span class="htag target">TARGET</span></div>
       <div class="kill"><span><span class="dot live"></span> Live · 42 streaming</span><span class="pull">Pull all</span></div>
       <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.10v</span></div>
       <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.18v</span></div>

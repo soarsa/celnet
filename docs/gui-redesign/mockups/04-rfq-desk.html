@@ -21,10 +21,8 @@
   .kpi .n { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:19px; font-weight:600; margin-top:2px; }
   .kpi .s { font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); }
 
-  /* honesty tags — LIVE (semantic green) vs TARGET (structural indigo) */
-  .lnk { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; padding:1px 5px; border-radius:4px; }
-  .lnk.live { background:oklch(0.78 0.16 155/.16); color:var(--bid); }
-  .lnk.tgt  { background:var(--accent-soft); color:var(--accent); }
+  /* honesty tags — the ONE shared .htag vocab (celer.css); only a compact ladder-header variant here */
+  .qhead .htag { padding:0 4px; }
   .prov { display:flex; gap:12px; flex-wrap:wrap; align-items:center; font-size:var(--type-caption); color:var(--text-tertiary);
     padding-top:8px; margin-top:10px; border-top:1px solid var(--grid-line); }
 
@@ -188,7 +186,7 @@
       <section class="panel">
         <header>
           <span class="headline">Inbound client flow — RFQ &amp; IOI <span style="font-weight:400;font-size:var(--type-caption);color:var(--text-tertiary)">· 7 recent · 5 live · 2 closed</span></span>
-          <span class="state live">● LIVE · desk-gateway</span>
+          <span style="display:inline-flex;gap:6px;align-items:center;font-size:var(--type-micro);color:var(--text-tertiary)"><span class="htag live">LIVE</span> OIS desk lifecycle <span class="htag target">TARGET</span> FX-options inbox</span>
         </header>
         <div class="body" style="padding:var(--space-2) 0 0">
           <table class="grid inbox" id="inbox">
@@ -319,8 +317,9 @@
             </tbody>
           </table>
           <div class="prov" style="padding:8px var(--space-4)">
-            <span><span class="lnk live">LIVE</span> RfqDeskService — submit / respond, FIX &amp; SDK &amp; GUI channels</span>
-            <span><span class="lnk live">LIVE</span> IOI is a first-class desk concept, distinct from a tradeable quote</span>
+            <span><span class="htag live">LIVE</span> RfqDeskService lifecycle — submit / respond / accept over FIX &amp; SDK &amp; GUI — rates-OIS desk today (DeskRequest.instrument = RatesInstrument)</span>
+            <span><span class="htag live">LIVE</span> IOI is a first-class desk concept, distinct from a tradeable quote</span>
+            <span><span class="htag target">TARGET</span> FX-options desk inbox — the FX-vol flow shown needs an FX instrument arm on the desk seam</span>
           </div>
         </div>
       </section>
@@ -355,7 +354,7 @@
           <div class="label" style="margin:12px 0 2px">Ranked quote lines — <span style="color:var(--accent)">AUTO</span> + manual · you arm the line</div>
           <div class="qlad" id="qlad">
             <div class="qhead">
-              <span></span><span>Source</span><span>Your bid</span><span>Your offer</span><span>Spread</span><span>Edge</span><span>Est. win</span>
+              <span></span><span>Source</span><span>Your bid</span><span>Your offer</span><span>Spread</span><span>Edge</span><span>Est. win <span class="htag target">TARGET</span></span>
             </div>
             <div class="qrow armed">
               <span class="rad"></span>
@@ -394,9 +393,11 @@
           </div>
 
           <div class="prov">
-            <span><span class="lnk live">LIVE</span> maker-response ▸ on client lift RfqDesk books the desk position (Book G10-A store)</span>
-            <span><span class="lnk tgt">TARGET</span> book-on-lift is the desk trader's Execute — sales relays the price only</span>
-            <span><span class="lnk tgt">TARGET</span> inventory → skew (risk-lean line not yet wired into the spread signature)</span>
+            <span><span class="htag live">LIVE</span> maker respond ▸ accept lifecycle — on client lift the desk books the rates book (RatesPositionStore)</span>
+            <span><span class="htag target">TARGET</span> FX book-on-lift — accept writes the rates store only, never the FX book (G10-A)</span>
+            <span><span class="htag target">TARGET</span> book-on-lift is the desk trader's Execute — sales relays the price only</span>
+            <span><span class="htag target">TARGET</span> Est. win column — needs the quote-elasticity estimator (mockup 03 tags it TARGET)</span>
+            <span><span class="htag target">TARGET</span> inventory → skew (risk-lean line not yet wired into the spread signature)</span>
           </div>
         </div>
       </section>
@@ -471,8 +472,8 @@
             <span>sample <b>401</b> RFQ</span>
           </div>
           <div class="prov">
-            <span><span class="lnk live">LIVE</span> outcomes derived from booked deal history (Deal store)</span>
-            <span><span class="lnk tgt">TARGET</span> cover-margin needs winning-away levels — partial from FIX cover tags</span>
+            <span><span class="htag live">LIVE</span> outcomes derived from booked deal history (Deal store)</span>
+            <span><span class="htag target">TARGET</span> cover-margin needs winning-away levels — partial from FIX cover tags</span>
           </div>
         </div>
       </section>
@@ -564,13 +565,13 @@
           </table>
 
           <div class="actions">
-            <button class="btn ghost" title="Route the hedge to best-ex LP — currently unbooked">Best-ex ▸ route hedge <span class="lnk tgt" style="margin-left:6px">TARGET</span></button>
+            <button class="btn ghost" title="Route the hedge to best-ex LP — currently unbooked">Best-ex ▸ route hedge <span class="htag target" style="margin-left:6px">TARGET</span></button>
             <button class="btn ghost">Re-request panel</button>
           </div>
           <div class="prov">
-            <span><span class="lnk live">LIVE</span> engine ranks native + synthetic LPs · best-bid/offer · deterministic tie-break · last-look</span>
-            <span><span class="lnk tgt">TARGET</span> depth-aware best-ex (VWAP-to-hedge-size) — engine ranks top-of-book; the 50mm sweep is derived here</span>
-            <span><span class="lnk tgt">TARGET</span> hedge fills unbooked — accept writes an ephemeral Execution, no position store</span>
+            <span><span class="htag live">LIVE</span> engine ranks native + synthetic LPs · best-bid/offer · deterministic tie-break · last-look</span>
+            <span><span class="htag target">TARGET</span> depth-aware best-ex (VWAP-to-hedge-size) — engine ranks top-of-book; the 50mm sweep is derived here</span>
+            <span><span class="htag target">TARGET</span> hedge fills unbooked — accept writes an ephemeral Execution, no position store</span>
             <span><span class="dim">distinct from the client-facing panel — this aggregates EXTERNAL liquidity</span></span>
           </div>
           </div>
@@ -649,7 +650,7 @@
   // (header + SLA + pricing-model + Δ-convention + the ranked quote ladder ALL follow the
   //  selected request, so the body can never contradict the header)
   const stateChip = { new:['new','new'], work:['work','working'], quote:['quote','quoted'], done:['done','booked'], pass:['pass','passed'] };
-  const QHEAD = '<div class="qhead"><span></span><span>Source</span><span>Your bid</span><span>Your offer</span><span>Spread</span><span>Edge</span><span>Est. win</span></div>';
+  const QHEAD = '<div class="qhead"><span></span><span>Source</span><span>Your bid</span><span>Your offer</span><span>Spread</span><span>Edge</span><span>Est. win <span class="htag target">TARGET</span></span></div>';
   const esc = s => String(s).replace(/[&<>]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]));
   const qlad = document.getElementById('qlad');
 
