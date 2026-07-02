@@ -20,7 +20,6 @@ import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
 import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
 import { MarketDataWorkspace } from "../workspaces/MarketDataWorkspace";
-import { OIS_STRUCTURE_ID } from "../products/ois";
 import { QuotingWorkspace } from "../workspaces/QuotingWorkspace";
 import { ReferenceDataWorkspace } from "../workspaces/ReferenceDataWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
@@ -44,15 +43,11 @@ import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import {
   buildCommands,
   configuredLicense,
-  domainRailState,
-  DOMAINS,
-  domainOf,
   LICENSE_UPSELL_TITLE,
   RAIL,
   railChord,
   railState,
   resolveChord,
-  type Domain,
   type RailState,
   type WorkspaceId,
 } from "../lib/commands";
@@ -60,54 +55,42 @@ import { isTerminal } from "../lib/scope";
 import type { CelnetTransport } from "../data/transport";
 import styles from "./Shell.module.css";
 
-/** The workspace components, keyed by id, for the persistent-mount canvas. */
+/**
+ * The workspace components, keyed by id, for the persistent-mount canvas.
+ *
+ * fe-fi-migration #6 (capstone): the duplicated FX/FI rail rows that seeded the
+ * shared workspaces at a fixed lens are COLLAPSED into ONE class-parametric row
+ * each. There is no longer a `rates`/`curve`/`ratesrisk`/`deals`/`ratesbook` entry
+ * point pinning a lens — instead each shared workspace opens at its own default
+ * lens and the trader chooses the ASSET CLASS INSIDE via the lens bar + the active
+ * scope/underlier (built by #1–#4). No capability is lost: the FI curve is the
+ * Market Data workspace's rates lens, FI risk its rates lens, the FI book its
+ * positions lens, and the rates ticket its fixed-income product family — all
+ * reachable from the single rail under a fixed-income scope/license.
+ */
 const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
+  // Ticket (Price): class-parametric — a rates instrument is priced through the
+  // SAME card via its fixed-income product family; a universe-underlier drill
+  // pre-targets the cross-asset spec (#3). Opens the default (FX) structure.
   ticket: TicketWorkspace,
-  // fe-fi-migration #3: the standalone FI PRICING silo is folded into the ONE
-  // shared ticket. The `rates` rail row is now an ENTRY POINT that opens the shared
-  // TicketWorkspace seeded to the fixed-income (OIS) family — a rates instrument is
-  // priced through the SAME card as FX/cross-asset (calling `priceRates`), rather
-  // than a separate `RatesWorkspace`. The pricing analogue of the #1 Risk / #2
-  // Market-Data lens entry-points; `ticket` opens the default FX structure.
-  rates: () => <TicketWorkspace initialStructure={OIS_STRUCTURE_ID} />,
-  // fe-fi-migration #2: the FX/FI market-data silo is folded into the ONE
-  // class-parametric MarketDataWorkspace. The `curve` rail row is now an ENTRY
-  // POINT that opens the shared Market Data workspace on its Fixed-Income (rates
-  // curve) lens; `surface` opens the FX (vol surface) lens. Both mount the same
-  // component, so FX vol surfaces and FI curves flow through the same workflow
-  // under a license lens — no FX-vs-FI split.
-  curve: () => <MarketDataWorkspace initialLens="rates" />,
-  // fe-fi-migration: the FI risk silo is folded into the ONE class-parametric
-  // RiskWorkspace. The `ratesrisk` rail row is now an ENTRY POINT that opens the
-  // shared Risk workspace on its Fixed-Income lens (`risk` opens the FX lens);
-  // both mount the same component, so a rates book is risked through the same
-  // workflow as FX under a fixed-income license — no FX-vs-FI split.
-  ratesrisk: () => <RiskWorkspace initialLens="rates" />,
-  quoting: QuotingWorkspace,
-  // fe-fi-migration #4: the three book/position/blotter silos are folded into the
-  // ONE unified `BookWorkspace` with a VIEW lens toggle (Positions & Booking ·
-  // Aggregate Risk · Deals). Each rail row is now an ENTRY POINT that opens the
-  // shared Book on the matching lens — `deals` on the executed-deals blotter,
-  // `ratesbook` on the FI position ledger + booking, `book` on the aggregate-risk
-  // rollup (below). All three mount the same component, so a trader's positions,
-  // booking, aggregate risk and deals flow through the ONE "Book" — no FX-vs-FI
-  // (or view-vs-view) split. The Book analogue of the #1/#2/#3 lens entry points.
-  deals: () => <BookWorkspace initialLens="deals" />,
-  ratesbook: () => <BookWorkspace initialLens="positions" />,
-  refdata: ReferenceDataWorkspace,
   stream: StreamWorkspace,
-  // fe-fi-migration #2: the `surface` rail row opens the shared Market Data
-  // workspace on its FX vol-surface lens (the default lens); see `curve` above.
-  surface: () => <MarketDataWorkspace initialLens="fx" />,
+  // Market Data: FX vol surface + FI rates curve as two lenses of ONE workspace
+  // (#2). Opens the FX surface lens by default; the FI curve is the rates lens.
+  surface: MarketDataWorkspace,
+  // Risk: FX scenario + FI rates risk as two lenses of ONE workspace (#1). Opens
+  // the FX lens by default; a rates book is risked via the fixed-income lens.
   risk: RiskWorkspace,
+  // Book: Positions & Booking / Aggregate Risk / Deals as three VIEW lenses of ONE
+  // workspace (#4). Opens the Aggregate-Risk lens by default; positions/booking and
+  // the executed-deals blotter are the other lenses.
+  book: BookWorkspace,
+  quoting: QuotingWorkspace,
   xva: XvaWorkspace,
-  // fe-fi-migration #4: `book` opens the unified Book on its Aggregate Risk lens
-  // (the default); `ratesbook`/`deals` open the Positions and Deals lenses (above).
-  book: () => <BookWorkspace initialLens="risk" />,
+  excel: ExcelWorkspace,
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,
   permissions: PermissionsWorkspace,
-  excel: ExcelWorkspace,
+  refdata: ReferenceDataWorkspace,
 };
 
 export function Shell(): React.ReactElement {
@@ -116,68 +99,31 @@ export function Shell(): React.ReactElement {
   // The keyboard-shortcut cheatsheet overlay (bound to `?`). Shell-local UI.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-  // Navigation gating (single source: lib/commands.ts) is now THREE-state
-  // (DEC-license-gating-and-scope). A workspace's `railState` is:
-  //   • HIDDEN — entitlement-deny (no `view` on the asset class / non-admin on an
-  //     admin pane): an information-barrier hide, exactly as before.
-  //   • GATED-UPSELL — entitled but the asset class is NOT LICENSED: PRESENT but
-  //     greyed + locked + a "license this class" upsell (discoverable, not hidden).
-  //   • PRESENT — entitled AND licensed: a normal, navigable entry.
+  // Navigation gating (single source: lib/commands.ts) is THREE-state
+  // (DEC-license-gating-and-scope), now over the ONE class-parametric rail
+  // (fe-fi-migration #6 — the FX/FI domain-tab split is retired). A workspace's
+  // `railState` is:
+  //   • HIDDEN — not reachable (no `view` on ANY class it serves / non-admin on an
+  //     admin pane): an information-barrier hide.
+  //   • GATED-UPSELL — reachable but the firm is licensed for NONE of its served
+  //     classes: PRESENT but greyed + locked + a "license this class" upsell
+  //     (discoverable, not hidden). A cross-asset row stays present while EITHER
+  //     class is licensed; its unlicensed lens is gated per-lens INSIDE the pane.
+  //   • PRESENT — reachable AND licensed: a normal, navigable entry.
   // The license predicate is config-driven (`VITE_CELNET_UNLICENSED`) and DEFAULTS
   // TO ALL-LICENSED, so with no config `railState` is present-or-hidden exactly as
-  // the old two-state — the rail is byte-identical to before. Signed out, `can` is
-  // permissive ⇒ every asset domain is entitled. Every entry keeps its ORIGINAL
-  // rail index so the ⌘N numbers stay aligned with `resolveChord`.
+  // the two-state — the rail is byte-identical unless a class is explicitly gated.
+  // Signed out, `can` is permissive ⇒ every trading workspace is reachable.
   const licensed = useMemo(() => configuredLicense(), []);
   const stateOfWs = (r: (typeof RAIL)[number]): RailState => railState(r.id, app.auth, licensed);
-  // Shown in the rail: everything NOT entitlement-hidden (present OR gated-upsell).
-  const railShown = (r: (typeof RAIL)[number]): boolean => stateOfWs(r) !== "hidden";
-  // Fully usable (licensed + entitled): the only entries that MOUNT a pane and that
-  // keyboard/command navigation may target — a gated class never mounts a workspace
-  // it cannot price. (Default all-licensed ⇒ usable == shown, so unchanged.)
-  const railUsable = (r: (typeof RAIL)[number]): boolean => stateOfWs(r) === "present";
-
-  // GW-tabs: the rail is split into top-level DOMAIN tabs (FX Options / Fixed
-  // Income / Administration). The active domain follows the active workspace; the
-  // rail BUTTONS show the active domain's shown workspaces (`navRail`, incl. gated),
-  // while the persistent-mount canvas iterates every USABLE domain's workspaces
-  // (`mountRail`) so switching tabs never unmounts a pane (preserves P0-11
-  // persistent mount) — and a hidden/gated domain's panes are never mounted.
-  const activeDomain = domainOf(app.workspace);
-  const mountRail = RAIL.filter(railUsable);
-  const navRail = RAIL.filter((r) => r.domain === activeDomain && railShown(r));
-
-  // Domain tabs are three-state too: entitlement-deny (or non-admin on
-  // Administration) hides the tab; an entitled-but-unlicensed asset domain shows a
-  // greyed, locked tab (upsell); else present. Default all-licensed ⇒ every
-  // accessible tab is present (unchanged).
-  const visibleDomains = DOMAINS.map((d) => ({
-    def: d,
-    state: domainRailState(d.id, app.auth, licensed),
-  })).filter((x) => x.state !== "hidden");
-
-  // Per-domain memory of the last-active workspace, so re-selecting a tab returns
-  // to where the trader left it (defaulting to that domain's first rail entry).
-  // Shell-local UI state — kept in sync with the active workspace below.
-  const [lastByDomain, setLastByDomain] = useState<Partial<Record<Domain, WorkspaceId>>>(
-    () => ({ [activeDomain]: app.workspace }),
-  );
-  useEffect(() => {
-    const d = domainOf(app.workspace);
-    setLastByDomain((m) => (m[d] === app.workspace ? m : { ...m, [d]: app.workspace }));
-  }, [app.workspace]);
-
-  const firstOfDomain = (d: Domain): WorkspaceId => {
-    const entry = RAIL.find((r) => r.domain === d && railUsable(r));
-    return entry ? entry.id : app.workspace;
-  };
-  const selectDomain = (d: Domain): void => {
-    // A locked (unlicensed) domain tab is an upsell affordance, not a jump: leave
-    // the active workspace put. (Default all-licensed ⇒ every visible tab is
-    // present, so this is a no-op guard until a class is explicitly gated.)
-    if (domainRailState(d, app.auth, licensed) !== "present") return;
-    app.setWorkspace(lastByDomain[d] ?? firstOfDomain(d));
-  };
+  // Shown in the rail: everything NOT hidden (present OR gated-upsell). ONE rail —
+  // every reachable workspace across the whole platform in registry order, with no
+  // per-domain tab filter; the admin/ops rows are simply hidden for a non-admin.
+  const navRail = RAIL.filter((r) => stateOfWs(r) !== "hidden");
+  // Fully usable (licensed + reachable): the only entries that MOUNT a pane and
+  // that keyboard/command navigation may target — a wholly-unlicensed class never
+  // mounts a workspace it cannot use. (Default all-licensed ⇒ usable == shown.)
+  const mountRail = RAIL.filter((r) => stateOfWs(r) === "present");
 
   // The runnable commands, bound to live app actions — the SINGLE source the
   // palette renders and the Shell dispatches from.
@@ -313,44 +259,12 @@ export function Shell(): React.ReactElement {
       </aside>
 
       <div className={styles.main}>
-        <div className={styles.tabBar} role="tablist" aria-label="product domains">
-          {visibleDomains.map(({ def: d, state }) => {
-            const active = d.id === activeDomain;
-            const gated = state === "gated-upsell";
-            // A license-gated domain tab is greyed + locked + an upsell (title
-            // "license this class"); the click guard in `selectDomain` keeps it
-            // from navigating. Spread the lock props so present tabs stay byte-
-            // identical (no undefined title/aria-disabled). Default all-licensed ⇒
-            // every visible tab is present, so `gated` is never true here.
-            const lockProps = gated
-              ? { title: LICENSE_UPSELL_TITLE, "aria-disabled": true as const }
-              : {};
-            return (
-              <button
-                key={d.id}
-                role="tab"
-                aria-selected={active}
-                tabIndex={active ? 0 : -1}
-                className={`${styles.tab} ${active ? styles.tabActive : ""} ${gated ? styles.tabLocked : ""}`}
-                onClick={() => selectDomain(d.id)}
-                {...lockProps}
-              >
-                {d.label}
-                {gated && (
-                  <span className={styles.tabLock} aria-hidden>
-                    {"🔒︎"}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
         <TitleBar />
         {/*
          * P0-11: every workspace stays MOUNTED; we toggle visibility rather than
-         * conditionally rendering. The canvas iterates the FULL admin-gated rail
-         * (all domains), so switching tabs/workspaces never remounts a pane (no
-         * lost Risk/Book in-progress state, no re-fired heavy effects).
+         * conditionally rendering. The canvas iterates the FULL single rail (every
+         * usable workspace), so switching workspaces never remounts a pane (no lost
+         * Risk/Book in-progress state, no re-fired heavy effects).
          */}
         <div className={styles.canvas}>
           {mountRail.map((r) => {

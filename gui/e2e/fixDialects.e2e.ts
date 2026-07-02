@@ -20,8 +20,8 @@ const CONN_NAME = `FI Quote Venue ${Date.now()}`;
 test("admin sees the FI dialect cards and creates an FI-quote venue", async ({ page }) => {
   await openLive(page);
 
-  // Administration domain → Admin workspace: create a desk to own the connection.
-  await page.getByRole("tab", { name: "Administration" }).click();
+  // Admin workspace (a direct button on the single class-parametric rail — the
+  // former Administration domain tab is retired): create a desk to own the connection.
   const rail = page.getByRole("complementary", { name: "workspaces" });
   await rail.getByRole("button", { name: "Admin", exact: false }).click();
   await page.getByRole("textbox", { name: "new desk name" }).fill(DESK_NAME);

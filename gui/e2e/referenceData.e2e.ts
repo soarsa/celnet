@@ -2,7 +2,8 @@
  * Reference Data workspace e2e (live, server-enforced — CELNET_ACCESS_MODE=enforce).
  *
  * Drives the REAL app against the REAL demo edge: an administrator opens
- * Fixed Income → Reference Data, creates an OIS definition AND a bond definition
+ * Reference Data (a direct workspace on the single class-parametric rail — the
+ * FX/FI domain-tab split is retired), creates an OIS definition AND a bond definition
  * (each with an external identifier), and both appear in the registry table with
  * their external ids. Then a freshly created trader (non-admin) signs in and
  * confirms the per-control admin gating: the list is visible to them, but the

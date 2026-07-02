@@ -1,7 +1,10 @@
 /**
- * LIVE e2e — the Curve workspace's build-by-instrument-reference mode against the
- * REAL demo edge under `CELNET_ACCESS_MODE=enforce`. Logs in, opens the Curve
- * workspace, confirms the slice-A pillar editor still renders, switches to the
+ * LIVE e2e — the FI rates-curve build-by-instrument-reference mode against the
+ * REAL demo edge under `CELNET_ACCESS_MODE=enforce`. fe-fi-migration #6 collapsed
+ * the standalone Curve rail row into the single class-parametric Market Data
+ * workspace: the curve is now the Fixed Income lens of Market Data. Logs in, opens
+ * Market Data, flips to its Fixed Income asset-class lens (the curve builder),
+ * confirms the slice-A pillar editor still renders, switches to the
  * instrument-reference mode, picks seeded reference-data registry instruments,
  * supplies a calibrating quote each, calls the server's `BuildCurve` over the WS
  * mirror, and asserts the returned calibrated discount curve renders. Closes with
@@ -26,7 +29,13 @@ test("Curve workspace builds a discount curve from registry instruments", async 
   page,
 }) => {
   await openLive(page);
-  const pane = await gotoWorkspace(page, "curve");
+  // The curve lives on the single class-parametric Market Data workspace; flip to
+  // its Fixed Income asset-class lens to reach the rates-curve builder.
+  const pane = await gotoWorkspace(page, "surface");
+  await pane
+    .getByRole("group", { name: "market data asset class" })
+    .getByRole("button", { name: "Fixed Income" })
+    .click();
 
   // Slice-A pillar editor is the default mode and still renders its ladder.
   await expect(

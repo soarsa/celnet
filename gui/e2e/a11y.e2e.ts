@@ -22,7 +22,9 @@ import {
 const VIEWS: { id: "ticket" | "stream" | "surface" | "risk" | "book"; name: string }[] = [
   { id: "ticket", name: "Ticket" },
   { id: "stream", name: "Stream" },
-  { id: "surface", name: "Surface" },
+  // fe-fi-migration #6: the "Surface" rail row is now the class-parametric "Market
+  // Data" workspace (FX vol surface + FI rates curve lenses).
+  { id: "surface", name: "Market Data" },
   { id: "risk", name: "Risk" },
   { id: "book", name: "Book" },
 ];
@@ -42,12 +44,15 @@ test.describe("Celnet GUI — axe a11y (zero serious/critical)", () => {
     page,
   }) => {
     await openLive(page);
-    // fe-fi-migration #3: the `rates` rail opens the SHARED ticket in the OIS
-    // family. Price it so axe scans the priced result (PV / par / PV01 / DV01 + the
-    // key-rate DV01 ladder) and the new direction/tenor selectors, whose active
-    // state uses the axe-AA high-contrast pattern (text-primary + accent underline),
-    // NOT the resting inputs alone.
-    const pane = await gotoWorkspace(page, "rates");
+    // fe-fi-migration #6: there is no separate `rates` rail row — the OIS family is
+    // reached through the SHARED Ticket's class-parametric structure gallery (a rates
+    // ticket under a fixed-income scope/license). Select OIS from the searchable
+    // gallery, then price it so axe scans the priced result (PV / par / PV01 / DV01 +
+    // the key-rate DV01 ladder) and the direction/tenor selectors, whose active state
+    // uses the axe-AA high-contrast pattern (text-primary + accent underline).
+    const pane = await gotoWorkspace(page, "ticket");
+    await pane.getByRole("combobox", { name: "search structures" }).fill("OIS");
+    await pane.getByRole("option", { name: /OIS|Overnight/i }).first().click();
     await pane.getByRole("button", { name: "Price OIS" }).click();
     await pane.getByText("Key-rate DV01 ladder").waitFor();
     await page.waitForTimeout(500);

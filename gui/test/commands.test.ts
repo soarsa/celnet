@@ -19,14 +19,12 @@ import {
   buildCommands,
   cheatsheet,
   COMMAND_META,
-  domainAccessible,
-  DOMAINS,
-  domainOf,
   firstAccessibleWorkspace,
   RAIL,
   railChord,
   resolveChord,
   workspaceAccessible,
+  workspaceAssets,
   type CommandContext,
   type NavAuth,
 } from "../src/lib/commands";
@@ -89,41 +87,45 @@ describe("registry integrity", () => {
   });
 });
 
-describe("domains — the top-tab partition over the rail (GW-tabs)", () => {
-  it("declares the three product domains in tab order", () => {
-    expect(DOMAINS.map((d) => d.id)).toEqual([
-      "fx-options",
-      "fixed-income",
-      "administration",
-    ]);
-    for (const d of DOMAINS) expect(d.label.length).toBeGreaterThan(0);
+describe("single class-parametric rail (fe-fi-migration #6 — domain-tab collapse)", () => {
+  it("has NO duplicate FX/FI rail rows — the collapsed ids are gone", () => {
+    const ids = new Set(RAIL.map((r) => r.id));
+    // The duplicated FX/FI rows that routed to the same shared workspace at a fixed
+    // lens are collapsed into ONE class-parametric row each.
+    for (const gone of ["rates", "curve", "ratesrisk", "deals", "ratesbook"]) {
+      expect(ids.has(gone as never)).toBe(false);
+    }
+    // The surviving capability rows are present exactly once each.
+    for (const kept of ["ticket", "surface", "risk", "book", "quoting"]) {
+      expect(RAIL.filter((r) => r.id === kept)).toHaveLength(1);
+    }
+    // Every rail id is unique + every glyph/label is non-empty.
+    expect(ids.size).toBe(RAIL.length);
+    for (const r of RAIL) {
+      expect(r.glyph.length).toBeGreaterThan(0);
+      expect(r.label.length).toBeGreaterThan(0);
+    }
   });
 
-  it("every rail entry declares a valid domain", () => {
-    const valid = new Set(DOMAINS.map((d) => d.id));
-    for (const r of RAIL) expect(valid.has(r.domain)).toBe(true);
+  it("the collapsed Market Data row carries both asset classes (class chosen inside)", () => {
+    // `curve` (FI) + `surface` (FX) collapsed into ONE cross-asset "Market Data" row.
+    const md = RAIL.find((r) => r.id === "surface");
+    expect(md).toBeDefined();
+    expect(md!.label).toBe("Market Data");
+    expect(new Set(md!.assets)).toEqual(new Set(["fx_options", "fixed_income"]));
   });
 
-  it("domainOf returns each rail entry's declared domain", () => {
-    for (const r of RAIL) expect(domainOf(r.id)).toBe(r.domain);
-  });
-
-  it("the three domains partition the rail (every entry in exactly one, none empty)", () => {
-    const counts = new Map<string, number>();
-    for (const r of RAIL) counts.set(r.domain, (counts.get(r.domain) ?? 0) + 1);
-    // Sum of per-domain counts == rail length (a partition: no entry double-counted).
-    const total = [...counts.values()].reduce((a, b) => a + b, 0);
-    expect(total).toBe(RAIL.length);
-    // Each declared domain is non-empty (so every tab has at least one workspace).
-    for (const d of DOMAINS) expect(counts.get(d.id) ?? 0).toBeGreaterThan(0);
-  });
-
-  it("places ratesrisk under Fixed Income with its glyph + label", () => {
-    const entry = RAIL.find((r) => r.id === "ratesrisk");
-    expect(entry).toBeDefined();
-    expect(entry!.domain).toBe("fixed-income");
-    expect(entry!.glyph.length).toBeGreaterThan(0);
-    expect(entry!.label).toBe("Rates Risk");
+  it("every rail row declares the asset class(es) it serves (workspaceAssets)", () => {
+    for (const r of RAIL) expect(workspaceAssets(r.id)).toEqual(r.assets);
+    // The four collapsed trading capabilities are cross-asset (both classes).
+    for (const id of ["ticket", "surface", "risk", "book"] as const) {
+      expect(new Set(workspaceAssets(id))).toEqual(new Set(["fx_options", "fixed_income"]));
+    }
+    // Quoting (no FX twin) is single-asset FI; Stream is single-asset FX.
+    expect(workspaceAssets("quoting")).toEqual(["fixed_income"]);
+    expect(workspaceAssets("stream")).toEqual(["fx_options"]);
+    // Admin/ops rows serve no asset class (gated by isAdmin, no license concept).
+    for (const id of ADMIN_ONLY_WORKSPACES) expect(workspaceAssets(id)).toEqual([]);
   });
 });
 
@@ -165,8 +167,8 @@ describe("resolveChord — honoured grammar == advertised grammar", () => {
       expect(hit?.id).toBe(`ws-${RAIL[i]!.id}`);
       expect(hit?.railIndex).toBe(i);
     }
-    // The eleventh-and-beyond views (Connections / Admin / Permissions / Excel
-    // today) have no ⌘N chord at all.
+    // The eleventh-and-beyond views (Permissions / Reference Data today) have no
+    // ⌘N chord at all — the single-digit grammar addresses only ⌘1..⌘9 + ⌘0.
     expect(railChord(10)).toEqual([]);
     // A two-digit "chord" is never honoured (the grammar is a single keypress).
     expect(resolveChord({ key: String(RAIL.length + 1), meta: true }, RAIL.length)).toBeNull();
@@ -208,7 +210,7 @@ describe("buildCommands — dispatch wiring & context gating", () => {
   });
 });
 
-describe("navigation gating — domainAccessible / workspaceAccessible (slice 5c)", () => {
+describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace-asset)", () => {
   /** A NavAuth whose `can` admits exactly the given set of `action·asset` keys. */
   function navAuth(opts: { isAdmin: boolean; allow?: ReadonlySet<string> }): NavAuth {
     return {
@@ -219,35 +221,6 @@ describe("navigation gating — domainAccessible / workspaceAccessible (slice 5c
 
   // The signed-out identity: `can` is permissive (returns true) and not admin.
   const signedOut: NavAuth = { isAdmin: false, can: () => true };
-
-  describe("domainAccessible", () => {
-    it("fx-options requires view·fx_options for a signed-in identity", () => {
-      const has = navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) });
-      const lacks = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
-      expect(domainAccessible("fx-options", has)).toBe(true);
-      expect(domainAccessible("fx-options", lacks)).toBe(false);
-    });
-
-    it("fixed-income requires view·fixed_income for a signed-in identity", () => {
-      const has = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
-      const lacks = navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) });
-      expect(domainAccessible("fixed-income", has)).toBe(true);
-      expect(domainAccessible("fixed-income", lacks)).toBe(false);
-    });
-
-    it("administration requires isAdmin regardless of capabilities", () => {
-      const admin = navAuth({ isAdmin: true });
-      const trader = navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) });
-      expect(domainAccessible("administration", admin)).toBe(true);
-      expect(domainAccessible("administration", trader)).toBe(false);
-    });
-
-    it("signed-out is permissive — every asset domain visible, admin hidden", () => {
-      expect(domainAccessible("fx-options", signedOut)).toBe(true);
-      expect(domainAccessible("fixed-income", signedOut)).toBe(true);
-      expect(domainAccessible("administration", signedOut)).toBe(false);
-    });
-  });
 
   describe("workspaceAccessible", () => {
     it("admin-only workspaces require isAdmin", () => {
@@ -262,23 +235,27 @@ describe("navigation gating — domainAccessible / workspaceAccessible (slice 5c
       }
     });
 
-    it("Excel (FX Options domain) follows fx-options view capability", () => {
-      expect(workspaceAccessible("excel", navAuth({ isAdmin: false }))).toBe(false);
-      expect(
-        workspaceAccessible(
-          "excel",
-          navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) }),
-        ),
-      ).toBe(true);
+    it("a cross-asset (class-parametric) workspace is reachable via EITHER class", () => {
+      const fxOnly = navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) });
+      const fiOnly = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
+      // Ticket / Market Data / Risk / Book each serve BOTH classes — a view on
+      // either FX or FI reaches them (the denied class is gated per-lens inside).
+      for (const id of ["ticket", "surface", "risk", "book"] as const) {
+        expect(workspaceAccessible(id, fxOnly)).toBe(true);
+        expect(workspaceAccessible(id, fiOnly)).toBe(true);
+      }
     });
 
-    it("FX/FI workspaces follow their domain's view capability", () => {
+    it("single-asset workspaces follow their one class's view capability", () => {
+      const fxOnly = navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) });
       const fiOnly = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
-      // FX workspaces hidden; FI workspaces shown.
-      expect(workspaceAccessible("ticket", fiOnly)).toBe(false); // fx-options
-      expect(workspaceAccessible("surface", fiOnly)).toBe(false); // fx-options
-      expect(workspaceAccessible("rates", fiOnly)).toBe(true); // fixed-income
-      expect(workspaceAccessible("book", fiOnly)).toBe(true); // fixed-income
+      // Stream is FX-only; Quoting is FI-only; Excel/XVA stay FX-scoped.
+      expect(workspaceAccessible("stream", fxOnly)).toBe(true);
+      expect(workspaceAccessible("stream", fiOnly)).toBe(false);
+      expect(workspaceAccessible("quoting", fiOnly)).toBe(true);
+      expect(workspaceAccessible("quoting", fxOnly)).toBe(false);
+      expect(workspaceAccessible("excel", fiOnly)).toBe(false);
+      expect(workspaceAccessible("excel", fxOnly)).toBe(true);
     });
 
     it("signed-out reaches every non-admin workspace", () => {
@@ -292,11 +269,13 @@ describe("navigation gating — domainAccessible / workspaceAccessible (slice 5c
   describe("firstAccessibleWorkspace", () => {
     it("returns the first RAIL workspace the identity can reach", () => {
       const fiOnly = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
-      // FX entries lead RAIL but are inaccessible ⇒ first hit is the first FI entry.
-      expect(firstAccessibleWorkspace(fiOnly)).toBe("rates");
+      // The rail now LEADS with the cross-asset Ticket (reachable via FI view), so a
+      // FI-only trader lands there — no per-domain detour to a separate FI section.
+      expect(firstAccessibleWorkspace(fiOnly)).toBe("ticket");
+      expect(RAIL[0]!.id).toBe("ticket");
     });
 
-    it("an admin reaches the first RAIL entry (FX ticket)", () => {
+    it("an admin reaches the first RAIL entry (Ticket)", () => {
       const admin = navAuth({
         isAdmin: true,
         allow: new Set(["view·fx_options", "view·fixed_income"]),
@@ -305,8 +284,8 @@ describe("navigation gating — domainAccessible / workspaceAccessible (slice 5c
     });
 
     it("an identity with no asset view and not admin reaches nothing (null)", () => {
-      // No view on either asset, not admin: every workspace gates on its domain
-      // (FX/FI on view, Administration on isAdmin), so nothing is reachable. The
+      // No view on either asset, not admin: every trading workspace gates on a view
+      // of a class it serves, admin panes on isAdmin, so nothing is reachable. The
       // AppContext redirect treats a null target as "leave the workspace as-is".
       const none = navAuth({ isAdmin: false });
       expect(firstAccessibleWorkspace(none)).toBeNull();

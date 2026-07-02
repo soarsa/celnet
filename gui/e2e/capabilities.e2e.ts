@@ -18,8 +18,9 @@ const TRADER_EMAIL = `perms-trader-${Date.now()}@celnet.com`;
 test("admin edits a user's capability overlay end-to-end", async ({ page }) => {
   await openLive(page);
 
-  // Administration domain → Admin workspace.
-  await page.getByRole("tab", { name: "Administration" }).click();
+  // fe-fi-migration #6: the single rail — the Admin workspace is a direct rail
+  // button (no product-domain tab to select first). It is shown because we signed
+  // in as the seeded admin (admin/ops rows are hidden for non-admins).
   await page
     .getByRole("complementary", { name: "workspaces" })
     .getByRole("button", { name: "Admin", exact: false })

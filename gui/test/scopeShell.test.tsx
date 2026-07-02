@@ -19,7 +19,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { AppProvider } from "../src/app/AppContext";
 import { Shell } from "../src/app/Shell";
-import { RAIL, railChord } from "../src/lib/commands";
+import { ADMIN_ONLY_WORKSPACES, RAIL, railChord } from "../src/lib/commands";
 
 beforeEach(() => {
   window.history.replaceState(null, "", "/?mock");
@@ -42,33 +42,24 @@ async function renderShell(): Promise<void> {
   });
 }
 
-describe("data-driven rail + glyph fix (GW1-S1)", () => {
+describe("data-driven single class-parametric rail + glyph fix (GW1-S1 / #6)", () => {
   it("renders one rail button per registry view with its ⌘N hint (admin-only views hidden)", async () => {
     await renderShell();
     const rail = screen.getByRole("complementary", { name: "workspaces" });
-    // The default render is a non-admin (anonymous) session: every registry view
-    // appears EXCEPT the admin-only Administration group (Connections + Admin), and
-    // each visible button keeps its registry ⌘N hint (the original index, so the
-    // numbering stays aligned).
+    // fe-fi-migration #6: ONE rail — every non-admin workspace is shown TOGETHER
+    // (no per-domain tab filter). The default render is an anonymous session, so the
+    // admin-only ops panes are hidden; every trading workspace appears with its
+    // registry ⌘N hint (⌘1..⌘9 for the first nine, ⌘0 for the tenth, none beyond).
     for (let i = 0; i < RAIL.length; i += 1) {
       const r = RAIL[i]!;
-      // Admin-only views (Connections + Admin) are hidden for a non-admin session.
-      if (r.id === "connections" || r.id === "admin") {
-        expect(
-          within(rail).queryByRole("button", { name: new RegExp(r.label, "i") }),
-        ).toBeNull();
-        continue;
-      }
-      // GW-tabs: the rail now shows only the ACTIVE domain's workspaces. The default
-      // landing is `stream` (FX Options), so only that domain's buttons are mounted;
-      // a button in another domain is honestly absent until its tab is selected.
       const btn = within(rail).queryByRole("button", { name: new RegExp(r.label, "i") });
-      if (r.domain !== "fx-options") {
+      if (ADMIN_ONLY_WORKSPACES.has(r.id)) {
         expect(btn).toBeNull();
         continue;
       }
       expect(btn).not.toBeNull();
-      expect(btn!.getAttribute("title")).toContain(railChord(i).join(""));
+      const chord = railChord(i).join("");
+      if (chord.length > 0) expect(btn!.getAttribute("title")).toContain(chord);
     }
   });
 
@@ -78,13 +69,9 @@ describe("data-driven rail + glyph fix (GW1-S1)", () => {
     expect(book.glyph).toBe("▤");
     // No rail glyph is Σ — it is freed for sum / vega-ladder use exclusively.
     expect(RAIL.some((r) => r.glyph === "Σ")).toBe(false);
-    // Book lives under the Fixed Income domain; select that tab to mount its rail.
-    act(() => {
-      fireEvent.click(screen.getByRole("tab", { name: "Fixed Income" }));
-    });
+    // The single rail shows Book directly — no domain tab to select first, and the
+    // "Rates Book" twin was collapsed away, so the Book button is unambiguous.
     const rail = screen.getByRole("complementary", { name: "workspaces" });
-    // The Fixed Income rail also carries "Rates Book"; select the FX "Book" button
-    // unambiguously by its title prefix so the glyph assertion targets one button.
     const bookBtn = within(rail)
       .getAllByRole("button")
       .find((b) => b.getAttribute("title")?.startsWith("Book "));

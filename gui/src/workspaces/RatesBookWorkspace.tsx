@@ -98,11 +98,13 @@ export function RatesBookWorkspace(): React.ReactElement {
       );
   }, [app.transport, principal]);
 
-  // The workspace stays mounted (the shell display-toggles panes), so besides the
-  // initial mount load, re-read the server state whenever this view becomes the
-  // ACTIVE one — that picks up any entity/book the admin added (and any position
-  // booked) since the last time the view was shown.
-  const isActive = app.workspace === "ratesbook";
+  // fe-fi-migration #6: this panel is now the "positions" LENS BODY of the unified
+  // `book` workspace (the standalone `ratesbook` rail row was collapsed away). The
+  // shell display-toggles panes and BookWorkspace conditionally mounts this lens,
+  // so besides the initial mount load, re-read the server state whenever the Book
+  // workspace becomes ACTIVE — that picks up any entity/book the admin added (and
+  // any position booked) since the last time the view was shown.
+  const isActive = app.workspace === "book";
 
   useEffect(() => {
     refresh();
