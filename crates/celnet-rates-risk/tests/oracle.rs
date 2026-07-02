@@ -19,7 +19,8 @@ use celnet_types::{Df, Rate, Time};
 use time::{Date, Month};
 
 use celnet_rates_risk::{
-    FiPosition, RatePillars, RateShock, rate_scenario_var_es, scenario_pnls,
+    CorrelationScenario, CurveId, FiPosition, GirrSensitivity, LadderPoint, RatePillars, RateShock,
+    girr_delta_charge, map_ladder_to_vertices, rate_scenario_var_es, scenario_pnls,
     standard_bump_scenarios,
 };
 
@@ -458,4 +459,127 @@ fn end_to_end_var_es_matches_independent_pipeline() {
     );
     // Base PV is the un-shocked book value.
     assert!((report.base_pv - base_hand).abs() <= 1e-6);
+}
+
+// ================================================================================================
+// (d) FRTB SbM GIRR delta charge (central-core Phase C2b) — integration oracle through the PUBLIC
+//     ladder -> vertices -> charge path the risk cube will use (C2c), validated against independent
+//     hand computations (never the engine checking itself).
+// ================================================================================================
+
+/// Independent transcription of the MAR21.53 GIRR delta risk weights, aligned with the vertices
+/// [0.25, 0.5, 1, 2, 3, 5, 10, 15, 20, 30]y. Re-typed here from the published standard so the
+/// integration oracle never reads the engine's own table.
+const RW_STD: [f64; 10] = [
+    0.017, 0.017, 0.016, 0.013, 0.012, 0.011, 0.011, 0.011, 0.011, 0.011,
+];
+const VERT_STD: [f64; 10] = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 20.0, 30.0];
+
+/// Independent MAR21.55 medium-scenario same-curve correlation between two vertices.
+fn rho_std(i: usize, j: usize) -> f64 {
+    let (a, b) = (VERT_STD[i], VERT_STD[j]);
+    (-0.03 * (a - b).abs() / a.min(b)).exp().max(0.40)
+}
+
+#[test]
+fn girr_ladder_path_reproduces_the_hand_worked_example() {
+    // The verified worked example expressed as 1 bp DV01 ladders (s = dv01 / 1e-4):
+    //   USD: s(2y)=+1000, s(5y)=+2000  ->  dv01 = +0.10, +0.20
+    //   EUR: s(10y)=-1500              ->  dv01 = -0.15
+    // Driving the PUBLIC map_ladder_to_vertices -> girr_delta_charge path must reproduce the
+    // offline-computed aggregate charge 29.90953960876919 (see girr.rs worked_example test).
+    let usd_ladder = [
+        LadderPoint {
+            tenor_years: 2.0,
+            dv01: 0.10,
+        },
+        LadderPoint {
+            tenor_years: 5.0,
+            dv01: 0.20,
+        },
+    ];
+    let eur_ladder = [LadderPoint {
+        tenor_years: 10.0,
+        dv01: -0.15,
+    }];
+
+    let mut sens = map_ladder_to_vertices(ccy_usd(), CurveId::OIS, &usd_ladder);
+    sens.extend(map_ladder_to_vertices(ccy_eur(), CurveId::OIS, &eur_ladder));
+
+    let charge = girr_delta_charge(&sens, CorrelationScenario::Medium);
+    assert!(
+        (charge.charge - 29.909_539_608_769_19).abs() <= 1e-11,
+        "ladder-path charge {} vs hand 29.90953960876919",
+        charge.charge
+    );
+}
+
+#[test]
+fn girr_offvertex_ladder_matches_independent_hand_bucket_charge() {
+    // A single-currency book with an OFF-vertex ladder point (4y, between the 3y and 5y vertices),
+    // so the mapping genuinely interpolates. Independent hand computation of K_b (= the aggregate,
+    // one bucket) via the transcribed tables, asserted against the engine at <=1e-12.
+    let ladder = [
+        LadderPoint {
+            tenor_years: 2.0,
+            dv01: 0.05,
+        }, // on vertex idx 3
+        LadderPoint {
+            tenor_years: 4.0,
+            dv01: 0.08,
+        }, // splits idx 4 (3y) / idx 5 (5y) half-half
+    ];
+    let sens = map_ladder_to_vertices(ccy_usd(), CurveId::OIS, &ladder);
+    let charge = girr_delta_charge(&sens, CorrelationScenario::Medium);
+
+    // Independent weighted sensitivities: s = dv01 / 1e-4, split by linear interpolation.
+    let ws3 = RW_STD[3] * (0.05 / 1e-4);
+    let ws4 = RW_STD[4] * (0.08 / 1e-4 * 0.5);
+    let ws5 = RW_STD[5] * (0.08 / 1e-4 * 0.5);
+    let sumsq = ws3 * ws3 + ws4 * ws4 + ws5 * ws5;
+    let cross =
+        2.0 * (rho_std(3, 4) * ws3 * ws4 + rho_std(3, 5) * ws3 * ws5 + rho_std(4, 5) * ws4 * ws5);
+    let k_hand = (sumsq + cross).sqrt();
+
+    assert!(
+        (charge.charge - k_hand).abs() <= TOL,
+        "off-vertex charge {} vs hand {k_hand}",
+        charge.charge
+    );
+    // Offline Python literal, belt-and-suspenders.
+    assert!((charge.charge - 15.563_021_331_109_258).abs() <= 1e-11);
+}
+
+#[test]
+fn girr_directly_constructed_sensitivities_agree_with_ladder_mapping() {
+    // Constructing the sensitivities directly (s = dv01 / 1e-4) must agree with the ladder path,
+    // pinning the DV01 -> per-unit-rate conversion in the public mapping.
+    let via_new = [
+        GirrSensitivity::new(ccy_usd(), CurveId::OIS, 3, 0.05 / 1e-4).unwrap(),
+        GirrSensitivity::new(ccy_usd(), CurveId::OIS, 5, 0.20 / 1e-4).unwrap(),
+    ];
+    let via_ladder = map_ladder_to_vertices(
+        ccy_usd(),
+        CurveId::OIS,
+        &[
+            LadderPoint {
+                tenor_years: 2.0,
+                dv01: 0.05,
+            },
+            LadderPoint {
+                tenor_years: 5.0,
+                dv01: 0.20,
+            },
+        ],
+    );
+    let a = girr_delta_charge(&via_new, CorrelationScenario::Medium).charge;
+    let b = girr_delta_charge(&via_ladder, CorrelationScenario::Medium).charge;
+    assert!((a - b).abs() <= TOL, "direct {a} vs ladder {b}");
+}
+
+fn ccy_usd() -> celnet_types::Ccy {
+    celnet_types::Ccy::USD
+}
+fn ccy_eur() -> celnet_types::Ccy {
+    celnet_types::Ccy::EUR
 }

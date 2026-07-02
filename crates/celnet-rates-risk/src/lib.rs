@@ -28,11 +28,15 @@
 //! zero-rate shift has an **exact** closed-form effect on every discount factor (see `curve_shock`),
 //! which the reprice-under-shock is oracle-validated against to ≤1e-12.
 //!
-//! ## Scope (Phase C2a) and what is deferred
+//! ## Scope (Phases C2a–C2b) and what is deferred
 //!
-//! - **In scope:** the scenario generator, FI reprice-under-shock (OIS + cash bond), and the VaR/ES
-//!   reduction, all standalone and oracle-validated.
-//! - **Deferred:** the FRTB SbM GIRR sensitivity charge (C2b) and integration into the
+//! - **In scope (C2a):** the scenario generator, FI reprice-under-shock (OIS + cash bond), and the
+//!   VaR/ES reduction, all standalone and oracle-validated.
+//! - **In scope (C2b):** the FRTB Standardised-Approach **GIRR delta** capital charge ([`girr`]) —
+//!   the prescribed MAR21 risk-weight and correlation tables, vertex mapping of the key-rate ladder,
+//!   intra-bucket `K_b`, and cross-bucket aggregation with the `S_b` cap/floor, under all three
+//!   correlation scenarios; oracle-validated against the published tables and a hand computation.
+//! - **Deferred:** the GIRR **vega** and **curvature** charges (C2b-extension); integration into the
 //!   `celnet-risk-cube` non-additive path — including sign-normalizing the OIS receive-fixed vs
 //!   bond-positive P&L conventions and exposing the key-rate axis (C2c). The VaR/ES reduction here
 //!   ([`rate_var_es`]) deliberately matches `celnet-risk-cube`'s tail convention so C2c can unify
@@ -48,10 +52,17 @@
 
 pub mod curve_shock;
 pub mod error;
+pub mod girr;
 pub mod position;
 pub mod var;
 
 pub use curve_shock::{RatePillars, RateShock, standard_bump_scenarios};
 pub use error::RateRiskError;
+pub use girr::{
+    CorrelationScenario, CurveId, GIRR_CORRELATION_FLOOR, GIRR_CORRELATION_THETA,
+    GIRR_CROSS_BUCKET_GAMMA, GIRR_DELTA_RISK_WEIGHTS, GIRR_DIFFERENT_CURVE_FACTOR, GIRR_VERTICES,
+    GirrBucketCharge, GirrDeltaCharge, GirrError, GirrSensitivity, LadderPoint, girr_delta_charge,
+    girr_delta_charges_all, map_ladder_to_vertices,
+};
 pub use position::FiPosition;
 pub use var::{RateRiskReport, RateVarEs, rate_scenario_var_es, rate_var_es, scenario_pnls};
