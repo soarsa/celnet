@@ -10,6 +10,7 @@
 import type { ReactElement } from "react";
 import type { Instrument, PricingModel, Product, Tenor } from "../data/contract";
 import type { BrokenDate, SettlementStyle, Underlying } from "../data/contract";
+import type { OisInstrument, RatesCurveSet } from "../data/contract";
 
 /**
  * Asset class of a structurable product. FX is the origin class; the cross-asset
@@ -29,7 +30,8 @@ export type ProductGroup =
   | "Volatility"
   | "Path-dependent"
   | "Structured"
-  | "Cross-asset (equity / commodity / crypto)";
+  | "Cross-asset (equity / commodity / crypto)"
+  | "Fixed income (rates)";
 
 /** The canonical group order in the structure gallery. */
 export const PRODUCT_GROUP_ORDER: readonly ProductGroup[] = [
@@ -40,7 +42,21 @@ export const PRODUCT_GROUP_ORDER: readonly ProductGroup[] = [
   "Path-dependent",
   "Structured",
   "Cross-asset (equity / commodity / crypto)",
+  // fe-fi-migration #3: the fixed-income (linear rates) family — the OIS priced
+  // through the SAME ticket as FX/cross-asset, collapsing the standalone FI
+  // pricing silo. Its specs are a distinct pricing family (see {@link RatesProductSpec}).
+  "Fixed income (rates)",
 ];
+
+/**
+ * The pricing family a {@link ProductSpec}/{@link RatesProductSpec} belongs to.
+ * `option` (the resting family, absent ⇒ this) builds a wire {@link Instrument}
+ * the ticket prices via `requestQuote` (an FX/cross-asset premium two-way + the
+ * 14-Greek set). `rates` builds an {@link OisInstrument} the ticket prices via
+ * `priceRates` against a calibrated {@link RatesCurveSet} (PV / par rate / PV01 /
+ * DV01 / key-rate ladder) — the fixed-income fold, one ticket for both.
+ */
+export type ProductFamily = "option" | "rates";
 
 /**
  * The market / contract context a {@link ProductSpec} needs to build its wire
@@ -104,6 +120,13 @@ export interface InputBlockProps<I> {
 export interface ProductSpec<I> {
   /** Stable structure id (matches the ticket `Structure` union + analytics catalogue). */
   id: string;
+  /**
+   * The pricing family. Absent (or `"option"`) ⇒ the FX/cross-asset options family
+   * (this interface): the ticket builds {@link ProductSpec.toInstrument} and prices
+   * it via `requestQuote`. The `"rates"` family is a distinct shape,
+   * {@link RatesProductSpec}. This literal is the discriminant of {@link AnyProductSpec}.
+   */
+  family?: "option";
   /** Trader-facing name. */
   label: string;
   /** Gallery group. */
@@ -160,18 +183,77 @@ export interface ProductSpec<I> {
 }
 
 /**
- * Type-erased {@link ProductSpec} for heterogeneous registry storage/iteration.
+ * A fixed-income (linear rates) product family — the OIS fold (fe-fi-migration #3).
+ * Shares the discovery metadata + per-family input state seam of {@link ProductSpec},
+ * but is priced through a DIFFERENT wire path: it builds an {@link OisInstrument}
+ * the ticket prices via `CelnetTransport.priceRates` against a calibrated
+ * {@link RatesCurveSet} (PV / par rate / PV01 / DV01 / key-rate ladder) — NOT the
+ * option `Instrument`/`requestQuote` two-way. It therefore has no `Instrument`
+ * product-oneof `kind`, no `allowedModels` (no booking model), and no expiry/tenor
+ * shell dimension (the swap tenor is an input its {@link ProductSpec.InputBlock}
+ * owns). The `"rates"` `family` literal discriminates {@link AnyProductSpec}.
+ */
+export interface RatesProductSpec<I> {
+  /** Stable structure id (matches the ticket `Structure` selection + analytics catalogue). */
+  id: string;
+  /** The fixed-income pricing family — the {@link AnyProductSpec} discriminant. */
+  family: "rates";
+  /** Trader-facing name. */
+  label: string;
+  /** Gallery group. */
+  group: ProductGroup;
+  /** One-line gallery description. */
+  summary: string;
+  /** Extra search keywords for the gallery (method synonyms, aliases). */
+  keywords: readonly string[];
+  /** Default inputs at first render. */
+  defaults: I;
+  /** The calibrated curve the family prices against (e.g. the default USD-SOFR curve). */
+  curve: RatesCurveSet;
+  /**
+   * Validate the inputs against the family's laws (a whole-year tenor `>= 1`, a
+   * positive notional). Returns display-ready violation messages; non-empty gates
+   * the shell's price request. Absent ⇒ every input state the block can produce is lawful.
+   */
+  validate?: (inputs: I, ctx: ProductBuildCtx) => readonly string[];
+  /**
+   * Build the wire {@link OisInstrument} from the trader inputs. The ticket prices
+   * it via `priceRates(curve, instrument)`; the offline in-app source and the live
+   * `price_rates` mirror compute the SAME real OIS off the one contract.
+   */
+  toOisInstrument: (inputs: I, ctx: ProductBuildCtx) => OisInstrument;
+  /** The input block UI for this family. */
+  InputBlock: (props: InputBlockProps<I>) => ReactElement;
+}
+
+/**
+ * Type-erased product family for heterogeneous registry storage/iteration — the
+ * discriminated union of the FX/cross-asset options family ({@link ProductSpec})
+ * and the fixed-income rates family ({@link RatesProductSpec}), keyed by `family`.
  * The per-family `I` is recovered at the single shell boundary that owns that
  * family's input state. (A registry of differently-typed specs is the one place
  * an erased element type is sound — every consumer pairs a spec with its own
  * matching state.)
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type AnyProductSpec = ProductSpec<any>;
+export type AnyProductSpec =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | ProductSpec<any>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | RatesProductSpec<any>;
 
-/** Identity helper that preserves a spec's `I` at definition while typing the field. */
+/** Identity helper that preserves an option spec's `I` at definition while typing the field. */
 export function defineProduct<I>(spec: ProductSpec<I>): ProductSpec<I> {
   return spec;
+}
+
+/** Identity helper that preserves a rates spec's `I` at definition while typing the field. */
+export function defineRatesProduct<I>(spec: RatesProductSpec<I>): RatesProductSpec<I> {
+  return spec;
+}
+
+/** True for the fixed-income (rates) family — narrows {@link AnyProductSpec} to {@link RatesProductSpec}. */
+export function isRatesSpec(spec: AnyProductSpec): spec is RatesProductSpec<unknown> {
+  return spec.family === "rates";
 }
 
 /**

@@ -22,11 +22,6 @@ const TRADER_EMAIL = `role-bundle-trader-${Date.now()}@celnet.com`;
 const TRADER_PW = "longenoughpw1";
 const BOOK_DENIED_TITLE = "Your permissions don't allow booking fixed-income positions.";
 
-/** Click a top-level product-domain tab. */
-async function selectDomain(page: Page, name: string): Promise<void> {
-  await page.getByRole("tab", { name }).click();
-}
-
 /** Click a workspace rail button by its title prefix `"<label> ("` (unique per view). */
 async function railClick(page: Page, label: string): Promise<void> {
   await page
@@ -35,12 +30,28 @@ async function railClick(page: Page, label: string): Promise<void> {
     .click();
 }
 
+/**
+ * Open the rates book. fe-fi-migration #6 collapsed the standalone "Rates Book"
+ * rail row into the single class-parametric Book workspace: click Book, then flip
+ * to the "Positions & Booking" lens in the book-view group — the rates "Book
+ * position" control lives there. Returns the active pane.
+ */
+async function gotoRatesBook(page: Page) {
+  await railClick(page, "Book");
+  const pane = page.locator('[aria-hidden="false"]:not([inert])').last();
+  await pane
+    .getByRole("group", { name: "book view" })
+    .getByRole("button", { name: "Positions & Booking" })
+    .click();
+  return pane;
+}
+
 test("admin narrows the Trader role bundle end-to-end; a re-logged trader loses the affordance", async ({
   page,
 }) => {
-  // 1) Admin signs in; create a fresh trader via the Admin workspace.
+  // 1) Admin signs in; create a fresh trader via the Admin workspace (a direct
+  // button on the single class-parametric rail — no product-domain tab).
   await openLive(page);
-  await selectDomain(page, "Administration");
   await railClick(page, "Admin");
 
   await page.getByRole("button", { name: "New user" }).click();
@@ -88,9 +99,8 @@ test("admin narrows the Trader role bundle end-to-end; a re-logged trader loses 
   await page.getByRole("button", { name: "Sign out" }).click();
   await signIn(page, TRADER_EMAIL, TRADER_PW);
 
-  await selectDomain(page, "Fixed Income");
-  await railClick(page, "Rates Book");
-  const bookBtn = page.getByRole("button", { name: "Book position" });
+  const ratesBookPane = await gotoRatesBook(page);
+  const bookBtn = ratesBookPane.getByRole("button", { name: "Book position" });
   await expect(bookBtn).toBeVisible();
   await expect(bookBtn).toBeDisabled();
   await expect(bookBtn).toHaveAttribute("title", BOOK_DENIED_TITLE);

@@ -1,5 +1,8 @@
 /**
- * SurfaceWorkspace — the "show me why" (GUI-DESIGN §4.3). Three linked views of
+ * SurfaceWorkspace — the FX (options / metals) vol-surface LENS of the shared,
+ * class-parametric `MarketDataWorkspace` (`fe-fi-migration` #2); the `surface`
+ * rail row opens the Market Data workspace on this lens. Behaviour is unchanged:
+ * it is the "show me why" (GUI-DESIGN §4.3). Three linked views of
  * one marked surface: the rotatable 3D vol surface (the `VolSurface3D` lib chart,
  * three.js — height + Viridis colour both encode vol, arb-flagged tenors carry
  * danger markers), the per-tenor smile family (the `VolSmile` lib chart, visx —

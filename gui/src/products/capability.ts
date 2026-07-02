@@ -17,7 +17,7 @@
  * gives exactly ONE place to port to the Excel client.
  */
 import type { Underlying, Product } from "../data/contract";
-import type { AssetClass } from "./types";
+import type { AssetClass, ProductFamily } from "./types";
 
 /** A product-oneof arm (the wire `Instrument.product` discriminant). */
 export type ProductKind = Product["kind"];
@@ -165,7 +165,14 @@ export type CardState = "available" | Dimmed | "hidden";
 /** The minimal spec shape `galleryCardStates` reads (the registry's `AnyProductSpec`). */
 export interface SpecApplicability {
   readonly id: string;
-  readonly kind: ProductKind;
+  /**
+   * The `Instrument` product-oneof arm — present ONLY on the option family. The
+   * fixed-income (`rates`) family has no `Instrument` arm (it prices via the OIS
+   * `priceRates` seam), so this is absent for it and it is handled specially below.
+   */
+  readonly kind?: ProductKind;
+  /** The pricing family — absent ⇒ the option family; `"rates"` ⇒ fixed income. */
+  readonly family?: ProductFamily;
   readonly applicableClasses?: readonly AssetClass[];
 }
 
@@ -196,16 +203,25 @@ export function galleryCardStates(
   // else HIDDEN when a sibling spec of the same arm IS the builder here (no
   // duplicate card — e.g. the FX vanilla hidden behind the cross-asset vanilla);
   // else DIMMED with the honest capability reason (the FX/metal-only families).
+  // The fixed-income (rates) family is NOT priced on an FX asset class at all (it
+  // prices the USD-SOFR OIS via `priceRates`, gated by the `fixed_income`
+  // license/entitlement at the price action, not by the active FX underlier), so
+  // it is AVAILABLE on every class — never dimmed by the cross-asset matrix.
   const availableKinds = new Set(
-    specs.filter((s) => builderClasses(s).includes(cls)).map((s) => s.kind),
+    specs
+      .filter((s) => s.family !== "rates" && s.kind !== undefined && builderClasses(s).includes(cls))
+      .map((s) => s.kind as ProductKind),
   );
   for (const s of specs) {
-    if (builderClasses(s).includes(cls)) {
+    const kind = s.kind;
+    if (s.family === "rates" || kind === undefined) {
       states.set(s.id, "available");
-    } else if (availableKinds.has(s.kind)) {
+    } else if (builderClasses(s).includes(cls)) {
+      states.set(s.id, "available");
+    } else if (availableKinds.has(kind)) {
       states.set(s.id, "hidden");
     } else {
-      const p = priceability(s.kind, cls);
+      const p = priceability(kind, cls);
       states.set(s.id, p === "priceable" ? "hidden" : p);
     }
   }

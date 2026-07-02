@@ -65,24 +65,22 @@ import {
 import { firstAccessibleWorkspace, workspaceAccessible } from "../lib/commands";
 import type { Density } from "../design/density";
 
+// fe-fi-migration #6: the single class-parametric WorkspaceId set (the FX/FI
+// duplicate rows collapsed into one capability row each). Mirrors
+// `commands.WorkspaceId` exactly.
 export type WorkspaceId =
   | "ticket"
-  | "rates"
-  | "curve"
-  | "ratesrisk"
-  | "quoting"
-  | "deals"
-  | "ratesbook"
-  | "refdata"
   | "stream"
   | "surface"
   | "risk"
-  | "xva"
   | "book"
+  | "quoting"
+  | "xva"
+  | "excel"
   | "connections"
   | "admin"
   | "permissions"
-  | "excel";
+  | "refdata";
 
 // Re-export the scope vocabulary from its owning module so existing consumers
 // (riskView, riskScope tests) import it from AppContext unchanged — the types now

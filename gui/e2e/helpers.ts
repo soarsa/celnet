@@ -8,14 +8,21 @@ import AxeBuilder from "@axe-core/playwright";
 
 import { readWsUrl } from "./wsUrl";
 
-/** Workspace ids ↔ their rail button labels (Shell.tsx RAIL). */
+/**
+ * Workspace ids ↔ their rail button labels (Shell.tsx RAIL). fe-fi-migration #6:
+ * the single class-parametric rail — the duplicate FX/FI rows collapsed into one
+ * capability row each, and "Surface" was relabelled "Market Data" (it now spans the
+ * FX vol surface + the FI rates curve as two lenses of one workspace).
+ */
 const RAIL_LABEL: Record<string, string> = {
   ticket: "Ticket",
   stream: "Stream",
-  surface: "Surface",
+  surface: "Market Data",
   risk: "Risk",
   book: "Book",
-  curve: "Curve",
+  quoting: "Quoting",
+  xva: "XVA",
+  excel: "Excel",
 };
 
 /**
@@ -59,47 +66,22 @@ export async function signIn(
 }
 
 /**
- * Which top-level product-domain tab each rail workspace lives under (Shell.tsx
- * splits the rail into FX Options / Fixed Income / Administration tabs; the rail
- * shows ONLY the active domain's workspaces). The original five FX-domain views
- * all sit under "FX Options", but the merged-in fixed-income subsystem moved
- * `book` (and added Rates/Curve/…) under "Fixed Income", so reaching `book`
- * requires selecting that tab first.
- */
-const RAIL_DOMAIN: Record<keyof typeof RAIL_LABEL, string> = {
-  ticket: "FX Options",
-  stream: "FX Options",
-  surface: "FX Options",
-  risk: "FX Options",
-  book: "Fixed Income",
-  curve: "Fixed Income",
-};
-
-/**
  * Switch to a workspace via its rail button and return the ACTIVE pane locator.
  * Every workspace stays mounted (Shell toggles `display`), so all queries must be
  * scoped to the active pane — the only `.canvas` child without the `inert`
  * attribute — or a hidden pane's text would match. Waits for the pane to settle.
  *
- * The rail is domain-tabbed: select the workspace's product-domain tab first so
- * its rail button renders. Each rail button's accessible name is `"<glyph> <label>"`
- * (the glyph is decorative leading text), so a substring `name` match is ambiguous
- * once the fixed-income subsystem added a "Rates Book" alongside "Book" — both
- * contain "Book". Target the button by its `title` attribute instead, which is
- * exactly `"<label> (<chord>)"`: anchoring on `"<label> ("` is unique per workspace.
+ * fe-fi-migration #6: the rail is ONE single class-parametric rail (no product-
+ * domain tabs), so every reachable workspace's button is present without selecting
+ * a tab first. Each rail button's accessible name is `"<glyph> <label>"` (the glyph
+ * is decorative leading text); target the button by its `title` attribute instead,
+ * which is exactly `"<label> (<chord>)"` — anchoring on `"<label> ("` is unique.
  */
 export async function gotoWorkspace(
   page: Page,
   id: keyof typeof RAIL_LABEL,
 ): Promise<Locator> {
-  // Select the workspace's product-domain tab so its rail button is rendered.
-  await page
-    .getByRole("tablist", { name: "product domains" })
-    .getByRole("tab", { name: RAIL_DOMAIN[id], exact: true })
-    .click();
   const rail = page.getByRole("complementary", { name: "workspaces" });
-  // `title="<label> (<chord>)"` — the leading `"<label> ("` disambiguates "Book"
-  // from "Rates Book" (the accessible name's shared "Book" suffix would not).
   await rail.locator(`button[title^="${RAIL_LABEL[id]} ("]`).click();
   // The active pane is the canvas child that is NOT inert (hidden panes carry it).
   const pane = page.locator('[aria-hidden="false"]:not([inert])').last();

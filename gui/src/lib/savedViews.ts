@@ -25,44 +25,40 @@ import {
   type ScopeState,
 } from "./scope";
 
-/** The rail workspace the view is parked on. Mirrors `commands.WorkspaceId`. */
+/**
+ * The rail workspace the view is parked on. Mirrors `commands.WorkspaceId` exactly
+ * (fe-fi-migration #6: the single class-parametric rail). A recalled/pasted URL
+ * carrying a retired id (`rates`/`curve`/`ratesrisk`/`deals`/`ratesbook`) is an
+ * unknown token ⇒ `decode` ignores it and defaults the workspace (forward-compat),
+ * so old bookmarks still open — just on the shared workspace's default lens.
+ */
 export type WorkspaceId =
   | "ticket"
-  | "rates"
-  | "curve"
-  | "ratesrisk"
-  | "quoting"
-  | "deals"
-  | "ratesbook"
-  | "refdata"
   | "stream"
   | "surface"
   | "risk"
-  | "xva"
   | "book"
+  | "quoting"
+  | "xva"
+  | "excel"
   | "connections"
   | "admin"
   | "permissions"
-  | "excel";
+  | "refdata";
 
 const WORKSPACES: readonly WorkspaceId[] = [
   "ticket",
-  "rates",
-  "curve",
-  "ratesrisk",
-  "quoting",
-  "deals",
-  "ratesbook",
-  "refdata",
   "stream",
   "surface",
   "risk",
-  "xva",
   "book",
+  "quoting",
+  "xva",
+  "excel",
   "connections",
   "admin",
   "permissions",
-  "excel",
+  "refdata",
 ] as const;
 
 /**

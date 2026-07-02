@@ -12,6 +12,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isRatesSpec,
+  OIS_STRUCTURE_ID,
   PRODUCT_GROUP_ORDER,
   PRODUCT_REGISTRY,
   registryByGroup,
@@ -19,7 +21,7 @@ import {
   type ProductBuildCtx,
 } from "../src/products";
 import { bookingModelsFor, tenorYearsToTenor } from "../src/data/seed";
-import { instrumentToWire } from "../src/data/wsCodec";
+import { instrumentToWire, ratesInstrumentToWire } from "../src/data/wsCodec";
 
 /** A representative EURUSD 3M context, ATM-forward seeded above spot. */
 const CTX: ProductBuildCtx = {
@@ -39,8 +41,11 @@ describe("product registry (GW2)", () => {
     expect(PRODUCT_REGISTRY.length).toBeGreaterThan(0);
   });
 
-  it("every spec builds a wire-valid, deterministically round-tripping instrument from its defaults", () => {
+  it("every OPTION spec builds a wire-valid, deterministically round-tripping instrument from its defaults", () => {
     for (const spec of PRODUCT_REGISTRY) {
+      // The fixed-income (rates) family prices an `OisInstrument` via `priceRates`,
+      // NOT an option `Instrument`/`requestQuote` — asserted separately below.
+      if (isRatesSpec(spec)) continue;
       const inst = spec.toInstrument(spec.defaults, CTX);
       // Tenor stamped (buildInstrument tail); DEFAULT model presence-omitted.
       // A declared no-expiry family (the perpetual — the one tenorless product)
@@ -64,8 +69,9 @@ describe("product registry (GW2)", () => {
     }
   });
 
-  it("allowedModels equal bookingModelsFor(kind) for every spec (no booking-matrix drift)", () => {
+  it("allowedModels equal bookingModelsFor(kind) for every OPTION spec (no booking-matrix drift)", () => {
     for (const spec of PRODUCT_REGISTRY) {
+      if (isRatesSpec(spec)) continue; // no `Instrument` kind / booking model
       expect(spec.allowedModels).toEqual(bookingModelsFor(spec.kind));
     }
   });
@@ -88,5 +94,46 @@ describe("product registry (GW2)", () => {
     // Groups appear in canonical order.
     const order = grouped.map((g) => PRODUCT_GROUP_ORDER.indexOf(g.group));
     expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+});
+
+/**
+ * The fixed-income (rates) family (fe-fi-migration #3): the OIS is a
+ * {@link RatesProductSpec} in the SAME registry, priced through the shared ticket
+ * via `priceRates`. It has no option `Instrument` (so it is skipped by the option
+ * round-trip above); instead its `toOisInstrument` builds a wire `OisInstrument`
+ * that round-trips through the real rates wire codec deterministically.
+ */
+describe("product registry — fixed-income (rates) family", () => {
+  it("registers the OIS as a `rates`-family spec in the Fixed-income group", () => {
+    const ois = specById(OIS_STRUCTURE_ID);
+    expect(ois).toBeDefined();
+    expect(ois && isRatesSpec(ois)).toBe(true);
+    expect(ois?.group).toBe("Fixed income (rates)");
+  });
+
+  it("every rates spec builds a wire-valid, deterministically round-tripping OisInstrument", () => {
+    const ratesSpecs = PRODUCT_REGISTRY.filter(isRatesSpec);
+    expect(ratesSpecs.length).toBeGreaterThan(0);
+    for (const spec of ratesSpecs) {
+      const ois = spec.toOisInstrument(spec.defaults, CTX);
+      expect(ois.tenorYears).toBeGreaterThanOrEqual(1);
+      expect(ois.notional).toBeGreaterThan(0);
+      // The family's curve validates through the same real bootstrap path.
+      expect(spec.curve.pillars.length).toBeGreaterThan(0);
+      // Round-trips through the real rates wire codec, and is byte-stable.
+      const wire = ratesInstrumentToWire(ois);
+      expect(wire).toBeTruthy();
+      expect(ratesInstrumentToWire(ois)).toEqual(wire);
+    }
+  });
+
+  it("its default inputs are lawful; a sub-year tenor / non-positive notional are gated", () => {
+    const ois = specById(OIS_STRUCTURE_ID);
+    if (!ois || !isRatesSpec(ois)) throw new Error("OIS spec missing");
+    expect(ois.validate?.(ois.defaults, CTX)).toEqual([]);
+    const bad = { ...(ois.defaults as Record<string, unknown>), tenorYears: 0, notionalMm: 0 };
+    const violations = ois.validate?.(bad as never, CTX) ?? [];
+    expect(violations.length).toBeGreaterThanOrEqual(2);
   });
 });

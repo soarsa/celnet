@@ -235,9 +235,19 @@ export type ComponentSection = "fx_options" | "fixed_income" | "administration";
  * One trader-facing component and the capabilities that constitute its Read and
  * Write access. The Administration row is the cross-asset exception: it governs
  * `administer` on BOTH asset classes as a single toggle (Read == Write).
+ *
+ * NOTE (fe-fi-migration #6): the RAIL collapsed its duplicate FX/FI rows into one
+ * class-parametric row each, but the Permissions grid is the per-ASSET-CLASS
+ * CAPABILITY editor — its components enumerate the distinct capabilities an admin
+ * grants (e.g. `price·fixed_income` via the `rates` component, `book·fixed_income`
+ * via `ratesbook`), so it deliberately stays per-asset and is NOT collapsed:
+ * collapsing it would STRAND those per-asset capabilities. A component id here is a
+ * capability-grouping key — most map to a rail workspace, some (`rates`/`curve`/
+ * `ratesrisk`/`deals`/`ratesbook`) now map to a lens/product-family reached via a
+ * SHARED class-parametric workspace, and `simulator`/`administration` are non-rail.
  */
 export interface ComponentAccess {
-  /** Stable id (the workspace id it surfaces; the cross-asset row is `administration`). */
+  /** Stable capability-grouping id (usually a rail workspace id; see the note above). */
   id: string;
   /** Human label for the grid row. */
   label: string;

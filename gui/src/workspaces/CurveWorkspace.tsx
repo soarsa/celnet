@@ -1,5 +1,8 @@
 /**
- * CurveWorkspace — the rates CURVE inspection surface (FI-ARCHITECTURE §4.2). A
+ * CurveWorkspace — the fixed-income (rates curve) LENS of the shared,
+ * class-parametric `MarketDataWorkspace` (`fe-fi-migration` #2); the `curve` rail
+ * row opens the Market Data workspace on this lens. Behaviour is unchanged: it is
+ * the rates CURVE inspection surface (FI-ARCHITECTURE §4.2). A
  * trader builds / perturbs the calibrated USD-SOFR curve set (its par-OIS pillars)
  * and inspects the bootstrapped discount curve three ways: the discount factor
  * `DF(t)`, the continuously-compounded zero rate `z(t) = −ln DF(t)/t`, and the

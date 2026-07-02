@@ -39,16 +39,26 @@ import { americanSpec } from "./american";
 import { perpetualSpec } from "./perpetual";
 import { basketSpec } from "./basket";
 import { crossAssetSpec } from "./crossAsset";
+import { oisSpec } from "./ois";
 
 export type {
   AnyProductSpec,
   AssetClass,
   InputBlockProps,
   ProductBuildCtx,
+  ProductFamily,
   ProductGroup,
   ProductSpec,
+  RatesProductSpec,
 } from "./types";
-export { PRODUCT_GROUP_ORDER, defineProduct, withTenorAndModel } from "./types";
+export {
+  PRODUCT_GROUP_ORDER,
+  defineProduct,
+  defineRatesProduct,
+  isRatesSpec,
+  withTenorAndModel,
+} from "./types";
+export { oisSpec, OIS_STRUCTURE_ID, type OisInputs } from "./ois";
 
 // The structuring UI the ticket shell composes the registry with: the grouped
 // gallery picker (replaces the flat structure <select>), the payoff-at-expiry
@@ -99,6 +109,10 @@ export const PRODUCT_REGISTRY: readonly AnyProductSpec[] = [
   // Cross-asset (equity / commodity / crypto / metal) vanilla over the W1
   // `Underlying` oneof + settlement-style seam.
   crossAssetSpec,
+  // Fixed income (rates): the OIS priced through the SAME ticket via the
+  // `priceRates` seam (fe-fi-migration #3) — a distinct pricing family
+  // (RatesProductSpec), collapsing the standalone FI pricing silo.
+  oisSpec,
 ];
 
 /** Look up a product spec by its structure id, or `undefined` if not registered. */

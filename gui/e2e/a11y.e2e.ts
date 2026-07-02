@@ -22,7 +22,9 @@ import {
 const VIEWS: { id: "ticket" | "stream" | "surface" | "risk" | "book"; name: string }[] = [
   { id: "ticket", name: "Ticket" },
   { id: "stream", name: "Stream" },
-  { id: "surface", name: "Surface" },
+  // fe-fi-migration #6: the "Surface" rail row is now the class-parametric "Market
+  // Data" workspace (FX vol surface + FI rates curve lenses).
+  { id: "surface", name: "Market Data" },
   { id: "risk", name: "Risk" },
   { id: "book", name: "Book" },
 ];
@@ -37,6 +39,29 @@ test.describe("Celnet GUI — axe a11y (zero serious/critical)", () => {
       await expectNoSeriousA11y(page, `${view.name} view`);
     });
   }
+
+  test("Fixed-income OIS ticket (the FI pricing fold) has no serious/critical a11y violations", async ({
+    page,
+  }) => {
+    await openLive(page);
+    // fe-fi-migration #6: there is no separate `rates` rail row — the OIS family is
+    // reached through the SHARED Ticket's class-parametric structure gallery (a rates
+    // ticket under a fixed-income scope/license). Select OIS from the searchable
+    // gallery, then price it so axe scans the priced result (PV / par / PV01 / DV01 +
+    // the key-rate DV01 ladder) and the direction/tenor selectors, whose active state
+    // uses the axe-AA high-contrast pattern (text-primary + accent underline).
+    const pane = await gotoWorkspace(page, "ticket");
+    // The gallery search is an `<input type="search">` → the ARIA `searchbox`
+    // role (a plain search field, not a `list`-backed `combobox`).
+    await pane.getByRole("searchbox", { name: "search structures" }).fill("OIS");
+    await pane.getByRole("option", { name: /OIS|Overnight/i }).first().click();
+    await pane.getByRole("button", { name: "Price OIS" }).click();
+    // The ladder TITLE is the `<h3>` heading — the OIS input-form note also
+    // contains the phrase ("…and the key-rate DV01 ladder."), so match by role.
+    await pane.getByRole("heading", { name: "Key-rate DV01 ladder" }).waitFor();
+    await page.waitForTimeout(500);
+    await expectNoSeriousA11y(page, "Fixed-income OIS ticket");
+  });
 
   test("Cube heatmap view has no serious/critical a11y violations", async ({ page }) => {
     await openLive(page);

@@ -3,10 +3,13 @@
  * the admin-managed legal-entity / netting-book registry drives a NAMED rates
  * booking, and the book/blotter render NAMES — never the raw uint32 partition keys.
  *
- * Walkthrough: admin signs in → Administration → create a legal entity + a book
- * under it → Fixed Income → Rates Book → confirm Entity & Book are NAMED dropdowns
- * → book a position → confirm the rates book shows the NAMES. Screenshots at 1440
- * width capture (a) the named dropdowns and (b) the booked line showing names.
+ * Walkthrough: admin signs in → Admin workspace → create a legal entity + a book
+ * under it → the Book workspace's "Positions & Booking" lens → confirm Entity &
+ * Book are NAMED dropdowns → book a position → confirm the rates book shows the
+ * NAMES. (fe-fi-migration #6 retired the FX/FI domain-tab split: every workspace,
+ * including the rates book, is a direct button on the single class-parametric
+ * rail.) Screenshots at 1440 width capture (a) the named dropdowns and (b) the
+ * booked line showing names.
  *
  * The seeded edge already owns the sample registry (Celnet Global Markets /
  * Celnet Securities + the "Rates Trading" book), and book names are globally
@@ -19,16 +22,27 @@ import { openLive, expectNoSeriousA11y } from "./helpers";
 
 const ARTIFACTS = "e2e/.artifacts";
 
-/** Select a product-domain tab, click a workspace by its `title` prefix, return its pane. */
-async function gotoView(page: Page, domain: string, label: string) {
-  await page
-    .getByRole("tablist", { name: "product domains" })
-    .getByRole("tab", { name: domain, exact: true })
-    .click();
+/** Open a workspace via its direct rail button (by `title="<label> (…)"` prefix), return its pane. */
+async function gotoView(page: Page, label: string) {
   const rail = page.getByRole("complementary", { name: "workspaces" });
   await rail.locator(`button[title^="${label} ("]`).click();
   const pane = page.locator('[aria-hidden="false"]:not([inert])').last();
   await expect(pane).toBeVisible();
+  return pane;
+}
+
+/**
+ * Open the rates book. fe-fi-migration #6 collapsed the standalone "Rates Book"
+ * rail row into the single class-parametric Book workspace: go to Book, then flip
+ * to the "Positions & Booking" lens in the book-view group — the rates booking
+ * form (named entity/book dropdowns + the blotter) lives there.
+ */
+async function gotoRatesBook(page: Page) {
+  const pane = await gotoView(page, "Book");
+  await pane
+    .getByRole("group", { name: "book view" })
+    .getByRole("button", { name: "Positions & Booking" })
+    .click();
   return pane;
 }
 
@@ -41,8 +55,8 @@ test("admin registry → named rates booking renders names, not numbers", async 
   const entityCode = `AC${stamp}`;
   const bookName = `Rates Trading ${stamp}`;
 
-  // --- Administration: create the legal entity + a book under it --------------
-  const admin = await gotoView(page, "Administration", "Admin");
+  // --- Admin workspace: create the legal entity + a book under it -------------
+  const admin = await gotoView(page, "Admin");
 
   await admin.getByLabel("entity name").fill(entityName);
   await admin.getByLabel("entity code").fill(entityCode);
@@ -58,8 +72,8 @@ test("admin registry → named rates booking renders names, not numbers", async 
 
   await expectNoSeriousA11y(page, "Administration (entity + book registry)");
 
-  // --- Rates Book: the Book Position form's NAMED dropdowns -------------------
-  const ratesBook = await gotoView(page, "Fixed Income", "Rates Book");
+  // --- Book workspace (Positions & Booking lens): the Book Position form's NAMED dropdowns ---
+  const ratesBook = await gotoRatesBook(page);
 
   // Both are <select> dropdowns: a native <select> has the implicit ARIA role
   // "combobox", so resolving them by that role proves they are NAMED dropdowns

@@ -25,40 +25,34 @@
 import { CAPABILITY_ASSETS, type CapabilityAction, type CapabilityAsset } from "../data/contract";
 import type { Command } from "../components/CommandPalette";
 
-/** Workspace ids the rail exposes (kept in sync with `AppContext.WorkspaceId`). */
+/**
+ * Workspace ids the rail exposes (kept in sync with `AppContext.WorkspaceId`).
+ *
+ * fe-fi-migration #6 (capstone): the FX-vs-FI DOMAIN-TAB split is retired for a
+ * SINGLE class-parametric rail. The duplicated FX/FI rows that routed to the same
+ * shared workspace under different lenses are COLLAPSED into ONE capability row
+ * each — `ratesrisk`→`risk`, `curve`→`surface` (Market Data), `deals`+`ratesbook`
+ * →`book`, `rates`→`ticket` — with the ASSET CLASS chosen by the scope/underlier +
+ * the license lens INSIDE the workspace (built by #1–#4), not by a duplicate rail
+ * row. `quoting` had no FX twin and is unchanged. No capability is lost: a rates
+ * ticket is priced through the shared `ticket` (its rates product family), an FI
+ * curve through the shared `surface` (its rates lens), an FI book through the
+ * shared `book` (its positions lens), FI risk through the shared `risk` (its rates
+ * lens) — all reachable under a fixed-income scope/license.
+ */
 export type WorkspaceId =
   | "ticket"
-  | "rates"
-  | "curve"
-  | "ratesrisk"
-  | "quoting"
-  | "deals"
-  | "ratesbook"
-  | "refdata"
   | "stream"
   | "surface"
   | "risk"
-  | "xva"
   | "book"
+  | "quoting"
+  | "xva"
+  | "excel"
   | "connections"
   | "admin"
   | "permissions"
-  | "excel";
-
-/**
- * A top-level product domain — the tab a workspace lives under. The Shell renders
- * one tab per domain (Administration shown only to admins) and switching a tab
- * jumps to that domain's last-active (or first) workspace. Every RAIL entry
- * declares exactly one domain, so the three tabs partition the rail.
- */
-export type Domain = "fx-options" | "fixed-income" | "administration";
-
-/** The top-tab bar order: FX Options, then Fixed Income, then Administration. */
-export const DOMAINS: readonly { id: Domain; label: string }[] = [
-  { id: "fx-options", label: "FX Options" },
-  { id: "fixed-income", label: "Fixed Income" },
-  { id: "administration", label: "Administration" },
-] as const;
+  | "refdata";
 
 /** A logical grouping of related commands (sections the cheatsheet + palette use). */
 export type CommandGroup = "Global" | "Workspace" | "Scope" | "Action";
@@ -84,56 +78,71 @@ export interface CommandMeta {
 }
 
 /**
- * The rail workspaces, in order. The data-driven rail (replacing the hard-coded
- * `RAIL`/`⌘1-5`): the `⌘N` hint and the `metaDigit` chord are DERIVED from this
- * order, so adding a view needs only a row here — its `⌘N` lights up for free
- * (`⌘1..⌘9`, then `⌘0` for a tenth; uncapping the old `⌘1-5`). Glyph fix: Book is `▤` (a ledger), freeing `Σ` for
- * sum/vega-ladder use exclusively (one glyph, one meaning).
+ * The rail workspaces, in order — ONE single class-parametric rail (fe-fi-migration
+ * #6). The data-driven rail: the `⌘N` hint and the `metaDigit` chord are DERIVED
+ * from this order, so adding a view needs only a row here — its `⌘N` lights up for
+ * free (`⌘1..⌘9`, then `⌘0` for a tenth; the eleventh+ are palette-only). Glyph
+ * fix: Book is `▤` (a ledger), freeing `Σ` for sum/vega-ladder use exclusively (one
+ * glyph, one meaning).
+ *
+ * Each row declares the asset class(es) it serves via {@link workspaceAssets}:
+ *   • CROSS-ASSET (class-parametric) rows list BOTH classes — the class is chosen
+ *     INSIDE the workspace by the scope/underlier + the license lens (#1–#4), never
+ *     by a duplicate rail row. `ticket` (Price), `surface` (Market Data), `risk`,
+ *     and `book` each span FX + FI.
+ *   • SINGLE-ASSET rows list one class: `stream` (FX price streaming) and `quoting`
+ *     (fixed-income dealer quoting — no FX twin). `xva`/`excel` stay FX-scoped (no
+ *     FI reconciliation was built for them, so their entitlement is unchanged).
+ *   • ADMIN/ops rows list NONE — gated by `isAdmin`, with no license concept.
+ * The rail is driven by scope/underlier + license, NOT by an FX/FI domain tab.
  */
 export const RAIL: readonly {
   id: WorkspaceId;
   glyph: string;
   label: string;
-  /** The top-level product domain (tab) this workspace lives under. */
-  domain: Domain;
+  /** The asset class(es) this workspace serves (see {@link workspaceAssets}). */
+  assets: readonly CapabilityAsset[];
 }[] = [
-  // FX Options.
-  { id: "ticket", glyph: "⌁", label: "Ticket", domain: "fx-options" },
-  { id: "stream", glyph: "≋", label: "Stream", domain: "fx-options" },
-  { id: "surface", glyph: "◷", label: "Surface", domain: "fx-options" },
-  { id: "risk", glyph: "⊞", label: "Risk", domain: "fx-options" },
-  { id: "xva", glyph: "⊗", label: "XVA", domain: "fx-options" },
-  { id: "excel", glyph: "▦", label: "Excel", domain: "fx-options" },
-  // Fixed Income.
-  { id: "rates", glyph: "≣", label: "Rates", domain: "fixed-income" },
-  { id: "curve", glyph: "∿", label: "Curve", domain: "fixed-income" },
-  { id: "ratesrisk", glyph: "⊟", label: "Rates Risk", domain: "fixed-income" },
-  { id: "quoting", glyph: "⇌", label: "Quoting", domain: "fixed-income" },
-  { id: "deals", glyph: "✓", label: "Deals", domain: "fixed-income" },
-  { id: "ratesbook", glyph: "▥", label: "Rates Book", domain: "fixed-income" },
-  { id: "book", glyph: "▤", label: "Book", domain: "fixed-income" },
-  // Administration.
-  { id: "connections", glyph: "⇄", label: "Connections", domain: "administration" },
-  { id: "admin", glyph: "⚇", label: "Admin", domain: "administration" },
-  { id: "permissions", glyph: "⚷", label: "Permissions", domain: "administration" },
-  { id: "refdata", glyph: "❏", label: "Reference Data", domain: "administration" },
+  // Trading capabilities — class chosen by scope/underlier + lens INSIDE the pane.
+  { id: "ticket", glyph: "⌁", label: "Ticket", assets: CAPABILITY_ASSETS },
+  { id: "stream", glyph: "≋", label: "Stream", assets: ["fx_options"] },
+  { id: "surface", glyph: "◷", label: "Market Data", assets: CAPABILITY_ASSETS },
+  { id: "risk", glyph: "⊞", label: "Risk", assets: CAPABILITY_ASSETS },
+  { id: "book", glyph: "▤", label: "Book", assets: CAPABILITY_ASSETS },
+  { id: "quoting", glyph: "⇌", label: "Quoting", assets: ["fixed_income"] },
+  { id: "xva", glyph: "⊗", label: "XVA", assets: ["fx_options"] },
+  { id: "excel", glyph: "▦", label: "Excel", assets: ["fx_options"] },
+  // Administration / ops — admin-gated, no license concept.
+  { id: "connections", glyph: "⇄", label: "Connections", assets: [] },
+  { id: "admin", glyph: "⚇", label: "Admin", assets: [] },
+  { id: "permissions", glyph: "⚷", label: "Permissions", assets: [] },
+  { id: "refdata", glyph: "❏", label: "Reference Data", assets: [] },
 ] as const;
 
-/** The product domain (tab) a workspace belongs to — looked up via {@link RAIL}. */
-export function domainOf(id: WorkspaceId): Domain {
+/**
+ * The asset class(es) a workspace serves — looked up via {@link RAIL}. Cross-asset
+ * (class-parametric) rows return both classes; single-asset rows one; admin/ops
+ * rows the empty list. Drives navigation gating (reachable if the identity can view
+ * ANY served class) and the license three-state, replacing the retired per-domain
+ * asset mapping now that the rail no longer splits by asset class.
+ */
+export function workspaceAssets(id: WorkspaceId): readonly CapabilityAsset[] {
   const entry = RAIL.find((r) => r.id === id);
   if (!entry) {
-    throw new Error(`domainOf: unknown workspace id \`${id}\` (not in RAIL)`);
+    throw new Error(`workspaceAssets: unknown workspace id \`${id}\` (not in RAIL)`);
   }
-  return entry.domain;
+  return entry.assets;
 }
 
 // ---------------------------------------------------------------------------
-// Navigation gating (slice 5c) — HIDE whole domain tabs/workspaces a signed-in
-// user has no access to, exactly as the Administration tab is hidden for non-
-// admins. Slice 5b gated individual CONTROLS (disable + tooltip); this layer
-// gates NAVIGATION: a user with no `view` on an asset class never sees that
-// domain's tab or its rail workspaces. The predicates are PURE (no React, no
+// Navigation gating (slice 5c) — HIDE rail workspaces a signed-in user has no
+// access to, exactly as the admin panes are hidden for non-admins. Slice 5b gated
+// individual CONTROLS (disable + tooltip); this layer gates NAVIGATION: a user
+// with no `view` on ANY of a workspace's served asset classes never sees that
+// workspace. fe-fi-migration #6: with the FX/FI domain-tab split retired, gating
+// is per-WORKSPACE-ASSET (a class-parametric row is reachable if the identity can
+// view EITHER class it serves; its unlicensed/denied class is gated per-lens
+// INSIDE the pane), not per-domain-tab. The predicates are PURE (no React, no
 // transport) so the Shell + AppContext share one source of truth and the rules
 // are unit-tested in isolation. UX-only: the server still enforces every RPC.
 // ---------------------------------------------------------------------------
@@ -166,35 +175,20 @@ export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<Workspace
 ]);
 
 /**
- * Whether a top-level DOMAIN tab is accessible to this identity. The base read
- * capability `view` on the domain's asset class is the right gate for "can see
- * this asset class at all" (write controls remain individually gated by 5b):
- *   - `fx-options`     → `view` on `fx_options`
- *   - `fixed-income`   → `view` on `fixed_income`
- *   - `administration` → `isAdmin` (unchanged)
- * Signed out, `can` is permissive ⇒ both asset domains stay visible.
- */
-export function domainAccessible(domain: Domain, auth: NavAuth): boolean {
-  switch (domain) {
-    case "fx-options":
-      return auth.can("view", "fx_options");
-    case "fixed-income":
-      return auth.can("view", "fixed_income");
-    case "administration":
-      return auth.isAdmin;
-  }
-}
-
-/**
- * Whether a single WORKSPACE is reachable by this identity. Admin-only
- * workspaces require `isAdmin`; every other workspace follows its domain's
- * accessibility (FX/FI gate on `view`, Administration on `isAdmin`). Used by the
- * rail filter, the palette/⌘N command filter, and the AppContext redirect so no
- * path can strand a user on a hidden workspace.
+ * Whether a single WORKSPACE is reachable by this identity. Admin-only workspaces
+ * require `isAdmin`; every trading workspace is reachable if the identity can
+ * `view` AT LEAST ONE of the asset classes it serves (a class-parametric row —
+ * Ticket / Market Data / Risk / Book — is reachable via EITHER FX or FI view; a
+ * single-asset row via that one). The base read capability `view` is the right
+ * gate for "can see this at all" (write controls remain individually gated by 5b);
+ * the denied/unlicensed class is gated per-lens INSIDE the pane. Signed out, `can`
+ * is permissive ⇒ every trading workspace stays visible. Used by the rail filter,
+ * the palette/⌘N command filter, and the AppContext redirect so no path can strand
+ * a user on a hidden workspace.
  */
 export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
   if (ADMIN_ONLY_WORKSPACES.has(id)) return auth.isAdmin;
-  return domainAccessible(domainOf(id), auth);
+  return workspaceAssets(id).some((asset) => auth.can("view", asset));
 }
 
 /**
@@ -250,47 +244,19 @@ export function makeLicensePredicate(unlicensed: Iterable<CapabilityAsset>): Lic
 }
 
 /**
- * The asset class a domain licenses under, or `null` when the domain has no
- * commercial-license concept (Administration is admin-gated, never licensed).
- */
-export function assetOfDomain(domain: Domain): CapabilityAsset | null {
-  switch (domain) {
-    case "fx-options":
-      return "fx_options";
-    case "fixed-income":
-      return "fixed_income";
-    case "administration":
-      return null;
-  }
-}
-
-/** The asset class a workspace licenses under (via its domain), or `null`. */
-export function workspaceAsset(id: WorkspaceId): CapabilityAsset | null {
-  return assetOfDomain(domainOf(id));
-}
-
-/**
- * The three-state a DOMAIN tab renders in: entitlement-deny ⇒ hidden;
- * entitled-but-unlicensed ⇒ gated-upsell; else present. With the default
- * all-licensed predicate this collapses to the legacy two-state (present iff
- * {@link domainAccessible}).
- */
-export function domainRailState(
-  domain: Domain,
-  auth: NavAuth,
-  licensed: LicensePredicate = ALL_LICENSED,
-): RailState {
-  if (!domainAccessible(domain, auth)) return "hidden";
-  const asset = assetOfDomain(domain);
-  if (asset !== null && !licensed(asset)) return "gated-upsell";
-  return "present";
-}
-
-/**
- * The three-state a WORKSPACE rail entry renders in — the per-workspace twin of
- * {@link domainRailState}: entitlement-deny ⇒ hidden; entitled-but-unlicensed ⇒
- * gated-upsell; else present. With the default all-licensed predicate this
- * collapses to the legacy two-state (present iff {@link workspaceAccessible}).
+ * The three-state a WORKSPACE rail entry renders in (fe-fi-migration #6, now that
+ * the rail no longer splits by asset class):
+ *   • NOT reachable (entitlement-deny / non-admin on an admin pane) ⇒ HIDDEN — an
+ *     information-barrier hide (wins over any upsell).
+ *   • Reachable, but the firm is licensed for NONE of the entitled classes this
+ *     workspace serves ⇒ GATED-UPSELL (present + lock + "license this class"). A
+ *     single-asset row (Stream/Quoting) shows this when its one class is
+ *     unlicensed; a cross-asset row (Ticket/Market Data/Risk/Book) only when BOTH
+ *     served classes are unlicensed — while EITHER is licensed it stays PRESENT
+ *     and the unlicensed lens is gated per-lens INSIDE the class-parametric pane.
+ *   • Admin/ops workspaces (no served asset) have no license concept ⇒ PRESENT.
+ * With the default all-licensed predicate this collapses to the two-state (present
+ * iff reachable), so the rail is byte-identical unless a class is explicitly gated.
  */
 export function railState(
   id: WorkspaceId,
@@ -298,9 +264,12 @@ export function railState(
   licensed: LicensePredicate = ALL_LICENSED,
 ): RailState {
   if (!workspaceAccessible(id, auth)) return "hidden";
-  const asset = workspaceAsset(id);
-  if (asset !== null && !licensed(asset)) return "gated-upsell";
-  return "present";
+  // The classes this workspace serves that the identity is ENTITLED to view
+  // (signed out, `can` is permissive ⇒ every served class). Admin/ops rows serve
+  // none, so they have no license concept and stay present.
+  const entitled = workspaceAssets(id).filter((asset) => auth.can("view", asset));
+  if (entitled.length === 0) return "present";
+  return entitled.some((asset) => licensed(asset)) ? "present" : "gated-upsell";
 }
 
 /**

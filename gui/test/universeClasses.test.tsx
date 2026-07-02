@@ -229,7 +229,7 @@ describe("the asset-class-aware surface-family switch", () => {
     await act(async () => {
       fireEvent.click(within(crypto).getByRole("option", { name: /ETH\/USD \(inverse/ }));
     });
-    await goTo(/Surface/);
+    await goTo(/Market Data/);
     const empty = screen.getByRole("status", { name: "surface unavailable" });
     expect(empty.textContent).toContain("No marked surface for Crypto");
     expect(empty.textContent).toContain("FX-only today");
@@ -245,7 +245,7 @@ describe("the asset-class-aware surface-family switch", () => {
     await act(async () => {
       fireEvent.click(within(metals).getByRole("option", { name: /XAU\/USD/ }));
     });
-    await goTo(/Surface/);
+    await goTo(/Market Data/);
     const empty = screen.getByRole("status", { name: "surface unavailable" });
     // The empty state offers the way back: the switch-underlier affordance.
     await act(async () => {
