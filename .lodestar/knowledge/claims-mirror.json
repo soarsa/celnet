@@ -14179,5 +14179,40 @@
    "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.price"
   ],
   "text": "`linear::price(opt, i)` — the USDT/coin-quoted (linear-margined) crypto vanilla closed form — is a thin delegation to the unified generalized-BSM kernel `gbsm_carry_price`, passing the option type together with the carry rate `i.carry.carry_rate()` and discount rate `i.carry.discount_rate()` extracted from the `Carry`, plus spot/strike/vol/t. Post-ADR-0012 gBSM unification the leaf holds no inline closed form of its own (the former `aux`/`fx_equiv_rates` precompute was removed), so it is bit-identical to every other carry-seam leaf under matching rates. Pure: reads `(OptionType, &LinearInputs)`, returns `f64`, no WRITES, allocation, or I/O."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-core.src.contract.Priceable",
+   "github.com-soarsa-celnet.crates.celnet-core.src.contract.RiskMeasure"
+  ],
+  "text": "ADR-0020 (central cross-asset pricing/risk contract): every asset class prices and risks through ONE contract — `Priceable`, whose `price` returns present value plus the priced result and whose `risk` returns the unified tagged `RiskMeasure`. `RiskMeasure` is an additive tag set: `OptionGreeks(CarryGreeks)` for the nonlinear options/cross-asset Greek strip and `RateLadder(RateLadder)` for the linear FI PV+ladder — a new asset class adds a variant, it does not fork the risk type. Options-first: the FX vanilla leaf (Phase A1) and the equity/commodity/crypto/perpetual/listed-future cross-asset leaves (Phase A2) all conform; FI conforms in Phase B. This SUPERSEDES the prior two-paradigm split (a separate FI pricing/risk path). The R-a/R-b risk-cube fork (aggregate risk at the leaf vs a dedicated cube consumer) is noted OPEN. References ADR-0008 (asset-class router), ADR-0010 (DiscountCurve seam), ADR-0016 (hot-core embargo)."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-core.src.contract.MarketResolver",
+   "github.com-soarsa-celnet.crates.celnet-core.src.contract.ResolvedMarket"
+  ],
+  "text": "ADR-0020 (market resolution is request-tier only): `MarketResolver::resolve` turns a per-request input into a borrowed `ResolvedMarket` — the discount (numeraire) `DiscountCurve` handle, an optional foreign-leg curve, resolved scalar spot/vol, and the borrowed `ConventionSet` — so all curve/surface resolution happens at the request/batch tier behind the one shared `DiscountCurve` seam (ADR-0010). The zero-alloc hot core is deliberately NOT a resolver consumer: it keeps a flat `MarketState` (spot, r_dom, r_for, t, conventions, smile) and holds NO curve handle, `ResolvedMarket`, or `Arc<Curve>` — the ADR-0016 embargo. Resolution cost is paid once per request/batch, never per hot-loop tick."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_cross_asset_via_contract",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_vanilla_via_contract"
+  ],
+  "text": "The Phase-A1/A2 central-contract re-seat is byte-identical: routing an FX vanilla through `price_vanilla_via_contract` (build `FxSurfaceResolver` -> resolve -> `VanillaEngine as Priceable`) and a cross-asset product through `price_cross_asset_via_contract` (build `CrossAssetCarryResolver` -> resolve -> the equity/commodity/crypto-linear/crypto-inverse/perpetual/listed-future leaf) yields a `Priced` whose fields are `to_bits`-equal to the direct `price_instrument` path. The cross-asset entry mirrors the legacy product/underlying routing leaf-by-leaf and preserves the pre-dispatch guard/refusal cascade verbatim (FX/metal routed here is an internal-error; unsupported products refuse). Both entries are pure: they construct a resolver, resolve a borrowed market, and dispatch to a leaf, mutating no shared state."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-engine.src.rt.hot_core_embargoes_request_tier_curve_handles"
+  ],
+  "text": "Hot-core curve-handle embargo (ADR-0016): `MarketState`, the flat state the zero-alloc hot pricing core reads, may hold NO borrowed handle (barred by a `'static` bound) and NO owned curve field — its `size_of` is pinned equal to a shadow struct of exactly {spot, r_dom, r_for, t, conventions, smile}, so adding a `ResolvedMarket` / `Arc<Curve>` / `DiscountCurve` field to the hot core trips this compile/test pin. Curve resolution stays at the request tier behind `ResolvedMarket`; the hot loop never dereferences a curve. Pure structural guard: it asserts layout and static-ness, mutating nothing."
  }
 ]

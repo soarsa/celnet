@@ -36,6 +36,7 @@ generations; the descriptor is the stable identity).
 | 0013 | One sell-side front-end (persona lenses) | canonical; kept its number |
 | 0018 | Fixed income as a new asset-class leaf | **renumbered from 0012** (collision, 2026-07-01) |
 | 0019 | Credit pricing leaf | **renumbered from 0013** (collision, 2026-07-01) |
+| 0020 | Central cross-asset pricing/risk contract (`Priceable`/`MarketResolver`/`RiskMeasure`) | Phase A1+A2 landed (`ee43dc4`); `GOVERNS` edge deferred — no acceptance `Deliverable` node (#52/#19) |
 
 Numbers 0014–0017 are reserved for the target-architecture / wire-the-islands / Raft
 (configurable-consistency) decisions recorded in the ledger and knowledge layer.
@@ -60,7 +61,7 @@ _Each: coordinator-attested pending soarsa/lodestar#52._
 - `cl_ff7c6b33cb474075` — SECURITY/EXPOSURE (verified 2026-06-27, refute-default) — the stream/WS RFS session path enforces NO caller authentication or entitlement. stream_sess…
 - `cl_0126508a40f818d0` — The carry seam (ADR-0008) is the platform's load-bearing asset-class abstraction: all pricing math consumes CarryInputs.forward(t)/discount_df(t) and …
 
-## Attested `decision` claims (42)
+## Attested `decision` claims (44)
 
 _Each: coordinator-attested pending soarsa/lodestar#52._
 
@@ -106,4 +107,6 @@ _Each: coordinator-attested pending soarsa/lodestar#52._
 - `cl_108bf72904a541de` — The new celnet-risk-accel crate wires the celnet-gpu BatchPricer (BatchPricer::price_batch) into the risk-cube reprice loop as an f32 SCREENING lens o…
 - `cl_a374d5fcb87de98b` — XVA is LIVE end-to-end and WS-mirrored: PricingService.PriceXva → PricingEdge.price_xva → celnet_xva::compute_xva via QMC ExposureProfile::simulate; W…
 - `cl_94059a318e5f3bbe` — gBSM full unification (ADR-0012, operator option C — landed origin/main 4371f17). Every vanilla generalized-Black-Scholes price/greeks in Celnet route…
+- `cl_1beb3bbef8133e37` — ADR-0020 (central cross-asset pricing/risk contract): every asset class prices and risks through ONE contract — `Priceable`, whose `price` returns present value plus the priced result and whose `risk` returns the unified tagged `RiskMeasure` (additive tags OptionGreeks | RateLadder). Options-first (A1 FX + A2 cross-asset), FI Phase B; supersedes the two-paradigm split…
+- `cl_ebaf7665d9c1f63a` — ADR-0020 (market resolution is request-tier only): `MarketResolver::resolve` turns a per-request input into a borrowed `ResolvedMarket` (discount curve + optional foreign leg + resolved spot/vol + borrowed `ConventionSet`); the zero-alloc hot core stays flat `MarketState` with no curve handle (ADR-0016 embargo)…
 
