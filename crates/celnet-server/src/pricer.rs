@@ -1032,6 +1032,93 @@ pub fn price_cross_asset_via_contract(
     }
 }
 
+/// Price an FX/metal **exotic** (every non-vanilla FX product family) instrument
+/// through the unified pricing **contract** ([`celnet_core::contract`]) — the
+/// leaf-level re-seat of the exotic arms (ADR-0017 **Phase A2b**,
+/// `docs/plan/CENTRAL-CORE-UNIFICATION.md`); the exotic companion of
+/// [`price_vanilla_via_contract`], completing the OPTIONS side of the contract.
+///
+/// The market is resolved by [`contract::FxSurfaceResolver`] into an FX two-rate
+/// [`celnet_core::contract::ResolvedMarket`] (the same handle the A1 vanilla entry
+/// builds), and each product oneof arm is dispatched to its
+/// [`celnet_core::contract::Priceable`] leaf engine in [`engines`]. This is the
+/// **contract-native twin of [`engines::dispatch`]**: it mirrors that FX/analytic
+/// registry arm-for-arm through the `Priceable` seam, so every exotic price/greek
+/// is **byte-identical** to the [`price_instrument`] dispatch route (gated by
+/// `tests::exotic_reseat_is_byte_identical`) — each leaf calls the identical
+/// [`ProductEngine::price`] against the same [`engines::EngineCtx`].
+///
+/// Like [`engines::dispatch`], this is the **post-routing** FX-path dispatcher: the
+/// caller performs the asset-class / term-shape / booking-model routing exactly as
+/// [`price_instrument`] does before [`engines::dispatch_live`] (a cross-asset
+/// underlying belongs on [`price_cross_asset_via_contract`]; a window barrier under
+/// the DEFAULT model is refused identically through both routes). The `Vanilla` arm
+/// routes to the native [`engines::VanillaEngine`] — the plugin-host model override
+/// is A1's concern — so the dispatch stays total and mirrors the registry. The
+/// `ExoticLegPricer` VaR seam and plugin-host dispatch are untouched.
+///
+/// # Errors
+///
+/// [`PriceError`] if the instrument carries no product or an out-of-domain input.
+pub fn price_exotic_via_contract(
+    instrument: &Instrument,
+    market: &WireMarketContext,
+    conv: &ConventionSet,
+) -> Result<Priced, PriceError> {
+    use celnet_core::contract::{MarketResolver, Priceable};
+    use instrument::Product as P;
+
+    let resolver = contract::FxSurfaceResolver::from_market(market, conv);
+    let resolved = resolver.resolve(&())?;
+    let ctx = engines::EngineCtx {
+        instrument,
+        market,
+        expiry: instrument.expiry_years,
+        conv,
+        plugin_models: None,
+    };
+    let product = instrument
+        .product
+        .as_ref()
+        .ok_or(PriceError::EmptyProduct)?;
+
+    // Dispatch each product oneof arm to its `Priceable` leaf engine. Naming the
+    // trait (`Priceable::price`) disambiguates from the engine's inherent
+    // `ProductEngine::price` (same method name, different trait) and resolves the
+    // impl by the receiver type. Mirrors `engines::dispatch` arm-for-arm.
+    macro_rules! via {
+        ($engine:expr) => {
+            Priceable::price(&$engine, &resolved, &ctx)
+        };
+    }
+    match product {
+        P::Vanilla(_) => via!(engines::VanillaEngine),
+        P::Strategy(_) => via!(engines::StrategyEngine),
+        P::SingleBarrier(_) => via!(engines::SingleBarrierEngine),
+        P::DoubleBarrier(_) => via!(engines::DoubleBarrierEngine),
+        P::Digital(_) => via!(engines::DigitalEngine),
+        P::Touch(_) => via!(engines::TouchEngine),
+        P::VarianceSwap(_) => via!(engines::VarianceSwapEngine),
+        P::VolatilitySwap(_) => via!(engines::VolatilitySwapEngine),
+        P::AsianOption(_) => via!(engines::AsianOptionEngine),
+        P::ForwardStart(_) => via!(engines::ForwardStartEngine),
+        P::Cliquet(_) => via!(engines::CliquetEngine),
+        P::Quanto(_) => via!(engines::QuantoEngine),
+        P::Tarf(_) => via!(engines::TarfEngine),
+        P::Pivot(_) => via!(engines::PivotEngine),
+        P::Accumulator(_) => via!(engines::AccumulatorEngine),
+        P::Lookback(_) => via!(engines::LookbackEngine),
+        P::American(_) => via!(engines::AmericanEngine),
+        P::Basket(_) => via!(engines::BasketEngine),
+        P::WindowBarrier(_) => via!(engines::WindowBarrierEngine),
+        P::FxForward(_) => via!(engines::FxForwardEngine),
+        P::FxSwap(_) => via!(engines::FxSwapEngine),
+        P::Ndf(_) => via!(engines::NdfEngine),
+        P::PerpetualOption(_) => via!(engines::PerpetualOptionEngine),
+        P::ListedFutureOption(_) => via!(engines::ListedFutureOptionEngine),
+    }
+}
+
 /// Decode the wire [`celnet_proto::SettlementStyle`] tag into the crypto leaf's
 /// local settlement discriminator. The proto3 default (`0`, `LINEAR`) is the
 /// ordinary USD-margined contract; `INVERSE_COIN` selects the coin-margined
@@ -4414,5 +4501,671 @@ mod tests {
             price_instrument(&zero_strike, &m, &conv_set()),
             Err(PriceError::Domain(_))
         ));
+    }
+
+    // ====================================================================
+    // ADR-0017 Phase A2b — FX exotic `Priceable` re-seat byte-identity.
+    //
+    // `price_exotic_via_contract` (resolver → ResolvedMarket → the family's
+    // `Priceable` leaf) must be `to_bits`-identical to the `price_instrument`
+    // dispatch route (through `engines::dispatch_live`) for EVERY non-vanilla FX
+    // product family, because each leaf calls the identical `ProductEngine::price`
+    // against the same `EngineCtx`. This is the new exotic via-contract sweep the
+    // A2b gate requires; it is the exotic companion of the A1/A2 sweeps in
+    // `contract::tests`.
+    // ====================================================================
+
+    /// Assert two priced results are equal to the bit across all 14 Greek members
+    /// and the resolved strike / vol / std-error — the A2b byte-identity gate.
+    fn assert_priced_bit_identical(got: &Priced, want: &Priced, label: &str) {
+        let g = &got.greeks;
+        let w = &want.greeks;
+        for (name, a, b) in [
+            ("price", g.price, w.price),
+            ("delta_spot", g.delta_spot, w.delta_spot),
+            ("delta_forward", g.delta_forward, w.delta_forward),
+            ("gamma", g.gamma, w.gamma),
+            ("vega", g.vega, w.vega),
+            ("theta", g.theta, w.theta),
+            ("rho_dom", g.rho_dom, w.rho_dom),
+            ("rho_for", g.rho_for, w.rho_for),
+            ("vanna", g.vanna, w.vanna),
+            ("volga", g.volga, w.volga),
+            ("charm", g.charm, w.charm),
+            ("speed", g.speed, w.speed),
+            ("zomma", g.zomma, w.zomma),
+            ("color", g.color, w.color),
+        ] {
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "[{label}] greek `{name}` drifted through the exotic re-seat: {a} vs {b}"
+            );
+        }
+        assert_eq!(
+            got.resolved_strike.to_bits(),
+            want.resolved_strike.to_bits(),
+            "[{label}] resolved_strike drifted"
+        );
+        assert_eq!(
+            got.vol.to_bits(),
+            want.vol.to_bits(),
+            "[{label}] vol drifted"
+        );
+        assert_eq!(
+            got.std_error.map(f64::to_bits),
+            want.std_error.map(f64::to_bits),
+            "[{label}] std_error drifted"
+        );
+    }
+
+    fn barrier_vanilla(option: celnet_proto::OptionType, strike: f64) -> Vanilla {
+        Vanilla {
+            option_type: option as i32,
+            strike: Some(StrikeOrDelta {
+                spec: Some(strike_or_delta::Spec::Strike(strike)),
+            }),
+        }
+    }
+
+    /// Every non-vanilla FX product family, each as a valid instrument + its
+    /// market, labelled for diagnostics. `window_barrier` is excluded (no closed
+    /// form under the DEFAULT model — its error-path parity is asserted separately
+    /// by [`window_barrier_errors_identically_through_the_contract`]).
+    fn exotic_via_contract_grid() -> Vec<(&'static str, Instrument, WM)> {
+        let m = market();
+        let mut out: Vec<(&'static str, Instrument, WM)> = Vec::new();
+
+        // Strategy (signed-ratio leg sum) — a risk reversal.
+        let leg = |ot: i32, strike: f64, side: i32| celnet_proto::Leg {
+            option_type: ot,
+            strike: Some(StrikeOrDelta {
+                spec: Some(strike_or_delta::Spec::Strike(strike)),
+            }),
+            side,
+            ratio: 1.0,
+        };
+        out.push((
+            "strategy",
+            base_instrument(Product::Strategy(celnet_proto::Strategy {
+                kind: celnet_proto::StrategyKind::RiskReversal as i32,
+                legs: vec![
+                    leg(
+                        celnet_proto::OptionType::Call as i32,
+                        1.15,
+                        celnet_proto::Side::Buy as i32,
+                    ),
+                    leg(
+                        celnet_proto::OptionType::Put as i32,
+                        1.05,
+                        celnet_proto::Side::Sell as i32,
+                    ),
+                ],
+            })),
+            m,
+        ));
+
+        // Single barrier — down-and-out call and up-and-in put.
+        for (label, kind, side, barrier, option, strike) in [
+            (
+                "single_barrier.do_call",
+                celnet_proto::BarrierKind::KnockOut,
+                celnet_proto::BarrierSide::Down,
+                0.95,
+                celnet_proto::OptionType::Call,
+                1.10,
+            ),
+            (
+                "single_barrier.ui_put",
+                celnet_proto::BarrierKind::KnockIn,
+                celnet_proto::BarrierSide::Up,
+                1.30,
+                celnet_proto::OptionType::Put,
+                1.12,
+            ),
+        ] {
+            out.push((
+                label,
+                base_instrument(Product::SingleBarrier(celnet_proto::SingleBarrier {
+                    vanilla: Some(barrier_vanilla(option, strike)),
+                    kind: kind as i32,
+                    side: side as i32,
+                    barrier,
+                    rebate: 0.0,
+                    monitoring: celnet_proto::MonitoringStyle::Continuous as i32,
+                })),
+                m,
+            ));
+        }
+
+        // Double barrier — knock-out and knock-in (in-out parity) corridor.
+        for (label, kind) in [
+            ("double_barrier.ko", celnet_proto::BarrierKind::KnockOut),
+            ("double_barrier.ki", celnet_proto::BarrierKind::KnockIn),
+        ] {
+            out.push((
+                label,
+                base_instrument(Product::DoubleBarrier(celnet_proto::DoubleBarrier {
+                    vanilla: Some(barrier_vanilla(celnet_proto::OptionType::Call, 1.10)),
+                    kind: kind as i32,
+                    lower_barrier: 0.90,
+                    upper_barrier: 1.30,
+                    rebate: 0.0,
+                    monitoring: celnet_proto::MonitoringStyle::Continuous as i32,
+                })),
+                m,
+            ));
+        }
+
+        // Digital — cash-or-nothing and asset-or-nothing.
+        for (label, style, option) in [
+            (
+                "digital.cash",
+                celnet_proto::DigitalStyle::CashOrNothing,
+                celnet_proto::OptionType::Call,
+            ),
+            (
+                "digital.asset",
+                celnet_proto::DigitalStyle::AssetOrNothing,
+                celnet_proto::OptionType::Put,
+            ),
+        ] {
+            out.push((
+                label,
+                base_instrument(Product::Digital(celnet_proto::Digital {
+                    option_type: option as i32,
+                    strike: 1.10,
+                    style: style as i32,
+                    payout: 1.0,
+                })),
+                m,
+            ));
+        }
+
+        // Touch — every kind (single + double corridors).
+        for (label, kind) in [
+            ("touch.one", celnet_proto::TouchKind::OneTouch),
+            ("touch.no", celnet_proto::TouchKind::NoTouch),
+            ("touch.dnt", celnet_proto::TouchKind::DoubleNoTouch),
+            ("touch.dot", celnet_proto::TouchKind::DoubleOneTouch),
+        ] {
+            out.push((
+                label,
+                base_instrument(Product::Touch(celnet_proto::Touch {
+                    kind: kind as i32,
+                    lower_barrier: 0.95,
+                    upper_barrier: 1.25,
+                    rebate: 1.0,
+                    monitoring: celnet_proto::MonitoringStyle::Continuous as i32,
+                })),
+                m,
+            ));
+        }
+
+        // Variance / volatility swaps.
+        out.push((
+            "variance_swap",
+            base_instrument(Product::VarianceSwap(celnet_proto::VarianceSwap {
+                strike_vol: 0.0,
+            })),
+            m,
+        ));
+        out.push((
+            "volatility_swap",
+            base_instrument(Product::VolatilitySwap(celnet_proto::VolatilitySwap {
+                strike_vol: 0.0,
+            })),
+            m,
+        ));
+
+        // Asian — Curran discrete and Turnbull-Wakeman continuous.
+        out.push((
+            "asian.curran",
+            base_instrument(Product::AsianOption(celnet_proto::AsianOption {
+                option_type: celnet_proto::OptionType::Call as i32,
+                strike: 1.10,
+                averaging: celnet_proto::AveragingStyle::Discrete as i32,
+                observations: 12,
+                method: celnet_proto::AsianMethod::Curran as i32,
+                elapsed_avg: 0.0,
+                elapsed_weight: 0.0,
+            })),
+            m,
+        ));
+        out.push((
+            "asian.turnbull_wakeman",
+            base_instrument(Product::AsianOption(celnet_proto::AsianOption {
+                option_type: celnet_proto::OptionType::Put as i32,
+                strike: 1.12,
+                averaging: celnet_proto::AveragingStyle::Continuous as i32,
+                observations: 0,
+                method: celnet_proto::AsianMethod::TurnbullWakeman as i32,
+                elapsed_avg: 0.0,
+                elapsed_weight: 0.0,
+            })),
+            m,
+        ));
+
+        // Forward-start.
+        out.push((
+            "forward_start",
+            base_instrument(Product::ForwardStart(celnet_proto::ForwardStart {
+                option_type: celnet_proto::OptionType::Call as i32,
+                moneyness: 1.0,
+                reset: 0.25,
+            })),
+            m,
+        ));
+
+        // Cliquet — plain closed form and clamped Monte-Carlo.
+        out.push((
+            "cliquet.plain",
+            base_instrument(Product::Cliquet(celnet_proto::Cliquet {
+                option_type: celnet_proto::OptionType::Call as i32,
+                moneyness: 1.0,
+                periods: 4,
+                local_floor: None,
+                local_cap: None,
+                global_floor: None,
+                global_cap: None,
+                mc_pairs: 0,
+                mc_seed: 0,
+            })),
+            m,
+        ));
+        out.push((
+            "cliquet.capped_mc",
+            base_instrument(Product::Cliquet(celnet_proto::Cliquet {
+                option_type: celnet_proto::OptionType::Call as i32,
+                moneyness: 1.0,
+                periods: 4,
+                local_floor: Some(0.0),
+                local_cap: Some(0.03),
+                global_floor: None,
+                global_cap: None,
+                mc_pairs: 20_000,
+                mc_seed: 0xCABC_1190,
+            })),
+            m,
+        ));
+
+        // Quanto — vanilla and digital payoffs.
+        out.push((
+            "quanto.vanilla",
+            base_instrument(Product::Quanto(celnet_proto::Quanto {
+                payoff: celnet_proto::QuantoPayoff::Vanilla as i32,
+                option_type: celnet_proto::OptionType::Call as i32,
+                strike: 1.10,
+                conversion_vol: 0.09,
+                correlation: -0.3,
+            })),
+            m,
+        ));
+        out.push((
+            "quanto.digital",
+            base_instrument(Product::Quanto(celnet_proto::Quanto {
+                payoff: celnet_proto::QuantoPayoff::Digital as i32,
+                option_type: celnet_proto::OptionType::Put as i32,
+                strike: 1.12,
+                conversion_vol: 0.07,
+                correlation: 0.4,
+            })),
+            m,
+        ));
+
+        // TARF (Monte-Carlo).
+        out.push((
+            "tarf",
+            base_instrument(Product::Tarf(celnet_proto::Tarf {
+                option_type: celnet_proto::OptionType::Put as i32,
+                strike: 1.10,
+                target: 0.30,
+                leverage: 2.0,
+                redemption: celnet_proto::TarfRedemption::FullGain as i32,
+                schedule: Some(tarf_schedule()),
+                mc_pairs: 20_000,
+                mc_seed: 0x7A2F_BEEF,
+            })),
+            m,
+        ));
+
+        // Pivot TRA (Monte-Carlo).
+        out.push((
+            "pivot",
+            base_instrument(Product::Pivot(celnet_proto::Pivot {
+                option_type: celnet_proto::OptionType::Call as i32,
+                strike: 1.08,
+                pivot: 1.13,
+                target: 0.20,
+                leverage: 2.5,
+                redemption: celnet_proto::TarfRedemption::FullGain as i32,
+                schedule: Some(tarf_schedule()),
+                mc_pairs: 20_000,
+                mc_seed: 0x9_1707_BEEF,
+            })),
+            m,
+        ));
+
+        // Accumulator (Monte-Carlo).
+        out.push((
+            "accumulator",
+            base_instrument(Product::Accumulator(celnet_proto::Accumulator {
+                pivot: 1.10,
+                barrier: 1.16,
+                leverage: 2.0,
+                monitoring: celnet_proto::AccumulatorMonitoring::Discrete as i32,
+                schedule: Some(accumulator_schedule()),
+                mc_pairs: 20_000,
+                mc_seed: 0xACC0_BEEF,
+            })),
+            m,
+        ));
+
+        // Lookback — continuous floating (closed form) and discrete fixed (MC).
+        out.push((
+            "lookback.floating_continuous",
+            base_instrument(Product::Lookback(celnet_proto::Lookback {
+                style: celnet_proto::LookbackStyle::Floating as i32,
+                option_type: celnet_proto::OptionType::Call as i32,
+                monitoring: celnet_proto::LookbackMonitoring::Continuous as i32,
+                strike: 0.0,
+                observations: 0,
+                mc_pairs: 0,
+                mc_seed: 0,
+            })),
+            m,
+        ));
+        out.push((
+            "lookback.fixed_discrete_mc",
+            base_instrument(Product::Lookback(celnet_proto::Lookback {
+                style: celnet_proto::LookbackStyle::Fixed as i32,
+                option_type: celnet_proto::OptionType::Call as i32,
+                monitoring: celnet_proto::LookbackMonitoring::Discrete as i32,
+                strike: 1.05,
+                observations: 32,
+                mc_pairs: 20_000,
+                mc_seed: 0x100C_BAC4,
+            })),
+            m,
+        ));
+
+        // American — projected-SOR FD (default) and Longstaff-Schwartz LSM.
+        out.push((
+            "american.fd",
+            american_instrument(
+                celnet_proto::OptionType::Put,
+                100.0,
+                1.0,
+                celnet_proto::ExerciseStyle::American,
+                Vec::new(),
+                0,
+                0,
+            ),
+            american_fd_market(),
+        ));
+        out.push((
+            "american.lsm",
+            american_instrument(
+                celnet_proto::OptionType::Put,
+                100.0,
+                1.0,
+                celnet_proto::ExerciseStyle::American,
+                Vec::new(),
+                50_000,
+                0xABCD,
+            ),
+            american_fd_market(),
+        ));
+        // Bermudan (single date at expiry).
+        out.push((
+            "american.bermudan",
+            american_instrument(
+                celnet_proto::OptionType::Put,
+                110.0,
+                1.0,
+                celnet_proto::ExerciseStyle::Bermudan,
+                vec![1.0],
+                0,
+                0,
+            ),
+            WM::fx(100.0, 0.30, 0.10, 0.0),
+        ));
+
+        // Basket (scrambled-Sobol Monte-Carlo) — one-leg and two-leg best-of.
+        out.push((
+            "basket.one_leg",
+            basket_instrument(
+                vec![celnet_proto::BasketLeg {
+                    underlying: None,
+                    weight: 1.0,
+                    spot: 1.12,
+                    vol: 0.13,
+                    r_for: 0.012,
+                }],
+                vec![1.0],
+                celnet_proto::OptionType::Call,
+                1.10,
+                celnet_proto::BasketKind::Basket,
+                1.0,
+            ),
+            m,
+        ));
+        out.push((
+            "basket.two_leg_best_of",
+            basket_instrument(
+                vec![
+                    celnet_proto::BasketLeg {
+                        underlying: None,
+                        weight: 1.0,
+                        spot: 1.10,
+                        vol: 0.12,
+                        r_for: 0.01,
+                    },
+                    celnet_proto::BasketLeg {
+                        underlying: None,
+                        weight: 1.0,
+                        spot: 1.05,
+                        vol: 0.15,
+                        r_for: 0.02,
+                    },
+                ],
+                vec![1.0, 0.3, 0.3, 1.0],
+                celnet_proto::OptionType::Call,
+                1.08,
+                celnet_proto::BasketKind::BestOf,
+                1.0,
+            ),
+            m,
+        ));
+
+        // FX forward (linear book).
+        out.push((
+            "fx_forward",
+            fx_forward_instrument(
+                eurusd_underlying(),
+                1.25,
+                1_000_000.0,
+                celnet_proto::Side::Buy,
+                1.0,
+            ),
+            linear_market_ctx(),
+        ));
+
+        // FX swap (linear book).
+        out.push((
+            "fx_swap",
+            Instrument {
+                underlying: Some(eurusd_underlying()),
+                expiry_years: 1.0,
+                side: celnet_proto::Side::Buy as i32,
+                pricing_model: celnet_proto::PricingModel::Default as i32,
+                product: Some(Product::FxSwap(celnet_proto::FxSwap {
+                    near: Some(celnet_proto::FxForward {
+                        contract_rate: 1.25,
+                        notional: 2_000_000.0,
+                        side: celnet_proto::Side::Buy as i32,
+                    }),
+                    far: Some(celnet_proto::FxForward {
+                        contract_rate: 1.25,
+                        notional: 2_000_000.0,
+                        side: celnet_proto::Side::Sell as i32,
+                    }),
+                })),
+                ..Default::default()
+            },
+            linear_market_ctx(),
+        ));
+
+        // NDF (linear book, non-deliverable).
+        out.push((
+            "ndf",
+            ndf_instrument(
+                usdbrl_underlying(),
+                5.1,
+                1_000_000.0,
+                celnet_proto::Side::Buy,
+                celnet_proto::FixingSource::BrlPtax,
+                0.5,
+            ),
+            WM::fx(5.0, 0.10, 0.10, 0.05),
+        ));
+
+        // Perpetual American on the FX two-rate carry (expiry == 0).
+        out.push((
+            "perpetual",
+            perpetual_instrument(None, celnet_proto::OptionType::Put, 1.05),
+            m,
+        ));
+
+        // Listed-future option (asset-class-agnostic Black-76, FX-context path).
+        out.push((
+            "listed_future",
+            listed_future_instrument(None, 90.0, 0.5, 0.6, celnet_proto::Margining::EquityStyle),
+            WM::fx(85.0, 0.30, 0.05, 0.0),
+        ));
+
+        out
+    }
+
+    /// THE A2b GATE: every non-vanilla FX exotic price/greek is `to_bits`-UNCHANGED
+    /// through the `Priceable` re-seat (`price_exotic_via_contract`) vs the
+    /// established `price_instrument` dispatch route, across every product family.
+    #[test]
+    fn exotic_reseat_is_byte_identical() {
+        let conv = conv_set();
+        let grid = exotic_via_contract_grid();
+        assert!(
+            grid.len() >= 23,
+            "the A2b sweep must cover every non-vanilla FX family (got {})",
+            grid.len()
+        );
+        for (label, instr, m) in grid {
+            let want = price_instrument(&instr, &m, &conv)
+                .unwrap_or_else(|e| panic!("[{label}] dispatch route must price: {e:?}"));
+            let got = price_exotic_via_contract(&instr, &m, &conv)
+                .unwrap_or_else(|e| panic!("[{label}] contract route must price: {e:?}"));
+            assert_priced_bit_identical(&got, &want, label);
+        }
+    }
+
+    /// The vanilla arm also routes through `price_exotic_via_contract` (the entry
+    /// mirrors `engines::dispatch` totally) byte-identically to the dispatch route,
+    /// so it is a complete FX-path contract dispatcher.
+    #[test]
+    fn exotic_via_contract_vanilla_arm_is_byte_identical() {
+        let conv = conv_set();
+        let m = market();
+        let instr = vanilla_instrument(1.12);
+        let want = price_instrument(&instr, &m, &conv).unwrap();
+        let got = price_exotic_via_contract(&instr, &m, &conv).unwrap();
+        assert_priced_bit_identical(&got, &want, "vanilla");
+    }
+
+    /// A window barrier has no closed form under the DEFAULT model: BOTH the
+    /// dispatch route and the contract route refuse it with the identical typed
+    /// error, so the error path is byte-identical through the re-seat too.
+    #[test]
+    fn window_barrier_errors_identically_through_the_contract() {
+        let conv = conv_set();
+        let m = market();
+        let instr = base_instrument(Product::WindowBarrier(celnet_proto::WindowBarrier {
+            vanilla: Some(barrier_vanilla(celnet_proto::OptionType::Call, 1.10)),
+            barrier: 1.30,
+            side: celnet_proto::BarrierSide::Up as i32,
+            window_start: 0.0,
+            window_end: 1.0,
+            mc_pairs: 0,
+            mc_steps: 0,
+            mc_seed: 0,
+        }));
+        let want = price_instrument(&instr, &m, &conv);
+        let got = price_exotic_via_contract(&instr, &m, &conv);
+        assert!(
+            matches!(
+                want,
+                Err(PriceError::UnsupportedModel {
+                    model: "DEFAULT",
+                    product: "window_barrier"
+                })
+            ),
+            "dispatch route must refuse a DEFAULT-model window barrier, got {want:?}"
+        );
+        assert!(
+            matches!(
+                got,
+                Err(PriceError::UnsupportedModel {
+                    model: "DEFAULT",
+                    product: "window_barrier"
+                })
+            ),
+            "contract route must refuse identically, got {got:?}"
+        );
+    }
+
+    /// The exotic `Priceable::risk` re-seat reports the unified `OptionGreeks` tag
+    /// whose strip is the byte-identical FX Greek set (the two FX rhos verbatim,
+    /// `RateSensitivities::Fx`) — identical to the A1 vanilla risk seam.
+    #[test]
+    fn exotic_risk_tag_is_fx_option_greeks() {
+        use celnet_core::contract::{MarketResolver, Priceable, RiskMeasure};
+        let conv = conv_set();
+        let m = market();
+        let instr = base_instrument(Product::SingleBarrier(celnet_proto::SingleBarrier {
+            vanilla: Some(barrier_vanilla(celnet_proto::OptionType::Call, 1.10)),
+            kind: celnet_proto::BarrierKind::KnockOut as i32,
+            side: celnet_proto::BarrierSide::Down as i32,
+            barrier: 0.95,
+            rebate: 0.0,
+            monitoring: celnet_proto::MonitoringStyle::Continuous as i32,
+        }));
+        let priced = price_instrument(&instr, &m, &conv).unwrap();
+
+        let resolver = contract::FxSurfaceResolver::from_market(&m, &conv);
+        let rm = resolver.resolve(&()).unwrap();
+        let ctx = engines::EngineCtx {
+            instrument: &instr,
+            market: &m,
+            expiry: instr.expiry_years,
+            conv: &conv,
+            plugin_models: None,
+        };
+        let risk = Priceable::risk(&engines::SingleBarrierEngine, &rm, &ctx).unwrap();
+        match risk {
+            RiskMeasure::OptionGreeks(cg) => {
+                assert_eq!(cg.price.to_bits(), priced.greeks.price.to_bits());
+                assert_eq!(cg.delta_spot.to_bits(), priced.greeks.delta_spot.to_bits());
+                assert_eq!(cg.vega.to_bits(), priced.greeks.vega.to_bits());
+                match cg.rates {
+                    RateSensitivities::Fx { rho_dom, rho_for } => {
+                        assert_eq!(rho_dom.to_bits(), priced.greeks.rho_dom.to_bits());
+                        assert_eq!(rho_for.to_bits(), priced.greeks.rho_for.to_bits());
+                    }
+                    RateSensitivities::Carry { .. } => {
+                        panic!("an FX exotic risk must tag the Fx arm")
+                    }
+                }
+            }
+            RiskMeasure::RateLadder(_) => panic!("an FX exotic must report the option arm"),
+        }
     }
 }

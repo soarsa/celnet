@@ -43,7 +43,14 @@ use celnet_crypto_vanilla::{
 };
 use celnet_equity_vanilla::EquityInputs;
 
-use super::engines::{EngineCtx, PluginModelEngine, ProductEngine, VanillaEngine};
+use super::engines::{
+    AccumulatorEngine, AmericanEngine, AsianOptionEngine, BasketEngine, CliquetEngine,
+    DigitalEngine, DoubleBarrierEngine, EngineCtx, ForwardStartEngine, FxForwardEngine,
+    FxSwapEngine, ListedFutureOptionEngine, LookbackEngine, NdfEngine, PerpetualOptionEngine,
+    PivotEngine, PluginModelEngine, ProductEngine, QuantoEngine, SingleBarrierEngine,
+    StrategyEngine, TarfEngine, TouchEngine, VanillaEngine, VarianceSwapEngine,
+    VolatilitySwapEngine, WindowBarrierEngine,
+};
 use super::{
     ConventionSet, PriceError, Priced, carry_greeks_to_greeks, cost_of_carry,
     cross_asset_vanilla_terms, decode_option_type, price_listed_future_option, price_perpetual,
@@ -593,6 +600,127 @@ impl Priceable for CrossAssetListedFutureEngine {
         )))
     }
 }
+
+// ===========================================================================
+// FX exotic product-family leaves — ADR-0017 Phase A2b
+// ===========================================================================
+//
+// The exotic companion of the A1 FX vanilla re-seat above: every NON-vanilla FX
+// product-family [`ProductEngine`] in [`super::engines`] ALSO implements the
+// unified [`Priceable`] contract, wrapping the SAME [`ProductEngine::price`] body
+// it dispatches today. This completes the OPTIONS side of the contract (vanilla
+// FX = A1, cross-asset = A2, exotics = A2b).
+//
+// # Byte-identity by construction (critique F2 — leaf-level re-seat only)
+//
+// The re-seat is purely a seam: [`Priceable::price`] extracts the family's decoded
+// product oneof from `ctx.instrument` and calls the identical
+// `ProductEngine::price(self, product, ctx)` against the SAME [`EngineCtx`] the
+// `price_instrument` dispatch route builds — same market, expiry, conventions,
+// same finite-difference / Monte-Carlo (`seed`, `pairs`) sourcing. So every exotic
+// price/greek is `to_bits`-unchanged from the dispatch route (gated by
+// `crate::pricer::tests::exotic_reseat_is_byte_identical` plus the server
+// exotic-routing frozen pins). The exotic engines read every input from `ctx`
+// (never from the resolved market), so the [`ResolvedMarket`] rides only as the
+// produced contract handle — exactly as the A1 plugin-model leaf does.
+//
+// `risk()` reports the unified [`RiskMeasure::OptionGreeks`] tag lifted from the
+// priced FX Greek strip by the single carry-tagged source [`fx_carry_greeks`] (the
+// two FX rhos verbatim, [`celnet_types::RateSensitivities::Fx`]) — identical to the
+// A1 vanilla risk seam, because every FX exotic prices on the FX two-rate arm.
+//
+// The [`celnet_core::carry::ExoticLegPricer`] VaR seam (consumed by the risk cube)
+// and the plugin-host dynamic dispatch are UNTOUCHED: this is an additive
+// leaf-level re-seat, not a change to routing, the guard cascade, or the VaR path.
+
+/// Reify the [`Priceable`] leaf re-seat for an FX exotic [`ProductEngine`].
+///
+/// `$engine` is the (zero-sized) family engine, `$variant` its
+/// [`celnet_proto::instrument::Product`] oneof arm, and `$label` the human name for
+/// the mismatch error. The generated [`Priceable::price`] extracts the decoded
+/// product oneof from `ctx.instrument` and calls the verbatim
+/// [`ProductEngine::price`]; [`Priceable::risk`] lifts the priced FX Greek strip to
+/// the unified [`RiskMeasure::OptionGreeks`] tag via [`fx_carry_greeks`]. The
+/// resolved market is unused by the price (the engine reads `ctx`), so the re-seat
+/// is byte-identical to the dispatch route by construction.
+macro_rules! fx_exotic_priceable {
+    ($engine:ty, $variant:ident, $label:literal) => {
+        impl Priceable for $engine {
+            type Market<'a> = ResolvedMarket<'a, ConventionSet>;
+            type Ctx<'a> = EngineCtx<'a>;
+            type Priced = Priced;
+            type Error = PriceError;
+
+            fn price(
+                &self,
+                _market: &ResolvedMarket<'_, ConventionSet>,
+                ctx: &EngineCtx<'_>,
+            ) -> Result<Priced, PriceError> {
+                // Extract this family's decoded product oneof from the request
+                // instrument, then price via the IDENTICAL ProductEngine body the
+                // dispatch route calls — the whole of the byte-identity guarantee.
+                let product = match ctx.instrument.product.as_ref() {
+                    Some(instrument::Product::$variant(p)) => p,
+                    Some(_) => {
+                        return Err(PriceError::Domain(concat!(
+                            "the ",
+                            $label,
+                            " Priceable leaf prices only the ",
+                            $label,
+                            " product"
+                        )));
+                    }
+                    None => return Err(PriceError::EmptyProduct),
+                };
+                ProductEngine::price(self, product, ctx)
+            }
+
+            fn risk(
+                &self,
+                market: &ResolvedMarket<'_, ConventionSet>,
+                ctx: &EngineCtx<'_>,
+            ) -> Result<RiskMeasure, PriceError> {
+                let priced = <Self as Priceable>::price(self, market, ctx)?;
+                // Every FX exotic prices on the FX two-rate arm ⇒ the two FX rhos
+                // verbatim (`RateSensitivities::Fx`), identical to the A1 vanilla
+                // risk seam.
+                Ok(RiskMeasure::OptionGreeks(fx_carry_greeks(&priced.greeks)))
+            }
+        }
+    };
+}
+
+// The 23 non-vanilla FX product families (the FX/analytic dispatch registry of
+// `super::engines::dispatch`, minus `Vanilla` — that arm is the A1 re-seat above,
+// including its plugin-host override). One `Priceable` leaf per family, each a
+// verbatim wrapper of the family's `ProductEngine::price`.
+fx_exotic_priceable!(StrategyEngine, Strategy, "strategy");
+fx_exotic_priceable!(SingleBarrierEngine, SingleBarrier, "single-barrier");
+fx_exotic_priceable!(DoubleBarrierEngine, DoubleBarrier, "double-barrier");
+fx_exotic_priceable!(DigitalEngine, Digital, "digital");
+fx_exotic_priceable!(TouchEngine, Touch, "touch");
+fx_exotic_priceable!(VarianceSwapEngine, VarianceSwap, "variance-swap");
+fx_exotic_priceable!(VolatilitySwapEngine, VolatilitySwap, "volatility-swap");
+fx_exotic_priceable!(AsianOptionEngine, AsianOption, "Asian-option");
+fx_exotic_priceable!(ForwardStartEngine, ForwardStart, "forward-start");
+fx_exotic_priceable!(CliquetEngine, Cliquet, "cliquet");
+fx_exotic_priceable!(QuantoEngine, Quanto, "quanto");
+fx_exotic_priceable!(TarfEngine, Tarf, "TARF");
+fx_exotic_priceable!(PivotEngine, Pivot, "pivot-TRA");
+fx_exotic_priceable!(AccumulatorEngine, Accumulator, "accumulator");
+fx_exotic_priceable!(LookbackEngine, Lookback, "lookback");
+fx_exotic_priceable!(AmericanEngine, American, "American");
+fx_exotic_priceable!(BasketEngine, Basket, "basket");
+fx_exotic_priceable!(WindowBarrierEngine, WindowBarrier, "window-barrier");
+fx_exotic_priceable!(FxForwardEngine, FxForward, "FX-forward");
+fx_exotic_priceable!(FxSwapEngine, FxSwap, "FX-swap");
+fx_exotic_priceable!(NdfEngine, Ndf, "NDF");
+fx_exotic_priceable!(PerpetualOptionEngine, PerpetualOption, "perpetual-option");
+fx_exotic_priceable!(
+    ListedFutureOptionEngine,
+    ListedFutureOption,
+    "listed-future-option"
+);
 
 #[cfg(test)]
 mod tests {
