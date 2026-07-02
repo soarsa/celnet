@@ -1,0 +1,57 @@
+//! # celnet-rates-risk — fixed-income rate-scenario VaR / Expected-Shortfall
+//!
+//! The standalone first increment (central-core Phase C2a) of the unified single VaR engine: a
+//! scenario **bump-and-revalue** rate-risk engine for *linear* fixed income. Given a base discount
+//! curve and a set of rate shocks, it reprices a book of FI positions under every shocked curve and
+//! reduces the P&L distribution to Value-at-Risk and Expected Shortfall.
+//!
+//! ## What it wraps (and never re-implements)
+//!
+//! - **The discount/forward curve** — [`celnet_rates::Curve`] and its
+//!   [`celnet_rates::Curve::from_zero_rates`] builder generate every shocked curve
+//!   ([`RatePillars::shocked_curve`]).
+//! - **OIS pricing** — [`celnet_rates::ois_pv`] reprices a fixed-vs-OIS swap on the shocked curve
+//!   ([`FiPosition::OisSwap`]); the analytic [`celnet_rates::pv01`] / [`celnet_rates::ois_annuity`]
+//!   underpin the first-order oracle.
+//! - **Cash-bond pricing** — [`celnet_bond::price_from_curve`] reprices a bond off the shocked curve
+//!   ([`FiPosition::CashBond`]).
+//!
+//! Both instrument types value **through a `&Curve`**, so a single shocked curve reprices a
+//! heterogeneous FI book with no per-instrument branching in the scenario engine (`curve_shock`).
+//!
+//! ## Shock model
+//!
+//! A scenario is an absolute additive shift of the base curve's per-pillar zero rates: a
+//! [`RateShock::parallel`] shift, a per-pillar [`RateShock::key_rate`] (curve-hedge) bump, or an
+//! arbitrary [`RateShock::new`] historical/prescribed vector. [`standard_bump_scenarios`] builds the
+//! prescribed ± parallel + ± per-pillar grid. On the log-linear-on-log-DF curve a per-pillar
+//! zero-rate shift has an **exact** closed-form effect on every discount factor (see `curve_shock`),
+//! which the reprice-under-shock is oracle-validated against to ≤1e-12.
+//!
+//! ## Scope (Phase C2a) and what is deferred
+//!
+//! - **In scope:** the scenario generator, FI reprice-under-shock (OIS + cash bond), and the VaR/ES
+//!   reduction, all standalone and oracle-validated.
+//! - **Deferred:** the FRTB SbM GIRR sensitivity charge (C2b) and integration into the
+//!   `celnet-risk-cube` non-additive path — including sign-normalizing the OIS receive-fixed vs
+//!   bond-positive P&L conventions and exposing the key-rate axis (C2c). The VaR/ES reduction here
+//!   ([`rate_var_es`]) deliberately matches `celnet-risk-cube`'s tail convention so C2c can unify
+//!   the two into one shared primitive.
+//!
+//! ## Determinism
+//!
+//! No RNG; the only transcendental is the curve's `exp`. For a fixed `(positions, base, shocks,
+//! alpha)` every result is bit-reproducible. Method/paper provenance lives in prose only, never in
+//! identifiers (CLAUDE.md §8).
+
+#![forbid(unsafe_code)]
+
+pub mod curve_shock;
+pub mod error;
+pub mod position;
+pub mod var;
+
+pub use curve_shock::{RatePillars, RateShock, standard_bump_scenarios};
+pub use error::RateRiskError;
+pub use position::FiPosition;
+pub use var::{RateRiskReport, RateVarEs, rate_scenario_var_es, rate_var_es, scenario_pnls};
