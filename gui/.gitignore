@@ -19,3 +19,4 @@ e2e-artifacts/
 
 # Storybook — built gallery is a local/CI artifact, never committed
 storybook-static/
+/*.png
