@@ -20,13 +20,12 @@ import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
 import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
 import { RatesWorkspace } from "../workspaces/RatesWorkspace";
-import { CurveWorkspace } from "../workspaces/CurveWorkspace";
+import { MarketDataWorkspace } from "../workspaces/MarketDataWorkspace";
 import { QuotingWorkspace } from "../workspaces/QuotingWorkspace";
 import { DealsBlotterWorkspace } from "../workspaces/DealsBlotterWorkspace";
 import { RatesBookWorkspace } from "../workspaces/RatesBookWorkspace";
 import { ReferenceDataWorkspace } from "../workspaces/ReferenceDataWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
-import { SurfaceWorkspace } from "../workspaces/SurfaceWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { XvaWorkspace } from "../workspaces/XvaWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
@@ -67,7 +66,13 @@ import styles from "./Shell.module.css";
 const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   ticket: TicketWorkspace,
   rates: RatesWorkspace,
-  curve: CurveWorkspace,
+  // fe-fi-migration #2: the FX/FI market-data silo is folded into the ONE
+  // class-parametric MarketDataWorkspace. The `curve` rail row is now an ENTRY
+  // POINT that opens the shared Market Data workspace on its Fixed-Income (rates
+  // curve) lens; `surface` opens the FX (vol surface) lens. Both mount the same
+  // component, so FX vol surfaces and FI curves flow through the same workflow
+  // under a license lens — no FX-vs-FI split.
+  curve: () => <MarketDataWorkspace initialLens="rates" />,
   // fe-fi-migration: the FI risk silo is folded into the ONE class-parametric
   // RiskWorkspace. The `ratesrisk` rail row is now an ENTRY POINT that opens the
   // shared Risk workspace on its Fixed-Income lens (`risk` opens the FX lens);
@@ -79,7 +84,9 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   ratesbook: RatesBookWorkspace,
   refdata: ReferenceDataWorkspace,
   stream: StreamWorkspace,
-  surface: SurfaceWorkspace,
+  // fe-fi-migration #2: the `surface` rail row opens the shared Market Data
+  // workspace on its FX vol-surface lens (the default lens); see `curve` above.
+  surface: () => <MarketDataWorkspace initialLens="fx" />,
   risk: RiskWorkspace,
   xva: XvaWorkspace,
   book: BookWorkspace,
