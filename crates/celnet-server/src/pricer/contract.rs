@@ -850,11 +850,13 @@ mod tests {
     fn fx_vanilla_reseat_is_byte_identical() {
         let conv = conv();
         for (instrument, market) in grid() {
-            // The established product-`match` dispatch route.
+            // The canonical dispatch route (the unified engine → plugin-host
+            // `dispatch_live` → the vanilla `ProductEngine`).
             let want = super::super::price_instrument(&instrument, &market, &conv)
                 .expect("dispatch route prices");
-            // The unified-contract route: resolver → ResolvedMarket → Priceable.
-            let got = super::super::price_vanilla_via_contract(&instrument, &market, &conv)
+            // The `Priceable` vanilla-leaf route (the C2 risk seam), exercised through
+            // the `#[cfg(test)]` contract dispatcher whose vanilla arm is `VanillaEngine`.
+            let got = super::super::price_exotic_via_contract(&instrument, &market, &conv)
                 .expect("contract route prices");
             assert_priced_bit_identical(&got, &want);
         }
@@ -1218,9 +1220,9 @@ mod tests {
     }
 
     /// THE GATE: every cross-asset price/greek is `to_bits`-UNCHANGED through the
-    /// `Priceable` re-seat (`price_cross_asset_via_contract`) vs the established
-    /// `price_instrument` dispatch route (through `price_cross_asset`), across the
-    /// whole grid — equity, commodity, crypto linear + inverse, perpetual and
+    /// unified engine's `Priceable`-leaf cross-asset dispatch (`price_instrument` →
+    /// `PricingEngine`) vs the frozen pre-C1 native `price_cross_asset` oracle, across
+    /// the whole grid — equity, commodity, crypto linear + inverse, perpetual and
     /// listed-future, over both carry-arm encodings.
     #[test]
     fn cross_asset_reseat_is_byte_identical() {
@@ -1228,10 +1230,24 @@ mod tests {
         let grid = ca_grid();
         assert!(!grid.is_empty(), "the cross-asset grid must not be empty");
         for (instrument, market) in grid {
-            let want = super::super::price_instrument(&instrument, &market, &conv)
-                .expect("dispatch route prices");
-            let got = super::super::price_cross_asset_via_contract(&instrument, &market, &conv)
-                .expect("contract route prices");
+            // Production path: the unified engine routes cross-asset through the
+            // cost-of-carry `Priceable` leaves.
+            let got = super::super::price_instrument(&instrument, &market, &conv)
+                .expect("engine cross-asset path prices");
+            // Independent oracle: the frozen pre-C1 native `price_cross_asset` dispatch
+            // (the retired duplicate, kept `#[cfg(test)]` — never the engine checking
+            // itself).
+            let wire_underlying = instrument.underlying.as_ref().unwrap();
+            let underlying = celnet_types::Underlying::try_from(wire_underlying.clone()).unwrap();
+            let product = instrument.product.as_ref().unwrap();
+            let want = super::super::price_cross_asset(
+                &underlying,
+                &instrument,
+                product,
+                &market,
+                instrument.expiry_years,
+            )
+            .expect("frozen native oracle prices");
             assert_priced_bit_identical(&got, &want);
         }
     }

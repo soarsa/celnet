@@ -53,8 +53,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use celnet_replog::{BookState, BookUpdate, LogEntry, RaftConfig, RaftNode};
 
-/// Hard wall-clock deadline — nothing here may hang.
-const TEST_DEADLINE: Duration = Duration::from_secs(30);
+/// Hard wall-clock deadline — nothing here may hang. Sized generously for the
+/// heaviest snapshot+failover workflow (multiple elections at 400–800ms each +
+/// InstallSnapshot + a leader-kill re-election) running under the fully-loaded
+/// `just t2` parallel test-integration on one machine, where CPU starvation can
+/// stretch each Raft phase — a genuine deadlock still trips it well within.
+/// (Mirrors the celnet-server/replog TEST_DEADLINE contention hardening.)
+const TEST_DEADLINE: Duration = Duration::from_secs(90);
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 

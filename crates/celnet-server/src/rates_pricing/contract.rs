@@ -269,11 +269,18 @@ impl Priceable for BondEngine {
 
 /// Price a [`RatesPriceRequest`] through the **central-core contract**: resolve the
 /// curve ([`RatesCurveResolver`]) → [`ResolvedMarket`] → price the linear-FI leaf
-/// ([`Priceable`]). This is the FI counterpart of `price_vanilla_via_contract` and
-/// is **byte-identical** to [`super::price_rates`] (gated by
+/// ([`Priceable`]). This is the FI contract seam (ADR-0017 Phase B) — the linear-FI
+/// counterpart of the options `Priceable` leaves — and the entry that keeps
+/// [`RatesOisEngine`] (the Phase-C2 [`RiskMeasure::RateLadder`] risk seam) live and
+/// proven. It is **byte-identical** to [`super::price_rates`] (gated by
 /// [`tests::ois_via_contract_is_byte_identical`]): it calls the identical
-/// [`build_quotes`] / [`resolve_date`] / [`price_ois`] bodies, so every measure —
-/// PV, par, PV01, DV01, and the key-rate ladder — is unchanged.
+/// [`build_quotes`] / [`resolve_date`] / [`price_ois`] bodies, so every measure — PV,
+/// par, PV01, DV01, and the key-rate ladder — is unchanged.
+///
+/// The unified [`crate::pricer::PricingEngine::price_rates`] fronts the efficient
+/// single-bootstrap [`super::price_rates`]; this contract entry (which additionally
+/// bootstraps the resolved discount curve the OIS leaf carries as its market handle)
+/// is retained as the FI risk-leaf seam, not the hot calc path.
 ///
 /// # Errors
 ///

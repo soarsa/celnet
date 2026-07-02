@@ -1,0 +1,28 @@
+[package]
+name = "celnet-rates-risk"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet fixed-income rate-scenario VaR/ES engine — bump-and-revalue rate risk for linear FI (fixed-vs-OIS swaps, cash bonds) over parallel and per-pillar (key-rate) zero-curve shocks, reduced to Value-at-Risk / Expected Shortfall. A pure, deterministic, oracle-validated leaf that WRAPS the celnet-rates discount curve and the celnet-bond leaf (never re-implementing their pricing); the standalone first increment of the unified single VaR engine (central-core Phase C2a). The cube integrates it into the non-additive risk path in Phase C2c."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The discount/forward curve, OIS pricing, and the analytic PV01 the scenario
+# engine wraps. celnet-rates depends only on -types/-calendar/time, so this is a
+# one-way edge (no cycle); the FI reprice-under-shock reuses `ois_pv`/`ois_annuity`
+# directly rather than reimplementing them.
+celnet-rates.workspace = true
+# The cash-bond leaf; the scenario engine reprices bonds under a shocked curve via
+# `price_from_curve` (never re-deriving the discounted-cashflow sum).
+celnet-bond.workspace = true
+celnet-types.workspace = true
+
+[dev-dependencies]
+# Civil dates for constructing `Bond` fixtures in the oracle tests (the pricing
+# crates take `time::Date`); test-only, never a runtime dependency.
+time.workspace = true
