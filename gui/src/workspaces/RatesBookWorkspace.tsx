@@ -1,6 +1,9 @@
 /**
- * RatesBookWorkspace — the booked linear-rates book (fixed-income). The desk's
- * standing OIS positions on the right; a Book ticket on the left to add one. This
+ * RatesBookWorkspace — the Positions & Booking LENS of the unified, one-per-book
+ * `BookWorkspace` (`fe-fi-migration` #4); the `ratesbook` rail row opens the Book
+ * on this lens. Behaviour is unchanged — it is still the booked linear-rates book
+ * (fixed-income). The desk's standing OIS positions on the right; a Book ticket on
+ * the left to add one. This
  * is the outstanding "rates Book" surface: positions are listed from the server's
  * in-memory rates book and a Book action persists a new one (an accepted desk
  * deal also books a position here, so a fill from the Quoting workspace appears).

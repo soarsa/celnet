@@ -1,7 +1,10 @@
 /**
- * DealsBlotterWorkspace — the received-deals blotter (fixed-income). Every deal
- * booked by an accepted desk quote, newest first: counterparty, instrument,
- * notional, dealt price, side, booking trader and execution time.
+ * DealsBlotterWorkspace — the Deals LENS of the unified, one-per-book
+ * `BookWorkspace` (`fe-fi-migration` #4); the `deals` rail row opens the Book on
+ * this lens. Behaviour is unchanged — it is still the received-deals blotter
+ * (fixed-income). Every deal booked by an accepted desk quote, newest first:
+ * counterparty, instrument, notional, dealt price, side, booking trader and
+ * execution time.
  *
  * One contract, two transports (GUI-DESIGN §6.2): the blotter talks ONLY to the
  * `CelnetTransport.listDeals` seam, so the SAME deals render through the

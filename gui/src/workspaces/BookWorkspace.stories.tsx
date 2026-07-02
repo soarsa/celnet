@@ -18,21 +18,25 @@
  * The limit bar fill uses OKLCH tinting from the same variable. No inline hex.
  */
 
-import type { Decorator, Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react";
 import { AppProvider } from "../app/AppContext";
 import { createMockTransport } from "../data/mockSource";
 import { BookWorkspace } from "./BookWorkspace";
 
-const withAppContext: Decorator = (Story) => (
-  <AppProvider transport={createMockTransport()}>
-    <Story />
-  </AppProvider>
-);
-
 const meta = {
   title: "Workspaces/BookWorkspace",
   component: BookWorkspace,
-  decorators: [withAppContext],
+  // Inlined (untyped) so the meta infers the component's optional-arg type — a
+  // top-level `Decorator` const clashes with StrictArgs under
+  // exactOptionalPropertyTypes now that BookWorkspace takes `{ initialLens? }`
+  // (same fix the #1 RiskWorkspace fold used).
+  decorators: [
+    (Story) => (
+      <AppProvider transport={createMockTransport()}>
+        <Story />
+      </AppProvider>
+    ),
+  ],
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
@@ -51,7 +55,7 @@ const meta = {
 
 export default meta;
 
-type Story = StoryObj<typeof meta>;
+type Story = StoryObj<typeof BookWorkspace>;
 
 /**
  * Book at firm scope — the default view. The mock transport seeds a small book

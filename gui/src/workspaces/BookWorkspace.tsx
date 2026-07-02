@@ -1,19 +1,43 @@
 /**
- * BookWorkspace — the firm-scale HIERARCHICAL risk view, computed SERVER-SIDE.
+ * BookWorkspace — the ONE unified "my book" workspace (`fe-fi-migration` #4).
  *
- * Aggregation is owned by the server (CLAUDE.md rule 11 / API-first parity): this
- * view issues ONE `aggregate_risk` call for the rolled-up node tree over the org
- * dimension the active Scope selects, plus a `drill_risk` for the Book→Risk drill
- * — it NEVER loops positions and sums client-side (the old `portfolioRisk`
- * per-position `transport.scenario` loop, now deleted). Every number is the
- * server's, rolled up across the entitled book and collapsed into ONE common
- * reporting numeraire (USD) via `celnet-risk-normalize` — so the old "native
- * premium units" caveat is RESOLVED: a high-spot pair no longer dominates a raw
- * sum, because every leg is already in common units.
+ * The three separate book/position/blotter silos are folded into a SINGLE
+ * workspace with a VIEW lens toggle — the trader's book seen three ways:
+ *   • Positions & Booking (`positions`) — the fixed-income position ledger +
+ *     booking form (the former standalone `RatesBookWorkspace`, composed here
+ *     VERBATIM): named entity/book registry name resolution, `book·fixed_income`-
+ *     gated booking, the live in-app / edge rates book.
+ *   • Aggregate Risk (`risk`) — the firm-scale server-aggregated HIERARCHICAL
+ *     risk rollup (the former BookWorkspace body, now the local `AggregateRiskLens`
+ *     below): Firm→Desk→Book tree, common reporting numeraire, P&L attribution,
+ *     limits RAG, and the Book→Risk drill.
+ *   • Deals (`deals`) — the executed-deals blotter (the former standalone
+ *     `DealsBlotterWorkspace`, composed here VERBATIM): every booked deal, newest
+ *     first, refreshing live on push notifications.
  *
- * The Scope toolbar drives the group-by dimension and the entitlement principal
- * (grant-all today, show-all-now). A node row drills into its constituents in
- * Risk; the Limits panel surfaces `celnet-limits` utilization/RAG for the scope.
+ * Unlike the #1 Risk / #2 Market-Data / #3 pricing folds — where the lens is the
+ * ASSET CLASS (ONE concept rendered FX vs FI) — these three book surfaces are
+ * DIFFERENT CONCEPTS (a position ledger, an aggregate-risk rollup, a deals
+ * blotter). So the Book lens is the VIEW of "my book", not the asset class. That
+ * makes this a coherent unification (three views of ONE book), NOT a lossy merge:
+ * every lens keeps its full capability unchanged — the two folded workspaces are
+ * composed verbatim, and the only code that moves is the aggregate body into the
+ * local `AggregateRiskLens`.
+ *
+ * FX and FI both flow through this ONE Book: the aggregate-risk lens is already
+ * cross-asset (it rolls the entitled book up across every class into one common
+ * reporting numeraire); the positions/booking + deals lenses render the desk's
+ * fixed-income ledger/blotter (the only position-ledger and deals surfaces the
+ * platform has). No FX-vs-FI book split remains — there is ONE "Book".
+ *
+ * `initialLens` is the entry-point default (the `book` rail row opens Aggregate
+ * Risk, `ratesbook` opens Positions & Booking, `deals` opens the blotter — all
+ * three rail rows mount THIS component via Shell.tsx, mirroring the #2 fold's
+ * surface/curve entry points). All three lenses are reachable from any entry: the
+ * rail row that mounts the workspace is already fixed-income-domain-gated (view ×
+ * license), and the booking capability stays gated INSIDE the positions lens
+ * (`book·fixed_income`), so the workspace itself needs no extra per-lens gate —
+ * the license/entitlement gates are unchanged by the fold.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -41,7 +65,60 @@ import { InspectorStrip } from "../components/InspectorStrip";
 import { Provenance } from "../components/Provenance";
 import { fmtPnlAdaptive } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
+import { RatesBookWorkspace } from "./RatesBookWorkspace";
+import { DealsBlotterWorkspace } from "./DealsBlotterWorkspace";
 import styles from "./BookWorkspace.module.css";
+
+/** The VIEW lens the unified Book workspace renders under (a view, not a class). */
+export type BookLens = "positions" | "risk" | "deals";
+
+/** One row per view the Book spans: its lens id + the toggle label. */
+const LENSES: readonly { lens: BookLens; label: string }[] = [
+  { lens: "positions", label: "Positions & Booking" },
+  { lens: "risk", label: "Aggregate Risk" },
+  { lens: "deals", label: "Deals" },
+];
+
+/**
+ * The unified Book shell: the slim view-lens toggle above the active lens body.
+ * The lens bar is always shown (all three views are reachable together — see the
+ * file header on gating), so there is no single-lens degenerate to collapse. Only
+ * the active lens body mounts (mirrors the #2 MarketData fold), so heavy effects
+ * fire only for the view on screen.
+ */
+export function BookWorkspace({
+  initialLens = "risk",
+}: {
+  initialLens?: BookLens;
+} = {}): React.ReactElement {
+  const [lens, setLens] = useState<BookLens>(initialLens);
+  return (
+    <div className={styles.classShell}>
+      <div className={styles.lensBar} role="group" aria-label="book view">
+        {LENSES.map((l) => (
+          <button
+            key={l.lens}
+            type="button"
+            className={`${styles.lensTab} ${lens === l.lens ? styles.lensTabActive : ""}`}
+            aria-pressed={lens === l.lens}
+            onClick={() => setLens(l.lens)}
+          >
+            {l.label}
+          </button>
+        ))}
+      </div>
+      <div className={styles.lensBody}>
+        {lens === "positions" ? (
+          <RatesBookWorkspace />
+        ) : lens === "deals" ? (
+          <DealsBlotterWorkspace />
+        ) : (
+          <AggregateRiskLens />
+        )}
+      </div>
+    </div>
+  );
+}
 
 /** The fetched server result for the active scope (aggregate + limits). */
 interface BookView {
@@ -49,7 +126,26 @@ interface BookView {
   limits: LimitStatusResponse;
 }
 
-export function BookWorkspace(): React.ReactElement {
+/**
+ * AggregateRiskLens — the firm-scale HIERARCHICAL risk view, computed SERVER-SIDE
+ * (the former BookWorkspace body, unchanged; now the Aggregate Risk lens of the
+ * unified Book).
+ *
+ * Aggregation is owned by the server (CLAUDE.md rule 11 / API-first parity): this
+ * view issues ONE `aggregate_risk` call for the rolled-up node tree over the org
+ * dimension the active Scope selects, plus a `drill_risk` for the Book→Risk drill
+ * — it NEVER loops positions and sums client-side (the old `portfolioRisk`
+ * per-position `transport.scenario` loop, now deleted). Every number is the
+ * server's, rolled up across the entitled book and collapsed into ONE common
+ * reporting numeraire (USD) via `celnet-risk-normalize` — so the old "native
+ * premium units" caveat is RESOLVED: a high-spot pair no longer dominates a raw
+ * sum, because every leg is already in common units.
+ *
+ * The Scope toolbar drives the group-by dimension and the entitlement principal
+ * (grant-all today, show-all-now). A node row drills into its constituents in
+ * Risk; the Limits panel surfaces `celnet-limits` utilization/RAG for the scope.
+ */
+function AggregateRiskLens(): React.ReactElement {
   const app = useApp();
   const [view, setView] = useState<BookView | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -22,8 +22,6 @@ import { TicketWorkspace } from "../workspaces/TicketWorkspace";
 import { MarketDataWorkspace } from "../workspaces/MarketDataWorkspace";
 import { OIS_STRUCTURE_ID } from "../products/ois";
 import { QuotingWorkspace } from "../workspaces/QuotingWorkspace";
-import { DealsBlotterWorkspace } from "../workspaces/DealsBlotterWorkspace";
-import { RatesBookWorkspace } from "../workspaces/RatesBookWorkspace";
 import { ReferenceDataWorkspace } from "../workspaces/ReferenceDataWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
@@ -86,8 +84,16 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // workflow as FX under a fixed-income license — no FX-vs-FI split.
   ratesrisk: () => <RiskWorkspace initialLens="rates" />,
   quoting: QuotingWorkspace,
-  deals: DealsBlotterWorkspace,
-  ratesbook: RatesBookWorkspace,
+  // fe-fi-migration #4: the three book/position/blotter silos are folded into the
+  // ONE unified `BookWorkspace` with a VIEW lens toggle (Positions & Booking ·
+  // Aggregate Risk · Deals). Each rail row is now an ENTRY POINT that opens the
+  // shared Book on the matching lens — `deals` on the executed-deals blotter,
+  // `ratesbook` on the FI position ledger + booking, `book` on the aggregate-risk
+  // rollup (below). All three mount the same component, so a trader's positions,
+  // booking, aggregate risk and deals flow through the ONE "Book" — no FX-vs-FI
+  // (or view-vs-view) split. The Book analogue of the #1/#2/#3 lens entry points.
+  deals: () => <BookWorkspace initialLens="deals" />,
+  ratesbook: () => <BookWorkspace initialLens="positions" />,
   refdata: ReferenceDataWorkspace,
   stream: StreamWorkspace,
   // fe-fi-migration #2: the `surface` rail row opens the shared Market Data
@@ -95,7 +101,9 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   surface: () => <MarketDataWorkspace initialLens="fx" />,
   risk: RiskWorkspace,
   xva: XvaWorkspace,
-  book: BookWorkspace,
+  // fe-fi-migration #4: `book` opens the unified Book on its Aggregate Risk lens
+  // (the default); `ratesbook`/`deals` open the Positions and Deals lenses (above).
+  book: () => <BookWorkspace initialLens="risk" />,
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,
   permissions: PermissionsWorkspace,
