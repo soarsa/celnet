@@ -29,6 +29,7 @@ import { ReferenceDataWorkspace } from "../workspaces/ReferenceDataWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { SurfaceWorkspace } from "../workspaces/SurfaceWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
+import { XvaWorkspace } from "../workspaces/XvaWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
 import { ConnectionsWorkspace } from "../workspaces/ConnectionsWorkspace";
 import { AdminWorkspace } from "../workspaces/AdminWorkspace";
@@ -76,6 +77,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   stream: StreamWorkspace,
   surface: SurfaceWorkspace,
   risk: RiskWorkspace,
+  xva: XvaWorkspace,
   book: BookWorkspace,
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,

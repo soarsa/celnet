@@ -38,6 +38,7 @@ export type WorkspaceId =
   | "stream"
   | "surface"
   | "risk"
+  | "xva"
   | "book"
   | "connections"
   | "admin"
@@ -101,6 +102,7 @@ export const RAIL: readonly {
   { id: "stream", glyph: "≋", label: "Stream", domain: "fx-options" },
   { id: "surface", glyph: "◷", label: "Surface", domain: "fx-options" },
   { id: "risk", glyph: "⊞", label: "Risk", domain: "fx-options" },
+  { id: "xva", glyph: "⊗", label: "XVA", domain: "fx-options" },
   { id: "excel", glyph: "▦", label: "Excel", domain: "fx-options" },
   // Fixed Income.
   { id: "rates", glyph: "≣", label: "Rates", domain: "fixed-income" },
