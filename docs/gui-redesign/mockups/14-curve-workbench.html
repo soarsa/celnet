@@ -144,7 +144,7 @@
       <svg class="pinwheel" viewBox="0 0 501 500" aria-hidden="true"><path d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
       <span class="wm">Celnet</span>
     </div>
-    <span class="scope" title="Scope everything to a desk & book — the scope bus propagates the asset class to every panel and the context rail">Desk <b>Rates</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>USD-OIS</b> <span class="car">▾</span></span>
+    <span class="scope" title="Scope everything to a desk & book">Desk <b>Rates</b> <span class="car">▾</span> <span class="s">▸</span> Book <b>USD-OIS</b> <span class="car">▾</span></span>
     <div class="cmd">
       <span class="glyph num">⌘K</span>
       <input placeholder="Price · model · mark surface · contribute · feed · risk · report…   or jump to any underlier" />
@@ -189,7 +189,7 @@
       <span class="selctl"><span class="lbl">calendar</span> US · mod-follow <span class="car">▾</span></span>
       <span class="selctl"><span class="lbl">pillars</span> 10 · ON–30Y <span class="car">▾</span></span>
       <span style="flex:1"></span>
-      <span class="pill" title="TARGET — no FI market-data composite feed exists yet; par marks are user-supplied quotes carried in the request-scoped CurveSet payload."><span class="htag target">TARGET</span> CCP/ICE composite · as-of <span class="num">12:04:07</span></span>
+      <span class="pill" title="No FI composite feed yet — par marks are user-supplied quotes in the request-scoped CurveSet"><span class="htag target">TARGET</span> CCP/ICE composite · as-of <span class="num">12:04:07</span></span>
     </div>
 
     <!-- curve-set hero: OIS / SOFR-proj / multi-curve (analog of the smile-model picker) -->
@@ -204,7 +204,7 @@
       <span style="flex:1"></span>
       <span class="selctl"><span class="lbl">accrual</span> ACT/360 <span class="car">▾</span></span>
       <button class="btn" id="rebootBtn">Re-bootstrap</button>
-      <button class="btn ghost" title="TARGET — diffing against a previous published version needs the server-side versioned curve store (SurfaceBook pattern), port pending.">Diff vs v206 ◷</button>
+      <button class="btn ghost" title="TARGET — needs the server-side versioned curve store">Diff vs v206 ◷</button>
     </div>
 
     <!-- publish gate — TARGET spine: mark → bootstrap → no-arb/monotone → publish (versioned).
@@ -212,27 +212,27 @@
          CurveBook / publish_curve); curve sets are request-scoped payloads on PriceRates /
          AggregateRatesRisk. This spine is the vol-surface SurfaceBook pattern, port pending. -->
     <div class="gate">
-      <span class="htag target" title="No server-side versioned curve publish exists today — CurveSet is a request-scoped payload on the PriceRates / AggregateRatesRisk RPCs. This whole mark→bootstrap→no-arb→publish spine is the vol-surface SurfaceBook pattern, port pending.">TARGET · SurfaceBook pattern — port pending</span>
+      <span class="htag target" title="No server-side curve publish today — CurveSet is a request-scoped payload on PriceRates / AggregateRatesRisk; this publish spine is a pending port of the vol-surface pattern">TARGET</span>
       <div class="steps" id="steps">
         <span class="step done" data-i="0"><span class="no">1</span> Mark</span><span class="sep">→</span>
         <span class="step done" data-i="1"><span class="no">2</span> Bootstrap</span><span class="sep">→</span>
         <span class="step done" data-i="2"><span class="no">3</span> No-arb / monotone</span><span class="sep">→</span>
         <span class="step on" data-i="3"><span class="no">4</span> Publish</span>
       </div>
-      <span class="invariant" title="TARGET invariant, ported from the vol-surface SurfaceBook: every bootstrapped curve is stamped and immutable; live pricing/risk/FIX may only reference a PUBLISHED CurveSet version — never an in-flight par-mark edit.">
-        <span class="lk">⛭</span> published-curve-immutable invariant</span>
+      <span class="invariant" title="Published curves are immutable — pricing/risk/FIX reference only a published CurveSet version, never an in-flight mark edit">
+        <span class="lk">⛭</span> published-curve-immutable</span>
       <span style="flex:1"></span>
-      <span class="gatever" title="TARGET versioning — no server-side versioned curve store exists; draft/prev-live numbering is the SurfaceBook pattern, port pending."><span class="htag target">TARGET</span> draft <b class="num">v207</b> <span class="dim">· prev</span> <b class="num">v206</b> <span class="dim">· sentinel v0=unbootstrapped · versioned store port pending</span></span>
-      <span class="pill" title="TARGET — today the CurveSet is a request-scoped payload sent per PriceRates / AggregateRatesRisk call; a publish that pins ONE version across pricing, risk and FIX is the SurfaceBook pattern, port pending.">
+      <span class="gatever" title="Versioned curve store pending — v0 = unbootstrapped sentinel"><span class="htag target">TARGET</span> draft <b class="num">v207</b> <span class="dim">· prev</span> <b class="num">v206</b></span>
+      <span class="pill" title="CurveSet is sent per call today; a publish pinning one version across pricing, risk and FIX is pending">
         <span class="htag target">TARGET</span> CurveSet ▸ price · risk · FIX</span>
-      <button class="btn okpub" id="publishBtn" title="TARGET publish flow (SurfaceBook pattern, port pending) — not a live control. No-arb / monotonicity gate PASSES — discount factors strictly decreasing, all instantaneous forwards positive. A publish would stamp v207 across pricing, risk and FIX once the versioned curve store is ported.">
+      <button class="btn okpub" id="publishBtn" title="TARGET — gate passes (DF strictly decreasing, all forwards positive); a publish would stamp v207 across pricing, risk and FIX">
         <span class="lk">✓</span> Publish v207 <span class="pp">◷ port pending</span></button>
     </div>
 
     <!-- SIGNATURE: overlaid zero / instantaneous-forward / discount-factor term structure -->
     <section class="panel">
       <header>
-        <span class="headline">USD-SOFR term structure <span class="dim" style="font-size:11px">— zero · instantaneous forward · discount factor vs tenor (log-time)</span></span>
+        <span class="headline">USD-SOFR term structure</span>
         <span style="display:flex; gap:var(--space-4); align-items:center">
           <span class="linetog" id="lineToggle" title="Toggle each curve overlay">
             <button class="on" data-l="z"><span class="sw" style="border-color:var(--seq-4)"></span>Zero</button>
@@ -267,10 +267,10 @@
             <div class="ln div"><span class="pildot" style="width:8px;height:8px;border-radius:50%;background:var(--seq-4);border:1px solid var(--bg-raised)"></span>calibrating pillar</div>
             <div class="ln"><span style="width:18px;border-top:1px dashed var(--warn);display:inline-block"></span>turn / meeting jump</div>
             <div class="div note">
-              <span class="htag live">LIVE</span> OIS self-discounting curve wired end-to-end — request-scoped <span class="num">CurveSet</span> on <span class="num">PriceRates</span> ▸ 5 clients.<br>
-              <span class="htag target">TARGET</span> FRA / STIR / swap strip engine-complete (<span class="num">bootstrap_futures_strip</span>), wire pending.
+              <span class="htag live" title="OIS self-discounting curve wired end-to-end — request-scoped CurveSet on PriceRates ▸ 5 clients">LIVE</span> OIS ·
+              <span class="htag target" title="FRA / STIR / swap strip engine-complete (bootstrap_futures_strip); wire pending">TARGET</span> FRA/STIR/swap
             </div>
-            <div class="div note" id="hoverHint">Hover the chart for zero / fwd / DF at any tenor.</div>
+            <div class="div note" id="hoverHint">hover ▸ zero / fwd / DF</div>
           </div>
         </div>
       </div>
@@ -279,9 +279,9 @@
     <!-- PAR-PILLAR bootstrap instruments (editable) + interpolation + turns -->
     <section class="panel">
       <header>
-        <span class="headline">Par-pillar bootstrap instruments <span class="dim" style="font-size:11px">— edit a quote to re-bootstrap</span></span>
+        <span class="headline" title="Sequential bootstrap — each dated pillar solves one discount factor (bootstrap_ois); futures/FRA feed the short-end strip (bootstrap_futures_strip)">Par-pillar bootstrap instruments <span class="dim" style="font-size:11px">— edit a quote to re-bootstrap</span></span>
         <span style="display:flex; gap:var(--space-4); align-items:center; flex-wrap:wrap">
-          <span class="segbtn" id="interpseg" title="Curve interpolation scheme — sets the shape of the instantaneous forward. log-linear·logDF is the shipping wire default; monotone-convex is engine-complete (from_monotone_convex_dfs) but a wire selector is pending.">
+          <span class="segbtn" id="interpseg" title="log-linear·logDF = wire default; monotone-convex engine-complete (from_monotone_convex_dfs), wire selector pending">
             <button class="on" data-i="loglin">log-linear · logDF</button><button data-i="mono">monotone-convex</button>
           </span>
           <span class="segbtn" id="turnseg" title="Overlay turn-of-year / FOMC meeting forward-jump markers">
@@ -297,9 +297,8 @@
           <tbody id="bookBody"></tbody>
         </table>
         <div style="display:flex; gap:var(--space-5); padding:var(--space-3) var(--space-5); border-top:var(--hairline); font-size:var(--type-caption); color:var(--text-tertiary); flex-wrap:wrap">
-          <span><b style="color:var(--text-secondary)">Sequential bootstrap</b> — each dated pillar solves one discount factor (<span class="num">bootstrap_ois</span>); futures/FRA feed the short-end strip (<span class="num">bootstrap_futures_strip</span>).</span>
           <span style="flex:1"></span>
-          <span><span class="htag live">LIVE</span> OIS on wire · <span class="htag target">TARGET</span> FRA/STIR/swap engine-complete, wire pending</span>
+          <span><span class="htag live">LIVE</span> OIS · <span class="htag target" title="FRA/STIR/swap engine-complete; wire pending">TARGET</span> FRA/STIR/swap</span>
         </div>
       </div>
     </section>
@@ -310,17 +309,14 @@
       <!-- pillar Jacobian: bar ladder ↔ ∂z/∂q heatmap -->
       <section class="panel">
         <header>
-          <span class="headline">Key-rate DV01 · pillar Jacobian</span>
+          <span class="headline" title="Key-rate DV01 (USD/bp) of book USD-OIS per calibrating pillar — ois_risk · key_rate_ladder">Key-rate DV01 · pillar Jacobian</span>
           <span class="segbtn" id="riskview">
             <button class="on" data-v="ladder">Ladder</button><button data-v="jac">∂z/∂q Jacobian</button>
           </span>
         </header>
         <div class="body">
           <div id="dv01Ladder">
-            <div class="muted" style="font-size:11px; margin-bottom:8px">
-              FI risk is a <b>pillar Jacobian</b> — key-rate DV01 (USD /bp) of book <span class="num">USD-OIS</span> to each
-              calibrating node, not a single Greek vector. <span class="num">ois_risk</span> · <span class="num">key_rate_ladder</span>.
-            </div>
+            <div class="label" style="margin-bottom:6px">USD /bp · book USD-OIS</div>
             <div id="ladBody"></div>
             <div class="divramp" style="margin-top:10px">
               <span class="num">receive −</span>
@@ -332,10 +328,7 @@
             <div class="kv"><span class="k">RPC</span><span class="v"><span class="htag live">LIVE</span> <span class="num">AggregateRatesRisk</span></span></div>
           </div>
           <div id="jacHeat" style="display:none">
-            <div class="muted" style="font-size:11px; margin-bottom:8px">
-              Bootstrap Jacobian <span class="num">∂z<sub>i</sub> / ∂q<sub>j</sub></span> — near-diagonal &amp; lower-triangular
-              (each solved zero depends only on its own quote and the shorter pillars). Diverging, centred 0.
-            </div>
+            <div class="label" style="margin-bottom:6px" title="Near-diagonal, lower-triangular — each solved zero depends only on its own quote and the shorter pillars; diverging, centred 0">∂z<sub>i</sub> / ∂q<sub>j</sub></div>
             <table class="jac" id="jacTbl" aria-label="Bootstrap Jacobian dz/dq, diverging centred at zero"></table>
             <div class="divramp" style="margin-top:10px">
               <span class="num">−0.4</span><span class="r"></span><span class="num">+1.0</span>
@@ -356,8 +349,8 @@
           <div class="kv"><span class="k">Interpolation</span><span class="v num" id="interpEcho">log-linear · logDF</span></div>
           <div class="kv"><span class="k">Fwd continuity</span><span class="v num" id="fwdCont">piecewise-flat</span></div>
           <div class="kv"><span class="k">Turn overlay</span><span class="v num" id="turnEcho">off</span></div>
-          <div style="margin-top:10px; padding:var(--space-3) var(--space-4); border-radius:var(--r-sm); background:var(--bg-inset); border:var(--hairline); font-size:var(--type-caption); color:var(--text-tertiary)" id="gateNote">
-            <span class="pos">✓ gate clear</span> — v207 eligible to publish. Break monotonicity by marking a long pillar through a shorter one and the gate vetoes the publish (analog of the vol-surface butterfly veto).
+          <div style="margin-top:10px; padding:var(--space-3) var(--space-4); border-radius:var(--r-sm); background:var(--bg-inset); border:var(--hairline); font-size:var(--type-caption); color:var(--text-tertiary)" id="gateNote" title="Marking a long pillar through a shorter one vetoes the publish">
+            <span class="pos">✓ gate clear</span> — v207 eligible to publish
           </div>
         </div>
       </section>
@@ -368,11 +361,10 @@
   <!-- ============ CONTEXT RAIL (scope-bus: rates book, matching 15-rates-ticket) ============ -->
   <aside class="ctx" aria-label="Desk context">
     <section>
-      <div class="grouphdr"><span class="label">Contribution · rates RFS</span><span class="htag target">TARGET</span></div>
+      <div class="grouphdr"><span class="label">Contribution · rates RFS</span><span class="htag target" title="No rates RFS/streaming contract on the wire yet — FX-style tiered OIS-rate streaming is the design target">TARGET</span></div>
       <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.4bp</span></div>
       <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.7bp</span></div>
       <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">1.1bp</span></div>
-      <div class="dim" style="font-size:var(--type-micro); margin-top:4px">No rates RFS/streaming contract on the wire yet — FX-style tiered OIS-rate streaming is the design target.</div>
     </section>
 
     <section>
@@ -389,8 +381,7 @@
       <div class="kv"><span class="k">DV01 (USD/bp)</span><span class="v num neg">−1.7k</span></div>
       <div class="kv"><span class="k">Key-rate peak</span><span class="v num">10Y · −3.1k</span></div>
       <div class="kv"><span class="k">DV01 limit</span><span class="v"><span class="rag g"></span>within</span></div>
-      <div class="kv"><span class="k">1d rates VaR</span><span class="v"><span class="htag target">TARGET</span> <span class="num dim">—</span></span></div>
-      <div class="dim" style="font-size:var(--type-micro); margin-top:4px"><span class="num">AggregateRatesRisk</span> · net PV/PV01/DV01 + key-rate ladder over the booked netting set (reconciles to the ladder at left); no VaR measure on the rates wire yet.</div>
+      <div class="kv"><span class="k">1d rates VaR</span><span class="v"><span class="htag target" title="No VaR measure on the rates wire yet">TARGET</span> <span class="num dim">—</span></span></div>
     </section>
 
     <section>
@@ -633,15 +624,15 @@
       steps[2].classList.remove('blocked'); steps[2].classList.remove('on'); steps[2].classList.add('done');
       steps[3].classList.add('on');
       pub.className='btn okpub'; pub.innerHTML='<span class="lk">✓</span> Publish v207 <span class="pp">◷ port pending</span>';
-      pub.title='TARGET publish flow (SurfaceBook pattern, port pending) — not a live control. No-arb / monotonicity gate PASSES — DF strictly decreasing, all forwards positive. A publish would stamp v207 across pricing, risk and FIX once the versioned curve store is ported.';
-      note.innerHTML='<span class="pos">✓ gate clear</span> — v207 eligible to publish <span class="dim">(TARGET flow — SurfaceBook pattern, port pending)</span>. Break monotonicity by marking a long pillar through a shorter one and the gate vetoes the publish (analog of the vol-surface butterfly veto).';
+      pub.title='TARGET — gate passes (DF strictly decreasing, all forwards positive); a publish would stamp v207 across pricing, risk and FIX';
+      note.innerHTML='<span class="pos">✓ gate clear</span> — v207 eligible to publish';
     } else {
       steps[2].classList.remove('done'); steps[2].classList.add('blocked'); steps[2].classList.add('on');
       steps[3].classList.remove('on');
       pub.className='btn blocked'; pub.innerHTML='<span class="lk">⊘</span> blocked · negative forward';
-      pub.title='Publish VETOED — the marked curve is not arbitrage-free (a discount factor is non-monotone → a negative instantaneous forward). Re-mark the offending pillar.';
+      pub.title='VETOED — curve not arbitrage-free (non-monotone DF → negative forward); re-mark the offending pillar';
       var pi=d.badPi;
-      note.innerHTML='<span class="neg">⊘ no-arb VETO</span> — pillar <b class="num">'+(pi>=0?LBL[pi]:'?')+'</b> pierces a shorter pillar → DF non-monotone / forward &lt; 0. Publish of v207 is blocked until re-marked.';
+      note.innerHTML='<span class="neg">⊘ no-arb VETO</span> — pillar <b class="num">'+(pi>=0?LBL[pi]:'?')+'</b> pierces a shorter pillar → DF non-monotone / fwd &lt; 0 · publish blocked';
       var row=document.querySelector('#bookBody tr[data-pi="'+pi+'"]'); if(row) row.classList.add('bad');
     }
   }
@@ -762,7 +753,7 @@
   }
   wrap.addEventListener('mousemove', onMove);
   wrap.addEventListener('mouseleave', function(){ hoverG.style.display='none';
-    if(hint) hint.textContent='Hover the chart for zero / fwd / DF at any tenor.'; });
+    if(hint) hint.textContent='hover ▸ zero / fwd / DF'; });
 
   /* ===================== interactions ===================== */
   // curve-set picker
@@ -772,8 +763,8 @@
       b.classList.add('on'); b.setAttribute('aria-selected','true');
       curSet=b.dataset.set;
       var badge = curSet==='ois'?'self-discounting OIS · <span class="num">bootstrap_ois</span> · <span class="htag live">LIVE</span>'
-                : curSet==='proj'?'3M projection curve · <span class="htag target">TARGET</span> (single OIS curve on wire today)'
-                : 'discount + per-tenor projection container · <span class="htag target">TARGET</span>';
+                : curSet==='proj'?'3M projection · <span class="htag target" title="Single OIS curve on the wire today">TARGET</span>'
+                : 'discount + projection · <span class="htag target" title="Single OIS curve on the wire today">TARGET</span>';
       document.getElementById('curvemeta').innerHTML=badge+' · 10 nodes · max reprice <span class="num">&lt;1e-12</span>';
       renderChart();
     });
@@ -827,7 +818,7 @@
       setTimeout(function(){ s.innerHTML='<span class="lk">⊘</span> blocked · negative forward'; }, 1500); return;
     }
     var s2=this; s2.innerHTML='<span class="lk">✓</span> published v207 <span class="pp">◷ preview</span>'; s2.className='btn okpub';
-    document.getElementById('gateNote').innerHTML='<span class="dim">◷ publish previewed — TARGET flow (SurfaceBook pattern, port pending); nothing was stamped.</span> A real publish would pin v207 across pricing · risk · FIX and advance the draft to v208.';
+    document.getElementById('gateNote').innerHTML='<span class="dim">◷ publish previewed — TARGET · nothing stamped</span>';
     setTimeout(function(){ s2.innerHTML='<span class="lk">✓</span> Publish v208 <span class="pp">◷ port pending</span>'; }, 1600);
   });
   // re-bootstrap

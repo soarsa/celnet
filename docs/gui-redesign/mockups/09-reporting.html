@@ -15,9 +15,6 @@
 .rp-badge { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-caption); font-weight:700;
   padding:3px 10px; border-radius:var(--r-full); background:var(--brand-soft); color:var(--brand);
   letter-spacing:.05em; text-transform:uppercase; }
-.rp-note { display:flex; align-items:center; gap:var(--space-3); padding:8px 12px; border-radius:var(--r-md);
-  background:oklch(0.82 0.16 75 / 0.09); border:1px solid oklch(0.82 0.16 75 / 0.26);
-  font-size:var(--type-caption); color:var(--text-secondary); }
 .rp-tag { font-size:8px; font-weight:800; letter-spacing:.06em; padding:1px 5px; border-radius:3px; text-transform:uppercase; }
 .rp-tag.live { background:oklch(0.78 0.16 155 / 0.16); color:var(--bid); }
 .rp-tag.target { background:var(--accent-soft); color:var(--accent); }
@@ -157,7 +154,7 @@
     <!-- page header -->
     <div class="rp-head">
       <span class="title">Reporting</span>
-      <span class="rp-badge" title="No reporting backend exists yet — greenfield capability">◆ New · to build</span>
+      <span class="rp-badge" title="No report engine, scheduler or delivery bus yet — figures are sample data; underlying analytics (valuation, FRTB SBM, XVA, journal) already exist">◆ New · to build</span>
       <div class="seg" id="rp-tplseg" role="tablist" aria-label="Report template">
         <button class="on" data-tpl="valuation">Valuation</button>
         <button data-tpl="risk">Risk &amp; Capital</button>
@@ -168,13 +165,6 @@
       <span style="flex:1"></span>
       <button class="btn ghost">Duplicate</button>
       <button class="btn primary">New report</button>
-    </div>
-
-    <div class="rp-note">
-      <span class="rp-badge" style="background:var(--accent-soft); color:var(--accent)">Greenfield</span>
-      <span>No report engine, scheduler or delivery bus is wired yet — every figure below is <b>illustrative sample data</b>. Underlying analytics already exist
-        (<span class="num">valuation</span>, <span class="num">FRTB SBM capital</span>, <span class="num">XVA</span>, <span class="num">journal / audit log</span>);
-        report assembly &amp; distribution are the build. Data-source links are tagged <span class="rp-tag target">target</span>.</span>
     </div>
 
     <div class="rp-grid">
@@ -197,7 +187,7 @@
           </div>
 
           <div class="rp-secslabel">
-            <span class="label">Sections · drag to order · toggle to include</span>
+            <span class="label" title="Drag to reorder · toggle to include">Sections</span>
             <span class="num dim" id="rp-count" style="font-size:11px">6 of 6 sections</span>
           </div>
 
@@ -681,7 +671,7 @@
 
           <!-- raw / tabular export surface — shown for non-PDF output formats -->
           <div class="rp-raw rp-hidden" id="rp-raw">
-            <div class="rp-rawhd"><span class="num" id="rp-rawfmt">CSV</span> <span class="dim">— machine-readable export · tabular sections · sample</span></div>
+            <div class="rp-rawhd"><span class="num" id="rp-rawfmt">CSV</span> <span class="rp-tag target" title="Sample tabular export">sample</span></div>
             <pre class="rp-rawpre" id="rp-rawpre"></pre>
           </div>
 
@@ -752,7 +742,7 @@
       <section class="panel">
         <header>
           <span class="headline">Recent runs</span>
-          <span class="dim" style="font-size:11px">sample history · <span class="rp-tag target">target</span> once the engine ships</span>
+          <span class="rp-tag target" title="Sample history — live once the report engine ships">target</span>
         </header>
         <div class="body" style="padding-top:var(--space-2)">
           <table class="grid">

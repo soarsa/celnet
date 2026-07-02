@@ -138,7 +138,7 @@
 
     <!-- lens / risk toolbar -->
     <div class="rlens">
-      <span class="lens"><span class="eye">◎</span> Risk Manager · View-only · scope <b style="margin-left:2px">Firm roll-up</b> <span class="dim" style="font-weight:400; margin-left:2px">▸ entered from desk FX Vol / G10-A</span></span>
+      <span class="lens" title="Entered from desk FX Vol / G10-A"><span class="eye">◎</span> Risk Manager · View-only · scope <b style="margin-left:2px">Firm roll-up</b></span>
       <span class="dim" style="font-size:var(--type-micro)">GROUP-BY</span>
       <span class="crumb">
         <span class="node on" data-gb>Firm</span><span class="sep">▸</span>
@@ -170,7 +170,7 @@
         </div>
       </div>
       <div class="kpigrp grp-var">
-        <div class="hd"><span class="label">Non-additive · re-derived per node</span><span class="tag live">bump-revalue</span></div>
+        <div class="hd"><span class="label" title="Non-additive — re-derived per node by bump-revalue">VaR · ES · capital · firm</span><span class="tag live">bump-revalue</span></div>
         <div class="kpirow">
           <div class="stat"><div class="k">1d VaR 99%</div><div class="v neg">−$3.28mm</div><div class="s">historical · 501d</div></div>
           <div class="stat"><div class="k">ES 97.5%</div><div class="v neg">−$4.10mm</div><div class="s">expected shortfall</div></div>
@@ -321,7 +321,7 @@
             <span class="sw dn2"></span><span class="sw dn1"></span><span class="sw dm"></span><span class="sw dp1"></span><span class="sw dp2"></span>
             <span class="lab">gain</span>
             <span style="flex:1"></span>
-            <span class="lab">−$376k … 0 … +$376k · symmetric |max| domain · ±¼max / ±½max cuts · RdBu diverging, centred 0</span>
+            <span class="lab" title="Symmetric |max| domain · ±¼max / ±½max cuts · diverging, centred 0">−$376k … 0 … +$376k</span>
           </div>
         </div>
       </section>
@@ -330,7 +330,7 @@
       <section class="panel">
         <header>
           <span class="headline">Drill · contributing nodes</span>
-          <span class="tag live">DrillRisk → Books</span>
+          <span class="tag live" title="DrillRisk → Books">live</span>
         </header>
         <div class="body" style="padding-top:var(--space-3)">
           <div class="drillhead">
@@ -343,7 +343,7 @@
               <div class="pl neg" id="drill-pnl">−$121k</div>
             </div>
           </div>
-          <div style="margin:var(--space-3) 0 var(--space-2)" class="label">by desk / book · entitlement-pruned</div>
+          <div style="margin:var(--space-3) 0 var(--space-2)" class="label" title="Entitlement-pruned server-side, pre-reduction — a parent total never leaks an invisible subtree">by desk / book</div>
           <div id="drill-list">
             <div class="dbrk"><span>FX Vol G10 · London</span><span class="bar" style="width:70px"><i class="dn1" style="width:100%"></i></span><span class="num" data-share="0.48">−$58k</span></div>
             <div class="dbrk"><span>FX Vol EM · London</span><span class="bar" style="width:70px"><i class="dn1" style="width:46%"></i></span><span class="num" data-share="0.22">−$27k</span></div>
@@ -354,9 +354,6 @@
           <div class="kv" style="margin-top:var(--space-3)"><span class="k">worst-cell in grid</span><span class="v neg">−$220k <span class="dim">· spot 0% / vol +4v</span></span></div>
           <div class="kv"><span class="k">best-cell</span><span class="v pos">+$376k <span class="dim">· spot −3% / vol −4v</span></span></div>
           <div class="kv"><span class="k">grid convexity</span><span class="v">long Γ · short Vega</span></div>
-          <div style="margin-top:var(--space-3); font-size:var(--type-micro); color:var(--text-tertiary)">
-            A parent total never leaks the magnitude of an invisible subtree — pruning happens server-side, pre-reduction.
-          </div>
         </div>
       </section>
     </div>
@@ -415,7 +412,7 @@
             <text class="hm-ax" x="298.5" y="170" text-anchor="middle">1Y</text>
             <text class="hm-ax" x="339.5" y="170" text-anchor="middle">2Y</text>
           </svg>
-          <div class="chartcap">net vega +$420k · long belly (1M/3M) vs short wings (2M/1Y) · bucketed tenor × ATM-Δ</div>
+          <div class="chartcap" title="Bucketed tenor × ATM-Δ">net vega +$420k · long belly (1M/3M) vs short wings (2M/1Y)</div>
           <div style="display:flex; align-items:center; gap:7px; margin-top:6px; font-size:var(--type-micro)">
             <span class="softhard hard">breach</span>
             <span style="color:var(--danger)">3M bucket +$186k over the +$160k per-tenor vega limit · +$26k (116%)</span>
@@ -519,9 +516,7 @@
           <div style="display:flex; gap:var(--space-4); margin-top:var(--space-2)">
             <span class="swleg"><i style="background:var(--seq-2)"></i> Delta</span>
             <span class="swleg"><i style="background:var(--seq-4)"></i> Vega</span>
-            <span class="swleg"><i style="background:var(--seq-6)"></i> Curvature</span>
-            <span style="flex:1"></span>
-            <span class="chartcap" style="margin:0">curvature charges short-γ only</span>
+            <span class="swleg" title="Charges short-γ only"><i style="background:var(--seq-6)"></i> Curvature</span>
           </div>
         </div>
       </section>
@@ -532,9 +527,8 @@
       <!-- hierarchical risk-cube drill grid -->
       <section class="panel">
         <header>
-          <span class="headline">Risk-cube · hierarchical drill</span>
+          <span class="headline" title="Trader ▸ Book ▸ Desk ▸ CcyPair ▸ Location ▸ Entity ▸ Firm — additive Greeks roll up exactly (Σ children = parent); VaR / ES / SbM re-derived per node by bump-revalue, USD numéraire">Risk-cube · hierarchical drill</span>
           <span class="htag">
-            <span class="dim" style="font-size:var(--type-micro)">Trader ▸ Book ▸ Desk ▸ CcyPair ▸ Location ▸ Entity ▸ Firm</span>
             <span class="tag tgt">fleet: single-node</span>
           </span>
         </header>
@@ -615,16 +609,13 @@
               </tr>
             </tbody>
           </table>
-          <div style="padding:var(--space-3) var(--space-4); font-size:var(--type-micro); color:var(--text-tertiary); border-top:var(--hairline)">
-            Additive Greeks roll up exactly (Σ children = parent). VaR / ES / SbM are non-additive — re-derived per node by bump-revalue, cross-pair collapsed into the USD numéraire view.
-          </div>
         </div>
       </section>
 
       <!-- limits dashboard -->
       <section class="panel">
         <header>
-          <span class="headline">Limits · RAG</span>
+          <span class="headline" title="Soft = early-warning · Hard = blocking · limits cascade board → entity → desk → book → trader, pre- &amp; post-trade">Limits · RAG</span>
           <span class="htag"><span class="tag live">monitor</span><span class="tag tgt">cascade solver: gap</span></span>
         </header>
         <div class="body" style="padding-top:var(--space-3)">
@@ -657,9 +648,6 @@
             <span class="rag r"></span>
             <div class="meta"><div class="t">Stop-loss (D-1 MTD) <span class="softhard hard">hard</span></div><div class="sc">book G10-B · blocking · escalated ▸ desk head</div></div>
             <div style="min-width:96px"><div class="limbar"><i class="dn2" style="width:100%"></i><span class="thr" style="left:100%"></span></div><div class="util" style="color:var(--danger)">103%</div></div>
-          </div>
-          <div style="margin-top:var(--space-3); font-size:var(--type-micro); color:var(--text-tertiary)">
-            Soft = early-warning · Hard = blocking. Limits cascade board → entity → desk → book → trader, pre-trade &amp; post-trade.
           </div>
         </div>
       </section>

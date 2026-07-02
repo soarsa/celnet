@@ -128,8 +128,6 @@
   .pmeta{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:var(--type-caption);}
   .pmeta dt{color:var(--text-tertiary);} .pmeta dd{margin:0;color:var(--text-secondary);}
   .cardnote{font-size:var(--type-micro);color:var(--text-tertiary);line-height:1.5;}
-  /* persona cards: push the note to the bottom behind a divider so the card never shows a dead band */
-  .pcard .cardnote{margin-top:auto;padding-top:8px;border-top:1px solid var(--grid-line);}
   .scopelist{display:flex;flex-direction:column;gap:2px;margin-top:6px;}
   .scopelist .r{display:flex;justify-content:space-between;font-size:var(--type-caption);padding:3px 0;border-bottom:1px solid var(--grid-line);}
   .scopelist .r .k{color:var(--text-secondary);} .scopelist .r .v{font-family:var(--font-mono);color:var(--text-tertiary);}
@@ -191,8 +189,7 @@
 
     <!-- deny-wins resolution hero row (.model) -->
     <div class="model">
-      <span class="title" style="font-size:15px">Entitlement resolution · deny-wins <span class="car" style="font-size:11px">▾</span></span>
-      <span class="meta">role bundle ⊕ per-user overlay · pruned <b>pre-aggregation</b> so a parent total never leaks an invisible subtree</span>
+      <span class="title" style="font-size:15px" title="Role bundle ⊕ per-user overlay, pruned pre-aggregation — a parent total never leaks an invisible subtree">Entitlement resolution · deny-wins <span class="car" style="font-size:11px">▾</span></span>
       <span class="selctl"><span class="lbl">apply preset</span>
         <span class="pseg" id="pseg">
           <button data-p="quant">Quant</button>
@@ -213,8 +210,8 @@
       <!-- Capability MATRIX (Action × AssetClass, deny-wins cells) -->
       <section class="panel">
         <header>
-          <span class="headline">Capability matrix · Action × AssetClass <span class="muted" style="font-weight:400;font-size:12px">— scoped by Desk · <span id="mtxPersona">Trader / MM</span></span></span>
-          <span class="muted" style="font-size:11px">click a cell to edit the overlay</span>
+          <span class="headline" title="FX Opt + Rates/FI are the engine-enforced AssetClass arms (FxOptions / FixedIncome); Metal rides FxOptions; Equity / Cmdty / Crypto are client-gated pending a server arm">Capability matrix · Action × AssetClass <span class="muted" style="font-weight:400;font-size:12px">— Desk · <span id="mtxPersona">Trader / MM</span></span></span>
+          <span class="muted" style="font-size:11px" title="Click a cell to cycle grant → deny → none">click to edit</span>
         </header>
         <div class="body" style="padding-bottom:var(--space-3)">
           <svg id="capMtx" class="chart" viewBox="0 0 600 360" height="356" aria-label="Capability matrix: 10 actions by 3 licensed asset classes plus a collapsed unlicensed summary, deny-wins cells">
@@ -238,7 +235,6 @@
             <span class="lg"><span class="sw none">·</span> not granted</span>
             <span class="lg"><span class="sw gated">▨</span> class not licensed</span>
           </div>
-          <div class="cardnote" style="margin-top:6px"><b>FX Opt</b> + <b>Rates/FI</b> are the two engine-enforced <span class="num">AssetClass</span> arms (<span class="num">FxOptions</span> / <span class="num">FixedIncome</span>); <b>Metal</b> rides the <span class="num">FxOptions</span> arm; <b>Equity / Cmdty / Crypto</b> are gated in the client capability kernel pending a server AssetClass arm.</div>
         </div>
       </section>
 
@@ -246,11 +242,10 @@
       <section class="panel">
         <header><span class="headline">Deny-wins resolution</span><span class="badge live">allows()</span></header>
         <div class="body" style="padding-top:var(--space-3)">
-          <div class="formula">
+          <div class="formula" title="celnet-entitlements · capability.rs:226 — deny always wins">
             <div>allows(<b>cap</b>) =</div>
             <div>&nbsp;&nbsp;<span class="d">¬</span> denies<span class="d">∋</span>cap</div>
             <div>&nbsp;&nbsp;<b>∧</b> ( grant_all <b>∨</b> grants∋cap )</div>
-            <div class="cite">celnet-entitlements · capability.rs:226 — deny always wins</div>
           </div>
 
           <div class="statrow">
@@ -259,7 +254,7 @@
             <div class="stat gt"><div class="n" id="cntGated">—</div><div class="k">gated</div></div>
           </div>
 
-          <div class="label" style="margin:12px 0 4px">Desk scope · <span class="num">DeskScope</span></div>
+          <div class="label" style="margin:12px 0 4px" title="Resolved per session (ResolvedCaller.desk_scope, services/access.rs:318); prunes fan-out before the risk-cube reduction so a firm-wide View grant never leaks a magnitude it can't drill into">Desk scope · <span class="num">DeskScope</span></div>
           <div class="seg" id="deskSeg" style="width:100%">
             <button data-d="All" style="flex:1">All</button>
             <button class="on" data-d="Desk" style="flex:1">Desk(FX&nbsp;Vol)</button>
@@ -271,7 +266,6 @@
             <div class="r"><span class="k">Rates · STIR-1</span><span class="v" id="rowRates">pruned</span></div>
             <div class="r"><span class="k">Credit · IG-flow</span><span class="v">pruned</span></div>
           </div>
-          <div class="cardnote" style="margin-top:8px">Scope resolves per session — <span class="num">ResolvedCaller.desk_scope</span> (services/access.rs:318) — and prunes fan-out <b>before</b> the risk-cube reduction, so a Risk-Mgr <span class="num">View</span>-only firm-wide grant can never leak a magnitude it can't drill into.</div>
         </div>
       </section>
     </div>
@@ -279,11 +273,8 @@
     <!-- ROW 2 — SIGNATURE: per-asset-class license tier management -->
     <section class="panel">
       <header>
-        <span class="headline">License tiers · per-asset-class commercial primitive</span>
-        <span style="display:flex;gap:8px;align-items:center">
-          <span class="cardnote">engine hard-rejects out-of-tier products · pricer.rs:697</span>
-          <span class="badge live">engine-enforced</span>
-        </span>
+        <span class="headline">License tiers · per asset class</span>
+        <span class="badge live" title="Engine hard-rejects out-of-tier products · pricer.rs:697">engine-enforced</span>
       </header>
       <div class="body">
         <div class="tiers">
@@ -325,7 +316,7 @@
         </div>
 
         <!-- product-kind reach — stacked Viridis breakdown of the 24 Product arms per class -->
-        <div class="label" style="margin:16px 0 6px">Product-kind reach · which of the 24 <span class="num">Product</span> arms each class prices <span class="dim">— depth = Viridis family ramp</span></div>
+        <div class="label" style="margin:16px 0 6px" title="FX/Metal reach every family (Metal rides FxOptions); Equity/Cmdty/Crypto price Vanilla only — the engine hard-rejects cross-asset exotics; Perpetual/ListedFutureOption are LANDING; Rates/FI is a separate curve leaf, not one of the 24 arms">Product-kind reach · 24 <span class="num">Product</span> arms</div>
         <svg id="covChart" class="chart" viewBox="0 0 480 196" height="190" aria-label="Stacked product-kind reach per asset class, Viridis sequential depth">
           <defs>
             <pattern id="covGate" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -340,23 +331,19 @@
           <g id="covBody"></g>
         </svg>
         <div class="covleg" id="covLeg"></div>
-        <div class="cardnote" style="margin-top:6px"><b>FX / Metal</b> reach every family (Metal rides the <span class="num">FxOptions</span> arm); <b>Equity / Cmdty / Crypto</b> price the <span class="num">Vanilla</span> family only — the engine hard-rejects cross-asset exotics (<span class="num">cross_asset_non_vanilla_product_is_rejected</span>, pricer.rs). <span class="num">Perpetual</span> / <span class="num">ListedFutureOption</span> are LANDING across all classes. Rates/FI is a separate curve leaf, not one of the 24 option arms.</div>
       </div>
     </section>
 
     <!-- ROW 3 — SIGNATURE: persona-preset editor -->
     <section class="panel">
       <header>
-        <span class="headline">Persona presets · capability overlays</span>
-        <span style="display:flex;gap:8px;align-items:center">
-          <span class="cardnote">presets over the Trader base (or Admin) via set_role_capabilities — not server role variants</span>
-          <span class="badge warn" title="Server Role is binary Admin|Trader today; the 5 personas ship as curated per-user overlay presets, not new role enum arms">Role = Admin | Trader</span>
-        </span>
+        <span class="headline" title="Overlay edits are audited both ways (audit_records_emitted_for_allow_and_deny) and persist via set_role_capabilities (services/auth.rs:1668); widen with a grant, narrow with a deny — deny wins on resolve">Persona presets · capability overlays</span>
+        <span class="badge warn" title="Server Role is binary Admin|Trader; the 5 personas are curated per-user overlay presets over the Trader base via set_role_capabilities, not new role enum arms">Role = Admin | Trader</span>
       </header>
       <div class="body">
         <div class="pgrid" id="pgrid">
 
-          <div class="pcard" data-p="quant">
+          <div class="pcard" data-p="quant" title="price_without_execute — validates every model, never deals">
             <div class="ph"><span class="pn">Quant</span><span class="pfoot" data-foot="quant"></span></div>
             <div class="acap">
               <span class="a">view</span><span class="a">price</span><span class="a">simulate</span>
@@ -367,10 +354,9 @@
               <dt>Scope</dt><dd>All (cross-desk)</dd>
               <dt>Home</dt><dd>Surface model/calibrate (read-only) + golden-oracle diff</dd>
             </dl>
-            <div class="cardnote"><span class="num">price_without_execute</span> — validates every model, never deals.</div>
           </div>
 
-          <div class="pcard on" data-p="trader">
+          <div class="pcard on" data-p="trader" title="FX-only narrowing overlay denies the FixedIncome action set — deny wins">
             <div class="ph"><span class="pn">Trader / MM</span><span class="pfoot" data-foot="trader"></span></div>
             <div class="acap">
               <span class="a">view</span><span class="a">price</span><span class="a">quote</span><span class="a">rfq</span><span class="a">ioi</span><span class="a">stream</span><span class="a">execute</span><span class="a">book</span>
@@ -380,10 +366,9 @@
               <dt>Scope</dt><dd>Desk(self)</dd>
               <dt>Home</dt><dd>Stream ⇄ Ticket ⇄ Risk ⇄ Surface ⇄ Book</dd>
             </dl>
-            <div class="cardnote">FX-only narrowing overlay denies the FixedIncome action set — <b style="color:var(--danger)">deny wins</b>.</div>
           </div>
 
-          <div class="pcard" data-p="sales">
+          <div class="pcard" data-p="sales" title="Relays client RFQ/IOI; never commits the desk's balance sheet">
             <div class="ph"><span class="pn">Sales-Trader</span><span class="pfoot" data-foot="sales"></span></div>
             <div class="acap">
               <span class="a">view</span><span class="a">rfq</span><span class="a">ioi</span>
@@ -394,10 +379,9 @@
               <dt>Scope</dt><dd>Desk(self)</dd>
               <dt>Home</dt><dd>RFQ/IOI inbox (filtered Stream) + Ticket price-show</dd>
             </dl>
-            <div class="cardnote">Relays client RFQ/IOI; never commits the desk's balance sheet.</div>
           </div>
 
-          <div class="pcard" data-p="risk">
+          <div class="pcard" data-p="risk" title="Reads across every desk, forbidden from acting on any — separation of duties">
             <div class="ph"><span class="pn">Risk Manager</span><span class="pfoot" data-foot="risk"></span></div>
             <div class="acap">
               <span class="a">view</span>
@@ -408,30 +392,27 @@
               <dt>Scope</dt><dd>All (firm-wide)</dd>
               <dt>Home</dt><dd>Risk + Book · breadcrumb group-by</dd>
             </dl>
-            <div class="cardnote">The only persona reading across every desk, forbidden from acting on any — separation of duties.</div>
           </div>
 
-          <div class="pcard" data-p="deskhead">
+          <div class="pcard" data-p="deskhead" title="Desk-level limit admin has no dedicated Action arm — rides Administer scoped to the desk (entitlement gap flagged)">
             <div class="ph"><span class="pn">Desk Head</span><span class="pfoot" data-foot="deskhead"></span></div>
             <div class="acap">
-              <span class="a">view</span><span class="a">price</span><span class="a">quote</span><span class="a">stream</span><span class="a">execute</span><span class="a">book</span><span class="a" style="background:oklch(0.82 0.16 75/.16);color:var(--warn)">administer*</span>
+              <span class="a">view</span><span class="a">price</span><span class="a">quote</span><span class="a">stream</span><span class="a">execute</span><span class="a">book</span><span class="a" style="background:oklch(0.82 0.16 75/.16);color:var(--warn)" title="Rides Administer scoped to the desk — no dedicated Action arm (entitlement gap)">administer</span>
             </div>
             <dl class="pmeta">
               <dt>Asset</dt><dd>desk's class · FxOptions</dd>
               <dt>Scope</dt><dd>Desk(self) · every book under desk</dd>
               <dt>Home</dt><dd>Book (desk aggregate) + Risk (desk limits)</dd>
             </dl>
-            <div class="cardnote"><span style="color:var(--warn)">*</span> desk-level limit admin has no dedicated <span class="num">Action</span> arm — rides <span class="num">Administer</span> scoped to the desk (entitlement gap flagged).</div>
           </div>
 
         </div>
-        <div class="cardnote" style="margin-top:12px">Overlay edits are audited both ways — <span class="num">audit_records_emitted_for_allow_and_deny</span> — and persist through <span class="num">set_role_capabilities</span> (services/auth.rs:1668). Widen with a grant, narrow with a deny; deny always wins on resolve.</div>
       </div>
     </section>
 
     <!-- ROW 4 — per-user overlay & audit -->
     <section class="panel">
-      <header><span class="headline">Per-user overlay &amp; audit</span><span class="badge live">journaled</span></header>
+      <header><span class="headline">Per-user overlay &amp; audit</span><span class="badge live" title="Every allow and deny is journaled; Admin (grant_all) is immutable — the Admin role cannot be narrowed">journaled</span></header>
       <div class="body" style="padding-top:var(--space-2)">
         <table class="grid">
           <thead><tr><th style="text-align:left">When</th><th style="text-align:left">Actor</th><th style="text-align:left">Principal</th><th style="text-align:left">Δ overlay</th><th style="text-align:left">Capability</th><th style="text-align:left">Effect</th></tr></thead>
@@ -445,8 +426,6 @@
         <div style="margin-top:12px;display:flex;gap:6px">
           <button class="btn" id="btnAdd">Add principal ＋</button>
           <button class="btn ghost" id="btnExport">Export policy ◷</button>
-          <span style="flex:1"></span>
-          <span class="cardnote" style="align-self:center">Admin (<span class="num">grant_all</span>) is immutable — the Admin role cannot be narrowed.</span>
         </div>
       </div>
     </section>

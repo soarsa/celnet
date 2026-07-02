@@ -114,7 +114,6 @@
 .pv-big { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 26px; font-weight: 600; line-height: 1; }
 .pv-chg { font-family: var(--font-mono); font-size: var(--type-caption); }
 .pv-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.pv-desc { font-size: var(--type-caption); line-height: 16px; color: var(--text-secondary); }
 .pv-kv { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--grid-line); font-size: var(--type-caption); }
 .pv-kv .k { color: var(--text-tertiary); } .pv-kv .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .pv-dest { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -675,25 +674,23 @@ body.closed .scrim, body.closed .palette-wrap { display: none; }
 
     if (arch === 'spark') {
       var pos = d.chgpos === '1';
-      html += '<div class="pv-head"><div class="pv-ic brandbg">↳</div><div>'
+      html += '<div class="pv-head" title="' + (d.desc || '') + '"><div class="pv-ic brandbg">↳</div><div>'
             + '<div class="pv-ttl">' + d.title + '</div>'
             + '<div class="pv-sub">' + d.cls + ' · jump to underlier</div></div></div>';
       html += '<div class="pv-row" style="align-items:baseline; gap:10px">'
             + '<span class="pv-big">' + d.spot + '</span>'
             + '<span class="pv-chg" style="color:' + (pos ? 'var(--bid)' : 'var(--danger)') + '">' + d.chg + '</span></div>';
       html += sparkSVG(d.spark);
-      html += '<div class="pv-desc">' + (d.desc || '') + '</div>';
       html += '<div class="pv-kv"><span class="k">Asset class</span><span class="v">' + d.cls + '</span></div>';
       html += '<div class="pv-kv"><span class="k">Contribution</span><span class="v">' + (d.tiers || '—') + '</span></div>';
       html += '<div class="pv-kv"><span class="k">Licensed</span><span class="v" style="color:var(--bid)">✓ this desk</span></div>';
       html += '<div class="pv-dest"><span>enter → <b>' + d.dest + '</b></span>' + stateTag(d.state) + '</div>';
     } else if (arch === 'action') {
       var bg = (d.state === 'live') ? 'pv-ic brandbg' : 'pv-ic';
-      html += '<div class="pv-head"><div class="' + bg + '">' + iconGlyph + '</div><div>'
+      html += '<div class="pv-head" title="' + (d.desc || '') + '"><div class="' + bg + '">' + iconGlyph + '</div><div>'
             + '<div class="pv-ttl">' + d.title + '</div>'
             + '<div class="pv-sub">' + (d.entity || '') + '</div></div></div>';
       html += '<div class="pv-row">' + stateTag(d.state) + '<span class="pv-flow">entity × verb</span></div>';
-      html += '<div class="pv-desc">' + (d.desc || '') + '</div>';
       if (d.verb === 'price') {
         html += '<div class="label" style="margin-top:2px">Greeks preview · USD</div>'
              + '<div class="pv-greeks">'
@@ -715,12 +712,11 @@ body.closed .scrim, body.closed .palette-wrap { display: none; }
       html += '<div class="pv-dest"><span>enter → <b>' + d.dest + '</b></span>' + stateTag(d.state) + '</div>';
     } else { /* cap / surface / book / locked */
       var lockBg = (d.state === 'lock') ? 'pv-ic' : ((d.state === 'live') ? 'pv-ic' : 'pv-ic');
-      html += '<div class="pv-head"><div class="' + lockBg + '">' + iconGlyph + '</div><div>'
+      var tip = (d.desc || '') + (d.flow ? ' — ' + d.flow : '');
+      html += '<div class="pv-head" title="' + tip + '"><div class="' + lockBg + '">' + iconGlyph + '</div><div>'
             + '<div class="pv-ttl">' + d.title + '</div>'
             + '<div class="pv-sub">' + (d.dest || '') + '</div></div></div>';
       html += '<div class="pv-row">' + stateTag(d.state) + (d.hint ? '<span class="pv-flow">' + d.hint + '</span>' : '') + '</div>';
-      html += '<div class="pv-desc">' + (d.desc || '') + '</div>';
-      if (d.flow) html += '<div class="pv-kv"><span class="k">Integration</span><span class="v" style="font-size:10px">' + d.flow + '</span></div>';
       var verb = (d.state === 'lock') ? 'request →' : 'enter →';
       html += '<div class="pv-dest"><span>' + verb + ' <b>' + d.dest + '</b></span>' + stateTag(d.state) + '</div>';
     }

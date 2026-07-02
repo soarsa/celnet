@@ -198,7 +198,6 @@
       <span class="title" style="font-size:15px">Pricing model · LSV <span class="car" style="font-size:11px">▾</span></span>
       <span class="meta">calibrated 3m ago · RMSE <span class="num">0.03v</span> <span class="ok">✓ arb-free</span></span>
       <span class="selctl"><span class="lbl">Δ conv</span> spot <span class="car">▾</span></span>
-      <span class="meta">structure priced as a <b style="color:var(--text-secondary)">signed leg sum</b> → the leg set books as <b style="color:var(--text-secondary)">one desk contract</b></span>
       <span style="flex:1"></span>
       <button class="btn ghost">Recalibrate</button>
     </div>
@@ -209,7 +208,7 @@
       <!-- entitlement gate banner (shown only for the unlicensed Eq/Cmdty/Crypto classes) -->
       <div class="gatebanner">
         <span style="font-size:16px">⊘</span>
-        <span><b id="gate-class">Equity</b> is <b>not licensed</b> for desk <b>FX Vol</b>. Under <b>Entitlements · Enforce</b> the request is denied — <span class="rj">capability_denied</span>. Even once granted, a cross-asset class prices <b>single-leg only</b> (<span class="rj">cross_asset_non_vanilla_product_is_rejected</span>) — multi-leg structures stay on the FX / Metal path. Allowed single-leg products:</span>
+        <span title="Entitlements · Enforce denies the class for desk FX Vol. Even once granted, a cross-asset class prices single-leg only (cross_asset_non_vanilla_product_is_rejected) — multi-leg stays FX / Metal."><b id="gate-class">Equity</b> not licensed — <span class="rj">capability_denied</span> · single-leg only:</span>
         <span class="prod">Vanilla</span><span class="prod">PerpetualOption</span><span class="prod">ListedFutureOption</span>
         <button class="btn ghost req">Request access →</button>
       </div>
@@ -218,7 +217,7 @@
 
         <!-- ===================== PAYOFF HERO ===================== -->
         <section class="panel payoff-panel">
-          <div class="gatemask"><b id="gate-class-mask">Equity</b> is not licensed for this desk.<br>Request access in Admin &amp; License to price single-leg<br>vanilla / perpetual / listed-future on cross-asset classes.</div>
+          <div class="gatemask" title="Request access in Admin &amp; License — cross-asset classes price single-leg vanilla / perpetual / listed-future only."><b id="gate-class-mask">Equity</b> — not licensed</div>
           <header>
             <span class="headline" id="ptitle">Payoff · Seagull</span>
             <span style="display:flex;gap:6px;align-items:center">
@@ -232,47 +231,47 @@
           <div class="anwrap">
             <div class="an active" data-strat="seagull">
               <span class="nm">Seagull</span><span class="kindchip">kind · SEAGULL</span>
-              <span class="desc">3-leg collar-with-wing — long 1.1000/1.1250 call spread + short 1.0700 put</span>
+              <span class="desc" title="Collar-with-wing">long 1.1000/1.1250 call spread + short 1.0700 put</span>
               <span class="mm"><span><b>net</b><span class="num pos">+0.15%</span></span><span><b>b/e</b><span class="num">1.0685</span></span><span><b>max&nbsp;+</b><span class="num pos">+2.65%</span></span><span><b>max&nbsp;−</b><span class="num neg">−2.85%</span></span></span>
             </div>
             <div class="an" data-strat="rr">
               <span class="nm">Risk Reversal</span><span class="kindchip">kind · RISK_REVERSAL</span>
-              <span class="desc">long 1.1050 call vs short 1.0700 put — directional skew position</span>
+              <span class="desc" title="Directional skew position">long 1.1050 call vs short 1.0700 put</span>
               <span class="mm"><span><b>net</b><span class="num">−0.05%</span></span><span><b>b/e</b><span class="num">1.0705 · 1.1055</span></span><span><b>bias</b><span class="num">long skew</span></span></span>
             </div>
             <div class="an" data-strat="straddle">
               <span class="nm">Straddle</span><span class="kindchip">kind · STRADDLE</span>
-              <span class="desc">long 1.0850 call + put at ATM — pure long-vol / long-gamma</span>
+              <span class="desc" title="Pure long-vol / long-gamma">long 1.0850 call + put at ATM</span>
               <span class="mm"><span><b>net</b><span class="num neg">−1.75%</span></span><span><b>b/e</b><span class="num">1.0675 · 1.1025</span></span><span><b>max&nbsp;−</b><span class="num neg">−1.75%</span></span></span>
             </div>
             <div class="an" data-strat="strangle">
               <span class="nm">Strangle</span><span class="kindchip">kind · STRANGLE</span>
-              <span class="desc">long 1.0650 put + 1.1050 call OTM wings — cheaper long-vol</span>
+              <span class="desc" title="OTM wings — cheaper long-vol">long 1.0650 put + 1.1050 call</span>
               <span class="mm"><span><b>net</b><span class="num neg">−1.25%</span></span><span><b>b/e</b><span class="num">1.0525 · 1.1175</span></span><span><b>max&nbsp;−</b><span class="num neg">−1.25%</span></span></span>
             </div>
             <div class="an" data-strat="callspread">
               <span class="nm">Call Spread</span><span class="kindchip custom">custom · leg sum</span>
-              <span class="desc">long 1.0900 call vs short 1.1100 call — debit vertical, capped bull</span>
+              <span class="desc" title="Debit vertical — capped bull">long 1.0900 call vs short 1.1100 call</span>
               <span class="mm"><span><b>net</b><span class="num neg">−0.85%</span></span><span><b>b/e</b><span class="num">1.0993</span></span><span><b>max&nbsp;+</b><span class="num pos">+1.00%</span></span><span><b>max&nbsp;−</b><span class="num neg">−0.85%</span></span></span>
             </div>
             <div class="an" data-strat="putspread">
               <span class="nm">Put Spread</span><span class="kindchip custom">custom · leg sum</span>
-              <span class="desc">long 1.0800 put vs short 1.0600 put — debit vertical, capped bear</span>
+              <span class="desc" title="Debit vertical — capped bear">long 1.0800 put vs short 1.0600 put</span>
               <span class="mm"><span><b>net</b><span class="num neg">−0.80%</span></span><span><b>b/e</b><span class="num">1.0716</span></span><span><b>max&nbsp;+</b><span class="num pos">+1.05%</span></span><span><b>max&nbsp;−</b><span class="num neg">−0.80%</span></span></span>
             </div>
             <div class="an" data-strat="butterfly">
               <span class="nm">Butterfly</span><span class="kindchip custom">custom · leg sum</span>
-              <span class="desc">long 1.0700 / short 2×1.0850 / long 1.1000 call fly — pinned wings, short vol</span>
+              <span class="desc" title="Pinned wings — short vol">long 1.0700 / short 2×1.0850 / long 1.1000 call fly</span>
               <span class="mm"><span><b>net</b><span class="num neg">−0.45%</span></span><span><b>b/e</b><span class="num">1.0749 · 1.0951</span></span><span><b>max&nbsp;+</b><span class="num pos">+0.90%</span></span><span><b>max&nbsp;−</b><span class="num neg">−0.45%</span></span></span>
             </div>
             <div class="an" data-strat="ironcondor">
               <span class="nm">Iron Condor</span><span class="kindchip custom">custom · leg sum</span>
-              <span class="desc">short 1.0750/1.1050 inner + long 1.0600/1.1200 wings — range-bound, net credit</span>
+              <span class="desc" title="Range-bound — net credit">short 1.0750/1.1050 inner + long 1.0600/1.1200 wings</span>
               <span class="mm"><span><b>net</b><span class="num pos">+0.55%</span></span><span><b>b/e</b><span class="num">1.0691 · 1.1110</span></span><span><b>max&nbsp;+</b><span class="num pos">+0.55%</span></span><span><b>max&nbsp;−</b><span class="num neg">−0.83%</span></span></span>
             </div>
             <div class="an" data-strat="collar">
               <span class="nm">Collar</span><span class="kindchip custom">custom · leg sum</span>
-              <span class="desc">long 1.0700 put + short 1.1050 call over long spot — fenced range</span>
+              <span class="desc" title="Fenced range">long 1.0700 put + short 1.1050 call over long spot</span>
               <span class="mm"><span><b>net</b><span class="num pos">+0.05%</span></span><span><b>b/e</b><span class="num">1.0876</span></span><span><b>max&nbsp;+</b><span class="num pos">+1.50%</span></span><span><b>max&nbsp;−</b><span class="num neg">−1.50%</span></span></span>
             </div>
           </div>
@@ -527,11 +526,11 @@
 
         <!-- ===================== STRUCTURE LIBRARY (gallery) ===================== -->
         <aside class="panel gallery-panel">
-          <header><span class="headline">Structure library</span><span class="muted" style="font-size:11px">grouped · searchable</span></header>
+          <header><span class="headline">Structure library</span></header>
           <div class="body">
             <input class="gsearch" id="gsearch" placeholder="Filter structures…  straddle · seagull · butterfly" />
 
-            <div class="ggrp label multileg" title="The template declares the proto StrategyKind enum (RISK_REVERSAL / STRANGLE / STRADDLE / SEAGULL) — the engine prices the leg sum and books that declared kind; it never infers a name from arbitrary legs.">Strategy templates · StrategyKind declared, not inferred</div>
+            <div class="ggrp label multileg" title="The template declares the StrategyKind (RISK_REVERSAL / STRANGLE / STRADDLE / SEAGULL) — the engine prices the leg sum and books that declared kind; it never infers a name from arbitrary legs.">Strategy templates</div>
             <div class="scard multileg" data-strat="rr" data-name="risk reversal">
               <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,20 14,12 30,12 41,4" fill="none" stroke="var(--seq-4)" stroke-width="1.6"/></svg>
               <span><span class="nm">Risk Reversal</span><br><span class="leg-n">2 legs · long call / short put</span></span>
@@ -553,7 +552,7 @@
               <span class="tag kind">kind</span>
             </div>
 
-            <div class="ggrp label multileg">Custom multi-leg · signed leg sum</div>
+            <div class="ggrp label multileg" title="Priced as a signed leg sum — no declared StrategyKind">Custom multi-leg</div>
             <div class="scard multileg" data-strat="callspread" data-name="call spread">
               <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 22,17 34,6 41,6" fill="none" stroke="var(--seq-3)" stroke-width="1.6"/></svg>
               <span><span class="nm">Call Spread</span><br><span class="leg-n">2 legs · capped upside</span></span>
@@ -598,19 +597,19 @@
             </div>
             <div class="scard" data-tpl data-name="perpetual option" data-legs="1">
               <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 20,17 41,7" fill="none" stroke="var(--seq-5)" stroke-width="1.6"/></svg>
-              <span><span class="nm">Perpetual Option</span><br><span class="leg-n">1 leg · no expiry (arm 30)</span></span>
+              <span><span class="nm">Perpetual Option</span><br><span class="leg-n" title="proto arm 30">1 leg · no expiry</span></span>
               <span class="tag any">all</span>
             </div>
             <div class="scard" data-tpl data-name="listed future option" data-legs="1">
               <svg class="glyph" width="44" height="24" viewBox="0 0 44 24"><polyline points="3,17 21,17 41,5" fill="none" stroke="var(--seq-5)" stroke-width="1.6"/></svg>
-              <span><span class="nm">Listed Future Option</span><br><span class="leg-n">1 leg · option on a future (arm 31)</span></span>
+              <span><span class="nm">Listed Future Option</span><br><span class="leg-n" title="proto arm 31">1 leg · option on a future</span></span>
               <span class="tag any">all</span>
             </div>
 
             <!-- ===== EXOTICS — the shipped PRODUCT_REGISTRY catalogue (17 families, real gallery grouping);
                  FX & Metal route to the one full engine (a metal's lease rate is the FX foreign rate);
                  Equity/Commodity/Crypto are engine-rejected: price_cross_asset → PriceError::UnsupportedModel ===== -->
-            <div class="exohdr exo"><span class="t">Exotics · FX / Metal</span><span class="htag live">LIVE</span><span class="n">17 families · engine-priced</span></div>
+            <div class="exohdr exo"><span class="t">Exotics · FX / Metal</span><span class="htag live">LIVE</span><span class="n">17 families</span></div>
 
             <div class="ggrp label exo">Barriers &amp; digitals</div>
             <div class="scard exo" data-exo data-title="Single Barrier" data-grp="barrier" data-name="single barrier exotic ko ki">
@@ -688,7 +687,7 @@
               <span><span class="nm">Basket / Best-of / Worst-of</span><br><span class="leg-n">multi-underlier payoff</span></span>
             </div>
 
-            <div class="exogate">⊘ <b>Equity · Commodity · Crypto</b> — exotics stay FX / Metal. Those classes are not licensed for this desk, and even once granted the engine rejects every exotic on a cross-asset underlier: <span class="rj">price_cross_asset → PriceError::UnsupportedModel</span> (<span class="rj">cross_asset_non_vanilla_product_is_rejected</span>). Cross-asset pricing is single-leg <b>Vanilla / Perpetual / Listed-future</b> only.</div>
+            <div class="exogate" title="Not licensed for this desk; even once granted the engine rejects every exotic on a cross-asset underlier (cross_asset_non_vanilla_product_is_rejected) — cross-asset is single-leg Vanilla / Perpetual / Listed-future only.">⊘ <b>Eq · Cmdty · Crypto</b> — <span class="rj">price_cross_asset → PriceError::UnsupportedModel</span></div>
 
             <div class="tplnote" id="tplnote" style="display:none"></div>
           </div>
@@ -696,12 +695,12 @@
 
         <!-- ===================== LEG LADDER ===================== -->
         <section class="panel ladder-panel multileg">
-          <header><span class="headline">Leg ladder</span><span class="muted" style="font-size:11px">editable · dir = leg direction (structural sign)</span></header>
+          <header><span class="headline">Leg ladder</span></header>
           <div class="body" style="padding-top:var(--space-3)">
 
             <div class="ladblk active" data-strat="seagull">
               <table class="ladder">
-                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th title="Structural leg direction (sign) — not an execution side">dir</th><th>type</th><th>strike / Δ</th><th title="Scales the leg vs the base notional">ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
                 <tbody>
                   <tr><td class="ix">1</td><td><span class="dirtog short">Short</span></td><td class="otype">Put</td><td class="n">1.0700 <span class="dim">25ΔP</span></td><td class="n">1.00</td><td class="n">8.42</td><td class="n pos">+0.85</td><td class="n">+0.26</td><td class="n neg">−0.061</td><td class="n">0.031</td><td><span class="rmx">✕</span></td></tr>
                   <tr><td class="ix">2</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.1000 <span class="dim">20ΔC</span></td><td class="n">1.00</td><td class="n">7.95</td><td class="n neg">−0.80</td><td class="n">+0.19</td><td class="n">+0.058</td><td class="n">0.028</td><td><span class="rmx">✕</span></td></tr>
@@ -712,7 +711,7 @@
 
             <div class="ladblk" data-strat="rr">
               <table class="ladder">
-                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th title="Structural leg direction (sign) — not an execution side">dir</th><th>type</th><th>strike / Δ</th><th title="Scales the leg vs the base notional">ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
                 <tbody>
                   <tr><td class="ix">1</td><td><span class="dirtog short">Short</span></td><td class="otype">Put</td><td class="n">1.0700 <span class="dim">25ΔP</span></td><td class="n">1.00</td><td class="n">8.42</td><td class="n pos">+0.80</td><td class="n">+0.25</td><td class="n neg">−0.060</td><td class="n">0.030</td><td><span class="rmx">✕</span></td></tr>
                   <tr><td class="ix">2</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.1050 <span class="dim">25ΔC</span></td><td class="n">1.00</td><td class="n">8.05</td><td class="n neg">−0.85</td><td class="n">+0.24</td><td class="n">+0.062</td><td class="n">0.031</td><td><span class="rmx">✕</span></td></tr>
@@ -722,7 +721,7 @@
 
             <div class="ladblk" data-strat="straddle">
               <table class="ladder">
-                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th title="Structural leg direction (sign) — not an execution side">dir</th><th>type</th><th>strike / Δ</th><th title="Scales the leg vs the base notional">ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
                 <tbody>
                   <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.0850 <span class="dim">ATM</span></td><td class="n">1.00</td><td class="n">8.00</td><td class="n neg">−0.90</td><td class="n">+0.51</td><td class="n">+0.118</td><td class="n">0.044</td><td><span class="rmx">✕</span></td></tr>
                   <tr><td class="ix">2</td><td><span class="dirtog long">Long</span></td><td class="otype">Put</td><td class="n">1.0850 <span class="dim">ATM</span></td><td class="n">1.00</td><td class="n">8.00</td><td class="n neg">−0.85</td><td class="n">−0.49</td><td class="n">+0.118</td><td class="n">0.044</td><td><span class="rmx">✕</span></td></tr>
@@ -732,7 +731,7 @@
 
             <div class="ladblk" data-strat="strangle">
               <table class="ladder">
-                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th title="Structural leg direction (sign) — not an execution side">dir</th><th>type</th><th>strike / Δ</th><th title="Scales the leg vs the base notional">ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
                 <tbody>
                   <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Put</td><td class="n">1.0650 <span class="dim">15ΔP</span></td><td class="n">1.00</td><td class="n">8.55</td><td class="n neg">−0.60</td><td class="n">−0.16</td><td class="n">+0.092</td><td class="n">0.030</td><td><span class="rmx">✕</span></td></tr>
                   <tr><td class="ix">2</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.1050 <span class="dim">20ΔC</span></td><td class="n">1.00</td><td class="n">8.05</td><td class="n neg">−0.65</td><td class="n">+0.18</td><td class="n">+0.096</td><td class="n">0.031</td><td><span class="rmx">✕</span></td></tr>
@@ -742,7 +741,7 @@
 
             <div class="ladblk" data-strat="callspread">
               <table class="ladder">
-                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th title="Structural leg direction (sign) — not an execution side">dir</th><th>type</th><th>strike / Δ</th><th title="Scales the leg vs the base notional">ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
                 <tbody>
                   <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.0900 <span class="dim">20ΔC</span></td><td class="n">1.00</td><td class="n">7.90</td><td class="n neg">−0.95</td><td class="n">+0.22</td><td class="n">+0.061</td><td class="n">0.030</td><td><span class="rmx">✕</span></td></tr>
                   <tr><td class="ix">2</td><td><span class="dirtog short">Short</span></td><td class="otype">Call</td><td class="n">1.1100 <span class="dim">12ΔC</span></td><td class="n">1.00</td><td class="n">8.10</td><td class="n pos">+0.10</td><td class="n">−0.09</td><td class="n neg">−0.040</td><td class="n">0.018</td><td><span class="rmx">✕</span></td></tr>
@@ -752,7 +751,7 @@
 
             <div class="ladblk" data-strat="putspread">
               <table class="ladder">
-                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th title="Structural leg direction (sign) — not an execution side">dir</th><th>type</th><th>strike / Δ</th><th title="Scales the leg vs the base notional">ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
                 <tbody>
                   <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Put</td><td class="n">1.0800 <span class="dim">30ΔP</span></td><td class="n">1.00</td><td class="n">8.20</td><td class="n neg">−0.98</td><td class="n">−0.30</td><td class="n">+0.064</td><td class="n">0.031</td><td><span class="rmx">✕</span></td></tr>
                   <tr><td class="ix">2</td><td><span class="dirtog short">Short</span></td><td class="otype">Put</td><td class="n">1.0600 <span class="dim">15ΔP</span></td><td class="n">1.00</td><td class="n">8.60</td><td class="n pos">+0.18</td><td class="n">+0.10</td><td class="n neg">−0.045</td><td class="n">0.020</td><td><span class="rmx">✕</span></td></tr>
@@ -762,7 +761,7 @@
 
             <div class="ladblk" data-strat="butterfly">
               <table class="ladder">
-                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th title="Structural leg direction (sign) — not an execution side">dir</th><th>type</th><th>strike / Δ</th><th title="Scales the leg vs the base notional">ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
                 <tbody>
                   <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Call</td><td class="n">1.0700 <span class="dim">30ΔC</span></td><td class="n">1.00</td><td class="n">8.05</td><td class="n neg">−1.35</td><td class="n">+0.30</td><td class="n">+0.070</td><td class="n">0.033</td><td><span class="rmx">✕</span></td></tr>
                   <tr><td class="ix">2</td><td><span class="dirtog short">Short</span></td><td class="otype">Call</td><td class="n">1.0850 <span class="dim">ATM</span></td><td class="n">2.00</td><td class="n">8.00</td><td class="n pos">+1.70</td><td class="n">−1.00</td><td class="n neg">−0.148</td><td class="n">0.088</td><td><span class="rmx">✕</span></td></tr>
@@ -773,7 +772,7 @@
 
             <div class="ladblk" data-strat="ironcondor">
               <table class="ladder">
-                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th title="Structural leg direction (sign) — not an execution side">dir</th><th>type</th><th>strike / Δ</th><th title="Scales the leg vs the base notional">ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
                 <tbody>
                   <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Put</td><td class="n">1.0600 <span class="dim">15ΔP</span></td><td class="n">1.00</td><td class="n">8.60</td><td class="n neg">−0.42</td><td class="n">−0.14</td><td class="n">+0.050</td><td class="n">0.022</td><td><span class="rmx">✕</span></td></tr>
                   <tr><td class="ix">2</td><td><span class="dirtog short">Short</span></td><td class="otype">Put</td><td class="n">1.0750 <span class="dim">25ΔP</span></td><td class="n">1.00</td><td class="n">8.30</td><td class="n pos">+0.78</td><td class="n">+0.24</td><td class="n neg">−0.062</td><td class="n">0.030</td><td><span class="rmx">✕</span></td></tr>
@@ -785,7 +784,7 @@
 
             <div class="ladblk" data-strat="collar">
               <table class="ladder">
-                <thead><tr><th>#</th><th>dir</th><th>type</th><th>strike / Δ</th><th>ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th title="Structural leg direction (sign) — not an execution side">dir</th><th>type</th><th>strike / Δ</th><th title="Scales the leg vs the base notional">ratio</th><th>vol</th><th>prem %</th><th>Δ</th><th>vega</th><th>γ</th><th></th></tr></thead>
                 <tbody>
                   <tr><td class="ix">1</td><td><span class="dirtog long">Long</span></td><td class="otype">Put</td><td class="n">1.0700 <span class="dim">25ΔP</span></td><td class="n">1.00</td><td class="n">8.42</td><td class="n neg">−0.82</td><td class="n">−0.26</td><td class="n">+0.061</td><td class="n">0.031</td><td><span class="rmx">✕</span></td></tr>
                   <tr><td class="ix">2</td><td><span class="dirtog short">Short</span></td><td class="otype">Call</td><td class="n">1.1050 <span class="dim">20ΔC</span></td><td class="n">1.00</td><td class="n">8.05</td><td class="n pos">+0.87</td><td class="n">−0.19</td><td class="n neg">−0.058</td><td class="n">0.029</td><td><span class="rmx">✕</span></td></tr>
@@ -797,8 +796,6 @@
             <div class="ladfoot">
               <span class="addleg">＋ add leg</span>
               <span class="addleg" style="color:var(--text-secondary)">⧉ duplicate structure</span>
-              <span style="flex:1"></span>
-              <span class="muted" style="font-size:11px">ratios scale each leg vs the 10.00mm base notional</span>
             </div>
           </div>
         </section>
@@ -806,9 +803,8 @@
         <!-- ===================== NET-GREEK STRIP ===================== -->
         <section class="panel netstrip-panel">
           <header>
-            <span class="headline">Net structure — Greeks &amp; premium</span>
+            <span class="headline" title="Signed leg sum — books as one desk contract">Net structure — Greeks &amp; premium</span>
             <span style="display:flex;gap:6px;align-items:center">
-              <span class="muted" style="font-size:11px">signed leg sum · books as one contract</span>
               <button class="btn ghost">Open in Price &amp; Model <span class="htag live">LIVE</span></button>
               <button class="btn ghost">Send to RFQ desk <span class="htag target">TARGET</span></button>
             </span>
@@ -1020,9 +1016,12 @@
       const tn = document.getElementById('tplnote');
       tn.style.display = 'block';
       const single = !c.classList.contains('multileg');
+      tn.title = single
+        ? 'Loads as one ladder leg — single-leg vanilla / perpetual / listed-future price on every licensed class.'
+        : 'A single-expiry payoff diagram can\'t represent a time spread — loading builds the legs into the ladder; the preview stays on the single-expiry structures.';
       tn.innerHTML = single
-        ? '<b>' + c.getAttribute('data-name') + '</b> · single-leg · priced directly by the class engine. Load replaces the ladder with one leg; single-leg vanilla / perpetual / listed-future price on every licensed class.'
-        : '<b>' + c.getAttribute('data-name') + '</b> · ' + c.getAttribute('data-legs') + '-leg custom across two expiries — priced as a <b>signed leg sum</b>. A single-expiry payoff diagram can\'t represent a time spread, so loading builds its legs into the ladder while the live preview stays on the single-expiry structures.';
+        ? '<b>' + c.getAttribute('data-name') + '</b> · single-leg · all licensed classes'
+        : '<b>' + c.getAttribute('data-name') + '</b> · ' + c.getAttribute('data-legs') + ' legs · two expiries · no payoff preview';
     });
   });
 
@@ -1034,8 +1033,8 @@
       c.classList.add('active');
       const tn = document.getElementById('tplnote');
       tn.style.display = 'block';
-      tn.innerHTML = '<b>' + c.getAttribute('data-title') + '</b> · ' + c.getAttribute('data-grp')
-        + ' exotic — a single-contract family, not a leg structure: loading opens its family ticket (own input block; FX and Metal price on the one full engine path). The payoff preview above stays on the multi-leg vanilla structures — a single-expiry P&amp;L line can\'t represent a path-dependent contract. Equity / Commodity / Crypto: engine-rejected — <span class="rj">price_cross_asset → PriceError::UnsupportedModel</span>.';
+      tn.title = 'Single-contract family, not a leg structure — loading opens its family ticket (FX / Metal engine). A single-expiry P&L line can\'t represent a path-dependent contract. Cross-asset classes are engine-rejected: price_cross_asset → PriceError::UnsupportedModel.';
+      tn.innerHTML = '<b>' + c.getAttribute('data-title') + '</b> · ' + c.getAttribute('data-grp') + ' exotic · opens family ticket · FX / Metal';
     });
   });
 

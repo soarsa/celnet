@@ -204,8 +204,7 @@
     <div class="opsbar">
       <div class="ops-head" style="flex:1">
         <div class="htitle">
-          <span class="headline">Ops &amp; Connectivity</span>
-          <span class="sub">latency &amp; throughput telemetry · <span class="num">celnet-observability</span> &nbsp;·&nbsp; FIX venues · <span class="num">ConnectionsWorkspace</span></span>
+          <span class="headline" title="Telemetry: celnet-observability · FIX venues: ConnectionsWorkspace">Ops &amp; Connectivity</span>
         </div>
       </div>
       <span class="tag live" title="FixAdminService/ListConnections is a live gRPC/WS service">LIVE · FIX admin</span>
@@ -273,7 +272,7 @@
           </div>
           <svg class="hist" id="histSvg" viewBox="0 0 660 276" aria-label="Latency histogram with percentile markers"></svg>
           <div class="histcap">
-            <span>HdrHistogram · log-linear buckets · window <span class="num" id="winLabel">last 60 s</span> · <span class="num" id="winSamples">1.24 M</span> samples</span>
+            <span title="HdrHistogram · log-linear buckets">window <span class="num" id="winLabel">last 60 s</span> · <span class="num" id="winSamples">1.24 M</span> samples</span>
             <span id="sloRatio"></span>
           </div>
           <div class="pctcards">
@@ -304,9 +303,9 @@
           <svg class="thr-spark" id="cc-inflight" viewBox="0 0 320 42" preserveAspectRatio="none" aria-label="In-flight concurrency over time vs the 512 cap"></svg>
           <div class="cc-cap"><span>peak <span class="num">71</span> · cap <span class="num">512</span> <span class="dim">(dashed)</span></span><span class="ok">88% headroom</span></div>
 
-          <div class="trow" style="margin-top:var(--space-3)"><span class="tlab">Telemetry offload queue <span class="dim">· bounded, back-pressured</span></span><span class="tval">3.1<span class="u">%</span></span></div>
+          <div class="trow" style="margin-top:var(--space-3)"><span class="tlab" title="Bounded, back-pressured offload — the hot core stays log/alloc-free">Telemetry offload queue</span><span class="tval">3.1<span class="u">%</span></span></div>
           <div class="qbar"><i style="width:3.1%"></i></div>
-          <div class="foot" style="font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); margin-top:4px">depth 2,048 · high-water 11% · 0 dropped (hot core stays log/alloc-free)</div>
+          <div class="foot" style="font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); margin-top:4px">depth 2,048 · high-water 11% · 0 dropped</div>
 
           <div class="sesscount">
             <div class="sc"><div class="v num">42</div><div class="k">streaming</div></div>
@@ -320,7 +319,7 @@
     <!-- FIX SESSION MONITOR (LIVE) -->
     <section class="panel">
       <header style="gap:var(--space-3)">
-        <span class="headline">FIX session monitor</span>
+        <span class="headline" title="Desk-scoped — admin sees all venues, a desk session only its own · FSM: Disconnected → LogonPending → Active → LogoutPending · click a row for the read-only message tail">FIX session monitor</span>
         <span class="tag live">LIVE · FixAdminService/ListConnections</span>
         <span style="flex:1"></span>
         <div class="seg" id="fixSeg" role="tablist" aria-label="Dialect filter">
@@ -430,18 +429,14 @@
        </div>
         <!-- row-select opens this read-only console (FixAdminService/ListMessages) -->
         <div id="fixDetail" hidden aria-live="polite"></div>
-        <div class="foot" style="font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); padding:8px var(--cell-pad-x)">
-          desk-scoped · admin sees all venues · a desk session sees only its own · FSM: Disconnected → LogonPending → Active → LogoutPending · click a row for the read-only message tail
-        </div>
       </div>
     </section>
 
     <!-- FEEDS & HIGH-AVAILABILITY -->
     <div class="ops-head" style="margin-top:var(--space-1)">
-      <span class="label">Feeds &amp; high-availability</span>
+      <span class="label" title="Gauges show % of each metric's own SLA/limit; the tick marks the warn threshold — hover a gauge for detail">Feeds &amp; high-availability</span>
       <span class="tag live">feed health LIVE</span>
       <span class="tag target">Raft/replog HA · activation pending</span>
-      <span class="sub" style="margin-left:auto; display:inline-flex; align-items:center; gap:6px">gauge = % of each metric's own SLA/limit ·&nbsp;<span style="display:inline-block; width:2px; height:11px; background:var(--text-primary); opacity:0.5; border-radius:1px"></span>&nbsp;warn threshold · hover for detail</span>
     </div>
     <div class="hatiles">
       <div class="hatile">

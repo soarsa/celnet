@@ -13,8 +13,6 @@
   .lensbar .headline { margin-right:var(--space-2); }
   .lenschip { display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 10px; border-radius:var(--r-full);
     background:var(--accent-soft); color:var(--accent); font-size:var(--type-caption); font-weight:600; }
-  .banner { display:flex; align-items:center; gap:10px; padding:7px 12px; border-radius:var(--r-md);
-    background:oklch(0.62 0.19 280 / 0.09); border:1px solid oklch(0.62 0.19 280 / 0.26); font-size:var(--type-caption); color:var(--text-secondary); }
   .chip.target { background:var(--accent-soft); color:var(--accent); }
   .chip.live   { background:var(--brand-soft); color:var(--brand); }
   .chip.native { background:var(--accent-soft); color:var(--accent); }
@@ -75,7 +73,6 @@
   .tier { border:var(--hairline); border-radius:var(--r-md); padding:var(--space-3) var(--space-4); background:var(--bg-inset); }
   .tier .h { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
   .tier .big { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:20px; font-weight:600; }
-  .tier .desc { font-size:var(--type-micro); color:var(--text-tertiary); line-height:1.35; }
   .gauge { display:grid; grid-template-columns:1fr auto; gap:5px 10px; align-items:center; margin:6px 0; }
   .gauge .lab { font-family:var(--font-mono); font-size:var(--type-caption); }
   .gauge .lab small { color:var(--text-tertiary); }
@@ -160,8 +157,9 @@
     <!-- lens + honesty banner + kind filter -->
     <div class="lensbar">
       <span class="headline">Models &amp; Plugins</span>
-      <span class="lenschip">◇ QUANT lens</span>
-      <span class="muted" style="font-size:var(--type-caption)">model &amp; plugin-host registry · inspect / calibrate / validate — no dealing</span>
+      <span class="lenschip" title="Model &amp; plugin-host registry — inspect / calibrate / validate, no dealing">◇ QUANT lens</span>
+      <span class="chip live" title="celnet-plugin-host registry is wired into pricing — every registered Tier-0/Tier-2 model resolves through ModelRegistry on the hot path">● HOST LIVE</span>
+      <span class="chip target" title="This management surface (register · recalibrate · promote · sandbox admin) is not yet a shipped UI">◇ TARGET · management UI</span>
       <span style="flex:1"></span>
       <span class="seg kind" role="tablist" aria-label="Filter by model kind">
         <button class="on" data-kind="all">All</button>
@@ -171,18 +169,11 @@
       </span>
     </div>
 
-    <div class="banner">
-      <span class="chip live">● HOST LIVE</span>
-      <span>The <b>celnet-plugin-host</b> registry is wired into pricing today — every registered Tier-0/Tier-2 model resolves through <span class="num">ModelRegistry</span> on the hot path.</span>
-      <span class="chip target">TARGET</span>
-      <span>This management surface (register · recalibrate · promote · sandbox admin) is not yet a shipped UI.</span>
-    </div>
-
     <!-- ===== MODEL REGISTRY ===== -->
     <section class="panel">
       <header>
         <span class="headline">Model registry</span>
-        <span class="muted" style="font-size:11px"><span class="num" id="regCount">13</span> models · <span class="num">10</span> Tier-0 native · <span class="num">3</span> Tier-2 wasmi · native ⇔ wasm twins agree through one registry</span>
+        <span class="muted" style="font-size:11px"><span class="num" id="regCount">13</span> models · <span class="num">10</span> Tier-0 native · <span class="num">3</span> Tier-2 wasmi</span>
       </header>
       <div class="body" style="padding:0 var(--space-2) var(--space-2)">
         <table class="reg">
@@ -354,7 +345,7 @@
 
             <!-- calibrated models: residual ladder + convergence + stats (all keyed by selected model) -->
             <div id="diagCalib">
-            <div class="label" style="margin-bottom:6px">Fit residuals · fitted − market broker marks · vol points <span class="dim">(shaded ±0.05v tolerance · axis auto-scales)</span></div>
+            <div class="label" style="margin-bottom:6px" title="Fitted − market broker marks; shaded band = ±0.05v tolerance; axis auto-scales">Fit residuals · vol points</div>
             <svg class="chart" viewBox="0 0 520 200" height="196" aria-label="Calibration residuals by delta pillar">
               <!-- fixed ±0.05v tolerance band around zero (y=87); position set by script for the auto-scaled axis -->
               <rect id="resBand" x="52" y="34.5" width="448" height="105" fill="oklch(0.66 0.11 168 / 0.10)"/>
@@ -409,7 +400,7 @@
             <div id="diagEmpty" class="emptyfit">
               <div class="glyph">∮</div>
               <div class="headline h">closed-form · no calibration residuals</div>
-              <div class="d"><span class="num" id="emptyName">fx-vanilla</span> — <span id="emptyProv">Garman–Kohlhagen closed-form</span>. Priced analytically in a single evaluation, so there is no iterative fit — no residual ladder and no convergence trace to show. Correctness is validated directly against the golden oracle at <span class="num" id="emptyOrc">3.1e-14</span> relative.</div>
+              <div class="d" title="Priced analytically in a single evaluation — no iterative fit, so no residual ladder or convergence trace; correctness is validated directly against the golden oracle"><span class="num" id="emptyName">fx-vanilla</span> — <span id="emptyProv">Garman–Kohlhagen closed-form</span> · golden-oracle <span class="num" id="emptyOrc">3.1e-14</span> rel</div>
             </div>
           </div>
         </section>
@@ -417,7 +408,7 @@
         <section class="panel">
           <header>
             <span class="headline">Golden-oracle validation</span>
-            <span class="muted" style="font-size:11px">|model − QuantLib 1.42.1| rel · <span class="num">celnet-golden</span> frozen tables · <span class="ok">128/128 within tol</span></span>
+            <span class="muted" style="font-size:11px" title="celnet-golden frozen tables">|model − QuantLib 1.42.1| rel · <span class="ok">128/128 within tol</span></span>
           </header>
           <div class="body">
             <svg class="chart" viewBox="0 0 520 198" height="190" aria-label="Golden-oracle relative difference by instrument">
@@ -454,7 +445,7 @@
               <text class="axlbl" x="362" y="162" text-anchor="middle">DKO·6M·PDE</text>
               <text class="axlbl" x="418" y="162" text-anchor="middle">VarSw·1Y·rep</text>
               <text class="axlbl b" x="474" y="162" text-anchor="middle">Asian·1Y·QMC</text>
-              <text class="axlbl b" x="60" y="20">max |Δ| 7.3e-5 · Asian 1Y (QMC) — all instruments below 1e-4 tolerance</text>
+              <text class="axlbl b" x="60" y="20">max |Δ| 7.3e-5 · Asian 1Y (QMC)</text>
               <!-- Viridis |Δ|-magnitude colorbar legend -->
               <g transform="translate(60,182)">
                 <text class="axlbl" x="0" y="8">|Δ| magnitude</text>
@@ -474,22 +465,19 @@
       <!-- right column: plugin sandbox status -->
       <section class="panel">
         <header>
-          <span class="headline">Plugin sandbox</span>
-          <span class="muted" style="font-size:11px">celnet-plugin-host · one registry, two tiers</span>
+          <span class="headline" title="celnet-plugin-host — one registry, two tiers">Plugin sandbox</span>
         </header>
         <div class="body">
           <div class="tiercards">
-            <div class="tier">
+            <div class="tier" title="Compiled-in, in-process; full f64; zero sandbox overhead — trusted, no fuel metering">
               <div class="h"><span class="chip native">Tier-0 native</span><span class="big">10</span></div>
-              <div class="desc">Compiled-in, in-process. Full <span class="num">f64</span>. Zero sandbox overhead — trusted, no fuel metering.</div>
             </div>
-            <div class="tier">
+            <div class="tier" title="Fuel-metered guest sandbox; deterministic (wasmi R1 instruction cost); memory-capped, trap-guarded">
               <div class="h"><span class="chip wasm">Tier-2 wasmi</span><span class="big">3</span></div>
-              <div class="desc">Fuel-metered guest sandbox. Deterministic (wasmi R1 instruction cost). Memory-capped, trap-guarded.</div>
             </div>
           </div>
 
-          <div class="label" style="margin:var(--space-4) 0 2px">Tier-2 fuel · per-call budget <span class="num">50,000,000</span> · deterministic compute SLA</div>
+          <div class="label" style="margin:var(--space-4) 0 2px">Tier-2 fuel · per-call budget <span class="num">50,000,000</span></div>
 
           <div class="gauge">
             <span class="lab">equity-cost-of-carry <small>· Pricing guest</small></span>
@@ -525,8 +513,8 @@
             <span><b>−3</b> did-not-converge</span>
           </div>
 
-          <div class="verline"><span class="ok">✓</span> native ⇔ wasm twins agree bit-for-bit through one registry</div>
-          <div class="verline"><span class="ok">✓</span> fuel exhaustion traps within budget — runaway guest is always bounded</div>
+          <div class="verline" title="Native ⇔ wasm twins agree bit-for-bit through one registry"><span class="ok">✓</span> twins bit-identical</div>
+          <div class="verline" title="Fuel exhaustion traps within budget — a runaway guest is always bounded"><span class="ok">✓</span> fuel-trap bounded</div>
         </div>
       </section>
     </div>

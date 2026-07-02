@@ -176,7 +176,7 @@ tfoot.blot-foot td.n { font-family:var(--font-mono); font-variant-numeric:tabula
         <button data-cls="metal">Metal</button>
         <button data-cls="rates">Rates</button>
       </span>
-      <span class="badge-target" title="PositionStore (FX) and RatesPositionStore (rates) are disjoint types today — this cross-asset view is the unifying target, not a wired store.">Unified book · TARGET <span class="mono">PositionStore ⊕ RatesPositionStore</span></span>
+      <span class="badge-target" title="PositionStore (FX) and RatesPositionStore (rates) are disjoint types today — this cross-asset view is the unifying target, not a wired store.">Unified book · TARGET</span>
       <span class="spacer"></span>
       <span class="pill"><span class="dot live"></span> as-of 12:04:07 · streaming</span>
     </div>
@@ -197,7 +197,7 @@ tfoot.blot-foot td.n { font-family:var(--font-mono); font-variant-numeric:tabula
       <!-- book / desk tree -->
       <section class="panel">
         <header>
-          <span class="headline">Book &amp; desk tree</span>
+          <span class="headline" title="Roll-up via book_to_desk / location_to_entity parent pointers (risk-cube Hierarchy) · Rates leg federated from RatesPositionStore">Book &amp; desk tree</span>
           <span class="note">Firm ▸ Entity ▸ Desk ▸ Book</span>
         </header>
         <div class="body" style="padding:var(--space-3)">
@@ -215,13 +215,10 @@ tfoot.blot-foot td.n { font-family:var(--font-mono); font-variant-numeric:tabula
             <div class="tnode lvl-book" data-parent="d-fxf" data-id="b-fwd"><span class="car leaf">◆</span><span class="nm">Fwd-G10</span><span class="tbar"><i class="pos" style="width:14px"></i></span><span class="mtm pos">+0.48mm</span></div>
 
             <div class="tnode lvl-desk" data-id="d-rts" data-kids="b-rt1"><span class="car" data-car>▸</span><span class="nm"><span class="lv">Desk</span> Rates <span class="badge-target" style="padding:1px 6px"><span class="tgt-dot"></span> TARGET</span></span><span class="tbar"><i class="pos" style="width:20px"></i></span><span class="mtm pos">+0.80mm</span></div>
-            <div class="tnode lvl-book hidden" data-parent="d-rts" data-id="b-rt1"><span class="car leaf">◆</span><span class="nm">IRS-EUR <span class="dim">RatesPositionStore</span></span><span class="tbar"><i class="pos" style="width:20px"></i></span><span class="mtm pos">+0.80mm</span></div>
+            <div class="tnode lvl-book hidden" data-parent="d-rts" data-id="b-rt1"><span class="car leaf">◆</span><span class="nm" title="Federated from RatesPositionStore">IRS-EUR</span><span class="tbar"><i class="pos" style="width:20px"></i></span><span class="mtm pos">+0.80mm</span></div>
 
             <div class="tnode lvl-entity" data-id="e-ny" data-kids="d-ny1"><span class="car" data-car>▸</span><span class="nm"><span class="lv">Ent</span> Celer Bank NY</span><span class="tbar"><i class="pos" style="width:24px"></i></span><span class="mtm pos">+1.68mm</span></div>
             <div class="tnode lvl-desk hidden" data-parent="e-ny" data-id="d-ny1"><span class="car leaf">◆</span><span class="nm"><span class="lv">Desk</span> FX Vol NY</span><span class="tbar"><i class="pos" style="width:24px"></i></span><span class="mtm pos">+1.68mm</span></div>
-          </div>
-          <div style="margin-top:var(--space-3); padding-top:var(--space-3); border-top:var(--hairline)" class="note">
-            Roll-up resolves via <span class="num">book_to_desk</span> / <span class="num">location_to_entity</span> parent pointers (risk-cube Hierarchy). Rates leg federated from a <span style="color:var(--accent)">separate store</span> — <span class="xlink">wire unification →</span>
           </div>
         </div>
       </section>
@@ -230,7 +227,7 @@ tfoot.blot-foot td.n { font-family:var(--font-mono); font-variant-numeric:tabula
       <section class="panel blot-wrap">
         <header>
           <span class="headline">Position blotter · <span id="scopelbl">Desk · FX Vol</span></span>
-          <span class="note">virtualized window · <span class="num">12,480</span> positions · showing <span class="num" id="shown">19</span> · per-cell live flash</span>
+          <span class="note" title="Virtualized window · per-cell live flash"><span class="num">12,480</span> positions · showing <span class="num" id="shown">19</span></span>
         </header>
         <div class="blot-scroll">
         <table class="blot" id="blot">
@@ -351,7 +348,7 @@ tfoot.blot-foot td.n { font-family:var(--font-mono); font-variant-numeric:tabula
       <section class="panel">
         <header>
           <span class="headline">Day P&amp;L attribution · <span id="wflbl">Desk · FX Vol</span></span>
-          <span class="note">Taylor decomposition · <span class="num">taylor_pnl</span> risk-cube</span>
+          <span class="note" title="taylor_pnl risk-cube — first 7 buckets are Taylor sensitivities; then Θ/roll, new trades, unexplained residual closing to MTM">Taylor decomposition</span>
         </header>
         <div class="body">
           <svg class="chart" viewBox="0 0 620 232" height="216" aria-label="P&L attribution waterfall">
@@ -420,7 +417,6 @@ tfoot.blot-foot td.n { font-family:var(--font-mono); font-variant-numeric:tabula
             <span><i style="background:var(--div-pos2)"></i> gain</span>
             <span><i style="background:var(--div-neg2)"></i> loss</span>
             <span><i style="background:var(--accent)"></i> net day P&amp;L</span>
-            <span class="note">first 7 buckets = <span class="num">taylor_pnl</span> sensitivities · Θ/roll · new-trades · unexplained residual close to MTM</span>
           </div>
         </div>
       </section>
@@ -435,13 +431,10 @@ tfoot.blot-foot td.n { font-family:var(--font-mono); font-variant-numeric:tabula
           <div class="legend" style="margin-top:6px">
             <span><i style="background:var(--div-pos2)"></i> gain</span>
             <span><i style="background:var(--div-neg2)"></i> loss</span>
-            <span><span class="tgt-dot"></span> federated · TARGET</span>
+            <span title="Rates book read from the RatesPositionStore aggregate, not the FX PositionStore — one net cross-asset book is the target"><span class="tgt-dot"></span> federated · TARGET</span>
           </div>
           <div style="margin-top:8px; padding-top:8px; border-top:var(--hairline); display:flex; justify-content:space-between; align-items:baseline">
             <span class="label">Desk total · day P&amp;L</span><span class="num pos" style="font-size:16px">+148.0k</span>
-          </div>
-          <div class="note" style="margin-top:8px; line-height:1.5">
-            Shared USD-k x-scale · 0-axis · min/max ticks. Rates book <span style="color:var(--accent)">federated</span> — value/greeks read from <span class="num">RatesPositionStore</span> aggregate, not the FX <span class="num">PositionStore</span>. One net cross-asset book is the <b style="color:var(--accent)">TARGET</b> (flow-links gap #4).
           </div>
         </div>
       </section>

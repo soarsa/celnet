@@ -129,8 +129,6 @@
   .surfview { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; margin-bottom:var(--space-3); }
   .surfview .sepv { width:1px; height:16px; background:var(--grid-line); }
   .segbtn button[disabled] { opacity:0.5; cursor:not-allowed; }
-  .surffoot { display:flex; flex-direction:column; gap:4px; margin-top:var(--space-3); font-size:var(--type-caption); color:var(--text-tertiary); }
-  .surffoot .num { color:var(--text-secondary); }
 </style>
 </head>
 <body data-surf="shaded">
@@ -199,7 +197,7 @@
         <button role="tab" class="on" aria-selected="true"><span>SSVI</span><span class="tag">parametric-surface</span></button>
         <button role="tab"><span>eSSVI</span><span class="tag">extended-surface</span></button>
       </div>
-      <span class="meta" id="modelmeta">calibrated 2m ago · <span class="num">build_model_smile</span> · fit RMSE <span class="num">0.030v</span></span>
+      <span class="meta" id="modelmeta">calibrated 2m ago · fit RMSE <span class="num">0.030v</span></span>
       <span style="flex:1"></span>
       <span class="selctl"><span class="lbl">weights</span> vega <span class="car">▾</span></span>
       <button class="btn">Recalibrate</button>
@@ -217,7 +215,7 @@
       <span class="invariant" title="Every marked version is stamped and immutable; live prices/streams may only reference a published version — never an in-flight edit.">
         <span class="lk">⛭</span> no-unmarked-edits invariant</span>
       <span style="flex:1"></span>
-      <span class="gatever">draft <b class="num">v129</b> <span class="dim">· prev live</span> <b class="num" style="color:var(--bid)">v128</b> <span class="dim">· sentinel v0=unmarked</span></span>
+      <span class="gatever" title="v0 = unmarked sentinel">draft <b class="num">v129</b> <span class="dim">· prev live</span> <b class="num" style="color:var(--bid)">v128</b></span>
       <span class="pill" title="One versioned SurfaceBook is visible to pricing, streaming and FIX at once — a publish pins across all three (LIVE).">
         <span class="dot live"></span> SurfaceBook ▸ price · stream · FIX</span>
       <button class="btn blocked" id="publishBtn" title="Publish is VETOED by the arb-gate — the 1W wing butterfly is negative (implied risk-neutral density &lt; 0). Re-mark the 1W 10ΔP/25ΔP wings or apply a wing override, then re-run the gate.">
@@ -253,7 +251,7 @@
           <span class="segbtn"><button disabled aria-disabled="true" title="DEFERRED (CAPABILITY-MAP §C6) — crypto has NO marked smile and prices off flat vol today; the planned surface is strike-pillar (not Δ-space)">BTC/USD · strike-axis</button></span>
           <span class="htag target" title="Crypto strike-axis surface — deferred fast-follow (CAPABILITY-MAP §C6); entry stays disabled rather than rendering a fabricated crypto smile">TARGET</span>
           <span style="flex:1"></span>
-          <span class="muted" id="surfviewnote" style="font-size:11px">σ_imp(Δ,T) · marked delta-space pillars</span>
+          <span class="muted" id="surfviewnote" style="font-size:11px">σ_imp(Δ,T) · marked Δ-pillars</span>
         </div>
         <div class="surfstage">
           <div class="surfwrap">
@@ -282,10 +280,6 @@
             <div class="lk"><span class="legdot" style="border-color:var(--accent); border-top-style:dashed"></span><i>term ATM</i></div>
             <div class="lk" style="color:var(--danger)">▧ arb-flagged cell · 1W wing</div>
           </div>
-        </div>
-        <div class="surffoot">
-          <span><span class="htag live">LIVE</span> Dupire local vol — <span class="num">LocalVolSurface::local_vol</span> (celnet-exotics/leverage.rs) extracts σ_loc from the marked smile; the LSV leverage calibrates on it (<span class="num">lsv.rs</span> particle method) · FX &amp; metals</span>
-          <span><span class="htag target">TARGET</span> Crypto strike-axis surface — deferred: no marked crypto smile, prices off flat vol today; strike-pillar axis (not Δ-space) once marked</span>
         </div>
       </div>
     </section>
@@ -319,7 +313,7 @@
 
       <!-- TERM structure -->
       <section class="panel">
-        <header><span class="headline">Term structure · ATM</span><span class="muted" style="font-size:11px">forward-vol consistent</span></header>
+        <header><span class="headline" title="Forward-vol consistent interpolation">Term structure · ATM</span></header>
         <div class="body" style="padding-bottom:var(--space-3)">
           <svg class="chart" viewBox="0 0 360 196" height="196" aria-label="ATM term structure">
             <line class="gl" x1="46" y1="162.5" x2="332" y2="162.5"/><text class="axlbl" x="40" y="165.5" text-anchor="end">7.0</text>
@@ -340,7 +334,7 @@
 
       <!-- IMPLIED − MODEL DIFF + arbitrage-flagged cells (fix-3: data-driven linked heatmap) -->
       <section class="panel">
-        <header><span class="headline">Implied − model</span><span class="muted" style="font-size:11px">vol pts · ⊘ arb-flag · brushed</span></header>
+        <header><span class="headline">Implied − model</span><span class="muted" style="font-size:11px">vol pts · ⊘ arb-flag</span></header>
         <div class="body">
           <table class="diff" aria-label="Implied minus model residual heatmap, diverging centred at zero">
             <thead><tr><th></th><th>10ΔP</th><th>25ΔP</th><th>35ΔP</th><th>ATM</th><th>35ΔC</th><th>25ΔC</th><th>10ΔC</th></tr></thead>
@@ -359,7 +353,7 @@
     <!-- PER-TENOR calibration + arb gate detail -->
     <section class="panel">
       <header>
-        <span class="headline">Calibration &amp; arbitrage gate · per tenor</span>
+        <span class="headline" title="Gate: butterfly (density ≥ 0) · vertical spread (C(K) monotone ↓) · calendar (Σvar ↑ in T)">Calibration &amp; arbitrage gate · per tenor</span>
         <span class="segbtn" id="gatefilter">
           <button class="on" data-f="all">All 7</button><button data-f="flag">Flagged 1</button>
         </span>
@@ -382,11 +376,6 @@
             <tr><td>2Y</td><td class="n">9.28</td><td class="n">−0.25</td><td class="n">0.20</td><td class="n">−0.38</td><td class="n">0.46</td><td class="n">1.1123</td><td>SSVI</td><td class="n">0.017</td><td class="n">+0.021</td><td class="n">+0.000</td><td class="n">ok</td><td><span class="rag g"></span>pass</td><td><span class="st live">live v128</span></td></tr>
           </tbody>
         </table>
-        <div style="display:flex; gap:var(--space-5); padding:var(--space-3) var(--space-5); border-top:var(--hairline); font-size:var(--type-caption); color:var(--text-tertiary); flex-wrap:wrap">
-          <span><b style="color:var(--text-secondary)">Arb gate</b> = butterfly (density ≥ 0) · vertical-spread (C(K) monotone ↓) · calendar (Σvar ↑ in T)</span>
-          <span style="flex:1"></span>
-          <span class="neg">1 tenor fails butterfly → publish of v129 blocked until re-mark or wing override</span>
-        </div>
       </div>
     </section>
 
@@ -654,7 +643,7 @@
   /* ============ model meta ============ */
   function refreshMeta(prefix){
     var rms=rmseCur.reduce(function(x,y){return x+y;},0)/rmseCur.length;
-    document.getElementById('modelmeta').innerHTML=prefix+' · <span class="num">build_model_smile('+curModel+')</span> · fit RMSE <span class="num">'+rms.toFixed(3)+'v</span> · <span class="neg">⚠ 1W slice fails butterfly</span>';
+    document.getElementById('modelmeta').innerHTML=prefix+' · fit RMSE <span class="num">'+rms.toFixed(3)+'v</span> · <span class="neg">⚠ 1W slice fails butterfly</span>';
   }
 
   /* ============ interactions ============ */
@@ -679,12 +668,12 @@
   // surface-family toggle — implied ↔ Dupire local-vol (LIVE). The crypto strike-axis entry is a
   // disabled TARGET outside this group (no marked crypto smile — nothing honest to render).
   var VIEWNOTE={
-    implied:'σ_imp(Δ,T) · marked delta-space pillars',
-    local:'σ_loc(K,T) at Δ-pillar strikes · extracted from THIS marked smile · backs LSV leverage'
+    implied:'σ_imp(Δ,T) · marked Δ-pillars',
+    local:'σ_loc(K,T) · Dupire'
   };
   var VIEWDIM={
     implied:'— tenor × delta, height & Viridis = implied vol',
-    local:'— tenor × delta, height & Viridis = Dupire local vol (from the marked smile)'
+    local:'— tenor × delta, height & Viridis = Dupire local vol'
   };
   function setView(v){
     curView=v;

@@ -20,7 +20,6 @@
 .fam.on { background:var(--accent-soft); color:var(--text-primary); border-color:transparent; box-shadow:inset 0 0 0 1px var(--accent); }
 .fam .htag { font-size:8px; padding:1px 5px; }
 .railscope { font-size:9px; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; color:var(--accent); }
-.wirenote { margin-left:auto; font-size:var(--type-caption); color:var(--text-tertiary); max-width:360px; text-align:right; }
 
 /* price panel headline metrics */
 .rmetrics { display:grid; grid-template-columns:1fr 1fr; gap:var(--space-3); }
@@ -31,7 +30,6 @@
 .rm.big .v { font-size:27px; line-height:1.05; }
 .rm .sub { font-size:var(--type-micro); color:var(--text-tertiary); font-family:var(--font-mono); }
 
-.actnote { font-size:var(--type-micro); color:var(--text-tertiary); margin-top:9px; line-height:1.4; }
 .tot td { border-top:1px solid var(--text-tertiary) !important; font-weight:600; color:var(--text-primary); }
 .selctl.wide { max-width:none; }
 </style>
@@ -98,12 +96,11 @@
       <span class="fam" data-long="USD 3×6 FRA · SOFR" data-short="FRA" data-wire="target" title="engine ✓ QuantLib-validated · not on the proto today">FRA <span class="htag target">WIRE TARGET</span></span>
       <span class="fam" data-long="SOFR 3M STIR future strip" data-short="STIR future" data-wire="target" title="engine ✓ (convexity-adjusted) · not on the proto today">STIR future <span class="htag target">WIRE TARGET</span></span>
       <span class="fam" data-long="UST 5Y cash bond" data-short="Cash bond" data-wire="target" title="engine ✓ (yield / Z-spread / ASW) · not on the proto today">Cash bond <span class="htag target">WIRE TARGET</span></span>
-      <span id="wireNote" class="wirenote">OIS prices LIVE end-to-end across all five clients — the one instrument arm on the wire today.</span>
     </div>
 
     <!-- curve selection hero (the model row's curve-first analog) -->
     <div class="model">
-      <span class="title" style="font-size:15px">Curve set · USD-SOFR <span class="car" style="font-size:11px">▾</span></span>
+      <span class="title" style="font-size:15px" title="One self-discounting OIS curve on the wire (CurveSet, USD-SOFR P0); separate discount vs per-tenor projection curves &amp; multi-currency are TARGET">Curve set · USD-SOFR <span class="car" style="font-size:11px">▾</span></span>
       <span class="meta">bootstrapped 2m ago · 6 OIS pillars · <span class="ok">✓ self-discounting</span> · <span class="dim">acyclic</span></span>
       <span class="selctl"><span class="lbl">discount</span> USD-SOFR <span class="car">▾</span></span>
       <span class="selctl"><span class="lbl">projection</span> USD-SOFR <span class="car">▾</span></span>
@@ -111,9 +108,6 @@
       <span style="flex:1"></span>
       <button class="btn">Re-bootstrap</button>
       <button class="btn ghost">Turns / meetings ◷</button>
-    </div>
-    <div class="dim" style="font-size:var(--type-micro); margin:-6px 2px 0">
-      One self-discounting OIS curve on the wire today (<span class="num">CurveSet</span>, USD-SOFR P0); separate discount vs per-tenor projection curves &amp; multi-currency are <span class="htag target">TARGET</span>.
     </div>
 
     <!-- PRICE (tall) · SCHEDULE&LEGS · DISCOUNT CURVE -->
@@ -155,7 +149,6 @@
           </div>
 
           <div class="label" style="margin:14px 0 4px">Key-rate DV01 ladder · USD/bp per calibrating pillar</div>
-          <div class="dim" style="font-size:var(--type-micro); margin-bottom:2px">FI risk is a Jacobian ladder against the curve pillars — not a Greek vector.</div>
           <svg class="chart" viewBox="0 0 340 180" height="176" aria-label="Key-rate DV01 ladder">
             <!-- zero baseline -->
             <line class="gl" x1="34" y1="42" x2="322" y2="42"/>
@@ -185,23 +178,17 @@
           <div class="kv"><span class="k">Σ key-rate</span><span class="v num">−45,050 <span class="dim">= DV01 · ladder reconciles</span></span></div>
 
           <div style="display:flex; gap:6px; margin-top:16px; flex-wrap:wrap">
-            <button class="btn primary" id="priceBtn">Price ▸ PriceRates</button>
-            <button class="btn ghost">Send to RFQ desk</button>
-            <button class="btn ghost">Book ▸ blotter</button>
-            <button class="btn ghost">Contribute ▸ stream</button>
-          </div>
-          <div class="actnote">
-            <span class="htag live">LIVE</span> <b>Price</b> — OIS via <span class="num">RatesService.PriceRates</span>.
-            <span class="htag live">LIVE</span> <b>RFQ desk</b> — the inbound desk-RFQ leg is wired today: <span class="num">RfqDeskEdge</span> submit ▸ respond ▸ accept books <span class="num">RatesPositionStore</span>, and desk pricing rides the same <span class="num">price_rates</span> (bit-equal per <span class="num">desk_pricing_matches_price_rates</span>).
-            <span class="htag live">LIVE</span> <b>Book</b> — the rates blotter (<span class="num">BookRatesPosition</span> · <span class="num">ListRatesPositions</span>).
-            <span class="htag target">TARGET</span> <b>Contribute</b> — only the outbound rates RFS/streaming contract is missing; no rates stream on the wire yet.
+            <button class="btn primary" id="priceBtn" title="LIVE — OIS via RatesService.PriceRates">Price ▸ PriceRates</button>
+            <button class="btn ghost" title="LIVE — RfqDeskEdge submit ▸ respond ▸ accept books RatesPositionStore; desk pricing bit-equal to price_rates">Send to RFQ desk</button>
+            <button class="btn ghost" title="LIVE — BookRatesPosition · ListRatesPositions">Book ▸ blotter</button>
+            <button class="btn ghost" title="No outbound rates RFS/streaming contract on the wire yet">Contribute ▸ stream <span class="htag target">TARGET</span></button>
           </div>
         </div>
       </section>
 
       <!-- schedule & leg shape builder -->
       <section class="panel">
-        <header><span class="headline">Schedule &amp; legs</span><span class="htag target" title="Convention selectors exceed the shipped OIS engine — see note below">TARGET · engine preview</span><span class="muted" style="font-size:11px">spot-start · 5Y · annual</span></header>
+        <header><span class="headline">Schedule &amp; legs</span><span class="htag target" title="bdc/stub/roll + 2d-lookback obs-shift are convention-schema targets — shipped OIS schedule is hard-wired mod-follow · US · ACT/360 (usd_sofr_ois_schedule); dates/tenor/notional/side ride the LIVE OisInstrument wire fields">TARGET · engine preview</span><span class="muted" style="font-size:11px">spot-start · 5Y · annual</span></header>
         <div class="body">
           <div class="ticketline" style="margin-bottom:10px">
             <span class="field"><span class="lbl">effective</span> 2 Jul 26</span>
@@ -218,10 +205,7 @@
             </tbody>
           </table>
           <div class="kv" style="margin-top:6px"><span class="k">notional</span><span class="v num">100.00mm USD <span class="dim">· no principal exchange</span></span></div>
-          <div class="kv"><span class="k">RFR observation</span><span class="v num">daily comp · 2d lookback <span class="dim">obs-shift</span> <span class="htag target">TARGET</span></span></div>
-          <div class="actnote">
-            <span class="htag target">TARGET</span> The bdc / stub / roll selectors and the 2d-lookback obs-shift are convention-schema targets: the shipped OIS schedule is hard-wired mod-follow · US calendar · ACT/360 (<span class="num">usd_sofr_ois_schedule</span>) and the float leg prices as a par/annuity identity, not an explicit daily-compounded accrual. The ticket dates/tenor/notional/side themselves ride the LIVE <span class="num">OisInstrument</span> wire fields.
-          </div>
+          <div class="kv"><span class="k">RFR observation</span><span class="v num">daily comp · 2d lookback <span class="dim">obs-shift</span> <span class="htag target" title="Shipped float leg prices as a par/annuity identity, not an explicit daily-compounded accrual">TARGET</span></span></div>
         </div>
       </section>
 
@@ -255,8 +239,8 @@
 
     <!-- cashflow schedule -->
     <section class="panel">
-      <header><span class="headline">Cashflow schedule</span><span class="htag target" title="No cashflow echo on the wire — RatesPricingResult carries pv · parRate · pv01 · dv01 · keyRateLadder only">TARGET · engine preview</span><span class="muted" style="font-size:11px">fixed vs SOFR-projected float · self-discounted · net PV</span></header>
-      <div class="body" style="padding:0 var(--space-4)">
+      <header><span class="headline">Cashflow schedule</span><span class="htag target" title="No cashflow echo on the wire — RatesPricingResult carries pv · parRate · pv01 · dv01 · keyRateLadder only; the Σ net PV reconciles to the LIVE PriceRates pv">TARGET · engine preview</span><span class="muted" style="font-size:11px">fixed vs SOFR-projected float · self-discounted · net PV</span></header>
+      <div class="body" style="padding:0 var(--space-4) var(--space-3)">
         <table class="grid">
           <thead><tr><th>#</th><th>accrual end</th><th>days</th><th>fixed CF (USD)</th><th>float CF · SOFR (USD)</th><th>DF</th><th>net PV (USD)</th></tr></thead>
           <tbody>
@@ -270,9 +254,6 @@
             <tr class="tot"><td>Σ</td><td class="n">5Y</td><td class="n">1,827</td><td class="n">21,061,250</td><td class="n">20,774,969</td><td class="n">—</td><td class="n pos">+239,840</td></tr>
           </tfoot>
         </table>
-        <div class="actnote" style="padding-bottom:var(--space-3)">
-          <span class="htag target">TARGET</span> Per-period rows are an engine preview — the wire <span class="num">RatesPricingResult</span> returns <span class="num">pv · parRate · pv01 · dv01 · keyRateLadder</span> only, with no cashflow/schedule echo; surfacing the schedule needs a wire extension. Only the Σ net-PV total reconciles to the LIVE <span class="num">PriceRates</span> pv above.
-        </div>
       </div>
     </section>
   </main>
@@ -280,11 +261,10 @@
   <!-- ============ CONTEXT RAIL ============ -->
   <aside class="ctx" aria-label="Desk context">
     <section>
-      <div class="grouphdr"><span class="label">Contribution · rates RFS</span><span class="htag target">TARGET</span></div>
+      <div class="grouphdr"><span class="label">Contribution · rates RFS</span><span class="htag target" title="No rates RFS/streaming contract on the wire yet — FX-style tiered OIS-rate streaming is the design target">TARGET</span></div>
       <div class="axeline"><span class="chip brand">T1</span><span class="bar"><i style="width:88%"></i></span><span class="num">0.4bp</span></div>
       <div class="axeline"><span class="chip brand">T2</span><span class="bar"><i style="width:60%"></i></span><span class="num">0.7bp</span></div>
       <div class="axeline"><span class="chip brand">T3</span><span class="bar"><i style="width:38%"></i></span><span class="num">1.1bp</span></div>
-      <div class="dim" style="font-size:var(--type-micro); margin-top:4px">No rates RFS/streaming contract on the wire yet — FX-style tiered OIS-rate streaming is the design target.</div>
     </section>
 
     <section>
@@ -301,8 +281,7 @@
       <div class="kv"><span class="k">DV01 (USD/bp)</span><span class="v num neg">−128k</span></div>
       <div class="kv"><span class="k">Key-rate peak</span><span class="v num">5Y · −61.2k</span></div>
       <div class="kv"><span class="k">DV01 limit</span><span class="v"><span class="rag g"></span>within</span></div>
-      <div class="kv"><span class="k">1d rates VaR</span><span class="v"><span class="htag target">TARGET</span> <span class="num dim">—</span></span></div>
-      <div class="dim" style="font-size:var(--type-micro); margin-top:4px"><span class="num">AggregateRatesRisk</span> · net PV/PV01/DV01 + key-rate ladder over the booked netting set; no VaR measure on the rates wire yet.</div>
+      <div class="kv"><span class="k">1d rates VaR</span><span class="v"><span class="htag target" title="No VaR measure on the rates wire yet">TARGET</span> <span class="num dim">—</span></span></div>
     </section>
 
     <section>
@@ -338,9 +317,6 @@
       st.className = 'state ' + (live ? 'live' : 'draft');
       st.textContent = live ? '● LIVE ▸ PriceRates' : '◷ ENGINE ▸ wire TARGET';
       document.getElementById('instName').textContent = f.dataset.long;
-      document.getElementById('wireNote').innerHTML = live
-        ? 'OIS prices LIVE end-to-end across all five clients — the one instrument arm on the wire today.'
-        : f.dataset.short + ' engine is QuantLib-validated — priced here as an engine preview; not yet on the proto (OIS-only today).';
     });
   });
   // Price — transient flash on the PV

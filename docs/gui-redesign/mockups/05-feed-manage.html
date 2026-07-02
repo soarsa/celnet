@@ -125,7 +125,7 @@
       <span class="meta">median consensus · MAD-gated outlier exclusion · <span class="num" id="flagCount">1</span> flagged this slice</span>
       <span class="selctl"><span class="lbl">half-life</span> <span class="num">12.0s</span> <span class="car">▾</span></span>
       <span class="selctl"><span class="lbl">tolerance</span> <span class="stepper" id="tolStep"><button data-d="-0.01" aria-label="decrease">−</button><span class="val" id="tolVal">0.12v</span><button data-d="0.01" aria-label="increase">+</button></span></span>
-      <span class="selctl"><span class="lbl">min-src gate</span> <span class="num">3</span></span>
+      <span class="selctl" title="≥3 sources needed to discriminate an outlier — dual/single-feed is measured but never flagged"><span class="lbl">min-src gate</span> <span class="num">3</span></span>
       <span style="flex:1"></span>
       <button class="btn ghost" title="Runs blend() over the live slice without publishing — celnet-integration::aggregate::blend">Preview blend ◷</button>
     </div>
@@ -181,14 +181,14 @@
       <section class="panel">
         <header>
           <span class="headline">Inbound latency &amp; update-rate</span>
-          <span class="muted" style="font-size:11px">inter-arrival · HdrHistogram p50/p99 · per SubscriptionKey</span>
+          <span class="muted" style="font-size:11px" title="HdrHistogram inter-arrival percentiles · per SubscriptionKey">inter-arrival p50/p99</span>
         </header>
         <div class="body" style="padding-bottom:var(--space-3)">
           <div class="legend" style="margin-bottom:8px">
             <span class="lg"><span class="sw" style="width:8px;height:8px;border-radius:50%;background:var(--text-secondary)"></span>p50</span>
             <span class="lg"><span class="sw" style="background:var(--text-secondary)"></span>p50–p99</span>
-            <span class="lg"><span class="sw dash" style="border-top:2px dashed var(--warn)"></span>stale cutoff 2.0s</span>
-            <span class="lg" style="color:var(--text-tertiary)">colour = source (Viridis)</span>
+            <span class="lg" title="a p99 whisker past the cutoff marks the source stale — its weight 2^(−age/½-life) collapses and, with a smile-dev breach, it drops from the blend"><span class="sw dash" style="border-top:2px dashed var(--warn)"></span>stale cutoff 2.0s</span>
+            <span class="lg" style="color:var(--text-tertiary)">colour = source</span>
           </div>
           <svg class="chart" viewBox="0 0 360 208" height="212" aria-label="Per-source inter-arrival latency, log time axis with p50 marker and p99 whisker per source">
             <!-- log-time x gridlines + labels (1ms · 10 · 100 · 1s) -->
@@ -230,7 +230,6 @@
             <line x1="332.3" y1="165" x2="332.3" y2="173" style="stroke:var(--warn);stroke-width:1.6"/>
             <circle cx="281.6" cy="169" r="3.4" fill="var(--seq-6)"/><circle cx="332.3" cy="169" r="2.6" fill="var(--warn)"/>
           </svg>
-          <div class="cardnote" style="margin-top:6px">A p99 whisker past the 2.0s cutoff marks a stale source: Vendor-C's 4.2s inter-arrival collapses its staleness weight <span class="num">2^(−age/½-life)</span> and, with a smile-dev breach, drops it from the blend. Signed ±dev per source lives in the table below.</div>
         </div>
       </section>
     </div>
@@ -239,13 +238,13 @@
     <section class="panel">
       <header>
         <span class="headline">Inbound sources · freshness &amp; health</span>
-        <span class="muted" style="font-size:11px">SubscriptionKey EUR/USD·1M · valuation-anchored ages · staleness weight = 2^(−age / half-life)</span>
+        <span class="muted" style="font-size:11px" title="valuation-anchored ages · SubscriptionKey EUR/USD·1M">EUR/USD·1M · staleness wt = 2^(−age/½-life)</span>
       </header>
       <div class="body" style="padding-top:var(--space-2)">
         <table class="grid">
           <thead>
             <tr>
-              <th>Source</th><th>Vendor symbol</th><th>Transport</th><th>Last tick</th><th>Staleness wt</th><th>Max dev (v)</th><th>Blend wt</th><th style="text-align:left">Recent freshness</th><th style="text-align:left">State</th><th style="text-align:center">Include</th>
+              <th>Source</th><th>Vendor symbol</th><th>Transport</th><th>Last tick</th><th>Staleness wt</th><th title="max smile deviation vs the per-quantity median consensus (ATM · 25ΔC/P · 10ΔC/P); excluded only when it breaches both the absolute tolerance and the data-adaptive MAD bound">Max dev (v)</th><th>Blend wt</th><th style="text-align:left">Recent freshness</th><th style="text-align:left">State</th><th style="text-align:center">Include</th>
             </tr>
           </thead>
           <tbody>
@@ -287,7 +286,6 @@
             </tr>
           </tbody>
         </table>
-        <div class="cardnote" style="margin-top:8px">Gate needs ≥ 3 sources to discriminate an outlier (dual/single-feed ⇒ measured but never flagged). Consensus is the per-quantity <b>median</b> over ATM · 25ΔC/P · 10ΔC/P; a source is excluded only when its max smile deviation breaches <b>both</b> the absolute tolerance and the data-adaptive MAD bound.</div>
       </div>
     </section>
 
@@ -298,7 +296,7 @@
       <section class="panel">
         <header>
           <span class="headline">Symbology &amp; normalization</span>
-          <span class="muted" style="font-size:11px">vendor tick → canonical NormalizedSlice</span>
+          <span class="muted" style="font-size:11px" title="tenor pillars resolve to a common grid (1W·2W·1M·2M·3M·6M·1Y); wings arrive as 25Δ/10Δ RR·BF">vendor tick → canonical NormalizedSlice</span>
         </header>
         <div class="body" style="padding-top:var(--space-2)">
           <table class="map">
@@ -306,11 +304,10 @@
             <tbody>
               <tr><td>EBS</td><td class="vend">EURUSD</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">spot · pa</td></tr>
               <tr><td>Reuters</td><td class="vend">EUR=</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">spot · pa</td></tr>
-              <tr><td>Vendor-C</td><td class="vend">EUR/USD.SPOT</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">fwd · <span class="warn">unadj ⚠</span></td></tr>
+              <tr><td>Vendor-C</td><td class="vend">EUR/USD.SPOT</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px" title="forward-delta, premium-unadjusted — normalized on ingest before consensus; likely driver of its divergence">fwd · <span class="warn">unadj ⚠</span></td></tr>
               <tr><td>Celer-Internal</td><td class="vend">EURUSD</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">spot · pa</td></tr>
             </tbody>
           </table>
-          <div class="cardnote" style="margin-top:10px">Tenor pillars resolve to a common grid (1W·2W·1M·2M·3M·6M·1Y); wings arrive as 25Δ/10Δ RR·BF. Vendor-C publishes a <b>forward-delta, premium-unadjusted</b> convention — normalized on ingest before consensus, and a likely driver of its divergence.</div>
           <div style="margin-top:12px;display:flex;gap:6px">
             <button class="btn ghost">Add source ＋</button>
             <button class="btn ghost">Edit mapping</button>
@@ -328,7 +325,7 @@
           <div class="cfgrow"><span class="k">Scheme</span><span class="num" style="font-size:12px">staleness-weighted · exp half-life</span></div>
           <div class="cfgrow"><span class="k">Staleness half-life</span><span class="num" style="font-size:12px">12.0s</span></div>
           <div class="cfgrow"><span class="k">Divergence tolerance</span><span class="num" style="font-size:12px" id="tolVal2">0.12v</span></div>
-          <div class="cfgrow"><span class="k">Surviving weight Σ</span><span class="num" style="font-size:12px">1.000 · <span id="contribTxt">3 sources</span></span></div>
+          <div class="cfgrow" title="excluded sources drop to a hard 0.0; survivors re-normalize to Σ1 — the outer 10Δ wing re-normalizes only over the sources that carry it"><span class="k">Surviving weight Σ</span><span class="num" style="font-size:12px">1.000 · <span id="contribTxt">3 sources</span></span></div>
 
           <div class="label" style="margin:14px 0 6px">Final normalized weights</div>
           <div class="wrow" id="wr-EBS"><span class="src"><span class="srcdot" style="background:var(--seq-2)"></span>EBS</span><span class="wbar"><i id="wb-EBS" style="width:41%"></i></span><span class="wv" id="wv-EBS">0.41</span></div>
@@ -336,7 +333,6 @@
           <div class="wrow" id="wr-Celer"><span class="src"><span class="srcdot" style="background:var(--seq-4)"></span>Celer-Internal</span><span class="wbar"><i id="wb-Celer" style="width:26%"></i></span><span class="wv" id="wv-Celer">0.26</span></div>
           <div class="wrow ex" id="wr-VendorC"><span class="src"><span class="srcdot" style="background:var(--seq-6)"></span>Vendor-C</span><span class="wbar"><i id="wb-VendorC" style="width:0%"></i></span><span class="wv dim" id="wv-VendorC">excl</span></div>
 
-          <div class="cardnote" style="margin-top:10px">Excluded sources drop to a hard <span class="num">0.0</span>; the surviving staleness weights re-normalize to Σ 1. Outer 10Δ wing is re-normalized only over the sources that carry it, so a missing wing never biases the blend.</div>
           <div style="margin-top:12px;display:flex;gap:6px;align-items:center">
             <button class="btn primary" title="Wiring target — activates FEEDS → PRICING">Wire to surface ▸</button>
             <span class="cardnote">blended slice → auto-calibrate marks <span class="badge target" style="padding:1px 7px">TARGET</span></span>
@@ -349,16 +345,13 @@
     <section class="panel">
       <header>
         <span class="headline">FIX session admin</span>
-        <span style="display:flex;gap:8px;align-items:center">
-          <span class="cardnote">initiator = outbound feed/quote · acceptor = inbound client</span>
-          <span class="badge live" title="celnet-fix Session state machine — wired &amp; running">LIVE</span>
-        </span>
+        <span class="badge live" title="celnet-fix Session state machine — wired &amp; running">LIVE</span>
       </header>
       <div class="body" style="padding-top:var(--space-2)">
         <table class="grid">
           <thead>
             <tr>
-              <th style="text-align:left">Session · Sender → Target</th><th style="text-align:left">Role</th><th style="text-align:left">State</th><th>Seq out</th><th>Seq in (exp)</th><th>HB</th><th>Last HB</th><th>Resend</th><th style="text-align:left">Admin</th>
+              <th style="text-align:left">Session · Sender → Target</th><th style="text-align:left" title="initiator = outbound feed/quote · acceptor = inbound client">Role</th><th style="text-align:left" title="Disconnected → LogonPending → Active → LogoutPending · seq resync via ResendRequest / gap-fill is automatic">State</th><th>Seq out</th><th>Seq in (exp)</th><th>HB</th><th>Last HB</th><th>Resend</th><th style="text-align:left" title="connectivity-only — no order or execution surface">Admin</th>
             </tr>
           </thead>
           <tbody>
@@ -394,7 +387,6 @@
             </tr>
           </tbody>
         </table>
-        <div class="cardnote" style="margin-top:8px">State machine: Disconnected → LogonPending → Active → LogoutPending. Seq-number resync via ResendRequest / gap-fill is automatic; admin actions here are connectivity-only (no order or execution surface).</div>
       </div>
     </section>
   </main>

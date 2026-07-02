@@ -139,8 +139,7 @@
 
     <!-- header row -->
     <div class="xhead">
-      <span class="title" style="font-size:20px">XVA</span>
-      <span class="muted" style="font-size:13px">Portfolio credit &amp; funding valuation adjustments · post-trade</span>
+      <span class="title" style="font-size:20px" title="Portfolio credit &amp; funding valuation adjustments · post-trade">XVA</span>
       <span class="coming" title="celnet-xva::compute_xva is a scaffold — no proto/WS wire surface yet (D-xva activation)">◷ TARGET · coming</span>
       <span style="flex:1"></span>
       <span class="field"><span class="lbl">netting sets</span> All · 5 <span class="car">▾</span></span>
@@ -150,7 +149,7 @@
 
     <!-- honesty / integration strip (per KNOWLEDGE-flow-links) -->
     <div class="honest">
-      <span><b class="muted">Engine</b> <span class="num">celnet-xva::compute_xva</span> present · exposure = Sobol-LSMC (Owen-scramble, bit-reproducible) · <span class="dim">callers 0 · illustrative figures</span></span>
+      <span title="Engine present, callers 0 — exposure = Sobol-LSMC (Owen-scramble, bit-reproducible)"><b class="muted">Engine</b> <span class="num">celnet-xva::compute_xva</span> · <span class="dim">illustrative figures</span></span>
       <span style="flex:1"></span>
       <span class="lk"><span class="tg tgt">target</span> exposures ← book</span>
       <span class="lk"><span class="tg tgt">target</span> XVA → pricing skew</span>
@@ -313,8 +312,8 @@
             <text class="axlbl" x="584" y="285" text-anchor="middle">18M</text>
             <text class="axlbl b" x="676" y="285" text-anchor="middle">2Y·H</text>
           </svg>
-          <div class="dim" style="font-size:var(--type-micro); margin-top:2px; text-align:right">
-            band = PFE 5–95% quantiles · inner = 25–75% · line = expected exposure · dashed = time-average EPE
+          <div class="dim" style="font-size:var(--type-micro); margin-top:2px; text-align:right" title="Line = expected exposure · dashed = time-average EPE">
+            band 5–95% · inner 25–75% quantiles
           </div>
         </div>
       </section>
@@ -362,7 +361,7 @@
             <text class="blab" x="150" y="214" text-anchor="middle">DVA</text>
             <text class="blab" x="230" y="214" text-anchor="middle">FVA</text>
             <text class="blab" x="308" y="214" text-anchor="middle" fill="var(--text-primary)">XVA</text>
-            <text class="blab" x="200" y="232" text-anchor="middle" fill="var(--text-tertiary)">MVA · KVA — not modelled (scaffold)</text>
+            <text class="blab" x="200" y="232" text-anchor="middle" fill="var(--text-tertiary)">MVA · KVA — not modelled</text>
           </svg>
         </div>
       </section>
@@ -370,8 +369,7 @@
       <!-- CREDIT & COLLATERAL (survival/hazard grounding) -->
       <section class="panel" style="grid-column:1 / -1">
         <header>
-          <span class="headline">Credit &amp; collateral · <span id="credit-name">Halcyon Asset Mgmt</span></span>
-          <span class="muted" style="font-size:11px">drives CVA (counterparty survival) · FVA (funding on net EE)</span>
+          <span class="headline" title="Drives CVA (counterparty survival) and FVA (funding on net EE)">Credit &amp; collateral · <span id="credit-name">Halcyon Asset Mgmt</span></span>
         </header>
         <div class="body" style="display:grid; grid-template-columns:320px 1fr; gap:var(--space-5); align-items:center">
           <!-- CDS term structure mini -->
