@@ -1,3 +1,46 @@
+/* --- class-parametric lens shell (fe-fi-migration) ---------------------------
+ * The ONE Risk workspace hosts the FX/options scenario lens and the fixed-income
+ * rates lens. A slim segmented toggle sits above the active lens body, which
+ * fills the remaining height (each lens keeps its own full-height layout). */
+.classShell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.lensBar {
+  display: flex;
+  gap: 2px;
+  align-self: start;
+  background: var(--bg-inset);
+  border-radius: var(--r-sm);
+  padding: 2px;
+  margin-bottom: var(--space-4);
+}
+.lensTab {
+  padding: var(--space-1) var(--space-4);
+  border-radius: 4px;
+  font-size: var(--type-caption);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.lensTab:hover {
+  color: var(--text-primary);
+}
+.lensTabActive {
+  background: var(--accent-soft);
+  /* High-contrast label (AA ≥4.5:1); the accent reads as an underline indicator,
+   * not the text colour (accent-on-tint was 3.99:1 — axe serious). */
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent);
+  font-weight: var(--weight-emphasis);
+}
+.lensBody {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .grid {
   display: grid;
   grid-template-columns: 1fr 320px;
