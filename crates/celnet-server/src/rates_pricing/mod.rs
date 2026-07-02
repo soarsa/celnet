@@ -39,6 +39,9 @@ use celnet_rates::{
 use celnet_types::Rate;
 use time::{Date, Month};
 
+mod contract;
+pub use contract::{BondPriced, price_bond_via_contract, price_rates_via_contract};
+
 /// The ISO 4217 code of the only currency the P0 rates arm supports.
 const SUPPORTED_CURRENCY: &str = "USD";
 
