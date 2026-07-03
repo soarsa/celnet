@@ -138,6 +138,7 @@ import type {
   RatesLegDayCount,
   RatesCurveSet,
   RatesPricingResult,
+  RatesQuote,
   RatesStreamSnapshot,
   RatesStreamUpdate,
   BuildCurveRequest,
@@ -1055,6 +1056,63 @@ export function ratesPricingResultFromWire(o: WireObject): RatesPricingResult {
     dv01: num(result, "dv01"),
     keyRateLadder,
   };
+}
+
+// --- fixed-income (rates): RFQ two-way (RequestRatesQuote) --------------------
+//
+// The taker's fixed-income RFQ (`QuoteService.RequestRatesQuote`) over the WS
+// mirror. The request body is byte-compatible with the server's
+// `generated_codec::decode_rates_quote_request`
+// (crates/celnet-server/src/ws/generated_codec.rs): it REUSES the SHARED
+// `curve_set` + `instrument` encoders the rates unary edge already speaks
+// (`ratesCurveSetToWire` / `ratesInstrumentUnionToWire`) plus the RFQ envelope
+// (`notional`, the taker `side`). The envelope `side` is the taker's directional
+// intent (SIDE_BUY / SIDE_SELL / SIDE_TWO_WAY) and governs the returned risk sign;
+// the instrument arm carries its own direction independently. The `rates_quote`
+// reply decodes from the server codec's `encode_rates_quote` (the SAME snake_case
+// fields, reusing `twoWayFromWire` for `price` and `ratesPricingResultFromWire` for
+// the `result` child). There is only the single two-way on the contract — the
+// multi-dealer panel wire (`QuoteRequest`) is FX-`Instrument` only — so no rates
+// `DealerQuote` ladder is encoded/decoded.
+
+/**
+ * Encode a `RatesQuoteRequest` to its wire body (minus the frame `type` the
+ * `WsConnection` injects). Byte-compatible with the server decoder: the exact
+ * snake_case field names and integer `Side` code it reads, reusing the shared
+ * curve/instrument encoders (one encoding, no duplication).
+ */
+export function ratesQuoteRequestToWire(
+  idempotencyKey: string,
+  curve: RatesCurveSet,
+  instrument: RatesInstrument,
+  notional: number,
+  side: Side,
+): WireObject {
+  return {
+    idempotency_key: idempotencyKey,
+    curve_set: ratesCurveSetToWire(curve),
+    instrument: ratesInstrumentUnionToWire(instrument),
+    notional,
+    side: e.side.toWire(side),
+  };
+}
+
+/** Decode a `rates_quote` reply frame into a {@link RatesQuote}. */
+export function ratesQuoteFromWire(o: WireObject): RatesQuote {
+  const q: RatesQuote = {
+    quoteId: numToBigInt(o, "quote_id"),
+    idempotencyKey: str(o, "idempotency_key"),
+    price: twoWayFromWire(child(o, "price")),
+    // The reply's `result` child is the full FI risk; `ratesPricingResultFromWire`
+    // reads the `result` key off the object it is handed (the quote frame here).
+    result: ratesPricingResultFromWire(o),
+    notional: num(o, "notional"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+    validUntilNanos: numToBigInt(o, "valid_until_nanos"),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) q.correlationId = corr;
+  return q;
 }
 
 // --- fixed-income (rates): LIVE STREAMING subscribe + snapshot/update ---------

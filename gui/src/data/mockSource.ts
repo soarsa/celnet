@@ -84,6 +84,7 @@ import type {
   DatePillar,
   RatesPosition,
   RatesPricingResult,
+  RatesQuote,
   RatesRiskNode,
   RatesStreamSnapshot,
   RatesStreamUpdate,
@@ -96,6 +97,7 @@ import type {
   ScenarioResult,
   ShockAxis,
   ShockFactor,
+  Side,
   Smile,
   SmileModel,
   Snapshot,
@@ -120,6 +122,7 @@ import {
   combinedTailRiskOffline,
   priceRatesOffline,
   priceRatesInstrumentOffline,
+  ratesRfqTwoWayOffline,
   bootstrapCurveFromSet,
   discountFactorAt,
   zeroRateAt,
@@ -1173,6 +1176,36 @@ export class MockTransport implements CelnetTransport {
     if (quote.surfaceVersion !== undefined)
       panel.surfaceVersion = quote.surfaceVersion;
     return panel;
+  }
+
+  async requestRatesQuote(
+    curve: RatesCurveSet,
+    instrument: RatesInstrument,
+    notional: number,
+    side: Side,
+    idempotencyKey: string,
+  ): Promise<RatesQuote> {
+    // A GENUINE in-browser fixed-income two-way: reproduce the server's
+    // `quote_rates_two_way` — the side-independent fair level (par rate for an
+    // OIS/IRS/FRA, clean price for a cash bond) split the same maker half-spread
+    // either side, with the FULL `priceRates` risk signed to the RFQ envelope side —
+    // so the offline two-way mid equals the offline `priceRates` mid EXACTLY and
+    // agrees with the live `request_rates_quote` RPC. A malformed curve/instrument
+    // throws (mirroring the server refusal), surfaced by the workspace as a live
+    // transport error would be. Like the server handler, the quote is a pure
+    // calculation and is not deduplicated on the idempotency key (a fresh quote id
+    // + timestamps each call); the key is echoed for the taker's correlation.
+    const two = ratesRfqTwoWayOffline(curve, instrument, side);
+    const now = nowNanos();
+    return {
+      quoteId: this.quoteSeq++,
+      idempotencyKey,
+      price: { bid: two.bid, offer: two.offer },
+      result: two.result,
+      notional,
+      epochNanos: now,
+      validUntilNanos: now + 8_000n * NS_PER_MS, // 8s RFQ last-look
+    };
   }
 
   async acceptQuote(

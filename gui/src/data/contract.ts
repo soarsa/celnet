@@ -2505,6 +2505,41 @@ export interface RatesPricingResult {
   keyRateLadder: readonly number[];
 }
 
+/**
+ * A tradeable two-way quote for a linear-rates instrument (`celnet.wire
+ * .RatesQuote`, returned by `QuoteService.RequestRatesQuote`) — the fixed-income
+ * analogue of {@link Quote}. The taker's price-discovery two-way, mirroring the
+ * FIX venue auto-quote: `price` is struck around the SIDE-INDEPENDENT fair level —
+ * a RATE market (bid/offer around the par rate) for an OIS/IRS/FRA, a clean-PRICE
+ * market (bid/offer around the clean price per 100 face) for a cash bond — so
+ * `(bid+offer)/2` is the fair level the FI pricing path computed. `result` carries
+ * the full linear-rates risk (PV, par rate, PV01, DV01, key-rate ladder) at the
+ * requested `side`. There is NO multi-dealer rates path on the contract: the
+ * client-reachable FI RFQ is this single two-way (the `QuoteRequest` panel wire is
+ * FX-`Instrument` only), so no `DealerQuote` ladder is fabricated for rates.
+ */
+export interface RatesQuote {
+  /** Server-assigned stable, unguessable quote identifier (minted like `Quote.quoteId`). */
+  quoteId: bigint;
+  /** Echo of the originating request's idempotency key. */
+  idempotencyKey: string;
+  /**
+   * The two-way bid/offer: a rate market for an OIS/IRS/FRA, a clean-price market
+   * for a cash bond. `(bid+offer)/2` is the side-independent fair level.
+   */
+  price: TwoWayPrice;
+  /** The full linear-rates risk of the quoted position at the requested `side`. */
+  result: RatesPricingResult;
+  /** The RFQ size the two-way is good for (curve currency), echoed from the request. */
+  notional: number;
+  /** Publication time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+  /** Quote validity deadline (last-look window), nanoseconds since the Unix epoch (UTC). */
+  validUntilNanos: bigint;
+  /** Echo of the originating request's correlation id, if one was supplied. */
+  correlationId?: bigint;
+}
+
 // ---------------------------------------------------------------------------
 // Fixed-income (linear-rates) LIVE STREAMING — the FI analogue of the FX
 // Snapshot/Update RFS line, folded onto the SAME multiplexed StreamSession (and

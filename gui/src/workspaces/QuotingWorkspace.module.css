@@ -329,3 +329,195 @@
   font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
   color: var(--text-secondary);
 }
+
+/* --- class-parametric mode bar (respond desk | taker RFQ) --- */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.modeBar {
+  display: flex;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
+.modeTab {
+  font: var(--type-caption) / 1 var(--font-ui);
+  font-weight: var(--weight-emphasis);
+  letter-spacing: 0.03em;
+  padding: var(--space-2) var(--space-4);
+  border: var(--hairline) solid var(--grid-line);
+  border-radius: var(--r-md);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color var(--workspace-switch) var(--ease-out),
+    background var(--workspace-switch) var(--ease-out),
+    color var(--workspace-switch) var(--ease-out);
+}
+
+.modeTab:hover {
+  border-color: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.modeTab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.modeTabActive {
+  border-color: var(--accent);
+  background: var(--bg-raised);
+  color: var(--accent);
+}
+
+/* The mode bar sits above the desk grid or the taker region; the grid must fill. */
+.root .wrap {
+  flex: 1 1 auto;
+  height: auto;
+  padding: 0;
+}
+
+.takerRegion {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* --- taker RFQ panel --- */
+
+.taker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 720px;
+}
+
+.takerHint {
+  margin: 0;
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  color: var(--text-secondary);
+}
+
+.rfqForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.armSet {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.segmented {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: 3px;
+  border: var(--hairline) solid var(--grid-line);
+  border-radius: var(--r-md);
+  background: var(--bg-inset);
+}
+
+.segItem {
+  font: var(--type-caption) / 1 var(--font-mono);
+  font-weight: var(--weight-emphasis);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--workspace-switch) var(--ease-out),
+    color var(--workspace-switch) var(--ease-out);
+}
+
+.segItem:hover {
+  color: var(--text-primary);
+}
+
+.segItem:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.segItemActive {
+  background: var(--accent);
+  color: var(--bg-base);
+}
+
+.rfqFields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.rfqFields .input {
+  width: 96px;
+}
+
+.quoteResult {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border-top: var(--hairline) solid var(--grid-line);
+  padding-top: var(--space-3);
+}
+
+.twoWay {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.twoWaySide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--grid-line);
+  border-radius: var(--r-md);
+  background: var(--bg-inset);
+}
+
+.bidSide {
+  border-color: color-mix(in oklab, var(--bid) 45%, var(--grid-line));
+}
+
+.offerSide {
+  border-color: color-mix(in oklab, var(--offer) 45%, var(--grid-line));
+}
+
+.twoWayLabel {
+  font: var(--type-micro) / 1 var(--font-mono);
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.twoWayValue {
+  font: var(--type-headline) / var(--type-headline-lh) var(--font-mono);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+
+.bidSide .twoWayValue {
+  color: var(--bid);
+}
+
+.offerSide .twoWayValue {
+  color: var(--offer);
+}
