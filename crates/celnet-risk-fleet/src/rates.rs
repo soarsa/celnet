@@ -65,6 +65,8 @@ use celnet_risk_cube::{BookId, EntityId};
 use celnet_router::{PartitionKey, PartitionMap, ReplicaId, RouteError, TenantId};
 use celnet_types::Ccy;
 
+use crate::additive::{AdditiveAggregate, fan_in_additive_seq};
+
 /// One bucket of a key-rate (instrument-Jacobian) ladder: the DV01 attributable
 /// to a single calibrating-instrument **tenor**, in PV (settlement-currency)
 /// terms.
@@ -331,6 +333,21 @@ impl RatesFirmRollup {
     }
 }
 
+/// The fixed-income additive aggregate joins the **one class-parametric additive
+/// fan-in seam** ([`AdditiveAggregate`], the additive-side complement of the C2c
+/// non-additive cube unification): `combine` is the existing fixed-order per-currency
+/// [`RatesFirmRollup::merge`], so the shared [`fan_in_additive_seq`] driver folds the
+/// FI net-DV01 / PV01 / key-rate ladder through the **same** path as the options
+/// net-Greeks / vega ladder. Its exact-reconciliation contract is unchanged: the
+/// re-fold pins the fixed ascending-`(ccy, entity, tenor)` summation order, so the
+/// fan-in equals the single-node [`firm_aggregate_rates`] **bit-for-bit** under any
+/// sharding (the F5 invariant).
+impl AdditiveAggregate for RatesFirmRollup {
+    fn combine(self, other: &Self) -> Self {
+        self.merge(other)
+    }
+}
+
 /// The single-node **reference** roll-up over a whole book: per-currency net
 /// PV/PV01/DV01 and the tenor-bucketed key-rate ladder, computed directly from the
 /// full fact list in the fixed `(ccy, entity, tenor)` summation order.
@@ -435,17 +452,19 @@ impl RatesFleetReducer {
     /// order. Associative + commutative bit-for-bit, so the result equals
     /// [`firm_aggregate_rates`] over the union of facts **exactly** (proven by the
     /// invariant test) — independent of the sharding.
+    ///
+    /// Delegates to the **one class-parametric additive fan-in driver**
+    /// ([`fan_in_additive_seq`]) — the single additive-aggregation path shared with
+    /// the options reducer ([`crate::FleetReducer::fan_in_additive`]); the FI
+    /// aggregate's fixed-order [`RatesFirmRollup::merge`] rides through it as its
+    /// [`AdditiveAggregate::combine`]. Byte-identical to the prior hand-written left
+    /// fold (same `merge`, same ascending-owner order).
     #[must_use]
     pub fn fan_in_additive(&self) -> RatesFirmRollup {
-        let mut iter = self.shards.iter();
-        let Some(first) = iter.next() else {
-            return RatesFirmRollup::empty();
-        };
-        let mut acc = first.local_aggregate();
-        for shard in iter {
-            acc = acc.merge(&shard.local_aggregate());
-        }
-        acc
+        fan_in_additive_seq(
+            self.shards.iter().map(RatesLogicalShard::local_aggregate),
+            RatesFirmRollup::empty,
+        )
     }
 }
 
@@ -677,6 +696,52 @@ mod tests {
             "EUR 2y dv01 {}",
             two_y.dv01
         );
+    }
+
+    /// The pre-unification hand-written left fold, reconstructed inline: seed with
+    /// the first shard's local roll-up, then [`RatesFirmRollup::merge`] each
+    /// subsequent shard in ascending-owner order. The reference the unified driver
+    /// must reproduce bit-for-bit.
+    fn hand_fold(reducer: &RatesFleetReducer) -> RatesFirmRollup {
+        let mut iter = reducer.shards().iter();
+        let Some(first) = iter.next() else {
+            return RatesFirmRollup::empty();
+        };
+        let mut acc = first.local_aggregate();
+        for shard in iter {
+            acc = acc.merge(&shard.local_aggregate());
+        }
+        acc
+    }
+
+    /// **UNIFIED DRIVER — FI parity oracle (non-circular).** After folding the
+    /// fixed-income roll-up through the shared class-parametric fan-in driver
+    /// ([`fan_in_additive_seq`], behind [`RatesFleetReducer::fan_in_additive`]), the
+    /// result is (1) **bit-for-bit** equal to the pre-unification hand-written left
+    /// fold over the same shards (behavior preservation — same `merge`, same order),
+    /// and (2) **bit-for-bit** equal to the INDEPENDENT single-node reference
+    /// [`firm_aggregate_rates`] (a direct `from_facts` fold that never runs the
+    /// sharded reducer — the F5 invariant as a non-circular oracle that the refactor
+    /// is exact).
+    #[test]
+    fn unified_fan_in_equals_prior_hand_fold_and_single_node() {
+        let facts = firm_book();
+        let set = replicas(&[1, 2, 3, 4, 5]);
+        let map = PartitionMap::new(&set);
+        let reducer = partition_rates_facts(&facts, &map).unwrap();
+        assert!(
+            reducer.shard_count() >= 2,
+            "must genuinely fan across >=2 shards, got {}",
+            reducer.shard_count()
+        );
+
+        let unified = reducer.fan_in_additive();
+
+        // (1) Behavior preservation vs the prior hand fold.
+        assert_rollup_bit_equal(&unified, &hand_fold(&reducer));
+
+        // (2) Still exact against the independent single-node reference.
+        assert_rollup_bit_equal(&unified, &firm_aggregate_rates(&facts));
     }
 
     /// **Sharding is a disjoint cover.** Every fact lands on exactly one shard;

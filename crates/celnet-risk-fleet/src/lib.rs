@@ -88,8 +88,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod additive;
 pub mod rates;
 
+pub use additive::{AdditiveAggregate, fan_in_additive_seq};
 pub use rates::{
     KeyRateBucket, RatesFactKey, RatesFirmRollup, RatesFleetReducer, RatesLogicalShard,
     RatesNodeAggregate, RatesRiskFact, firm_aggregate_rates, partition_rates_facts,
@@ -292,6 +294,19 @@ impl LogicalShard {
     }
 }
 
+/// The options additive aggregate joins the **one class-parametric additive fan-in
+/// seam** ([`AdditiveAggregate`]): `combine` is the existing in-place
+/// [`NodeAggregate::merge_additive`] net-sum, wrapped by-value so the shared
+/// [`fan_in_additive_seq`] driver folds it left-to-right identically to the
+/// pre-unification loop. Byte-identical: the same field-sum + ladder merge + concat,
+/// in the same order.
+impl AdditiveAggregate for NodeAggregate {
+    fn combine(mut self, other: &Self) -> Self {
+        self.merge_additive(other);
+        self
+    }
+}
+
 /// The fan-out / fan-in **cross-shard reducer** (`docs/RISK-HIERARCHY.md` §3.4).
 ///
 /// Holds the logical shards produced by [`partition_facts`] in **deterministic
@@ -330,17 +345,20 @@ impl FleetReducer {
     /// deterministic owner order. Associative + commutative → **exactly** the
     /// single-node [`Cube::firm_aggregate`] over the union of facts (up to
     /// floating-point summation order, which the fixed order pins).
+    ///
+    /// Delegates to the **one class-parametric additive fan-in driver**
+    /// ([`fan_in_additive_seq`]) — the single additive-aggregation path shared with
+    /// the fixed-income reducer ([`RatesFleetReducer::fan_in_additive`]); the
+    /// per-shard local roll-up (which needs the vega-pillar map) is built at this
+    /// call site so the driver stays context-free. Byte-identical to the prior
+    /// hand-written left fold (same `merge_additive`, same order).
     pub fn fan_in_additive<P: VegaPillarMap>(&self, pillars: &P) -> NodeAggregate {
-        let mut iter = self.shards.iter();
-        let Some(first) = iter.next() else {
-            // No shards (empty book): an empty firm aggregate.
-            return Cube::new().firm_aggregate(pillars);
-        };
-        let mut acc = first.local_aggregate(pillars);
-        for shard in iter {
-            acc.merge_additive(&shard.local_aggregate(pillars));
-        }
-        acc
+        fan_in_additive_seq(
+            self.shards
+                .iter()
+                .map(|shard| shard.local_aggregate(pillars)),
+            || Cube::new().firm_aggregate(pillars),
+        )
     }
 
     /// **Non-additive firm re-gather**: gather the union of every shard's
@@ -1083,6 +1101,61 @@ mod tests {
             "expected >=3 shards, got {}",
             reducer.shard_count()
         );
+    }
+
+    /// **UNIFIED DRIVER — options byte-identity to the prior hand fold.** The
+    /// class-parametric [`fan_in_additive_seq`] driver (now behind
+    /// `FleetReducer::fan_in_additive`) reproduces the pre-unification hand-written
+    /// left fold — the same [`NodeAggregate::merge_additive`] in the same
+    /// ascending-owner shard order — **bit-for-bit** across every net-Greek field,
+    /// every vega-ladder pillar, and the constituent counts. This pins that folding
+    /// the options additive path through the shared seam changed no bits.
+    #[test]
+    fn unified_fan_in_equals_prior_hand_fold() {
+        let facts = firm_book();
+        let set = replicas(&[1, 2, 3, 4, 5]);
+        let reducer = partition_facts(&facts, &set).unwrap();
+        assert!(
+            reducer.shard_count() >= 3,
+            "must genuinely fan across shards"
+        );
+
+        let unified = reducer.fan_in_additive(&DaysPillar);
+
+        // The prior algorithm, reconstructed inline: seed with the first shard's
+        // local aggregate, then merge_additive each subsequent shard in order.
+        let mut shards = reducer.shards().iter();
+        let mut hand = shards.next().unwrap().local_aggregate(&DaysPillar);
+        for shard in shards {
+            hand.merge_additive(&shard.local_aggregate(&DaysPillar));
+        }
+
+        let u = &unified.net_greeks;
+        let h = &hand.net_greeks;
+        for (a, b, name) in [
+            (u.delta_base, h.delta_base, "delta_base"),
+            (u.gamma, h.gamma, "gamma"),
+            (u.vega, h.vega, "vega"),
+            (u.theta, h.theta, "theta"),
+            (u.vanna, h.vanna, "vanna"),
+            (u.volga, h.volga, "volga"),
+            (u.charm, h.charm, "charm"),
+            (u.speed, h.speed, "speed"),
+            (u.zomma, h.zomma, "zomma"),
+            (u.color, h.color, "color"),
+            (u.premium_quote, h.premium_quote, "premium_quote"),
+        ] {
+            assert_eq!(a.to_bits(), b.to_bits(), "unified vs hand-fold {name}");
+        }
+        for (p, v) in hand.vega_ladder.pillars() {
+            assert_eq!(
+                unified.vega_ladder.vega_in(p).to_bits(),
+                v.to_bits(),
+                "unified vs hand-fold vega pillar {p:?}"
+            );
+        }
+        assert_eq!(unified.positions.len(), hand.positions.len());
+        assert_eq!(unified.leaves.len(), hand.leaves.len());
     }
 
     /// **RECONCILIATION — non-additive (VaR/ES) fan-out == single-node, EXACT to
