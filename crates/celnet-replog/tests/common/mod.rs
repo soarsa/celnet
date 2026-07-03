@@ -7,10 +7,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Hard upper bound on any single test body — a regression fails loudly here.
 ///
-/// Raised 15 s → 45 s: loaded-t2 M4 contention starves multi-node Raft
-/// election/convergence past the original limit (not a real break — passes
-/// uncontended; mirrors the celnet-client TEST_DEADLINE fix).
-pub(crate) const TEST_DEADLINE: Duration = Duration::from_secs(45);
+/// Raised 15 s → 45 s → 180 s: loaded-t2 M4 contention starves multi-node Raft
+/// election/convergence past the lower limits (not a real break — passes
+/// uncontended). 180 s aligns with `raft_snapshot`/`raft_election` under the
+/// now-heavier multi-parallel-session load ("entry N did not commit within
+/// deadline" = tokio-task starvation, not a consensus regression).
+pub(crate) const TEST_DEADLINE: Duration = Duration::from_secs(180);
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 

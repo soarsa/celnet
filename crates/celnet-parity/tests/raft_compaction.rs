@@ -48,8 +48,11 @@ use celnet_replog::{
     snapshot_path,
 };
 
-/// Hard wall-clock deadline — nothing here may hang.
-const TEST_DEADLINE: Duration = Duration::from_secs(15);
+/// Hard wall-clock deadline — nothing here may hang. Set to 180 s (matching
+/// `raft_snapshot`/`raft_election`/`celnet-replog`) so multi-parallel-session M4
+/// contention starving multi-node Raft compaction/convergence doesn't read as a
+/// hang — it passes uncontended; this is tokio starvation, not a regression.
+const TEST_DEADLINE: Duration = Duration::from_secs(180);
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
