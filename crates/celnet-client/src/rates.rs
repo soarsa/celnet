@@ -9,10 +9,12 @@
 
 use celnet_proto::convert::WireError;
 use celnet_proto::{
-    AggregateRatesRiskRequest, AggregateRatesRiskResponse, BookRatesPositionRequest, BrokenDate,
-    CurveSet, KeyRateDv01 as WireKeyRateDv01, ListRatesPositionsRequest, OisInstrument, OisPillar,
-    PillarTenor, RatesInstrument, RatesPosition as WireRatesPosition, RatesPricingResult,
-    RatesRiskNode as WireRatesRiskNode, RatesRiskScope as WireRatesRiskScope, Side, pillar_tenor,
+    AccrualBasis as WireAccrualBasis, AggregateRatesRiskRequest, AggregateRatesRiskResponse,
+    BondInstrument, BookRatesPositionRequest, BrokenDate, CurveSet, DayCount as WireDayCount,
+    FraInstrument, KeyRateDv01 as WireKeyRateDv01, ListRatesPositionsRequest, OisInstrument,
+    OisPillar, PaymentFrequency as WirePaymentFrequency, PillarTenor, RatesInstrument,
+    RatesPosition as WireRatesPosition, RatesPricingResult, RatesRiskNode as WireRatesRiskNode,
+    RatesRiskScope as WireRatesRiskScope, Side, VanillaIrsInstrument, pillar_tenor,
     rates_instrument,
 };
 
@@ -257,6 +259,446 @@ impl Ois {
             // absent expected `ois` arm as a typed error.
             Some(_) => Err(ClientError::MissingField("RatesInstrument.ois")),
             None => Err(ClientError::MissingField("RatesInstrument.instrument")),
+        }
+    }
+}
+
+// ===========================================================================
+// linear-rates instrument specs beyond the OIS P0 arm — the typed SDK face of the
+// landed [`RatesInstrument`] IRS / FRA / bond arms. Each mirrors the [`Ois`]
+// precedent: the trader writes economic intent (`IrsSpec::pay_fixed(5, 0.041)`) and
+// the builder lays the exact wire leaf message [`crate::Client::price_irs`] /
+// [`crate::Client::price_fra`] / [`crate::Client::price_bond`] send, reusing the
+// same [`UsdSofrCurve`] curve-encoding path. Directions and schedule conventions are
+// typed enums (never a raw proto3-zero tag), and convention defaults are the
+// USD-market standard, documented per builder — exactly as [`Ois`] defaults unit
+// notional. The curve currency and the server-side range checks (tenor >= 1,
+// notional > 0, FRA window strictly increasing, bond maturity after settlement,
+// redemption > 0) are enforced once, server-side, so the client never re-derives
+// them (api-first parity).
+// ===========================================================================
+
+/// The client's directional side of a fixed-vs-float swap or FRA: which leg the
+/// client pays. Shared by [`IrsSpec`] and [`FraSpec`] (both carry the same
+/// pay-fixed / receive-fixed direction); the rates-linear analogue of [`OisSide`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwapSide {
+    /// Pay the fixed leg (payer swap; long the floating rate). Wire `SIDE_BUY`.
+    PayFixed,
+    /// Receive the fixed leg (receiver swap). Wire `SIDE_SELL`.
+    ReceiveFixed,
+}
+
+impl SwapSide {
+    fn to_wire(self) -> i32 {
+        match self {
+            Self::PayFixed => Side::Buy as i32,
+            Self::ReceiveFixed => Side::Sell as i32,
+        }
+    }
+}
+
+/// The client's directional side of a cash bond: long (a bought bond, positive PV)
+/// or short. Wire `SIDE_BUY` = long, `SIDE_SELL` = short.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BondSide {
+    /// Long the bond (bought; positive PV). Wire `SIDE_BUY`.
+    Long,
+    /// Short the bond (sold; negative PV). Wire `SIDE_SELL`.
+    Short,
+}
+
+impl BondSide {
+    fn to_wire(self) -> i32 {
+        match self {
+            Self::Long => Side::Buy as i32,
+            Self::Short => Side::Sell as i32,
+        }
+    }
+}
+
+/// Coupon / leg payment frequency for a linear-rates schedule — the number of coupon
+/// periods per year the schedule rolls at. Maps to the wire
+/// [`celnet_proto::PaymentFrequency`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RatesFrequency {
+    /// One coupon per year.
+    Annual,
+    /// Two coupons per year (semi-annual — the USD fixed-leg / bond-coupon default).
+    SemiAnnual,
+    /// Four coupons per year (quarterly — the USD float-leg default).
+    Quarterly,
+}
+
+impl RatesFrequency {
+    fn to_wire(self) -> i32 {
+        match self {
+            Self::Annual => WirePaymentFrequency::Annual as i32,
+            Self::SemiAnnual => WirePaymentFrequency::SemiAnnual as i32,
+            Self::Quarterly => WirePaymentFrequency::Quarterly as i32,
+        }
+    }
+}
+
+/// The accrual day-count basis an IRS leg turns an accrual period into a year
+/// fraction on. Maps to the wire [`celnet_proto::DayCount`] (the swap-leg time axis:
+/// ACT/365F or ACT/360; the 30/360 fixed leg awaits the shared curve-time day-count
+/// extension and is not offered on an IRS leg yet — use [`AccrualBasis`] for the
+/// 30/360 bond / FRA basis).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegDayCount {
+    /// Actual/365 fixed.
+    Act365Fixed,
+    /// Actual/360 — USD/EUR money-market accrual (the swap-leg default).
+    Act360,
+}
+
+impl LegDayCount {
+    fn to_wire(self) -> i32 {
+        match self {
+            Self::Act365Fixed => WireDayCount::Act365Fixed as i32,
+            Self::Act360 => WireDayCount::Act360 as i32,
+        }
+    }
+}
+
+/// The accrual day-count basis a FRA window or a bond coupon accrues on — the
+/// instrument-level superset that additionally carries 30/360 Bond Basis (the
+/// standard USD fixed-bond basis). Maps to the wire [`celnet_proto::AccrualBasis`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccrualBasis {
+    /// Actual/360 — USD/EUR money-market accrual (the FRA default).
+    Act360,
+    /// Actual/365 fixed.
+    Act365Fixed,
+    /// 30/360 Bond Basis (ISDA 2006 4.16(f)) — the standard USD fixed-bond basis
+    /// (the bond-coupon default).
+    Thirty360BondBasis,
+}
+
+impl AccrualBasis {
+    fn to_wire(self) -> i32 {
+        match self {
+            Self::Act360 => WireAccrualBasis::Act360 as i32,
+            Self::Act365Fixed => WireAccrualBasis::Act365Fixed as i32,
+            Self::Thirty360BondBasis => WireAccrualBasis::Thirty360BondBasis as i32,
+        }
+    }
+}
+
+/// Fluent builder for a vanilla fixed-vs-float interest-rate swap (IRS): a fixed leg
+/// vs a projected floating leg on the single self-discounting curve. Both legs are
+/// the spot-starting schedules of `tenor_years`, each at its own payment frequency
+/// and accrual basis. Defaults are the USD-market shape (semi-annual ACT/360 fixed
+/// vs quarterly ACT/360 float, unit notional); override the notional with
+/// [`IrsSpec::notional`] and either leg with [`IrsSpec::fixed_leg`] /
+/// [`IrsSpec::float_leg`]. Pass to [`crate::Client::price_irs`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IrsSpec {
+    tenor_years: u32,
+    fixed_rate: f64,
+    notional: f64,
+    side: SwapSide,
+    fixed_frequency: RatesFrequency,
+    fixed_day_count: LegDayCount,
+    float_frequency: RatesFrequency,
+    float_day_count: LegDayCount,
+}
+
+impl IrsSpec {
+    fn with_side(tenor_years: u32, fixed_rate: f64, side: SwapSide) -> Self {
+        // USD-market convention default: semi-annual ACT/360 fixed vs quarterly
+        // ACT/360 float, unit notional. Identical to the server's canonical IRS shape.
+        Self {
+            tenor_years,
+            fixed_rate,
+            notional: 1.0,
+            side,
+            fixed_frequency: RatesFrequency::SemiAnnual,
+            fixed_day_count: LegDayCount::Act360,
+            float_frequency: RatesFrequency::Quarterly,
+            float_day_count: LegDayCount::Act360,
+        }
+    }
+
+    /// A pay-fixed (payer) IRS of `tenor_years` whole years at `fixed_rate` (decimal).
+    #[must_use]
+    pub fn pay_fixed(tenor_years: u32, fixed_rate: f64) -> Self {
+        Self::with_side(tenor_years, fixed_rate, SwapSide::PayFixed)
+    }
+
+    /// A receive-fixed (receiver) IRS of `tenor_years` whole years at `fixed_rate`.
+    #[must_use]
+    pub fn receive_fixed(tenor_years: u32, fixed_rate: f64) -> Self {
+        Self::with_side(tenor_years, fixed_rate, SwapSide::ReceiveFixed)
+    }
+
+    /// Set the notional in the curve currency (must be `> 0`).
+    #[must_use]
+    pub fn notional(mut self, notional: f64) -> Self {
+        self.notional = notional;
+        self
+    }
+
+    /// Set the fixed-leg payment frequency and accrual day-count (USD default:
+    /// semi-annual, ACT/360).
+    #[must_use]
+    pub fn fixed_leg(mut self, frequency: RatesFrequency, day_count: LegDayCount) -> Self {
+        self.fixed_frequency = frequency;
+        self.fixed_day_count = day_count;
+        self
+    }
+
+    /// Set the float-leg payment frequency and accrual day-count (USD default:
+    /// quarterly, ACT/360).
+    #[must_use]
+    pub fn float_leg(mut self, frequency: RatesFrequency, day_count: LegDayCount) -> Self {
+        self.float_frequency = frequency;
+        self.float_day_count = day_count;
+        self
+    }
+
+    /// The swap tenor in whole years from spot.
+    #[must_use]
+    pub fn tenor_years(&self) -> u32 {
+        self.tenor_years
+    }
+
+    /// The fixed-leg rate as a decimal (`0.041` = 4.10%).
+    #[must_use]
+    pub fn fixed_rate(&self) -> f64 {
+        self.fixed_rate
+    }
+
+    /// The notional in the curve currency (always positive; direction is [`IrsSpec::side`]).
+    #[must_use]
+    pub fn notional_amount(&self) -> f64 {
+        self.notional
+    }
+
+    /// The client's directional side (pay-fixed / receive-fixed).
+    #[must_use]
+    pub fn side(&self) -> SwapSide {
+        self.side
+    }
+
+    pub(crate) fn to_wire(self) -> RatesInstrument {
+        RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Irs(VanillaIrsInstrument {
+                tenor_years: self.tenor_years,
+                fixed_rate: self.fixed_rate,
+                notional: self.notional,
+                side: self.side.to_wire(),
+                fixed_frequency: self.fixed_frequency.to_wire(),
+                fixed_day_count: self.fixed_day_count.to_wire(),
+                float_frequency: self.float_frequency.to_wire(),
+                float_day_count: self.float_day_count.to_wire(),
+            })),
+        }
+    }
+}
+
+/// Fluent builder for a forward rate agreement (FRA): a single accrual window on the
+/// projected float index, from `start_months` to `end_months` after spot (a 3x6 FRA
+/// is `start_months = 3`, `end_months = 6`). Defaults are unit notional and the
+/// ACT/360 accrual basis; override with [`FraSpec::notional`] /
+/// [`FraSpec::accrual_basis`]. Pass to [`crate::Client::price_fra`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FraSpec {
+    start_months: u32,
+    end_months: u32,
+    fixed_rate: f64,
+    notional: f64,
+    side: SwapSide,
+    accrual_basis: AccrualBasis,
+}
+
+impl FraSpec {
+    fn with_side(start_months: u32, end_months: u32, fixed_rate: f64, side: SwapSide) -> Self {
+        Self {
+            start_months,
+            end_months,
+            fixed_rate,
+            notional: 1.0,
+            side,
+            accrual_basis: AccrualBasis::Act360,
+        }
+    }
+
+    /// A pay-fixed FRA over the `start_months`×`end_months` window at `fixed_rate`.
+    #[must_use]
+    pub fn pay_fixed(start_months: u32, end_months: u32, fixed_rate: f64) -> Self {
+        Self::with_side(start_months, end_months, fixed_rate, SwapSide::PayFixed)
+    }
+
+    /// A receive-fixed FRA over the `start_months`×`end_months` window at `fixed_rate`.
+    #[must_use]
+    pub fn receive_fixed(start_months: u32, end_months: u32, fixed_rate: f64) -> Self {
+        Self::with_side(start_months, end_months, fixed_rate, SwapSide::ReceiveFixed)
+    }
+
+    /// Set the notional in the curve currency (must be `> 0`).
+    #[must_use]
+    pub fn notional(mut self, notional: f64) -> Self {
+        self.notional = notional;
+        self
+    }
+
+    /// Set the accrual day-count basis for the window's year fraction (default ACT/360).
+    #[must_use]
+    pub fn accrual_basis(mut self, basis: AccrualBasis) -> Self {
+        self.accrual_basis = basis;
+        self
+    }
+
+    /// The window start (fixing) tenor in months from spot.
+    #[must_use]
+    pub fn start_months(&self) -> u32 {
+        self.start_months
+    }
+
+    /// The window end (maturity) tenor in months from spot.
+    #[must_use]
+    pub fn end_months(&self) -> u32 {
+        self.end_months
+    }
+
+    /// The contractual fixed rate as a decimal (`0.033` = 3.30%).
+    #[must_use]
+    pub fn fixed_rate(&self) -> f64 {
+        self.fixed_rate
+    }
+
+    /// The notional in the curve currency (always positive; direction is [`FraSpec::side`]).
+    #[must_use]
+    pub fn notional_amount(&self) -> f64 {
+        self.notional
+    }
+
+    /// The client's directional side (pay-fixed / receive-fixed).
+    #[must_use]
+    pub fn side(&self) -> SwapSide {
+        self.side
+    }
+
+    pub(crate) fn to_wire(self) -> RatesInstrument {
+        RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Fra(FraInstrument {
+                start_months: self.start_months,
+                end_months: self.end_months,
+                fixed_rate: self.fixed_rate,
+                notional: self.notional,
+                side: self.side.to_wire(),
+                accrual_basis: self.accrual_basis.to_wire(),
+            })),
+        }
+    }
+}
+
+/// Fluent builder for a fixed-coupon cash bond priced off the calibrated curve: each
+/// cashflow is discounted at the bootstrapped curve (dirty price) and the implied
+/// yield-risk set reported. The bond settles on the curve reference (spot-anchor)
+/// date; the coupon schedule is the regular month-step dates rolled back from
+/// `maturity` at `coupon_frequency`. Defaults are the USD fixed-bond shape
+/// (semi-annual coupon, 30/360 Bond Basis, par redemption of 100); override with
+/// [`BondSpec::coupon_frequency`] / [`BondSpec::day_count`] / [`BondSpec::redemption`].
+/// Pass to [`crate::Client::price_bond`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BondSpec {
+    coupon_rate: f64,
+    coupon_frequency: RatesFrequency,
+    day_count: AccrualBasis,
+    maturity: CivilDate,
+    redemption: f64,
+    side: BondSide,
+}
+
+impl BondSpec {
+    fn with_side(coupon_rate: f64, maturity: CivilDate, side: BondSide) -> Self {
+        // USD fixed-bond convention default: semi-annual coupon, 30/360 Bond Basis,
+        // par redemption of 100. Identical to the server's canonical bond shape.
+        Self {
+            coupon_rate,
+            coupon_frequency: RatesFrequency::SemiAnnual,
+            day_count: AccrualBasis::Thirty360BondBasis,
+            maturity,
+            redemption: 100.0,
+            side,
+        }
+    }
+
+    /// A long (bought) fixed-coupon bond at `coupon_rate` (annual, decimal; `0` for a
+    /// zero-coupon bond) redeeming on `maturity`.
+    #[must_use]
+    pub fn long(coupon_rate: f64, maturity: CivilDate) -> Self {
+        Self::with_side(coupon_rate, maturity, BondSide::Long)
+    }
+
+    /// A short (sold) fixed-coupon bond at `coupon_rate` (annual, decimal) redeeming
+    /// on `maturity`.
+    #[must_use]
+    pub fn short(coupon_rate: f64, maturity: CivilDate) -> Self {
+        Self::with_side(coupon_rate, maturity, BondSide::Short)
+    }
+
+    /// Set the coupon payment frequency (also the yield compounding basis; default
+    /// semi-annual).
+    #[must_use]
+    pub fn coupon_frequency(mut self, frequency: RatesFrequency) -> Self {
+        self.coupon_frequency = frequency;
+        self
+    }
+
+    /// Set the accrual day-count basis for accrued interest (default 30/360 Bond Basis).
+    #[must_use]
+    pub fn day_count(mut self, basis: AccrualBasis) -> Self {
+        self.day_count = basis;
+        self
+    }
+
+    /// Set the par redemption / face value in the curve currency (must be `> 0`;
+    /// default 100).
+    #[must_use]
+    pub fn redemption(mut self, redemption: f64) -> Self {
+        self.redemption = redemption;
+        self
+    }
+
+    /// The annual coupon rate as a decimal (`0.06` = 6%; `0` for a zero-coupon bond).
+    #[must_use]
+    pub fn coupon_rate(&self) -> f64 {
+        self.coupon_rate
+    }
+
+    /// The maturity (final-redemption) date.
+    #[must_use]
+    pub fn maturity(&self) -> CivilDate {
+        self.maturity
+    }
+
+    /// The par redemption / face value in the curve currency (always positive;
+    /// direction is [`BondSpec::side`]).
+    #[must_use]
+    pub fn redemption_amount(&self) -> f64 {
+        self.redemption
+    }
+
+    /// The client's directional side (long / short).
+    #[must_use]
+    pub fn side(&self) -> BondSide {
+        self.side
+    }
+
+    pub(crate) fn to_wire(self) -> RatesInstrument {
+        RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Bond(BondInstrument {
+                coupon_rate: self.coupon_rate,
+                coupon_frequency: self.coupon_frequency.to_wire(),
+                day_count: self.day_count.to_wire(),
+                maturity_date: Some(self.maturity.to_wire()),
+                redemption: self.redemption,
+                side: self.side.to_wire(),
+            })),
         }
     }
 }
@@ -678,6 +1120,134 @@ mod tests {
         };
         assert_eq!(ois.side, Side::Buy as i32);
         assert_eq!(ois.notional, 1.0); // default unit notional
+    }
+
+    // --- IRS / FRA / bond arm conformance: the SDK builds exactly the wire leaf
+    //     message the landed server arms (`price_irs`/`price_fra`/`price_bond_instrument`)
+    //     decode and read — field-for-field, including the USD-market convention
+    //     defaults, so the SDK-built `RatesInstrument` is the instrument the server
+    //     expects, never a silent proto3-zero default. ---
+
+    #[test]
+    fn irs_defaults_to_the_usd_market_shape() {
+        use rates_instrument::Instrument;
+        let wire = IrsSpec::receive_fixed(5, 0.041)
+            .notional(50_000_000.0)
+            .to_wire();
+        let Some(Instrument::Irs(irs)) = wire.instrument else {
+            unreachable!("receive_fixed builds an IRS arm");
+        };
+        assert_eq!(irs.tenor_years, 5);
+        assert_eq!(irs.fixed_rate, 0.041);
+        assert_eq!(irs.notional, 50_000_000.0);
+        assert_eq!(irs.side, Side::Sell as i32); // receive-fixed
+        // USD-market default: semi-annual ACT/360 fixed vs quarterly ACT/360 float.
+        assert_eq!(irs.fixed_frequency, WirePaymentFrequency::SemiAnnual as i32);
+        assert_eq!(irs.fixed_day_count, WireDayCount::Act360 as i32);
+        assert_eq!(irs.float_frequency, WirePaymentFrequency::Quarterly as i32);
+        assert_eq!(irs.float_day_count, WireDayCount::Act360 as i32);
+    }
+
+    #[test]
+    fn irs_pay_fixed_takes_custom_leg_conventions() {
+        use rates_instrument::Instrument;
+        let wire = IrsSpec::pay_fixed(10, 0.0415)
+            .fixed_leg(RatesFrequency::Annual, LegDayCount::Act365Fixed)
+            .float_leg(RatesFrequency::SemiAnnual, LegDayCount::Act360)
+            .to_wire();
+        let Some(Instrument::Irs(irs)) = wire.instrument else {
+            unreachable!("pay_fixed builds an IRS arm");
+        };
+        assert_eq!(irs.side, Side::Buy as i32); // pay-fixed
+        assert_eq!(irs.notional, 1.0); // default unit notional
+        assert_eq!(irs.fixed_frequency, WirePaymentFrequency::Annual as i32);
+        assert_eq!(irs.fixed_day_count, WireDayCount::Act365Fixed as i32);
+        assert_eq!(irs.float_frequency, WirePaymentFrequency::SemiAnnual as i32);
+        assert_eq!(irs.float_day_count, WireDayCount::Act360 as i32);
+    }
+
+    #[test]
+    fn fra_builds_the_window_arm() {
+        use rates_instrument::Instrument;
+        let wire = FraSpec::receive_fixed(3, 6, 0.033)
+            .notional(100_000_000.0)
+            .to_wire();
+        let Some(Instrument::Fra(fra)) = wire.instrument else {
+            unreachable!("receive_fixed builds a FRA arm");
+        };
+        assert_eq!(fra.start_months, 3);
+        assert_eq!(fra.end_months, 6);
+        assert_eq!(fra.fixed_rate, 0.033);
+        assert_eq!(fra.notional, 100_000_000.0);
+        assert_eq!(fra.side, Side::Sell as i32); // receive-fixed
+        assert_eq!(fra.accrual_basis, WireAccrualBasis::Act360 as i32); // default
+    }
+
+    #[test]
+    fn fra_pay_fixed_takes_a_custom_basis() {
+        use rates_instrument::Instrument;
+        let wire = FraSpec::pay_fixed(6, 12, 0.035)
+            .accrual_basis(AccrualBasis::Act365Fixed)
+            .to_wire();
+        let Some(Instrument::Fra(fra)) = wire.instrument else {
+            unreachable!("pay_fixed builds a FRA arm");
+        };
+        assert_eq!(fra.side, Side::Buy as i32); // pay-fixed
+        assert_eq!(fra.notional, 1.0); // default unit notional
+        assert_eq!(fra.accrual_basis, WireAccrualBasis::Act365Fixed as i32);
+    }
+
+    #[test]
+    fn bond_defaults_to_the_usd_fixed_bond_shape() {
+        use rates_instrument::Instrument;
+        let wire = BondSpec::long(0.06, CivilDate::new(2035, 6, 15)).to_wire();
+        let Some(Instrument::Bond(bond)) = wire.instrument else {
+            unreachable!("long builds a bond arm");
+        };
+        assert_eq!(bond.coupon_rate, 0.06);
+        assert_eq!(
+            bond.coupon_frequency,
+            WirePaymentFrequency::SemiAnnual as i32
+        );
+        assert_eq!(bond.day_count, WireAccrualBasis::Thirty360BondBasis as i32);
+        assert_eq!(bond.redemption, 100.0); // par default
+        assert_eq!(bond.side, Side::Buy as i32); // long
+        let m = bond.maturity_date.expect("maturity carried");
+        assert_eq!((m.year, m.month, m.day), (2035, 6, 15));
+    }
+
+    #[test]
+    fn bond_short_takes_custom_terms() {
+        use rates_instrument::Instrument;
+        let wire = BondSpec::short(0.0, CivilDate::new(2030, 1, 31))
+            .coupon_frequency(RatesFrequency::Annual)
+            .day_count(AccrualBasis::Act360)
+            .redemption(1_000.0)
+            .to_wire();
+        let Some(Instrument::Bond(bond)) = wire.instrument else {
+            unreachable!("short builds a bond arm");
+        };
+        assert_eq!(bond.coupon_rate, 0.0); // zero-coupon
+        assert_eq!(bond.coupon_frequency, WirePaymentFrequency::Annual as i32);
+        assert_eq!(bond.day_count, WireAccrualBasis::Act360 as i32);
+        assert_eq!(bond.redemption, 1_000.0);
+        assert_eq!(bond.side, Side::Sell as i32); // short
+    }
+
+    #[test]
+    fn ois_arm_is_untouched_by_the_new_specs() {
+        // The OIS arm the SDK has always built stays byte-identical (arm tag 1, the
+        // same four fields) — the new IRS/FRA/bond arms are purely additive.
+        let wire = Ois::receive_fixed(5, 0.0405)
+            .notional(100_000_000.0)
+            .to_wire();
+        let Some(rates_instrument::Instrument::Ois(ois)) = wire.instrument else {
+            unreachable!("receive_fixed still builds the OIS arm");
+        };
+        assert_eq!(ois.tenor_years, 5);
+        assert_eq!(ois.fixed_rate, 0.0405);
+        assert_eq!(ois.notional, 100_000_000.0);
+        assert_eq!(ois.side, Side::Sell as i32);
     }
 
     #[test]
