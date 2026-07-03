@@ -637,6 +637,34 @@
       ]
     },
     {
+      "id": "MARKCURVE",
+      "name": "MARKCURVE",
+      "description": "Mark (persist) a discount curve under a fresh server-assigned version via the live mark_curve engine RPC (SurfaceService.MarkCurve — the FI analogue of MARKSURFACE); spills the bootstrapped points [tenor_years, discount_factor, zero_rate], the echoed par pillars, then a version/currency footer carrying the assigned pinned version (a later CELNET.GETCURVE pins it). Commits a write on evaluation.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "curve",
+          "description": "2-column [tenorYears, parRate] curve range; one row per OIS pillar, strictly increasing tenor.",
+          "type": "any",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "referenceDate",
+          "description": "Curve reference (spot-anchor) date: an Excel date cell or YYYY-MM-DD.",
+          "type": "any"
+        },
+        {
+          "name": "currency",
+          "description": "Optional ISO-4217 curve currency (defaults to USD).",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "SURFACE",
       "name": "SURFACE",
       "description": "The marked smile for a (pair, tenor) as a delta x vol grid with an arb + convention footer.",

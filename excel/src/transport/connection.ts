@@ -38,6 +38,8 @@ import type {
   GetCurveResponse,
   Heartbeat,
   Instrument,
+  MarkCurveRequest,
+  MarkCurveResponse,
   MarketObservable,
   MarketSeriesPoint,
   MarketSeriesSnapshot,
@@ -71,6 +73,8 @@ import {
   fraInstrumentToWire,
   getCurveRequestToWire,
   getCurveResponseFromWire,
+  markCurveRequestToWire,
+  markCurveResponseFromWire,
   greeksFromWire,
   heartbeatFromWire,
   instrumentToWire,
@@ -1196,6 +1200,28 @@ export class Connection {
   async getCurve(request: GetCurveRequest): Promise<GetCurveResponse> {
     const reply = await this.request("get_curve", getCurveRequestToWire(request), "get_curve_response");
     return getCurveResponseFromWire(reply);
+  }
+
+  /**
+   * Mark (persist) a discount curve over the `mark_curve` RPC (the WS mirror of
+   * `SurfaceService.MarkCurve`, ADR-0021 — the FI analogue of `mark_surface`): send
+   * the calibrating `curve_set`, the server bootstraps it and DEPOSITS it under a
+   * fresh monotonic `curve_version`, and decodes the `mark_curve_response` (the
+   * assigned version + the echoed calibrating par pillars + the bootstrapped points
+   * + the mark timestamp). The returned `curveVersion` is the id a later
+   * `getCurve({ …, curveVersion })` reproduces the exact curve from. Like
+   * `mark_surface` the mark carries NO session token — the `MarkCurveRequest` proto
+   * has only `curve_set`; the server admits the mark and stamps the version (the
+   * add-in holds no curve math, the live `celnet-rates` engine bootstraps + persists
+   * the authoritative curve over the one unversioned contract).
+   */
+  async markCurve(request: MarkCurveRequest): Promise<MarkCurveResponse> {
+    const reply = await this.request(
+      "mark_curve",
+      markCurveRequestToWire(request),
+      "mark_curve_response",
+    );
+    return markCurveResponseFromWire(reply);
   }
 
   async requestQuote(
