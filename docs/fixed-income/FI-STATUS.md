@@ -121,7 +121,11 @@ GUI (existing):
 ### D. Server (`celnet-server`, `celnet-risk-cube`)
 - Pricing service consumes `celnet-rates` for the rates arms.
 - **Rates risk folds into the existing server-owned `RiskService`** rollup — clients never loop-sum
-  (FI-ARCHITECTURE §3); FRTB GIRR cross-checked vs ORE.
+  (FI-ARCHITECTURE §3). **FRTB GIRR** (delta SBM, `celnet-risk-cube::fi::girr_delta_sbm`) is
+  implemented + tested but is **not yet server-wired to any client** (tracked: `be-rates-wire-arms`,
+  `be-girr-vega`/`be-girr-curvature`) and is validated by **SBM structural identities, NOT an ORE
+  cross-check** — no ORE integration exists in the codebase (FI numerics use structural/analytic
+  identities per `FI-VERIFICATION-CONTRACT.md`).
 
 ### E. FIX fixed-income dialect (`celnet-fix`) — **"FIX API supports FI"**
 - NEW `crates/celnet-fix/src/dialect_rates.rs` mirroring `dialect_fx.rs`: decode inbound FI
@@ -150,9 +154,13 @@ GUI (existing):
   DV01 + key-rate DV01 ladder) and `=CELNET.CURVE(...)` bootstraps a discount curve over `build_curve`
   (per-pillar time / DF / cc-zero). Both are custom-function entry points in
   `excel/src/functions/functions.ts` on the same WS codec (`excel/src/contract/wsCodec.ts`) — verified
-  via lodestar. Further `=CELNET.*` FI fns (`=CELNET.BOND`, FI stream/RFQ/mark) are TARGET, gated on
-  the backend wire-lanes below.
-- **Rust SDK** (`celnet-client`) — ✅ rates instrument vocab + `Client::price_rates`.
+  via lodestar. **Now LIVE + registered (2026-07-03): `=CELNET.RATESRISK` (AggregateRatesRisk),
+  `=CELNET.RATESBOOK` (ListRatesPositions), `=CELNET.INSTRUMENTS` (reference-data), `=CELNET.BOND`,
+  `=CELNET.IRS`, `=CELNET.FRA` (all via `price_rates`), and `=CELNET.XVA` (CVA/DVA/FVA via `price_xva`)
+  — 9 FI/XVA functions total.** Remaining `=CELNET.*` FI fns (FI stream/RFQ/mark-bond) are TARGET,
+  gated on the backend wire-lanes below.
+- **Rust SDK** (`celnet-client`) — ✅ rates instrument vocab + `Client::price_rates`/`price_irs`/
+  `price_fra`/`price_bond` (`sdk-fi-price-parity`, landed).
 - **FIX** — the dialect in (E).
 - **Federation** — ✅ cross-shard rates risk fan-out + bit-exact rollup in `celnet-risk-fleet`
   (`af8ad25`: `RatesFleetReducer::fan_in_additive` == single-node, proptest-pinned bit-for-bit;
@@ -181,8 +189,10 @@ GUI (existing):
   `33d9a0a` / capstone `fd18594`). The earlier top-level FX-vs-FI domain-tab split is **retired**;
   asset class is chosen by scope + license, and FI capability is reached as **lenses** of the shared
   workspaces (see slice F above). "FI integrated, not a peer."
-- **Excel FI parity:** ✅ **LIVE** — `=CELNET.RATES` (OIS) + `=CELNET.CURVE` (bootstrap), both
-  registered (`fe-unified-book`, `86ecb46` / `bb36ad8`).
+- **Excel FI parity:** ✅ **LIVE — 9 functions** — `=CELNET.RATES`/`CURVE`/`RATESRISK`/`RATESBOOK`/
+  `INSTRUMENTS`/`BOND`/`IRS`/`FRA` (via `price_rates`/`build_curve`/`aggregate_rates_risk`/
+  `list_rates_positions`) + `=CELNET.XVA` (CVA/DVA/FVA via `price_xva`), all registered
+  (`fe-unified-book` + follow-ons through 2026-07-03; XVA closes GUI↔Excel client parity).
 
 ---
 
@@ -193,14 +203,22 @@ The client FI surfaces above are LIVE against **today's** wire contract (`PriceR
 **backend wire-lanes that are backend-owned and currently unclaimed** on the multi-asset board
 ([`../plan/MULTI-ASSET-CORE-INTEGRATION.md`](../plan/MULTI-ASSET-CORE-INTEGRATION.md) §2–§4):
 
-- **TARGET (backend):** `unified-price-rpc` (collapse `Price`/`PriceRates`/`PriceXva` → one
-  `Price(oneof Instrument)`; **unblocked** now that the `ws-codec-from-proto` swap landed `8c04897`,
-  not yet built), `rates-stream-ws` (FI on WS StreamService), `rates-rfq-ws` + `multi-dealer-rates-rfq`,
-  `curve-surface-query` (`GetCurve`/`MarkCurve`), `fi-wire-instruments` (bond/IRS/FRA `price_rates`
-  arms — analytics exist, unwired), `celnet-xva-activation` + `be-xva-rates-exposure`.
-- **TARGET (client, waits on the above):** the further GUI FI surfaces `fi-bond-ticket-gui`,
-  `fi-stream-gui`, `fi-scenario-gui`, `fi-rfq-gui`, `fi-xva-gui` and the Excel FI fns `excel-bond-fn`
-  (`=CELNET.BOND`), `excel-fi-stream`, `excel-fi-rfq`, `excel-fi-mark-bond`.
+- **✅ LANDED since this register was written (no longer TARGET):** `fi-wire-instruments`
+  (bond/IRS/FRA `price_rates` arms — **now fully wired + client-reachable**, `5b5d375`),
+  `fix-bond-dialect` (bonds on FIX/RFQ), `sdk-fi-price-parity` (SDK `price_irs`/`fra`/`bond`),
+  `be-combined-tail-risk-rpc` (`RiskService.CombinedTailRisk`), and the client surfaces
+  `fi-bond-ticket-gui`, `fi-scenario-gui`, `excel-bond-fn`, `=CELNET.IRS/FRA/XVA`.
+- **TARGET (backend, still open):** `rates-stream-ws` (FI on WS StreamService), `rates-rfq-ws` +
+  `multi-dealer-rates-rfq`, `curve-surface-query` (`GetCurve`/`MarkCurve`), `be-xva-rates-exposure`,
+  `unified-price-rpc` (collapse `Price`/`PriceRates`/`PriceXva` → one `Price(oneof Instrument)`), and
+  **`be-rates-wire-arms` — wire the built-but-orphaned FI engines** (FRTB GIRR delta SBM, bond-future
+  relative-value CTD/basis/implied-repo, smooth-curve monotone-convex interpolation + turns) which are
+  implemented + tested in `celnet-rates`/`celnet-risk-cube` but reach no client today.
+- **TARGET (client, waits on the above):** `fi-stream-gui`/`excel-fi-stream`, `fi-rfq-gui`/
+  `excel-fi-rfq`, `fi-xva-gui`, `excel-fi-mark-bond`.
+- **Contract nuance:** the "one Priceable/MarketResolver/RiskMeasure contract" is honored by **OIS +
+  Bond**; **IRS/FRA dispatch to correct engines but route *around* the Priceable seam** (functional
+  parity, not abstraction parity) — closing this is `uniform-asset-class-architecture` (ADR-0021).
 
 ---
 
