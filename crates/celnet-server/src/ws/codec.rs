@@ -3795,10 +3795,14 @@ const _: fn() = || {
 #[doc(hidden)]
 pub mod diff_support {
     use celnet_proto::{
-        ArbReport, CcyPair, CommodityRef, Conventions, CryptoPair, EquityRef, Greeks, Instrument,
-        MarketContext, MetalPair, PriceRequest, PriceResponse, PriceXvaRequest, PriceXvaResponse,
-        Quantity, RateSensitivities, RatesPriceRequest, RatesPriceResponse, Solve, Strategy,
-        StrikeOrDelta, Symbol, Tenor, Underlying, Vanilla,
+        ArbReport, CcyPair, CommodityRef, Conventions, CreateFixConnectionRequest,
+        CreateFixConnectionResponse, CryptoPair, DeleteFixConnectionRequest,
+        DeleteFixConnectionResponse, EquityRef, Greeks, Instrument, ListFixConnectionsRequest,
+        ListFixConnectionsResponse, ListFixMessagesRequest, ListFixMessagesResponse, MarketContext,
+        MetalPair, PriceRequest, PriceResponse, PriceXvaRequest, PriceXvaResponse, Quantity,
+        RateSensitivities, RatesPriceRequest, RatesPriceResponse, SetFixConnectionEnabledRequest,
+        SetFixConnectionEnabledResponse, Solve, Strategy, StrikeOrDelta, Symbol, Tenor, Underlying,
+        UpdateFixConnectionRequest, UpdateFixConnectionResponse, Vanilla,
     };
     use serde_json::{Map, Value};
 
@@ -4050,6 +4054,110 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_arb_report_to_json(a: &ArbReport) -> Value {
         super::arb_report_to_json(a)
+    }
+
+    // --- FixAdminService references: the request decoders + response encoders the
+    // generated fix-admin codec is proven byte-identical to (the six connection /
+    // message admin verbs, including the nested `EntitlementPrincipal` and the
+    // quirked `ListFixMessagesRequest` projection).
+
+    /// Hand-codec `ListFixConnectionsRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_fix_connections_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListFixConnectionsRequest, CodecError> {
+        super::list_fix_connections_request_from_json(o)
+    }
+
+    /// Hand-codec `CreateFixConnectionRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_create_fix_connection_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<CreateFixConnectionRequest, CodecError> {
+        super::create_fix_connection_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateFixConnectionRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_fix_connection_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateFixConnectionRequest, CodecError> {
+        super::update_fix_connection_request_from_json(o)
+    }
+
+    /// Hand-codec `DeleteFixConnectionRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_delete_fix_connection_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<DeleteFixConnectionRequest, CodecError> {
+        super::delete_fix_connection_request_from_json(o)
+    }
+
+    /// Hand-codec `SetFixConnectionEnabledRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_set_fix_connection_enabled_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<SetFixConnectionEnabledRequest, CodecError> {
+        super::set_fix_connection_enabled_request_from_json(o)
+    }
+
+    /// Hand-codec `ListFixMessagesRequest` decoder (the quirked
+    /// whitespace-`connection_id` / saturating-`limit` projection).
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_fix_messages_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListFixMessagesRequest, CodecError> {
+        super::list_fix_messages_request_from_json(o)
+    }
+
+    /// Hand-codec reference for the `ListFixConnectionsResponse` encode.
+    #[must_use]
+    pub fn hand_list_fix_connections_response_to_json(r: &ListFixConnectionsResponse) -> Value {
+        super::list_fix_connections_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `CreateFixConnectionResponse` encode.
+    #[must_use]
+    pub fn hand_create_fix_connection_response_to_json(r: &CreateFixConnectionResponse) -> Value {
+        super::create_fix_connection_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `UpdateFixConnectionResponse` encode.
+    #[must_use]
+    pub fn hand_update_fix_connection_response_to_json(r: &UpdateFixConnectionResponse) -> Value {
+        super::update_fix_connection_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `DeleteFixConnectionResponse` encode.
+    #[must_use]
+    pub fn hand_delete_fix_connection_response_to_json(r: &DeleteFixConnectionResponse) -> Value {
+        super::delete_fix_connection_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `SetFixConnectionEnabledResponse` encode.
+    #[must_use]
+    pub fn hand_set_fix_connection_enabled_response_to_json(
+        r: &SetFixConnectionEnabledResponse,
+    ) -> Value {
+        super::set_fix_connection_enabled_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `ListFixMessagesResponse` encode.
+    #[must_use]
+    pub fn hand_list_fix_messages_response_to_json(r: &ListFixMessagesResponse) -> Value {
+        super::list_fix_messages_response_to_json(r)
     }
 }
 

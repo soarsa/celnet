@@ -37,15 +37,20 @@ use celnet_proto::wire_contract::{self, WireField, WireLabel};
 use celnet_proto::{
     Accumulator, AmericanOption, ArbReport, AsianOption, BasketLeg, BasketOption, BondInstrument,
     BrokenDate, CcyPair, Cliquet, CombinedTailRiskRequest, CombinedTailRiskResponse, CommodityRef,
-    Conventions, CryptoPair, CurveSet, Digital, DoubleBarrier, EquityRef, FixingSchedule,
-    ForwardStart, FraInstrument, FxForward, FxSwap, Greeks, Instrument, JointTailScenario, Leg,
-    ListedFutureOption, Lookback, MarketContext, MetalPair, Ndf, OisFixedPeriod, OisInstrument,
-    OisPillar, OisSwapLeg, PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse,
-    PriceXvaRequest, PriceXvaResponse, Quantity, Quanto, RateSensitivities, RatesInstrument,
-    RatesPriceRequest, RatesPriceResponse, RatesPricingResult, RatesQuote, RatesQuoteRequest,
-    SingleBarrier, Solve, Strategy, StrikeOrDelta, Symbol, TailRiskCurvePillar, TailRiskFiPosition,
-    TailRiskKeyRate, TailRiskOptionLeg, Tarf, Tenor, Touch, TwoWayPrice, Underlying, Vanilla,
-    VanillaIrsInstrument, VarEs, VarianceSwap, VolatilitySwap, WindowBarrier,
+    Conventions, CreateFixConnectionRequest, CreateFixConnectionResponse, CryptoPair, CurveSet,
+    DeleteFixConnectionRequest, DeleteFixConnectionResponse, Digital, DoubleBarrier,
+    EntitlementPrincipal, EntitlementRule, EquityRef, FixConnectionDesc, FixConnectionSpec,
+    FixMessage, FixingSchedule, ForwardStart, FraInstrument, FxForward, FxSwap, Greeks, Instrument,
+    JointTailScenario, Leg, ListFixConnectionsRequest, ListFixConnectionsResponse,
+    ListFixMessagesRequest, ListFixMessagesResponse, ListedFutureOption, Lookback, MarketContext,
+    MetalPair, Ndf, OisFixedPeriod, OisInstrument, OisPillar, OisSwapLeg, PerpetualOption,
+    PillarTenor, Pivot, PriceRequest, PriceResponse, PriceXvaRequest, PriceXvaResponse, Quantity,
+    Quanto, RateSensitivities, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
+    RatesPricingResult, RatesQuote, RatesQuoteRequest, RiskScope, SetFixConnectionEnabledRequest,
+    SetFixConnectionEnabledResponse, SingleBarrier, Solve, Strategy, StrikeOrDelta, Symbol,
+    TailRiskCurvePillar, TailRiskFiPosition, TailRiskKeyRate, TailRiskOptionLeg, Tarf, Tenor,
+    Touch, TwoWayPrice, Underlying, UpdateFixConnectionRequest, UpdateFixConnectionResponse,
+    Vanilla, VanillaIrsInstrument, VarEs, VarianceSwap, VolatilitySwap, WindowBarrier,
     XvaResult as WireXvaResult, XvaSurvivalCurve, XvaTrade, instrument, pillar_tenor,
     rate_sensitivities, rates_instrument, strike_or_delta, tail_risk_fi_position,
 };
@@ -817,15 +822,19 @@ fn opt_repeated<T: WireBuilder>(value: Option<&Value>, what: &str) -> DResult<Ve
     }
 }
 
-/// An optional presence-tracked `String` (mirrors `opt_string`): `None` on absence,
-/// else the string value (error on a non-string).
+/// An optional presence-tracked `String` (mirrors the hand `opt_string`): `None` on
+/// absence OR on an **empty** string (the hand codec's `.filter(|s| !s.is_empty())`),
+/// else the string value (error on a non-string). The empty-string ⇒ `None` filter is
+/// the byte-identity-critical detail — an admin `session_token: ""` decodes to `None`
+/// exactly as the hand codec does, not `Some("")`.
 fn opt_string(value: Option<&Value>, field: &str) -> DResult<Option<String>> {
     match value {
         None => Ok(None),
-        Some(v) => v
-            .as_str()
-            .map(|s| Some(s.to_owned()))
-            .ok_or_else(|| CodecError(format!("field `{field}` must be a string"))),
+        Some(v) => match v.as_str() {
+            None => Err(CodecError(format!("field `{field}` must be a string"))),
+            Some("") => Ok(None),
+            Some(s) => Ok(Some(s.to_owned())),
+        },
     }
 }
 
@@ -2448,4 +2457,379 @@ impl WireAdapter for TailRiskKeyRate {
             _ => None,
         }
     }
+}
+
+// ===========================================================================
+// FixAdminService — the inbound FIX-acceptor connection administration surface
+// ===========================================================================
+//
+// Six unary verbs (list / create / update / delete / set-enabled connections +
+// list captured messages) run fully on this descriptor-driven codec. The requests
+// carry the shared admin envelope (`EntitlementPrincipal` principal + `session_token`
+// + `correlation_id`) plus a `FixConnectionSpec`; the responses carry a
+// `FixConnectionDesc` and a page of `FixMessage`. Every message decodes/encodes
+// purely from the field tables via the generic [`decode`] / [`encode`] walk EXCEPT
+// `ListFixMessagesRequest`, whose two hand-codec quirks the field table cannot
+// express — a whitespace-trimmed `connection_id` and a `limit` that saturates to
+// `u32::MAX` on overflow (rather than the generic clamp-to-zero) — so it keeps the
+// message-level projection escape hatch ([`decode_list_fix_messages_request`]). The
+// admin response messages emit their absent optional `correlation_id` as JSON `null`
+// (they are in [`super::codec_overrides::null_absent_optional`]).
+
+// --- shared entitlement-principal WireBuilders (decode; reused by risk + auth) ---
+
+impl WireBuilder for RiskScope {
+    const MESSAGE: &'static str = "RiskScope";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "dimension" => self.dimension = enum_or_zero(value),
+            "value" => self.value = u64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for EntitlementRule {
+    const MESSAGE: &'static str = "EntitlementRule";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "scopes" => self.scopes = opt_repeated::<RiskScope>(value, "scopes")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for EntitlementPrincipal {
+    const MESSAGE: &'static str = "EntitlementPrincipal";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "grant_all" => self.grant_all = bool_or_false(value),
+            "grants" => self.grants = opt_repeated::<EntitlementRule>(value, "grants")?,
+            "denies" => self.denies = opt_repeated::<EntitlementRule>(value, "denies")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+// --- fix-admin request WireBuilders (decode) --------------------------------
+
+impl WireBuilder for FixConnectionSpec {
+    const MESSAGE: &'static str = "FixConnectionSpec";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "id" => self.id = string_or_empty(value),
+            "name" => self.name = req_string(value, "name")?,
+            "kind" => self.kind = enum_or_zero(value),
+            "bind_addr" => self.bind_addr = req_string(value, "bind_addr")?,
+            "sender_comp_id" => self.sender_comp_id = req_string(value, "sender_comp_id")?,
+            "target_comp_id" => self.target_comp_id = req_string(value, "target_comp_id")?,
+            "enabled" => self.enabled = bool_or_false(value),
+            "desk" => self.desk = string_or_empty(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListFixConnectionsRequest {
+    const MESSAGE: &'static str = "ListFixConnectionsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CreateFixConnectionRequest {
+    const MESSAGE: &'static str = "CreateFixConnectionRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "spec" => self.spec = Some(req_msg::<FixConnectionSpec>(value, "spec")?),
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateFixConnectionRequest {
+    const MESSAGE: &'static str = "UpdateFixConnectionRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "id" => self.id = req_string(value, "id")?,
+            "spec" => self.spec = Some(req_msg::<FixConnectionSpec>(value, "spec")?),
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeleteFixConnectionRequest {
+    const MESSAGE: &'static str = "DeleteFixConnectionRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "id" => self.id = req_string(value, "id")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for SetFixConnectionEnabledRequest {
+    const MESSAGE: &'static str = "SetFixConnectionEnabledRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "id" => self.id = req_string(value, "id")?,
+            "enabled" => self.enabled = bool_or_false(value),
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+/// Decode a [`ListFixConnectionsRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A malformed `principal` body, as a [`CodecError`].
+pub fn decode_list_fix_connections_request(
+    o: &Map<String, Value>,
+) -> DResult<ListFixConnectionsRequest> {
+    decode(ListFixConnectionsRequest::MESSAGE, o)
+}
+
+/// Decode a [`CreateFixConnectionRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing/malformed `spec` (or a missing required `name`/`bind_addr`/comp-ids), as
+/// a [`CodecError`].
+pub fn decode_create_fix_connection_request(
+    o: &Map<String, Value>,
+) -> DResult<CreateFixConnectionRequest> {
+    decode(CreateFixConnectionRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateFixConnectionRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `id`, a missing/malformed `spec`, as a [`CodecError`].
+pub fn decode_update_fix_connection_request(
+    o: &Map<String, Value>,
+) -> DResult<UpdateFixConnectionRequest> {
+    decode(UpdateFixConnectionRequest::MESSAGE, o)
+}
+
+/// Decode a [`DeleteFixConnectionRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `id`, as a [`CodecError`].
+pub fn decode_delete_fix_connection_request(
+    o: &Map<String, Value>,
+) -> DResult<DeleteFixConnectionRequest> {
+    decode(DeleteFixConnectionRequest::MESSAGE, o)
+}
+
+/// Decode a [`SetFixConnectionEnabledRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `id`, as a [`CodecError`].
+pub fn decode_set_fix_connection_enabled_request(
+    o: &Map<String, Value>,
+) -> DResult<SetFixConnectionEnabledRequest> {
+    decode(SetFixConnectionEnabledRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListFixMessagesRequest`] — a **message-level projection** mirroring the
+/// hand `list_fix_messages_request_from_json`: two field-table-inexpressible quirks —
+/// a `connection_id` that treats a whitespace-only string as absent
+/// (`.filter(|s| !s.trim().is_empty())`), and a `limit` that saturates to `u32::MAX`
+/// on overflow (the poll page cap) rather than the generic clamp-to-zero. The
+/// remaining fields decode with the shared presence helpers.
+///
+/// # Errors
+/// A malformed `principal` body, as a [`CodecError`].
+pub fn decode_list_fix_messages_request(o: &Map<String, Value>) -> DResult<ListFixMessagesRequest> {
+    let connection_id = o
+        .get("connection_id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned);
+    Ok(ListFixMessagesRequest {
+        connection_id,
+        after_seq: u64_or_zero(o.get("after_seq")),
+        limit: u32::try_from(u64_or_zero(o.get("limit"))).unwrap_or(u32::MAX),
+        principal: opt_msg::<EntitlementPrincipal>(
+            o.get("principal").filter(|v| !v.is_null()),
+            "principal",
+        )?,
+        correlation_id: opt_u64(o.get("correlation_id").filter(|v| !v.is_null())),
+        session_token: opt_string(o.get("session_token"), "session_token")?,
+    })
+}
+
+// --- fix-admin encode adapters (encode) -------------------------------------
+
+impl WireAdapter for FixConnectionDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "id" => Some(WireVal::Str(&self.id)),
+            "name" => Some(WireVal::Str(&self.name)),
+            "kind" => Some(WireVal::Enum(self.kind)),
+            "bind_addr" => Some(WireVal::Str(&self.bind_addr)),
+            "sender_comp_id" => Some(WireVal::Str(&self.sender_comp_id)),
+            "target_comp_id" => Some(WireVal::Str(&self.target_comp_id)),
+            "enabled" => Some(WireVal::Bool(self.enabled)),
+            "running" => Some(WireVal::Bool(self.running)),
+            "bound_addr" => Some(WireVal::Str(&self.bound_addr)),
+            "desk" => Some(WireVal::Str(&self.desk)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for FixMessage {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "seq" => Some(WireVal::U64(self.seq)),
+            "connection_id" => Some(WireVal::Str(&self.connection_id)),
+            "direction" => Some(WireVal::Enum(self.direction)),
+            "msg_type" => Some(WireVal::Str(&self.msg_type)),
+            "summary" => Some(WireVal::Str(&self.summary)),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            "raw" => Some(WireVal::Str(&self.raw)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListFixConnectionsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "connections" => Some(WireVal::RepeatedMsg(
+                self.connections
+                    .iter()
+                    .map(|c| c as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CreateFixConnectionResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "connection" => self
+                .connection
+                .as_ref()
+                .map(|c| WireVal::Msg(c as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateFixConnectionResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "connection" => self
+                .connection
+                .as_ref()
+                .map(|c| WireVal::Msg(c as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeleteFixConnectionResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for SetFixConnectionEnabledResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "connection" => self
+                .connection
+                .as_ref()
+                .map(|c| WireVal::Msg(c as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListFixMessagesResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "messages" => Some(WireVal::RepeatedMsg(
+                self.messages
+                    .iter()
+                    .map(|m| m as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "latest_seq" => Some(WireVal::U64(self.latest_seq)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+/// Encode a [`ListFixConnectionsResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_fix_connections_response(r: &ListFixConnectionsResponse) -> Value {
+    encode("ListFixConnectionsResponse", r)
+}
+
+/// Encode a [`CreateFixConnectionResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_create_fix_connection_response(r: &CreateFixConnectionResponse) -> Value {
+    encode("CreateFixConnectionResponse", r)
+}
+
+/// Encode an [`UpdateFixConnectionResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_fix_connection_response(r: &UpdateFixConnectionResponse) -> Value {
+    encode("UpdateFixConnectionResponse", r)
+}
+
+/// Encode a [`DeleteFixConnectionResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_delete_fix_connection_response(r: &DeleteFixConnectionResponse) -> Value {
+    encode("DeleteFixConnectionResponse", r)
+}
+
+/// Encode a [`SetFixConnectionEnabledResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_set_fix_connection_enabled_response(r: &SetFixConnectionEnabledResponse) -> Value {
+    encode("SetFixConnectionEnabledResponse", r)
+}
+
+/// Encode a [`ListFixMessagesResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_fix_messages_response(r: &ListFixMessagesResponse) -> Value {
+    encode("ListFixMessagesResponse", r)
 }

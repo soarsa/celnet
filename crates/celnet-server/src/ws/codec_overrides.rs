@@ -48,6 +48,17 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     // presence-tracked `correlation_id` reaches the wire as `null` when absent,
     // consistent with the other one-shot reply messages above.
     "RatesQuote",
+    // The FixAdminService reply envelopes: their `json!({ .. })` hand encoders emit
+    // the `Option<u64>` `correlation_id` as `null` when absent (present-with-null),
+    // so the generated encoder must too. (The `connection` singular-message field is
+    // already rendered `null`-when-absent by the generic encoder's singular-message
+    // rule and needs no entry here.)
+    "ListFixConnectionsResponse",
+    "CreateFixConnectionResponse",
+    "UpdateFixConnectionResponse",
+    "DeleteFixConnectionResponse",
+    "SetFixConnectionEnabledResponse",
+    "ListFixMessagesResponse",
 ];
 
 /// How the generated encoder should treat one descriptor field's JSON key.

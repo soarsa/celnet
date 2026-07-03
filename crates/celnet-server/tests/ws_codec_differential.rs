@@ -1081,3 +1081,300 @@ fn arb_report_encode_is_byte_identical_incl_synthetic_label() {
         );
     }
 }
+
+// ===========================================================================
+// FixAdminService — the six connection/message administration verbs: the request
+// decoders (incl. the shared `EntitlementPrincipal` envelope + the quirked
+// `ListFixMessagesRequest` projection) and the response encoders (incl. the
+// `correlation_id`-as-`null` policy), byte-identical to the hand codec over the
+// admin conformance shapes + edge vectors.
+// ===========================================================================
+
+use celnet_proto::{
+    CreateFixConnectionResponse, DeleteFixConnectionResponse, FixConnectionDesc, FixMessage,
+    ListFixConnectionsResponse, ListFixMessagesResponse, SetFixConnectionEnabledResponse,
+    UpdateFixConnectionResponse,
+};
+
+/// A representative admin entitlement principal body (grant/deny rules with pinned
+/// dimension scopes) — the nested tree every fix-admin request can carry.
+fn principal_body() -> Value {
+    json!({
+        "grant_all": false,
+        "grants": [
+            { "scopes": [ { "dimension": 1, "value": 99 }, { "dimension": 2, "value": 7 } ] },
+            { "scopes": [] }
+        ],
+        "denies": [ { "scopes": [ { "dimension": 3, "value": 4 } ] } ]
+    })
+}
+
+/// A representative editable connection spec body.
+fn fix_spec_body() -> Value {
+    json!({
+        "id": "lp-one", "name": "LP One", "kind": 1, "bind_addr": "127.0.0.1:9099",
+        "sender_comp_id": "CELNET", "target_comp_id": "LPONE", "enabled": true, "desk": "fx-desk"
+    })
+}
+
+#[test]
+fn list_fix_connections_request_decode_byte_identical() {
+    let cases = [
+        (
+            "full",
+            json!({ "principal": principal_body(), "correlation_id": 42, "session_token": "tok-abc" }),
+        ),
+        // Minimal: all optionals absent ⇒ None / grant-all-default principal absent.
+        ("minimal", json!({})),
+        // Empty session token ⇒ None (the hand `opt_string` empty-filter, quirk).
+        ("empty-session", json!({ "session_token": "" })),
+    ];
+    for (label, body) in cases {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("ListFixConnectionsRequest({label})"),
+            generated::decode_list_fix_connections_request(o),
+            hand::hand_list_fix_connections_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn create_fix_connection_request_decode_byte_identical() {
+    let body = json!({
+        "spec": fix_spec_body(), "principal": principal_body(),
+        "correlation_id": 7, "session_token": "tok"
+    });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "CreateFixConnectionRequest",
+        generated::decode_create_fix_connection_request(o),
+        hand::hand_create_fix_connection_request_from_json(o),
+    );
+    // Spec-only (no principal / ids): the required `spec` with proto3-default id/desk.
+    let minimal = json!({ "spec": { "name": "LP Two", "bind_addr": "0.0.0.0:0",
+        "sender_comp_id": "C", "target_comp_id": "L" } });
+    let mo = minimal.as_object().expect("object");
+    assert_decode_eq(
+        "CreateFixConnectionRequest(minimal spec)",
+        generated::decode_create_fix_connection_request(mo),
+        hand::hand_create_fix_connection_request_from_json(mo),
+    );
+}
+
+#[test]
+fn update_fix_connection_request_decode_byte_identical() {
+    let body = json!({
+        "id": "lp-one", "spec": fix_spec_body(), "principal": principal_body(),
+        "correlation_id": 8, "session_token": "tok"
+    });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateFixConnectionRequest",
+        generated::decode_update_fix_connection_request(o),
+        hand::hand_update_fix_connection_request_from_json(o),
+    );
+}
+
+#[test]
+fn delete_fix_connection_request_decode_byte_identical() {
+    let body = json!({ "id": "lp-one", "principal": principal_body(), "correlation_id": 3 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "DeleteFixConnectionRequest",
+        generated::decode_delete_fix_connection_request(o),
+        hand::hand_delete_fix_connection_request_from_json(o),
+    );
+}
+
+#[test]
+fn set_fix_connection_enabled_request_decode_byte_identical() {
+    for (label, body) in [
+        (
+            "disable",
+            json!({ "id": "lp-one", "enabled": false, "session_token": "tok" }),
+        ),
+        (
+            "enable",
+            json!({ "id": "lp-one", "enabled": true, "correlation_id": 5 }),
+        ),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("SetFixConnectionEnabledRequest({label})"),
+            generated::decode_set_fix_connection_enabled_request(o),
+            hand::hand_set_fix_connection_enabled_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn list_fix_messages_request_decode_byte_identical_incl_quirks() {
+    let cases = [
+        (
+            "full",
+            json!({ "connection_id": "lp-one", "after_seq": 100, "limit": 50, "correlation_id": 9 }),
+        ),
+        // Whitespace-only connection_id ⇒ None (the hand `.trim().is_empty()` quirk).
+        ("whitespace-conn", json!({ "connection_id": "   " })),
+        // `limit` beyond u32::MAX saturates to u32::MAX (the hand `.unwrap_or(u32::MAX)` quirk).
+        ("limit-overflow", json!({ "limit": 99_999_999_999_u64 })),
+        // Absent cursor/limit ⇒ after_seq 0, limit 0 (server default), connection_id None.
+        ("defaults", json!({})),
+    ];
+    for (label, body) in cases {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("ListFixMessagesRequest({label})"),
+            generated::decode_list_fix_messages_request(o),
+            hand::hand_list_fix_messages_request_from_json(o),
+        );
+    }
+}
+
+/// A fully-populated connection descriptor (runtime status included).
+fn fix_conn_desc() -> FixConnectionDesc {
+    FixConnectionDesc {
+        id: "lp-one".to_owned(),
+        name: "LP One".to_owned(),
+        kind: 1,
+        bind_addr: "127.0.0.1:9099".to_owned(),
+        sender_comp_id: "CELNET".to_owned(),
+        target_comp_id: "LPONE".to_owned(),
+        enabled: true,
+        running: true,
+        bound_addr: "127.0.0.1:9099".to_owned(),
+        desk: "fx-desk".to_owned(),
+    }
+}
+
+#[test]
+fn list_fix_connections_response_encode_byte_identical() {
+    let full = ListFixConnectionsResponse {
+        connections: vec![fix_conn_desc(), FixConnectionDesc::default()],
+        correlation_id: Some(42),
+    };
+    assert_bytes_eq(
+        "ListFixConnectionsResponse(full)",
+        &generated::encode_list_fix_connections_response(&full),
+        &hand::hand_list_fix_connections_response_to_json(&full),
+    );
+    // Empty connections + absent correlation_id ⇒ `[]` + `null`.
+    let empty = ListFixConnectionsResponse {
+        connections: vec![],
+        correlation_id: None,
+    };
+    let g = generated::encode_list_fix_connections_response(&empty);
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_eq!(g.get("connections"), Some(&Value::Array(vec![])));
+    assert_bytes_eq(
+        "ListFixConnectionsResponse(empty)",
+        &g,
+        &hand::hand_list_fix_connections_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn create_update_setenabled_response_encode_byte_identical() {
+    // Present connection + id.
+    let created = CreateFixConnectionResponse {
+        connection: Some(fix_conn_desc()),
+        correlation_id: Some(7),
+    };
+    assert_bytes_eq(
+        "CreateFixConnectionResponse(full)",
+        &generated::encode_create_fix_connection_response(&created),
+        &hand::hand_create_fix_connection_response_to_json(&created),
+    );
+    // Absent connection + id ⇒ both `null` (singular-message + optional-scalar null).
+    let empty = CreateFixConnectionResponse {
+        connection: None,
+        correlation_id: None,
+    };
+    let g = generated::encode_create_fix_connection_response(&empty);
+    assert_eq!(g.get("connection"), Some(&Value::Null));
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "CreateFixConnectionResponse(empty)",
+        &g,
+        &hand::hand_create_fix_connection_response_to_json(&empty),
+    );
+
+    let updated = UpdateFixConnectionResponse {
+        connection: Some(fix_conn_desc()),
+        correlation_id: Some(8),
+    };
+    assert_bytes_eq(
+        "UpdateFixConnectionResponse",
+        &generated::encode_update_fix_connection_response(&updated),
+        &hand::hand_update_fix_connection_response_to_json(&updated),
+    );
+
+    let toggled = SetFixConnectionEnabledResponse {
+        connection: Some(fix_conn_desc()),
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "SetFixConnectionEnabledResponse(null corr)",
+        &generated::encode_set_fix_connection_enabled_response(&toggled),
+        &hand::hand_set_fix_connection_enabled_response_to_json(&toggled),
+    );
+}
+
+#[test]
+fn delete_fix_connection_response_encode_byte_identical() {
+    for (label, correlation_id) in [("with-id", Some(3_u64)), ("null-id", None)] {
+        let r = DeleteFixConnectionResponse { correlation_id };
+        assert_bytes_eq(
+            &format!("DeleteFixConnectionResponse({label})"),
+            &generated::encode_delete_fix_connection_response(&r),
+            &hand::hand_delete_fix_connection_response_to_json(&r),
+        );
+    }
+}
+
+#[test]
+fn list_fix_messages_response_encode_byte_identical() {
+    let full = ListFixMessagesResponse {
+        messages: vec![
+            FixMessage {
+                seq: 1,
+                connection_id: "lp-one".to_owned(),
+                direction: 0,
+                msg_type: "R".to_owned(),
+                summary: "QuoteRequest".to_owned(),
+                epoch_nanos: 1_720_000_000_000_000_000,
+                raw: "8=FIX.4.4|35=R|".to_owned(),
+            },
+            FixMessage {
+                seq: 2,
+                connection_id: "lp-one".to_owned(),
+                direction: 1,
+                msg_type: "S".to_owned(),
+                summary: "Quote".to_owned(),
+                epoch_nanos: 1_720_000_000_500_000_000,
+                raw: "8=FIX.4.4|35=S|".to_owned(),
+            },
+        ],
+        latest_seq: 2,
+        correlation_id: Some(9),
+    };
+    assert_bytes_eq(
+        "ListFixMessagesResponse(full)",
+        &generated::encode_list_fix_messages_response(&full),
+        &hand::hand_list_fix_messages_response_to_json(&full),
+    );
+    let empty = ListFixMessagesResponse {
+        messages: vec![],
+        latest_seq: 0,
+        correlation_id: None,
+    };
+    let g = generated::encode_list_fix_messages_response(&empty);
+    assert_eq!(g.get("messages"), Some(&Value::Array(vec![])));
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "ListFixMessagesResponse(empty)",
+        &g,
+        &hand::hand_list_fix_messages_response_to_json(&empty),
+    );
+}

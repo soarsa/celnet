@@ -935,53 +935,60 @@ async fn handle_unary(
                 codec::list_deals_response_to_json
             )
         }
-        // ---- fix-admin: manage the inbound FIX acceptor connections ----------
+        // The FixAdminService connection/message administration verbs run on the
+        // descriptor-driven generated codec (arch item G — `ws-codec-from-proto`):
+        // the `ws_codec_differential` harness proves, over the fix-admin conformance
+        // corpus + edge vectors, that the generated request-decode + response-encode
+        // is byte-identical to the hand codec (retained as the frozen oracle in
+        // `codec::diff_support`), so this swap is contract-preserving.
         "list_fix_connections" => {
-            let req = decode!(codec::list_fix_connections_request_from_json(o));
+            let req = decode!(generated_codec::decode_list_fix_connections_request(o));
             call!(
                 services.fix_admin.list_connections(Request::new(req)),
                 "fix_connections",
-                codec::list_fix_connections_response_to_json
+                generated_codec::encode_list_fix_connections_response
             )
         }
         "create_fix_connection" => {
-            let req = decode!(codec::create_fix_connection_request_from_json(o));
+            let req = decode!(generated_codec::decode_create_fix_connection_request(o));
             call!(
                 services.fix_admin.create_connection(Request::new(req)),
                 "fix_connection_created",
-                codec::create_fix_connection_response_to_json
+                generated_codec::encode_create_fix_connection_response
             )
         }
         "update_fix_connection" => {
-            let req = decode!(codec::update_fix_connection_request_from_json(o));
+            let req = decode!(generated_codec::decode_update_fix_connection_request(o));
             call!(
                 services.fix_admin.update_connection(Request::new(req)),
                 "fix_connection_updated",
-                codec::update_fix_connection_response_to_json
+                generated_codec::encode_update_fix_connection_response
             )
         }
         "delete_fix_connection" => {
-            let req = decode!(codec::delete_fix_connection_request_from_json(o));
+            let req = decode!(generated_codec::decode_delete_fix_connection_request(o));
             call!(
                 services.fix_admin.delete_connection(Request::new(req)),
                 "fix_connection_deleted",
-                codec::delete_fix_connection_response_to_json
+                generated_codec::encode_delete_fix_connection_response
             )
         }
         "set_fix_connection_enabled" => {
-            let req = decode!(codec::set_fix_connection_enabled_request_from_json(o));
+            let req = decode!(generated_codec::decode_set_fix_connection_enabled_request(
+                o
+            ));
             call!(
                 services.fix_admin.set_enabled(Request::new(req)),
                 "fix_connection_enabled",
-                codec::set_fix_connection_enabled_response_to_json
+                generated_codec::encode_set_fix_connection_enabled_response
             )
         }
         "list_fix_messages" => {
-            let req = decode!(codec::list_fix_messages_request_from_json(o));
+            let req = decode!(generated_codec::decode_list_fix_messages_request(o));
             call!(
                 services.fix_admin.list_messages(Request::new(req)),
                 "fix_messages",
-                codec::list_fix_messages_response_to_json
+                generated_codec::encode_list_fix_messages_response
             )
         }
         "login" => {
