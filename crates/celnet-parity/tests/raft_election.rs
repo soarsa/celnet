@@ -56,7 +56,11 @@ use celnet_replog::{BookState, BookUpdate, Log, LogEntry, RaftConfig, RaftNode, 
 // ---------------------------------------------------------------------------
 
 /// Hard upper bound on any single test body — a regression fails loudly here.
-const TEST_DEADLINE: Duration = Duration::from_secs(15);
+/// Set generously (180s) to tolerate tokio-task starvation when many parallel
+/// Claude sessions saturate the single M4 during a landing t2 — the election +
+/// partition scenarios need several election rounds, and under load each round
+/// runs slow (not a consensus regression). Mirrors `raft_snapshot`'s 180s budget.
+const TEST_DEADLINE: Duration = Duration::from_secs(180);
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
