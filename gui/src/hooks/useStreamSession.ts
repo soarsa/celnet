@@ -14,6 +14,9 @@ import type {
   Greeks,
   Heartbeat,
   Instrument,
+  RatesCurveSet,
+  RatesInstrument,
+  RatesPricingResult,
   Snapshot,
   StreamHealth,
   TradableToken,
@@ -56,6 +59,32 @@ export interface StreamRow {
 }
 
 /**
+ * A live fixed-income (linear-rates) line in the Stream workspace — the FI
+ * analogue of {@link StreamRow}, multiplexed on the SAME session. It carries the
+ * streamed indicative PV + first-order risk (PV / par / PV01 / DV01) re-priced
+ * each tick against the baseline curve shifted by `curveShift`. There is NO
+ * two-way market and NO click-to-trade token: rates click-to-trade routes through
+ * the RFQ/desk path, so this row is honestly indicative-only.
+ */
+export interface RatesStreamRow {
+  subscriptionId: bigint;
+  instrument: RatesInstrument;
+  /** The subscribed baseline curve (its shift-0 price is the baseline snapshot). */
+  curveSet: RatesCurveSet;
+  /** The linear-rates arm ("ois" / "irs" / "fra" / "bond") for the row label. */
+  kind: RatesInstrument["kind"];
+  label: string;
+  sequence: bigint;
+  /** The streamed PV + par + PV01 / DV01 / key-rate ladder at this sequence. */
+  result: RatesPricingResult;
+  /** The parallel curve shift (decimal) this tick was priced against (0 baseline). */
+  curveShift: number;
+  /** Recent PVs for the sparkline (bounded ring). */
+  pvHistory: number[];
+  epochNanos: bigint;
+}
+
+/**
  * The latest server-reported observability, distilled from the most recent
  * [`Heartbeat`] across all live subscriptions. The StatusRibbon renders this so
  * the trader sees the SERVER's real numbers (drain-side price tail, ring
@@ -88,9 +117,24 @@ const HISTORY_LEN = 48;
 
 export interface StreamApi {
   rows: StreamRow[];
+  /** The live fixed-income (linear-rates) lines, multiplexed on the same session. */
+  ratesRows: RatesStreamRow[];
   toasts: TradeToast[];
   subscribe: (instrument: Instrument, conventions: Conventions, label: string) => bigint;
   unsubscribe: (subscriptionId: bigint) => void;
+  /**
+   * Open a fixed-income streaming line (an OIS / IRS / FRA / bond priced against a
+   * baseline curve). Returns its client subscription id. The line is INDICATIVE
+   * (PV + first-order risk); there is no click-to-trade side (rates route to RFQ/
+   * desk), so no `execute` counterpart exists for it.
+   */
+  subscribeRates: (
+    instrument: RatesInstrument,
+    curveSet: RatesCurveSet,
+    label: string,
+  ) => bigint;
+  /** Tear down a fixed-income streaming line. */
+  unsubscribeRates: (subscriptionId: bigint) => void;
   /**
    * Click-to-trade a side. Resolves the FRESHEST live token for that side from the
    * authoritative row map (not the React-committed row, which lags the tape by up
@@ -147,8 +191,26 @@ export function useStreamSession(
   // server observability the ribbon shows). Distilled into one ServerObservability
   // on the same rAF batch as the rows, so a beat burst never causes >1 paint/frame.
   const beatMap = useRef(new Map<bigint, Heartbeat>());
+  // The authoritative fixed-income row map (same ref-then-rAF-commit discipline as
+  // the FX rows). Per-subscription metadata (label + instrument + baseline curve)
+  // the wire snapshot/update do NOT carry is resolved here, keyed by SubscriptionId.
+  const ratesRowMap = useRef(new Map<bigint, RatesStreamRow>());
+  const ratesMetaRef = useRef(
+    new Map<bigint, { label: string; instrument: RatesInstrument; curveSet: RatesCurveSet }>(),
+  );
+  // Rates snapshots that arrived before their metadata was recorded (the mock
+  // emits the baseline snapshot synchronously inside subscribeRates(), before it
+  // has returned the id we key metadata by). Materialized once metadata lands.
+  const ratesOrphanRef = useRef(
+    new Map<
+      bigint,
+      { sequence: bigint; result: RatesPricingResult; curveShift: number; epochNanos: bigint }
+    >(),
+  );
+  const materializeRatesOrphanRef = useRef<(id: bigint) => boolean>(() => false);
 
   const [rows, setRows] = useState<StreamRow[]>([]);
+  const [ratesRows, setRatesRows] = useState<RatesStreamRow[]>([]);
   const [toasts, setToasts] = useState<TradeToast[]>([]);
   const [totalSeq, setTotalSeq] = useState<bigint>(0n);
   const [observability, setObservability] = useState<ServerObservability>(EMPTY_OBSERVABILITY);
@@ -167,6 +229,7 @@ export function useStreamSession(
       raf.current = requestAnimationFrame(() => {
         dirty.current = false;
         setRows([...rowMap.current.values()]);
+        setRatesRows([...ratesRowMap.current.values()]);
         let max = 0n;
         for (const r of rowMap.current.values()) if (r.sequence > max) max = r.sequence;
         setTotalSeq(max);
@@ -222,6 +285,47 @@ export function useStreamSession(
       return false;
     };
 
+    // --- fixed-income rows (same discipline as the FX rows above) ------------
+    const ratesMeta = ratesMetaRef.current;
+    // Build (or refresh) a fixed-income row from a baseline snapshot. The wire
+    // snapshot carries the priced result + shift + sequence; the display label +
+    // instrument + baseline curve are resolved from the recorded metadata.
+    const applyRatesSnapshot = (
+      subscriptionId: bigint,
+      sequence: bigint,
+      result: RatesPricingResult,
+      curveShift: number,
+      epochNanos: bigint,
+      m: { label: string; instrument: RatesInstrument; curveSet: RatesCurveSet },
+    ): void => {
+      const existing = ratesRowMap.current.get(subscriptionId);
+      const row: RatesStreamRow = {
+        subscriptionId,
+        instrument: m.instrument,
+        curveSet: m.curveSet,
+        kind: m.instrument.kind,
+        label: m.label,
+        sequence,
+        result,
+        curveShift,
+        pvHistory: appendHistory(existing?.pvHistory, result.pv),
+        epochNanos,
+      };
+      ratesRowMap.current.set(subscriptionId, row);
+    };
+    // Materialize a parked rates snapshot now that metadata for `id` is known.
+    materializeRatesOrphanRef.current = (id: bigint) => {
+      const m = ratesMeta.get(id);
+      const orphan = ratesOrphanRef.current.get(id);
+      if (m && orphan) {
+        applyRatesSnapshot(id, orphan.sequence, orphan.result, orphan.curveShift, orphan.epochNanos, m);
+        ratesOrphanRef.current.delete(id);
+        scheduleCommit();
+        return true;
+      }
+      return false;
+    };
+
     const dispose = session.onEvent((event) => {
       switch (event.kind) {
         case "snapshot": {
@@ -255,6 +359,50 @@ export function useStreamSession(
           row.tradable = u.tradable;
           row.midHistory = appendHistory(row.midHistory, mid(u.price));
           row.gaps += gap;
+          scheduleCommit();
+          break;
+        }
+        case "ratesSnapshot": {
+          const s = event.snapshot;
+          const m = ratesMeta.get(s.subscriptionId);
+          const existing = ratesRowMap.current.get(s.subscriptionId);
+          if (!m && !existing) {
+            // Metadata not recorded yet (snapshot emitted synchronously inside
+            // subscribeRates()). Park it; subscribeRates() materializes it once
+            // it holds the id. Keep only the latest orphan per id.
+            ratesOrphanRef.current.set(s.subscriptionId, {
+              sequence: s.sequence,
+              result: s.result,
+              curveShift: s.curveShift,
+              epochNanos: s.epochNanos,
+            });
+            break;
+          }
+          const resolved = m ?? {
+            label: existing!.label,
+            instrument: existing!.instrument,
+            curveSet: existing!.curveSet,
+          };
+          applyRatesSnapshot(
+            s.subscriptionId,
+            s.sequence,
+            s.result,
+            s.curveShift,
+            s.epochNanos,
+            resolved,
+          );
+          scheduleCommit();
+          break;
+        }
+        case "ratesUpdate": {
+          const u = event.update;
+          const row = ratesRowMap.current.get(u.subscriptionId);
+          if (!row) break;
+          row.sequence = u.sequence;
+          row.result = u.result;
+          row.curveShift = u.curveShift;
+          row.pvHistory = appendHistory(row.pvHistory, u.result.pv);
+          row.epochNanos = u.epochNanos;
           scheduleCommit();
           break;
         }
@@ -319,8 +467,11 @@ export function useStreamSession(
       session.close();
       sessionRef.current = null;
       rowMap.current = new Map();
+      ratesRowMap.current = new Map();
+      ratesOrphanRef.current = new Map();
       beatMap.current = new Map();
       meta.clear();
+      ratesMeta.clear();
     };
     // Seed + transport are stable for the app lifetime; intentional one-time wire.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -350,6 +501,31 @@ export function useStreamSession(
     setRows([...rowMap.current.values()]);
     setObservability(distillObservability(beatMap.current));
   };
+  const subscribeRates = (
+    instrument: RatesInstrument,
+    curveSet: RatesCurveSet,
+    label: string,
+  ): bigint => {
+    const session = sessionRef.current;
+    if (!session) return 0n;
+    // Same synchronous-baseline race as the FX path: the session emits the
+    // baseline `ratesSnapshot` inside subscribeRates() before this returns the id,
+    // so it lands in the rates orphan buffer. Record metadata, then materialize
+    // the parked snapshot so the new fixed-income line appears immediately.
+    const id = session.subscribeRates(instrument, curveSet, label);
+    ratesMetaRef.current.set(id, { label, instrument, curveSet });
+    if (materializeRatesOrphanRef.current(id)) {
+      setRatesRows([...ratesRowMap.current.values()]);
+    }
+    return id;
+  };
+  const unsubscribeRates = (subscriptionId: bigint) => {
+    ratesRowMap.current.delete(subscriptionId);
+    ratesMetaRef.current.delete(subscriptionId);
+    ratesOrphanRef.current.delete(subscriptionId);
+    sessionRef.current?.unsubscribeRates(subscriptionId);
+    setRatesRows([...ratesRowMap.current.values()]);
+  };
   const execute = (subscriptionId: bigint, side: "BUY" | "SELL"): boolean => {
     const session = sessionRef.current;
     if (!session) return false;
@@ -366,9 +542,12 @@ export function useStreamSession(
 
   return {
     rows,
+    ratesRows,
     toasts,
     subscribe,
     unsubscribe,
+    subscribeRates,
+    unsubscribeRates,
     execute,
     dismissToast,
     totalSeq,

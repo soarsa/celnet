@@ -2506,6 +2506,62 @@ export interface RatesPricingResult {
 }
 
 // ---------------------------------------------------------------------------
+// Fixed-income (linear-rates) LIVE STREAMING — the FI analogue of the FX
+// Snapshot/Update RFS line, folded onto the SAME multiplexed StreamSession (and
+// the SAME server PriceFanout). A rates line opens with a `RatesInstrument`
+// priced against a baseline `RatesCurveSet` (the FI analogue of the FX
+// instrument + market), and the server streams a baseline `RatesStreamSnapshot`
+// then sequenced `RatesStreamUpdate`s as the curve deterministically ticks (a
+// parallel par-rate shift). The streamed line is INDICATIVE (PV + first-order
+// risk) — click-to-trade for rates books through the RFQ/desk path, so NO
+// TradableToken rides this stream. Mirrors `celnet.wire.RatesStreamSnapshot` /
+// `RatesStreamUpdate` field-for-field.
+// ---------------------------------------------------------------------------
+
+/**
+ * The baseline state of a streamed fixed-income line at a sequence point — the
+ * priced {@link RatesPricingResult} a consumer applies whole before consuming
+ * deltas. Faithful to `PricingService.PriceRates`: the snapshot's `result` at
+ * the subscribed baseline curve (`curveShift === 0`) equals
+ * `price_rates(instrument, curve_set)` EXACTLY.
+ */
+export interface RatesStreamSnapshot {
+  /** The client-assigned subscription id this snapshot answers. */
+  subscriptionId: bigint;
+  /** The monotonic per-subscription sequence number of this snapshot (1). */
+  sequence: bigint;
+  /** The priced PV + par + PV01 / DV01 / key-rate ladder at this snapshot. */
+  result: RatesPricingResult;
+  /**
+   * The parallel curve shift (decimal, added to every pillar par rate) applied
+   * relative to the subscribed baseline curve — always `0` at the baseline.
+   */
+  curveShift: number;
+  /** Echo of the opening subscribe correlation id, when one was supplied. */
+  correlationId?: bigint;
+  /** Snapshot time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+}
+
+/**
+ * A sequenced delta on a streamed fixed-income line (`celnet.wire
+ * .RatesStreamUpdate`): the line re-priced at the next sequence against the
+ * baseline curve shifted by `curveShift`. A gap in `sequence` signals loss.
+ */
+export interface RatesStreamUpdate {
+  /** The subscription this update advances. */
+  subscriptionId: bigint;
+  /** The monotonic per-subscription sequence number (snapshot seq + n). */
+  sequence: bigint;
+  /** The re-priced PV + first-order risk at this sequence. */
+  result: RatesPricingResult;
+  /** The parallel curve shift (decimal) applied to the baseline curve this tick. */
+  curveShift: number;
+  /** Update time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+}
+
+// ---------------------------------------------------------------------------
 // XVA — counterparty valuation adjustments (`PricingService.PriceXva`).
 //
 // A netting set of FX vanillas priced for its all-in credit / funding valuation

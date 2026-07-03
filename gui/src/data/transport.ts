@@ -80,6 +80,8 @@ import type {
   RatesCurveSet,
   RatesInstrument,
   RatesPricingResult,
+  RatesStreamSnapshot,
+  RatesStreamUpdate,
   RiskBucketRequest,
   ScenarioResult,
   ShockAxis,
@@ -120,7 +122,9 @@ export type StreamEvent =
   | { kind: "health"; subscriptionId: bigint; health: "HEALTHY" | "RESYNCING" | "STALE" }
   | { kind: "heartbeat"; heartbeat: Heartbeat }
   | { kind: "marketSeriesSnapshot"; snapshot: MarketSeriesSnapshot }
-  | { kind: "marketSeriesPoint"; point: MarketSeriesPoint };
+  | { kind: "marketSeriesPoint"; point: MarketSeriesPoint }
+  | { kind: "ratesSnapshot"; snapshot: RatesStreamSnapshot }
+  | { kind: "ratesUpdate"; update: RatesStreamUpdate };
 
 /** Parameters for opening a market-series subscription on the stream session. */
 export interface MarketSeriesParams {
@@ -152,6 +156,18 @@ export interface StreamSession {
   subscribeMarketSeries(params: MarketSeriesParams): bigint;
   /** Tear down a market-series subscription. */
   unsubscribeMarketSeries(subscriptionId: bigint): void;
+  /**
+   * Open a fixed-income (linear-rates) streaming line on the SAME multiplexed
+   * session — a {@link RatesInstrument} priced against a baseline
+   * {@link RatesCurveSet}. Returns its client subscription id. The server (or
+   * offline mock) replies with a baseline `ratesSnapshot` then sequenced
+   * `ratesUpdate`s as the curve deterministically ticks. The line is INDICATIVE
+   * (PV + first-order risk); rates click-to-trade routes through RFQ/desk, so no
+   * click-to-trade token rides this line and there is no `execute` for it.
+   */
+  subscribeRates(instrument: RatesInstrument, curveSet: RatesCurveSet, label: string): bigint;
+  /** Tear down a fixed-income streaming line (the SAME id space as the FX lines). */
+  unsubscribeRates(subscriptionId: bigint): void;
   /** Subscribe to server→client events; returns an unsubscribe disposer. */
   onEvent(listener: (event: StreamEvent) => void): () => void;
   /** Close the whole session. */

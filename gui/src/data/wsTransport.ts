@@ -190,6 +190,9 @@ import {
   ratesCurveSetToWire,
   ratesInstrumentUnionToWire,
   ratesPricingResultFromWire,
+  ratesStreamSnapshotFromWire,
+  ratesStreamUpdateFromWire,
+  ratesSubscribeToWire,
   riskBucketRequestToWire,
   xvaResultFromWire,
   scenarioResultFromWire,
@@ -652,6 +655,22 @@ interface WsSub {
 }
 
 /**
+ * A live fixed-income (linear-rates) streaming line — the FI analogue of
+ * {@link WsSub}. It carries the originating instrument + baseline curve so a
+ * reconnect re-opens the exact line, and its last good sequence to detect gaps.
+ */
+interface WsRatesSub {
+  readonly id: bigint;
+  readonly instrument: RatesInstrument;
+  readonly curveSet: RatesCurveSet;
+  readonly label: string;
+  /** The last in-sequence number successfully applied (0 until first snapshot). */
+  lastSequence: bigint;
+  /** True once the baseline snapshot has been seen (post-subscribe/post-resync). */
+  baselined: boolean;
+}
+
+/**
  * The live multiplexed RFS session over the WS connection. Implements the same
  * `StreamSession` seam the mock does, so workspaces and the streaming store are
  * transport-agnostic. It assigns each subscription a client `SubscriptionId`
@@ -668,6 +687,13 @@ class WsStreamSession implements StreamSession {
    * reconnect re-opens each series and the snapshot/point frames route by id.
    */
   private readonly series = new Map<bigint, MarketSeriesParams>();
+  /**
+   * Live fixed-income streaming lines, keyed by the SAME id space as the FX price
+   * + market-series streams (the contract multiplexes all three on one
+   * `SubscriptionId` space). Held so a reconnect re-opens each line and the
+   * rates snapshot/update frames route by id.
+   */
+  private readonly ratesSubs = new Map<bigint, WsRatesSub>();
   private readonly listeners = new Set<(e: StreamEvent) => void>();
   private nextSubId = 1n;
   private closed = false;
@@ -767,6 +793,43 @@ class WsStreamSession implements StreamSession {
     });
   }
 
+  subscribeRates(instrument: RatesInstrument, curveSet: RatesCurveSet, label: string): bigint {
+    const id = this.nextSubId++;
+    this.ratesSubs.set(id, {
+      id,
+      instrument,
+      curveSet,
+      label,
+      lastSequence: 0n,
+      baselined: false,
+    });
+    this.sendRatesSubscribe(id, instrument, curveSet);
+    return id;
+  }
+
+  private sendRatesSubscribe(
+    id: bigint,
+    instrument: RatesInstrument,
+    curveSet: RatesCurveSet,
+  ): void {
+    this.conn.send({
+      type: "rates_subscribe",
+      ...ratesSubscribeToWire({ subscriptionId: id, instrument, curveSet }),
+    });
+  }
+
+  unsubscribeRates(subscriptionId: bigint): void {
+    if (!this.ratesSubs.delete(subscriptionId)) return;
+    // A rates line tears down through the SAME generic `unsubscribe` control
+    // frame the FX lines use — the server's handler removes it from either the
+    // FX or the fixed-income subscription map (crates/celnet-server/src/services
+    // /stream.rs), so the id space is uniform and one verb suffices.
+    this.conn.send({
+      type: "unsubscribe",
+      subscription: { value: Number(subscriptionId) },
+    });
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -779,8 +842,12 @@ class WsStreamSession implements StreamSession {
         ...marketSeriesUnsubscribeToWire(id),
       });
     }
+    for (const id of this.ratesSubs.keys()) {
+      this.conn.send({ type: "unsubscribe", subscription: { value: Number(id) } });
+    }
     this.subs.clear();
     this.series.clear();
+    this.ratesSubs.clear();
     this.listeners.clear();
     this.conn.bindSession(null);
   }
@@ -808,6 +875,13 @@ class WsStreamSession implements StreamSession {
     // snapshot (the series has no client-side sequence resync; it is conflatable).
     for (const [id, params] of this.series) {
       this.sendMarketSeriesSubscribe(id, params);
+    }
+    // Re-open every live fixed-income line — the server re-baselines each with a
+    // fresh `rates_stream_snapshot` at shift 0 (the FI line is conflatable and
+    // re-prices from the baseline curve, so no client-side sequence resync).
+    for (const sub of this.ratesSubs.values()) {
+      sub.baselined = false;
+      this.sendRatesSubscribe(sub.id, sub.instrument, sub.curveSet);
     }
   }
 
@@ -902,6 +976,26 @@ class WsStreamSession implements StreamSession {
         const point = marketSeriesPointFromWire(frame);
         if (!this.series.has(point.subscriptionId)) break;
         this.emit({ kind: "marketSeriesPoint", point });
+        break;
+      }
+      case "rates_stream_snapshot": {
+        const snapshot = ratesStreamSnapshotFromWire(frame);
+        const sub = this.ratesSubs.get(snapshot.subscriptionId);
+        if (!sub) break;
+        // The baseline is authoritative: accept its sequence whole.
+        sub.lastSequence = snapshot.sequence;
+        sub.baselined = true;
+        this.emit({ kind: "ratesSnapshot", snapshot });
+        break;
+      }
+      case "rates_stream_update": {
+        const update = ratesStreamUpdateFromWire(frame);
+        const sub = this.ratesSubs.get(update.subscriptionId);
+        // A rates line is conflatable and re-prices from the baseline curve each
+        // tick, so a gap needs no client resync — just apply the latest.
+        if (!sub || !sub.baselined) break;
+        if (update.sequence > sub.lastSequence) sub.lastSequence = update.sequence;
+        this.emit({ kind: "ratesUpdate", update });
         break;
       }
       default:

@@ -37,8 +37,12 @@ import {
   multiDealerQuoteFromWire,
   parseFrame,
   quoteAcceptToWire,
+  ratesCurveSetToWire,
   ratesInstrumentToWire,
   ratesInstrumentUnionToWire,
+  ratesStreamSnapshotFromWire,
+  ratesStreamUpdateFromWire,
+  ratesSubscribeToWire,
   serializeFrame,
   smileModelToWire,
   updateBookRequestToWire,
@@ -53,6 +57,9 @@ import type {
   MarketContext,
   OisInstrument,
   PremiumStyle,
+  RatesCurveSet,
+  RatesInstrument,
+  RatesPricingResult,
   ReportingNumeraire,
   RiskScope,
   SmileModel,
@@ -700,5 +707,119 @@ describe("wsCodec — RatesInstrument oneof arms (server decoder contract)", () 
       }),
     ];
     expect(arms.map((a) => Object.keys(a))).toEqual([["ois"], ["fra"]]);
+  });
+});
+
+describe("wsCodec — fixed-income LIVE STREAMING (rates_subscribe + snapshot/update)", () => {
+  // The server contract: `rates_subscribe_from_json` reads { subscription,
+  // instrument, curve_set, throttle_nanos, correlation_id? }; the snapshot/update
+  // frames are `rates_stream_snapshot_to_json` / `rates_stream_update_to_json`
+  // (subscription, sequence, result{pv,par_rate,pv01,dv01,key_rate_ladder},
+  // curve_shift, epoch_nanos, correlation_id?). BYTE-MATCH those exactly.
+
+  const curve: RatesCurveSet = {
+    currency: "USD",
+    referenceDate: { year: 2026, month: 6, day: 30 },
+    pillars: [
+      { tenor: { kind: "years", years: 2 }, parRate: 0.0418 },
+      { tenor: { kind: "years", years: 5 }, parRate: 0.0405 },
+    ],
+  };
+  const instrument: RatesInstrument = {
+    kind: "ois",
+    ois: { tenorYears: 5, fixedRate: 0.0405, notional: 100_000_000, direction: "PAY_FIXED" },
+  };
+
+  it("encodes rates_subscribe with the server decoder's exact field shape", () => {
+    const body = ratesSubscribeToWire({ subscriptionId: 7n, instrument, curveSet: curve });
+    expect(body).toEqual({
+      subscription: { value: 7 },
+      // reuses the SHARED unary encoders verbatim (one encoding, no duplication)
+      instrument: ratesInstrumentUnionToWire(instrument),
+      curve_set: ratesCurveSetToWire(curve),
+      throttle_nanos: 0,
+    });
+    // correlation_id is presence-tracked — absent unless supplied.
+    expect("correlation_id" in body).toBe(false);
+  });
+
+  it("carries the correlation id + throttle when supplied", () => {
+    const body = ratesSubscribeToWire({
+      subscriptionId: 9n,
+      instrument,
+      curveSet: curve,
+      throttleNanos: 250_000n,
+      correlationId: 4242n,
+    });
+    expect(body["throttle_nanos"]).toBe(250_000);
+    expect(body["correlation_id"]).toBe(4242);
+  });
+
+  it("decodes a rates_stream_snapshot frame (server rates_stream_snapshot_to_json)", () => {
+    const result: RatesPricingResult = {
+      pv: -123456.789,
+      parRate: 0.04093,
+      pv01: -4821.5,
+      dv01: -4830.1,
+      keyRateLadder: [-1200.3, -3630.2],
+    };
+    // The exact server frame shape (snake_case, nested `result`).
+    const frame = {
+      subscription: { value: 7 },
+      sequence: 1,
+      result: {
+        pv: result.pv,
+        par_rate: result.parRate,
+        pv01: result.pv01,
+        dv01: result.dv01,
+        key_rate_ladder: [...result.keyRateLadder],
+      },
+      curve_shift: 0,
+      correlation_id: 4242,
+      epoch_nanos: 1_700_000_000_000_000_000,
+    };
+    const snap = ratesStreamSnapshotFromWire(frame);
+    expect(snap.subscriptionId).toBe(7n);
+    expect(snap.sequence).toBe(1n);
+    expect(snap.result).toEqual(result);
+    expect(snap.curveShift).toBe(0);
+    expect(snap.correlationId).toBe(4242n);
+    expect(snap.epochNanos).toBe(1_700_000_000_000_000_000n);
+  });
+
+  it("decodes a rates_stream_update frame (no correlation, non-zero shift)", () => {
+    const frame = {
+      subscription: { value: 7 },
+      sequence: 5,
+      result: { pv: 42.0, par_rate: 0.041, pv01: 10.0, dv01: 11.0, key_rate_ladder: [] },
+      curve_shift: 0.00007,
+      // A JSON-safe-integer epoch (the WireObject the decoder receives is already
+      // parsed; the bigint-safe frame path is exercised by parseFrame elsewhere).
+      epoch_nanos: 1_700_000_000_000,
+    };
+    const upd = ratesStreamUpdateFromWire(frame);
+    expect(upd.subscriptionId).toBe(7n);
+    expect(upd.sequence).toBe(5n);
+    expect(upd.result).toEqual({
+      pv: 42.0,
+      parRate: 0.041,
+      pv01: 10.0,
+      dv01: 11.0,
+      keyRateLadder: [],
+    });
+    expect(upd.curveShift).toBe(0.00007);
+    expect(upd.epochNanos).toBe(1_700_000_000_000n);
+  });
+
+  it("snapshot omits correlationId when the frame carries none (present-tracked)", () => {
+    const frame = {
+      subscription: { value: 1 },
+      sequence: 1,
+      result: { pv: 0, par_rate: 0.04, pv01: 0, dv01: 0, key_rate_ladder: [] },
+      curve_shift: 0,
+      epoch_nanos: 1,
+    };
+    const snap = ratesStreamSnapshotFromWire(frame);
+    expect("correlationId" in snap).toBe(false);
   });
 });
