@@ -1473,7 +1473,55 @@ export interface RatesPricingResult {
   /**
    * The key-rate (bucketed) DV01 ladder: one entry per curve pillar, in pillar
    * order, each the PV change for a +1bp bump of that pillar alone. Sums to
-   * `dv01` to first order (the residual is curve cross-gamma).
+   * `dv01` to first order (the residual is curve cross-gamma). EMPTY for a cash
+   * bond (`celnet.wire.BondInstrument`): the engine's bond risk is a closed-form
+   * yield-space measure with no per-calibrating-pillar decomposition.
    */
   keyRateLadder: readonly number[];
+}
+
+/**
+ * The coupon payment frequency of a cash bond (`celnet.wire.PaymentFrequency`) —
+ * also the yield-compounding basis. The wire carries the numeric proto tag
+ * (ANNUAL=0, SEMI_ANNUAL=1, QUARTERLY=2).
+ */
+export type BondCouponFrequency = "ANNUAL" | "SEMI_ANNUAL" | "QUARTERLY";
+
+/**
+ * The accrual day-count basis of a cash bond (`celnet.wire.AccrualBasis`) — the
+ * instrument-level superset of the curve/vol `DayCount` that additionally carries
+ * 30/360 Bond Basis, the standard USD fixed-bond basis. The wire carries the
+ * numeric proto tag (ACT_360=0, ACT_365_FIXED=1, THIRTY_360_BOND_BASIS=2).
+ */
+export type BondDayCount = "ACT_360" | "ACT_365_FIXED" | "THIRTY_360_BOND_BASIS";
+
+/**
+ * The position direction of a cash bond (`celnet.wire.BondInstrument.side`): LONG
+ * (a bought bond, +PV — wire `Side` SIDE_BUY = 0) or SHORT (a sold bond, −PV —
+ * wire `Side` SIDE_SELL = 1). SIDE_TWO_WAY is rejected by the engine for an
+ * outright bond price.
+ */
+export type BondPositionSide = "LONG" | "SHORT";
+
+/**
+ * A fixed-coupon cash bond to price off the calibrated curve
+ * (`celnet.wire.BondInstrument`, the `RatesInstrument.bond` oneof arm). The engine
+ * PVs each cashflow at the bootstrapped discount curve (the DIRTY price) and
+ * reports the implied yield-risk set. Settlement is the `RatesCurveSet` reference
+ * (spot-anchor) date rolled to the next US business day; the coupon schedule is the
+ * regular month-step dates rolled back from `maturityDate` at `couponFrequency`.
+ */
+export interface BondInstrument {
+  /** The annual coupon rate as a decimal (0.06 = 6%); 0 for a zero-coupon bond. */
+  couponRate: number;
+  /** The coupon payment frequency (also the yield compounding basis). */
+  couponFrequency: BondCouponFrequency;
+  /** The accrual day-count basis for accrued interest. */
+  dayCount: BondDayCount;
+  /** The maturity (final-redemption) civil date; must be strictly after settlement. */
+  maturityDate: BrokenDate;
+  /** The par redemption / face value (e.g. 100); strictly positive. */
+  redemption: number;
+  /** LONG (+PV) or SHORT (−PV); the position direction carries the PV sign. */
+  side: BondPositionSide;
 }

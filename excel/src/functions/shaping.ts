@@ -26,6 +26,10 @@ import type {
   BasketKind,
   BasketLeg,
   BasketOption,
+  BondCouponFrequency,
+  BondDayCount,
+  BondInstrument,
+  BondPositionSide,
   BrokenDate,
   BuildCurveRequest,
   CalibratedCurve,
@@ -3978,6 +3982,185 @@ export function formatRatesSpill(
   result.keyRateLadder.forEach((value, i) => {
     const label = tenorLabelled ? `kr_dv01[${pillars[i]!.tenorYears}Y]` : `kr_dv01[${i}]`;
     rows.push([label, value]);
+  });
+  return rectangular(rows);
+}
+
+// ---------------------------------------------------------------------------
+// fixed-income (rates) — cash-bond arm: parse the scalar bond terms into the
+// typed `BondInstrument` the `price_rates` RPC carries on its `RatesInstrument
+// .bond` oneof arm, and format the server's `RatesPricingResult` (with bond
+// semantics) as a labelled spill. The add-in holds NO bond math: it only shapes
+// the inputs the `celnet-rates` bond engine prices and lays out its result.
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the bond coupon frequency (also the yield-compounding basis). Accepts the
+ * canonical contract names and the desk short/synonym forms, case-/separator-
+ * insensitive: ANNUAL/ANN/A/1Y; SEMI_ANNUAL/SEMI/SA/6M/2; QUARTERLY/QTR/Q/3M/4.
+ * Empty/absent ⇒ SEMI_ANNUAL — the standard cash-bond convention (a USD Treasury
+ * / corporate pays semi-annually), the ergonomic default for an omitted argument.
+ */
+export function parseBondCouponFrequency(raw: string | number | undefined): BondCouponFrequency {
+  if (raw === undefined || raw === "") return "SEMI_ANNUAL";
+  const t = String(raw).trim().toUpperCase().replace(/[._\s-]/g, "");
+  switch (t) {
+    case "ANNUAL":
+    case "ANN":
+    case "A":
+    case "1Y":
+    case "1":
+      return "ANNUAL";
+    case "SEMIANNUAL":
+    case "SEMI":
+    case "SA":
+    case "6M":
+    case "2":
+      return "SEMI_ANNUAL";
+    case "QUARTERLY":
+    case "QTR":
+    case "Q":
+    case "3M":
+    case "4":
+      return "QUARTERLY";
+    default:
+      throw new ShapingError(
+        `invalid coupon frequency \`${raw}\` (expected ANNUAL, SEMI_ANNUAL or QUARTERLY)`,
+      );
+  }
+}
+
+/**
+ * Parse the bond accrual day-count basis (`AccrualBasis`). Accepts the canonical
+ * contract names and the desk short forms, case-/separator-insensitive:
+ * ACT_360/ACT360; ACT_365_FIXED/ACT365/ACT365F; THIRTY_360_BOND_BASIS/30_360/
+ * 30360/30/BONDBASIS/BOND. Empty/absent ⇒ THIRTY_360_BOND_BASIS — the standard
+ * USD fixed-bond basis (the proto `AccrualBasis` doc default for a cash bond).
+ */
+export function parseBondDayCount(raw: string | undefined): BondDayCount {
+  if (raw === undefined || raw.trim() === "") return "THIRTY_360_BOND_BASIS";
+  const t = raw.trim().toUpperCase().replace(/[._\s/-]/g, "");
+  switch (t) {
+    case "ACT360":
+    case "ACTUAL360":
+      return "ACT_360";
+    case "ACT365FIXED":
+    case "ACT365F":
+    case "ACT365":
+    case "ACTUAL365FIXED":
+      return "ACT_365_FIXED";
+    case "THIRTY360BONDBASIS":
+    case "30360BONDBASIS":
+    case "30360":
+    case "30":
+    case "BONDBASIS":
+    case "BOND":
+      return "THIRTY_360_BOND_BASIS";
+    default:
+      throw new ShapingError(
+        `invalid day count \`${raw}\` (expected ACT_360, ACT_365_FIXED or THIRTY_360_BOND_BASIS)`,
+      );
+  }
+}
+
+/**
+ * Parse the bond position direction. LONG (a bought bond, +PV) or SHORT (a sold
+ * bond, −PV), with the desk aliases (LONG/L/BUY/B; SHORT/S/SELL). Empty/absent ⇒
+ * LONG. TWO_WAY is not a valid outright bond direction (the engine rejects it).
+ */
+export function parseBondSide(raw: string | undefined): BondPositionSide {
+  const t = (raw ?? "LONG").trim().toUpperCase();
+  if (t === "" || t === "LONG" || t === "L" || t === "BUY" || t === "B") return "LONG";
+  if (t === "SHORT" || t === "S" || t === "SELL") return "SHORT";
+  throw new ShapingError(`invalid bond side \`${raw}\` (expected LONG/BUY or SHORT/SELL)`);
+}
+
+/** Validate a strictly-positive par redemption / face value (default 100 when absent). */
+function shapeBondRedemption(raw: number | undefined): number {
+  if (raw === undefined) return 100;
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new ShapingError(`bond redemption/face must be a positive number (got \`${raw}\`)`);
+  }
+  return raw;
+}
+
+/** Compare two civil dates; `< 0` if a is before b, `0` if equal, `> 0` if after. */
+function compareBrokenDate(a: BrokenDate, b: BrokenDate): number {
+  return a.year - b.year || a.month - b.month || a.day - b.day;
+}
+
+/** The scalar cash-bond terms a CELNET.BOND call shapes into a `BondInstrument`. */
+export interface BondInstrumentArgs {
+  /** The maturity (final-redemption) civil date (Excel date serial or `YYYY-MM-DD`). */
+  readonly maturity: number | string;
+  /** The curve reference (settlement / spot-anchor) date, for a client-side maturity guard. */
+  readonly referenceDate: BrokenDate;
+  /** The annual coupon rate as a decimal (0.06 = 6%); 0 for a zero-coupon bond. */
+  readonly couponRate: number;
+  /** The par redemption / face value; absent ⇒ 100. */
+  readonly redemption?: number | undefined;
+  /** The coupon frequency; absent ⇒ SEMI_ANNUAL. */
+  readonly frequency?: string | number | undefined;
+  /** The accrual day-count basis; absent ⇒ THIRTY_360_BOND_BASIS. */
+  readonly dayCount?: string | undefined;
+  /** The position direction (LONG/SHORT); absent ⇒ LONG. */
+  readonly side?: string | undefined;
+}
+
+/**
+ * Shape the scalar bond terms into the typed `BondInstrument`. The coupon rate must
+ * be a finite decimal (0 for a zero-coupon bond, but not negative); the maturity
+ * must be strictly after the curve reference date (the engine settles on the
+ * reference date rolled to the next business day and validates `maturity >
+ * settlement`, so a maturity at/before the reference is always invalid — caught
+ * here with a friendly message rather than a wire round-trip).
+ */
+export function shapeBondInstrument(args: BondInstrumentArgs): BondInstrument {
+  if (!Number.isFinite(args.couponRate) || args.couponRate < 0) {
+    throw new ShapingError(
+      `bond coupon rate must be a finite non-negative decimal (got \`${args.couponRate}\`)`,
+    );
+  }
+  const maturityDate = parseBrokenDate(args.maturity);
+  if (compareBrokenDate(maturityDate, args.referenceDate) <= 0) {
+    throw new ShapingError(
+      `bond maturity ${maturityDate.year}-${maturityDate.month}-${maturityDate.day} must be ` +
+        `strictly after the curve reference date ${args.referenceDate.year}-` +
+        `${args.referenceDate.month}-${args.referenceDate.day}`,
+    );
+  }
+  return {
+    couponRate: args.couponRate,
+    couponFrequency: parseBondCouponFrequency(args.frequency),
+    dayCount: parseBondDayCount(args.dayCount),
+    maturityDate,
+    redemption: shapeBondRedemption(args.redemption),
+    side: parseBondSide(args.side),
+  };
+}
+
+/**
+ * Format a bond `RatesPricingResult` as a labelled vertical spill. For a cash bond
+ * the shared rates-result fields carry BOND semantics (the engine repurposes the
+ * generic fields): `pv` is the DIRTY price (side-signed), `par_rate` is the yield
+ * to maturity (side-independent), and `pv01` = `dv01` is the yield DV01 (both
+ * coincide for a fixed-coupon bond) — so the rows are bond-labelled `dirty_price`,
+ * `ytm`, `dv01`, never the swap `pv`/`par_rate` labels that would mislead. The
+ * `key_rate_ladder` is empty for a bond (a closed-form yield-space risk with no
+ * per-pillar decomposition); if the engine ever returns a ladder it is appended
+ * positionally, never silently dropped. Only the fields the wire actually carries
+ * are shown — clean price / accrued / duration are NOT on the `price_rates`
+ * response and are never fabricated. Returns a rectangular `3×2` (+ any ladder)
+ * matrix.
+ */
+export function formatBondSpill(result: RatesPricingResult): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["dirty_price", result.pv],
+    ["ytm", result.parRate],
+    ["dv01", result.dv01],
+  ];
+  result.keyRateLadder.forEach((value, i) => {
+    rows.push([`kr_dv01[${i}]`, value]);
   });
   return rectangular(rows);
 }

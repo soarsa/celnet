@@ -178,6 +178,7 @@ export type EntryPointId =
   | "subscribe"
   | "series"
   | "rates"
+  | "bond"
   | "ratesrisk"
   | "ratesbook"
   | "curve"
@@ -289,6 +290,15 @@ export const ENTRY_POINTS: Record<EntryPointId, EntryPoint> = {
     asset: "fixed_income",
     requiresSignIn: false,
     signInLabel: "price rates",
+  },
+  bond: {
+    id: "bond",
+    label: "CELNET.BOND",
+    surface: "cell",
+    action: "price",
+    asset: "fixed_income",
+    requiresSignIn: false,
+    signInLabel: "price bonds",
   },
   ratesrisk: {
     id: "ratesrisk",

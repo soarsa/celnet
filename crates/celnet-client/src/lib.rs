@@ -135,8 +135,9 @@ pub use desk::{
 pub use error::{ClientError, ClientResult};
 pub use notify::{Notification, NotificationKind, NotificationScopeSpec, NotificationStream};
 pub use rates::{
-    CivilDate, KeyRateDv01, Ois, OisSide, RatesAggregateQuery, RatesPosition, RatesPositionQuery,
-    RatesPriced, RatesRiskAggregate, RatesRiskNode, RatesRiskScope, UsdSofrCurve,
+    AccrualBasis, BondSide, BondSpec, CivilDate, FraSpec, IrsSpec, KeyRateDv01, LegDayCount, Ois,
+    OisSide, RatesAggregateQuery, RatesFrequency, RatesPosition, RatesPositionQuery, RatesPriced,
+    RatesRiskAggregate, RatesRiskNode, RatesRiskScope, SwapSide, UsdSofrCurve,
 };
 pub use rfs::{
     ClickExecution, ExecuteOutcome, RejectReason, StreamEvent, StreamLine, StreamSession,
@@ -177,7 +178,7 @@ use celnet_proto::risk_service_client::RiskServiceClient;
 use celnet_proto::surface_service_client::SurfaceServiceClient;
 use celnet_proto::{
     GetSmileRequest, MarkSurfaceRequest, PriceRequest, QuoteAccept, QuoteReject, QuoteRequest,
-    RatesPriceRequest, ScenarioRequest,
+    RatesInstrument, RatesPriceRequest, ScenarioRequest,
 };
 use celnet_types::CcyPair;
 use tonic::transport::{Channel, Endpoint};
@@ -396,6 +397,111 @@ impl Client {
             request_id: 0,
             curve_set: Some(curve.to_wire()),
             instrument: Some(instrument.to_wire()),
+            correlation_id: None,
+        };
+        let resp = svc.price_rates(request).await?.into_inner();
+        let result = resp
+            .result
+            .ok_or(ClientError::MissingField("RatesPriceResponse.result"))?;
+        Ok(rates::RatesPriced::from_wire(result))
+    }
+
+    /// Price a vanilla fixed-vs-float interest-rate swap (IRS) against a calibrated
+    /// curve, on the same `PriceRates` wire path as [`Client::price_rates`] — the IRS
+    /// arm of the one linear-rates contract.
+    ///
+    /// ```no_run
+    /// # use celnet_client::{Client, rates::{UsdSofrCurve, CivilDate, IrsSpec}};
+    /// # async fn ex(client: &Client) -> celnet_client::ClientResult<()> {
+    /// let curve = UsdSofrCurve::new(CivilDate::new(2026, 6, 25))
+    ///     .pillar(1, 0.0432).pillar(2, 0.0418).pillar(5, 0.0405);
+    /// let priced = client
+    ///     .price_irs(&curve, &IrsSpec::receive_fixed(5, 0.0405).notional(100_000_000.0))
+    ///     .await?;
+    /// println!("par {} pv {} dv01 {}", priced.par_rate, priced.pv, priced.dv01);
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a missing result.
+    pub async fn price_irs(
+        &self,
+        curve: &rates::UsdSofrCurve,
+        instrument: &rates::IrsSpec,
+    ) -> ClientResult<rates::RatesPriced> {
+        self.price_rates_arm(curve, instrument.to_wire()).await
+    }
+
+    /// Price a forward rate agreement (FRA) against a calibrated curve, on the same
+    /// `PriceRates` wire path as [`Client::price_rates`] — the FRA arm of the one
+    /// linear-rates contract.
+    ///
+    /// ```no_run
+    /// # use celnet_client::{Client, rates::{UsdSofrCurve, CivilDate, FraSpec}};
+    /// # async fn ex(client: &Client) -> celnet_client::ClientResult<()> {
+    /// let curve = UsdSofrCurve::new(CivilDate::new(2026, 6, 25))
+    ///     .pillar(1, 0.0432).pillar(2, 0.0418).pillar(5, 0.0405);
+    /// let priced = client
+    ///     .price_fra(&curve, &FraSpec::receive_fixed(3, 6, 0.033).notional(100_000_000.0))
+    ///     .await?;
+    /// println!("par {} pv {}", priced.par_rate, priced.pv);
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a missing result.
+    pub async fn price_fra(
+        &self,
+        curve: &rates::UsdSofrCurve,
+        instrument: &rates::FraSpec,
+    ) -> ClientResult<rates::RatesPriced> {
+        self.price_rates_arm(curve, instrument.to_wire()).await
+    }
+
+    /// Price a fixed-coupon cash bond off a calibrated curve, on the same
+    /// `PriceRates` wire path as [`Client::price_rates`] — the bond arm of the one
+    /// linear-rates contract. The priced `pv` is the dirty price and `par_rate` the
+    /// yield to maturity.
+    ///
+    /// ```no_run
+    /// # use celnet_client::{Client, rates::{UsdSofrCurve, CivilDate, BondSpec}};
+    /// # async fn ex(client: &Client) -> celnet_client::ClientResult<()> {
+    /// let curve = UsdSofrCurve::new(CivilDate::new(2026, 6, 25))
+    ///     .pillar(1, 0.0432).pillar(2, 0.0418).pillar(5, 0.0405).pillar(10, 0.0415);
+    /// let priced = client
+    ///     .price_bond(&curve, &BondSpec::long(0.06, CivilDate::new(2035, 6, 15)))
+    ///     .await?;
+    /// println!("dirty {} ytm {}", priced.pv, priced.par_rate);
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a missing result.
+    pub async fn price_bond(
+        &self,
+        curve: &rates::UsdSofrCurve,
+        instrument: &rates::BondSpec,
+    ) -> ClientResult<rates::RatesPriced> {
+        self.price_rates_arm(curve, instrument.to_wire()).await
+    }
+
+    /// Send one already-encoded [`RatesInstrument`] arm to the `PriceRates` edge
+    /// against `curve`, returning the typed [`rates::RatesPriced`]. The shared body of
+    /// [`Client::price_irs`] / [`Client::price_fra`] / [`Client::price_bond`] — the
+    /// exact request shape [`Client::price_rates`] builds, differing only in the arm.
+    async fn price_rates_arm(
+        &self,
+        curve: &rates::UsdSofrCurve,
+        instrument: RatesInstrument,
+    ) -> ClientResult<rates::RatesPriced> {
+        let mut svc = PricingServiceClient::new(self.channel.clone());
+        let request = RatesPriceRequest {
+            request_id: 0,
+            curve_set: Some(curve.to_wire()),
+            instrument: Some(instrument),
             correlation_id: None,
         };
         let resp = svc.price_rates(request).await?.into_inner();
