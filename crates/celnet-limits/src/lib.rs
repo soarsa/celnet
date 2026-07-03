@@ -78,7 +78,8 @@ pub mod tree;
 
 pub use check::{
     EscalationStatus, IncrementalTrade, LimitCheck, NonAdditiveExposure, PreTradeDecision,
-    PreTradeResult, ScopeMonitor, check_scope, exposure_of, post_trade_check, pre_trade_check,
+    PreTradeResult, ScopeMonitor, check_scope, check_scope_rates, exposure_of, exposure_of_rates,
+    post_trade_check, post_trade_check_rates, pre_trade_check,
 };
 pub use limit::{ConcentrationMetric, Enforcement, LimitMetric, LimitSpec, RagStatus, Utilization};
 pub use tree::{LimitScope, LimitTree, ScopePath};
@@ -516,5 +517,172 @@ mod tests {
         let clear = post_trade_check(&clear_tree, LimitScope::Book(BookId(1)), &node, &na);
         assert_eq!(clear.worst, RagStatus::Green);
         assert_eq!(clear.escalation, EscalationStatus::Clear);
+    }
+
+    // ---- fixed-income (FI) limit parity -------------------------------------
+
+    /// A hand-specified linear-FI risk fact — its DV01 / PV01 / per-tenor ladder are
+    /// chosen here, so the roll-up is KNOWN independently of any pricing engine (the
+    /// non-circular oracle for the extraction test).
+    fn fi_fact(
+        entity: u32,
+        book: u32,
+        pv01: f64,
+        dv01: f64,
+        ladder: &[(u32, f64)],
+    ) -> celnet_risk_fleet::RatesRiskFact {
+        celnet_risk_fleet::RatesRiskFact {
+            key: celnet_risk_fleet::RatesFactKey {
+                entity: EntityId(entity),
+                ccy: Ccy::USD,
+                book: BookId(book),
+            },
+            pv: 0.0,
+            pv01,
+            dv01,
+            key_rate_ladder: ladder
+                .iter()
+                .map(|&(tenor_years, dv01)| celnet_risk_fleet::KeyRateBucket { tenor_years, dv01 })
+                .collect(),
+        }
+    }
+
+    /// Roll hand-specified facts up into the single-currency rates aggregate.
+    fn fi_agg(
+        facts: Vec<celnet_risk_fleet::RatesRiskFact>,
+    ) -> celnet_risk_fleet::RatesNodeAggregate {
+        celnet_risk_fleet::firm_aggregate_rates(&facts)
+            .books()
+            .first()
+            .expect("one USD currency book")
+            .clone()
+    }
+
+    /// **`exposure_of_rates` reads the netted DV01 / PV01 / per-tenor bucket off the
+    /// rates aggregate, matching an independent hand roll-up of the constituent facts.**
+    #[test]
+    fn fi_exposure_matches_independent_hand_rollup() {
+        let a = fi_fact(1, 10, -1200.0, -1000.0, &[(2, -300.0), (5, -700.0)]);
+        let b = fi_fact(2, 20, -800.0, -600.0, &[(5, -250.0), (10, -350.0)]);
+        // Independent hand roll-up (the fixed ascending-entity, ascending-tenor fold).
+        let want_dv01 = -1000.0 + -600.0;
+        let want_pv01 = -1200.0 + -800.0;
+        let want_2y = -300.0;
+        let want_5y = -700.0 + -250.0;
+        let want_10y = -350.0;
+        let agg = fi_agg(vec![a, b]);
+
+        assert_eq!(exposure_of_rates(&agg, LimitMetric::Dv01), want_dv01);
+        assert_eq!(exposure_of_rates(&agg, LimitMetric::Pvbp), want_pv01);
+        assert_eq!(
+            exposure_of_rates(&agg, LimitMetric::RateTenorBucket { tenor_years: 2 }),
+            want_2y
+        );
+        assert_eq!(
+            exposure_of_rates(&agg, LimitMetric::RateTenorBucket { tenor_years: 5 }),
+            want_5y
+        );
+        assert_eq!(
+            exposure_of_rates(&agg, LimitMetric::RateTenorBucket { tenor_years: 10 }),
+            want_10y
+        );
+        // A tenor with no bucket reads 0 — no exposure, never a spurious breach.
+        assert_eq!(
+            exposure_of_rates(&agg, LimitMetric::RateTenorBucket { tenor_years: 30 }),
+            0.0
+        );
+    }
+
+    /// **A hard DV01 limit hard-breaches an over-limit FI book and clears an under one**,
+    /// the breach threshold set from the KNOWN (hand-specified) net DV01 — not from
+    /// re-running any engine.
+    #[test]
+    fn fi_dv01_limit_breach_and_pass() {
+        // net_dv01 = -5000 (known); the magnitude the caps straddle is |5000|.
+        let agg = fi_agg(vec![fi_fact(1, 10, -6000.0, -5000.0, &[(5, -5000.0)])]);
+
+        let mut breach = LimitTree::new();
+        breach.set(LimitScope::Firm, LimitSpec::hard(LimitMetric::Dv01, 4000.0));
+        let mon = post_trade_check_rates(&breach, LimitScope::Firm, &agg);
+        assert_eq!(mon.escalation, EscalationStatus::HardBreach);
+        assert_eq!(mon.worst, RagStatus::Breach);
+
+        let mut ok = LimitTree::new();
+        ok.set(
+            LimitScope::Firm,
+            LimitSpec::hard(LimitMetric::Dv01, 10_000.0),
+        );
+        let clear = post_trade_check_rates(&ok, LimitScope::Firm, &agg);
+        assert_eq!(clear.escalation, EscalationStatus::Clear);
+        assert_eq!(clear.worst, RagStatus::Green); // 5000 / 10000 = 0.5 → green.
+    }
+
+    /// **A per-tenor bucket limit catches a single-tenor curve concentration** even when
+    /// the parallel DV01 nets small — and a bucket cap only ever charges its own tenor.
+    #[test]
+    fn fi_tenor_bucket_limit_breach() {
+        // Net DV01 = -900 (small), but the 5y bucket is -4900 (concentrated).
+        let agg = fi_agg(vec![fi_fact(
+            1,
+            10,
+            -1000.0,
+            -900.0,
+            &[(2, 4000.0), (5, -4900.0)],
+        )]);
+
+        let mut tree = LimitTree::new();
+        tree.set(
+            LimitScope::Firm,
+            LimitSpec::hard(LimitMetric::RateTenorBucket { tenor_years: 5 }, 3000.0),
+        );
+        let mon = post_trade_check_rates(&tree, LimitScope::Firm, &agg);
+        assert_eq!(mon.escalation, EscalationStatus::HardBreach);
+        // A 5y-only cap evaluates exactly one check — the uncapped 2y bucket is untouched.
+        assert_eq!(mon.checks.len(), 1);
+        assert_eq!(
+            mon.checks[0].limit.metric,
+            LimitMetric::RateTenorBucket { tenor_years: 5 }
+        );
+    }
+
+    /// **The two metric families are inert on each other's node**, so one limit tree may
+    /// carry both without cross-charging, and the rates check evaluates only FI limits.
+    #[test]
+    fn fi_and_fx_metrics_are_inert_across_families() {
+        let agg = fi_agg(vec![fi_fact(1, 10, -100.0, -80.0, &[(5, -80.0)])]);
+        let na = NonAdditiveExposure::default();
+
+        // An FX-Greeks metric has no exposure on a rates node.
+        assert_eq!(exposure_of_rates(&agg, LimitMetric::Delta), 0.0);
+        assert_eq!(exposure_of_rates(&agg, LimitMetric::Vega), 0.0);
+        // An FI metric has no exposure on an FX-Greeks node (exposure_of stays inert).
+        assert_eq!(exposure_of(&empty_node(), LimitMetric::Dv01, &na), 0.0);
+        assert_eq!(
+            exposure_of(
+                &empty_node(),
+                LimitMetric::RateTenorBucket { tenor_years: 5 },
+                &na
+            ),
+            0.0
+        );
+
+        // check_scope_rates evaluates ONLY the FI limits at a scope — a stray FX (delta
+        // proxy) limit in the same tree is skipped, so the families never double-charge.
+        let mut tree = LimitTree::new();
+        tree.set(LimitScope::Firm, LimitSpec::hard(LimitMetric::Delta, 1.0));
+        tree.set(LimitScope::Firm, LimitSpec::hard(LimitMetric::Dv01, 1.0e12));
+        let checks = check_scope_rates(&tree, LimitScope::Firm, &agg);
+        assert_eq!(
+            checks.len(),
+            1,
+            "only the FI limit is evaluated on the rates aggregate"
+        );
+        assert_eq!(checks[0].limit.metric, LimitMetric::Dv01);
+
+        assert!(LimitMetric::Dv01.is_fixed_income());
+        assert!(LimitMetric::Pvbp.is_fixed_income());
+        assert!(LimitMetric::RateTenorBucket { tenor_years: 5 }.is_fixed_income());
+        assert!(!LimitMetric::Delta.is_fixed_income());
+        assert!(!LimitMetric::TenorVega { tenor_days: 365 }.is_fixed_income());
     }
 }

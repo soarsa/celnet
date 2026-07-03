@@ -65,6 +65,49 @@ pub enum LimitMetric {
     ExpectedShortfall,
     /// **Stop-loss** — a realized/scenario loss magnitude cap (RH §5.1).
     StopLoss,
+    /// **Net parallel DV01** — the linear fixed-income counterpart to
+    /// [`LimitMetric::Delta`]: the book's signed present-value change for a +1bp upward
+    /// parallel bump of every discount-curve zero rate
+    /// (`celnet_risk_fleet::RatesNodeAggregate::net_dv01`), in the platform's one signed
+    /// P&L convention (a rate rise is a loss ⇒ negative for a long bond / receive-fixed
+    /// swap; `celnet-rates-risk` ladder). Enforced against the rates risk **aggregate**,
+    /// not a Greeks node.
+    Dv01,
+    /// **Net analytic PV01** — the annuity price-value-of-a-basis-point
+    /// (`celnet_risk_fleet::RatesNodeAggregate::net_pv01`), the analytic sibling of
+    /// [`LimitMetric::Dv01`] in the same signed convention.
+    Pvbp,
+    /// **Signed DV01 in one key-rate tenor bucket** — the linear fixed-income
+    /// counterpart to [`LimitMetric::TenorVega`]: the net DV01 attributable to one
+    /// calibrating-tenor pillar of the key-rate ladder
+    /// (`celnet_risk_fleet::KeyRateBucket`), capping a single-tenor curve concentration
+    /// even when the parallel DV01 nets small.
+    RateTenorBucket {
+        /// The calibrating-instrument tenor, in whole years — the ladder bucket key,
+        /// matching `celnet_risk_fleet::KeyRateBucket::tenor_years`.
+        tenor_years: u32,
+    },
+}
+
+impl LimitMetric {
+    /// Whether this metric constrains **linear fixed-income** rate risk
+    /// ([`LimitMetric::Dv01`] / [`LimitMetric::Pvbp`] / [`LimitMetric::RateTenorBucket`])
+    /// — the family read off a `celnet_risk_fleet::RatesNodeAggregate` by
+    /// [`crate::check::exposure_of_rates`], as opposed to the FX-Greeks family read off a
+    /// `celnet_risk_cube::NodeAggregate` by [`crate::check::exposure_of`].
+    ///
+    /// A single [`crate::tree::LimitTree`] may carry limits from **both** families (a
+    /// linear-rates book gates a coarse delta proxy at booking *and* precise DV01/tenor
+    /// caps against the aggregate). Each family reads a true `0` (is inert) on the
+    /// other's node, and the rates aggregate gate evaluates only this family, so the two
+    /// never double-charge.
+    #[must_use]
+    pub fn is_fixed_income(self) -> bool {
+        matches!(
+            self,
+            LimitMetric::Dv01 | LimitMetric::Pvbp | LimitMetric::RateTenorBucket { .. }
+        )
+    }
 }
 
 /// The underlying additive metric whose **gross** (un-netted) magnitude a

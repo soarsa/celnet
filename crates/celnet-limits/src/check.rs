@@ -23,6 +23,7 @@
 //!   classified continuously; a breach drives the [`EscalationStatus`] workflow.
 
 use celnet_risk_cube::{NetGreeks, NodeAggregate, Scenario, VegaPillar};
+use celnet_risk_fleet::RatesNodeAggregate;
 
 use crate::limit::{
     ConcentrationMetric, Enforcement, LimitMetric, LimitSpec, RagStatus, Utilization,
@@ -102,6 +103,64 @@ pub fn exposure_of(
         LimitMetric::Var => nonadditive.var.unwrap_or(0.0),
         LimitMetric::ExpectedShortfall => nonadditive.es.unwrap_or(0.0),
         LimitMetric::StopLoss => nonadditive.stop_loss.unwrap_or(0.0),
+        // The linear fixed-income metrics carry **no exposure on an FX-Greeks node**: a
+        // `NodeAggregate` is an options/Greeks roll-up with no linear-rate DV01 line.
+        // They are enforced against a `celnet_risk_fleet::RatesNodeAggregate` via
+        // [`exposure_of_rates`]; here they read a true `0` (inert), so a rates limit that
+        // is (mis)configured onto an FX limit tree can never spuriously breach an options
+        // booking. Every pre-existing FX-Greeks metric is untouched — `exposure_of` stays
+        // byte-identical on the options path.
+        LimitMetric::Dv01 | LimitMetric::Pvbp | LimitMetric::RateTenorBucket { .. } => 0.0,
+    }
+}
+
+/// The signed exposure of a **linear fixed-income** node for a limit `metric`, in the
+/// metric's native units — the FI counterpart to [`exposure_of`], reading a
+/// [`RatesNodeAggregate`] (the curve-priced per-currency rates roll-up) instead of an
+/// options `NodeAggregate`.
+///
+/// The three FI metrics read the aggregate's already-summed measures directly, so a
+/// check is O(ladder) with no re-derivation and stays in the additive pre-trade budget
+/// (RH §3.5/§5.3), exactly as the additive Greek metrics do:
+///
+/// - [`LimitMetric::Dv01`] → the net parallel DV01 ([`RatesNodeAggregate::net_dv01`]);
+/// - [`LimitMetric::Pvbp`] → the net analytic PV01 ([`RatesNodeAggregate::net_pv01`]);
+/// - [`LimitMetric::RateTenorBucket`] → the net DV01 in that tenor bucket of the merged
+///   key-rate ladder ([`RatesNodeAggregate::key_rate_ladder`]); a tenor with no bucket
+///   reads `0` (no exposure, never a spurious breach).
+///
+/// All are **signed** in the platform's one P&L convention (a rate rise is a loss ⇒
+/// negative for a long bond / receive-fixed swap; `celnet-rates-risk` ladder), and the
+/// ladder is already merged to one bucket per tenor, so the per-tenor sum is that one
+/// bucket. [`LimitSpec::utilization`](crate::limit::LimitSpec::utilization) compares the
+/// **magnitude** against the cap, so the two-sided cap is sign-agnostic — identical
+/// handling to the signed Greek metrics.
+///
+/// An **FX-Greeks metric** (delta/vega/…) carries no exposure on a linear-FI node — a
+/// rates roll-up has no option Greeks — so it reads a true `0` here, the mirror of the
+/// FI-metrics-on-a-Greeks-node case in [`exposure_of`].
+#[must_use]
+pub fn exposure_of_rates(agg: &RatesNodeAggregate, metric: LimitMetric) -> f64 {
+    match metric {
+        LimitMetric::Dv01 => agg.net_dv01,
+        LimitMetric::Pvbp => agg.net_pv01,
+        LimitMetric::RateTenorBucket { tenor_years } => agg
+            .key_rate_ladder
+            .iter()
+            .filter(|b| b.tenor_years == tenor_years)
+            .map(|b| b.dv01)
+            .sum(),
+        LimitMetric::Delta
+        | LimitMetric::Gamma
+        | LimitMetric::Vega
+        | LimitMetric::Vanna
+        | LimitMetric::Volga
+        | LimitMetric::VegaBucket(_)
+        | LimitMetric::TenorVega { .. }
+        | LimitMetric::Concentration(_)
+        | LimitMetric::Var
+        | LimitMetric::ExpectedShortfall
+        | LimitMetric::StopLoss => 0.0,
     }
 }
 
@@ -351,6 +410,69 @@ pub fn post_trade_check(
     nonadditive: &NonAdditiveExposure,
 ) -> ScopeMonitor {
     let checks = check_scope(tree, scope, node, nonadditive);
+    let mut worst = RagStatus::Green;
+    let mut escalation = EscalationStatus::Clear;
+    for c in &checks {
+        worst = worst.max(c.utilization.status);
+        if c.is_hard_breach() {
+            escalation = escalation.max(EscalationStatus::HardBreach);
+        } else if c.is_soft_breach() {
+            escalation = escalation.max(EscalationStatus::SoftBreach);
+        }
+    }
+    ScopeMonitor {
+        scope,
+        worst,
+        escalation,
+        checks,
+    }
+}
+
+// ============================ fixed-income parity ============================
+//
+// The linear-FI counterparts of [`check_scope`] / [`post_trade_check`], reading a
+// curve-priced `celnet_risk_fleet::RatesNodeAggregate` (net DV01 / PV01 + key-rate
+// ladder) instead of the options `NodeAggregate`. They give linear fixed-income
+// positions the same limit breach-detection + escalation the options cube already has,
+// enforced against the rates risk aggregate (ADR-0016 A3).
+
+/// Evaluate the **fixed-income** limits configured at a scope against a rates node's
+/// aggregate — the FI counterpart to [`check_scope`]. Only
+/// [`LimitMetric::is_fixed_income`] limits are evaluated: a Greek limit that also sits in
+/// the rates tree (e.g. the coarse linear-delta proxy the rates booking sink charges at
+/// pre-trade) is left to the options path, so the two families never double-charge the
+/// same node. Pure: the aggregate is read, never mutated.
+#[must_use]
+pub fn check_scope_rates(
+    tree: &LimitTree,
+    scope: LimitScope,
+    agg: &RatesNodeAggregate,
+) -> Vec<LimitCheck> {
+    tree.at(scope)
+        .iter()
+        .filter(|limit| limit.metric.is_fixed_income())
+        .map(|limit| {
+            let exposure = exposure_of_rates(agg, limit.metric);
+            LimitCheck {
+                scope,
+                limit: *limit,
+                utilization: limit.classify(exposure),
+            }
+        })
+        .collect()
+}
+
+/// **Post-trade FI monitoring** — the fixed-income counterpart to [`post_trade_check`]:
+/// classify a rates node's *current* aggregate against the FI limits at `scope` and
+/// derive the escalation status. Continuous monitoring of the booked rates state,
+/// enforced against the curve-priced rates risk aggregate ([`RatesNodeAggregate`]).
+#[must_use]
+pub fn post_trade_check_rates(
+    tree: &LimitTree,
+    scope: LimitScope,
+    agg: &RatesNodeAggregate,
+) -> ScopeMonitor {
+    let checks = check_scope_rates(tree, scope, agg);
     let mut worst = RagStatus::Green;
     let mut escalation = EscalationStatus::Clear;
     for c in &checks {

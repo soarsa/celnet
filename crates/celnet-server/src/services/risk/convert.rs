@@ -404,10 +404,23 @@ pub fn fact_to_position(
 /// Map a domain [`LimitMetric`] onto its wire `(kind, vega_pillar, tenor_days)`
 /// triple. The pillar/tenor payloads ride on dedicated fields, selected by `kind`
 /// (mirroring the proto contract).
-#[must_use]
-pub fn limit_metric_to_wire(metric: LimitMetric) -> (LimitMetricKind, Option<WireVegaPillar>, u32) {
+/// Map a domain [`LimitMetric`] onto its wire `LimitStatus` kind + pillar/tenor payload.
+///
+/// The wire `LimitStatus` surface reports the **options** limit tree, whose metrics are
+/// the FX-Greeks family only (the proto `LimitMetricKind` enumerates exactly these).
+///
+/// # Errors
+/// `internal` for a **fixed-income** metric ([`LimitMetric::Dv01`] / [`LimitMetric::Pvbp`]
+/// / [`LimitMetric::RateTenorBucket`]): FI limits are enforced against the rates risk
+/// aggregate ([`celnet_limits::exposure_of_rates`]) and surfaced as a `LimitBreached`
+/// status at the `AggregateRatesRisk` edge — never through this converter — so there is
+/// deliberately no `LimitMetricKind` for them. An FI metric reaching here is an internal
+/// invariant violation, rejected loudly rather than silently coerced to a wrong wire kind.
+pub fn limit_metric_to_wire(
+    metric: LimitMetric,
+) -> Result<(LimitMetricKind, Option<WireVegaPillar>, u32), Status> {
     use celnet_limits::ConcentrationMetric;
-    match metric {
+    Ok(match metric {
         LimitMetric::Delta => (LimitMetricKind::Delta, None, 0),
         LimitMetric::Gamma => (LimitMetricKind::Gamma, None, 0),
         LimitMetric::Vega => (LimitMetricKind::Vega, None, 0),
@@ -424,7 +437,13 @@ pub fn limit_metric_to_wire(metric: LimitMetric) -> (LimitMetricKind, Option<Wir
         LimitMetric::Var => (LimitMetricKind::Var, None, 0),
         LimitMetric::ExpectedShortfall => (LimitMetricKind::ExpectedShortfall, None, 0),
         LimitMetric::StopLoss => (LimitMetricKind::StopLoss, None, 0),
-    }
+        LimitMetric::Dv01 | LimitMetric::Pvbp | LimitMetric::RateTenorBucket { .. } => {
+            return Err(Status::internal(format!(
+                "fixed-income limit metric {metric:?} has no wire LimitStatus representation; \
+                 FI limits are enforced against the rates risk aggregate, not surfaced via LimitStatus"
+            )));
+        }
+    })
 }
 
 /// The wire enum value for a domain [`RagStatus`].

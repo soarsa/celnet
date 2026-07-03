@@ -119,6 +119,19 @@ impl RatesPositionStore {
         g.set(scope, spec);
     }
 
+    /// A clone of the configured limit tree — the read snapshot the rates risk aggregate
+    /// gate ([`crate::services::rates_risk::aggregate_rates_risk_gated`]) evaluates the
+    /// fixed-income limits over, taken off the async edge (never the pinned pricing
+    /// core). Cheap: the configured limit set is bounded (O(scopes × metric-types)), and
+    /// [`LimitTree`] is allocation-light `Clone`.
+    #[must_use]
+    pub fn limits_snapshot(&self) -> LimitTree {
+        self.limits
+            .read()
+            .expect("rates limit tree lock poisoned")
+            .clone()
+    }
+
     /// **The pre-trade limit gate + booking sink** for linear-rates positions
     /// (ADR-0016 A1): the single convergence point both rates booking front-ends
     /// funnel through — `RiskService::BookRatesPosition`

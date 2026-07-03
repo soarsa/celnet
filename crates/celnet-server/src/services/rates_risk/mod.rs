@@ -26,4 +26,4 @@
 pub mod aggregate;
 pub mod convert;
 
-pub use aggregate::aggregate_rates_risk;
+pub use aggregate::{aggregate_rates_risk, aggregate_rates_risk_gated};

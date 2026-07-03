@@ -646,7 +646,7 @@ impl RiskEdge {
                 }
                 utilization_to_wire(&c.utilization)
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(LimitStatusResponse {
             scope: Some(*wire_scope),
@@ -837,9 +837,9 @@ fn scale_node_positions(
 }
 
 /// Map a domain [`Utilization`] onto its wire [`LimitUtilization`].
-fn utilization_to_wire(u: &Utilization) -> LimitUtilization {
-    let (kind, vega_pillar, tenor_days) = convert::limit_metric_to_wire(u.metric);
-    LimitUtilization {
+fn utilization_to_wire(u: &Utilization) -> Result<LimitUtilization, Status> {
+    let (kind, vega_pillar, tenor_days) = convert::limit_metric_to_wire(u.metric)?;
+    Ok(LimitUtilization {
         metric: kind as i32,
         vega_pillar,
         tenor_days,
@@ -849,7 +849,7 @@ fn utilization_to_wire(u: &Utilization) -> LimitUtilization {
         status: convert::rag_to_wire(u.status),
         enforcement: convert::enforcement_to_wire(u.enforcement),
         headroom: u.headroom(),
-    }
+    })
 }
 
 // The four entitlement-gated RPCs of the contract — the **complete** set: no
@@ -991,7 +991,20 @@ impl RiskService for RiskEdge {
         // `CurveSet` + positions (no live-market read, no per-pair fleet route to
         // forward), so the additive fan-in runs in-process under the edge topology
         // on every replica — no federation forwarding, unlike the store-backed RPCs.
-        let resp = crate::services::rates_risk::aggregate_rates_risk(&req, self.topology())?;
+        //
+        // ADR-0016 A3: the aggregated book is then gated against the configured
+        // fixed-income limits (DV01 / PVBP / per-tenor key-rate caps) held on the shared
+        // rates position store — a hard breach rejects with the uniform `LimitBreached`
+        // status, giving FI positions the hard-limit pre-trade parity options get at the
+        // booking sink, enforced against the real curve-priced rates aggregate. The
+        // empty-tree default (no FI limit configured) is inert, so the response stays
+        // byte-identical to the ungated rollup.
+        let fi_limits = self.rates.limits_snapshot();
+        let resp = crate::services::rates_risk::aggregate_rates_risk_gated(
+            &req,
+            self.topology(),
+            &fi_limits,
+        )?;
         Ok(Response::new(resp))
     }
 

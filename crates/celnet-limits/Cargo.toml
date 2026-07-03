@@ -14,6 +14,12 @@ workspace = true
 [dependencies]
 celnet-types.workspace = true
 celnet-risk-cube.workspace = true
+# The linear-FI per-currency risk roll-up (`RatesNodeAggregate`: net DV01 / PV01 +
+# key-rate ladder) the FI limit metrics (`Dv01`/`Pvbp`/`RateTenorBucket`) are read
+# off by `check::exposure_of_rates` — the FI counterpart to reading the options
+# `NodeAggregate` off `celnet-risk-cube`. One-way edge: limits -> risk-fleet (fleet
+# does not depend on limits), so the fixed-income limit check mirrors the options one.
+celnet-risk-fleet.workspace = true
 celnet-risk-normalize.workspace = true
 # The agnostic CarryPricer carry seam the non-additive VaR/ES re-derivation
 # threads through (the cube reducers are generic over it). One-way edge:

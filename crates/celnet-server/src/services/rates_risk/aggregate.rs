@@ -38,14 +38,19 @@
 // `RiskService` surface (mirrors `services::risk`).
 #![allow(clippy::result_large_err)]
 
+use celnet_limits::{
+    EscalationStatus, LimitCheck, LimitScope, LimitTree, PreTradeDecision, PreTradeResult,
+    post_trade_check_rates,
+};
 use celnet_proto::{AggregateRatesRiskRequest, AggregateRatesRiskResponse, RatesRiskScope};
 use celnet_risk_fleet::{
-    FleetTopology, RatesRiskFact, firm_aggregate_rates, partition_rates_facts,
+    FleetTopology, RatesFirmRollup, RatesRiskFact, firm_aggregate_rates, partition_rates_facts,
 };
 use celnet_router::{PartitionMap, Replica, ReplicaId, ReplicaSet};
 use tonic::Status;
 
 use super::convert::{fact_from_position, rollup_to_response};
+use crate::services::risk::store::limit_breached_status;
 
 /// The number of in-process **logical shards** a co-resident ([`FleetTopology::InProcess`])
 /// rates fan-out spreads its facts across. Any value ≥ 1 yields the identical
@@ -129,18 +134,90 @@ pub fn aggregate_rates_risk(
     req: &AggregateRatesRiskRequest,
     topology: &FleetTopology,
 ) -> Result<AggregateRatesRiskResponse, Status> {
-    let facts = priced_facts(req)?;
+    Ok(rollup_to_response(
+        &rates_rollup(req, topology)?,
+        req.correlation_id,
+    ))
+}
 
-    // Shard across the firm HRW partition map and fan in additively. The fan-in is
-    // bit-for-bit equal to `firm_aggregate_rates` over the same facts (asserted by
-    // the federation integration test and the `celnet-risk-fleet` invariant).
+/// Price, scope, shard, and fan the request's positions into the per-currency firm
+/// roll-up — the shared core of [`aggregate_rates_risk`] and its limit-gated sibling
+/// [`aggregate_rates_risk_gated`]. The sharded fan-in is bit-for-bit equal to
+/// [`firm_aggregate_rates`] over the same facts (the F5 invariant, asserted by the
+/// federation integration test and the `celnet-risk-fleet` property test), so the two
+/// entry points share one rollup path.
+///
+/// # Errors
+/// As [`priced_facts`], plus `internal` for an unroutable partition.
+fn rates_rollup(
+    req: &AggregateRatesRiskRequest,
+    topology: &FleetTopology,
+) -> Result<RatesFirmRollup, Status> {
+    let facts = priced_facts(req)?;
     let replicas = rates_partition_replicas(topology)?;
     let map = PartitionMap::new(&replicas);
     let reducer = partition_rates_facts(&facts, &map)
         .map_err(|e| Status::internal(format!("rates fan-out routing failed: {e}")))?;
-    let rollup = reducer.fan_in_additive();
+    Ok(reducer.fan_in_additive())
+}
 
+/// [`aggregate_rates_risk`] with a **pre-trade fixed-income limit gate** (ADR-0016 A3):
+/// the request's proposed rates book is priced and rolled up, then its curve-priced net
+/// DV01 / PV01 / per-tenor key-rate exposures are checked against the firm-scope
+/// fixed-income limits in `limits` before the response is returned. A **hard** breach
+/// rejects the request with the uniform `LimitBreached` `failed_precondition` status —
+/// giving linear-FI positions the same hard-limit pre-trade parity options get at the
+/// booking sink ([`crate::services::risk::store::PositionStore::book`]), enforced
+/// against the **real** rates risk aggregate (not the curve-free linear-delta proxy the
+/// booking sink charges). An empty tree (the default) is inert, so the response is
+/// byte-identical to [`aggregate_rates_risk`].
+///
+/// # Errors
+/// As [`aggregate_rates_risk`], plus `failed_precondition` when a hard FI limit is
+/// breached by the aggregated book.
+pub fn aggregate_rates_risk_gated(
+    req: &AggregateRatesRiskRequest,
+    topology: &FleetTopology,
+    limits: &LimitTree,
+) -> Result<AggregateRatesRiskResponse, Status> {
+    let rollup = rates_rollup(req, topology)?;
+    enforce_fi_limits(&rollup, limits)?;
     Ok(rollup_to_response(&rollup, req.correlation_id))
+}
+
+/// Reject on the first **hard** fixed-income limit breach across the roll-up's
+/// per-currency aggregates, evaluated at the firm scope (a `RatesNodeAggregate` is a
+/// per-currency firm-level net). Only FI limits are consulted
+/// ([`post_trade_check_rates`] filters to [`celnet_limits::LimitMetric::is_fixed_income`]),
+/// so a Greek limit in the same tree (the booking sink's coarse linear-delta proxy) is
+/// untouched here — the two families never double-charge. An empty tree short-circuits,
+/// keeping the ungated path byte-identical.
+fn enforce_fi_limits(rollup: &RatesFirmRollup, limits: &LimitTree) -> Result<(), Status> {
+    if limits.is_empty() {
+        return Ok(());
+    }
+    let mut hard_breaches = Vec::new();
+    for book in rollup.books() {
+        let monitor = post_trade_check_rates(limits, LimitScope::Firm, book);
+        if monitor.escalation == EscalationStatus::HardBreach {
+            hard_breaches.extend(
+                monitor
+                    .checks
+                    .into_iter()
+                    .filter(LimitCheck::is_hard_breach),
+            );
+        }
+    }
+    if hard_breaches.is_empty() {
+        return Ok(());
+    }
+    // Reuse the uniform `LimitBreached` reason (`<scope>/<metric>` + utilization + cap),
+    // the same status the FX and rates booking sinks surface, so a client sees one
+    // limit-breach contract regardless of which limit family (Greek or FI) tripped.
+    Err(limit_breached_status(&PreTradeResult {
+        decision: PreTradeDecision::Reject,
+        checks: hard_breaches,
+    }))
 }
 
 /// The **single-node reference** rollup for a request: price + scope the identical
@@ -354,5 +431,95 @@ mod tests {
         };
         let err = aggregate_rates_risk(&req, &FleetTopology::InProcess).unwrap_err();
         assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    // ---- ADR-0016 A3: fixed-income limit gate on the aggregate ----
+    //
+    // The rates risk aggregate is curve-priced (real DV01 / PV01 + key-rate ladder), so
+    // it is the enforcement point for the FI limit metrics (unlike the curve-free
+    // booking sink, which gates a coarse linear-delta proxy). A hard breach rejects the
+    // request with the uniform `LimitBreached` status.
+
+    /// A hard **firm DV01 limit** rejects an over-limit rates book with the uniform
+    /// `LimitBreached` status; a generous cap (or the empty-tree default) passes and
+    /// returns the same rollup as the ungated path, bit-for-bit.
+    #[test]
+    fn fi_dv01_limit_gates_the_aggregate() {
+        use celnet_limits::{LimitMetric, LimitSpec};
+        // A 100mm 10y OIS carries a large |net DV01| (orders of magnitude > 1), so a hard
+        // 1.0 DV01 cap is unambiguously breached — independent of the exact DV01 value.
+        let req = request(vec![position(1, 1, 100, 10, 0.043, Side::Sell)], None);
+
+        let mut breach = LimitTree::new();
+        breach.set(LimitScope::Firm, LimitSpec::hard(LimitMetric::Dv01, 1.0));
+        let err = aggregate_rates_risk_gated(&req, &FleetTopology::InProcess, &breach).unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("limit breached"),
+            "the reject carries the uniform LimitBreached reason, got {:?}",
+            err.message()
+        );
+
+        let ungated = aggregate_rates_risk(&req, &FleetTopology::InProcess).unwrap();
+
+        // A generous cap passes and is byte-identical to the ungated rollup.
+        let mut ok = LimitTree::new();
+        ok.set(LimitScope::Firm, LimitSpec::hard(LimitMetric::Dv01, 1.0e15));
+        let gated = aggregate_rates_risk_gated(&req, &FleetTopology::InProcess, &ok).unwrap();
+        assert_eq!(gated.nodes.len(), ungated.nodes.len());
+        assert_eq!(
+            gated.nodes[0].net_dv01.to_bits(),
+            ungated.nodes[0].net_dv01.to_bits()
+        );
+
+        // The empty-tree default is inert — byte-identical to the ungated response.
+        let inert =
+            aggregate_rates_risk_gated(&req, &FleetTopology::InProcess, &LimitTree::new()).unwrap();
+        assert_eq!(
+            inert.nodes[0].net_dv01.to_bits(),
+            ungated.nodes[0].net_dv01.to_bits()
+        );
+    }
+
+    /// A hard **per-tenor key-rate bucket limit** rejects a book whose DV01 concentrates
+    /// in that tenor, while a tenor the book carries no risk in never trips.
+    #[test]
+    fn fi_tenor_bucket_limit_gates_the_aggregate() {
+        use celnet_limits::{LimitMetric, LimitSpec};
+        let req = request(vec![position(1, 1, 100, 10, 0.043, Side::Sell)], None);
+
+        // Find the ladder's dominant (largest-magnitude) key-rate bucket from the ungated
+        // rollup, and cap it below its own magnitude → a guaranteed hard breach of THAT
+        // tenor. (The exact DV01 correctness is validated independently in celnet-limits.)
+        let ungated = aggregate_rates_risk(&req, &FleetTopology::InProcess).unwrap();
+        let peak = ungated.nodes[0]
+            .key_rate_ladder
+            .iter()
+            .max_by(|a, b| a.dv01.abs().total_cmp(&b.dv01.abs()))
+            .expect("a 10y OIS has a non-empty key-rate ladder");
+        assert!(peak.dv01.abs() > 0.0, "the dominant bucket must carry risk");
+
+        let mut tree = LimitTree::new();
+        tree.set(
+            LimitScope::Firm,
+            LimitSpec::hard(
+                LimitMetric::RateTenorBucket {
+                    tenor_years: peak.tenor_years,
+                },
+                peak.dv01.abs() * 0.5,
+            ),
+        );
+        let err = aggregate_rates_risk_gated(&req, &FleetTopology::InProcess, &tree).unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+
+        // A tenor NOT on the curve (no bucket → 0 exposure) never breaches, even at a
+        // tiny cap.
+        let mut absent = LimitTree::new();
+        absent.set(
+            LimitScope::Firm,
+            LimitSpec::hard(LimitMetric::RateTenorBucket { tenor_years: 30 }, 1.0),
+        );
+        let ok = aggregate_rates_risk_gated(&req, &FleetTopology::InProcess, &absent).unwrap();
+        assert!(!ok.nodes.is_empty());
     }
 }
