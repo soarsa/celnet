@@ -72,8 +72,10 @@ import type {
   QuantoPayoff,
   RatesAccrualBasis,
   RatesCurveSet,
+  RatesInstrument,
   RatesLegDayCount,
   RatesPricingResult,
+  RatesQuote,
   SettlementStyle,
   Side,
   SingleBarrier,
@@ -4326,6 +4328,163 @@ export function shapeFraInstrument(args: FraInstrumentArgs): FraInstrument {
     direction: parseRatesSide(args.side),
     accrualBasis: parseRatesAccrualBasis(args.accrualBasis, "ACT_360"),
   };
+}
+
+// ---------------------------------------------------------------------------
+// fixed-income (rates) — RFQ: shape the `=CELNET.RATESRFQ` taker arguments into a
+// `RatesInstrument` + taker `Side` for the `request_rates_quote` RPC (the FI twin of
+// `=CELNET.RFQ`), and format the two-way `RatesQuote` reply. The RFQ mirrors the
+// `=CELNET.RATES` arg grammar — the instrument is built from (tenor, fixedRate,
+// notional) exactly like the unary rates cells, reusing the byte-verified arm
+// shapers (`shapeOisInstrument` / `shapeIrsInstrument`). The server strikes the
+// two-way around the SIDE-INDEPENDENT fair level and OVERRIDES the arm's own
+// direction with the RFQ `side` (`rates_pricing::override_arm_side`), so the arm
+// direction is derived from `side` purely for a coherent request body. The add-in
+// holds NO FI math: it shapes the inputs the live engine quotes and lays out its
+// authoritative two-way.
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the `=CELNET.RATESRFQ` taker side into the wire `Side` (BUY / SELL /
+ * TWO_WAY). Accepts the contract names + desk synonyms, case-/separator-insensitive:
+ * BUY/B/PAY/PAYER/PAY_FIXED/LONG ⇒ BUY; SELL/S/RECEIVE/REC/RECEIVER/RECEIVE_FIXED/
+ * SHORT ⇒ SELL; TWO_WAY/TWOWAY/TWO/2WAY/BOTH/MID ⇒ TWO_WAY. Empty/absent ⇒ TWO_WAY
+ * — the natural RFQ default (request a two-way market with no firm direction). The
+ * returned two-way is always struck around the side-independent fair level; `side`
+ * selects the sign of the returned risk (a TWO_WAY request reports the
+ * receive-fixed / long magnitude).
+ */
+export function parseRatesRfqSide(raw: string | undefined): Side {
+  if (raw === undefined || String(raw).trim() === "") return "TWO_WAY";
+  const t = String(raw).trim().toUpperCase().replace(/[._\s-]/g, "");
+  switch (t) {
+    case "BUY":
+    case "B":
+    case "PAY":
+    case "PAYER":
+    case "PAYFIXED":
+    case "LONG":
+      return "BUY";
+    case "SELL":
+    case "S":
+    case "RECEIVE":
+    case "REC":
+    case "RECEIVER":
+    case "RECEIVEFIXED":
+    case "SHORT":
+      return "SELL";
+    case "TWOWAY":
+    case "TWO":
+    case "2WAY":
+    case "BOTH":
+    case "MID":
+      return "TWO_WAY";
+    default:
+      throw new ShapingError(`invalid RFQ side \`${raw}\` (expected BUY, SELL or TWO_WAY)`);
+  }
+}
+
+/** The `RatesInstrument` arm an `=CELNET.RATESRFQ` cell quotes from (tenor, fixedRate). */
+export type RatesRfqInstrumentKind = "OIS" | "IRS";
+
+/**
+ * Parse the optional `instrument` selector for `=CELNET.RATESRFQ`. The RFQ grammar
+ * carries only (tenor, fixedRate, notional), which fully specifies an OIS or a
+ * spot-starting vanilla IRS (with the market-default leg frequencies/day-counts) —
+ * so those are the two selectable arms. A FRA (needs a `[startMonths, endMonths]`
+ * accrual window) or a cash bond (needs a maturity date + coupon) is not expressible
+ * in this grammar; those are quoted through their dedicated `=CELNET.FRA` / `=CELNET
+ * .BOND` pricing cells, so they are rejected here with a friendly message rather than
+ * silently mis-shaped. Empty/absent ⇒ OIS (mirroring `=CELNET.RATES`).
+ */
+export function parseRatesRfqInstrumentKind(raw: string | undefined): RatesRfqInstrumentKind {
+  if (raw === undefined || raw.trim() === "") return "OIS";
+  const t = raw.trim().toUpperCase().replace(/[._\s-]/g, "");
+  if (t === "OIS") return "OIS";
+  if (t === "IRS" || t === "SWAP") return "IRS";
+  if (t === "FRA" || t === "BOND") {
+    throw new ShapingError(
+      `RATESRFQ cannot quote a ${t} from (tenor, fixedRate) — price it via CELNET.${t} (its dedicated terms), then RFQ the OIS/IRS arm`,
+    );
+  }
+  throw new ShapingError(`invalid RFQ instrument \`${raw}\` (expected OIS or IRS)`);
+}
+
+/** The taker `Side` → the arm's fixed-leg direction (BUY = pay fixed, SELL = receive fixed). */
+function rfqSideToDirection(side: Side): OisDirection {
+  return side === "SELL" ? "RECEIVE_FIXED" : "PAY_FIXED";
+}
+
+/** The scalar terms a `=CELNET.RATESRFQ` cell shapes into the quoted `RatesInstrument`. */
+export interface RatesRfqInstrumentArgs {
+  /** The swap tenor in whole years (`5` or `"5Y"`). */
+  readonly tenor: number | string;
+  /** The fixed-leg rate as a decimal (0.041 = 4.10%). */
+  readonly fixedRate: number;
+  /** The RFQ size in the curve currency (strictly positive). */
+  readonly notional: number;
+  /** The taker side — governs the returned risk sign and the arm's derived direction. */
+  readonly side: Side;
+  /** The instrument arm to quote (OIS default, or IRS). */
+  readonly instrument?: string | undefined;
+}
+
+/**
+ * Shape the RATESRFQ scalar terms into the typed {@link RatesInstrument} union arm.
+ * The arm direction is DERIVED from the taker `side` (the server overrides it with
+ * the RFQ side regardless — this only keeps the request body coherent). Reuses the
+ * byte-verified {@link shapeOisInstrument} / {@link shapeIrsInstrument} arm shapers,
+ * so the RFQ instrument body is identical to the `=CELNET.RATES`/`IRS` unary wire.
+ */
+export function shapeRatesRfqInstrument(args: RatesRfqInstrumentArgs): RatesInstrument {
+  const kind = parseRatesRfqInstrumentKind(args.instrument);
+  const direction = rfqSideToDirection(args.side);
+  if (kind === "IRS") {
+    return {
+      kind: "irs",
+      irs: shapeIrsInstrument({
+        tenor: args.tenor,
+        fixedRate: args.fixedRate,
+        notional: args.notional,
+        side: direction,
+      }),
+    };
+  }
+  return {
+    kind: "ois",
+    ois: shapeOisInstrument({
+      tenor: args.tenor,
+      fixedRate: args.fixedRate,
+      direction,
+      notional: args.notional,
+    }),
+  };
+}
+
+/**
+ * Format a two-way `RatesQuote` (the `request_rates_quote` reply) as a labelled
+ * vertical spill — the same `label × value` discipline as `=CELNET.RATES`. The
+ * two-way is `bid` / `offer` with the derived `mid` = `(bid + offer) / 2` (the
+ * side-independent fair level — for a swap/FRA it equals `result.par_rate`, a live
+ * cross-check), then the RFQ metadata the wire carries (`notional`, the string
+ * `quote_id` — 64-bit-exact, referenceable by a later accept — and the `valid_until`
+ * last-look deadline as ISO-8601), then the full FI risk block at the taker side
+ * (`pv`, `par_rate`, `pv01`, `dv01`). Returns a rectangular `10×2` matrix.
+ */
+export function formatRatesRfqSpill(quote: RatesQuote): SpillMatrix {
+  const mid = (quote.price.bid + quote.price.offer) / 2;
+  return rectangular([
+    ["bid", quote.price.bid],
+    ["offer", quote.price.offer],
+    ["mid", mid],
+    ["notional", quote.notional],
+    ["quote_id", quote.quoteId.toString()],
+    ["valid_until", validUntilIso(quote.validUntilNanos)],
+    ["pv", quote.result.pv],
+    ["par_rate", quote.result.parRate],
+    ["pv01", quote.result.pv01],
+    ["dv01", quote.result.dv01],
+  ]);
 }
 
 // ---------------------------------------------------------------------------

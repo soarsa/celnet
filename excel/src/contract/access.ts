@@ -184,6 +184,7 @@ export type EntryPointId =
   | "bond"
   | "irs"
   | "fra"
+  | "ratesrfq"
   | "ratesseries"
   | "ratesrisk"
   | "ratesbook"
@@ -335,6 +336,22 @@ export const ENTRY_POINTS: Record<EntryPointId, EntryPoint> = {
     asset: "fixed_income",
     requiresSignIn: false,
     signInLabel: "price FRAs",
+  },
+  ratesrfq: {
+    id: "ratesrfq",
+    label: "CELNET.RATESRFQ",
+    surface: "cell",
+    // The FI request-for-quote TAKER cell (`request_rates_quote`) is a pure
+    // price-discovery two-way against the caller-supplied curve — the fixed-income
+    // twin of `rfq_cell` (`price` · fx_options). Like the server RPC (anonymous-OK,
+    // no per-caller gate — the stateful maker-side booking is `RfqDeskService`), it
+    // maps to the `price` action on `fixed_income`: the same `price · fixed_income`
+    // bucket as RATES/BOND/IRS/FRA, so a signed-in user permitted to price rates may
+    // RFQ them. Anonymous stays permissive client-side (preview); the server enforces.
+    action: "price",
+    asset: "fixed_income",
+    requiresSignIn: false,
+    signInLabel: "request rates quotes",
   },
   ratesseries: {
     id: "ratesseries",
