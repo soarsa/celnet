@@ -3819,6 +3819,26 @@ pub mod diff_support {
         RespondDeskRequestResponse, ScenarioRequest, ScenarioResponse, Smile,
         SubmitDeskRequestRequest, SubmitDeskRequestResponse,
     };
+    // Wave-4 verb family (arch item G): the AuthService admin + session surface the
+    // generated codec is proven byte-identical to (login/session, user/desk/entity/book
+    // CRUD, capabilities + roles, the instrument registry, and `BuildCurve`).
+    use celnet_proto::{
+        BuildCurveRequest, CalibratedCurve, CreateBookRequest, CreateBookResponse,
+        CreateDeskRequest, CreateDeskResponse, CreateEntityRequest, CreateEntityResponse,
+        CreateInstrumentRequest, CreateInstrumentResponse, CreateUserRequest, CreateUserResponse,
+        DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest, DeleteDeskResponse,
+        DeleteEntityRequest, DeleteEntityResponse, DeleteInstrumentRequest,
+        DeleteInstrumentResponse, DeleteUserRequest, DeleteUserResponse, GetInstrumentRequest,
+        GetInstrumentResponse, GetRoleCapabilitiesRequest, GetRoleCapabilitiesResponse,
+        GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, ListBooksRequest,
+        ListBooksResponse, ListDesksRequest, ListDesksResponse, ListEntitiesRequest,
+        ListEntitiesResponse, ListInstrumentsRequest, ListInstrumentsResponse, ListUsersRequest,
+        ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse,
+        ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
+        SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
+        UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest, UpdateEntityResponse,
+        UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest, UpdateUserResponse,
+    };
     use serde_json::{Map, Value};
 
     use super::CodecError;
@@ -4484,6 +4504,461 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_list_deals_response_to_json(r: &ListDealsResponse) -> Value {
         super::list_deals_response_to_json(r)
+    }
+
+    // --- wave 4: AuthService references (the frozen byte-identity oracle) --------
+    //
+    // Thin `pub` wrappers around the module-private hand codec for the auth family,
+    // the final unary family the generated codec is proven byte-identical to. Request
+    // decoders (compared via decoded-proto `PartialEq` + re-encoded bytes) then reply
+    // encoders (compared via exact JSON text).
+
+    /// Hand-codec `LoginRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_login_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<LoginRequest, CodecError> {
+        super::login_request_from_json(o)
+    }
+
+    /// Hand-codec `LoginResponse` encoder.
+    #[must_use]
+    pub fn hand_login_response_to_json(r: &LoginResponse) -> Value {
+        super::login_response_to_json(r)
+    }
+
+    /// Hand-codec `LogoutRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_logout_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<LogoutRequest, CodecError> {
+        super::logout_request_from_json(o)
+    }
+
+    /// Hand-codec `LogoutResponse` encoder.
+    #[must_use]
+    pub fn hand_logout_response_to_json(r: &LogoutResponse) -> Value {
+        super::logout_response_to_json(r)
+    }
+
+    /// Hand-codec `ListUsersRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_users_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListUsersRequest, CodecError> {
+        super::list_users_request_from_json(o)
+    }
+
+    /// Hand-codec `ListUsersResponse` encoder.
+    #[must_use]
+    pub fn hand_list_users_response_to_json(r: &ListUsersResponse) -> Value {
+        super::list_users_response_to_json(r)
+    }
+
+    /// Hand-codec `CreateUserRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_create_user_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<CreateUserRequest, CodecError> {
+        super::create_user_request_from_json(o)
+    }
+
+    /// Hand-codec `CreateUserResponse` encoder.
+    #[must_use]
+    pub fn hand_create_user_response_to_json(r: &CreateUserResponse) -> Value {
+        super::create_user_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdateUserRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_user_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateUserRequest, CodecError> {
+        super::update_user_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateUserResponse` encoder.
+    #[must_use]
+    pub fn hand_update_user_response_to_json(r: &UpdateUserResponse) -> Value {
+        super::update_user_response_to_json(r)
+    }
+
+    /// Hand-codec `DeleteUserRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_delete_user_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<DeleteUserRequest, CodecError> {
+        super::delete_user_request_from_json(o)
+    }
+
+    /// Hand-codec `DeleteUserResponse` encoder.
+    #[must_use]
+    pub fn hand_delete_user_response_to_json(r: &DeleteUserResponse) -> Value {
+        super::delete_user_response_to_json(r)
+    }
+
+    /// Hand-codec `ResetPasswordRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_reset_password_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ResetPasswordRequest, CodecError> {
+        super::reset_password_request_from_json(o)
+    }
+
+    /// Hand-codec `ResetPasswordResponse` encoder.
+    #[must_use]
+    pub fn hand_reset_password_response_to_json(r: &ResetPasswordResponse) -> Value {
+        super::reset_password_response_to_json(r)
+    }
+
+    /// Hand-codec `GetUserCapabilitiesRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_get_user_capabilities_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<GetUserCapabilitiesRequest, CodecError> {
+        super::get_user_capabilities_request_from_json(o)
+    }
+
+    /// Hand-codec `GetUserCapabilitiesResponse` encoder.
+    #[must_use]
+    pub fn hand_get_user_capabilities_response_to_json(r: &GetUserCapabilitiesResponse) -> Value {
+        super::get_user_capabilities_response_to_json(r)
+    }
+
+    /// Hand-codec `SetUserCapabilitiesRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_set_user_capabilities_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<SetUserCapabilitiesRequest, CodecError> {
+        super::set_user_capabilities_request_from_json(o)
+    }
+
+    /// Hand-codec `SetUserCapabilitiesResponse` encoder.
+    #[must_use]
+    pub fn hand_set_user_capabilities_response_to_json(r: &SetUserCapabilitiesResponse) -> Value {
+        super::set_user_capabilities_response_to_json(r)
+    }
+
+    /// Hand-codec `GetRoleCapabilitiesRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_get_role_capabilities_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<GetRoleCapabilitiesRequest, CodecError> {
+        super::get_role_capabilities_request_from_json(o)
+    }
+
+    /// Hand-codec `GetRoleCapabilitiesResponse` encoder.
+    #[must_use]
+    pub fn hand_get_role_capabilities_response_to_json(r: &GetRoleCapabilitiesResponse) -> Value {
+        super::get_role_capabilities_response_to_json(r)
+    }
+
+    /// Hand-codec `SetRoleCapabilitiesRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_set_role_capabilities_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<SetRoleCapabilitiesRequest, CodecError> {
+        super::set_role_capabilities_request_from_json(o)
+    }
+
+    /// Hand-codec `SetRoleCapabilitiesResponse` encoder.
+    #[must_use]
+    pub fn hand_set_role_capabilities_response_to_json(r: &SetRoleCapabilitiesResponse) -> Value {
+        super::set_role_capabilities_response_to_json(r)
+    }
+
+    /// Hand-codec `ListDesksRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_desks_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListDesksRequest, CodecError> {
+        super::list_desks_request_from_json(o)
+    }
+
+    /// Hand-codec `ListDesksResponse` encoder.
+    #[must_use]
+    pub fn hand_list_desks_response_to_json(r: &ListDesksResponse) -> Value {
+        super::list_desks_response_to_json(r)
+    }
+
+    /// Hand-codec `CreateDeskRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_create_desk_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<CreateDeskRequest, CodecError> {
+        super::create_desk_request_from_json(o)
+    }
+
+    /// Hand-codec `CreateDeskResponse` encoder.
+    #[must_use]
+    pub fn hand_create_desk_response_to_json(r: &CreateDeskResponse) -> Value {
+        super::create_desk_response_to_json(r)
+    }
+
+    /// Hand-codec `DeleteDeskRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_delete_desk_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<DeleteDeskRequest, CodecError> {
+        super::delete_desk_request_from_json(o)
+    }
+
+    /// Hand-codec `DeleteDeskResponse` encoder.
+    #[must_use]
+    pub fn hand_delete_desk_response_to_json(r: &DeleteDeskResponse) -> Value {
+        super::delete_desk_response_to_json(r)
+    }
+
+    /// Hand-codec `ListEntitiesRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_entities_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListEntitiesRequest, CodecError> {
+        super::list_entities_request_from_json(o)
+    }
+
+    /// Hand-codec `ListEntitiesResponse` encoder.
+    #[must_use]
+    pub fn hand_list_entities_response_to_json(r: &ListEntitiesResponse) -> Value {
+        super::list_entities_response_to_json(r)
+    }
+
+    /// Hand-codec `CreateEntityRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_create_entity_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<CreateEntityRequest, CodecError> {
+        super::create_entity_request_from_json(o)
+    }
+
+    /// Hand-codec `CreateEntityResponse` encoder.
+    #[must_use]
+    pub fn hand_create_entity_response_to_json(r: &CreateEntityResponse) -> Value {
+        super::create_entity_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdateEntityRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_entity_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateEntityRequest, CodecError> {
+        super::update_entity_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateEntityResponse` encoder.
+    #[must_use]
+    pub fn hand_update_entity_response_to_json(r: &UpdateEntityResponse) -> Value {
+        super::update_entity_response_to_json(r)
+    }
+
+    /// Hand-codec `DeleteEntityRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_delete_entity_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<DeleteEntityRequest, CodecError> {
+        super::delete_entity_request_from_json(o)
+    }
+
+    /// Hand-codec `DeleteEntityResponse` encoder.
+    #[must_use]
+    pub fn hand_delete_entity_response_to_json(r: &DeleteEntityResponse) -> Value {
+        super::delete_entity_response_to_json(r)
+    }
+
+    /// Hand-codec `ListBooksRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_books_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListBooksRequest, CodecError> {
+        super::list_books_request_from_json(o)
+    }
+
+    /// Hand-codec `ListBooksResponse` encoder.
+    #[must_use]
+    pub fn hand_list_books_response_to_json(r: &ListBooksResponse) -> Value {
+        super::list_books_response_to_json(r)
+    }
+
+    /// Hand-codec `CreateBookRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_create_book_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<CreateBookRequest, CodecError> {
+        super::create_book_request_from_json(o)
+    }
+
+    /// Hand-codec `CreateBookResponse` encoder.
+    #[must_use]
+    pub fn hand_create_book_response_to_json(r: &CreateBookResponse) -> Value {
+        super::create_book_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdateBookRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_book_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateBookRequest, CodecError> {
+        super::update_book_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateBookResponse` encoder.
+    #[must_use]
+    pub fn hand_update_book_response_to_json(r: &UpdateBookResponse) -> Value {
+        super::update_book_response_to_json(r)
+    }
+
+    /// Hand-codec `DeleteBookRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_delete_book_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<DeleteBookRequest, CodecError> {
+        super::delete_book_request_from_json(o)
+    }
+
+    /// Hand-codec `DeleteBookResponse` encoder.
+    #[must_use]
+    pub fn hand_delete_book_response_to_json(r: &DeleteBookResponse) -> Value {
+        super::delete_book_response_to_json(r)
+    }
+
+    /// Hand-codec `ListInstrumentsRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_instruments_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListInstrumentsRequest, CodecError> {
+        super::list_instruments_request_from_json(o)
+    }
+
+    /// Hand-codec `ListInstrumentsResponse` encoder.
+    #[must_use]
+    pub fn hand_list_instruments_response_to_json(r: &ListInstrumentsResponse) -> Value {
+        super::list_instruments_response_to_json(r)
+    }
+
+    /// Hand-codec `GetInstrumentRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_get_instrument_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<GetInstrumentRequest, CodecError> {
+        super::get_instrument_request_from_json(o)
+    }
+
+    /// Hand-codec `GetInstrumentResponse` encoder.
+    #[must_use]
+    pub fn hand_get_instrument_response_to_json(r: &GetInstrumentResponse) -> Value {
+        super::get_instrument_response_to_json(r)
+    }
+
+    /// Hand-codec `CreateInstrumentRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_create_instrument_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<CreateInstrumentRequest, CodecError> {
+        super::create_instrument_request_from_json(o)
+    }
+
+    /// Hand-codec `CreateInstrumentResponse` encoder.
+    #[must_use]
+    pub fn hand_create_instrument_response_to_json(r: &CreateInstrumentResponse) -> Value {
+        super::create_instrument_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdateInstrumentRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_instrument_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateInstrumentRequest, CodecError> {
+        super::update_instrument_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateInstrumentResponse` encoder.
+    #[must_use]
+    pub fn hand_update_instrument_response_to_json(r: &UpdateInstrumentResponse) -> Value {
+        super::update_instrument_response_to_json(r)
+    }
+
+    /// Hand-codec `DeleteInstrumentRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_delete_instrument_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<DeleteInstrumentRequest, CodecError> {
+        super::delete_instrument_request_from_json(o)
+    }
+
+    /// Hand-codec `DeleteInstrumentResponse` encoder.
+    #[must_use]
+    pub fn hand_delete_instrument_response_to_json(r: &DeleteInstrumentResponse) -> Value {
+        super::delete_instrument_response_to_json(r)
+    }
+
+    /// Hand-codec `BuildCurveRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_build_curve_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<BuildCurveRequest, CodecError> {
+        super::build_curve_request_from_json(o)
+    }
+
+    /// Hand-codec `CalibratedCurve` encoder.
+    #[must_use]
+    pub fn hand_calibrated_curve_to_json(c: &CalibratedCurve) -> Value {
+        super::calibrated_curve_to_json(c)
     }
 }
 

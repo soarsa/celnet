@@ -1017,228 +1017,238 @@ async fn handle_unary(
                 generated_codec::encode_list_fix_messages_response
             )
         }
+        // The AuthService admin + session verbs run on the descriptor-driven generated
+        // codec (arch item G — `ws-codec-from-proto`, wave 4 — the FINAL family): the
+        // `ws_codec_differential` harness proves the generated request-decode +
+        // reply-encode is byte-identical to the hand codec (retained as the frozen
+        // oracle in `codec::diff_support`) over the auth conformance shapes + edge
+        // vectors — the login/session envelopes, the user/desk/entity/book CRUD, the
+        // capabilities repeated-message lists, the instrument registry `definition`
+        // family oneof (its `calendars` repeated-string + `BondDef` optional coupon
+        // dates) and `BuildCurve`'s pillar arrays — so the swap is contract-preserving.
+        // With this family every WS unary verb runs on the generated codec.
         "login" => {
-            let req = decode!(codec::login_request_from_json(o));
+            let req = decode!(generated_codec::decode_login_request(o));
             call!(
                 services.auth.login(Request::new(req)),
                 "login_result",
-                codec::login_response_to_json
+                generated_codec::encode_login_response
             )
         }
         "logout" => {
-            let req = decode!(codec::logout_request_from_json(o));
+            let req = decode!(generated_codec::decode_logout_request(o));
             call!(
                 services.auth.logout(Request::new(req)),
                 "logout_result",
-                codec::logout_response_to_json
+                generated_codec::encode_logout_response
             )
         }
         "list_users" => {
-            let req = decode!(codec::list_users_request_from_json(o));
+            let req = decode!(generated_codec::decode_list_users_request(o));
             call!(
                 services.auth.list_users(Request::new(req)),
                 "users",
-                codec::list_users_response_to_json
+                generated_codec::encode_list_users_response
             )
         }
         "create_user" => {
-            let req = decode!(codec::create_user_request_from_json(o));
+            let req = decode!(generated_codec::decode_create_user_request(o));
             call!(
                 services.auth.create_user(Request::new(req)),
                 "user_created",
-                codec::create_user_response_to_json
+                generated_codec::encode_create_user_response
             )
         }
         "update_user" => {
-            let req = decode!(codec::update_user_request_from_json(o));
+            let req = decode!(generated_codec::decode_update_user_request(o));
             call!(
                 services.auth.update_user(Request::new(req)),
                 "user_updated",
-                codec::update_user_response_to_json
+                generated_codec::encode_update_user_response
             )
         }
         "delete_user" => {
-            let req = decode!(codec::delete_user_request_from_json(o));
+            let req = decode!(generated_codec::decode_delete_user_request(o));
             call!(
                 services.auth.delete_user(Request::new(req)),
                 "user_deleted",
-                codec::delete_user_response_to_json
+                generated_codec::encode_delete_user_response
             )
         }
         "reset_password" => {
-            let req = decode!(codec::reset_password_request_from_json(o));
+            let req = decode!(generated_codec::decode_reset_password_request(o));
             call!(
                 services.auth.reset_password(Request::new(req)),
                 "password_reset",
-                codec::reset_password_response_to_json
+                generated_codec::encode_reset_password_response
             )
         }
         "get_user_capabilities" => {
-            let req = decode!(codec::get_user_capabilities_request_from_json(o));
+            let req = decode!(generated_codec::decode_get_user_capabilities_request(o));
             call!(
                 services.auth.get_user_capabilities(Request::new(req)),
                 "user_capabilities",
-                codec::get_user_capabilities_response_to_json
+                generated_codec::encode_get_user_capabilities_response
             )
         }
         "set_user_capabilities" => {
-            let req = decode!(codec::set_user_capabilities_request_from_json(o));
+            let req = decode!(generated_codec::decode_set_user_capabilities_request(o));
             call!(
                 services.auth.set_user_capabilities(Request::new(req)),
                 "user_capabilities_set",
-                codec::set_user_capabilities_response_to_json
+                generated_codec::encode_set_user_capabilities_response
             )
         }
         "get_role_capabilities" => {
-            let req = decode!(codec::get_role_capabilities_request_from_json(o));
+            let req = decode!(generated_codec::decode_get_role_capabilities_request(o));
             call!(
                 services.auth.get_role_capabilities(Request::new(req)),
                 "role_capabilities",
-                codec::get_role_capabilities_response_to_json
+                generated_codec::encode_get_role_capabilities_response
             )
         }
         "set_role_capabilities" => {
-            let req = decode!(codec::set_role_capabilities_request_from_json(o));
+            let req = decode!(generated_codec::decode_set_role_capabilities_request(o));
             call!(
                 services.auth.set_role_capabilities(Request::new(req)),
                 "role_capabilities_set",
-                codec::set_role_capabilities_response_to_json
+                generated_codec::encode_set_role_capabilities_response
             )
         }
         "list_desks" => {
-            let req = decode!(codec::list_desks_request_from_json(o));
+            let req = decode!(generated_codec::decode_list_desks_request(o));
             call!(
                 services.auth.list_desks(Request::new(req)),
                 "desks",
-                codec::list_desks_response_to_json
+                generated_codec::encode_list_desks_response
             )
         }
         "create_desk" => {
-            let req = decode!(codec::create_desk_request_from_json(o));
+            let req = decode!(generated_codec::decode_create_desk_request(o));
             call!(
                 services.auth.create_desk(Request::new(req)),
                 "desk_created",
-                codec::create_desk_response_to_json
+                generated_codec::encode_create_desk_response
             )
         }
         "delete_desk" => {
-            let req = decode!(codec::delete_desk_request_from_json(o));
+            let req = decode!(generated_codec::decode_delete_desk_request(o));
             call!(
                 services.auth.delete_desk(Request::new(req)),
                 "desk_deleted",
-                codec::delete_desk_response_to_json
+                generated_codec::encode_delete_desk_response
             )
         }
         "list_entities" => {
-            let req = decode!(codec::list_entities_request_from_json(o));
+            let req = decode!(generated_codec::decode_list_entities_request(o));
             call!(
                 services.auth.list_entities(Request::new(req)),
                 "entities",
-                codec::list_entities_response_to_json
+                generated_codec::encode_list_entities_response
             )
         }
         "create_entity" => {
-            let req = decode!(codec::create_entity_request_from_json(o));
+            let req = decode!(generated_codec::decode_create_entity_request(o));
             call!(
                 services.auth.create_entity(Request::new(req)),
                 "entity_created",
-                codec::create_entity_response_to_json
+                generated_codec::encode_create_entity_response
             )
         }
         "update_entity" => {
-            let req = decode!(codec::update_entity_request_from_json(o));
+            let req = decode!(generated_codec::decode_update_entity_request(o));
             call!(
                 services.auth.update_entity(Request::new(req)),
                 "entity_updated",
-                codec::update_entity_response_to_json
+                generated_codec::encode_update_entity_response
             )
         }
         "delete_entity" => {
-            let req = decode!(codec::delete_entity_request_from_json(o));
+            let req = decode!(generated_codec::decode_delete_entity_request(o));
             call!(
                 services.auth.delete_entity(Request::new(req)),
                 "entity_deleted",
-                codec::delete_entity_response_to_json
+                generated_codec::encode_delete_entity_response
             )
         }
         "list_books" => {
-            let req = decode!(codec::list_books_request_from_json(o));
+            let req = decode!(generated_codec::decode_list_books_request(o));
             call!(
                 services.auth.list_books(Request::new(req)),
                 "books",
-                codec::list_books_response_to_json
+                generated_codec::encode_list_books_response
             )
         }
         "create_book" => {
-            let req = decode!(codec::create_book_request_from_json(o));
+            let req = decode!(generated_codec::decode_create_book_request(o));
             call!(
                 services.auth.create_book(Request::new(req)),
                 "book_created",
-                codec::create_book_response_to_json
+                generated_codec::encode_create_book_response
             )
         }
         "update_book" => {
-            let req = decode!(codec::update_book_request_from_json(o));
+            let req = decode!(generated_codec::decode_update_book_request(o));
             call!(
                 services.auth.update_book(Request::new(req)),
                 "book_updated",
-                codec::update_book_response_to_json
+                generated_codec::encode_update_book_response
             )
         }
         "delete_book" => {
-            let req = decode!(codec::delete_book_request_from_json(o));
+            let req = decode!(generated_codec::decode_delete_book_request(o));
             call!(
                 services.auth.delete_book(Request::new(req)),
                 "book_deleted",
-                codec::delete_book_response_to_json
+                generated_codec::encode_delete_book_response
             )
         }
         "list_instruments" => {
-            let req = decode!(codec::list_instruments_request_from_json(o));
+            let req = decode!(generated_codec::decode_list_instruments_request(o));
             call!(
                 services.auth.list_instruments(Request::new(req)),
                 "instruments",
-                codec::list_instruments_response_to_json
+                generated_codec::encode_list_instruments_response
             )
         }
         "get_instrument" => {
-            let req = decode!(codec::get_instrument_request_from_json(o));
+            let req = decode!(generated_codec::decode_get_instrument_request(o));
             call!(
                 services.auth.get_instrument(Request::new(req)),
                 "instrument",
-                codec::get_instrument_response_to_json
+                generated_codec::encode_get_instrument_response
             )
         }
         "create_instrument" => {
-            let req = decode!(codec::create_instrument_request_from_json(o));
+            let req = decode!(generated_codec::decode_create_instrument_request(o));
             call!(
                 services.auth.create_instrument(Request::new(req)),
                 "instrument_created",
-                codec::create_instrument_response_to_json
+                generated_codec::encode_create_instrument_response
             )
         }
         "update_instrument" => {
-            let req = decode!(codec::update_instrument_request_from_json(o));
+            let req = decode!(generated_codec::decode_update_instrument_request(o));
             call!(
                 services.auth.update_instrument(Request::new(req)),
                 "instrument_updated",
-                codec::update_instrument_response_to_json
+                generated_codec::encode_update_instrument_response
             )
         }
         "delete_instrument" => {
-            let req = decode!(codec::delete_instrument_request_from_json(o));
+            let req = decode!(generated_codec::decode_delete_instrument_request(o));
             call!(
                 services.auth.delete_instrument(Request::new(req)),
                 "instrument_deleted",
-                codec::delete_instrument_response_to_json
+                generated_codec::encode_delete_instrument_response
             )
         }
         "build_curve" => {
-            let req = decode!(codec::build_curve_request_from_json(o));
+            let req = decode!(generated_codec::decode_build_curve_request(o));
             call!(
                 services.auth.build_curve(Request::new(req)),
                 "calibrated_curve",
-                codec::calibrated_curve_to_json
+                generated_codec::encode_calibrated_curve
             )
         }
         other => codec::error_frame(&format!("unknown request type `{other}`"), correlation_id),

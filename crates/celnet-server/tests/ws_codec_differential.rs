@@ -2911,3 +2911,1004 @@ fn desk_reply_encode_is_byte_identical() {
         &hand::hand_list_deals_response_to_json(&list_deals),
     );
 }
+
+// ===========================================================================
+// AuthService — the admin + session surface (wave 4, the FINAL family): the
+// request decoders (login/session, user/desk/entity/book CRUD, capabilities +
+// roles, the instrument registry with its `definition` family oneof, and
+// `BuildCurve`) and the reply encoders, byte-identical to the hand codec incl. the
+// presence-tracked-null policy (`correlation_id`, `UserDesc.desk_id`, `BondDef`
+// coupon dates), the `capabilities` repeated-message lists and the `calendars`
+// repeated-string.
+// ===========================================================================
+
+use celnet_proto::{
+    BondDef, BookDesc, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc, CreateBookResponse,
+    CreateDeskResponse, CreateEntityResponse, CreateInstrumentResponse, CreateUserResponse,
+    DeleteBookResponse, DeleteDeskResponse, DeleteEntityResponse, DeleteInstrumentResponse,
+    DeleteUserResponse, DepositDef, DeskDesc, EntityDesc, ExternalId, FraDef,
+    GetInstrumentResponse, GetRoleCapabilitiesResponse, GetUserCapabilitiesResponse,
+    InstrumentDefDesc, ListBooksResponse, ListDesksResponse, ListEntitiesResponse,
+    ListInstrumentsResponse, ListUsersResponse, LoginResponse, LogoutResponse, OisDef,
+    ResetPasswordResponse, SetRoleCapabilitiesResponse, SetUserCapabilitiesResponse, StirFutureDef,
+    UpdateBookResponse, UpdateEntityResponse, UpdateInstrumentResponse, UpdateUserResponse,
+    UserDesc, VanillaIrsDef, instrument_def_desc::Definition,
+};
+
+// --- fixtures ----------------------------------------------------------------
+
+fn a_capability(action: &str, asset: &str) -> CapabilityDesc {
+    CapabilityDesc {
+        action: action.to_owned(),
+        asset: asset.to_owned(),
+    }
+}
+
+fn a_user_desc(desk_id: Option<&str>) -> UserDesc {
+    UserDesc {
+        id: "u-1".to_owned(),
+        email: "trader@celer.example".to_owned(),
+        display_name: "A Trader".to_owned(),
+        role: 2,
+        desk_id: desk_id.map(str::to_owned),
+        disabled: false,
+    }
+}
+
+fn an_entity_desc() -> EntityDesc {
+    EntityDesc {
+        key: 7,
+        name: "Celer Capital".to_owned(),
+        code: "CELCAP".to_owned(),
+    }
+}
+
+fn a_book_desc() -> BookDesc {
+    BookDesc {
+        key: 11,
+        name: "G10 Vol".to_owned(),
+        entity_key: 7,
+    }
+}
+
+fn a_broken_date(year: i32, month: u32, day: u32) -> BrokenDate {
+    BrokenDate { year, month, day }
+}
+
+/// A fully-populated instrument carrying `definition` — exercising every family
+/// adapter + the `calendars` repeated-string and (for the bond) the optional
+/// coupon dates.
+fn instrument_def_with(definition: Definition) -> InstrumentDefDesc {
+    InstrumentDefDesc {
+        instrument_id: "usd-inst".to_owned(),
+        name: "USD Instrument".to_owned(),
+        description: "a calibrating instrument".to_owned(),
+        currency: "USD".to_owned(),
+        external_ids: vec![
+            ExternalId {
+                scheme: "isin".to_owned(),
+                value: "US0000000000".to_owned(),
+            },
+            ExternalId {
+                scheme: "ticker".to_owned(),
+                value: "USDX".to_owned(),
+            },
+        ],
+        definition: Some(definition),
+    }
+}
+
+fn deposit_def() -> Definition {
+    Definition::Deposit(DepositDef {
+        index: "SOFR".to_owned(),
+        tenor: "3M".to_owned(),
+        day_count: "ACT/360".to_owned(),
+        business_day_convention: "MODFOLLOWING".to_owned(),
+        calendars: vec!["USD".to_owned(), "USNY".to_owned()],
+        spot_lag_days: 2,
+    })
+}
+
+fn fra_def() -> Definition {
+    Definition::Fra(FraDef {
+        float_index: "SOFR".to_owned(),
+        start_tenor: "3M".to_owned(),
+        end_tenor: "6M".to_owned(),
+        accrual_day_count: "ACT/360".to_owned(),
+        business_day_convention: "MODFOLLOWING".to_owned(),
+        calendars: vec!["USD".to_owned()],
+        spot_lag_days: 2,
+    })
+}
+
+fn stir_future_def() -> Definition {
+    Definition::StirFuture(StirFutureDef {
+        contract_code: "SR3".to_owned(),
+        reference_start: "2026-06-17".to_owned(),
+        reference_end: "2026-09-16".to_owned(),
+        day_count: "ACT/360".to_owned(),
+        calendars: vec!["USD".to_owned()],
+        convexity_vol: 0.006,
+        contract_size: 2500.0,
+    })
+}
+
+fn vanilla_irs_def() -> Definition {
+    Definition::VanillaIrs(VanillaIrsDef {
+        tenor: "10Y".to_owned(),
+        fixed_frequency: "6M".to_owned(),
+        fixed_day_count: "30/360".to_owned(),
+        float_index: "SOFR".to_owned(),
+        float_frequency: "3M".to_owned(),
+        float_day_count: "ACT/360".to_owned(),
+        business_day_convention: "MODFOLLOWING".to_owned(),
+        calendars: vec!["USD".to_owned()],
+        roll_convention: "EOM".to_owned(),
+        spot_lag_days: 2,
+    })
+}
+
+fn ois_def() -> Definition {
+    Definition::Ois(OisDef {
+        tenor: "5Y".to_owned(),
+        index: "SOFR".to_owned(),
+        fixed_frequency: "1Y".to_owned(),
+        fixed_day_count: "ACT/360".to_owned(),
+        float_day_count: "ACT/360".to_owned(),
+        business_day_convention: "MODFOLLOWING".to_owned(),
+        calendars: vec!["USD".to_owned()],
+        spot_lag_days: 2,
+    })
+}
+
+/// A bond with a present `issue_date`/`maturity_date` and an absent
+/// `dated_date`/`first_coupon_date` — exercises both the present-message and the
+/// `null`-when-absent optional/singular coupon-date rules.
+fn bond_def() -> Definition {
+    Definition::Bond(BondDef {
+        issuer: "US TREASURY".to_owned(),
+        coupon_rate: 0.0425,
+        coupon_type: "FIXED".to_owned(),
+        coupon_frequency: "6M".to_owned(),
+        day_count: "ACT/ACT".to_owned(),
+        issue_date: Some(a_broken_date(2026, 5, 15)),
+        dated_date: None,
+        first_coupon_date: None,
+        maturity_date: Some(a_broken_date(2036, 5, 15)),
+        redemption: 100.0,
+        calendars: vec!["USGS".to_owned()],
+    })
+}
+
+// --- decode: session + user + capabilities -----------------------------------
+
+#[test]
+fn auth_session_verbs_decode_byte_identical() {
+    let login = json!({ "email": "a@b.c", "password": "pw", "correlation_id": 5 });
+    let o = login.as_object().expect("object");
+    assert_decode_eq(
+        "LoginRequest",
+        generated::decode_login_request(o),
+        hand::hand_login_request_from_json(o),
+    );
+    // Absent correlation_id ⇒ None.
+    let login_min = json!({ "email": "a@b.c", "password": "pw" });
+    let o = login_min.as_object().expect("object");
+    assert_decode_eq(
+        "LoginRequest(no-corr)",
+        generated::decode_login_request(o),
+        hand::hand_login_request_from_json(o),
+    );
+
+    let logout = json!({ "session_token": "tok", "correlation_id": 1 });
+    let o = logout.as_object().expect("object");
+    assert_decode_eq(
+        "LogoutRequest",
+        generated::decode_logout_request(o),
+        hand::hand_logout_request_from_json(o),
+    );
+
+    let list = json!({ "session_token": "tok" });
+    let o = list.as_object().expect("object");
+    assert_decode_eq(
+        "ListUsersRequest",
+        generated::decode_list_users_request(o),
+        hand::hand_list_users_request_from_json(o),
+    );
+}
+
+#[test]
+fn auth_user_crud_decode_byte_identical() {
+    let cases = [
+        (
+            "create-full",
+            json!({ "session_token": "tok", "email": "a@b.c", "display_name": "A",
+                    "role": 2, "desk_id": "fx", "password": "pw", "correlation_id": 3 }),
+        ),
+        // Absent desk_id (⇒ None) + empty desk_id (⇒ None via opt_string filter).
+        (
+            "create-no-desk",
+            json!({ "session_token": "tok", "email": "a@b.c", "display_name": "A",
+                    "role": 0, "password": "pw" }),
+        ),
+        (
+            "create-empty-desk",
+            json!({ "session_token": "tok", "email": "a@b.c", "display_name": "A",
+                    "role": 1, "desk_id": "", "password": "pw" }),
+        ),
+    ];
+    for (label, body) in &cases {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("CreateUserRequest({label})"),
+            generated::decode_create_user_request(o),
+            hand::hand_create_user_request_from_json(o),
+        );
+    }
+
+    let update = json!({ "session_token": "tok", "id": "u-1", "display_name": "A2",
+        "role": 3, "desk_id": "rates", "disabled": true, "correlation_id": 9 });
+    let o = update.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateUserRequest",
+        generated::decode_update_user_request(o),
+        hand::hand_update_user_request_from_json(o),
+    );
+
+    let del = json!({ "session_token": "tok", "id": "u-1" });
+    let o = del.as_object().expect("object");
+    assert_decode_eq(
+        "DeleteUserRequest",
+        generated::decode_delete_user_request(o),
+        hand::hand_delete_user_request_from_json(o),
+    );
+
+    let reset = json!({ "session_token": "tok", "id": "u-1", "new_password": "np" });
+    let o = reset.as_object().expect("object");
+    assert_decode_eq(
+        "ResetPasswordRequest",
+        generated::decode_reset_password_request(o),
+        hand::hand_reset_password_request_from_json(o),
+    );
+}
+
+#[test]
+fn auth_capabilities_decode_byte_identical() {
+    let get_user = json!({ "session_token": "tok", "id": "u-1", "correlation_id": 2 });
+    let o = get_user.as_object().expect("object");
+    assert_decode_eq(
+        "GetUserCapabilitiesRequest",
+        generated::decode_get_user_capabilities_request(o),
+        hand::hand_get_user_capabilities_request_from_json(o),
+    );
+
+    let set_user = json!({ "session_token": "tok", "id": "u-1",
+        "grants": [{ "action": "price", "asset": "fx_options" }],
+        "denies": [{ "action": "execute", "asset": "fixed_income" }] });
+    let o = set_user.as_object().expect("object");
+    assert_decode_eq(
+        "SetUserCapabilitiesRequest",
+        generated::decode_set_user_capabilities_request(o),
+        hand::hand_set_user_capabilities_request_from_json(o),
+    );
+    // Absent grants/denies ⇒ empty lists.
+    let set_user_min = json!({ "session_token": "tok", "id": "u-1" });
+    let o = set_user_min.as_object().expect("object");
+    assert_decode_eq(
+        "SetUserCapabilitiesRequest(empty)",
+        generated::decode_set_user_capabilities_request(o),
+        hand::hand_set_user_capabilities_request_from_json(o),
+    );
+
+    let get_role = json!({ "session_token": "tok", "role": 2 });
+    let o = get_role.as_object().expect("object");
+    assert_decode_eq(
+        "GetRoleCapabilitiesRequest",
+        generated::decode_get_role_capabilities_request(o),
+        hand::hand_get_role_capabilities_request_from_json(o),
+    );
+
+    let set_role = json!({ "session_token": "tok", "role": 2,
+        "capabilities": [{ "action": "view", "asset": "fx_options" },
+                         { "action": "quote_respond", "asset": "fx_options" }] });
+    let o = set_role.as_object().expect("object");
+    assert_decode_eq(
+        "SetRoleCapabilitiesRequest",
+        generated::decode_set_role_capabilities_request(o),
+        hand::hand_set_role_capabilities_request_from_json(o),
+    );
+}
+
+// --- decode: desk / entity / book --------------------------------------------
+
+#[test]
+fn auth_desk_crud_decode_byte_identical() {
+    let list = json!({ "session_token": "tok", "correlation_id": 4 });
+    let o = list.as_object().expect("object");
+    assert_decode_eq(
+        "ListDesksRequest",
+        generated::decode_list_desks_request(o),
+        hand::hand_list_desks_request_from_json(o),
+    );
+
+    let create = json!({ "session_token": "tok", "name": "FX Vol" });
+    let o = create.as_object().expect("object");
+    assert_decode_eq(
+        "CreateDeskRequest",
+        generated::decode_create_desk_request(o),
+        hand::hand_create_desk_request_from_json(o),
+    );
+
+    let del = json!({ "session_token": "tok", "id": "d-1" });
+    let o = del.as_object().expect("object");
+    assert_decode_eq(
+        "DeleteDeskRequest",
+        generated::decode_delete_desk_request(o),
+        hand::hand_delete_desk_request_from_json(o),
+    );
+}
+
+#[test]
+fn auth_entity_crud_decode_byte_identical() {
+    let list = json!({ "session_token": "tok" });
+    let o = list.as_object().expect("object");
+    assert_decode_eq(
+        "ListEntitiesRequest",
+        generated::decode_list_entities_request(o),
+        hand::hand_list_entities_request_from_json(o),
+    );
+
+    // create: `key` optional (defaults to 0).
+    for (label, body) in [
+        (
+            "with-key",
+            json!({ "session_token": "tok", "name": "E", "code": "EEE", "key": 5 }),
+        ),
+        (
+            "default-key",
+            json!({ "session_token": "tok", "name": "E", "code": "EEE" }),
+        ),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("CreateEntityRequest({label})"),
+            generated::decode_create_entity_request(o),
+            hand::hand_create_entity_request_from_json(o),
+        );
+    }
+
+    let update = json!({ "session_token": "tok", "key": 5, "name": "E2", "code": "EE2" });
+    let o = update.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateEntityRequest",
+        generated::decode_update_entity_request(o),
+        hand::hand_update_entity_request_from_json(o),
+    );
+
+    let del = json!({ "session_token": "tok", "key": 5 });
+    let o = del.as_object().expect("object");
+    assert_decode_eq(
+        "DeleteEntityRequest",
+        generated::decode_delete_entity_request(o),
+        hand::hand_delete_entity_request_from_json(o),
+    );
+}
+
+#[test]
+fn auth_book_crud_decode_byte_identical() {
+    let list = json!({ "session_token": "tok" });
+    let o = list.as_object().expect("object");
+    assert_decode_eq(
+        "ListBooksRequest",
+        generated::decode_list_books_request(o),
+        hand::hand_list_books_request_from_json(o),
+    );
+
+    for (label, body) in [
+        (
+            "with-key",
+            json!({ "session_token": "tok", "name": "B", "entity_key": 7, "key": 3 }),
+        ),
+        (
+            "default-key",
+            json!({ "session_token": "tok", "name": "B", "entity_key": 7 }),
+        ),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("CreateBookRequest({label})"),
+            generated::decode_create_book_request(o),
+            hand::hand_create_book_request_from_json(o),
+        );
+    }
+
+    let update = json!({ "session_token": "tok", "key": 3, "name": "B2", "entity_key": 7 });
+    let o = update.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateBookRequest",
+        generated::decode_update_book_request(o),
+        hand::hand_update_book_request_from_json(o),
+    );
+
+    let del = json!({ "session_token": "tok", "key": 3 });
+    let o = del.as_object().expect("object");
+    assert_decode_eq(
+        "DeleteBookRequest",
+        generated::decode_delete_book_request(o),
+        hand::hand_delete_book_request_from_json(o),
+    );
+}
+
+// --- decode: instrument registry (the `definition` family oneof) -------------
+
+fn instrument_body(family: Value) -> Value {
+    let mut inst = json!({
+        "instrument_id": "usd-inst", "name": "USD Instrument",
+        "description": "a calibrating instrument", "currency": "USD",
+        "external_ids": [ { "scheme": "isin", "value": "US0000000000" } ]
+    });
+    let (key, body) = family
+        .as_object()
+        .expect("family object")
+        .iter()
+        .next()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .expect("one family arm");
+    inst.as_object_mut().expect("object").insert(key, body);
+    inst
+}
+
+#[test]
+fn auth_instrument_list_get_delete_decode_byte_identical() {
+    let list = json!({ "session_token": "tok" });
+    let o = list.as_object().expect("object");
+    assert_decode_eq(
+        "ListInstrumentsRequest",
+        generated::decode_list_instruments_request(o),
+        hand::hand_list_instruments_request_from_json(o),
+    );
+
+    let get = json!({ "session_token": "tok", "instrument_id": "usd-inst" });
+    let o = get.as_object().expect("object");
+    assert_decode_eq(
+        "GetInstrumentRequest",
+        generated::decode_get_instrument_request(o),
+        hand::hand_get_instrument_request_from_json(o),
+    );
+
+    let del = json!({ "session_token": "tok", "instrument_id": "usd-inst" });
+    let o = del.as_object().expect("object");
+    assert_decode_eq(
+        "DeleteInstrumentRequest",
+        generated::decode_delete_instrument_request(o),
+        hand::hand_delete_instrument_request_from_json(o),
+    );
+}
+
+#[test]
+fn auth_create_update_instrument_decode_byte_identical_all_families() {
+    let families = [
+        (
+            "deposit",
+            json!({ "deposit": { "index": "SOFR", "tenor": "3M", "day_count": "ACT/360",
+                "business_day_convention": "MODFOLLOWING", "calendars": ["USD", "USNY"],
+                "spot_lag_days": 2 } }),
+        ),
+        (
+            "fra",
+            json!({ "fra": { "float_index": "SOFR", "start_tenor": "3M", "end_tenor": "6M",
+                "accrual_day_count": "ACT/360", "business_day_convention": "MODFOLLOWING",
+                "calendars": ["USD"], "spot_lag_days": 2 } }),
+        ),
+        (
+            "stir_future",
+            json!({ "stir_future": { "contract_code": "SR3", "reference_start": "2026-06-17",
+                "reference_end": "2026-09-16", "day_count": "ACT/360", "calendars": ["USD"],
+                "convexity_vol": 0.006, "contract_size": 2500.0 } }),
+        ),
+        (
+            "vanilla_irs",
+            json!({ "vanilla_irs": { "tenor": "10Y", "fixed_frequency": "6M",
+                "fixed_day_count": "30/360", "float_index": "SOFR", "float_frequency": "3M",
+                "float_day_count": "ACT/360", "business_day_convention": "MODFOLLOWING",
+                "calendars": ["USD"], "roll_convention": "EOM", "spot_lag_days": 2 } }),
+        ),
+        (
+            "ois",
+            json!({ "ois": { "tenor": "5Y", "index": "SOFR", "fixed_frequency": "1Y",
+                "fixed_day_count": "ACT/360", "float_day_count": "ACT/360",
+                "business_day_convention": "MODFOLLOWING", "calendars": ["USD"],
+                "spot_lag_days": 2 } }),
+        ),
+        (
+            "bond",
+            json!({ "bond": { "issuer": "US TREASURY", "coupon_rate": 0.0425,
+                "coupon_type": "FIXED", "coupon_frequency": "6M", "day_count": "ACT/ACT",
+                "issue_date": { "year": 2026, "month": 5, "day": 15 },
+                "maturity_date": { "year": 2036, "month": 5, "day": 15 },
+                "redemption": 100.0, "calendars": ["USGS"] } }),
+        ),
+    ];
+    for (label, family) in families {
+        let create =
+            json!({ "session_token": "tok", "instrument": instrument_body(family.clone()) });
+        let o = create.as_object().expect("object");
+        assert_decode_eq(
+            &format!("CreateInstrumentRequest({label})"),
+            generated::decode_create_instrument_request(o),
+            hand::hand_create_instrument_request_from_json(o),
+        );
+        let update = json!({ "session_token": "tok", "instrument": instrument_body(family) });
+        let o = update.as_object().expect("object");
+        assert_decode_eq(
+            &format!("UpdateInstrumentRequest({label})"),
+            generated::decode_update_instrument_request(o),
+            hand::hand_update_instrument_request_from_json(o),
+        );
+    }
+    // A no-family instrument keeps `definition` unset (family_from_json ⇒ None).
+    let no_family = json!({ "session_token": "tok",
+        "instrument": { "name": "bare", "currency": "USD" } });
+    let o = no_family.as_object().expect("object");
+    assert_decode_eq(
+        "CreateInstrumentRequest(no-family)",
+        generated::decode_create_instrument_request(o),
+        hand::hand_create_instrument_request_from_json(o),
+    );
+}
+
+#[test]
+fn auth_build_curve_decode_byte_identical() {
+    let full = json!({
+        "request_id": "req-1", "currency": "USD", "session_token": "tok",
+        "reference_date": { "year": 2026, "month": 6, "day": 30 },
+        "pillars": [ { "instrument_id": "usd-irs-10y", "quote": 0.0405 } ],
+        "date_pillars": [ { "maturity_date": { "year": 2026, "month": 9, "day": 30 },
+                            "quote": 0.0415 } ]
+    });
+    let o = full.as_object().expect("object");
+    assert_decode_eq(
+        "BuildCurveRequest(full)",
+        generated::decode_build_curve_request(o),
+        hand::hand_build_curve_request_from_json(o),
+    );
+    // Absent pillar arrays ⇒ empty.
+    let min = json!({ "request_id": "req-2", "currency": "EUR", "session_token": "tok",
+        "reference_date": { "year": 2026, "month": 6, "day": 30 } });
+    let o = min.as_object().expect("object");
+    assert_decode_eq(
+        "BuildCurveRequest(no-pillars)",
+        generated::decode_build_curve_request(o),
+        hand::hand_build_curve_request_from_json(o),
+    );
+}
+
+// --- encode: session + user + capabilities -----------------------------------
+
+#[test]
+fn auth_session_replies_encode_byte_identical() {
+    let login = LoginResponse {
+        session_token: "sess-abc".to_owned(),
+        user: Some(a_user_desc(Some("fx"))),
+        expires_nanos: 1_720_000_000_000_000_000,
+        capabilities: vec![
+            a_capability("view", "fx_options"),
+            a_capability("price", "fixed_income"),
+        ],
+        correlation_id: Some(5),
+    };
+    assert_bytes_eq(
+        "LoginResponse(full)",
+        &generated::encode_login_response(&login),
+        &hand::hand_login_response_to_json(&login),
+    );
+    // Absent user + correlation_id + no caps ⇒ user null, correlation_id null, [].
+    let login0 = LoginResponse {
+        session_token: "sess-x".to_owned(),
+        user: None,
+        expires_nanos: 0,
+        capabilities: vec![],
+        correlation_id: None,
+    };
+    let g = generated::encode_login_response(&login0);
+    assert_eq!(g.get("user"), Some(&Value::Null));
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_eq!(g.get("capabilities"), Some(&Value::Array(vec![])));
+    assert_bytes_eq(
+        "LoginResponse(empty)",
+        &g,
+        &hand::hand_login_response_to_json(&login0),
+    );
+
+    for (label, correlation_id, ended) in [("with", Some(1_u64), true), ("null", None, false)] {
+        let r = LogoutResponse {
+            ended,
+            correlation_id,
+        };
+        assert_bytes_eq(
+            &format!("LogoutResponse({label})"),
+            &generated::encode_logout_response(&r),
+            &hand::hand_logout_response_to_json(&r),
+        );
+    }
+
+    // ListUsersResponse: a user with desk_id None ⇒ nested `desk_id` renders `null`.
+    let users = ListUsersResponse {
+        users: vec![a_user_desc(Some("fx")), a_user_desc(None)],
+        correlation_id: Some(2),
+    };
+    let g = generated::encode_list_users_response(&users);
+    assert_eq!(g["users"][1].get("desk_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "ListUsersResponse",
+        &g,
+        &hand::hand_list_users_response_to_json(&users),
+    );
+    let users_empty = ListUsersResponse {
+        users: vec![],
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "ListUsersResponse(empty)",
+        &generated::encode_list_users_response(&users_empty),
+        &hand::hand_list_users_response_to_json(&users_empty),
+    );
+}
+
+#[test]
+fn auth_user_crud_replies_encode_byte_identical() {
+    for (label, user) in [
+        ("with-user", Some(a_user_desc(Some("fx")))),
+        ("no-user", None),
+    ] {
+        let created = CreateUserResponse {
+            user: user.clone(),
+            correlation_id: Some(3),
+        };
+        assert_bytes_eq(
+            &format!("CreateUserResponse({label})"),
+            &generated::encode_create_user_response(&created),
+            &hand::hand_create_user_response_to_json(&created),
+        );
+        let updated = UpdateUserResponse {
+            user,
+            correlation_id: None,
+        };
+        assert_bytes_eq(
+            &format!("UpdateUserResponse({label})"),
+            &generated::encode_update_user_response(&updated),
+            &hand::hand_update_user_response_to_json(&updated),
+        );
+    }
+
+    for (label, correlation_id, removed) in [("hit", Some(4_u64), true), ("miss", None, false)] {
+        let del = DeleteUserResponse {
+            removed,
+            correlation_id,
+        };
+        assert_bytes_eq(
+            &format!("DeleteUserResponse({label})"),
+            &generated::encode_delete_user_response(&del),
+            &hand::hand_delete_user_response_to_json(&del),
+        );
+    }
+
+    for (label, correlation_id) in [("with", Some(7_u64)), ("null", None)] {
+        let reset = ResetPasswordResponse { correlation_id };
+        assert_bytes_eq(
+            &format!("ResetPasswordResponse({label})"),
+            &generated::encode_reset_password_response(&reset),
+            &hand::hand_reset_password_response_to_json(&reset),
+        );
+    }
+}
+
+#[test]
+fn auth_capabilities_replies_encode_byte_identical() {
+    let caps = vec![
+        a_capability("view", "fx_options"),
+        a_capability("price", "fixed_income"),
+    ];
+    let get_user = GetUserCapabilitiesResponse {
+        grants: caps.clone(),
+        denies: vec![a_capability("execute", "fixed_income")],
+        effective: caps.clone(),
+        correlation_id: Some(1),
+    };
+    assert_bytes_eq(
+        "GetUserCapabilitiesResponse",
+        &generated::encode_get_user_capabilities_response(&get_user),
+        &hand::hand_get_user_capabilities_response_to_json(&get_user),
+    );
+    let set_user = SetUserCapabilitiesResponse {
+        grants: caps.clone(),
+        denies: vec![],
+        effective: caps.clone(),
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "SetUserCapabilitiesResponse",
+        &generated::encode_set_user_capabilities_response(&set_user),
+        &hand::hand_set_user_capabilities_response_to_json(&set_user),
+    );
+    let get_role = GetRoleCapabilitiesResponse {
+        capabilities: caps.clone(),
+        correlation_id: Some(2),
+    };
+    assert_bytes_eq(
+        "GetRoleCapabilitiesResponse",
+        &generated::encode_get_role_capabilities_response(&get_role),
+        &hand::hand_get_role_capabilities_response_to_json(&get_role),
+    );
+    let set_role = SetRoleCapabilitiesResponse {
+        capabilities: caps,
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "SetRoleCapabilitiesResponse",
+        &generated::encode_set_role_capabilities_response(&set_role),
+        &hand::hand_set_role_capabilities_response_to_json(&set_role),
+    );
+}
+
+// --- encode: desk / entity / book --------------------------------------------
+
+#[test]
+fn auth_desk_replies_encode_byte_identical() {
+    let desk = DeskDesc {
+        id: "d-1".to_owned(),
+        name: "FX Vol".to_owned(),
+    };
+    let list = ListDesksResponse {
+        desks: vec![desk.clone()],
+        correlation_id: Some(1),
+    };
+    assert_bytes_eq(
+        "ListDesksResponse",
+        &generated::encode_list_desks_response(&list),
+        &hand::hand_list_desks_response_to_json(&list),
+    );
+    for (label, d) in [("with", Some(desk)), ("null", None)] {
+        let created = CreateDeskResponse {
+            desk: d,
+            correlation_id: None,
+        };
+        assert_bytes_eq(
+            &format!("CreateDeskResponse({label})"),
+            &generated::encode_create_desk_response(&created),
+            &hand::hand_create_desk_response_to_json(&created),
+        );
+    }
+    let del = DeleteDeskResponse {
+        removed: true,
+        correlation_id: Some(9),
+    };
+    assert_bytes_eq(
+        "DeleteDeskResponse",
+        &generated::encode_delete_desk_response(&del),
+        &hand::hand_delete_desk_response_to_json(&del),
+    );
+}
+
+#[test]
+fn auth_entity_replies_encode_byte_identical() {
+    let list = ListEntitiesResponse {
+        entities: vec![an_entity_desc()],
+        correlation_id: Some(1),
+    };
+    assert_bytes_eq(
+        "ListEntitiesResponse",
+        &generated::encode_list_entities_response(&list),
+        &hand::hand_list_entities_response_to_json(&list),
+    );
+    for (label, e) in [("with", Some(an_entity_desc())), ("null", None)] {
+        let created = CreateEntityResponse {
+            entity: e.clone(),
+            correlation_id: Some(2),
+        };
+        assert_bytes_eq(
+            &format!("CreateEntityResponse({label})"),
+            &generated::encode_create_entity_response(&created),
+            &hand::hand_create_entity_response_to_json(&created),
+        );
+        let updated = UpdateEntityResponse {
+            entity: e,
+            correlation_id: None,
+        };
+        assert_bytes_eq(
+            &format!("UpdateEntityResponse({label})"),
+            &generated::encode_update_entity_response(&updated),
+            &hand::hand_update_entity_response_to_json(&updated),
+        );
+    }
+    let del = DeleteEntityResponse {
+        removed: false,
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "DeleteEntityResponse",
+        &generated::encode_delete_entity_response(&del),
+        &hand::hand_delete_entity_response_to_json(&del),
+    );
+}
+
+#[test]
+fn auth_book_replies_encode_byte_identical() {
+    let list = ListBooksResponse {
+        books: vec![a_book_desc()],
+        correlation_id: Some(1),
+    };
+    assert_bytes_eq(
+        "ListBooksResponse",
+        &generated::encode_list_books_response(&list),
+        &hand::hand_list_books_response_to_json(&list),
+    );
+    for (label, b) in [("with", Some(a_book_desc())), ("null", None)] {
+        let created = CreateBookResponse {
+            book: b.clone(),
+            correlation_id: Some(2),
+        };
+        assert_bytes_eq(
+            &format!("CreateBookResponse({label})"),
+            &generated::encode_create_book_response(&created),
+            &hand::hand_create_book_response_to_json(&created),
+        );
+        let updated = UpdateBookResponse {
+            book: b,
+            correlation_id: None,
+        };
+        assert_bytes_eq(
+            &format!("UpdateBookResponse({label})"),
+            &generated::encode_update_book_response(&updated),
+            &hand::hand_update_book_response_to_json(&updated),
+        );
+    }
+    let del = DeleteBookResponse {
+        removed: true,
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "DeleteBookResponse",
+        &generated::encode_delete_book_response(&del),
+        &hand::hand_delete_book_response_to_json(&del),
+    );
+}
+
+// --- encode: instrument registry + build_curve -------------------------------
+
+#[test]
+fn auth_instrument_replies_encode_byte_identical_all_families() {
+    let families = [
+        ("deposit", deposit_def()),
+        ("fra", fra_def()),
+        ("stir_future", stir_future_def()),
+        ("vanilla_irs", vanilla_irs_def()),
+        ("ois", ois_def()),
+        ("bond", bond_def()),
+    ];
+    let mut instruments = Vec::new();
+    for (label, def) in families {
+        let inst = instrument_def_with(def);
+        // Via the single-instrument reply.
+        let get = GetInstrumentResponse {
+            instrument: Some(inst.clone()),
+            correlation_id: Some(1),
+        };
+        assert_bytes_eq(
+            &format!("GetInstrumentResponse({label})"),
+            &generated::encode_get_instrument_response(&get),
+            &hand::hand_get_instrument_response_to_json(&get),
+        );
+        // Create/Update replies carry the same nested projection.
+        let created = CreateInstrumentResponse {
+            instrument: Some(inst.clone()),
+            correlation_id: None,
+        };
+        assert_bytes_eq(
+            &format!("CreateInstrumentResponse({label})"),
+            &generated::encode_create_instrument_response(&created),
+            &hand::hand_create_instrument_response_to_json(&created),
+        );
+        let updated = UpdateInstrumentResponse {
+            instrument: Some(inst.clone()),
+            correlation_id: Some(3),
+        };
+        assert_bytes_eq(
+            &format!("UpdateInstrumentResponse({label})"),
+            &generated::encode_update_instrument_response(&updated),
+            &hand::hand_update_instrument_response_to_json(&updated),
+        );
+        instruments.push(inst);
+    }
+    // The bond's absent coupon dates render `null`; its present ones render objects.
+    let bond = GetInstrumentResponse {
+        instrument: Some(instrument_def_with(bond_def())),
+        correlation_id: None,
+    };
+    let gb = generated::encode_get_instrument_response(&bond);
+    assert_eq!(
+        gb["instrument"]["bond"].get("dated_date"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        gb["instrument"]["bond"].get("first_coupon_date"),
+        Some(&Value::Null)
+    );
+    assert!(gb["instrument"]["bond"]["issue_date"].is_object());
+    // The list reply over every family.
+    let list = ListInstrumentsResponse {
+        instruments,
+        correlation_id: Some(5),
+    };
+    assert_bytes_eq(
+        "ListInstrumentsResponse",
+        &generated::encode_list_instruments_response(&list),
+        &hand::hand_list_instruments_response_to_json(&list),
+    );
+    // An absent instrument singular ⇒ null.
+    let get_none = GetInstrumentResponse {
+        instrument: None,
+        correlation_id: None,
+    };
+    let gn = generated::encode_get_instrument_response(&get_none);
+    assert_eq!(gn.get("instrument"), Some(&Value::Null));
+    assert_bytes_eq(
+        "GetInstrumentResponse(none)",
+        &gn,
+        &hand::hand_get_instrument_response_to_json(&get_none),
+    );
+    let del = DeleteInstrumentResponse {
+        removed: true,
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "DeleteInstrumentResponse",
+        &generated::encode_delete_instrument_response(&del),
+        &hand::hand_delete_instrument_response_to_json(&del),
+    );
+}
+
+#[test]
+fn auth_calibrated_curve_encode_byte_identical() {
+    let curve = CalibratedCurve {
+        request_id: "req-1".to_owned(),
+        currency: "USD".to_owned(),
+        reference_date: Some(a_broken_date(2026, 6, 30)),
+        points: vec![
+            CalibratedCurvePoint {
+                instrument_id: "usd-depo-3m".to_owned(),
+                time_years: 0.25,
+                discount_factor: 0.9899,
+                zero_rate: 0.0406,
+                label: "3M".to_owned(),
+            },
+            CalibratedCurvePoint {
+                instrument_id: "usd-irs-10y".to_owned(),
+                time_years: 10.0,
+                discount_factor: 0.665,
+                zero_rate: 0.0408,
+                label: "10Y".to_owned(),
+            },
+        ],
+    };
+    assert_bytes_eq(
+        "CalibratedCurve(full)",
+        &generated::encode_calibrated_curve(&curve),
+        &hand::hand_calibrated_curve_to_json(&curve),
+    );
+    // Absent reference_date ⇒ `null`; empty points ⇒ `[]`.
+    let bare = CalibratedCurve {
+        request_id: "req-2".to_owned(),
+        currency: "EUR".to_owned(),
+        reference_date: None,
+        points: vec![],
+    };
+    let g = generated::encode_calibrated_curve(&bare);
+    assert_eq!(g.get("reference_date"), Some(&Value::Null));
+    assert_eq!(g.get("points"), Some(&Value::Array(vec![])));
+    assert_bytes_eq(
+        "CalibratedCurve(bare)",
+        &g,
+        &hand::hand_calibrated_curve_to_json(&bare),
+    );
+}

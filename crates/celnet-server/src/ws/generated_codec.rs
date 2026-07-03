@@ -77,6 +77,31 @@ use celnet_proto::{
     SmileModel, SmilePoint, SubmitDeskRequestRequest, SubmitDeskRequestResponse, VanillaInputs,
     VegaBucket, VegaLadderBucket, VegaPillar, respond_desk_request_request::Response as RespondArm,
 };
+// Wave-4 verb family (arch item G — `ws-codec-from-proto`): the AuthService surface
+// — login/session, the user / desk / entity / book CRUD, capabilities + roles, the
+// instrument registry (`InstrumentDefDesc` + its `definition` family oneof), and the
+// `BuildCurve` curve-calibration verb. This is the final family; after it every WS
+// unary verb runs on the descriptor-driven generated codec.
+use celnet_proto::{
+    BondDef, BookDesc, BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
+    CreateBookRequest, CreateBookResponse, CreateDeskRequest, CreateDeskResponse,
+    CreateEntityRequest, CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse,
+    CreateUserRequest, CreateUserResponse, DatePillar, DeleteBookRequest, DeleteBookResponse,
+    DeleteDeskRequest, DeleteDeskResponse, DeleteEntityRequest, DeleteEntityResponse,
+    DeleteInstrumentRequest, DeleteInstrumentResponse, DeleteUserRequest, DeleteUserResponse,
+    DepositDef, DeskDesc, EntityDesc, ExternalId, FraDef, GetInstrumentRequest,
+    GetInstrumentResponse, GetRoleCapabilitiesRequest, GetRoleCapabilitiesResponse,
+    GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, InstrumentDefDesc, InstrumentQuote,
+    ListBooksRequest, ListBooksResponse, ListDesksRequest, ListDesksResponse, ListEntitiesRequest,
+    ListEntitiesResponse, ListInstrumentsRequest, ListInstrumentsResponse, ListUsersRequest,
+    ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, OisDef,
+    ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
+    SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
+    StirFutureDef, UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest,
+    UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest,
+    UpdateUserResponse, UserDesc, VanillaIrsDef,
+    instrument_def_desc::Definition as InstrumentDefinition,
+};
 use serde_json::{Map, Value, json};
 
 use super::codec::CodecError;
@@ -108,6 +133,8 @@ enum WireVal<'a> {
     RepeatedMsg(Vec<&'a dyn WireAdapter>),
     /// A `repeated double` scalar field (e.g. a rates `key_rate_ladder`).
     RepeatedF64(&'a [f64]),
+    /// A `repeated string` scalar field (e.g. an instrument family's `calendars`).
+    RepeatedStr(&'a [String]),
 }
 
 /// The reflection bridge: a per-message accessor yielding a field's raw value by
@@ -174,6 +201,7 @@ fn encode_value(field: &WireField, value: WireVal<'_>) -> Value {
                 .collect(),
         ),
         WireVal::RepeatedF64(items) => Value::Array(items.iter().map(|x| json!(x)).collect()),
+        WireVal::RepeatedStr(items) => Value::Array(items.iter().map(|s| json!(s)).collect()),
     }
 }
 
@@ -835,6 +863,20 @@ fn f64_vec(value: Option<&Value>) -> Vec<f64> {
     value
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(Value::as_f64).collect())
+        .unwrap_or_default()
+}
+
+/// A repeated `String` defaulting to empty, silently dropping non-string elements
+/// (mirrors the hand `string_array` — the instrument family `calendars` shape): a
+/// non-array (or absent) value yields an empty vec rather than an error.
+fn string_vec(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_owned))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -4789,4 +4831,1640 @@ pub fn encode_list_desk_requests_response(r: &ListDeskRequestsResponse) -> Value
 #[must_use]
 pub fn encode_list_deals_response(r: &ListDealsResponse) -> Value {
     encode("ListDealsResponse", r)
+}
+
+// ===========================================================================
+// AuthService — the admin + session surface (wave 4, arch item G —
+// `ws-codec-from-proto`, the FINAL family): login/session, user / desk / entity /
+// book CRUD, capabilities + roles, the instrument registry (`InstrumentDefDesc` +
+// its `definition` family oneof) and `BuildCurve`. The request decoders and reply
+// encoders below run purely on the descriptor field tables + the shared presence
+// helpers; the `ws_codec_differential` harness proves each is byte-identical to the
+// hand codec (retained as the frozen oracle in `super::codec::diff_support`) over
+// the auth conformance shapes + edge vectors (absent optionals, empty/whitespace
+// strings, the `capabilities` repeated-message lists, the instrument family oneof
+// with its `calendars` repeated-string + `BondDef` optional coupon dates).
+// ===========================================================================
+
+// --- shared decode helper: the lenient `external_ids` list --------------------
+
+/// Decode the `InstrumentDefDesc.external_ids` list exactly as the hand
+/// `instrument_def_from_json`: a non-array (or absent) value yields an empty vec
+/// (NOT an error), and each present element is an object decoded through
+/// [`ExternalId`]'s builder under the `external_id` error label.
+///
+/// # Errors
+/// A non-object element, or an element missing `scheme`/`value`, as a [`CodecError`].
+fn external_ids(value: Option<&Value>) -> DResult<Vec<ExternalId>> {
+    match value.and_then(Value::as_array) {
+        None => Ok(Vec::new()),
+        Some(items) => items
+            .iter()
+            .map(|e| decode(ExternalId::MESSAGE, obj(e, "external_id")?))
+            .collect(),
+    }
+}
+
+// --- auth nested-message builders (decode) -----------------------------------
+
+impl WireBuilder for CapabilityDesc {
+    const MESSAGE: &'static str = "CapabilityDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "action" => self.action = req_string(value, "action")?,
+            "asset" => self.asset = req_string(value, "asset")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ExternalId {
+    const MESSAGE: &'static str = "ExternalId";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "scheme" => self.scheme = req_string(value, "scheme")?,
+            "value" => self.value = req_string(value, "value")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DepositDef {
+    const MESSAGE: &'static str = "DepositDef";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "index" => self.index = req_string(value, "index")?,
+            "tenor" => self.tenor = req_string(value, "tenor")?,
+            "day_count" => self.day_count = req_string(value, "day_count")?,
+            "business_day_convention" => {
+                self.business_day_convention = req_string(value, "business_day_convention")?;
+            }
+            "calendars" => self.calendars = string_vec(value),
+            "spot_lag_days" => self.spot_lag_days = u32_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for FraDef {
+    const MESSAGE: &'static str = "FraDef";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "float_index" => self.float_index = req_string(value, "float_index")?,
+            "start_tenor" => self.start_tenor = req_string(value, "start_tenor")?,
+            "end_tenor" => self.end_tenor = req_string(value, "end_tenor")?,
+            "accrual_day_count" => self.accrual_day_count = req_string(value, "accrual_day_count")?,
+            "business_day_convention" => {
+                self.business_day_convention = req_string(value, "business_day_convention")?;
+            }
+            "calendars" => self.calendars = string_vec(value),
+            "spot_lag_days" => self.spot_lag_days = u32_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for StirFutureDef {
+    const MESSAGE: &'static str = "StirFutureDef";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "contract_code" => self.contract_code = req_string(value, "contract_code")?,
+            "reference_start" => self.reference_start = req_string(value, "reference_start")?,
+            "reference_end" => self.reference_end = req_string(value, "reference_end")?,
+            "day_count" => self.day_count = req_string(value, "day_count")?,
+            "calendars" => self.calendars = string_vec(value),
+            "convexity_vol" => self.convexity_vol = f64_or_zero(value),
+            "contract_size" => self.contract_size = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for VanillaIrsDef {
+    const MESSAGE: &'static str = "VanillaIrsDef";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "tenor" => self.tenor = req_string(value, "tenor")?,
+            "fixed_frequency" => self.fixed_frequency = req_string(value, "fixed_frequency")?,
+            "fixed_day_count" => self.fixed_day_count = req_string(value, "fixed_day_count")?,
+            "float_index" => self.float_index = req_string(value, "float_index")?,
+            "float_frequency" => self.float_frequency = req_string(value, "float_frequency")?,
+            "float_day_count" => self.float_day_count = req_string(value, "float_day_count")?,
+            "business_day_convention" => {
+                self.business_day_convention = req_string(value, "business_day_convention")?;
+            }
+            "calendars" => self.calendars = string_vec(value),
+            "roll_convention" => self.roll_convention = string_or_empty(value),
+            "spot_lag_days" => self.spot_lag_days = u32_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for OisDef {
+    const MESSAGE: &'static str = "OisDef";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "tenor" => self.tenor = req_string(value, "tenor")?,
+            "index" => self.index = req_string(value, "index")?,
+            "fixed_frequency" => self.fixed_frequency = req_string(value, "fixed_frequency")?,
+            "fixed_day_count" => self.fixed_day_count = req_string(value, "fixed_day_count")?,
+            "float_day_count" => self.float_day_count = req_string(value, "float_day_count")?,
+            "business_day_convention" => {
+                self.business_day_convention = req_string(value, "business_day_convention")?;
+            }
+            "calendars" => self.calendars = string_vec(value),
+            "spot_lag_days" => self.spot_lag_days = u32_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for BondDef {
+    const MESSAGE: &'static str = "BondDef";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "issuer" => self.issuer = req_string(value, "issuer")?,
+            "coupon_rate" => self.coupon_rate = f64_or_zero(value),
+            "coupon_type" => self.coupon_type = req_string(value, "coupon_type")?,
+            "coupon_frequency" => self.coupon_frequency = string_or_empty(value),
+            "day_count" => self.day_count = req_string(value, "day_count")?,
+            "issue_date" => self.issue_date = opt_msg::<BrokenDate>(value, "issue_date")?,
+            "dated_date" => self.dated_date = opt_msg::<BrokenDate>(value, "dated_date")?,
+            "first_coupon_date" => {
+                self.first_coupon_date = opt_msg::<BrokenDate>(value, "first_coupon_date")?;
+            }
+            "maturity_date" => self.maturity_date = opt_msg::<BrokenDate>(value, "maturity_date")?,
+            "redemption" => self.redemption = f64_or_zero(value),
+            "calendars" => self.calendars = string_vec(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for InstrumentDefDesc {
+    const MESSAGE: &'static str = "InstrumentDefDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            // `instrument_id`/`description` mirror `opt_string(..).unwrap_or_default()`
+            // (= `string_or_empty`): an absent OR empty value decodes to "".
+            "instrument_id" => self.instrument_id = string_or_empty(value),
+            "name" => self.name = req_string(value, "name")?,
+            "description" => self.description = string_or_empty(value),
+            "currency" => self.currency = req_string(value, "currency")?,
+            "external_ids" => self.external_ids = external_ids(value)?,
+            // The `definition` family oneof: the generic decoder has already selected
+            // the single live arm (first present in declaration order — the same
+            // precedence as the hand `family_from_json`).
+            "deposit" => {
+                self.definition = Some(InstrumentDefinition::Deposit(req_msg::<DepositDef>(
+                    value, "deposit",
+                )?));
+            }
+            "fra" => {
+                self.definition = Some(InstrumentDefinition::Fra(req_msg::<FraDef>(value, "fra")?));
+            }
+            "stir_future" => {
+                self.definition = Some(InstrumentDefinition::StirFuture(req_msg::<StirFutureDef>(
+                    value,
+                    "stir_future",
+                )?));
+            }
+            "vanilla_irs" => {
+                self.definition = Some(InstrumentDefinition::VanillaIrs(req_msg::<VanillaIrsDef>(
+                    value,
+                    "vanilla_irs",
+                )?));
+            }
+            "ois" => {
+                self.definition = Some(InstrumentDefinition::Ois(req_msg::<OisDef>(value, "ois")?));
+            }
+            "bond" => {
+                self.definition = Some(InstrumentDefinition::Bond(req_msg::<BondDef>(
+                    value, "bond",
+                )?));
+            }
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for InstrumentQuote {
+    const MESSAGE: &'static str = "InstrumentQuote";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "instrument_id" => self.instrument_id = req_string(value, "instrument_id")?,
+            "quote" => self.quote = req_f64(value, "quote")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DatePillar {
+    const MESSAGE: &'static str = "DatePillar";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "maturity_date" => {
+                self.maturity_date = Some(req_msg::<BrokenDate>(value, "maturity_date")?);
+            }
+            "quote" => self.quote = req_f64(value, "quote")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+// --- auth request-envelope builders (decode) ---------------------------------
+
+impl WireBuilder for LoginRequest {
+    const MESSAGE: &'static str = "LoginRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "email" => self.email = req_string(value, "email")?,
+            "password" => self.password = req_string(value, "password")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for LogoutRequest {
+    const MESSAGE: &'static str = "LogoutRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListUsersRequest {
+    const MESSAGE: &'static str = "ListUsersRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CreateUserRequest {
+    const MESSAGE: &'static str = "CreateUserRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "email" => self.email = req_string(value, "email")?,
+            "display_name" => self.display_name = req_string(value, "display_name")?,
+            "role" => self.role = enum_or_zero(value),
+            "desk_id" => self.desk_id = opt_string(value, "desk_id")?,
+            "password" => self.password = req_string(value, "password")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateUserRequest {
+    const MESSAGE: &'static str = "UpdateUserRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "display_name" => self.display_name = req_string(value, "display_name")?,
+            "role" => self.role = enum_or_zero(value),
+            "desk_id" => self.desk_id = opt_string(value, "desk_id")?,
+            "disabled" => self.disabled = bool_or_false(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeleteUserRequest {
+    const MESSAGE: &'static str = "DeleteUserRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ResetPasswordRequest {
+    const MESSAGE: &'static str = "ResetPasswordRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "new_password" => self.new_password = req_string(value, "new_password")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for GetUserCapabilitiesRequest {
+    const MESSAGE: &'static str = "GetUserCapabilitiesRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for SetUserCapabilitiesRequest {
+    const MESSAGE: &'static str = "SetUserCapabilitiesRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "grants" => self.grants = opt_repeated::<CapabilityDesc>(value, "grants")?,
+            "denies" => self.denies = opt_repeated::<CapabilityDesc>(value, "denies")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for GetRoleCapabilitiesRequest {
+    const MESSAGE: &'static str = "GetRoleCapabilitiesRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "role" => self.role = enum_or_zero(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for SetRoleCapabilitiesRequest {
+    const MESSAGE: &'static str = "SetRoleCapabilitiesRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "role" => self.role = enum_or_zero(value),
+            "capabilities" => {
+                self.capabilities = opt_repeated::<CapabilityDesc>(value, "capabilities")?;
+            }
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListDesksRequest {
+    const MESSAGE: &'static str = "ListDesksRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CreateDeskRequest {
+    const MESSAGE: &'static str = "CreateDeskRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "name" => self.name = req_string(value, "name")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeleteDeskRequest {
+    const MESSAGE: &'static str = "DeleteDeskRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListEntitiesRequest {
+    const MESSAGE: &'static str = "ListEntitiesRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CreateEntityRequest {
+    const MESSAGE: &'static str = "CreateEntityRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "name" => self.name = req_string(value, "name")?,
+            "code" => self.code = req_string(value, "code")?,
+            // `opt_u32(..).unwrap_or(0)` = defaults-to-0, clamps overflow to 0.
+            "key" => self.key = u32_or_zero(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateEntityRequest {
+    const MESSAGE: &'static str = "UpdateEntityRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "key" => self.key = req_u32(value, "key")?,
+            "name" => self.name = req_string(value, "name")?,
+            "code" => self.code = req_string(value, "code")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeleteEntityRequest {
+    const MESSAGE: &'static str = "DeleteEntityRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "key" => self.key = req_u32(value, "key")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListBooksRequest {
+    const MESSAGE: &'static str = "ListBooksRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CreateBookRequest {
+    const MESSAGE: &'static str = "CreateBookRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "name" => self.name = req_string(value, "name")?,
+            "entity_key" => self.entity_key = req_u32(value, "entity_key")?,
+            "key" => self.key = u32_or_zero(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateBookRequest {
+    const MESSAGE: &'static str = "UpdateBookRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "key" => self.key = req_u32(value, "key")?,
+            "name" => self.name = req_string(value, "name")?,
+            "entity_key" => self.entity_key = req_u32(value, "entity_key")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeleteBookRequest {
+    const MESSAGE: &'static str = "DeleteBookRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "key" => self.key = req_u32(value, "key")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListInstrumentsRequest {
+    const MESSAGE: &'static str = "ListInstrumentsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for GetInstrumentRequest {
+    const MESSAGE: &'static str = "GetInstrumentRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "instrument_id" => self.instrument_id = req_string(value, "instrument_id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CreateInstrumentRequest {
+    const MESSAGE: &'static str = "CreateInstrumentRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "instrument" => {
+                self.instrument = Some(req_msg::<InstrumentDefDesc>(value, "instrument")?);
+            }
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateInstrumentRequest {
+    const MESSAGE: &'static str = "UpdateInstrumentRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "instrument" => {
+                self.instrument = Some(req_msg::<InstrumentDefDesc>(value, "instrument")?);
+            }
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeleteInstrumentRequest {
+    const MESSAGE: &'static str = "DeleteInstrumentRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "instrument_id" => self.instrument_id = req_string(value, "instrument_id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for BuildCurveRequest {
+    const MESSAGE: &'static str = "BuildCurveRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "request_id" => self.request_id = req_string(value, "request_id")?,
+            "currency" => self.currency = req_string(value, "currency")?,
+            "reference_date" => {
+                self.reference_date = Some(req_msg::<BrokenDate>(value, "reference_date")?);
+            }
+            "pillars" => self.pillars = opt_repeated::<InstrumentQuote>(value, "pillars")?,
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "date_pillars" => {
+                self.date_pillars = opt_repeated::<DatePillar>(value, "date_pillars")?
+            }
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+// --- auth request decode entry points ----------------------------------------
+
+/// Decode a [`LoginRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `email`/`password`, as a [`CodecError`].
+pub fn decode_login_request(o: &Map<String, Value>) -> DResult<LoginRequest> {
+    decode(LoginRequest::MESSAGE, o)
+}
+
+/// Decode a [`LogoutRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_logout_request(o: &Map<String, Value>) -> DResult<LogoutRequest> {
+    decode(LogoutRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListUsersRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_users_request(o: &Map<String, Value>) -> DResult<ListUsersRequest> {
+    decode(ListUsersRequest::MESSAGE, o)
+}
+
+/// Decode a [`CreateUserRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing required string (`session_token`/`email`/`display_name`/`password`), as
+/// a [`CodecError`].
+pub fn decode_create_user_request(o: &Map<String, Value>) -> DResult<CreateUserRequest> {
+    decode(CreateUserRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateUserRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing required string (`session_token`/`id`/`display_name`), as a [`CodecError`].
+pub fn decode_update_user_request(o: &Map<String, Value>) -> DResult<UpdateUserRequest> {
+    decode(UpdateUserRequest::MESSAGE, o)
+}
+
+/// Decode a [`DeleteUserRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`id`, as a [`CodecError`].
+pub fn decode_delete_user_request(o: &Map<String, Value>) -> DResult<DeleteUserRequest> {
+    decode(DeleteUserRequest::MESSAGE, o)
+}
+
+/// Decode a [`ResetPasswordRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`id`/`new_password`, as a [`CodecError`].
+pub fn decode_reset_password_request(o: &Map<String, Value>) -> DResult<ResetPasswordRequest> {
+    decode(ResetPasswordRequest::MESSAGE, o)
+}
+
+/// Decode a [`GetUserCapabilitiesRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`id`, as a [`CodecError`].
+pub fn decode_get_user_capabilities_request(
+    o: &Map<String, Value>,
+) -> DResult<GetUserCapabilitiesRequest> {
+    decode(GetUserCapabilitiesRequest::MESSAGE, o)
+}
+
+/// Decode a [`SetUserCapabilitiesRequest`] envelope — fully generic (the `grants` /
+/// `denies` capability lists default to empty when absent).
+///
+/// # Errors
+/// A missing `session_token`/`id`, a malformed capability, as a [`CodecError`].
+pub fn decode_set_user_capabilities_request(
+    o: &Map<String, Value>,
+) -> DResult<SetUserCapabilitiesRequest> {
+    decode(SetUserCapabilitiesRequest::MESSAGE, o)
+}
+
+/// Decode a [`GetRoleCapabilitiesRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_get_role_capabilities_request(
+    o: &Map<String, Value>,
+) -> DResult<GetRoleCapabilitiesRequest> {
+    decode(GetRoleCapabilitiesRequest::MESSAGE, o)
+}
+
+/// Decode a [`SetRoleCapabilitiesRequest`] envelope — fully generic (the
+/// `capabilities` list defaults to empty when absent).
+///
+/// # Errors
+/// A missing `session_token`, a malformed capability, as a [`CodecError`].
+pub fn decode_set_role_capabilities_request(
+    o: &Map<String, Value>,
+) -> DResult<SetRoleCapabilitiesRequest> {
+    decode(SetRoleCapabilitiesRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListDesksRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_desks_request(o: &Map<String, Value>) -> DResult<ListDesksRequest> {
+    decode(ListDesksRequest::MESSAGE, o)
+}
+
+/// Decode a [`CreateDeskRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`name`, as a [`CodecError`].
+pub fn decode_create_desk_request(o: &Map<String, Value>) -> DResult<CreateDeskRequest> {
+    decode(CreateDeskRequest::MESSAGE, o)
+}
+
+/// Decode a [`DeleteDeskRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`id`, as a [`CodecError`].
+pub fn decode_delete_desk_request(o: &Map<String, Value>) -> DResult<DeleteDeskRequest> {
+    decode(DeleteDeskRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListEntitiesRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_entities_request(o: &Map<String, Value>) -> DResult<ListEntitiesRequest> {
+    decode(ListEntitiesRequest::MESSAGE, o)
+}
+
+/// Decode a [`CreateEntityRequest`] envelope — fully generic (`key` defaults to 0).
+///
+/// # Errors
+/// A missing `session_token`/`name`/`code`, as a [`CodecError`].
+pub fn decode_create_entity_request(o: &Map<String, Value>) -> DResult<CreateEntityRequest> {
+    decode(CreateEntityRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateEntityRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`name`/`code`, a missing/out-of-range `key`, as a
+/// [`CodecError`].
+pub fn decode_update_entity_request(o: &Map<String, Value>) -> DResult<UpdateEntityRequest> {
+    decode(UpdateEntityRequest::MESSAGE, o)
+}
+
+/// Decode a [`DeleteEntityRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, a missing/out-of-range `key`, as a [`CodecError`].
+pub fn decode_delete_entity_request(o: &Map<String, Value>) -> DResult<DeleteEntityRequest> {
+    decode(DeleteEntityRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListBooksRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_books_request(o: &Map<String, Value>) -> DResult<ListBooksRequest> {
+    decode(ListBooksRequest::MESSAGE, o)
+}
+
+/// Decode a [`CreateBookRequest`] envelope — fully generic (`key` defaults to 0).
+///
+/// # Errors
+/// A missing `session_token`/`name`, a missing/out-of-range `entity_key`, as a
+/// [`CodecError`].
+pub fn decode_create_book_request(o: &Map<String, Value>) -> DResult<CreateBookRequest> {
+    decode(CreateBookRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateBookRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`name`, a missing/out-of-range `key`/`entity_key`, as a
+/// [`CodecError`].
+pub fn decode_update_book_request(o: &Map<String, Value>) -> DResult<UpdateBookRequest> {
+    decode(UpdateBookRequest::MESSAGE, o)
+}
+
+/// Decode a [`DeleteBookRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, a missing/out-of-range `key`, as a [`CodecError`].
+pub fn decode_delete_book_request(o: &Map<String, Value>) -> DResult<DeleteBookRequest> {
+    decode(DeleteBookRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListInstrumentsRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_instruments_request(o: &Map<String, Value>) -> DResult<ListInstrumentsRequest> {
+    decode(ListInstrumentsRequest::MESSAGE, o)
+}
+
+/// Decode a [`GetInstrumentRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`instrument_id`, as a [`CodecError`].
+pub fn decode_get_instrument_request(o: &Map<String, Value>) -> DResult<GetInstrumentRequest> {
+    decode(GetInstrumentRequest::MESSAGE, o)
+}
+
+/// Decode a [`CreateInstrumentRequest`] envelope — the required `instrument` nests
+/// the [`InstrumentDefDesc`] registry body (its lenient `external_ids` + the
+/// `definition` family oneof).
+///
+/// # Errors
+/// A missing `session_token`, a missing/malformed `instrument`, as a [`CodecError`].
+pub fn decode_create_instrument_request(
+    o: &Map<String, Value>,
+) -> DResult<CreateInstrumentRequest> {
+    decode(CreateInstrumentRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateInstrumentRequest`] envelope — the required `instrument` nests
+/// the [`InstrumentDefDesc`] registry body.
+///
+/// # Errors
+/// A missing `session_token`, a missing/malformed `instrument`, as a [`CodecError`].
+pub fn decode_update_instrument_request(
+    o: &Map<String, Value>,
+) -> DResult<UpdateInstrumentRequest> {
+    decode(UpdateInstrumentRequest::MESSAGE, o)
+}
+
+/// Decode a [`DeleteInstrumentRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`instrument_id`, as a [`CodecError`].
+pub fn decode_delete_instrument_request(
+    o: &Map<String, Value>,
+) -> DResult<DeleteInstrumentRequest> {
+    decode(DeleteInstrumentRequest::MESSAGE, o)
+}
+
+/// Decode a [`BuildCurveRequest`] envelope — the required `reference_date` nests a
+/// [`BrokenDate`]; `pillars` / `date_pillars` are optional repeated pillar arrays
+/// (absent ⇒ empty).
+///
+/// # Errors
+/// A missing `request_id`/`currency`/`session_token`, a missing/malformed
+/// `reference_date` or pillar, as a [`CodecError`].
+pub fn decode_build_curve_request(o: &Map<String, Value>) -> DResult<BuildCurveRequest> {
+    decode(BuildCurveRequest::MESSAGE, o)
+}
+
+// --- auth nested-message adapters (encode) -----------------------------------
+
+impl WireAdapter for UserDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "id" => Some(WireVal::Str(&self.id)),
+            "email" => Some(WireVal::Str(&self.email)),
+            "display_name" => Some(WireVal::Str(&self.display_name)),
+            "role" => Some(WireVal::Enum(self.role)),
+            // `optional string desk_id`: absent ⇒ `null` (UserDesc ∈ null-absent-optional).
+            "desk_id" => self.desk_id.as_deref().map(WireVal::Str),
+            "disabled" => Some(WireVal::Bool(self.disabled)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeskDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "id" => Some(WireVal::Str(&self.id)),
+            "name" => Some(WireVal::Str(&self.name)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for EntityDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "key" => Some(WireVal::U64(u64::from(self.key))),
+            "name" => Some(WireVal::Str(&self.name)),
+            "code" => Some(WireVal::Str(&self.code)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for BookDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "key" => Some(WireVal::U64(u64::from(self.key))),
+            "name" => Some(WireVal::Str(&self.name)),
+            "entity_key" => Some(WireVal::U64(u64::from(self.entity_key))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CapabilityDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "action" => Some(WireVal::Str(&self.action)),
+            "asset" => Some(WireVal::Str(&self.asset)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ExternalId {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "scheme" => Some(WireVal::Str(&self.scheme)),
+            "value" => Some(WireVal::Str(&self.value)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DepositDef {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "index" => Some(WireVal::Str(&self.index)),
+            "tenor" => Some(WireVal::Str(&self.tenor)),
+            "day_count" => Some(WireVal::Str(&self.day_count)),
+            "business_day_convention" => Some(WireVal::Str(&self.business_day_convention)),
+            "calendars" => Some(WireVal::RepeatedStr(&self.calendars)),
+            "spot_lag_days" => Some(WireVal::U64(u64::from(self.spot_lag_days))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for FraDef {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "float_index" => Some(WireVal::Str(&self.float_index)),
+            "start_tenor" => Some(WireVal::Str(&self.start_tenor)),
+            "end_tenor" => Some(WireVal::Str(&self.end_tenor)),
+            "accrual_day_count" => Some(WireVal::Str(&self.accrual_day_count)),
+            "business_day_convention" => Some(WireVal::Str(&self.business_day_convention)),
+            "calendars" => Some(WireVal::RepeatedStr(&self.calendars)),
+            "spot_lag_days" => Some(WireVal::U64(u64::from(self.spot_lag_days))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for StirFutureDef {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "contract_code" => Some(WireVal::Str(&self.contract_code)),
+            "reference_start" => Some(WireVal::Str(&self.reference_start)),
+            "reference_end" => Some(WireVal::Str(&self.reference_end)),
+            "day_count" => Some(WireVal::Str(&self.day_count)),
+            "calendars" => Some(WireVal::RepeatedStr(&self.calendars)),
+            "convexity_vol" => Some(WireVal::F64(self.convexity_vol)),
+            "contract_size" => Some(WireVal::F64(self.contract_size)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for VanillaIrsDef {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor" => Some(WireVal::Str(&self.tenor)),
+            "fixed_frequency" => Some(WireVal::Str(&self.fixed_frequency)),
+            "fixed_day_count" => Some(WireVal::Str(&self.fixed_day_count)),
+            "float_index" => Some(WireVal::Str(&self.float_index)),
+            "float_frequency" => Some(WireVal::Str(&self.float_frequency)),
+            "float_day_count" => Some(WireVal::Str(&self.float_day_count)),
+            "business_day_convention" => Some(WireVal::Str(&self.business_day_convention)),
+            "calendars" => Some(WireVal::RepeatedStr(&self.calendars)),
+            "roll_convention" => Some(WireVal::Str(&self.roll_convention)),
+            "spot_lag_days" => Some(WireVal::U64(u64::from(self.spot_lag_days))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for OisDef {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor" => Some(WireVal::Str(&self.tenor)),
+            "index" => Some(WireVal::Str(&self.index)),
+            "fixed_frequency" => Some(WireVal::Str(&self.fixed_frequency)),
+            "fixed_day_count" => Some(WireVal::Str(&self.fixed_day_count)),
+            "float_day_count" => Some(WireVal::Str(&self.float_day_count)),
+            "business_day_convention" => Some(WireVal::Str(&self.business_day_convention)),
+            "calendars" => Some(WireVal::RepeatedStr(&self.calendars)),
+            "spot_lag_days" => Some(WireVal::U64(u64::from(self.spot_lag_days))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for BondDef {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "issuer" => Some(WireVal::Str(&self.issuer)),
+            "coupon_rate" => Some(WireVal::F64(self.coupon_rate)),
+            "coupon_type" => Some(WireVal::Str(&self.coupon_type)),
+            "coupon_frequency" => Some(WireVal::Str(&self.coupon_frequency)),
+            "day_count" => Some(WireVal::Str(&self.day_count)),
+            // `optional BrokenDate` coupon-schedule dates: absent ⇒ `null` (BondDef ∈
+            // null-absent-optional); `maturity_date` (singular message) renders `null`
+            // via the generic rule.
+            "issue_date" => self.issue_date.as_ref().map(|d| WireVal::Msg(d)),
+            "dated_date" => self.dated_date.as_ref().map(|d| WireVal::Msg(d)),
+            "first_coupon_date" => self.first_coupon_date.as_ref().map(|d| WireVal::Msg(d)),
+            "maturity_date" => self.maturity_date.as_ref().map(|d| WireVal::Msg(d)),
+            "redemption" => Some(WireVal::F64(self.redemption)),
+            "calendars" => Some(WireVal::RepeatedStr(&self.calendars)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for InstrumentDefDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "instrument_id" => Some(WireVal::Str(&self.instrument_id)),
+            "name" => Some(WireVal::Str(&self.name)),
+            "description" => Some(WireVal::Str(&self.description)),
+            "currency" => Some(WireVal::Str(&self.currency)),
+            "external_ids" => Some(WireVal::RepeatedMsg(
+                self.external_ids
+                    .iter()
+                    .map(|x| x as &dyn WireAdapter)
+                    .collect(),
+            )),
+            // The `definition` family oneof: only the live arm's key is emitted (the
+            // generic encoder omits the absent arms), byte-identical to the hand
+            // `family_to_json` single-key insertion.
+            "deposit" => match &self.definition {
+                Some(InstrumentDefinition::Deposit(d)) => Some(WireVal::Msg(d)),
+                _ => None,
+            },
+            "fra" => match &self.definition {
+                Some(InstrumentDefinition::Fra(f)) => Some(WireVal::Msg(f)),
+                _ => None,
+            },
+            "stir_future" => match &self.definition {
+                Some(InstrumentDefinition::StirFuture(s)) => Some(WireVal::Msg(s)),
+                _ => None,
+            },
+            "vanilla_irs" => match &self.definition {
+                Some(InstrumentDefinition::VanillaIrs(v)) => Some(WireVal::Msg(v)),
+                _ => None,
+            },
+            "ois" => match &self.definition {
+                Some(InstrumentDefinition::Ois(o)) => Some(WireVal::Msg(o)),
+                _ => None,
+            },
+            "bond" => match &self.definition {
+                Some(InstrumentDefinition::Bond(b)) => Some(WireVal::Msg(b)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CalibratedCurvePoint {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "instrument_id" => Some(WireVal::Str(&self.instrument_id)),
+            "time_years" => Some(WireVal::F64(self.time_years)),
+            "discount_factor" => Some(WireVal::F64(self.discount_factor)),
+            "zero_rate" => Some(WireVal::F64(self.zero_rate)),
+            "label" => Some(WireVal::Str(&self.label)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CalibratedCurve {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "request_id" => Some(WireVal::Str(&self.request_id)),
+            "currency" => Some(WireVal::Str(&self.currency)),
+            "reference_date" => self.reference_date.as_ref().map(|d| WireVal::Msg(d)),
+            "points" => Some(WireVal::RepeatedMsg(
+                self.points.iter().map(|p| p as &dyn WireAdapter).collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+// --- auth reply-envelope adapters (encode) -----------------------------------
+
+impl WireAdapter for LoginResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "session_token" => Some(WireVal::Str(&self.session_token)),
+            "user" => self.user.as_ref().map(|u| WireVal::Msg(u)),
+            "expires_nanos" => Some(WireVal::I64(self.expires_nanos)),
+            "capabilities" => Some(WireVal::RepeatedMsg(
+                self.capabilities
+                    .iter()
+                    .map(|c| c as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for LogoutResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "ended" => Some(WireVal::Bool(self.ended)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListUsersResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "users" => Some(WireVal::RepeatedMsg(
+                self.users.iter().map(|u| u as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CreateUserResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "user" => self.user.as_ref().map(|u| WireVal::Msg(u)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateUserResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "user" => self.user.as_ref().map(|u| WireVal::Msg(u)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeleteUserResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "removed" => Some(WireVal::Bool(self.removed)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ResetPasswordResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for GetUserCapabilitiesResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "grants" => Some(WireVal::RepeatedMsg(
+                self.grants.iter().map(|c| c as &dyn WireAdapter).collect(),
+            )),
+            "denies" => Some(WireVal::RepeatedMsg(
+                self.denies.iter().map(|c| c as &dyn WireAdapter).collect(),
+            )),
+            "effective" => Some(WireVal::RepeatedMsg(
+                self.effective
+                    .iter()
+                    .map(|c| c as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for SetUserCapabilitiesResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "grants" => Some(WireVal::RepeatedMsg(
+                self.grants.iter().map(|c| c as &dyn WireAdapter).collect(),
+            )),
+            "denies" => Some(WireVal::RepeatedMsg(
+                self.denies.iter().map(|c| c as &dyn WireAdapter).collect(),
+            )),
+            "effective" => Some(WireVal::RepeatedMsg(
+                self.effective
+                    .iter()
+                    .map(|c| c as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for GetRoleCapabilitiesResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "capabilities" => Some(WireVal::RepeatedMsg(
+                self.capabilities
+                    .iter()
+                    .map(|c| c as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for SetRoleCapabilitiesResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "capabilities" => Some(WireVal::RepeatedMsg(
+                self.capabilities
+                    .iter()
+                    .map(|c| c as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListDesksResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "desks" => Some(WireVal::RepeatedMsg(
+                self.desks.iter().map(|d| d as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CreateDeskResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "desk" => self.desk.as_ref().map(|d| WireVal::Msg(d)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeleteDeskResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "removed" => Some(WireVal::Bool(self.removed)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListEntitiesResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "entities" => Some(WireVal::RepeatedMsg(
+                self.entities
+                    .iter()
+                    .map(|e| e as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CreateEntityResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "entity" => self.entity.as_ref().map(|e| WireVal::Msg(e)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateEntityResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "entity" => self.entity.as_ref().map(|e| WireVal::Msg(e)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeleteEntityResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "removed" => Some(WireVal::Bool(self.removed)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListBooksResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "books" => Some(WireVal::RepeatedMsg(
+                self.books.iter().map(|b| b as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CreateBookResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book" => self.book.as_ref().map(|b| WireVal::Msg(b)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateBookResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book" => self.book.as_ref().map(|b| WireVal::Msg(b)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeleteBookResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "removed" => Some(WireVal::Bool(self.removed)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListInstrumentsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "instruments" => Some(WireVal::RepeatedMsg(
+                self.instruments
+                    .iter()
+                    .map(|i| i as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for GetInstrumentResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "instrument" => self.instrument.as_ref().map(|i| WireVal::Msg(i)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CreateInstrumentResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "instrument" => self.instrument.as_ref().map(|i| WireVal::Msg(i)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateInstrumentResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "instrument" => self.instrument.as_ref().map(|i| WireVal::Msg(i)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeleteInstrumentResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "removed" => Some(WireVal::Bool(self.removed)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+// --- auth reply encode entry points ------------------------------------------
+
+/// Encode a [`LoginResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_login_response(r: &LoginResponse) -> Value {
+    encode("LoginResponse", r)
+}
+
+/// Encode a [`LogoutResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_logout_response(r: &LogoutResponse) -> Value {
+    encode("LogoutResponse", r)
+}
+
+/// Encode a [`ListUsersResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_users_response(r: &ListUsersResponse) -> Value {
+    encode("ListUsersResponse", r)
+}
+
+/// Encode a [`CreateUserResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_create_user_response(r: &CreateUserResponse) -> Value {
+    encode("CreateUserResponse", r)
+}
+
+/// Encode an [`UpdateUserResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_user_response(r: &UpdateUserResponse) -> Value {
+    encode("UpdateUserResponse", r)
+}
+
+/// Encode a [`DeleteUserResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_delete_user_response(r: &DeleteUserResponse) -> Value {
+    encode("DeleteUserResponse", r)
+}
+
+/// Encode a [`ResetPasswordResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_reset_password_response(r: &ResetPasswordResponse) -> Value {
+    encode("ResetPasswordResponse", r)
+}
+
+/// Encode a [`GetUserCapabilitiesResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_get_user_capabilities_response(r: &GetUserCapabilitiesResponse) -> Value {
+    encode("GetUserCapabilitiesResponse", r)
+}
+
+/// Encode a [`SetUserCapabilitiesResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_set_user_capabilities_response(r: &SetUserCapabilitiesResponse) -> Value {
+    encode("SetUserCapabilitiesResponse", r)
+}
+
+/// Encode a [`GetRoleCapabilitiesResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_get_role_capabilities_response(r: &GetRoleCapabilitiesResponse) -> Value {
+    encode("GetRoleCapabilitiesResponse", r)
+}
+
+/// Encode a [`SetRoleCapabilitiesResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_set_role_capabilities_response(r: &SetRoleCapabilitiesResponse) -> Value {
+    encode("SetRoleCapabilitiesResponse", r)
+}
+
+/// Encode a [`ListDesksResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_desks_response(r: &ListDesksResponse) -> Value {
+    encode("ListDesksResponse", r)
+}
+
+/// Encode a [`CreateDeskResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_create_desk_response(r: &CreateDeskResponse) -> Value {
+    encode("CreateDeskResponse", r)
+}
+
+/// Encode a [`DeleteDeskResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_delete_desk_response(r: &DeleteDeskResponse) -> Value {
+    encode("DeleteDeskResponse", r)
+}
+
+/// Encode a [`ListEntitiesResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_entities_response(r: &ListEntitiesResponse) -> Value {
+    encode("ListEntitiesResponse", r)
+}
+
+/// Encode a [`CreateEntityResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_create_entity_response(r: &CreateEntityResponse) -> Value {
+    encode("CreateEntityResponse", r)
+}
+
+/// Encode an [`UpdateEntityResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_entity_response(r: &UpdateEntityResponse) -> Value {
+    encode("UpdateEntityResponse", r)
+}
+
+/// Encode a [`DeleteEntityResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_delete_entity_response(r: &DeleteEntityResponse) -> Value {
+    encode("DeleteEntityResponse", r)
+}
+
+/// Encode a [`ListBooksResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_books_response(r: &ListBooksResponse) -> Value {
+    encode("ListBooksResponse", r)
+}
+
+/// Encode a [`CreateBookResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_create_book_response(r: &CreateBookResponse) -> Value {
+    encode("CreateBookResponse", r)
+}
+
+/// Encode an [`UpdateBookResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_book_response(r: &UpdateBookResponse) -> Value {
+    encode("UpdateBookResponse", r)
+}
+
+/// Encode a [`DeleteBookResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_delete_book_response(r: &DeleteBookResponse) -> Value {
+    encode("DeleteBookResponse", r)
+}
+
+/// Encode a [`ListInstrumentsResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_instruments_response(r: &ListInstrumentsResponse) -> Value {
+    encode("ListInstrumentsResponse", r)
+}
+
+/// Encode a [`GetInstrumentResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_get_instrument_response(r: &GetInstrumentResponse) -> Value {
+    encode("GetInstrumentResponse", r)
+}
+
+/// Encode a [`CreateInstrumentResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_create_instrument_response(r: &CreateInstrumentResponse) -> Value {
+    encode("CreateInstrumentResponse", r)
+}
+
+/// Encode an [`UpdateInstrumentResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_instrument_response(r: &UpdateInstrumentResponse) -> Value {
+    encode("UpdateInstrumentResponse", r)
+}
+
+/// Encode a [`DeleteInstrumentResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_delete_instrument_response(r: &DeleteInstrumentResponse) -> Value {
+    encode("DeleteInstrumentResponse", r)
+}
+
+/// Encode a [`CalibratedCurve`] to its WS JSON — descriptor-driven (mirrors the hand
+/// `calibrated_curve_to_json`; `reference_date` renders `null`-when-absent).
+#[must_use]
+pub fn encode_calibrated_curve(c: &CalibratedCurve) -> Value {
+    encode("CalibratedCurve", c)
 }

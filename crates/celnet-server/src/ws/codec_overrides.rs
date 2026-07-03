@@ -84,6 +84,47 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     // `null` when absent (present-with-null through the RFQ lifecycle).
     "DeskRequest",
     "Deal",
+    // The AuthService reply envelopes (wave 4 — login/session, user/desk/entity/book
+    // CRUD, capabilities, roles, instrument registry): every one is built by a
+    // `json!({ .. })` hand encoder that emits the `Option<u64>` `correlation_id` as
+    // JSON `null` when absent (present-with-null). Their singular-message payload
+    // fields (`user` / `desk` / `entity` / `book` / `instrument`) already render
+    // `null`-when-absent via the generic singular-message rule and need no entry.
+    "LoginResponse",
+    "LogoutResponse",
+    "ListUsersResponse",
+    "CreateUserResponse",
+    "UpdateUserResponse",
+    "DeleteUserResponse",
+    "ResetPasswordResponse",
+    "GetUserCapabilitiesResponse",
+    "SetUserCapabilitiesResponse",
+    "GetRoleCapabilitiesResponse",
+    "SetRoleCapabilitiesResponse",
+    "ListDesksResponse",
+    "CreateDeskResponse",
+    "DeleteDeskResponse",
+    "ListEntitiesResponse",
+    "CreateEntityResponse",
+    "UpdateEntityResponse",
+    "DeleteEntityResponse",
+    "ListBooksResponse",
+    "CreateBookResponse",
+    "UpdateBookResponse",
+    "DeleteBookResponse",
+    "ListInstrumentsResponse",
+    "GetInstrumentResponse",
+    "CreateInstrumentResponse",
+    "UpdateInstrumentResponse",
+    "DeleteInstrumentResponse",
+    // The `UserDesc` blotter row: its `optional string desk_id` (absent ⇒ unassigned)
+    // is emitted as JSON `null` by `user_desc_to_json`'s `json!({ .. })`.
+    "UserDesc",
+    // The `BondDef` instrument family block: its `optional BrokenDate` coupon-schedule
+    // dates (`issue_date` / `dated_date` / `first_coupon_date`) are emitted as JSON
+    // `null` when absent by `family_to_json`'s `.as_ref().map(..)` (the `maturity_date`
+    // singular message already renders `null`-when-absent via the generic rule).
+    "BondDef",
 ];
 
 /// How the generated encoder should treat one descriptor field's JSON key.
