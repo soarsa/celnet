@@ -682,6 +682,53 @@ impl PositionStore {
         ))
     }
 
+    /// **Check-only pre-trade limit gate for a class-parametric position** (ADR-0021
+    /// uniform-asset-class): the cross-asset analogue of [`Self::evaluate_pre_trade`],
+    /// for a booking whose risk artifact lives off the warehouse and is a normalized
+    /// [`PositionRisk`] of **any** asset class — an FX/metal pair, or an
+    /// equity/commodity/digital-asset (linear) cost-of-carry position. It consults the
+    /// **same** limit tree + current-book aggregation the FX path does, without
+    /// recording a risk fact.
+    ///
+    /// The position is placed at the org-unattributed scopes it actually carries — its
+    /// `underlying` axis and the firm apex ([`unattributed_key`]) — never a fabricated
+    /// desk/book/trader. The canonical leaf is re-derived through the position's own
+    /// asset-class leaf ([`canonicalize`]), so a cross-asset delta charges the shared
+    /// firm/per-underlying caps exactly as an FX delta does — the pre-trade gate sees
+    /// the position's real class-correct exposure, never a silent zero (guardrail #2).
+    /// The check-only handle is `0` (excluded from no prior fact — the store has none
+    /// for this off-warehouse position), matching the FX check-only path.
+    ///
+    /// # Errors
+    /// `invalid_argument` if the position is not priceable through its leaf.
+    pub fn evaluate_pre_trade_position(
+        &self,
+        position: &PositionRisk,
+    ) -> Result<PreTradeResult, tonic::Status> {
+        let key = unattributed_key(position.underlying.clone());
+        let g = self.inner.read().expect("position store lock poisoned");
+        // No limits configured ⇒ nothing to gate: accept without canonicalizing, so a
+        // deployment that has set no caps is byte-identical to the pre-gate booking path
+        // (mirrors the FX `evaluate_pre_trade` short-circuit exactly).
+        if g.limits.is_empty() {
+            return Ok(PreTradeResult {
+                decision: PreTradeDecision::Accept,
+                checks: Vec::new(),
+            });
+        }
+        let (position, leaf, fact) = canonical_fact(position, 0, 0, key.clone())?;
+        let handle = fact.position_id.0;
+        Ok(project_pre_trade(
+            &g.facts,
+            &g.limits,
+            &g.hierarchy,
+            &position,
+            &leaf,
+            key,
+            handle,
+        ))
+    }
+
     /// A read-only snapshot of the store for one aggregation cycle: the current
     /// facts, the hierarchy, and the per-position attribution provenance. Taken
     /// under the read lock and returned owned so the aggregation runs lock-free.
@@ -762,24 +809,37 @@ fn seat_name(book: &BookId) -> String {
     }
 }
 
-/// The org-**unattributed** [`FactKey`] for a booking that lives OFF the FX risk
+/// The org-**unattributed** [`FactKey`] for a booking that lives OFF the risk
 /// warehouse — a `QuoteService::AcceptQuote` execution (kept in the quote store) or a
 /// FIX acceptor `ExecutionReport` fill (emitted on the wire). Its trader / book / desk
 /// / location / entity handles are all `0` (the "unknown / resolve-from-parent"
 /// sentinel), so the only scopes [`ScopePath::resolve`] yields a *configurable* limit
-/// at are the position's currency pair and the firm apex (always appended). The gate
-/// therefore enforces exactly the **firm-wide** and **ccy-pair** caps that apply
-/// regardless of desk attribution — it never invents a desk/book/trader the accept
-/// never recorded (guardrail #2: derive from the position, never fabricate).
-fn unattributed_fx_key(pair: CcyPair) -> FactKey {
+/// at are the position's `underlying` axis and the firm apex (always appended). The
+/// gate therefore enforces exactly the **firm-wide** and **per-underlying** caps that
+/// apply regardless of desk attribution — it never invents a desk/book/trader the
+/// accept never recorded (guardrail #2: derive from the position, never fabricate).
+///
+/// Class-parametric over the underlying (ADR-0021 uniform-asset-class): the same
+/// unattributed key serves an FX pair, a metal, or a cross-asset (equity/commodity/
+/// digital-asset) underlying — the cube's [`DimensionId::Underlying`] group value packs
+/// each class, so a per-underlying cap covers any class without a schema change. FX is
+/// [`unattributed_fx_key`].
+fn unattributed_key(underlying: celnet_types::Underlying) -> FactKey {
     FactKey {
         trader: TraderId(0),
         book: CubeBookId(0),
         desk: DeskId(0),
-        underlying: celnet_types::Underlying::Fx(pair),
+        underlying,
         location: LocationId(0),
         entity: EntityId(0),
     }
+}
+
+/// The org-unattributed [`FactKey`] for an FX booking off the risk warehouse — the
+/// FX-ergonomic form of [`unattributed_key`] (byte-identical to the former inline
+/// key), used by the FX-vanilla [`PositionStore::evaluate_pre_trade`] path.
+fn unattributed_fx_key(pair: CcyPair) -> FactKey {
+    unattributed_key(celnet_types::Underlying::Fx(pair))
 }
 
 /// Canonicalize a booked vanilla line into its convention-free `(position, leaf,
@@ -790,12 +850,6 @@ fn canonical_vanilla_fact(
     booked: &BookedPosition,
     key: FactKey,
 ) -> Result<(PositionRisk, CanonicalLeaf, RiskFact), tonic::Status> {
-    let handle = u32::try_from(booked.position_id).map_err(|_| {
-        tonic::Status::invalid_argument(format!(
-            "position_id {} exceeds the u32 cube handle space",
-            booked.position_id
-        ))
-    })?;
     let position = PositionRisk::fx(
         booked.pair,
         booked.option,
@@ -804,7 +858,28 @@ fn canonical_vanilla_fact(
         booked.quoted_delta,
         booked.premium_style,
     );
-    let leaf = canonicalize(&position).map_err(|e| {
+    canonical_fact(&position, booked.position_id, booked.surface_version, key)
+}
+
+/// Canonicalize an already-built [`PositionRisk`] of **any** asset class into its
+/// convention-free `(position, leaf, fact)` — the class-parametric core shared by
+/// [`canonical_vanilla_fact`] (FX) and the cross-asset check-only pre-trade
+/// ([`PositionStore::evaluate_pre_trade_position`]). The underlying discriminant lives
+/// entirely inside the leaf pricer [`canonicalize`] dispatches to (ADR-0008); this
+/// step is asset-class agnostic — an equity/commodity/digital-asset position produces
+/// its own leaf greeks, never an FX proxy (guardrail #2).
+fn canonical_fact(
+    position: &PositionRisk,
+    position_id: u64,
+    surface_version: u64,
+    key: FactKey,
+) -> Result<(PositionRisk, CanonicalLeaf, RiskFact), tonic::Status> {
+    let handle = u32::try_from(position_id).map_err(|_| {
+        tonic::Status::invalid_argument(format!(
+            "position_id {position_id} exceeds the u32 cube handle space"
+        ))
+    })?;
+    let leaf = canonicalize(position).map_err(|e| {
         tonic::Status::invalid_argument(format!("booked position is not priceable: {e}"))
     })?;
     let fact = RiskFact {
@@ -815,9 +890,9 @@ fn canonical_vanilla_fact(
             position: position.clone(),
             exotic: None,
         },
-        surface_version: booked.surface_version,
+        surface_version,
     };
-    Ok((position, leaf, fact))
+    Ok((position.clone(), leaf, fact))
 }
 
 /// Run the pre-trade check for a proposed vanilla booking against the **projected**

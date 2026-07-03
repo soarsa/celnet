@@ -104,9 +104,15 @@ use tonic::{Request, Response, Status};
 
 use celnet_entitlements::{Action, AssetClass};
 
+use celnet_core::carry::CarryInputs;
+use celnet_risk_normalize::PositionRisk;
+
 use crate::clock::Clock;
 use crate::core_link::CoreLink;
-use crate::pricer::{ConventionSet, price_instrument};
+use crate::pricer::{
+    ConventionSet, CryptoSettlementStyle, Priced, cost_of_carry, decode_settlement_style,
+    is_cross_asset, price_instrument,
+};
 use crate::readiness::ReadinessGate;
 use crate::services::access::{
     RequiredAuthority, ResolvedCaller, authorize_caller, resolve_caller,
@@ -277,12 +283,35 @@ struct QuoteRecord {
     /// bound to this requester when it was authenticated — a different authenticated
     /// principal is refused. An anonymous requester keeps idempotency-only accepts.
     requester: RequesterBinding,
-    /// The FX-vanilla pre-trade template captured at quote time (ADR-0016 A1): the
-    /// BUY-side [`BookedPosition`] this quote would book, so an `AcceptQuote` can run
-    /// the pre-trade limit gate against the shared position book without re-pricing (a
-    /// `Side=SELL` accept negates the notional). `None` for a non-vanilla / non-FX
-    /// instrument, which carries no canonical-vanilla risk leaf and so is never gated.
-    pre_trade: Option<BookedPosition>,
+    /// The **class-correct** pre-trade risk leaf captured at quote time (ADR-0016 A1;
+    /// generalized under ADR-0021 uniform-asset-class): the BUY-side exposure this quote
+    /// would book, so an `AcceptQuote` can run the pre-trade limit gate against the
+    /// shared position book without re-pricing (a `Side=SELL` accept negates the
+    /// notional). FX vanilla carries a canonical-vanilla [`BookedPosition`], a
+    /// cross-asset (equity/commodity/linear-crypto) vanilla its cost-of-carry
+    /// [`PositionRisk`] — each gated through the SAME unified aggregate. `None` for an
+    /// instrument that carries no derivable canonical leaf (a non-vanilla product, a
+    /// zero notional, or the deferred inverse-crypto seam) — an explicit no-gate
+    /// outcome, never a fabricated zero.
+    pre_trade: Option<PreTradeLeaf>,
+}
+
+/// The class-correct pre-trade risk leaf a quote captures at request time, so an
+/// [`QuoteService::accept_quote`] can gate the booking against the shared position book
+/// without re-pricing. Generalized across asset classes (ADR-0021 uniform-asset-class):
+/// a quote of any priceable class carries its OWN class-correct exposure into the
+/// pre-trade gate — never a silent zero for a non-FX quote (guardrail #2).
+#[derive(Debug, Clone)]
+enum PreTradeLeaf {
+    /// FX vanilla — the canonical-vanilla [`BookedPosition`] gated through the FX
+    /// [`PositionStore::evaluate_pre_trade`] path (byte-identical to the prior FX-only
+    /// leaf).
+    FxVanilla(BookedPosition),
+    /// Cross-asset vanilla (equity / commodity / linear digital-asset) — its normalized
+    /// cost-of-carry [`PositionRisk`] gated through the class-parametric
+    /// [`PositionStore::evaluate_pre_trade_position`], re-canonicalized through the
+    /// position's own asset-class leaf so the gate sees its real class-correct exposure.
+    CrossAsset(PositionRisk),
 }
 
 /// The in-memory RFQ store: idempotency-key → quote_id, and quote_id → record.
@@ -634,6 +663,112 @@ fn fx_pre_trade_template(
     })
 }
 
+/// Build the BUY-side **cross-asset** pre-trade risk leaf (ADR-0021 uniform-asset-class)
+/// a quote would book — the equity / commodity / linear digital-asset analogue of
+/// [`fx_pre_trade_template`]. It re-expresses the priced position as a normalized
+/// cost-of-carry [`PositionRisk`] over the SAME market carry and resolved strike/vol the
+/// pricer used ([`cost_of_carry`] — the single source, so the canonicalized leaf's
+/// greeks match the quoted greeks), at the instrument's base-leg notional. The
+/// [`QuoteService::accept_quote`] gate then re-canonicalizes it through the position's
+/// own asset-class leaf, so a cross-asset quote charges its real class-correct exposure
+/// against the shared limit tree — not a silent zero.
+///
+/// `None` (an explicit no-gate outcome, never a fabricated exposure — guardrail #2) for:
+/// * a non-vanilla product (the leaf pricers price vanilla; an exotic cross-asset leaf
+///   is out of canonical scope, exactly as for FX);
+/// * an FX / metal underlying (those stay on the FX path via [`fx_pre_trade_template`]);
+/// * the **inverse** (coin-margined `1/S_T`) crypto arm — its additive-seam numeraire
+///   collapse is a deliberately deferred follow-up in `celnet-risk-normalize` (its
+///   `CryptoLeaf` is linear-only), so routing it through the linear leaf would mis-state
+///   the settlement leg; the LINEAR crypto arm is fully covered;
+/// * a zero-notional / non-priceable-carry instrument.
+fn cross_asset_pre_trade_leaf(
+    instrument: &celnet_proto::Instrument,
+    market: &MarketContext,
+    priced: &Priced,
+) -> Option<PositionRisk> {
+    use celnet_proto::instrument::Product;
+
+    let Some(Product::Vanilla(vanilla)) = instrument.product.as_ref() else {
+        return None;
+    };
+    let wire_underlying = instrument.underlying.as_ref()?;
+    // Decode the wire underlying to its domain form and keep ONLY the cross-asset arms
+    // the pricer routes through the cost-of-carry leaves; FX / metal are handled by
+    // `fx_pre_trade_template` (the SAME `is_cross_asset` split the pricing dispatch uses).
+    let underlying = celnet_types::Underlying::try_from(wire_underlying.clone()).ok()?;
+    if !is_cross_asset(&underlying) {
+        return None;
+    }
+    // Inverse crypto: an explicit `None` leaf (see the doc — the deferred inverse seam),
+    // never a linear-leaf mis-statement. Decoded through the pricer's own settlement map.
+    if matches!(underlying, celnet_types::Underlying::DigitalAsset(_))
+        && !matches!(
+            decode_settlement_style(instrument.settlement_style),
+            Ok(CryptoSettlementStyle::Linear)
+        )
+    {
+        return None;
+    }
+    let option = celnet_types::OptionType::from(
+        celnet_proto::OptionType::try_from(vanilla.option_type).ok()?,
+    );
+    // The net cost-of-carry the position was PRICED under — read from the SAME market arm
+    // through the SAME arithmetic the pricer uses, so the canonical leaf matches the quote.
+    let carry = cost_of_carry(market).ok()?;
+    let inputs = CarryInputs::new(
+        market.spot,
+        priced.resolved_strike,
+        priced.vol,
+        instrument.expiry_years,
+        underlying.clone(),
+        carry,
+    );
+    // The absolute base-leg notional (a quote-ccy notional converts to base at spot); the
+    // traded side signs it at accept time — mirrors the FX template exactly.
+    let abs_base = instrument.quantity.as_ref().map_or(0.0, |q| {
+        if q.base_ccy {
+            q.notional
+        } else if market.spot != 0.0 {
+            q.notional / market.spot
+        } else {
+            0.0
+        }
+    });
+    if abs_base == 0.0 {
+        return None;
+    }
+    Some(PositionRisk::carry(
+        underlying,
+        option,
+        abs_base.abs(),
+        inputs,
+    ))
+}
+
+/// Capture the **class-correct** pre-trade risk leaf a quote would book (ADR-0016 A1,
+/// generalized under ADR-0021), dispatching on the instrument's asset class: FX vanilla
+/// → the canonical-vanilla [`BookedPosition`] (unchanged); a cross-asset
+/// (equity/commodity/linear-crypto) vanilla → its cost-of-carry [`PositionRisk`]. The
+/// two share the one unified aggregate at the gate. `None` when no canonical leaf is
+/// derivable (an explicit no-gate outcome, never a fabricated zero).
+fn pre_trade_leaf(
+    instrument: &celnet_proto::Instrument,
+    market: &MarketContext,
+    conv: &ConventionSet,
+    priced: &Priced,
+    surface_version: u64,
+) -> Option<PreTradeLeaf> {
+    // FX vanilla first (the byte-identical canonical-vanilla path); its `None` covers
+    // every non-FX / non-vanilla / delta-key / zero-notional FX case, and the cross-asset
+    // builder's own `is_cross_asset` guard makes the fall-through disjoint (FX/metal are
+    // never cross-asset), so the two arms never both fire.
+    if let Some(booked) = fx_pre_trade_template(instrument, market, conv, priced, surface_version) {
+        return Some(PreTradeLeaf::FxVanilla(booked));
+    }
+    cross_asset_pre_trade_leaf(instrument, market, priced).map(PreTradeLeaf::CrossAsset)
+}
+
 #[tonic::async_trait]
 impl QuoteService for QuoteEdge {
     async fn request_quote(
@@ -795,11 +930,14 @@ impl QuoteService for QuoteEdge {
             price_std_error: priced.std_error,
         };
 
-        // ADR-0016 A1: capture the FX-vanilla pre-trade template this quote would book
-        // (the BUY-side risk leaf), so a later `AcceptQuote` can run the pre-trade limit
-        // gate against the shared position book without re-pricing. A non-vanilla / non-FX
-        // instrument has no canonical-vanilla risk leaf, so it is never gated (`None`).
-        let pre_trade = fx_pre_trade_template(
+        // ADR-0016 A1 (generalized under ADR-0021): capture the CLASS-CORRECT pre-trade
+        // risk leaf this quote would book (the BUY-side exposure), so a later
+        // `AcceptQuote` can run the pre-trade limit gate against the shared position book
+        // without re-pricing. FX vanilla → the canonical-vanilla leaf (unchanged);
+        // cross-asset (equity/commodity/linear-crypto) → its cost-of-carry leaf — each
+        // routed through the SAME unified aggregate. An instrument with no derivable
+        // canonical leaf carries `None` (an explicit no-gate outcome, never a fake zero).
+        let pre_trade = pre_trade_leaf(
             &instrument,
             &effective_market,
             &conv,
@@ -1221,19 +1359,32 @@ impl QuoteService for QuoteEdge {
             _ => (Side::Buy, price.offer),
         };
 
-        // Pre-trade limit gate (ADR-0016 A1): an accept books the strongest FX write, so
-        // before pinning the execution consult the SAME limit tree + current-book
-        // aggregation the RFS click-to-trade sink enforces. A hard breach refuses the
-        // accept with a typed `failed_precondition` `LimitBreached` status (uniform with
-        // every FX booking front-end — guardrail #11) and books nothing; store state is
-        // never mutated on a reject. A non-vanilla / non-FX quote carries no pre-trade
-        // template, so there is nothing to gate.
-        if let Some(template) = rec.pre_trade {
-            let mut booked = template;
-            if traded_side == Side::Sell {
-                booked.notional_base = -booked.notional_base;
-            }
-            let result = self.access_store.evaluate_pre_trade(&booked)?;
+        // Pre-trade limit gate (ADR-0016 A1, generalized under ADR-0021): an accept books
+        // the strongest write, so before pinning the execution consult the SAME limit tree
+        // + current-book aggregation the RFS click-to-trade sink enforces — for whichever
+        // asset class the quote carries. A hard breach refuses the accept with a typed
+        // `failed_precondition` `LimitBreached` status (uniform across every booking
+        // front-end — guardrail #11) and books nothing; store state is never mutated on a
+        // reject. A quote with no derivable canonical leaf carries `None`, so there is
+        // nothing to gate. The traded side signs the captured BUY-side notional (a `SELL`
+        // accept negates it).
+        if let Some(leaf) = rec.pre_trade.as_ref() {
+            let result = match leaf {
+                PreTradeLeaf::FxVanilla(booked) => {
+                    let mut booked = *booked;
+                    if traded_side == Side::Sell {
+                        booked.notional_base = -booked.notional_base;
+                    }
+                    self.access_store.evaluate_pre_trade(&booked)?
+                }
+                PreTradeLeaf::CrossAsset(position) => {
+                    let mut position = position.clone();
+                    if traded_side == Side::Sell {
+                        position.notional_base = -position.notional_base;
+                    }
+                    self.access_store.evaluate_pre_trade_position(&position)?
+                }
+            };
             if result.decision == celnet_limits::PreTradeDecision::Reject {
                 return Err(limit_breached_status(&result));
             }
@@ -1461,15 +1612,61 @@ mod tests {
         session_token: Option<String>,
         principal: Option<celnet_proto::EntitlementPrincipal>,
     ) -> QuoteRequest {
+        quote_request_for(key, vanilla_call(1.12), session_token, principal)
+    }
+
+    /// A quote request over an explicit instrument (so the cross-asset arms can be
+    /// exercised through the SAME request path as the FX vanilla).
+    fn quote_request_for(
+        key: &str,
+        instrument: celnet_proto::Instrument,
+        session_token: Option<String>,
+        principal: Option<celnet_proto::EntitlementPrincipal>,
+    ) -> QuoteRequest {
         QuoteRequest {
             idempotency_key: key.to_owned(),
-            instrument: Some(vanilla_call(1.12)),
+            instrument: Some(instrument),
             conventions: Some(wire_conventions()),
             correlation_id: None,
             surface_version: None,
             attribution: None,
             session_token,
             principal,
+        }
+    }
+
+    /// A BRENT/USD commodity vanilla-call wire instrument at an absolute strike, 1Y — a
+    /// CROSS-ASSET arm the pricer routes through the cost-of-carry leaves (not the FX
+    /// path). It prices against the edge's live FX-derived market (the FX two-rate carry
+    /// arm supplies the cost-of-carry `b = r − r_for`), so an admitted RFQ produces a
+    /// genuine cross-asset quote with a non-zero delta.
+    fn commodity_call(strike: f64) -> celnet_proto::Instrument {
+        celnet_proto::Instrument {
+            underlying: Some(celnet_proto::Underlying::commodity(
+                celnet_proto::CommodityRef::new(celnet_proto::Symbol::new("BRENT", ""), "USD"),
+            )),
+            tenor: Some(celnet_proto::Tenor {
+                unit: celnet_proto::tenor::Unit::Years as i32,
+                count: 1,
+                broken_date: None,
+            }),
+            expiry_years: 1.0,
+            quantity: Some(celnet_proto::Quantity {
+                notional: 1_000_000.0,
+                base_ccy: true,
+            }),
+            side: celnet_proto::Side::TwoWay as i32,
+            solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(celnet_proto::instrument::Product::Vanilla(
+                celnet_proto::Vanilla {
+                    option_type: celnet_proto::OptionType::Call as i32,
+                    strike: Some(celnet_proto::StrikeOrDelta {
+                        spec: Some(celnet_proto::strike_or_delta::Spec::Strike(strike)),
+                    }),
+                },
+            )),
+            ..Default::default()
         }
     }
 
@@ -1747,5 +1944,115 @@ mod tests {
             .expect("a no-limit accept books")
             .into_inner();
         assert_eq!(exec.quote_id, quote.quote_id);
+    }
+
+    // --- ADR-0021 cross-asset pre-trade leaf (the divergence-closer) ----------
+
+    /// ADR-0021 (uniform-asset-class): a CROSS-ASSET (commodity) quote carries its
+    /// CLASS-CORRECT risk into the SAME pre-trade gate — a firm Delta cap the commodity
+    /// option's own delta blows is tripped, computed from the KNOWN position through the
+    /// cost-of-carry leaf. Before the generalization a non-FX quote carried NO leaf and
+    /// so was a silent zero that no cap could ever gate; this proves the gate now sees
+    /// the real cross-asset exposure (the headline validation).
+    #[tokio::test]
+    async fn accept_cross_asset_quote_rejects_a_hard_limit_blown_booking() {
+        let (edge, _sessions, store) = edge_under(AccessMode::Permissive);
+        // A firm Delta cap of 1 base unit — the 1mm commodity call's delta blows it hard.
+        store.set_limit(
+            celnet_limits::LimitScope::Firm,
+            celnet_limits::LimitSpec::hard(celnet_limits::LimitMetric::Delta, 1.0),
+        );
+
+        let quote = edge
+            .request_quote(Request::new(quote_request_for(
+                "ca-lim",
+                commodity_call(1.12),
+                None,
+                None,
+            )))
+            .await
+            .expect("the cross-asset quote prices")
+            .into_inner();
+
+        let err = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "ca-lim".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect_err("a hard-limit-blown cross-asset accept must be rejected");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("limit breached"),
+            "the reject carries the uniform LimitBreached reason, got {:?}",
+            err.message()
+        );
+    }
+
+    /// A cross-asset quote whose booked delta sits WITHIN a generous firm cap books —
+    /// proving the gate reads a finite, position-derived exposure (not an always-reject
+    /// nor an always-accept), and that a no-limit cross-asset accept is byte-identical to
+    /// the pre-gate path (the gate stays inert until a cap actually binds).
+    #[tokio::test]
+    async fn accept_cross_asset_quote_books_within_cap_and_without_limits() {
+        // Within a generous cap: the commodity delta is far below 10^9 base units.
+        let (edge, _sessions, store) = edge_under(AccessMode::Permissive);
+        store.set_limit(
+            celnet_limits::LimitScope::Firm,
+            celnet_limits::LimitSpec::hard(celnet_limits::LimitMetric::Delta, 1.0e9),
+        );
+        let quote = edge
+            .request_quote(Request::new(quote_request_for(
+                "ca-ok",
+                commodity_call(1.12),
+                None,
+                None,
+            )))
+            .await
+            .expect("the cross-asset quote prices")
+            .into_inner();
+        let exec = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "ca-ok".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect("a within-cap cross-asset accept books")
+            .into_inner();
+        assert_eq!(exec.quote_id, quote.quote_id);
+
+        // No limits: the cross-asset accept books unchanged (inert-gate byte-identity).
+        let (edge2, _s2, _st2) = edge_under(AccessMode::Permissive);
+        let quote2 = edge2
+            .request_quote(Request::new(quote_request_for(
+                "ca-nolim",
+                commodity_call(1.12),
+                None,
+                None,
+            )))
+            .await
+            .expect("the cross-asset quote prices")
+            .into_inner();
+        let exec2 = edge2
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: quote2.quote_id,
+                idempotency_key: "ca-nolim".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect("a no-limit cross-asset accept books")
+            .into_inner();
+        assert_eq!(exec2.quote_id, quote2.quote_id);
     }
 }

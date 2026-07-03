@@ -39,7 +39,7 @@ use celnet_exotics::{PerpetualInputs, VarSwapContext, perpetual_greeks, perpetua
 use celnet_linear::{LinearInputs, LinearTerms, Side as LinearSide, ndf::Ndf as LinearNdf, swap};
 
 use celnet_commodity_vanilla::{CommodityInputs, Margining as CommodityMargining};
-use celnet_crypto_vanilla::SettlementStyle as CryptoSettlementStyle;
+pub(crate) use celnet_crypto_vanilla::SettlementStyle as CryptoSettlementStyle;
 // The equity + crypto option-input types are used only by the frozen `price_cross_asset`
 // C1 byte-identity oracle (see below). The production cross-asset path prices through
 // the `Priceable` leaves in `contract.rs`, which carry their own leaf imports.
@@ -523,7 +523,7 @@ pub fn price_instrument(
 /// Whether the underlying is a cross-asset (non-FX/non-metal) arm routed through
 /// the generalized cost-of-carry leaves. FX and metal stay on the FX option path
 /// (a metal's lease rate is modelled as the FX foreign rate), byte-identically.
-fn is_cross_asset(underlying: &Underlying) -> bool {
+pub(crate) fn is_cross_asset(underlying: &Underlying) -> bool {
     matches!(
         underlying,
         Underlying::Equity(_) | Underlying::Commodity(_) | Underlying::DigitalAsset(_)
@@ -538,7 +538,7 @@ fn is_cross_asset(underlying: &Underlying) -> bool {
 /// typed error rather than silently coerced; an absent carry is likewise refused
 /// (`b` is the whole pricing input — there is no safe default across asset
 /// classes), mirroring the FX path's no-silent-fallback guard.
-fn cost_of_carry(market: &WireMarketContext) -> Result<Carry, PriceError> {
+pub(crate) fn cost_of_carry(market: &WireMarketContext) -> Result<Carry, PriceError> {
     use celnet_proto::carry_model::Model;
     let carry = market.carry.as_ref().ok_or(PriceError::Domain(
         "a cross-asset underlying requires a carry market arm (FX two-rate or generalized cost-of-carry)",
@@ -903,7 +903,7 @@ pub fn price_exotic_via_contract(
 /// local settlement discriminator. The proto3 default (`0`, `LINEAR`) is the
 /// ordinary USD-margined contract; `INVERSE_COIN` selects the coin-margined
 /// `1/S_T` payoff. An out-of-range tag is a typed error, never a silent default.
-fn decode_settlement_style(tag: i32) -> Result<CryptoSettlementStyle, PriceError> {
+pub(crate) fn decode_settlement_style(tag: i32) -> Result<CryptoSettlementStyle, PriceError> {
     // Decode through the domain `SettlementStyle` (the wire ↔ domain map lives in
     // `celnet-proto`), then lower onto the crypto leaf's local enum.
     let domain = celnet_proto::SettlementStyle::try_from(tag)
