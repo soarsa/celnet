@@ -89,6 +89,10 @@ import type {
   Underlying,
   VanillaIrsInstrument,
   WindowBarrier,
+  XvaPricingRequest,
+  XvaResult,
+  XvaSurvivalCurve,
+  XvaTrade,
 } from "../contract/contract";
 import type {
   AdditiveRisk,
@@ -4638,6 +4642,210 @@ export function formatRatesRiskSpill(nodes: readonly RatesRiskNode[]): SpillMatr
       `${nodes.length} currenc${nodes.length === 1 ? "y" : "ies"} | server-netted (celnet-rates-risk)`,
     ]);
   }
+  return rectangular(rows);
+}
+
+// ---------------------------------------------------------------------------
+// XVA — counterparty valuation adjustments (`price_xva` / `PricingService.PriceXva`)
+// — the CELNET.XVA add-in path. Shape a netting set of FX vanillas (a row-per-trade
+// range) + the single-factor exposure model + the counterparty/own survival (hazard)
+// curves + LGDs + funding spread into the typed {@link XvaPricingRequest}, and lay
+// out the four scalar adjustments the wire returns. The add-in holds NO XVA math:
+// the live `celnet-xva` engine simulates the expected-exposure profile and
+// aggregates CVA/DVA/FVA; this only shapes the inputs and lays the reply out.
+// ---------------------------------------------------------------------------
+
+/** The GUI XvaWorkspace exposure-estimator defaults (mirrors `MC_PATHS` / `MC_SEED`
+ * / `EXPOSURE_STEPS` in `gui/src/workspaces/XvaWorkspace.tsx`), so an Excel cell that
+ * omits the optional MC controls prices against the same budget as the GUI. */
+const XVA_DEFAULT_PATHS = 4096;
+const XVA_DEFAULT_SEED = 1;
+const XVA_DEFAULT_EXPOSURE_STEPS = 16;
+
+/** The non-empty cells of a range row (Excel right-pads ranges with blank cells). */
+function nonEmptyCells(
+  row: readonly (string | number | boolean)[],
+): (string | number | boolean)[] {
+  return row.filter((c) => c !== "" && c !== null && c !== undefined);
+}
+
+/**
+ * Shape a survival (hazard-rate) curve cell/range into an {@link XvaSurvivalCurve}.
+ * A single scalar cell is a FLAT curve — constant hazard `λ`, NO pillar times
+ * (`{ pillarTimes: [], hazardRates: [λ] }`, survival `e^{−λt}`). A 2-column
+ * `[pillarYears, hazard]` range is a PIECEWISE-constant curve — strictly-increasing
+ * positive pillar times with their per-segment hazards, the last held flat past the
+ * final pillar (the market convention). Blank trailing rows are ignored; a malformed
+ * shape is rejected loudly. Mirrors the server's `SurvivalCurve::{flat,piecewise}`
+ * decode (`crates/celnet-xva`) and the GUI's flat/piecewise `XvaSurvivalCurve`.
+ */
+export function shapeXvaSurvivalCurve(
+  range: readonly (readonly (string | number | boolean)[])[],
+  what: string,
+): XvaSurvivalCurve {
+  const rows = range.filter((r) => !isEmptyCurveRow(r));
+  if (rows.length === 0) {
+    throw new ShapingError(
+      `${what} survival curve is empty (give a flat hazard λ, or a [pillarYears, hazard] range)`,
+    );
+  }
+  // FLAT: a single scalar cell ⇒ a constant hazard with no pillar times.
+  if (rows.length === 1 && nonEmptyCells(rows[0]!).length === 1) {
+    const lambda = ratesCell(nonEmptyCells(rows[0]!)[0]!, `${what} flat hazard`);
+    if (lambda < 0) throw new ShapingError(`${what} hazard must be >= 0 (got \`${lambda}\`)`);
+    return { pillarTimes: [], hazardRates: [lambda] };
+  }
+  // PIECEWISE: [pillarYears, hazard] per row, strictly-increasing positive pillars.
+  const pillarTimes: number[] = [];
+  const hazardRates: number[] = [];
+  let prev = 0;
+  for (const row of rows) {
+    if (nonEmptyCells(row).length < 2) {
+      throw new ShapingError(
+        `${what} piecewise survival row needs [pillarYears, hazard] (a lone value is read as a flat hazard)`,
+      );
+    }
+    const t = ratesCell(row[0]!, `${what} pillar time`);
+    const lambda = ratesCell(row[1]!, `${what} hazard`);
+    if (!(t > prev)) {
+      throw new ShapingError(
+        `${what} pillar times must be strictly increasing and positive (got \`${t}\` after \`${prev}\`)`,
+      );
+    }
+    if (lambda < 0) throw new ShapingError(`${what} hazard must be >= 0 (got \`${lambda}\`)`);
+    pillarTimes.push(t);
+    hazardRates.push(lambda);
+    prev = t;
+  }
+  return { pillarTimes, hazardRates };
+}
+
+/**
+ * Shape a netting-set range `[callPut, strike, expiryYears, vol, notional]` (one FX
+ * vanilla per row) into {@link XvaTrade}s. `callPut` is `C`/`P` (or CALL/PUT);
+ * `strike`/`expiryYears`/`vol` are strictly positive; `notional` is SIGNED (a
+ * negative notional flips the trade direction). Blank trailing rows are ignored; an
+ * empty set is rejected. Mirrors the RATESRISK positions shaper and the server's
+ * `xva_trade_from_json` field order.
+ */
+export function shapeXvaTrades(
+  rows: readonly (readonly (string | number | boolean)[])[],
+): XvaTrade[] {
+  const trades: XvaTrade[] = [];
+  for (const row of rows) {
+    if (isEmptyCurveRow(row)) continue;
+    if (row.length < 5) {
+      throw new ShapingError("each XVA trade row needs [callPut, strike, expiryYears, vol, notional]");
+    }
+    const optionType = parseOptionType(String(row[0]));
+    const strike = ratesCell(row[1]!, "trade strike");
+    const expiryYears = ratesCell(row[2]!, "trade expiryYears");
+    const vol = ratesCell(row[3]!, "trade vol");
+    const notional = ratesCell(row[4]!, "trade notional");
+    if (!(strike > 0)) throw new ShapingError(`trade strike must be > 0 (got \`${strike}\`)`);
+    if (!(expiryYears > 0)) throw new ShapingError(`trade expiryYears must be > 0 (got \`${expiryYears}\`)`);
+    if (!(vol > 0)) throw new ShapingError(`trade vol must be > 0 (got \`${vol}\`)`);
+    trades.push({ optionType, strike, expiryYears, vol, notional });
+  }
+  if (trades.length === 0) {
+    throw new ShapingError("the XVA netting set needs at least one trade");
+  }
+  return trades;
+}
+
+/** Validate an optional whole-count exposure control, defaulting when omitted. */
+function shapeXvaCount(
+  raw: number | undefined,
+  dflt: number,
+  what: string,
+  min: number,
+): number {
+  if (raw === undefined) return dflt;
+  if (!Number.isInteger(raw) || raw < min) {
+    throw new ShapingError(`${what} must be a whole number >= ${min} (got \`${raw}\`)`);
+  }
+  return raw;
+}
+
+/** Validate a loss-given-default fraction (a decimal in `[0, 1]`). */
+function shapeXvaFraction(raw: number, what: string): number {
+  if (!Number.isFinite(raw) || raw < 0 || raw > 1) {
+    throw new ShapingError(`${what} must be a decimal in [0, 1] (got \`${raw}\`)`);
+  }
+  return raw;
+}
+
+/** The raw CELNET.XVA cell arguments before shaping into the typed request. */
+export interface XvaRequestArgs {
+  readonly trades: readonly (readonly (string | number | boolean)[])[];
+  readonly spot0: number;
+  readonly sigma: number;
+  readonly rDom: number;
+  readonly rFor: number;
+  readonly counterparty: readonly (readonly (string | number | boolean)[])[];
+  readonly own: readonly (readonly (string | number | boolean)[])[];
+  readonly lgdCounterparty: number;
+  readonly lgdOwn: number;
+  readonly fundingSpread: number;
+  readonly paths?: number;
+  readonly seed?: number;
+  readonly exposureSteps?: number;
+}
+
+/**
+ * Shape the CELNET.XVA cell arguments into the typed {@link XvaPricingRequest} the
+ * `price_xva` RPC decodes. Validates the netting set, the single-factor exposure
+ * model (`spot0 > 0`, `sigma >= 0`, finite rates), both survival curves, the two
+ * LGDs (`∈ [0, 1]`) and the funding spread, and defaults the optional MC controls to
+ * the GUI's exposure-estimator budget. Every number is passed straight to the engine
+ * as a decimal (no unit conversion) — exactly like the RATES/BOND cell shapers.
+ */
+export function shapeXvaRequest(args: XvaRequestArgs): XvaPricingRequest {
+  const trades = shapeXvaTrades(args.trades);
+  if (!(args.spot0 > 0)) throw new ShapingError(`spot0 must be > 0 (got \`${args.spot0}\`)`);
+  if (!Number.isFinite(args.sigma) || args.sigma < 0) {
+    throw new ShapingError(`sigma must be a decimal >= 0 (got \`${args.sigma}\`)`);
+  }
+  if (!Number.isFinite(args.rDom)) throw new ShapingError("rDom must be a finite decimal");
+  if (!Number.isFinite(args.rFor)) throw new ShapingError("rFor must be a finite decimal");
+  if (!Number.isFinite(args.fundingSpread)) {
+    throw new ShapingError("fundingSpread must be a finite decimal");
+  }
+  return {
+    trades,
+    rDom: args.rDom,
+    rFor: args.rFor,
+    spot0: args.spot0,
+    sigma: args.sigma,
+    paths: shapeXvaCount(args.paths, XVA_DEFAULT_PATHS, "paths", 1),
+    seed: shapeXvaCount(args.seed, XVA_DEFAULT_SEED, "seed", 0),
+    exposureSteps: shapeXvaCount(args.exposureSteps, XVA_DEFAULT_EXPOSURE_STEPS, "exposureSteps", 1),
+    counterparty: shapeXvaSurvivalCurve(args.counterparty, "counterparty"),
+    own: shapeXvaSurvivalCurve(args.own, "own"),
+    lgdCounterparty: shapeXvaFraction(args.lgdCounterparty, "lgdCounterparty"),
+    lgdOwn: shapeXvaFraction(args.lgdOwn, "lgdOwn"),
+    fundingSpread: args.fundingSpread,
+  };
+}
+
+/**
+ * Format an {@link XvaResult} as a labelled vertical spill: `cva`, `dva`, `fva`,
+ * `total_adjustment` (the WHOLE wire result — the simulated exposure profile is a
+ * server-internal and is NEVER on the wire, so it is never shown, never fabricated),
+ * then a provenance footer stating the netting-set size + the pricing engine. The
+ * four numbers ARE the server's `celnet-xva` figures — a cell is bit-consistent with
+ * the GUI XvaWorkspace over the one contract. Returns a rectangular matrix.
+ */
+export function formatXvaSpill(result: XvaResult, tradeCount: number): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["cva", result.cva],
+    ["dva", result.dva],
+    ["fva", result.fva],
+    ["total_adjustment", result.totalAdjustment],
+  ];
+  rows.push([
+    `${tradeCount} trade${tradeCount === 1 ? "" : "s"} netted | server-priced (celnet-xva)`,
+  ]);
   return rectangular(rows);
 }
 

@@ -59,6 +59,7 @@ import {
   formatSmileSpill,
   formatVarSwapSpill,
   formatVolSwapSpill,
+  formatXvaSpill,
   lookbackIsMonteCarlo,
   parseObservable,
   parsePair,
@@ -78,6 +79,7 @@ import {
   shapeRatesRiskPositions,
   shapeReportingNumeraire,
   shapeVanillaInstrument,
+  shapeXvaRequest,
   type SpillMatrix,
 } from "./shaping";
 import {
@@ -715,6 +717,87 @@ export async function RATESRISK(
 }
 
 /**
+ * Price the all-in counterparty valuation adjustment (CVA / DVA / FVA) of a NETTING
+ * SET of FX vanilla options against the live `price_xva` engine RPC (the WS mirror of
+ * `PricingService.PriceXva`), and spill the four scalar adjustments. The add-in
+ * carries NO XVA math: the netting set, the single-factor exposure model, the
+ * counterparty/own survival (hazard) curves, the LGDs and the funding spread are sent
+ * to the `celnet-xva` engine, which simulates the expected-exposure profile
+ * (scrambled-Sobol QMC) and aggregates the discrete CVA / symmetric DVA / funding FVA;
+ * this cell only shapes the inputs and lays out the authoritative reply (bit-consistent
+ * with the GUI XvaWorkspace over the one contract).
+ *
+ * `trades` is a row-per-trade netting-set range `[callPut, strike, expiryYears, vol,
+ * notional]`: each row one FX vanilla (`callPut` = C/P; strike / expiry / vol strictly
+ * positive; `notional` SIGNED — a negative notional flips the direction, so the set
+ * nets long against short). A survival curve is EITHER a single scalar cell (a FLAT
+ * hazard `λ`, survival `e^{−λt}`) OR a 2-column `[pillarYears, hazard]` range (a
+ * strictly-increasing piecewise-constant curve). The LGDs are decimals in `[0, 1]`;
+ * the funding spread is an absolute decimal (0.008 = 80bp). The optional MC controls
+ * default to the GUI's exposure-estimator budget.
+ *
+ * The spill is a labelled `5×2` matrix: `cva`, `dva`, `fva`, `total_adjustment`
+ * (`= cva − dva + fva`), then a provenance footer. These four are the WHOLE wire
+ * result — the simulated exposure PROFILE is a server-internal and is NEVER on the
+ * wire, so it is never shown (no fabricated numbers). `price_xva` is a pure
+ * calculation against the caller-supplied set + curves, so the cell is anonymous-OK
+ * (no sign-in needed; the server still enforces every request).
+ * @customfunction XVA
+ * @param trades The row-per-trade netting-set range [callPut, strike, expiryYears, vol, notional] — one FX vanilla per row (notional SIGNED).
+ * @param spot0 The initial spot S₀ (quote per 1 unit of base); > 0.
+ * @param sigma The exposure-model annualised volatility σ as a decimal (0.1 = 10%); ≥ 0.
+ * @param rDom The continuously-compounded domestic (quote) rate, a decimal.
+ * @param rFor The continuously-compounded foreign (base) rate, a decimal.
+ * @param counterparty The counterparty survival curve: a flat hazard λ (single cell) or a [pillarYears, hazard] range.
+ * @param own The own survival curve: a flat hazard λ (single cell) or a [pillarYears, hazard] range.
+ * @param lgdCounterparty The counterparty loss-given-default, a decimal in [0, 1].
+ * @param lgdOwn The own loss-given-default, a decimal in [0, 1].
+ * @param fundingSpread The funding spread over risk-free, an absolute decimal (0.008 = 80bp).
+ * @param paths Optional Monte-Carlo exposure paths (whole number ≥ 1; default 4096).
+ * @param seed Optional exposure-RNG seed (whole number ≥ 0; default 1) — a fixed seed reproduces the estimate.
+ * @param exposureSteps Optional exposure time buckets to the set horizon (whole number ≥ 1; default 16).
+ * @returns A `5×2` spill: cva, dva, fva, total_adjustment, then a provenance footer.
+ */
+export async function XVA(
+  trades: (string | number | boolean)[][],
+  spot0: number,
+  sigma: number,
+  rDom: number,
+  rFor: number,
+  counterparty: (string | number | boolean)[][],
+  own: (string | number | boolean)[][],
+  lgdCounterparty: number,
+  lgdOwn: number,
+  fundingSpread: number,
+  paths?: number,
+  seed?: number,
+  exposureSteps?: number,
+): Promise<SpillMatrix> {
+  try {
+    denyIfUngated("xva");
+    const request = shapeXvaRequest({
+      trades,
+      spot0,
+      sigma,
+      rDom,
+      rFor,
+      counterparty,
+      own,
+      lgdCounterparty,
+      lgdOwn,
+      fundingSpread,
+      ...(paths !== undefined ? { paths } : {}),
+      ...(seed !== undefined ? { seed } : {}),
+      ...(exposureSteps !== undefined ? { exposureSteps } : {}),
+    });
+    const result = await getConnection().priceXva(request);
+    return formatXvaSpill(result, request.trades.length);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
  * List the desk's standing linear-rates BOOK — the server-owned OIS position
  * ledger the `aggregate_rates_risk` roll-up nets — via the live
  * `list_rates_positions` engine RPC (the WS mirror of
@@ -1339,6 +1422,7 @@ function registerAll(): void {
   cf.associate("IRS", IRS as (...a: never[]) => unknown);
   cf.associate("FRA", FRA as (...a: never[]) => unknown);
   cf.associate("RATESRISK", RATESRISK as (...a: never[]) => unknown);
+  cf.associate("XVA", XVA as (...a: never[]) => unknown);
   cf.associate("RATESBOOK", RATESBOOK as (...a: never[]) => unknown);
   cf.associate("CURVE", CURVE as (...a: never[]) => unknown);
   cf.associate("INSTRUMENTS", INSTRUMENTS as (...a: never[]) => unknown);

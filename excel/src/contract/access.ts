@@ -151,6 +151,7 @@ export function capabilityDenialTitle(
 // gates it, mirroring the GUI's per-workspace `can("…", "…")` mapping:
 //
 //   * Ticket request-quote / PRICE / GREEKS / RFQ → price  · fx_options
+//   * XVA (netting-set CVA/DVA/FVA)               → price   · fx_options
 //   * book (click-to-trade accept)                → execute · fx_options
 //   * SUBSCRIBE / SERIES (live streams)           → stream  · fx_options
 //   * contribute a mark / MARKSURFACE / MARK      → price   · fx_options
@@ -177,6 +178,7 @@ export type EntryPointId =
   | "rfq_cell"
   | "subscribe"
   | "series"
+  | "xva"
   | "rates"
   | "bond"
   | "irs"
@@ -283,6 +285,18 @@ export const ENTRY_POINTS: Record<EntryPointId, EntryPoint> = {
     asset: "fx_options",
     requiresSignIn: false,
     signInLabel: "stream prices",
+  },
+  xva: {
+    id: "xva",
+    label: "CELNET.XVA",
+    surface: "cell",
+    // XVA prices a netting set of FX VANILLA options for its counterparty valuation
+    // adjustments, so it maps to the FX-options `price` capability (the same bucket
+    // as PRICE/GREEKS). Anonymous-OK price-preview (the server still enforces).
+    action: "price",
+    asset: "fx_options",
+    requiresSignIn: false,
+    signInLabel: "price XVA",
   },
   rates: {
     id: "rates",

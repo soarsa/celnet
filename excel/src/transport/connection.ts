@@ -50,6 +50,8 @@ import type {
   Tenor,
   Update,
   VanillaIrsInstrument,
+  XvaPricingRequest,
+  XvaResult,
 } from "../contract/contract";
 import {
   bondInstrumentToWire,
@@ -70,10 +72,12 @@ import {
   multiDealerQuoteFromWire,
   parseFrame,
   quoteFromWire,
+  priceXvaRequestToWire,
   ratesCurveSetToWire,
   ratesInstrumentToWire,
   ratesPricingResultFromWire,
   serializeFrame,
+  xvaResultFromWire,
   snapshotFromWire,
   streamRejectFromWire,
   updateFromWire,
@@ -950,6 +954,25 @@ export class Connection {
       "rates_price_response",
     );
     return ratesPricingResultFromWire(reply);
+  }
+
+  /**
+   * Price a netting set's all-in XVA (CVA / DVA / FVA) over the `price_xva` RPC (the
+   * WS mirror of `PricingService.PriceXva`): send the netting set of FX vanillas +
+   * the single-factor exposure model (spot / vol / rates + the MC path/step budget)
+   * + the counterparty & own survival (hazard) curves + the two LGDs + the funding
+   * spread, and decode the four scalar adjustments the server returns. The add-in
+   * carries no XVA math of its own — the live `celnet-xva` engine simulates the
+   * expected-exposure profile and aggregates the adjustments; the one unversioned
+   * contract makes the result authoritative and bit-identical to the GUI XvaWorkspace.
+   * The exposure PROFILE is a server-internal — the reply carries ONLY
+   * `{ cva, dva, fva, total_adjustment }`. Anonymous-OK: `price_xva` is a pure
+   * calculation against the caller-supplied netting set + curves, so it carries no
+   * session token (exactly like `price_rates`).
+   */
+  async priceXva(request: XvaPricingRequest): Promise<XvaResult> {
+    const reply = await this.request("price_xva", priceXvaRequestToWire(request), "price_xva_response");
+    return xvaResultFromWire(reply);
   }
 
   /**
