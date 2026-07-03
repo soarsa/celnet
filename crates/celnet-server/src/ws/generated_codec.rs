@@ -915,20 +915,32 @@ fn opt_repeated<T: WireBuilder>(value: Option<&Value>, what: &str) -> DResult<Ve
     }
 }
 
-/// An optional presence-tracked `String` (mirrors the hand `opt_string`): `None` on
-/// absence OR on an **empty** string (the hand codec's `.filter(|s| !s.is_empty())`),
-/// else the string value (error on a non-string). The empty-string ⇒ `None` filter is
-/// the byte-identity-critical detail — an admin `session_token: ""` decodes to `None`
-/// exactly as the hand codec does, not `Some("")`.
-fn opt_string(value: Option<&Value>, field: &str) -> DResult<Option<String>> {
-    match value {
-        None => Ok(None),
-        Some(v) => match v.as_str() {
-            None => Err(CodecError(format!("field `{field}` must be a string"))),
-            Some("") => Ok(None),
-            Some(s) => Ok(Some(s.to_owned())),
-        },
-    }
+/// An optional presence-tracked `String`, **byte-identical to the hand codec's
+/// lenient [`super::codec`] `opt_string`** (`o.get(key).and_then(Value::as_str)
+/// .filter(|s| !s.is_empty())`). Three byte-identity-critical behaviours mirror the
+/// hand codec exactly:
+/// - absent / `null` ⇒ `None` (`decode` has already collapsed both to `None` here);
+/// - a present **non-string** value ⇒ `None`, **not** a decode error. This is the
+///   fix for the FX-legacy wire-key collision the transport creates: the WS framing
+///   layer injects a NUMERIC `correlation_id` (the request↔reply sequence) onto every
+///   frame, which lands on the SAME JSON key as a proto `string correlation_id`
+///   (`SubmitDeskRequestRequest` / `BookRatesPositionRequest` / `ListRatesPositions`
+///   / `ListDeskRequests` …). The hand codec's `Value::as_str` yields `None` for that
+///   number, leaving the message field `None`; the generated codec MUST do the same or
+///   the whole request fails to decode. (A strict "must be a string" error here was the
+///   regression that broke the live rates-book booking + RFQ-desk injection e2e flows;
+///   the conformance corpus missed it because its vectors set `correlation_id` to a
+///   STRING, never the transport's numeric framing id.)
+/// - an **empty** string ⇒ `None` (the hand `.filter(|s| !s.is_empty())`), so an admin
+///   `session_token: ""` decodes to `None`, not `Some("")`.
+///
+/// The `field` name is retained for call-site symmetry with [`req_string`] (which
+/// needs it for its required-field error); this lenient reader never errors.
+fn opt_string(value: Option<&Value>, _field: &str) -> DResult<Option<String>> {
+    Ok(value
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned))
 }
 
 // ---------------------------------------------------------------------------

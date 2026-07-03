@@ -2791,6 +2791,132 @@ fn list_desk_requests_decode_is_byte_identical() {
     );
 }
 
+/// REGRESSION (live GUI shape): the WS transport frames the request/reply match by
+/// injecting a **numeric** `correlation_id` (the connection sequence) onto EVERY
+/// frame — and it collides on the SAME JSON key as the proto **`string
+/// correlation_id`** of the RfqDesk + linear-rates-book verbs. The hand codec's
+/// lenient `opt_string` reads a non-string as `None`; the generated codec MUST too,
+/// or the whole request fails to decode (which silently broke the live rates-book
+/// booking + simulator RFQ-injection e2e flows — `book_rates_position` /
+/// `submit_desk_request` returned an error frame the GUI swallowed, so the book
+/// stayed empty and the injected item never rendered). The earlier vectors above set
+/// `correlation_id` to a STRING (`"corr-1"`), so they never exercised the collision;
+/// these use the transport's REAL numeric framing id + the injected `type`
+/// discriminator, and assert the message `correlation_id` decodes to `None` (the
+/// numeric framing id is NOT the message's business correlation id) on BOTH codecs.
+#[test]
+fn desk_and_rates_book_decode_transport_numeric_correlation_id() {
+    // The exact live grant-all principal the GUI sends on these gated verbs (an
+    // explicit `grant_all: true` with empty grants/denies — never the populated
+    // `principal_json()` the other vectors use).
+    let grant_all = || json!({ "grant_all": true, "grants": [], "denies": [] });
+
+    // submit_desk_request — the exact live frame (9-pillar SOFR curve + numeric
+    // framing `correlation_id` + injected `type`).
+    let submit = json!({
+        "type": "submit_desk_request",
+        "correlation_id": 20,
+        "session_token": "sess-tok",
+        "kind": 1,
+        "counterparty": "Acme Capital",
+        "desk": "g10-rates",
+        "instrument": { "ois": { "tenor_years": 5, "fixed_rate": 0.04, "notional": 50_000_000.0, "side": 0 } },
+        "curve_set": {
+            "currency": "USD",
+            "reference_date": { "year": 2026, "month": 6, "day": 25 },
+            "ois_pillars": [
+                { "tenor": { "years": 1 }, "par_rate": 0.0432 },
+                { "tenor": { "years": 2 }, "par_rate": 0.0418 },
+                { "tenor": { "years": 3 }, "par_rate": 0.0409 },
+                { "tenor": { "years": 5 }, "par_rate": 0.0405 },
+                { "tenor": { "years": 7 }, "par_rate": 0.0408 },
+                { "tenor": { "years": 10 }, "par_rate": 0.0415 },
+                { "tenor": { "years": 15 }, "par_rate": 0.0421 },
+                { "tenor": { "years": 20 }, "par_rate": 0.0424 },
+                { "tenor": { "years": 30 }, "par_rate": 0.0423 }
+            ]
+        },
+        "side": 0,
+        "notional": 50_000_000.0,
+        "ttl_ms": 120_000,
+        "principal": grant_all()
+    });
+    let o = submit.as_object().expect("object");
+    let decoded = generated::decode_submit_desk_request(o).expect("generated decodes live frame");
+    assert_eq!(
+        decoded.correlation_id, None,
+        "the numeric framing correlation_id must NOT populate the message `string correlation_id`"
+    );
+    assert_decode_eq(
+        "SubmitDeskRequest(live/numeric-corr)",
+        generated::decode_submit_desk_request(o),
+        hand::hand_submit_desk_request_from_json(o),
+    );
+
+    // book_rates_position — the exact live frame (numeric framing correlation_id).
+    let book = json!({
+        "type": "book_rates_position",
+        "correlation_id": 33,
+        "session_token": "sess-tok",
+        "position": {
+            "position_id": 0,
+            "entity": 3,
+            "book": 5,
+            "instrument": { "ois": { "tenor_years": 5, "fixed_rate": 0.0405, "notional": 50_000_000.0, "side": 1 } }
+        },
+        "principal": grant_all()
+    });
+    let o = book.as_object().expect("object");
+    let decoded =
+        generated::decode_book_rates_position_request(o).expect("generated decodes live frame");
+    assert_eq!(decoded.correlation_id, None);
+    assert_decode_eq(
+        "BookRatesPosition(live/numeric-corr)",
+        generated::decode_book_rates_position_request(o),
+        hand::hand_book_rates_position_request_from_json(o),
+    );
+
+    // list_rates_positions — grant-all, numeric framing correlation_id, no scope.
+    let list_rates = json!({
+        "type": "list_rates_positions",
+        "correlation_id": 30,
+        "session_token": "sess-tok",
+        "principal": grant_all()
+    });
+    let o = list_rates.as_object().expect("object");
+    assert_eq!(
+        generated::decode_list_rates_positions_request(o)
+            .expect("generated decodes")
+            .correlation_id,
+        None
+    );
+    assert_decode_eq(
+        "ListRatesPositions(live/numeric-corr)",
+        generated::decode_list_rates_positions_request(o),
+        hand::hand_list_rates_positions_request_from_json(o),
+    );
+
+    // list_desk_requests — grant-all, numeric framing correlation_id, no scope.
+    let list_desk = json!({
+        "type": "list_desk_requests",
+        "correlation_id": 6,
+        "session_token": "sess-tok",
+        "principal": grant_all()
+    });
+    let o = list_desk.as_object().expect("object");
+    assert_eq!(
+        generated::decode_list_desk_requests(o)
+            .expect("generated decodes")
+            .correlation_id,
+        None
+    );
+    assert_decode_eq(
+        "ListDeskRequests(live/numeric-corr)",
+        generated::decode_list_desk_requests(o),
+        hand::hand_list_desk_requests_from_json(o),
+    );
+}
+
 #[test]
 fn list_deals_decode_is_byte_identical() {
     // Object scope.
