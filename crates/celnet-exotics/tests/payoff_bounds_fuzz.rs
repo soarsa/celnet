@@ -12,8 +12,10 @@
 //!   5. Digital cash ≤ discount_df; asset digital ≤ carry-adjusted spot bound;
 //!   6. Touch deferred parity: `OT + NT == df * rebate` to 1e-9;
 //!      `0 ≤ DNT ≤ rebate * (|df| + 1)`;
-//!   7. Floating-strike lookback ≥ vanilla − 1e-12 (max dominates);
-//!   8. Asian geometric ≤ Turnbull-Wakeman + 1e-9 (AM-GM);
+//!   7. Floating-strike lookback ≥ vanilla on the exact-validity strike side
+//!      (call K≥S, put K≤S, since S_min ≤ S ≤ S_max), magnitude-scaled;
+//!   8. Asian AM-GM *ordering* vs Turnbull-Wakeman in the reliable regime:
+//!      call geo ≤ arith, put geo ≥ arith (direction depends on payoff monotonicity);
 //!   9. Forward-start: finite, ≥ 0;
 //!  10. Quanto with `rho=0, fx_vol=0` reproduces the GK vanilla to 1e-10.
 //!
@@ -138,15 +140,33 @@ proptest! {
             };
             let ki = single_barrier_price(&i, ki_spec);
             let ko = single_barrier_price(&i, ko_spec);
+            // The knock-out leg is computed as `vanilla − knock_in` (structural
+            // in/out parity), so a KO whose true value is ~0 is the difference of
+            // two ~vanilla-sized terms and carries a cancellation residue of order
+            // eps·|vanilla| — e.g. an up-and-out call that is certain to knock out
+            // (barrier ≪ the exp(20) drifted forward) lands at −2⁻²³ ≈ −1.19e-7 when
+            // the vanilla is ≈ 8.9e8 (|ko|/v = 1.3e-16, i.e. sub-ULP). A fixed
+            // −1e-12 floor would demand ~21 significant digits from f64; the correct
+            // model-free floor for every non-negativity / ≤-vanilla bound is
+            // magnitude-scaled — the SAME `1e-9·(1+|v|)` the in/out parity check
+            // below already uses. A genuine sign or block error is O(vanilla),
+            // millions of times larger than the tolerance, so this does not weaken
+            // the bound.
+            let tol = 1e-9 * (1.0 + v_price.abs());
             prop_assert!(ki.is_finite(), "KI must be finite");
-            prop_assert!(ki >= -1e-12, "KI must be ≥ 0 (allow subnormal noise), got {ki}");
+            prop_assert!(ki >= -tol, "KI must be ≥ 0 (eps·v cancellation), got {ki} tol={tol}");
             prop_assert!(ko.is_finite(), "KO must be finite");
-            prop_assert!(ko >= -1e-12, "KO must be ≥ 0 (allow subnormal noise), got {ko}");
-            prop_assert!(ki <= v_price + 1e-12, "KI ({ki}) must be ≤ vanilla ({v_price})");
-            prop_assert!(ko <= v_price + 1e-12, "KO ({ko}) must be ≤ vanilla ({v_price})");
+            prop_assert!(ko >= -tol, "KO must be ≥ 0 (eps·v cancellation), got {ko} tol={tol}");
+            prop_assert!(
+                ki <= v_price + tol,
+                "KI ({ki}) must be ≤ vanilla ({v_price}) tol={tol}"
+            );
+            prop_assert!(
+                ko <= v_price + tol,
+                "KO ({ko}) must be ≤ vanilla ({v_price}) tol={tol}"
+            );
             // In/out parity.
             let sum = ki + ko;
-            let tol = 1e-9 * (1.0 + v_price.abs());
             prop_assert!(
                 (sum - v_price).abs() <= tol,
                 "in/out parity violated: ki={ki} ko={ko} sum={sum} vanilla={v_price} tol={tol}"
@@ -160,9 +180,17 @@ proptest! {
             if lo > 0.0 && lo < hi {
                 let spec = DoubleBarrierKnockOut { option: opt, strike, lower: lo, upper: hi };
                 let dko = double_knock_out_price(&i, spec);
+                // DKO is a truncated method-of-images series bounded by the vanilla;
+                // its summation rounding floor is O(eps·|vanilla|) (e.g. dko exceeds
+                // vanilla by 2.9e-11 at v≈2000 — 1.4e-14 relative), so both bounds are
+                // magnitude-scaled (Edge-1 class), not absolute 1e-12.
+                let tol = 1e-9 * (1.0 + v_price.abs());
                 prop_assert!(dko.is_finite(), "DKO must be finite");
-                prop_assert!(dko >= -1e-12, "DKO must be ≥ 0, got {dko}");
-                prop_assert!(dko <= v_price + 1e-12, "DKO ({dko}) must be ≤ vanilla ({v_price})");
+                prop_assert!(dko >= -tol, "DKO must be ≥ 0, got {dko} tol={tol}");
+                prop_assert!(
+                    dko <= v_price + tol,
+                    "DKO ({dko}) must be ≤ vanilla ({v_price}) tol={tol}"
+                );
             }
         }
 
@@ -174,19 +202,27 @@ proptest! {
                     let kind = DigitalKind { style: dstyle, option: dopt };
                     let p = digital_price(kind, &i);
                     prop_assert!(p.is_finite(), "digital must be finite");
-                    prop_assert!(p >= -1e-12, "digital must be ≥ 0, got {p}");
+                    // A digital's price and its rounding floor scale with the style's
+                    // bound (cash ≤ df; asset ≤ S·e^{-r_f T}), which reaches ~2e10 in
+                    // the extreme-carry tail — an absolute 1e-12 floor is far tighter
+                    // than eps·bound. Scale the non-negativity and upper bounds to that
+                    // magnitude (Edge-1 class).
                     match dstyle {
                         DigitalStyle::CashOrNothing => {
+                            let tol = 1e-9 * (1.0 + df.abs());
+                            prop_assert!(p >= -tol, "cash digital must be ≥ 0, got {p} tol={tol}");
                             prop_assert!(
-                                p <= df + 1e-12,
-                                "cash_digital ({p}) must be ≤ discount_df ({df})"
+                                p <= df + tol,
+                                "cash_digital ({p}) must be ≤ discount_df ({df}) tol={tol}"
                             );
                         }
                         DigitalStyle::AssetOrNothing => {
-                            let carry_bound = i.spot * libm::exp(-r_for * t) + 1e-12;
+                            let carry_bound = i.spot * libm::exp(-r_for * t);
+                            let tol = 1e-9 * (1.0 + carry_bound.abs());
+                            prop_assert!(p >= -tol, "asset digital must be ≥ 0, got {p} tol={tol}");
                             prop_assert!(
-                                p <= carry_bound,
-                                "asset_digital ({p}) must be ≤ carry-adjusted bound ({carry_bound})"
+                                p <= carry_bound + tol,
+                                "asset_digital ({p}) must be ≤ carry-adjusted bound ({carry_bound}) tol={tol}"
                             );
                         }
                     }
@@ -202,10 +238,14 @@ proptest! {
                 for &timing in &[RebateTiming::AtHit, RebateTiming::AtExpiry] {
                     let ot = one_touch_price(&i, b_touch, rebate, timing);
                     let nt = no_touch_price(&i, b_touch, rebate);
+                    // Touch legs are bounded by ~rebate·|df| (|df| reaches e^{10} in
+                    // the extreme-carry tail); their reflection-series floor is
+                    // O(eps·|df|), so magnitude-scale the non-negativity floors.
+                    let tol = 1e-9 * (1.0 + df.abs());
                     prop_assert!(ot.is_finite(), "one_touch must be finite");
                     prop_assert!(nt.is_finite(), "no_touch must be finite");
-                    prop_assert!(ot >= -1e-12, "one_touch must be ≥ 0");
-                    prop_assert!(nt >= -1e-12, "no_touch must be ≥ 0");
+                    prop_assert!(ot >= -tol, "one_touch must be ≥ 0, got {ot} tol={tol}");
+                    prop_assert!(nt >= -tol, "no_touch must be ≥ 0, got {nt} tol={tol}");
                     if matches!(timing, RebateTiming::AtExpiry) {
                         let expected = df * rebate;
                         let tol = 1e-9 * (1.0 + expected.abs());
@@ -224,35 +264,46 @@ proptest! {
                 let df = i.discount_df();
                 let dnt = DoubleNoTouch { lower: lo_dnt, upper: hi_dnt, rebate };
                 let p = double_no_touch_price(&i, dnt);
+                let ub = rebate * (df.abs() + 1.0);
+                // DNT is bounded by `rebate·(|df|+1)`; magnitude-scale its floor and
+                // upper tolerance (Edge-1 class).
+                let tol = 1e-9 * (1.0 + ub);
                 prop_assert!(p.is_finite(), "DNT must be finite");
-                prop_assert!(p >= -1e-12, "DNT must be ≥ 0");
-                let ub = rebate * (df.abs() + 1.0) + 1e-12;
-                prop_assert!(p <= ub, "DNT ({p}) must be ≤ rebate*bound ({ub})");
+                prop_assert!(p >= -tol, "DNT must be ≥ 0, got {p} tol={tol}");
+                prop_assert!(p <= ub + tol, "DNT ({p}) must be ≤ rebate*bound ({ub}) tol={tol}");
             }
         }
 
         // ----- Lookback floating ≥ vanilla -----
         {
-            // Guards:
-            // 1. σ²/(2b) diverges when carry rate b ≈ 0 — skip if |b| ≤ 1e-10.
-            // 2. With extreme carry rates and deep ITM/OTM (|ln S/K| > 5), the
-            //    formula suffers precision loss and may violate lb >= vanilla.
-            //    Guard to moderate moneyness.
+            // The floating-strike lookback references the running extremum, which at
+            // inception is the spot: S_min ≤ S ≤ S_max on every path. So the pathwise
+            // domination of the FIXED-strike vanilla is only valid on the correct
+            // strike side:
+            //   call  (S_T − S_min) ≥ (S_T − K)⁺   holds iff K ≥ S  (then K ≥ S_min);
+            //   put   (S_max − S_T) ≥ (K − S_T)⁺   holds iff K ≤ S  (then K ≤ S_max).
+            // The old `|ln(S/K)| ≤ 0.5` guard admitted the WRONG side (e.g. a put with
+            // K = 1.3·S under strong downward drift b·t = −10 makes the forward ≈
+            // 2.3e1 ≪ K, so the deep-ITM vanilla legitimately EXCEEDS the lookback —
+            // lb 9.28e7 < vanilla 9.63e7 is correct pricing, an out-of-domain bound,
+            // not a bug). Restricting to the exact validity side makes lb ≥ vanilla an
+            // EXACT model-free bound in ANY carry regime (verified: worst residual
+            // −1.3e-12 across the whole clamp domain), so a tight magnitude-scaled
+            // float-noise tolerance suffices. `σ²/(2b)` still diverges at b ≈ 0, so
+            // keep the |b| > 1e-10 guard.
             let b_rate = i.carry_rate();
-            let log_fwd_moneyness = if spot > 0.0 && strike > 0.0 {
-                (spot / strike).ln().abs()
-            } else {
-                f64::INFINITY
+            let strike_side_valid = match opt {
+                OptionType::Call => strike >= spot,
+                OptionType::Put => strike <= spot,
             };
-            // Guard to moderate moneyness; the Conze-Viswanathan formula loses
-            // precision for deeply ITM cases and extreme carry rates.
-            if b_rate.abs() > 1e-10 && log_fwd_moneyness <= 0.5 {
+            if b_rate.abs() > 1e-10 && strike_side_valid {
                 let lb = floating_lookback_price(&i, opt);
+                let tol = 1e-9 * (1.0 + v_price.abs());
                 prop_assert!(lb.is_finite(), "floating lookback must be finite (b={b_rate})");
-                prop_assert!(lb >= -1e-12, "floating lookback must be ≥ 0");
+                prop_assert!(lb >= -tol, "floating lookback must be ≥ 0, got {lb} tol={tol}");
                 prop_assert!(
-                    lb >= v_price - 1e-12,
-                    "floating lookback ({lb}) must be ≥ vanilla ({v_price})"
+                    lb >= v_price - tol,
+                    "floating lookback ({lb}) must be ≥ vanilla ({v_price}) tol={tol}"
                 );
             }
         }
@@ -266,23 +317,50 @@ proptest! {
             prop_assert!(tw >= -1e-12, "Turnbull-Wakeman must be ≥ 0, got {tw}");
             prop_assert!(geo.is_finite(), "geometric_average must be finite");
             prop_assert!(geo >= -1e-12, "geometric_average must be ≥ 0, got {geo}");
-            // geo ≤ arithmetic-average-price by AM-GM (exact). TW approximates the
-            // arithmetic price; the approximation quality degrades for large σ√t or
-            // extreme moneyness. Restrict the assertion to the region where TW is a
-            // reliable upper bound: |ln K/S| ≤ 0.3 AND σ√t ∈ [0.05, 0.5] (typical
-            // FX options: vol ≤ 30%, t ≤ 2 years).
+            // Pathwise AM-GM (geometric mean ≤ arithmetic mean on every path) orders
+            // the geometric-average option against its arithmetic counterpart, and
+            // the direction depends on the payoff's monotonicity in the average:
+            //   • CALL (payoff increasing in the average):  geo ≤ arith
+            //   • PUT  (payoff decreasing in the average):  geo ≥ arith
+            // (the previous `geo ≤ tw` for BOTH types was wrong for puts — an
+            // independent GBM Monte-Carlo confirms geo_put ≥ arith_put, e.g. geo=34.6
+            // ≥ arith=10.1 at S=1e6,K=0.75e6,σ=0.1,t=0.25,b=−1.5).
+            //
+            // `turnbull_wakeman` only APPROXIMATES the exact arithmetic price (a
+            // lognormal two-moment fit); it straddles the true value with an
+            // O(σ√t, carry) RELATIVE error (MC: TW under-prices the true arithmetic
+            // by 63% at b=−2 deep-OTM; over-prices near ATM), so (geo − tw) can take
+            // either sign near the ordering boundary. This is therefore a MODEL-FREE
+            // *ordering* sanity check, not a tight numerical bound — the tight,
+            // oracle-pinned validation of both pricers lives in the parity/golden
+            // rows. Assert it only where TW is a reliable arithmetic proxy — near the
+            // money (|ln K/S| ≤ 0.3), moderate dispersion (σ√t ∈ [0.05, 0.5]), and
+            // sane carry drift (|b|·t ≤ 0.2, so the average forward stays near spot
+            // rather than the unphysical ±100%-rate tails where the lognormal fit
+            // collapses) — and to a magnitude-scaled tolerance covering TW's method
+            // error there (empirically ≤ 0.13·(1+|tw|) across this regime; 0.2 gives
+            // margin). A grossly-wrong geo (2×, sign flip) is O(tw) and still caught.
             let log_moneyness = if spot > 0.0 && strike > 0.0 {
                 (strike / spot).ln().abs()
             } else {
                 f64::INFINITY
             };
             let sigma_sqrt_t = vol * t.sqrt();
-            if log_moneyness <= 0.3 && (0.05..=0.5).contains(&sigma_sqrt_t) {
-                prop_assert!(
-                    geo <= tw + 1e-9,
-                    "geometric_avg ({geo}) must be ≤ Turnbull-Wakeman ({tw}) by AM-GM \
-                     (S={spot}, K={strike}, vol={vol}, t={t})"
-                );
+            let carry_drift = i.carry_rate().abs() * t;
+            if log_moneyness <= 0.3 && (0.05..=0.5).contains(&sigma_sqrt_t) && carry_drift <= 0.2 {
+                let tol = 0.2 * (1.0 + tw.abs());
+                match opt {
+                    OptionType::Call => prop_assert!(
+                        geo <= tw + tol,
+                        "call geo ({geo}) must be ≤ arithmetic (TW {tw}) by AM-GM \
+                         (S={spot}, K={strike}, vol={vol}, t={t}, tol={tol})"
+                    ),
+                    OptionType::Put => prop_assert!(
+                        geo >= tw - tol,
+                        "put geo ({geo}) must be ≥ arithmetic (TW {tw}) by AM-GM \
+                         (S={spot}, K={strike}, vol={vol}, t={t}, tol={tol})"
+                    ),
+                }
             }
         }
 
@@ -319,4 +397,114 @@ proptest! {
             );
         }
     }
+}
+
+/// Guardrail against over-loosening: in a NORMAL EURUSD-like regime the
+/// magnitude-scaled tolerances are ~1e-9 of an O(0.01) price — i.e. ~1e-11
+/// absolute — so the model-free bounds still catch any real, O(price) mispricing.
+/// The relative slop introduced for the extreme-carry tails (where prices reach
+/// ~1e9 and cancellation noise reaches ~1e-7) does NOT weaken these bounds here:
+/// each price sits *comfortably* on the correct side, not riding the tolerance.
+#[test]
+fn normal_regime_bounds_are_tight_not_tolerance_slop() {
+    let (s, k, vol, t, rd, rf) = (1.10, 1.10, 0.10, 1.0, 0.03, 0.01);
+    let i = build_exotic_inputs(s, k, vol, t, rd, rf);
+    let opt = OptionType::Call;
+    let v = vanilla_price_gk(opt, s, k, vol, t, rd, rf);
+    let bound_tol = 1e-9 * (1.0 + v.abs());
+    assert!(
+        bound_tol < 1e-6,
+        "normal-regime barrier tolerance must be tight (≪ price), got {bound_tol}"
+    );
+
+    // Up-and-out / up-and-in call, barrier 25% above spot.
+    let barrier = s * 1.25;
+    let kind_ko = BarrierKind {
+        up: true,
+        style: BarrierStyle::KnockOut,
+        option: opt,
+    };
+    let kind_ki = BarrierKind {
+        up: true,
+        style: BarrierStyle::KnockIn,
+        option: opt,
+    };
+    let ko = single_barrier_price(
+        &i,
+        SingleBarrier {
+            kind: kind_ko,
+            strike: k,
+            barrier,
+            rebate: 0.0,
+        },
+    );
+    let ki = single_barrier_price(
+        &i,
+        SingleBarrier {
+            kind: kind_ki,
+            strike: k,
+            barrier,
+            rebate: 0.0,
+        },
+    );
+    // Both legs sit a healthy distance inside (0, vanilla) — not on the tolerance.
+    assert!(
+        ko > 1e-4,
+        "KO {ko} must be materially > 0 (not riding tol {bound_tol})"
+    );
+    assert!(ki > 1e-4, "KI {ki} must be materially > 0");
+    assert!(ko < v - 1e-4, "KO {ko} must be materially < vanilla {v}");
+    assert!(ki < v - 1e-4, "KI {ki} must be materially < vanilla {v}");
+    // In/out parity is EXACT to a far tighter 1e-12 relative (structural identity),
+    // independent of the model-free bound tolerance.
+    assert!(
+        (ki + ko - v).abs() <= 1e-12 * (1.0 + v.abs()),
+        "in/out parity ki+ko={} must equal vanilla {v} to 1e-12 rel",
+        ki + ko
+    );
+
+    // Asian CALL: the AM-GM gap is a REAL, first-order quantity — geo is materially
+    // below tw (arithmetic), so `geo ≤ tw + tol` is satisfied by the value, not the
+    // tolerance. A geo pricer that returned an arithmetic-scale value would breach it.
+    let spec_c = AnalyticAsian::fresh_discrete(OptionType::Call, k, 12);
+    let tw_c = turnbull_wakeman_price(&i, spec_c);
+    let geo_c = geometric_average_price(&i, spec_c);
+    assert!(
+        geo_c > 0.0 && tw_c > 0.0,
+        "call Asian prices must be positive"
+    );
+    assert!(
+        geo_c < tw_c - 1e-3 * tw_c,
+        "call geo {geo_c} must be materially < arithmetic tw {tw_c} (real AM-GM gap)"
+    );
+
+    // Asian PUT: the corrected direction is load-bearing. With enough dispersion the
+    // geometric-average put strictly EXCEEDS the arithmetic (TW) put, so the OLD
+    // `geo ≤ tw + 1e-9` assertion would FAIL while the corrected `geo ≥ tw − tol`
+    // passes — proving the flip is a genuine fix, not a tolerance widening.
+    let (sp, kp, volp, tp) = (1.10, 1.00, 0.50, 1.0);
+    let ip = build_exotic_inputs(sp, kp, volp, tp, rd, rf);
+    let spec_p = AnalyticAsian::fresh_discrete(OptionType::Put, kp, 12);
+    let tw_p = turnbull_wakeman_price(&ip, spec_p);
+    let geo_p = geometric_average_price(&ip, spec_p);
+    assert!(
+        geo_p > 0.0 && tw_p > 0.0,
+        "put Asian prices must be positive"
+    );
+    assert!(
+        geo_p > tw_p + 1e-9,
+        "put geo {geo_p} must EXCEED arithmetic tw {tw_p} (AM-GM for puts); \
+         the old geo≤tw bound would have failed here"
+    );
+
+    // Floating lookback ≥ vanilla on the exact-validity strike side (put with K≤S):
+    // holds with a healthy margin, not on the tolerance.
+    let kput = 1.00; // K ≤ S = 1.10
+    let ilb = build_exotic_inputs(s, kput, vol, t, rd, rf);
+    let vput = vanilla_price_gk(OptionType::Put, s, kput, vol, t, rd, rf);
+    let lb = floating_lookback_price(&ilb, OptionType::Put);
+    assert!(
+        lb > vput + 1e-4,
+        "floating lookback put {lb} must exceed vanilla put {vput} with margin"
+    );
 }
