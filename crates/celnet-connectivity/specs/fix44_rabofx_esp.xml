@@ -1,0 +1,119 @@
+<fix major="4" minor="4">
+  <!-- Hand-curated Rabo FX ESP Order Routing dictionary subset.
+       Covers the messages the Java RaboFXEspOrderRoutingDestination
+       implementation actually exercised. Fork from FIX 4.4 standard
+       with Rabo's customizations (SecondaryClOrdID required, NoPartyIDs
+       required on every order). -->
+  <header>
+    <field name="BeginString" required="Y"/>
+    <field name="BodyLength" required="Y"/>
+    <field name="MsgType" required="Y"/>
+    <field name="SenderCompID" required="Y"/>
+    <field name="TargetCompID" required="Y"/>
+    <field name="MsgSeqNum" required="Y"/>
+    <field name="SendingTime" required="Y"/>
+    <field name="PossDupFlag" required="N"/>
+    <field name="PossResend" required="N"/>
+    <field name="OrigSendingTime" required="N"/>
+  </header>
+  <trailer>
+    <field name="CheckSum" required="Y"/>
+  </trailer>
+  <messages>
+    <!-- Session-level admin messages — standard FIX 4.4 set. -->
+    <message name="Heartbeat" msgtype="0" msgcat="admin">
+      <field name="TestReqID" required="N"/>
+    </message>
+    <message name="Logon" msgtype="A" msgcat="admin">
+      <field name="EncryptMethod" required="Y"/>
+      <field name="HeartBtInt" required="Y"/>
+      <field name="ResetSeqNumFlag" required="N"/>
+      <field name="Username" required="Y"/>
+      <field name="Password" required="Y"/>
+    </message>
+    <message name="TestRequest" msgtype="1" msgcat="admin">
+      <field name="TestReqID" required="Y"/>
+    </message>
+    <message name="ResendRequest" msgtype="2" msgcat="admin">
+      <field name="BeginSeqNo" required="Y"/>
+      <field name="EndSeqNo" required="Y"/>
+    </message>
+    <message name="Reject" msgtype="3" msgcat="admin">
+      <field name="RefSeqNum" required="Y"/>
+      <field name="Text" required="N"/>
+    </message>
+    <message name="SequenceReset" msgtype="4" msgcat="admin">
+      <field name="GapFillFlag" required="N"/>
+      <field name="NewSeqNo" required="Y"/>
+    </message>
+    <message name="Logout" msgtype="5" msgcat="admin">
+      <field name="Text" required="N"/>
+    </message>
+
+    <!-- Order entry — Rabo-flavoured: SecondaryClOrdID and NoPartyIDs required. -->
+    <message name="NewOrderSingle" msgtype="D" msgcat="app">
+      <field name="ClOrdID" required="Y"/>
+      <field name="SecondaryClOrdID" required="Y"/>
+      <group name="NoPartyIDs" required="Y">
+        <field name="PartyID" required="Y"/>
+        <field name="PartyIDSource" required="Y"/>
+        <field name="PartyRole" required="Y"/>
+      </group>
+      <field name="Symbol" required="Y"/>
+      <field name="Side" required="Y"/>
+      <field name="OrderQty" required="Y"/>
+      <field name="OrdType" required="Y"/>
+      <field name="Price" required="N"/>
+      <field name="TimeInForce" required="Y"/>
+      <field name="TransactTime" required="Y"/>
+      <field name="Currency" required="N"/>
+    </message>
+
+    <message name="OrderCancelRequest" msgtype="F" msgcat="app">
+      <field name="OrigClOrdID" required="Y"/>
+      <field name="ClOrdID" required="Y"/>
+      <field name="Symbol" required="Y"/>
+      <field name="Side" required="Y"/>
+      <field name="TransactTime" required="Y"/>
+    </message>
+
+    <message name="OrderCancelReplaceRequest" msgtype="G" msgcat="app">
+      <field name="OrigClOrdID" required="Y"/>
+      <field name="ClOrdID" required="Y"/>
+      <field name="Symbol" required="Y"/>
+      <field name="Side" required="Y"/>
+      <field name="OrderQty" required="Y"/>
+      <field name="OrdType" required="Y"/>
+      <field name="Price" required="N"/>
+      <field name="TransactTime" required="Y"/>
+    </message>
+
+    <message name="ExecutionReport" msgtype="8" msgcat="app">
+      <field name="OrderID" required="Y"/>
+      <field name="ClOrdID" required="Y"/>
+      <field name="SecondaryClOrdID" required="N"/>
+      <field name="ExecID" required="Y"/>
+      <field name="ExecType" required="Y"/>
+      <field name="OrdStatus" required="Y"/>
+      <field name="Symbol" required="Y"/>
+      <field name="Side" required="Y"/>
+      <field name="LeavesQty" required="Y"/>
+      <field name="CumQty" required="Y"/>
+      <field name="AvgPx" required="Y"/>
+      <field name="LastQty" required="N"/>
+      <field name="LastPx" required="N"/>
+      <field name="TransactTime" required="N"/>
+      <field name="Text" required="N"/>
+    </message>
+
+    <message name="OrderCancelReject" msgtype="9" msgcat="app">
+      <field name="OrderID" required="Y"/>
+      <field name="ClOrdID" required="Y"/>
+      <field name="OrigClOrdID" required="Y"/>
+      <field name="OrdStatus" required="Y"/>
+      <field name="CxlRejResponseTo" required="Y"/>
+      <field name="CxlRejReason" required="N"/>
+      <field name="Text" required="N"/>
+    </message>
+  </messages>
+</fix>

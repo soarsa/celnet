@@ -1,0 +1,20 @@
+[package]
+name = "celnet-connectivity"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet connectivity extension — vendor FIX venue-adapter descriptors + certification harness on the celnet-fix engine. Vendor identity is data, never an identifier."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# Descriptors + cert-ledger snapshots serialize onto the one canonical API surface
+# (the connectivity control-plane RPCs) — derive-only, no runtime cost on the hot path.
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
