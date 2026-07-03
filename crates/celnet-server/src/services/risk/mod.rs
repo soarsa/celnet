@@ -25,6 +25,7 @@
 #![allow(clippy::result_large_err)]
 
 pub mod aggregate;
+pub mod combined_tail;
 pub mod convert;
 pub mod exotic_pricer;
 pub mod federate;
@@ -38,10 +39,10 @@ use celnet_limits::{
 use celnet_proto::risk_service_server::RiskService;
 use celnet_proto::{
     AggregateRatesRiskRequest, AggregateRatesRiskResponse, AggregateRiskRequest,
-    AggregateRiskResponse, BookRatesPositionRequest, BookRatesPositionResponse, DrillRiskRequest,
-    DrillRiskResponse, LimitStatusRequest, LimitStatusResponse, LimitUtilization,
-    ListPositionsRequest, ListPositionsResponse, ListRatesPositionsRequest,
-    ListRatesPositionsResponse, RiskScope,
+    AggregateRiskResponse, BookRatesPositionRequest, BookRatesPositionResponse,
+    CombinedTailRiskRequest, CombinedTailRiskResponse, DrillRiskRequest, DrillRiskResponse,
+    LimitStatusRequest, LimitStatusResponse, LimitUtilization, ListPositionsRequest,
+    ListPositionsResponse, ListRatesPositionsRequest, ListRatesPositionsResponse, RiskScope,
 };
 use celnet_risk_cube::{
     BookId, DeskId, DimensionId, EntityId, LocationId, NetGreeks, NodeAggregate, TraderId,
@@ -1043,6 +1044,29 @@ impl RiskService for RiskEdge {
             None,
         )?;
         let resp = self.list_rates_positions_impl(&req)?;
+        Ok(Response::new(resp))
+    }
+
+    async fn combined_tail_risk(
+        &self,
+        request: Request<CombinedTailRiskRequest>,
+    ) -> Result<Response<CombinedTailRiskResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let caller = resolve_caller(&self.sessions, req.session_token.as_deref(), None)?;
+        authorize_caller(
+            self.store.access_mode(),
+            &caller,
+            "RiskService/CombinedTailRisk",
+            RequiredAuthority::ReadAny,
+            req.correlation_id,
+        )?;
+        // A pure calculation over the request-supplied inline portfolio + scenario
+        // config (no store read, no live-market read), so — like `AggregateRatesRisk`
+        // — it runs in-process on every replica with no federation forwarding and the
+        // identical result everywhere.
+        let resp = crate::services::risk::combined_tail::combined_tail_risk_response(&req)?;
         Ok(Response::new(resp))
     }
 }

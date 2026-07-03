@@ -832,6 +832,19 @@ async fn handle_unary(
                 codec::aggregate_rates_risk_response_to_json
             )
         }
+        // The C2c unified joint options+FI tail-risk cube. Its request/response run on
+        // the descriptor-driven generated codec (arch item G — `ws-codec-from-proto`):
+        // the new messages carry no FX-legacy quirks, so they decode/encode purely
+        // from the field tables, proven round-trip byte-stable by the differential
+        // harness (`tests/ws_codec_differential.rs`).
+        "combined_tail_risk" => {
+            let req = decode!(generated_codec::decode_combined_tail_risk_request(o));
+            call!(
+                services.risk.combined_tail_risk(Request::new(req)),
+                "combined_tail_risk_response",
+                generated_codec::encode_combined_tail_risk_response
+            )
+        }
         "drill_risk" => {
             let req = decode!(codec::drill_risk_request_from_json(o));
             call!(

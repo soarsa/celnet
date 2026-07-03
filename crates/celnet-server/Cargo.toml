@@ -52,6 +52,12 @@ celnet-plugin-host.workspace = true
 celnet-proto.workspace = true
 celnet-risk-normalize.workspace = true
 celnet-risk-cube.workspace = true
+# Linear-FI scenario risk (the C2a rate-shock engine): supplies the `FiPosition` /
+# `RatePillars` / `RateShock` the `RiskService.CombinedTailRisk` edge builds the
+# `celnet_risk_cube::combined_tail_risk` joint-tail cube from. One-way edge
+# (server → rates-risk); its leaf graph is {rates, bond, types, risk-cube-free}, all
+# already in the server tree, so no cycle.
+celnet-rates-risk.workspace = true
 celnet-limits.workspace = true
 celnet-entitlements.workspace = true
 celnet-risk-fleet.workspace = true

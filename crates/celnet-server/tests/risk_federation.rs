@@ -900,6 +900,14 @@ impl RiskService for DelayingBackend {
         tokio::time::sleep(self.delay).await;
         RiskService::list_rates_positions(&self.inner, request).await
     }
+
+    async fn combined_tail_risk(
+        &self,
+        request: Request<celnet_proto::CombinedTailRiskRequest>,
+    ) -> Result<Response<celnet_proto::CombinedTailRiskResponse>, Status> {
+        tokio::time::sleep(self.delay).await;
+        RiskService::combined_tail_risk(&self.inner, request).await
+    }
 }
 
 /// Boot a delaying `RiskService` backend (seeded with `legs`, sleeping `delay` before

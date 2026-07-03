@@ -36,15 +36,18 @@
 use celnet_proto::wire_contract::{self, WireField, WireLabel};
 use celnet_proto::{
     Accumulator, AmericanOption, ArbReport, AsianOption, BasketLeg, BasketOption, BondInstrument,
-    BrokenDate, CcyPair, Cliquet, CommodityRef, Conventions, CryptoPair, CurveSet, Digital,
-    DoubleBarrier, EquityRef, FixingSchedule, ForwardStart, FraInstrument, FxForward, FxSwap,
-    Greeks, Instrument, Leg, ListedFutureOption, Lookback, MarketContext, MetalPair, Ndf,
-    OisInstrument, OisPillar, PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse,
+    BrokenDate, CcyPair, Cliquet, CombinedTailRiskRequest, CombinedTailRiskResponse, CommodityRef,
+    Conventions, CryptoPair, CurveSet, Digital, DoubleBarrier, EquityRef, FixingSchedule,
+    ForwardStart, FraInstrument, FxForward, FxSwap, Greeks, Instrument, JointTailScenario, Leg,
+    ListedFutureOption, Lookback, MarketContext, MetalPair, Ndf, OisFixedPeriod, OisInstrument,
+    OisPillar, OisSwapLeg, PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse,
     PriceXvaRequest, PriceXvaResponse, Quantity, Quanto, RateSensitivities, RatesInstrument,
     RatesPriceRequest, RatesPriceResponse, RatesPricingResult, SingleBarrier, Solve, Strategy,
-    StrikeOrDelta, Symbol, Tarf, Tenor, Touch, Underlying, Vanilla, VanillaIrsInstrument,
+    StrikeOrDelta, Symbol, TailRiskCurvePillar, TailRiskFiPosition, TailRiskKeyRate,
+    TailRiskOptionLeg, Tarf, Tenor, Touch, Underlying, Vanilla, VanillaIrsInstrument, VarEs,
     VarianceSwap, VolatilitySwap, WindowBarrier, XvaResult as WireXvaResult, XvaSurvivalCurve,
     XvaTrade, instrument, pillar_tenor, rate_sensitivities, rates_instrument, strike_or_delta,
+    tail_risk_fi_position,
 };
 use serde_json::{Map, Value, json};
 
@@ -751,6 +754,35 @@ fn f64_array(value: Option<&Value>, field: &str) -> DResult<Vec<f64>> {
             })
             .collect(),
         Some(_) => Err(CodecError(format!("`{field}` must be an array of numbers"))),
+    }
+}
+
+/// An OPTIONAL repeated message (absent/null ⇒ empty vec), the proto3-faithful
+/// counterpart of the required [`req_repeated`]: a `repeated` field that is simply
+/// omitted decodes to an empty list rather than erroring (e.g. the `CombinedTailRisk`
+/// `fi_positions` on an options-only request). Each present element is decoded via
+/// `T`'s [`WireBuilder`].
+fn opt_repeated<T: WireBuilder>(value: Option<&Value>, what: &str) -> DResult<Vec<T>> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(v) => v
+            .as_array()
+            .ok_or_else(|| CodecError(format!("field `{what}` must be a JSON array")))?
+            .iter()
+            .map(|e| decode(T::MESSAGE, obj(e, what)?))
+            .collect(),
+    }
+}
+
+/// An optional presence-tracked `String` (mirrors `opt_string`): `None` on absence,
+/// else the string value (error on a non-string).
+fn opt_string(value: Option<&Value>, field: &str) -> DResult<Option<String>> {
+    match value {
+        None => Ok(None),
+        Some(v) => v
+            .as_str()
+            .map(|s| Some(s.to_owned()))
+            .ok_or_else(|| CodecError(format!("field `{field}` must be a string"))),
     }
 }
 
@@ -1969,5 +2001,377 @@ impl WireBuilder for PriceXvaRequest {
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
+    }
+}
+
+// ===========================================================================
+// CombinedTailRisk — the C2c unified options+FI joint tail (RiskService)
+// ===========================================================================
+//
+// The RiskService.CombinedTailRisk request/response run fully on this
+// descriptor-driven codec: the messages carry NO FX-legacy quirk (flat GK inputs,
+// snake_case keys, one plain oneof), so both directions decode/encode purely from
+// the field tables via the generic [`decode`] / [`encode`] walk — no message-level
+// projection and only the one curated `oneof_required` entry
+// (`TailRiskFiPosition.position`). Both traits are implemented for every message so
+// the round-trip harness (`tests/ws_codec_differential.rs`) can prove
+// `decode(encode(v)) == v` byte-stable in each direction.
+
+/// Decode a [`CombinedTailRiskRequest`] envelope from its already-unwrapped WS JSON
+/// object — fully generic (no FX-legacy divergence).
+///
+/// # Errors
+/// A malformed leg / scenario / curve body, a missing required scalar, or a
+/// `TailRiskFiPosition` carrying no `position` arm, as a [`CodecError`].
+pub fn decode_combined_tail_risk_request(
+    o: &Map<String, Value>,
+) -> DResult<CombinedTailRiskRequest> {
+    decode(CombinedTailRiskRequest::MESSAGE, o)
+}
+
+/// Encode a [`CombinedTailRiskResponse`] to its WS JSON — the joint VaR/ES, the FI
+/// key-rate ladder, the signed parallel DV01 and the presence-tracked
+/// `correlation_id`, descriptor-driven.
+#[must_use]
+pub fn encode_combined_tail_risk_response(r: &CombinedTailRiskResponse) -> Value {
+    encode("CombinedTailRiskResponse", r)
+}
+
+/// Encode a [`CombinedTailRiskRequest`] to its WS JSON — the symmetric counterpart of
+/// [`decode_combined_tail_risk_request`] (the WS mirror's second encoding of the one
+/// contract in the request direction, e.g. for request logging / replay), and the
+/// encode half the round-trip harness proves stable.
+#[must_use]
+pub fn encode_combined_tail_risk_request(r: &CombinedTailRiskRequest) -> Value {
+    encode("CombinedTailRiskRequest", r)
+}
+
+/// Decode a [`CombinedTailRiskResponse`] from its WS JSON object — the symmetric
+/// counterpart of [`encode_combined_tail_risk_response`] (the WS mirror's second
+/// encoding of the one contract in the response direction, e.g. a client-side read),
+/// and the decode half the round-trip harness proves stable.
+///
+/// # Errors
+/// A malformed key-rate / VaR-ES body or a non-numeric scalar, as a [`CodecError`].
+pub fn decode_combined_tail_risk_response(
+    o: &Map<String, Value>,
+) -> DResult<CombinedTailRiskResponse> {
+    decode(CombinedTailRiskResponse::MESSAGE, o)
+}
+
+// --- request-side WireBuilders (decode: convert + place; the presence policy) ---
+
+impl WireBuilder for CombinedTailRiskRequest {
+    const MESSAGE: &'static str = "CombinedTailRiskRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_legs" => {
+                self.option_legs = opt_repeated::<TailRiskOptionLeg>(value, "option_legs")?;
+            }
+            "fi_positions" => {
+                self.fi_positions = opt_repeated::<TailRiskFiPosition>(value, "fi_positions")?;
+            }
+            "base_curve" => {
+                self.base_curve = opt_repeated::<TailRiskCurvePillar>(value, "base_curve")?;
+            }
+            "scenarios" => {
+                self.scenarios = opt_repeated::<JointTailScenario>(value, "scenarios")?;
+            }
+            "alpha" => self.alpha = f64_or_zero(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for TailRiskOptionLeg {
+    const MESSAGE: &'static str = "TailRiskOptionLeg";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "pair" => self.pair = Some(req_msg::<CcyPair>(value, "pair")?),
+            "option_type" => self.option_type = enum_or_zero(value),
+            "notional_base" => self.notional_base = f64_or_zero(value),
+            "spot" => self.spot = req_f64(value, "spot")?,
+            "strike" => self.strike = req_f64(value, "strike")?,
+            "vol" => self.vol = req_f64(value, "vol")?,
+            "t" => self.t = req_f64(value, "t")?,
+            "r_dom" => self.r_dom = f64_or_zero(value),
+            "r_for" => self.r_for = f64_or_zero(value),
+            "quoted_delta" => self.quoted_delta = enum_or_zero(value),
+            "premium_style" => self.premium_style = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for TailRiskFiPosition {
+    const MESSAGE: &'static str = "TailRiskFiPosition";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "ois_swap" => {
+                self.position = Some(tail_risk_fi_position::Position::OisSwap(req_msg::<
+                    OisSwapLeg,
+                >(
+                    value, "ois_swap",
+                )?));
+            }
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for OisSwapLeg {
+    const MESSAGE: &'static str = "OisSwapLeg";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "start" => self.start = req_f64(value, "start")?,
+            "periods" => self.periods = opt_repeated::<OisFixedPeriod>(value, "periods")?,
+            "fixed_rate" => self.fixed_rate = req_f64(value, "fixed_rate")?,
+            "notional" => self.notional = req_f64(value, "notional")?,
+            "receive_fixed" => self.receive_fixed = bool_or_false(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for OisFixedPeriod {
+    const MESSAGE: &'static str = "OisFixedPeriod";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "pay" => self.pay = req_f64(value, "pay")?,
+            "accrual" => self.accrual = req_f64(value, "accrual")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for TailRiskCurvePillar {
+    const MESSAGE: &'static str = "TailRiskCurvePillar";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "t" => self.t = req_f64(value, "t")?,
+            "zero_rate" => self.zero_rate = req_f64(value, "zero_rate")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for JointTailScenario {
+    const MESSAGE: &'static str = "JointTailScenario";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "spot_rel" => self.spot_rel = f64_or_zero(value),
+            "vol_abs" => self.vol_abs = f64_or_zero(value),
+            "discount_abs" => self.discount_abs = f64_or_zero(value),
+            "carry_abs" => self.carry_abs = f64_or_zero(value),
+            "rate_shifts" => self.rate_shifts = f64_array(value, "rate_shifts")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+// --- response-side WireBuilders (decode; exercised by the round-trip harness) ---
+
+impl WireBuilder for CombinedTailRiskResponse {
+    const MESSAGE: &'static str = "CombinedTailRiskResponse";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "joint_var_es" => self.joint_var_es = opt_msg::<VarEs>(value, "joint_var_es")?,
+            "key_rate" => self.key_rate = opt_repeated::<TailRiskKeyRate>(value, "key_rate")?,
+            "fi_parallel_dv01" => self.fi_parallel_dv01 = f64_or_zero(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for VarEs {
+    const MESSAGE: &'static str = "VarEs";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "var" => self.var = req_f64(value, "var")?,
+            "es" => self.es = req_f64(value, "es")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for TailRiskKeyRate {
+    const MESSAGE: &'static str = "TailRiskKeyRate";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "tenor_years" => self.tenor_years = req_f64(value, "tenor_years")?,
+            "dv01" => self.dv01 = req_f64(value, "dv01")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+// --- reflection adapters (encode: mechanical field access only) ---
+
+impl WireAdapter for CombinedTailRiskRequest {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "option_legs" => Some(WireVal::RepeatedMsg(
+                self.option_legs
+                    .iter()
+                    .map(|x| x as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "fi_positions" => Some(WireVal::RepeatedMsg(
+                self.fi_positions
+                    .iter()
+                    .map(|x| x as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "base_curve" => Some(WireVal::RepeatedMsg(
+                self.base_curve
+                    .iter()
+                    .map(|x| x as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "scenarios" => Some(WireVal::RepeatedMsg(
+                self.scenarios
+                    .iter()
+                    .map(|x| x as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "alpha" => Some(WireVal::F64(self.alpha)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            "session_token" => self.session_token.as_deref().map(WireVal::Str),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for TailRiskOptionLeg {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "pair" => self
+                .pair
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            "option_type" => Some(WireVal::Enum(self.option_type)),
+            "notional_base" => Some(WireVal::F64(self.notional_base)),
+            "spot" => Some(WireVal::F64(self.spot)),
+            "strike" => Some(WireVal::F64(self.strike)),
+            "vol" => Some(WireVal::F64(self.vol)),
+            "t" => Some(WireVal::F64(self.t)),
+            "r_dom" => Some(WireVal::F64(self.r_dom)),
+            "r_for" => Some(WireVal::F64(self.r_for)),
+            "quoted_delta" => Some(WireVal::Enum(self.quoted_delta)),
+            "premium_style" => Some(WireVal::Enum(self.premium_style)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for TailRiskFiPosition {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match (proto_name, &self.position) {
+            ("ois_swap", Some(tail_risk_fi_position::Position::OisSwap(s))) => {
+                Some(WireVal::Msg(s as &dyn WireAdapter))
+            }
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for OisSwapLeg {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "start" => Some(WireVal::F64(self.start)),
+            "periods" => Some(WireVal::RepeatedMsg(
+                self.periods.iter().map(|p| p as &dyn WireAdapter).collect(),
+            )),
+            "fixed_rate" => Some(WireVal::F64(self.fixed_rate)),
+            "notional" => Some(WireVal::F64(self.notional)),
+            "receive_fixed" => Some(WireVal::Bool(self.receive_fixed)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for OisFixedPeriod {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "pay" => Some(WireVal::F64(self.pay)),
+            "accrual" => Some(WireVal::F64(self.accrual)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for TailRiskCurvePillar {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "t" => Some(WireVal::F64(self.t)),
+            "zero_rate" => Some(WireVal::F64(self.zero_rate)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for JointTailScenario {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "spot_rel" => Some(WireVal::F64(self.spot_rel)),
+            "vol_abs" => Some(WireVal::F64(self.vol_abs)),
+            "discount_abs" => Some(WireVal::F64(self.discount_abs)),
+            "carry_abs" => Some(WireVal::F64(self.carry_abs)),
+            "rate_shifts" => Some(WireVal::RepeatedF64(&self.rate_shifts)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CombinedTailRiskResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "joint_var_es" => self
+                .joint_var_es
+                .as_ref()
+                .map(|v| WireVal::Msg(v as &dyn WireAdapter)),
+            "key_rate" => Some(WireVal::RepeatedMsg(
+                self.key_rate
+                    .iter()
+                    .map(|k| k as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "fi_parallel_dv01" => Some(WireVal::F64(self.fi_parallel_dv01)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for VarEs {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "var" => Some(WireVal::F64(self.var)),
+            "es" => Some(WireVal::F64(self.es)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for TailRiskKeyRate {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor_years" => Some(WireVal::F64(self.tenor_years)),
+            "dv01" => Some(WireVal::F64(self.dv01)),
+            _ => None,
+        }
     }
 }

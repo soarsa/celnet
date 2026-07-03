@@ -114,6 +114,9 @@ pub(crate) fn oneof_required(message: &str, group: &str) -> bool {
         // A rates instrument must name its family (`rates_instrument_from_json`
         // errors when the `ois` arm is absent).
         | ("RatesInstrument", "instrument")
+        // A combined-tail-risk FI leg must name its instrument arm (only `ois_swap`
+        // today); a leg carrying no arm cannot build a `celnet_rates_risk::FiPosition`.
+        | ("TailRiskFiPosition", "position")
     )
 }
 

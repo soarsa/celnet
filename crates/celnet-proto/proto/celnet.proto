@@ -3068,6 +3068,16 @@ service RiskService {
   // List the firm rates positions (scoped + entitlement-pruned), the rates analogue
   // of `ListPositions`. Reads the rates position store the booked flow populates.
   rpc ListRatesPositions(ListRatesPositionsRequest) returns (ListRatesPositionsResponse);
+  // Compute one-cube joint options+FI tail risk (the C2c unified risk cube / R-a
+  // "true single VaR engine"): full joint bump-and-revalue over aligned
+  // (options-shock, rate-shock) scenarios yields the non-additive joint VaR/ES over
+  // the union of the vanilla FX option legs and the linear-FI (OIS) legs, plus the
+  // FI key-rate DV01 axis and signed parallel DV01. A pure calculation over the
+  // inline portfolio + scenario config (like `AggregateRatesRisk`): no store read, no
+  // market read, so every replica computes the identical result. Options-only reduces
+  // to the options VaR; FI-only to the rate VaR; a mixed book shows the cross-risk-
+  // class diversification (the economically-correct joint tail).
+  rpc CombinedTailRisk(CombinedTailRiskRequest) returns (CombinedTailRiskResponse);
 }
 
 // The surface workflow: read a smile, mark/recalibrate from broker quotes, and
@@ -4736,6 +4746,179 @@ message AggregateRatesRiskResponse {
   repeated RatesRiskNode nodes = 1;
   // Echo of the request's `correlation_id`, if supplied.
   optional uint64 correlation_id = 2;
+}
+
+// ===========================================================================
+// combined tail risk — the C2c unified options+FI joint tail
+// (RiskService.CombinedTailRisk)
+// ===========================================================================
+//
+// The wire surface of `celnet_risk_cube::fi::combined_tail_risk` — the R-a "true
+// single VaR engine": ONE non-additive cube over a portfolio's vanilla FX option
+// legs AND its linear-FI (OIS-swap) legs, by full joint bump-and-revalue over
+// aligned (options-shock, rate-shock) scenarios, plus the FI key-rate DV01 axis and
+// signed parallel DV01. The whole portfolio + scenario config travels INLINE on the
+// request (a pure calculation, like `AggregateRatesRisk` — no store read, no market
+// read), so every replica computes the identical result.
+
+// One vanilla FX option leg of the tail-risk portfolio: the raw Garman-Kohlhagen
+// inputs plus its quoted conventions — exactly the arguments of
+// `celnet_risk_normalize::PositionRisk::fx`. The canonical convention-free risk is
+// re-derived server-side from these inputs (never a convention-baked Greek). Carried
+// as flat `r_dom`/`r_for` (the FX two-rate carry) rather than the generalized
+// `VanillaInputs.carry` oneof, matching the FX joint-tail leaf byte-for-byte.
+message TailRiskOptionLeg {
+  // The currency pair (BASE/QUOTE).
+  CcyPair pair = 1;
+  // Option type (call/put on the base currency).
+  OptionType option_type = 2;
+  // Signed base-currency notional (positive = long the option); per-unit risk is
+  // scaled by this.
+  double notional_base = 3;
+  // Spot FX rate (quote per 1 unit of base).
+  double spot = 4;
+  // Strike (quote per 1 unit of base).
+  double strike = 5;
+  // Annualized volatility (absolute, e.g. 0.10 = 10 vol).
+  double vol = 6;
+  // Time to expiry in years (vol-time).
+  double t = 7;
+  // The continuously-compounded domestic (numeraire / quote) rate `r_dom`.
+  double r_dom = 8;
+  // The continuously-compounded foreign (base) rate `r_for`.
+  double r_for = 9;
+  // The delta convention the leg was quoted under (provenance; the canonical
+  // spot-unadjusted delta is unaffected).
+  DeltaConvention quoted_delta = 10;
+  // The premium style the leg was quoted under (provenance).
+  PremiumStyle premium_style = 11;
+}
+
+// One accrual period of an OIS fixed leg, in curve year-fraction coordinates
+// (mirrors `celnet_rates::FixedPeriod`).
+message OisFixedPeriod {
+  // Payment time (period end) in curve year-fraction coordinates; strictly
+  // increasing across the schedule.
+  double pay = 1;
+  // Year-fraction accrual for the period (e.g. ACT/360); strictly positive.
+  double accrual = 2;
+}
+
+// A fixed-vs-OIS swap leg priced off the (shocked) discount curve — mirrors
+// `celnet_rates_risk::FiPosition::OisSwap`. Valued by the self-discounting OIS
+// identity `N·(K·A − (DF(start) − DF(maturity)))` (the receive-fixed sign, negated
+// for pay-fixed).
+message OisSwapLeg {
+  // The swap effective (start) time in curve year-fraction coordinates.
+  double start = 1;
+  // The ordered fixed-leg accrual periods (the final period's `pay` is maturity).
+  repeated OisFixedPeriod periods = 2;
+  // The fixed rate `K` paid/received (decimal, e.g. 0.033).
+  double fixed_rate = 3;
+  // The swap notional `N` in curve-currency units (positive).
+  double notional = 4;
+  // True to receive fixed (the raw OIS-PV sign), false to pay fixed (negated).
+  bool receive_fixed = 5;
+}
+
+// One linear-FI position of the tail-risk portfolio. A oneof mirroring
+// `celnet_rates_risk::FiPosition`; the swap arm is wired now (the cash-bond arm
+// grows additively — one contract, no versioning).
+message TailRiskFiPosition {
+  // Exactly one arm is set.
+  oneof position {
+    // A fixed-vs-OIS swap.
+    OisSwapLeg ois_swap = 1;
+  }
+}
+
+// One dated pillar of the base discount curve the FI legs reprice off — a
+// `(time, continuously-compounded zero rate)` knot (mirrors one entry of
+// `celnet_rates_risk::RatePillars`). The curve origin `(0, DF=1)` is implicit.
+message TailRiskCurvePillar {
+  // The pillar time in curve year-fraction coordinates; strictly increasing, > 0.
+  double t = 1;
+  // The continuously-compounded zero rate at `t`.
+  double zero_rate = 2;
+}
+
+// One joint cross-risk-class scenario: an options spot/vol/carry shock applied to
+// the option legs AND a per-pillar rate shock applied to the FI legs, as ONE market
+// state (aligned by scenario index) — mirrors `celnet_risk_cube::JointScenario`.
+message JointTailScenario {
+  // Relative spot shock (0.01 = +1%): `spot *= 1 + spot_rel`.
+  double spot_rel = 1;
+  // Absolute vol shock in vol units (0.01 = +1 vol point): `vol += vol_abs`.
+  double vol_abs = 2;
+  // Absolute discount-rate shock `Δr` (the numeraire rate; `r_dom` for FX).
+  double discount_abs = 3;
+  // Absolute net-carry shock `Δb` (`r_dom − r_for` for FX).
+  double carry_abs = 4;
+  // Per-pillar absolute additive zero-rate shifts, aligned with `base_curve` (the
+  // `RateShock`). Its length must equal the base-curve pillar count when FI legs are
+  // present; ignored (and may be empty) when there are no FI legs.
+  repeated double rate_shifts = 5;
+}
+
+// A value-at-risk / expected-shortfall pair (mirrors `celnet_risk_cube::VarEs`): the
+// alpha-quantile loss and the mean tail loss beyond it.
+message VarEs {
+  // Value-at-Risk: the `alpha`-quantile loss.
+  double var = 1;
+  // Expected Shortfall: the mean loss in the tail beyond VaR.
+  double es = 2;
+}
+
+// One point of the FI signed key-rate DV01 ladder: the signed ΔPV per +1bp up-bump
+// of one curve pillar's zero rate (mirrors `celnet_rates_risk::KeyRatePoint`). The
+// tenor is a real pillar time (fractional tenors allowed), so it is a `double` —
+// unlike the whole-year-bucketed `KeyRateDv01` of the additive rates rollup.
+message TailRiskKeyRate {
+  // The pillar tenor in years.
+  double tenor_years = 1;
+  // The signed DV01 at this tenor (a rate rise is a loss ⇒ negative for a long bond
+  // / receive-fixed swap).
+  double dv01 = 2;
+}
+
+// Request: one-cube joint options+FI tail risk over an inline portfolio + scenario
+// config. Options-only ⇒ empty `fi_positions` (reduces to the options VaR); FI-only
+// ⇒ empty `option_legs` (reduces to the rate VaR); a mixed book shows the joint
+// cross-risk-class diversification.
+message CombinedTailRiskRequest {
+  // The vanilla FX option legs (may be empty for an FI-only request).
+  repeated TailRiskOptionLeg option_legs = 1;
+  // The linear-FI legs (may be empty for an options-only request).
+  repeated TailRiskFiPosition fi_positions = 2;
+  // The base discount-curve zero-rate pillars the rate shocks perturb and the FI
+  // key-rate ladder is measured off (required, ≥ 1 pillar, strictly increasing in
+  // time). Present even for an options-only request (the FI ladder is then all-zero).
+  repeated TailRiskCurvePillar base_curve = 3;
+  // The aligned joint scenarios (one market state each) reduced to the tail.
+  repeated JointTailScenario scenarios = 4;
+  // The VaR/ES confidence level (e.g. 0.99). Defaults to 0.99 when 0.
+  double alpha = 5;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional uint64 correlation_id = 6;
+  // The bearer session token from `AuthService.Login`. When present and valid the
+  // server authenticates the caller; absent ⇒ the grant-all default (mode-gated,
+  // exactly as `AggregateRatesRisk`). A secret — never logged.
+  optional string session_token = 7;
+}
+
+// Response: the joint tail plus the FI key-rate axis and signed parallel DV01
+// (mirrors `celnet_risk_cube::CombinedTailRisk`).
+message CombinedTailRiskResponse {
+  // The joint options-spot/vol + FI-rate tail — one non-additive VaR/ES over the union.
+  VarEs joint_var_es = 1;
+  // The FI per-tenor signed key-rate DV01 ladder, ascending by pillar tenor (empty
+  // when there are no FI legs; one point per base-curve pillar otherwise).
+  repeated TailRiskKeyRate key_rate = 2;
+  // The FI signed parallel DV01 (a rate rise is a loss ⇒ negative for a long bond /
+  // receive-fixed swap; 0 when there are no FI legs).
+  double fi_parallel_dv01 = 3;
+  // Echo of the request's `correlation_id`, if supplied.
+  optional uint64 correlation_id = 4;
 }
 
 // ===========================================================================
