@@ -2256,7 +2256,9 @@ export class MockTransport implements CelnetTransport {
       referenceDate: source.referenceDate,
       points: MockTransport.curvePointsAt(discount, queryTenorYears),
       parPillars: MockTransport.curveParPillars(source),
-      curveVersion,
+      // Echo the pinned version only when reading one (omit the key otherwise —
+      // exactOptionalPropertyTypes; a live bootstrap has no version).
+      ...(curveVersion !== undefined ? { curveVersion } : {}),
       epochNanos: nowNanos(),
     };
   }

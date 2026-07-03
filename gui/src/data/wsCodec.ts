@@ -1612,15 +1612,14 @@ export function calibratedCurveFromWire(o: WireObject): CalibratedCurve {
  * bootstrapped live. The presence-tracked `curve_version` is OMITTED when absent
  * (proto3 optional), matching the server's `opt_u64` decode.
  */
-export function getCurveRequestToWire(args: {
-  readonly curveSet: RatesCurveSet | null;
-  readonly queryTenorYears: readonly number[];
-  readonly curveVersion?: bigint;
-}): WireObject {
-  const w: WireObject = { query_tenor_years: [...args.queryTenorYears] };
-  if (args.curveSet) w["curve_set"] = ratesCurveSetToWire(args.curveSet);
-  if (args.curveVersion !== undefined)
-    w["curve_version"] = Number(args.curveVersion);
+export function getCurveRequestToWire(
+  curveSet: RatesCurveSet | null,
+  queryTenorYears: readonly number[],
+  curveVersion?: bigint,
+): WireObject {
+  const w: WireObject = { query_tenor_years: [...queryTenorYears] };
+  if (curveSet) w["curve_set"] = ratesCurveSetToWire(curveSet);
+  if (curveVersion !== undefined) w["curve_version"] = Number(curveVersion);
   return w;
 }
 
@@ -1636,21 +1635,20 @@ export function markCurveRequestToWire(curveSet: RatesCurveSet): WireObject {
  * `instrument` is presence-tracked — OMITTED when absent (only the shifted curve is
  * returned).
  */
-export function curveScenarioRequestToWire(args: {
-  readonly curveSet: RatesCurveSet;
-  readonly parallelShiftBp: number;
-  readonly keyRateShiftBp: readonly number[];
-  readonly queryTenorYears: readonly number[];
-  readonly instrument?: RatesInstrument;
-}): WireObject {
+export function curveScenarioRequestToWire(
+  curveSet: RatesCurveSet,
+  parallelShiftBp: number,
+  keyRateShiftBp: readonly number[],
+  queryTenorYears: readonly number[],
+  instrument?: RatesInstrument,
+): WireObject {
   const w: WireObject = {
-    curve_set: ratesCurveSetToWire(args.curveSet),
-    parallel_shift_bp: args.parallelShiftBp,
-    key_rate_shift_bp: [...args.keyRateShiftBp],
-    query_tenor_years: [...args.queryTenorYears],
+    curve_set: ratesCurveSetToWire(curveSet),
+    parallel_shift_bp: parallelShiftBp,
+    key_rate_shift_bp: [...keyRateShiftBp],
+    query_tenor_years: [...queryTenorYears],
   };
-  if (args.instrument)
-    w["instrument"] = ratesInstrumentUnionToWire(args.instrument);
+  if (instrument) w["instrument"] = ratesInstrumentUnionToWire(instrument);
   return w;
 }
 
@@ -1674,6 +1672,9 @@ function curveParPillarFromWire(o: WireObject): CurveParPillar {
 /** Decode a `get_curve_response` frame into a {@link GetCurveResult}. */
 export function getCurveResultFromWire(o: WireObject): GetCurveResult {
   const ref = child(o, "reference_date");
+  // Presence-tracked: `curveVersion` present iff the request pinned a marked version
+  // (omit the key entirely when absent — exactOptionalPropertyTypes).
+  const version = optBigInt(o, "curve_version");
   return {
     currency: str(o, "currency"),
     referenceDate: {
@@ -1683,8 +1684,7 @@ export function getCurveResultFromWire(o: WireObject): GetCurveResult {
     },
     points: array(o, "points").map(curvePointFromWire),
     parPillars: array(o, "par_pillars").map(curveParPillarFromWire),
-    // Presence-tracked: present iff the request pinned a marked version.
-    curveVersion: optBigInt(o, "curve_version"),
+    ...(version !== undefined ? { curveVersion: version } : {}),
     epochNanos: numToBigInt(o, "epoch_nanos"),
   };
 }

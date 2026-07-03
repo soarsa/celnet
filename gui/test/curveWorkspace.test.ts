@@ -180,9 +180,10 @@ describe("curvePillarNodes — the YieldCurve wiring off the real bootstrap", ()
 describe("CurveWorkspace — model honesty: affordances match the shipped math", () => {
   // Grounded (celnet graph, 2026-07-01): the in-browser bootstrap implements ONLY
   // log-linear-on-log-DF; monotone-convex + turn jumps exist server-engine-side
-  // (celnet-rates curve.rs / turns.rs) but are absent from the wire `CurveSet`;
-  // and NO curve publish/versioning exists anywhere (zero hits for CurveBook /
-  // publish_curve / curve_version). The workspace must say exactly that.
+  // (celnet-rates curve.rs / turns.rs) but are absent from the wire `CurveSet`. The
+  // workspace must say exactly that. Curve publish/versioning DOES now exist
+  // (SurfaceService MarkCurve / GetCurve, ADR-0021) — it lives in the dedicated
+  // Query · mark · scenario lens; the request-scoped pillar editor routes to it.
 
   it("offers log-linear DF as the only enabled, selected interpolation — the real bootstrap", () => {
     render(createElement(CurveWorkspace));
@@ -201,13 +202,20 @@ describe("CurveWorkspace — model honesty: affordances match the shipped math",
     expect(screen.getByText(/not yet on the wire CurveSet/i)).toBeInTheDocument();
   });
 
-  it("ships NO publish/version affordance and states the request-scoped truth", () => {
+  it("keeps the pillar editor request-scoped and routes versioning to the Query · mark · scenario lens (ADR-0021)", () => {
     render(createElement(CurveWorkspace));
-    expect(screen.queryByRole("button", { name: /publish/i })).toBeNull();
+    // The pillar editor itself pins nothing: no publish button, no version badge —
     // Mockup 14's honesty inversion (draft-v207 / live-v206) must NOT leak here.
+    expect(screen.queryByRole("button", { name: /publish/i })).toBeNull();
     expect(screen.queryByText(/(draft|live)\s*v\d+/i)).toBeNull();
+    // But server-side curve versioning DOES now exist (SurfaceService MarkCurve /
+    // GetCurve): the request-scoped note routes the trader to the query lens, whose
+    // tab is present alongside the two authoring modes.
     expect(
-      screen.getByText(/no server-side curve publish or versioning/i),
+      screen.getByText(/pin a curve under a server version/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /query.*mark.*scenario/i }),
     ).toBeInTheDocument();
   });
 });

@@ -1770,7 +1770,7 @@ export class WsTransport implements CelnetTransport {
     // the read curve is byte-identical to the offline in-app bootstrap.
     const reply = await this.conn.request(
       "get_curve",
-      getCurveRequestToWire({ curveSet, queryTenorYears, curveVersion }),
+      getCurveRequestToWire(curveSet, queryTenorYears, curveVersion),
       "get_curve_response",
       PRICING_REQUEST_TIMEOUT_MS,
     );
@@ -1803,13 +1803,13 @@ export class WsTransport implements CelnetTransport {
     // Scenario re-bootstraps through the same engine — pricing-class deadline.
     const reply = await this.conn.request(
       "curve_scenario",
-      curveScenarioRequestToWire({
+      curveScenarioRequestToWire(
         curveSet,
         parallelShiftBp,
         keyRateShiftBp,
         queryTenorYears,
         instrument,
-      }),
+      ),
       "curve_scenario_response",
       PRICING_REQUEST_TIMEOUT_MS,
     );
