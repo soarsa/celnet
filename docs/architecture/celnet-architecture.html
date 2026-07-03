@@ -3,35 +3,45 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>CelNet Architecture — current state &amp; the one-contract target</title>
-<link href="https://fonts.googleapis.com/css2?family=Anaheim:wght@400..800&display=swap" rel="stylesheet" />
+<title>Celnet Architecture — Current → Target (one cross-asset contract)</title>
 <style>
-  /* ---------------------------------------------------------------------
-     CelNet architecture — current vs one-contract target.
-     Self-contained: inline CSS + inline SVG, no external JS/CDN.
-     Palette + surfaces mirror the Fixed-Income mockups (docs/fixed-income
-     /mockups) and the Celer brand kit: coral #ff7357 (accent + the
-     FI-unification highlight), indigo #6b6bf5 (interactive), navy base.
-     --------------------------------------------------------------------- */
+  /* =========================================================================
+     Celnet architecture — CURRENT (landed) → TARGET.
+     Self-contained: inline CSS + inline SVG only. No external fonts/JS/CDN/images.
+     Brand: Celer coral #ff7357 (accent + the unification highlight), indigo
+     #6b6bf5 (interactive), navy base. Fonts: Anaheim / Space Grotesk named first,
+     degrading to the system stack (kept local — no external font fetch).
+     Facts verified against origin/main via the lodestar knowledge graph
+     (github.com-soarsa-celnet) + docs/ARCHITECTURE-TARGET.md, ADR-0020,
+     docs/plan/CENTRAL-CORE-UNIFICATION.md.
+     ========================================================================= */
   :root {
-    --navy:      #1B1F2A;   /* base surface   */
-    --inset:     #14171F;   /* recessed       */
-    --raised:    #282C3E;   /* raised panels  */
-    --group:     #212534;   /* group rows     */
-    --coral:     #ff7357;   /* brand accent + FI-unification highlight */
-    --coral-soft: rgba(255,115,87,0.15);
+    --navy:       #1B1F2A;
+    --inset:      #14171F;
+    --raised:     #282C3E;
+    --raised-2:   #2f3346;
+    --group:      #212534;
+    --coral:      #ff7357;
+    --coral-soft: rgba(255,115,87,0.14);
     --coral-line: rgba(255,115,87,0.55);
-    --indigo:    #6b6bf5;   /* interactive    */
-    --indigo-soft: rgba(107,107,245,0.18);
-    --text:      #EBEDF5;
-    --secondary: #979CB7;   /* uppercase labels */
-    --tertiary:  #6E7391;
-    --green:     #57d9a3;
-    --amber:     #f5c451;
-    --red:       #f06f7a;
-    --hair:      rgba(255,255,255,0.08);
-    --hair-strong: rgba(255,255,255,0.14);
-    --mono: "SF Mono", "IBM Plex Mono", "Menlo", "Consolas", ui-monospace, monospace;
+    --indigo:     #6b6bf5;
+    --indigo-soft:rgba(107,107,245,0.16);
+    --indigo-line:rgba(107,107,245,0.5);
+    --text:       #EBEDF5;
+    --secondary:  #979CB7;
+    --tertiary:   #6E7391;
+    --green:      #57d9a3;
+    --green-soft: rgba(87,217,163,0.14);
+    --green-line: rgba(87,217,163,0.5);
+    --amber:      #f5c451;
+    --amber-soft: rgba(245,196,81,0.14);
+    --amber-line: rgba(245,196,81,0.5);
+    --red:        #f06f7a;
+    --hair:       rgba(255,255,255,0.08);
+    --hair-strong:rgba(255,255,255,0.14);
+    --mono: "JetBrains Mono", "SF Mono", "IBM Plex Mono", "Menlo", "Consolas", ui-monospace, monospace;
+    --brand: "Anaheim", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --display: "Space Grotesk", "Anaheim", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     --r-sm: 6px; --r-md: 10px; --r-lg: 16px;
   }
 
@@ -39,575 +49,608 @@
 
   html, body {
     background:
-      radial-gradient(1200px 600px at 82% -8%, rgba(107,107,245,0.10), transparent 60%),
-      radial-gradient(900px 520px at 4% 2%, rgba(255,115,87,0.08), transparent 55%),
+      radial-gradient(1200px 620px at 84% -10%, rgba(107,107,245,0.14), transparent 60%),
+      radial-gradient(1000px 560px at 2% 1%, rgba(255,115,87,0.10), transparent 55%),
+      radial-gradient(900px 700px at 55% 118%, rgba(107,107,245,0.07), transparent 60%),
       var(--navy);
+    background-attachment: fixed;
     color: var(--text);
-    font-family: "Anaheim", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-family: var(--brand);
     font-size: 15px;
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
     min-height: 100%;
   }
 
-  .page { max-width: 1220px; margin: 0 auto; padding: 0 28px 64px; }
+  .page { max-width: 1280px; margin: 0 auto; padding: 0 28px 72px; }
 
   /* ---------- header ---------- */
   header.top {
-    display: flex; align-items: center; gap: 16px;
-    padding: 26px 0 22px; border-bottom: 1px solid var(--hair);
-    margin-bottom: 34px;
+    display: flex; align-items: center; gap: 15px;
+    padding: 26px 0 20px; border-bottom: 1px solid var(--hair);
+    margin-bottom: 30px;
   }
-  .logo { width: 42px; height: 42px; flex: none; filter: drop-shadow(0 3px 10px rgba(255,115,87,0.4)); }
-  .brand { display: flex; flex-direction: column; gap: 1px; }
-  .wordmark { font-size: 26px; font-weight: 700; letter-spacing: 0.02em; line-height: 1; }
+  .logo { width: 40px; height: 40px; flex: none; filter: drop-shadow(0 3px 11px rgba(255,115,87,0.42)); }
+  .brand { display: flex; flex-direction: column; gap: 2px; }
+  .wordmark { font-size: 25px; font-weight: 700; letter-spacing: 0.01em; line-height: 1; }
   .wordmark b { color: var(--coral); font-weight: 800; }
-  .brand .caption { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--secondary); }
+  .brand .caption { font-size: 10.5px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--secondary); }
   .top .spacer { flex: 1; }
   .top .tag {
-    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    font-size: 10.5px; letter-spacing: 0.13em; text-transform: uppercase;
     color: var(--secondary); border: 1px solid var(--hair-strong);
     padding: 7px 13px; border-radius: 999px; background: rgba(255,255,255,0.02);
+    font-family: var(--mono);
   }
 
   /* ---------- doc title ---------- */
-  .doc-title { font-size: 34px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.12; }
+  .doc-title { font-family: var(--display); font-size: 35px; font-weight: 700; letter-spacing: -0.015em; line-height: 1.1; margin-top: 6px; }
   .doc-title .u { color: var(--coral); }
-  .doc-sub { color: var(--secondary); font-size: 16px; margin-top: 10px; max-width: 860px; }
-  .doc-sub code { font-family: var(--mono); font-size: 13px; color: var(--text); background: var(--inset);
-    padding: 1px 6px; border-radius: 5px; border: 1px solid var(--hair); }
-
-  /* ---------- section scaffold ---------- */
-  section { margin-top: 52px; }
-  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 8px; }
-  .sec-num { font-family: var(--mono); font-size: 13px; color: var(--coral); letter-spacing: 0.08em; }
-  .sec-title { font-size: 23px; font-weight: 700; letter-spacing: 0.005em; }
-  .sec-lede { color: var(--secondary); font-size: 15px; max-width: 940px; margin-bottom: 22px; }
-  .sec-lede code, .verdict code, .prose code, table code {
-    font-family: var(--mono); font-size: 12.5px; color: var(--text);
-    background: var(--inset); padding: 1px 6px; border-radius: 5px; border: 1px solid var(--hair);
-  }
-
-  /* ---------- diagram frame ---------- */
-  .diagram {
-    background: linear-gradient(180deg, rgba(255,255,255,0.012), rgba(0,0,0,0.14));
-    border: 1px solid var(--hair); border-radius: var(--r-lg);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.3), 0 12px 40px rgba(0,0,0,0.28);
-    padding: 20px 20px 8px; margin-bottom: 18px;
-  }
-  .diagram svg { display: block; width: 100%; height: auto; }
+  .doc-title .i { color: var(--indigo); }
+  .doc-sub { color: var(--secondary); font-size: 16px; margin-top: 12px; max-width: 940px; }
+  code, .mono { font-family: var(--mono); font-size: 0.86em; color: var(--text);
+    background: var(--inset); padding: 1px 6px; border-radius: 5px; border: 1px solid var(--hair); }
 
   /* ---------- legend ---------- */
-  .legend { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 4px 2px 0; }
-  .lg { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--secondary); }
-  .lg .swatch { width: 26px; height: 12px; border-radius: 3px; flex: none; }
-  .lg .swatch.neutral { background: var(--raised); border: 1px solid var(--hair-strong); }
-  .lg .swatch.coral { background: var(--coral-soft); border: 1px solid var(--coral-line); }
-  .lg .swatch.indigo { background: var(--indigo-soft); border: 1px solid var(--indigo); }
-  .lg .swatch.dash { background: transparent; border: 1.5px dashed var(--coral-line); }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 22px 0 6px; align-items: center; }
+  .legend .lg { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--secondary); }
+  .dot { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+  .dot.live   { background: var(--green);  box-shadow: 0 0 8px var(--green-line); }
+  .dot.flight { background: var(--indigo); box-shadow: 0 0 8px var(--indigo-line); }
+  .dot.part   { background: var(--amber);  box-shadow: 0 0 8px var(--amber-line); }
 
-  /* ---------- verdict block ---------- */
-  .verdict {
-    display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 1px;
-    background: var(--hair); border: 1px solid var(--hair); border-radius: var(--r-md);
-    overflow: hidden; margin-top: 22px;
+  .badge { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 999px; font-weight: 600; white-space: nowrap; flex: none; }
+  .badge.live   { color: var(--green);  background: var(--green-soft);  border: 1px solid var(--green-line); }
+  .badge.flight { color: var(--indigo); background: var(--indigo-soft); border: 1px solid var(--indigo-line); }
+  .badge.part   { color: var(--amber);  background: var(--amber-soft);  border: 1px solid var(--amber-line); }
+
+  /* ---------- section scaffold ---------- */
+  section { margin-top: 50px; }
+  .sec-head { display: flex; align-items: baseline; gap: 13px; margin-bottom: 8px; }
+  .sec-num { font-family: var(--mono); font-size: 12.5px; color: var(--coral); letter-spacing: 0.06em; }
+  .sec-title { font-family: var(--display); font-size: 23px; font-weight: 600; letter-spacing: 0.003em; }
+  .sec-lede { color: var(--secondary); font-size: 15px; max-width: 1000px; margin-bottom: 22px; }
+
+  /* ---------- thesis banner ---------- */
+  .thesis {
+    margin-top: 26px; border: 1px solid var(--coral-line); border-radius: var(--r-lg);
+    background: linear-gradient(180deg, var(--coral-soft), rgba(255,115,87,0.03));
+    padding: 20px 24px; display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center;
   }
-  .seam { background: var(--raised); padding: 14px 16px; }
-  .seam .sk { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--secondary); margin-bottom: 6px; display:flex; align-items:center; gap:8px;}
-  .seam .sv { font-size: 13.5px; color: var(--text); line-height: 1.5; }
-  .st { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase;
-    padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
-  .st.siloed  { color: var(--coral);  background: var(--coral-soft);  border: 1px solid var(--coral-line); }
-  .st.absent  { color: var(--red);    background: rgba(240,111,122,0.14); border: 1px solid rgba(240,111,122,0.5); }
-  .st.wired   { color: var(--amber);  background: rgba(245,196,81,0.14); border: 1px solid rgba(245,196,81,0.5); }
-  .st.unified { color: var(--green);  background: rgba(87,217,163,0.14); border: 1px solid rgba(87,217,163,0.5); }
+  .thesis .mark { font-family: var(--display); font-size: 30px; font-weight: 700; color: var(--coral); line-height: 1;
+    writing-mode: vertical-rl; text-orientation: mixed; letter-spacing: 0.02em; opacity: 0.85; }
+  .thesis p { font-size: 15.5px; color: var(--text); }
+  .thesis b { color: var(--coral); }
+  .thesis .em { color: var(--indigo); font-weight: 600; }
 
-  .prose { color: var(--text); font-size: 15px; max-width: 960px; margin-top: 20px; }
-  .prose p { margin-bottom: 12px; }
-  .prose b { color: var(--coral); font-weight: 700; }
-  .prose .ib { color: var(--indigo); font-weight: 700; }
+  /* ---------- generic panel ---------- */
+  .panel { background: var(--raised); border: 1px solid var(--hair); border-radius: var(--r-md); }
 
-  /* ---------- delivery-plan table ---------- */
-  table.plan { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 6px;
-    background: var(--raised); border-radius: var(--r-md); overflow: hidden;
-    border: 1px solid var(--hair); box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
-  table.plan thead th {
-    text-align: left; font-size: 10.5px; letter-spacing: 0.07em; text-transform: uppercase;
-    color: var(--secondary); font-weight: 700; padding: 12px 14px;
-    background: var(--group); border-bottom: 1px solid var(--hair-strong);
+  /* ---------- central-contract diagram ---------- */
+  .core-wrap { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  .band { border: 1px solid var(--hair); border-radius: var(--r-md); background: var(--group); padding: 15px 16px; }
+  .band > .band-hd { display: flex; align-items: center; gap: 10px; margin-bottom: 13px; }
+  .band .band-title { font-family: var(--display); font-size: 14px; font-weight: 600; letter-spacing: 0.02em; }
+  .band .band-note { font-size: 11.5px; color: var(--tertiary); margin-left: auto; font-family: var(--mono); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 9px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px; padding: 8px 11px;
+    border-radius: var(--r-sm); border: 1px solid var(--hair-strong); background: var(--raised);
+    font-size: 12.5px; line-height: 1.25;
   }
-  table.plan tbody td { padding: 12px 14px; border-bottom: 1px solid var(--hair); vertical-align: top; }
-  table.plan tbody tr:last-child td { border-bottom: 0; }
-  table.plan tbody tr:hover { background: rgba(255,255,255,0.02); }
-  table.plan .lane { font-family: var(--mono); font-size: 12.5px; color: var(--text); white-space: nowrap; }
-  table.plan .lane.core { color: var(--coral); }
-  table.plan .layer { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tertiary); }
-  table.plan .does { color: var(--secondary); max-width: 560px; }
-  table.plan .does b { color: var(--text); font-weight: 600; }
-  .pill { font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
-    padding: 3px 9px; border-radius: 999px; white-space: nowrap; display: inline-block; }
-  .pill.landed  { color: var(--green);  background: rgba(87,217,163,0.14); border: 1px solid rgba(87,217,163,0.5); }
-  .pill.next    { color: var(--coral);  background: var(--coral-soft);     border: 1px solid var(--coral-line); }
-  .pill.flight  { color: var(--indigo); background: var(--indigo-soft);    border: 1px solid var(--indigo); }
-  .pill.claimed { color: var(--amber);  background: rgba(245,196,81,0.14); border: 1px solid rgba(245,196,81,0.5); }
-  .pill.queued  { color: var(--secondary); background: rgba(255,255,255,0.04); border: 1px solid var(--hair-strong); }
-  .pill.blocked { color: var(--red);    background: rgba(240,111,122,0.14); border: 1px solid rgba(240,111,122,0.5); }
+  .chip .cn { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+  .chip .cd { color: var(--secondary); font-size: 11px; }
+  .chip.live   { border-color: var(--green-line);  box-shadow: inset 2px 0 0 var(--green); }
+  .chip.flight { border-color: var(--indigo-line); box-shadow: inset 2px 0 0 var(--indigo); background: rgba(107,107,245,0.05); }
+  .chip.part   { border-color: var(--amber-line);  box-shadow: inset 2px 0 0 var(--amber); }
+  .chip.core   { border-color: var(--coral-line); background: var(--coral-soft); }
+  .chip.core .cn { color: #ffd6ca; }
 
-  .defer {
-    margin-top: 20px; background: var(--inset); border: 1px solid var(--hair);
-    border-left: 3px solid var(--coral); border-radius: var(--r-md); padding: 16px 18px;
-  }
-  .defer h4 { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--secondary); margin-bottom: 12px; }
-  .defer ul { list-style: none; display: grid; gap: 9px; }
-  .defer li { display: flex; align-items: baseline; gap: 12px; font-size: 13.5px; color: var(--text); }
-  .defer li .lbl { flex: none; }
-  .defer li .txt { color: var(--secondary); }
-  .defer li .txt code { font-family: var(--mono); font-size: 12px; color: var(--text); }
+  .flow-down { display: flex; justify-content: center; margin: 2px 0; color: var(--tertiary); font-size: 18px; }
+
+  /* ---------- current → target comparison ---------- */
+  .cmp { display: grid; grid-template-columns: 150px 1fr 44px 1fr; gap: 12px 14px; align-items: stretch; }
+  .cmp .col-hd { font-family: var(--display); font-size: 13px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--secondary); padding: 4px 2px 10px; }
+  .cmp .col-hd.now { color: var(--green); }
+  .cmp .col-hd.tgt { color: var(--indigo); }
+  .cmp .row-lab { font-family: var(--display); font-size: 13px; font-weight: 600; color: var(--text);
+    display: flex; align-items: center; letter-spacing: 0.01em; }
+  .cmp .cell { border: 1px solid var(--hair); border-radius: var(--r-sm); padding: 11px 13px; background: var(--group);
+    display: flex; flex-direction: column; gap: 6px; }
+  .cmp .cell.now { border-left: 3px solid var(--green); }
+  .cmp .cell.tgt { border-left: 3px solid var(--indigo); background: rgba(107,107,245,0.045); }
+  .cmp .cell .ct { font-size: 13px; color: var(--text); }
+  .cmp .cell .ct b { color: #fff; font-weight: 600; }
+  .cmp .cell .cx { font-size: 11.5px; color: var(--tertiary); font-family: var(--mono); }
+  .cmp .arrow { display: flex; align-items: center; justify-content: center; color: var(--coral); font-size: 22px; }
+  .cmp .cell .hdr { display: flex; align-items: center; gap: 8px; }
+
+  /* ---------- platform stack ---------- */
+  .stack { display: flex; flex-direction: column; gap: 9px; }
+  .layer { border: 1px solid var(--hair); border-radius: var(--r-md); padding: 12px 15px; background: var(--group); }
+  .layer .lh { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+  .layer .lname { font-family: var(--display); font-size: 13px; font-weight: 600; letter-spacing: 0.03em; }
+  .layer .lkind { font-family: var(--mono); font-size: 10.5px; color: var(--tertiary); text-transform: uppercase; letter-spacing: 0.08em; }
+  .layer .spacer { flex: 1; }
+  .layer.contract { border-color: var(--coral-line); background: var(--coral-soft); }
+  .layer.hot { border-color: var(--indigo-line); background: rgba(107,107,245,0.06); }
+  .tiles { display: flex; flex-wrap: wrap; gap: 7px; }
+  .tile { font-family: var(--mono); font-size: 11px; padding: 5px 9px; border-radius: var(--r-sm);
+    border: 1px solid var(--hair-strong); background: var(--raised); color: var(--secondary); display: inline-flex; gap: 6px; align-items: center; }
+  .tile .s { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+  .tile .s.live { background: var(--green); } .tile .s.flight { background: var(--indigo); } .tile .s.part { background: var(--amber); }
+  .stack-arrow { text-align: center; color: var(--tertiary); font-size: 14px; letter-spacing: 0.3em; margin: -4px 0; }
+
+  /* ---------- coverage matrix ---------- */
+  .matrix-wrap { overflow-x: auto; border: 1px solid var(--hair); border-radius: var(--r-md); }
+  table.matrix { border-collapse: collapse; width: 100%; min-width: 780px; font-size: 12.5px; }
+  table.matrix th, table.matrix td { padding: 9px 12px; text-align: center; border-bottom: 1px solid var(--hair); border-right: 1px solid var(--hair); }
+  table.matrix th { font-family: var(--display); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--secondary); background: var(--group); position: sticky; top: 0; }
+  table.matrix th:first-child, table.matrix td:first-child { text-align: left; font-family: var(--display); font-weight: 600; color: var(--text);
+    background: var(--group); position: sticky; left: 0; }
+  table.matrix tr:last-child td { border-bottom: none; }
+  table.matrix td:last-child, table.matrix th:last-child { border-right: none; }
+  .cell-mark { display: inline-flex; align-items: center; justify-content: center; gap: 5px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.03em; }
+  .cell-mark.live   { color: var(--green); }
+  .cell-mark.flight { color: var(--indigo); }
+  .cell-mark.part   { color: var(--amber); }
+  .cell-mark.none   { color: var(--tertiary); }
+  .cm-glyph { font-size: 12px; }
+
+  /* ---------- prose / notes ---------- */
+  .note { margin-top: 16px; border: 1px solid var(--hair); border-left: 3px solid var(--coral); border-radius: var(--r-sm);
+    background: var(--inset); padding: 14px 16px; font-size: 13px; color: var(--secondary); }
+  .note b { color: var(--text); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { border: 1px solid var(--hair); border-radius: var(--r-md); padding: 15px 16px; background: var(--group); }
+  .card h4 { font-family: var(--display); font-size: 14px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .card ul { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+  .card li { font-size: 12.5px; color: var(--secondary); padding-left: 16px; position: relative; }
+  .card li::before { content: "▸"; position: absolute; left: 0; color: var(--coral); font-size: 10px; top: 2px; }
+  .card li b { color: var(--text); font-weight: 600; }
 
   /* ---------- footer ---------- */
-  footer.foot {
-    margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--hair);
-    display: flex; align-items: center; gap: 16px;
-    font-family: var(--mono); font-size: 11px; color: var(--tertiary); letter-spacing: 0.03em;
+  footer { margin-top: 58px; padding-top: 20px; border-top: 1px solid var(--hair);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  footer .stamp { font-family: var(--mono); font-size: 11px; color: var(--tertiary); }
+  footer .stamp b { color: var(--coral); font-weight: 600; }
+  footer .spacer { flex: 1; }
+  footer .cite { font-size: 11.5px; color: var(--tertiary); max-width: 640px; }
+  footer .cite code { font-size: 10.5px; }
+
+  @media (max-width: 860px) {
+    .cmp { grid-template-columns: 1fr; }
+    .cmp .col-hd, .cmp .arrow { display: none; }
+    .cmp .row-lab { margin-top: 8px; color: var(--coral); }
+    .grid2 { grid-template-columns: 1fr; }
+    .thesis { grid-template-columns: 1fr; }
+    .thesis .mark { writing-mode: horizontal-tb; }
   }
-  footer.foot .fspacer { flex: 1; }
-  footer.foot .stamp { color: var(--secondary); }
 </style>
 </head>
 <body>
-
-<!-- shared arrowhead markers (referenced document-wide by the two diagrams) -->
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <defs>
-    <marker id="ah-mut" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,0 L8,3 L0,6 Z" fill="#979CB7"/></marker>
-    <marker id="ah-ind" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,0 L8,3 L0,6 Z" fill="#6b6bf5"/></marker>
-    <marker id="ah-cor" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,0 L8,3 L0,6 Z" fill="#ff7357"/></marker>
-  </defs>
-</svg>
-
 <div class="page">
 
+  <!-- ===================== HEADER ===================== -->
   <header class="top">
-    <svg class="logo" viewBox="0 0 501 500" role="img" aria-label="Celer pinwheel">
+    <svg class="logo" viewBox="0 0 501 500" aria-label="Celer pinwheel">
       <path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/>
     </svg>
     <div class="brand">
-      <div class="wordmark">cel<b>net</b></div>
+      <div class="wordmark">Cel<b>net</b></div>
       <div class="caption">a Celer Technologies product</div>
     </div>
     <div class="spacer"></div>
-    <div class="tag">Architecture · current → target</div>
+    <div class="tag">Architecture · Current → Target</div>
   </header>
 
-  <h1 class="doc-title">CelNet architecture — current state &amp; the <span class="u">one-contract</span> target</h1>
+  <div class="doc-title">One <span class="u">cross-asset</span> contract, now landed — from disconnected islands to a <span class="i">unified</span> platform</div>
   <p class="doc-sub">
-    CelNet prices FX options, cross-asset options and linear products through a single, unversioned
-    pricing + risk contract (<code>celnet-core::contract</code>, ADR-0007 / ADR-0017 Phase&nbsp;A1). Fixed
-    Income is <b>built and live</b> but still runs on a <b>parallel, siloed path</b>. This page maps the
-    current topology, the fully-unified target, and the phased plan that collapses the FI silos onto the
-    one contract.
+    Celnet's central-core unification has <b style="color:var(--green)">landed on <code>origin/main</code></b>: options and fixed income now
+    speak one <code>Priceable</code> / <code>MarketResolver</code> / <code>RiskMeasure</code> contract, dispatch through one
+    <code>PricingEngine</code>, and aggregate in one risk cube — with FI first-class in the GUI, Excel, SDK and CLI. This map shows the
+    <b style="color:var(--green)">CURRENT (landed)</b> state honestly against the <b style="color:var(--indigo)">TARGET</b> that remains: a single
+    <code>Price(Instrument)</code> RPC, XVA/scenario on every surface, credit &amp; inflation leaves, rates streaming/RFQ, and full elastic scale-out.
   </p>
 
-  <!-- ============================== SECTION 1 — CURRENT ============================== -->
-  <section id="current">
-    <div class="sec-head">
-      <span class="sec-num">§1</span>
-      <span class="sec-title">Current state — one unified options path, one Fixed-Income silo</span>
-    </div>
+  <div class="legend">
+    <span class="lg"><span class="dot live"></span> <b style="color:var(--text)">LIVE</b> — landed on <code>origin/main</code>, gated (t2 19/19)</span>
+    <span class="lg"><span class="dot part"></span> <b style="color:var(--text)">PARTIAL</b> — wired but incomplete / not yet on the live path</span>
+    <span class="lg"><span class="dot flight"></span> <b style="color:var(--text)">TARGET</b> — planned or in-flight (design/proto window)</span>
+  </div>
+
+  <!-- ===================== THESIS ===================== -->
+  <div class="thesis">
+    <div class="mark">↻</div>
+    <p>
+      The whole-platform audit's dominant finding: Celnet had built genuinely <b>state-of-the-art capabilities</b> to a high standard and left many
+      of them <b>unwired from the live path</b> — SOTA capability as disconnected islands. The architectural win was therefore
+      <span class="em">integration and de-duplication, not new capability</span>. The central pricing kernel (unified gBSM, ADR-0012) and the wire
+      shape were already right; the program <b>connected the islands, unified the substrate, and deleted the duplication</b> — and the pricing/risk
+      unification is now <b>done and byte-identical</b>.
+    </p>
+  </div>
+
+  <!-- ===================== 1. THE ONE CONTRACT ===================== -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><span class="sec-title">The one contract — <span style="color:var(--coral)">landed</span></span></div>
     <p class="sec-lede">
-      FX / equity / commodity / crypto vanilla and linear products already converge on the shared carry
-      seam and the one contract. Fixed Income flows through an entirely parallel path: its own standalone
-      pricing function, its own proto message, its own RPC, its own risk service — and no streaming.
-      The Fixed-Income cluster is drawn in <span style="color:var(--coral);font-weight:700">coral</span>.
+      Every asset class implements the same three seams in <code>celnet-core/src/contract.rs</code>. Leaves price against a request-tier
+      <code>ResolvedMarket</code> (the shared <code>DiscountCurve</code> seam), report a tagged <code>RiskMeasure</code>, and are dispatched by one
+      stateless <code>PricingEngine</code>. Re-seating was proven <b>byte-identical</b> (<code>to_bits</code>) at every step — the hot core is untouched (ADR-0016 embargo). <span style="color:var(--tertiary)">Ref: ADR-0020, Central-Core Phases A1/A2/A2b/B/C.</span>
     </p>
 
-    <div class="diagram">
-      <svg viewBox="0 0 1180 800" role="img" aria-labelledby="cur-t cur-d" preserveAspectRatio="xMidYMid meet">
-        <title id="cur-t">Current CelNet cluster diagram</title>
-        <desc id="cur-d">A shared foundation of celnet-types and celnet-core forks into two lanes: a unified
-          options lane (leaves, price_instrument dispatch, one Priceable contract, the Instrument.product proto)
-          and a siloed Fixed-Income lane (celnet-rates, the standalone price_rates function, a bypassed
-          contract with a separate rates-risk service, and a separate RatesInstrument proto message). Both
-          converge on celnet-server and the clients.</desc>
+    <div class="core-wrap">
 
-        <!-- ---------- edges (drawn first, under the boxes) ---------- -->
-        <!-- shared spine -->
-        <line x1="590" y1="66"  x2="590" y2="96"  stroke="#979CB7" stroke-width="1.6" marker-end="url(#ah-mut)"/>
-        <!-- fork from core to the two lanes -->
-        <path d="M505,166 C440,192 360,190 316,208" fill="none" stroke="#979CB7" stroke-width="1.6" marker-end="url(#ah-mut)"/>
-        <path d="M675,166 C740,192 820,190 864,208" fill="none" stroke="#979CB7" stroke-width="1.6" marker-end="url(#ah-mut)"/>
+      <div class="band">
+        <div class="band-hd">
+          <span class="badge live">LIVE</span>
+          <span class="band-title">celnet-core::contract — the three seams + one tagged measure</span>
+          <span class="band-note">crates/celnet-core/src/contract.rs</span>
+        </div>
+        <div class="chips">
+          <div class="chip core"><span><span class="cn">Priceable</span> <span class="cd">price() + risk() per product family</span></span></div>
+          <div class="chip core"><span><span class="cn">MarketResolver → ResolvedMarket</span> <span class="cd">request-tier; DiscountCurve + spot/vol + conventions</span></span></div>
+          <div class="chip core"><span><span class="cn">RiskMeasure</span> <span class="cd">additive tags: OptionGreeks | RateLadder</span></span></div>
+          <div class="chip core"><span><span class="cn">DiscountCurve</span> <span class="cd">Carry (flat, degenerate) | rates Curve (bootstrapped)</span></span></div>
+        </div>
+      </div>
 
-        <!-- OPTIONS lane (neutral / indigo) -->
-        <line x1="300" y1="278" x2="300" y2="312" stroke="#6b6bf5" stroke-width="1.8" marker-end="url(#ah-ind)"/>
-        <line x1="300" y1="378" x2="300" y2="414" stroke="#6b6bf5" stroke-width="1.8" marker-end="url(#ah-ind)"/>
-        <line x1="300" y1="476" x2="300" y2="512" stroke="#6b6bf5" stroke-width="1.8" marker-end="url(#ah-ind)"/>
-        <path d="M300,578 C300,596 420,598 486,608" fill="none" stroke="#6b6bf5" stroke-width="1.8" marker-end="url(#ah-ind)"/>
+      <div class="flow-down">▼ &nbsp; implemented by every leaf &nbsp; ▼</div>
 
-        <!-- FIXED-INCOME lane (coral, dashed = siloed data-flow) -->
-        <line x1="880" y1="278" x2="880" y2="312" stroke="#ff7357" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#ah-cor)"/>
-        <line x1="880" y1="378" x2="880" y2="414" stroke="#ff7357" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#ah-cor)"/>
-        <line x1="880" y1="476" x2="880" y2="512" stroke="#ff7357" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#ah-cor)"/>
-        <path d="M880,578 C880,596 760,598 694,608" fill="none" stroke="#ff7357" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#ah-cor)"/>
+      <div class="band">
+        <div class="band-hd">
+          <span class="badge live">LIVE</span>
+          <span class="band-title">Priceable leaves — all asset classes conform</span>
+          <span class="band-note">celnet-server/src/pricer/contract.rs</span>
+        </div>
+        <div class="chips">
+          <div class="chip live"><span class="cn">FX vanilla</span></div>
+          <div class="chip live"><span class="cn">23 FX exotics</span><span class="cd">barrier · Asian · digital · TARF · accumulator · …</span></div>
+          <div class="chip live"><span class="cn">Equity</span><span class="cd">gBSM q=r−b</span></div>
+          <div class="chip live"><span class="cn">Commodity</span><span class="cd">Black-76</span></div>
+          <div class="chip live"><span class="cn">Crypto linear + inverse</span><span class="cd">coin-measure</span></div>
+          <div class="chip live"><span class="cn">Perpetual</span></div>
+          <div class="chip live"><span class="cn">Listed future</span></div>
+          <div class="chip live"><span class="cn">FI · OIS swap</span><span class="cd">→ RateLadder</span></div>
+          <div class="chip live"><span class="cn">FI · cash bond</span><span class="cd">→ RateLadder</span></div>
+          <div class="chip flight"><span class="cn">Credit</span><span class="cd">CR01 — leaf greenfield (ADR-0019)</span></div>
+          <div class="chip flight"><span class="cn">Inflation</span><span class="cd">greenfield</span></div>
+        </div>
+      </div>
 
-        <!-- converge -->
-        <line x1="590" y1="670" x2="590" y2="702" stroke="#979CB7" stroke-width="1.6" marker-end="url(#ah-mut)"/>
+      <div class="flow-down">▼ &nbsp; dispatched + risked by &nbsp; ▼</div>
 
-        <!-- ---------- shared foundation ---------- -->
-        <g>
-          <rect x="480" y="20" width="220" height="46" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="590" y="40" text-anchor="middle" fill="#EBEDF5" font-size="13.5" font-weight="700">celnet-types</text>
-          <text x="590" y="56" text-anchor="middle" fill="#979CB7" font-size="10.5">canonical domain vocabulary</text>
-        </g>
-        <g>
-          <rect x="400" y="100" width="380" height="66" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="590" y="128" text-anchor="middle" fill="#EBEDF5" font-size="13.5" font-weight="700">celnet-core — carry seam + contract</text>
-          <text x="590" y="146" text-anchor="middle" fill="#979CB7" font-size="10.5">carry.rs · Priceable · ResolvedMarket · RiskMeasure</text>
-          <text x="590" y="160" text-anchor="middle" fill="#6E7391" font-size="9.5">landed f6022dd — byte-identical on FX vanilla</text>
-        </g>
-        <!-- FI-seam callout: designed in, unwired -->
-        <g>
-          <rect x="812" y="96" width="342" height="74" rx="10" fill="rgba(255,115,87,0.06)" stroke="rgba(255,115,87,0.55)" stroke-dasharray="5 4"/>
-          <text x="983" y="120" text-anchor="middle" fill="#ff7357" font-size="11.5" font-weight="700">FI seam: designed-in, UNWIRED</text>
-          <text x="983" y="138" text-anchor="middle" fill="#979CB7" font-size="10">ResolvedMarket single-curve mode ·</text>
-          <text x="983" y="152" text-anchor="middle" fill="#979CB7" font-size="10">RiskMeasure::RateLadder — reserved,</text>
-          <text x="983" y="166" text-anchor="middle" fill="#979CB7" font-size="10">0 FI types implement Priceable</text>
-        </g>
+      <div class="grid2">
+        <div class="band">
+          <div class="band-hd">
+            <span class="badge live">LIVE</span>
+            <span class="band-title">Unified PricingEngine dispatch</span>
+          </div>
+          <div class="chips">
+            <div class="chip live"><span><span class="cn">PricingEngine::price</span> <span class="cd">one dispatch (was price_instrument / price_rates / price_cross_asset)</span></span></div>
+            <div class="chip live"><span class="cd">Price / PriceRates / PriceXva wire RPCs are now thin façades over the one engine — no proto change (ADR-0007)</span></div>
+          </div>
+          <div class="band-note" style="margin-top:10px">celnet-server/src/pricer/engine.rs · Phase C1</div>
+        </div>
+        <div class="band">
+          <div class="band-hd">
+            <span class="badge live">LIVE</span>
+            <span class="band-title">One risk cube — additive + tail</span>
+          </div>
+          <div class="chips">
+            <div class="chip live"><span><span class="cn">Additive</span> <span class="cd">Greeks + rate ladders sum side-by-side</span></span></div>
+            <div class="chip live"><span><span class="cn">Joint VaR / ES</span> <span class="cd">options + FI, one bump-and-revalue (R-a)</span></span></div>
+            <div class="chip live"><span><span class="cn">FRTB SbM GIRR</span> <span class="cd">delta charge (BCBS MAR21)</span></span></div>
+            <div class="chip flight"><span class="cn">GIRR vega / curvature</span></div>
+          </div>
+          <div class="band-note" style="margin-top:10px">celnet-risk-cube/src/fi.rs · celnet-rates-risk · Phase C2</div>
+        </div>
+      </div>
 
-        <!-- ---------- OPTIONS lane ---------- -->
-        <g>
-          <rect x="130" y="214" width="340" height="64" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="300" y="242" text-anchor="middle" fill="#EBEDF5" font-size="13" font-weight="700">option / cross-asset leaves</text>
-          <text x="300" y="260" text-anchor="middle" fill="#979CB7" font-size="10.5">FX vanilla · equity · commodity · crypto</text>
-          <text x="300" y="273" text-anchor="middle" fill="#979CB7" font-size="10.5">exotics · linear · heston</text>
-        </g>
-        <g>
-          <rect x="130" y="316" width="340" height="62" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="300" y="343" text-anchor="middle" fill="#EBEDF5" font-size="12.5" font-weight="700">price_instrument → ProductEngine ×20</text>
-          <text x="300" y="361" text-anchor="middle" fill="#979CB7" font-size="10.5">celnet-server::pricer — single entry point</text>
-        </g>
-        <g>
-          <rect x="130" y="418" width="340" height="58" rx="10" fill="#21273b" stroke="#6b6bf5"/>
-          <text x="300" y="443" text-anchor="middle" fill="#EBEDF5" font-size="13" font-weight="700">one contract — Priceable</text>
-          <text x="300" y="461" text-anchor="middle" fill="#979CB7" font-size="10.5">1 impl: VanillaEngine (celnet-core::contract)</text>
-        </g>
-        <g>
-          <rect x="130" y="516" width="340" height="62" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="300" y="543" text-anchor="middle" fill="#EBEDF5" font-size="12.5" font-weight="700">celnet-proto — Instrument.product</text>
-          <text x="300" y="561" text-anchor="middle" fill="#979CB7" font-size="10.5">the one wire · 26 oneof arms</text>
-        </g>
+    </div>
+  </section>
 
-        <!-- ---------- FIXED-INCOME lane (coral) ---------- -->
-        <g>
-          <rect x="710" y="214" width="340" height="64" rx="10" fill="rgba(255,115,87,0.09)" stroke="#ff7357"/>
-          <text x="880" y="242" text-anchor="middle" fill="#ff7357" font-size="13" font-weight="700">celnet-rates leaves</text>
-          <text x="880" y="260" text-anchor="middle" fill="#c9b3ad" font-size="10.5">OIS · IRS · FRA · cash-bond</text>
-          <text x="880" y="273" text-anchor="middle" fill="#c9b3ad" font-size="10.5">STIR / bond-future</text>
-        </g>
-        <g>
-          <rect x="710" y="316" width="340" height="62" rx="10" fill="rgba(255,115,87,0.09)" stroke="#ff7357"/>
-          <text x="880" y="343" text-anchor="middle" fill="#ff7357" font-size="12.5" font-weight="700">price_rates() — standalone fn</text>
-          <text x="880" y="361" text-anchor="middle" fill="#c9b3ad" font-size="10.5">bypasses price_instrument + Priceable</text>
-        </g>
-        <!-- ghost: the contract is bypassed -->
-        <g>
-          <rect x="710" y="418" width="340" height="58" rx="10" fill="rgba(255,115,87,0.05)" stroke="#ff7357" stroke-dasharray="5 4"/>
-          <text x="880" y="440" text-anchor="middle" fill="#ff7357" font-size="12.5" font-weight="700">✗ one contract — bypassed</text>
-          <text x="880" y="457" text-anchor="middle" fill="#c9b3ad" font-size="10">aggregate_rates_risk() — separate service,</text>
-          <text x="880" y="470" text-anchor="middle" fill="#c9b3ad" font-size="10">re-prices inline · no FI stream path</text>
-        </g>
-        <g>
-          <rect x="710" y="516" width="340" height="62" rx="10" fill="rgba(255,115,87,0.09)" stroke="#ff7357"/>
-          <text x="880" y="540" text-anchor="middle" fill="#ff7357" font-size="12.5" font-weight="700">celnet-proto — separate FI wire</text>
-          <text x="880" y="557" text-anchor="middle" fill="#c9b3ad" font-size="10">RatesInstrument msg + PriceRates RPC</text>
-          <text x="880" y="570" text-anchor="middle" fill="#c9b3ad" font-size="10">— not in Instrument.product oneof</text>
-        </g>
+  <!-- ===================== 2. CURRENT → TARGET ===================== -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><span class="sec-title">Current → Target, surface by surface</span></div>
+    <p class="sec-lede">
+      What is landed today, and what remains — marked honestly against the code. The pricing/risk core and the client parity are largely
+      <b style="color:var(--green)">done</b>; the remaining <b style="color:var(--indigo)">target</b> is the single unified wire verb, XVA/scenario on every
+      client, the new asset-class leaves, and full scale-out / latency hardening.
+    </p>
 
-        <!-- ---------- converge ---------- -->
-        <g>
-          <rect x="410" y="612" width="360" height="58" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="590" y="637" text-anchor="middle" fill="#EBEDF5" font-size="13" font-weight="700">celnet-server — service edge</text>
-          <text x="590" y="655" text-anchor="middle" fill="#979CB7" font-size="10.5">gRPC + WebSocket · aggregation point</text>
-        </g>
-        <g>
-          <rect x="280" y="702" width="620" height="54" rx="10" fill="#21273b" stroke="#6b6bf5"/>
-          <text x="590" y="726" text-anchor="middle" fill="#EBEDF5" font-size="13" font-weight="700">clients — one wire contract</text>
-          <text x="590" y="744" text-anchor="middle" fill="#979CB7" font-size="10.5">SDK · CLI · GUI · Excel · FIX · RFQ</text>
-        </g>
-      </svg>
+    <div class="cmp">
+      <div></div><div class="col-hd now">Current — landed on origin/main</div><div></div><div class="col-hd tgt">Target — planned / in-flight</div>
+
+      <div class="row-lab">Wire / RPC</div>
+      <div class="cell now"><div class="hdr"><span class="badge live">LIVE</span></div>
+        <div class="ct">Three RPCs — <b>Price</b>, <b>PriceRates</b>, <b>PriceXva</b> — as thin façades over one engine.</div>
+        <div class="cx">PricingService · celnet.proto</div></div>
+      <div class="arrow">➜</div>
+      <div class="cell tgt"><div class="hdr"><span class="badge flight">IN-FLIGHT</span></div>
+        <div class="ct">One <b>Price(oneof Instrument{option,rates,bond,credit,xva})</b> RPC — every class first-class, one codec path.</div>
+        <div class="cx">operator decision 2026-07-02 · unblocked by G ws-codec swap</div></div>
+
+      <div class="row-lab">Dispatch</div>
+      <div class="cell now"><div class="hdr"><span class="badge live">LIVE</span></div>
+        <div class="ct">One <b>PricingEngine</b> — options + FI dispatch unified, byte-identical.</div>
+        <div class="cx">Phase C1</div></div>
+      <div class="arrow">➜</div>
+      <div class="cell tgt"><div class="hdr"><span class="badge flight">TARGET</span></div>
+        <div class="ct">Phase D — FI product families as <b>pluggable Priceable registrants</b>; plugin-host reaches FI.</div>
+        <div class="cx">all-arm plugin dispatch + calibrate callback</div></div>
+
+      <div class="row-lab">Risk cube</div>
+      <div class="cell now"><div class="hdr"><span class="badge live">LIVE</span></div>
+        <div class="ct">One cube: additive Greeks + rate ladders, joint <b>VaR/ES</b>, <b>FRTB GIRR delta</b>.</div>
+        <div class="cx">R-a complete · Phase C2c</div></div>
+      <div class="arrow">➜</div>
+      <div class="cell tgt"><div class="hdr"><span class="badge flight">TARGET</span></div>
+        <div class="ct">GIRR <b>vega + curvature</b>; <b>credit CR01</b> &amp; inflation as new additive tags.</div>
+        <div class="cx">additive extension — no contract break</div></div>
+
+      <div class="row-lab">GUI</div>
+      <div class="cell now"><div class="hdr"><span class="badge live">LIVE</span></div>
+        <div class="ct">One <b>class-parametric front-end</b> — Risk / MarketData / Ticket / Book workspaces unified; FI on the single rail.</div>
+        <div class="cx">fe-fi-migration · domain-tab collapse</div></div>
+      <div class="arrow">➜</div>
+      <div class="cell tgt"><div class="hdr"><span class="badge flight">TARGET</span></div>
+        <div class="ct"><b>XVA</b> &amp; <b>scenario</b> surfaces client-side; rates streaming / RFQ desk views.</div>
+        <div class="cx">rates-rfq-ws · curve-surface-query</div></div>
+
+      <div class="row-lab">Excel</div>
+      <div class="cell now"><div class="hdr"><span class="badge live">LIVE</span></div>
+        <div class="ct">FI parity: <b>=CELNET.RATES</b> registered + <b>=CELNET.CURVE</b> (discount-curve bootstrap).</div>
+        <div class="cx">fe-unified-book</div></div>
+      <div class="arrow">➜</div>
+      <div class="cell tgt"><div class="hdr"><span class="badge flight">TARGET</span></div>
+        <div class="ct"><b>=CELNET.SCENARIO</b>; XVA custom functions — full add-in parity with the GUI/SDK.</div>
+        <div class="cx">api-first parity</div></div>
+
+      <div class="row-lab">SDK / CLI</div>
+      <div class="cell now"><div class="hdr"><span class="badge live">LIVE</span></div>
+        <div class="ct">Typed FI risk, <b>DeskClient</b> (5 RFQ-desk RPCs), notification stream — SDK + CLI.</div>
+        <div class="cx">client-parity 1c763d8</div></div>
+      <div class="arrow">➜</div>
+      <div class="cell tgt"><div class="hdr"><span class="badge flight">TARGET</span></div>
+        <div class="ct"><b>XVA client surface</b> (SDK/CLI); every capability behind the one canonical API.</div>
+        <div class="cx">D-xva wire landed; clients deferred</div></div>
+
+      <div class="row-lab">Scale-out</div>
+      <div class="cell now"><div class="hdr"><span class="badge part">PARTIAL</span></div>
+        <div class="ct"><b>Raft</b> config-consistency wired; provable off-tick router; SPMC seqlock fan-out; HRW routing.</div>
+        <div class="cx">celnet-replog · D-replog</div></div>
+      <div class="arrow">➜</div>
+      <div class="cell tgt"><div class="hdr"><span class="badge flight">TARGET</span></div>
+        <div class="ct">Full <b>replog activation</b> — hot-standby failover, Raft-log membership + surface distribution; HFT fan-out tier.</div>
+        <div class="cx">P3 · ADR-0015</div></div>
+
+      <div class="row-lab">Acceleration</div>
+      <div class="cell now"><div class="hdr"><span class="badge part">PARTIAL</span></div>
+        <div class="ct"><b>GPU batch</b> on the live path (batch-size branch); pre-trade limit gate at the position sinks.</div>
+        <div class="cx">P1 · 5 wgpu pipelines</div></div>
+      <div class="arrow">➜</div>
+      <div class="cell tgt"><div class="hdr"><span class="badge flight">TARGET</span></div>
+        <div class="ct">GPU <b>risk-cube repricer</b> + streaming pathwise Greeks; hard <b>latency SLO gate</b> in t2; batch SoA/SIMD.</div>
+        <div class="cx">P4 · ADR-0013/0016</div></div>
+
+    </div>
+  </section>
+
+  <!-- ===================== 3. PLATFORM STACK ===================== -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><span class="sec-title">The layered platform — one contract, top to bottom</span></div>
+    <p class="sec-lede">
+      Every client speaks the same wire contract; every RPC resolves into the one engine and one risk cube; every product prices against the shared
+      <code>DiscountCurve</code> seam — and the zero-alloc hot core stays flat (no curve handle ever reaches <code>MarketState</code>).
+    </p>
+
+    <div class="stack">
+      <div class="layer">
+        <div class="lh"><span class="lname">Clients</span><span class="lkind">api-first parity</span><span class="spacer"></span></div>
+        <div class="tiles">
+          <span class="tile"><span class="s live"></span>React GUI (class-parametric)</span>
+          <span class="tile"><span class="s live"></span>Excel add-in (RATES/CURVE)</span>
+          <span class="tile"><span class="s live"></span>SDK (celnet-client)</span>
+          <span class="tile"><span class="s live"></span>CLI (celnet-cli)</span>
+          <span class="tile"><span class="s live"></span>FIX ingress (FX + FI)</span>
+          <span class="tile"><span class="s flight"></span>XVA / scenario views</span>
+        </div>
+      </div>
+      <div class="stack-arrow">· · · ·</div>
+
+      <div class="layer contract">
+        <div class="lh"><span class="badge part">LIVE → 1 verb</span><span class="lname">Wire contract</span><span class="lkind">one unversioned contract (ADR-0007)</span><span class="spacer"></span></div>
+        <div class="tiles">
+          <span class="tile"><span class="s live"></span>Price</span>
+          <span class="tile"><span class="s live"></span>PriceRates</span>
+          <span class="tile"><span class="s live"></span>PriceXva</span>
+          <span class="tile"><span class="s live"></span>RiskService (FI risk + desk)</span>
+          <span class="tile"><span class="s live"></span>SurfaceService · QuoteService · StreamService</span>
+          <span class="tile"><span class="s flight"></span>→ unified Price(Instrument)</span>
+        </div>
+      </div>
+      <div class="stack-arrow">· · · ·</div>
+
+      <div class="layer">
+        <div class="lh"><span class="lname">Edges</span><span class="lkind">auth · readiness · topology</span><span class="spacer"></span></div>
+        <div class="tiles">
+          <span class="tile"><span class="s live"></span>PricingEdge</span>
+          <span class="tile"><span class="s live"></span>RiskEdge</span>
+          <span class="tile"><span class="s live"></span>router (HRW / PartitionMap)</span>
+          <span class="tile"><span class="s live"></span>pre-trade limit gate (position sinks)</span>
+        </div>
+      </div>
+      <div class="stack-arrow">· · · ·</div>
+
+      <div class="layer">
+        <div class="lh"><span class="badge live">LIVE</span><span class="lname">Unified engine + one risk cube</span><span class="lkind">Priceable dispatch · RiskMeasure</span><span class="spacer"></span></div>
+        <div class="tiles">
+          <span class="tile"><span class="s live"></span>PricingEngine</span>
+          <span class="tile"><span class="s live"></span>risk-cube (additive + VaR/ES/FRTB)</span>
+          <span class="tile"><span class="s live"></span>celnet-rates-risk (rate-VaR + GIRR)</span>
+          <span class="tile"><span class="s live"></span>celnet-xva (CVA/DVA/FVA)</span>
+          <span class="tile"><span class="s part"></span>GPU BatchPricer</span>
+        </div>
+      </div>
+      <div class="stack-arrow">· · · ·</div>
+
+      <div class="layer">
+        <div class="lh"><span class="lname">Priceable leaves + MarketResolver</span><span class="lkind">every asset class</span><span class="spacer"></span></div>
+        <div class="tiles">
+          <span class="tile"><span class="s live"></span>FX vanilla + 23 exotics</span>
+          <span class="tile"><span class="s live"></span>equity · commodity · crypto</span>
+          <span class="tile"><span class="s live"></span>perpetual · listed-future</span>
+          <span class="tile"><span class="s live"></span>FI OIS · cash bond</span>
+          <span class="tile"><span class="s flight"></span>credit · inflation</span>
+        </div>
+      </div>
+      <div class="stack-arrow">· · · ·</div>
+
+      <div class="layer">
+        <div class="lh"><span class="lname">Shared DiscountCurve seam</span><span class="lkind">request / batch tier</span><span class="spacer"></span></div>
+        <div class="tiles">
+          <span class="tile"><span class="s live"></span>Carry — flat degenerate one-pillar curve</span>
+          <span class="tile"><span class="s live"></span>celnet-rates Curve — bootstrapped term structure</span>
+          <span class="tile"><span class="s live"></span>FX two-curve carry = 2 curves</span>
+        </div>
+      </div>
+      <div class="stack-arrow">· · · ·</div>
+
+      <div class="layer hot">
+        <div class="lh"><span class="badge live">LIVE · EMBARGOED</span><span class="lname">Zero-alloc hot core</span><span class="lkind">no alloc / lock / log · no Arc&lt;Curve&gt;</span><span class="spacer"></span></div>
+        <div class="tiles">
+          <span class="tile"><span class="s live"></span>flat MarketState (f64 rates)</span>
+          <span class="tile"><span class="s live"></span>arc_swap::Cache + rtrb SPSC + seqlock fan-out</span>
+          <span class="tile"><span class="s live"></span>static smile dispatch</span>
+          <span class="tile"><span class="s live"></span>off-thread HdrHistogram telemetry</span>
+        </div>
+      </div>
     </div>
 
-    <div class="legend">
-      <span class="lg"><span class="swatch neutral"></span>shared foundation / edge</span>
-      <span class="lg"><span class="swatch indigo"></span>the one contract &amp; its clients</span>
-      <span class="lg"><span class="swatch coral"></span>Fixed-Income subsystem — still siloed</span>
-      <span class="lg"><span class="swatch dash"></span>siloed flow / designed-in but unwired</span>
+    <div class="note">
+      <b>Hard invariant preserved through the whole unification.</b> The term-structure <code>Curve</code> lives strictly in the request/batch tier;
+      the streaming hot path keeps flat <code>f64</code> rates. FX pricing stays <b>byte-identical</b> (<code>to_bits</code>) across the generalization —
+      the flat-carry CPU path remains the sole byte-identity oracle. Numerical code is validated to ≤1e-12 against independent oracles (QuantLib / BCBS
+      published / hand-derived), never a self-referential regen.
+    </div>
+  </section>
+
+  <!-- ===================== 4. COVERAGE MATRIX ===================== -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><span class="sec-title">Cross-asset coverage — asset class × surface</span></div>
+    <p class="sec-lede">
+      The multiplier: because every class routes through one carry seam and one contract, breadth is additive dispatch — not a new system.
+      Coverage today, marked LIVE / partial / target.
+    </p>
+
+    <div class="matrix-wrap">
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th>Asset class</th>
+            <th>Priced</th>
+            <th>Risk (cube)</th>
+            <th>GUI</th>
+            <th>Excel</th>
+            <th>SDK / CLI</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>FX options (vanilla + 23 exotics)</td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+          </tr>
+          <tr>
+            <td>Equity · Commodity · Crypto</td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark part"><span class="cm-glyph">◐</span>PART</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+          </tr>
+          <tr>
+            <td>Perpetual · Listed future</td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark part"><span class="cm-glyph">◐</span>PART</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+          </tr>
+          <tr>
+            <td>Fixed income — OIS · cash bond</td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+          </tr>
+          <tr>
+            <td>XVA — CVA / DVA / FVA</td>
+            <td><span class="cell-mark live"><span class="cm-glyph">●</span>LIVE</span></td>
+            <td><span class="cell-mark part"><span class="cm-glyph">◐</span>WIRE</span></td>
+            <td><span class="cell-mark flight"><span class="cm-glyph">○</span>TARGET</span></td>
+            <td><span class="cell-mark flight"><span class="cm-glyph">○</span>TARGET</span></td>
+            <td><span class="cell-mark flight"><span class="cm-glyph">○</span>TARGET</span></td>
+          </tr>
+          <tr>
+            <td>Credit · Inflation</td>
+            <td><span class="cell-mark flight"><span class="cm-glyph">○</span>TARGET</span></td>
+            <td><span class="cell-mark flight"><span class="cm-glyph">○</span>TARGET</span></td>
+            <td><span class="cell-mark none"><span class="cm-glyph">—</span></span></td>
+            <td><span class="cell-mark none"><span class="cm-glyph">—</span></span></td>
+            <td><span class="cell-mark none"><span class="cm-glyph">—</span></span></td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
-    <div class="verdict">
-      <div class="seam">
-        <div class="sk">Wire schema <span class="st siloed">siloed</span></div>
-        <div class="sv">FI lives in a separate <code>RatesInstrument</code> message + <code>PriceRates</code> RPC — it is <b>not</b> an arm of the unified <code>Instrument.product</code> oneof.</div>
+    <div class="grid2" style="margin-top:18px">
+      <div class="card">
+        <h4><span class="badge live">DONE</span> Landed this program</h4>
+        <ul>
+          <li>The <b>one contract</b> — Priceable / MarketResolver / RiskMeasure across options + FI, byte-identical (ADR-0020)</li>
+          <li>One <b>PricingEngine</b> dispatch; three wire RPCs as thin façades (Phase C1)</li>
+          <li>One <b>risk cube</b> — joint VaR/ES + FRTB GIRR delta, FI folded in (R-a, Phase C2c)</li>
+          <li>FI first-class: <b>class-parametric GUI</b> + Excel RATES/CURVE + SDK/CLI parity</li>
+          <li><b>PriceXva</b> RPC serving CVA/DVA/FVA; <b>G</b> descriptor-driven WS codec swap</li>
+        </ul>
       </div>
-      <div class="seam">
-        <div class="sk">Dispatch <span class="st siloed">siloed</span></div>
-        <div class="sv"><code>price_rates()</code> is a standalone function; it bypasses <code>price_instrument</code>. Of 20 <code>ProductEngine</code> impls, <b>zero</b> are FI.</div>
-      </div>
-      <div class="seam">
-        <div class="sk">Contract <span class="st wired">designed-in, unwired</span></div>
-        <div class="sv"><code>ResolvedMarket</code> single-curve mode + <code>RiskMeasure::RateLadder</code> exist in <code>celnet-core</code>, but <b>no FI type implements <code>Priceable</code></b> (1 impl: VanillaEngine).</div>
-      </div>
-      <div class="seam">
-        <div class="sk">Risk <span class="st siloed">siloed</span></div>
-        <div class="sv"><code>aggregate_rates_risk()</code> re-prices positions inline, separate from the <code>aggregate_risk</code> / <code>celnet-risk-cube</code> roll-up used by options.</div>
-      </div>
-      <div class="seam">
-        <div class="sk">Stream <span class="st absent">absent</span></div>
-        <div class="sv">The streaming session hardcodes <code>AssetClass::FxOptions</code> — there is no <code>Rates</code> subscription and no FI streaming price at all.</div>
-      </div>
-      <div class="seam">
-        <div class="sk">Options + cross-asset + linear <span class="st unified">unified</span></div>
-        <div class="sv">FX / equity / commodity / crypto vanilla and linear products already share the carry seam and price through the one <code>Priceable</code> contract.</div>
+      <div class="card">
+        <h4><span class="badge flight">NEXT</span> The remaining target</h4>
+        <ul>
+          <li>Unify the wire into <b>one Price(Instrument)</b> RPC (in-flight; codec unblocked)</li>
+          <li><b>XVA / scenario</b> on every client (GUI / Excel / SDK / CLI); =CELNET.SCENARIO</li>
+          <li>New leaves: <b>credit CR01</b> + <b>inflation</b>; GIRR vega/curvature</li>
+          <li><b>Rates streaming / RFQ</b>; curve-surface query; Phase D pluggable FI engines</li>
+          <li>Scale-out (P3): full <b>replog activation</b> + HFT fan-out. Latency (P4): hard SLO gate, GPU risk-cube repricer</li>
+        </ul>
       </div>
     </div>
   </section>
 
-  <!-- ============================== SECTION 2 — TARGET ============================== -->
-  <section id="target">
-    <div class="sec-head">
-      <span class="sec-num">§2</span>
-      <span class="sec-title">Target state — Fixed Income on the one contract</span>
-    </div>
-    <p class="sec-lede">
-      Every asset class — including Fixed Income — prices and risks through the single
-      <code>celnet-core::contract</code> seam: one <code>Priceable</code>, one <code>Instrument.product</code>
-      wire, one <code>price</code> RPC, one <code>aggregate_risk</code> roll-up, one streaming subscription.
-      The edges the FI unification adds are drawn in <span style="color:var(--coral);font-weight:700">coral</span>.
-    </p>
-
-    <div class="diagram">
-      <svg viewBox="0 0 1180 860" role="img" aria-labelledby="tgt-t tgt-d" preserveAspectRatio="xMidYMid meet">
-        <title id="tgt-t">Target CelNet cluster diagram</title>
-        <desc id="tgt-d">A single spine: celnet-types to celnet-core to a unified leaf row (FX plus the FI
-          leaves), to price_instrument and ProductEngine (plus OisEngine, SwapEngine and BondEngine), to the
-          one Priceable contract, to the one celnet-proto wire (Instrument.product with FI arms and one price
-          RPC), which feeds one aggregate_risk roll-up carrying RiskMeasure RateLadder and one streaming
-          subscription carrying AssetClass Rates, then celnet-server and the clients. The newly-unified FI
-          edges are coral.</desc>
-
-        <!-- ---------- edges ---------- -->
-        <line x1="590" y1="62"  x2="590" y2="86"  stroke="#6b6bf5" stroke-width="1.8" marker-end="url(#ah-ind)"/>
-        <line x1="590" y1="150" x2="590" y2="174" stroke="#6b6bf5" stroke-width="1.8" marker-end="url(#ah-ind)"/>
-        <!-- newly-unified spine (coral) -->
-        <line x1="590" y1="248" x2="590" y2="286" stroke="#ff7357" stroke-width="2.2" marker-end="url(#ah-cor)"/>
-        <line x1="590" y1="354" x2="590" y2="392" stroke="#ff7357" stroke-width="2.2" marker-end="url(#ah-cor)"/>
-        <line x1="590" y1="460" x2="590" y2="498" stroke="#ff7357" stroke-width="2.2" marker-end="url(#ah-cor)"/>
-        <!-- proto fans out to risk + stream (coral) and straight to server (indigo) -->
-        <path d="M500,566 C420,586 380,590 352,608" fill="none" stroke="#ff7357" stroke-width="2" marker-end="url(#ah-cor)"/>
-        <path d="M680,566 C760,586 800,590 828,608" fill="none" stroke="#ff7357" stroke-width="2" marker-end="url(#ah-cor)"/>
-        <line x1="590" y1="566" x2="590" y2="714" stroke="#6b6bf5" stroke-width="1.8" marker-end="url(#ah-ind)"/>
-        <!-- risk + stream feed the server -->
-        <path d="M320,676 C320,696 440,700 496,714" fill="none" stroke="#6b6bf5" stroke-width="1.6" marker-end="url(#ah-ind)"/>
-        <path d="M860,676 C860,696 740,700 684,714" fill="none" stroke="#6b6bf5" stroke-width="1.6" marker-end="url(#ah-ind)"/>
-        <line x1="590" y1="774" x2="590" y2="796" stroke="#6b6bf5" stroke-width="1.8" marker-end="url(#ah-ind)"/>
-
-        <!-- ---------- spine boxes ---------- -->
-        <g>
-          <rect x="480" y="18" width="220" height="44" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="590" y="37" text-anchor="middle" fill="#EBEDF5" font-size="13.5" font-weight="700">celnet-types</text>
-          <text x="590" y="53" text-anchor="middle" fill="#979CB7" font-size="10.5">canonical domain vocabulary</text>
-        </g>
-        <g>
-          <rect x="400" y="86" width="380" height="64" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="590" y="113" text-anchor="middle" fill="#EBEDF5" font-size="13.5" font-weight="700">celnet-core — carry seam + contract</text>
-          <text x="590" y="131" text-anchor="middle" fill="#979CB7" font-size="10.5">Priceable · ResolvedMarket · RiskMeasure</text>
-          <text x="590" y="144" text-anchor="middle" fill="#6E7391" font-size="9.5">the one unversioned contract (ADR-0007)</text>
-        </g>
-
-        <!-- unified leaves: FX region + FI region (coral) -->
-        <g>
-          <rect x="200" y="178" width="780" height="70" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="440" y="203" text-anchor="middle" fill="#EBEDF5" font-size="12.5" font-weight="700">product leaves — one carry seam</text>
-          <text x="440" y="221" text-anchor="middle" fill="#979CB7" font-size="10.5">FX vanilla · equity · commodity</text>
-          <text x="440" y="234" text-anchor="middle" fill="#979CB7" font-size="10.5">crypto · exotics · linear · heston</text>
-          <rect x="694" y="184" width="280" height="58" rx="8" fill="rgba(255,115,87,0.12)" stroke="#ff7357"/>
-          <text x="834" y="208" text-anchor="middle" fill="#ff7357" font-size="11.5" font-weight="700">+ celnet-rates leaves</text>
-          <text x="834" y="225" text-anchor="middle" fill="#c9b3ad" font-size="10">OIS · IRS · FRA · cash-bond</text>
-          <text x="834" y="237" text-anchor="middle" fill="#c9b3ad" font-size="10">STIR — now on the seam</text>
-        </g>
-
-        <g>
-          <rect x="310" y="286" width="560" height="66" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="590" y="312" text-anchor="middle" fill="#EBEDF5" font-size="13" font-weight="700">price_instrument → ProductEngine</text>
-          <text x="590" y="330" text-anchor="middle" fill="#979CB7" font-size="10.5">single entry point + static dispatch</text>
-          <text x="590" y="345" text-anchor="middle" fill="#ff7357" font-size="10.5" font-weight="700">+ OisEngine · SwapEngine · BondEngine</text>
-        </g>
-        <g>
-          <rect x="310" y="392" width="560" height="66" rx="10" fill="#21273b" stroke="#6b6bf5"/>
-          <text x="590" y="418" text-anchor="middle" fill="#EBEDF5" font-size="13" font-weight="700">one contract — Priceable + MarketResolver</text>
-          <text x="590" y="436" text-anchor="middle" fill="#979CB7" font-size="10.5">celnet-core::contract</text>
-          <text x="590" y="451" text-anchor="middle" fill="#ff7357" font-size="10.5" font-weight="700">FX impls + FI impls (single-curve ResolvedMarket → RateLadder)</text>
-        </g>
-        <g>
-          <rect x="310" y="498" width="560" height="68" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="590" y="524" text-anchor="middle" fill="#EBEDF5" font-size="13" font-weight="700">celnet-proto — one wire · Instrument.product</text>
-          <text x="590" y="542" text-anchor="middle" fill="#ff7357" font-size="10.5" font-weight="700">+ ois · vanilla_swap · fra · bond arms</text>
-          <text x="590" y="557" text-anchor="middle" fill="#979CB7" font-size="10.5">one price RPC — no version, additive (ADR-0007)</text>
-        </g>
-
-        <!-- risk + stream, both now unified -->
-        <g>
-          <rect x="150" y="612" width="340" height="64" rx="10" fill="rgba(255,115,87,0.09)" stroke="#ff7357"/>
-          <text x="320" y="638" text-anchor="middle" fill="#ff7357" font-size="12.5" font-weight="700">one risk — aggregate_risk → risk-cube</text>
-          <text x="320" y="656" text-anchor="middle" fill="#c9b3ad" font-size="10">RiskMeasure { OptionGreeks + RateLadder }</text>
-          <text x="320" y="669" text-anchor="middle" fill="#c9b3ad" font-size="10">additive tags, side-by-side in one cube</text>
-        </g>
-        <g>
-          <rect x="690" y="612" width="340" height="64" rx="10" fill="rgba(255,115,87,0.09)" stroke="#ff7357"/>
-          <text x="860" y="638" text-anchor="middle" fill="#ff7357" font-size="12.5" font-weight="700">one stream — Session subscribe</text>
-          <text x="860" y="656" text-anchor="middle" fill="#c9b3ad" font-size="10">AssetClass { FxOptions, Rates }</text>
-          <text x="860" y="669" text-anchor="middle" fill="#c9b3ad" font-size="10">FI now streams like options</text>
-        </g>
-
-        <g>
-          <rect x="400" y="718" width="380" height="56" rx="10" fill="#282C3E" stroke="rgba(255,255,255,0.14)"/>
-          <text x="590" y="742" text-anchor="middle" fill="#EBEDF5" font-size="13" font-weight="700">celnet-server — service edge</text>
-          <text x="590" y="760" text-anchor="middle" fill="#979CB7" font-size="10.5">gRPC + WebSocket · aggregation point</text>
-        </g>
-        <g>
-          <rect x="280" y="796" width="620" height="52" rx="10" fill="#21273b" stroke="#6b6bf5"/>
-          <text x="590" y="819" text-anchor="middle" fill="#EBEDF5" font-size="13" font-weight="700">clients — one wire contract</text>
-          <text x="590" y="837" text-anchor="middle" fill="#979CB7" font-size="10.5">SDK · CLI · GUI · Excel · FIX · RFQ</text>
-        </g>
-      </svg>
-    </div>
-
-    <div class="legend">
-      <span class="lg"><span class="swatch indigo"></span>the one contract, its spine &amp; clients</span>
-      <span class="lg"><span class="swatch coral"></span>newly-unified — Fixed Income joins the contract</span>
-      <span class="lg"><span class="swatch neutral"></span>shared foundation</span>
-    </div>
-
-    <div class="prose">
-      <p>
-        The target is not a new architecture — it is the <span class="ib">completion</span> of the one already
-        landed. <code>celnet-core::contract</code> defines a single asset-class-agnostic seam:
-        <code>Priceable::price</code> / <code>Priceable::risk</code> over a <code>ResolvedMarket</code> whose
-        discounting is the shared <code>DiscountCurve</code> trait — a flat two-rate carry for FX, a
-        bootstrapped <code>celnet-rates</code> curve for FI, interchangeable behind the trait. The
-        <code>RiskMeasure</code> enum already carries both a <code>OptionGreeks</code> tag and a reserved
-        <code>RateLadder</code> tag; Phase&nbsp;A1 proved the re-seat is <b>byte-identical</b> on FX vanilla
-        (<code>f6022dd</code>).
-      </p>
-      <p>
-        Two lanes complete the unification. <b>be-rates-wire-arms</b> gives the FI leaves
-        (<code>OisEngine</code>, <code>SwapEngine</code>, <code>BondEngine</code>) a <code>ProductEngine</code> +
-        <code>Priceable</code> impl, adds FI products as additive arms of <code>Instrument.product</code> (one
-        <code>price</code> RPC — no version, per ADR-0007), and retires the standalone <code>price_rates()</code>.
-        <b>fe-fi-migration</b> then collapses the FI silos: <code>aggregate_rates_risk</code> folds into the one
-        <code>aggregate_risk</code> emitting <code>RiskMeasure::RateLadder</code> into <code>celnet-risk-cube</code>,
-        the streaming session gains an <code>AssetClass::Rates</code> arm, and the separate
-        <code>RatesInstrument</code> / <code>PriceRates</code> messages are removed. When both land, Fixed Income
-        is indistinguishable from FX at the contract boundary — one wire, one dispatch, one risk cube, one stream.
-      </p>
-    </div>
-  </section>
-
-  <!-- ============================== SECTION 3 — DELIVERY PLAN ============================== -->
-  <section id="plan">
-    <div class="sec-head">
-      <span class="sec-num">§3</span>
-      <span class="sec-title">Delivery plan — the phased board lanes (current → target)</span>
-    </div>
-    <p class="sec-lede">
-      The unification ships as disjoint, coordinator-gated board lanes. The one contract
-      (central-core Phase-A1) is the landed foundation; the FI lanes and the platform/console lanes build on it.
-    </p>
-
-    <table class="plan">
-      <thead>
-        <tr>
-          <th style="width:200px">Lane</th>
-          <th style="width:64px">Layer</th>
-          <th>What it does — current → target</th>
-          <th style="width:130px">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="lane core">central-core&nbsp;A1</td>
-          <td class="layer">core</td>
-          <td class="does"><b>The one pricing + risk contract.</b> <code>Priceable</code> / <code>ResolvedMarket</code> / <code>RiskMeasure</code> in <code>celnet-core</code>; proven byte-identical on the FX vanilla path (<code>f6022dd</code>).</td>
-          <td><span class="pill landed">landed</span></td>
-        </tr>
-        <tr>
-          <td class="lane">fe-reconcile-divergence</td>
-          <td class="layer">FE</td>
-          <td class="does">Reconcile the divergent FX and Fixed-Income GUI shells onto one workspace grammar (the asset-class tab layer) ahead of the FI migration.</td>
-          <td><span class="pill queued">planned</span></td>
-        </tr>
-        <tr>
-          <td class="lane">fe-xva-workspace</td>
-          <td class="layer">FE</td>
-          <td class="does">XVA workspace surfacing EPE/ENE + CVA/DVA/FVA over the activated <code>celnet-xva</code> engine — depends on the D-xva activation.</td>
-          <td><span class="pill claimed">claimed</span></td>
-        </tr>
-        <tr>
-          <td class="lane">be-rates-wire-arms</td>
-          <td class="layer">BE</td>
-          <td class="does"><b>Wire the orphaned FI engines into the one contract.</b> FI arms in <code>Instrument.product</code>; <code>OisEngine</code>/<code>SwapEngine</code>/<code>BondEngine</code> as <code>ProductEngine</code> + <code>Priceable</code>; retire standalone <code>price_rates()</code>.</td>
-          <td><span class="pill next">next</span></td>
-        </tr>
-        <tr>
-          <td class="lane">fe-fi-migration</td>
-          <td class="layer">FE</td>
-          <td class="does"><b>Collapse the FI silos.</b> <code>aggregate_rates_risk</code> → one <code>aggregate_risk</code> (<code>RiskMeasure::RateLadder</code>); stream <code>AssetClass::Rates</code>; drop <code>RatesInstrument</code>/<code>PriceRates</code>.</td>
-          <td><span class="pill queued">queued</span></td>
-        </tr>
-        <tr>
-          <td class="lane">be-contribution-lpmake</td>
-          <td class="layer">BE</td>
-          <td class="does">Price-contribution / LP-making service — quotes made onto the multi-dealer RFQ / RFS surfaces over the one contract.</td>
-          <td><span class="pill queued">planned</span></td>
-        </tr>
-        <tr>
-          <td class="lane">be-platform-services</td>
-          <td class="layer">BE</td>
-          <td class="does">Platform services — the replicated deterministic-replay log lifecycle (<code>celnet-replog</code> over <code>celnet-journal</code>) wired into the server.</td>
-          <td><span class="pill claimed">claimed</span></td>
-        </tr>
-        <tr>
-          <td class="lane">fe-tierC-consoles</td>
-          <td class="layer">FE</td>
-          <td class="does">Tier-C operator / quant consoles (limits, entitlements, observability) reading the unified risk cube.</td>
-          <td><span class="pill queued">planned</span></td>
-        </tr>
-        <tr>
-          <td class="lane">fe-unified-book</td>
-          <td class="layer">FE</td>
-          <td class="does">A single cross-asset position book — options <em>and</em> FI positions in one persisted store and one blotter, feeding the one risk roll-up.</td>
-          <td><span class="pill queued">queued</span></td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="defer">
-      <h4>Tracked deferrals — status</h4>
-      <ul>
-        <li><span class="lbl"><span class="pill landed">landed</span></span><span class="txt"><b style="color:var(--text)">central-core A1</b> — the one contract, <code>f6022dd</code>, byte-identical on FX vanilla.</span></li>
-        <li><span class="lbl"><span class="pill flight">in&nbsp;flight</span></span><span class="txt"><b style="color:var(--text)">G — full unary WS-codec swap</b> — increments&nbsp;1&nbsp;&amp;&nbsp;2 on <code>origin/arch/G-ws-codec-full-swap</code>.</span></li>
-        <li><span class="lbl"><span class="pill claimed">claimed</span></span><span class="txt"><b style="color:var(--text)">D — celnet-xva + celnet-replog activation</b> — claimed by the coordinator.</span></li>
-        <li><span class="lbl"><span class="pill blocked">blocked</span></span><span class="txt"><b style="color:var(--text)">lodestar design-target sentinel</b> — blocked on <code>soarsa/lodestar#19</code>.</span></li>
-      </ul>
-    </div>
-  </section>
-
-  <footer class="foot">
-    <span>celnet · architecture — current &amp; one-contract target</span>
-    <span class="fspacer"></span>
-    <span class="stamp">build 2026-07-02T03:04:46Z · celnet arch-viz · main</span>
+  <!-- ===================== FOOTER ===================== -->
+  <footer>
+    <svg class="logo" viewBox="0 0 501 500" style="width:22px;height:22px" aria-hidden="true">
+      <path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/>
+    </svg>
+    <span class="stamp"><b>celnet</b> · origin/main <b>d3ae5c5</b> · 2026-07-02 UTC</span>
+    <span class="spacer"></span>
+    <span class="cite">
+      Facts verified against the lodestar knowledge graph (<code>github.com-soarsa-celnet</code>) — <code>celnet-core/src/contract.rs</code>,
+      <code>celnet-server/src/pricer/engine.rs</code>, <code>celnet-risk-cube/src/fi.rs</code>, <code>celnet.proto</code> — plus
+      <code>docs/ARCHITECTURE-TARGET.md</code>, ADR-0020 and the central-core implementation ledger.
+    </span>
   </footer>
 
 </div>
