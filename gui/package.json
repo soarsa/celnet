@@ -14,6 +14,8 @@
     "test": "vitest run",
     "e2e": "playwright test",
     "e2e:install": "playwright install chromium",
+    "fidelity": "CELNET_FIDELITY=1 playwright test --project=fidelity",
+    "fidelity:update": "CELNET_FIDELITY=1 playwright test --project=fidelity --update-snapshots",
     "storybook": "storybook dev -p 6006 --no-open",
     "storybook:build": "storybook build"
   },
