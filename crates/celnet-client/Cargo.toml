@@ -27,6 +27,12 @@ celnet-exotics.workspace = true
 celnet-conventions.workspace = true
 celnet-limits.workspace = true
 celnet-risk-cube.workspace = true
+# The independent linear-FI / risk-cube references the combined-tail-risk loopback
+# test reduces its oracle from (the standalone rate VaR and the summed-P&L joint
+# reduction) — never the RPC re-run as its own check.
+celnet-rates-risk.workspace = true
+celnet-rates.workspace = true
+celnet-risk-normalize.workspace = true
 # The frozen golden-vector corpus is the cross-client conformance oracle.
 celnet-golden.workspace = true
 serde_json.workspace = true

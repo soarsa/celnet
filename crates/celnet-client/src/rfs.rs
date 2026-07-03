@@ -69,8 +69,9 @@ use std::task::{Context, Poll};
 use celnet_proto::stream_service_client::StreamServiceClient;
 use celnet_proto::{
     ClientStreamMessage, Conventions as WireConventions, EntitlementPrincipal, Execute, Instrument,
-    MarketSeriesSubscribe, Resync, ServerStreamMessage, StreamAuth, Subscribe, SubscriptionId,
-    TradableToken, client_stream_message, server_stream_message, stream_end, stream_reject,
+    MarketSeriesSubscribe, RatesSubscribe, Resync, ServerStreamMessage, StreamAuth, Subscribe,
+    SubscriptionId, TradableToken, client_stream_message, server_stream_message, stream_end,
+    stream_reject,
 };
 use celnet_types::{CcyPair, Greeks, Tenor};
 use futures_util::{Stream, StreamExt};
@@ -79,6 +80,11 @@ use tonic::transport::Channel;
 
 use crate::error::{ClientError, ClientResult};
 use crate::idempotency::KeyMinter;
+use crate::rates::UsdSofrCurve;
+use crate::rates_stream::{
+    RatesInstrumentSpec, RatesLineState, RatesStreamEvent, RatesSubscription,
+    decode_rates_snapshot, decode_rates_update,
+};
 use crate::series::{MarketSeries, Observable, SeriesEvent, SeriesState, decode_snapshot};
 use crate::vocab::{Attribution, Conventions, InstrumentSpec, Side, TwoWay};
 
@@ -326,6 +332,12 @@ type Registry = Arc<Mutex<HashMap<u64, SubState>>>;
 /// both mint from the session's one `next_sub_id`).
 type SeriesRegistry = Arc<Mutex<HashMap<u64, SeriesState>>>;
 
+/// The driver's fixed-income registry, shared with
+/// [`StreamSession::subscribe_rates`] and the demultiplexing driver. Keyed by the
+/// rates line's subscription id (same id space as FX price + market-series
+/// subscriptions, never colliding — all mint from the session's one `next_sub_id`).
+type RatesRegistry = Arc<Mutex<HashMap<u64, RatesLineState>>>;
+
 /// A multiplexed RFS session: one bidirectional gRPC connection over which any
 /// number of typed [`Subscription`]s and their click-to-trade executes are carried.
 ///
@@ -347,6 +359,7 @@ struct SessionInner {
     control: mpsc::Sender<ClientStreamMessage>,
     registry: Registry,
     series: SeriesRegistry,
+    rates: RatesRegistry,
     waiters: ExecuteWaiters,
     keys: KeyMinter,
     next_sub_id: AtomicU64,
@@ -374,6 +387,7 @@ impl StreamSession {
 
         let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
         let series: SeriesRegistry = Arc::new(Mutex::new(HashMap::new()));
+        let rates: RatesRegistry = Arc::new(Mutex::new(HashMap::new()));
         let waiters: ExecuteWaiters = Arc::new(Mutex::new(HashMap::new()));
 
         // Authenticate FIRST: push the `Authenticate` frame onto the outbound relay
@@ -396,6 +410,7 @@ impl StreamSession {
             inbound,
             registry: Arc::clone(&registry),
             series: Arc::clone(&series),
+            rates: Arc::clone(&rates),
             waiters: Arc::clone(&waiters),
             auth,
         }));
@@ -404,6 +419,7 @@ impl StreamSession {
             control: control_tx,
             registry,
             series,
+            rates,
             waiters,
             keys,
             next_sub_id: AtomicU64::new(1),
@@ -613,6 +629,76 @@ impl StreamSession {
             observable,
         })
     }
+
+    /// Open a **fixed-income** streaming line on this session: a typed async
+    /// [`RatesSubscription`] stream of a linear-rates instrument's PV + first-order
+    /// risk over the session's *same* connection, in the same subscription-id space
+    /// as an FX price [`Subscription`] and a [`MarketSeries`]. The server seeds the
+    /// line with a baseline [`RatesStreamEvent::Snapshot`] priced at the subscribed
+    /// `curve` (faithful to `price_rates`/`price_irs`/`price_fra`/`price_bond`) then
+    /// emits [`RatesStreamEvent::Update`]s as the pricing curve deterministically
+    /// evolves, conflated to `throttle_nanos` (a client hint; `0` = no throttling).
+    ///
+    /// `instrument` is any streamable [`RatesInstrumentSpec`] arm (OIS / vanilla IRS
+    /// / FRA / cash bond); `correlation_id` (optional) is echoed on the baseline
+    /// snapshot so a blotter can join the opened line to its request.
+    ///
+    /// This is the FI half of the ONE asset-class-agnostic streaming seam (ADR-0021):
+    /// the rates line rides the same multiplexed `StreamService` bidi + server-side
+    /// `PriceFanout` the FX/cross-asset price stream uses, never a parallel FI stack.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::StreamClosed`] if the session's control channel has closed (the
+    /// connection is gone). A server-side validation failure (e.g. an uncalibratable
+    /// curve) surfaces as a [`ClientError::Status`] event on the returned stream.
+    pub async fn subscribe_rates<I: RatesInstrumentSpec>(
+        &self,
+        curve: &UsdSofrCurve,
+        instrument: &I,
+        correlation_id: Option<u64>,
+        throttle_nanos: u64,
+    ) -> ClientResult<RatesSubscription> {
+        let sub_id = self.inner.next_sub_id.fetch_add(1, Ordering::Relaxed);
+
+        // The per-line SDK→caller event channel.
+        let (event_tx, event_rx) =
+            mpsc::channel::<ClientResult<RatesStreamEvent>>(EVENT_CHANNEL_DEPTH);
+
+        // Register before sending, so a snapshot/update can never race the
+        // registration.
+        self.inner
+            .rates
+            .lock()
+            .expect("rates registry poisoned")
+            .insert(sub_id, RatesLineState { event_tx });
+
+        let subscribe = ClientStreamMessage {
+            message: Some(client_stream_message::Message::RatesSubscribe(
+                RatesSubscribe {
+                    subscription: Some(SubscriptionId { value: sub_id }),
+                    instrument: Some(instrument.to_rates_instrument()),
+                    curve_set: Some(curve.to_wire()),
+                    throttle_nanos,
+                    correlation_id,
+                },
+            )),
+        };
+        if self.inner.control.send(subscribe).await.is_err() {
+            self.inner
+                .rates
+                .lock()
+                .expect("rates registry poisoned")
+                .remove(&sub_id);
+            return Err(ClientError::StreamClosed);
+        }
+
+        Ok(RatesSubscription {
+            sub_id,
+            rx: event_rx,
+            control: self.inner.control.clone(),
+        })
+    }
 }
 
 /// A live RFS subscription on a [`StreamSession`]: a typed async stream of
@@ -776,6 +862,7 @@ struct DriverCtx {
     inbound: tonic::Streaming<ServerStreamMessage>,
     registry: Registry,
     series: SeriesRegistry,
+    rates: RatesRegistry,
     waiters: ExecuteWaiters,
     /// The session credential, re-sent FIRST on a drain-cutover reconnect so the
     /// freshly-dialed (anonymous) stream is re-authenticated before re-subscribe.
@@ -835,6 +922,7 @@ async fn drive_session(mut ctx: DriverCtx) {
                             payload,
                             &ctx.registry,
                             &ctx.series,
+                            &ctx.rates,
                             &ctx.relay_tx,
                             &ctx.waiters,
                         )
@@ -847,6 +935,7 @@ async fn drive_session(mut ctx: DriverCtx) {
                     Some(Err(status)) => {
                         broadcast_error(&ctx.registry, &status);
                         broadcast_series_error(&ctx.series, &status);
+                        broadcast_rates_error(&ctx.rates, &status);
                         // Fail any in-flight click-to-trade so its `execute` future
                         // resolves with the transport status instead of hanging.
                         fail_all_waiters(&ctx.waiters, &ClientError::from(status));
@@ -879,6 +968,7 @@ async fn handle_frame(
     payload: server_stream_message::Message,
     registry: &Registry,
     series: &SeriesRegistry,
+    rates: &RatesRegistry,
     relay: &mpsc::Sender<ClientStreamMessage>,
     waiters: &ExecuteWaiters,
 ) -> SessionFlow {
@@ -965,13 +1055,31 @@ async fn handle_frame(
             .await;
             SessionFlow::Continue
         }
-        // Fixed-income streaming frames (RatesStreamSnapshot / RatesStreamUpdate)
-        // are consumed by the dedicated FI-stream client surface (sdk-fi-stream). A
-        // price/series session that never opened a rates line does not receive
-        // these; an unsolicited FI frame is dropped, not mis-routed — never faked
-        // into an FX price line.
-        server_stream_message::Message::RatesStreamSnapshot(_)
-        | server_stream_message::Message::RatesStreamUpdate(_) => SessionFlow::Continue,
+        // Fixed-income streaming frames: route by the rates line's SubscriptionId to
+        // the owning `RatesSubscription` (a separate registry from FX price + market
+        // series; ids never collide). Each frame is a *complete* re-price, so there
+        // is no gap-detect/`Resync` here (the server retains no rates replay); an
+        // unsolicited FI frame (no matching line) is dropped, not mis-routed — never
+        // faked into an FX price line.
+        server_stream_message::Message::RatesStreamSnapshot(s) => {
+            let Some(sub_id) = s.subscription.map(|i| i.value) else {
+                return SessionFlow::Continue;
+            };
+            deliver_rates(rates, sub_id, decode_rates_snapshot(&s)).await;
+            SessionFlow::Continue
+        }
+        server_stream_message::Message::RatesStreamUpdate(u) => {
+            let Some(sub_id) = u.subscription.map(|i| i.value) else {
+                return SessionFlow::Continue;
+            };
+            deliver_rates(
+                rates,
+                sub_id,
+                decode_rates_update(&u).map(RatesStreamEvent::Update),
+            )
+            .await;
+            SessionFlow::Continue
+        }
     }
 }
 
@@ -995,6 +1103,31 @@ async fn deliver_series(series: &SeriesRegistry, sub_id: u64, event: ClientResul
 /// Surface a session-level transport error to every live market series.
 fn broadcast_series_error(series: &SeriesRegistry, status: &tonic::Status) {
     let reg = series.lock().expect("series registry poisoned");
+    for s in reg.values() {
+        let _ = s.event_tx.try_send(Err(ClientError::from(status.clone())));
+    }
+}
+
+/// Send one event to a rates line's caller channel. If the caller dropped the line
+/// (channel closed), forget it so the driver stops routing to it.
+async fn deliver_rates(rates: &RatesRegistry, sub_id: u64, event: ClientResult<RatesStreamEvent>) {
+    let tx = {
+        let reg = rates.lock().expect("rates registry poisoned");
+        reg.get(&sub_id).map(|s| s.event_tx.clone())
+    };
+    if let Some(tx) = tx
+        && tx.send(event).await.is_err()
+    {
+        rates
+            .lock()
+            .expect("rates registry poisoned")
+            .remove(&sub_id);
+    }
+}
+
+/// Surface a session-level transport error to every live rates line.
+fn broadcast_rates_error(rates: &RatesRegistry, status: &tonic::Status) {
+    let reg = rates.lock().expect("rates registry poisoned");
     for s in reg.values() {
         let _ = s.event_tx.try_send(Err(ClientError::from(status.clone())));
     }

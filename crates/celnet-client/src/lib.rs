@@ -122,10 +122,12 @@ mod error;
 mod idempotency;
 pub mod notify;
 pub mod rates;
+pub mod rates_stream;
 pub mod rfs;
 pub mod risk;
 pub mod series;
 pub mod surface_vocab;
+pub mod tail_risk;
 pub mod vocab;
 
 pub use desk::{
@@ -139,6 +141,7 @@ pub use rates::{
     OisSide, RatesAggregateQuery, RatesFrequency, RatesPosition, RatesPositionQuery, RatesPriced,
     RatesRiskAggregate, RatesRiskNode, RatesRiskScope, SwapSide, UsdSofrCurve,
 };
+pub use rates_stream::{RatesInstrumentSpec, RatesLine, RatesStreamEvent, RatesSubscription};
 pub use rfs::{
     ClickExecution, ExecuteOutcome, RejectReason, StreamEvent, StreamLine, StreamSession,
     Subscription, TradableLine,
@@ -154,6 +157,10 @@ pub use surface_vocab::{
     ArbReport, BrokerQuoteSet, BucketedRisk, CrossGammaTerm, MarkedSurface, MarketContext,
     RiskRequest, ScenarioGrid, ScenarioNode, ScenarioRisk, ShockAxis, ShockFactor, Smile,
     SmilePoint, VegaPillar,
+};
+pub use tail_risk::{
+    CombinedTailRisk, CombinedTailRiskQuery, DiscountCurve, JointShock, OisAccrualPeriod,
+    TailFiPosition, TailKeyRate, TailOptionLeg, VarEs,
 };
 pub use vocab::{
     AccumulatorMonitoring, AccumulatorTerms, AmericanTerms, AsianMethod, AsianTerms, Attribution,
@@ -685,6 +692,70 @@ impl Client {
         .await
     }
 
+    /// Subscribe to a live **fixed-income** (linear-rates) price/risk feed: open a
+    /// streaming line for `instrument` priced against `curve`, returning a typed
+    /// [`RatesSubscription`] stream of [`RatesStreamEvent`]s (a baseline
+    /// [`RatesStreamEvent::Snapshot`] then live [`RatesStreamEvent::Update`]s as the
+    /// pricing curve deterministically evolves). The streaming analogue of
+    /// [`Client::price_rates`]/[`Client::price_irs`]/[`Client::price_fra`]/[`Client::price_bond`]:
+    /// the baseline snapshot's priced result equals the corresponding one-shot
+    /// `price_*` call, and each update carries the line re-priced at the tick's
+    /// [`RatesLine::curve_shift`].
+    ///
+    /// `instrument` is any streamable [`RatesInstrumentSpec`] arm — an [`rates::Ois`],
+    /// [`rates::IrsSpec`], [`rates::FraSpec`], or [`rates::BondSpec`].
+    ///
+    /// This opens a dedicated multiplexed session for the line; the returned
+    /// subscription owns a clone of that session's control channel, so the
+    /// demultiplexing driver stays alive for as long as the subscription is held and
+    /// tears the connection down (server-side line included) when it is dropped. A
+    /// caller streaming *many* instruments (FX price + FI rates) over ONE connection
+    /// should instead [`Client::open_session`] once and call
+    /// [`StreamSession::subscribe_rates`] / [`StreamSession::subscribe`] on it — the
+    /// FI feed rides the SAME asset-class-agnostic streaming seam (ADR-0021).
+    ///
+    /// ```no_run
+    /// # use celnet_client::{Client, rates::{UsdSofrCurve, CivilDate, IrsSpec}};
+    /// # use futures_util::StreamExt;
+    /// # async fn ex(client: &Client) -> celnet_client::ClientResult<()> {
+    /// let curve = UsdSofrCurve::new(CivilDate::new(2026, 6, 25))
+    ///     .pillar(1, 0.0432).pillar(2, 0.0418).pillar(5, 0.0405);
+    /// let mut line = client
+    ///     .subscribe_rates(&curve, &IrsSpec::receive_fixed(5, 0.0405))
+    ///     .await?;
+    /// while let Some(event) = line.next_event().await {
+    ///     match event? {
+    ///         celnet_client::RatesStreamEvent::Snapshot { line, .. } =>
+    ///             println!("baseline pv {} dv01 {}", line.priced.pv, line.priced.dv01),
+    ///         celnet_client::RatesStreamEvent::Update(l) =>
+    ///             println!("tick shift {} pv {}", l.curve_shift, l.priced.pv),
+    ///     }
+    /// }
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] if the session stream cannot be opened or the subscribe frame
+    /// cannot be sent. A server-side validation failure (e.g. an uncalibratable
+    /// curve) surfaces as a [`ClientError::Status`] event on the returned stream.
+    pub async fn subscribe_rates<I: RatesInstrumentSpec>(
+        &self,
+        curve: &rates::UsdSofrCurve,
+        instrument: &I,
+    ) -> ClientResult<RatesSubscription> {
+        let session = self.open_session().await?;
+        let subscription = session.subscribe_rates(curve, instrument, None, 0).await?;
+        // The returned `RatesSubscription` holds a clone of the session's control
+        // sender, which keeps the demultiplexing driver alive once `session` is
+        // dropped here (dropping the driver's `JoinHandle` detaches — never aborts —
+        // the task), exactly as a `MarketSeries`/`Subscription` outlives the
+        // `StreamSession` that opened it. Dropping the subscription drops the last
+        // control sender, ending the driver and tearing the server-side line down.
+        drop(session);
+        Ok(subscription)
+    }
+
     /// Run a scenario / what-if grid (see [`Client::scenario`]) **and** the
     /// book-shaped risk decomposition (bucketed vega per `(tenor, delta)` pillar,
     /// cross-gamma per factor pair, theta roll over horizons) in one round-trip,
@@ -862,6 +933,48 @@ impl Client {
             .await?
             .into_inner();
         Ok(rates::RatesRiskAggregate::from_wire(resp))
+    }
+
+    /// Compute the **combined (joint options + fixed-income) tail risk** over an inline
+    /// cross-risk-class portfolio and an aligned `(option-shock, rate-shift)` scenario
+    /// set: ONE non-additive VaR/ES over the union of the vanilla FX option legs and the
+    /// linear-FI (OIS-swap) legs — the cross-risk-class diversifying tail — plus the FI
+    /// per-tenor signed key-rate DV01 ladder and the signed parallel DV01, all reduced
+    /// SERVER-SIDE (the api-first parity rule: the SDK never reduces the tail itself).
+    /// The client parity of the landed `RiskService.CombinedTailRisk` C2c risk cube.
+    ///
+    /// Build the [`tail_risk::CombinedTailRiskQuery`] with
+    /// [`CombinedTailRiskQuery::fi_only`](crate::CombinedTailRiskQuery::fi_only) for an
+    /// FI-only book (reduces to the standalone rate VaR),
+    /// [`CombinedTailRiskQuery::options_only`](crate::CombinedTailRiskQuery::options_only)
+    /// for an options book, or
+    /// [`CombinedTailRiskQuery::joint`](crate::CombinedTailRiskQuery::joint) for a mixed
+    /// book (whose joint VaR diversifies below the naive sum of the two marginal VaRs).
+    ///
+    /// This is a pure calculation over the request-supplied portfolio (no store read,
+    /// no live-market read) gated by `ReadAny`. There is no asserted-principal field on
+    /// this request, so under the production `Enforce` edge an authenticated session is
+    /// the only admission — attach an `AuthService.Login` bearer with
+    /// [`Client::with_session_token`] first; the token only authorizes and never changes
+    /// the number (faithful transport).
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Status`] — `unauthenticated` / `permission_denied` without a valid
+    /// session under `Enforce`, or `invalid_argument` for a malformed portfolio (a bad
+    /// currency pair, an empty or non-increasing base curve, or a rate-shift vector
+    /// whose length ≠ the base-curve pillar count when FI legs are present) — a
+    /// transport failure, or [`ClientError::MissingField`] on a malformed response.
+    pub async fn combined_tail_risk(
+        &self,
+        query: &tail_risk::CombinedTailRiskQuery,
+    ) -> ClientResult<tail_risk::CombinedTailRisk> {
+        let mut svc = RiskServiceClient::new(self.channel.clone());
+        let resp = svc
+            .combined_tail_risk(query.to_wire(self.session_token.clone()))
+            .await?
+            .into_inner();
+        tail_risk::CombinedTailRisk::from_wire(resp)
     }
 
     /// Book one rates position into the firm rates position store (the linear-rates
