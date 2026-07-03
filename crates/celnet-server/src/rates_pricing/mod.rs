@@ -47,6 +47,10 @@ use time::{Date, Month};
 mod contract;
 pub use contract::{BondPriced, price_bond_via_contract, price_rates_via_contract};
 
+mod engines;
+pub(crate) use engines::dispatch_rates_live;
+pub use engines::install_fi_house_models;
+
 /// The ISO 4217 code of the only currency the P0 rates arm supports.
 const SUPPORTED_CURRENCY: &str = "USD";
 
@@ -101,6 +105,10 @@ pub enum RatesPriceError {
     FraSetup(FraError),
     /// A cash-bond construction, curve-pricing, or yield solve failed.
     Bond(BondError),
+    /// A registered fixed-income house model could not price the instrument (the
+    /// pluggable-dispatch path only; the native path never yields this). Carries a
+    /// static, provenance-neutral reason.
+    Model(&'static str),
 }
 
 impl core::fmt::Display for RatesPriceError {
@@ -146,6 +154,7 @@ impl core::fmt::Display for RatesPriceError {
             Self::Swap(e) => write!(f, "swap: {e}"),
             Self::FraSetup(e) => write!(f, "fra: {e}"),
             Self::Bond(e) => write!(f, "bond: {e}"),
+            Self::Model(w) => write!(f, "registered rates model: {w}"),
         }
     }
 }
@@ -542,6 +551,26 @@ fn bond_contract_from_wire(
 /// currency, malformed pillars, a missing/invalid instrument, or a numeric
 /// schedule/bootstrap failure.
 pub fn price_rates(req: &RatesPriceRequest) -> Result<RatesPricingResult, RatesPriceError> {
+    let (quotes, reference) = build_rates_market(req)?;
+    match rates_instrument_of(req)? {
+        rates_instrument::Instrument::Ois(ois) => price_ois(ois, &quotes, reference),
+        rates_instrument::Instrument::Irs(irs) => price_irs(irs, &quotes, reference),
+        rates_instrument::Instrument::Fra(fra) => price_fra(fra, &quotes, reference),
+        rates_instrument::Instrument::Bond(bond) => price_bond_instrument(bond, &quotes, reference),
+    }
+}
+
+/// Resolve the request's curve set into the calibrating OIS `quotes` + the curve
+/// reference date — the shared front-half of both the native [`price_rates`] and
+/// the pluggable [`engines::dispatch_rates`] path, so the two never drift.
+///
+/// # Errors
+///
+/// Returns [`RatesPriceError`] for a missing/invalid curve set, an unsupported
+/// currency, or malformed pillars.
+pub(super) fn build_rates_market(
+    req: &RatesPriceRequest,
+) -> Result<(Vec<OisQuote>, Date), RatesPriceError> {
     let curve = req
         .curve_set
         .as_ref()
@@ -551,21 +580,23 @@ pub fn price_rates(req: &RatesPriceRequest) -> Result<RatesPricingResult, RatesP
         .as_ref()
         .ok_or(RatesPriceError::MissingReferenceDate)?;
     let reference = resolve_date(reference_date)?;
-
     let quotes = build_quotes(curve, reference)?;
+    Ok((quotes, reference))
+}
 
-    let instrument = req
-        .instrument
+/// Borrow the request's decoded rates-instrument oneof arm.
+///
+/// # Errors
+///
+/// Returns [`RatesPriceError::MissingInstrument`] if the request carried no
+/// instrument or an unset oneof arm.
+pub(super) fn rates_instrument_of(
+    req: &RatesPriceRequest,
+) -> Result<&rates_instrument::Instrument, RatesPriceError> {
+    req.instrument
         .as_ref()
         .and_then(|i| i.instrument.as_ref())
-        .ok_or(RatesPriceError::MissingInstrument)?;
-
-    match instrument {
-        rates_instrument::Instrument::Ois(ois) => price_ois(ois, &quotes, reference),
-        rates_instrument::Instrument::Irs(irs) => price_irs(irs, &quotes, reference),
-        rates_instrument::Instrument::Fra(fra) => price_fra(fra, &quotes, reference),
-        rates_instrument::Instrument::Bond(bond) => price_bond_instrument(bond, &quotes, reference),
-    }
+        .ok_or(RatesPriceError::MissingInstrument)
 }
 
 /// The P0 static USD-SOFR par-OIS pillar ladder `(tenor_years, par_rate)`.

@@ -64,7 +64,7 @@ use super::{
     ConventionSet, PriceError, Priced, decode_settlement_style, is_cross_asset,
     price_instrument_lsv, product_name, wire_error_to_price_error,
 };
-use crate::rates_pricing::{RatesPriceError, price_rates};
+use crate::rates_pricing::{RatesPriceError, dispatch_rates_live};
 
 /// The one internal pricing dispatch (ADR-0017 Phase C1).
 ///
@@ -260,24 +260,31 @@ impl PricingEngine {
     /// Linear FI is a distinct paradigm (a bootstrapped discount curve + a linear
     /// swap, not the asset-class-agnostic option carry kernel) with a distinct wire
     /// request/result, so it is a distinct entry on the one engine rather than an arm
-    /// of [`Self::price`]. It routes through the curve-bootstrap resolver / OIS leaf
-    /// path [`crate::rates_pricing::price_rates`]; [`crate::rates_pricing`]'s
-    /// `RatesPriceRequest` conversion + `celnet_rates` engine are byte-for-byte
-    /// unchanged.
+    /// of [`Self::price`]. It routes through the pluggable FI dispatch
+    /// [`crate::rates_pricing::dispatch_rates_live`] — the fixed-income analog of the
+    /// option [`engines::dispatch_live`] terminal (ADR-0021): the calling worker's
+    /// installed FI house-model registry is threaded in, so a registered rates model
+    /// overrides the native pricer per FI product kind, otherwise every arm is the
+    /// verbatim native [`crate::rates_pricing::price_rates`] body (byte-identical).
+    /// `celnet_rates` / `celnet_bond` engines are byte-for-byte unchanged.
     ///
     /// # Errors
     ///
     /// Returns [`RatesPriceError`] for a missing/invalid curve set, an unsupported
-    /// currency, malformed pillars, a missing/invalid instrument, or a numeric
-    /// schedule/bootstrap failure.
+    /// currency, malformed pillars, a missing/invalid instrument, a numeric
+    /// schedule/bootstrap failure, or a registered house-model failure.
     pub fn price_rates(req: &RatesPriceRequest) -> Result<RatesPricingResult, RatesPriceError> {
-        price_rates(req)
+        dispatch_rates_live(req)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The pre-C1 native rates dispatch: the independent oracle the unified
+    // engine's rates path (now the pluggable `dispatch_rates_live`, empty-registry)
+    // is byte-checked against.
+    use crate::rates_pricing::price_rates;
     use celnet_proto::{
         BrokenDate, CarryModel, CcyPair, CommodityRef, CostOfCarry, CryptoPair, CurveSet,
         EquityRef, MarketContext, OisInstrument, OisPillar, PillarTenor, RatesInstrument,

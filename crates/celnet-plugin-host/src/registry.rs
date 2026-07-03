@@ -14,13 +14,22 @@
 
 use celnet_plugin_api::{
     ModelDescriptor, ModelId, ModelKind, ModelRegistry as DiscoveryRegistry, PluginError,
-    PricingModel,
+    PricingModel, RatesPricingModel, RatesProductKind,
 };
 
 use crate::error::{HostError, HostResult};
 use crate::model::HostModel;
 use crate::native::NativeModel;
+use crate::rates_model::{NativeRatesModel, RatesHostModel};
 use crate::wasm::{FuelBudget, WasmModel};
+
+/// One registered linear fixed-income model: the [`RatesProductKind`] it serves
+/// (the routing key), its descriptor, and the tier-blind handle.
+struct RatesEntry {
+    kind: RatesProductKind,
+    descriptor: ModelDescriptor,
+    model: Box<dyn RatesHostModel>,
+}
 
 /// A unified, tier-blind registry of priceable models.
 ///
@@ -31,6 +40,12 @@ use crate::wasm::{FuelBudget, WasmModel};
 pub struct ModelRegistry {
     entries: Vec<Box<dyn HostModel>>,
     descriptors: Vec<ModelDescriptor>,
+    /// Registered linear fixed-income models, keyed by the [`RatesProductKind`]
+    /// each serves. Kept separate from the option `entries` because a rates model
+    /// implements a distinct contract ([`RatesPricingModel`]) and is resolved by
+    /// FI product kind rather than by option [`ModelKind`] — the FI half of the
+    /// uniform-asset-class dispatch (ADR-0021).
+    rates_entries: Vec<RatesEntry>,
 }
 
 impl core::fmt::Debug for ModelRegistry {
@@ -128,16 +143,78 @@ impl ModelRegistry {
             .map(|i| self.entries[i].as_ref())
     }
 
-    /// Number of registered models across all tiers.
+    /// Register a compiled-in native (Tier-0) [`RatesPricingModel`] against the
+    /// [`RatesProductKind`] it serves — the FI counterpart of
+    /// [`ModelRegistry::register_native`]. A desk registers its OIS model and its
+    /// bond model as two calls (one per kind); the FI dispatch then resolves the
+    /// registered model **by kind** via [`ModelRegistry::active_rates_model`].
+    ///
+    /// # Errors
+    /// Returns [`HostError::Model`] wrapping [`PluginError::InvalidInput`] if a
+    /// model with the same [`ModelId`] is already registered for the same kind.
+    pub fn register_native_rates<M: RatesPricingModel + 'static>(
+        &mut self,
+        kind: RatesProductKind,
+        model: M,
+    ) -> HostResult<ModelId> {
+        let handle: Box<dyn RatesHostModel> = Box::new(NativeRatesModel::new(model));
+        let descriptor = handle.descriptor();
+        if self
+            .rates_entries
+            .iter()
+            .any(|e| e.kind == kind && e.descriptor.id == descriptor.id)
+        {
+            return Err(HostError::Model(PluginError::InvalidInput(
+                "duplicate rates model id for kind",
+            )));
+        }
+        self.rates_entries.push(RatesEntry {
+            kind,
+            descriptor,
+            model: handle,
+        });
+        Ok(descriptor.id)
+    }
+
+    /// The active house rates model for `kind` — the first registered rates model
+    /// serving that [`RatesProductKind`] in stable insertion order, or `None` if
+    /// none is registered for it.
+    ///
+    /// The non-allocating hot-path resolver the FI dispatch consults to serve an
+    /// OIS / IRS / FRA / bond arm through a registered model: a linear scan
+    /// returning a borrowed `&dyn RatesHostModel`. `None` (the default for an
+    /// unregistered kind) leaves the arm on the verbatim native path — the FI
+    /// analog of [`ModelRegistry::active_pricing_model`].
+    #[must_use]
+    pub fn active_rates_model(&self, kind: RatesProductKind) -> Option<&dyn RatesHostModel> {
+        self.rates_entries
+            .iter()
+            .find(|e| e.kind == kind)
+            .map(|e| e.model.as_ref())
+    }
+
+    /// Number of registered option models across all tiers.
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// Whether the registry holds no models.
+    /// Whether the registry holds no option models.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Number of registered linear fixed-income models across all kinds.
+    #[must_use]
+    pub fn rates_len(&self) -> usize {
+        self.rates_entries.len()
+    }
+
+    /// Whether the registry holds no rates models.
+    #[must_use]
+    pub fn rates_is_empty(&self) -> bool {
+        self.rates_entries.is_empty()
     }
 }
 
@@ -149,5 +226,89 @@ impl ModelRegistry {
 impl DiscoveryRegistry for ModelRegistry {
     fn descriptors(&self) -> &[ModelDescriptor] {
         &self.descriptors
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ModelRegistry;
+    use celnet_plugin_api::example::ConstantRatesModel;
+    use celnet_plugin_api::{RatesCurvePillar, RatesMeasures, RatesProductKind, RatesTerms};
+
+    fn measures(pv: f64) -> RatesMeasures {
+        RatesMeasures {
+            pv,
+            par_rate: 0.04,
+            pv01: 1.0,
+            dv01: 1.0,
+            key_rate_ladder: vec![],
+        }
+    }
+
+    fn ois_terms() -> RatesTerms {
+        RatesTerms::Ois {
+            tenor_years: 5,
+            fixed_rate: 0.04,
+            notional: 1e6,
+            receive_fixed: true,
+        }
+    }
+
+    /// A native rates model registers by [`RatesProductKind`] and resolves for
+    /// that kind only; the option registry stays independent.
+    #[test]
+    fn rates_models_register_and_resolve_by_kind() {
+        let mut reg = ModelRegistry::new();
+        assert!(reg.rates_is_empty());
+        assert!(reg.active_rates_model(RatesProductKind::Ois).is_none());
+
+        reg.register_native_rates(
+            RatesProductKind::Ois,
+            ConstantRatesModel::new(measures(42.0)),
+        )
+        .unwrap();
+        assert_eq!(reg.rates_len(), 1);
+
+        let curve = [RatesCurvePillar::new(1.0, 0.04)];
+        let priced = reg
+            .active_rates_model(RatesProductKind::Ois)
+            .unwrap()
+            .price(&ois_terms(), &curve)
+            .unwrap();
+        assert_eq!(priced.pv, 42.0);
+
+        // No model for the other kinds.
+        assert!(reg.active_rates_model(RatesProductKind::Irs).is_none());
+        assert!(reg.active_rates_model(RatesProductKind::Bond).is_none());
+
+        // The option registry is untouched by rates registration.
+        assert!(reg.is_empty());
+        assert!(reg.active_pricing_model().is_none());
+    }
+
+    /// A duplicate `(kind, id)` is rejected, but the same id under a different
+    /// kind is a distinct registration.
+    #[test]
+    fn duplicate_rates_id_for_kind_is_rejected() {
+        let mut reg = ModelRegistry::new();
+        reg.register_native_rates(
+            RatesProductKind::Ois,
+            ConstantRatesModel::new(measures(1.0)),
+        )
+        .unwrap();
+        assert!(
+            reg.register_native_rates(
+                RatesProductKind::Ois,
+                ConstantRatesModel::new(measures(2.0))
+            )
+            .is_err()
+        );
+        // Same model id, different kind: allowed.
+        reg.register_native_rates(
+            RatesProductKind::Bond,
+            ConstantRatesModel::new(measures(3.0)),
+        )
+        .unwrap();
+        assert_eq!(reg.rates_len(), 2);
     }
 }

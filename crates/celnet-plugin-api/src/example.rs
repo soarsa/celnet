@@ -31,6 +31,7 @@ use crate::calibration::{Calibration, CalibrationReport, CalibrationTarget};
 use crate::descriptor::{GreekSupport, ModelDescriptor, ModelId, ModelKind};
 use crate::error::{PluginError, PluginResult};
 use crate::pricing::PricingModel;
+use crate::rates::{RatesCurvePillar, RatesMeasures, RatesPricingModel, RatesTerms};
 use crate::smile::SmileModel;
 
 /// The stable identity advertised by the reference flat-vol pricer.
@@ -350,4 +351,52 @@ pub fn reference_call(inputs: &CarryInputs) -> f64 {
     let d2 = d1 - vsqt;
     inputs.spot * exp((b - r) * inputs.t) * norm_cdf(d1)
         - inputs.strike * exp(-r * inputs.t) * norm_cdf(d2)
+}
+
+// --- Linear fixed-income seam ------------------------------------------------
+
+/// The stable identity advertised by the reference constant-quote rates model.
+pub const CONSTANT_RATES_ID: ModelId = ModelId("celnet.reference.constant-rates");
+
+/// A deterministic reference rates model that returns a fixed, caller-configured
+/// [`RatesMeasures`] regardless of the curve — the minimal [`RatesPricingModel`],
+/// modelling a desk that publishes a **fixed manual quote** for a product.
+///
+/// It is a real, deterministic model (not a placeholder): its output is a pure
+/// function of the [`RatesMeasures`] it was constructed with. It exists to
+/// exercise — and prove — the fixed-income registry + dispatch seam end-to-end,
+/// exactly as [`FlatSmilePricer`] anchors the option seam. A desk's own model
+/// legitimately computes its measures from the [`RatesTerms`] and curve; this one
+/// deliberately does not, so a test can assert the dispatch routed *through* it
+/// by recognising its configured sentinel result.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstantRatesModel {
+    /// The fixed measures this model quotes for every request.
+    measures: RatesMeasures,
+}
+
+impl ConstantRatesModel {
+    /// Construct a constant-quote rates model returning `measures`.
+    #[must_use]
+    pub fn new(measures: RatesMeasures) -> Self {
+        Self { measures }
+    }
+}
+
+impl RatesPricingModel for ConstantRatesModel {
+    fn descriptor(&self) -> ModelDescriptor {
+        ModelDescriptor::new(
+            CONSTANT_RATES_ID,
+            ModelKind::RatesPricing,
+            GreekSupport::PRICE_ONLY,
+        )
+    }
+
+    fn price(
+        &self,
+        _terms: &RatesTerms,
+        _curve: &[RatesCurvePillar],
+    ) -> PluginResult<RatesMeasures> {
+        Ok(self.measures.clone())
+    }
 }

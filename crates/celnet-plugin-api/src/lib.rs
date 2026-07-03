@@ -11,11 +11,15 @@
 //! The host runtime weight lives entirely in `celnet-plugin-host`, which runs the
 //! untrusted tier on the `wasmi` interpreter (the contract is runtime-agnostic).
 //!
-//! # The three model seams
+//! # The model seams
 //!
 //! - [`PricingModel`] — price (and optionally the carry-tagged Greek strip) for
 //!   an option given the generalized [`celnet_core::CarryInputs`], so a model can
 //!   price any asset class (FX, or a cost-of-carry equity/commodity), not only FX.
+//! - [`RatesPricingModel`] — the linear fixed-income analog: price an
+//!   OIS / IRS / FRA / cash bond given its neutral [`RatesTerms`] and the
+//!   calibrating discount curve, so fixed-income analytics are user-extensible on
+//!   the same registry (ADR-0021, uniform-asset-class dispatch).
 //! - [`SmileModel`] — a volatility smile/surface; extends [`celnet_core::Smile`]
 //!   and adds an arbitrage self-check.
 //! - [`Calibration`] — fits a model's parameters to market targets, producing a
@@ -49,6 +53,7 @@ mod descriptor;
 mod error;
 pub mod example;
 mod pricing;
+mod rates;
 mod registry;
 mod smile;
 
@@ -56,6 +61,10 @@ pub use calibration::{Calibration, CalibrationReport, CalibrationTarget};
 pub use descriptor::{GreekSupport, ModelDescriptor, ModelId, ModelKind};
 pub use error::{PluginError, PluginResult};
 pub use pricing::PricingModel;
+pub use rates::{
+    RatesAccrualBasis, RatesCurvePillar, RatesFrequency, RatesMeasures, RatesPricingModel,
+    RatesProductKind, RatesTerms,
+};
 pub use registry::ModelRegistry;
 pub use smile::SmileModel;
 
@@ -454,5 +463,54 @@ mod tests {
             PluginError::Unsupported("butterfly arbitrage").to_string(),
             "unsupported: butterfly arbitrage"
         );
+    }
+
+    /// The linear fixed-income seam: the reference [`ConstantRatesModel`]
+    /// describes itself as [`ModelKind::RatesPricing`], round-trips its configured
+    /// measures, and [`RatesTerms::product_kind`] tags each variant — the SDK
+    /// surface a house/user rates model is authored against.
+    #[test]
+    fn rates_pricing_model_contract() {
+        use crate::example::{CONSTANT_RATES_ID, ConstantRatesModel};
+        use crate::{
+            RatesAccrualBasis, RatesCurvePillar, RatesFrequency, RatesMeasures, RatesPricingModel,
+            RatesProductKind, RatesTerms,
+        };
+
+        let measures = RatesMeasures {
+            pv: 1_234.5,
+            par_rate: 0.041,
+            pv01: 6.7,
+            dv01: 6.7,
+            key_rate_ladder: vec![1.0, 2.0, 3.0],
+        };
+        let model = ConstantRatesModel::new(measures.clone());
+        let d = RatesPricingModel::descriptor(&model);
+        assert_eq!(d.id, CONSTANT_RATES_ID);
+        assert_eq!(d.kind, ModelKind::RatesPricing);
+
+        // Each terms variant reports its kind; the model round-trips its quote.
+        let ois = RatesTerms::Ois {
+            tenor_years: 5,
+            fixed_rate: 0.04,
+            notional: 1e6,
+            receive_fixed: true,
+        };
+        assert_eq!(ois.product_kind(), RatesProductKind::Ois);
+        let curve = [
+            RatesCurvePillar::new(1.0, 0.042),
+            RatesCurvePillar::new(2.0, 0.041),
+        ];
+        assert_eq!(model.price(&ois, &curve).unwrap(), measures);
+
+        let bond = RatesTerms::Bond {
+            coupon_rate: 0.05,
+            redemption: 100.0,
+            coupon_frequency: RatesFrequency::SemiAnnual,
+            day_count: RatesAccrualBasis::Thirty360BondBasis,
+            maturity: celnet_types::BrokenDate::new(2031, 6, 25),
+            long: true,
+        };
+        assert_eq!(bond.product_kind(), RatesProductKind::Bond);
     }
 }

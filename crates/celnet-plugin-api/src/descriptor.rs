@@ -40,6 +40,12 @@ pub enum ModelKind {
     /// Fits model parameters to market targets — implements
     /// [`crate::Calibration`].
     Calibration,
+    /// Prices a linear fixed-income instrument (OIS / IRS / FRA / cash bond) off
+    /// a discount curve — implements [`crate::RatesPricingModel`]. The
+    /// fixed-income analog of [`ModelKind::Pricing`]: an FI house/user model
+    /// advertises this kind so the registry routes rates work to it, exactly as a
+    /// [`ModelKind::Pricing`] model serves the option analytic arm.
+    RatesPricing,
 }
 
 /// Which Greeks a [`crate::PricingModel`] is able to produce, advertised up

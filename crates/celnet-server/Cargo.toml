@@ -46,9 +46,15 @@ celnet-xva.workspace = true
 celnet-rfq.workspace = true
 celnet-engine.workspace = true
 # User-extensible analytics: the tiered plugin host whose ModelRegistry the
-# pricer's ProductEngine dispatch resolves a registered house model through
-# (architecture item D — dormant-crate activation).
+# pricer's ProductEngine (options) + FiProductEngine (fixed income, ADR-0021)
+# dispatch resolve a registered house model through (architecture item D —
+# dormant-crate activation).
 celnet-plugin-host.workspace = true
+# The frozen plugin SDK contract itself: the FI dispatch (rates_pricing/engines.rs)
+# builds the neutral `RatesTerms` / `RatesCurvePillar` a registered rates house
+# model prices, and maps its `RatesMeasures` back onto the wire result. Used on the
+# non-test dispatch path (and by the reference models in tests), so a normal dep.
+celnet-plugin-api.workspace = true
 celnet-proto.workspace = true
 celnet-risk-normalize.workspace = true
 celnet-risk-cube.workspace = true
@@ -93,9 +99,6 @@ tracing.workspace = true
 
 [dev-dependencies]
 celnet-testkit.workspace = true
-# The frozen plugin SDK contract + its reference FlatSmilePricer model, registered
-# as a native house model in the pricer's plugin-dispatch tests (item D).
-celnet-plugin-api.workspace = true
 # The frozen golden-vector corpus: the cross-asset WS conformance suite
 # (tests/cross_asset_ws.rs) reconciles the WS mirror against the vectors'
 # independent oracles.
