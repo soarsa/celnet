@@ -486,27 +486,7 @@ fn price_bond_instrument(
 ) -> Result<RatesPricingResult, RatesPriceError> {
     let side = Side::try_from(bond.side).map_err(|_| RatesPriceError::InvalidSide)?;
     let sign = bond_side_sign(side)?;
-    let frequency = map_frequency(bond.coupon_frequency)?;
-    let day_count = map_accrual_basis(bond.day_count)?;
-    let maturity = bond
-        .maturity_date
-        .as_ref()
-        .ok_or(RatesPriceError::MissingBondMaturity)?;
-    let maturity_date = parse_broken_date(maturity).ok_or(RatesPriceError::InvalidBondMaturity)?;
-
-    // Settlement = the curve time-0 date (reference rolled to the next US business
-    // day), so the bond's ACT/365F cashflow-time axis coincides with the discount
-    // curve's. `Bond::new` validates `maturity > settlement` and `redemption > 0`.
-    let cal = us_settlement_calendar();
-    let settlement = RollRule::Following.adjust(&cal, reference);
-    let bond_contract = Bond::new(
-        settlement,
-        maturity_date,
-        bond.coupon_rate,
-        frequency,
-        day_count,
-        bond.redemption,
-    )?;
+    let bond_contract = bond_contract_from_wire(bond, reference)?;
 
     let curve = bootstrap_ois(quotes)?;
     let dirty_price = price_from_curve(&bond_contract, &curve)?;
@@ -519,6 +499,36 @@ fn price_bond_instrument(
         dv01: sign * risk.dv01,
         key_rate_ladder: Vec::new(),
     })
+}
+
+/// Build the [`celnet_bond::Bond`] contract from the wire [`BondInstrument`] and the
+/// curve reference date — the side-agnostic economics shared by [`price_bond_instrument`]
+/// (which applies the `side` sign after) and [`quote_bond`] (which prices the magnitude).
+///
+/// Settlement = the curve time-0 date (reference rolled to the next US business day), so
+/// the bond's cashflow-time axis coincides with the discount curve's. `Bond::new`
+/// validates `maturity > settlement` and `redemption > 0`.
+fn bond_contract_from_wire(
+    bond: &BondInstrument,
+    reference: Date,
+) -> Result<Bond, RatesPriceError> {
+    let frequency = map_frequency(bond.coupon_frequency)?;
+    let day_count = map_accrual_basis(bond.day_count)?;
+    let maturity = bond
+        .maturity_date
+        .as_ref()
+        .ok_or(RatesPriceError::MissingBondMaturity)?;
+    let maturity_date = parse_broken_date(maturity).ok_or(RatesPriceError::InvalidBondMaturity)?;
+    let cal = us_settlement_calendar();
+    let settlement = RollRule::Following.adjust(&cal, reference);
+    Ok(Bond::new(
+        settlement,
+        maturity_date,
+        bond.coupon_rate,
+        frequency,
+        day_count,
+        bond.redemption,
+    )?)
 }
 
 /// Price the [`RatesPriceRequest`]'s instrument against its curve set.
@@ -622,6 +632,62 @@ pub fn par_rate_for(curve: &CurveSet, tenor_years: u32) -> Result<f64, RatesPric
     let schedule = usd_sofr_ois_schedule(reference, tenor_years)?;
     let base = bootstrap_ois(&quotes)?;
     Ok(ois_par_rate(&base, &schedule).0)
+}
+
+/// The two-way-quoting view of a cash bond the FIX/RFS edge centres a market on: the
+/// dirty price discounted off the curve, the clean (quoted) price and accrued interest,
+/// the yield DV01, and the yield to maturity — all as **side-independent magnitudes**
+/// (a bond's price and DV01 do not depend on long/short; only the PV sign does, and the
+/// edge quotes the price two-way around the magnitude, exactly as it quotes an OIS
+/// two-way around the side-independent par rate).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BondQuote {
+    /// The dirty (full) price discounted off the curve — [`celnet_bond::price_from_curve`].
+    pub dirty_price: f64,
+    /// The clean (quoted) price: `dirty − accrued`. The market-convention quote level.
+    pub clean_price: f64,
+    /// Accrued interest from the last coupon to settlement.
+    pub accrued_interest: f64,
+    /// DV01: the dirty-price move per +1bp of yield (a positive magnitude).
+    pub dv01: f64,
+    /// Yield to maturity implied by the dirty price (the bond's break-even yield).
+    pub yield_to_maturity: f64,
+}
+
+/// Price a cash [`BondInstrument`] off a [`CurveSet`] for the quoting edge, returning the
+/// full [`BondQuote`] (clean/dirty price, accrued, DV01, YTM) as side-independent
+/// magnitudes.
+///
+/// Byte-identical to [`price_rates`]'s `Bond` arm on the shared numbers: it calls the
+/// **identical** [`bond_contract_from_wire`] / [`bootstrap_ois`] / [`price_from_curve`] /
+/// [`bond_risk`] bodies (gated by [`tests::quote_bond_matches_price_rates`]). It differs
+/// only in that it exposes the clean price + accrued the FIX two-way market is struck on
+/// (which the scalar [`RatesPricingResult`] does not carry) and never applies a `side`
+/// sign — so a two-way (`SIDE_TWO_WAY`) request, which [`price_rates`] rejects, is
+/// priced at magnitude. This is the cash-bond analogue of [`par_rate_for`].
+///
+/// # Errors
+///
+/// Returns [`RatesPriceError`] for a missing/invalid curve set, malformed bond
+/// economics, an invalid maturity, or a numeric schedule/bootstrap/yield-solve failure.
+pub fn quote_bond(bond: &BondInstrument, curve: &CurveSet) -> Result<BondQuote, RatesPriceError> {
+    let reference_date = curve
+        .reference_date
+        .as_ref()
+        .ok_or(RatesPriceError::MissingReferenceDate)?;
+    let reference = resolve_date(reference_date)?;
+    let quotes = build_quotes(curve, reference)?;
+    let bond_contract = bond_contract_from_wire(bond, reference)?;
+    let discount = bootstrap_ois(&quotes)?;
+    let dirty_price = price_from_curve(&bond_contract, &discount)?;
+    let risk = bond_risk(&bond_contract, dirty_price)?;
+    Ok(BondQuote {
+        dirty_price,
+        clean_price: risk.clean_price,
+        accrued_interest: risk.accrued_interest,
+        dv01: risk.dv01,
+        yield_to_maturity: risk.yield_to_maturity.0,
+    })
 }
 
 #[cfg(test)]
@@ -1118,6 +1184,43 @@ mod tests {
         assert_eq!(short.pv01, -long.pv01);
         assert_eq!(short.dv01, -long.dv01);
         assert_eq!(short.par_rate, long.par_rate); // yield is side-independent
+    }
+
+    /// [`quote_bond`] (the FIX-edge quoting view) is `to_bits`-identical to the landed
+    /// [`price_rates`] `Bond` arm on every shared number: its `dirty_price` equals the
+    /// long PV, its `dv01` equals the long DV01, and its `yield_to_maturity` equals the
+    /// par (yield). It additionally exposes `clean = dirty − accrued` (the internal
+    /// consistency of the wrapped `bond_risk`) and prices a two-way request at magnitude
+    /// where [`price_rates`] rejects `SIDE_TWO_WAY`.
+    #[test]
+    fn quote_bond_matches_price_rates() {
+        let bond = BondInstrument {
+            coupon_rate: 0.05,
+            coupon_frequency: WirePaymentFrequency::SemiAnnual as i32,
+            day_count: WireAccrualBasis::Thirty360BondBasis as i32,
+            maturity_date: Some(BrokenDate {
+                year: 2031,
+                month: 6,
+                day: 15,
+            }),
+            redemption: 100.0,
+            side: Side::TwoWay as i32, // a two-way request price_rates would reject
+        };
+
+        let quote = quote_bond(&bond, &curve_set()).expect("two-way bond quotes at magnitude");
+        let long = price_rates(&bond_request(0.05, (2031, 6, 15), 100.0, Side::Buy)).unwrap();
+
+        assert_eq!(quote.dirty_price.to_bits(), long.pv.to_bits());
+        assert_eq!(quote.dv01.to_bits(), long.dv01.to_bits());
+        assert_eq!(quote.yield_to_maturity.to_bits(), long.par_rate.to_bits());
+        assert!(
+            (quote.clean_price + quote.accrued_interest - quote.dirty_price).abs() <= 1e-12,
+            "clean {} + accrued {} != dirty {}",
+            quote.clean_price,
+            quote.accrued_interest,
+            quote.dirty_price
+        );
+        assert!(quote.dv01 > 0.0, "a long-magnitude bond DV01 is positive");
     }
 
     /// The IRS / FRA key-rate ladders carry one entry per calibrating pillar and sum

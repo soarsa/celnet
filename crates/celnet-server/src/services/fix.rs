@@ -192,6 +192,15 @@ impl RatesAutoQuotePolicy {
     pub(crate) fn admits(&self, notional: f64, tenor_years: u32) -> bool {
         notional <= self.max_notional && self.tenors.contains(&tenor_years)
     }
+
+    /// Whether a cash-bond RFQ of this `notional` is auto-quoted (`true`) or routed to a
+    /// human desk (`false`). A bond carries no whole-year tenor to match the on-the-run
+    /// set against (its schedule is a maturity date), so the bond admission is the
+    /// notional cap alone — the same clip-size gate the OIS path applies.
+    #[must_use]
+    pub(crate) fn admits_notional(&self, notional: f64) -> bool {
+        notional <= self.max_notional
+    }
 }
 
 impl FixContext {
@@ -602,6 +611,13 @@ impl FixSession {
         let Some(intent) = rates_intent_for_kind(self.ctx.kind) else {
             return;
         };
+        // A fixed-income venue serves BOTH arms; `SecurityType(167)=BOND` selects the
+        // cash-bond arm, every other rates request is the OIS arm.
+        if frame.get(167) == Some(dialect_rates::SEC_TYPE_BOND) {
+            self.on_bond_quote_request(frame, st, req_id, symbol, out)
+                .await;
+            return;
+        }
         let Ok(rfq) = dialect_rates::decode_rates_rfq(frame) else {
             return;
         };
@@ -660,6 +676,93 @@ impl FixSession {
                 notional: rfq.notional,
                 side: side as i32,
             })),
+        };
+        let quote = auto_level.map(|lvl| DeskQuote {
+            price: lvl,
+            notional: rfq.notional,
+            valid_for_ms: RATES_AUTO_QUOTE_VALID_MS,
+            trader: "auto".to_owned(),
+        });
+        edge.ingest_fix_rfq(
+            &self.ctx.desk,
+            &counterparty,
+            instrument,
+            curve.clone(),
+            side,
+            rfq.notional,
+            quote,
+        );
+    }
+
+    /// Handle an inbound cash-bond `QuoteRequest(R)` on a dedicated fixed-income venue —
+    /// the bond analogue of [`Self::on_rates_quote_request`]'s OIS body: decode +
+    /// intent-check the bond RFQ, record it into the desk inbox, and either auto-quote it
+    /// (admitted by the notional policy → `Quote(S)` + QUOTED history) or route it to a
+    /// human desk (declined → PENDING). The auto-quote runs through the SAME
+    /// [`bond_line`] pricing + [`Self::emit_two_way_quote`] token/quote machinery as an
+    /// OIS or FX line — a bond carries no canonical-vanilla risk leaf, so no FX pre-trade
+    /// template.
+    async fn on_bond_quote_request(
+        &mut self,
+        frame: &FrameCursor<'_>,
+        st: &[u8],
+        req_id: &[u8],
+        symbol: &[u8],
+        out: &mut Vec<Vec<u8>>,
+    ) {
+        let Some(intent) = rates_intent_for_kind(self.ctx.kind) else {
+            return;
+        };
+        let Ok(rfq) = dialect_rates::decode_bond_rfq(frame) else {
+            return;
+        };
+        if !subscription_matches_intent(intent, rfq.subscription) {
+            return;
+        }
+        let curve = crate::rates_pricing::default_usd_sofr_curve_set();
+        // Auto-quote only a policy-admitted RFQ the venue can actually price; a request
+        // over the notional cap OR one the engine cannot price (e.g. a maturity that does
+        // not resolve) routes to a human desk as PENDING — never dropped.
+        let priced = if self.ctx.auto_quote.admits_notional(rfq.notional) {
+            bond_line(frame, Some(intent)).ok()
+        } else {
+            None
+        };
+        match priced {
+            Some(priced) => {
+                self.emit_two_way_quote(st, req_id, symbol, &priced, None, out);
+                let mid = 0.5 * (priced.bid + priced.offer);
+                self.record_bond_rfq(&rfq, &curve, Some(mid));
+            }
+            None => {
+                self.record_bond_rfq(&rfq, &curve, None);
+            }
+        }
+    }
+
+    /// Record an inbound cash-bond RFQ into the desk inbox under this venue's desk — the
+    /// bond analogue of [`Self::record_rates_rfq`]. When `auto_level` is `Some`, the
+    /// venue auto-quoted → stored QUOTED at that clean-price level; otherwise stored
+    /// PENDING for a human trader. A no-op when the acceptor is not desk-routed or
+    /// carries no desk. The recorded instrument is the LANDED [`RatesInstrument`] `Bond`
+    /// arm the decode produced (its `side` is the request's side, `SIDE_TWO_WAY` for a
+    /// two-way request).
+    fn record_bond_rfq(
+        &self,
+        rfq: &dialect_rates::BondRfq,
+        curve: &CurveSet,
+        auto_level: Option<f64>,
+    ) {
+        let Some(edge) = self.ctx.desk_edge.as_ref() else {
+            return;
+        };
+        if self.ctx.desk.trim().is_empty() {
+            return;
+        }
+        let counterparty = String::from_utf8_lossy(&self.ctx.counterparty).into_owned();
+        let side = Side::try_from(rfq.instrument.side).unwrap_or(Side::TwoWay);
+        let instrument = RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Bond(rfq.instrument)),
         };
         let quote = auto_level.map(|lvl| DeskQuote {
             price: lvl,
@@ -810,7 +913,18 @@ impl FixSession {
         // / lift / fill machinery as an FX option line.
         if let Some(intent) = rates_intent_for_kind(self.ctx.kind) {
             // A rates line has no canonical-vanilla risk leaf ⇒ no pre-trade template.
+            // The bond arm is selected by `SecurityType(167)=BOND`; every other rates
+            // request is the OIS arm.
+            if frame.get(167) == Some(dialect_rates::SEC_TYPE_BOND) {
+                return bond_line(frame, Some(intent)).map(|line| (line, None));
+            }
             return rates_line(frame, Some(intent)).map(|line| (line, None));
+        }
+        // The FX-options / legacy-demo acceptor still content-detects a fixed-income
+        // request by `SecurityType(167)` (BOND before OIS), so a mixed acceptor prices
+        // cash bonds and OIS alongside FX options.
+        if frame.get(167) == Some(dialect_rates::SEC_TYPE_BOND) {
+            return bond_line(frame, None).map(|line| (line, None));
         }
         if frame.get(167) == Some(dialect_rates::SEC_TYPE_OIS) {
             return rates_line(frame, None).map(|line| (line, None));
@@ -981,6 +1095,44 @@ fn rates_line(frame: &FrameCursor<'_>, expected: Option<RatesIntent>) -> Result<
     let curve = crate::rates_pricing::default_usd_sofr_curve_set();
     let par = crate::rates_pricing::par_rate_for(&curve, rfq.tenor_years).map_err(|_| ())?;
     let (bid, offer) = dialect_rates::two_way_rates(par, RATES_HALF_SPREAD);
+    Ok(PricedLine {
+        bid,
+        offer,
+        size: rfq.notional,
+    })
+}
+
+/// The P0 maker half-spread for a fixed-income two-way **bond price** market, in price
+/// points per 100 face (`0.05` = 5 cents each side ⇒ a 10-cent-wide market). The bond
+/// analogue of [`RATES_HALF_SPREAD`] (which is in rate); a documented constant until a
+/// bond-specific spread model lands.
+const BOND_HALF_SPREAD: f64 = 0.05;
+
+/// Price an inbound cash-bond RFQ to a two-way **clean-price** line: the clean (quoted)
+/// price of the bond discounted off the P0 static USD-SOFR curve — the LANDED
+/// `price_rates`(Bond) / `celnet_bond` result (via [`crate::rates_pricing::quote_bond`])
+/// — split [`BOND_HALF_SPREAD`] either side, with the RFQ notional as the quote size.
+/// A bond's clean price and DV01 are side-independent magnitudes, so the two-way market
+/// is struck around the magnitude exactly as [`rates_line`] centres an OIS market on the
+/// side-independent par rate. The rate-valued `PricedLine` is reused unchanged, so the
+/// inbound bond RFQ is quoted, token-minted, lifted and filled exactly like an OIS or FX
+/// line — that reuse is what makes cash bonds first-class on the FIX edge with no
+/// bond-specific quote/order path.
+///
+/// `expected` is the venue's rates intent when this is a dedicated fixed-income
+/// connection (`Some`), or `None` for the content-detected path (which imposes no `263`
+/// constraint). When set, an inbound subscription type that does not match the intent is
+/// refused.
+fn bond_line(frame: &FrameCursor<'_>, expected: Option<RatesIntent>) -> Result<PricedLine, ()> {
+    let rfq = dialect_rates::decode_bond_rfq(frame).map_err(|_| ())?;
+    if let Some(intent) = expected
+        && !subscription_matches_intent(intent, rfq.subscription)
+    {
+        return Err(());
+    }
+    let curve = crate::rates_pricing::default_usd_sofr_curve_set();
+    let quote = crate::rates_pricing::quote_bond(&rfq.instrument, &curve).map_err(|_| ())?;
+    let (bid, offer) = dialect_rates::two_way_rates(quote.clean_price, BOND_HALF_SPREAD);
     Ok(PricedLine {
         bid,
         offer,

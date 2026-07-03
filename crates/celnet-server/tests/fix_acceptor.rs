@@ -31,13 +31,16 @@ use std::time::Duration;
 
 use celnet_core::is_close;
 use celnet_fix::MsgType;
-use celnet_fix::dialect_rates::{self, RatesQuoteRequestParams, RatesSide, SubscriptionRequest};
+use celnet_fix::dialect_rates::{
+    self, BondQuoteRequestParams, RatesQuoteRequestParams, RatesSide, SubscriptionRequest,
+};
 use celnet_fix::framing::{FrameCursor, FrameEncoder};
 use celnet_fix::messages::{
     self, EXEC_FILLED, EXEC_REJECTED, ExecReportView, Header, NewOrderParams, QuoteView,
 };
 use celnet_fix::session::{InMemoryStore, Role, Session, SessionConfig, SessionState};
 use celnet_fix::transport::{FrameReader, write_frame};
+use celnet_proto::{AccrualBasis, BondInstrument, BrokenDate, PaymentFrequency, Side};
 use celnet_server::{Clock, SpreadModel};
 use celnet_types::{OptionType, VanillaInputs};
 use tokio::net::TcpStream;
@@ -228,6 +231,77 @@ fn build_rates_lift<'a>(
     }
 }
 
+/// The bond symbol the fixed-income e2e uses on the wire.
+const BOND_SYMBOL: &[u8] = b"US-TREASURY-5Y";
+/// The maker half-spread the bond edge quotes a two-way clean price with, in price
+/// points per 100 face (mirrors `fix::BOND_HALF_SPREAD`).
+const BOND_HALF_SPREAD: f64 = 0.05;
+
+/// The intended cash bond behind the fixed-income e2e: a 4.5% semi-annual, 30/360 USD
+/// bond redeeming at par, maturing on the P0 curve's 5-year anniversary (2031-06-25).
+/// The coupon sits above the ~4.05% 5y curve level, so it prices at a premium (clean
+/// price > par). The clean price and DV01 are side-independent magnitudes.
+fn bond_instrument() -> BondInstrument {
+    BondInstrument {
+        coupon_rate: 0.045,
+        coupon_frequency: PaymentFrequency::SemiAnnual as i32,
+        day_count: AccrualBasis::Thirty360BondBasis as i32,
+        maturity_date: Some(BrokenDate {
+            year: 2031,
+            month: 6,
+            day: 25,
+        }),
+        redemption: 100.0,
+        side: Side::TwoWay as i32,
+    }
+}
+
+/// Build a cash-bond `QuoteRequest(R)` on the fixed-income dialect for [`bond_instrument`].
+fn build_bond_rfq<'a>(
+    req_id: &'a [u8],
+    notional: f64,
+    side: Side,
+) -> impl FnOnce(&Header<'_>, &mut FrameEncoder) -> Vec<u8> + 'a {
+    move |h: &Header<'_>, e: &mut FrameEncoder| {
+        let p = BondQuoteRequestParams {
+            quote_req_id: req_id,
+            symbol: BOND_SYMBOL,
+            coupon_rate: 0.045,
+            coupon_frequency: PaymentFrequency::SemiAnnual,
+            day_count: AccrualBasis::Thirty360BondBasis,
+            maturity: BrokenDate {
+                year: 2031,
+                month: 6,
+                day: 25,
+            },
+            redemption: 100.0,
+            notional,
+            side,
+            subscription: SubscriptionRequest::Snapshot,
+        };
+        dialect_rates::build_bond_quote_request(h, &p, e)
+    }
+}
+
+/// Lift a bond quote (`NewOrderSingle(D)` against a `QuoteID` on a side).
+fn build_bond_lift<'a>(
+    cl_ord_id: &'a [u8],
+    quote_id: &'a [u8],
+    side: u8,
+) -> impl FnOnce(&Header<'_>, &mut FrameEncoder) -> Vec<u8> + 'a {
+    move |h: &Header<'_>, e: &mut FrameEncoder| {
+        let p = NewOrderParams {
+            cl_ord_id,
+            quote_id,
+            symbol: BOND_SYMBOL,
+            side,
+            qty: 25_000_000.0,
+            transact_time: T,
+        };
+        messages::build_new_order_single(h, &p, e)
+    }
+}
+
 /// Attach a FIX acceptor to a freshly-booted edge and return its bound address.
 async fn boot_edge_with_fix(clock: Clock) -> (celnet_server::Edge, SocketAddr) {
     let (mut edge, _grpc, _data_dir) = start_edge_with(true, clock.clone()).await;
@@ -359,6 +433,93 @@ async fn fix_rates_rfq_quotes_par_and_lift_fills() {
         assert!(
             is_close(fill_exact, expected_offer, 1e-12, 1e-12),
             "FIX rates fill {fill_exact} != quoted offer {expected_offer}"
+        );
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test timed out");
+}
+
+/// Fixed-income RFQ → Quote on the cash-BOND dialect: the maker shows a two-way CLEAN
+/// PRICE market centred on the engine's clean price for the bond off the P0 static
+/// USD-SOFR curve (the exact-price field reconciles to 1e-12), and a BUY lift books a
+/// fill at exactly the quoted offer — proving cash bonds are first-class on the FIX edge,
+/// running through the SAME quote / keyed-MAC token / last-look machinery as OIS and FX.
+///
+/// The reference clean price + DV01 come from the LANDED bond engine
+/// (`rates_pricing::quote_bond`, itself `to_bits`-identical to `price_rates`(Bond) and
+/// QuantLib-gated in `celnet-bond`) applied to a HAND-BUILT [`BondInstrument`]; the FIX
+/// server independently decodes the SAME economics off the raw wire frame. A decode or
+/// routing bug (wrong frequency/day-count/maturity, or quoting the dirty price / wrong
+/// spread) diverges the two and fails — a non-circular identity, not the engine checking
+/// itself.
+#[tokio::test]
+async fn fix_bond_rfq_quotes_clean_price_and_lift_fills() {
+    tokio::time::timeout(DEADLINE, async {
+        let clock = Clock::system();
+        let (edge, fix_addr) = boot_edge_with_fix(clock).await;
+
+        // First-principles reference: the LANDED engine's clean price for the bond, plus
+        // the maker half-spread on the offer side.
+        let curve = celnet_server::rates_pricing::default_usd_sofr_curve_set();
+        let engine = celnet_server::rates_pricing::quote_bond(&bond_instrument(), &curve)
+            .expect("the bond prices off the P0 curve");
+        let (_bid, expected_offer) =
+            dialect_rates::two_way_rates(engine.clean_price, BOND_HALF_SPREAD);
+
+        // Independent sanity on the magnitude (a 4.5% coupon vs a ~4.05% 5y curve is a
+        // premium bond): clean price is above par, in a sane band; DV01 is a sane
+        // positive per-100-face sensitivity; dirty = clean + accrued.
+        assert!(
+            engine.clean_price > 100.0 && engine.clean_price < 110.0,
+            "premium-bond clean price {} out of sane band",
+            engine.clean_price
+        );
+        assert!(
+            engine.dv01 > 0.0 && engine.dv01 < 1.0,
+            "bond DV01 {} out of sane band",
+            engine.dv01
+        );
+        assert!(
+            (engine.clean_price + engine.accrued_interest - engine.dirty_price).abs() < 1e-9,
+            "clean + accrued != dirty"
+        );
+
+        let mut drv = Driver::connect(fix_addr).await;
+
+        // Bond RFQ → Quote (two-way request).
+        drv.send_app(build_bond_rfq(b"BREQ-1", 25_000_000.0, Side::TwoWay))
+            .await;
+        let quote_raw = drv.next_app(MsgType::Quote).await;
+        let view = QuoteView::new(FrameCursor::parse(&quote_raw).expect("a well-formed Quote"));
+
+        let quote_id = view
+            .quote_id()
+            .expect("the quote carries a QuoteID")
+            .to_vec();
+        let offer_exact = view
+            .offer_exact()
+            .expect("the Quote carries the exact offer price");
+        assert!(
+            is_close(offer_exact, expected_offer, 1e-12, 1e-12),
+            "FIX bond offer {offer_exact} != engine clean+spread {expected_offer}"
+        );
+
+        // BUY (long) lift takes the offer → a fill at exactly the quoted clean price.
+        drv.send_app(build_bond_lift(b"BORD-1", &quote_id, b'1'))
+            .await;
+        let exec_raw = drv.next_app(MsgType::ExecutionReport).await;
+        let er = ExecReportView::new(
+            FrameCursor::parse(&exec_raw).expect("a well-formed ExecutionReport"),
+        );
+        assert_eq!(er.exec_type(), Some(EXEC_FILLED), "the bond lift fills");
+        let fill_exact = er
+            .last_px_exact()
+            .expect("the fill carries the exact price");
+        assert!(
+            is_close(fill_exact, expected_offer, 1e-12, 1e-12),
+            "FIX bond fill {fill_exact} != quoted offer {expected_offer}"
         );
 
         edge.shutdown(Duration::from_secs(5)).await;
