@@ -2793,6 +2793,114 @@ export interface CalibratedCurve {
 }
 
 // ---------------------------------------------------------------------------
+// fixed-income curve query — the FI market-data query surface (ADR-0021: the
+// asset-class-agnostic market-data query seam the FX vol surface already has,
+// generalized so fixed income rides it too). The discount-curve analogues of the
+// options `GetSmile` / `MarkSurface` / `Scenario` verbs: read a marked/bootstrapped
+// curve on a tenor axis, pin it under a fresh version, and bump-and-reprice it.
+// Mirrors the `celnet.wire` curve-query messages one-to-one.
+// ---------------------------------------------------------------------------
+
+/**
+ * A queried point on a discount curve (`celnet.wire.CurvePoint`): the
+ * continuously-compounded zero rate and the discount factor at `tenorYears` (a year
+ * fraction from the curve reference/spot-anchor date). The curve analogue of a
+ * {@link SmilePoint}.
+ */
+export interface CurvePoint {
+  /** The tenor (year fraction from the reference date) this point reports. */
+  tenorYears: number;
+  /** The continuously-compounded zero rate z(t) = −ln DF(t) / t. */
+  zeroRate: number;
+  /** The discount factor DF(t) = exp(−z(t)·t). */
+  discountFactor: number;
+}
+
+/**
+ * A calibrating par pillar resolved to its final-payment year fraction and observed
+ * par (fair fixed) rate (`celnet.wire.CurveParPillar`) — the curve analogue of a
+ * `Smile`'s echoed broker quotes.
+ */
+export interface CurveParPillar {
+  /** The resolved final-payment year fraction from spot for this pillar. */
+  tenorYears: number;
+  /** The observed par (fair fixed) rate as a decimal (0.0405 = 4.05%). */
+  parRate: number;
+}
+
+/**
+ * A read discount curve (`celnet.wire.GetCurveResponse`, `SurfaceService.GetCurve`)
+ * — the FI analogue of a {@link Smile}: the currency + reference date, the queried
+ * points, the echoed calibrating par pillars, and (when the request pinned one) the
+ * marked version it was read from.
+ */
+export interface GetCurveResult {
+  /** ISO-4217 currency of the curve. */
+  currency: string;
+  /** The curve reference (spot-anchor) date the tenor axis is measured from. */
+  referenceDate: BrokenDate;
+  /** The queried points (zero rate + discount factor per requested tenor). */
+  points: readonly CurvePoint[];
+  /** The calibrating par pillars echoed (resolved tenor + par rate). */
+  parPillars: readonly CurveParPillar[];
+  /** The marked version this was read from — present iff the request pinned one. */
+  curveVersion?: bigint;
+  /** Read time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+}
+
+/**
+ * A marked/persisted discount curve under a fresh pinned version
+ * (`celnet.wire.MarkCurveResponse`, `SurfaceService.MarkCurve`) — the FI analogue of
+ * a {@link MarkedSurface}: a later {@link GetCurveResult} pinned to `curveVersion`
+ * reproduces this exact curve.
+ */
+export interface MarkedCurve {
+  /** ISO-4217 currency of the marked curve. */
+  currency: string;
+  /** The monotonic server-assigned curve version id (a `GetCurve` pins against it). */
+  curveVersion: bigint;
+  /** The resolved calibrating par pillars marked. */
+  parPillars: readonly CurveParPillar[];
+  /** The bootstrapped points (zero rate + discount factor) at the pillar tenors. */
+  points: readonly CurvePoint[];
+  /** Mark time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+}
+
+/**
+ * The repriced instrument leg of a curve scenario
+ * (`celnet.wire.CurveScenarioReprice`): the PV before and after the shift, the
+ * resulting PV change, and the base-curve DV01 (PV change per +1bp parallel pillar
+ * bump) so a consumer can check `pvChange ≈ dv01 · parallelShiftBp`.
+ */
+export interface CurveScenarioReprice {
+  /** The instrument PV on the unshifted (base) curve. */
+  basePv: number;
+  /** The instrument PV on the shifted curve. */
+  shiftedPv: number;
+  /** The PV change (`shiftedPv − basePv`). */
+  pvChange: number;
+  /** The base-curve DV01 (PV change per +1bp parallel bump), signed per side. */
+  dv01: number;
+}
+
+/**
+ * A bump-and-reprice curve scenario result (`celnet.wire.CurveScenarioResponse`,
+ * `SurfaceService.CurveScenario`) — the FI analogue of a vol-surface
+ * {@link ScenarioResult}: the shifted curve on the query axis plus the optional
+ * repriced instrument leg (present iff the request carried an instrument).
+ */
+export interface CurveScenarioResult {
+  /** ISO-4217 currency of the curve. */
+  currency: string;
+  /** The shifted curve points (zero rate + discount factor per requested tenor). */
+  points: readonly CurvePoint[];
+  /** The repriced instrument leg — present iff the request carried an instrument. */
+  reprice: CurveScenarioReprice | null;
+}
+
+// ---------------------------------------------------------------------------
 // fixed-income (rates) portfolio risk — the additive book-level risk rollup
 // (`RiskService.AggregateRatesRisk`). Mirrors the `celnet.wire` rates-risk
 // messages one-to-one: a `CurveSet` + signed `RatesPosition`s roll up additively

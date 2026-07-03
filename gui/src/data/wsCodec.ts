@@ -143,6 +143,12 @@ import type {
   RatesStreamUpdate,
   BuildCurveRequest,
   CalibratedCurve,
+  CurvePoint,
+  CurveParPillar,
+  CurveScenarioReprice,
+  CurveScenarioResult,
+  GetCurveResult,
+  MarkedCurve,
   ReportingNumeraire,
   RiskBucketRequest,
   RiskNode,
@@ -1586,6 +1592,139 @@ export function calibratedCurveFromWire(o: WireObject): CalibratedCurve {
       zeroRate: num(p, "zero_rate"),
       label: str(p, "label"),
     })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// fixed-income curve query — SurfaceService GetCurve / MarkCurve / CurveScenario
+// (ADR-0021, the FI market-data query surface). Byte-compatible with the server's
+// generated codec (`crates/celnet-server/src/ws/generated_codec.rs`): the exact
+// snake_case proto field names it reads/writes. The request encoders REUSE
+// `ratesCurveSetToWire` / `ratesInstrumentUnionToWire` verbatim (one encoding, no
+// duplication), so a curve query rides the SAME wire `curve_set` / `instrument`
+// shapes `price_rates` already round-trips.
+// ---------------------------------------------------------------------------
+
+/**
+ * Encode a `GetCurveRequest` to the wire `get_curve` body. Exactly one curve
+ * source: pass a `curveVersion` to read a `MarkCurve`d version (the inline
+ * `curveSet` is then ignored server-side), else the inline `curveSet` is
+ * bootstrapped live. The presence-tracked `curve_version` is OMITTED when absent
+ * (proto3 optional), matching the server's `opt_u64` decode.
+ */
+export function getCurveRequestToWire(args: {
+  readonly curveSet: RatesCurveSet | null;
+  readonly queryTenorYears: readonly number[];
+  readonly curveVersion?: bigint;
+}): WireObject {
+  const w: WireObject = { query_tenor_years: [...args.queryTenorYears] };
+  if (args.curveSet) w["curve_set"] = ratesCurveSetToWire(args.curveSet);
+  if (args.curveVersion !== undefined)
+    w["curve_version"] = Number(args.curveVersion);
+  return w;
+}
+
+/** Encode a `MarkCurveRequest` to the wire `mark_curve` body. */
+export function markCurveRequestToWire(curveSet: RatesCurveSet): WireObject {
+  return { curve_set: ratesCurveSetToWire(curveSet) };
+}
+
+/**
+ * Encode a `CurveScenarioRequest` to the wire `curve_scenario` body.
+ * `keyRateShiftBp` is a proto3-default repeated double (empty ⇒ parallel-only);
+ * when present its length must equal the pillar count (the server enforces). An
+ * `instrument` is presence-tracked — OMITTED when absent (only the shifted curve is
+ * returned).
+ */
+export function curveScenarioRequestToWire(args: {
+  readonly curveSet: RatesCurveSet;
+  readonly parallelShiftBp: number;
+  readonly keyRateShiftBp: readonly number[];
+  readonly queryTenorYears: readonly number[];
+  readonly instrument?: RatesInstrument;
+}): WireObject {
+  const w: WireObject = {
+    curve_set: ratesCurveSetToWire(args.curveSet),
+    parallel_shift_bp: args.parallelShiftBp,
+    key_rate_shift_bp: [...args.keyRateShiftBp],
+    query_tenor_years: [...args.queryTenorYears],
+  };
+  if (args.instrument)
+    w["instrument"] = ratesInstrumentUnionToWire(args.instrument);
+  return w;
+}
+
+/** Decode one wire `CurvePoint` (`{ tenor_years, zero_rate, discount_factor }`). */
+function curvePointFromWire(o: WireObject): CurvePoint {
+  return {
+    tenorYears: num(o, "tenor_years"),
+    zeroRate: num(o, "zero_rate"),
+    discountFactor: num(o, "discount_factor"),
+  };
+}
+
+/** Decode one wire `CurveParPillar` (`{ tenor_years, par_rate }`). */
+function curveParPillarFromWire(o: WireObject): CurveParPillar {
+  return {
+    tenorYears: num(o, "tenor_years"),
+    parRate: num(o, "par_rate"),
+  };
+}
+
+/** Decode a `get_curve_response` frame into a {@link GetCurveResult}. */
+export function getCurveResultFromWire(o: WireObject): GetCurveResult {
+  const ref = child(o, "reference_date");
+  return {
+    currency: str(o, "currency"),
+    referenceDate: {
+      year: num(ref, "year"),
+      month: num(ref, "month"),
+      day: num(ref, "day"),
+    },
+    points: array(o, "points").map(curvePointFromWire),
+    parPillars: array(o, "par_pillars").map(curveParPillarFromWire),
+    // Presence-tracked: present iff the request pinned a marked version.
+    curveVersion: optBigInt(o, "curve_version"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+}
+
+/** Decode a `mark_curve_response` frame into a {@link MarkedCurve}. */
+export function markedCurveFromWire(o: WireObject): MarkedCurve {
+  return {
+    currency: str(o, "currency"),
+    curveVersion: numToBigInt(o, "curve_version"),
+    parPillars: array(o, "par_pillars").map(curveParPillarFromWire),
+    points: array(o, "points").map(curvePointFromWire),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+}
+
+/** Decode a wire `CurveScenarioReprice` leg. */
+function curveScenarioRepriceFromWire(o: WireObject): CurveScenarioReprice {
+  return {
+    basePv: num(o, "base_pv"),
+    shiftedPv: num(o, "shifted_pv"),
+    pvChange: num(o, "pv_change"),
+    dv01: num(o, "dv01"),
+  };
+}
+
+/** Decode a `curve_scenario_response` frame into a {@link CurveScenarioResult}. */
+export function curveScenarioResultFromWire(
+  o: WireObject,
+): CurveScenarioResult {
+  // `reprice` is an optional proto message: present iff the request carried an
+  // `instrument`. Absent/null ⇒ the shifted curve only (an honest empty leg).
+  const rp = o["reprice"];
+  const reprice =
+    rp && typeof rp === "object"
+      ? curveScenarioRepriceFromWire(rp as WireObject)
+      : null;
+  return {
+    currency: str(o, "currency"),
+    points: array(o, "points").map(curvePointFromWire),
+    reprice,
   };
 }
 
