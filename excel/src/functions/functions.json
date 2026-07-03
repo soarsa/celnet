@@ -755,6 +755,64 @@
       ]
     },
     {
+      "id": "RATESSERIES",
+      "name": "RATESSERIES",
+      "description": "Stream a live fixed-income measure (PV/PAR/PV01/DV01) for an OIS priced against a self-discounting curve; multiplexed, coalesced, stale-aware.",
+      "options": {
+        "stream": true,
+        "cancelable": true
+      },
+      "result": {
+        "dimensionality": "scalar",
+        "type": "string"
+      },
+      "parameters": [
+        {
+          "name": "curve",
+          "description": "2-column [tenorYears, parRate] curve range; one row per OIS pillar, strictly increasing tenor.",
+          "type": "any",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "referenceDate",
+          "description": "Curve reference (spot-anchor) date: an Excel date cell or YYYY-MM-DD.",
+          "type": "any"
+        },
+        {
+          "name": "tenor",
+          "description": "OIS tenor in whole years (e.g. 5 or 5Y).",
+          "type": "any"
+        },
+        {
+          "name": "fixedRate",
+          "description": "Fixed-leg rate as a decimal (0.041 = 4.10%).",
+          "type": "number"
+        },
+        {
+          "name": "direction",
+          "description": "PAY_FIXED (payer) or RECEIVE_FIXED (receiver).",
+          "type": "string"
+        },
+        {
+          "name": "notional",
+          "description": "Positive notional in the curve currency.",
+          "type": "number"
+        },
+        {
+          "name": "observable",
+          "description": "Measure to stream: PV (default), PAR, PV01 or DV01.",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "currency",
+          "description": "Optional ISO-4217 curve currency (defaults to USD).",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "MARK",
       "name": "MARK",
       "description": "Stage a manual vol/mark contribution (two-phase, idempotent; commits via the task pane).",

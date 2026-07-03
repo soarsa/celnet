@@ -43,7 +43,10 @@ import type {
   OisInstrument,
   Quote,
   RatesCurveSet,
+  RatesInstrument,
   RatesPricingResult,
+  RatesStreamSnapshot,
+  RatesStreamUpdate,
   Snapshot,
   StreamHealth,
   StreamReject,
@@ -75,7 +78,10 @@ import {
   priceXvaRequestToWire,
   ratesCurveSetToWire,
   ratesInstrumentToWire,
+  ratesInstrumentUnionToWire,
   ratesPricingResultFromWire,
+  ratesStreamSnapshotFromWire,
+  ratesStreamUpdateFromWire,
   serializeFrame,
   xvaResultFromWire,
   snapshotFromWire,
@@ -168,6 +174,8 @@ export type StreamEvent =
     }
   | { readonly kind: "series_snapshot"; readonly snapshot: MarketSeriesSnapshot }
   | { readonly kind: "series_point"; readonly point: MarketSeriesPoint }
+  | { readonly kind: "rates_snapshot"; readonly snapshot: RatesStreamSnapshot }
+  | { readonly kind: "rates_update"; readonly update: RatesStreamUpdate }
   | { readonly kind: "heartbeat"; readonly heartbeat: Heartbeat };
 
 /** The shape of a market-series subscription request (one observable time series). */
@@ -203,6 +211,31 @@ interface Sub {
   /** True once the baseline snapshot has been seen (post-subscribe/post-resync). */
   baselined: boolean;
   /** Wall-clock (ms) of the last server frame on this subscription. */
+  lastFrameAt: number;
+  /** The health last emitted, so the monitor only emits on a transition. */
+  health: StreamHealth;
+}
+
+/**
+ * Per-subscription state for a fixed-income (linear-rates) streaming line — the FI
+ * analogue of {@link Sub}, folded onto the SAME multiplexed session. Holds the
+ * baseline `instrument` + `curve` so a reconnect re-issues the line (the server
+ * answers a fresh baseline snapshot). A rates line carries NO click-to-trade token
+ * (indicative), and the server advances its sequence only on a successful send, so
+ * the client never sees a gap and needs no `resync` — recovery is reconnect →
+ * re-subscribe (fresh baseline) + the shared staleness monitor.
+ */
+interface RatesSub {
+  readonly id: bigint;
+  readonly instrument: RatesInstrument;
+  readonly curve: RatesCurveSet;
+  readonly label: string;
+  readonly throttleNanos: bigint;
+  /** The last sequence applied (0 until the first snapshot). */
+  lastSequence: bigint;
+  /** True once the baseline snapshot has been seen (post-subscribe/reconnect). */
+  baselined: boolean;
+  /** Wall-clock (ms) of the last server frame on this rates line. */
   lastFrameAt: number;
   /** The health last emitted, so the monitor only emits on a transition. */
   health: StreamHealth;
@@ -248,6 +281,8 @@ export class Connection {
   private readonly subs = new Map<bigint, Sub>();
   /** Live market-series subscriptions (kept so a reconnect re-issues them). */
   private readonly seriesSubs = new Map<bigint, MarketSeriesRequest>();
+  /** Live fixed-income streaming lines (kept so a reconnect re-issues them). */
+  private readonly ratesSubs = new Map<bigint, RatesSub>();
   private readonly listeners = new Set<(e: StreamEvent) => void>();
   private nextSubId = 1n;
   private readonly stateListeners = new Set<(open: boolean) => void>();
@@ -605,6 +640,58 @@ export class Connection {
   }
 
   /**
+   * Open a fixed-income (linear-rates) streaming line on the single multiplexed
+   * session, in the same subscription-id space as the FX price + market-series
+   * streams. The line prices `instrument` against the baseline `curve`; the server
+   * answers a `rates_stream_snapshot` (baseline == `price_rates` exactly) then
+   * sequenced `rates_stream_update`s as the curve deterministically ticks (PV / par
+   * / PV01 / DV01). Returns the client `SubscriptionId`; `rates_snapshot` then
+   * `rates_update` events arrive on the event listeners keyed by this id. Survives
+   * reconnect: the line is re-issued on a fresh socket (a fresh baseline snapshot).
+   * The streamed line carries no tradable token (rates click-to-trade books via the
+   * RFQ/desk path). Requires the `Stream · FixedIncome` capability server-side.
+   */
+  subscribeRates(
+    instrument: RatesInstrument,
+    curve: RatesCurveSet,
+    label: string,
+    throttleNanos: bigint = 0n,
+  ): bigint {
+    const id = this.nextSubId++;
+    this.ratesSubs.set(id, {
+      id,
+      instrument,
+      curve,
+      label,
+      throttleNanos,
+      lastSequence: 0n,
+      baselined: false,
+      lastFrameAt: this.clock(),
+      health: "RESYNCING",
+    });
+    this.sendRatesSubscribe(id, this.ratesSubs.get(id)!);
+    this.armStalenessMonitor();
+    return id;
+  }
+
+  private sendRatesSubscribe(id: bigint, sub: RatesSub): void {
+    this.send({
+      type: "rates_subscribe",
+      subscription: { value: Number(id) },
+      instrument: ratesInstrumentUnionToWire(sub.instrument),
+      curve_set: ratesCurveSetToWire(sub.curve),
+      throttle_nanos: Number(sub.throttleNanos),
+    });
+  }
+
+  unsubscribeRates(subscriptionId: bigint): void {
+    if (!this.ratesSubs.delete(subscriptionId)) return;
+    // The subscription-id space is shared: the server's single `unsubscribe` arm
+    // tears down whichever line (FX price / market-series / rates) the id names.
+    this.send({ type: "unsubscribe", subscription: { value: Number(subscriptionId) } });
+  }
+
+  /**
    * On a fresh connection (initial open or post-drop), re-issue every live
    * subscription, then resync each from its last good sequence so the server
    * replays anything missed (or re-baselines with a fresh snapshot).
@@ -629,6 +716,17 @@ export class Connection {
     // with a fresh `series_snapshot`); no per-series sequence resync is needed —
     // a series is a conflatable trend, so a fresh baseline is the recovery.
     for (const [id, req] of this.seriesSubs) this.sendSeriesSubscribe(id, req);
+    // Re-open every live fixed-income line. The server has no rates `Resync` replay
+    // (a rates line is re-priced-on-tick with server-advanced-on-send sequences, so
+    // it never gaps), so recovery is a fresh re-subscribe: the server answers a
+    // fresh baseline `rates_stream_snapshot` (sequence 1) and resumes ticking.
+    for (const sub of this.ratesSubs.values()) {
+      sub.baselined = false;
+      sub.lastSequence = 0n;
+      sub.lastFrameAt = now;
+      this.sendRatesSubscribe(sub.id, sub);
+      this.setHealth(sub, "RESYNCING");
+    }
   }
 
   /** Route an inbound RFS server frame (already typed by `dispatch`). */
@@ -681,9 +779,12 @@ export class Connection {
         this.emit({ kind: "heartbeat", heartbeat: beat });
         const subId = subscriptionIdOf(frame);
         if (subId === undefined) {
-          // Connection-level heartbeat: refresh every subscription's liveness.
+          // Connection-level heartbeat: refresh every subscription's liveness (FX
+          // price lines AND fixed-income lines — a quiet-but-alive rates line stays
+          // HEALTHY on the shared beat rather than tripping the staleness monitor).
           const now = this.clock();
           for (const sub of this.subs.values()) sub.lastFrameAt = now;
+          for (const sub of this.ratesSubs.values()) sub.lastFrameAt = now;
           break;
         }
         const sub = this.subs.get(subId);
@@ -730,6 +831,32 @@ export class Connection {
         this.emit({ kind: "series_point", point });
         break;
       }
+      case "rates_stream_snapshot": {
+        const snapshot = ratesStreamSnapshotFromWire(frame);
+        const sub = this.ratesSubs.get(snapshot.subscriptionId);
+        if (!sub) break;
+        sub.lastSequence = snapshot.sequence;
+        sub.baselined = true;
+        sub.lastFrameAt = this.clock();
+        this.emit({ kind: "rates_snapshot", snapshot });
+        this.setHealth(sub, "HEALTHY");
+        break;
+      }
+      case "rates_stream_update": {
+        const update = ratesStreamUpdateFromWire(frame);
+        const sub = this.ratesSubs.get(update.subscriptionId);
+        if (!sub || !sub.baselined) break;
+        sub.lastFrameAt = this.clock();
+        // The server advances a rates line's sequence only on a successful send, so
+        // sequences are strictly contiguous — a not-newer sequence is a stale
+        // duplicate (e.g. a post-reconnect straggler) and is dropped; a newer one is
+        // applied under latest-tick semantics (the freshest re-price wins).
+        if (update.sequence <= sub.lastSequence) break;
+        sub.lastSequence = update.sequence;
+        this.setHealth(sub, "HEALTHY");
+        this.emit({ kind: "rates_update", update });
+        break;
+      }
       default:
         break;
     }
@@ -737,16 +864,21 @@ export class Connection {
 
   // --- staleness monitor ----------------------------------------------------
 
+  /** True while any staleness-watched line (FX price OR fixed-income) is live. */
+  private hasStaleWatchedSubs(): boolean {
+    return this.subs.size > 0 || this.ratesSubs.size > 0;
+  }
+
   /** Arm the periodic staleness sweep if a window is configured and not closed. */
   private armStalenessMonitor(): void {
     if (this.closed || this.stalenessWindowMs <= 0) return;
     if (this.stalenessTimer !== undefined) return;
-    if (this.subs.size === 0) return;
+    if (!this.hasStaleWatchedSubs()) return;
     const tick = (): void => {
       this.stalenessTimer = undefined;
       this.sweepStaleness();
       // Re-arm while there is anything to watch.
-      if (!this.closed && this.subs.size > 0) {
+      if (!this.closed && this.hasStaleWatchedSubs()) {
         this.stalenessTimer = this.setTimer(tick, this.stalenessWindowMs);
       }
     };
@@ -754,16 +886,19 @@ export class Connection {
   }
 
   /**
-   * Flip any subscription with no frame within the staleness window to STALE.
-   * Exposed for the unit harness to drive deterministically with an injected
-   * clock (no real timers needed). A subsequent frame returns it to HEALTHY.
+   * Flip any subscription (FX price OR fixed-income line) with no frame within the
+   * staleness window to STALE. Exposed for the unit harness to drive
+   * deterministically with an injected clock (no real timers needed). A subsequent
+   * frame returns it to HEALTHY.
    */
   sweepStaleness(): void {
     const now = this.clock();
+    const stale = (last: number): boolean => now - last >= this.stalenessWindowMs;
     for (const sub of this.subs.values()) {
-      if (now - sub.lastFrameAt >= this.stalenessWindowMs && sub.health !== "STALE") {
-        this.setHealth(sub, "STALE");
-      }
+      if (stale(sub.lastFrameAt) && sub.health !== "STALE") this.setHealth(sub, "STALE");
+    }
+    for (const sub of this.ratesSubs.values()) {
+      if (stale(sub.lastFrameAt) && sub.health !== "STALE") this.setHealth(sub, "STALE");
     }
   }
 
@@ -772,9 +907,19 @@ export class Connection {
       sub.baselined = false;
       this.setHealth(sub, "STALE");
     }
+    for (const sub of this.ratesSubs.values()) {
+      sub.baselined = false;
+      this.setHealth(sub, "STALE");
+    }
   }
 
-  private setHealth(sub: Sub, health: StreamHealth): void {
+  /**
+   * Transition a line's health (FX price OR fixed-income) and emit a `health` event
+   * on the change. Typed on the structural `{ id, health }` shape both {@link Sub}
+   * and {@link RatesSub} satisfy, so one setter serves both families; the emitted
+   * `subscriptionId` is generic (the registries key off it).
+   */
+  private setHealth(sub: { id: bigint; health: StreamHealth }, health: StreamHealth): void {
     if (sub.health === health) return;
     sub.health = health;
     this.emit({ kind: "health", subscriptionId: sub.id, health });
@@ -794,6 +939,7 @@ export class Connection {
     this.failAllWaiters(new TransportError("transport closed"));
     this.subs.clear();
     this.seriesSubs.clear();
+    this.ratesSubs.clear();
     this.listeners.clear();
     const ws = this.ws;
     this.ws = null;

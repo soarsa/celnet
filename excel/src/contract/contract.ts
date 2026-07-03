@@ -1605,6 +1605,72 @@ export interface BondInstrument {
   side: BondPositionSide;
 }
 
+/**
+ * A linear interest-rate instrument to stream/price (`celnet.wire.RatesInstrument`
+ * oneof) — exactly one arm is set, discriminated by `kind`. The add-in projection
+ * of the server's `rates_instrument` oneof: a rates streaming line
+ * (`CELNET.RATESSERIES`) builds one of these and opens it via
+ * `Connection.subscribeRates`. Byte-compatible with the unary `price_rates` arm
+ * encoders (`ratesInstrumentUnionToWire`), so a streamed baseline is identical to
+ * the `CELNET.RATES`/`IRS`/`FRA`/`BOND` unary price of the same instrument. The
+ * arms grow additively (rule 9), never renumbering.
+ */
+export type RatesInstrument =
+  | { kind: "ois"; ois: OisInstrument }
+  | { kind: "irs"; irs: VanillaIrsInstrument }
+  | { kind: "fra"; fra: FraInstrument }
+  | { kind: "bond"; bond: BondInstrument };
+
+/** Wrap a bare {@link OisInstrument} as the `ois` arm of a {@link RatesInstrument}. */
+export function oisRatesInstrument(ois: OisInstrument): RatesInstrument {
+  return { kind: "ois", ois };
+}
+
+/**
+ * The baseline state of a streamed fixed-income line (`celnet.wire
+ * .RatesStreamSnapshot`) — the priced `RatesPricingResult` a consumer applies
+ * whole before consuming deltas. Faithful to `PricingService.PriceRates`: the
+ * snapshot's `result` at the subscribed baseline curve equals
+ * `price_rates(instrument, curve_set)` exactly (`curveShift` is always 0 at the
+ * baseline). Carries NO tradable token — a rates stream is indicative (rates
+ * click-to-trade books through the RFQ/desk path).
+ */
+export interface RatesStreamSnapshot {
+  /** The client `SubscriptionId` this snapshot answers. */
+  readonly subscriptionId: bigint;
+  /** The monotonic per-subscription sequence number of this snapshot (1). */
+  readonly sequence: bigint;
+  /** The priced PV + PV01 / DV01 / key-rate ladder at this snapshot. */
+  readonly result: RatesPricingResult;
+  /** The parallel curve shift (decimal) applied vs the baseline — 0 at baseline. */
+  readonly curveShift: number;
+  /** Echo of the opening `RatesSubscribe.correlationId`, if one was supplied. */
+  readonly correlationId?: bigint;
+  /** Snapshot time (ns since the Unix epoch, UTC). */
+  readonly epochNanos: bigint;
+}
+
+/**
+ * A sequenced delta on a streamed fixed-income line (`celnet.wire
+ * .RatesStreamUpdate`): the line re-priced at the next sequence against the
+ * baseline curve shifted by `curveShift` (the deterministic per-curve evolution
+ * the fan-out published). A gap in `sequence` never arises — the server only
+ * advances the sequence on a successful send — so the client applies the freshest
+ * update (latest-tick) and relies on reconnect → re-subscribe for recovery.
+ */
+export interface RatesStreamUpdate {
+  /** The client `SubscriptionId` this update advances. */
+  readonly subscriptionId: bigint;
+  /** The monotonic per-subscription sequence number (snapshot seq + n). */
+  readonly sequence: bigint;
+  /** The re-priced PV + first-order risk at this sequence. */
+  readonly result: RatesPricingResult;
+  /** The parallel curve shift (decimal) applied to the baseline curve for this tick. */
+  readonly curveShift: number;
+  /** Update time (ns since the Unix epoch, UTC). */
+  readonly epochNanos: bigint;
+}
+
 // ---------------------------------------------------------------------------
 // XVA — counterparty valuation adjustments (CVA / DVA / FVA) over a netting set
 // (`PricingService.PriceXva`). A netting set of FX vanillas is priced for its
