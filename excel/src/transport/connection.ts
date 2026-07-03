@@ -34,8 +34,12 @@ import type {
   Executed,
   Execution,
   FraInstrument,
+  GetCurveRequest,
+  GetCurveResponse,
   Heartbeat,
   Instrument,
+  MarkCurveRequest,
+  MarkCurveResponse,
   MarketObservable,
   MarketSeriesPoint,
   MarketSeriesSnapshot,
@@ -67,6 +71,10 @@ import {
   executedFromWire,
   executionFromWire,
   fraInstrumentToWire,
+  getCurveRequestToWire,
+  getCurveResponseFromWire,
+  markCurveRequestToWire,
+  markCurveResponseFromWire,
   greeksFromWire,
   heartbeatFromWire,
   instrumentToWire,
@@ -1176,6 +1184,44 @@ export class Connection {
     if (this.sessionToken !== null) body["session_token"] = this.sessionToken;
     const reply = await this.request("build_curve", body, "calibrated_curve");
     return calibratedCurveFromWire(reply);
+  }
+
+  /**
+   * Read a discount curve over the `get_curve` RPC (the WS mirror of
+   * `SurfaceService.GetCurve`, ADR-0021 — the FI analogue of `get_smile`): send the
+   * calibrating `curve_set` + tenor axis (+ an optional pinned `curve_version`) and
+   * decode the server-read `get_curve_response` (per-tenor zero rate + discount
+   * factor, the echoed calibrating par pillars, the marked version and the read
+   * timestamp). Like `get_smile` / `price_rates` this is a PURE calculation against
+   * the request (a live bootstrap or a pinned marked-curve read), so it carries no
+   * session token — the add-in holds no curve math, the live `celnet-rates` engine
+   * computes the authoritative reply over the one unversioned contract.
+   */
+  async getCurve(request: GetCurveRequest): Promise<GetCurveResponse> {
+    const reply = await this.request("get_curve", getCurveRequestToWire(request), "get_curve_response");
+    return getCurveResponseFromWire(reply);
+  }
+
+  /**
+   * Mark (persist) a discount curve over the `mark_curve` RPC (the WS mirror of
+   * `SurfaceService.MarkCurve`, ADR-0021 — the FI analogue of `mark_surface`): send
+   * the calibrating `curve_set`, the server bootstraps it and DEPOSITS it under a
+   * fresh monotonic `curve_version`, and decodes the `mark_curve_response` (the
+   * assigned version + the echoed calibrating par pillars + the bootstrapped points
+   * + the mark timestamp). The returned `curveVersion` is the id a later
+   * `getCurve({ …, curveVersion })` reproduces the exact curve from. Like
+   * `mark_surface` the mark carries NO session token — the `MarkCurveRequest` proto
+   * has only `curve_set`; the server admits the mark and stamps the version (the
+   * add-in holds no curve math, the live `celnet-rates` engine bootstraps + persists
+   * the authoritative curve over the one unversioned contract).
+   */
+  async markCurve(request: MarkCurveRequest): Promise<MarkCurveResponse> {
+    const reply = await this.request(
+      "mark_curve",
+      markCurveRequestToWire(request),
+      "mark_curve_response",
+    );
+    return markCurveResponseFromWire(reply);
   }
 
   async requestQuote(

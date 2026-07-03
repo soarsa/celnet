@@ -60,6 +60,10 @@ import type {
   Side,
   BuildCurveRequest,
   CalibratedCurve,
+  GetCurveRequest,
+  GetCurveResponse,
+  MarkCurveRequest,
+  MarkCurveResponse,
   SingleBarrier,
   Touch,
   Vanilla,
@@ -1622,6 +1626,89 @@ export function calibratedCurveFromWire(o: WireObject): CalibratedCurve {
       zeroRate: num(p, "zero_rate"),
       label: str(p, "label"),
     })),
+  };
+}
+
+// --- curve query (`get_curve` / `SurfaceService.GetCurve`, ADR-0021) ----------
+// The FI analogue of `get_smile`. The request reuses the shared `CurveSet` encoder
+// (`ratesCurveSetToWire`) verbatim — one encoding, no divergence — plus the tenor
+// axis and an optional pinned version; the reply decodes the queried points, the
+// echoed calibrating par pillars, the (optional) marked version and the read
+// timestamp. Byte-identical to the server's `generated_codec` GetCurve tables.
+
+/** Encode a {@link GetCurveRequest} into the snake_case `get_curve` body. */
+export function getCurveRequestToWire(req: GetCurveRequest): WireObject {
+  const body: WireObject = {
+    curve_set: ratesCurveSetToWire(req.curveSet),
+    query_tenor_years: [...req.queryTenorYears],
+  };
+  // `curve_version` is a presence-tracked optional uint64 — emitted ONLY when the
+  // caller pins a marked version (absent ⇒ the server bootstraps `curve_set` live).
+  if (req.curveVersion !== undefined) body["curve_version"] = req.curveVersion;
+  return body;
+}
+
+/** Decode a wire `get_curve_response` frame into a {@link GetCurveResponse}. */
+export function getCurveResponseFromWire(o: WireObject): GetCurveResponse {
+  const ref = child(o, "reference_date");
+  const version = optBigInt(o, "curve_version");
+  const resp: GetCurveResponse = {
+    currency: str(o, "currency"),
+    referenceDate: {
+      year: num(ref, "year"),
+      month: num(ref, "month"),
+      day: num(ref, "day"),
+    },
+    points: array(o, "points").map((p) => ({
+      tenorYears: num(p, "tenor_years"),
+      zeroRate: num(p, "zero_rate"),
+      discountFactor: num(p, "discount_factor"),
+    })),
+    parPillars: array(o, "par_pillars").map((p) => ({
+      tenorYears: num(p, "tenor_years"),
+      parRate: num(p, "par_rate"),
+    })),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+  // Presence-tracked: only surface the marked version when the read was pinned.
+  if (version !== undefined) resp.curveVersion = version;
+  return resp;
+}
+
+// --- curve mark (`mark_curve` / `SurfaceService.MarkCurve`, ADR-0021) ---------
+// The FI analogue of `mark_surface`: persist a bootstrapped discount curve under a
+// fresh server-assigned version. The request reuses the shared `CurveSet` encoder
+// (`ratesCurveSetToWire`) verbatim — one encoding, no divergence — and carries NO
+// tenor axis (a mark reports at the calibrating pillars). The reply decodes the
+// assigned version, the echoed calibrating par pillars, the bootstrapped points and
+// the mark timestamp. Byte-identical to the server's `generated_codec` MarkCurve
+// tables (`MarkCurveRequest` has only `curve_set`; `MarkCurveResponse` always
+// stamps a `curve_version`).
+
+/** Encode a {@link MarkCurveRequest} into the snake_case `mark_curve` body. */
+export function markCurveRequestToWire(req: MarkCurveRequest): WireObject {
+  return {
+    curve_set: ratesCurveSetToWire(req.curveSet),
+  };
+}
+
+/** Decode a wire `mark_curve_response` frame into a {@link MarkCurveResponse}. */
+export function markCurveResponseFromWire(o: WireObject): MarkCurveResponse {
+  return {
+    currency: str(o, "currency"),
+    // A mark ALWAYS stamps a version (required, not presence-tracked); recover the
+    // 64-bit id as a `bigint` so a large monotonic id never loses precision.
+    curveVersion: numToBigInt(o, "curve_version"),
+    points: array(o, "points").map((p) => ({
+      tenorYears: num(p, "tenor_years"),
+      zeroRate: num(p, "zero_rate"),
+      discountFactor: num(p, "discount_factor"),
+    })),
+    parPillars: array(o, "par_pillars").map((p) => ({
+      tenorYears: num(p, "tenor_years"),
+      parRate: num(p, "par_rate"),
+    })),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
   };
 }
 
