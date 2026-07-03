@@ -55,7 +55,7 @@ import {
   type ProductBuildCtx,
 } from "../products";
 import { crossAssetInputsFor, crossAssetSpec } from "../products/crossAsset";
-import type { OisInputs } from "../products/ois";
+import type { RatesResultView } from "../products/types";
 import { PayoffDiagram, type PayoffLeg } from "../viz/PayoffDiagram";
 import { forward as forwardRate } from "../data/pricing";
 import { impliedVolForInstrument, sampleSurface } from "../data/surface";
@@ -581,9 +581,9 @@ export function TicketWorkspace({
       if (!structureLawful) return;
       setBusy(true);
       setFill(null);
-      const ois = ratesSpec.toOisInstrument(inputs as never, effectiveCtx);
+      const ratesInstrument = ratesSpec.toRatesInstrument(inputs as never, effectiveCtx);
       try {
-        const priced = await app.transport.priceRates(ratesSpec.curve, ois);
+        const priced = await app.transport.priceRates(ratesSpec.curve, ratesInstrument);
         setRatesResult(priced);
         setQuote(null);
         setDealerPanel(null);
@@ -752,14 +752,16 @@ export function TicketWorkspace({
     [structure, clearPriced],
   );
 
-  // Set the OIS fixed rate to the par (zero-PV breakeven) rate just priced (the
-  // rates family's analogue of the FX inline strike solve). Editing the inputs
-  // clears the now-stale price, so the trader re-prices at par.
+  // Set the rates family's fixed rate to the par (breakeven) rate just priced (the
+  // rates family's analogue of the FX inline strike solve). Only offered by families
+  // that carry a fixed-rate input (`spec.pinToPar` — OIS / IRS / FRA; not the bond,
+  // whose par metric is a yield). Editing the inputs clears the now-stale price, so
+  // the trader re-prices at par.
   const setRatesToPar = useCallback(() => {
-    if (!ratesResult) return;
-    const cur = inputsByStructure[structure] as OisInputs;
-    updateInputs({ ...cur, fixedRatePct: Number((ratesResult.parRate * 100).toFixed(4)) });
-  }, [ratesResult, inputsByStructure, structure, updateInputs]);
+    if (!ratesResult || !ratesSpec?.pinToPar) return;
+    const cur = inputsByStructure[structure];
+    updateInputs(ratesSpec.pinToPar(cur as never, ratesResult.parRate));
+  }, [ratesResult, ratesSpec, inputsByStructure, structure, updateInputs]);
 
   const strikePreview = previewStrike(inputs, atmForward);
   const netLegs = instrument ? netStructureLegs(instrument) : [];
@@ -1018,11 +1020,15 @@ export function TicketWorkspace({
 
         {ratesSpec &&
           (ratesResult ? (
-            <RatesResult result={ratesResult} curve={ratesSpec.curve} />
+            <RatesResult
+              result={ratesResult}
+              curve={ratesSpec.curve}
+              view={ratesSpec.resultView}
+            />
           ) : (
             <p className={styles.ratesEmpty}>
-              Build an OIS and price it to see the PV, par (fair fixed) rate, PV01, DV01
-              and the key-rate DV01 ladder.
+              {ratesSpec.emptyHint ??
+                "Build a rates instrument and price it to see the PV, par rate, PV01, DV01 and the key-rate DV01 ladder."}
             </p>
           ))}
 
@@ -1131,7 +1137,7 @@ export function TicketWorkspace({
                     ? "Fix inputs"
                     : ratesResult
                       ? "Re-price"
-                      : "Price OIS"}
+                      : (ratesSpec?.priceActionLabel ?? "Price")}
             </Button>
           ) : (
             <Button
@@ -1161,7 +1167,7 @@ export function TicketWorkspace({
                             : "Request quote"}
             </Button>
           )}
-          {isRates && ratesResult && (
+          {isRates && ratesResult && ratesSpec?.pinToPar && (
             <Button
               variant="ghost"
               onClick={setRatesToPar}
@@ -1287,20 +1293,33 @@ function fmtRatePct(rate: number): string {
 }
 
 /**
- * The fixed-income (OIS) priced result — the PV / par (fair fixed) rate / PV01 /
- * DV01 headline metrics + the key-rate DV01 ladder, over the SAME `priceRates`
- * result the standalone rates surface rendered (capability preserved by the
- * fold, not a reimplementation). Each ladder bucket maps to a curve pillar and
- * sums (to first order) to the parallel DV01. All measures are in the curve
- * currency and already carry the instrument direction sign.
+ * The fixed-income priced result — the PV (or bond dirty PV) / par rate (or bond
+ * yield) / PV01 / DV01 headline metrics + the key-rate DV01 ladder, over the SAME
+ * `priceRates` result the standalone rates surface rendered (capability preserved by
+ * the fold, not a reimplementation). Each ladder bucket maps to a curve pillar and
+ * sums (to first order) to the parallel DV01. All measures are in the curve currency
+ * and already carry the instrument side sign.
+ *
+ * The optional {@link RatesResultView} (per rates spec) relabels + reshapes the strip
+ * for the bond, whose wire result maps `pv = dirty price`, `parRate = yield`, `pv01 =
+ * dv01`, empty ladder — so the PV01 row + the ladder are hidden. Only fields the wire
+ * actually carries are shown; no clean price / duration are fabricated.
  */
 function RatesResult({
   result,
   curve,
+  view,
 }: {
   result: RatesPricingResult;
   curve: RatesCurveSet;
+  view?: RatesResultView | undefined;
 }): React.ReactElement {
+  const pvLabel = view?.pvLabel ?? "PV";
+  const pvUnit = (view?.pvHasCurrencyUnit ?? true) ? curve.currency : undefined;
+  const parLabel = view?.parLabel ?? "Par rate";
+  const showPv01 = view?.showPv01 ?? true;
+  const showLadder = view?.showLadder ?? true;
+
   const ladder: LadderRow[] = curve.pillars.map((p, i) => {
     const dv01 = result.keyRateLadder[i] ?? 0;
     return {
@@ -1315,20 +1334,32 @@ function RatesResult({
   return (
     <div className={styles.ratesResult}>
       <dl className={styles.ratesMetrics}>
-        <RatesMetric label="PV" value={fmtPnlAdaptive(result.pv)} unit={curve.currency} emphatic />
-        <RatesMetric label="Par rate" value={fmtRatePct(result.parRate)} />
-        <RatesMetric label="PV01" value={fmtPnlAdaptive(result.pv01)} unit={`${curve.currency}/bp`} />
+        <RatesMetric label={pvLabel} value={fmtPnlAdaptive(result.pv)} unit={pvUnit} emphatic />
+        <RatesMetric label={parLabel} value={fmtRatePct(result.parRate)} />
+        {showPv01 && (
+          <RatesMetric
+            label="PV01"
+            value={fmtPnlAdaptive(result.pv01)}
+            unit={`${curve.currency}/bp`}
+          />
+        )}
         <RatesMetric label="DV01" value={fmtPnlAdaptive(result.dv01)} unit={`${curve.currency}/bp`} />
       </dl>
-      <div className={styles.ratesLadder}>
-        <h3 className={styles.ratesLadderTitle}>Key-rate DV01 ladder</h3>
-        <DataGrid label="key-rate DV01 ladder" columns={RATES_LADDER_COLUMNS} groups={ladderGroups} />
-      </div>
+      {showLadder && (
+        <div className={styles.ratesLadder}>
+          <h3 className={styles.ratesLadderTitle}>Key-rate DV01 ladder</h3>
+          <DataGrid
+            label="key-rate DV01 ladder"
+            columns={RATES_LADDER_COLUMNS}
+            groups={ladderGroups}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-/** One headline OIS measure: a labelled term/value pair in the rates result strip. */
+/** One headline rates measure: a labelled term/value pair in the rates result strip. */
 function RatesMetric({
   label,
   value,
@@ -1337,7 +1368,7 @@ function RatesMetric({
 }: {
   label: string;
   value: string;
-  unit?: string;
+  unit?: string | undefined;
   emphatic?: boolean;
 }): React.ReactElement {
   return (

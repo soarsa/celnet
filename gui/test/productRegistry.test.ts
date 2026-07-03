@@ -21,7 +21,7 @@ import {
   type ProductBuildCtx,
 } from "../src/products";
 import { bookingModelsFor, tenorYearsToTenor } from "../src/data/seed";
-import { instrumentToWire, ratesInstrumentToWire } from "../src/data/wsCodec";
+import { instrumentToWire, ratesInstrumentUnionToWire } from "../src/data/wsCodec";
 
 /** A representative EURUSD 3M context, ATM-forward seeded above spot. */
 const CTX: ProductBuildCtx = {
@@ -98,11 +98,12 @@ describe("product registry (GW2)", () => {
 });
 
 /**
- * The fixed-income (rates) family (fe-fi-migration #3): the OIS is a
- * {@link RatesProductSpec} in the SAME registry, priced through the shared ticket
- * via `priceRates`. It has no option `Instrument` (so it is skipped by the option
- * round-trip above); instead its `toOisInstrument` builds a wire `OisInstrument`
- * that round-trips through the real rates wire codec deterministically.
+ * The fixed-income (rates) family (fe-fi-migration #3 + fi-bond-ticket-gui): the OIS,
+ * vanilla IRS, FRA and cash bond are {@link RatesProductSpec}s in the SAME registry,
+ * priced through the shared ticket via `priceRates`. They have no option `Instrument`
+ * (so they are skipped by the option round-trip above); instead each `toRatesInstrument`
+ * builds a wire `RatesInstrument` oneof arm that round-trips through the real rates wire
+ * codec deterministically.
  */
 describe("product registry — fixed-income (rates) family", () => {
   it("registers the OIS as a `rates`-family spec in the Fixed-income group", () => {
@@ -112,19 +113,30 @@ describe("product registry — fixed-income (rates) family", () => {
     expect(ois?.group).toBe("Fixed income (rates)");
   });
 
-  it("every rates spec builds a wire-valid, deterministically round-tripping OisInstrument", () => {
+  it("registers every rates arm (OIS / IRS / FRA / bond) in the Fixed-income group", () => {
+    const ratesSpecs = PRODUCT_REGISTRY.filter(isRatesSpec);
+    const ids = ratesSpecs.map((s) => s.id).sort();
+    expect(ids).toEqual(["BOND", "FRA", "IRS", "OIS"]);
+    for (const spec of ratesSpecs) expect(spec.group).toBe("Fixed income (rates)");
+  });
+
+  it("every rates spec builds a wire-valid, deterministically round-tripping RatesInstrument", () => {
     const ratesSpecs = PRODUCT_REGISTRY.filter(isRatesSpec);
     expect(ratesSpecs.length).toBeGreaterThan(0);
     for (const spec of ratesSpecs) {
-      const ois = spec.toOisInstrument(spec.defaults, CTX);
-      expect(ois.tenorYears).toBeGreaterThanOrEqual(1);
-      expect(ois.notional).toBeGreaterThan(0);
+      const instrument = spec.toRatesInstrument(spec.defaults, CTX);
+      // Exactly one oneof arm is set.
+      expect(["ois", "irs", "fra", "bond"]).toContain(instrument.kind);
       // The family's curve validates through the same real bootstrap path.
       expect(spec.curve.pillars.length).toBeGreaterThan(0);
       // Round-trips through the real rates wire codec, and is byte-stable.
-      const wire = ratesInstrumentToWire(ois);
+      const wire = ratesInstrumentUnionToWire(instrument);
       expect(wire).toBeTruthy();
-      expect(ratesInstrumentToWire(ois)).toEqual(wire);
+      // The single present arm key matches the discriminant.
+      expect(Object.keys(wire)).toEqual([instrument.kind]);
+      expect(ratesInstrumentUnionToWire(instrument)).toEqual(wire);
+      // The default inputs are lawful.
+      expect(spec.validate?.(spec.defaults, CTX) ?? []).toEqual([]);
     }
   });
 

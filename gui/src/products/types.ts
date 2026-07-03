@@ -10,7 +10,7 @@
 import type { ReactElement } from "react";
 import type { Instrument, PricingModel, Product, Tenor } from "../data/contract";
 import type { BrokenDate, SettlementStyle, Underlying } from "../data/contract";
-import type { OisInstrument, RatesCurveSet } from "../data/contract";
+import type { RatesCurveSet, RatesInstrument } from "../data/contract";
 
 /**
  * Asset class of a structurable product. FX is the origin class; the cross-asset
@@ -183,15 +183,39 @@ export interface ProductSpec<I> {
 }
 
 /**
- * A fixed-income (linear rates) product family — the OIS fold (fe-fi-migration #3).
+ * How the shared ticket labels + shapes a rates family's {@link RatesPricingResult}.
+ * The default (absent ⇒ the OIS/swap view) shows PV, the par (fair fixed) rate, PV01,
+ * DV01, and the key-rate DV01 ladder. The cash bond overrides this: its wire result
+ * carries `pv = dirty price`, `parRate = yield to maturity`, `pv01 = dv01` (the yield
+ * DV01), and an EMPTY ladder — so it hides the PV01 row + the ladder and relabels PV
+ * and the par metric. The renderer only ever shows fields the wire actually carries
+ * (no fabricated clean price / duration — those are not on `RatesPricingResult`).
+ */
+export interface RatesResultView {
+  /** Label for the PV metric (default "PV"; bond "Dirty PV"). */
+  pvLabel: string;
+  /** Whether the PV metric carries the curve-currency unit (bond price: false). Default true. */
+  pvHasCurrencyUnit?: boolean;
+  /** Label for the par-rate metric (default "Par rate"; bond "Yield to maturity"). */
+  parLabel: string;
+  /** Show the analytic PV01 row (default true; bond false — PV01 ≡ DV01). */
+  showPv01?: boolean;
+  /** Show the key-rate DV01 ladder (default true; bond false — the wire ladder is empty). */
+  showLadder?: boolean;
+}
+
+/**
+ * A fixed-income (linear rates) product family — the OIS fold (fe-fi-migration #3),
+ * generalised to the vanilla IRS, FRA and cash bond arms (fi-bond-ticket-gui).
  * Shares the discovery metadata + per-family input state seam of {@link ProductSpec},
- * but is priced through a DIFFERENT wire path: it builds an {@link OisInstrument}
- * the ticket prices via `CelnetTransport.priceRates` against a calibrated
- * {@link RatesCurveSet} (PV / par rate / PV01 / DV01 / key-rate ladder) — NOT the
- * option `Instrument`/`requestQuote` two-way. It therefore has no `Instrument`
- * product-oneof `kind`, no `allowedModels` (no booking model), and no expiry/tenor
- * shell dimension (the swap tenor is an input its {@link ProductSpec.InputBlock}
- * owns). The `"rates"` `family` literal discriminates {@link AnyProductSpec}.
+ * but is priced through a DIFFERENT wire path: it builds a {@link RatesInstrument}
+ * (one of the `ois` / `irs` / `fra` / `bond` arms) the ticket prices via
+ * `CelnetTransport.priceRates` against a calibrated {@link RatesCurveSet} (PV / par or
+ * yield / PV01 / DV01 / key-rate ladder) — NOT the option `Instrument`/`requestQuote`
+ * two-way. It therefore has no `Instrument` product-oneof `kind`, no `allowedModels`
+ * (no booking model), and no expiry/tenor shell dimension (the tenor/maturity is an
+ * input its {@link ProductSpec.InputBlock} owns). The `"rates"` `family` literal
+ * discriminates {@link AnyProductSpec}.
  */
 export interface RatesProductSpec<I> {
   /** Stable structure id (matches the ticket `Structure` selection + analytics catalogue). */
@@ -217,11 +241,32 @@ export interface RatesProductSpec<I> {
    */
   validate?: (inputs: I, ctx: ProductBuildCtx) => readonly string[];
   /**
-   * Build the wire {@link OisInstrument} from the trader inputs. The ticket prices
-   * it via `priceRates(curve, instrument)`; the offline in-app source and the live
-   * `price_rates` mirror compute the SAME real OIS off the one contract.
+   * Build the wire {@link RatesInstrument} (the priced oneof arm) from the trader
+   * inputs. The ticket prices it via `priceRates(curve, instrument)`; the offline
+   * in-app source and the live `price_rates` mirror compute the SAME real result off
+   * the one contract.
    */
-  toOisInstrument: (inputs: I, ctx: ProductBuildCtx) => OisInstrument;
+  toRatesInstrument: (inputs: I, ctx: ProductBuildCtx) => RatesInstrument;
+  /**
+   * How the shared ticket labels the priced result. Absent ⇒ the OIS/swap view
+   * (PV / par rate / PV01 / DV01 / key-rate ladder). The bond overrides it.
+   */
+  resultView?: RatesResultView;
+  /**
+   * The verb on the price button ("Price OIS" / "Price swap" / "Price FRA" /
+   * "Price bond"). Absent ⇒ a plain "Price".
+   */
+  priceActionLabel?: string;
+  /** The empty-state hint shown before the first price. */
+  emptyHint?: string;
+  /**
+   * Set the family's fixed rate to the just-priced par (breakeven) rate — the rates
+   * analogue of the FX inline strike solve. Declared ONLY by families that carry a
+   * fixed-rate input (OIS / IRS / FRA); absent ⇒ no "Set to par" action (the bond,
+   * whose par metric is a yield with no fixed-rate input to pin). Returns the updated
+   * inputs; `parRate` is the wire result's `parRate` (a decimal).
+   */
+  pinToPar?: (inputs: I, parRate: number) => I;
   /** The input block UI for this family. */
   InputBlock: (props: InputBlockProps<I>) => ReactElement;
 }

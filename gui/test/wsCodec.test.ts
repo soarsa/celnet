@@ -37,6 +37,8 @@ import {
   multiDealerQuoteFromWire,
   parseFrame,
   quoteAcceptToWire,
+  ratesInstrumentToWire,
+  ratesInstrumentUnionToWire,
   serializeFrame,
   smileModelToWire,
   updateBookRequestToWire,
@@ -49,6 +51,7 @@ import type {
   Conventions,
   DeltaConvention,
   MarketContext,
+  OisInstrument,
   PremiumStyle,
   ReportingNumeraire,
   RiskScope,
@@ -566,5 +569,136 @@ describe("wsCodec — legal-entity / netting-book registry", () => {
     const encoded = createBookRequestToWire({ name: "Swaps", entityKey: 2 });
     const decoded = bookResponseFromWire({ book: { ...encoded, key: 4 } });
     expect(decoded).toEqual({ key: 4, name: "Swaps", entityKey: 2 });
+  });
+});
+
+describe("wsCodec — RatesInstrument oneof arms (server decoder contract)", () => {
+  // The exact snake_case field names + integer enum codes the server
+  // `rates_instrument_from_json` (crates/celnet-server/src/ws/codec.rs) reads. Wire
+  // codes: Side BUY=0/SELL=1; PaymentFrequency ANNUAL=0/SEMI=1/QUARTERLY=2; leg
+  // DayCount ACT_365_FIXED=0/ACT_360=1; AccrualBasis ACT_360=0/ACT_365F=1/30_360=2.
+
+  it("encodes the OIS arm identically to the OIS-only encoder", () => {
+    const ois: OisInstrument = {
+      tenorYears: 5,
+      fixedRate: 0.0405,
+      notional: 100_000_000,
+      direction: "RECEIVE_FIXED",
+    };
+    const wire = ratesInstrumentUnionToWire({ kind: "ois", ois });
+    expect(wire).toEqual(ratesInstrumentToWire(ois));
+    expect(wire).toEqual({
+      ois: { tenor_years: 5, fixed_rate: 0.0405, notional: 100_000_000, side: 1 },
+    });
+  });
+
+  it("encodes the IRS arm with the server's field names + enum codes", () => {
+    const wire = ratesInstrumentUnionToWire({
+      kind: "irs",
+      irs: {
+        tenorYears: 5,
+        fixedRate: 0.041,
+        notional: 100_000_000,
+        direction: "PAY_FIXED",
+        fixedFrequency: "SEMI_ANNUAL",
+        fixedDayCount: "ACT_360",
+        floatFrequency: "QUARTERLY",
+        floatDayCount: "ACT_365_FIXED",
+      },
+    });
+    expect(wire).toEqual({
+      irs: {
+        tenor_years: 5,
+        fixed_rate: 0.041,
+        notional: 100_000_000,
+        side: 0,
+        fixed_frequency: 1,
+        fixed_day_count: 1,
+        float_frequency: 2,
+        float_day_count: 0,
+      },
+    });
+  });
+
+  it("encodes the FRA arm with the server's field names + enum codes", () => {
+    const wire = ratesInstrumentUnionToWire({
+      kind: "fra",
+      fra: {
+        startMonths: 3,
+        endMonths: 6,
+        fixedRate: 0.033,
+        notional: 100_000_000,
+        direction: "RECEIVE_FIXED",
+        accrualBasis: "THIRTY_360_BOND_BASIS",
+      },
+    });
+    expect(wire).toEqual({
+      fra: {
+        start_months: 3,
+        end_months: 6,
+        fixed_rate: 0.033,
+        notional: 100_000_000,
+        side: 1,
+        accrual_basis: 2,
+      },
+    });
+  });
+
+  it("encodes the bond arm with a nested maturity_date + long/short side code", () => {
+    const long = ratesInstrumentUnionToWire({
+      kind: "bond",
+      bond: {
+        couponRate: 0.06,
+        couponFrequency: "SEMI_ANNUAL",
+        dayCount: "THIRTY_360_BOND_BASIS",
+        maturityDate: { year: 2035, month: 6, day: 15 },
+        redemption: 100,
+        position: "LONG",
+      },
+    });
+    expect(long).toEqual({
+      bond: {
+        coupon_rate: 0.06,
+        coupon_frequency: 1,
+        day_count: 2,
+        maturity_date: { year: 2035, month: 6, day: 15 },
+        redemption: 100,
+        side: 0,
+      },
+    });
+    // SHORT flips only the side code (SELL = 1).
+    const short = ratesInstrumentUnionToWire({
+      kind: "bond",
+      bond: {
+        couponRate: 0.06,
+        couponFrequency: "SEMI_ANNUAL",
+        dayCount: "THIRTY_360_BOND_BASIS",
+        maturityDate: { year: 2035, month: 6, day: 15 },
+        redemption: 100,
+        position: "SHORT",
+      },
+    });
+    expect((short.bond as { side: number }).side).toBe(1);
+  });
+
+  it("emits exactly one oneof arm key per instrument", () => {
+    const arms = [
+      ratesInstrumentUnionToWire({
+        kind: "ois",
+        ois: { tenorYears: 2, fixedRate: 0.04, notional: 1, direction: "PAY_FIXED" },
+      }),
+      ratesInstrumentUnionToWire({
+        kind: "fra",
+        fra: {
+          startMonths: 3,
+          endMonths: 6,
+          fixedRate: 0.03,
+          notional: 1,
+          direction: "PAY_FIXED",
+          accrualBasis: "ACT_360",
+        },
+      }),
+    ];
+    expect(arms.map((a) => Object.keys(a))).toEqual([["ois"], ["fra"]]);
   });
 });

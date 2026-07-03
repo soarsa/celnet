@@ -74,9 +74,9 @@ import type {
   MarketSeriesPoint,
   MarketSeriesSnapshot,
   MultiDealerQuote,
-  OisInstrument,
   Quote,
   RatesCurveSet,
+  RatesInstrument,
   RatesPricingResult,
   RiskBucketRequest,
   ScenarioResult,
@@ -193,17 +193,18 @@ export interface CelnetTransport {
   ): Promise<PriceResult>;
 
   /**
-   * PricingService.PriceRates — price one linear-rates instrument (an OIS today)
-   * against an explicit calibrated `RatesCurveSet`. The linear-rates analogue of
-   * {@link price}: pure and market-explicit (the curve set IS the market), it
-   * returns the direction-signed PV + first-order risk (PV01, DV01, key-rate
-   * ladder). Satisfied identically by both transports — the offline source
-   * bootstraps the curve and prices in-browser; the live transport issues the
-   * `price_rates` RPC to celnet-server.
+   * PricingService.PriceRates — price one linear-rates instrument (an OIS, vanilla
+   * IRS, FRA, or cash bond — the `RatesInstrument` oneof) against an explicit
+   * calibrated `RatesCurveSet`. The linear-rates analogue of {@link price}: pure and
+   * market-explicit (the curve set IS the market), it returns the side-signed PV +
+   * first-order risk (par/yield, PV01, DV01, key-rate ladder; the bond maps `pv =
+   * dirty price`, `parRate = yield to maturity`, empty ladder). Satisfied identically
+   * by both transports — the offline source bootstraps the curve and prices
+   * in-browser; the live transport issues the `price_rates` RPC to celnet-server.
    */
   priceRates(
     curve: RatesCurveSet,
-    instrument: OisInstrument,
+    instrument: RatesInstrument,
   ): Promise<RatesPricingResult>;
 
   /**

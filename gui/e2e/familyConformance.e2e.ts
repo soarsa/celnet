@@ -64,9 +64,11 @@ import { readWsUrl } from "./wsUrl";
  * What a successful live quote renders for a family on the ticket face:
  *  - `greeks`          — the option premium two-way + Greeks strip (delta cell).
  *  - `fair-variance` / `fair-volatility` — the swap fair-strike panel.
- *  - `rates`           — the fixed-income (OIS) `RatesResult`: PV / par / PV01 /
- *    DV01 + the key-rate DV01 ladder (priced via the `price_rates` seam, not a
- *    premium two-way — no Greeks, no premium unit).
+ *  - `rates`           — a fixed-income `RatesResult` (OIS / IRS / FRA / cash
+ *    bond): PV / par / DV01 (+ PV01 + the key-rate DV01 ladder for the swap-shaped
+ *    OIS/IRS/FRA; the cash bond reshapes it to Dirty PV / Yield to maturity / DV01
+ *    with no PV01 row + no ladder). Priced via the `price_rates` seam, not a
+ *    premium two-way — no Greeks, no premium unit.
  */
 type PricedMarker = "greeks" | "fair-variance" | "fair-volatility" | "rates";
 
@@ -169,6 +171,19 @@ const GUI_STRUCTURES: readonly {
     corpusFamilies: [],
     marker: "rates",
   },
+  // fi-bond-ticket-gui: three more fixed-income (rates) arms folded into the SHARED
+  // ticket alongside the OIS, each a `RatesProductSpec` reached through the same
+  // "Fixed income (rates)" gallery group and priced via the `price_rates` seam — no
+  // option `Instrument`, no golden-corpus family (`corpusFamilies` empty; their
+  // numerical conformance is gated on the rates-pricing seam). The browser half
+  // proves each quotes live from the gallery via the `rates` marker. Labels mirror
+  // the registry specs EXACTLY (`src/products/{bond,irs,fra}.tsx` `label:`). IRS/FRA
+  // render the full OIS-style `RatesResult` (par rate + key-rate DV01 ladder); the
+  // cash BOND reshapes it (Dirty PV / Yield to maturity / DV01, no PV01, no ladder,
+  // no "Set to par") — the browser half asserts each shape below.
+  { id: "BOND", label: "Bond (cash)", corpusFamilies: [], marker: "rates" },
+  { id: "IRS", label: "IRS (fixed vs float)", corpusFamilies: [], marker: "rates" },
+  { id: "FRA", label: "FRA (forward rate)", corpusFamilies: [], marker: "rates" },
 ];
 
 /**
@@ -270,21 +285,43 @@ test.describe("gallery → ticket → live RFQ: every registered family quotes o
       await expect(pane.getByText("Fair variance strike", { exact: true })).toHaveCount(0);
       await expect(pane.getByText("Fair volatility strike", { exact: true })).toHaveCount(0);
 
-      // Fixed income (OIS): the registry `RatesProductSpec` prices through the
-      // SAME ticket via the `price_rates` seam — its primary action reads "Price
-      // OIS" (not the option "Request quote"), and a `RatesResult` (PV / par /
-      // PV01 / DV01 + the key-rate DV01 ladder) REPLACES the premium two-way +
-      // Greeks strip: no `delta (spot)` cell, no premium-unit label. This proves
-      // the FI family quotes live from the shared gallery, same as every option
-      // family below.
+      // Fixed income (rates): each registry `RatesProductSpec` (OIS / IRS / FRA /
+      // BOND) prices through the SAME ticket via the `price_rates` seam — its
+      // primary action is the family's own `priceActionLabel` ("Price OIS/swap/
+      // FRA/bond", → "Re-price" once a result lands; NOT the option "Request
+      // quote"), and a `RatesResult` REPLACES the premium two-way + Greeks strip:
+      // no `delta (spot)` cell, no premium-unit label, for every rates family.
+      // This proves the FI families quote live from the shared gallery, same as
+      // every option family below.
       if (s.marker === "rates") {
-        await pane.getByRole("button", { name: /Price OIS|Re-price/ }).click();
-        // The ladder TITLE is the `<h3>` heading (the OIS input-form note also
-        // contains the phrase, so match the heading by role, not free text).
-        await expect(
-          pane.getByRole("heading", { name: "Key-rate DV01 ladder" }),
-        ).toBeVisible({ timeout: renderTimeoutMs });
-        await expect(pane.getByText("Par rate", { exact: true })).toBeVisible();
+        await pane.getByRole("button", { name: /Price (OIS|swap|FRA|bond)|Re-price/ }).click();
+        if (s.id === "BOND") {
+          // The cash bond reshapes the strip (`bond.tsx` BOND_RESULT_VIEW): PV →
+          // "Dirty PV", par → "Yield to maturity", DV01 present — but NO PV01 row,
+          // NO key-rate DV01 ladder (the wire ladder is empty), and NO "Set to par"
+          // (the bond spec has no `pinToPar`). Assert the bond-specific headline
+          // metrics AND the absence of the OIS-style ladder / PV01 / par action, so
+          // the two result shapes cannot be silently swapped. Exact-text matches on
+          // the `<dt>` metric labels (the input note's prose never equals them).
+          await expect(pane.getByText("Yield to maturity", { exact: true })).toBeVisible({
+            timeout: renderTimeoutMs,
+          });
+          await expect(pane.getByText("Dirty PV", { exact: true })).toBeVisible();
+          await expect(pane.getByText("DV01", { exact: true })).toBeVisible();
+          await expect(pane.getByRole("heading", { name: "Key-rate DV01 ladder" })).toHaveCount(0);
+          await expect(pane.getByText("PV01", { exact: true })).toHaveCount(0);
+          await expect(pane.getByRole("button", { name: "Set to par" })).toHaveCount(0);
+        } else {
+          // OIS / IRS / FRA render the full OIS-style `RatesResult`: the par (fair)
+          // rate + the key-rate DV01 ladder. The ladder TITLE is the `<h3>` heading
+          // (the input-form note also contains the phrase, so match the heading by
+          // role, not free text).
+          await expect(
+            pane.getByRole("heading", { name: "Key-rate DV01 ladder" }),
+          ).toBeVisible({ timeout: renderTimeoutMs });
+          await expect(pane.getByText("Par rate", { exact: true })).toBeVisible();
+        }
+        // No option chrome for any rates family.
         await expect(pane.getByTitle("delta (spot)")).toHaveCount(0);
         await expect(pane.getByText(/% .* prem/)).toHaveCount(0);
         return;

@@ -26,6 +26,7 @@ import { principalForScope } from "../data/riskView";
 import { fmtPnlAdaptive, fmtRate, fmtClock } from "../lib/format";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import type { DeskRequest, RatesPricingResult, Side } from "../data/contract";
+import { oisRatesInstrument } from "../data/contract";
 import styles from "./QuotingWorkspace.module.css";
 
 const MM = 1_000_000;
@@ -185,7 +186,9 @@ export function QuotingWorkspace(): React.ReactElement {
               });
               refresh();
             }}
-            priceRequest={(req) => app.transport.priceRates(req.curveSet, req.instrument)}
+            priceRequest={(req) =>
+              app.transport.priceRates(req.curveSet, oisRatesInstrument(req.instrument))
+            }
           />
         ) : (
           <p className={styles.empty}>Select a request to price it.</p>

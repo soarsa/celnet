@@ -2372,6 +2372,117 @@ export interface OisInstrument {
 }
 
 /**
+ * Coupon / leg payment frequency for a linear-rates product (`celnet.wire
+ * .PaymentFrequency`) — the number of coupon periods per year the schedule rolls at.
+ */
+export type PaymentFrequency = "ANNUAL" | "SEMI_ANNUAL" | "QUARTERLY";
+
+/**
+ * A curve/leg day-count basis (`celnet.wire.DayCount`) — the money-market subset an
+ * IRS leg accrues on (ACT/365F or ACT/360). Distinct from {@link RatesAccrualBasis}:
+ * an IRS leg carries no 30/360 arm (the market 30/360 fixed leg awaits the shared
+ * curve-time day-count extension), matching the server `VanillaIrsInstrument`.
+ */
+export type RatesLegDayCount = "ACT_365_FIXED" | "ACT_360";
+
+/**
+ * An instrument-level accrual basis (`celnet.wire.AccrualBasis`) — the money-market
+ * bases plus 30/360 Bond Basis (the standard USD fixed-bond / fixed-swap basis). Used
+ * by the FRA accrual window and the bond coupon accrual.
+ */
+export type RatesAccrualBasis = "ACT_360" | "ACT_365_FIXED" | "THIRTY_360_BOND_BASIS";
+
+/**
+ * A vanilla fixed-vs-float interest-rate swap to price (`celnet.wire
+ * .VanillaIrsInstrument`) — a fixed leg vs a projected floating leg on the single
+ * self-discounting curve, each leg at its own frequency + day-count. The PV is
+ * `N·(K·A_fixed − F_float)` (receive-fixed); `direction` maps to the wire `Side`.
+ */
+export interface VanillaIrsInstrument {
+  /** The swap tenor in whole years from spot (e.g. 2, 5, 10); `>= 1`. */
+  tenorYears: number;
+  /** The fixed-leg rate as a decimal (0.041 = 4.10%). */
+  fixedRate: number;
+  /** The notional in the curve currency (always positive; direction is `direction`). */
+  notional: number;
+  /** Pay-fixed (payer) or receive-fixed (receiver). */
+  direction: OisDirection;
+  /** Fixed-leg payment frequency (USD market: semi-annual). */
+  fixedFrequency: PaymentFrequency;
+  /** Fixed-leg accrual day-count (ACT/365F or ACT/360). */
+  fixedDayCount: RatesLegDayCount;
+  /** Float-leg payment frequency (USD market: quarterly). */
+  floatFrequency: PaymentFrequency;
+  /** Float-leg accrual day-count (ACT/360 typical for USD). */
+  floatDayCount: RatesLegDayCount;
+}
+
+/**
+ * A forward rate agreement to price (`celnet.wire.FraInstrument`) — a single accrual
+ * window `[startMonths, endMonths]` on the projected float index, rebuilt server-side
+ * to roll-adjusted dates from the curve reference date. The PV is the single-period
+ * swaplet `N·(K·τ·DF(end) − (DF(start) − DF(end)))` (receive-fixed); `direction` maps
+ * to the wire `Side`.
+ */
+export interface FraInstrument {
+  /** The window start (fixing) tenor in months from spot (e.g. 3); `< endMonths`. */
+  startMonths: number;
+  /** The window end (maturity) tenor in months from spot (e.g. 6); `> startMonths`. */
+  endMonths: number;
+  /** The contractual fixed rate K as a decimal (0.033 = 3.30%). */
+  fixedRate: number;
+  /** The notional in the curve currency (always positive; direction is `direction`). */
+  notional: number;
+  /** Pay-fixed (payer) or receive-fixed (receiver). */
+  direction: OisDirection;
+  /** The accrual day-count basis for τ (ACT/360 typical; 30/360 supported). */
+  accrualBasis: RatesAccrualBasis;
+}
+
+/** A cash-bond position direction — `LONG` (bought, +PV) or `SHORT` (sold, −PV). */
+export type BondPosition = "LONG" | "SHORT";
+
+/**
+ * A fixed-coupon cash bond to price off the calibrated curve (`celnet.wire
+ * .BondInstrument`) — each cashflow discounted at the bootstrapped curve (dirty
+ * price), reported with the implied yield-risk set. Settlement is the curve
+ * reference (spot-anchor) date; the coupon schedule is the regular month-step dates
+ * rolled back from `maturityDate` at `couponFrequency`. `position` maps to the wire
+ * `Side` (LONG = SIDE_BUY, SHORT = SIDE_SELL).
+ */
+export interface BondInstrument {
+  /** The annual coupon rate as a decimal (0.06 = 6%); 0 for a zero-coupon bond. */
+  couponRate: number;
+  /** The coupon payment frequency (also the yield compounding basis). */
+  couponFrequency: PaymentFrequency;
+  /** The accrual day-count basis for accrued interest (ACT/365F / ACT/360 / 30/360). */
+  dayCount: RatesAccrualBasis;
+  /** The maturity (final-redemption) date; must be strictly after settlement. */
+  maturityDate: BrokenDate;
+  /** The par redemption / face value (e.g. 100); required, strictly positive. */
+  redemption: number;
+  /** Long (bought, +PV) or short (sold, −PV). */
+  position: BondPosition;
+}
+
+/**
+ * A linear interest-rate instrument to price (`celnet.wire.RatesInstrument` oneof) —
+ * exactly one arm is set, discriminated by `kind`. The browser projection of the
+ * server's `rates_instrument` oneof: the ticket builds one of these and prices it via
+ * `CelnetTransport.priceRates`. The arms grow additively (rule 9), never renumbering.
+ */
+export type RatesInstrument =
+  | { kind: "ois"; ois: OisInstrument }
+  | { kind: "irs"; irs: VanillaIrsInstrument }
+  | { kind: "fra"; fra: FraInstrument }
+  | { kind: "bond"; bond: BondInstrument };
+
+/** Wrap a bare {@link OisInstrument} as the `ois` arm of a {@link RatesInstrument}. */
+export function oisRatesInstrument(ois: OisInstrument): RatesInstrument {
+  return { kind: "ois", ois };
+}
+
+/**
  * The priced result for a linear-rates instrument (`celnet.wire
  * .RatesPricingResult`). All measures are in the curve currency and already
  * carry the instrument direction sign (a payer and a receiver of the same swap

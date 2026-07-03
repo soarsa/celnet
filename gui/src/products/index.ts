@@ -40,6 +40,9 @@ import { perpetualSpec } from "./perpetual";
 import { basketSpec } from "./basket";
 import { crossAssetSpec } from "./crossAsset";
 import { oisSpec } from "./ois";
+import { irsSpec } from "./irs";
+import { fraSpec } from "./fra";
+import { bondSpec } from "./bond";
 
 export type {
   AnyProductSpec,
@@ -59,6 +62,9 @@ export {
   withTenorAndModel,
 } from "./types";
 export { oisSpec, OIS_STRUCTURE_ID, type OisInputs } from "./ois";
+export { irsSpec, IRS_STRUCTURE_ID, type IrsInputs } from "./irs";
+export { fraSpec, FRA_STRUCTURE_ID, type FraInputs } from "./fra";
+export { bondSpec, BOND_STRUCTURE_ID, type BondInputs } from "./bond";
 
 // The structuring UI the ticket shell composes the registry with: the grouped
 // gallery picker (replaces the flat structure <select>), the payoff-at-expiry
@@ -109,10 +115,14 @@ export const PRODUCT_REGISTRY: readonly AnyProductSpec[] = [
   // Cross-asset (equity / commodity / crypto / metal) vanilla over the W1
   // `Underlying` oneof + settlement-style seam.
   crossAssetSpec,
-  // Fixed income (rates): the OIS priced through the SAME ticket via the
-  // `priceRates` seam (fe-fi-migration #3) — a distinct pricing family
-  // (RatesProductSpec), collapsing the standalone FI pricing silo.
+  // Fixed income (rates): the OIS / vanilla IRS / FRA / cash bond priced through
+  // the SAME ticket via the `priceRates` seam (fe-fi-migration #3 +
+  // fi-bond-ticket-gui) — a distinct pricing family (RatesProductSpec), each an
+  // additive `RatesInstrument` oneof arm, collapsing the standalone FI pricing silo.
   oisSpec,
+  irsSpec,
+  fraSpec,
+  bondSpec,
 ];
 
 /** Look up a product spec by its structure id, or `undefined` if not registered. */
