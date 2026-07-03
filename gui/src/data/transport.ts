@@ -40,6 +40,9 @@ import type {
   InstrumentInput,
   BuildCurveRequest,
   CalibratedCurve,
+  GetCurveResult,
+  MarkedCurve,
+  CurveScenarioResult,
   UserCapabilities,
   RoleCapabilities,
   UserRole,
@@ -601,4 +604,47 @@ export interface CelnetTransport {
    * per-instrument calibrated points (short→long by resolved maturity).
    */
   buildCurve(request: BuildCurveRequest): Promise<CalibratedCurve>;
+
+  // --- fixed-income curve query (SurfaceService, ADR-0021) -------------------
+  //
+  // The FI market-data query surface — the discount-curve analogue of the FX vol
+  // surface's GetSmile / MarkSurface / Scenario. One asset-class-agnostic seam:
+  // read a marked/bootstrapped curve on a tenor axis, pin it under a fresh version,
+  // and bump-and-reprice it. The curve source is either an inline `curveSet`
+  // (bootstrapped live) or a pinned marked `curveVersion` — exactly one.
+
+  /**
+   * SurfaceService.GetCurve — read a discount curve on the `queryTenorYears` axis.
+   * Exactly one source: pass a `curveVersion` to read a `MarkCurve`d version (the
+   * inline `curveSet` is ignored), else the inline `curveSet` is bootstrapped live
+   * (pass `null` when pinning a version). The FI analogue of {@link getSmile}.
+   */
+  getCurve(
+    curveSet: RatesCurveSet | null,
+    queryTenorYears: readonly number[],
+    curveVersion?: bigint,
+  ): Promise<GetCurveResult>;
+
+  /**
+   * SurfaceService.MarkCurve — bootstrap + persist `curveSet` under a fresh pinned
+   * `curveVersion`, so a later {@link getCurve} pinned to it reproduces this exact
+   * curve. The FI analogue of {@link markSurface}.
+   */
+  markCurve(curveSet: RatesCurveSet): Promise<MarkedCurve>;
+
+  /**
+   * SurfaceService.CurveScenario — apply a parallel (and optional per-pillar
+   * key-rate) shift to the calibrating par rates, re-bootstrap, and report the
+   * shifted curve on `queryTenorYears`. When an `instrument` is supplied it is
+   * repriced on the base and shifted curves (PV impact + base-curve DV01). The FI
+   * analogue of the vol-surface {@link scenario}. `keyRateShiftBp` is parallel-only
+   * when empty; otherwise its length must equal the pillar count.
+   */
+  curveScenario(
+    curveSet: RatesCurveSet,
+    parallelShiftBp: number,
+    keyRateShiftBp: readonly number[],
+    queryTenorYears: readonly number[],
+    instrument?: RatesInstrument,
+  ): Promise<CurveScenarioResult>;
 }

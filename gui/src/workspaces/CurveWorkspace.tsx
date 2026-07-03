@@ -28,8 +28,16 @@
  * real curve, with an on-chart hover readout off the identical math. The curve model
  * is stated honestly: only log-linear-on-log-DF is wired here; monotone-convex and
  * turn / meeting jumps exist server-engine-side but are not on the wire `CurveSet`,
- * so they render as DISABLED Target affordances, never as fabricated curve math; and
- * there is no server-side curve publish/versioning, so this surface ships none.
+ * so they render as DISABLED Target affordances, never as fabricated curve math.
+ *
+ * A third lens — **Query · mark · scenario** — drives the FI market-data query
+ * surface (SurfaceService `GetCurve` / `MarkCurve` / `CurveScenario`, ADR-0021: the
+ * asset-class-agnostic query seam the FX vol surface already has, generalized so
+ * fixed income rides it too). It reads a bootstrapped curve on a tenor axis, pins it
+ * under a fresh server-assigned version (a later query reproduces that exact marked
+ * curve), and bump-and-reprices it (parallel + optional per-pillar key-rate shift,
+ * with an optional repriced leg). Every call rides the ONE contract through
+ * `app.transport`, byte-identical live vs. the offline `?mock` bootstrap.
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -39,16 +47,28 @@ import { DataGrid } from "../components/DataGrid";
 import { Sparkline } from "../components/Sparkline";
 import { CurveChart, type CurveSeries } from "../viz/CurveChart";
 import { YieldCurve, type CurveNode } from "../viz/YieldCurve";
+import { KeyRateLadder, type KeyRatePillar } from "../viz/KeyRateLadder";
 import type { ColumnDef } from "../lib/grid";
 import type {
   BrokenDate,
   CalibratedCurve,
+  CurvePoint,
+  CurveScenarioResult,
   DatePillar,
+  GetCurveResult,
   InstrumentDef,
+  MarkedCurve,
+  OisInstrument,
   PillarTenor,
   RatesCurveSet,
+  RatesInstrument,
 } from "../data/contract";
-import { INSTRUMENT_FAMILY_LABELS, pillarTenorLabel } from "../data/contract";
+import {
+  INSTRUMENT_FAMILY_LABELS,
+  oisRatesInstrument,
+  pillarTenorLabel,
+} from "../data/contract";
+import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import { useApp } from "../app/AppContext";
 import { useReferenceData } from "../hooks/useReferenceData";
 import {
@@ -63,8 +83,8 @@ import {
 } from "../data/ratesPricing";
 import styles from "./CurveWorkspace.module.css";
 
-/** The two curve-authoring modes the workspace offers. */
-type AuthoringMode = "pillars" | "instruments";
+/** The curve-authoring / query modes the workspace offers. */
+type AuthoringMode = "pillars" | "instruments" | "query";
 
 /** Number of points sampled across the span for the term-structure plots. */
 const SAMPLE_COUNT = 96;
@@ -251,8 +271,19 @@ export function CurveWorkspace(): React.ReactElement {
         >
           By instrument reference
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "query"}
+          className={`${styles.modeTab} ${mode === "query" ? styles.modeTabActive : ""}`}
+          onClick={() => setMode("query")}
+        >
+          Query · mark · scenario
+        </button>
       </div>
-      {mode === "pillars" ? <PillarEditorMode /> : <InstrumentReferenceMode />}
+      {mode === "pillars" && <PillarEditorMode />}
+      {mode === "instruments" && <InstrumentReferenceMode />}
+      {mode === "query" && <CurveQueryMode />}
     </div>
   );
 }
@@ -559,15 +590,15 @@ function PillarEditorMode(): React.ReactElement {
         )}
 
         {/*
-         * Scope honesty: curve sets are request-scoped payloads (PriceRates /
-         * AggregateRatesRisk) — celnet has no server-side curve publish/versioning
-         * (the vol-surface SurfaceBook has no curve analog), so this surface ships
-         * no publish/version affordance and states its true scope instead.
+         * Scope honesty: this editor's curve set is a request-scoped payload
+         * (PriceRates / AggregateRatesRisk). Server-side curve publish + versioning
+         * DOES now exist (SurfaceService MarkCurve / GetCurve, ADR-0021) — it lives in
+         * the Query · mark · scenario lens; this editor stays request-scoped.
          */}
         <p className={styles.scopeNote}>
           Request-scoped curve set: pillar edits reprice this workspace and ride each
-          pricing request — there is no server-side curve publish or versioning
-          (Target: the vol-surface marked-version book has no curve analog yet).
+          pricing request. To pin a curve under a server version and read it back, use
+          the Query · mark · scenario lens (SurfaceService MarkCurve / GetCurve).
         </p>
       </Panel>
 
@@ -1116,6 +1147,639 @@ function InstrumentReferenceMode(): React.ReactElement {
               ? "Add calibrating instruments and build to bootstrap the discount curve."
               : "Sign in to build a curve from registry instruments."}
           </p>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Query · mark · scenario — the FI market-data query lens (SurfaceService
+// GetCurve / MarkCurve / CurveScenario, ADR-0021). The discount-curve analogue of
+// the FX vol surface's GetSmile / MarkSurface / Scenario, driven through the ONE
+// contract (`app.transport`) so live and offline `?mock` are byte-identical.
+// ---------------------------------------------------------------------------
+
+/** The standard query tenor grid (year fractions), clamped to the curve span. */
+const QUERY_TENOR_GRID: readonly number[] = [
+  0.25, 0.5, 1, 2, 3, 5, 7, 10, 15, 20, 30,
+];
+
+/** One row of the queried-curve readout (a returned {@link CurvePoint}). */
+interface QueryPointRow {
+  readonly tenorLabel: string;
+  readonly zero: number;
+  readonly df: number;
+}
+
+const QUERY_POINT_COLUMNS: readonly ColumnDef<QueryPointRow>[] = [
+  {
+    key: "tenor",
+    header: "Tenor",
+    width: 96,
+    align: "left",
+    accessor: (r) => r.tenorLabel,
+  },
+  {
+    key: "zero",
+    header: "Zero (cc)",
+    unit: "%",
+    width: 120,
+    accessor: (r) => fmtRatePct(r.zero),
+  },
+  {
+    key: "df",
+    header: "DF",
+    width: 120,
+    accessor: (r) => fmtDf(r.df),
+  },
+];
+
+/** Map returned curve points onto the `YieldCurve` pillar-node contract. */
+function pointsToNodes(points: readonly CurvePoint[]): CurveNode[] {
+  return points.map((p) => ({
+    label: fmtTenorAxis(p.tenorYears),
+    tenorYears: p.tenorYears,
+    zeroRate: p.zeroRate,
+  }));
+}
+
+/** Format a signed currency amount (PV / DV01) with thousands separators. */
+function fmtCcy(v: number): string {
+  return v.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/**
+ * The Query · mark · scenario lens. A trader edits a par-OIS curve set, then drives
+ * the three FI market-data query verbs against it through the one contract:
+ *   • GetCurve  — read the bootstrapped curve on a tenor axis (live, or pinned to a
+ *                 marked version so a later read reproduces the exact marked curve);
+ *   • MarkCurve — bootstrap + pin the curve under a fresh server-assigned version;
+ *   • CurveScenario — parallel (+ optional per-pillar key-rate) bump-and-reprice,
+ *                 with an optional repriced OIS leg (PV impact + base-curve DV01).
+ * License-gated on `fixed_income` (disabled + tooltip, never hidden; the server
+ * still enforces). The queried / shifted curves reuse the `YieldCurve` chart and the
+ * repriced leg's key-rate DV01 reuses the `KeyRateLadder`.
+ */
+function CurveQueryMode(): React.ReactElement {
+  const app = useApp();
+
+  // Capability gating (never hidden — disabled + denial tooltip, server-enforced;
+  // anonymous ⇒ permissive, exactly as the rates booking / risk lenses gate).
+  const canView = app.auth.can("view", "fixed_income");
+  const canMark = app.auth.can("price", "fixed_income");
+  const canSimulate = app.auth.can("simulate", "fixed_income");
+
+  // The editable base curve set (par rates in percent), seeded from the default
+  // USD-SOFR ladder — the single contract the query / mark / scenario verbs consume.
+  const [pillars, setPillars] =
+    useState<readonly EditablePillar[]>(INITIAL_PILLARS);
+
+  const curveSet = useMemo<RatesCurveSet>(
+    () => ({
+      currency: DEFAULT_USD_SOFR_CURVE.currency,
+      referenceDate: REFERENCE_DATE,
+      pillars: pillars.map((p) => ({
+        tenor: p.tenor,
+        parRate: p.parRatePct / 100,
+      })),
+    }),
+    [pillars],
+  );
+
+  // A local bootstrap probe: a malformed edit disables the verbs + surfaces the real
+  // RatesPricingError, never a fabricated curve (mirrors the pillar editor).
+  const curveError = useMemo<string | null>(() => {
+    try {
+      bootstrapCurveFromSet(curveSet);
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : "curve build failed";
+    }
+  }, [curveSet]);
+
+  const span = useMemo(() => {
+    const times = curveSet.pillars.map((p) =>
+      pillarMaturityYears(p.tenor, curveSet.referenceDate),
+    );
+    return times.length ? Math.max(...times) : 0;
+  }, [curveSet]);
+
+  const queryTenors = useMemo(
+    () => QUERY_TENOR_GRID.filter((t) => t <= span + 1e-9),
+    [span],
+  );
+
+  // Query / mark / scenario async state.
+  const [queryResult, setQueryResult] = useState<GetCurveResult | null>(null);
+  const [queryError, setQueryError] = useState<string | null>(null);
+  const [querying, setQuerying] = useState(false);
+
+  const [marked, setMarked] = useState<MarkedCurve | null>(null);
+  const [markError, setMarkError] = useState<string | null>(null);
+  const [marking, setMarking] = useState(false);
+
+  const [parallelBp, setParallelBp] = useState(25);
+  const [keyRateMode, setKeyRateMode] = useState(false);
+  const [keyRateBp, setKeyRateBp] = useState<readonly number[]>([]);
+  const [repriceLeg, setRepriceLeg] = useState(false);
+  const [legTenorY, setLegTenorY] = useState(5);
+  const [legFixedPct, setLegFixedPct] = useState(4);
+  const [legNotional, setLegNotional] = useState(10_000_000);
+  const [legDirection, setLegDirection] =
+    useState<OisInstrument["direction"]>("PAY_FIXED");
+  const [scenario, setScenario] = useState<CurveScenarioResult | null>(null);
+  const [legLadder, setLegLadder] = useState<readonly KeyRatePillar[] | null>(
+    null,
+  );
+  const [scenarioError, setScenarioError] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+
+  const setPillarRate = useCallback((index: number, pct: number) => {
+    setPillars((prev) =>
+      prev.map((p, j) => (j === index ? { ...p, parRatePct: pct } : p)),
+    );
+    // A curve edit invalidates the pinned/queried/scenario reads off the old curve.
+    setQueryResult(null);
+    setScenario(null);
+  }, []);
+
+  const setKeyRate = useCallback((index: number, bp: number) => {
+    setKeyRateBp((prev) => {
+      const next = [...prev];
+      while (next.length < index + 1) next.push(0);
+      next[index] = bp;
+      return next;
+    });
+  }, []);
+
+  const legInstrument = useCallback((): RatesInstrument | undefined => {
+    if (!repriceLeg) return undefined;
+    const ois: OisInstrument = {
+      tenorYears: legTenorY,
+      fixedRate: legFixedPct / 100,
+      notional: legNotional,
+      direction: legDirection,
+    };
+    return oisRatesInstrument(ois);
+  }, [repriceLeg, legTenorY, legFixedPct, legNotional, legDirection]);
+
+  const runQuery = useCallback(
+    async (pinnedVersion?: bigint): Promise<void> => {
+      setQuerying(true);
+      setQueryError(null);
+      try {
+        const result = await app.transport.getCurve(
+          pinnedVersion === undefined ? curveSet : null,
+          queryTenors,
+          pinnedVersion,
+        );
+        setQueryResult(result);
+      } catch (e: unknown) {
+        setQueryResult(null);
+        setQueryError(e instanceof Error ? e.message : "curve query failed");
+      } finally {
+        setQuerying(false);
+      }
+    },
+    [app.transport, curveSet, queryTenors],
+  );
+
+  const runMark = useCallback(async (): Promise<void> => {
+    if (!canMark) return;
+    setMarking(true);
+    setMarkError(null);
+    try {
+      const result = await app.transport.markCurve(curveSet);
+      setMarked(result);
+    } catch (e: unknown) {
+      setMarked(null);
+      setMarkError(e instanceof Error ? e.message : "curve mark failed");
+    } finally {
+      setMarking(false);
+    }
+  }, [app.transport, curveSet, canMark]);
+
+  const runScenario = useCallback(async (): Promise<void> => {
+    if (!canSimulate) return;
+    setRunning(true);
+    setScenarioError(null);
+    try {
+      const keyVec = keyRateMode
+        ? pillars.map((_, i) => keyRateBp[i] ?? 0)
+        : [];
+      const instrument = legInstrument();
+      const result = await app.transport.curveScenario(
+        curveSet,
+        parallelBp,
+        keyVec,
+        queryTenors,
+        instrument,
+      );
+      setScenario(result);
+      // The repriced leg's key-rate DV01 ladder (base curve) — a second read through
+      // the SAME `price_rates` seam, reconciling Σ key-rate DV01 ≈ scenario DV01.
+      if (instrument) {
+        const priced = await app.transport.priceRates(curveSet, instrument);
+        setLegLadder(
+          pillars.map((p, i) => ({
+            pillar: pillarTenorLabel(p.tenor),
+            dv01: priced.keyRateLadder[i] ?? 0,
+          })),
+        );
+      } else {
+        setLegLadder(null);
+      }
+    } catch (e: unknown) {
+      setScenario(null);
+      setLegLadder(null);
+      setScenarioError(
+        e instanceof Error ? e.message : "curve scenario failed",
+      );
+    } finally {
+      setRunning(false);
+    }
+  }, [
+    app.transport,
+    curveSet,
+    parallelBp,
+    keyRateMode,
+    keyRateBp,
+    pillars,
+    queryTenors,
+    legInstrument,
+    canSimulate,
+  ]);
+
+  const queryNodes = useMemo<CurveNode[]>(
+    () => (queryResult ? pointsToNodes(queryResult.points) : []),
+    [queryResult],
+  );
+  const scenarioNodes = useMemo<CurveNode[]>(
+    () => (scenario ? pointsToNodes(scenario.points) : []),
+    [scenario],
+  );
+
+  const queryPointGroups = useMemo(
+    () => [
+      {
+        key: "",
+        label: "",
+        rows: (queryResult?.points ?? []).map((p, i) => ({
+          key: `${p.tenorYears}-${i}`,
+          datum: {
+            tenorLabel: fmtTenorAxis(p.tenorYears),
+            zero: p.zeroRate,
+            df: p.discountFactor,
+          } as QueryPointRow,
+        })),
+      },
+    ],
+    [queryResult],
+  );
+
+  const disabled = !!curveError || querying;
+  const pinnedVersion = marked?.curveVersion ?? null;
+
+  return (
+    <div className={styles.wrap}>
+      <Panel material="float" className={styles.builder} title="Curve set">
+        <p className={styles.hint}>
+          Edit the calibrating par-OIS pillars, then read / pin / shift the
+          bootstrapped curve through the one contract (SurfaceService GetCurve /
+          MarkCurve / CurveScenario, ADR-0021).
+        </p>
+
+        <div className={styles.curveRow}>
+          <span className={styles.curveLabel}>Curve</span>
+          <span className={styles.curveName}>{curveSet.currency}-SOFR</span>
+          <span className={styles.curveMeta}>
+            {pillars.length} pillars · ref {curveSet.referenceDate.year}-
+            {String(curveSet.referenceDate.month).padStart(2, "0")}-
+            {String(curveSet.referenceDate.day).padStart(2, "0")}
+          </span>
+        </div>
+
+        {!canView && (
+          <p className={styles.notice} role="status">
+            Your entitlements do not include the fixed-income license — curve
+            queries are shown read-only and the server will refuse them.
+          </p>
+        )}
+
+        <div className={styles.pillarHead}>
+          <span className={styles.fieldLabel}>Par-OIS pillars</span>
+          <label className={styles.inlineInput}>
+            <input
+              type="checkbox"
+              checked={keyRateMode}
+              aria-label="enable per-pillar key-rate shift inputs"
+              onChange={(e) => setKeyRateMode(e.target.checked)}
+            />
+            <span>Key-rate shift</span>
+          </label>
+        </div>
+
+        <ul className={styles.pillarList}>
+          {pillars.map((p, i) => (
+            <li key={i} className={styles.pillarItem}>
+              <span className={styles.pickLabel}>{pillarTenorLabel(p.tenor)}</span>
+              <label className={styles.inlineInput}>
+                <input
+                  type="number"
+                  step={0.01}
+                  value={p.parRatePct}
+                  aria-label={`${pillarTenorLabel(p.tenor)} par rate in percent`}
+                  onChange={(e) => setPillarRate(i, Number(e.target.value))}
+                />
+                <span className={styles.inputUnit}>%</span>
+              </label>
+              {keyRateMode && (
+                <label className={styles.inlineInput}>
+                  <input
+                    type="number"
+                    step={1}
+                    value={keyRateBp[i] ?? 0}
+                    aria-label={`${pillarTenorLabel(p.tenor)} key-rate shift in basis points`}
+                    onChange={(e) => setKeyRate(i, Number(e.target.value))}
+                  />
+                  <span className={styles.inputUnit}>bp</span>
+                </label>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        <div className={styles.field}>
+          <span className={styles.fieldLabel}>Parallel shift</span>
+          <label className={styles.inlineInput}>
+            <input
+              type="number"
+              step={1}
+              value={parallelBp}
+              aria-label="scenario parallel shift in basis points"
+              onChange={(e) => setParallelBp(Number(e.target.value))}
+            />
+            <span className={styles.inputUnit}>bp</span>
+          </label>
+        </div>
+
+        <fieldset className={styles.modelField}>
+          <legend className={styles.fieldLabel}>Reprice a leg</legend>
+          <label className={styles.inlineInput}>
+            <input
+              type="checkbox"
+              checked={repriceLeg}
+              aria-label="reprice an OIS leg on the base and shifted curves"
+              onChange={(e) => setRepriceLeg(e.target.checked)}
+            />
+            <span>Reprice an OIS leg on the shift</span>
+          </label>
+          {repriceLeg && (
+            <div className={styles.tenorPicks}>
+              <label className={styles.inlineInput}>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={legTenorY}
+                  aria-label="repriced leg tenor in years"
+                  onChange={(e) =>
+                    setLegTenorY(Math.max(1, Math.trunc(Number(e.target.value))))
+                  }
+                />
+                <span className={styles.inputUnit}>y</span>
+              </label>
+              <label className={styles.inlineInput}>
+                <input
+                  type="number"
+                  step={0.01}
+                  value={legFixedPct}
+                  aria-label="repriced leg fixed rate in percent"
+                  onChange={(e) => setLegFixedPct(Number(e.target.value))}
+                />
+                <span className={styles.inputUnit}>%</span>
+              </label>
+              <label className={styles.inlineInput}>
+                <input
+                  type="number"
+                  step={1_000_000}
+                  value={legNotional}
+                  aria-label="repriced leg notional"
+                  onChange={(e) => setLegNotional(Number(e.target.value))}
+                />
+              </label>
+              <select
+                className={styles.pillarKind}
+                value={legDirection}
+                aria-label="repriced leg direction"
+                onChange={(e) =>
+                  setLegDirection(
+                    e.target.value as OisInstrument["direction"],
+                  )
+                }
+              >
+                <option value="PAY_FIXED">Pay fixed</option>
+                <option value="RECEIVE_FIXED">Receive fixed</option>
+              </select>
+            </div>
+          )}
+        </fieldset>
+
+        <div className={styles.buildRow}>
+          <Button
+            variant="primary"
+            onClick={() => void runQuery()}
+            disabled={disabled}
+            title="read the bootstrapped curve on the query axis"
+          >
+            {querying ? "Querying…" : "Query live"}
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => pinnedVersion !== null && void runQuery(pinnedVersion)}
+            disabled={disabled || pinnedVersion === null}
+            title={
+              pinnedVersion === null
+                ? "mark a curve first to read a pinned version"
+                : `read the pinned marked version ${pinnedVersion}`
+            }
+          >
+            Query pinned
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => void runMark()}
+            disabled={!!curveError || marking || !canMark}
+            title={
+              canMark
+                ? "pin this curve under a fresh server version"
+                : capabilityDenialTitle("price", "fixed_income")
+            }
+          >
+            {marking ? "Marking…" : "Mark curve"}
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => void runScenario()}
+            disabled={!!curveError || running || !canSimulate}
+            title={
+              canSimulate
+                ? "bump-and-reprice the curve"
+                : capabilityDenialTitle("simulate", "fixed_income")
+            }
+          >
+            {running ? "Running…" : "Run scenario"}
+          </Button>
+        </div>
+
+        {marked && (
+          <p className={styles.notice} role="status">
+            Pinned as version {String(marked.curveVersion)} ·{" "}
+            {marked.parPillars.length} par pillars — a Query pinned read reproduces
+            this exact curve.
+          </p>
+        )}
+        {curveError && (
+          <p className={styles.error} role="alert">
+            {curveError}
+          </p>
+        )}
+        {queryError && (
+          <p className={styles.error} role="alert">
+            {queryError}
+          </p>
+        )}
+        {markError && (
+          <p className={styles.error} role="alert">
+            {markError}
+          </p>
+        )}
+        {scenarioError && (
+          <p className={styles.error} role="alert">
+            {scenarioError}
+          </p>
+        )}
+      </Panel>
+
+      <Panel className={styles.results} title="Queried curve">
+        {queryResult && queryResult.points.length > 0 ? (
+          <>
+            <div className={styles.curveRow}>
+              <span className={styles.curveLabel}>Read</span>
+              <span className={styles.curveName}>
+                {queryResult.currency} discount
+              </span>
+              <span className={styles.curveMeta}>
+                {queryResult.curveVersion === undefined
+                  ? "live bootstrap"
+                  : `marked v${String(queryResult.curveVersion)}`}{" "}
+                · {queryResult.points.length} points · ref{" "}
+                {queryResult.referenceDate.year}-
+                {String(queryResult.referenceDate.month).padStart(2, "0")}-
+                {String(queryResult.referenceDate.day).padStart(2, "0")}
+              </span>
+            </div>
+
+            <div className={styles.chart}>
+              <h3 className={styles.chartTitle}>
+                Term structure · zero &amp; forward (%) · discount factor
+              </h3>
+              <YieldCurve
+                nodes={queryNodes}
+                interpolation="log-linear"
+                height={280}
+              />
+            </div>
+
+            <div className={styles.ladder}>
+              <h3 className={styles.chartTitle}>Queried points</h3>
+              <DataGrid
+                label="queried curve points"
+                columns={QUERY_POINT_COLUMNS}
+                groups={queryPointGroups}
+              />
+            </div>
+          </>
+        ) : (
+          <p className={styles.empty}>
+            {canView
+              ? "Query the curve to read its zero rates and discount factors on the tenor axis."
+              : "Sign in with a fixed-income license to query curves."}
+          </p>
+        )}
+
+        {scenario && scenario.points.length > 0 && (
+          <>
+            <div className={styles.curveRow}>
+              <span className={styles.curveLabel}>Scenario</span>
+              <span className={styles.curveName}>
+                {parallelBp >= 0 ? "+" : ""}
+                {parallelBp}bp{keyRateMode ? " + key-rate" : ""}
+              </span>
+              <span className={styles.curveMeta}>shifted curve</span>
+            </div>
+            <div className={styles.chart}>
+              <h3 className={styles.chartTitle}>Shifted term structure</h3>
+              <YieldCurve
+                nodes={scenarioNodes}
+                interpolation="log-linear"
+                height={240}
+              />
+            </div>
+
+            {scenario.reprice && (
+              <>
+                <dl className={styles.metrics}>
+                  <div className={styles.metric}>
+                    <dt className={styles.metricLabel}>Base PV</dt>
+                    <dd className={styles.metricValue}>
+                      {fmtCcy(scenario.reprice.basePv)}
+                    </dd>
+                  </div>
+                  <div className={styles.metric}>
+                    <dt className={styles.metricLabel}>Shifted PV</dt>
+                    <dd className={styles.metricValue}>
+                      {fmtCcy(scenario.reprice.shiftedPv)}
+                    </dd>
+                  </div>
+                  <div className={`${styles.metric} ${styles.metricEmphatic}`}>
+                    <dt className={styles.metricLabel}>Δ PV</dt>
+                    <dd className={styles.metricValue}>
+                      {fmtCcy(scenario.reprice.pvChange)}
+                    </dd>
+                  </div>
+                  <div className={styles.metric}>
+                    <dt className={styles.metricLabel}>DV01 (base)</dt>
+                    <dd className={styles.metricValue}>
+                      {fmtCcy(scenario.reprice.dv01)}
+                    </dd>
+                  </div>
+                </dl>
+                <p className={styles.scopeNote}>
+                  First-order check: DV01 · parallel shift ={" "}
+                  {fmtCcy(scenario.reprice.dv01 * parallelBp)} vs. actual Δ PV{" "}
+                  {fmtCcy(scenario.reprice.pvChange)} (the residual is curve
+                  convexity + any key-rate shift).
+                </p>
+                {legLadder && legLadder.length > 0 && (
+                  <div className={styles.chart}>
+                    <h3 className={styles.chartTitle}>
+                      Repriced leg · key-rate DV01
+                    </h3>
+                    <KeyRateLadder
+                      data={legLadder}
+                      parallelDv01={scenario.reprice.dv01}
+                      unit={`${curveSet.currency}/bp`}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </>
         )}
       </Panel>
     </div>

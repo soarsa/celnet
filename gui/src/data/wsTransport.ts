@@ -43,6 +43,9 @@ import type {
   InstrumentInput,
   BuildCurveRequest,
   CalibratedCurve,
+  GetCurveResult,
+  MarkedCurve,
+  CurveScenarioResult,
   DrillRiskRequest,
   DrillRiskResponse,
   Execution,
@@ -157,6 +160,12 @@ import {
   deleteInstrumentResponseFromWire,
   buildCurveRequestToWire,
   calibratedCurveFromWire,
+  getCurveRequestToWire,
+  getCurveResultFromWire,
+  markCurveRequestToWire,
+  markedCurveFromWire,
+  curveScenarioRequestToWire,
+  curveScenarioResultFromWire,
   deleteUserRequestToWire,
   deskResponseFromWire,
   listDesksRequestToWire,
@@ -1748,6 +1757,63 @@ export class WsTransport implements CelnetTransport {
       "calibrated_curve",
     );
     return calibratedCurveFromWire(reply);
+  }
+
+  async getCurve(
+    curveSet: RatesCurveSet | null,
+    queryTenorYears: readonly number[],
+    curveVersion?: bigint,
+  ): Promise<GetCurveResult> {
+    // The `get_curve` RPC over the WS mirror (SurfaceService, ADR-0021): read a
+    // discount curve on the tenor axis, either bootstrapping the inline `curveSet`
+    // live or reading a pinned `MarkCurve`d version. One unversioned contract, so
+    // the read curve is byte-identical to the offline in-app bootstrap.
+    const reply = await this.conn.request(
+      "get_curve",
+      getCurveRequestToWire(curveSet, queryTenorYears, curveVersion),
+      "get_curve_response",
+      PRICING_REQUEST_TIMEOUT_MS,
+    );
+    return getCurveResultFromWire(reply);
+  }
+
+  async markCurve(curveSet: RatesCurveSet): Promise<MarkedCurve> {
+    // The `mark_curve` RPC over the WS mirror: bootstrap + persist the curve under a
+    // fresh server-assigned version (the same version authority `mark_surface`
+    // stamps), so a later `get_curve` pinned to it reproduces this exact curve.
+    const reply = await this.conn.request(
+      "mark_curve",
+      markCurveRequestToWire(curveSet),
+      "mark_curve_response",
+      PRICING_REQUEST_TIMEOUT_MS,
+    );
+    return markedCurveFromWire(reply);
+  }
+
+  async curveScenario(
+    curveSet: RatesCurveSet,
+    parallelShiftBp: number,
+    keyRateShiftBp: readonly number[],
+    queryTenorYears: readonly number[],
+    instrument?: RatesInstrument,
+  ): Promise<CurveScenarioResult> {
+    // The `curve_scenario` RPC over the WS mirror: parallel (+ optional per-pillar
+    // key-rate) shift the par rates, re-bootstrap, return the shifted curve, and —
+    // when an `instrument` rides along — reprice it on the base and shifted curves.
+    // Scenario re-bootstraps through the same engine — pricing-class deadline.
+    const reply = await this.conn.request(
+      "curve_scenario",
+      curveScenarioRequestToWire(
+        curveSet,
+        parallelShiftBp,
+        keyRateShiftBp,
+        queryTenorYears,
+        instrument,
+      ),
+      "curve_scenario_response",
+      PRICING_REQUEST_TIMEOUT_MS,
+    );
+    return curveScenarioResultFromWire(reply);
   }
 
   /** Permanently close the underlying connection (call on app teardown). */

@@ -81,6 +81,12 @@ import type {
   BuildCurveRequest,
   CalibratedCurve,
   CalibratedCurvePoint,
+  CurvePoint,
+  CurveParPillar,
+  GetCurveResult,
+  MarkedCurve,
+  CurveScenarioResult,
+  CurveScenarioReprice,
   DatePillar,
   RatesPosition,
   RatesPricingResult,
@@ -860,6 +866,15 @@ export class MockTransport implements CelnetTransport {
   private readonly seed: bigint;
   private readonly tickMs: number;
   private surfaceVersion = 1n;
+  /** The monotonic marked-curve version authority (SurfaceService.MarkCurve). */
+  private curveVersion = 0n;
+  /**
+   * The offline marked-curve store: a `MarkCurve` deposits the bootstrapped
+   * `curveSet` here keyed by its assigned version, so a later `GetCurve` pinned to
+   * that version re-bootstraps + reproduces the exact same curve (the offline
+   * mirror of the server's version-pinned read).
+   */
+  private readonly markedCurves = new Map<bigint, RatesCurveSet>();
   private quoteSeq = 1n;
   /** Stored quotes; `dealers` is pinned by a multi-dealer request so an accept naming an `lpId` books exactly the line shown. */
   private readonly quotes = new Map<
@@ -2208,6 +2223,130 @@ export class MockTransport implements CelnetTransport {
       referenceDate: request.referenceDate,
       points,
     };
+  }
+
+  async getCurve(
+    curveSet: RatesCurveSet | null,
+    queryTenorYears: readonly number[],
+    curveVersion?: bigint,
+  ): Promise<GetCurveResult> {
+    // Exactly one source (the wire rule): a pinned marked version reads the stored
+    // curve; else the inline `curveSet` is bootstrapped live. An unknown version is
+    // a `failed_precondition` refusal (mirrors the server), surfaced as a throw.
+    let source: RatesCurveSet;
+    if (curveVersion !== undefined) {
+      const stored = this.markedCurves.get(curveVersion);
+      if (!stored) {
+        throw new Error(`no marked curve with version ${curveVersion}`);
+      }
+      source = stored;
+    } else if (curveSet) {
+      source = curveSet;
+    } else {
+      throw new Error(
+        "get_curve needs an inline curve_set or a pinned curve_version",
+      );
+    }
+    // A GENUINE in-browser read: bootstrap the self-discounting curve and sample the
+    // requested tenor axis with the SAME log-linear-on-log-DF math the OIS pricer
+    // uses, so the read curve agrees with the live `get_curve` RPC exactly.
+    const discount = bootstrapCurveFromSet(source);
+    return {
+      currency: source.currency,
+      referenceDate: source.referenceDate,
+      points: MockTransport.curvePointsAt(discount, queryTenorYears),
+      parPillars: MockTransport.curveParPillars(source),
+      // Echo the pinned version only when reading one (omit the key otherwise —
+      // exactOptionalPropertyTypes; a live bootstrap has no version).
+      ...(curveVersion !== undefined ? { curveVersion } : {}),
+      epochNanos: nowNanos(),
+    };
+  }
+
+  async markCurve(curveSet: RatesCurveSet): Promise<MarkedCurve> {
+    // Bootstrap once to validate + resolve, then deposit under a fresh version so a
+    // later pinned `getCurve` reproduces it. A malformed set throws (server refusal).
+    const discount = bootstrapCurveFromSet(curveSet);
+    this.curveVersion += 1n;
+    const version = this.curveVersion;
+    this.markedCurves.set(version, curveSet);
+    const parPillars = MockTransport.curveParPillars(curveSet);
+    return {
+      currency: curveSet.currency,
+      curveVersion: version,
+      parPillars,
+      // The self-describing marked curve: bootstrapped points at the pillar tenors.
+      points: MockTransport.curvePointsAt(
+        discount,
+        parPillars.map((p) => p.tenorYears),
+      ),
+      epochNanos: nowNanos(),
+    };
+  }
+
+  async curveScenario(
+    curveSet: RatesCurveSet,
+    parallelShiftBp: number,
+    keyRateShiftBp: readonly number[],
+    queryTenorYears: readonly number[],
+    instrument?: RatesInstrument,
+  ): Promise<CurveScenarioResult> {
+    // Build the shifted set: every pillar par += (parallel + key-rate_i) bp. An empty
+    // key-rate vector ⇒ parallel-only; a non-empty one must match the pillar count
+    // (the server enforces the same alignment). bp → decimal is ·1e-4.
+    if (
+      keyRateShiftBp.length > 0 &&
+      keyRateShiftBp.length !== curveSet.pillars.length
+    ) {
+      throw new Error(
+        `key_rate_shift_bp length ${keyRateShiftBp.length} must equal the pillar count ${curveSet.pillars.length}`,
+      );
+    }
+    const shifted: RatesCurveSet = {
+      ...curveSet,
+      pillars: curveSet.pillars.map((p, i) => ({
+        ...p,
+        parRate: p.parRate + (parallelShiftBp + (keyRateShiftBp[i] ?? 0)) * 1e-4,
+      })),
+    };
+    const shiftedDiscount = bootstrapCurveFromSet(shifted);
+    const points = MockTransport.curvePointsAt(shiftedDiscount, queryTenorYears);
+
+    let reprice: CurveScenarioReprice | null = null;
+    if (instrument) {
+      // Reprice the leg on the base and shifted curves through the SAME offline FI
+      // pricer `price_rates` uses, so `basePv` equals the offline `priceRates` PV
+      // exactly. `dv01` is the base-curve DV01 (the first-order predictor of ΔPV).
+      const base = priceRatesInstrumentOffline(curveSet, instrument);
+      const shiftedPriced = priceRatesInstrumentOffline(shifted, instrument);
+      reprice = {
+        basePv: base.pv,
+        shiftedPv: shiftedPriced.pv,
+        pvChange: shiftedPriced.pv - base.pv,
+        dv01: base.dv01,
+      };
+    }
+    return { currency: curveSet.currency, points, reprice };
+  }
+
+  /** Resolve a curve set's calibrating par pillars to `{ tenorYears, parRate }`. */
+  private static curveParPillars(curveSet: RatesCurveSet): CurveParPillar[] {
+    return curveSet.pillars.map((p) => ({
+      tenorYears: pillarMaturityYears(p.tenor, curveSet.referenceDate),
+      parRate: p.parRate,
+    }));
+  }
+
+  /** Sample a bootstrapped curve at each query tenor (zero rate + discount factor). */
+  private static curvePointsAt(
+    discount: ReturnType<typeof bootstrapCurveFromSet>,
+    tenors: readonly number[],
+  ): CurvePoint[] {
+    return tenors.map((t) => ({
+      tenorYears: t,
+      zeroRate: zeroRateAt(discount, t),
+      discountFactor: discountFactorAt(discount, t),
+    }));
   }
 
   /**
