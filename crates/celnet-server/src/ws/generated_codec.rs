@@ -35,9 +35,16 @@
 
 use celnet_proto::wire_contract::{self, WireField, WireLabel};
 use celnet_proto::{
-    BrokenDate, CcyPair, CommodityRef, Conventions, CryptoPair, EquityRef, Greeks, Leg,
-    MarketContext, MetalPair, Quantity, RateSensitivities, Solve, Strategy, StrikeOrDelta, Symbol,
-    Tenor, Underlying, Vanilla, rate_sensitivities, strike_or_delta,
+    Accumulator, AmericanOption, ArbReport, AsianOption, BasketLeg, BasketOption, BrokenDate,
+    CcyPair, Cliquet, CommodityRef, Conventions, CryptoPair, CurveSet, Digital, DoubleBarrier,
+    EquityRef, FixingSchedule, ForwardStart, FxForward, FxSwap, Greeks, Instrument, Leg,
+    ListedFutureOption, Lookback, MarketContext, MetalPair, Ndf, OisInstrument, OisPillar,
+    PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse, PriceXvaRequest,
+    PriceXvaResponse, Quantity, Quanto, RateSensitivities, RatesInstrument, RatesPriceRequest,
+    RatesPriceResponse, RatesPricingResult, SingleBarrier, Solve, Strategy, StrikeOrDelta, Symbol,
+    Tarf, Tenor, Touch, Underlying, Vanilla, VarianceSwap, VolatilitySwap, WindowBarrier,
+    XvaResult as WireXvaResult, XvaSurvivalCurve, XvaTrade, instrument, pillar_tenor,
+    rate_sensitivities, rates_instrument, strike_or_delta,
 };
 use serde_json::{Map, Value, json};
 
@@ -60,12 +67,16 @@ enum WireVal<'a> {
     I64(i64),
     /// A proto enum, carried by its canonical enum number (as the hand codec does).
     Enum(i32),
+    /// A `bool` scalar.
+    Bool(bool),
     /// A UTF-8 `string` scalar.
     Str(&'a str),
     /// A present nested message — encoded by recursing on its own field table.
     Msg(&'a dyn WireAdapter),
     /// A `repeated` message field.
     RepeatedMsg(Vec<&'a dyn WireAdapter>),
+    /// A `repeated double` scalar field (e.g. a rates `key_rate_ladder`).
+    RepeatedF64(&'a [f64]),
 }
 
 /// The reflection bridge: a per-message accessor yielding a field's raw value by
@@ -122,6 +133,7 @@ fn encode_value(field: &WireField, value: WireVal<'_>) -> Value {
         WireVal::U64(x) => json!(x),
         WireVal::I64(x) => json!(x),
         WireVal::Enum(x) => json!(x),
+        WireVal::Bool(b) => json!(b),
         WireVal::Str(s) => json!(s),
         WireVal::Msg(inner) => encode(simple_type_name(field.proto_type), inner),
         WireVal::RepeatedMsg(items) => Value::Array(
@@ -130,6 +142,7 @@ fn encode_value(field: &WireField, value: WireVal<'_>) -> Value {
                 .map(|inner| encode(simple_type_name(field.proto_type), inner))
                 .collect(),
         ),
+        WireVal::RepeatedF64(items) => Value::Array(items.iter().map(|x| json!(x)).collect()),
     }
 }
 
@@ -157,13 +170,21 @@ fn encode(message: &str, adapter: &dyn WireAdapter) -> Value {
                 }
                 None => {
                     // An absent SINGULAR message field mirrors the hand codec's
-                    // `.map(..)` → `null`. An unset oneof arm or an absent proto3
-                    // `optional` is simply omitted.
-                    if field.oneof_group.is_none()
-                        && field.label == WireLabel::Singular
-                        && is_message_type(field.proto_type)
-                    {
-                        map.insert(key.to_owned(), Value::Null);
+                    // `.map(..)` → `null`. An unset oneof arm is always omitted. An
+                    // absent proto3 `optional` is omitted by default (the request-side
+                    // leaf messages, e.g. `Tenor.broken_date`) but emitted as `null`
+                    // for the Price-family response messages whose hand encoders build
+                    // via `json!({ .. })` (`correlation_id` / `surface_version` /
+                    // `price_std_error`) — the per-message override, quirk-symmetric
+                    // with the request side.
+                    if field.oneof_group.is_none() {
+                        let absent_singular_message =
+                            field.label == WireLabel::Singular && is_message_type(field.proto_type);
+                        let null_absent_optional = field.label == WireLabel::Optional
+                            && codec_overrides::null_absent_optional(message);
+                        if absent_singular_message || null_absent_optional {
+                            map.insert(key.to_owned(), Value::Null);
+                        }
                     }
                 }
             }
@@ -228,6 +249,46 @@ pub fn encode_tenor(t: &Tenor) -> Value {
 #[must_use]
 pub fn encode_strategy(s: &Strategy) -> Value {
     encode("Strategy", s)
+}
+
+/// Encode a [`Conventions`] to its WS JSON (the six market-convention enum tags),
+/// descriptor-driven (mirrors the hand `conventions_to_json`).
+#[must_use]
+pub fn encode_conventions(c: &Conventions) -> Value {
+    encode("Conventions", c)
+}
+
+/// Encode a [`PriceResponse`] (the one-shot pricing reply) to its WS JSON — the
+/// Greeks strip, resolved strike, echoed conventions and the presence-tracked
+/// `correlation_id` / `surface_version` / `price_std_error` emitted as `null` when
+/// absent (mirrors the hand `price_response_to_json`).
+#[must_use]
+pub fn encode_price_response(r: &PriceResponse) -> Value {
+    encode("PriceResponse", r)
+}
+
+/// Encode a [`RatesPriceResponse`] to its WS JSON (mirrors the hand
+/// `rates_price_response_to_json`).
+#[must_use]
+pub fn encode_rates_price_response(r: &RatesPriceResponse) -> Value {
+    encode("RatesPriceResponse", r)
+}
+
+/// Encode a [`PriceXvaResponse`] to its WS JSON (mirrors the hand
+/// `price_xva_response_to_json`).
+#[must_use]
+pub fn encode_price_xva_response(r: &PriceXvaResponse) -> Value {
+    encode("PriceXvaResponse", r)
+}
+
+/// Encode an [`ArbReport`] to its WS JSON — the two arbitrage flags, worst density,
+/// note, the numeric `smile_model` provenance tag and the synthesized
+/// `smile_model_label` (mirrors the hand `arb_report_to_json`; the label is
+/// re-derived independently from the `SmileModel` enum in
+/// [`super::codec_overrides::arb_report_synth`]).
+#[must_use]
+pub fn encode_arb_report(a: &ArbReport) -> Value {
+    encode("ArbReport", a)
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +456,116 @@ impl WireAdapter for StrikeOrDelta {
     }
 }
 
+// --- Price-family RESPONSE adapters (arch item G — increment 4) --------------
+// The one-shot pricing reply surface. Absent proto3-`optional` scalars return
+// `None` here and are turned into JSON `null` by the generic encoder's
+// [`codec_overrides::null_absent_optional`] policy for these messages.
+
+impl WireAdapter for Conventions {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "delta_convention" => Some(WireVal::Enum(self.delta_convention)),
+            "atm_convention" => Some(WireVal::Enum(self.atm_convention)),
+            "premium_style" => Some(WireVal::Enum(self.premium_style)),
+            "cut" => Some(WireVal::Enum(self.cut)),
+            "day_count" => Some(WireVal::Enum(self.day_count)),
+            "settlement" => Some(WireVal::Enum(self.settlement)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for PriceResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "request_id" => Some(WireVal::U64(self.request_id)),
+            "greeks" => self
+                .greeks
+                .as_ref()
+                .map(|g| WireVal::Msg(g as &dyn WireAdapter)),
+            "resolved_strike" => Some(WireVal::F64(self.resolved_strike)),
+            "conventions" => self
+                .conventions
+                .as_ref()
+                .map(|c| WireVal::Msg(c as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            "surface_version" => self.surface_version.map(WireVal::U64),
+            "price_std_error" => self.price_std_error.map(WireVal::F64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RatesPricingResult {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "pv" => Some(WireVal::F64(self.pv)),
+            "par_rate" => Some(WireVal::F64(self.par_rate)),
+            "pv01" => Some(WireVal::F64(self.pv01)),
+            "dv01" => Some(WireVal::F64(self.dv01)),
+            "key_rate_ladder" => Some(WireVal::RepeatedF64(&self.key_rate_ladder)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RatesPriceResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "request_id" => Some(WireVal::U64(self.request_id)),
+            "result" => self
+                .result
+                .as_ref()
+                .map(|r| WireVal::Msg(r as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for WireXvaResult {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "cva" => Some(WireVal::F64(self.cva)),
+            "dva" => Some(WireVal::F64(self.dva)),
+            "fva" => Some(WireVal::F64(self.fva)),
+            "total_adjustment" => Some(WireVal::F64(self.total_adjustment)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for PriceXvaResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "request_id" => Some(WireVal::U64(self.request_id)),
+            "result" => self
+                .result
+                .as_ref()
+                .map(|r| WireVal::Msg(r as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ArbReport {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "butterfly_arbitrage_free" => Some(WireVal::Bool(self.butterfly_arbitrage_free)),
+            "calendar_arbitrage_free" => Some(WireVal::Bool(self.calendar_arbitrage_free)),
+            "worst_density" => Some(WireVal::F64(self.worst_density)),
+            "note" => Some(WireVal::Str(&self.note)),
+            "smile_model" => Some(WireVal::Enum(self.smile_model)),
+            _ => None,
+        }
+    }
+
+    fn synthesized(&self) -> Vec<(&'static str, Value)> {
+        codec_overrides::arb_report_synth(self.smile_model)
+    }
+}
+
 // ===========================================================================
 // DECODE (arch item G — `ws-codec-from-proto`, increment 3)
 // ===========================================================================
@@ -522,6 +693,65 @@ fn req_repeated<T: WireBuilder>(value: Option<&Value>, what: &str) -> DResult<Ve
         .iter()
         .map(|v| decode(T::MESSAGE, obj(v, what)?))
         .collect()
+}
+
+/// A `u64` defaulting to `0` (mirrors `u64_or_zero`).
+fn u64_or_zero(value: Option<&Value>) -> u64 {
+    value.and_then(Value::as_u64).unwrap_or(0)
+}
+
+/// An optional presence-tracked `u64` (mirrors `opt_u64`).
+fn opt_u64(value: Option<&Value>) -> Option<u64> {
+    value.and_then(Value::as_u64)
+}
+
+/// An optional presence-tracked `f64` (mirrors `opt_f64`).
+fn opt_f64(value: Option<&Value>) -> Option<f64> {
+    value.and_then(Value::as_f64)
+}
+
+/// A `u32` count that DEFAULTS to `0` when absent but ERRORS on overflow — the
+/// exotic-product `u32::try_from(u64_or_zero(..)).map_err(..)` policy (distinct from
+/// [`u32_or_zero`], which silently clamps overflow to `0`; `Tenor.count` uses that).
+fn u32_ranged(value: Option<&Value>, field: &str) -> DResult<u32> {
+    u32::try_from(value.and_then(Value::as_u64).unwrap_or(0))
+        .map_err(|_| CodecError(format!("field `{field}` out of u32 range")))
+}
+
+/// A REQUIRED `u32` field carried as a JSON integer, range-checked (mirrors the hand
+/// `u32_field`): error on absence / a non-integer value / u32 overflow.
+fn req_u32(value: Option<&Value>, field: &str) -> DResult<u32> {
+    let n = value
+        .and_then(Value::as_u64)
+        .ok_or_else(|| CodecError(format!("missing or non-integer field `{field}`")))?;
+    u32::try_from(n).map_err(|_| CodecError(format!("field `{field}` out of u32 range")))
+}
+
+/// A repeated `f64` defaulting to empty, silently dropping non-numeric elements
+/// (mirrors `f64_vec` — the basket `correlations` / schedule `fixing_years` shape).
+fn f64_vec(value: Option<&Value>) -> Vec<f64> {
+    value
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_f64).collect())
+        .unwrap_or_default()
+}
+
+/// A repeated `f64` (absent/null ⇒ empty) that ERRORS on a non-numeric element
+/// (mirrors the strict `f64_array` — the XVA survival curve / American Bermudan
+/// date-set shape).
+fn f64_array(value: Option<&Value>, field: &str) -> DResult<Vec<f64>> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.as_f64()
+                    .ok_or_else(|| CodecError(format!("`{field}[{i}]` must be a number")))
+            })
+            .collect(),
+        Some(_) => Err(CodecError(format!("`{field}` must be an array of numbers"))),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -952,4 +1182,729 @@ fn unhandled(message: &str, field: &str) -> CodecError {
         "generated decoder for `{message}` has no builder arm for field `{field}` \
          (contract drifted — update the WireBuilder)"
     ))
+}
+
+// ===========================================================================
+// DECODE — the Instrument-consuming Price family (arch item G — increment 4)
+// ===========================================================================
+//
+// The full request-side surface the unified one-shot `Price(Instrument)` RPC
+// decodes: the `Instrument` message + its 24-arm `product` oneof, and the
+// `PriceRequest` / `RatesPriceRequest` / `PriceXvaRequest` envelopes. Each product
+// body (`SingleBarrier`, `AsianOption`, `BasketOption`, …) and the rates/xva
+// sub-messages decode through the generic table-driven [`decode`] via their
+// [`WireBuilder`] — the descriptor drives the field set and the JSON key; the
+// builder only carries the per-field presence policy the proto3 descriptor cannot
+// express (required-erroring vs proto3-default vs `Option`, and the exotic
+// `u32`-range-checked casts). The two FX-legacy trees that the field table cannot
+// express — the `Instrument.underlying` dual-key (legacy `pair` vs the richer
+// `underlying` oneof) and the FX-legacy `MarketContext` inside `PriceRequest` —
+// keep the message-level projection escape hatch established in increment 3
+// ([`decode_instrument`] / [`decode_price_request`]); the pure rates & XVA trees
+// carry no FX-legacy divergence and decode fully generically.
+
+/// A required nested value by key (mirrors the hand `nested`): error on an absent
+/// key, else hand the raw value (including `null`, which the nested decoder then
+/// rejects as a non-object — byte-identical to the hand path).
+fn req_value<'a>(value: Option<&'a Value>, what: &str) -> DResult<&'a Value> {
+    value.ok_or_else(|| CodecError(format!("missing nested field `{what}`")))
+}
+
+/// Decode a nested product body `{ "<key>": { .. } }` into its concrete `T` through
+/// the generic table-driven decoder — the input-side mirror of the encoder's nested
+/// recursion, subsuming the 24 hand `*_from_json` product decoders.
+fn body<T: WireBuilder>(v: &Value, key: &str) -> DResult<T> {
+    decode(T::MESSAGE, obj(v, key)?)
+}
+
+/// Decode an [`Instrument`] from its WS JSON object (mirrors the hand
+/// `instrument_from_json`) — a **message-level projection**: the `underlying`
+/// dual-key (legacy FX `pair` vs the richer cross-asset `underlying` oneof, quirk a)
+/// and the `product` 24-arm oneof are not expressible as a flat field-table walk, so
+/// they are resolved here, delegating every leaf/product body to the generated
+/// generic decoders. `v` is the instrument object itself.
+///
+/// # Errors
+/// Malformed body, a missing required field (`expiry_years`), or an absent/unknown
+/// `product` arm, as a [`CodecError`].
+pub fn decode_instrument(v: &Value) -> DResult<Instrument> {
+    let o = obj(v, "instrument")?;
+    Ok(Instrument {
+        underlying: instrument_underlying(o)?,
+        tenor: opt_msg(o.get("tenor").filter(|v| !v.is_null()), "tenor")?,
+        expiry_years: req_f64(o.get("expiry_years"), "expiry_years")?,
+        quantity: opt_msg(o.get("quantity").filter(|v| !v.is_null()), "quantity")?,
+        side: enum_or_zero(o.get("side")),
+        solve: opt_msg(o.get("solve").filter(|v| !v.is_null()), "solve")?,
+        pricing_model: enum_or_zero(o.get("pricing_model")),
+        settlement_style: enum_or_zero(o.get("settlement_style")),
+        product: Some(decode_product(o)?),
+    })
+}
+
+/// The `Instrument.underlying` dual-key resolution (mirrors the hand
+/// `instrument_underlying_from_json`): the richer cross-asset `underlying` oneof is
+/// authoritative when present; otherwise the legacy FX `pair` projection; a frame
+/// carrying neither yields `None`.
+fn instrument_underlying(o: &Map<String, Value>) -> DResult<Option<Underlying>> {
+    if let Some(v) = o.get("underlying").filter(|v| !v.is_null()) {
+        return decode_underlying_object(v).map(Some);
+    }
+    match o.get("pair") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => Ok(Some(Underlying::fx(decode_ccy_pair(v)?))),
+    }
+}
+
+/// Decode the `product` oneof (mirrors the hand `product_from_json`): the JSON
+/// carries exactly one product key, whose body decodes through the generic
+/// table-driven [`decode`]. First present arm wins, in the hand codec's declaration
+/// order.
+fn decode_product(o: &Map<String, Value>) -> DResult<instrument::Product> {
+    use instrument::Product;
+    if let Some(v) = o.get("vanilla") {
+        Ok(Product::Vanilla(body(v, "vanilla")?))
+    } else if let Some(v) = o.get("strategy") {
+        Ok(Product::Strategy(body(v, "strategy")?))
+    } else if let Some(v) = o.get("single_barrier") {
+        Ok(Product::SingleBarrier(body(v, "single_barrier")?))
+    } else if let Some(v) = o.get("double_barrier") {
+        Ok(Product::DoubleBarrier(body(v, "double_barrier")?))
+    } else if let Some(v) = o.get("digital") {
+        Ok(Product::Digital(body(v, "digital")?))
+    } else if let Some(v) = o.get("touch") {
+        Ok(Product::Touch(body(v, "touch")?))
+    } else if let Some(v) = o.get("variance_swap") {
+        Ok(Product::VarianceSwap(body(v, "variance_swap")?))
+    } else if let Some(v) = o.get("volatility_swap") {
+        Ok(Product::VolatilitySwap(body(v, "volatility_swap")?))
+    } else if let Some(v) = o.get("asian_option") {
+        Ok(Product::AsianOption(body(v, "asian_option")?))
+    } else if let Some(v) = o.get("forward_start") {
+        Ok(Product::ForwardStart(body(v, "forward_start")?))
+    } else if let Some(v) = o.get("cliquet") {
+        Ok(Product::Cliquet(body(v, "cliquet")?))
+    } else if let Some(v) = o.get("quanto") {
+        Ok(Product::Quanto(body(v, "quanto")?))
+    } else if let Some(v) = o.get("tarf") {
+        Ok(Product::Tarf(body(v, "tarf")?))
+    } else if let Some(v) = o.get("pivot") {
+        Ok(Product::Pivot(body(v, "pivot")?))
+    } else if let Some(v) = o.get("accumulator") {
+        Ok(Product::Accumulator(body(v, "accumulator")?))
+    } else if let Some(v) = o.get("lookback") {
+        Ok(Product::Lookback(body(v, "lookback")?))
+    } else if let Some(v) = o.get("window_barrier") {
+        Ok(Product::WindowBarrier(body(v, "window_barrier")?))
+    } else if let Some(v) = o.get("american") {
+        Ok(Product::American(body(v, "american")?))
+    } else if let Some(v) = o.get("basket") {
+        Ok(Product::Basket(body(v, "basket")?))
+    } else if let Some(v) = o.get("fx_forward") {
+        Ok(Product::FxForward(body(v, "fx_forward")?))
+    } else if let Some(v) = o.get("fx_swap") {
+        Ok(Product::FxSwap(body(v, "fx_swap")?))
+    } else if let Some(v) = o.get("ndf") {
+        Ok(Product::Ndf(body(v, "ndf")?))
+    } else if let Some(v) = o.get("perpetual_option") {
+        Ok(Product::PerpetualOption(body(v, "perpetual_option")?))
+    } else if let Some(v) = o.get("listed_future_option") {
+        Ok(Product::ListedFutureOption(body(
+            v,
+            "listed_future_option",
+        )?))
+    } else {
+        Err(CodecError(
+            "instrument needs exactly one product (vanilla / strategy / \
+             single_barrier / double_barrier / digital / touch / variance_swap / \
+             volatility_swap / asian_option / forward_start / cliquet / quanto / \
+             tarf / pivot / accumulator / lookback / window_barrier / american / \
+             basket / fx_forward / fx_swap / ndf / perpetual_option / \
+             listed_future_option)"
+                .to_owned(),
+        ))
+    }
+}
+
+/// Decode a [`PriceRequest`] envelope from its already-unwrapped WS JSON object
+/// (mirrors the hand `price_request_from_json`) — a **message-level projection**
+/// because it nests the FX-legacy [`Instrument`] and [`MarketContext`] projections.
+///
+/// # Errors
+/// A missing required nested field (`instrument` / `market` / `conventions`) or a
+/// malformed body, as a [`CodecError`].
+pub fn decode_price_request(o: &Map<String, Value>) -> DResult<PriceRequest> {
+    Ok(PriceRequest {
+        request_id: u64_or_zero(o.get("request_id")),
+        instrument: Some(decode_instrument(req_value(
+            o.get("instrument"),
+            "instrument",
+        )?)?),
+        market: Some(decode_market_context(req_value(
+            o.get("market"),
+            "market",
+        )?)?),
+        conventions: Some(decode_conventions(req_value(
+            o.get("conventions"),
+            "conventions",
+        )?)?),
+        correlation_id: opt_u64(o.get("correlation_id").filter(|v| !v.is_null())),
+        surface_version: opt_u64(o.get("surface_version").filter(|v| !v.is_null())),
+    })
+}
+
+/// Decode a [`RatesPriceRequest`] envelope (mirrors the hand
+/// `rates_price_request_from_json`). The pure rates tree carries no FX-legacy
+/// divergence, so it decodes fully generically through the descriptor.
+///
+/// # Errors
+/// A missing required nested field (`curve_set` / `instrument`) or a malformed body.
+pub fn decode_rates_price_request(o: &Map<String, Value>) -> DResult<RatesPriceRequest> {
+    decode(RatesPriceRequest::MESSAGE, o)
+}
+
+/// Decode a [`PriceXvaRequest`] envelope (mirrors the hand
+/// `price_xva_request_from_json`). The pure XVA tree decodes fully generically.
+///
+/// # Errors
+/// A missing required field (`trades` / the market scalars / `counterparty` / `own`)
+/// or a malformed body.
+pub fn decode_price_xva_request(o: &Map<String, Value>) -> DResult<PriceXvaRequest> {
+    decode(PriceXvaRequest::MESSAGE, o)
+}
+
+// --- product WireBuilders (mechanical convert + place; the presence policy) ---
+
+impl WireBuilder for SingleBarrier {
+    const MESSAGE: &'static str = "SingleBarrier";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "vanilla" => self.vanilla = Some(req_msg::<Vanilla>(value, "vanilla")?),
+            "kind" => self.kind = enum_or_zero(value),
+            "side" => self.side = enum_or_zero(value),
+            "barrier" => self.barrier = req_f64(value, "barrier")?,
+            "rebate" => self.rebate = f64_or_zero(value),
+            "monitoring" => self.monitoring = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DoubleBarrier {
+    const MESSAGE: &'static str = "DoubleBarrier";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "vanilla" => self.vanilla = Some(req_msg::<Vanilla>(value, "vanilla")?),
+            "kind" => self.kind = enum_or_zero(value),
+            "lower_barrier" => self.lower_barrier = req_f64(value, "lower_barrier")?,
+            "upper_barrier" => self.upper_barrier = req_f64(value, "upper_barrier")?,
+            "rebate" => self.rebate = f64_or_zero(value),
+            "monitoring" => self.monitoring = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Digital {
+    const MESSAGE: &'static str = "Digital";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = req_f64(value, "strike")?,
+            "style" => self.style = enum_or_zero(value),
+            "payout" => self.payout = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Touch {
+    const MESSAGE: &'static str = "Touch";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "kind" => self.kind = enum_or_zero(value),
+            "lower_barrier" => self.lower_barrier = req_f64(value, "lower_barrier")?,
+            "upper_barrier" => self.upper_barrier = f64_or_zero(value),
+            "rebate" => self.rebate = f64_or_zero(value),
+            "monitoring" => self.monitoring = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for VarianceSwap {
+    const MESSAGE: &'static str = "VarianceSwap";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "strike_vol" => self.strike_vol = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for VolatilitySwap {
+    const MESSAGE: &'static str = "VolatilitySwap";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "strike_vol" => self.strike_vol = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for AsianOption {
+    const MESSAGE: &'static str = "AsianOption";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = req_f64(value, "strike")?,
+            "averaging" => self.averaging = enum_or_zero(value),
+            "observations" => self.observations = u32_ranged(value, "asian_option.observations")?,
+            "method" => self.method = enum_or_zero(value),
+            "elapsed_avg" => self.elapsed_avg = f64_or_zero(value),
+            "elapsed_weight" => self.elapsed_weight = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ForwardStart {
+    const MESSAGE: &'static str = "ForwardStart";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_type" => self.option_type = enum_or_zero(value),
+            "moneyness" => self.moneyness = req_f64(value, "moneyness")?,
+            "reset" => self.reset = req_f64(value, "reset")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Cliquet {
+    const MESSAGE: &'static str = "Cliquet";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_type" => self.option_type = enum_or_zero(value),
+            "moneyness" => self.moneyness = req_f64(value, "moneyness")?,
+            "periods" => self.periods = u32_ranged(value, "cliquet.periods")?,
+            "local_floor" => self.local_floor = opt_f64(value),
+            "local_cap" => self.local_cap = opt_f64(value),
+            "global_floor" => self.global_floor = opt_f64(value),
+            "global_cap" => self.global_cap = opt_f64(value),
+            "mc_pairs" => self.mc_pairs = u32_ranged(value, "cliquet.mc_pairs")?,
+            "mc_seed" => self.mc_seed = u64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Quanto {
+    const MESSAGE: &'static str = "Quanto";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "payoff" => self.payoff = enum_or_zero(value),
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = req_f64(value, "strike")?,
+            "conversion_vol" => self.conversion_vol = f64_or_zero(value),
+            "correlation" => self.correlation = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for FixingSchedule {
+    const MESSAGE: &'static str = "FixingSchedule";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "fixing_years" => self.fixing_years = f64_vec(value),
+            "fixing_notional" => self.fixing_notional = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Tarf {
+    const MESSAGE: &'static str = "Tarf";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = req_f64(value, "strike")?,
+            "target" => self.target = req_f64(value, "target")?,
+            "leverage" => self.leverage = f64_or_zero(value),
+            "redemption" => self.redemption = enum_or_zero(value),
+            "schedule" => self.schedule = opt_msg::<FixingSchedule>(value, "schedule")?,
+            "mc_pairs" => self.mc_pairs = u32_ranged(value, "tarf.mc_pairs")?,
+            "mc_seed" => self.mc_seed = u64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Pivot {
+    const MESSAGE: &'static str = "Pivot";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = req_f64(value, "strike")?,
+            "pivot" => self.pivot = req_f64(value, "pivot")?,
+            "target" => self.target = req_f64(value, "target")?,
+            "leverage" => self.leverage = f64_or_zero(value),
+            "redemption" => self.redemption = enum_or_zero(value),
+            "schedule" => self.schedule = opt_msg::<FixingSchedule>(value, "schedule")?,
+            "mc_pairs" => self.mc_pairs = u32_ranged(value, "pivot.mc_pairs")?,
+            "mc_seed" => self.mc_seed = u64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Accumulator {
+    const MESSAGE: &'static str = "Accumulator";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "pivot" => self.pivot = req_f64(value, "pivot")?,
+            "barrier" => self.barrier = req_f64(value, "barrier")?,
+            "leverage" => self.leverage = f64_or_zero(value),
+            "monitoring" => self.monitoring = enum_or_zero(value),
+            "schedule" => self.schedule = opt_msg::<FixingSchedule>(value, "schedule")?,
+            "mc_pairs" => self.mc_pairs = u32_ranged(value, "accumulator.mc_pairs")?,
+            "mc_seed" => self.mc_seed = u64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Lookback {
+    const MESSAGE: &'static str = "Lookback";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "style" => self.style = enum_or_zero(value),
+            "option_type" => self.option_type = enum_or_zero(value),
+            "monitoring" => self.monitoring = enum_or_zero(value),
+            "strike" => self.strike = f64_or_zero(value),
+            "observations" => self.observations = u32_ranged(value, "lookback.observations")?,
+            "mc_pairs" => self.mc_pairs = u32_ranged(value, "lookback.mc_pairs")?,
+            "mc_seed" => self.mc_seed = u64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for WindowBarrier {
+    const MESSAGE: &'static str = "WindowBarrier";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "vanilla" => self.vanilla = Some(req_msg::<Vanilla>(value, "vanilla")?),
+            "barrier" => self.barrier = req_f64(value, "barrier")?,
+            "side" => self.side = enum_or_zero(value),
+            "window_start" => self.window_start = req_f64(value, "window_start")?,
+            "window_end" => self.window_end = req_f64(value, "window_end")?,
+            "mc_pairs" => self.mc_pairs = u32_ranged(value, "window_barrier.mc_pairs")?,
+            "mc_steps" => self.mc_steps = u32_ranged(value, "window_barrier.mc_steps")?,
+            "mc_seed" => self.mc_seed = u64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for BasketLeg {
+    const MESSAGE: &'static str = "BasketLeg";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            // The leg underlying rides under the legacy `pair` key (resolved by the
+            // override), decoded via the FX `{base, quote}` projection.
+            "underlying" => {
+                self.underlying = match value {
+                    Some(v) => Some(Underlying::fx(decode_ccy_pair(v)?)),
+                    None => None,
+                };
+            }
+            "weight" => self.weight = req_f64(value, "weight")?,
+            "spot" => self.spot = req_f64(value, "spot")?,
+            "vol" => self.vol = req_f64(value, "vol")?,
+            "r_for" => self.r_for = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for BasketOption {
+    const MESSAGE: &'static str = "BasketOption";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "legs" => self.legs = req_repeated::<BasketLeg>(value, "basket leg")?,
+            "correlations" => self.correlations = f64_vec(value),
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = req_f64(value, "strike")?,
+            "kind" => self.kind = enum_or_zero(value),
+            "mc_paths" => self.mc_paths = u32_ranged(value, "basket.mc_paths")?,
+            "mc_replications" => {
+                self.mc_replications = u32_ranged(value, "basket.mc_replications")?;
+            }
+            "mc_steps" => self.mc_steps = u32_ranged(value, "basket.mc_steps")?,
+            "mc_seed" => self.mc_seed = u64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for AmericanOption {
+    const MESSAGE: &'static str = "AmericanOption";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = req_f64(value, "strike")?,
+            "exercise_style" => self.exercise_style = enum_or_zero(value),
+            "bermudan_dates" => {
+                self.bermudan_dates = f64_array(value, "american.bermudan_dates")?;
+            }
+            "lsm_paths" => self.lsm_paths = u32_ranged(value, "american.lsm_paths")?,
+            "lsm_exercise_dates" => {
+                self.lsm_exercise_dates = u32_ranged(value, "american.lsm_exercise_dates")?;
+            }
+            "lsm_seed" => self.lsm_seed = u64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for FxForward {
+    const MESSAGE: &'static str = "FxForward";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "contract_rate" => self.contract_rate = req_f64(value, "contract_rate")?,
+            "notional" => self.notional = req_f64(value, "notional")?,
+            "side" => self.side = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for FxSwap {
+    const MESSAGE: &'static str = "FxSwap";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "near" => self.near = Some(req_msg::<FxForward>(value, "near")?),
+            "far" => self.far = Some(req_msg::<FxForward>(value, "far")?),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for Ndf {
+    const MESSAGE: &'static str = "Ndf";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "contract_rate" => self.contract_rate = req_f64(value, "contract_rate")?,
+            "notional" => self.notional = req_f64(value, "notional")?,
+            "side" => self.side = enum_or_zero(value),
+            "fixing" => self.fixing = enum_or_zero(value),
+            "settlement_ccy" => self.settlement_ccy = string_or_empty(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for PerpetualOption {
+    const MESSAGE: &'static str = "PerpetualOption";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = req_f64(value, "strike")?,
+            "notional" => self.notional = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListedFutureOption {
+    const MESSAGE: &'static str = "ListedFutureOption";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "future_symbol" => {
+                self.future_symbol = Some(req_msg::<Symbol>(value, "future_symbol")?);
+            }
+            "future_expiry_years" => {
+                self.future_expiry_years = req_f64(value, "future_expiry_years")?;
+            }
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = req_f64(value, "strike")?,
+            "notional" => self.notional = f64_or_zero(value),
+            "margining" => self.margining = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+// --- linear-rates WireBuilders (the pure rates tree — fully generic) ---------
+
+impl WireBuilder for OisInstrument {
+    const MESSAGE: &'static str = "OisInstrument";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "tenor_years" => self.tenor_years = req_u32(value, "tenor_years")?,
+            "fixed_rate" => self.fixed_rate = req_f64(value, "fixed_rate")?,
+            "notional" => self.notional = req_f64(value, "notional")?,
+            "side" => self.side = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RatesInstrument {
+    const MESSAGE: &'static str = "RatesInstrument";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        use rates_instrument::Instrument;
+        // `decode` calls `set` only for the single live oneof arm it selected.
+        match field.proto_name {
+            "ois" => {
+                self.instrument = Some(Instrument::Ois(req_msg::<OisInstrument>(value, "ois")?))
+            }
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for PillarTenor {
+    const MESSAGE: &'static str = "PillarTenor";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        use pillar_tenor::Point;
+        match field.proto_name {
+            "years" => self.point = Some(Point::Years(req_u32(value, "years")?)),
+            "months" => self.point = Some(Point::Months(req_u32(value, "months")?)),
+            "maturity_date" => {
+                self.point = Some(Point::MaturityDate(req_msg::<BrokenDate>(
+                    value,
+                    "maturity_date",
+                )?));
+            }
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for OisPillar {
+    const MESSAGE: &'static str = "OisPillar";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "tenor" => self.tenor = Some(req_msg::<PillarTenor>(value, "tenor")?),
+            "par_rate" => self.par_rate = req_f64(value, "par_rate")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CurveSet {
+    const MESSAGE: &'static str = "CurveSet";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "currency" => self.currency = req_string(value, "currency")?,
+            "reference_date" => {
+                self.reference_date = Some(req_msg::<BrokenDate>(value, "reference_date")?);
+            }
+            "ois_pillars" => self.ois_pillars = req_repeated::<OisPillar>(value, "ois_pillar")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RatesPriceRequest {
+    const MESSAGE: &'static str = "RatesPriceRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "request_id" => self.request_id = u64_or_zero(value),
+            "curve_set" => self.curve_set = Some(req_msg::<CurveSet>(value, "curve_set")?),
+            "instrument" => {
+                self.instrument = Some(req_msg::<RatesInstrument>(value, "instrument")?);
+            }
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+// --- XVA WireBuilders (the pure valuation-adjustment tree — fully generic) ----
+
+impl WireBuilder for XvaTrade {
+    const MESSAGE: &'static str = "XvaTrade";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "option_type" => self.option_type = enum_or_zero(value),
+            "strike" => self.strike = req_f64(value, "strike")?,
+            "expiry_years" => self.expiry_years = req_f64(value, "expiry_years")?,
+            "vol" => self.vol = req_f64(value, "vol")?,
+            "notional" => self.notional = req_f64(value, "notional")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for XvaSurvivalCurve {
+    const MESSAGE: &'static str = "XvaSurvivalCurve";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "pillar_times" => self.pillar_times = f64_array(value, "pillar_times")?,
+            "hazard_rates" => self.hazard_rates = f64_array(value, "hazard_rates")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for PriceXvaRequest {
+    const MESSAGE: &'static str = "PriceXvaRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "request_id" => self.request_id = u64_or_zero(value),
+            "trades" => self.trades = req_repeated::<XvaTrade>(value, "trade")?,
+            "r_dom" => self.r_dom = req_f64(value, "r_dom")?,
+            "r_for" => self.r_for = req_f64(value, "r_for")?,
+            "spot0" => self.spot0 = req_f64(value, "spot0")?,
+            "sigma" => self.sigma = req_f64(value, "sigma")?,
+            "paths" => self.paths = req_u32(value, "paths")?,
+            "seed" => self.seed = u64_or_zero(value),
+            "exposure_steps" => self.exposure_steps = req_u32(value, "exposure_steps")?,
+            "counterparty" => {
+                self.counterparty = Some(req_msg::<XvaSurvivalCurve>(value, "counterparty")?);
+            }
+            "own" => self.own = Some(req_msg::<XvaSurvivalCurve>(value, "own")?),
+            "lgd_counterparty" => self.lgd_counterparty = req_f64(value, "lgd_counterparty")?,
+            "lgd_own" => self.lgd_own = req_f64(value, "lgd_own")?,
+            "funding_spread" => self.funding_spread = req_f64(value, "funding_spread")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
 }

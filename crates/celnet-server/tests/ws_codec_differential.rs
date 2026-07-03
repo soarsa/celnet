@@ -552,3 +552,475 @@ fn ws_mirror_corpus_leaf_bodies_decode_byte_identical() {
         hand::hand_conventions_from_json(&conventions),
     );
 }
+
+// ===========================================================================
+// INCREMENT 4 — the Instrument-consuming Price family: the full `Instrument`
+// (24-arm `product` oneof) + the `PriceRequest` / `RatesPriceRequest` /
+// `PriceXvaRequest` request envelopes (decode, byte-identical to the hand codec)
+// and the `PriceResponse` / `RatesPriceResponse` / `PriceXvaResponse` /
+// `Conventions` / `ArbReport` response surface (encode, byte-identical). This is
+// the exact surface `handle_unary`'s price / price_rates / price_xva arms are
+// swapped onto — proving the generated descriptor-driven codec is the byte-identical
+// replacement over the price/rates/xva conformance corpus BEFORE (and continuously
+// after) the swap.
+// ===========================================================================
+
+use celnet_proto::{
+    ArbReport, Conventions, PriceResponse, PriceXvaResponse, RatesPriceResponse,
+    RatesPricingResult, SmileModel, XvaResult,
+};
+
+/// Wrap a product body under its oneof key into a full instrument object carrying
+/// the common leaf fields (the FX `pair` underlying, tenor, expiry, quantity, side,
+/// solve, and the booking-model / settlement-style selectors) — the exact shape a
+/// browser / Excel client sends. `decode_instrument` and the hand
+/// `instrument_from_json` must build the byte-identical `Instrument` from it.
+fn instrument_with(product_key: &str, product_body: Value) -> Value {
+    let mut o = json!({
+        "pair": { "base": "EUR", "quote": "USD" },
+        "tenor": { "unit": 3, "count": 3 },
+        "expiry_years": 0.25,
+        "quantity": { "notional": 1_000_000.0, "base_ccy": true },
+        "side": 1,
+        "solve": { "target": 1, "target_premium": 0.021_4 },
+        "pricing_model": 1,
+        "settlement_style": 0,
+    });
+    o.as_object_mut()
+        .expect("instrument object")
+        .insert(product_key.to_owned(), product_body);
+    o
+}
+
+/// One representative body per product arm, every field set to a non-default value
+/// so the byte-identity comparison is meaningful across all 24 arms (the same wire
+/// shapes the wave1/2/3 + linear + payoff conformance corpora exercise).
+fn product_bodies() -> Vec<(&'static str, Value)> {
+    let strike_or_delta = || json!({ "strike": { "strike": 1.082_53 } });
+    let schedule = || json!({ "fixing_years": [0.25, 0.5, 0.75], "fixing_notional": 1_000.0 });
+    vec![
+        (
+            "vanilla",
+            json!({ "option_type": 0, "strike": { "strike": 1.1 } }),
+        ),
+        (
+            "strategy",
+            json!({
+                "kind": 1,
+                "legs": [
+                    { "option_type": 0, "strike": { "delta": 0.25 }, "side": 1, "ratio": 1.0 },
+                    { "option_type": 1, "strike": { "strike": 1.082_53 }, "side": 2, "ratio": 2.0 }
+                ]
+            }),
+        ),
+        (
+            "single_barrier",
+            json!({ "vanilla": strike_or_delta(), "kind": 1, "side": 1,
+                    "barrier": 1.2, "rebate": 0.01, "monitoring": 1 }),
+        ),
+        (
+            "double_barrier",
+            json!({ "vanilla": strike_or_delta(), "kind": 1, "lower_barrier": 0.9,
+                    "upper_barrier": 1.3, "rebate": 0.01, "monitoring": 1 }),
+        ),
+        (
+            "digital",
+            json!({ "option_type": 0, "strike": 1.1, "style": 1, "payout": 1.0 }),
+        ),
+        (
+            "touch",
+            json!({ "kind": 1, "lower_barrier": 0.9, "upper_barrier": 1.3,
+                    "rebate": 0.5, "monitoring": 1 }),
+        ),
+        ("variance_swap", json!({ "strike_vol": 0.1 })),
+        ("volatility_swap", json!({ "strike_vol": 0.1 })),
+        (
+            "asian_option",
+            json!({ "option_type": 0, "strike": 1.1, "averaging": 1, "observations": 12,
+                    "method": 1, "elapsed_avg": 1.05, "elapsed_weight": 0.5 }),
+        ),
+        (
+            "forward_start",
+            json!({ "option_type": 0, "moneyness": 1.0, "reset": 0.25 }),
+        ),
+        (
+            "cliquet",
+            json!({ "option_type": 0, "moneyness": 1.0, "periods": 4, "local_floor": -0.02,
+                    "local_cap": 0.05, "global_floor": 0.0, "global_cap": 0.2,
+                    "mc_pairs": 1_000, "mc_seed": 42 }),
+        ),
+        (
+            "quanto",
+            json!({ "payoff": 1, "option_type": 0, "strike": 1.1,
+                    "conversion_vol": 0.08, "correlation": 0.3 }),
+        ),
+        (
+            "tarf",
+            json!({ "option_type": 0, "strike": 1.1, "target": 0.1, "leverage": 2.0,
+                    "redemption": 1, "schedule": schedule(), "mc_pairs": 1_000, "mc_seed": 7 }),
+        ),
+        (
+            "pivot",
+            json!({ "option_type": 0, "strike": 1.1, "pivot": 1.05, "target": 0.1,
+                    "leverage": 2.0, "redemption": 1, "schedule": schedule(),
+                    "mc_pairs": 1_000, "mc_seed": 7 }),
+        ),
+        (
+            "accumulator",
+            json!({ "pivot": 1.05, "barrier": 1.2, "leverage": 2.0, "monitoring": 1,
+                    "schedule": schedule(), "mc_pairs": 1_000, "mc_seed": 7 }),
+        ),
+        (
+            "lookback",
+            json!({ "style": 1, "option_type": 0, "monitoring": 1, "strike": 1.1,
+                    "observations": 50, "mc_pairs": 1_000, "mc_seed": 7 }),
+        ),
+        (
+            "window_barrier",
+            json!({ "vanilla": strike_or_delta(), "barrier": 1.2, "side": 1,
+                    "window_start": 0.1, "window_end": 0.2, "mc_pairs": 1_000,
+                    "mc_steps": 100, "mc_seed": 7 }),
+        ),
+        (
+            "american",
+            json!({ "option_type": 0, "strike": 1.1, "exercise_style": 1,
+                    "bermudan_dates": [0.1, 0.2, 0.3], "lsm_paths": 10_000,
+                    "lsm_exercise_dates": 50, "lsm_seed": 7 }),
+        ),
+        (
+            "basket",
+            json!({
+                "legs": [
+                    { "pair": { "base": "EUR", "quote": "USD" }, "weight": 0.5,
+                      "spot": 1.1, "vol": 0.1, "r_for": 0.01 },
+                    { "pair": { "base": "GBP", "quote": "USD" }, "weight": 0.5,
+                      "spot": 1.27, "vol": 0.12, "r_for": 0.02 }
+                ],
+                "correlations": [1.0, 0.3, 0.3, 1.0],
+                "option_type": 0, "strike": 1.1, "kind": 1,
+                "mc_paths": 10_000, "mc_replications": 10, "mc_steps": 100, "mc_seed": 7
+            }),
+        ),
+        (
+            "fx_forward",
+            json!({ "contract_rate": 1.1, "notional": 1_000_000.0, "side": 0 }),
+        ),
+        (
+            "fx_swap",
+            json!({
+                "near": { "contract_rate": 1.1, "notional": 1_000_000.0, "side": 0 },
+                "far": { "contract_rate": 1.12, "notional": 1_000_000.0, "side": 1 }
+            }),
+        ),
+        (
+            "ndf",
+            json!({ "contract_rate": 1.1, "notional": 1_000_000.0, "side": 0,
+                    "fixing": 1, "settlement_ccy": "USD" }),
+        ),
+        (
+            "perpetual_option",
+            json!({ "option_type": 0, "strike": 1.1, "notional": 1_000_000.0 }),
+        ),
+        (
+            "listed_future_option",
+            json!({ "future_symbol": { "ticker": "CL", "venue": "NYMEX" },
+                    "future_expiry_years": 0.5, "option_type": 0, "strike": 80.0,
+                    "notional": 1_000.0, "margining": 1 }),
+        ),
+    ]
+}
+
+#[test]
+fn instrument_all_24_product_arms_decode_byte_identical() {
+    let bodies = product_bodies();
+    assert_eq!(bodies.len(), 24, "every product arm must be covered");
+    for (key, body) in bodies {
+        let v = instrument_with(key, body);
+        assert_decode_eq(
+            &format!("Instrument(product/{key})"),
+            generated::decode_instrument(&v),
+            hand::hand_instrument_from_json(&v),
+        );
+    }
+}
+
+#[test]
+fn instrument_cross_asset_underlying_decode_byte_identical() {
+    // The dual-key `underlying` (the richer cross-asset oneof) takes precedence over
+    // the legacy `pair`; both codecs route it to the same asset-class arm.
+    let cases = [
+        ("metal", json!({ "metal": { "metal": 1, "quote": "USD" } })),
+        (
+            "equity",
+            json!({ "equity": { "symbol": { "ticker": "AAPL", "venue": "XNAS" }, "currency": "USD" } }),
+        ),
+        (
+            "commodity",
+            json!({ "commodity": { "symbol": { "ticker": "CL", "venue": "NYMEX" }, "currency": "USD" } }),
+        ),
+        (
+            "digital_asset",
+            json!({ "digital_asset": { "base": "BTC", "quote": "USDT" } }),
+        ),
+    ];
+    for (arm, underlying) in cases {
+        let mut v = json!({
+            "expiry_years": 0.5,
+            "vanilla": { "option_type": 0, "strike": { "strike": 1.1 } },
+        });
+        v.as_object_mut()
+            .unwrap()
+            .insert("underlying".to_owned(), underlying);
+        assert_decode_eq(
+            &format!("Instrument(underlying/{arm})"),
+            generated::decode_instrument(&v),
+            hand::hand_instrument_from_json(&v),
+        );
+    }
+}
+
+/// A representative full `PriceRequest` corpus body: a real vanilla instrument, FX
+/// market, conventions and the presence-tracked ids.
+fn price_request_body() -> Value {
+    json!({
+        "request_id": 7,
+        "instrument": instrument_with("vanilla", json!({ "option_type": 0, "strike": { "strike": 1.1 } })),
+        "market": { "spot": 1.082_53, "vol": 0.091_25, "r_dom": 0.042_10, "r_for": 0.018_70 },
+        "conventions": {
+            "delta_convention": 1, "atm_convention": 2, "premium_style": 1,
+            "cut": 3, "day_count": 1, "settlement": 1
+        },
+        "correlation_id": 123,
+        "surface_version": 5
+    })
+}
+
+#[test]
+fn price_request_envelope_decode_byte_identical() {
+    let body = price_request_body();
+    let o = body.as_object().expect("price request object");
+    assert_decode_eq(
+        "PriceRequest",
+        generated::decode_price_request(o),
+        hand::hand_price_request_from_json(o),
+    );
+    // The correlation_id / surface_version omitted ⇒ `None` on both paths.
+    let mut minimal = price_request_body();
+    let m = minimal.as_object_mut().unwrap();
+    m.remove("correlation_id");
+    m.remove("surface_version");
+    assert_decode_eq(
+        "PriceRequest(minimal ids)",
+        generated::decode_price_request(minimal.as_object().unwrap()),
+        hand::hand_price_request_from_json(minimal.as_object().unwrap()),
+    );
+}
+
+#[test]
+fn rates_price_request_envelope_decode_byte_identical() {
+    let body = json!({
+        "request_id": 3,
+        "curve_set": {
+            "currency": "USD",
+            "reference_date": { "year": 2026, "month": 6, "day": 30 },
+            "ois_pillars": [
+                { "tenor": { "months": 3 }, "par_rate": 0.030 },
+                { "tenor": { "years": 1 }, "par_rate": 0.035 },
+                { "tenor": { "maturity_date": { "year": 2031, "month": 6, "day": 30 } }, "par_rate": 0.041 }
+            ]
+        },
+        "instrument": { "ois": { "tenor_years": 5, "fixed_rate": 0.033, "notional": 10_000_000.0, "side": 0 } },
+        "correlation_id": 9
+    });
+    let o = body.as_object().expect("rates request object");
+    assert_decode_eq(
+        "RatesPriceRequest",
+        generated::decode_rates_price_request(o),
+        hand::hand_rates_price_request_from_json(o),
+    );
+}
+
+#[test]
+fn price_xva_request_envelope_decode_byte_identical() {
+    let body = json!({
+        "request_id": 4,
+        "trades": [
+            { "option_type": 0, "strike": 1.1, "expiry_years": 1.0, "vol": 0.1, "notional": 1_000_000.0 },
+            { "option_type": 1, "strike": 1.05, "expiry_years": 2.0, "vol": 0.12, "notional": 500_000.0 }
+        ],
+        "r_dom": 0.02, "r_for": 0.01, "spot0": 1.1, "sigma": 0.1,
+        "paths": 20_000, "seed": 7, "exposure_steps": 50,
+        "counterparty": { "pillar_times": [1.0, 2.0], "hazard_rates": [0.01, 0.02] },
+        "own": { "pillar_times": [], "hazard_rates": [0.005] },
+        "lgd_counterparty": 0.6, "lgd_own": 0.4, "funding_spread": 0.005,
+        "correlation_id": 11
+    });
+    let o = body.as_object().expect("xva request object");
+    assert_decode_eq(
+        "PriceXvaRequest",
+        generated::decode_price_xva_request(o),
+        hand::hand_price_xva_request_from_json(o),
+    );
+}
+
+// --- response encode byte-identity ------------------------------------------
+
+#[test]
+fn conventions_encode_is_byte_identical() {
+    let c = Conventions {
+        delta_convention: 1,
+        atm_convention: 2,
+        premium_style: 1,
+        cut: 3,
+        day_count: 1,
+        settlement: 1,
+    };
+    assert_bytes_eq(
+        "Conventions",
+        &generated::encode_conventions(&c),
+        &hand::hand_conventions_to_json(&c),
+    );
+}
+
+#[test]
+fn price_response_encode_is_byte_identical() {
+    let conv = Conventions {
+        delta_convention: 1,
+        atm_convention: 0,
+        premium_style: 1,
+        cut: 0,
+        day_count: 1,
+        settlement: 0,
+    };
+    // Fully-populated: Greeks strip + resolved strike + conventions + all ids.
+    let full = PriceResponse {
+        request_id: 7,
+        greeks: Some(greeks_with(Some(RateSensitivities::fx(880.5, -410.25)))),
+        resolved_strike: 1.082_53,
+        conventions: Some(conv),
+        correlation_id: Some(123),
+        surface_version: Some(5),
+        price_std_error: Some(0.000_25),
+    };
+    assert_bytes_eq(
+        "PriceResponse(full)",
+        &generated::encode_price_response(&full),
+        &hand::hand_price_response_to_json(&full),
+    );
+    // Absent presence-tracked fields: greeks/conventions ⇒ JSON null (singular
+    // message), correlation_id/surface_version/price_std_error ⇒ JSON null
+    // (proto3-optional scalars — the response-message null policy).
+    let empty = PriceResponse {
+        request_id: 8,
+        greeks: None,
+        resolved_strike: 0.0,
+        conventions: None,
+        correlation_id: None,
+        surface_version: None,
+        price_std_error: None,
+    };
+    let g = generated::encode_price_response(&empty);
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_eq!(g.get("surface_version"), Some(&Value::Null));
+    assert_eq!(g.get("price_std_error"), Some(&Value::Null));
+    assert_eq!(g.get("greeks"), Some(&Value::Null));
+    assert_eq!(g.get("conventions"), Some(&Value::Null));
+    assert_bytes_eq(
+        "PriceResponse(empty)",
+        &g,
+        &hand::hand_price_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn rates_price_response_encode_is_byte_identical() {
+    let full = RatesPriceResponse {
+        request_id: 3,
+        result: Some(RatesPricingResult {
+            pv: 12_345.67,
+            par_rate: 0.033,
+            pv01: 98.7,
+            dv01: 987.6,
+            key_rate_ladder: vec![10.0, 20.5, -5.25, 0.0],
+        }),
+        correlation_id: Some(9),
+    };
+    assert_bytes_eq(
+        "RatesPriceResponse(full)",
+        &generated::encode_rates_price_response(&full),
+        &hand::hand_rates_price_response_to_json(&full),
+    );
+    let empty = RatesPriceResponse {
+        request_id: 4,
+        result: None,
+        correlation_id: None,
+    };
+    let g = generated::encode_rates_price_response(&empty);
+    assert_eq!(g.get("result"), Some(&Value::Null));
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "RatesPriceResponse(empty)",
+        &g,
+        &hand::hand_rates_price_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn price_xva_response_encode_is_byte_identical() {
+    let full = PriceXvaResponse {
+        request_id: 5,
+        result: Some(XvaResult {
+            cva: 1_234.5,
+            dva: -678.25,
+            fva: 90.1,
+            total_adjustment: 646.35,
+        }),
+        correlation_id: Some(11),
+    };
+    assert_bytes_eq(
+        "PriceXvaResponse(full)",
+        &generated::encode_price_xva_response(&full),
+        &hand::hand_price_xva_response_to_json(&full),
+    );
+    let empty = PriceXvaResponse {
+        request_id: 6,
+        result: None,
+        correlation_id: None,
+    };
+    let g = generated::encode_price_xva_response(&empty);
+    assert_eq!(g.get("result"), Some(&Value::Null));
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "PriceXvaResponse(empty)",
+        &g,
+        &hand::hand_price_xva_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn arb_report_encode_is_byte_identical_incl_synthetic_label() {
+    // Every SmileModel tag (0..=4) plus an out-of-range tag exercises the
+    // synthesized `smile_model_label` override end-to-end.
+    let tags = [
+        SmileModel::MarketHedge as i32,
+        SmileModel::StochasticVol as i32,
+        SmileModel::Parametric as i32,
+        SmileModel::ParametricSurface as i32,
+        SmileModel::ExtendedSurface as i32,
+        99, // unknown ⇒ "unknown"
+    ];
+    for tag in tags {
+        let a = ArbReport {
+            butterfly_arbitrage_free: true,
+            calendar_arbitrage_free: false,
+            worst_density: -0.001_25,
+            note: "calibrated; model=parametric-surface".to_owned(),
+            smile_model: tag,
+        };
+        assert_bytes_eq(
+            &format!("ArbReport(smile_model={tag})"),
+            &generated::encode_arb_report(&a),
+            &hand::hand_arb_report_to_json(&a),
+        );
+    }
+}

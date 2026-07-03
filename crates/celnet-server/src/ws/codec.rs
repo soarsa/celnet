@@ -3667,11 +3667,12 @@ const _: fn() = || {
 #[doc(hidden)]
 pub mod diff_support {
     use celnet_proto::{
-        CcyPair, CommodityRef, Conventions, CryptoPair, EquityRef, Greeks, MarketContext,
-        MetalPair, Quantity, RateSensitivities, Solve, Strategy, StrikeOrDelta, Symbol, Tenor,
-        Underlying, Vanilla,
+        ArbReport, CcyPair, CommodityRef, Conventions, CryptoPair, EquityRef, Greeks, Instrument,
+        MarketContext, MetalPair, PriceRequest, PriceResponse, PriceXvaRequest, PriceXvaResponse,
+        Quantity, RateSensitivities, RatesPriceRequest, RatesPriceResponse, Solve, Strategy,
+        StrikeOrDelta, Symbol, Tenor, Underlying, Vanilla,
     };
-    use serde_json::Value;
+    use serde_json::{Map, Value};
 
     use super::CodecError;
 
@@ -3842,6 +3843,85 @@ pub mod diff_support {
     /// Propagates the hand codec's [`CodecError`] on a malformed body.
     pub fn hand_crypto_pair_from_json(v: &Value) -> Result<CryptoPair, CodecError> {
         super::crypto_pair_from_json(v)
+    }
+
+    // --- decode references (increment 4): the Instrument-consuming Price family.
+    // The generated descriptor-driven decoder must produce byte-identically the
+    // proto message these hand decoders produce, over the full price / rates / xva
+    // conformance corpus (the browser/Excel wire shapes) — every one of the 24
+    // product arms and the three request envelopes.
+
+    /// Hand-codec `Instrument` decoder (the 24-arm `product` oneof + the FX-legacy
+    /// `underlying` dual-key). The byte-identity reference for the whole
+    /// Instrument-consuming request surface.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_instrument_from_json(v: &Value) -> Result<Instrument, CodecError> {
+        super::instrument_from_json(v)
+    }
+
+    /// Hand-codec `PriceRequest` envelope decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_price_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<PriceRequest, CodecError> {
+        super::price_request_from_json(o)
+    }
+
+    /// Hand-codec `RatesPriceRequest` envelope decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_rates_price_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<RatesPriceRequest, CodecError> {
+        super::rates_price_request_from_json(o)
+    }
+
+    /// Hand-codec `PriceXvaRequest` envelope decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_price_xva_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<PriceXvaRequest, CodecError> {
+        super::price_xva_request_from_json(o)
+    }
+
+    // --- encode references (increment 4): the Price-family RESPONSE surface. ----
+
+    /// Hand-codec reference for `Conventions` encode (the echoed convention block).
+    #[must_use]
+    pub fn hand_conventions_to_json(c: &Conventions) -> Value {
+        super::conventions_to_json(c)
+    }
+
+    /// Hand-codec reference for the `PriceResponse` one-shot pricing reply.
+    #[must_use]
+    pub fn hand_price_response_to_json(r: &PriceResponse) -> Value {
+        super::price_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `RatesPriceResponse` reply.
+    #[must_use]
+    pub fn hand_rates_price_response_to_json(r: &RatesPriceResponse) -> Value {
+        super::rates_price_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `PriceXvaResponse` reply.
+    #[must_use]
+    pub fn hand_price_xva_response_to_json(r: &PriceXvaResponse) -> Value {
+        super::price_xva_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `ArbReport` encode (incl. the synthesized
+    /// `smile_model_label`).
+    #[must_use]
+    pub fn hand_arb_report_to_json(a: &ArbReport) -> Value {
+        super::arb_report_to_json(a)
     }
 }
 

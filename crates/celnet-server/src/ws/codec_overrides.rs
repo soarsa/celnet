@@ -31,6 +31,18 @@
 use celnet_proto::{Greeks, MarketContext, Underlying};
 use serde_json::{Value, json};
 
+/// The Price-family response messages whose absent proto3-`optional` scalar fields
+/// are emitted as JSON `null` (present-with-null), NOT omitted — the hand codec's
+/// one-shot pricing encoders (`price_response_to_json` / `rates_price_response_to_json`
+/// / `price_xva_response_to_json`) build these via `json!({ .. })`, where an
+/// `Option::None` scalar serializes to `null` under its key. This is the mirror image
+/// of the *request*-side leaf messages (e.g. `Tenor.broken_date`) whose absent
+/// proto3-`optional` fields are **omitted** by the hand `.map(..)` / conditional-insert
+/// encoders; the divergence is genuinely per-message, so it is recorded here rather
+/// than baked into the generic encoder. Keyed on the simple message type name.
+const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] =
+    &["PriceResponse", "RatesPriceResponse", "PriceXvaResponse"];
+
 /// How the generated encoder should treat one descriptor field's JSON key.
 ///
 /// The default for every field is [`FieldRule::Keep`] (emit under the field
@@ -62,8 +74,23 @@ pub(crate) fn field_rule(message: &str, proto_name: &str) -> FieldRule {
         // (d) camelCase `brokenDate` on the wire (snake_case `broken_date` in the
         //     descriptor field table).
         ("Tenor", "broken_date") => FieldRule::Rename("brokenDate"),
+        // A basket leg carries its (FX-only) underlying under the legacy `pair` key,
+        // decoded via the FX `{base, quote}` projection — the same FX-legacy pair
+        // surface as `Underlying` (quirk a), one level down. The generated
+        // `BasketLeg` builder resolves the `pair` value into the FX arm.
+        ("BasketLeg", "underlying") => FieldRule::Rename("pair"),
         _ => FieldRule::Keep,
     }
+}
+
+/// Whether `message`'s absent proto3-`optional` scalar fields are emitted as JSON
+/// `null` (rather than omitted) by the hand encoder — the Price-family one-shot
+/// response messages (see [`NULL_ABSENT_OPTIONAL_MESSAGES`]). The generated encoder
+/// consults this so `correlation_id`/`surface_version`/`price_std_error` reach the
+/// wire as `null` when `None`, byte-identical to the hand `json!({ .. })` encoders,
+/// while request-side leaf messages keep the omit-when-absent default.
+pub(crate) fn null_absent_optional(message: &str) -> bool {
+    NULL_ABSENT_OPTIONAL_MESSAGES.contains(&message)
 }
 
 /// Whether a real-oneof `group` on `message` is **required** — i.e. the hand
@@ -77,7 +104,17 @@ pub(crate) fn field_rule(message: &str, proto_name: &str) -> FieldRule {
 /// "strike must carry exactly one of `strike` or `delta`" when neither arm is
 /// present, so the generated decoder must reject the same body identically.
 pub(crate) fn oneof_required(message: &str, group: &str) -> bool {
-    matches!((message, group), ("StrikeOrDelta", "spec"))
+    matches!(
+        (message, group),
+        // The strike/delta specification (`strike_or_delta_from_json`).
+        ("StrikeOrDelta", "spec")
+        // A rates curve pillar must name a tenor point (`pillar_tenor_from_json`
+        // errors when neither `years`, `months`, nor `maturity_date` is present).
+        | ("PillarTenor", "point")
+        // A rates instrument must name its family (`rates_instrument_from_json`
+        // errors when the `ois` arm is absent).
+        | ("RatesInstrument", "instrument")
+    )
 }
 
 // Message-level synthesized keys — the cases where a JSON key is *derived* from an
@@ -114,4 +151,24 @@ pub(crate) fn market_context_synth(m: &MarketContext) -> Vec<(&'static str, Valu
 pub(crate) fn underlying_fx_projection(u: &Underlying) -> Value {
     u.as_fx()
         .map_or(Value::Null, super::generated_codec::encode_ccy_pair)
+}
+
+/// The `ArbReport` synthesized `smile_model_label`: a stable, machine-friendly label
+/// for the numeric `smile_model` tag, surfaced beside the numeric provenance (the
+/// hand `arb_report_to_json` emits both). Re-derived here **independently** from the
+/// published `celnet_proto::SmileModel` enum (guardrail: re-derive constants from the
+/// source, never call the hand codec); the differential harness proves this mapping
+/// stays byte-identical to the hand `smile_model_label`. Vendor-/method-neutral by
+/// name; an unrecognized tag is reported honestly as `unknown`.
+pub(crate) fn arb_report_synth(smile_model: i32) -> Vec<(&'static str, Value)> {
+    use celnet_proto::SmileModel;
+    let label = match SmileModel::try_from(smile_model) {
+        Ok(SmileModel::MarketHedge) => "market-hedge",
+        Ok(SmileModel::StochasticVol) => "stochastic-vol",
+        Ok(SmileModel::Parametric) => "parametric",
+        Ok(SmileModel::ParametricSurface) => "parametric-surface",
+        Ok(SmileModel::ExtendedSurface) => "extended-surface",
+        Err(_) => "unknown",
+    };
+    vec![("smile_model_label", json!(label))]
 }

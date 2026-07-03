@@ -721,28 +721,34 @@ async fn handle_unary(
     }
 
     match kind {
+        // The Instrument-consuming Price family runs on the descriptor-driven
+        // generated codec (arch item G — `ws-codec-from-proto`, increment 4): the
+        // `ws_codec_differential` harness proves, over the full price/rates/xva
+        // conformance corpus, that the generated request-decode + response-encode is
+        // byte-identical to the hand codec (retained as the frozen oracle in
+        // `codec::diff_support`), so this swap is contract-preserving.
         "price" => {
-            let req = decode!(codec::price_request_from_json(o));
+            let req = decode!(generated_codec::decode_price_request(o));
             call!(
                 services.pricing.price(Request::new(req)),
                 "price_response",
-                codec::price_response_to_json
+                generated_codec::encode_price_response
             )
         }
         "price_rates" => {
-            let req = decode!(codec::rates_price_request_from_json(o));
+            let req = decode!(generated_codec::decode_rates_price_request(o));
             call!(
                 services.pricing.price_rates(Request::new(req)),
                 "rates_price_response",
-                codec::rates_price_response_to_json
+                generated_codec::encode_rates_price_response
             )
         }
         "price_xva" => {
-            let req = decode!(codec::price_xva_request_from_json(o));
+            let req = decode!(generated_codec::decode_price_xva_request(o));
             call!(
                 services.pricing.price_xva(Request::new(req)),
                 "price_xva_response",
-                codec::price_xva_response_to_json
+                generated_codec::encode_price_xva_response
             )
         }
         "request_quote" => {
