@@ -85,6 +85,8 @@ import type {
   RatesPosition,
   RatesPricingResult,
   RatesRiskNode,
+  RatesStreamSnapshot,
+  RatesStreamUpdate,
   ReportingNumeraire,
   RespondDeskRequestRequest,
   RespondDeskRequestResponse,
@@ -143,6 +145,31 @@ import type {
 } from "./transport";
 
 const NS_PER_MS = 1_000_000n;
+
+/**
+ * The per-curve additive parallel-shift magnitude per tick, in decimal rate
+ * (`0.0001` = ±1 basis point). The offline mirror of the server fan-out's
+ * `RATE_STREAM_BUMP` (crates/celnet-server/src/services/pricefanout.rs): each
+ * rates tick draws an i.i.d. uniform shift in `[-RATE_STREAM_BUMP,
+ * RATE_STREAM_BUMP)` applied to every pillar par rate (the FI analogue of the
+ * FX spot walk), so the streamed line breathes at a realistic curve scale.
+ */
+const RATE_STREAM_BUMP = 0.0001;
+
+/**
+ * A parallel-shifted copy of a curve: every OIS pillar's par rate moved by
+ * `shift` (decimal). A `shift` of exactly `0` returns a value-identical clone, so
+ * a re-price at shift 0 equals the un-shifted baseline exactly — the offline
+ * mirror of the server's `shifted_curve` (crates/celnet-server/src/services
+ * /stream.rs), which guarantees the baseline snapshot == `price_rates`.
+ */
+function shiftedRatesCurve(curve: RatesCurveSet, shift: number): RatesCurveSet {
+  if (shift === 0) return curve;
+  return {
+    ...curve,
+    pillars: curve.pillars.map((p) => ({ ...p, parRate: p.parRate + shift })),
+  };
+}
 
 /** A wall-clock source in nanoseconds since epoch, monotone within a session. */
 function nowNanos(): bigint {
@@ -282,6 +309,25 @@ interface LiveSeries {
 }
 
 /**
+ * A live fixed-income (linear-rates) streaming line — the FI analogue of
+ * {@link LiveSubscription}. The offline mirror of the server's `RatesSubscription`
+ * (crates/celnet-server/src/services/stream.rs): it holds the baseline curve +
+ * instrument and re-prices on each deterministic parallel-shift tick through the
+ * SAME offline `price_rates` mirror the rates unary edge uses, so the baseline
+ * (shift 0) equals `priceRatesInstrumentOffline(curveSet, instrument)` EXACTLY.
+ */
+interface LiveRatesSubscription {
+  id: bigint;
+  instrument: RatesInstrument;
+  /** The subscribed baseline curve the deterministic parallel shift moves around. */
+  curveSet: RatesCurveSet;
+  label: string;
+  sequence: bigint;
+  /** Per-line deterministic PRNG driving the ±1bp parallel shift path. */
+  rng: Rng;
+}
+
+/**
  * The mock multiplexed stream session. One instance multiplexes many
  * subscriptions over a single ticking loop, exactly as the contract's single
  * bidirectional `StreamSession` multiplexes by `SubscriptionId`.
@@ -290,6 +336,8 @@ class MockStreamSession implements StreamSession {
   private readonly subs = new Map<bigint, LiveSubscription>();
   /** Live market-series subscriptions (same id space as price streams). */
   private readonly series = new Map<bigint, LiveSeries>();
+  /** Live fixed-income streaming lines (same id space as price/market streams). */
+  private readonly ratesSubs = new Map<bigint, LiveRatesSubscription>();
   private readonly listeners = new Set<(e: StreamEvent) => void>();
   private nextSubId = 1n;
   private nextToken = 1n;
@@ -346,10 +394,7 @@ class MockStreamSession implements StreamSession {
 
   unsubscribe(subscriptionId: bigint): void {
     this.subs.delete(subscriptionId);
-    if (this.subs.size === 0 && this.timer !== undefined) {
-      clearInterval(this.timer);
-      this.timer = undefined;
-    }
+    this.stopIfIdle();
   }
 
   execute(
@@ -476,9 +521,63 @@ class MockStreamSession implements StreamSession {
 
   unsubscribeMarketSeries(subscriptionId: bigint): void {
     this.series.delete(subscriptionId);
+    this.stopIfIdle();
+  }
+
+  subscribeRates(
+    instrument: RatesInstrument,
+    curveSet: RatesCurveSet,
+    label: string,
+  ): bigint {
+    const id = this.nextSubId;
+    this.nextSubId += 1n;
+    const sub: LiveRatesSubscription = {
+      id,
+      instrument,
+      curveSet,
+      label,
+      sequence: 0n,
+      rng: new Rng(this.seed ^ (id * 0x9e37_79b9n)),
+    };
+    this.ratesSubs.set(id, sub);
+    // Immediate baseline snapshot at shift 0 — byte-for-byte the offline
+    // `price_rates(instrument, curve_set)`, faithful to the server contract.
+    this.emit({ kind: "ratesSnapshot", snapshot: this.buildRatesSnapshot(sub) });
+    this.ensureRunning();
+    return id;
+  }
+
+  unsubscribeRates(subscriptionId: bigint): void {
+    this.ratesSubs.delete(subscriptionId);
+    this.stopIfIdle();
+  }
+
+  /**
+   * Build the baseline [`RatesStreamSnapshot`] for a line: the offline
+   * `price_rates` at the un-shifted baseline curve (shift 0), so a consumer's
+   * baseline equals `priceRatesInstrumentOffline(curveSet, instrument)` exactly.
+   */
+  private buildRatesSnapshot(sub: LiveRatesSubscription): RatesStreamSnapshot {
+    sub.sequence += 1n;
+    const result: RatesPricingResult = priceRatesInstrumentOffline(
+      sub.curveSet,
+      sub.instrument,
+    );
+    return {
+      subscriptionId: sub.id,
+      sequence: sub.sequence,
+      result,
+      curveShift: 0,
+      epochNanos: nowNanos(),
+    };
+  }
+
+  /** Stop the tick timer once no price / market-series / rates line remains. */
+  private stopIfIdle(): void {
     if (
       this.subs.size === 0 &&
       this.series.size === 0 &&
+      this.ratesSubs.size === 0 &&
       this.timer !== undefined
     ) {
       clearInterval(this.timer);
@@ -537,6 +636,7 @@ class MockStreamSession implements StreamSession {
     }
     this.subs.clear();
     this.series.clear();
+    this.ratesSubs.clear();
     this.listeners.clear();
   }
 
@@ -629,6 +729,35 @@ class MockStreamSession implements StreamSession {
 
   private tick(): void {
     this.frame += 1;
+    // Advance every live fixed-income line: draw one deterministic parallel curve
+    // shift in [-1bp, +1bp) (the offline mirror of the server fan-out's per-curve
+    // shift path), re-price the baseline curve shifted by it through the SAME
+    // offline `price_rates` mirror, and emit ONE conflated `RatesStreamUpdate`
+    // (the FI analogue of the FX one-Update-per-pass conflation throttle). No
+    // click-to-trade token — rates click-to-trade books through RFQ/desk.
+    for (const rs of this.ratesSubs.values()) {
+      const shift = (rs.rng.next() * 2 - 1) * RATE_STREAM_BUMP;
+      let result: RatesPricingResult;
+      try {
+        result = priceRatesInstrumentOffline(
+          shiftedRatesCurve(rs.curveSet, shift),
+          rs.instrument,
+        );
+      } catch {
+        // A transient shifted-curve re-price failure SKIPS this pass (honest:
+        // never a fabricated or stale point), exactly as the server driver does.
+        continue;
+      }
+      rs.sequence += 1n;
+      const update: RatesStreamUpdate = {
+        subscriptionId: rs.id,
+        sequence: rs.sequence,
+        result,
+        curveShift: shift,
+        epochNanos: nowNanos(),
+      };
+      this.emit({ kind: "ratesUpdate", update });
+    }
     // Advance every live market series: a deterministic mean-reverting walk around
     // the observable's anchor, appended at the series' cadence (throttle hint).
     for (const s of this.series.values()) {

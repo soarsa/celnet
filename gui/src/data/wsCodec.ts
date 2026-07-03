@@ -138,6 +138,8 @@ import type {
   RatesLegDayCount,
   RatesCurveSet,
   RatesPricingResult,
+  RatesStreamSnapshot,
+  RatesStreamUpdate,
   BuildCurveRequest,
   CalibratedCurve,
   ReportingNumeraire,
@@ -1052,6 +1054,69 @@ export function ratesPricingResultFromWire(o: WireObject): RatesPricingResult {
     pv01: num(result, "pv01"),
     dv01: num(result, "dv01"),
     keyRateLadder,
+  };
+}
+
+// --- fixed-income (rates): LIVE STREAMING subscribe + snapshot/update ---------
+//
+// The FI counterpart of the FX `subscribe` / `snapshot` / `update` RFS codec,
+// multiplexed onto the SAME StreamSession. The `rates_subscribe` request body is
+// byte-compatible with the server's `rates_subscribe_from_json`
+// (crates/celnet-server/src/ws/codec.rs): it reuses the SHARED `curve_set` +
+// `instrument` encoders the rates unary edge speaks, so a WS client opens a rates
+// stream over the exact contract the server decodes. The `rates_stream_snapshot`
+// / `rates_stream_update` frames are decoded from the server codec's
+// `rates_stream_snapshot_to_json` / `rates_stream_update_to_json` (the SAME
+// snake_case fields, reusing `ratesPricingResultFromWire` for the `result`).
+
+/**
+ * Encode a `RatesSubscribe` control-frame body (the `type` is added by the
+ * caller / connection). Reuses {@link ratesCurveSetToWire} and
+ * {@link ratesInstrumentUnionToWire} verbatim — one encoding, no duplication —
+ * so the streamed rates line is byte-identical to the rates unary edge the
+ * server already decodes. `correlation_id` is presence-tracked (omitted ⇒ none).
+ */
+export function ratesSubscribeToWire(args: {
+  subscriptionId: bigint;
+  instrument: RatesInstrument;
+  curveSet: RatesCurveSet;
+  throttleNanos?: bigint;
+  correlationId?: bigint;
+}): WireObject {
+  const body: WireObject = {
+    subscription: { value: Number(args.subscriptionId) },
+    instrument: ratesInstrumentUnionToWire(args.instrument),
+    curve_set: ratesCurveSetToWire(args.curveSet),
+    throttle_nanos: Number(args.throttleNanos ?? 0n),
+  };
+  if (args.correlationId !== undefined) {
+    body["correlation_id"] = Number(args.correlationId);
+  }
+  return body;
+}
+
+/** Decode a `rates_stream_snapshot` frame into a {@link RatesStreamSnapshot}. */
+export function ratesStreamSnapshotFromWire(o: WireObject): RatesStreamSnapshot {
+  const snap: RatesStreamSnapshot = {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    result: ratesPricingResultFromWire(o),
+    curveShift: num(o, "curve_shift"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) snap.correlationId = corr;
+  return snap;
+}
+
+/** Decode a `rates_stream_update` frame into a {@link RatesStreamUpdate}. */
+export function ratesStreamUpdateFromWire(o: WireObject): RatesStreamUpdate {
+  return {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    result: ratesPricingResultFromWire(o),
+    curveShift: num(o, "curve_shift"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
   };
 }
 
