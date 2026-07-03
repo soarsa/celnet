@@ -59,6 +59,13 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "DeleteFixConnectionResponse",
     "SetFixConnectionEnabledResponse",
     "ListFixMessagesResponse",
+    // The QuoteService reply messages: their `json!({ .. })` hand encoders emit every
+    // absent presence-tracked field (`correlation_id` / `surface_version` /
+    // `price_std_error` / the `attribution` optional message) as JSON `null`.
+    "Quote",
+    "DealerQuote",
+    "MultiDealerQuote",
+    "Execution",
 ];
 
 /// How the generated encoder should treat one descriptor field's JSON key.
@@ -97,8 +104,30 @@ pub(crate) fn field_rule(message: &str, proto_name: &str) -> FieldRule {
         // surface as `Underlying` (quirk a), one level down. The generated
         // `BasketLeg` builder resolves the `pair` value into the FX arm.
         ("BasketLeg", "underlying") => FieldRule::Rename("pair"),
+        // (quote family) the who's-trading `AttributionRecord` rides under camelCase
+        // wire keys the GUI/Excel decoders read (`attribution_to_json`).
+        ("AttributionRecord", "quoted_by") => FieldRule::Rename("quotedBy"),
+        ("AttributionRecord", "held_by") => FieldRule::Rename("heldBy"),
+        ("AttributionRecord", "lp_count") => FieldRule::Rename("lpCount"),
+        // (quote family) the `Owner` auto-pricer oneof arm rides under camelCase.
+        ("Owner", "auto_pricer") => FieldRule::Rename("autoPricer"),
+        // (quote family) the booked `Execution` carries the traded `instrument` in the
+        // proto, but the WS `execution_to_json` never serializes it — suppress it so
+        // the generated encoder omits the key exactly as the hand codec does. (Encode
+        // only: `Execution` is a response, never decoded through the generic walk.)
+        ("Execution", "instrument") => FieldRule::Suppress,
         _ => FieldRule::Keep,
     }
+}
+
+/// Whether `message`'s absent SINGULAR message fields are OMITTED (rather than
+/// rendered as JSON `null`) by the hand encoder — the messages whose hand encoder
+/// builds a `serde_json::Map` inserting only present fields (`attribution_to_json` /
+/// `book_id_to_json`), as opposed to the `json!({ .. })` encoders that emit every
+/// absent field as `null`. Keyed on the simple message type name; the default is
+/// `false` (the `json!`-style null-everything policy the Price/quote replies use).
+pub(crate) fn omit_absent_message(message: &str) -> bool {
+    matches!(message, "AttributionRecord" | "BookId")
 }
 
 /// Whether `message`'s absent proto3-`optional` scalar fields are emitted as JSON

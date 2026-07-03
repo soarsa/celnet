@@ -35,18 +35,20 @@
 
 use celnet_proto::wire_contract::{self, WireField, WireLabel};
 use celnet_proto::{
-    Accumulator, AmericanOption, ArbReport, AsianOption, BasketLeg, BasketOption, BondInstrument,
-    BrokenDate, CcyPair, Cliquet, CombinedTailRiskRequest, CombinedTailRiskResponse, CommodityRef,
-    Conventions, CreateFixConnectionRequest, CreateFixConnectionResponse, CryptoPair, CurveSet,
-    DeleteFixConnectionRequest, DeleteFixConnectionResponse, Digital, DoubleBarrier,
-    EntitlementPrincipal, EntitlementRule, EquityRef, FixConnectionDesc, FixConnectionSpec,
-    FixMessage, FixingSchedule, ForwardStart, FraInstrument, FxForward, FxSwap, Greeks, Instrument,
-    JointTailScenario, Leg, ListFixConnectionsRequest, ListFixConnectionsResponse,
-    ListFixMessagesRequest, ListFixMessagesResponse, ListedFutureOption, Lookback, MarketContext,
-    MetalPair, Ndf, OisFixedPeriod, OisInstrument, OisPillar, OisSwapLeg, PerpetualOption,
-    PillarTenor, Pivot, PriceRequest, PriceResponse, PriceXvaRequest, PriceXvaResponse, Quantity,
-    Quanto, RateSensitivities, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
-    RatesPricingResult, RatesQuote, RatesQuoteRequest, RiskScope, SetFixConnectionEnabledRequest,
+    Accumulator, AmericanOption, ArbReport, AsianOption, AttributionRecord, BasketLeg,
+    BasketOption, BondInstrument, BookId, BrokenDate, CcyPair, Cliquet, CombinedTailRiskRequest,
+    CombinedTailRiskResponse, CommodityRef, Conventions, CreateFixConnectionRequest,
+    CreateFixConnectionResponse, CryptoPair, CurveSet, DealerQuote, DeleteFixConnectionRequest,
+    DeleteFixConnectionResponse, Digital, DoubleBarrier, EntitlementPrincipal, EntitlementRule,
+    EquityRef, Execution, FixConnectionDesc, FixConnectionSpec, FixMessage, FixingSchedule,
+    ForwardStart, FraInstrument, FxForward, FxSwap, Greeks, Instrument, JointTailScenario, Leg,
+    ListFixConnectionsRequest, ListFixConnectionsResponse, ListFixMessagesRequest,
+    ListFixMessagesResponse, ListedFutureOption, Lookback, MarketContext, MetalPair,
+    MultiDealerQuote, Ndf, OisFixedPeriod, OisInstrument, OisPillar, OisSwapLeg, Owner,
+    PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse, PriceXvaRequest,
+    PriceXvaResponse, Quantity, Quanto, Quote, QuoteAccept, QuoteReject, QuoteRequest,
+    RateSensitivities, RatesInstrument, RatesPriceRequest, RatesPriceResponse, RatesPricingResult,
+    RatesQuote, RatesQuoteRequest, RejectAck, RiskScope, SetFixConnectionEnabledRequest,
     SetFixConnectionEnabledResponse, SingleBarrier, Solve, Strategy, StrikeOrDelta, Symbol,
     TailRiskCurvePillar, TailRiskFiPosition, TailRiskKeyRate, TailRiskOptionLeg, Tarf, Tenor,
     Touch, TwoWayPrice, Underlying, UpdateFixConnectionRequest, UpdateFixConnectionResponse,
@@ -186,8 +188,14 @@ fn encode(message: &str, adapter: &dyn WireAdapter) -> Value {
                     // `price_std_error`) — the per-message override, quirk-symmetric
                     // with the request side.
                     if field.oneof_group.is_none() {
-                        let absent_singular_message =
-                            field.label == WireLabel::Singular && is_message_type(field.proto_type);
+                        // An absent SINGULAR message field renders as `null` for the
+                        // `json!({ .. })`-style hand encoders, but is OMITTED for the
+                        // manual-`Map`-building hand encoders (`attribution_to_json` /
+                        // `book_id_to_json`, which insert only present fields) — the
+                        // latter are flagged by `omit_absent_message`.
+                        let absent_singular_message = field.label == WireLabel::Singular
+                            && is_message_type(field.proto_type)
+                            && !codec_overrides::omit_absent_message(message);
                         let null_absent_optional = field.label == WireLabel::Optional
                             && codec_overrides::null_absent_optional(message);
                         if absent_singular_message || null_absent_optional {
@@ -759,6 +767,28 @@ fn opt_u64(value: Option<&Value>) -> Option<u64> {
 /// An optional presence-tracked `f64` (mirrors `opt_f64`).
 fn opt_f64(value: Option<&Value>) -> Option<f64> {
     value.and_then(Value::as_f64)
+}
+
+/// A REQUIRED `u64` field carried as a JSON integer (mirrors the hand `u64_field`):
+/// error on absence or a non-integer value.
+fn req_u64(value: Option<&Value>, field: &str) -> DResult<u64> {
+    value
+        .and_then(Value::as_u64)
+        .ok_or_else(|| CodecError(format!("missing or non-integer field `{field}`")))
+}
+
+/// An optional presence-tracked `bool` (mirrors `o.get(k).and_then(as_bool)`): `None`
+/// on absence or a non-bool value.
+fn opt_bool(value: Option<&Value>) -> Option<bool> {
+    value.and_then(Value::as_bool)
+}
+
+/// An optional presence-tracked `u32` (mirrors `.and_then(as_u64).and_then(|n|
+/// u32::try_from(n).ok())`): `None` on absence OR on a value outside `u32` range.
+fn opt_u32(value: Option<&Value>) -> Option<u32> {
+    value
+        .and_then(Value::as_u64)
+        .and_then(|n| u32::try_from(n).ok())
 }
 
 /// A `u32` count that DEFAULTS to `0` when absent but ERRORS on overflow — the
@@ -2832,4 +2862,323 @@ pub fn encode_set_fix_connection_enabled_response(r: &SetFixConnectionEnabledRes
 #[must_use]
 pub fn encode_list_fix_messages_response(r: &ListFixMessagesResponse) -> Value {
     encode("ListFixMessagesResponse", r)
+}
+
+// ===========================================================================
+// QuoteService — the RFQ lifecycle (RequestQuote / RequestMultiDealerQuote /
+// AcceptQuote / RejectQuote)
+// ===========================================================================
+//
+// Four unary verbs. `QuoteRequest` keeps a message-level projection
+// ([`decode_quote_request`]) because it nests the FX-legacy `Instrument` dual-key,
+// exactly like `PriceRequest`; `QuoteAccept` / `QuoteReject` decode fully generically.
+// The reply surface (`Quote` / `MultiDealerQuote` / `DealerQuote` / `Execution` /
+// `RejectAck`) encodes from the field tables, with three curated overrides the
+// descriptor cannot express: the who's-trading `AttributionRecord` / `BookId` / `Owner`
+// tree rides under **camelCase** wire keys and its manual-`Map` hand encoders OMIT
+// absent fields (`omit_absent_message`), the `json!({ .. })` reply encoders render
+// absent presence-tracked fields as `null` (`null_absent_optional`), and the booked
+// `Execution` never serializes its `instrument` (a `Suppress` rule).
+
+// --- who's-trading attribution WireBuilders (decode; shared) ----------------
+
+impl WireBuilder for Owner {
+    const MESSAGE: &'static str = "Owner";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        use celnet_proto::owner::Seat;
+        // `decode` calls `set` only for the single live oneof arm it selected.
+        match field.proto_name {
+            "trader" => self.seat = Some(Seat::Trader(req_string(value, "trader")?)),
+            "auto_pricer" => self.seat = Some(Seat::AutoPricer(req_string(value, "autoPricer")?)),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for BookId {
+    const MESSAGE: &'static str = "BookId";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "book" => self.book = req_string(value, "book")?,
+            "owner" => self.owner = opt_msg::<Owner>(value, "owner")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for AttributionRecord {
+    const MESSAGE: &'static str = "AttributionRecord";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        // The camelCase wire keys (`quotedBy` / `heldBy` / `lpCount`) were resolved by
+        // the shared override in `decode`; here the fields are plain optionals.
+        match field.proto_name {
+            "quoted_by" => self.quoted_by = opt_msg::<BookId>(value, "quotedBy")?,
+            "held_by" => self.held_by = opt_msg::<BookId>(value, "heldBy")?,
+            "won" => self.won = opt_bool(value),
+            "lp_count" => self.lp_count = opt_u32(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+// --- quote request WireBuilders (decode) ------------------------------------
+
+impl WireBuilder for QuoteAccept {
+    const MESSAGE: &'static str = "QuoteAccept";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "quote_id" => self.quote_id = req_u64(value, "quote_id")?,
+            "idempotency_key" => self.idempotency_key = string_or_empty(value),
+            "side" => self.side = enum_or_zero(value),
+            "lp_id" => self.lp_id = string_or_empty(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for QuoteReject {
+    const MESSAGE: &'static str = "QuoteReject";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "quote_id" => self.quote_id = req_u64(value, "quote_id")?,
+            "reason" => self.reason = string_or_empty(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+/// Decode a [`QuoteRequest`] — a **message-level projection** (mirrors the hand
+/// `quote_request_from_json`): it nests the FX-legacy [`Instrument`] dual-key that the
+/// flat field table cannot express, delegating the leaf bodies to the generic
+/// decoders. `conventions` is required; the attribution / ids / caller identity are
+/// presence-tracked.
+///
+/// # Errors
+/// A missing required field (`idempotency_key` / `instrument` / `conventions`) or a
+/// malformed body, as a [`CodecError`].
+pub fn decode_quote_request(o: &Map<String, Value>) -> DResult<QuoteRequest> {
+    Ok(QuoteRequest {
+        idempotency_key: req_string(o.get("idempotency_key"), "idempotency_key")?,
+        instrument: Some(decode_instrument(req_value(
+            o.get("instrument"),
+            "instrument",
+        )?)?),
+        conventions: Some(decode_conventions(req_value(
+            o.get("conventions"),
+            "conventions",
+        )?)?),
+        correlation_id: opt_u64(o.get("correlation_id").filter(|v| !v.is_null())),
+        surface_version: opt_u64(o.get("surface_version").filter(|v| !v.is_null())),
+        attribution: opt_msg::<AttributionRecord>(
+            o.get("attribution").filter(|v| !v.is_null()),
+            "attribution",
+        )?,
+        session_token: opt_string(o.get("session_token"), "session_token")?,
+        principal: opt_msg::<EntitlementPrincipal>(
+            o.get("principal").filter(|v| !v.is_null()),
+            "principal",
+        )?,
+    })
+}
+
+/// Decode a [`QuoteAccept`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `quote_id`, as a [`CodecError`].
+pub fn decode_quote_accept(o: &Map<String, Value>) -> DResult<QuoteAccept> {
+    decode(QuoteAccept::MESSAGE, o)
+}
+
+/// Decode a [`QuoteReject`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `quote_id`, as a [`CodecError`].
+pub fn decode_quote_reject(o: &Map<String, Value>) -> DResult<QuoteReject> {
+    decode(QuoteReject::MESSAGE, o)
+}
+
+// --- who's-trading attribution adapters (encode; shared) --------------------
+
+impl WireAdapter for Owner {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        use celnet_proto::owner::Seat;
+        match (proto_name, &self.seat) {
+            ("trader", Some(Seat::Trader(t))) => Some(WireVal::Str(t)),
+            ("auto_pricer", Some(Seat::AutoPricer(p))) => Some(WireVal::Str(p)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for BookId {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book" => Some(WireVal::Str(&self.book)),
+            "owner" => self
+                .owner
+                .as_ref()
+                .map(|o| WireVal::Msg(o as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AttributionRecord {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "quoted_by" => self
+                .quoted_by
+                .as_ref()
+                .map(|b| WireVal::Msg(b as &dyn WireAdapter)),
+            "held_by" => self
+                .held_by
+                .as_ref()
+                .map(|b| WireVal::Msg(b as &dyn WireAdapter)),
+            "won" => self.won.map(WireVal::Bool),
+            "lp_count" => self.lp_count.map(|n| WireVal::U64(u64::from(n))),
+            _ => None,
+        }
+    }
+}
+
+// --- quote reply adapters (encode) ------------------------------------------
+
+impl WireAdapter for Quote {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "quote_id" => Some(WireVal::U64(self.quote_id)),
+            "idempotency_key" => Some(WireVal::Str(&self.idempotency_key)),
+            "price" => self
+                .price
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            "greeks" => self
+                .greeks
+                .as_ref()
+                .map(|g| WireVal::Msg(g as &dyn WireAdapter)),
+            "conventions" => self
+                .conventions
+                .as_ref()
+                .map(|c| WireVal::Msg(c as &dyn WireAdapter)),
+            "resolved_strike" => Some(WireVal::F64(self.resolved_strike)),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            "valid_until_nanos" => Some(WireVal::I64(self.valid_until_nanos)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            "surface_version" => self.surface_version.map(WireVal::U64),
+            "attribution" => self
+                .attribution
+                .as_ref()
+                .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            "price_std_error" => self.price_std_error.map(WireVal::F64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DealerQuote {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "lp_id" => Some(WireVal::Str(&self.lp_id)),
+            "price" => self
+                .price
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            "greeks" => self
+                .greeks
+                .as_ref()
+                .map(|g| WireVal::Msg(g as &dyn WireAdapter)),
+            "resolved_strike" => Some(WireVal::F64(self.resolved_strike)),
+            "valid_until_nanos" => Some(WireVal::I64(self.valid_until_nanos)),
+            "attribution" => self
+                .attribution
+                .as_ref()
+                .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            "price_std_error" => self.price_std_error.map(WireVal::F64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for MultiDealerQuote {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "quote_id" => Some(WireVal::U64(self.quote_id)),
+            "idempotency_key" => Some(WireVal::Str(&self.idempotency_key)),
+            "dealers" => Some(WireVal::RepeatedMsg(
+                self.dealers.iter().map(|d| d as &dyn WireAdapter).collect(),
+            )),
+            "best_bid_lp_id" => Some(WireVal::Str(&self.best_bid_lp_id)),
+            "best_offer_lp_id" => Some(WireVal::Str(&self.best_offer_lp_id)),
+            "conventions" => self
+                .conventions
+                .as_ref()
+                .map(|c| WireVal::Msg(c as &dyn WireAdapter)),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            "surface_version" => self.surface_version.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for Execution {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        // `instrument` is suppressed by the override (never serialized by the hand
+        // `execution_to_json`), so it is never requested here.
+        match proto_name {
+            "execution_id" => Some(WireVal::U64(self.execution_id)),
+            "quote_id" => Some(WireVal::U64(self.quote_id)),
+            "side" => Some(WireVal::Enum(self.side)),
+            "traded_premium" => Some(WireVal::F64(self.traded_premium)),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            "attribution" => self
+                .attribution
+                .as_ref()
+                .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RejectAck {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "quote_id" => Some(WireVal::U64(self.quote_id)),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            _ => None,
+        }
+    }
+}
+
+/// Encode a [`Quote`] (the single-dealer RFQ reply) to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_quote(q: &Quote) -> Value {
+    encode("Quote", q)
+}
+
+/// Encode a [`MultiDealerQuote`] (the ranked LP panel reply) to its WS JSON.
+#[must_use]
+pub fn encode_multi_dealer_quote(m: &MultiDealerQuote) -> Value {
+    encode("MultiDealerQuote", m)
+}
+
+/// Encode an [`Execution`] (the booking confirmation) to its WS JSON.
+#[must_use]
+pub fn encode_execution(e: &Execution) -> Value {
+    encode("Execution", e)
+}
+
+/// Encode a [`RejectAck`] (the quote-declined acknowledgement) to its WS JSON.
+#[must_use]
+pub fn encode_reject_ack(a: &RejectAck) -> Value {
+    encode("RejectAck", a)
 }

@@ -1378,3 +1378,350 @@ fn list_fix_messages_response_encode_byte_identical() {
         &hand::hand_list_fix_messages_response_to_json(&empty),
     );
 }
+
+// ===========================================================================
+// QuoteService — the RFQ lifecycle: the request decoders (incl. the FX-legacy
+// `QuoteRequest.instrument` projection + the camelCase attribution tree) and the
+// reply encoders (`Quote` / `MultiDealerQuote` / `Execution` / `RejectAck`),
+// byte-identical to the hand codec incl. the presence-tracked-null policy, the
+// camelCase attribution keys + omit-absent behavior, and the suppressed
+// `Execution.instrument`.
+// ===========================================================================
+
+use celnet_proto::{
+    AttributionRecord, BookId, Conventions as Conv, DealerQuote, Execution, MultiDealerQuote,
+    Owner, Quote, RejectAck, Side as QSide, TwoWayPrice, owner,
+};
+
+/// A representative Conventions block.
+fn quote_conv() -> Conv {
+    Conv {
+        delta_convention: 1,
+        atm_convention: 2,
+        premium_style: 1,
+        cut: 3,
+        day_count: 1,
+        settlement: 1,
+    }
+}
+
+/// A fully-populated who's-trading attribution chain (both books + won + lp_count).
+fn attribution_full() -> AttributionRecord {
+    AttributionRecord {
+        quoted_by: Some(BookId {
+            book: "EM-VOL-1".to_owned(),
+            owner: Some(Owner {
+                seat: Some(owner::Seat::Trader("alice".to_owned())),
+            }),
+        }),
+        held_by: Some(BookId {
+            book: "EM-VOL-2".to_owned(),
+            owner: Some(Owner {
+                seat: Some(owner::Seat::AutoPricer("pricer-x".to_owned())),
+            }),
+        }),
+        won: Some(true),
+        lp_count: Some(3),
+    }
+}
+
+/// The camelCase attribution JSON body a GUI/Excel client sends.
+fn attribution_body() -> Value {
+    json!({
+        "quotedBy": { "book": "EM-VOL-1", "owner": { "trader": "alice" } },
+        "heldBy": { "book": "EM-VOL-2", "owner": { "autoPricer": "pricer-x" } },
+        "won": true, "lpCount": 3
+    })
+}
+
+fn conventions_body() -> Value {
+    json!({
+        "delta_convention": 1, "atm_convention": 2, "premium_style": 1,
+        "cut": 3, "day_count": 1, "settlement": 1
+    })
+}
+
+#[test]
+fn quote_request_decode_byte_identical() {
+    let full = {
+        let mut o = json!({
+            "idempotency_key": "idem-1",
+            "instrument": instrument_with("vanilla", json!({ "option_type": 0, "strike": { "strike": 1.1 } })),
+            "conventions": conventions_body(),
+            "correlation_id": 7,
+            "surface_version": 5,
+            "session_token": "tok-abc",
+        });
+        o.as_object_mut()
+            .unwrap()
+            .insert("attribution".to_owned(), attribution_body());
+        o
+    };
+    let o = full.as_object().expect("object");
+    assert_decode_eq(
+        "QuoteRequest(full)",
+        generated::decode_quote_request(o),
+        hand::hand_quote_request_from_json(o),
+    );
+    // Minimal: only the required fields (idempotency_key + instrument + conventions).
+    let minimal = json!({
+        "idempotency_key": "idem-2",
+        "instrument": instrument_with("vanilla", json!({ "option_type": 1, "strike": { "delta": 0.25 } })),
+        "conventions": conventions_body(),
+    });
+    let mo = minimal.as_object().expect("object");
+    assert_decode_eq(
+        "QuoteRequest(minimal)",
+        generated::decode_quote_request(mo),
+        hand::hand_quote_request_from_json(mo),
+    );
+    // Partial attribution: quoted_by only (held_by / won / lp_count absent ⇒ omitted).
+    let partial = json!({
+        "idempotency_key": "idem-3",
+        "instrument": instrument_with("vanilla", json!({ "option_type": 0, "strike": { "strike": 1.2 } })),
+        "conventions": conventions_body(),
+        "attribution": { "quotedBy": { "book": "B", "owner": { "trader": "bob" } } },
+    });
+    let po = partial.as_object().expect("object");
+    assert_decode_eq(
+        "QuoteRequest(partial attribution)",
+        generated::decode_quote_request(po),
+        hand::hand_quote_request_from_json(po),
+    );
+}
+
+#[test]
+fn quote_accept_reject_decode_byte_identical() {
+    let accept = json!({
+        "quote_id": 42, "idempotency_key": "idem-1", "side": 1, "lp_id": "LP-A",
+        "session_token": "tok", "principal": principal_body()
+    });
+    let ao = accept.as_object().expect("object");
+    assert_decode_eq(
+        "QuoteAccept(full)",
+        generated::decode_quote_accept(ao),
+        hand::hand_quote_accept_from_json(ao),
+    );
+    let accept_min = json!({ "quote_id": 7 });
+    let amo = accept_min.as_object().expect("object");
+    assert_decode_eq(
+        "QuoteAccept(minimal)",
+        generated::decode_quote_accept(amo),
+        hand::hand_quote_accept_from_json(amo),
+    );
+
+    let reject = json!({ "quote_id": 42, "reason": "too wide", "session_token": "tok" });
+    let ro = reject.as_object().expect("object");
+    assert_decode_eq(
+        "QuoteReject(full)",
+        generated::decode_quote_reject(ro),
+        hand::hand_quote_reject_from_json(ro),
+    );
+    let reject_min = json!({ "quote_id": 8 });
+    let rmo = reject_min.as_object().expect("object");
+    assert_decode_eq(
+        "QuoteReject(minimal)",
+        generated::decode_quote_reject(rmo),
+        hand::hand_quote_reject_from_json(rmo),
+    );
+}
+
+#[test]
+fn quote_encode_byte_identical() {
+    let full = Quote {
+        quote_id: 42,
+        idempotency_key: "idem-1".to_owned(),
+        price: Some(TwoWayPrice {
+            bid: 0.021,
+            offer: 0.023,
+        }),
+        greeks: Some(greeks_with(Some(RateSensitivities::fx(880.5, -410.25)))),
+        conventions: Some(quote_conv()),
+        resolved_strike: 1.082_53,
+        epoch_nanos: 1_720_000_000_000_000_000,
+        valid_until_nanos: 1_720_000_030_000_000_000,
+        correlation_id: Some(7),
+        surface_version: Some(5),
+        attribution: Some(attribution_full()),
+        price_std_error: Some(0.000_25),
+    };
+    assert_bytes_eq(
+        "Quote(full)",
+        &generated::encode_quote(&full),
+        &hand::hand_quote_to_json(&full),
+    );
+    // Absent presence-tracked fields ⇒ JSON null (the `json!({ .. })` reply policy).
+    let empty = Quote {
+        quote_id: 1,
+        idempotency_key: "x".to_owned(),
+        price: None,
+        greeks: None,
+        conventions: None,
+        resolved_strike: 0.0,
+        epoch_nanos: 0,
+        valid_until_nanos: 0,
+        correlation_id: None,
+        surface_version: None,
+        attribution: None,
+        price_std_error: None,
+    };
+    let g = generated::encode_quote(&empty);
+    for key in [
+        "price",
+        "greeks",
+        "conventions",
+        "correlation_id",
+        "surface_version",
+        "attribution",
+        "price_std_error",
+    ] {
+        assert_eq!(g.get(key), Some(&Value::Null), "`{key}` must be null");
+    }
+    assert_bytes_eq("Quote(empty)", &g, &hand::hand_quote_to_json(&empty));
+}
+
+#[test]
+fn quote_attribution_partial_omits_absent_fields() {
+    // A quoted_by-only attribution: the manual-`Map` attribution encoder omits the
+    // absent `heldBy` / `won` / `lpCount`, and the book's absent `owner` is omitted.
+    let q = Quote {
+        quote_id: 9,
+        idempotency_key: "y".to_owned(),
+        price: None,
+        greeks: None,
+        conventions: None,
+        resolved_strike: 0.0,
+        epoch_nanos: 0,
+        valid_until_nanos: 0,
+        correlation_id: None,
+        surface_version: None,
+        attribution: Some(AttributionRecord {
+            quoted_by: Some(BookId {
+                book: "B".to_owned(),
+                owner: None,
+            }),
+            held_by: None,
+            won: None,
+            lp_count: None,
+        }),
+        price_std_error: None,
+    };
+    let g = generated::encode_quote(&q);
+    let attr = g.get("attribution").expect("attribution present");
+    assert!(attr.get("quotedBy").is_some());
+    assert!(attr.get("heldBy").is_none(), "absent heldBy omitted");
+    assert!(attr.get("won").is_none(), "absent won omitted");
+    assert!(attr.get("lpCount").is_none(), "absent lpCount omitted");
+    assert!(
+        attr.get("quotedBy").and_then(|b| b.get("owner")).is_none(),
+        "absent owner omitted from the book"
+    );
+    assert_bytes_eq(
+        "Quote(partial attribution)",
+        &g,
+        &hand::hand_quote_to_json(&q),
+    );
+}
+
+#[test]
+fn multi_dealer_quote_encode_byte_identical() {
+    let dealer = |lp: &str, bid: f64| DealerQuote {
+        lp_id: lp.to_owned(),
+        price: Some(TwoWayPrice {
+            bid,
+            offer: bid + 0.002,
+        }),
+        greeks: Some(greeks_with(Some(RateSensitivities::fx(1.0, -0.5)))),
+        resolved_strike: 1.1,
+        valid_until_nanos: 1_720_000_030_000_000_000,
+        attribution: Some(attribution_full()),
+        price_std_error: None,
+    };
+    let full = MultiDealerQuote {
+        quote_id: 100,
+        idempotency_key: "idem-md".to_owned(),
+        dealers: vec![dealer("LP-A", 0.020), dealer("LP-B", 0.019)],
+        best_bid_lp_id: "LP-A".to_owned(),
+        best_offer_lp_id: "LP-B".to_owned(),
+        conventions: Some(quote_conv()),
+        epoch_nanos: 1_720_000_000_000_000_000,
+        correlation_id: Some(11),
+        surface_version: Some(5),
+    };
+    assert_bytes_eq(
+        "MultiDealerQuote(full)",
+        &generated::encode_multi_dealer_quote(&full),
+        &hand::hand_multi_dealer_quote_to_json(&full),
+    );
+    let empty = MultiDealerQuote {
+        quote_id: 1,
+        idempotency_key: "z".to_owned(),
+        dealers: vec![],
+        best_bid_lp_id: String::new(),
+        best_offer_lp_id: String::new(),
+        conventions: None,
+        epoch_nanos: 0,
+        correlation_id: None,
+        surface_version: None,
+    };
+    let g = generated::encode_multi_dealer_quote(&empty);
+    assert_eq!(g.get("dealers"), Some(&Value::Array(vec![])));
+    assert_eq!(g.get("conventions"), Some(&Value::Null));
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "MultiDealerQuote(empty)",
+        &g,
+        &hand::hand_multi_dealer_quote_to_json(&empty),
+    );
+}
+
+#[test]
+fn execution_and_reject_ack_encode_byte_identical() {
+    // The booked `Execution` NEVER serializes its `instrument` (suppressed override).
+    let exec = Execution {
+        execution_id: 500,
+        quote_id: 42,
+        side: QSide::Buy as i32,
+        traded_premium: 0.022,
+        instrument: Some(celnet_proto::Instrument {
+            expiry_years: 0.25,
+            ..Default::default()
+        }),
+        epoch_nanos: 1_720_000_000_000_000_000,
+        attribution: Some(attribution_full()),
+    };
+    let g = generated::encode_execution(&exec);
+    assert!(
+        g.get("instrument").is_none(),
+        "Execution.instrument must never be serialized: {g}"
+    );
+    assert_bytes_eq("Execution(full)", &g, &hand::hand_execution_to_json(&exec));
+    // Absent attribution ⇒ null (json! policy); instrument still omitted.
+    let exec0 = Execution {
+        execution_id: 1,
+        quote_id: 2,
+        side: 0,
+        traded_premium: 0.0,
+        instrument: None,
+        epoch_nanos: 0,
+        attribution: None,
+    };
+    let g0 = generated::encode_execution(&exec0);
+    assert_eq!(g0.get("attribution"), Some(&Value::Null));
+    assert!(g0.get("instrument").is_none());
+    assert_bytes_eq(
+        "Execution(empty)",
+        &g0,
+        &hand::hand_execution_to_json(&exec0),
+    );
+
+    let ack = RejectAck {
+        quote_id: 42,
+        epoch_nanos: 1_720_000_000_000_000_000,
+    };
+    assert_bytes_eq(
+        "RejectAck",
+        &generated::encode_reject_ack(&ack),
+        &hand::hand_reject_ack_to_json(&ack),
+    );
+}

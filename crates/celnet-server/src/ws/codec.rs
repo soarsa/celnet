@@ -3797,12 +3797,14 @@ pub mod diff_support {
     use celnet_proto::{
         ArbReport, CcyPair, CommodityRef, Conventions, CreateFixConnectionRequest,
         CreateFixConnectionResponse, CryptoPair, DeleteFixConnectionRequest,
-        DeleteFixConnectionResponse, EquityRef, Greeks, Instrument, ListFixConnectionsRequest,
-        ListFixConnectionsResponse, ListFixMessagesRequest, ListFixMessagesResponse, MarketContext,
-        MetalPair, PriceRequest, PriceResponse, PriceXvaRequest, PriceXvaResponse, Quantity,
-        RateSensitivities, RatesPriceRequest, RatesPriceResponse, SetFixConnectionEnabledRequest,
-        SetFixConnectionEnabledResponse, Solve, Strategy, StrikeOrDelta, Symbol, Tenor, Underlying,
-        UpdateFixConnectionRequest, UpdateFixConnectionResponse, Vanilla,
+        DeleteFixConnectionResponse, EquityRef, Execution, Greeks, Instrument,
+        ListFixConnectionsRequest, ListFixConnectionsResponse, ListFixMessagesRequest,
+        ListFixMessagesResponse, MarketContext, MetalPair, MultiDealerQuote, PriceRequest,
+        PriceResponse, PriceXvaRequest, PriceXvaResponse, Quantity, Quote, QuoteAccept,
+        QuoteReject, QuoteRequest, RateSensitivities, RatesPriceRequest, RatesPriceResponse,
+        RejectAck, SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse, Solve,
+        Strategy, StrikeOrDelta, Symbol, Tenor, Underlying, UpdateFixConnectionRequest,
+        UpdateFixConnectionResponse, Vanilla,
     };
     use serde_json::{Map, Value};
 
@@ -4158,6 +4160,61 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_list_fix_messages_response_to_json(r: &ListFixMessagesResponse) -> Value {
         super::list_fix_messages_response_to_json(r)
+    }
+
+    // --- QuoteService references: the RFQ-lifecycle request decoders + reply encoders
+    // the generated quote codec is proven byte-identical to (incl. the who's-trading
+    // `AttributionRecord` camelCase tree + the suppressed `Execution.instrument`).
+
+    /// Hand-codec `QuoteRequest` decoder (the FX-legacy `Instrument` projection +
+    /// the attribution tree).
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_quote_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<QuoteRequest, CodecError> {
+        super::quote_request_from_json(o)
+    }
+
+    /// Hand-codec `QuoteAccept` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_quote_accept_from_json(o: &Map<String, Value>) -> Result<QuoteAccept, CodecError> {
+        super::quote_accept_from_json(o)
+    }
+
+    /// Hand-codec `QuoteReject` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_quote_reject_from_json(o: &Map<String, Value>) -> Result<QuoteReject, CodecError> {
+        super::quote_reject_from_json(o)
+    }
+
+    /// Hand-codec reference for the single-dealer `Quote` encode.
+    #[must_use]
+    pub fn hand_quote_to_json(q: &Quote) -> Value {
+        super::quote_to_json(q)
+    }
+
+    /// Hand-codec reference for the ranked-panel `MultiDealerQuote` encode.
+    #[must_use]
+    pub fn hand_multi_dealer_quote_to_json(m: &MultiDealerQuote) -> Value {
+        super::multi_dealer_quote_to_json(m)
+    }
+
+    /// Hand-codec reference for the `Execution` booking-confirmation encode.
+    #[must_use]
+    pub fn hand_execution_to_json(e: &Execution) -> Value {
+        super::execution_to_json(e)
+    }
+
+    /// Hand-codec reference for the `RejectAck` encode.
+    #[must_use]
+    pub fn hand_reject_ack_to_json(a: &RejectAck) -> Value {
+        super::reject_ack_to_json(a)
     }
 }
 

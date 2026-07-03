@@ -754,20 +754,25 @@ async fn handle_unary(
                 generated_codec::encode_price_xva_response
             )
         }
+        // The QuoteService RFQ-lifecycle verbs run on the descriptor-driven generated
+        // codec (arch item G — `ws-codec-from-proto`): the `ws_codec_differential`
+        // harness proves the generated request-decode + reply-encode is byte-identical
+        // to the hand codec (the frozen oracle in `codec::diff_support`) over the RFQ
+        // conformance shapes + edge vectors, so the swap is contract-preserving.
         "request_quote" => {
-            let req = decode!(codec::quote_request_from_json(o));
+            let req = decode!(generated_codec::decode_quote_request(o));
             call!(
                 services.quote.request_quote(Request::new(req)),
                 "quote",
-                codec::quote_to_json
+                generated_codec::encode_quote
             )
         }
         "request_multi_dealer_quote" => {
-            let req = decode!(codec::quote_request_from_json(o));
+            let req = decode!(generated_codec::decode_quote_request(o));
             call!(
                 services.quote.request_multi_dealer_quote(Request::new(req)),
                 "multi_dealer_quote",
-                codec::multi_dealer_quote_to_json
+                generated_codec::encode_multi_dealer_quote
             )
         }
         // The fixed-income taker RFQ (`QuoteService.RequestRatesQuote`) — request
@@ -784,19 +789,19 @@ async fn handle_unary(
             )
         }
         "accept_quote" => {
-            let req = decode!(codec::quote_accept_from_json(o));
+            let req = decode!(generated_codec::decode_quote_accept(o));
             call!(
                 services.quote.accept_quote(Request::new(req)),
                 "execution",
-                codec::execution_to_json
+                generated_codec::encode_execution
             )
         }
         "reject_quote" => {
-            let req = decode!(codec::quote_reject_from_json(o));
+            let req = decode!(generated_codec::decode_quote_reject(o));
             call!(
                 services.quote.reject_quote(Request::new(req)),
                 "reject_ack",
-                codec::reject_ack_to_json
+                generated_codec::encode_reject_ack
             )
         }
         "get_smile" => {
