@@ -13,10 +13,11 @@ These are settled — the research agent's `FI-ARCHITECTURE.md` must target them
   with a later `celnet-rates-vol` for swaptions/caps), depending only on the shared seams
   (`celnet-types`/`celnet-conventions`/`celnet-calendar`/`celnet-core`) — never folded into
   `celnet-vanilla`/`celnet-linear`. The agent proposes the exact crate split + dependency arrows.
-- **D2 — GUI asset-class tabs.** The GUI gains a **top-level tab structure to switch between
-  Options and Fixed Income** (an asset-class layer above the workspace rail), so each domain has
-  its own workspace set. The agent's UX/architecture section designs how the existing rail
-  (Ticket/Stream/Surface/Risk/Book…) coexists with a Fixed-Income workspace set under the tabs.
+- **D2 — GUI asset-class layer.** ✅ **RESOLVED / LANDED** (`fe-fi-migration`, `33d9a0a` / `fd18594`):
+  instead of a top-level Options-vs-FI tab strip, the split was **collapsed into one class-parametric
+  rail** — asset class chosen by scope + license, FI reached as *lenses* of the shared workspaces
+  (Ticket/Market Data/Risk/Book). "FI integrated, not a peer." See [`FI-STATUS.md`](./FI-STATUS.md)
+  slice F and [`FI-ARCHITECTURE.md`](./FI-ARCHITECTURE.md) §4.
 
 ## Locked P0 scope (operator, 2026-06-25 — REVISED; supersedes the 2026-06-23 full-breadth lock)
 

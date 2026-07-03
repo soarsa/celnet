@@ -1,6 +1,6 @@
 # Fixed Income — implementation status & outstanding features
 
-**Branch:** `fixedincom_risk_ui` · **Updated:** 2026-06-27
+**Status:** LANDED on `main` · **Updated:** 2026-07-02
 **Scope tracked:** the locked P0 (USD-only, linear rates + cash, no vol/credit — see
 [`OPEN-QUESTIONS.md`](./OPEN-QUESTIONS.md) D3–D12) plus the cross-asset/UI items.
 
@@ -50,10 +50,11 @@ Slice F — five-client parity (in progress):
 | F1 — WS mirror | `61a23b6` | `price_rates` → `rates_price_response` on the WebSocket edge (codec + dispatch) so browser/GUI clients reach the rates path; gRPC and WS share one impl. | +1 codec |
 | F2 — Rust SDK | `32d5504` | `celnet-client::rates` — `UsdSofrCurve` / `Ois` fluent builders + `Client::price_rates` returning side-signed `RatesPriced`. | +4 |
 
-**Five-client status:** FIX ✅ (E2), WS edge ✅ (F1), Rust SDK ✅ (F2). **Remaining: GUI** (F3 —
-`Options | Fixed-Income` asset tabs + a rates pricing workspace, on the F1 WS transport), **Excel**
-(F4 — rates worksheet functions), **federation** (F5 — rates fan-out). The GUI is the largest piece
-and, per the web rules, wants visual-regression + a11y verification — best done in a focused session.
+**Five-client status:** all delivered — FIX ✅ (E2), WS edge ✅ (F1), Rust SDK ✅ (F2), GUI ✅
+(the class-parametric front-end, `fe-fi-migration` — FI as lenses of the shared workspaces, **not**
+an asset-tab peer), Excel ✅ (`=CELNET.RATES` + `=CELNET.CURVE`, `fe-unified-book`), federation ✅
+(F5 rates fan-out). Deeper FI depth on each surface is TARGET, gated on the backend wire-lanes (see
+*Remaining* below).
 
 GUI (existing):
 
@@ -128,23 +129,29 @@ GUI (existing):
 - Gated by a loopback FIX initiator (mirror `tests/fix_acceptor.rs`).
 
 ### F. Five-client parity (slice 9)
-- **GUI** — ✅ the **top-level domain tab bar** (FX Options · Fixed Income · Administration —
-  `034065a`; the active tab derives from the active workspace so the global `⌘N` chord grammar is
-  unchanged) + **three** of the four §4.2 FI workspaces:
-  **Ticket** (`RatesWorkspace.tsx` + offline pricer `ratesPricing.ts` + live `wsTransport.priceRates`:
-  curve → OIS → PV / par / PV01 / DV01 / key-rate ladder over `price_rates`; pricer unit-tested),
-  **Curve** (`ee3f29f`: `CurveWorkspace.tsx` + `CurveChart` — DF / zero / forward inspection over the
-  bootstrapped curve, log-linear-on-log-DF, curve-identity tested), and **Risk** ✅ (`034065a`:
-  `RatesRiskWorkspace.tsx` — editable OIS portfolio → `transport.aggregateRatesRisk` → per-ccy nodes
-  with net PV/PV01/DV01 + key-rate DV01 ladder; ladder-sum == net-DV01 identity tested). The Risk
-  workspace reaches the federated RPC over a **WS-mirror of `AggregateRatesRisk`** (`bad2625`: server
-  codec + dispatch arm + GUI transport/codec/in-app rollup, entitlement path preserved). The remaining
-  §4.2 workspace **Book** (rates blotter) still awaits the persisted rates position store. The
-  §C/mockup RFQ · IOI · RFS surfaces await their own server contracts.
-- **Excel** add-in — ✅ (`7722c59`) `=CELNET.RATES(...)` prices an OIS via the live `price_rates`
-  engine RPC, spilling PV / par / PV01 / DV01 + the key-rate DV01 ladder (contract + codec adapted
-  byte-for-byte from the proven GUI; tsc clean, vitest 445/445 incl. 16 new). Further `CELNET.*`
-  rates fns (standalone curve DF, multi-arm) follow as the proto arms beyond OIS land.
+- **GUI** — ✅ FI is now integrated as **one class-parametric front-end**, not a peer domain
+  (`fe-fi-migration`, merge `33d9a0a`; capstone `fd18594`). The FX-vs-FI **domain-tab split is
+  retired**: `gui/src/app/Shell.tsx` renders a single class-parametric rail whose asset class is
+  chosen by **scope + license** (the `RAIL` + `railState`/`configuredLicense` predicate — verified
+  via lodestar). Each shared workspace opens at its default lens and the trader picks the asset
+  class *inside* via the lens bar + active scope:
+  - **Pricing/Ticket** — `TicketWorkspace.tsx`; a rates OIS is a fixed-income product family
+    (`gui/src/products/ois.tsx`) priced over `price_rates`. The standalone `RatesWorkspace.tsx` is
+    **deleted**.
+  - **Market Data** — `MarketDataWorkspace.tsx` with the FX vol **surface** (`SurfaceWorkspace`) and
+    the FI rates **curve** (`CurveWorkspace`) as two lenses of one workspace.
+  - **Risk** — `RiskWorkspace.tsx` with FX scenario + FI rate risk (`RatesRiskWorkspace` → the
+    federated `AggregateRatesRisk` WS-mirror `bad2625`) as two lenses.
+  - **Book** — `BookWorkspace.tsx` with Positions & Booking / Aggregate-Risk / Deals
+    (`RatesBookWorkspace` + `DealsBlotterWorkspace`) as three view lenses.
+  The §C/mockup RFQ · IOI · RFS FI surfaces await their own server contracts (see *Remaining* below).
+- **Excel** add-in — ✅ FI parity is live and **registered** (`fe-unified-book`, merge `86ecb46` /
+  `bb36ad8`): `=CELNET.RATES(...)` prices an OIS over the live `price_rates` RPC (PV / par / PV01 /
+  DV01 + key-rate DV01 ladder) and `=CELNET.CURVE(...)` bootstraps a discount curve over `build_curve`
+  (per-pillar time / DF / cc-zero). Both are custom-function entry points in
+  `excel/src/functions/functions.ts` on the same WS codec (`excel/src/contract/wsCodec.ts`) — verified
+  via lodestar. Further `=CELNET.*` FI fns (`=CELNET.BOND`, FI stream/RFQ/mark) are TARGET, gated on
+  the backend wire-lanes below.
 - **Rust SDK** (`celnet-client`) — ✅ rates instrument vocab + `Client::price_rates`.
 - **FIX** — the dialect in (E).
 - **Federation** — ✅ cross-shard rates risk fan-out + bit-exact rollup in `celnet-risk-fleet`
@@ -169,27 +176,41 @@ GUI (existing):
 ---
 
 ## UI changes — explicit status
-- **Administration tab:** ✅ done (`6c978cf`).
-- **Top-level domain tab bar (FX Options · Fixed Income · Administration):** ✅ done (`034065a`) —
-  active tab derives from the active workspace; admin tab gated; chord grammar unchanged.
-- **FI asset-class tabs + FI workspace set:** 🟡 mostly delivered (slice F) — designed in
-  [`mockups/`](./mockups/) and FI-ARCHITECTURE §4. Delivered: WS mirror for `price_rates` (codec +
-  dispatch) ✅, Rust SDK `Client::price_rates` ✅, the GUI Fixed-Income tab + rates pricing
-  workspace (curve → OIS → PV / par / PV01 / DV01 / key-rate ladder) ✅, the **Curve** workspace ✅,
-  the **Rates Risk** workspace ✅ (`034065a`, over the `AggregateRatesRisk` WS-mirror `bad2625`), and
-  the Excel `=CELNET.RATES(...)` function ✅ (`7722c59`). Remaining F work: the **Book** blotter
-  (awaits the persisted rates position store) and the §C RFQ · IOI · RFS surfaces (own contracts).
+- **Administration:** ✅ done (`6c978cf`) — an admin-gated rail group.
+- **Class-parametric single rail (FX + FI on ONE rail):** ✅ **LANDED** (`fe-fi-migration`,
+  `33d9a0a` / capstone `fd18594`). The earlier top-level FX-vs-FI domain-tab split is **retired**;
+  asset class is chosen by scope + license, and FI capability is reached as **lenses** of the shared
+  workspaces (see slice F above). "FI integrated, not a peer."
+- **Excel FI parity:** ✅ **LIVE** — `=CELNET.RATES` (OIS) + `=CELNET.CURVE` (bootstrap), both
+  registered (`fe-unified-book`, `86ecb46` / `bb36ad8`).
+
+---
+
+## Remaining — HONEST gap register (LIVE vs TARGET)
+
+The client FI surfaces above are LIVE against **today's** wire contract (`PriceRates` /
+`AggregateRatesRisk` / `BuildCurve`). Deepening FI to *first-class on every surface* is gated on
+**backend wire-lanes that are backend-owned and currently unclaimed** on the multi-asset board
+([`../plan/MULTI-ASSET-CORE-INTEGRATION.md`](../plan/MULTI-ASSET-CORE-INTEGRATION.md) §2–§4):
+
+- **TARGET (backend):** `unified-price-rpc` (collapse `Price`/`PriceRates`/`PriceXva` → one
+  `Price(oneof Instrument)`; **unblocked** now that the `ws-codec-from-proto` swap landed `8c04897`,
+  not yet built), `rates-stream-ws` (FI on WS StreamService), `rates-rfq-ws` + `multi-dealer-rates-rfq`,
+  `curve-surface-query` (`GetCurve`/`MarkCurve`), `fi-wire-instruments` (bond/IRS/FRA `price_rates`
+  arms — analytics exist, unwired), `celnet-xva-activation` + `be-xva-rates-exposure`.
+- **TARGET (client, waits on the above):** the further GUI FI surfaces `fi-bond-ticket-gui`,
+  `fi-stream-gui`, `fi-scenario-gui`, `fi-rfq-gui`, `fi-xva-gui` and the Excel FI fns `excel-bond-fn`
+  (`=CELNET.BOND`), `excel-fi-stream`, `excel-fi-rfq`, `excel-fi-mark-bond`.
 
 ---
 
 ## Build order for the outstanding phase
 **C (proto arms) ✅ → D (server consumes `celnet-rates`) ✅ → E (FIX dialect) ✅ → F (WS mirror ✅ ·
-Rust SDK ✅ · GUI asset-tabs + rates workspace ✅ · Excel ✅ · federation rollup ✅) 🟡**, with A/B
-product breadth (FRA / IRS / futures / cash-bond RV) landing into `celnet-rates` in parallel
-(disjoint leaf). C/D/E committed and gated; F's five client surfaces are delivered, **3 of the 4** §4.2
-GUI FI workspaces (Ticket, Curve, **Rates Risk** — `034065a`), the federated
-`RiskService.AggregateRatesRisk` endpoint (`5bb8099`) + its **WS-mirror** (`bad2625`), and the
-**top-level domain tab bar** (`034065a`). Shipped to UAT via `deploy/celnet-deploy.sh` option 2
-(binary release; service verified RUNNING on release `1c90371-…`). Remaining: the GUI **Book**
-workspace + its persisted execution-fed rates position store; and the §C RFQ · IOI · RFS surfaces
-(own server contracts first).
+Rust SDK ✅ · GUI class-parametric front-end ✅ · Excel `=RATES`+`=CURVE` ✅ · federation rollup ✅)**,
+with A/B product breadth (FRA / IRS / futures / cash-bond RV) landed into `celnet-rates` (disjoint
+leaf). C/D/E/F are committed, gated, and landed on `main`; the federated
+`RiskService.AggregateRatesRisk` (`5bb8099`) + WS-mirror (`bad2625`) drive the Risk lens; the GUI
+class-parametric rail (`fe-fi-migration`) and Excel `=CELNET.RATES`/`=CELNET.CURVE` (`fe-unified-book`)
+are live. Shipped to UAT via `deploy/celnet-deploy.sh` option 2 (binary release). **Remaining is the
+backend-owned multi-asset wire-lanes + their downstream client FI surfaces — see the gap register
+above.**

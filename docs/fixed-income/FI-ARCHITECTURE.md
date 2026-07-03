@@ -132,10 +132,18 @@ loop-and-sum** — the server rolls up over org dimensions in a reporting numera
 
 ---
 
-## 4. D2 — the GUI asset-class tab layer (Options | Fixed Income)
+## 4. D2 — the GUI asset-class layer (Options | Fixed Income)
 
-Per the **locked D2 decision**, the GUI gains a **top-level asset-class tab layer ABOVE the existing
-workspace rail**, so each domain owns its own workspace set (`OPEN-QUESTIONS.md` D2).
+> **SUPERSEDED — LANDED as ONE class-parametric rail (`fe-fi-migration`, `33d9a0a` / `fd18594`).**
+> The design below proposed a *top-level tab strip above the rail*; the final implementation instead
+> **collapsed the FX-vs-FI domain-tab split into one class-parametric rail** — asset class is chosen
+> by **scope + license**, and FI capability is reached as **lenses** of the shared workspaces (Market
+> Data → curve lens, Risk → rates lens, Book → positions/deals lenses, Ticket → rates product family;
+> the standalone `RatesWorkspace` is deleted). "FI integrated, not a peer." The subsections below are
+> retained as design rationale; for the shipped IA see [`FI-STATUS.md`](./FI-STATUS.md) slice F.
+
+Per the earlier **locked D2 decision**, the GUI was to gain a **top-level asset-class tab layer ABOVE
+the existing workspace rail**, so each domain owned its own workspace set (`OPEN-QUESTIONS.md` D2).
 
 ### 4.1 Today's GUI (what coexists)
 

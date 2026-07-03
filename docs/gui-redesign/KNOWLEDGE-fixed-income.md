@@ -1,5 +1,13 @@
 # Celnet Fixed-Income / Rates — Full Capability Review (lodestar-cited)
 
+> **NOTE (2026-07-02) — the GUI redesign this doc fed has since LANDED (`fe-fi-migration`,
+> `33d9a0a` / `fd18594`).** GUI workspace names below are point-in-time and now **superseded**: the
+> FX-vs-FI domain-tab split was collapsed into **one class-parametric rail**, the standalone
+> `RatesWorkspace` was **deleted** (rates OIS now prices through the shared `TicketWorkspace` via
+> `gui/src/products/ois.tsx`), and `CurveWorkspace` / `RatesRiskWorkspace` / `RatesBookWorkspace`
+> became **lenses** of `MarketDataWorkspace` / `RiskWorkspace` / `BookWorkspace`. The engine/wire
+> facts remain accurate; for the shipped IA see [`../fixed-income/FI-STATUS.md`](../fixed-income/FI-STATUS.md) slice F.
+
 Project: `github.com-soarsa-celnet` · index healthy (24,602 nodes / 75,644 edges, `status:ready`).
 Read-only review. All paths absolute under `/Users/adrian/code/celeroption/`.
 

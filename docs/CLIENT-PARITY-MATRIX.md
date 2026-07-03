@@ -139,6 +139,24 @@ but the full-workspace gates are pending, so under this matrix's gate semantics 
 | Drill risk (scope drill-down) | `RiskService.DrillRisk` | ✅ | ✅ `drill_risk` | ✅ `risk drill` | ✅ `CELNET.RISK` (scoped) | ✅ Book→Risk drill |
 | Limit status (RAG) | `RiskService.LimitStatus` | ✅ | ✅ `limit_status` | ✅ `risk limits` | ✅ `CELNET.LIMITS` | ✅ RiskWorkspace limits panel |
 
+## Fixed income (rates / curve)
+
+> FI is a **first-class asset class on the same one contract** — no separate FI wire. The GUI
+> surfaces it through **one class-parametric rail** (FI as *lenses* of the shared workspaces, **not**
+> a peer domain — `fe-fi-migration`), and Excel through `=CELNET.RATES` / `=CELNET.CURVE`
+> (`fe-unified-book`). Deeper FI depth (unified `Price` RPC, streaming, RFQ, bond ticket, XVA) is
+> **TARGET** — backend wire-lanes owned/unclaimed on the multi-asset board
+> (`docs/plan/MULTI-ASSET-CORE-INTEGRATION.md` §2–§4); the downstream client FI surfaces
+> (`fi-*-gui`, `excel-fi-*`) wait on them.
+
+| Capability | Wire contract | Server | SDK | CLI | Excel | GUI |
+|---|---|---|---|---|---|---|
+| Price OIS (PV / par / PV01 / DV01 / key-rate) | `PricingService.PriceRates` | ✅ | ✅ `price_rates` | gap (plan §2d) | ✅ `CELNET.RATES` | ✅ Ticket (OIS product family) |
+| Bootstrap discount curve | `BuildCurve` (WS `build_curve`) | ✅ | gap (plan §2d) | gap | ✅ `CELNET.CURVE` | ✅ Market Data → Curve lens |
+| Aggregate rates risk (federated roll-up) | `RiskService.AggregateRatesRisk` | ✅ | gap | gap | gap | ✅ Risk → rates lens |
+| FI RFQ → two-way (FIX edge) | `celnet-fix/dialect_rates` (OIS) | ✅ | n/a (FIX edge) | n/a | n/a | n/a |
+| Unified `Price(oneof Instrument)` · FI stream / RFQ (WS) · bond ticket · XVA exposure | `unified-price-rpc` / `rates-stream-ws` / `rates-rfq-ws` / `fi-wire-instruments` / XVA | **TARGET** | TARGET | TARGET | TARGET | TARGET |
+
 ## Conventions & calendar
 
 | Capability | Source | Server | SDK | CLI | Excel | GUI |
