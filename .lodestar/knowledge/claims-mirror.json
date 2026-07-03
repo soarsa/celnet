@@ -14214,5 +14214,66 @@
    "github.com-soarsa-celnet.crates.celnet-engine.src.rt.hot_core_embargoes_request_tier_curve_handles"
   ],
   "text": "Hot-core curve-handle embargo (ADR-0016): `MarketState`, the flat state the zero-alloc hot pricing core reads, may hold NO borrowed handle (barred by a `'static` bound) and NO owned curve field — its `size_of` is pinned equal to a shadow struct of exactly {spot, r_dom, r_for, t, conventions, smile}, so adding a `ResolvedMarket` / `Arc<Curve>` / `DiscountCurve` field to the hot core trips this compile/test pin. Curve resolution stays at the request tier behind `ResolvedMarket`; the hot loop never dereferences a curve. Pure structural guard: it asserts layout and static-ness, mutating nothing."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.gui.src.lib.commands.workspaceAssets",
+   "github.com-soarsa-celnet.gui.src.products.types.RatesProductSpec",
+   "github.com-soarsa-celnet.gui.src.products.types.isRatesSpec",
+   "github.com-soarsa-celnet.gui.src.workspaces.RiskWorkspace.RiskLens",
+   "github.com-soarsa-celnet.gui.src.workspaces.MarketDataWorkspace.MarketDataLens",
+   "github.com-soarsa-celnet.gui.src.workspaces.BookWorkspace.BookLens"
+  ],
+  "text": "FI/rates is integrated into the ONE class-parametric sell-side front-end, not a separate stack (ADR-0013 single-front-end). The GUI RAIL is a single class-parametric workspace rail whose asset set is chosen by scope+license (commands::workspaceAssets resolves a WorkspaceId over RAIL), and RiskWorkspace / MarketDataWorkspace / BookWorkspace are class-parametric lenses (RiskLens / MarketDataLens / BookLens) that render both FX and FI. Rates OIS is a first-class product in the shared ticket PRODUCT registry (products/types::RatesProductSpec, isRatesSpec) priced through the same TicketWorkspace as every other asset class — the former FX-vs-FI domain-tab split is collapsed into the one rail, with asset class a license-gated instance of one architecture rather than a siloed peer stack."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.excel.src.functions.functions.RATES",
+   "github.com-soarsa-celnet.excel.src.functions.functions.CURVE",
+   "github.com-soarsa-celnet.excel.src.transport.connection.Connection.buildCurve"
+  ],
+  "text": "Excel has FI parity over the ONE canonical contract. =CELNET.RATES (excel functions::RATES) prices a receive/pay OIS swap by shaping the rates curve + OIS instrument and dispatching through the shared Connection to the server rates RPC (shapeRatesCurve -> shapeOisInstrument -> getConnection -> priceRates -> formatRatesSpill), and =CELNET.CURVE (excel functions::CURVE) bootstraps the discount curve via Connection::buildCurve (shapeBuildCurveRequest -> getConnection -> buildCurve -> formatCalibratedCurveSpill). Both are Office custom-function projections of the same server rates/curve contract the GUI consumes — there is no Excel-specific pricing or bootstrap fork."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-core.src.contract.Priceable",
+   "github.com-soarsa-celnet.crates.celnet-core.src.contract.MarketResolver",
+   "github.com-soarsa-celnet.crates.celnet-core.src.contract.RiskMeasure",
+   "github.com-soarsa-celnet.crates.celnet-server.src.rates_pricing.contract.price_rates_via_contract",
+   "github.com-soarsa-celnet.crates.celnet-server.src.rates_pricing.contract.RatesOisEngine.price",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engine.PricingEngine.price_rates"
+  ],
+  "text": "Central-core unification (ADR-0010/0013, central-core Phase-B/C1): FI conforms to the ONE celnet-core pricing contract. RatesOisEngine implements the core Priceable::price and RatesCurveResolver implements the core MarketResolver::resolve, so price_rates_via_contract prices rates as resolve() -> <RatesOisEngine as Priceable>::price — the identical resolve->Priceable shape the FX/cross-asset path uses (RiskMeasure is the shared cross-asset risk enum). FI is exposed as a first-class arm of the unified PricingEngine via PricingEngine::price_rates; it is a parallel contract-conformant path, NOT routed through the FX engines::dispatch product registry, and NOT a siloed stack."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.pricing.PricingEdge.price",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.pricing.PricingEdge.price_rates",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.pricing.PricingEdge.price_xva",
+   "github.com-soarsa-celnet.excel.src.functions.functions.RATES",
+   "github.com-soarsa-celnet.excel.src.functions.functions.CURVE",
+   "github.com-soarsa-celnet.crates.celnet-server.src.rates_pricing.contract.price_bond_via_contract",
+   "github.com-soarsa-celnet.crates.celnet-server.src.rates_pricing.contract.BondEngine.price"
+  ],
+  "text": "Honest FI/multi-asset client-parity map (verified on main). LIVE: rates unary pricing + curve bootstrap — server RPC PricingEdge::price_rates plus Excel =CELNET.RATES/=CELNET.CURVE and the GUI class-parametric FI workspaces; XVA exposure — server RPC PricingEdge::price_xva (real passthrough to celnet_xva, WS-mirrored) plus the GUI XvaWorkspace/XvaExposureFan; multi-dealer RFQ in GUI and Excel (=CELNET.RFQ). TARGET / backend-only (still-open board lanes): bond pricing exists server-side (BondEngine::price, price_bond_via_contract) but is exposed by NO RPC arm or client; rates has no streaming subscription (unary only); XVA has no Excel/CLI surface; and there is still NO single unified Price(Instrument) RPC across asset classes — price, price_rates and price_xva remain three distinct PricingEdge RPC methods. (Corrects the earlier framing that listed XVA-exposure and RFQ as merely deferred.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "anchors": [
+   "design-target:docs/acceptance/single-front-end-experience.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engines.dispatch",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.engine.PricingEngine.price_rates"
+  ],
+  "text": "Front-end acceptance (single-front-end-experience): the one-parametric-contract assertion is backed on main. Every pricing surface is a projection of the one asset-class-parametric contract — FX/metal/equity/commodity/crypto route price_instrument -> engines::dispatch, and FI/rates routes the parallel PricingEngine::price_rates path — both conforming to the one celnet-core Priceable/MarketResolver seam, never a per-class client fork. FI/rates is a first-class (peer) asset class within the single architecture, not a siloed stack."
  }
 ]
