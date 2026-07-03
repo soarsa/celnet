@@ -94,6 +94,7 @@ import type {
   RiskPosition,
   RiskScope,
 } from "../contract/riskCodec";
+import type { InstrumentDef } from "../contract/referenceDataCodec";
 import { PRICING_MODEL_MEMBERS, SMILE_MODEL_MEMBERS } from "../contract/enums";
 
 /** The canonical desk default convention (spot-unadjusted Δ / ATM-forward / …),
@@ -4249,6 +4250,154 @@ export function formatRatesRiskSpill(nodes: readonly RatesRiskNode[]): SpillMatr
     rows.push([
       `${nodes.length} currenc${nodes.length === 1 ? "y" : "ies"} | server-netted (celnet-rates-risk)`,
     ]);
+  }
+  return rectangular(rows);
+}
+
+// ---------------------------------------------------------------------------
+// linear-rates BOOK ledger (`list_rates_positions`) — the CELNET.RATESBOOK add-in
+// path. Lay out the SERVER-owned OIS position ledger, resolving each numeric
+// `(entity, book)` partition key to its registry NAME through the caller-supplied
+// resolvers (backed by `list_entities` / `list_books`), exactly like the GUI
+// RatesBookWorkspace — an unknown key (or an unavailable registry) falls back to
+// `#<key>`, so a raw number is never shown. The add-in holds no book state: the
+// live `RiskService` owns it and this only lays the reply out in cells.
+// ---------------------------------------------------------------------------
+
+/**
+ * Format CELNET.RATESBOOK as a position ledger: a header
+ * `[position_id, entity, book, instrument, fixed_rate, notional, direction]`, one
+ * row per booked OIS (the numeric `(entity, book)` keys resolved to their registry
+ * NAMES via `entityName` / `bookName`; an unknown key resolves to `#<key>`), then a
+ * count footer — or an honest empty-state row when the book is empty. The
+ * `position_id` is rendered as a string to avoid 64-bit precision loss; the fixed
+ * rate (decimal) and notional (absolute) are raw numbers so the desk can compute on
+ * them. Returns a rectangular `(1 + positions + 1)×7` matrix.
+ */
+export function formatRatesBookSpill(
+  positions: readonly RatesPosition[],
+  entityName: (key: number) => string,
+  bookName: (key: number) => string,
+): SpillMatrix {
+  const header: (string | number)[] = [
+    "position_id",
+    "entity",
+    "book",
+    "instrument",
+    "fixed_rate",
+    "notional",
+    "direction",
+  ];
+  const rows: SpillMatrix = [header];
+  for (const p of positions) {
+    rows.push([
+      p.positionId.toString(),
+      entityName(p.entity),
+      bookName(p.book),
+      `${p.instrument.tenorYears}y OIS`,
+      p.instrument.fixedRate,
+      p.instrument.notional,
+      p.instrument.direction,
+    ]);
+  }
+  if (positions.length === 0) {
+    rows.push(["(no rates positions)"]);
+  } else {
+    rows.push([`${positions.length} position${positions.length === 1 ? "" : "s"}`]);
+  }
+  return rectangular(rows);
+}
+
+// ---------------------------------------------------------------------------
+// instrument reference-data roster (`list_instruments` / `get_instrument`) — the
+// CELNET.INSTRUMENTS add-in path. Lay out the admin-managed registry of instrument
+// DEFINITIONS the curve-bootstrap + pricing paths resolve against. The add-in holds
+// no registry: the live `AuthService` owns it and this only lays the reply out
+// (read-only; create/update/delete are admin-only, out of this surface). Every
+// family renders uniformly from its verbatim terms bag.
+// ---------------------------------------------------------------------------
+
+/** Render an instrument's external ids as a terse `scheme=value; …` cell (empty ⇒ `—`). */
+function renderExternalIds(ids: readonly { readonly scheme: string; readonly value: string }[]): string {
+  if (ids.length === 0) return "—";
+  return ids.map((x) => `${x.scheme}=${x.value}`).join("; ");
+}
+
+/**
+ * Render one family-terms value: an array as `[a, b]`, a `BrokenDate` object as
+ * `YYYY-MM-DD`, any other object as compact JSON, else the bare scalar. Keeps a
+ * definition's terms readable in a single cell without dropping any field.
+ */
+function renderTermValue(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map((x) => String(x)).join(", ")}]`;
+  if (v !== null && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    if (
+      typeof o["year"] === "number" &&
+      typeof o["month"] === "number" &&
+      typeof o["day"] === "number"
+    ) {
+      const pad = (n: number): string => String(n).padStart(2, "0");
+      return `${o["year"]}-${pad(o["month"] as number)}-${pad(o["day"] as number)}`;
+    }
+    return JSON.stringify(v);
+  }
+  return String(v);
+}
+
+/**
+ * Render a family terms bag as a terse `key=value; …` cell (empty ⇒ `—`). Null /
+ * undefined / empty-string / empty-array fields are dropped so the cell shows only
+ * the terms the family actually carries.
+ */
+function renderInstrumentTerms(terms: Readonly<Record<string, unknown>>): string {
+  const parts = Object.entries(terms)
+    .filter(
+      ([, v]) =>
+        v !== null &&
+        v !== undefined &&
+        v !== "" &&
+        !(Array.isArray(v) && v.length === 0),
+    )
+    .map(([k, v]) => `${k}=${renderTermValue(v)}`);
+  return parts.length === 0 ? "—" : parts.join("; ");
+}
+
+/**
+ * Format CELNET.INSTRUMENTS as a reference-data grid: a header
+ * `[instrument_id, name, family, currency, description, external_ids, terms]`, one
+ * row per definition (its family token + the family's terms rendered verbatim),
+ * then a count footer — or an honest empty-state row when the roster (or a `get` by
+ * id) returns nothing. Every field is the server's authoritative definition over the
+ * one contract; the add-in computes nothing. Returns a rectangular
+ * `(1 + rows + 1)×7` matrix.
+ */
+export function formatInstrumentsSpill(defs: readonly InstrumentDef[]): SpillMatrix {
+  const header: (string | number)[] = [
+    "instrument_id",
+    "name",
+    "family",
+    "currency",
+    "description",
+    "external_ids",
+    "terms",
+  ];
+  const rows: SpillMatrix = [header];
+  for (const d of defs) {
+    rows.push([
+      d.instrumentId,
+      d.name,
+      d.family === "" ? "?" : d.family,
+      d.currency,
+      d.description === "" ? "—" : d.description,
+      renderExternalIds(d.externalIds),
+      renderInstrumentTerms(d.terms),
+    ]);
+  }
+  if (defs.length === 0) {
+    rows.push(["(no instruments registered)"]);
+  } else {
+    rows.push([`${defs.length} instrument${defs.length === 1 ? "" : "s"}`]);
   }
   return rectangular(rows);
 }

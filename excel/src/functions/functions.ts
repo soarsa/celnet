@@ -42,10 +42,12 @@ import {
   formatCalibratedCurveSpill,
   formatCalibratedSmileSpill,
   formatGreeksSpill,
+  formatInstrumentsSpill,
   formatLimitsSpill,
   formatMarkStatusSpill,
   formatPositionsSpill,
   formatPremiumSpill,
+  formatRatesBookSpill,
   formatRatesRiskSpill,
   formatRatesSpill,
   formatRfqPanelSpill,
@@ -88,11 +90,21 @@ import {
   aggregateRiskResponseFromWire,
   limitStatusRequest,
   limitStatusResponseFromWire,
+  listBooksResponseFromWire,
+  listEntitiesResponseFromWire,
   listPositionsRequest,
   listPositionsResponseFromWire,
+  listRatesPositionsRequest,
+  listRatesPositionsResponseFromWire,
   type AggregateRatesRiskRequest,
+  type BookDesc,
+  type EntityDesc,
   type RiskScope,
 } from "../contract/riskCodec";
+import {
+  instrumentResponseFromWire,
+  instrumentsResponseFromWire,
+} from "../contract/referenceDataCodec";
 import { stageMark } from "./markStaging";
 import { getConnection, getRegistry, getSeriesRegistry, getSession } from "./runtime";
 import type { EntryPointId } from "../contract/access";
@@ -516,6 +528,101 @@ export async function RATESRISK(
     const reply = await getConnection().aggregateRatesRisk(aggregateRatesRiskRequest(request));
     const response = aggregateRatesRiskResponseFromWire(reply);
     return formatRatesRiskSpill(response.nodes);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * List the desk's standing linear-rates BOOK — the server-owned OIS position
+ * ledger the `aggregate_rates_risk` roll-up nets — via the live
+ * `list_rates_positions` engine RPC (the WS mirror of
+ * `RiskService.ListRatesPositions`). Each position carries NUMERIC `(entity, book)`
+ * partition keys on the wire; this cell resolves them to their registry NAMES
+ * through the `list_entities` / `list_books` admin registry (callable by any
+ * authenticated user), exactly like the GUI RatesBookWorkspace — a raw number is
+ * never shown, and an unknown key (or an unavailable registry) falls back to
+ * `#<key>`. The add-in holds no book state: the live `RiskService` owns it; this
+ * only shapes the optional scope and lays the authoritative ledger out.
+ *
+ * The positions themselves load under the audited grant-all principal (no sign-in
+ * needed); the NAME resolution needs a signed-in session, so an anonymous cell
+ * still shows the full ledger with `#<key>` placeholders rather than failing.
+ *
+ * The spill is a labelled `(1 + positions + 1)×7` grid: a header
+ * `[position_id, entity, book, instrument, fixed_rate, notional, direction]`, one
+ * row per booked OIS, then a count footer. The optional `scope` narrows the listing
+ * BEFORE it returns — a comma-separated list of `ENTITY:<n>` / `BOOK:<n>` tokens (a
+ * `CCY:<xxx>` token is accepted for parity with CELNET.RATESRISK, but a stored
+ * position has no currency of its own, so it does not constrain the listing).
+ * @customfunction RATESBOOK
+ * @param scope Optional pre-list filter: a comma-separated list of ENTITY:<n>, BOOK:<n> (omit ⇒ the whole entitled book).
+ * @returns A `(1 + positions + 1)×7` spill: header, one row per booked OIS position (entity/book resolved to names), then a count footer.
+ */
+export async function RATESBOOK(scope?: string): Promise<SpillMatrix> {
+  try {
+    denyIfUngated("ratesbook");
+    const conn = getConnection();
+    const scopeFilter = parseRatesRiskScope(typeof scope === "string" ? scope : undefined);
+    const body = listRatesPositionsRequest(scopeFilter !== undefined ? { scope: scopeFilter } : {});
+    const reply = await conn.listRatesPositions(body);
+    const { positions } = listRatesPositionsResponseFromWire(reply);
+    // Resolve the numeric (entity, book) keys to their registry names, mirroring the
+    // GUI. The registry reads are open to any AUTHENTICATED user, so a signed-in cell
+    // resolves names; an anonymous/unavailable registry degrades gracefully to
+    // `#<key>` (the positions load under grant-all and must not be lost to a
+    // registry-read failure).
+    let entities: readonly EntityDesc[] = [];
+    let books: readonly BookDesc[] = [];
+    try {
+      const [entityReply, bookReply] = await Promise.all([conn.listEntities(), conn.listBooks()]);
+      entities = listEntitiesResponseFromWire(entityReply);
+      books = listBooksResponseFromWire(bookReply);
+    } catch {
+      // Registry unavailable (anonymous / not authenticated) — keys fall back to `#<key>`.
+    }
+    const entityName = (key: number): string =>
+      entities.find((e) => e.key === key)?.name ?? `#${key}`;
+    const bookName = (key: number): string =>
+      books.find((b) => b.key === key)?.name ?? `#${key}`;
+    return formatRatesBookSpill(positions, entityName, bookName);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * List the instrument reference-data REGISTRY — the admin-managed roster of
+ * instrument DEFINITIONS (their static terms / conventions / identifiers) the
+ * curve-bootstrap and pricing paths resolve against — via the live
+ * `list_instruments` engine RPC (the WS mirror of `AuthService.ListInstruments`),
+ * or a SINGLE definition by id via `get_instrument`. Listing / get is open to any
+ * authenticated caller (it rides the held session token); the add-in holds no
+ * registry and computes nothing — it only lays the authoritative reply out,
+ * bit-identical to the GUI Reference Data workspace over the one unversioned
+ * contract.
+ *
+ * The spill is a labelled grid: a header
+ * `[instrument_id, name, family, currency, description, external_ids, terms]`, one
+ * row per definition (its family token — deposit / fra / stir_future / vanilla_irs
+ * / ois / bond — plus that family's terms rendered verbatim), then a count footer.
+ * Pass an `id` to fetch just that definition (an unknown id spills the honest
+ * empty-state); omit it to list the whole roster.
+ * @customfunction INSTRUMENTS
+ * @param id Optional registry instrument id (e.g. usd-sofr-irs-10y); omit to list the whole roster.
+ * @returns A `(1 + rows + 1)×7` spill: header, one row per instrument definition, then a count footer.
+ */
+export async function INSTRUMENTS(id?: string): Promise<SpillMatrix> {
+  try {
+    denyIfUngated("instruments");
+    const conn = getConnection();
+    if (typeof id === "string" && id.trim() !== "") {
+      const reply = await conn.getInstrument(id.trim());
+      const def = instrumentResponseFromWire(reply);
+      return formatInstrumentsSpill(def ? [def] : []);
+    }
+    const reply = await conn.listInstruments();
+    return formatInstrumentsSpill(instrumentsResponseFromWire(reply));
   } catch (err) {
     throw toCfError(err);
   }
@@ -1048,7 +1155,9 @@ function registerAll(): void {
   cf.associate("GREEKS", GREEKS as (...a: never[]) => unknown);
   cf.associate("RATES", RATES as (...a: never[]) => unknown);
   cf.associate("RATESRISK", RATESRISK as (...a: never[]) => unknown);
+  cf.associate("RATESBOOK", RATESBOOK as (...a: never[]) => unknown);
   cf.associate("CURVE", CURVE as (...a: never[]) => unknown);
+  cf.associate("INSTRUMENTS", INSTRUMENTS as (...a: never[]) => unknown);
   cf.associate("RFQ", RFQ as (...a: never[]) => unknown);
   cf.associate("SUBSCRIBE", SUBSCRIBE as (...a: never[]) => unknown);
   cf.associate("SURFACE", SURFACE as (...a: never[]) => unknown);
