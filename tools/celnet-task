@@ -92,8 +92,14 @@ session_tag() {
     local host user
     host=$(hostname -s 2>/dev/null || echo host)
     user=${USER:-$(id -un 2>/dev/null || echo user)}
-    [ -n "$sid" ] || sid="nosession$$"
-    printf '%s-%s-%s' "$user" "$host" "${sid:0:8}"
+    # A UNIQUE, STABLE per-session identity is load-bearing: the git-CAS claim/lease/mutex and
+    # the single-coordinator rule all assume distinct tags. Without an explicit CLAUDE_SESSION_ID,
+    # fall back to the WORKTREE BASENAME (stable across a session's shells, unique per worktree) —
+    # NEVER `nosession$$` truncated to "nosessio", which collapsed every id-less session onto ONE
+    # identity so they claimed over each other, heartbeat each other's leases, and shared the mutex.
+    [ -n "$sid" ] || sid=$(basename "$(git -C "${REPO_ROOT:-.}" rev-parse --show-toplevel 2>/dev/null || echo nosession)")
+    # 12 chars disambiguates the current worktree names (celnet-cc vs celnet-coord vs celnet-kernel).
+    printf '%s-%s-%s' "$user" "$host" "${sid:0:12}"
 }
 
 # ----------------------------------------------------------------- manifest read helpers
