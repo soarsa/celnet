@@ -16,8 +16,13 @@
 // absence). Enum numbers are the canonical proto tags verified against
 // `crates/celnet-proto/proto/celnet.proto`.
 
-import type { CcyPair } from "./contract";
-import { ccyPairFromWire, type WireObject } from "./wsCodec";
+import type { CcyPair, OisInstrument, RatesCurveSet } from "./contract";
+import {
+  ccyPairFromWire,
+  ratesCurveSetToWire,
+  ratesInstrumentToWire,
+  type WireObject,
+} from "./wsCodec";
 
 // ---------------------------------------------------------------------------
 // vocabulary — the typed string projection of the proto risk enums
@@ -640,4 +645,167 @@ export function limitStatusResponseFromWire(o: WireObject): LimitStatusResult {
     worst: ragStatusFromWire(enumNum(o, "worst")),
     hardBreach: Boolean(o["hard_breach"]),
   };
+}
+
+// ---------------------------------------------------------------------------
+// linear-rates portfolio risk (RiskService.AggregateRatesRisk) — the WS mirror
+// of the rates-risk edge (`crates/celnet-server/src/ws/codec.rs`
+// `aggregate_rates_risk_*`). Every signed `RatesPosition` prices against the ONE
+// request-supplied `curveSet` and rolls up ADDITIVELY into one `RatesRiskNode`
+// per settlement currency — netted PV / PV01 / DV01 + a tenor-bucketed key-rate
+// DV01 ladder. Purely additive, per-ccy partitioned, deterministic; the exact
+// rates analogue of the options `aggregate_risk` path. The `curve_set` /
+// `instrument` sub-shapes reuse the shared `price_rates` encoders (`wsCodec.ts`)
+// so the risk path speaks the IDENTICAL market the pricing edge does — the same
+// single server `curve_set_from_json` decodes both. Aggregation is SERVER-owned:
+// the client sends the market + positions and receives the netted node tree.
+// ---------------------------------------------------------------------------
+
+/**
+ * One open linear-rates position the rollup nets (`celnet.wire.RatesPosition`):
+ * the `(entity, book)` cell it books into plus the `OisInstrument` to price. The
+ * instrument carries its own signed direction (PAY_FIXED / RECEIVE_FIXED), so the
+ * priced PV / PV01 / DV01 already net by sign across long and short books.
+ */
+export interface RatesPosition {
+  /** Stable position identity (the pricer's `request_id` echo); informational. */
+  readonly positionId: bigint;
+  /** The legal-entity id the position books into (a scope filter dimension). */
+  readonly entity: number;
+  /** The trading-book id the position books into (a scope filter dimension). */
+  readonly book: number;
+  /** The OIS to price against the request `curveSet` (the only P0 arm). */
+  readonly instrument: OisInstrument;
+}
+
+/**
+ * The optional `(entity, book, ccy)` filter applied BEFORE the rollup
+ * (`celnet.wire.RatesRiskScope`): each present field narrows the contributing
+ * positions; an absent field does not constrain. `ccy` matches case-insensitively
+ * server-side.
+ */
+export interface RatesRiskScope {
+  /** Keep only positions in this legal entity, when set. */
+  readonly entity?: number;
+  /** Keep only positions in this trading book, when set. */
+  readonly book?: number;
+  /** Keep only positions whose settlement currency matches, when set. */
+  readonly ccy?: string;
+}
+
+/**
+ * `RiskService.AggregateRatesRisk` request — price every `RatesPosition` against
+ * the shared `curveSet`, narrow by the optional `scope`, then sum additively into
+ * one `RatesRiskNode` per settlement currency. The market is the request-supplied
+ * `curveSet`, so the rollup is a pure, deterministic calculation.
+ */
+export interface AggregateRatesRiskRequest {
+  /** The calibrated curve set every position prices against (the shared market). */
+  readonly curveSet: RatesCurveSet;
+  /** The positions to net; empty ⇒ an empty rollup. */
+  readonly positions: readonly RatesPosition[];
+  /** The optional pre-rollup `(entity, book, ccy)` filter. */
+  readonly scope?: RatesRiskScope;
+  /** Entitlement principal; omitted ⇒ the audited explicit grant-all default. */
+  readonly principal?: EntitlementPrincipal;
+}
+
+/**
+ * One tenor bucket of a node's key-rate DV01 ladder (`celnet.wire.KeyRateDv01`):
+ * the netted PV change for a +1bp bump of the curve pillar at `tenorYears` alone.
+ */
+export interface KeyRateDv01 {
+  /** The curve pillar tenor (whole years) this bucket bumps. */
+  readonly tenorYears: number;
+  /** The netted DV01 contribution at this pillar (curve currency). */
+  readonly dv01: number;
+}
+
+/**
+ * The netted risk of one settlement currency (`celnet.wire.RatesRiskNode`): the
+ * additively summed PV / PV01 / DV01 across every contributing position, plus the
+ * per-pillar key-rate DV01 ladder (which sums to `netDv01` to first order).
+ */
+export interface RatesRiskNode {
+  /** ISO-4217 settlement currency of this node (the rollup partition key). */
+  readonly ccy: string;
+  /** Summed present value across the node's positions (curve currency). */
+  readonly netPv: number;
+  /** Summed analytic PV01 across the node's positions. */
+  readonly netPv01: number;
+  /** Summed parallel DV01 across the node's positions. */
+  readonly netDv01: number;
+  /** The tenor-bucketed key-rate DV01 ladder, in ascending pillar order. */
+  readonly keyRateLadder: readonly KeyRateDv01[];
+}
+
+/**
+ * `RiskService.AggregateRatesRisk` response — one `RatesRiskNode` per settlement
+ * currency, in ascending-currency order (the server-computed rollup).
+ */
+export interface AggregateRatesRiskResponse {
+  readonly nodes: readonly RatesRiskNode[];
+}
+
+/** Encode one `RatesPosition` to its wire object (the OIS oneof + booking cell). */
+function ratesPositionToWire(p: RatesPosition): WireObject {
+  return {
+    // `position_id` is a wire `uint64`; the connection's other ids ride as JSON
+    // numbers, so narrow the bigint exactly as the correlation id is narrowed.
+    position_id: Number(p.positionId),
+    entity: p.entity,
+    book: p.book,
+    instrument: ratesInstrumentToWire(p.instrument),
+  };
+}
+
+/** Encode the optional `(entity, book, ccy)` scope; absent fields are omitted. */
+function ratesRiskScopeToWire(s: RatesRiskScope): WireObject {
+  const w: WireObject = {};
+  if (s.entity !== undefined) w["entity"] = s.entity;
+  if (s.book !== undefined) w["book"] = s.book;
+  if (s.ccy !== undefined) w["ccy"] = s.ccy;
+  return w;
+}
+
+/**
+ * Build the `aggregate_rates_risk` request body. Always carries an EXPLICIT
+ * principal — the caller's, or (when absent) the audited show-all-now grant-all —
+ * so the request clears the server's production deny-by-default edge
+ * (`AccessMode::Enforce`), exactly as the options `aggregate_risk` request does
+ * (the rates-risk edge requires only `ReadAny` + a present principal; a valid
+ * `session_token` is optional and is injected by the transport when held). Scope
+ * stays optional (absent ⇒ the whole book).
+ */
+export function aggregateRatesRiskRequest(request: AggregateRatesRiskRequest): WireObject {
+  const body: WireObject = {
+    curve_set: ratesCurveSetToWire(request.curveSet),
+    positions: request.positions.map(ratesPositionToWire),
+  };
+  body["principal"] = entitlementPrincipalToWire(
+    request.principal ?? { grantAll: true, grants: [], denies: [] },
+  );
+  if (request.scope !== undefined) body["scope"] = ratesRiskScopeToWire(request.scope);
+  return body;
+}
+
+/** Decode one key-rate DV01 ladder bucket (`{ tenor_years, dv01 }`). */
+function keyRateDv01FromWire(o: WireObject): KeyRateDv01 {
+  return { tenorYears: num(o, "tenor_years"), dv01: num(o, "dv01") };
+}
+
+/** Decode one per-currency `RatesRiskNode` (netted scalars + tenor ladder). */
+function ratesRiskNodeFromWire(o: WireObject): RatesRiskNode {
+  return {
+    ccy: str(o, "ccy"),
+    netPv: num(o, "net_pv"),
+    netPv01: num(o, "net_pv01"),
+    netDv01: num(o, "net_dv01"),
+    keyRateLadder: array(o, "key_rate_ladder").map(keyRateDv01FromWire),
+  };
+}
+
+/** Decode an `aggregate_rates_risk_response` into the per-currency node tree. */
+export function aggregateRatesRiskResponseFromWire(o: WireObject): AggregateRatesRiskResponse {
+  return { nodes: array(o, "nodes").map(ratesRiskNodeFromWire) };
 }

@@ -86,15 +86,19 @@ const OIS: OisInstrument = {
 };
 
 describe("rates wire codec — exact field names the engine decodes", () => {
-  it("encodes the curve set as { currency, reference_date{y,m,d}, ois_pillars[{tenor_years,par_rate}] }", () => {
+  it("encodes the curve set as { currency, reference_date{y,m,d}, ois_pillars[{tenor:{years},par_rate}] }", () => {
+    // The server's `ois_pillar_from_json` requires the `PillarTenor` oneof NESTED
+    // under `tenor` (a whole-year OIS pillar is the `years` arm) — a flat
+    // `{tenor_years,par_rate}` pillar is rejected. Byte-identical to the GUI encoder
+    // and the server round-trip oracle in `crates/celnet-server/src/ws/codec.rs`.
     const wire = ratesCurveSetToWire(CURVE);
     expect(wire).toEqual({
       currency: "USD",
       reference_date: { year: 2025, month: 6, day: 16 },
       ois_pillars: [
-        { tenor_years: 2, par_rate: 0.0405 },
-        { tenor_years: 5, par_rate: 0.041 },
-        { tenor_years: 10, par_rate: 0.0418 },
+        { tenor: { years: 2 }, par_rate: 0.0405 },
+        { tenor: { years: 5 }, par_rate: 0.041 },
+        { tenor: { years: 10 }, par_rate: 0.0418 },
       ],
     });
   });

@@ -1177,7 +1177,10 @@ export function scenarioResultFromWire(o: WireObject): ScenarioResult {
 // `celnet.wire` rates messages: a `CurveSet` of par-OIS pillars + an
 // `OisInstrument` on the wire, decoded back to a `RatesPricingResult`. Field
 // names are the proto's snake_case projection (`curve_set`, `reference_date`,
-// `ois_pillars`, `tenor_years`, `par_rate`, `fixed_rate`, `key_rate_ladder`).
+// `ois_pillars`, `tenor.years`, `par_rate`, `fixed_rate`, `key_rate_ladder`).
+// This same `curve_set` shape is shared by every rates edge that carries a
+// market — `price_rates` AND `aggregate_rates_risk` decode it through the one
+// server `curve_set_from_json`.
 // ---------------------------------------------------------------------------
 
 /** Encode a `RatesCurveSet` to the wire `curve_set` object. */
@@ -1190,7 +1193,13 @@ export function ratesCurveSetToWire(curve: RatesCurveSet): WireObject {
       day: curve.referenceDate.day,
     },
     ois_pillars: curve.pillars.map((p) => ({
-      tenor_years: p.tenorYears,
+      // The server's `ois_pillar_from_json` decodes the `PillarTenor` oneof NESTED
+      // under `tenor` ({ years | months | maturity_date }); a whole-year OIS pillar
+      // is the `years` arm. Byte-identical to the GUI's `ratesCurveSetToWire` and
+      // the server round-trip oracle (`ois_pillars:[{tenor:{years:N},par_rate}]`).
+      // A flat `{tenor_years,par_rate}` pillar is rejected ("pillar `tenor` oneof:
+      // expected a `years`, `months`, or `maturity_date` arm").
+      tenor: { years: p.tenorYears },
       par_rate: p.parRate,
     })),
   };

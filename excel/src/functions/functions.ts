@@ -46,6 +46,7 @@ import {
   formatMarkStatusSpill,
   formatPositionsSpill,
   formatPremiumSpill,
+  formatRatesRiskSpill,
   formatRatesSpill,
   formatRfqPanelSpill,
   formatRfqSpill,
@@ -58,6 +59,7 @@ import {
   lookbackIsMonteCarlo,
   parseObservable,
   parsePair,
+  parseRatesRiskScope,
   parseRfqPanelFlag,
   parseRiskDimension,
   parseRiskScope,
@@ -67,6 +69,7 @@ import {
   shapeCalibration,
   shapeOisInstrument,
   shapeRatesCurve,
+  shapeRatesRiskPositions,
   shapeReportingNumeraire,
   shapeVanillaInstrument,
   type SpillMatrix,
@@ -79,12 +82,15 @@ import {
   shapeSpecInstrument,
 } from "./instrumentSpec";
 import {
+  aggregateRatesRiskRequest,
+  aggregateRatesRiskResponseFromWire,
   aggregateRiskRequest,
   aggregateRiskResponseFromWire,
   limitStatusRequest,
   limitStatusResponseFromWire,
   listPositionsRequest,
   listPositionsResponseFromWire,
+  type AggregateRatesRiskRequest,
   type RiskScope,
 } from "../contract/riskCodec";
 import { stageMark } from "./markStaging";
@@ -454,6 +460,62 @@ export async function CURVE(
     const request = shapeBuildCurveRequest({ pillars, referenceDate, currency });
     const curve = await getConnection().buildCurve(request);
     return formatCalibratedCurveSpill(curve);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Net the linear-rates risk of a whole OIS BOOK against one shared curve via the
+ * live `aggregate_rates_risk` engine RPC (the WS mirror of
+ * `RiskService.AggregateRatesRisk`), and spill the per-currency netted risk. The
+ * add-in carries NO rates-risk math: the `curve` pillars and every position's OIS
+ * terms are sent to the `celnet-rates` engine, which prices each position and the
+ * SERVER sums them additively into one node per settlement currency (the API-first
+ * parity rule — a client never loops positions and sums); this cell only shapes
+ * the inputs and lays out the authoritative netted reply.
+ *
+ * `positions` is a row-per-position range `[tenorYears, fixedRate, direction,
+ * notional, entity?, book?]`: each row is one OIS (whole-year tenor, decimal fixed
+ * rate, PAY_FIXED/RECEIVE_FIXED direction carrying the sign, positive notional)
+ * plus the optional `(entity, book)` booking cell the roll-up and `scope` filter
+ * on. The optional `scope` narrows BEFORE the roll-up — a comma-separated list of
+ * `ENTITY:<n>` / `BOOK:<n>` / `CCY:<xxx>` tokens (each present key constrains).
+ *
+ * The spill is a labelled `(1 + currencies + 1)×(4 + pillars)` grid: a header
+ * `[ccy, net_pv, net_pv01, net_dv01, kr_dv01[<tenor>Y]…]`, one row per settlement-
+ * currency node (netted PV / PV01 / DV01 then the key-rate DV01 ladder, one column
+ * per curve pillar — the ladder sums to `net_dv01` to first order), then a summary
+ * footer. All measures are in the node currency and already net long against short
+ * by the position directions.
+ * @customfunction RATESRISK
+ * @param curve The 2-column `[tenorYears, parRate]` curve range — one row per self-discounting OIS pillar, in strictly increasing tenor order (the shared market every position prices against).
+ * @param referenceDate The curve reference (spot-anchor) date — an Excel date cell or "YYYY-MM-DD".
+ * @param positions The row-per-position range `[tenorYears, fixedRate, direction, notional, entity?, book?]` — one OIS per row.
+ * @param currency Optional ISO-4217 curve currency (defaults to USD).
+ * @param scope Optional pre-rollup filter: a comma-separated list of ENTITY:<n>, BOOK:<n>, CCY:<xxx> (omit ⇒ the whole book).
+ * @returns A `(1 + currencies + 1)×(4 + pillars)` spill: header, one netted node per settlement currency, then a footer.
+ */
+export async function RATESRISK(
+  curve: (string | number | boolean)[][],
+  referenceDate: number | string,
+  positions: (string | number | boolean)[][],
+  currency?: string,
+  scope?: string,
+): Promise<SpillMatrix> {
+  try {
+    denyIfUngated("ratesrisk");
+    const curveSet = shapeRatesCurve({ curve, referenceDate, currency });
+    const parsedPositions = shapeRatesRiskPositions(positions);
+    const scopeFilter = parseRatesRiskScope(typeof scope === "string" ? scope : undefined);
+    const request: AggregateRatesRiskRequest = {
+      curveSet,
+      positions: parsedPositions,
+      ...(scopeFilter !== undefined ? { scope: scopeFilter } : {}),
+    };
+    const reply = await getConnection().aggregateRatesRisk(aggregateRatesRiskRequest(request));
+    const response = aggregateRatesRiskResponseFromWire(reply);
+    return formatRatesRiskSpill(response.nodes);
   } catch (err) {
     throw toCfError(err);
   }
@@ -985,6 +1047,7 @@ function registerAll(): void {
   cf.associate("PRICE", PRICE as (...a: never[]) => unknown);
   cf.associate("GREEKS", GREEKS as (...a: never[]) => unknown);
   cf.associate("RATES", RATES as (...a: never[]) => unknown);
+  cf.associate("RATESRISK", RATESRISK as (...a: never[]) => unknown);
   cf.associate("CURVE", CURVE as (...a: never[]) => unknown);
   cf.associate("RFQ", RFQ as (...a: never[]) => unknown);
   cf.associate("SUBSCRIBE", SUBSCRIBE as (...a: never[]) => unknown);

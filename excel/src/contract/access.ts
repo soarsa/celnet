@@ -154,7 +154,7 @@ export function capabilityDenialTitle(
 //   * book (click-to-trade accept)                → execute · fx_options
 //   * SUBSCRIBE / SERIES (live streams)           → stream  · fx_options
 //   * contribute a mark / MARKSURFACE / MARK      → price   · fx_options
-//   * RATES (OIS pricing)                         → price   · fixed_income
+//   * RATES (OIS pricing) / RATESRISK (book risk) → price   · fixed_income
 //
 // Every FX-options PRODUCT (incl. the cross-asset equity/commodity/crypto leaves
 // that book through the same QuoteService) maps to the `fx_options` capability
@@ -177,6 +177,7 @@ export type EntryPointId =
   | "subscribe"
   | "series"
   | "rates"
+  | "ratesrisk"
   | "curve"
   | "marksurface"
   | "mark";
@@ -285,6 +286,15 @@ export const ENTRY_POINTS: Record<EntryPointId, EntryPoint> = {
     asset: "fixed_income",
     requiresSignIn: false,
     signInLabel: "price rates",
+  },
+  ratesrisk: {
+    id: "ratesrisk",
+    label: "CELNET.RATESRISK",
+    surface: "cell",
+    action: "price",
+    asset: "fixed_income",
+    requiresSignIn: false,
+    signInLabel: "aggregate rates risk",
   },
   curve: {
     id: "curve",
