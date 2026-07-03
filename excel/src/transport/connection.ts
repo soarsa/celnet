@@ -26,6 +26,7 @@
  */
 
 import type {
+  BondInstrument,
   BuildCurveRequest,
   CalibratedCurve,
   CcyPair,
@@ -49,6 +50,7 @@ import type {
   Update,
 } from "../contract/contract";
 import {
+  bondInstrumentToWire,
   buildCurveRequestToWire,
   calibratedCurveFromWire,
   ccyPairToWire,
@@ -858,6 +860,34 @@ export class Connection {
       {
         curve_set: ratesCurveSetToWire(curve),
         instrument: ratesInstrumentToWire(instrument),
+      },
+      "rates_price_response",
+    );
+    return ratesPricingResultFromWire(reply);
+  }
+
+  /**
+   * Price a fixed-coupon cash bond off the calibrated curve over the SAME
+   * `price_rates` RPC (the WS mirror), carrying the `RatesInstrument.bond` oneof
+   * arm: send the `curve_set` + the `bond` `instrument` body and decode the
+   * server-computed `RatesPricingResult`. The engine PVs each cashflow at the
+   * bootstrapped discount curve (the DIRTY price) and reports the implied yield
+   * risk; for a bond the shared result fields carry bond semantics —
+   * `pv` = dirty price, `par_rate` = yield to maturity, `pv01` = `dv01` = the
+   * yield DV01, and `key_rate_ladder` is empty (a closed-form yield-space
+   * measure). The add-in carries no bond math of its own — the one unversioned
+   * contract makes the result authoritative. Anonymous-OK: `price_rates` is a pure
+   * calculation against the caller-supplied curve, so it carries no session token.
+   */
+  async priceRatesBond(
+    curve: RatesCurveSet,
+    bond: BondInstrument,
+  ): Promise<RatesPricingResult> {
+    const reply = await this.request(
+      "price_rates",
+      {
+        curve_set: ratesCurveSetToWire(curve),
+        instrument: bondInstrumentToWire(bond),
       },
       "rates_price_response",
     );
