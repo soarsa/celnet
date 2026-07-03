@@ -343,3 +343,80 @@
   color: var(--text-tertiary);
   padding: var(--space-2) 0;
 }
+
+/* --- combined options+FI JOINT tail lens (RiskService.CombinedTailRisk) ------
+ * A headline joint VaR/ES + signed parallel DV01 tile strip beside the FI
+ * key-rate ladder, with two sub-book toggles that make the reduction identities
+ * (options-only ⇒ options VaR, FI-only ⇒ rate VaR) and their empty-states
+ * reachable. */
+.subBook {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.subBookLegend {
+  float: left;
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: 0;
+  margin-right: var(--space-2);
+}
+.subBookToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-caption);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.tailMetrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.tailMetric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+}
+.tailMetricEmphatic {
+  border-color: var(--accent);
+}
+.tailMetricLabel {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.tailMetricValue {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-headline);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+.tailUnit {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-regular);
+  color: var(--text-tertiary);
+}
+.error {
+  margin: var(--space-3) 0 0;
+  font-size: var(--type-caption);
+  color: var(--warn);
+}

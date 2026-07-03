@@ -63,6 +63,24 @@ test.describe("Celnet GUI — axe a11y (zero serious/critical)", () => {
     await expectNoSeriousA11y(page, "Fixed-income OIS ticket");
   });
 
+  test("Combined options+FI joint tail lens has no serious/critical a11y violations", async ({
+    page,
+  }) => {
+    await openLive(page);
+    // The joint options+FI tail is the "Combined tail" LENS of the class-parametric
+    // Risk workspace (a fixed-income capability). Switch to it, wait for the live
+    // `CombinedTailRisk` roll-up to render the headline joint VaR/ES + the FI
+    // key-rate DV01 ladder, then scan: the lens tablist active state uses the
+    // axe-AA high-contrast pattern (text-primary + accent underline, NOT accent
+    // text), and the ladder reuses the rates-lens diverging-ramp viz.
+    const pane = await gotoWorkspace(page, "risk");
+    await pane.getByRole("tab", { name: "Combined tail" }).click();
+    await pane.getByText("VaR (99%)").first().waitFor();
+    await pane.getByRole("img", { name: /Key-rate DV01 ladder/ }).waitFor();
+    await page.waitForTimeout(500);
+    await expectNoSeriousA11y(page, "Combined options+FI joint tail lens");
+  });
+
   test("Cube heatmap view has no serious/critical a11y violations", async ({ page }) => {
     await openLive(page);
     await gotoCube(page);

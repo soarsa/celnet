@@ -26,6 +26,8 @@ import type {
   AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
+  CombinedTailRiskRequest,
+  CombinedTailRiskResponse,
   BookRatesPositionRequest,
   BookRatesPositionResponse,
   BrokerQuoteSet,
@@ -93,6 +95,8 @@ import {
   aggregateRatesRiskResponseFromWire,
   aggregateRiskRequestToWire,
   aggregateRiskResponseFromWire,
+  combinedTailRiskRequestToWire,
+  combinedTailRiskResponseFromWire,
   bookRatesPositionToWire,
   bookRatesPositionResponseFromWire,
   ccyPairToWire,
@@ -1196,6 +1200,17 @@ export class WsTransport implements CelnetTransport {
       "aggregate_rates_risk_response",
     );
     return aggregateRatesRiskResponseFromWire(reply);
+  }
+
+  async combinedTailRisk(
+    request: CombinedTailRiskRequest,
+  ): Promise<CombinedTailRiskResponse> {
+    const reply = await this.conn.request(
+      "combined_tail_risk",
+      combinedTailRiskRequestToWire(request),
+      "combined_tail_risk_response",
+    );
+    return combinedTailRiskResponseFromWire(reply);
   }
 
   async drillRisk(request: DrillRiskRequest): Promise<DrillRiskResponse> {

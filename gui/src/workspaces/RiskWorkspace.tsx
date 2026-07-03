@@ -25,16 +25,29 @@ import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type {
   CapabilityAsset,
+  CcyPair,
+  CombinedTailRiskRequest,
+  CombinedTailRiskResponse,
+  Conventions,
   Instrument,
+  JointTailScenario,
+  MarketContext,
   RiskBucketRequest,
   ScenarioResult,
   ShockAxis,
   ShockFactor,
+  TailRiskCurvePillar,
+  TailRiskFiPosition,
+  TailRiskOptionLeg,
 } from "../data/contract";
 import { Panel } from "../components/Panel";
 import { Button } from "../components/Button";
 import { strategyInstrument } from "../data/seed";
+import { Rng } from "../data/rng";
+import { defaultTailRiskBaseCurve } from "../data/ratesPricing";
+import { defaultRatesRiskRows } from "./RatesRiskWorkspace";
 import { ScenarioHeatmap } from "../viz/ScenarioHeatmap";
+import { KeyRateLadder } from "../viz/KeyRateLadder";
 import { fmtPnlAdaptive, fmtSigned } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
 import { configuredLicense, type LicensePredicate } from "../lib/commands";
@@ -85,12 +98,16 @@ const METRICS = [
 type Metric = (typeof METRICS)[number]["id"];
 
 /** The asset-class lens the shared Risk workspace renders under. */
-export type RiskLens = "fx" | "rates";
+export type RiskLens = "fx" | "rates" | "combined";
 
-/** One row per class the workspace spans: its lens id, capability asset, label. */
+/** One row per class the workspace spans: its lens id, capability asset, label.
+ * The "combined" (joint options+FI) lens is a fixed-income capability — the FI
+ * license × entitlement is what unlocks the cross-risk-class cube — so an FX-only
+ * desk never sees it and a rates desk risks its joint book here. */
 const LENSES: readonly { lens: RiskLens; asset: CapabilityAsset; label: string }[] = [
   { lens: "fx", asset: "fx_options", label: "FX Options" },
   { lens: "rates", asset: "fixed_income", label: "Fixed Income" },
+  { lens: "combined", asset: "fixed_income", label: "Combined tail" },
 ];
 
 export function RiskWorkspace({
@@ -131,13 +148,21 @@ export function RiskWorkspace({
   return (
     <div className={styles.classShell}>
       {available.length > 1 && (
-        <div className={styles.lensBar} role="group" aria-label="risk asset class">
+        <div
+          className={styles.lensBar}
+          role="tablist"
+          aria-label="risk asset class lens"
+        >
           {available.map((l) => (
             <button
               key={l.lens}
               type="button"
+              role="tab"
+              id={`risk-lens-tab-${l.lens}`}
+              aria-controls="risk-lens-panel"
+              aria-selected={lens === l.lens}
+              tabIndex={lens === l.lens ? 0 : -1}
               className={`${styles.lensTab} ${lens === l.lens ? styles.lensTabActive : ""}`}
-              aria-pressed={lens === l.lens}
               onClick={() => setLens(l.lens)}
             >
               {l.label}
@@ -145,8 +170,19 @@ export function RiskWorkspace({
           ))}
         </div>
       )}
-      <div className={styles.lensBody}>
-        {lens === "fx" ? <FxScenarioLens /> : <RatesRiskPanel />}
+      <div
+        className={styles.lensBody}
+        role="tabpanel"
+        id="risk-lens-panel"
+        aria-labelledby={`risk-lens-tab-${lens}`}
+      >
+        {lens === "fx" ? (
+          <FxScenarioLens />
+        ) : lens === "rates" ? (
+          <RatesRiskPanel />
+        ) : (
+          <CombinedTailLens />
+        )}
       </div>
     </div>
   );
@@ -527,4 +563,349 @@ function AxisPicker({
 function pillarName(delta: number): string {
   if (Math.abs(delta) >= 0.49) return "ATM";
   return `${delta < 0 ? "−" : "+"}${Math.round(Math.abs(delta) * 100)}Δ`;
+}
+
+// ---------------------------------------------------------------------------
+// combined options+FI JOINT tail lens (RiskService.CombinedTailRisk)
+// ---------------------------------------------------------------------------
+//
+// The C2c "true single VaR engine": ONE non-additive tail cube over the book's
+// vanilla FX option legs AND its linear-FI (OIS-swap) legs, by full joint
+// bump-and-revalue over aligned (options-shock, rate-shock) scenarios — plus the
+// FI signed key-rate DV01 ladder and signed parallel DV01. The whole portfolio +
+// scenario config travels inline, so BOTH transports satisfy it identically (the
+// offline source reprices + reduces in-browser; the live edge issues the RPC).
+// The two sub-books toggle so the reduction identities are demonstrable and the
+// honest empty-states (no FI ⇒ options VaR; no options ⇒ rate VaR) are reachable.
+
+/** One million — FI/option notionals are denominated in millions. */
+const CT_MM = 1_000_000;
+/** The 3M expiry the seeded option legs are struck at (vol-time, years). */
+const CT_OPTION_T = 0.25;
+/**
+ * The synthetic joint-scenario draw count. 256 correlated draws so the α = 0.99
+ * tail (`⌊(1−α)·n⌋ = 2`) is a real ES-over-worst-two, not a single-scenario VaR.
+ */
+const CT_SCENARIO_COUNT = 256;
+/** A fixed RNG seed ⇒ the synthetic scenario set is deterministic across renders. */
+const CT_SCENARIO_SEED = 0x9e3779b97f4a7c15n;
+/** The default VaR/ES confidence level for the joint tail. */
+const CT_ALPHA = 0.99;
+
+/** The active FX pair + market to seed the option legs from, preferring a USD-quote
+ * major so the joint VaR/ES stays single-currency (USD) alongside the USD-SOFR FI
+ * book; falls back to the active pair (a mixed-currency tail is then flagged). */
+function pickOptionPair(
+  pairCtx: { pair: CcyPair; market: MarketContext },
+  pairs: readonly { pair: CcyPair; market: MarketContext }[],
+): { pair: CcyPair; market: MarketContext } {
+  if (pairCtx.pair.quote === "USD") return pairCtx;
+  return pairs.find((p) => p.pair.quote === "USD") ?? pairCtx;
+}
+
+/**
+ * Seed a small vanilla option book from a pair's live market: a long ATM call and
+ * a short 3%-OTM put (a covered-write shape that carries real two-sided tail P&L).
+ * GENUINE market inputs — the transport computes every number; nothing is baked.
+ */
+export function seedTailRiskOptionLegs(
+  pair: CcyPair,
+  m: MarketContext,
+  conv: Conventions,
+): TailRiskOptionLeg[] {
+  const base = {
+    pair,
+    spot: m.spot,
+    vol: m.vol,
+    rDom: m.rDom,
+    rFor: m.rFor,
+    t: CT_OPTION_T,
+    quotedDelta: conv.deltaConvention,
+    premiumStyle: conv.premiumStyle,
+  };
+  return [
+    { ...base, optionType: "CALL", notionalBase: 10 * CT_MM, strike: m.spot },
+    { ...base, optionType: "PUT", notionalBase: -10 * CT_MM, strike: m.spot * 0.97 },
+  ];
+}
+
+/**
+ * Seed the linear-FI book as OIS swaps from the shared rates-risk seed rows (the
+ * SAME editable book the Fixed Income lens rolls up), each an annual fixed leg to
+ * its whole-year tenor on the USD-SOFR curve. Genuine inputs, direction-signed.
+ */
+export function seedTailRiskFiPositions(): TailRiskFiPosition[] {
+  return defaultRatesRiskRows().map((row) => ({
+    oisSwap: {
+      start: 0,
+      periods: Array.from({ length: row.tenorYears }, (_, i) => ({
+        pay: i + 1,
+        accrual: 1,
+      })),
+      fixedRate: row.fixedRatePct / 100,
+      notional: row.notionalMm * CT_MM,
+      receiveFixed: row.direction === "RECEIVE_FIXED",
+    },
+  }));
+}
+
+/**
+ * A deterministic synthetic joint-scenario set (a Monte-Carlo-style historical
+ * proxy, fixed-seed ⇒ reproducible): correlated (spot, vol, rate) draws where a
+ * spot sell-off co-moves with a vol spike and a flight-to-quality rate rally, plus
+ * a curve-slope component. Each scenario's `rateShifts` is aligned to the base
+ * curve's `pillarCount` pillars, and its `discountAbs` moves the options' numeraire
+ * rate with the FI parallel move — ONE market state per scenario index.
+ */
+export function buildJointScenarios(
+  pillarCount: number,
+  count: number = CT_SCENARIO_COUNT,
+): JointTailScenario[] {
+  const rng = new Rng(CT_SCENARIO_SEED);
+  const n = Math.max(1, pillarCount);
+  const out: JointTailScenario[] = [];
+  for (let k = 0; k < count; k += 1) {
+    const z1 = rng.normal();
+    const z2 = rng.normal();
+    const z3 = rng.normal();
+    const z4 = rng.normal();
+    const spotRel = 0.01 * z1;
+    // Vol up when spot down (leverage effect); rates rally with risk-off (mild).
+    const volAbs = 0.01 * (-0.6 * z1 + 0.8 * z2);
+    const rateParallel = 0.0012 * (0.5 * z1 + 0.866 * z3);
+    const rateSlope = 0.0008 * z4;
+    const rateShifts = Array.from({ length: n }, (_, i) => {
+      const frac = n > 1 ? i / (n - 1) : 0.5;
+      return rateParallel + rateSlope * (frac - 0.5) * 2;
+    });
+    out.push({
+      spotRel,
+      volAbs,
+      discountAbs: rateParallel,
+      carryAbs: 0.0005 * z2,
+      rateShifts,
+    });
+  }
+  return out;
+}
+
+/** Assemble the `CombinedTailRiskRequest` from the seed books + sub-book toggles.
+ * Pure — the React layer just hands it to the transport seam. */
+export function buildCombinedTailRequest(opts: {
+  includeOptions: boolean;
+  includeFi: boolean;
+  optionLegs: readonly TailRiskOptionLeg[];
+  fiPositions: readonly TailRiskFiPosition[];
+  baseCurve: readonly TailRiskCurvePillar[];
+  scenarios: readonly JointTailScenario[];
+  alpha?: number;
+}): CombinedTailRiskRequest {
+  return {
+    optionLegs: opts.includeOptions ? opts.optionLegs : [],
+    fiPositions: opts.includeFi ? opts.fiPositions : [],
+    baseCurve: opts.baseCurve,
+    scenarios: opts.scenarios,
+    alpha: opts.alpha ?? CT_ALPHA,
+  };
+}
+
+/** The joint options+FI tail lens of the shared, class-parametric Risk workspace. */
+function CombinedTailLens(): React.ReactElement {
+  const app = useApp();
+  const [includeOptions, setIncludeOptions] = useState(true);
+  const [includeFi, setIncludeFi] = useState(true);
+  const [result, setResult] = useState<CombinedTailRiskResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const optionSource = useMemo(
+    () => pickOptionPair(app.pairCtx, app.pairs),
+    [app.pairCtx, app.pairs],
+  );
+  const optCcy = optionSource.pair.quote;
+
+  const baseCurve = useMemo(() => defaultTailRiskBaseCurve(), []);
+  const optionLegs = useMemo(
+    () => seedTailRiskOptionLegs(optionSource.pair, optionSource.market, app.conventions),
+    [optionSource, app.conventions],
+  );
+  const fiPositions = useMemo(() => seedTailRiskFiPositions(), []);
+  const scenarios = useMemo(() => buildJointScenarios(baseCurve.length), [baseCurve.length]);
+
+  const request = useMemo<CombinedTailRiskRequest>(
+    () =>
+      buildCombinedTailRequest({
+        includeOptions,
+        includeFi,
+        optionLegs,
+        fiPositions,
+        baseCurve,
+        scenarios,
+      }),
+    [includeOptions, includeFi, optionLegs, fiPositions, baseCurve, scenarios],
+  );
+
+  // One contract, two transports: the SAME request rolls up through the offline
+  // in-app cube and the live `RiskService.CombinedTailRisk` edge — a failure (a
+  // server refusal or an offline validation throw) surfaces honestly, never faked.
+  useEffect(() => {
+    let live = true;
+    void app.transport
+      .combinedTailRisk(request)
+      .then((r) => {
+        if (!live) return;
+        setResult(r);
+        setError(null);
+      })
+      .catch((e) => {
+        if (!live) return;
+        setResult(null);
+        setError(e instanceof Error ? e.message : "combined tail risk failed");
+      });
+    return () => {
+      live = false;
+    };
+  }, [app.transport, request]);
+
+  const emptyBook = !includeOptions && !includeFi;
+  // The options quote ccy carries the joint VaR/ES; the FI axis is USD-SOFR. When a
+  // mixed book crosses currencies the raw sum is flagged (the server's own caveat).
+  const jointCcy = includeOptions ? optCcy : "USD";
+  const crossCcy = includeOptions && includeFi && optCcy !== "USD";
+
+  const reductionNote = emptyBook
+    ? ""
+    : includeOptions && !includeFi
+      ? "Options-only book — the joint tail reduces to the options spot/vol VaR (no FI diversification)."
+      : !includeOptions && includeFi
+        ? "FI-only book — the joint tail reduces to the rate-scenario VaR."
+        : "Joint options + FI tail — ONE non-additive VaR/ES over the union of per-scenario P&L, capturing cross-risk-class diversification.";
+
+  return (
+    <div className={styles.grid}>
+      <Panel
+        glyph="⋈"
+        title="Joint options + FI tail"
+        actions={
+          <fieldset className={styles.subBook}>
+            <legend className={styles.subBookLegend}>book</legend>
+            <label className={styles.subBookToggle}>
+              <input
+                type="checkbox"
+                checked={includeOptions}
+                onChange={(e) => setIncludeOptions(e.target.checked)}
+              />
+              <span>
+                Options ({optionSource.pair.base}/{optionSource.pair.quote})
+              </span>
+            </label>
+            <label className={styles.subBookToggle}>
+              <input
+                type="checkbox"
+                checked={includeFi}
+                onChange={(e) => setIncludeFi(e.target.checked)}
+              />
+              <span>FI (USD-SOFR)</span>
+            </label>
+          </fieldset>
+        }
+      >
+        {error ? (
+          <p className={styles.error} role="alert">
+            {error}
+          </p>
+        ) : emptyBook ? (
+          <div className={styles.emptyState}>
+            <p className={styles.emptyTitle}>No book selected</p>
+            <p className={styles.emptyBody}>
+              Enable the option legs and/or the FI positions above to roll up the
+              desk&apos;s joint tail risk. Nothing is computed for an empty book.
+            </p>
+          </div>
+        ) : !result ? (
+          <div className={styles.loading}>Repricing joint tail…</div>
+        ) : (
+          <>
+            <div className={styles.tailMetrics}>
+              <TailMetric
+                label={`VaR (${(CT_ALPHA * 100).toFixed(0)}%)`}
+                value={fmtPnlAdaptive(result.jointVarEs.var)}
+                unit={jointCcy}
+                emphatic
+              />
+              <TailMetric
+                label={`Expected shortfall (${(CT_ALPHA * 100).toFixed(0)}%)`}
+                value={fmtPnlAdaptive(result.jointVarEs.es)}
+                unit={jointCcy}
+                emphatic
+              />
+              <TailMetric
+                label="FI parallel DV01"
+                value={includeFi ? fmtSigned(result.fiParallelDv01, 0) : "—"}
+                unit={includeFi ? "USD/bp" : ""}
+              />
+            </div>
+            <div className={styles.provLine}>
+              {reductionNote} Reduced from{" "}
+              <strong>{scenarios.length}</strong> aligned joint scenarios via the
+              one platform-wide VaR/ES tail primitive
+              {crossCcy && (
+                <>
+                  {" "}
+                  · <strong>mixed-currency</strong>: the joint number sums{" "}
+                  {optCcy} option P&amp;L with USD FI P&amp;L (numeraire-normalize
+                  for a true cross-ccy tail)
+                </>
+              )}
+              .
+            </div>
+          </>
+        )}
+      </Panel>
+
+      <Panel glyph="Σ" title="FI key-rate DV01" className={styles.ladderPanel}>
+        {result && includeFi && result.keyRate.length > 0 ? (
+          <KeyRateLadder
+            data={result.keyRate.map((k) => ({
+              pillar: `${k.tenorYears}y`,
+              dv01: k.dv01,
+            }))}
+            parallelDv01={result.fiParallelDv01}
+            unit="USD/bp"
+          />
+        ) : (
+          <div className={styles.emptyState}>
+            <p className={styles.emptyTitle}>No fixed-income key-rate axis</p>
+            <p className={styles.emptyBody}>
+              {includeFi
+                ? "The FI book exposes no calibrating pillars for a key-rate ladder."
+                : "No fixed-income positions in the book — the joint tail reduces to the options VaR, and there is no rate ladder or parallel DV01 to show."}
+            </p>
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+/** One headline tail measure: a labelled value + unit tile in the joint-tail lens. */
+function TailMetric({
+  label,
+  value,
+  unit,
+  emphatic,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  emphatic?: boolean;
+}): React.ReactElement {
+  return (
+    <div className={`${styles.tailMetric} ${emphatic ? styles.tailMetricEmphatic : ""}`}>
+      <span className={styles.tailMetricLabel}>{label}</span>
+      <span className={styles.tailMetricValue}>
+        {value}
+        {unit && <span className={styles.tailUnit}>{unit}</span>}
+      </span>
+    </div>
+  );
 }

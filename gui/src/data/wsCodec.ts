@@ -22,6 +22,16 @@ import type {
   AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
+  CombinedTailRiskRequest,
+  CombinedTailRiskResponse,
+  TailRiskOptionLeg,
+  TailRiskOisFixedPeriod,
+  TailRiskOisSwap,
+  TailRiskFiPosition,
+  TailRiskCurvePillar,
+  JointTailScenario,
+  TailRiskKeyRate,
+  VarEs,
   KeyRateDv01,
   RatesPosition,
   RatesRiskNode,
@@ -1156,6 +1166,186 @@ export function aggregateRatesRiskResponseFromWire(
 ): AggregateRatesRiskResponse {
   const res: AggregateRatesRiskResponse = {
     nodes: array(o, "nodes").map(ratesRiskNodeFromWire),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) res.correlationId = corr;
+  return res;
+}
+
+// --- combined options+FI JOINT tail risk (RiskService.CombinedTailRisk) ------
+// Byte-compatible with the server's descriptor-driven `ws::generated_codec`
+// (crates/celnet-server/src/ws/generated_codec.rs): snake_case keys in proto
+// field order, numeric enum tags (`option_type`/`quoted_delta`/`premium_style`),
+// the FI `position` oneof keyed by its live arm name `ois_swap`, and every scalar
+// emitted (proto3 — no zero-omission). The request reuses the shared
+// `ccyPairToWire`; the response mirrors `VarEs` + the signed key-rate ladder. The
+// framing `correlation_id`/`session_token` are injected by the `WsConnection`, so
+// the request body carries only the inline portfolio + scenario config.
+
+/** A repeated `double` field (absent/non-array ⇒ empty), the `rate_shifts` shape. */
+function numArray(o: WireObject, key: string): number[] {
+  const v = o[key];
+  return Array.isArray(v) ? v.map((x) => (typeof x === "number" ? x : Number(x))) : [];
+}
+
+function tailRiskOptionLegToWire(leg: TailRiskOptionLeg): WireObject {
+  return {
+    pair: ccyPairToWire(leg.pair),
+    option_type: e.optionType.toWire(leg.optionType),
+    notional_base: leg.notionalBase,
+    spot: leg.spot,
+    strike: leg.strike,
+    vol: leg.vol,
+    t: leg.t,
+    r_dom: leg.rDom,
+    r_for: leg.rFor,
+    quoted_delta: e.deltaConvention.toWire(leg.quotedDelta),
+    premium_style: e.premiumStyle.toWire(leg.premiumStyle),
+  };
+}
+
+function tailRiskOptionLegFromWire(o: WireObject): TailRiskOptionLeg {
+  return {
+    pair: ccyPairFromWire(child(o, "pair")),
+    optionType: e.optionType.fromWire(enumNum(o, "option_type")),
+    notionalBase: num(o, "notional_base"),
+    spot: num(o, "spot"),
+    strike: num(o, "strike"),
+    vol: num(o, "vol"),
+    t: num(o, "t"),
+    rDom: num(o, "r_dom"),
+    rFor: num(o, "r_for"),
+    quotedDelta: e.deltaConvention.fromWire(enumNum(o, "quoted_delta")),
+    premiumStyle: e.premiumStyle.fromWire(enumNum(o, "premium_style")),
+  };
+}
+
+function tailRiskOisFixedPeriodToWire(p: TailRiskOisFixedPeriod): WireObject {
+  return { pay: p.pay, accrual: p.accrual };
+}
+
+function tailRiskOisFixedPeriodFromWire(o: WireObject): TailRiskOisFixedPeriod {
+  return { pay: num(o, "pay"), accrual: num(o, "accrual") };
+}
+
+function tailRiskOisSwapToWire(s: TailRiskOisSwap): WireObject {
+  return {
+    start: s.start,
+    periods: s.periods.map(tailRiskOisFixedPeriodToWire),
+    fixed_rate: s.fixedRate,
+    notional: s.notional,
+    receive_fixed: s.receiveFixed,
+  };
+}
+
+function tailRiskOisSwapFromWire(o: WireObject): TailRiskOisSwap {
+  return {
+    start: num(o, "start"),
+    periods: array(o, "periods").map(tailRiskOisFixedPeriodFromWire),
+    fixedRate: num(o, "fixed_rate"),
+    notional: num(o, "notional"),
+    receiveFixed: o["receive_fixed"] === true,
+  };
+}
+
+function tailRiskFiPositionToWire(p: TailRiskFiPosition): WireObject {
+  // The `position` oneof — only the live arm's key is emitted (`ois_swap`),
+  // mirroring the server's `WireAdapter` for the oneof.
+  return { ois_swap: tailRiskOisSwapToWire(p.oisSwap) };
+}
+
+function tailRiskFiPositionFromWire(o: WireObject): TailRiskFiPosition {
+  return { oisSwap: tailRiskOisSwapFromWire(child(o, "ois_swap")) };
+}
+
+function tailRiskCurvePillarToWire(p: TailRiskCurvePillar): WireObject {
+  return { t: p.t, zero_rate: p.zeroRate };
+}
+
+function tailRiskCurvePillarFromWire(o: WireObject): TailRiskCurvePillar {
+  return { t: num(o, "t"), zeroRate: num(o, "zero_rate") };
+}
+
+function jointTailScenarioToWire(s: JointTailScenario): WireObject {
+  return {
+    spot_rel: s.spotRel,
+    vol_abs: s.volAbs,
+    discount_abs: s.discountAbs,
+    carry_abs: s.carryAbs,
+    rate_shifts: [...s.rateShifts],
+  };
+}
+
+function jointTailScenarioFromWire(o: WireObject): JointTailScenario {
+  return {
+    spotRel: num(o, "spot_rel"),
+    volAbs: num(o, "vol_abs"),
+    discountAbs: num(o, "discount_abs"),
+    carryAbs: num(o, "carry_abs"),
+    rateShifts: numArray(o, "rate_shifts"),
+  };
+}
+
+export function combinedTailRiskRequestToWire(
+  r: CombinedTailRiskRequest,
+): WireObject {
+  return {
+    option_legs: r.optionLegs.map(tailRiskOptionLegToWire),
+    fi_positions: r.fiPositions.map(tailRiskFiPositionToWire),
+    base_curve: r.baseCurve.map(tailRiskCurvePillarToWire),
+    scenarios: r.scenarios.map(jointTailScenarioToWire),
+    // Proto3 scalar: `0` ⇒ the server's 0.99 default (mirrors `DEFAULT_ALPHA`).
+    alpha: r.alpha ?? 0,
+  };
+}
+
+export function combinedTailRiskRequestFromWire(
+  o: WireObject,
+): CombinedTailRiskRequest {
+  return {
+    optionLegs: array(o, "option_legs").map(tailRiskOptionLegFromWire),
+    fiPositions: array(o, "fi_positions").map(tailRiskFiPositionFromWire),
+    baseCurve: array(o, "base_curve").map(tailRiskCurvePillarFromWire),
+    scenarios: array(o, "scenarios").map(jointTailScenarioFromWire),
+    alpha: num(o, "alpha"),
+  };
+}
+
+function varEsToWire(v: VarEs): WireObject {
+  return { var: v.var, es: v.es };
+}
+
+function varEsFromWire(o: WireObject): VarEs {
+  return { var: num(o, "var"), es: num(o, "es") };
+}
+
+function tailRiskKeyRateToWire(k: TailRiskKeyRate): WireObject {
+  return { tenor_years: k.tenorYears, dv01: k.dv01 };
+}
+
+function tailRiskKeyRateFromWire(o: WireObject): TailRiskKeyRate {
+  return { tenorYears: num(o, "tenor_years"), dv01: num(o, "dv01") };
+}
+
+export function combinedTailRiskResponseToWire(
+  r: CombinedTailRiskResponse,
+): WireObject {
+  const w: WireObject = {
+    joint_var_es: varEsToWire(r.jointVarEs),
+    key_rate: r.keyRate.map(tailRiskKeyRateToWire),
+    fi_parallel_dv01: r.fiParallelDv01,
+  };
+  if (r.correlationId !== undefined) w["correlation_id"] = Number(r.correlationId);
+  return w;
+}
+
+export function combinedTailRiskResponseFromWire(
+  o: WireObject,
+): CombinedTailRiskResponse {
+  const res: CombinedTailRiskResponse = {
+    jointVarEs: varEsFromWire(child(o, "joint_var_es")),
+    keyRate: array(o, "key_rate").map(tailRiskKeyRateFromWire),
+    fiParallelDv01: num(o, "fi_parallel_dv01"),
   };
   const corr = optBigInt(o, "correlation_id");
   if (corr !== undefined) res.correlationId = corr;
