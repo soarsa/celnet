@@ -8,11 +8,27 @@ Greenfield, started 30 May 2026.
 
 ## Hard guardrails (non-negotiable)
 
-1. **Git: local-first; one sanctioned remote.** Commit locally freely. Pushing is
-   permitted **only** to `github.com/soarsa/celnet` (the `origin` remote, owner
-   `soarsa`) — authorized 2026-06-05. Do **not** add any other remote or push
-   elsewhere. (The previous local-only deny rules in `.claude/settings.json` were
-   removed for this explicit authorization.)
+1. **Git: local-first; one sanctioned remote; SAFE landing under parallel sessions.**
+   Commit locally freely. Pushing is permitted **only** to `github.com/soarsa/celnet`
+   (the `origin` remote, owner `soarsa`) — authorized 2026-06-05. Do **not** add any
+   other remote or push elsewhere. (The previous local-only deny rules in
+   `.claude/settings.json` were removed for this explicit authorization.)
+   **Multiple sessions share this filesystem — landing must never clobber a peer**
+   (learned 2026-07-03 from a near-miss where the shared main checkout was on another
+   session's branch with a dirty `Cargo.lock`):
+   - **Land from your OWN worktree**, via `git push origin <your-local-ref>:main` (temp
+     branch at `origin/main` in your worktree → `merge --no-ff` your feature branch →
+     push its tip to `main`). **NEVER `git checkout main && reset --hard` in a checkout
+     another session may occupy** — that wipes their uncommitted build/tree.
+   - **Fetch-then-push, retry-on-reject, NEVER `--force` main.** `git fetch origin main`
+     + merge immediately before pushing; on a non-FF rejection (a peer landed), re-fetch
+     + re-merge + retry.
+   - **Atomic landing:** release the cargo lane / delete the branch / mark the lane
+     `done` **only after** the push succeeds and `origin/main` actually contains your
+     change — never on a merge that may have aborted.
+   - Disjoint file ownership + the board claim/cargo mutexes (guardrail below) keep
+     branches conflict-free; front-end (0-Rust-delta) lands never touch `Cargo.lock`.
+     Detail → auto-memory `[[parallel-session-safe-landing]]`.
 2. **No mocks, no placeholders, no `todo!()`.** Only 100% complete, state-of-the-art
    implementations. If scope can't be finished, narrow it — never fake depth. Split large
    implementations across files/crates instead of abbreviating.
