@@ -50,6 +50,7 @@ import {
   formatPremiumSpill,
   formatRatesBookSpill,
   formatRatesRiskSpill,
+  formatRatesSeriesCell,
   formatRatesSpill,
   formatRfqPanelSpill,
   formatRfqSpill,
@@ -63,6 +64,7 @@ import {
   lookbackIsMonteCarlo,
   parseObservable,
   parsePair,
+  parseRatesObservable,
   parseRatesRiskScope,
   parseRfqPanelFlag,
   parseRiskDimension,
@@ -112,12 +114,19 @@ import {
   instrumentsResponseFromWire,
 } from "../contract/referenceDataCodec";
 import { stageMark } from "./markStaging";
-import { getConnection, getRegistry, getSeriesRegistry, getSession } from "./runtime";
+import {
+  getConnection,
+  getRatesStreamRegistry,
+  getRegistry,
+  getSeriesRegistry,
+  getSession,
+} from "./runtime";
 import type { EntryPointId } from "../contract/access";
 import { brokerQuoteSetToWire, ccyPairToWire, conventionsToWire, smileFromWire, type WireObject } from "../contract/wsCodec";
 import { smileModel } from "../contract/enums";
-import type { Instrument, Quote } from "../contract/contract";
+import { oisRatesInstrument, type Instrument, type Quote } from "../contract/contract";
 import type { LiveTick } from "./streamRegistry";
+import type { RatesLiveTick } from "./ratesStreamRegistry";
 import type { SeriesTick } from "./seriesRegistry";
 import type { MarketSeriesRequest } from "../transport/connection";
 
@@ -1236,6 +1245,73 @@ function shapeSeriesRequest(
   return req as MarketSeriesRequest;
 }
 
+/**
+ * Stream a LIVE fixed-income (linear-rates) measure for an OIS priced against a
+ * self-discounting curve — the FI twin of CELNET.SUBSCRIBE/SERIES, folded onto the
+ * SAME multiplexed session (the `rates_subscribe` wire). It opens the exact OIS the
+ * unary CELNET.RATES prices (same curve + terms), so the baseline is byte-identical
+ * to CELNET.RATES, then re-emits on every server re-price as the curve
+ * deterministically ticks. A single streamed `RatesPricingResult` carries every
+ * measure at once, so the `observable` selector chooses which the cell shows — PV
+ * (default), PAR (the par/fair rate), PV01 or DV01. Identical-argument cells (even
+ * a PV cell + a DV01 cell on the SAME curve+swap) SHARE ONE server subscription;
+ * the line is torn down when the last cell is removed. The stream is INDICATIVE
+ * (no click-to-trade token — rates deal through RFQ/desk); it flips to a stale state
+ * on a heartbeat gap rather than freezing as live (docs §5).
+ * @customfunction RATESSERIES
+ * @param curve The 2-column `[tenorYears, parRate]` curve range — one row per self-discounting OIS pillar, in strictly increasing tenor order.
+ * @param referenceDate The curve reference (spot-anchor) date — an Excel date cell or "YYYY-MM-DD".
+ * @param tenor The OIS tenor in whole years (e.g. 5 or "5Y").
+ * @param fixedRate The fixed-leg rate as a decimal (0.041 = 4.10%).
+ * @param direction "PAY_FIXED" (payer) or "RECEIVE_FIXED" (receiver).
+ * @param notional The (positive) notional in the curve currency.
+ * @param observable Optional measure to stream: PV (default), PAR, PV01 or DV01.
+ * @param currency Optional ISO-4217 curve currency (defaults to USD).
+ * @param invocation The streaming invocation handle (auto-supplied).
+ * @streaming
+ */
+export function RATESSERIES(
+  curve: (string | number | boolean)[][],
+  referenceDate: number | string,
+  tenor: number | string,
+  fixedRate: number,
+  direction: string,
+  notional: number,
+  observable: string | undefined,
+  currency: string | undefined,
+  invocation: CustomFunctions.StreamingInvocation<string>,
+): void {
+  let instrument: ReturnType<typeof oisRatesInstrument>;
+  let curveSet: ReturnType<typeof shapeRatesCurve>;
+  let obs: ReturnType<typeof parseRatesObservable>;
+  let label: string;
+  try {
+    denyIfUngated("ratesseries");
+    curveSet = shapeRatesCurve({ curve, referenceDate, currency });
+    const ois = shapeOisInstrument({ tenor, fixedRate, direction, notional });
+    instrument = oisRatesInstrument(ois);
+    obs = parseRatesObservable(observable);
+    label = `${curveSet.currency} OIS ${ois.tenorYears}Y ${direction} @ ${fixedRate} [${obs}]`;
+  } catch (err) {
+    invocation.setResult(toCfError(err) as unknown as string);
+    return;
+  }
+  const registry = getRatesStreamRegistry();
+  const { release } = registry.acquire(instrument, curveSet, label, (tick: RatesLiveTick) => {
+    invocation.setResult(
+      formatRatesSeriesCell({
+        result: tick.result,
+        observable: obs,
+        health: tick.health,
+        baselined: tick.baselined,
+      }),
+    );
+  });
+  // Office.js calls onCanceled when the cell is deleted/recalculated away; tear the
+  // shared line down (decrement refcount; unsubscribe at zero — no orphans).
+  invocation.onCanceled = () => release();
+}
+
 /** Render a streamed tick to a single cell string: `bid/offer (health)`. */
 function renderLiveCell(tick: LiveTick): string {
   if (tick.health === "STALE") {
@@ -1431,6 +1507,7 @@ function registerAll(): void {
   cf.associate("SURFACE", SURFACE as (...a: never[]) => unknown);
   cf.associate("MARKSURFACE", MARKSURFACE as (...a: never[]) => unknown);
   cf.associate("SERIES", SERIES as (...a: never[]) => unknown);
+  cf.associate("RATESSERIES", RATESSERIES as (...a: never[]) => unknown);
   cf.associate("MARK", MARK as (...a: never[]) => unknown);
   cf.associate("RISK", RISK as (...a: never[]) => unknown);
   cf.associate("POSITIONS", POSITIONS as (...a: never[]) => unknown);

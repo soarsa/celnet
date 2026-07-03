@@ -14,6 +14,7 @@
 import { Connection } from "../transport/connection";
 import { browserWebSocketFactory } from "../transport/socket";
 import { UserSession } from "../transport/session";
+import { RatesStreamRegistry } from "./ratesStreamRegistry";
 import { SeriesRegistry } from "./seriesRegistry";
 import { StreamRegistry } from "./streamRegistry";
 
@@ -31,6 +32,7 @@ function resolveEndpoint(): string {
 let connection: Connection | null = null;
 let registry: StreamRegistry | null = null;
 let seriesRegistry: SeriesRegistry | null = null;
+let ratesStreamRegistry: RatesStreamRegistry | null = null;
 let session: UserSession | null = null;
 
 /** The shared connection (lazily opened on first use). */
@@ -58,6 +60,14 @@ export function getSeriesRegistry(): SeriesRegistry {
     seriesRegistry = new SeriesRegistry(getConnection());
   }
   return seriesRegistry;
+}
+
+/** The shared fixed-income (linear-rates) streaming registry over the shared connection. */
+export function getRatesStreamRegistry(): RatesStreamRegistry {
+  if (!ratesStreamRegistry) {
+    ratesStreamRegistry = new RatesStreamRegistry(getConnection());
+  }
+  return ratesStreamRegistry;
 }
 
 /**

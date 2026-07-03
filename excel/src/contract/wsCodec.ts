@@ -52,7 +52,10 @@ import type {
   PerpetualOption,
   Pivot,
   RatesCurveSet,
+  RatesInstrument,
   RatesPricingResult,
+  RatesStreamSnapshot,
+  RatesStreamUpdate,
   BuildCurveRequest,
   CalibratedCurve,
   SingleBarrier,
@@ -1380,6 +1383,73 @@ export function ratesPricingResultFromWire(o: WireObject): RatesPricingResult {
     pv01: num(result, "pv01"),
     dv01: num(result, "dv01"),
     keyRateLadder,
+  };
+}
+
+// --- fixed-income live streaming (RatesSubscribe / RatesStream{Snapshot,Update}) --
+// The FI counterpart of the FX `subscribe` / `snapshot` / `update` codecs, folded
+// onto the SAME multiplexed session (rates-stream-ws, commit 5ea82d6). A rates line
+// opens with a `rates_subscribe` control frame carrying a `RatesInstrument` (any of
+// the four `price_rates` arms) priced against a baseline `CurveSet`; the server
+// answers a `rates_stream_snapshot` then sequenced `rates_stream_update`s. Every
+// field name / shape mirrors the server WS mirror (`ws/codec.rs`
+// `rates_subscribe_from_json` / `rates_stream_snapshot_to_json` /
+// `rates_stream_update_to_json`) byte-for-byte, reusing the unary rates encoders +
+// `ratesPricingResultFromWire` (the `result` object is the identical shape the
+// `price_rates` response carries), so a streamed baseline is byte-identical to the
+// unary price of the same instrument. One unversioned contract.
+
+/**
+ * Encode a {@link RatesInstrument} union to the wire `instrument` object — the
+ * `ois` / `irs` / `fra` / `bond` arm the server's `rates_instrument_from_json`
+ * decodes (the SAME decoder the unary rates edge validates against). Each arm
+ * reuses the existing byte-verified unary arm encoder verbatim (one encoding, no
+ * duplication), so the streamed instrument is identical to the `CELNET.RATES`/
+ * `IRS`/`FRA`/`BOND` unary wire body.
+ */
+export function ratesInstrumentUnionToWire(instrument: RatesInstrument): WireObject {
+  switch (instrument.kind) {
+    case "ois":
+      return ratesInstrumentToWire(instrument.ois);
+    case "irs":
+      return irsInstrumentToWire(instrument.irs);
+    case "fra":
+      return fraInstrumentToWire(instrument.fra);
+    case "bond":
+      return bondInstrumentToWire(instrument.bond);
+  }
+}
+
+/**
+ * Decode a `rates_stream_snapshot` server frame into a {@link RatesStreamSnapshot}.
+ * The `result` object is the identical shape the `price_rates` response carries, so
+ * it is decoded by the shared {@link ratesPricingResultFromWire} (which reads the
+ * nested `result` child). `correlation_id` is presence-tracked (absent/`null` ⇒
+ * none), mirroring the optional proto field.
+ */
+export function ratesStreamSnapshotFromWire(o: WireObject): RatesStreamSnapshot {
+  const s: {
+    -readonly [K in keyof RatesStreamSnapshot]?: RatesStreamSnapshot[K];
+  } = {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    result: ratesPricingResultFromWire(o),
+    curveShift: num(o, "curve_shift"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) s.correlationId = corr;
+  return s as RatesStreamSnapshot;
+}
+
+/** Decode a `rates_stream_update` server frame into a {@link RatesStreamUpdate}. */
+export function ratesStreamUpdateFromWire(o: WireObject): RatesStreamUpdate {
+  return {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    result: ratesPricingResultFromWire(o),
+    curveShift: num(o, "curve_shift"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
   };
 }
 

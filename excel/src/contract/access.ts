@@ -156,6 +156,7 @@ export function capabilityDenialTitle(
 //   * SUBSCRIBE / SERIES (live streams)           → stream  · fx_options
 //   * contribute a mark / MARKSURFACE / MARK      → price   · fx_options
 //   * RATES/BOND/IRS/FRA (pricing) / RATESRISK    → price   · fixed_income
+//   * RATESSERIES (live rates stream)             → stream  · fixed_income
 //   * RATESBOOK (book ledger) / INSTRUMENTS (ref) → view    · fixed_income
 //
 // Every FX-options PRODUCT (incl. the cross-asset equity/commodity/crypto leaves
@@ -183,6 +184,7 @@ export type EntryPointId =
   | "bond"
   | "irs"
   | "fra"
+  | "ratesseries"
   | "ratesrisk"
   | "ratesbook"
   | "curve"
@@ -333,6 +335,19 @@ export const ENTRY_POINTS: Record<EntryPointId, EntryPoint> = {
     asset: "fixed_income",
     requiresSignIn: false,
     signInLabel: "price FRAs",
+  },
+  ratesseries: {
+    id: "ratesseries",
+    label: "CELNET.RATESSERIES",
+    surface: "cell",
+    // A live fixed-income streaming line (PV / par / PV01 / DV01) maps to the
+    // `stream` action on the `fixed_income` asset — the FI twin of SUBSCRIBE/SERIES
+    // (`stream` · fx_options). The server enforces `Stream · FixedIncome`;
+    // anonymous stays permissive client-side (preview), exactly like SUBSCRIBE.
+    action: "stream",
+    asset: "fixed_income",
+    requiresSignIn: false,
+    signInLabel: "stream live rates",
   },
   ratesrisk: {
     id: "ratesrisk",
