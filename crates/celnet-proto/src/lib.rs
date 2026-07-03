@@ -1543,6 +1543,7 @@ mod wire_contract_tests {
             "heartbeat",
             "market_series_subscribe",
             "market_series_unsubscribe",
+            "rates_subscribe",
         ];
         want.sort_unstable();
         assert_eq!(

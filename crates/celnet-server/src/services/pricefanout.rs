@@ -64,7 +64,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use celnet_fanout::{BroadcastRing, Consumer, Producer};
-use celnet_proto::{CcyPair, MarketContext, Underlying};
+use celnet_proto::{CcyPair, CurveSet, MarketContext, Underlying};
 
 use crate::tick::TickSource;
 
@@ -79,6 +79,15 @@ const RING_CAPACITY: usize = 256;
 /// per-subscription [`crate::services::stream`] bump so the streamed line's
 /// per-tick motion is the same scale).
 const STREAM_BUMP: f64 = 0.0005;
+
+/// The per-curve **additive** parallel-shift magnitude per tick, in decimal rate
+/// (`0.0001` = ±1 basis point). The fixed-income analogue of [`STREAM_BUMP`]: where
+/// an FX line's spot is bumped *multiplicatively* around its base, a rates line's
+/// whole curve is shifted *additively* (a parallel move of every zero rate) around
+/// its baseline, so the streamed FI line reprices against an evolving curve exactly
+/// as the FX line reprices against an evolving spot. One basis point is a realistic
+/// per-tick curve wiggle and makes the DV01-consistent PV move plainly observable.
+const RATE_STREAM_BUMP: f64 = 0.0001;
 
 /// The wall-clock interval between deterministic producer ticks. Chosen a little
 /// shorter than the consumer-side drain interval so a healthy consumer always has
@@ -110,6 +119,27 @@ impl Default for PriceTick {
             tick_seq: 0,
         }
     }
+}
+
+/// One per-curve fixed-income tick broadcast on a rates ring: the deterministic
+/// **parallel curve shift** to apply to the subscribed baseline curve, plus a
+/// monotonic per-curve stamp. **`Copy + Default + Send`** — the `celnet-fanout`
+/// ring payload bound — so it lives in the lock-free SPMC ring exactly like
+/// [`PriceTick`].
+///
+/// Deliberately a tiny POD: like [`PriceTick`] (which carries the driving market,
+/// not the per-instrument price) this carries only the driving curve *move* — the
+/// per-instrument PV/risk is derived per-subscriber by the stream driver, which
+/// holds the baseline `CurveSet` and applies `shift` before re-pricing through the
+/// landed `price_rates` path. `tick_seq` lets a consumer and the parity oracle
+/// agree on exactly which deterministic shift the tick carries.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RatesTick {
+    /// The parallel shift (decimal rate) added to every pillar par rate of the
+    /// subscribed baseline curve for this tick. `0` is the un-shifted baseline.
+    pub shift: f64,
+    /// The monotonic per-curve tick sequence (`0` is the producer's first tick).
+    pub tick_seq: u64,
 }
 
 /// A stable 64-bit seed for a currency pair's deterministic spot path. Built from
@@ -193,6 +223,92 @@ pub fn underlying_seed(u: &Underlying) -> u64 {
     seed_identity(&underlying_key(u))
 }
 
+/// The canonical, class-tagged ring/identity key for a fixed-income **curve**. The
+/// `"IRC:"` (interest-rate curve) class tag guarantees it can never collide with an
+/// FX underlying key (the bare `"BASE/QUOTE"`) or any other class-tagged underlying
+/// key ([`underlying_key`]). The key folds the curve's *identity* — currency,
+/// reference date, and each pillar's locator + exact par-rate bits — so two
+/// byte-identical curves share ONE ring (one curve evolution for every instrument
+/// priced on it, exactly as one EURUSD spot path serves every EURUSD line) while
+/// distinct curves seed distinct deterministic shift paths. Purely internal (never
+/// on the wire), so its spelling is free to evolve.
+fn curve_key(curve: &CurveSet) -> String {
+    use celnet_proto::pillar_tenor::Point;
+    use std::fmt::Write as _;
+
+    let mut s = String::with_capacity(64);
+    // The class tag + currency. `write!` to a String never fails.
+    let _ = write!(s, "IRC:{}", curve.currency);
+    if let Some(d) = curve.reference_date.as_ref() {
+        let _ = write!(s, "@{:04}-{:02}-{:02}", d.year, d.month, d.day);
+    }
+    for p in &curve.ois_pillars {
+        s.push('|');
+        match p.tenor.as_ref().and_then(|t| t.point.as_ref()) {
+            Some(Point::Years(y)) => {
+                let _ = write!(s, "y{y}");
+            }
+            Some(Point::Months(m)) => {
+                let _ = write!(s, "m{m}");
+            }
+            Some(Point::MaturityDate(d)) => {
+                let _ = write!(s, "d{:04}{:02}{:02}", d.year, d.month, d.day);
+            }
+            // A malformed (arm-less) pillar degrades to a stable sentinel rather
+            // than panicking, so a curve still keys deterministically.
+            None => s.push('?'),
+        }
+        // The exact par-rate bits so two curves differing only in a level seed
+        // distinctly (deterministic + reproducible across processes).
+        let _ = write!(s, ":{:016x}", p.par_rate.to_bits());
+    }
+    s
+}
+
+/// A stable 64-bit seed for a curve's deterministic parallel-shift path — the
+/// fixed-income analogue of [`underlying_seed`], folding the class-tagged
+/// [`curve_key`] through the same FNV-1a + `splitmix64` discipline. Distinct curves
+/// (and distinct asset classes) almost surely seed distinctly, so a streamed FI
+/// line gets its own reproducible shift path.
+#[must_use]
+fn curve_seed(curve: &CurveSet) -> u64 {
+    seed_identity(&curve_key(curve))
+}
+
+/// The generalized fan-out identity key — the asset-class-agnostic subscription key
+/// the hub rings are keyed on. An FX/cross-asset line keys on its [`Underlying`]; a
+/// fixed-income line keys on its [`CurveSet`]. Both fold to a class-tagged identity
+/// string ([`underlying_key`] / [`curve_key`]) through the SAME FNV-1a +
+/// `splitmix64` seed discipline, and each drives a per-key ring on the ONE producer
+/// thread — the generalization is entirely at subscribe time. Because the FX arm's
+/// `identity`/`seed` are byte-for-byte [`underlying_key`]/[`underlying_seed`], every
+/// streamed FX/cross-asset line is unchanged; the rates arm never collides with it
+/// (its `IRC:` tag is disjoint from every underlying key).
+enum FanoutKey<'a> {
+    /// An FX / cross-asset underlying (the pre-existing per-underlying ring).
+    Underlying(&'a Underlying),
+    /// A fixed-income curve (the new per-curve rates ring).
+    Curve(&'a CurveSet),
+}
+
+impl FanoutKey<'_> {
+    /// The canonical ring/identity string for this key.
+    fn identity(&self) -> String {
+        match self {
+            FanoutKey::Underlying(u) => underlying_key(u),
+            FanoutKey::Curve(c) => curve_key(c),
+        }
+    }
+
+    /// The deterministic 64-bit seed for this key's evolution path.
+    fn seed(&self) -> u64 {
+        match self {
+            FanoutKey::Underlying(u) => underlying_seed(u),
+            FanoutKey::Curve(c) => curve_seed(c),
+        }
+    }
+}
+
 /// The deterministically-bumped spot for a pair at a given tick sequence, *without*
 /// any mutable state — pure in `(seed, tick_seq, base_spot)`. Reuses the exact
 /// `splitmix64` + `unit_signed` discipline of [`crate::tick::TickSource`] (and the
@@ -208,6 +324,23 @@ pub fn spot_at(seed: u64, tick_seq: u64, base_spot: f64) -> f64 {
     let mixed = TickSource::splitmix64(seed ^ tick_seq.wrapping_mul(0x2545_F491_4F6C_DD1D));
     let u = TickSource::unit_signed(mixed);
     base_spot * (u * STREAM_BUMP + 1.0)
+}
+
+/// The deterministic parallel curve shift (decimal rate) at a given tick sequence,
+/// *without* any mutable state — pure in `(seed, tick_seq)`. The fixed-income
+/// analogue of [`spot_at`]: it reuses the **identical** `splitmix64` counter mix and
+/// `unit_signed` draw, but applies the draw *additively* at the [`RATE_STREAM_BUMP`]
+/// scale (a parallel shift of every zero rate by up to ±1 bp) instead of
+/// multiplicatively around a base spot. The result is in `[-RATE_STREAM_BUMP,
+/// RATE_STREAM_BUMP)`. The parity oracle recomputes it independently from
+/// `(seed, tick_seq)`.
+///
+/// Uses a single multiply (never a fused `mul_add`) for the exact cross-target
+/// bit-stability reason [`spot_at`] documents.
+#[must_use]
+pub fn shift_at(seed: u64, tick_seq: u64) -> f64 {
+    let mixed = TickSource::splitmix64(seed ^ tick_seq.wrapping_mul(0x2545_F491_4F6C_DD1D));
+    TickSource::unit_signed(mixed) * RATE_STREAM_BUMP
 }
 
 /// The single producer plus its driving state for one pair, owned exclusively by
@@ -233,6 +366,32 @@ impl PairProducer {
     }
 }
 
+/// The single producer plus its driving state for one fixed-income curve, owned
+/// exclusively by the producer OS thread. The rates analogue of [`PairProducer`]:
+/// it holds no curve — the baseline `CurveSet` lives per-subscriber in the stream
+/// driver — only the seed + counter needed to publish the deterministic
+/// parallel-shift path. Its publish path is the same zero-allocation, lock-free
+/// ring `publish` the FX producer uses.
+struct RatesProducer {
+    producer: Producer<RatesTick>,
+    seed: u64,
+    tick_seq: u64,
+}
+
+impl RatesProducer {
+    /// Advance and publish the next deterministic parallel-shift tick for this
+    /// curve.
+    #[inline]
+    fn drive(&mut self) {
+        let shift = shift_at(self.seed, self.tick_seq);
+        self.producer.publish(RatesTick {
+            shift,
+            tick_seq: self.tick_seq,
+        });
+        self.tick_seq = self.tick_seq.wrapping_add(1);
+    }
+}
+
 /// A control-plane request to the producer thread to ensure an underlying has a
 /// live ring and return a fresh consumer for it.
 struct SubscribeRequest {
@@ -241,26 +400,53 @@ struct SubscribeRequest {
     reply: std::sync::mpsc::Sender<Consumer<PriceTick>>,
 }
 
-/// The per-pair price-tick fan-out hub.
+/// A control-plane request to the producer thread to ensure a fixed-income curve
+/// has a live rates ring and return a fresh consumer for it. Carries only the
+/// curve (the ring identity + seed); the instrument being streamed lives
+/// per-subscriber in the stream driver, never on the producer thread.
+struct RatesSubscribeRequest {
+    curve_set: CurveSet,
+    reply: std::sync::mpsc::Sender<Consumer<RatesTick>>,
+}
+
+/// The generalized subscribe request routed over the ONE producer-thread control
+/// channel. This is the crux of the fan-out generalization: FX/cross-asset and
+/// fixed-income lines are serviced by a SINGLE producer thread over a SINGLE
+/// channel — not a bolted-on parallel FI path — so the fan-out remains one
+/// [`PriceFanout`]. Each arm drives its own per-key ring family; because the arms
+/// carry distinct POD payloads ([`PriceTick`] vs [`RatesTick`]) each publish stays
+/// its own zero-alloc, lock-free ring write.
+enum FanoutRequest {
+    /// Ensure an FX/cross-asset underlying ring (reply a [`PriceTick`] consumer).
+    Underlying(SubscribeRequest),
+    /// Ensure a fixed-income curve ring (reply a [`RatesTick`] consumer).
+    Rates(RatesSubscribeRequest),
+}
+
+/// The per-key price-tick fan-out hub.
 ///
 /// One hub per edge. It owns a dedicated producer thread that drives every live
-/// pair's ring on [`PRODUCER_INTERVAL`]. Sessions call [`PriceFanout::subscribe`]
-/// to obtain a [`Consumer<PriceTick>`] for a pair (lazily creating that pair's
-/// ring on first subscribe); they then drain it from their async loop.
+/// key's ring on [`PRODUCER_INTERVAL`] — per-underlying rings for FX/cross-asset
+/// lines ([`PriceFanout::subscribe`]) **and** per-curve rings for fixed-income
+/// lines ([`PriceFanout::subscribe_rates`]), all on the ONE thread over the ONE
+/// control channel. Sessions call the matching `subscribe*` to obtain an
+/// independent consumer (lazily creating that key's ring on first subscribe); they
+/// then drain it from their async loop.
 #[derive(Debug)]
 pub(crate) struct PriceFanout {
-    /// Control channel to the producer thread (subscribe / ensure-pair).
-    subscribe_tx: std::sync::mpsc::Sender<SubscribeRequest>,
+    /// The single generalized control channel to the producer thread (ensure an
+    /// FX/cross-asset underlying ring OR a fixed-income curve ring).
+    subscribe_tx: std::sync::mpsc::Sender<FanoutRequest>,
     /// Set false to ask the producer thread to wind down; joined on drop.
     running: Arc<AtomicBool>,
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl PriceFanout {
-    /// Spawn the per-pair price-tick fan-out, with its dedicated producer thread.
+    /// Spawn the per-key price-tick fan-out, with its dedicated producer thread.
     #[must_use]
     pub(crate) fn start() -> Arc<Self> {
-        let (subscribe_tx, subscribe_rx) = std::sync::mpsc::channel::<SubscribeRequest>();
+        let (subscribe_tx, subscribe_rx) = std::sync::mpsc::channel::<FanoutRequest>();
         let running = Arc::new(AtomicBool::new(true));
         let running_thread = Arc::clone(&running);
         let handle = std::thread::Builder::new()
@@ -291,11 +477,39 @@ impl PriceFanout {
     ) -> Option<Consumer<PriceTick>> {
         let (reply, reply_rx) = std::sync::mpsc::channel::<Consumer<PriceTick>>();
         self.subscribe_tx
-            .send(SubscribeRequest {
+            .send(FanoutRequest::Underlying(SubscribeRequest {
                 underlying: underlying.clone(),
                 base,
                 reply,
-            })
+            }))
+            .ok()?;
+        reply_rx.recv().ok()
+    }
+
+    /// Subscribe to a fixed-income **curve's** parallel-shift ring, returning an
+    /// independent [`RatesTick`] consumer positioned at the producer's current head
+    /// (it observes only ticks from now on — the same "from now on" head semantics
+    /// as [`PriceFanout::subscribe`]). The curve's ring is created lazily on first
+    /// subscribe, seeded from the curve's class-tagged identity
+    /// ([`curve_key`]/[`curve_seed`]) — so every instrument priced on one curve
+    /// shares ONE deterministic evolution (one curve move for everyone, exactly as
+    /// one EURUSD spot path serves every EURUSD line). A `None` means the producer
+    /// thread has stopped (edge shutting down) — the caller falls back to no
+    /// streamed updates, never a fake.
+    ///
+    /// This is the fixed-income arm of the generalized fan-out: it shares the ONE
+    /// producer thread + control channel with [`PriceFanout::subscribe`]; only the
+    /// per-key ring payload differs. The subscribed instrument is NOT passed here —
+    /// the producer only publishes the curve shift; the stream driver holds the
+    /// baseline `CurveSet` + instrument and reprices per drained tick.
+    #[must_use]
+    pub(crate) fn subscribe_rates(&self, curve_set: &CurveSet) -> Option<Consumer<RatesTick>> {
+        let (reply, reply_rx) = std::sync::mpsc::channel::<Consumer<RatesTick>>();
+        self.subscribe_tx
+            .send(FanoutRequest::Rates(RatesSubscribeRequest {
+                curve_set: curve_set.clone(),
+                reply,
+            }))
             .ok()?;
         reply_rx.recv().ok()
     }
@@ -311,28 +525,46 @@ impl Drop for PriceFanout {
     }
 }
 
-/// The dedicated producer-thread loop. Owns every per-pair [`PairProducer`] and the
-/// shared [`PairRing`] templates, drives all live pairs once per
-/// [`PRODUCER_INTERVAL`], and services subscribe requests between cadence ticks.
-/// Runs entirely off the tokio runtime so a slow async consumer can never stall
-/// publication (the ring conflates instead).
-fn producer_loop(subscribe_rx: std::sync::mpsc::Receiver<SubscribeRequest>, running: &AtomicBool) {
+/// The dedicated producer-thread loop. Owns every live ring — the per-underlying
+/// [`PairProducer`]s (FX/cross-asset) **and** the per-curve [`RatesProducer`]s
+/// (fixed-income) — drives them all once per [`PRODUCER_INTERVAL`], and services
+/// both kinds of subscribe request between cadence ticks over the ONE control
+/// channel. Runs entirely off the tokio runtime so a slow async consumer can never
+/// stall publication (the ring conflates instead).
+fn producer_loop(subscribe_rx: std::sync::mpsc::Receiver<FanoutRequest>, running: &AtomicBool) {
     let mut producers: HashMap<String, PairProducer> = HashMap::new();
+    let mut rates_producers: HashMap<String, RatesProducer> = HashMap::new();
     let mut last = std::time::Instant::now();
 
     while running.load(Ordering::Acquire) {
-        // Service all pending subscribe requests (non-blocking), creating a ring
-        // for any new underlying and replying with a fresh head-positioned consumer.
+        // Service all pending subscribe requests (non-blocking), creating a ring for
+        // any new key and replying with a fresh head-positioned consumer. Both arms
+        // route the generalized [`FanoutKey`] to the identical ring machinery.
         loop {
             match subscribe_rx.try_recv() {
-                Ok(req) => {
-                    let key = underlying_key(&req.underlying);
-                    let entry = producers.entry(key).or_insert_with(|| {
+                Ok(FanoutRequest::Underlying(req)) => {
+                    let key = FanoutKey::Underlying(&req.underlying);
+                    let entry = producers.entry(key.identity()).or_insert_with(|| {
                         let ring = BroadcastRing::<PriceTick>::new(RING_CAPACITY);
                         let producer = ring.into_producer();
                         PairProducer {
-                            seed: underlying_seed(&req.underlying),
+                            seed: FanoutKey::Underlying(&req.underlying).seed(),
                             base: req.base,
+                            tick_seq: 0,
+                            producer,
+                        }
+                    });
+                    // A fresh consumer at the producer's current head.
+                    let consumer = entry.producer.subscribe_from_head();
+                    let _ = req.reply.send(consumer);
+                }
+                Ok(FanoutRequest::Rates(req)) => {
+                    let key = FanoutKey::Curve(&req.curve_set);
+                    let entry = rates_producers.entry(key.identity()).or_insert_with(|| {
+                        let ring = BroadcastRing::<RatesTick>::new(RING_CAPACITY);
+                        let producer = ring.into_producer();
+                        RatesProducer {
+                            seed: FanoutKey::Curve(&req.curve_set).seed(),
                             tick_seq: 0,
                             producer,
                         }
@@ -350,11 +582,16 @@ fn producer_loop(subscribe_rx: std::sync::mpsc::Receiver<SubscribeRequest>, runn
             }
         }
 
-        // Drive every live pair once per cadence interval.
+        // Drive every live ring once per cadence interval — the underlying (FX/
+        // cross-asset) rings, then the curve (fixed-income) rings. Each `drive` is a
+        // single zero-alloc, lock-free ring publish of that ring's POD.
         let now = std::time::Instant::now();
         if now.duration_since(last) >= PRODUCER_INTERVAL {
             last = now;
             for prod in producers.values_mut() {
+                prod.drive();
+            }
+            for prod in rates_producers.values_mut() {
                 prod.drive();
             }
         }
@@ -583,6 +820,147 @@ mod tests {
             c.cursor() - start_head,
             "received + skipped == produced-observed (exact, no loss, no double-count)"
         );
+        drop(hub);
+    }
+
+    // ---- fixed-income (rates) fan-out arm ----------------------------------
+
+    fn years_tenor(y: u32) -> celnet_proto::PillarTenor {
+        celnet_proto::PillarTenor {
+            point: Some(celnet_proto::pillar_tenor::Point::Years(y)),
+        }
+    }
+
+    /// A minimal-but-real USD curve; `par5y` lets a test perturb one level.
+    fn rate_curve(par5y: f64) -> CurveSet {
+        CurveSet {
+            currency: "USD".to_owned(),
+            reference_date: Some(celnet_proto::BrokenDate {
+                year: 2026,
+                month: 6,
+                day: 25,
+            }),
+            ois_pillars: vec![
+                celnet_proto::OisPillar {
+                    tenor: Some(years_tenor(1)),
+                    par_rate: 0.0432,
+                },
+                celnet_proto::OisPillar {
+                    tenor: Some(years_tenor(5)),
+                    par_rate: par5y,
+                },
+            ],
+        }
+    }
+
+    /// A fixed-income curve key ([`FanoutKey::Curve`]) can NEVER collide with an FX
+    /// / cross-asset underlying key ([`FanoutKey::Underlying`]): its `IRC:` class tag
+    /// is disjoint from the bare `"BASE/QUOTE"` FX preimage. The FX arm's
+    /// identity/seed stay byte-for-byte [`underlying_key`]/[`underlying_seed`] (so no
+    /// streamed FX line moves), identical curves key + seed identically (one ring /
+    /// one evolution per curve), and distinct curves seed distinctly.
+    #[test]
+    fn fx_and_rates_fanout_keys_are_disjoint() {
+        let c = rate_curve(0.0405);
+        let u = Underlying::fx(pair("EUR", "USD"));
+        assert_ne!(
+            FanoutKey::Curve(&c).identity(),
+            FanoutKey::Underlying(&u).identity(),
+            "an IRC curve key can never collide with an FX underlying key"
+        );
+        assert_ne!(
+            FanoutKey::Curve(&c).seed(),
+            FanoutKey::Underlying(&u).seed()
+        );
+        // The FX arm is byte-identical to the historical FX key/seed (no regression).
+        assert_eq!(FanoutKey::Underlying(&u).identity(), underlying_key(&u));
+        assert_eq!(FanoutKey::Underlying(&u).seed(), underlying_seed(&u));
+        // One curve → one deterministic evolution; a different level → a different
+        // seed (so distinct curves get distinct shift paths).
+        assert_eq!(FanoutKey::Curve(&c).seed(), curve_seed(&rate_curve(0.0405)));
+        assert_ne!(
+            curve_seed(&rate_curve(0.0405)),
+            curve_seed(&rate_curve(0.0410))
+        );
+    }
+
+    /// The deterministic parallel-shift path is pure in `(seed, tick_seq)` and
+    /// bounded by [`RATE_STREAM_BUMP`], so a streamed curve never jumps more than
+    /// ±1 bp per tick (the FI analogue of the FX spot-path purity/positivity gate).
+    #[test]
+    fn rates_shift_path_is_pure_and_bounded() {
+        let seed = curve_seed(&rate_curve(0.0405));
+        for t in 0..256u64 {
+            let a = shift_at(seed, t);
+            let b = shift_at(seed, t);
+            assert_eq!(a.to_bits(), b.to_bits(), "pure in (seed, tick)");
+            assert!(
+                a.abs() <= RATE_STREAM_BUMP,
+                "bounded by RATE_STREAM_BUMP: {a}"
+            );
+        }
+    }
+
+    /// End-to-end through the real producer thread: two consumers on the SAME curve
+    /// observe the SAME deterministic parallel-shift stream in order (genuine
+    /// broadcast, not a partition), and each shift matches the pure [`shift_at`]
+    /// oracle — the rates arm of the fan-out is a true 1-producer → N-consumers
+    /// broadcast, sharing the ONE producer thread with the FX arm.
+    #[test]
+    fn two_consumers_same_curve_see_identical_ordered_rate_ticks() {
+        let hub = PriceFanout::start();
+        let c = rate_curve(0.0405);
+        let seed = curve_seed(&c);
+        let mut r1 = hub.subscribe_rates(&c).expect("rates ring");
+        let mut r2 = hub.subscribe_rates(&c).expect("rates ring");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut got1: Vec<RatesTick> = Vec::new();
+        let mut got2: Vec<RatesTick> = Vec::new();
+        while (got1.len() < 8 || got2.len() < 8) && std::time::Instant::now() < deadline {
+            while let Ok(t) = r1.try_recv() {
+                got1.push(t);
+            }
+            while let Ok(t) = r2.try_recv() {
+                got2.push(t);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            got1.len() >= 8 && got2.len() >= 8,
+            "both saw enough rate ticks"
+        );
+        for got in [&got1, &got2] {
+            for w in got.windows(2) {
+                assert!(w[0].tick_seq < w[1].tick_seq, "in order, no duplicates");
+            }
+            for t in got.iter() {
+                assert_eq!(
+                    t.shift.to_bits(),
+                    shift_at(seed, t.tick_seq).to_bits(),
+                    "the tick shift matches the pure oracle"
+                );
+            }
+        }
+        // Overlapping tick_seqs carry identical shifts across the two consumers.
+        let overlap_lo = got1
+            .first()
+            .unwrap()
+            .tick_seq
+            .max(got2.first().unwrap().tick_seq);
+        let overlap_hi = got1
+            .last()
+            .unwrap()
+            .tick_seq
+            .min(got2.last().unwrap().tick_seq);
+        assert!(overlap_hi >= overlap_lo, "the streams overlap");
+        for seq in overlap_lo..=overlap_hi {
+            let a = got1.iter().find(|t| t.tick_seq == seq).map(|t| t.shift);
+            let b = got2.iter().find(|t| t.tick_seq == seq).map(|t| t.shift);
+            if let (Some(a), Some(b)) = (a, b) {
+                assert_eq!(a.to_bits(), b.to_bits(), "broadcast: same shift per seq");
+            }
+        }
         drop(hub);
     }
 }

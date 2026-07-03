@@ -965,6 +965,13 @@ async fn handle_frame(
             .await;
             SessionFlow::Continue
         }
+        // Fixed-income streaming frames (RatesStreamSnapshot / RatesStreamUpdate)
+        // are consumed by the dedicated FI-stream client surface (sdk-fi-stream). A
+        // price/series session that never opened a rates line does not receive
+        // these; an unsolicited FI frame is dropped, not mis-routed — never faked
+        // into an FX price line.
+        server_stream_message::Message::RatesStreamSnapshot(_)
+        | server_stream_message::Message::RatesStreamUpdate(_) => SessionFlow::Continue,
     }
 }
 

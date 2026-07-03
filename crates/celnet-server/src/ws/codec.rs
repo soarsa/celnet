@@ -1596,6 +1596,23 @@ pub(super) fn subscribe_from_json(o: &Map<String, Value>) -> Result<Subscribe> {
     })
 }
 
+/// Decode a `RatesSubscribe` (open a fixed-income streaming line) from the WS JSON
+/// mirror — the FI counterpart of [`subscribe_from_json`]. Reuses the existing
+/// hand codec's `rates_instrument_from_json` + `curve_set_from_json` (the same
+/// decoders the rates unary edge validates against), so a WS client opens a rates
+/// stream over the SAME multiplexed session it opens an FX stream on.
+pub(super) fn rates_subscribe_from_json(
+    o: &Map<String, Value>,
+) -> Result<celnet_proto::RatesSubscribe> {
+    Ok(celnet_proto::RatesSubscribe {
+        subscription: Some(nested(o, "subscription", subscription_id_from_json)?),
+        instrument: Some(nested(o, "instrument", rates_instrument_from_json)?),
+        curve_set: Some(nested(o, "curve_set", curve_set_from_json)?),
+        throttle_nanos: u64_or_zero(o, "throttle_nanos"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
 pub(super) fn modify_from_json(o: &Map<String, Value>) -> Result<Modify> {
     Ok(Modify {
         subscription: Some(nested(o, "subscription", subscription_id_from_json)?),
@@ -1771,8 +1788,33 @@ pub(super) fn server_stream_message_to_json(
             ("market_series_snapshot", market_series_snapshot_to_json(s))
         }
         Message::MarketSeriesPoint(p) => ("market_series_point", market_series_point_to_json(p)),
+        Message::RatesStreamSnapshot(s) => {
+            ("rates_stream_snapshot", rates_stream_snapshot_to_json(s))
+        }
+        Message::RatesStreamUpdate(u) => ("rates_stream_update", rates_stream_update_to_json(u)),
     };
     Some(tagged(tag, body))
+}
+
+fn rates_stream_snapshot_to_json(s: &celnet_proto::RatesStreamSnapshot) -> Value {
+    json!({
+        "subscription": s.subscription.as_ref().map(subscription_id_to_json),
+        "sequence": s.sequence,
+        "result": s.result.as_ref().map(rates_pricing_result_to_json),
+        "curve_shift": s.curve_shift,
+        "correlation_id": s.correlation_id,
+        "epoch_nanos": s.epoch_nanos,
+    })
+}
+
+fn rates_stream_update_to_json(u: &celnet_proto::RatesStreamUpdate) -> Value {
+    json!({
+        "subscription": u.subscription.as_ref().map(subscription_id_to_json),
+        "sequence": u.sequence,
+        "result": u.result.as_ref().map(rates_pricing_result_to_json),
+        "curve_shift": u.curve_shift,
+        "epoch_nanos": u.epoch_nanos,
+    })
 }
 
 fn market_series_point_to_json(p: &celnet_proto::MarketSeriesPoint) -> Value {

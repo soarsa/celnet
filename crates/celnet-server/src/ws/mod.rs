@@ -664,6 +664,9 @@ fn decode_stream_control(
             client_stream_message::Message::Authenticate(codec::stream_auth_from_json(o)?)
         }
         "subscribe" => client_stream_message::Message::Subscribe(codec::subscribe_from_json(o)?),
+        "rates_subscribe" => {
+            client_stream_message::Message::RatesSubscribe(codec::rates_subscribe_from_json(o)?)
+        }
         "modify" => client_stream_message::Message::Modify(codec::modify_from_json(o)?),
         "unsubscribe" => {
             client_stream_message::Message::Unsubscribe(codec::unsubscribe_from_json(o)?)
@@ -1279,6 +1282,9 @@ mod tests {
             "heartbeat",
             "market_series_subscribe",
             "market_series_unsubscribe",
+            // The fixed-income streaming line folded onto the SAME multiplexed
+            // session (rates-stream-ws): a WS client sends `{"type":"rates_subscribe"}`.
+            "rates_subscribe",
         ];
         frozen.sort_unstable();
         assert_eq!(

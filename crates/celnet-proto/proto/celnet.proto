@@ -1924,6 +1924,79 @@ message Update {
   int64 epoch_nanos = 8;
 }
 
+// ===========================================================================
+// Fixed-income (linear-rates) live streaming — folded into the SAME multiplexed
+// StreamSession (and the SAME `PriceFanout`) the FX/cross-asset price stream
+// uses, NOT a parallel FI path. A client opens a rates line with
+// `RatesSubscribe` (a `RatesInstrument` priced against a `CurveSet`, the FI
+// analogue of `Subscribe`'s instrument + market) and receives a baseline
+// `RatesStreamSnapshot` then sequenced `RatesStreamUpdate`s as the curve evolves
+// (the same re-price-on-tick model the FX line uses against an evolving spot).
+// The streamed line is indicative (PV + first-order risk); click-to-trade for
+// rates is booked through the RFQ/desk path, so NO `TradableToken` rides the
+// rates stream. Additive (rule 9): new oneof arms + new messages; no existing
+// field is touched, so the FX/cross-asset stream stays byte-identical.
+// ===========================================================================
+
+// Open a fixed-income streaming line within the multiplexed session, keyed by a
+// client-assigned `SubscriptionId` (the SAME id space as the FX price + market
+// series streams). The line prices `instrument` against `curve_set`; the server
+// emits a baseline `RatesStreamSnapshot` then `RatesStreamUpdate`s as the curve
+// deterministically ticks.
+message RatesSubscribe {
+  // The client-assigned subscription id this rates line is keyed on.
+  SubscriptionId subscription = 1;
+  // The linear-rates instrument to stream (OIS / IRS / FRA / cash bond).
+  RatesInstrument instrument = 2;
+  // The calibrated curve set the instrument is priced against — the subscribed
+  // baseline curve the deterministic per-curve evolution shifts around.
+  CurveSet curve_set = 3;
+  // A client throttle hint: minimum nanoseconds between updates the client
+  // wants (the server conflates deltas to honour it). 0 = no throttling.
+  uint64 throttle_nanos = 4;
+  // Optional caller correlation id, echoed on the baseline snapshot
+  // (presence-tracked), so a blotter joins the line to its open request.
+  optional uint64 correlation_id = 5;
+}
+
+// The baseline state of a streamed fixed-income line at a sequence point — the
+// priced `RatesPricingResult` a consumer applies whole before consuming deltas.
+// Faithful to `PricingService.PriceRates`: the snapshot's `result` at the
+// subscribed baseline curve equals `price_rates(instrument, curve_set)` exactly.
+message RatesStreamSnapshot {
+  // The subscription this snapshot answers.
+  SubscriptionId subscription = 1;
+  // The monotonic per-subscription sequence number of this snapshot (1).
+  uint64 sequence = 2;
+  // The priced PV + PV01 / DV01 / key-rate ladder at this snapshot.
+  RatesPricingResult result = 3;
+  // The parallel curve shift (decimal, added to every pillar par rate) applied
+  // relative to the subscribed baseline curve — always 0 at the baseline.
+  double curve_shift = 4;
+  // Echo of the opening `RatesSubscribe.correlation_id`, if one was supplied
+  // (presence-tracked). Absent => none.
+  optional uint64 correlation_id = 5;
+  // Snapshot time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 6;
+}
+
+// A sequenced delta on a streamed fixed-income line: the line re-priced at the
+// next sequence against the baseline curve shifted by `curve_shift`. A gap in
+// `sequence` signals loss and prompts a `Resync`.
+message RatesStreamUpdate {
+  // The subscription this update advances.
+  SubscriptionId subscription = 1;
+  // The monotonic per-subscription sequence number (snapshot seq + n).
+  uint64 sequence = 2;
+  // The re-priced PV + first-order risk at this sequence.
+  RatesPricingResult result = 3;
+  // The parallel curve shift (decimal) applied to the baseline curve for this
+  // tick — the deterministic per-curve evolution the fan-out published.
+  double curve_shift = 4;
+  // Update time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 5;
+}
+
 // The server signals a subscription was dropped (e.g. slow consumer lagged the
 // per-subscriber buffer, or the engine is draining for a blue-green cutover).
 // The client should `Resync` (lag) or re-`Subscribe` after cutover (drain).
@@ -2038,6 +2111,8 @@ message ClientStreamMessage {
     // Authenticate the session — SHOULD be the first frame on a new session.
     // Pins the caller for all subsequent control + click-to-trade.
     StreamAuth authenticate = 9;
+    // Open a fixed-income (linear-rates) streaming line on the SAME session.
+    RatesSubscribe rates_subscribe = 10;
   }
 }
 
@@ -2077,6 +2152,10 @@ message ServerStreamMessage {
     MarketSeriesSnapshot market_series_snapshot = 7;
     // A new market-series point appended to an opened series.
     MarketSeriesPoint market_series_point = 8;
+    // The baseline state of a streamed fixed-income line.
+    RatesStreamSnapshot rates_stream_snapshot = 9;
+    // A sequenced delta advancing a streamed fixed-income line.
+    RatesStreamUpdate rates_stream_update = 10;
   }
 }
 

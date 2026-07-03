@@ -70,10 +70,12 @@ use celnet_fanout::Consumer;
 use celnet_observability::LatencyRecorder;
 use celnet_proto::stream_service_server::StreamService;
 use celnet_proto::{
-    ClientStreamMessage, Conventions, Execute, Executed, Heartbeat, Instrument, MarketContext,
-    MarketObservable, MarketSeriesPoint, MarketSeriesSnapshot, MarketSeriesSubscribe,
-    ServerStreamMessage, Side, Snapshot, StreamEnd, StreamReject, SubscriptionId, TradableToken,
-    TwoWayPrice, Update, client_stream_message, server_stream_message, stream_end, stream_reject,
+    ClientStreamMessage, Conventions, CurveSet, Execute, Executed, Heartbeat, Instrument,
+    MarketContext, MarketObservable, MarketSeriesPoint, MarketSeriesSnapshot,
+    MarketSeriesSubscribe, RatesInstrument, RatesPriceRequest, RatesPricingResult,
+    RatesStreamSnapshot, RatesStreamUpdate, RatesSubscribe, ServerStreamMessage, Side, Snapshot,
+    StreamEnd, StreamReject, SubscriptionId, TradableToken, TwoWayPrice, Update,
+    client_stream_message, server_stream_message, stream_end, stream_reject,
 };
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
@@ -82,13 +84,14 @@ use tonic::{Request, Response, Status, Streaming};
 use crate::clock::Clock;
 use crate::core_link::{CoreLink, Observable, ObservableQuery};
 use crate::pricer::{ConventionSet, Priced, price_instrument};
+use crate::rates_pricing::{RatesPriceError, price_rates};
 use crate::readiness::ReadinessGate;
 use crate::services::clicktrade::{
     BookOutcome, TokenLedger, TokenMinter, TwoWayLine, mint_two_way,
 };
 use crate::services::forward::route_pair;
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
-use crate::services::pricefanout::{PriceFanout, PriceTick};
+use crate::services::pricefanout::{PriceFanout, PriceTick, RatesTick};
 use crate::services::risk::federate::Fleet;
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
@@ -378,6 +381,79 @@ impl Subscription {
     }
 }
 
+/// The per-subscription server-side state for a streamed **fixed-income** line —
+/// the rates analogue of [`Subscription`]. It holds the baseline [`CurveSet`] +
+/// [`RatesInstrument`] (the FI analogue of an FX subscription's instrument + base
+/// market) and drains its curve's shared [`RatesTick`] ring to re-price on each
+/// deterministic parallel-shift tick. A rates line is **indicative** (PV + first-
+/// order risk); rates click-to-trade books through the RFQ/desk path, so — unlike
+/// [`Subscription`] — it carries no tradable-token ledger, replay buffer, or
+/// idempotency map (a resync re-subscribes; there is no dealable token to retire).
+struct RatesSubscription {
+    id: SubscriptionId,
+    /// The instrument being streamed (re-priced against the shifted curve per tick).
+    instrument: RatesInstrument,
+    /// The subscribed baseline curve the deterministic shift is applied around.
+    curve_set: CurveSet,
+    /// This line's independent consumer on its curve's shared [`RatesTick`] ring
+    /// (the 1-producer-per-curve → N-consumers fan-out). `drive_rates_tick` drains
+    /// it to learn the next parallel shift and emit one `RatesStreamUpdate` per pass.
+    tick: Consumer<RatesTick>,
+    /// The monotonic per-subscription sequence number last emitted.
+    sequence: u64,
+    /// The highest sequence actually handed to the client's channel.
+    delivered: u64,
+    /// The opening `RatesSubscribe.correlation_id`, echoed on the baseline snapshot.
+    correlation_id: Option<u64>,
+}
+
+impl RatesSubscription {
+    /// Price this line against its baseline curve shifted by `shift` (a parallel
+    /// move added to every pillar par rate), through the **landed** [`price_rates`]
+    /// path — never a reimplementation. At `shift == 0.0` the shifted curve is a
+    /// byte-identical clone (see [`shifted_curve`]), so the result is byte-for-byte
+    /// `price_rates(instrument, curve_set)` — the faithful baseline. The shifted
+    /// curve is a per-tick clone on the drain edge (never the pinned hot core), the
+    /// exact FI analogue of the FX line's per-tick `price_instrument` on the edge.
+    fn reprice(&self, shift: f64) -> Result<RatesPricingResult, Status> {
+        let req = RatesPriceRequest {
+            request_id: 0,
+            curve_set: Some(shifted_curve(&self.curve_set, shift)),
+            // `RatesInstrument` is a small `Copy` POD (scalar-only arms), so this is
+            // a register copy, not an allocation.
+            instrument: Some(self.instrument),
+            correlation_id: None,
+        };
+        price_rates(&req).map_err(rates_error_to_status)
+    }
+}
+
+/// A parallel-shifted copy of a curve: every OIS pillar's par rate moved by `shift`
+/// (decimal). A `shift` of exactly `0.0` short-circuits to a byte-identical clone,
+/// so a re-price at shift 0 equals the un-shifted baseline bit-for-bit (guarding
+/// the one f64 edge case where `x + 0.0` is not `x`, a negative-zero pillar).
+fn shifted_curve(curve: &CurveSet, shift: f64) -> CurveSet {
+    let mut shifted = curve.clone();
+    if shift == 0.0 {
+        return shifted;
+    }
+    for pillar in &mut shifted.ois_pillars {
+        pillar.par_rate += shift;
+    }
+    shifted
+}
+
+/// Map a rates pricing error to a gRPC status, mirroring the `PricingService`
+/// [`crate::services::pricing`] mapping exactly: a bootstrap failure on
+/// otherwise-valid input is an internal numeric fault; every other variant is a
+/// malformed request.
+fn rates_error_to_status(e: RatesPriceError) -> Status {
+    match e {
+        RatesPriceError::Bootstrap(_) => Status::internal(e.to_string()),
+        _ => Status::invalid_argument(e.to_string()),
+    }
+}
+
 /// Re-encode a decoded [`ConventionSet`] back to the wire form for echoing.
 fn conv_to_wire(c: &ConventionSet) -> Conventions {
     Conventions {
@@ -527,6 +603,53 @@ fn make_update(
     })
 }
 
+/// Build a [`RatesStreamSnapshot`] message for a fixed-income line at `seq` — the
+/// baseline `result` (priced at `shift`, `0.0` for the baseline) plus the echoed
+/// correlation id. Carries no tradable token (a rates stream is indicative).
+fn rates_snapshot_msg(
+    id: SubscriptionId,
+    seq: u64,
+    result: RatesPricingResult,
+    shift: f64,
+    correlation_id: Option<u64>,
+    now: i64,
+) -> ServerStreamMessage {
+    ServerStreamMessage {
+        message: Some(server_stream_message::Message::RatesStreamSnapshot(
+            RatesStreamSnapshot {
+                subscription: Some(id),
+                sequence: seq,
+                result: Some(result),
+                curve_shift: shift,
+                correlation_id,
+                epoch_nanos: now,
+            },
+        )),
+    }
+}
+
+/// Build a [`RatesStreamUpdate`] message for a fixed-income line at `seq` — the
+/// line re-priced against the baseline curve shifted by `shift`.
+fn rates_update_msg(
+    id: SubscriptionId,
+    seq: u64,
+    result: RatesPricingResult,
+    shift: f64,
+    now: i64,
+) -> ServerStreamMessage {
+    ServerStreamMessage {
+        message: Some(server_stream_message::Message::RatesStreamUpdate(
+            RatesStreamUpdate {
+                subscription: Some(id),
+                sequence: seq,
+                result: Some(result),
+                curve_shift: shift,
+                epoch_nanos: now,
+            },
+        )),
+    }
+}
+
 /// Build the wire [`celnet_proto::Greeks`] for a streamed Snapshot/Update,
 /// carry-tagging the rate-sensitivity arm by the instrument's asset class: an FX /
 /// metal line keeps the two-rho `Fx` arm **byte-identical** to today, a cross-asset
@@ -622,6 +745,7 @@ impl StreamEdge {
         Session {
             subs: HashMap::new(),
             series: HashMap::new(),
+            rates_subs: HashMap::new(),
             link: Arc::clone(&self.link),
             spread: self.spread,
             clock: self.clock.clone(),
@@ -798,6 +922,12 @@ pub(crate) async fn run_session<S>(
                 if !session.subs.is_empty() && !session.drive_tick(&out_tx) {
                     break; // channel closed: client gone.
                 }
+                // Fixed-income stream updates: the SAME deterministic tick, drained
+                // from the same fan-out's per-curve rings and re-priced through the
+                // landed `price_rates` path (sync, off the live read path).
+                if !session.rates_subs.is_empty() && !session.drive_rates_tick(&out_tx) {
+                    break; // channel closed: client gone.
+                }
                 // Market-series (TrendMode) points sampled off the *live* market
                 // state — an async read per due series, conflated by the client
                 // throttle, off the pinned hot core.
@@ -913,6 +1043,12 @@ pub(crate) struct Session {
     /// streams). Sampled off the live market state on each tick, conflated per the
     /// client throttle.
     series: HashMap<u64, MarketSeries>,
+    /// The live **fixed-income** streaming lines multiplexed on this session, keyed
+    /// by their `SubscriptionId` (the SAME id space as the FX price + market-series
+    /// streams). Each drains its curve's shared [`RatesTick`] ring from the ONE
+    /// [`PriceFanout`] and re-prices through the landed `price_rates` path — folded
+    /// into the same fan-out the FX/cross-asset lines use, not a parallel FI path.
+    rates_subs: HashMap<u64, RatesSubscription>,
     link: Arc<CoreLink>,
     spread: SpreadModel,
     clock: Clock,
@@ -1001,6 +1137,12 @@ impl Session {
             | client_stream_message::Message::MarketSeriesSubscribe(_) => Some(
                 RequiredAuthority::Capability(Action::Stream, AssetClass::FxOptions),
             ),
+            // A fixed-income streaming line needs the Stream capability for the
+            // FixedIncome asset class (the rates franchise), NOT FxOptions — a
+            // caller entitled to stream FX cannot self-grant a rates stream.
+            client_stream_message::Message::RatesSubscribe(_) => Some(
+                RequiredAuthority::Capability(Action::Stream, AssetClass::FixedIncome),
+            ),
             _ => None,
         };
         if let Some(required) = required
@@ -1038,10 +1180,17 @@ impl Session {
                 }
             }
             client_stream_message::Message::Subscribe(s) => self.handle_subscribe(s, out_tx).await,
+            client_stream_message::Message::RatesSubscribe(s) => {
+                self.handle_rates_subscribe(s, out_tx).await
+            }
             client_stream_message::Message::Modify(m) => self.handle_modify(m, out_tx).await,
             client_stream_message::Message::Unsubscribe(u) => {
+                // The subscription id space is shared across FX price, market-series,
+                // and fixed-income lines: a single id keys at most one of them, so
+                // tear down whichever this id names.
                 if let Some(id) = u.subscription
-                    && self.subs.remove(&id.value).is_some()
+                    && (self.subs.remove(&id.value).is_some()
+                        || self.rates_subs.remove(&id.value).is_some())
                 {
                     let end = ServerStreamMessage {
                         message: Some(server_stream_message::Message::StreamEnd(StreamEnd {
@@ -1185,6 +1334,87 @@ impl Session {
         }
         sub.delivered = 1;
         self.subs.insert(id.value, sub);
+        true
+    }
+
+    /// Open a new **fixed-income** streaming line: subscribe the instrument's CURVE
+    /// on the shared per-curve [`RatesTick`] ring (the ONE [`PriceFanout`] — the
+    /// SAME fan-out the FX/cross-asset lines use), price the baseline through the
+    /// landed `price_rates` path, and send the baseline `RatesStreamSnapshot` at
+    /// sequence 1. A subscribe missing its instrument or curve is a hard error
+    /// (never an FI line that can never price), never a fabricated stream.
+    async fn handle_rates_subscribe(
+        &mut self,
+        s: RatesSubscribe,
+        out_tx: &mpsc::Sender<Result<ServerStreamMessage, Status>>,
+    ) -> bool {
+        let Some(id) = s.subscription else {
+            return true;
+        };
+        let Some(instrument) = s.instrument else {
+            let _ = out_tx
+                .send(Err(Status::invalid_argument(
+                    "rates subscribe requires an `instrument`",
+                )))
+                .await;
+            return true;
+        };
+        let Some(curve_set) = s.curve_set else {
+            let _ = out_tx
+                .send(Err(Status::invalid_argument(
+                    "rates subscribe requires a `curve_set`",
+                )))
+                .await;
+            return true;
+        };
+        // Subscribe to the curve's shared parallel-shift ring on the ONE fan-out:
+        // every instrument priced on this curve shares one deterministic curve
+        // evolution (one curve move for everyone), exactly as every EURUSD line
+        // shares one spot path. A `None` means the fan-out is draining.
+        let tick = match self.fanout.subscribe_rates(&curve_set) {
+            Some(consumer) => consumer,
+            None => {
+                let _ = out_tx
+                    .send(Err(Status::unavailable(
+                        "price fan-out unavailable (edge draining)",
+                    )))
+                    .await;
+                return true;
+            }
+        };
+        let mut sub = RatesSubscription {
+            id,
+            instrument,
+            curve_set,
+            tick,
+            sequence: 1,
+            delivered: 0,
+            correlation_id: s.correlation_id,
+        };
+        // The baseline snapshot is priced at shift 0, i.e. byte-for-byte
+        // price_rates(instrument, curve_set) — the faithful baseline (an invalid
+        // curve/instrument surfaces its typed error and opens no line).
+        let result = match sub.reprice(0.0) {
+            Ok(r) => r,
+            Err(status) => {
+                let _ = out_tx.send(Err(status)).await;
+                return true;
+            }
+        };
+        let snap = rates_snapshot_msg(
+            sub.id,
+            1,
+            result,
+            0.0,
+            sub.correlation_id,
+            self.clock.now_nanos(),
+        );
+        // Blocking send for the snapshot so the baseline is never dropped.
+        if out_tx.send(Ok(snap)).await.is_err() {
+            return false;
+        }
+        sub.delivered = 1;
+        self.rates_subs.insert(id.value, sub);
         true
     }
 
@@ -1665,6 +1895,53 @@ impl Session {
         }
         true
     }
+
+    /// Drive a market-tick pass across every live **fixed-income** line — the FI
+    /// mirror of [`Session::drive_tick`]. Each line drains its curve's [`RatesTick`]
+    /// ring (the shared per-curve SPMC fan-out), **conflates the pass to the latest
+    /// parallel shift**, re-prices through the landed `price_rates` path, and emits
+    /// **at most one** sequenced `RatesStreamUpdate`. Returns `false` only when the
+    /// outbound channel has closed.
+    ///
+    /// Same one-`Update`-per-pass client conflation throttle the FX driver uses: the
+    /// ring delivers per-curve ticks in order (never torn/duplicated), the driver
+    /// keeps only the most recent, and the producer's own latest-value conflation
+    /// engages when a line falls more than the ring's capacity behind. A transient
+    /// re-price failure on a shifted curve SKIPS this pass (honest: never a
+    /// fabricated or stale point, never a teardown); a momentarily-full outbound
+    /// channel drops the update (the FI line is conflatable — the next pass carries
+    /// the then-current PV).
+    fn drive_rates_tick(
+        &mut self,
+        out_tx: &mpsc::Sender<Result<ServerStreamMessage, Status>>,
+    ) -> bool {
+        let now = self.clock.now_nanos();
+        for sub in self.rates_subs.values_mut() {
+            // Conflate the pass to the LATEST available parallel shift.
+            let mut latest: Option<f64> = None;
+            while let Ok(tick) = sub.tick.try_recv() {
+                latest = Some(tick.shift);
+            }
+            let Some(shift) = latest else {
+                continue;
+            };
+            let result = match sub.reprice(shift) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let seq = sub.sequence + 1;
+            let update = rates_update_msg(sub.id, seq, result, shift, now);
+            match out_tx.try_send(Ok(update)) {
+                Ok(()) => {
+                    sub.sequence = seq;
+                    sub.delivered = seq;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => return false,
+                Err(mpsc::error::TrySendError::Full(_)) => {}
+            }
+        }
+        true
+    }
 }
 
 /// The outcome of attempting to emit one `Update` to a subscriber.
@@ -1937,6 +2214,186 @@ mod tests {
         .expect("the cross-asset stream test completes within the deadline");
     }
 
+    // ---- fixed-income streaming (rates-stream-ws) --------------------------
+
+    /// A 5Y USD-SOFR OIS payer on the P0 static curve — a real, priced FI line.
+    fn ois_line() -> RatesInstrument {
+        RatesInstrument {
+            instrument: Some(celnet_proto::rates_instrument::Instrument::Ois(
+                celnet_proto::OisInstrument {
+                    tenor_years: 5,
+                    fixed_rate: 0.0405,
+                    notional: 10_000_000.0,
+                    side: Side::Buy as i32,
+                },
+            )),
+        }
+    }
+
+    /// The landed `price_rates` result for `instrument` against `curve` — the
+    /// INDEPENDENT oracle the streamed FI line is validated against (the pricer the
+    /// FI stream must faithfully reproduce, itself QuantLib-validated at landing).
+    fn oracle_price(instrument: &RatesInstrument, curve: &CurveSet) -> RatesPricingResult {
+        price_rates(&RatesPriceRequest {
+            request_id: 0,
+            curve_set: Some(curve.clone()),
+            instrument: Some(*instrument),
+            correlation_id: None,
+        })
+        .expect("the oracle prices the fixed-income line")
+    }
+
+    /// Assert two `RatesPricingResult`s are bit-for-bit identical (every scalar +
+    /// the full key-rate ladder) — the faithfulness gate for the streamed FI line.
+    fn assert_rates_result_bit_eq(got: &RatesPricingResult, want: &RatesPricingResult) {
+        assert_eq!(got.pv.to_bits(), want.pv.to_bits(), "pv");
+        assert_eq!(got.par_rate.to_bits(), want.par_rate.to_bits(), "par_rate");
+        assert_eq!(got.pv01.to_bits(), want.pv01.to_bits(), "pv01");
+        assert_eq!(got.dv01.to_bits(), want.dv01.to_bits(), "dv01");
+        assert_eq!(
+            got.key_rate_ladder.len(),
+            want.key_rate_ladder.len(),
+            "ladder length"
+        );
+        for (a, b) in got.key_rate_ladder.iter().zip(&want.key_rate_ladder) {
+            assert_eq!(a.to_bits(), b.to_bits(), "key-rate ladder entry");
+        }
+    }
+
+    /// **Faithfulness (the FI gate).** A streamed FI line's re-price at shift 0 is
+    /// byte-for-byte `price_rates(instrument, curve)` — the streamed snapshot equals
+    /// the landed pricer exactly. A parallel-shifted re-price equals
+    /// `price_rates(shifted curve)` exactly AND moves PV in the direction/magnitude
+    /// the reported `dv01` predicts — an INDEPENDENT cross-check (the engine computes
+    /// `dv01` by its own internal bump-and-reprice, a different code path than the
+    /// streamed re-price's direct PV, so PV(+1bp)−PV(0) ≈ dv01 is not circular).
+    #[test]
+    fn rates_reprice_is_faithful_and_dv01_consistent() {
+        let curve = crate::rates_pricing::default_usd_sofr_curve_set();
+        let instrument = ois_line();
+        let hub = PriceFanout::start();
+        let tick = hub.subscribe_rates(&curve).expect("the curve's rates ring");
+        let sub = RatesSubscription {
+            id: SubscriptionId { value: 7 },
+            instrument,
+            curve_set: curve.clone(),
+            tick,
+            sequence: 1,
+            delivered: 0,
+            correlation_id: None,
+        };
+
+        // Baseline (shift 0) == price_rates(instrument, curve) bit-for-bit.
+        let base = oracle_price(&instrument, &curve);
+        let got0 = sub.reprice(0.0).expect("baseline reprice");
+        assert_rates_result_bit_eq(&got0, &base);
+
+        // A +1bp parallel shift == price_rates(shifted curve) bit-for-bit.
+        let bump = 0.0001;
+        let shifted = shifted_curve(&curve, bump);
+        let want_shift = oracle_price(&instrument, &shifted);
+        let got_shift = sub.reprice(bump).expect("shifted reprice");
+        assert_rates_result_bit_eq(&got_shift, &want_shift);
+
+        // DV01-consistency: PV(+1bp) − PV(0) ≈ dv01 (the +1bp parallel curve delta,
+        // reported by an independent engine code path). The residual is the curve's
+        // second-order convexity over a single basis point.
+        let dpv = got_shift.pv - got0.pv;
+        let dv01 = base.dv01;
+        assert!(dv01.abs() > 0.0, "a 5Y OIS has a non-zero curve DV01");
+        assert!(
+            (dpv - dv01).abs() <= dv01.abs() * 5e-3 + 1e-6,
+            "PV move {dpv} must match the reported DV01 {dv01} to first order"
+        );
+        drop(hub);
+    }
+
+    /// **End-to-end through the session.** A `RatesSubscribe` on the multiplexed
+    /// session (through the SAME `handle_client_message` auth+dispatch seam the FX
+    /// stream uses) emits a baseline `RatesStreamSnapshot` carrying exactly
+    /// `price_rates(instrument, curve)` at `curve_shift == 0`, then — driven off the
+    /// shared fan-out's per-curve ring — emits `RatesStreamUpdate`s whose result is
+    /// the faithful re-price of the line against the baseline curve shifted by the
+    /// update's reported `curve_shift`. The FI line streams through the ONE fan-out.
+    #[tokio::test]
+    async fn rates_subscribe_snapshots_and_ticks_through_the_session() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let clock = Clock::manual(1_000_000_000);
+            let mut session = make_session(clock);
+            let (tx, mut rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(64);
+
+            let curve = crate::rates_pricing::default_usd_sofr_curve_set();
+            let instrument = ois_line();
+            let base = oracle_price(&instrument, &curve);
+
+            // Open the FI line via the full client-message path (Permissive admits;
+            // the RatesSubscribe → Stream·FixedIncome capability gate is a no-op here).
+            let subscribe = ClientStreamMessage {
+                message: Some(client_stream_message::Message::RatesSubscribe(
+                    RatesSubscribe {
+                        subscription: Some(SubscriptionId { value: 42 }),
+                        instrument: Some(instrument),
+                        curve_set: Some(curve.clone()),
+                        throttle_nanos: 0,
+                        correlation_id: Some(9),
+                    },
+                )),
+            };
+            assert!(
+                session.handle_client_message(subscribe, &tx).await,
+                "the rates subscribe is admitted on the multiplexed session"
+            );
+
+            // The baseline snapshot carries price_rates(instrument, curve) exactly.
+            let snap = rx
+                .try_recv()
+                .expect("a baseline RatesStreamSnapshot")
+                .unwrap();
+            let Some(server_stream_message::Message::RatesStreamSnapshot(s)) = snap.message else {
+                panic!("the rates subscribe answers with a RatesStreamSnapshot");
+            };
+            assert_eq!(s.sequence, 1);
+            assert_eq!(s.correlation_id, Some(9));
+            assert_eq!(
+                s.curve_shift.to_bits(),
+                0.0f64.to_bits(),
+                "baseline is unshifted"
+            );
+            assert_rates_result_bit_eq(s.result.as_ref().expect("snapshot result"), &base);
+
+            // Drive ticks until a RatesStreamUpdate arrives (the producer publishes on
+            // a real ~2ms cadence off the tokio runtime), then validate it reprices
+            // faithfully against the baseline curve shifted by the reported shift.
+            let deadline = std::time::Instant::now() + Duration::from_secs(8);
+            let mut update: Option<RatesStreamUpdate> = None;
+            while update.is_none() && std::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(4)).await;
+                assert!(session.drive_rates_tick(&tx), "drive_rates_tick succeeds");
+                while let Ok(Ok(m)) = rx.try_recv() {
+                    if let Some(server_stream_message::Message::RatesStreamUpdate(u)) = m.message {
+                        update = Some(u);
+                        break;
+                    }
+                }
+            }
+            let u = update.expect("a RatesStreamUpdate within the deadline");
+            assert!(u.sequence >= 2, "an update advances past the snapshot");
+            let shifted = shifted_curve(&curve, u.curve_shift);
+            let want = oracle_price(&instrument, &shifted);
+            assert_rates_result_bit_eq(u.result.as_ref().expect("update result"), &want);
+            // A non-zero shift genuinely moves the line off its baseline PV.
+            if u.curve_shift != 0.0 {
+                assert_ne!(
+                    u.result.as_ref().unwrap().pv.to_bits(),
+                    base.pv.to_bits(),
+                    "a shifted curve reprices the FI line to a different PV"
+                );
+            }
+        })
+        .await
+        .expect("the rates stream test completes within the deadline");
+    }
+
     /// The streamed wire Greeks carry-tag the rate-sensitivity arm by asset class:
     /// an FX line is **byte-identical** to the plain `Greeks → WireGreeks`
     /// conversion (the no streamed-FX regression gate, extended to the streaming
@@ -2026,6 +2483,7 @@ mod tests {
         let mut session = Session {
             subs: HashMap::new(),
             series: HashMap::new(),
+            rates_subs: HashMap::new(),
             link,
             spread: SpreadModel::default(),
             clock: clock.clone(),
@@ -2091,6 +2549,7 @@ mod tests {
         Session {
             subs: HashMap::new(),
             series: HashMap::new(),
+            rates_subs: HashMap::new(),
             link,
             spread: SpreadModel::default(),
             clock,
