@@ -45,8 +45,10 @@ import type {
   RatesCurveSet,
   RatesInstrument,
   RatesPricingResult,
+  RatesQuote,
   RatesStreamSnapshot,
   RatesStreamUpdate,
+  Side,
   Snapshot,
   StreamHealth,
   StreamReject,
@@ -80,6 +82,8 @@ import {
   ratesInstrumentToWire,
   ratesInstrumentUnionToWire,
   ratesPricingResultFromWire,
+  ratesQuoteFromWire,
+  ratesQuoteRequestToWire,
   ratesStreamSnapshotFromWire,
   ratesStreamUpdateFromWire,
   serializeFrame,
@@ -1100,6 +1104,37 @@ export class Connection {
       "rates_price_response",
     );
     return ratesPricingResultFromWire(reply);
+  }
+
+  /**
+   * Request a tradeable two-way FI RFQ over the `request_rates_quote` RPC (the WS
+   * mirror of `QuoteService.RequestRatesQuote`): send the calibrated `curve_set` +
+   * the `instrument` (any of the four `RatesInstrument` arms) + the RFQ `notional` +
+   * the taker `side`, and decode the two-way `RatesQuote` — the bid/offer struck
+   * around the side-independent fair level (the par rate for a swap/FRA, the clean
+   * price for a cash bond) plus the FULL `price_rates` risk at the taker side. This
+   * is the FI twin of {@link requestQuote}: a pure price-discovery calculation
+   * against the caller-supplied market (the server reads no live market, books
+   * nothing, and every replica computes the identical quote), so — like the
+   * `priceRates*` family — it carries no session token. The instrument body is the
+   * BYTE-IDENTICAL wire the unary `price_rates` cells send, and `result` is the SAME
+   * engine numbers the outright `RATES`/`IRS` cells return (one pricing path). The
+   * `idempotencyKey` deduplicates identical retries. The one unversioned contract
+   * makes the reply authoritative and bit-identical to the GUI / SDK rates RFQ.
+   */
+  async requestRatesQuote(
+    curve: RatesCurveSet,
+    instrument: RatesInstrument,
+    side: Side,
+    notional: number,
+    idempotencyKey: string,
+  ): Promise<RatesQuote> {
+    const reply = await this.request(
+      "request_rates_quote",
+      ratesQuoteRequestToWire({ idempotencyKey, curveSet: curve, instrument, notional, side }),
+      "rates_quote",
+    );
+    return ratesQuoteFromWire(reply);
   }
 
   /**

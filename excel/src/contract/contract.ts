@@ -1627,6 +1627,49 @@ export function oisRatesInstrument(ois: OisInstrument): RatesInstrument {
 }
 
 /**
+ * A tradeable two-way RFQ reply for a linear-rates instrument (`celnet.wire
+ * .RatesQuote`, returned by `QuoteService.RequestRatesQuote`) — the fixed-income
+ * analogue of {@link Quote}, bringing request-for-quote parity to the add-in's FI
+ * surface (`=CELNET.RATESRFQ`; FI RFQ previously existed only over FIX). `price` is
+ * the two-way struck around the SIDE-INDEPENDENT fair level: a RATE market (bid/offer
+ * around the par rate) for an OIS/IRS/FRA, a clean-PRICE market for a cash bond, so
+ * `(bid + offer) / 2` is the fair level the FI pricing path computed
+ * (`result.parRate` for a swap/FRA). `result` is the FULL `price_rates` risk (PV,
+ * par rate, PV01, DV01, key-rate ladder) at the requested taker `side` — the SAME
+ * engine numbers the outright `CELNET.RATES`/`IRS` cells return (no second pricing
+ * path). The add-in carries no FI math of its own; the one unversioned contract makes
+ * this reply authoritative and bit-identical to the GUI / SDK rates RFQ.
+ */
+export interface RatesQuote {
+  /** Server-assigned stable, unguessable quote identifier (minted like `Quote.quoteId`). */
+  quoteId: bigint;
+  /** Echo of the originating request's idempotency key. */
+  idempotencyKey: string;
+  /**
+   * The two-way bid/offer — a rate market for an OIS/IRS/FRA, a clean-price market
+   * for a cash bond. `(bid + offer) / 2` is the side-independent fair level.
+   */
+  price: TwoWayPrice;
+  /** The full linear-rates risk of the quoted position at the requested taker `side`. */
+  result: RatesPricingResult;
+  /** The RFQ size the two-way is good for (curve currency), echoed from the request. */
+  notional: number;
+  /** Publication time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+  /**
+   * Quote validity deadline (last-look window), nanoseconds since the Unix epoch
+   * (UTC). An accept after this instant is treated as expired.
+   */
+  validUntilNanos: bigint;
+  /**
+   * Echo of the originating request's `correlationId`, if one was supplied
+   * (presence-tracked; the transport routing id under the shared request/reply
+   * correlation), so a client joins this reply to its request.
+   */
+  correlationId?: bigint;
+}
+
+/**
  * The baseline state of a streamed fixed-income line (`celnet.wire
  * .RatesStreamSnapshot`) — the priced `RatesPricingResult` a consumer applies
  * whole before consuming deltas. Faithful to `PricingService.PriceRates`: the

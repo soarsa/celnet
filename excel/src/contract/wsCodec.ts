@@ -54,8 +54,10 @@ import type {
   RatesCurveSet,
   RatesInstrument,
   RatesPricingResult,
+  RatesQuote,
   RatesStreamSnapshot,
   RatesStreamUpdate,
+  Side,
   BuildCurveRequest,
   CalibratedCurve,
   SingleBarrier,
@@ -1384,6 +1386,73 @@ export function ratesPricingResultFromWire(o: WireObject): RatesPricingResult {
     dv01: num(result, "dv01"),
     keyRateLadder,
   };
+}
+
+// ---------------------------------------------------------------------------
+// fixed-income RFQ — `request_rates_quote` request/reply codec (the WS mirror of
+// `QuoteService.RequestRatesQuote`, the FI twin of `request_quote`). BYTE-IDENTICAL
+// to the server's descriptor-driven generated codec
+// (`generated_codec::decode_rates_quote_request` / `encode_rates_quote`, which
+// project the pure snake_case proto field names — the rates RFQ messages carry no
+// FX-legacy quirks). The request reuses the byte-verified unary rates encoders
+// (`ratesCurveSetToWire` + `ratesInstrumentUnionToWire`) verbatim — one encoding, no
+// duplication — so the RFQ instrument body is identical to the `CELNET.RATES`/`IRS`
+// unary wire body; the reply decodes the two-way `price` + the SAME `result` object
+// the `price_rates` response carries (shared `ratesPricingResultFromWire`).
+//
+// CORRELATION: `RatesQuoteRequest.correlation_id` (proto field 6) is the transport's
+// request/reply routing id under the SAME unified-correlation discipline as
+// `price_rates` / `price` — the `Connection.request` helper stamps the frame
+// `correlation_id`, the server decodes it into the message field and echoes it on
+// `RatesQuote.correlation_id`, which the client matches. So the request encoder does
+// NOT set `correlation_id` (the transport owns it), exactly like `priceRates`.
+// ---------------------------------------------------------------------------
+
+/**
+ * Encode a `request_rates_quote` request body (`celnet.wire.RatesQuoteRequest`): the
+ * idempotency key, the calibrated `curve_set`, the `instrument` to quote (any of the
+ * four `RatesInstrument` arms), the RFQ `notional`, and the taker `side`. The
+ * `curve_set` + `instrument` are the byte-identical bodies the unary `price_rates`
+ * edge carries. `correlation_id` is intentionally OMITTED — it is the transport
+ * routing id the `Connection.request` helper stamps on the frame.
+ */
+export function ratesQuoteRequestToWire(args: {
+  readonly idempotencyKey: string;
+  readonly curveSet: RatesCurveSet;
+  readonly instrument: RatesInstrument;
+  readonly notional: number;
+  readonly side: Side;
+}): WireObject {
+  return {
+    idempotency_key: args.idempotencyKey,
+    curve_set: ratesCurveSetToWire(args.curveSet),
+    instrument: ratesInstrumentUnionToWire(args.instrument),
+    notional: args.notional,
+    side: e.side.toWire(args.side),
+  };
+}
+
+/**
+ * Decode a `rates_quote` server frame (`celnet.wire.RatesQuote`) into a
+ * {@link RatesQuote}. `price` is the two-way `{ bid, offer }`; `result` is the SAME
+ * `RatesPricingResult` shape the `price_rates` response carries (decoded through the
+ * shared {@link ratesPricingResultFromWire}, which reads the nested `result` child).
+ * `correlation_id` is presence-tracked (absent/`null` ⇒ `undefined`), mirroring
+ * `quoteFromWire`.
+ */
+export function ratesQuoteFromWire(o: WireObject): RatesQuote {
+  const q: RatesQuote = {
+    quoteId: numToBigInt(o, "quote_id"),
+    idempotencyKey: str(o, "idempotency_key"),
+    price: twoWayFromWire(child(o, "price")),
+    result: ratesPricingResultFromWire(o),
+    notional: num(o, "notional"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+    validUntilNanos: numToBigInt(o, "valid_until_nanos"),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) q.correlationId = corr;
+  return q;
 }
 
 // --- fixed-income live streaming (RatesSubscribe / RatesStream{Snapshot,Update}) --

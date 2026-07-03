@@ -49,6 +49,7 @@ import {
   formatPositionsSpill,
   formatPremiumSpill,
   formatRatesBookSpill,
+  formatRatesRfqSpill,
   formatRatesRiskSpill,
   formatRatesSeriesCell,
   formatRatesSpill,
@@ -65,6 +66,7 @@ import {
   parseObservable,
   parsePair,
   parseRatesObservable,
+  parseRatesRfqSide,
   parseRatesRiskScope,
   parseRfqPanelFlag,
   parseRiskDimension,
@@ -78,6 +80,7 @@ import {
   shapeIrsInstrument,
   shapeOisInstrument,
   shapeRatesCurve,
+  shapeRatesRfqInstrument,
   shapeRatesRiskPositions,
   shapeReportingNumeraire,
   shapeVanillaInstrument,
@@ -625,6 +628,78 @@ export async function FRA(
     });
     const result = await getConnection().priceRatesFra(curveSet, fra);
     return formatRatesSpill(result, curveSet.pillars);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Request a tradeable two-way FIXED-INCOME RFQ off a self-discounting curve via the
+ * live `request_rates_quote` engine RPC (the WS mirror of
+ * `QuoteService.RequestRatesQuote`) — the FI twin of `=CELNET.RFQ`, bringing
+ * request-for-quote parity to the rates surface (FI RFQ previously existed only over
+ * FIX). The add-in carries NO FI math: the calibrated `curve` (its par-OIS pillars),
+ * the instrument terms, the RFQ `notional` and the taker `side` are sent to the
+ * `celnet-rates` engine, which prices the SIDE-INDEPENDENT fair level (the par rate)
+ * and returns the two-way struck around it plus the full first-order risk; this cell
+ * only shapes the inputs and lays out the authoritative reply — bit-identical to the
+ * GUI / SDK rates RFQ over the one unversioned contract.
+ *
+ * The RFQ mirrors the `=CELNET.RATES` arg grammar (the instrument is built from
+ * `tenor` + `fixedRate` + `notional`). It is a SINGLE two-way maker quote (the FI
+ * price-discovery two-way, mirroring the FIX venue auto-quote), not a multi-dealer
+ * panel — `=CELNET.RFQ`'s `panel` flag has no FI analogue on this contract.
+ *
+ * The spill is a labelled `10×2` matrix: `bid`, `offer`, `mid` (= `(bid + offer)/2`,
+ * the side-independent fair level — equal to `par_rate` for a swap, a live
+ * cross-check), then the RFQ metadata `notional`, `quote_id` (64-bit-exact as a
+ * string, referenceable by a later accept) and `valid_until` (the last-look deadline,
+ * ISO-8601), then the full FI risk at the taker side: `pv`, `par_rate`, `pv01`,
+ * `dv01`. All measures are in the curve currency.
+ * @customfunction RATESRFQ
+ * @param curve The 2-column `[tenorYears, parRate]` curve range — one row per self-discounting OIS pillar, in strictly increasing tenor order.
+ * @param referenceDate The curve reference (spot-anchor) date — an Excel date cell or "YYYY-MM-DD".
+ * @param tenor The instrument tenor in whole years (e.g. 5 or "5Y").
+ * @param fixedRate The fixed-leg rate as a decimal (0.041 = 4.10%).
+ * @param notional The (positive) RFQ size in the curve currency.
+ * @param side Optional taker side: BUY (pay fixed), SELL (receive fixed) or TWO_WAY (default — request a two-way market).
+ * @param currency Optional ISO-4217 curve currency (defaults to USD).
+ * @param instrument Optional instrument arm: OIS (default) or IRS (a spot-starting vanilla swap).
+ * @returns A `10×2` spill: bid, offer, mid, notional, quote_id, valid_until, pv, par_rate, pv01, dv01.
+ */
+export async function RATESRFQ(
+  curve: (string | number | boolean)[][],
+  referenceDate: number | string,
+  tenor: number | string,
+  fixedRate: number,
+  notional: number,
+  side?: string,
+  currency?: string,
+  instrument?: string,
+): Promise<SpillMatrix> {
+  try {
+    denyIfUngated("ratesrfq");
+    const curveSet = shapeRatesCurve({ curve, referenceDate, currency });
+    const takerSide = parseRatesRfqSide(side);
+    const rfqInstrument = shapeRatesRfqInstrument({
+      tenor,
+      fixedRate,
+      notional,
+      side: takerSide,
+      instrument,
+    });
+    // A deterministic idempotency key over the RFQ terms: an identical retry is
+    // deduplicated server-side, never colliding with a unary price cell for the
+    // same instrument (distinct `ratesrfq:` namespace).
+    const key = `ratesrfq:${curveSet.currency}:${takerSide}:${notional}:${JSON.stringify(rfqInstrument)}`;
+    const quote = await getConnection().requestRatesQuote(
+      curveSet,
+      rfqInstrument,
+      takerSide,
+      notional,
+      key,
+    );
+    return formatRatesRfqSpill(quote);
   } catch (err) {
     throw toCfError(err);
   }
@@ -1497,6 +1572,7 @@ function registerAll(): void {
   cf.associate("BOND", BOND as (...a: never[]) => unknown);
   cf.associate("IRS", IRS as (...a: never[]) => unknown);
   cf.associate("FRA", FRA as (...a: never[]) => unknown);
+  cf.associate("RATESRFQ", RATESRFQ as (...a: never[]) => unknown);
   cf.associate("RATESRISK", RATESRISK as (...a: never[]) => unknown);
   cf.associate("XVA", XVA as (...a: never[]) => unknown);
   cf.associate("RATESBOOK", RATESBOOK as (...a: never[]) => unknown);
