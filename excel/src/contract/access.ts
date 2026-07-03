@@ -155,6 +155,7 @@ export function capabilityDenialTitle(
 //   * SUBSCRIBE / SERIES (live streams)           → stream  · fx_options
 //   * contribute a mark / MARKSURFACE / MARK      → price   · fx_options
 //   * RATES (OIS pricing) / RATESRISK (book risk) → price   · fixed_income
+//   * RATESBOOK (book ledger) / INSTRUMENTS (ref) → view    · fixed_income
 //
 // Every FX-options PRODUCT (incl. the cross-asset equity/commodity/crypto leaves
 // that book through the same QuoteService) maps to the `fx_options` capability
@@ -178,7 +179,9 @@ export type EntryPointId =
   | "series"
   | "rates"
   | "ratesrisk"
+  | "ratesbook"
   | "curve"
+  | "instruments"
   | "marksurface"
   | "mark";
 
@@ -296,6 +299,17 @@ export const ENTRY_POINTS: Record<EntryPointId, EntryPoint> = {
     requiresSignIn: false,
     signInLabel: "aggregate rates risk",
   },
+  ratesbook: {
+    id: "ratesbook",
+    label: "CELNET.RATESBOOK",
+    surface: "cell",
+    // A read of the server-owned rates BOOK (the read side maps to `view`, exactly
+    // like the GUI's `readActions: ["view"]` on every fixed-income workspace).
+    action: "view",
+    asset: "fixed_income",
+    requiresSignIn: false,
+    signInLabel: "list the rates book",
+  },
   curve: {
     id: "curve",
     label: "CELNET.CURVE",
@@ -304,6 +318,17 @@ export const ENTRY_POINTS: Record<EntryPointId, EntryPoint> = {
     asset: "fixed_income",
     requiresSignIn: false,
     signInLabel: "bootstrap curves",
+  },
+  instruments: {
+    id: "instruments",
+    label: "CELNET.INSTRUMENTS",
+    surface: "cell",
+    // A read of the instrument reference-data roster (the `view` read action, like
+    // the GUI Reference Data workspace; the server admits any authenticated caller).
+    action: "view",
+    asset: "fixed_income",
+    requiresSignIn: false,
+    signInLabel: "view reference data",
   },
   marksurface: {
     id: "marksurface",

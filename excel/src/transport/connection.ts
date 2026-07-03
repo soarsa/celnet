@@ -1020,6 +1020,63 @@ export class Connection {
     return this.request("drill_risk", body, "drill_risk_response");
   }
 
+  /**
+   * `RiskService.ListRatesPositions` — the desk's standing linear-rates BOOK (the
+   * server-owned OIS position ledger the `aggregate_rates_risk` roll-up nets). Like
+   * `aggregateRatesRisk`, the body carries an explicit grant-all principal (built by
+   * `listRatesPositionsRequest`) that clears the production deny-by-default edge; the
+   * edge needs no session token, so — unlike the AuthService registry reads below —
+   * none is injected here (parity with the options risk RPCs). The reply is matched
+   * by its server-stamped `type` (`list_rates_positions_response`, which carries no
+   * echoed correlation id) via the request/reply FIFO — exactly as the server frames
+   * it (`codec::tagged`), so the `expect` string is that literal type, not a guessed
+   * `_response` suffix.
+   */
+  async listRatesPositions(body: WireObject): Promise<WireObject> {
+    return this.request("list_rates_positions", body, "list_rates_positions_response");
+  }
+
+  // --- AuthService reference-data reads (entity/book registry + instruments) -
+  //
+  // Four read-only AuthService RPCs over the same multiplexed connection. Each is
+  // open to any AUTHENTICATED caller and its request codec REQUIRES a
+  // `session_token` on the wire (`string_field`) — so, exactly like `build_curve`
+  // (and unlike the risk RPCs, whose helper does not), the held bearer token is
+  // injected explicitly when present; an anonymous caller (no token) is refused
+  // server-side. The reply is matched by the server's stamped `type`, which — per
+  // the WS dispatch (`ws/mod.rs`) — is the terse `entities` / `books` /
+  // `instruments` / `instrument`, NOT a `*_response` suffix (the latent-bug trap:
+  // these echo the numeric correlation id so they also match by correlation, but
+  // the `expect` string is set to the literal server type for correctness).
+
+  /** `AuthService.ListEntities` — the named legal-entity registry (needs a session token). */
+  async listEntities(): Promise<WireObject> {
+    const body: WireObject = {};
+    if (this.sessionToken !== null) body["session_token"] = this.sessionToken;
+    return this.request("list_entities", body, "entities");
+  }
+
+  /** `AuthService.ListBooks` — the named netting-book registry (needs a session token). */
+  async listBooks(): Promise<WireObject> {
+    const body: WireObject = {};
+    if (this.sessionToken !== null) body["session_token"] = this.sessionToken;
+    return this.request("list_books", body, "books");
+  }
+
+  /** `AuthService.ListInstruments` — the instrument reference-data roster (needs a session token). */
+  async listInstruments(): Promise<WireObject> {
+    const body: WireObject = {};
+    if (this.sessionToken !== null) body["session_token"] = this.sessionToken;
+    return this.request("list_instruments", body, "instruments");
+  }
+
+  /** `AuthService.GetInstrument` — one instrument definition by id (needs a session token). */
+  async getInstrument(instrumentId: string): Promise<WireObject> {
+    const body: WireObject = { instrument_id: instrumentId };
+    if (this.sessionToken !== null) body["session_token"] = this.sessionToken;
+    return this.request("get_instrument", body, "instrument");
+  }
+
   /** `RiskService.LimitStatus` — per-limit utilization/RAG for a scope node. */
   async limitStatus(body: WireObject): Promise<WireObject> {
     return this.request("limit_status", body, "limit_status_response");

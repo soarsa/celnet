@@ -809,3 +809,131 @@ function ratesRiskNodeFromWire(o: WireObject): RatesRiskNode {
 export function aggregateRatesRiskResponseFromWire(o: WireObject): AggregateRatesRiskResponse {
   return { nodes: array(o, "nodes").map(ratesRiskNodeFromWire) };
 }
+
+// ---------------------------------------------------------------------------
+// linear-rates BOOK ledger (RiskService.ListRatesPositions) + the named
+// entity/book registry (AuthService.List{Entities,Books}) — the WS mirror of the
+// rates-Book List edge (`crates/celnet-server/src/ws/codec.rs`
+// `list_rates_positions_*`, oracle `list_rates_positions_round_trip`) and the
+// entity/book registry (`entity_desc_to_json` / `book_desc_to_json`). The
+// CELNET.RATESBOOK add-in path lists the desk's standing OIS positions — which
+// carry NUMERIC `(entity, book)` partition keys on the wire — and resolves each
+// key to its registry NAME, exactly like the GUI RatesBookWorkspace (an unknown
+// key falls back to `#<key>`). A position is SERVER-owned — a client never sends
+// one on this read path — so there is only a decoder here, mirroring the server's
+// `rates_position_to_json` encoding (the OIS `side` code 0/1 ⇔ PAY/RECEIVE fixed).
+// ---------------------------------------------------------------------------
+
+/** The wire OIS `side` code → the typed `OisDirection` (PAY_FIXED=0, RECEIVE_FIXED=1). */
+function oisDirectionFromSide(side: number): OisInstrument["direction"] {
+  return side === 1 ? "RECEIVE_FIXED" : "PAY_FIXED";
+}
+
+/**
+ * Decode a `RatesInstrument` `{ ois: { tenor_years, fixed_rate, notional, side } }`
+ * into the typed `OisInstrument` — the exact inverse of `ratesInstrumentToWire`
+ * (`wsCodec.ts`), so the ledger reads back the market the book was booked under.
+ */
+function ratesInstrumentFromWire(o: WireObject): OisInstrument {
+  const ois = child(o, "ois");
+  return {
+    tenorYears: num(ois, "tenor_years"),
+    fixedRate: num(ois, "fixed_rate"),
+    notional: num(ois, "notional"),
+    direction: oisDirectionFromSide(num(ois, "side")),
+  };
+}
+
+/** Decode one `RatesPosition` `{ position_id, entity, book, instrument }` (the server-owned leaf). */
+export function ratesPositionFromWire(o: WireObject): RatesPosition {
+  return {
+    positionId: numToBigInt(o, "position_id"),
+    entity: num(o, "entity"),
+    book: num(o, "book"),
+    instrument: ratesInstrumentFromWire(child(o, "instrument")),
+  };
+}
+
+/** The fully-shaped pieces of a `list_rates_positions` request. */
+export interface ListRatesPositionsInput {
+  /** The optional `(entity, book, ccy)` pre-list filter (absent ⇒ the whole book). */
+  readonly scope?: RatesRiskScope;
+  /** Entitlement principal; omitted ⇒ the audited explicit grant-all default. */
+  readonly principal?: EntitlementPrincipal;
+}
+
+/**
+ * Build the `list_rates_positions` request body. Carries an EXPLICIT principal —
+ * the caller's, or (when absent) the audited show-all-now grant-all — so the read
+ * clears the server's production deny-by-default edge (`RiskService/
+ * ListRatesPositions`, `ReadAny`), exactly as `aggregate_rates_risk` does; the
+ * edge needs no session token (parity with the options risk RPCs). The optional
+ * `(entity, book, ccy)` scope narrows the listing (the server filters on
+ * entity/book; a stored position has no currency of its own, so `ccy` — accepted
+ * for parity with the risk scope — does not constrain).
+ */
+export function listRatesPositionsRequest(input: ListRatesPositionsInput): WireObject {
+  const body: WireObject = {};
+  body["principal"] = entitlementPrincipalToWire(
+    input.principal ?? { grantAll: true, grants: [], denies: [] },
+  );
+  if (input.scope !== undefined) body["scope"] = ratesRiskScopeToWire(input.scope);
+  return body;
+}
+
+/** Decode a `list_rates_positions_response` into the server-owned position ledger. */
+export interface ListRatesPositionsResponse {
+  readonly positions: readonly RatesPosition[];
+}
+
+export function listRatesPositionsResponseFromWire(o: WireObject): ListRatesPositionsResponse {
+  return { positions: array(o, "positions").map(ratesPositionFromWire) };
+}
+
+// --- named entity/book registry (the display-name ↔ partition-key map) -------
+//
+// The WS mirror of `AuthService.List{Entities,Books}`. A position carries opaque
+// `uint32` keys on the wire; this registry is the name ↔ key map the Book views
+// resolve a key back to a name with (an unknown key ⇒ `#<key>`). Listing is open
+// to any AUTHENTICATED user; the wire carries snake_case `entity_key`, mapped to
+// the camelCase `entityKey` (the only rename), exactly as the GUI codec does.
+
+/** A named legal entity a position books into (`celnet.wire.EntityDesc`). */
+export interface EntityDesc {
+  /** The `uint32` partition key carried on `RatesPosition.entity` (immutable identity). */
+  readonly key: number;
+  /** Human-friendly legal-entity name, e.g. "Celnet Global Markets". */
+  readonly name: string;
+  /** Short code, e.g. "CGM" (unique). */
+  readonly code: string;
+}
+
+/** A named netting book under an entity (`celnet.wire.BookDesc`). */
+export interface BookDesc {
+  /** The `uint32` partition key carried on `RatesPosition.book` (immutable identity). */
+  readonly key: number;
+  /** Human-friendly book name, e.g. "Rates Trading". */
+  readonly name: string;
+  /** The owning entity's `EntityDesc.key`. */
+  readonly entityKey: number;
+}
+
+/** Decode one `EntityDesc` `{ key, name, code }`. */
+export function entityDescFromWire(o: WireObject): EntityDesc {
+  return { key: num(o, "key"), name: str(o, "name"), code: str(o, "code") };
+}
+
+/** Decode one `BookDesc` `{ key, name, entity_key }` (maps `entity_key` → `entityKey`). */
+export function bookDescFromWire(o: WireObject): BookDesc {
+  return { key: num(o, "key"), name: str(o, "name"), entityKey: num(o, "entity_key") };
+}
+
+/** Decode a `list_entities` response (`{ entities: [...] }`, server-framed `type:"entities"`). */
+export function listEntitiesResponseFromWire(o: WireObject): EntityDesc[] {
+  return array(o, "entities").map(entityDescFromWire);
+}
+
+/** Decode a `list_books` response (`{ books: [...] }`, server-framed `type:"books"`). */
+export function listBooksResponseFromWire(o: WireObject): BookDesc[] {
+  return array(o, "books").map(bookDescFromWire);
+}

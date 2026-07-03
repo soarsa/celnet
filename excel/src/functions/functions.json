@@ -209,6 +209,40 @@
       ]
     },
     {
+      "id": "RATESBOOK",
+      "name": "RATESBOOK",
+      "description": "List the desk's standing linear-rates BOOK (the server-owned OIS position ledger) via the live list_rates_positions engine RPC; resolves each numeric (entity, book) key to its registry NAME (list_entities/list_books, falling back to #<key>) and spills [position_id, entity, book, instrument, fixed_rate, notional, direction] per booked OIS.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "scope",
+          "description": "Optional pre-list filter: a comma-separated list of ENTITY:<n>, BOOK:<n> (omit for the whole entitled book).",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "INSTRUMENTS",
+      "name": "INSTRUMENTS",
+      "description": "List the instrument reference-data REGISTRY (definitions the curve/pricing paths resolve against) via the live list_instruments engine RPC, or one definition by id via get_instrument; spills [instrument_id, name, family, currency, description, external_ids, terms] per definition.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "id",
+          "description": "Optional registry instrument id (e.g. usd-sofr-irs-10y); omit to list the whole roster.",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "CURVE",
       "name": "CURVE",
       "description": "Bootstrap a single-currency discount curve from its market pillars via the live build_curve engine RPC; spills a header then [pillar, time_years, discount_factor, zero_rate] per bootstrapped pillar.",
