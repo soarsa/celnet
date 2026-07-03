@@ -189,6 +189,7 @@ export type EntryPointId =
   | "ratesrisk"
   | "ratesbook"
   | "curve"
+  | "getcurve"
   | "instruments"
   | "marksurface"
   | "mark";
@@ -394,6 +395,18 @@ export const ENTRY_POINTS: Record<EntryPointId, EntryPoint> = {
     asset: "fixed_income",
     requiresSignIn: false,
     signInLabel: "bootstrap curves",
+  },
+  getcurve: {
+    id: "getcurve",
+    label: "CELNET.GETCURVE",
+    surface: "cell",
+    // A read/query of a marked or live-bootstrapped discount curve (the `view` read
+    // action, the FI analogue of the GetSmile market-data query; the server admits
+    // any caller — `get_curve` is a pure calculation with no session token).
+    action: "view",
+    asset: "fixed_income",
+    requiresSignIn: false,
+    signInLabel: "query curves",
   },
   instruments: {
     id: "instruments",

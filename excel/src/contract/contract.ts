@@ -1432,6 +1432,81 @@ export interface CalibratedCurve {
   points: readonly CalibratedCurvePoint[];
 }
 
+// --- curve query (`GetCurve` / `SurfaceService.GetCurve`, ADR-0021) -----------
+// The fixed-income analogue of `GetSmile`: read a marked or freshly-bootstrapped
+// discount curve on a tenor axis. Exactly one curve source — a pinned
+// `curveVersion` reads the marked curve of that version from the store, otherwise
+// the inline `curveSet` is bootstrapped live. Mirrors the server messages
+// (`celnet.wire.GetCurveRequest` / `.GetCurveResponse` / `.CurvePoint` /
+// `.CurveParPillar`) field-for-field over the one unversioned contract.
+
+/**
+ * A request to read a discount curve on a tenor axis (`celnet.wire
+ * .GetCurveRequest`). The `curveSet` is bootstrapped and read unless a
+ * `curveVersion` is pinned (then the marked curve of that version is read and the
+ * `curveSet` is ignored, exactly like the pinned-price path). Points are reported
+ * at each `queryTenorYears` (year fractions from the reference date).
+ */
+export interface GetCurveRequest {
+  /** The calibrating curve set to bootstrap and read (ignored when `curveVersion` is pinned). */
+  curveSet: RatesCurveSet;
+  /** The tenors (year fractions from the reference date) to report zero rates / discount factors at. */
+  queryTenorYears: readonly number[];
+  /**
+   * Optional pin to a `MarkCurve`d version: present ⇒ read the marked curve from
+   * the store; absent ⇒ bootstrap `curveSet` live. A *data* field selecting a
+   * marked curve, never an API version (the contract is unversioned, rule 9).
+   */
+  curveVersion?: number | undefined;
+}
+
+/**
+ * One queried point of a read curve (`celnet.wire.CurvePoint`): the tenor plus the
+ * continuously-compounded zero rate `z(t) = -ln DF(t) / t` and discount factor
+ * `DF(t) = exp(-z(t)·t)` there.
+ */
+export interface CurveQueryPoint {
+  /** The tenor (year fraction from the reference date) this point reports. */
+  tenorYears: number;
+  /** The continuously-compounded zero rate at this tenor (decimal). */
+  zeroRate: number;
+  /** The discount factor at this tenor. */
+  discountFactor: number;
+}
+
+/**
+ * A calibrating par pillar echoed by a read curve (`celnet.wire.CurveParPillar`):
+ * the pillar resolved to its final-payment year fraction from spot plus its
+ * observed par (fair fixed) rate — the curve analogue of a smile's broker quotes.
+ */
+export interface CurveParPillar {
+  /** The resolved final-payment year fraction from spot for this pillar. */
+  tenorYears: number;
+  /** The observed par (fair fixed) rate as a decimal (0.0405 = 4.05%). */
+  parRate: number;
+}
+
+/**
+ * The read curve reply (`celnet.wire.GetCurveResponse`): the currency + reference
+ * date, the queried points, the echoed calibrating par pillars, and (when the
+ * request pinned a version) the marked version this curve was read from — the FI
+ * analogue of a `Smile`.
+ */
+export interface GetCurveResponse {
+  /** ISO-4217 currency of the curve (USD for the P0 arm). */
+  currency: string;
+  /** The curve reference (spot-anchor) date the tenor axis is measured from. */
+  referenceDate: BrokenDate;
+  /** The queried points (zero rate + discount factor per requested tenor). */
+  points: readonly CurveQueryPoint[];
+  /** The calibrating par pillars echoed (resolved tenor + par rate). */
+  parPillars: readonly CurveParPillar[];
+  /** The marked version this curve was read from; present only for a pinned read. */
+  curveVersion?: bigint | undefined;
+  /** Read time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+}
+
 /**
  * The fixed-leg direction of an OIS from the client's perspective. The wire
  * `Side` carries this: SIDE_BUY pays fixed (payer), SIDE_SELL receives fixed.

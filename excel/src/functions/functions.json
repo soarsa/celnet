@@ -603,6 +603,40 @@
       ]
     },
     {
+      "id": "GETCURVE",
+      "name": "GETCURVE",
+      "description": "Read a marked or live-bootstrapped discount curve via the live get_curve engine RPC (SurfaceService.GetCurve); spills the queried points [tenor_years, discount_factor, zero_rate], the echoed par pillars, then a version/currency footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "curve",
+          "description": "2-column [tenorYears, parRate] curve range; one row per OIS pillar, strictly increasing tenor.",
+          "type": "any",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "referenceDate",
+          "description": "Curve reference (spot-anchor) date: an Excel date cell or YYYY-MM-DD.",
+          "type": "any"
+        },
+        {
+          "name": "pinnedVersion",
+          "description": "Optional MarkCurve version to read from the store (omit to bootstrap the curve live).",
+          "type": "any",
+          "optional": true
+        },
+        {
+          "name": "currency",
+          "description": "Optional ISO-4217 curve currency (defaults to USD).",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "SURFACE",
       "name": "SURFACE",
       "description": "The marked smile for a (pair, tenor) as a delta x vol grid with an arb + convention footer.",

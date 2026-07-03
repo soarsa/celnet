@@ -48,6 +48,8 @@ import type {
   FixingSchedule,
   FixingSource,
   FraInstrument,
+  GetCurveRequest,
+  GetCurveResponse,
   Greeks,
   Heartbeat,
   Instrument,
@@ -4720,6 +4722,86 @@ export function formatCalibratedCurveSpill(curve: CalibratedCurve): SpillMatrix 
       p.label.trim() !== "" ? p.label : p.instrumentId.trim() !== "" ? p.instrumentId : `pillar[${i}]`;
     rows.push([label, p.timeYears, p.discountFactor, p.zeroRate]);
   });
+  return rectangular(rows);
+}
+
+// ---------------------------------------------------------------------------
+// curve query (`get_curve` / `SurfaceService.GetCurve`, ADR-0021) — the
+// CELNET.GETCURVE add-in path. Shape a `[tenorYears, parRate]` curve range (the
+// shared `RatesCurveSet`) + an optional pinned version into a `GetCurveRequest`,
+// querying the curve at each pillar tenor, and lay out the server-read
+// `GetCurveResponse` (per-tenor zero rate + discount factor, the echoed
+// calibrating par pillars, the marked version) as a spill. The FI analogue of
+// CELNET.SURFACE/GetSmile: the add-in holds NO curve math — the live
+// `celnet-rates` engine bootstraps (or reads the pinned marked curve) and returns
+// the authoritative reply over the one unversioned contract.
+// ---------------------------------------------------------------------------
+
+/** The curve-range + reference-date + optional pinned version + currency a CELNET.GETCURVE call shapes into a `GetCurveRequest`. */
+export interface GetCurveArgs {
+  /** The 2-column `[tenorYears, parRate]` curve range (one row per pillar). */
+  readonly curve: readonly (readonly (string | number | boolean)[])[];
+  /** The curve reference (spot-anchor) civil date (Excel date serial or `YYYY-MM-DD`). */
+  readonly referenceDate: number | string;
+  /** Optional pin to a `MarkCurve`d version — read the marked curve of that version instead of bootstrapping live. */
+  readonly pinnedVersion?: number | string | undefined;
+  /** ISO-4217 currency; defaults to USD (the USD-SOFR P0 arm). */
+  readonly currency?: string | undefined;
+}
+
+/** Parse an optional pinned curve version — a non-negative integer; blank/absent ⇒ undefined (live bootstrap). */
+function parsePinnedCurveVersion(cell: number | string | undefined): number | undefined {
+  if (cell === undefined || cell === null || cell === "") return undefined;
+  const n = typeof cell === "number" ? cell : Number(String(cell).trim());
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+    throw new ShapingError(`pinned curve version must be a non-negative integer (got \`${cell}\`)`);
+  }
+  return n;
+}
+
+/**
+ * Shape a `[tenorYears, parRate]` curve range + reference date into the typed
+ * `GetCurveRequest`. The curve reuses the shared `RatesCurveSet` shaping
+ * (`shapeRatesCurve`), and the queried tenor axis is each pillar's `tenorYears` —
+ * so the read reports one point per pillar. An optional `pinnedVersion` reads the
+ * marked curve of that version instead of bootstrapping the curve live (the
+ * `curveSet` is still shaped, for the tenor axis, exactly as the server ignores it
+ * on a pinned read).
+ */
+export function shapeGetCurveRequest(args: GetCurveArgs): GetCurveRequest {
+  const curveSet = shapeRatesCurve({
+    curve: args.curve,
+    referenceDate: args.referenceDate,
+    currency: args.currency,
+  });
+  const request: GetCurveRequest = {
+    curveSet,
+    queryTenorYears: curveSet.pillars.map((p) => p.tenorYears),
+  };
+  const curveVersion = parsePinnedCurveVersion(args.pinnedVersion);
+  if (curveVersion !== undefined) request.curveVersion = curveVersion;
+  return request;
+}
+
+/**
+ * Format a `GetCurveResponse` as a labelled spill: a queried-points block
+ * (`point`, `tenor_years`, `discount_factor`, `zero_rate`), then a par-pillars
+ * block (`par_pillar`, `tenor_years`, `par_rate`) padded to width, then a footer
+ * row carrying the read version (`v<n>` for a pinned read, else `live`) and the
+ * reply currency. Every measure is the server's own authoritative read — the cell
+ * only lays it out. Returns a rectangular `(2 + points + parPillars + 1)×4` matrix.
+ */
+export function formatGetCurveSpill(reply: GetCurveResponse): SpillMatrix {
+  const rows: SpillMatrix = [["point", "tenor_years", "discount_factor", "zero_rate"]];
+  reply.points.forEach((p, i) => {
+    rows.push([`point[${i}]`, p.tenorYears, p.discountFactor, p.zeroRate]);
+  });
+  rows.push(["par_pillar", "tenor_years", "par_rate", ""]);
+  reply.parPillars.forEach((p, i) => {
+    rows.push([`par[${i}]`, p.tenorYears, p.parRate, ""]);
+  });
+  const version = reply.curveVersion === undefined ? "live" : `v${reply.curveVersion}`;
+  rows.push(["version", version, "currency", reply.currency]);
   return rectangular(rows);
 }
 
