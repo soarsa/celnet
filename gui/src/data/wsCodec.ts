@@ -121,6 +121,11 @@ import type {
   Owner,
   PillarTenor,
   Quote,
+  BondPosition,
+  PaymentFrequency,
+  RatesAccrualBasis,
+  RatesInstrument,
+  RatesLegDayCount,
   RatesCurveSet,
   RatesPricingResult,
   BuildCurveRequest,
@@ -919,6 +924,99 @@ export function ratesInstrumentToWire(instrument: OisInstrument): WireObject {
       side: oisDirectionToSide(instrument.direction),
     },
   };
+}
+
+/** The wire `Side` code for a bond position (LONG → BUY = 0; SHORT → SELL = 1). */
+function bondPositionToSide(position: BondPosition): number {
+  return position === "SHORT" ? 1 : 0;
+}
+
+/** The wire `PaymentFrequency` int: ANNUAL = 0, SEMI_ANNUAL = 1, QUARTERLY = 2. */
+function paymentFrequencyToWire(freq: PaymentFrequency): number {
+  switch (freq) {
+    case "ANNUAL":
+      return 0;
+    case "SEMI_ANNUAL":
+      return 1;
+    case "QUARTERLY":
+      return 2;
+  }
+}
+
+/** The wire `DayCount` int (the curve/leg enum): ACT_365_FIXED = 0, ACT_360 = 1. */
+function ratesLegDayCountToWire(dc: RatesLegDayCount): number {
+  return dc === "ACT_360" ? 1 : 0;
+}
+
+/** The wire `AccrualBasis` int: ACT_360 = 0, ACT_365_FIXED = 1, THIRTY_360_BOND_BASIS = 2. */
+function ratesAccrualBasisToWire(basis: RatesAccrualBasis): number {
+  switch (basis) {
+    case "ACT_360":
+      return 0;
+    case "ACT_365_FIXED":
+      return 1;
+    case "THIRTY_360_BOND_BASIS":
+      return 2;
+  }
+}
+
+/**
+ * Encode a `RatesInstrument` oneof to its wire `instrument` object — the
+ * `ois` / `irs` / `fra` / `bond` arm. Byte-compatible with the server
+ * `rates_instrument_from_json` decoder (`crates/celnet-server/src/ws/codec.rs`):
+ * the exact snake_case field names and integer enum codes it reads. The OIS arm
+ * reuses {@link ratesInstrumentToWire} verbatim (one encoding, no duplication).
+ */
+export function ratesInstrumentUnionToWire(instrument: RatesInstrument): WireObject {
+  switch (instrument.kind) {
+    case "ois":
+      return ratesInstrumentToWire(instrument.ois);
+    case "irs": {
+      const i = instrument.irs;
+      return {
+        irs: {
+          tenor_years: i.tenorYears,
+          fixed_rate: i.fixedRate,
+          notional: i.notional,
+          side: oisDirectionToSide(i.direction),
+          fixed_frequency: paymentFrequencyToWire(i.fixedFrequency),
+          fixed_day_count: ratesLegDayCountToWire(i.fixedDayCount),
+          float_frequency: paymentFrequencyToWire(i.floatFrequency),
+          float_day_count: ratesLegDayCountToWire(i.floatDayCount),
+        },
+      };
+    }
+    case "fra": {
+      const f = instrument.fra;
+      return {
+        fra: {
+          start_months: f.startMonths,
+          end_months: f.endMonths,
+          fixed_rate: f.fixedRate,
+          notional: f.notional,
+          side: oisDirectionToSide(f.direction),
+          accrual_basis: ratesAccrualBasisToWire(f.accrualBasis),
+        },
+      };
+    }
+    case "bond": {
+      const b = instrument.bond;
+      return {
+        bond: {
+          coupon_rate: b.couponRate,
+          coupon_frequency: paymentFrequencyToWire(b.couponFrequency),
+          day_count: ratesAccrualBasisToWire(b.dayCount),
+          maturity_date: {
+            year: b.maturityDate.year,
+            month: b.maturityDate.month,
+            day: b.maturityDate.day,
+          },
+          redemption: b.redemption,
+          side: bondPositionToSide(b.position),
+        },
+      };
+    }
+  }
 }
 
 /** Decode the `rates_price_response` frame's `result` into a `RatesPricingResult`. */

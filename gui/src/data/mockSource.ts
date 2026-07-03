@@ -73,6 +73,7 @@ import type {
   OisInstrument,
   Quote,
   RatesCurveSet,
+  RatesInstrument,
   BrokenDate,
   PillarTenor,
   BuildCurveRequest,
@@ -113,6 +114,7 @@ import { forward, priceInstrument, strikeFromDelta } from "./pricing";
 import {
   DEFAULT_USD_SOFR_CURVE,
   priceRatesOffline,
+  priceRatesInstrumentOffline,
   bootstrapCurveFromSet,
   discountFactorAt,
   zeroRateAt,
@@ -933,15 +935,15 @@ export class MockTransport implements CelnetTransport {
 
   async priceRates(
     curve: RatesCurveSet,
-    instrument: OisInstrument,
+    instrument: RatesInstrument,
   ): Promise<RatesPricingResult> {
-    // A GENUINE in-browser OIS computation: bootstrap the self-discounting curve
-    // from the par-OIS pillars and price the swap (PV / par / PV01 / DV01 /
-    // key-rate ladder), reproducing the server's `celnet-rates` math exactly so
-    // the offline number agrees with the live `price_rates` RPC. A malformed
+    // A GENUINE in-browser linear-rates computation: bootstrap the self-discounting
+    // curve from the par-OIS pillars and price the arm (OIS / IRS / FRA / bond),
+    // reproducing the server's `celnet-rates` / `celnet-bond` math exactly so the
+    // offline number agrees with the live `price_rates` RPC. A malformed
     // curve/instrument throws (mirroring the server refusal), surfaced by the
     // workspace exactly as a live transport error would be.
-    return priceRatesOffline(curve, instrument);
+    return priceRatesInstrumentOffline(curve, instrument);
   }
 
   async priceXva(request: XvaPricingRequest): Promise<XvaResult> {

@@ -18,7 +18,7 @@
  * `src/data/ratesPricing.ts`) and through the live WebSocket `price_rates` mirror,
  * so an offline price agrees with the live edge to floating-point precision.
  */
-import type { OisDirection, OisInstrument } from "../data/contract";
+import type { OisDirection, RatesInstrument } from "../data/contract";
 import { pillarYears } from "../data/contract";
 import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import styles from "../workspaces/TicketWorkspace.module.css";
@@ -155,11 +155,21 @@ export const oisSpec = defineRatesProduct<OisInputs>({
   keywords: ["ois", "swap", "rates", "sofr", "fixed income", "fi", "pv01", "dv01", "curve", "linear"],
   defaults: DEFAULT_OIS,
   curve: DEFAULT_USD_SOFR_CURVE,
-  toOisInstrument: (inputs): OisInstrument => ({
-    tenorYears: inputs.tenorYears,
-    fixedRate: inputs.fixedRatePct / 100,
-    notional: inputs.notionalMm * 1_000_000,
-    direction: inputs.direction,
+  priceActionLabel: "Price OIS",
+  emptyHint:
+    "Build an OIS and price it to see the PV, par (fair fixed) rate, PV01, DV01 and the key-rate DV01 ladder.",
+  pinToPar: (inputs, parRate) => ({
+    ...inputs,
+    fixedRatePct: Number((parRate * 100).toFixed(4)),
+  }),
+  toRatesInstrument: (inputs): RatesInstrument => ({
+    kind: "ois",
+    ois: {
+      tenorYears: inputs.tenorYears,
+      fixedRate: inputs.fixedRatePct / 100,
+      notional: inputs.notionalMm * 1_000_000,
+      direction: inputs.direction,
+    },
   }),
   validate: (inputs) => {
     const violations: string[] = [];

@@ -31,11 +31,18 @@
  */
 
 import type {
+  BondInstrument,
   BrokenDate,
+  FraInstrument,
   OisInstrument,
+  PaymentFrequency,
   PillarTenor,
+  RatesAccrualBasis,
   RatesCurveSet,
+  RatesInstrument,
+  RatesLegDayCount,
   RatesPricingResult,
+  VanillaIrsInstrument,
 } from "./contract";
 
 /** One basis point, in absolute rate terms. */
@@ -735,6 +742,591 @@ export function priceRatesOffline(
     dv01: sign * risk.dv01,
     keyRateLadder: risk.keyRate.map((k) => sign * k),
   };
+}
+
+// ===========================================================================
+// the additive rates arms — vanilla IRS, FRA, and cash bond
+// ===========================================================================
+//
+// The linear-rates oneof grows additively (FI-ARCHITECTURE §1): each arm below
+// reproduces the server engine it wraps bit-for-bit off the SAME bootstrapped
+// self-discounting curve as the OIS arm, so an offline price agrees with the live
+// `price_rates` mirror to floating-point precision:
+//
+//   - the vanilla IRS mirrors `celnet_rates::{swap_leg_schedule, VanillaSwap,
+//     swap_risk, swap_par_rate}` (per-frequency legs, explicit float projection,
+//     central-difference curve risk);
+//   - the FRA mirrors `celnet_rates::{Fra::from_dates, fra_risk, fra_par_rate}`
+//     (one accrual window, single-curve swaplet, central-difference risk);
+//   - the cash bond mirrors `celnet_bond::{CashflowSchedule, price_from_curve,
+//     bond_risk}` (roll-back coupon schedule, curve-discounted dirty price, a
+//     safeguarded-Newton yield-to-maturity solve and analytic yield DV01).
+//
+// The wire `RatesPricingResult` carries {pv, par_rate, pv01, dv01, key_rate_ladder}
+// for every arm; the bond maps `pv = dirty price`, `par_rate = yield to maturity`,
+// `pv01 = dv01 = the yield DV01`, and an empty ladder (its wrapped risk is a
+// closed-form yield-space sensitivity with no per-pillar decomposition), exactly as
+// `celnet-server`'s `price_bond_instrument` does.
+
+/** Months and periods-per-year of a coupon/leg payment frequency. */
+function frequencyMonths(freq: PaymentFrequency): number {
+  switch (freq) {
+    case "ANNUAL":
+      return 12;
+    case "SEMI_ANNUAL":
+      return 6;
+    case "QUARTERLY":
+      return 3;
+  }
+}
+
+function frequencyPerYear(freq: PaymentFrequency): number {
+  switch (freq) {
+    case "ANNUAL":
+      return 1;
+    case "SEMI_ANNUAL":
+      return 2;
+    case "QUARTERLY":
+      return 4;
+  }
+}
+
+/** Whole 30/360 Bond Basis day count (signed), mirroring `thirty_360_bond_basis_days`. */
+function thirty360BondBasisDays(start: BrokenDate, end: BrokenDate): number {
+  let d1 = start.day;
+  let d2 = end.day;
+  if (d1 === 31) d1 = 30;
+  if (d2 === 31 && d1 === 30) d2 = 30;
+  return 360 * (end.year - start.year) + 30 * (end.month - start.month) + (d2 - d1);
+}
+
+/** Year fraction on a curve/leg day-count basis (the money-market IRS-leg subset). */
+function legYearFraction(
+  basis: RatesLegDayCount,
+  start: BrokenDate,
+  end: BrokenDate,
+): number {
+  return basis === "ACT_360" ? act360(start, end) : act365f(start, end);
+}
+
+/** Year fraction on an instrument accrual basis (adds 30/360 Bond Basis). */
+function accrualYearFraction(
+  basis: RatesAccrualBasis,
+  start: BrokenDate,
+  end: BrokenDate,
+): number {
+  switch (basis) {
+    case "ACT_360":
+      return act360(start, end);
+    case "ACT_365_FIXED":
+      return act365f(start, end);
+    case "THIRTY_360_BOND_BASIS":
+      return thirty360BondBasisDays(start, end) / 360;
+  }
+}
+
+/** The receive-fixed sign for an OIS-style direction (receive = +1, pay = −1). */
+function receiveFixedSign(direction: OisInstrument["direction"]): number {
+  return direction === "RECEIVE_FIXED" ? 1 : -1;
+}
+
+// ---------------------------------------------------------------------------
+// vanilla fixed-vs-float interest-rate swap (IRS)
+// ---------------------------------------------------------------------------
+
+/** One accrual period of a swap leg, on the curve's ACT/365F time axis. */
+interface LegPeriod {
+  readonly accrualStart: number;
+  readonly pay: number;
+  readonly accrual: number;
+}
+
+/**
+ * Build a spot-starting swap leg of `years` at `freq`, accruing on `basis` — the
+ * exact analogue of `celnet_rates::swap_leg_schedule`. Each coupon end is
+ * `freq.months·i` months after the rolled spot, modified-following on the US
+ * calendar; the accrual fraction uses `basis`, and the accrual-start/pay time
+ * coordinates are ACT/365F from the spot (the curve's discount-time axis).
+ */
+function swapLegSchedule(
+  reference: BrokenDate,
+  years: number,
+  freq: PaymentFrequency,
+  basis: RatesLegDayCount,
+): LegPeriod[] {
+  const start = rollFollowing(reference);
+  const n = years * frequencyPerYear(freq);
+  const months = frequencyMonths(freq);
+  const periods: LegPeriod[] = [];
+  let prev = start;
+  for (let i = 1; i <= n; i += 1) {
+    const end = rollModifiedFollowing(addMonths(start, i * months));
+    periods.push({
+      accrualStart: act365f(start, prev),
+      pay: act365f(start, end),
+      accrual: legYearFraction(basis, prev, end),
+    });
+    prev = end;
+  }
+  return periods;
+}
+
+/** The fixed-leg annuity `A = Σ accrual_i · DF(pay_i)` (per unit notional). */
+function fixedAnnuity(curve: DiscountCurve, leg: readonly LegPeriod[]): number {
+  let annuity = 0;
+  for (const p of leg) annuity += p.accrual * discountFactor(curve, p.pay);
+  return annuity;
+}
+
+/**
+ * The float-leg value per unit notional, by explicit per-period forward projection
+ * (`celnet_rates::float_leg_value`): each coupon's value is
+ * `DF(pay)·accrual·((DF(start)/DF(pay) − 1)/accrual)`, computed in that order so it
+ * is byte-identical to the engine (it telescopes to `DF(start) − DF(maturity)` on
+ * the single self-discounting curve).
+ */
+function floatLegValue(curve: DiscountCurve, leg: readonly LegPeriod[]): number {
+  let value = 0;
+  for (const p of leg) {
+    const dfStart = discountFactor(curve, p.accrualStart);
+    const dfPay = discountFactor(curve, p.pay);
+    const forward = (dfStart / dfPay - 1) / p.accrual;
+    value += dfPay * p.accrual * forward;
+  }
+  return value;
+}
+
+/** The par (fair) fixed swap rate `K* = float_value / fixed_annuity`. */
+function swapParRate(
+  curve: DiscountCurve,
+  fixedLeg: readonly LegPeriod[],
+  floatLeg: readonly LegPeriod[],
+): number {
+  return floatLegValue(curve, floatLeg) / fixedAnnuity(curve, fixedLeg);
+}
+
+/** Present value of receiving fixed: `N·(K·A − F)`; pay-fixed is the negation. */
+function swapReceiveFixedPv(
+  curve: DiscountCurve,
+  fixedLeg: readonly LegPeriod[],
+  floatLeg: readonly LegPeriod[],
+  fixedRate: number,
+  notional: number,
+): number {
+  return notional * (fixedRate * fixedAnnuity(curve, fixedLeg) - floatLegValue(curve, floatLeg));
+}
+
+/**
+ * Receive-fixed PV / PV01 / DV01 / key-rate ladder for a vanilla swap priced off a
+ * curve bootstrapped from `quotes` (mirrors `celnet_rates::swap_risk`). DV01 and the
+ * ladder use CENTRAL (symmetric) quote bumps and re-bootstrap.
+ */
+function swapRisk(
+  quotes: readonly OisQuote[],
+  fixedLeg: readonly LegPeriod[],
+  floatLeg: readonly LegPeriod[],
+  fixedRate: number,
+  notional: number,
+): OisRisk {
+  const base = bootstrapOis(quotes);
+  const pv = swapReceiveFixedPv(base, fixedLeg, floatLeg, fixedRate, notional);
+  const pv01 = notional * fixedAnnuity(base, fixedLeg) * ONE_BP;
+
+  const reprice = (shift: (i: number) => number): number => {
+    const bumped = quotes.map((q, i) => ({
+      schedule: q.schedule,
+      parRate: q.parRate + shift(i),
+    }));
+    return swapReceiveFixedPv(bootstrapOis(bumped), fixedLeg, floatLeg, fixedRate, notional);
+  };
+
+  const dv01 = (reprice(() => ONE_BP) - reprice(() => -ONE_BP)) / 2;
+  const keyRate: number[] = [];
+  for (let target = 0; target < quotes.length; target += 1) {
+    const up = reprice((i) => (i === target ? ONE_BP : 0));
+    const down = reprice((i) => (i === target ? -ONE_BP : 0));
+    keyRate.push((up - down) / 2);
+  }
+  return { pv, pv01, dv01, keyRate };
+}
+
+/**
+ * Price a single vanilla IRS against a curve set, returning the direction-signed
+ * PV + risk. Validates exactly as the server's `price_irs` does (whole-year tenor
+ * `>= 1`, positive notional), so an offline rejection matches a live one.
+ *
+ * @throws {RatesPricingError} on a malformed curve / instrument.
+ */
+export function priceIrsOffline(
+  curve: RatesCurveSet,
+  irs: VanillaIrsInstrument,
+): RatesPricingResult {
+  const quotes = buildQuotes(curve);
+  if (irs.tenorYears < 1) throw new RatesPricingError("tenor_years must be >= 1");
+  if (!(irs.notional > 0)) throw new RatesPricingError("notional must be > 0");
+
+  const fixedLeg = swapLegSchedule(
+    curve.referenceDate,
+    irs.tenorYears,
+    irs.fixedFrequency,
+    irs.fixedDayCount,
+  );
+  const floatLeg = swapLegSchedule(
+    curve.referenceDate,
+    irs.tenorYears,
+    irs.floatFrequency,
+    irs.floatDayCount,
+  );
+  const risk = swapRisk(quotes, fixedLeg, floatLeg, irs.fixedRate, irs.notional);
+  const par = swapParRate(bootstrapOis(quotes), fixedLeg, floatLeg);
+  const sign = receiveFixedSign(irs.direction);
+
+  return {
+    pv: sign * risk.pv,
+    parRate: par,
+    pv01: sign * risk.pv01,
+    dv01: sign * risk.dv01,
+    keyRateLadder: risk.keyRate.map((k) => sign * k),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// forward rate agreement (FRA)
+// ---------------------------------------------------------------------------
+
+/** One accrual window `[fixing, maturity]` with its contractual accrual `τ`. */
+interface FraContract {
+  readonly fixing: number;
+  readonly maturity: number;
+  readonly accrual: number;
+}
+
+/** PV to the fixed-rate receiver: `N·(K·τ·DF(maturity) − (DF(fixing) − DF(maturity)))`. */
+function fraReceiveFixedPv(
+  curve: DiscountCurve,
+  fra: FraContract,
+  fixedRate: number,
+  notional: number,
+): number {
+  const dfFix = discountFactor(curve, fra.fixing);
+  const dfMat = discountFactor(curve, fra.maturity);
+  return notional * (fixedRate * fra.accrual * dfMat - (dfFix - dfMat));
+}
+
+/** Par (break-even) fixed rate `(DF(fixing)/DF(maturity) − 1)/τ`. */
+function fraParRate(curve: DiscountCurve, fra: FraContract): number {
+  const dfFix = discountFactor(curve, fra.fixing);
+  const dfMat = discountFactor(curve, fra.maturity);
+  return (dfFix / dfMat - 1) / fra.accrual;
+}
+
+/**
+ * Price a single FRA against a curve set (mirrors the server's `price_fra`): the
+ * roll-adjusted window dates are rebuilt from the curve reference date, the accrual
+ * `τ` uses the instrument basis, and the curve risk uses central quote bumps.
+ *
+ * @throws {RatesPricingError} on a malformed curve / instrument.
+ */
+export function priceFraOffline(
+  curve: RatesCurveSet,
+  fra: FraInstrument,
+): RatesPricingResult {
+  const quotes = buildQuotes(curve);
+  if (!(fra.notional > 0)) throw new RatesPricingError("notional must be > 0");
+  if (fra.endMonths <= fra.startMonths) {
+    throw new RatesPricingError("FRA window end months must exceed start months");
+  }
+
+  // Roll-adjusted window dates on the OIS/IRS curve axis: the spot is the reference
+  // rolled to the next US business day (curve time 0), each window end modified-
+  // following; the FRA coordinates are ACT/365F from that spot (`Fra::from_dates`).
+  const start = rollFollowing(curve.referenceDate);
+  const fixingDate = rollModifiedFollowing(addMonths(start, fra.startMonths));
+  const maturityDate = rollModifiedFollowing(addMonths(start, fra.endMonths));
+  const fixing = act365f(start, fixingDate);
+  const maturity = act365f(start, maturityDate);
+  if (maturity <= fixing) {
+    throw new RatesPricingError("FRA maturity must be strictly after fixing");
+  }
+  const accrual = accrualYearFraction(fra.accrualBasis, fixingDate, maturityDate);
+  if (!(accrual > 0)) throw new RatesPricingError("FRA accrual fraction must be positive");
+  const contract: FraContract = { fixing, maturity, accrual };
+
+  const base = bootstrapOis(quotes);
+  const pv = fraReceiveFixedPv(base, contract, fra.fixedRate, fra.notional);
+  const pv01 = fra.notional * contract.accrual * discountFactor(base, contract.maturity) * ONE_BP;
+  const par = fraParRate(base, contract);
+
+  const reprice = (shift: (i: number) => number): number => {
+    const bumped = quotes.map((q, i) => ({
+      schedule: q.schedule,
+      parRate: q.parRate + shift(i),
+    }));
+    return fraReceiveFixedPv(bootstrapOis(bumped), contract, fra.fixedRate, fra.notional);
+  };
+  const dv01 = (reprice(() => ONE_BP) - reprice(() => -ONE_BP)) / 2;
+  const keyRate: number[] = [];
+  for (let target = 0; target < quotes.length; target += 1) {
+    const up = reprice((i) => (i === target ? ONE_BP : 0));
+    const down = reprice((i) => (i === target ? -ONE_BP : 0));
+    keyRate.push((up - down) / 2);
+  }
+
+  const sign = receiveFixedSign(fra.direction);
+  return {
+    pv: sign * pv,
+    parRate: par,
+    pv01: sign * pv01,
+    dv01: sign * dv01,
+    keyRateLadder: keyRate.map((k) => sign * k),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// fixed-coupon cash bond
+// ---------------------------------------------------------------------------
+
+/** One future bond cashflow, as seen from settlement (`celnet_bond::Cashflow`). */
+interface BondCashflow {
+  /** Discounting exponent in coupon periods from settlement: `w + (k − 1)`. */
+  readonly periodExponent: number;
+  /** ACT/365F year-fraction time from settlement (the curve discount-time axis). */
+  readonly curveTime: number;
+  /** The cash amount paid (a coupon, plus `redemption` on the final flow). */
+  readonly amount: number;
+}
+
+/** A bond reduced to its future cashflows + accrued interest (`CashflowSchedule`). */
+interface BondCashflowSchedule {
+  readonly freq: number;
+  readonly accrued: number;
+  readonly flows: readonly BondCashflow[];
+}
+
+/**
+ * Reduce a bond to its future cashflows + accrued interest at settlement, mirroring
+ * `celnet_bond::CashflowSchedule::from_bond`: the regular coupon dates are rolled
+ * back from `maturityDate` in `12/f`-month steps (end-of-month-aware); those strictly
+ * after settlement are the future coupons, the latest on/before settlement is the
+ * current period's start. The buyer receives the full next coupon and compensates
+ * the seller through the accrued interest.
+ */
+function bondCashflowSchedule(
+  bond: BondInstrument,
+  settlement: BrokenDate,
+): BondCashflowSchedule {
+  const freq = frequencyPerYear(bond.couponFrequency);
+  const stepMonths = frequencyMonths(bond.couponFrequency);
+  const settle = dayNumber(settlement);
+
+  const futureDesc: BrokenDate[] = [];
+  let previousCoupon: BrokenDate | undefined;
+  for (let j = 0; ; j += 1) {
+    const date = addMonths(bond.maturityDate, -j * stepMonths);
+    if (dayNumber(date) <= settle) {
+      previousCoupon = date;
+      break;
+    }
+    futureDesc.push(date);
+  }
+  const future = futureDesc.reverse();
+  const nextCoupon = future[0]!;
+  const prevCoupon = previousCoupon!;
+
+  const periodLen = accrualYearFraction(bond.dayCount, prevCoupon, nextCoupon);
+  if (periodLen <= 0) {
+    throw new RatesPricingError("bond coupon period has a non-positive day-count length");
+  }
+  const remaining = accrualYearFraction(bond.dayCount, settlement, nextCoupon);
+  const w = remaining / periodLen;
+
+  const regularCoupon = (bond.couponRate / freq) * bond.redemption;
+  const accrued =
+    bond.couponRate * bond.redemption * accrualYearFraction(bond.dayCount, prevCoupon, settlement);
+
+  const last = future.length - 1;
+  const flows: BondCashflow[] = future.map((date, k) => ({
+    periodExponent: w + k,
+    curveTime: act365f(settlement, date),
+    amount: k === last ? regularCoupon + bond.redemption : regularCoupon,
+  }));
+
+  return { freq, accrued, flows };
+}
+
+/** Dirty price at a flat periodically-compounded yield: `Σ CFₖ·(1 + y/f)^(−eₖ)`. */
+function bondDirtyPriceAtYield(schedule: BondCashflowSchedule, yield_: number): number {
+  const base = 1 + yield_ / schedule.freq;
+  if (base <= 0) return Number.POSITIVE_INFINITY;
+  let sum = 0;
+  for (const c of schedule.flows) sum += c.amount * base ** -c.periodExponent;
+  return sum;
+}
+
+/** `∂(dirty price)/∂y = −(1/f)·Σ eₖ·CFₖ·(1 + y/f)^(−eₖ−1)` (analytic, negative). */
+function bondDirtyPriceFirstDerivative(
+  schedule: BondCashflowSchedule,
+  yield_: number,
+): number {
+  const base = 1 + yield_ / schedule.freq;
+  if (base <= 0) return Number.NEGATIVE_INFINITY;
+  let sum = 0;
+  for (const c of schedule.flows) {
+    sum += c.periodExponent * c.amount * base ** (-c.periodExponent - 1);
+  }
+  return -sum / schedule.freq;
+}
+
+/** Dirty price off a discount curve: `Σ CFₖ·DF(tₖ)` at the curve ACT/365F axis. */
+function bondPriceOnCurve(schedule: BondCashflowSchedule, curve: DiscountCurve): number {
+  let sum = 0;
+  for (const c of schedule.flows) sum += c.amount * discountFactor(curve, c.curveTime);
+  return sum;
+}
+
+/** Iteration cap + tolerances of the safeguarded-Newton yield solve (`yield_solve`). */
+const YIELD_MAX_ITER = 100;
+const YIELD_PRICE_TOL = 1e-12;
+const YIELD_STEP_TOL = 1e-14;
+const YIELD_RESIDUAL_ACCEPT = 1e-8;
+const YIELD_MAX_EXPANSIONS = 64;
+
+/**
+ * The yield to maturity repricing `schedule` to `marketDirtyPrice`, by safeguarded
+ * Newton–Raphson (mirrors `celnet_bond::yield_to_maturity`): a Newton step off the
+ * analytic price derivative, kept inside a validated `[low, high]` bracket by a
+ * bisection fallback, so a bad seed cannot diverge.
+ *
+ * @throws {RatesPricingError} on a non-positive/unreachable target or non-convergence.
+ */
+function bondYieldToMaturity(
+  schedule: BondCashflowSchedule,
+  marketDirtyPrice: number,
+  annualCoupon: number,
+): number {
+  if (!Number.isFinite(marketDirtyPrice) || marketDirtyPrice <= 0) {
+    throw new RatesPricingError("yield-to-maturity requires a strictly positive target price");
+  }
+  const freq = schedule.freq;
+  const residual = (y: number): number => bondDirtyPriceAtYield(schedule, y) - marketDirtyPrice;
+  const slope = (y: number): number => bondDirtyPriceFirstDerivative(schedule, y);
+
+  const lowYield = -freq + 1e-6;
+  if (residual(lowYield) <= 0) {
+    throw new RatesPricingError("no yield in the solvable range reprices the bond to that price");
+  }
+
+  const seed = Math.min(Math.max(annualCoupon / marketDirtyPrice, lowYield + 1e-3), 1.0);
+  let highYield = Math.max(seed, 0.05) * 2;
+  let expansions = 0;
+  while (residual(highYield) > 0) {
+    highYield *= 2;
+    expansions += 1;
+    if (expansions > YIELD_MAX_EXPANSIONS || highYield > 1e6) {
+      throw new RatesPricingError("no yield in the solvable range reprices the bond to that price");
+    }
+  }
+
+  let neg = highYield;
+  let pos = lowYield;
+  let y = Math.min(Math.max(seed, lowYield), highYield);
+  let stepPrev = Math.abs(highYield - lowYield);
+  let step = stepPrev;
+  let g = residual(y);
+  let dg = slope(y);
+
+  for (let iter = 0; iter < YIELD_MAX_ITER; iter += 1) {
+    const newtonOutOfRange = ((y - neg) * dg - g) * ((y - pos) * dg - g) > 0;
+    const newtonTooSlow = Math.abs(2 * g) > Math.abs(stepPrev * dg);
+    if (newtonOutOfRange || newtonTooSlow) {
+      stepPrev = step;
+      step = 0.5 * (neg - pos);
+      y = pos + step;
+    } else {
+      stepPrev = step;
+      step = g / dg;
+      y -= step;
+    }
+    if (Math.abs(step) < YIELD_STEP_TOL) break;
+    g = residual(y);
+    dg = slope(y);
+    if (g > 0) pos = y;
+    else neg = y;
+    if (Math.abs(g) < YIELD_PRICE_TOL) break;
+  }
+
+  if (Math.abs(residual(y)) > YIELD_RESIDUAL_ACCEPT) {
+    throw new RatesPricingError("the bond yield solve did not converge within the iteration cap");
+  }
+  return y;
+}
+
+/**
+ * Price a fixed-coupon cash bond off a curve set (mirrors the server's
+ * `price_bond_instrument`): the bond settles on the curve reference (spot-anchor)
+ * date, each cashflow is discounted off the bootstrapped OIS curve for the dirty
+ * price, and the implied yield-to-maturity + analytic yield DV01 are solved off that
+ * price. The wire result maps `pv = dirty price`, `par_rate = yield to maturity`,
+ * `pv01 = dv01 = yield DV01`, empty ladder — every measure position-signed (LONG +,
+ * SHORT −).
+ *
+ * @throws {RatesPricingError} on a malformed curve / instrument or a numeric failure.
+ */
+export function priceBondOffline(
+  curve: RatesCurveSet,
+  bond: BondInstrument,
+): RatesPricingResult {
+  const quotes = buildQuotes(curve);
+  const settlement = rollFollowing(curve.referenceDate);
+  if (dayNumber(bond.maturityDate) <= dayNumber(settlement)) {
+    throw new RatesPricingError("bond maturity must be strictly after settlement");
+  }
+  if (!(bond.redemption > 0) || !Number.isFinite(bond.redemption)) {
+    throw new RatesPricingError("the bond redemption must be strictly positive and finite");
+  }
+  if (!Number.isFinite(bond.couponRate)) {
+    throw new RatesPricingError("the bond coupon rate must be finite");
+  }
+
+  const discount = bootstrapOis(quotes);
+  const schedule = bondCashflowSchedule(bond, settlement);
+  const dirtyPrice = bondPriceOnCurve(schedule, discount);
+  const annualCoupon = bond.couponRate * bond.redemption;
+  const ytm = bondYieldToMaturity(schedule, dirtyPrice, annualCoupon);
+  const dv01 = -bondDirtyPriceFirstDerivative(schedule, ytm) * ONE_BP;
+  const sign = bond.position === "LONG" ? 1 : -1;
+
+  return {
+    pv: sign * dirtyPrice,
+    parRate: ytm,
+    pv01: sign * dv01,
+    dv01: sign * dv01,
+    keyRateLadder: [],
+  };
+}
+
+/**
+ * Price one linear-rates instrument (any oneof arm) against a curve set — the
+ * offline dispatcher the mock transport's `priceRates` uses. Routes to the OIS / IRS
+ * / FRA / bond engine, each reproducing the server's `celnet-rates` / `celnet-bond`
+ * math so the offline price agrees with the live `price_rates` mirror.
+ *
+ * @throws {RatesPricingError} on a malformed curve / instrument or a numeric failure.
+ */
+export function priceRatesInstrumentOffline(
+  curve: RatesCurveSet,
+  instrument: RatesInstrument,
+): RatesPricingResult {
+  switch (instrument.kind) {
+    case "ois":
+      return priceRatesOffline(curve, instrument.ois);
+    case "irs":
+      return priceIrsOffline(curve, instrument.irs);
+    case "fra":
+      return priceFraOffline(curve, instrument.fra);
+    case "bond":
+      return priceBondOffline(curve, instrument.bond);
+  }
 }
 
 // ---------------------------------------------------------------------------

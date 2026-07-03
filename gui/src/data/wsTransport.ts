@@ -68,9 +68,9 @@ import type {
   MarkedSurface,
   MarketContext,
   MultiDealerQuote,
-  OisInstrument,
   Quote,
   RatesCurveSet,
+  RatesInstrument,
   RatesPricingResult,
   RiskBucketRequest,
   ScenarioResult,
@@ -184,7 +184,7 @@ import {
   quoteFromWire,
   priceXvaRequestToWire,
   ratesCurveSetToWire,
-  ratesInstrumentToWire,
+  ratesInstrumentUnionToWire,
   ratesPricingResultFromWire,
   riskBucketRequestToWire,
   xvaResultFromWire,
@@ -982,17 +982,18 @@ export class WsTransport implements CelnetTransport {
 
   async priceRates(
     curve: RatesCurveSet,
-    instrument: OisInstrument,
+    instrument: RatesInstrument,
   ): Promise<RatesPricingResult> {
-    // The `price_rates` RPC over the WS mirror: send the curve set + OIS
-    // instrument and decode the server-bootstrapped PV + risk. One unversioned
-    // contract, so the server-priced result is byte-identical to the offline
-    // in-app pricer (which reproduces the same `celnet-rates` math).
+    // The `price_rates` RPC over the WS mirror: send the curve set + the
+    // `RatesInstrument` oneof arm (OIS / IRS / FRA / bond) and decode the
+    // server-bootstrapped PV + risk. One unversioned contract, so the
+    // server-priced result is byte-identical to the offline in-app pricer (which
+    // reproduces the same `celnet-rates` / `celnet-bond` math).
     const reply = await this.conn.request(
       "price_rates",
       {
         curve_set: ratesCurveSetToWire(curve),
-        instrument: ratesInstrumentToWire(instrument),
+        instrument: ratesInstrumentUnionToWire(instrument),
       },
       "rates_price_response",
       PRICING_REQUEST_TIMEOUT_MS,
