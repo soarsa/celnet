@@ -79,6 +79,7 @@ import type {
   SingleBarrier,
   SmileModel,
   StrategyKind,
+  StreamHealth,
   StrikeOrDelta,
   Tarf,
   TarfRedemption,
@@ -3266,6 +3267,96 @@ export function formatSeriesCell(t: SeriesCellInput): string {
   if (!t.baselined || !Number.isFinite(t.value)) return "… (awaiting)";
   const isVol = t.observable === "ATM_VOL" || t.observable === "RISK_REVERSAL" || t.observable === "BUTTERFLY";
   return isVol ? `${(t.value * 100).toFixed(2)}v` : t.value.toFixed(5);
+}
+
+// ---------------------------------------------------------------------------
+// fixed-income live streaming (CELNET.RATESSERIES): the streamable observable a
+// rates line surfaces + the single-cell render. A streamed `RatesPricingResult`
+// carries every measure at once (PV / par_rate / PV01 / DV01), so a live rates cell
+// PROJECTS one of them, chosen by the observable selector (the analogue of the FX
+// SERIES observable). The value is rendered as a display string (like SUBSCRIBE's
+// two-way and SERIES's trend point), health-tagged so a stale line shows its
+// last-good number dimmed, never frozen-as-live (docs §5).
+// ---------------------------------------------------------------------------
+
+/** The streamable observable a `CELNET.RATESSERIES` cell projects from the line's result. */
+export type RatesObservable = "PV" | "PAR_RATE" | "PV01" | "DV01";
+
+/**
+ * Parse the rates-observable selector: PV (present value, the default), PAR /
+ * PAR_RATE / RATE (the par/fair rate), PV01 (analytic PV01), or DV01. Accepts the
+ * canonical names + desk short forms, case-/separator-insensitive. Empty/absent ⇒
+ * PV (the line's headline measure).
+ */
+export function parseRatesObservable(raw: string | undefined): RatesObservable {
+  if (raw === undefined || raw.trim() === "") return "PV";
+  const t = raw.trim().toUpperCase().replace(/[._\s-]/g, "");
+  switch (t) {
+    case "PV":
+    case "NPV":
+    case "PRESENTVALUE":
+      return "PV";
+    case "PAR":
+    case "PARRATE":
+    case "RATE":
+    case "FAIR":
+    case "FAIRRATE":
+      return "PAR_RATE";
+    case "PV01":
+      return "PV01";
+    case "DV01":
+      return "DV01";
+    default:
+      throw new ShapingError(`invalid rates observable \`${raw}\` (expected PV, PAR, PV01 or DV01)`);
+  }
+}
+
+/** Select the chosen measure off a priced rates result. */
+function selectRatesObservable(result: RatesPricingResult, observable: RatesObservable): number {
+  switch (observable) {
+    case "PV":
+      return result.pv;
+    case "PAR_RATE":
+      return result.parRate;
+    case "PV01":
+      return result.pv01;
+    case "DV01":
+      return result.dv01;
+  }
+}
+
+/** A decoded rates streaming tick for a single live cell render. */
+export interface RatesSeriesCellInput {
+  /** The latest priced result; `null`/absent until the opening snapshot baselines. */
+  readonly result: RatesPricingResult | null;
+  /** The observable this cell projects. */
+  readonly observable: RatesObservable;
+  /** The line health (HEALTHY / RESYNCING / STALE). */
+  readonly health: StreamHealth;
+  /** True once a baseline result has been seeded. */
+  readonly baselined: boolean;
+}
+
+/**
+ * Render a streamed rates tick to a single cell string. The par rate is shown as a
+ * percentage (4dp of a percent, e.g. `4.1000%`); PV / PV01 / DV01 are currency
+ * amounts (2dp for a value ≥ 1, else 6dp so a small sensitivity stays visible). An
+ * un-baselined line renders an explicit waiting marker; a STALE line shows its
+ * last-good number dimmed (`… <n> (stale)`); a resyncing line is tagged `(resync)`.
+ */
+export function formatRatesSeriesCell(t: RatesSeriesCellInput): string {
+  if (!t.baselined || t.result === null) return "… (awaiting)";
+  const v = selectRatesObservable(t.result, t.observable);
+  if (!Number.isFinite(v)) return "… (awaiting)";
+  const body =
+    t.observable === "PAR_RATE"
+      ? `${(v * 100).toFixed(4)}%`
+      : Math.abs(v) >= 1
+        ? v.toFixed(2)
+        : v.toFixed(6);
+  if (t.health === "STALE") return `… ${body} (stale)`;
+  const tag = t.health === "RESYNCING" ? " (resync)" : "";
+  return `${body}${tag}`;
 }
 
 /** The decoded fields a CELNET.MARK status spill renders (two-phase staging). */
