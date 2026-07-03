@@ -169,6 +169,68 @@
       ]
     },
     {
+      "id": "BOND",
+      "name": "BOND",
+      "description": "Price a fixed-coupon cash bond off a self-discounting curve via the live price_rates engine RPC (the RatesInstrument.bond arm); spills [dirty_price, ytm, dv01] (the fields the bond price response carries: dirty price, yield to maturity, yield DV01).",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "curve",
+          "description": "2-column [tenorYears, parRate] discount-curve range; one row per OIS pillar, strictly increasing tenor.",
+          "type": "any",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "referenceDate",
+          "description": "Curve reference (settlement / spot-anchor) date: an Excel date cell or YYYY-MM-DD.",
+          "type": "any"
+        },
+        {
+          "name": "maturity",
+          "description": "Bond maturity (final-redemption) date: an Excel date cell or YYYY-MM-DD; must be after referenceDate.",
+          "type": "any"
+        },
+        {
+          "name": "couponRate",
+          "description": "Annual coupon rate as a decimal (0.06 = 6%); 0 for a zero-coupon bond.",
+          "type": "number"
+        },
+        {
+          "name": "redemption",
+          "description": "Optional par redemption / face value (defaults to 100).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "frequency",
+          "description": "Optional coupon frequency: ANNUAL, SEMI_ANNUAL (default) or QUARTERLY.",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "dayCount",
+          "description": "Optional accrual day-count: ACT_360, ACT_365_FIXED or THIRTY_360_BOND_BASIS (default).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "side",
+          "description": "Optional position direction: LONG (default, +PV) or SHORT (-PV).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "currency",
+          "description": "Optional ISO-4217 curve currency (defaults to USD).",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "RATESRISK",
       "name": "RATESRISK",
       "description": "Net a linear-rates OIS book against one shared curve via the live aggregate_rates_risk engine RPC; spills one server-netted node per settlement currency: [ccy, net_pv, net_pv01, net_dv01] then the key-rate DV01 ladder (one kr_dv01[<tenor>Y] column per curve pillar).",

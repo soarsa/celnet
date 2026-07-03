@@ -39,6 +39,7 @@ import {
   ShapingError,
   americanIsMonteCarlo,
   cliquetIsMonteCarlo,
+  formatBondSpill,
   formatCalibratedCurveSpill,
   formatCalibratedSmileSpill,
   formatGreeksSpill,
@@ -67,6 +68,7 @@ import {
   parseRiskScope,
   parseSmileModel,
   parseTenor,
+  shapeBondInstrument,
   shapeBuildCurveRequest,
   shapeCalibration,
   shapeOisInstrument,
@@ -433,6 +435,64 @@ export async function RATES(
     const instrument = shapeOisInstrument({ tenor, fixedRate, direction, notional });
     const result = await getConnection().priceRates(curveSet, instrument);
     return formatRatesSpill(result, curveSet.pillars);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a fixed-coupon cash bond off a self-discounting curve via the live
+ * `price_rates` engine RPC (the SAME RPC as CELNET.RATES, carrying the
+ * `RatesInstrument.bond` arm), and spill the priced bond result. The add-in carries
+ * NO bond math: the calibrated `curve` (its par-OIS pillars) and the bond terms are
+ * sent to the `celnet-rates` bond engine, which bootstraps the discount curve, PVs
+ * each cashflow (the DIRTY price), and returns the authoritative result; this cell
+ * only shapes the inputs and lays out the reply.
+ *
+ * The spill is a labelled `3×2` matrix: `dirty_price` (the full settlement price,
+ * carrying the position `side` sign), `ytm` (yield to maturity, side-independent),
+ * and `dv01` (the yield DV01). These are exactly the fields the `price_rates`
+ * response carries for a bond — clean price / accrued / duration are computed inside
+ * the engine but are NOT on the wire, so they are never shown here (no fabricated
+ * numbers). Settlement is the curve reference date rolled to the next US business
+ * day; the coupon schedule rolls back from `maturity` at `frequency`.
+ * @customfunction BOND
+ * @param curve The 2-column `[tenorYears, parRate]` discount-curve range — one row per self-discounting OIS pillar, in strictly increasing tenor order.
+ * @param referenceDate The curve reference (settlement / spot-anchor) date — an Excel date cell or "YYYY-MM-DD".
+ * @param maturity The bond maturity (final-redemption) date — an Excel date cell or "YYYY-MM-DD"; must be after referenceDate.
+ * @param couponRate The annual coupon rate as a decimal (0.06 = 6%); 0 for a zero-coupon bond.
+ * @param redemption Optional par redemption / face value (defaults to 100).
+ * @param frequency Optional coupon frequency: ANNUAL, SEMI_ANNUAL (default) or QUARTERLY.
+ * @param dayCount Optional accrual day-count: ACT_360, ACT_365_FIXED or THIRTY_360_BOND_BASIS (default).
+ * @param side Optional position direction: LONG (default, +PV) or SHORT (−PV).
+ * @param currency Optional ISO-4217 curve currency (defaults to USD).
+ * @returns A `3×2` spill: dirty_price, ytm, dv01.
+ */
+export async function BOND(
+  curve: (string | number | boolean)[][],
+  referenceDate: number | string,
+  maturity: number | string,
+  couponRate: number,
+  redemption?: number,
+  frequency?: string,
+  dayCount?: string,
+  side?: string,
+  currency?: string,
+): Promise<SpillMatrix> {
+  try {
+    denyIfUngated("bond");
+    const curveSet = shapeRatesCurve({ curve, referenceDate, currency });
+    const bond = shapeBondInstrument({
+      maturity,
+      referenceDate: curveSet.referenceDate,
+      couponRate,
+      redemption,
+      frequency,
+      dayCount,
+      side,
+    });
+    const result = await getConnection().priceRatesBond(curveSet, bond);
+    return formatBondSpill(result);
   } catch (err) {
     throw toCfError(err);
   }
@@ -1154,6 +1214,7 @@ function registerAll(): void {
   cf.associate("PRICE", PRICE as (...a: never[]) => unknown);
   cf.associate("GREEKS", GREEKS as (...a: never[]) => unknown);
   cf.associate("RATES", RATES as (...a: never[]) => unknown);
+  cf.associate("BOND", BOND as (...a: never[]) => unknown);
   cf.associate("RATESRISK", RATESRISK as (...a: never[]) => unknown);
   cf.associate("RATESBOOK", RATESBOOK as (...a: never[]) => unknown);
   cf.associate("CURVE", CURVE as (...a: never[]) => unknown);

@@ -26,6 +26,7 @@ import type {
   AmericanOption,
   ArbReport,
   BasketOption,
+  BondInstrument,
   BrokerQuoteSet,
   BucketedRisk,
   CcyPair,
@@ -1218,6 +1219,57 @@ export function ratesInstrumentToWire(instrument: OisInstrument): WireObject {
       fixed_rate: instrument.fixedRate,
       notional: instrument.notional,
       side: oisDirectionToSide(instrument.direction),
+    },
+  };
+}
+
+/**
+ * The wire `PaymentFrequency` tag for a bond coupon frequency (proto enum:
+ * ANNUAL=0, SEMI_ANNUAL=1, QUARTERLY=2). The server reads it with `enum_or_zero`
+ * (a raw integer, never a string) — the EXACT numeric the descriptor codec
+ * decodes.
+ */
+const BOND_COUPON_FREQUENCY_TO_WIRE: Record<BondInstrument["couponFrequency"], number> = {
+  ANNUAL: 0,
+  SEMI_ANNUAL: 1,
+  QUARTERLY: 2,
+};
+
+/**
+ * The wire `AccrualBasis` tag for a bond day-count (proto enum: ACT_360=0,
+ * ACT_365_FIXED=1, THIRTY_360_BOND_BASIS=2). `AccrualBasis` is the instrument-level
+ * superset of the curve `DayCount`; the server reads it with `enum_or_zero`.
+ */
+const BOND_DAY_COUNT_TO_WIRE: Record<BondInstrument["dayCount"], number> = {
+  ACT_360: 0,
+  ACT_365_FIXED: 1,
+  THIRTY_360_BOND_BASIS: 2,
+};
+
+/**
+ * Encode a `BondInstrument` to the wire `instrument` object (the `bond` oneof arm
+ * of `RatesInstrument`). The EXACT shape the server's `bond_instrument_from_json`
+ * (and the byte-identical descriptor codec) decodes: every field is a FLAT scalar
+ * or numeric enum tag EXCEPT `maturity_date`, which nests a `BrokenDate`
+ * `{year, month, day}` (the same nested-date discipline as the OIS pillar tenor).
+ * Key order mirrors the server encoder `rates_instrument_to_json` so a request is
+ * byte-identical to the server round-trip. `side` is the numeric wire `Side`
+ * (LONG → SIDE_BUY = 0 = +PV; SHORT → SIDE_SELL = 1 = −PV; TWO_WAY is rejected by
+ * the engine for an outright bond price).
+ */
+export function bondInstrumentToWire(bond: BondInstrument): WireObject {
+  return {
+    bond: {
+      coupon_rate: bond.couponRate,
+      coupon_frequency: BOND_COUPON_FREQUENCY_TO_WIRE[bond.couponFrequency],
+      day_count: BOND_DAY_COUNT_TO_WIRE[bond.dayCount],
+      maturity_date: {
+        year: bond.maturityDate.year,
+        month: bond.maturityDate.month,
+        day: bond.maturityDate.day,
+      },
+      redemption: bond.redemption,
+      side: bond.side === "SHORT" ? 1 : 0,
     },
   };
 }
