@@ -15,6 +15,12 @@ workspace = true
 # Descriptors + cert-ledger snapshots serialize onto the one canonical API surface
 # (the connectivity control-plane RPCs) — derive-only, no runtime cost on the hot path.
 serde = { workspace = true }
+# The live session driver REUSES the celnet-fix engine (Session / framing / transport /
+# message builders) — no FIX is re-implemented in this crate.
+celnet-fix = { workspace = true }
+# Async socket IO for the initiator driver: `io::split` + read timers, on top of the
+# workspace tokio feature set (net / rt-multi-thread / macros / time already enabled).
+tokio = { workspace = true, features = ["io-util"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }

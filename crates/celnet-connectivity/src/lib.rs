@@ -13,12 +13,16 @@
 //! * [`cert`] — the certification ledger: seed a checklist, auto-pass automatic
 //!   checks as the session observes wire events, gate promote-to-PROD.
 //! * [`registry`] — the compile-time table of seeded adapters.
+//! * [`driver`] — the live FIX session driver on the `celnet-fix` seam: runs a
+//!   certification cycle over a real session and feeds every observed wire event
+//!   into the ledger.
 //!
-//! The live FIX session **driver** (on the `celnet-fix` seam) and the
-//! control-plane **API** land in the `conn-framework` / `conn-server-api` lanes.
+//! The control-plane **API** (connection lifecycle over the one contract) lands
+//! in the `conn-server-api` lane.
 
 pub mod cert;
 pub mod descriptor;
+pub mod driver;
 pub mod registry;
 
 mod adapters;
@@ -32,4 +36,5 @@ pub use descriptor::{
     CertCheckDef, ConnectionRole, EventCheckOverride, FieldKind, FieldTemplate,
     STANDARD_INITIATOR_FIELDS, VendorAdapterSpec, WireDirection,
 };
+pub use driver::{CycleReport, VenueEndpoint, run_cert_cycle};
 pub use registry::AdapterRegistry;
