@@ -1003,6 +1003,18 @@ export class Connection {
     return this.request("aggregate_risk", body, "aggregate_risk_response");
   }
 
+  /**
+   * `RiskService.AggregateRatesRisk` — the SERVER's per-currency netted rates-book
+   * risk (net PV / PV01 / DV01 + key-rate DV01 ladder) for a curve + a set of OIS
+   * positions. Like `aggregateRisk`, the body carries an explicit grant-all
+   * principal (built by `aggregateRatesRiskRequest`) that clears the production
+   * deny-by-default edge; the edge needs no session token, so — unlike
+   * `build_curve` — none is injected here (parity with the options risk RPCs).
+   */
+  async aggregateRatesRisk(body: WireObject): Promise<WireObject> {
+    return this.request("aggregate_rates_risk", body, "aggregate_rates_risk_response");
+  }
+
   /** `RiskService.DrillRisk` — drill a node into child sub-nodes and/or positions. */
   async drillRisk(body: WireObject): Promise<WireObject> {
     return this.request("drill_risk", body, "drill_risk_response");

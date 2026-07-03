@@ -85,6 +85,9 @@ import type {
   AdditiveRisk,
   LimitUtilization,
   NumeraireRate,
+  RatesPosition,
+  RatesRiskNode,
+  RatesRiskScope,
   ReportingNumeraire,
   RiskDimension,
   RiskNode,
@@ -4075,5 +4078,177 @@ export function formatCalibratedCurveSpill(curve: CalibratedCurve): SpillMatrix 
       p.label.trim() !== "" ? p.label : p.instrumentId.trim() !== "" ? p.instrumentId : `pillar[${i}]`;
     rows.push([label, p.timeYears, p.discountFactor, p.zeroRate]);
   });
+  return rectangular(rows);
+}
+
+// ---------------------------------------------------------------------------
+// linear-rates portfolio risk (`aggregate_rates_risk`) — the CELNET.RATESRISK
+// add-in path. Shape a rates BOOK (an OIS-per-row range) + the optional
+// `(entity, book, ccy)` scope into the typed `RatesPosition[]` / `RatesRiskScope`
+// the server nets against one shared curve, and lay out the server-returned
+// per-currency `RatesRiskNode` tree as a spill. The add-in holds NO rates-risk
+// math: the live `celnet-rates` engine prices every position and the server sums
+// them additively; this only shapes the inputs and lays out the netted reply.
+// ---------------------------------------------------------------------------
+
+/** Parse an optional booking-cell id (`entity`/`book`) — a non-negative integer; blank ⇒ 0. */
+function shapeBookingId(cell: string | number | boolean | undefined, what: string): number {
+  if (cell === undefined || cell === null || cell === "") return 0;
+  if (typeof cell === "boolean") throw new ShapingError(`${what} must be a number, not a boolean`);
+  const n = typeof cell === "number" ? cell : Number(String(cell).trim());
+  if (!Number.isInteger(n) || n < 0) {
+    throw new ShapingError(`${what} must be a non-negative integer (got \`${cell}\`)`);
+  }
+  return n;
+}
+
+/**
+ * Parse the CELNET.RATESRISK positions range — one OIS position per row,
+ * `[tenorYears, fixedRate, direction, notional, entity?, book?]` — into typed
+ * `RatesPosition`s. Blank trailing rows are ignored. Each row's OIS reuses the
+ * exact `price_rates` OIS shape (whole-year tenor, decimal fixed rate, positive
+ * notional, PAY_FIXED/RECEIVE_FIXED direction carrying the sign); the optional
+ * `entity`/`book` are the booking cell the server rolls up and the `scope`
+ * filters on (absent ⇒ the `0` default). A synthetic 1-based `positionId` is
+ * assigned per row (informational — the server echoes it, it does not affect the
+ * netting). At least one position is required.
+ */
+export function shapeRatesRiskPositions(
+  rows: readonly (readonly (string | number | boolean)[])[],
+): RatesPosition[] {
+  const positions: RatesPosition[] = [];
+  let seq = 0;
+  for (const row of rows) {
+    if (isEmptyCurveRow(row)) continue;
+    if (row.length < 4) {
+      throw new ShapingError(
+        "each rates position row needs [tenorYears, fixedRate, direction, notional] (entity, book optional)",
+      );
+    }
+    // The tenor accepts EITHER a whole-year number (`5`) or a `"5Y"` string, exactly
+    // like the RATES sibling — so parse it directly (a boolean is neither).
+    const tenorCell = row[0]!;
+    if (typeof tenorCell === "boolean") {
+      throw new ShapingError("position tenorYears must be a whole-year number or a `5Y` string");
+    }
+    const tenorYears = parseOisTenorYears(tenorCell);
+    const fixedRate = ratesCell(row[1]!, "position fixedRate");
+    const direction = parseOisDirection(String(row[2]));
+    const notional = shapeOisNotional(ratesCell(row[3]!, "position notional"));
+    const entity = shapeBookingId(row[4], "entity");
+    const book = shapeBookingId(row[5], "book");
+    seq += 1;
+    positions.push({
+      positionId: BigInt(seq),
+      entity,
+      book,
+      instrument: { tenorYears, fixedRate, notional, direction },
+    });
+  }
+  if (positions.length === 0) {
+    throw new ShapingError("the rates portfolio needs at least one OIS position");
+  }
+  return positions;
+}
+
+/** Parse one scope uint token value (`entity`/`book`) — a non-negative integer. */
+function parseScopeUint(raw: string, what: string): number {
+  const n = Number(raw.trim());
+  if (!Number.isInteger(n) || n < 0) {
+    throw new ShapingError(`scope ${what} must be a non-negative integer (got \`${raw}\`)`);
+  }
+  return n;
+}
+
+/**
+ * Parse the optional CELNET.RATESRISK scope string into a `RatesRiskScope`, or
+ * undefined for the whole book. The grammar is a comma/semicolon-separated list of
+ * `KEY:value` tokens (case-insensitive): `ENTITY:<n>`, `BOOK:<n>`, `CCY:<xxx>` —
+ * each present key narrows the rollup, an absent key does not constrain. Empty /
+ * `ALL` / `FIRM` ⇒ undefined (no filter). A malformed token is rejected loudly,
+ * never silently ignored.
+ */
+export function parseRatesRiskScope(raw: string | undefined): RatesRiskScope | undefined {
+  const s = (raw ?? "").trim();
+  if (s === "" || s.toUpperCase() === "ALL" || s.toUpperCase() === "FIRM") return undefined;
+  const scope: { -readonly [K in keyof RatesRiskScope]?: RatesRiskScope[K] } = {};
+  for (const tokenRaw of s.split(/[,;]+/)) {
+    const token = tokenRaw.trim();
+    if (token === "") continue;
+    const m = /^([A-Za-z]+)\s*[:=]\s*(.+)$/.exec(token);
+    if (!m || m[1] === undefined || m[2] === undefined) {
+      throw new ShapingError(`invalid scope token \`${token}\` (expected ENTITY:n, BOOK:n or CCY:xxx)`);
+    }
+    const key = m[1].toUpperCase();
+    const value = m[2].trim();
+    switch (key) {
+      case "ENTITY":
+      case "ENT":
+        scope.entity = parseScopeUint(value, "entity");
+        break;
+      case "BOOK":
+      case "BK":
+        scope.book = parseScopeUint(value, "book");
+        break;
+      case "CCY":
+      case "CURRENCY": {
+        const ccy = value.toUpperCase();
+        if (!/^[A-Z]{3}$/.test(ccy)) {
+          throw new ShapingError(`invalid scope ccy \`${value}\` (expected a 3-letter code)`);
+        }
+        scope.ccy = ccy;
+        break;
+      }
+      default:
+        throw new ShapingError(`invalid scope key \`${m[1]}\` (expected ENTITY, BOOK or CCY)`);
+    }
+  }
+  if (scope.entity === undefined && scope.book === undefined && scope.ccy === undefined) {
+    return undefined;
+  }
+  return scope;
+}
+
+/**
+ * Format the CELNET.RATESRISK reply as a per-currency node grid: a header
+ * `[ccy, net_pv, net_pv01, net_dv01, kr_dv01[<tenor>Y]…]`, one row per settlement-
+ * currency node, then a summary footer. Every node prices against the ONE request
+ * curve, so its key-rate ladder shares the curve's pillar tenors; the ladder
+ * columns are the sorted union of every node's bucket tenors (a node missing a
+ * bucket at a column tenor shows blank, never a spurious zero). The netting is the
+ * server's; this only lays the server-returned node tree out in cells. An empty
+ * rollup (no positions in scope) spills an honest empty-state row.
+ */
+export function formatRatesRiskSpill(nodes: readonly RatesRiskNode[]): SpillMatrix {
+  const tenorSet = new Set<number>();
+  for (const node of nodes) {
+    for (const bucket of node.keyRateLadder) tenorSet.add(bucket.tenorYears);
+  }
+  const tenors = [...tenorSet].sort((a, b) => a - b);
+  const header: (string | number)[] = [
+    "ccy",
+    "net_pv",
+    "net_pv01",
+    "net_dv01",
+    ...tenors.map((t) => `kr_dv01[${t}Y]`),
+  ];
+  const rows: SpillMatrix = [header];
+  for (const node of nodes) {
+    const ladder = new Map<number, number>();
+    for (const bucket of node.keyRateLadder) ladder.set(bucket.tenorYears, bucket.dv01);
+    const row: (string | number)[] = [node.ccy, node.netPv, node.netPv01, node.netDv01];
+    for (const t of tenors) {
+      const v = ladder.get(t);
+      row.push(v === undefined ? "" : v);
+    }
+    rows.push(row);
+  }
+  if (nodes.length === 0) {
+    rows.push(["(no rates positions in scope)"]);
+  } else {
+    rows.push([
+      `${nodes.length} currenc${nodes.length === 1 ? "y" : "ies"} | server-netted (celnet-rates-risk)`,
+    ]);
+  }
   return rectangular(rows);
 }
