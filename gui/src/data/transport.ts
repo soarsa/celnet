@@ -80,11 +80,13 @@ import type {
   RatesCurveSet,
   RatesInstrument,
   RatesPricingResult,
+  RatesQuote,
   RatesStreamSnapshot,
   RatesStreamUpdate,
   RiskBucketRequest,
   ScenarioResult,
   ShockAxis,
+  Side,
   Smile,
   SmileModel,
   Snapshot,
@@ -261,6 +263,30 @@ export interface CelnetTransport {
     conventions: Conventions,
     idempotencyKey: string,
   ): Promise<MultiDealerQuote>;
+
+  /**
+   * QuoteService.RequestRatesQuote — the fixed-income taker RFQ: request a
+   * tradeable two-way on a linear-rates instrument (an OIS / vanilla IRS / FRA /
+   * cash bond — the `RatesInstrument` oneof) priced against an explicit calibrated
+   * `RatesCurveSet`. The FI analogue of {@link requestQuote}: a pure, market-
+   * explicit price-discovery two-way (the curve set IS the market) struck around
+   * the side-independent fair level (the par rate for an OIS/IRS/FRA, the clean
+   * price for a cash bond) plus the full PV / PV01 / DV01 / key-rate risk. `side`
+   * is the taker's directional intent (BUY = pay fixed / long, SELL = receive fixed
+   * / short, TWO_WAY = no firm direction) and selects the sign of the returned
+   * risk; the price is always the side-independent two-way. Satisfied identically
+   * by both transports — the offline source prices in-browser and struts the same
+   * two-way, the live transport issues the `request_rates_quote` RPC to
+   * celnet-server. There is NO multi-dealer rates path (the panel wire is
+   * FX-`Instrument` only), so this single two-way is the whole FI RFQ contract.
+   */
+  requestRatesQuote(
+    curve: RatesCurveSet,
+    instrument: RatesInstrument,
+    notional: number,
+    side: Side,
+    idempotencyKey: string,
+  ): Promise<RatesQuote>;
 
   /**
    * QuoteService.AcceptQuote (books an execution on the chosen side). An absent/

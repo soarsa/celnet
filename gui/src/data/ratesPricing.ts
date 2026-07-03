@@ -46,6 +46,7 @@ import type {
   RatesInstrument,
   RatesLegDayCount,
   RatesPricingResult,
+  Side,
   TailRiskCurvePillar,
   TailRiskFiPosition,
   TailRiskKeyRate,
@@ -1287,6 +1288,30 @@ export function priceBondOffline(
   curve: RatesCurveSet,
   bond: BondInstrument,
 ): RatesPricingResult {
+  return bondQuoteOffline(curve, bond).result;
+}
+
+/**
+ * A cash bond's full offline quote — the {@link RatesPricingResult} PLUS the
+ * side-independent clean/dirty price + accrued the two-way RFQ market is struck on
+ * (which the scalar `RatesPricingResult` does not carry). The offline analogue of
+ * the server's `quote_bond` (`crates/celnet-server/src/rates_pricing/mod.rs`):
+ * `clean = dirty − accrued`, both magnitudes (position-independent); only the
+ * `result` PV / DV01 carry the LONG/SHORT sign. `priceBondOffline` delegates here
+ * so the price + risk are computed EXACTLY once (no second bond implementation).
+ */
+interface BondQuoteOffline {
+  /** The dirty (full) price discounted off the curve, a magnitude. */
+  readonly dirtyPrice: number;
+  /** The clean (quoted) price `dirty − accrued`, a magnitude — the two-way mid for a bond. */
+  readonly cleanPrice: number;
+  /** Accrued interest from the last coupon to settlement. */
+  readonly accrued: number;
+  /** The position-signed PV + yield risk (the wire `RatesPricingResult`). */
+  readonly result: RatesPricingResult;
+}
+
+function bondQuoteOffline(curve: RatesCurveSet, bond: BondInstrument): BondQuoteOffline {
   const quotes = buildQuotes(curve);
   const settlement = rollFollowing(curve.referenceDate);
   if (dayNumber(bond.maturityDate) <= dayNumber(settlement)) {
@@ -1302,17 +1327,23 @@ export function priceBondOffline(
   const discount = bootstrapOis(quotes);
   const schedule = bondCashflowSchedule(bond, settlement);
   const dirtyPrice = bondPriceOnCurve(schedule, discount);
+  const cleanPrice = dirtyPrice - schedule.accrued;
   const annualCoupon = bond.couponRate * bond.redemption;
   const ytm = bondYieldToMaturity(schedule, dirtyPrice, annualCoupon);
   const dv01 = -bondDirtyPriceFirstDerivative(schedule, ytm) * ONE_BP;
   const sign = bond.position === "LONG" ? 1 : -1;
 
   return {
-    pv: sign * dirtyPrice,
-    parRate: ytm,
-    pv01: sign * dv01,
-    dv01: sign * dv01,
-    keyRateLadder: [],
+    dirtyPrice,
+    cleanPrice,
+    accrued: schedule.accrued,
+    result: {
+      pv: sign * dirtyPrice,
+      parRate: ytm,
+      pv01: sign * dv01,
+      dv01: sign * dv01,
+      keyRateLadder: [],
+    },
   };
 }
 
@@ -1338,6 +1369,118 @@ export function priceRatesInstrumentOffline(
     case "bond":
       return priceBondOffline(curve, instrument.bond);
   }
+}
+
+// ---------------------------------------------------------------------------
+// RFQ two-way — the taker's fixed-income two-way (`QuoteService.RequestRatesQuote`)
+// ---------------------------------------------------------------------------
+//
+// The offline analogue of the server's `quote_rates_two_way`
+// (`crates/celnet-server/src/rates_pricing/mod.rs`): the two-way is struck around
+// the SIDE-INDEPENDENT fair level — the par rate for an OIS/IRS/FRA, the clean
+// price for a cash bond — split a fixed maker half-spread either side, and the
+// `result` is the FULL `priceRates` risk signed to the RFQ envelope side. So the
+// offline two-way mid equals the offline `priceRates` mid EXACTLY (one FI pricing
+// path, no second implementation), matching the live `request_rates_quote` RPC.
+
+/**
+ * The maker half-spread for a fixed-income two-way RATE market, in absolute rate
+ * (`0.00005` = 0.5bp each side ⇒ a 1bp-wide market). Mirrors the server
+ * `RATES_RFQ_HALF_SPREAD`.
+ */
+export const RATES_RFQ_HALF_SPREAD = 0.000_05;
+
+/**
+ * The maker half-spread for a fixed-income two-way clean-PRICE market, in price
+ * points per 100 face (`0.05` = 5 cents each side ⇒ a 10-cent-wide market). Mirrors
+ * the server `BOND_RFQ_HALF_SPREAD`.
+ */
+export const BOND_RFQ_HALF_SPREAD = 0.05;
+
+/** A tradeable two-way FI RFQ line plus the full priced risk (offline `RatesTwoWay`). */
+export interface RatesRfqTwoWay {
+  /** The two-way bid struck around the fair level (a rate for OIS/IRS/FRA, a clean price for a bond). */
+  readonly bid: number;
+  /** The two-way offer. */
+  readonly offer: number;
+  /** The full linear-rates risk of the position at the resolved directional side. */
+  readonly result: RatesPricingResult;
+  /** Whether the two-way is a clean-PRICE market (a cash bond) vs a RATE market. */
+  readonly isPriceMarket: boolean;
+}
+
+/**
+ * Resolve the RFQ envelope `side` to the directional side the RISK measures are
+ * signed to (mirrors the server `resolve_pricing_side`): a firm BUY / SELL is
+ * honoured; a TWO_WAY request reports the canonical magnitude — receive-fixed
+ * (SELL) for a swap/FRA, long (BUY) for a cash bond.
+ */
+function resolveRatesPricingSide(side: Side, isBond: boolean): Side {
+  if (side === "BUY") return "BUY";
+  if (side === "SELL") return "SELL";
+  return isBond ? "BUY" : "SELL";
+}
+
+/**
+ * Override the instrument arm's own direction/position to the resolved directional
+ * side (mirrors the server `override_arm_side`): BUY ⇒ pay-fixed / long, SELL ⇒
+ * receive-fixed / short. The RFQ envelope side governs the risk sign, not any
+ * direction carried on the instrument the taker built.
+ */
+function overrideArmSide(instrument: RatesInstrument, side: Side): RatesInstrument {
+  const direction = side === "SELL" ? "RECEIVE_FIXED" : "PAY_FIXED";
+  switch (instrument.kind) {
+    case "ois":
+      return { kind: "ois", ois: { ...instrument.ois, direction } };
+    case "irs":
+      return { kind: "irs", irs: { ...instrument.irs, direction } };
+    case "fra":
+      return { kind: "fra", fra: { ...instrument.fra, direction } };
+    case "bond":
+      return {
+        kind: "bond",
+        bond: { ...instrument.bond, position: side === "SELL" ? "SHORT" : "LONG" },
+      };
+  }
+}
+
+/**
+ * Price a linear-rates instrument to a tradeable two-way RFQ line — the offline
+ * taker two-way the mock transport's `requestRatesQuote` returns, reproducing the
+ * server's `quote_rates_two_way` EXACTLY: the fair level (par rate for a swap/FRA,
+ * clean price for a cash bond) split `RATES_RFQ_HALF_SPREAD` / `BOND_RFQ_HALF_SPREAD`
+ * either side, with the full `priceRates` risk signed to the resolved side.
+ *
+ * @throws {RatesPricingError} on a malformed curve / instrument or a numeric failure.
+ */
+export function ratesRfqTwoWayOffline(
+  curve: RatesCurveSet,
+  instrument: RatesInstrument,
+  side: Side,
+): RatesRfqTwoWay {
+  const isBond = instrument.kind === "bond";
+  const pricingSide = resolveRatesPricingSide(side, isBond);
+  const priced = overrideArmSide(instrument, pricingSide);
+
+  if (priced.kind === "bond") {
+    const quote = bondQuoteOffline(curve, priced.bond);
+    const h = BOND_RFQ_HALF_SPREAD;
+    return {
+      bid: quote.cleanPrice - h,
+      offer: quote.cleanPrice + h,
+      result: quote.result,
+      isPriceMarket: true,
+    };
+  }
+
+  const result = priceRatesInstrumentOffline(curve, priced);
+  const h = RATES_RFQ_HALF_SPREAD;
+  return {
+    bid: result.parRate - h,
+    offer: result.parRate + h,
+    result,
+    isPriceMarket: false,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -74,9 +74,11 @@ import type {
   RatesCurveSet,
   RatesInstrument,
   RatesPricingResult,
+  RatesQuote,
   RiskBucketRequest,
   ScenarioResult,
   ShockAxis,
+  Side,
   Smile,
   SmileModel,
   UpdateUserInput,
@@ -190,6 +192,8 @@ import {
   ratesCurveSetToWire,
   ratesInstrumentUnionToWire,
   ratesPricingResultFromWire,
+  ratesQuoteFromWire,
+  ratesQuoteRequestToWire,
   ratesStreamSnapshotFromWire,
   ratesStreamUpdateFromWire,
   ratesSubscribeToWire,
@@ -1170,6 +1174,30 @@ export class WsTransport implements CelnetTransport {
     // any row's lpId) can return a complete Execution, exactly as requestQuote.
     this.quoteInstruments.set(panel.quoteId, instrument);
     return panel;
+  }
+
+  async requestRatesQuote(
+    curve: RatesCurveSet,
+    instrument: RatesInstrument,
+    notional: number,
+    side: Side,
+    idempotencyKey: string,
+  ): Promise<RatesQuote> {
+    // The fixed-income taker RFQ (`QuoteService.RequestRatesQuote`) over the WS
+    // mirror: send the curve set + the `RatesInstrument` oneof arm + the RFQ
+    // envelope (notional + taker side) and decode the two-way struck around the
+    // side-independent fair level plus the full FI risk. A pure price-discovery
+    // calculation (the curve set IS the market), so — like `priceRates` — it carries
+    // no caller-authz envelope on the wire (the `RatesQuoteRequest` proto has none;
+    // the stateful maker/booking flow is `RfqDeskService`). One unversioned
+    // contract, so the server-priced two-way is byte-identical to the offline path.
+    const reply = await this.conn.request(
+      "request_rates_quote",
+      ratesQuoteRequestToWire(idempotencyKey, curve, instrument, notional, side),
+      "rates_quote",
+      PRICING_REQUEST_TIMEOUT_MS,
+    );
+    return ratesQuoteFromWire(reply);
   }
 
   async acceptQuote(

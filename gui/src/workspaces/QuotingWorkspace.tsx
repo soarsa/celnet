@@ -25,11 +25,32 @@ import { Panel } from "../components/Panel";
 import { principalForScope } from "../data/riskView";
 import { fmtPnlAdaptive, fmtRate, fmtClock } from "../lib/format";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
-import type { DeskRequest, RatesPricingResult, Side } from "../data/contract";
+import { configuredLicense } from "../lib/commands";
+import type {
+  DeskRequest,
+  RatesInstrument,
+  RatesPricingResult,
+  RatesQuote,
+  Side,
+} from "../data/contract";
 import { oisRatesInstrument } from "../data/contract";
+import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import styles from "./QuotingWorkspace.module.css";
 
 const MM = 1_000_000;
+
+/** The taker RFQ instrument arms (the client-reachable `RatesInstrument` oneof). */
+type RfqArm = "ois" | "irs" | "fra" | "bond";
+
+const ARM_LABELS: Record<RfqArm, string> = {
+  ois: "OIS",
+  irs: "IRS",
+  fra: "FRA",
+  bond: "Bond",
+};
+
+/** The taker's directional intent options for the two-way RFQ. */
+const RFQ_SIDES: readonly Side[] = ["BUY", "SELL", "TWO_WAY"];
 
 /** A human label for a request's OIS direction (carried on the wire `Side`). */
 function sideLabel(side: Side): string {
@@ -67,6 +88,11 @@ export function QuotingWorkspace(): React.ReactElement {
   const [requests, setRequests] = useState<DeskRequest[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The workspace is class-parametric across the FI RFQ lifecycle: RESPOND to
+  // inbound requests (the maker desk, `RfqDeskService`) OR REQUEST a firm two-way
+  // (the taker RFQ, `QuoteService.RequestRatesQuote`). Default to the maker desk so
+  // the live inbox leads.
+  const [mode, setMode] = useState<"respond" | "request">("respond");
 
   // The transport seam; a ref keeps the latest refresh callback stable for the
   // notification subscription effect without re-subscribing on every render.
@@ -109,7 +135,40 @@ export function QuotingWorkspace(): React.ReactElement {
   const isOffline = !app.transport.label.startsWith("live");
 
   return (
-    <div className={styles.wrap}>
+    <div className={styles.root}>
+      <div className={styles.modeBar} role="tablist" aria-label="quoting mode">
+        <button
+          type="button"
+          role="tab"
+          id="quoting-mode-respond"
+          aria-selected={mode === "respond"}
+          className={`${styles.modeTab} ${mode === "respond" ? styles.modeTabActive : ""}`}
+          onClick={() => setMode("respond")}
+        >
+          Respond to requests
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="quoting-mode-request"
+          aria-selected={mode === "request"}
+          className={`${styles.modeTab} ${mode === "request" ? styles.modeTabActive : ""}`}
+          onClick={() => setMode("request")}
+        >
+          Request two-way (RFQ)
+        </button>
+      </div>
+
+      {mode === "request" ? (
+        <div
+          className={styles.takerRegion}
+          role="tabpanel"
+          aria-labelledby="quoting-mode-request"
+        >
+          <TakerRfqPanel trader={trader} />
+        </div>
+      ) : (
+        <div className={styles.wrap} role="tabpanel" aria-labelledby="quoting-mode-respond">
       <Panel material="float" className={styles.inbox} title="RFQ / IOI inbox">
         <div className={styles.inboxHead}>
           <span className={styles.engine}>{isOffline ? "in-app desk" : "live desk"}</span>
@@ -194,7 +253,359 @@ export function QuotingWorkspace(): React.ReactElement {
           <p className={styles.empty}>Select a request to price it.</p>
         )}
       </Panel>
+        </div>
+      )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// taker RFQ panel — request a firm two-way (QuoteService.RequestRatesQuote)
+// ---------------------------------------------------------------------------
+
+/**
+ * The taker's fixed-income RFQ: build a `RatesInstrument` (OIS / IRS / FRA / cash
+ * bond), price it against the calibrated USD-SOFR curve, and request a firm two-way
+ * (`transport.requestRatesQuote`). Renders the two-way (bid | mid | offer) — a RATE
+ * market for an OIS/IRS/FRA, a clean-PRICE market for a cash bond — plus the full FI
+ * risk. Mirrors the FX RFQ ergonomics (a single request-then-render two-way); there
+ * is NO multi-dealer rates path on the contract (the panel wire is FX-`Instrument`
+ * only), so no dealer ladder is shown. License-gated on `fixed_income` and the
+ * `price` authority (a pure price-discovery request); a11y-safe throughout.
+ */
+function TakerRfqPanel({ trader }: { trader: string }): React.ReactElement {
+  const app = useApp();
+  const licensed = useMemo(() => configuredLicense(), []);
+  const canRequest = app.auth.can("price", "fixed_income") && licensed("fixed_income");
+  const requestDeniedTitle = capabilityDenialTitle("price", "fixed_income");
+
+  const curve = DEFAULT_USD_SOFR_CURVE;
+
+  const [arm, setArm] = useState<RfqArm>("ois");
+  const [side, setSide] = useState<Side>("TWO_WAY");
+  const [notionalMm, setNotionalMm] = useState<string>("100");
+  // OIS / IRS
+  const [tenorYears, setTenorYears] = useState<string>("5");
+  const [fixedPct, setFixedPct] = useState<string>("4.00");
+  // FRA
+  const [startMonths, setStartMonths] = useState<string>("3");
+  const [endMonths, setEndMonths] = useState<string>("6");
+  // Bond
+  const [couponPct, setCouponPct] = useState<string>("5.00");
+  const [maturityYears, setMaturityYears] = useState<string>("5");
+
+  const [quote, setQuote] = useState<RatesQuote | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [reqError, setReqError] = useState<string | null>(null);
+
+  const notional = Number.parseFloat(notionalMm) * MM;
+  const notionalValid = Number.isFinite(notional) && notional > 0;
+
+  // Build the RatesInstrument oneof from the arm-specific inputs. The arm's own
+  // direction/position is set from the taker `side` (BUY = pay fixed / long); the
+  // server/offline path re-derives the risk sign from the RFQ envelope side anyway,
+  // so this is purely for a faithful, complete wire instrument.
+  const buildInstrument = useCallback((): RatesInstrument => {
+    const direction = side === "SELL" ? "RECEIVE_FIXED" : "PAY_FIXED";
+    const size = notionalValid ? notional : MM;
+    switch (arm) {
+      case "ois":
+        return {
+          kind: "ois",
+          ois: {
+            tenorYears: Math.max(1, Math.trunc(Number(tenorYears) || 1)),
+            fixedRate: (Number(fixedPct) || 0) / 100,
+            notional: size,
+            direction,
+          },
+        };
+      case "irs":
+        return {
+          kind: "irs",
+          irs: {
+            tenorYears: Math.max(1, Math.trunc(Number(tenorYears) || 1)),
+            fixedRate: (Number(fixedPct) || 0) / 100,
+            notional: size,
+            direction,
+            fixedFrequency: "SEMI_ANNUAL",
+            fixedDayCount: "ACT_360",
+            floatFrequency: "QUARTERLY",
+            floatDayCount: "ACT_360",
+          },
+        };
+      case "fra":
+        return {
+          kind: "fra",
+          fra: {
+            startMonths: Math.max(0, Math.trunc(Number(startMonths) || 0)),
+            endMonths: Math.max(1, Math.trunc(Number(endMonths) || 1)),
+            fixedRate: (Number(fixedPct) || 0) / 100,
+            notional: size,
+            direction,
+            accrualBasis: "ACT_360",
+          },
+        };
+      case "bond":
+        return {
+          kind: "bond",
+          bond: {
+            couponRate: (Number(couponPct) || 0) / 100,
+            couponFrequency: "SEMI_ANNUAL",
+            dayCount: "THIRTY_360_BOND_BASIS",
+            maturityDate: {
+              year: curve.referenceDate.year + Math.max(1, Math.trunc(Number(maturityYears) || 1)),
+              month: curve.referenceDate.month,
+              day: curve.referenceDate.day,
+            },
+            redemption: 100,
+            position: side === "SELL" ? "SHORT" : "LONG",
+          },
+        };
+    }
+  }, [
+    arm,
+    side,
+    notional,
+    notionalValid,
+    tenorYears,
+    fixedPct,
+    startMonths,
+    endMonths,
+    couponPct,
+    maturityYears,
+    curve.referenceDate.year,
+    curve.referenceDate.month,
+    curve.referenceDate.day,
+  ]);
+
+  const runRequest = async () => {
+    if (!canRequest || !notionalValid) return;
+    setBusy(true);
+    setReqError(null);
+    try {
+      const key = `fi-rfq-${arm}-${side}-${Date.now()}`;
+      const q = await app.transport.requestRatesQuote(
+        curve,
+        buildInstrument(),
+        notional,
+        side,
+        key,
+      );
+      setQuote(q);
+    } catch (err) {
+      setQuote(null);
+      setReqError(err instanceof Error ? err.message : "RFQ failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // A cash bond quotes a clean-PRICE market (per 100 face); the rate arms quote a
+  // RATE market. The client knows the arm it requested, so it formats the reply's
+  // side-independent two-way correctly (the reply carries no arm discriminator).
+  const isPriceMarket = arm === "bond";
+  const fmtLevel = (v: number): string => (isPriceMarket ? v.toFixed(3) : fmtRate(v));
+
+  return (
+    <Panel className={styles.taker} title="Request a firm two-way (RFQ)">
+      <p className={styles.takerHint}>
+        Price a fixed-income instrument against the {curve.currency}-SOFR curve and
+        request a firm two-way. A single price-discovery two-way — the fixed-income
+        contract has no multi-dealer rates panel.
+      </p>
+
+      <div className={styles.rfqForm}>
+        <fieldset className={styles.armSet}>
+          <legend className={styles.fieldLabel}>Instrument</legend>
+          <div className={styles.segmented} role="radiogroup" aria-label="instrument arm">
+            {(Object.keys(ARM_LABELS) as RfqArm[]).map((a) => (
+              <button
+                key={a}
+                type="button"
+                role="radio"
+                aria-checked={arm === a}
+                className={`${styles.segItem} ${arm === a ? styles.segItemActive : ""}`}
+                onClick={() => {
+                  setArm(a);
+                  setQuote(null);
+                }}
+              >
+                {ARM_LABELS[a]}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset className={styles.armSet}>
+          <legend className={styles.fieldLabel}>Side</legend>
+          <div className={styles.segmented} role="radiogroup" aria-label="taker side">
+            {RFQ_SIDES.map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="radio"
+                aria-checked={side === s}
+                className={`${styles.segItem} ${side === s ? styles.segItemActive : ""}`}
+                onClick={() => setSide(s)}
+              >
+                {sideLabel(s)}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <div className={styles.rfqFields}>
+          {(arm === "ois" || arm === "irs") && (
+            <>
+              <Field label="Tenor (y)">
+                <input
+                  className={styles.input}
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={tenorYears}
+                  aria-label="swap tenor in years"
+                  onChange={(e) => setTenorYears(e.target.value)}
+                />
+              </Field>
+              <Field label="Fixed %">
+                <input
+                  className={styles.input}
+                  type="number"
+                  step={0.01}
+                  value={fixedPct}
+                  aria-label="fixed rate in percent"
+                  onChange={(e) => setFixedPct(e.target.value)}
+                />
+              </Field>
+            </>
+          )}
+          {arm === "fra" && (
+            <>
+              <Field label="Start (m)">
+                <input
+                  className={styles.input}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={startMonths}
+                  aria-label="FRA start in months"
+                  onChange={(e) => setStartMonths(e.target.value)}
+                />
+              </Field>
+              <Field label="End (m)">
+                <input
+                  className={styles.input}
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={endMonths}
+                  aria-label="FRA end in months"
+                  onChange={(e) => setEndMonths(e.target.value)}
+                />
+              </Field>
+              <Field label="Fixed %">
+                <input
+                  className={styles.input}
+                  type="number"
+                  step={0.01}
+                  value={fixedPct}
+                  aria-label="FRA fixed rate in percent"
+                  onChange={(e) => setFixedPct(e.target.value)}
+                />
+              </Field>
+            </>
+          )}
+          {arm === "bond" && (
+            <>
+              <Field label="Coupon %">
+                <input
+                  className={styles.input}
+                  type="number"
+                  step={0.01}
+                  value={couponPct}
+                  aria-label="bond coupon in percent"
+                  onChange={(e) => setCouponPct(e.target.value)}
+                />
+              </Field>
+              <Field label="Maturity (y)">
+                <input
+                  className={styles.input}
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={maturityYears}
+                  aria-label="bond maturity in years"
+                  onChange={(e) => setMaturityYears(e.target.value)}
+                />
+              </Field>
+            </>
+          )}
+          <Field label="Notional (mm)">
+            <input
+              className={styles.input}
+              type="number"
+              min={1}
+              step={5}
+              value={notionalMm}
+              aria-label="RFQ notional in millions"
+              onChange={(e) => setNotionalMm(e.target.value)}
+            />
+          </Field>
+        </div>
+
+        <Button
+          variant="primary"
+          disabled={busy || !notionalValid || !canRequest}
+          onClick={runRequest}
+          title={canRequest ? undefined : requestDeniedTitle}
+        >
+          Request two-way — {trader}
+        </Button>
+      </div>
+
+      {reqError && (
+        <p className={styles.error} role="alert">
+          {reqError}
+        </p>
+      )}
+
+      {quote && (
+        <section className={styles.quoteResult} aria-label="two-way quote">
+          <h3 className={styles.cardTitle}>
+            {ARM_LABELS[arm]} two-way {isPriceMarket ? "(clean price / 100)" : "(rate)"}
+          </h3>
+          <div className={styles.twoWay}>
+            <div className={`${styles.twoWaySide} ${styles.bidSide}`}>
+              <span className={styles.twoWayLabel}>BID</span>
+              <span className={styles.twoWayValue}>{fmtLevel(quote.price.bid)}</span>
+            </div>
+            <div className={styles.twoWaySide}>
+              <span className={styles.twoWayLabel}>MID</span>
+              <span className={styles.twoWayValue}>
+                {fmtLevel(0.5 * (quote.price.bid + quote.price.offer))}
+              </span>
+            </div>
+            <div className={`${styles.twoWaySide} ${styles.offerSide}`}>
+              <span className={styles.twoWayLabel}>OFFER</span>
+              <span className={styles.twoWayValue}>{fmtLevel(quote.price.offer)}</span>
+            </div>
+          </div>
+          <dl className={styles.metrics}>
+            <Metric label="Par rate" value={fmtRate(quote.result.parRate)} emphatic />
+            <Metric label="PV" value={fmtPnlAdaptive(quote.result.pv)} unit={curve.currency} />
+            <Metric label="PV01" value={fmtPnlAdaptive(quote.result.pv01)} unit="/bp" />
+            <Metric label="DV01" value={fmtPnlAdaptive(quote.result.dv01)} unit="/bp" />
+          </dl>
+          <dl className={styles.metrics}>
+            <Metric label="Notional" value={`${(quote.notional / MM).toLocaleString(undefined, { maximumFractionDigits: 1 })}mm`} />
+            <Metric label="Key rates" value={`${quote.result.keyRateLadder.length}`} />
+            <Metric label="Quote id" value={`${quote.quoteId}`} />
+            <Metric label="Good until" value={fmtClock(quote.validUntilNanos)} />
+          </dl>
+        </section>
+      )}
+    </Panel>
   );
 }
 
@@ -437,6 +848,22 @@ function PricePanel({
 // ---------------------------------------------------------------------------
 // small presentational pieces
 // ---------------------------------------------------------------------------
+
+/** A labelled form field: a `<label>` wrapping its label text + the control. */
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <label className={styles.field}>
+      <span className={styles.fieldLabel}>{label}</span>
+      {children}
+    </label>
+  );
+}
 
 function Term({ label, value }: { label: string; value: string }): React.ReactElement {
   return (
