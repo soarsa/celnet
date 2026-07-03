@@ -1725,3 +1725,1189 @@ fn execution_and_reject_ack_encode_byte_identical() {
         &hand::hand_reject_ack_to_json(&ack),
     );
 }
+
+// ===========================================================================
+// WAVE 3 — SurfaceService: GetSmile / MarkSurface / Scenario. The request
+// decoders (incl. the `smile_model` dual int/string enum, the `VegaBucket` /
+// `CrossGamma` response-only-field hardcode, and the FX-legacy `ScenarioRequest`
+// instrument/market projection) and the `Smile` / `MarkSurfaceResponse` /
+// `ScenarioResponse` reply encoders — the exact surface `handle_unary`'s
+// get_smile / mark_surface / scenario arms are swapped onto.
+// ===========================================================================
+
+use celnet_proto::{
+    BrokerQuoteSet, BucketedRisk, CrossGamma, MarkSurfaceResponse, ScenarioPoint, ScenarioResponse,
+    Smile, SmilePoint, VegaBucket,
+};
+
+/// The six-enum convention block a surface request carries.
+fn conventions_json() -> Value {
+    json!({
+        "delta_convention": 0, "atm_convention": 0, "premium_style": 0,
+        "cut": 0, "day_count": 0, "settlement": 0
+    })
+}
+
+#[test]
+fn get_smile_request_decode_is_byte_identical() {
+    // With the pair present.
+    let v = json!({
+        "pair": { "base": "EUR", "quote": "USD" },
+        "tenor_years": 0.25,
+        "conventions": conventions_json(),
+    });
+    let o = v.as_object().expect("object");
+    assert_decode_eq(
+        "GetSmile(pair)",
+        generated::decode_get_smile_request(o),
+        hand::hand_get_smile_request_from_json(o),
+    );
+    // With the optional pair absent.
+    let v0 = json!({ "tenor_years": 0.1, "conventions": conventions_json() });
+    let o0 = v0.as_object().expect("object");
+    assert_decode_eq(
+        "GetSmile(no-pair)",
+        generated::decode_get_smile_request(o0),
+        hand::hand_get_smile_request_from_json(o0),
+    );
+}
+
+#[test]
+fn mark_surface_request_decode_is_byte_identical() {
+    let five_point = json!({
+        "tenor_years": 0.25, "atm_vol": 0.09, "rr_25": -0.01, "bf_25": 0.002,
+        "rr_10": -0.02, "bf_10": 0.004, "has_ten_delta": true
+    });
+    // A three-point set omitting the 10Δ wings (absent optionals default to 0.0).
+    let three_point = json!({ "tenor_years": 0.5, "atm_vol": 0.085 });
+    // `smile_model` as the enum integer.
+    let v_int = json!({
+        "pair": { "base": "EUR", "quote": "USD" },
+        "broker_quotes": [five_point.clone(), three_point.clone()],
+        "conventions": conventions_json(),
+        "smile_model": 2,
+    });
+    let oi = v_int.as_object().expect("object");
+    assert_decode_eq(
+        "MarkSurface(smile_model=int)",
+        generated::decode_mark_surface_request(oi),
+        hand::hand_mark_surface_request_from_json(oi),
+    );
+    // `smile_model` as its `SMILE_MODEL_*` string name (the dual-decode quirk).
+    let v_str = json!({
+        "broker_quotes": [five_point.clone()],
+        "conventions": conventions_json(),
+        "smile_model": "SMILE_MODEL_PARAMETRIC_SURFACE",
+    });
+    let os = v_str.as_object().expect("object");
+    assert_decode_eq(
+        "MarkSurface(smile_model=str)",
+        generated::decode_mark_surface_request(os),
+        hand::hand_mark_surface_request_from_json(os),
+    );
+    // A string the client cannot select (a server-internal repair family) ⇒ None.
+    let v_unknown = json!({
+        "broker_quotes": [three_point.clone()],
+        "conventions": conventions_json(),
+        "smile_model": "SMILE_MODEL_EXTENDED_SURFACE",
+    });
+    let ou = v_unknown.as_object().expect("object");
+    assert_decode_eq(
+        "MarkSurface(smile_model=unknown-str)",
+        generated::decode_mark_surface_request(ou),
+        hand::hand_mark_surface_request_from_json(ou),
+    );
+    // `smile_model` absent ⇒ None (server default).
+    let v_none = json!({
+        "broker_quotes": [five_point],
+        "conventions": conventions_json(),
+    });
+    let on = v_none.as_object().expect("object");
+    assert_decode_eq(
+        "MarkSurface(no-smile_model)",
+        generated::decode_mark_surface_request(on),
+        hand::hand_mark_surface_request_from_json(on),
+    );
+}
+
+#[test]
+fn scenario_request_decode_is_byte_identical() {
+    let inst = instrument_with(
+        "vanilla",
+        json!({ "option_type": 0, "strike": { "strike": 1.12 } }),
+    );
+    // Full: an FX-legacy instrument + market, a two-axis grid, and the book-shaped
+    // risk buckets whose response-only `vega`/`value` fields must decode to 0.0.
+    let v = json!({
+        "instrument": inst.clone(),
+        "base_market": { "spot": 1.08, "vol": 0.09, "r_dom": 0.04, "r_for": 0.01 },
+        "conventions": conventions_json(),
+        "axes": [
+            { "factor": 1, "relative": true, "steps": [-0.1, 0.0, 0.1] },
+            { "factor": 4, "relative": false, "steps": [0.003, 0.006] }
+        ],
+        "expiry_years": 0.25,
+        "risk_buckets": {
+            "vega_pillars": [{ "tenor_years": 0.25, "delta": 0.25, "vega": 999.0 }],
+            "cross_gamma_pairs": [{ "factor_a": 0, "factor_b": 1, "value": 888.0 }],
+            "roll_horizons_years": [0.003, 0.006]
+        },
+        "smile_model": "SMILE_MODEL_STOCHASTIC_VOL",
+    });
+    let o = v.as_object().expect("object");
+    assert_decode_eq(
+        "Scenario(full)",
+        generated::decode_scenario_request(o),
+        hand::hand_scenario_request_from_json(o),
+    );
+    // Sparse: no risk_buckets, no smile_model (both presence-tracked).
+    let v0 = json!({
+        "instrument": inst,
+        "base_market": { "spot": 1.08, "vol": 0.09, "r_dom": 0.04, "r_for": 0.01 },
+        "conventions": conventions_json(),
+        "axes": [{ "factor": 0, "relative": false, "steps": [-0.02, 0.02] }],
+        "expiry_years": 0.5,
+    });
+    let o0 = v0.as_object().expect("object");
+    assert_decode_eq(
+        "Scenario(sparse)",
+        generated::decode_scenario_request(o0),
+        hand::hand_scenario_request_from_json(o0),
+    );
+}
+
+/// A fully-populated smile (every optional sub-message present).
+fn full_smile() -> Smile {
+    Smile {
+        pair: Some(CcyPair {
+            base: "EUR".to_owned(),
+            quote: "USD".to_owned(),
+        }),
+        tenor_years: 0.25,
+        broker_quotes: Some(BrokerQuoteSet {
+            tenor_years: 0.25,
+            atm_vol: 0.09,
+            rr_25: -0.01,
+            bf_25: 0.002,
+            rr_10: -0.02,
+            bf_10: 0.004,
+            has_ten_delta: true,
+        }),
+        points: vec![
+            SmilePoint {
+                delta: 0.25,
+                tenor_years: 0.25,
+                vol: 0.095,
+            },
+            SmilePoint {
+                delta: -0.25,
+                tenor_years: 0.25,
+                vol: 0.098,
+            },
+        ],
+        conventions: Some(Conventions::default()),
+        arbitrage: Some(ArbReport {
+            butterfly_arbitrage_free: true,
+            calendar_arbitrage_free: true,
+            worst_density: 0.0,
+            note: "clean".to_owned(),
+            smile_model: SmileModel::Parametric as i32,
+        }),
+        epoch_nanos: 1_720_000_000_000_000_000,
+    }
+}
+
+#[test]
+fn smile_reply_encode_is_byte_identical() {
+    let full = full_smile();
+    assert_bytes_eq(
+        "Smile(full)",
+        &generated::encode_smile(&full),
+        &hand::hand_smile_reply_to_json(&full),
+    );
+    // Sparse: every optional sub-message absent ⇒ JSON `null` (the `json!` policy).
+    let sparse = Smile {
+        pair: None,
+        tenor_years: 0.1,
+        broker_quotes: None,
+        points: vec![],
+        conventions: None,
+        arbitrage: None,
+        epoch_nanos: 0,
+    };
+    let g = generated::encode_smile(&sparse);
+    assert_eq!(g.get("pair"), Some(&Value::Null));
+    assert_eq!(g.get("broker_quotes"), Some(&Value::Null));
+    assert_eq!(g.get("conventions"), Some(&Value::Null));
+    assert_eq!(g.get("arbitrage"), Some(&Value::Null));
+    assert_bytes_eq(
+        "Smile(sparse)",
+        &g,
+        &hand::hand_smile_reply_to_json(&sparse),
+    );
+}
+
+#[test]
+fn mark_surface_response_encode_is_byte_identical() {
+    let r = MarkSurfaceResponse {
+        pair: Some(CcyPair {
+            base: "GBP".to_owned(),
+            quote: "USD".to_owned(),
+        }),
+        surface_version: 7,
+        smiles: vec![full_smile()],
+        epoch_nanos: 1_720_000_000_000_000_123,
+    };
+    assert_bytes_eq(
+        "MarkSurfaceResponse",
+        &generated::encode_mark_surface_response(&r),
+        &hand::hand_mark_surface_response_to_json(&r),
+    );
+    // Absent pair ⇒ null.
+    let r0 = MarkSurfaceResponse {
+        pair: None,
+        surface_version: 0,
+        smiles: vec![],
+        epoch_nanos: 0,
+    };
+    let g0 = generated::encode_mark_surface_response(&r0);
+    assert_eq!(g0.get("pair"), Some(&Value::Null));
+    assert_bytes_eq(
+        "MarkSurfaceResponse(empty)",
+        &g0,
+        &hand::hand_mark_surface_response_to_json(&r0),
+    );
+}
+
+#[test]
+fn scenario_response_encode_is_byte_identical() {
+    let full = ScenarioResponse {
+        points: vec![
+            ScenarioPoint {
+                applied_shocks: vec![-0.1, 0.0, 0.1],
+                shocked_market: Some(MarketContext::fx(1.08, 0.09, 0.04, 0.01)),
+                greeks: Some(Greeks::default()),
+                expiry_years: 0.24,
+            },
+            // A node with the optional market/greeks absent ⇒ null.
+            ScenarioPoint {
+                applied_shocks: vec![],
+                shocked_market: None,
+                greeks: None,
+                expiry_years: 0.25,
+            },
+        ],
+        bucketed_risk: Some(BucketedRisk {
+            vega_buckets: vec![VegaBucket {
+                tenor_years: 0.25,
+                delta: 0.25,
+                vega: 1234.5,
+            }],
+            cross_gammas: vec![CrossGamma {
+                factor_a: 0,
+                factor_b: 1,
+                value: 9.9,
+            }],
+            theta_roll: vec![-1.0, -2.5],
+            roll_horizons_years: vec![0.003, 0.006],
+        }),
+    };
+    assert_bytes_eq(
+        "ScenarioResponse(full)",
+        &generated::encode_scenario_response(&full),
+        &hand::hand_scenario_response_to_json(&full),
+    );
+    // No book-shaped risk ⇒ `bucketed_risk` null.
+    let bare = ScenarioResponse {
+        points: vec![],
+        bucketed_risk: None,
+    };
+    let gb = generated::encode_scenario_response(&bare);
+    assert_eq!(gb.get("bucketed_risk"), Some(&Value::Null));
+    assert_bytes_eq(
+        "ScenarioResponse(bare)",
+        &gb,
+        &hand::hand_scenario_response_to_json(&bare),
+    );
+}
+
+// ===========================================================================
+// WAVE 3 — RiskService: ListPositions / AggregateRisk / AggregateRatesRisk /
+// DrillRisk / LimitStatus / BookRatesPosition / ListRatesPositions. The request
+// decoders (shared `EntitlementPrincipal` + `ReportingNumeraire` + `VegaPillar` +
+// linear-rates `CurveSet`/`RatesInstrument` trees) and the rich `RiskNode` /
+// `RiskPosition` / `RatesRiskNode` reply encoders (incl. the FX-legacy
+// `VanillaInputs` r_dom/r_for and `OrgKey.underlying`→`ccy_pair`, the
+// `NonAdditiveRisk` null-absent optionals, and the null-absent `correlation_id`
+// echoes) — the exact surface `handle_unary`'s risk arms are swapped onto.
+// ===========================================================================
+
+use celnet_proto::{
+    AdditiveRisk, AggregateRatesRiskResponse, AggregateRiskResponse, BookRatesPositionResponse,
+    CcyExposureLeg, DrillRiskResponse, KeyRateDv01, LimitStatusResponse, LimitUtilization,
+    ListPositionsResponse, ListRatesPositionsResponse, NonAdditiveRisk, OisInstrument, OrgKey,
+    RatesInstrument, RatesPosition, RatesRiskNode, RiskNode, RiskPosition, RiskScope,
+    VanillaInputs, VegaLadderBucket, VegaPillar, rates_instrument,
+};
+
+/// The shared entitlement-principal body (`grant_all` + a scoped grant + a deny).
+fn principal_json() -> Value {
+    json!({
+        "grant_all": false,
+        "grants": [{ "scopes": [{ "dimension": 3, "value": 99 }] }],
+        "denies": [{ "scopes": [{ "dimension": 1, "value": 7 }] }]
+    })
+}
+
+/// A reporting-numeraire conversion table body.
+fn numeraire_json() -> Value {
+    json!({ "numeraire": "USD", "rates": [{ "ccy": "EUR", "rate": 1.08 }, { "ccy": "JPY", "rate": 0.0067 }] })
+}
+
+/// A calibrated OIS curve-set body (a broken reference date + one pillar).
+fn curve_set_json() -> Value {
+    json!({
+        "currency": "USD",
+        "reference_date": { "year": 2026, "month": 7, "day": 3 },
+        "ois_pillars": [{ "tenor": { "years": 5 }, "par_rate": 0.041 }]
+    })
+}
+
+/// One inline rates position (an OIS arm) as `AggregateRatesRisk`/`BookRates` carry.
+fn ois_position_json() -> Value {
+    json!({
+        "position_id": 42,
+        "entity": 1,
+        "book": 7,
+        "instrument": { "ois": { "tenor_years": 5, "fixed_rate": 0.04, "notional": 1_000_000.0, "side": 1 } }
+    })
+}
+
+#[test]
+fn list_positions_request_decode_is_byte_identical() {
+    let v = json!({
+        "scope": { "dimension": 3, "value": 99 },
+        "principal": principal_json(),
+        "correlation_id": 12_345,
+        "session_token": "sess-abc"
+    });
+    let o = v.as_object().expect("object");
+    assert_decode_eq(
+        "ListPositions(full)",
+        generated::decode_list_positions_request(o),
+        hand::hand_list_positions_request_from_json(o),
+    );
+    // Sparse: no scope / principal / correlation_id (the grant-all show-all posture).
+    let v0 = json!({ "session_token": "s" });
+    let o0 = v0.as_object().expect("object");
+    assert_decode_eq(
+        "ListPositions(sparse)",
+        generated::decode_list_positions_request(o0),
+        hand::hand_list_positions_request_from_json(o0),
+    );
+}
+
+#[test]
+fn aggregate_risk_request_decode_is_byte_identical() {
+    let v = json!({
+        "dimension": 2,
+        "numeraire": numeraire_json(),
+        "principal": principal_json(),
+        "scope": { "dimension": 3, "value": 99 },
+        "vega_pillars": [{ "tenor_days": 30, "delta_bp": 2500 }, { "tenor_days": 90, "delta_bp": -1000 }],
+        "var_spot_shocks": [-0.01, 0.0, 0.01],
+        "var_alpha": 0.99,
+        "curvature_risk_weight": 0.05,
+        "correlation_id": 7,
+        "session_token": "tok"
+    });
+    let o = v.as_object().expect("object");
+    assert_decode_eq(
+        "AggregateRisk",
+        generated::decode_aggregate_risk_request(o),
+        hand::hand_aggregate_risk_request_from_json(o),
+    );
+    // Minimal: bare dimension only (numeraire/principal/scope absent).
+    let v0 = json!({ "dimension": 0 });
+    let o0 = v0.as_object().expect("object");
+    assert_decode_eq(
+        "AggregateRisk(bare)",
+        generated::decode_aggregate_risk_request(o0),
+        hand::hand_aggregate_risk_request_from_json(o0),
+    );
+}
+
+#[test]
+fn drill_risk_request_decode_is_byte_identical() {
+    let v = json!({
+        "node": { "dimension": 3, "value": 99 },
+        "child_dimension": 4,
+        "numeraire": numeraire_json(),
+        "principal": principal_json(),
+        "vega_pillars": [{ "tenor_days": 30, "delta_bp": 2500 }],
+        "include_children": true,
+        "include_positions": true,
+        "correlation_id": 55,
+        "session_token": "t"
+    });
+    let o = v.as_object().expect("object");
+    assert_decode_eq(
+        "DrillRisk",
+        generated::decode_drill_risk_request(o),
+        hand::hand_drill_risk_request_from_json(o),
+    );
+}
+
+#[test]
+fn limit_status_request_decode_is_byte_identical() {
+    let v = json!({
+        "scope": { "dimension": 3, "value": 99 },
+        "numeraire": numeraire_json(),
+        "principal": principal_json(),
+        "vega_pillars": [{ "tenor_days": 30, "delta_bp": 2500 }],
+        "var_spot_shocks": [-0.02, 0.02],
+        "var_alpha": 0.975,
+        "correlation_id": 9,
+        "session_token": "t"
+    });
+    let o = v.as_object().expect("object");
+    assert_decode_eq(
+        "LimitStatus",
+        generated::decode_limit_status_request(o),
+        hand::hand_limit_status_request_from_json(o),
+    );
+}
+
+#[test]
+fn aggregate_rates_risk_request_decode_is_byte_identical() {
+    let v = json!({
+        "curve_set": curve_set_json(),
+        "positions": [ois_position_json()],
+        "scope": { "entity": 1, "book": 7, "ccy": "USD" },
+        "principal": principal_json(),
+        "correlation_id": 3,
+        "session_token": "t"
+    });
+    let o = v.as_object().expect("object");
+    assert_decode_eq(
+        "AggregateRatesRisk",
+        generated::decode_aggregate_rates_risk_request(o),
+        hand::hand_aggregate_rates_risk_request_from_json(o),
+    );
+    // No positions (optional repeated ⇒ empty), no scope.
+    let v0 = json!({ "curve_set": curve_set_json() });
+    let o0 = v0.as_object().expect("object");
+    assert_decode_eq(
+        "AggregateRatesRisk(no-positions)",
+        generated::decode_aggregate_rates_risk_request(o0),
+        hand::hand_aggregate_rates_risk_request_from_json(o0),
+    );
+}
+
+#[test]
+fn book_and_list_rates_positions_request_decode_are_byte_identical() {
+    let vb = json!({
+        "session_token": "t",
+        "position": ois_position_json(),
+        "principal": principal_json(),
+        "correlation_id": "corr-1"
+    });
+    let ob = vb.as_object().expect("object");
+    assert_decode_eq(
+        "BookRatesPosition",
+        generated::decode_book_rates_position_request(ob),
+        hand::hand_book_rates_position_request_from_json(ob),
+    );
+    let vl = json!({
+        "session_token": "t",
+        "scope": { "entity": 1, "ccy": "USD" },
+        "principal": principal_json(),
+        "correlation_id": "corr-2"
+    });
+    let ol = vl.as_object().expect("object");
+    assert_decode_eq(
+        "ListRatesPositions",
+        generated::decode_list_rates_positions_request(ol),
+        hand::hand_list_rates_positions_request_from_json(ol),
+    );
+}
+
+/// A fully-attributed risk position: an org key with the FX-legacy underlying, the
+/// FX carry-seam `VanillaInputs`, and an attribution record.
+fn full_risk_position() -> RiskPosition {
+    RiskPosition {
+        position_id: 1001,
+        org: Some(OrgKey {
+            trader: 5,
+            book: 7,
+            desk: 3,
+            underlying: Some(Underlying::fx(CcyPair {
+                base: "EUR".to_owned(),
+                quote: "USD".to_owned(),
+            })),
+            location: 2,
+            entity: 1,
+        }),
+        option_type: 0,
+        notional_base: 1_000_000.0,
+        inputs: Some(VanillaInputs::fx(1.08, 1.10, 0.09, 0.25, 0.04, 0.01)),
+        quoted_delta: 1,
+        premium_style: 1,
+        surface_version: 88,
+        attribution: Some(AttributionRecord {
+            quoted_by: None,
+            held_by: None,
+            won: Some(true),
+            lp_count: Some(3),
+        }),
+    }
+}
+
+/// A sparse position: every optional sub-message absent ⇒ JSON `null`.
+fn sparse_risk_position() -> RiskPosition {
+    RiskPosition {
+        position_id: 2002,
+        org: None,
+        option_type: 1,
+        notional_base: -500_000.0,
+        inputs: None,
+        quoted_delta: 0,
+        premium_style: 0,
+        surface_version: 0,
+        attribution: None,
+    }
+}
+
+#[test]
+fn list_positions_response_encode_is_byte_identical() {
+    let r = ListPositionsResponse {
+        positions: vec![full_risk_position(), sparse_risk_position()],
+        correlation_id: Some(12_345),
+    };
+    let g = generated::encode_list_positions_response(&r);
+    // The FX-legacy projections: `VanillaInputs.r_dom`/`r_for` + `OrgKey.ccy_pair`.
+    let inputs = &g["positions"][0]["inputs"];
+    assert!(inputs.get("r_dom").is_some() && inputs.get("r_for").is_some());
+    assert!(inputs.get("discount_rate").is_none() && inputs.get("carry").is_none());
+    assert_eq!(g["positions"][0]["org"]["ccy_pair"]["base"], json!("EUR"));
+    assert!(g["positions"][0]["org"].get("underlying").is_none());
+    // The sparse position's absent optionals ⇒ null.
+    assert_eq!(g["positions"][1].get("org"), Some(&Value::Null));
+    assert_eq!(g["positions"][1].get("inputs"), Some(&Value::Null));
+    assert_eq!(g["positions"][1].get("attribution"), Some(&Value::Null));
+    assert_bytes_eq(
+        "ListPositionsResponse",
+        &g,
+        &hand::hand_list_positions_response_to_json(&r),
+    );
+    // Absent correlation_id ⇒ null.
+    let r0 = ListPositionsResponse {
+        positions: vec![],
+        correlation_id: None,
+    };
+    let g0 = generated::encode_list_positions_response(&r0);
+    assert_eq!(g0.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "ListPositionsResponse(empty)",
+        &g0,
+        &hand::hand_list_positions_response_to_json(&r0),
+    );
+}
+
+/// A representative risk node: additive measures with a delta vector + vega ladder,
+/// and non-additive VaR/ES present.
+fn full_risk_node() -> RiskNode {
+    RiskNode {
+        dimension: 2,
+        group: 99,
+        additive: Some(AdditiveRisk {
+            delta_numeraire: 1_234.5,
+            delta_vector: vec![
+                CcyExposureLeg {
+                    ccy: "EUR".to_owned(),
+                    amount: 1_000.0,
+                },
+                CcyExposureLeg {
+                    ccy: "USD".to_owned(),
+                    amount: -1_080.0,
+                },
+            ],
+            gamma: 12.0,
+            vega_numeraire: 55.0,
+            theta: -3.0,
+            vanna: 1.1,
+            volga: 2.2,
+            charm: 0.3,
+            speed: 0.01,
+            zomma: 0.02,
+            color: 0.03,
+            premium_numeraire: 9_000.0,
+            vega_ladder: vec![VegaLadderBucket {
+                pillar: Some(VegaPillar {
+                    tenor_days: 30,
+                    delta_bp: 2500,
+                }),
+                vega: 44.0,
+            }],
+        }),
+        nonadditive: Some(NonAdditiveRisk {
+            var: Some(50_000.0),
+            es: Some(65_000.0),
+            var_alpha: Some(0.99),
+            curvature_spot: None,
+        }),
+        position_count: 4,
+    }
+}
+
+#[test]
+fn aggregate_risk_response_encode_is_byte_identical() {
+    let r = AggregateRiskResponse {
+        dimension: 2,
+        numeraire: "USD".to_owned(),
+        nodes: vec![full_risk_node()],
+        correlation_id: Some(7),
+    };
+    let g = generated::encode_aggregate_risk_response(&r);
+    // The not-evaluated `curvature_spot` ⇒ null (never a spurious zero).
+    assert_eq!(
+        g["nodes"][0]["nonadditive"].get("curvature_spot"),
+        Some(&Value::Null)
+    );
+    assert_bytes_eq(
+        "AggregateRiskResponse",
+        &g,
+        &hand::hand_aggregate_risk_response_to_json(&r),
+    );
+    // Absent additive/nonadditive ⇒ null; absent correlation_id ⇒ null.
+    let bare = AggregateRiskResponse {
+        dimension: 0,
+        numeraire: "USD".to_owned(),
+        nodes: vec![RiskNode {
+            dimension: 0,
+            group: 0,
+            additive: None,
+            nonadditive: None,
+            position_count: 0,
+        }],
+        correlation_id: None,
+    };
+    let gb = generated::encode_aggregate_risk_response(&bare);
+    assert_eq!(gb["nodes"][0].get("additive"), Some(&Value::Null));
+    assert_eq!(gb["nodes"][0].get("nonadditive"), Some(&Value::Null));
+    assert_eq!(gb.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "AggregateRiskResponse(bare)",
+        &gb,
+        &hand::hand_aggregate_risk_response_to_json(&bare),
+    );
+}
+
+#[test]
+fn drill_risk_response_encode_is_byte_identical() {
+    let r = DrillRiskResponse {
+        node: Some(RiskScope {
+            dimension: 3,
+            value: 99,
+        }),
+        children: vec![full_risk_node()],
+        positions: vec![full_risk_position()],
+        correlation_id: Some(55),
+    };
+    assert_bytes_eq(
+        "DrillRiskResponse",
+        &generated::encode_drill_risk_response(&r),
+        &hand::hand_drill_risk_response_to_json(&r),
+    );
+    let bare = DrillRiskResponse {
+        node: None,
+        children: vec![],
+        positions: vec![],
+        correlation_id: None,
+    };
+    let gb = generated::encode_drill_risk_response(&bare);
+    assert_eq!(gb.get("node"), Some(&Value::Null));
+    assert_eq!(gb.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "DrillRiskResponse(bare)",
+        &gb,
+        &hand::hand_drill_risk_response_to_json(&bare),
+    );
+}
+
+#[test]
+fn limit_status_response_encode_is_byte_identical() {
+    let r = LimitStatusResponse {
+        scope: Some(RiskScope {
+            dimension: 3,
+            value: 99,
+        }),
+        limits: vec![
+            LimitUtilization {
+                metric: 2,
+                vega_pillar: Some(VegaPillar {
+                    tenor_days: 30,
+                    delta_bp: 2500,
+                }),
+                tenor_days: 0,
+                cap: 1_000_000.0,
+                exposure: 750_000.0,
+                ratio: 0.75,
+                status: 1,
+                enforcement: 1,
+                headroom: 250_000.0,
+            },
+            LimitUtilization {
+                metric: 0,
+                vega_pillar: None,
+                tenor_days: 0,
+                cap: 500.0,
+                exposure: 600.0,
+                ratio: 1.2,
+                status: 3,
+                enforcement: 1,
+                headroom: -100.0,
+            },
+        ],
+        worst: 3,
+        hard_breach: true,
+        correlation_id: Some(9),
+    };
+    let g = generated::encode_limit_status_response(&r);
+    // The non-VEGA_BUCKET limit's absent `vega_pillar` ⇒ null.
+    assert_eq!(g["limits"][1].get("vega_pillar"), Some(&Value::Null));
+    assert_bytes_eq(
+        "LimitStatusResponse",
+        &g,
+        &hand::hand_limit_status_response_to_json(&r),
+    );
+}
+
+#[test]
+fn aggregate_rates_risk_response_encode_is_byte_identical() {
+    let r = AggregateRatesRiskResponse {
+        nodes: vec![RatesRiskNode {
+            ccy: "USD".to_owned(),
+            net_pv: 12_345.6,
+            net_pv01: 78.9,
+            net_dv01: 80.1,
+            key_rate_ladder: vec![
+                KeyRateDv01 {
+                    tenor_years: 2,
+                    dv01: 10.0,
+                },
+                KeyRateDv01 {
+                    tenor_years: 5,
+                    dv01: 25.0,
+                },
+            ],
+        }],
+        correlation_id: Some(3),
+    };
+    assert_bytes_eq(
+        "AggregateRatesRiskResponse",
+        &generated::encode_aggregate_rates_risk_response(&r),
+        &hand::hand_aggregate_rates_risk_response_to_json(&r),
+    );
+    let bare = AggregateRatesRiskResponse {
+        nodes: vec![],
+        correlation_id: None,
+    };
+    let gb = generated::encode_aggregate_rates_risk_response(&bare);
+    assert_eq!(gb.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "AggregateRatesRiskResponse(bare)",
+        &gb,
+        &hand::hand_aggregate_rates_risk_response_to_json(&bare),
+    );
+}
+
+/// A booked rates position (an OIS arm) as the rates book/list encode.
+fn ois_rates_position() -> RatesPosition {
+    RatesPosition {
+        position_id: 42,
+        entity: 1,
+        book: 7,
+        instrument: Some(RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+                tenor_years: 5,
+                fixed_rate: 0.04,
+                notional: 1_000_000.0,
+                side: 1,
+            })),
+        }),
+    }
+}
+
+#[test]
+fn book_and_list_rates_positions_response_encode_are_byte_identical() {
+    let rb = BookRatesPositionResponse {
+        position: Some(ois_rates_position()),
+    };
+    assert_bytes_eq(
+        "BookRatesPositionResponse",
+        &generated::encode_book_rates_position_response(&rb),
+        &hand::hand_book_rates_position_response_to_json(&rb),
+    );
+    // Absent position ⇒ null.
+    let rb0 = BookRatesPositionResponse { position: None };
+    let gb0 = generated::encode_book_rates_position_response(&rb0);
+    assert_eq!(gb0.get("position"), Some(&Value::Null));
+    assert_bytes_eq(
+        "BookRatesPositionResponse(empty)",
+        &gb0,
+        &hand::hand_book_rates_position_response_to_json(&rb0),
+    );
+    let rl = ListRatesPositionsResponse {
+        positions: vec![ois_rates_position()],
+    };
+    assert_bytes_eq(
+        "ListRatesPositionsResponse",
+        &generated::encode_list_rates_positions_response(&rl),
+        &hand::hand_list_rates_positions_response_to_json(&rl),
+    );
+}
+
+// ===========================================================================
+// WAVE 3 — RfqDeskService: SubmitDeskRequest / RespondDeskRequest /
+// AcceptDeskQuote / ListDeskRequests / ListDeals. The request decoders (incl. the
+// `respond` oneof error-on-both quirk and the `list_deals` non-erroring scope) and
+// the `DeskRequest` / `Deal` blotter reply encoders (reusing the rates encode tree,
+// with null-absent `quote` / `position_id` / `correlation_id`) — the exact surface
+// `handle_unary`'s rfq_desk arms are swapped onto.
+// ===========================================================================
+
+use celnet_proto::{
+    AcceptDeskQuoteResponse, CurveSet, Deal, DeskQuote, DeskRequest, ListDealsResponse,
+    ListDeskRequestsResponse, OisPillar, PillarTenor, RespondDeskRequestResponse,
+    SubmitDeskRequestResponse, pillar_tenor,
+};
+
+/// A calibrated OIS curve set (a broken reference date + one year pillar).
+fn a_curve_set() -> CurveSet {
+    CurveSet {
+        currency: "USD".to_owned(),
+        reference_date: Some(BrokenDate {
+            year: 2026,
+            month: 7,
+            day: 3,
+        }),
+        ois_pillars: vec![OisPillar {
+            tenor: Some(PillarTenor {
+                point: Some(pillar_tenor::Point::Years(5)),
+            }),
+            par_rate: 0.041,
+        }],
+    }
+}
+
+/// A dealt OIS instrument.
+fn a_rates_instrument() -> RatesInstrument {
+    RatesInstrument {
+        instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+            tenor_years: 5,
+            fixed_rate: 0.04,
+            notional: 1_000_000.0,
+            side: 1,
+        })),
+    }
+}
+
+/// A desk request in its QUOTED state (every optional sub-message present).
+fn full_desk_request() -> DeskRequest {
+    DeskRequest {
+        request_id: "req-1".to_owned(),
+        kind: 1,
+        counterparty: "CP-A".to_owned(),
+        desk: "USD-RATES".to_owned(),
+        instrument: Some(a_rates_instrument()),
+        curve_set: Some(a_curve_set()),
+        side: 1,
+        notional: 1_000_000.0,
+        received_at_nanos: 1_720_000_000_000_000_000,
+        expires_at_nanos: 1_720_000_030_000_000_000,
+        state: 2,
+        quote: Some(DeskQuote {
+            price: 0.041,
+            notional: 1_000_000.0,
+            valid_for_ms: 5_000,
+            trader: "tdr".to_owned(),
+        }),
+        correlation_id: Some("corr-1".to_owned()),
+    }
+}
+
+/// A pending desk request: no quote yet, no correlation id ⇒ those reach the wire as
+/// JSON `null`; instrument/curve_set present.
+fn pending_desk_request() -> DeskRequest {
+    DeskRequest {
+        request_id: "req-2".to_owned(),
+        kind: 2,
+        counterparty: "CP-B".to_owned(),
+        desk: "USD-RATES".to_owned(),
+        instrument: Some(a_rates_instrument()),
+        curve_set: Some(a_curve_set()),
+        side: 0,
+        notional: 500_000.0,
+        received_at_nanos: 1_720_000_000_000_000_000,
+        expires_at_nanos: 1_720_000_030_000_000_000,
+        state: 1,
+        quote: None,
+        correlation_id: None,
+    }
+}
+
+fn a_deal() -> Deal {
+    Deal {
+        deal_id: "deal-1".to_owned(),
+        request_id: "req-1".to_owned(),
+        kind: 1,
+        counterparty: "CP-A".to_owned(),
+        desk: "USD-RATES".to_owned(),
+        instrument: Some(a_rates_instrument()),
+        curve_set: Some(a_curve_set()),
+        side: 0,
+        notional: 1_000_000.0,
+        price: 0.041,
+        executed_at_nanos: 1_720_000_000_000_000_000,
+        trader: "tdr".to_owned(),
+        position_id: Some(4_242),
+        correlation_id: Some("corr-1".to_owned()),
+    }
+}
+
+#[test]
+fn submit_desk_request_decode_is_byte_identical() {
+    let v = json!({
+        "session_token": "t",
+        "kind": 1,
+        "counterparty": "CP-A",
+        "desk": "USD-RATES",
+        "instrument": { "ois": { "tenor_years": 5, "fixed_rate": 0.04, "notional": 1_000_000.0, "side": 1 } },
+        "curve_set": curve_set_json(),
+        "side": 1,
+        "notional": 1_000_000.0,
+        "ttl_ms": 5_000,
+        "principal": principal_json(),
+        "correlation_id": "corr-1"
+    });
+    let o = v.as_object().expect("object");
+    assert_decode_eq(
+        "SubmitDeskRequest",
+        generated::decode_submit_desk_request(o),
+        hand::hand_submit_desk_request_from_json(o),
+    );
+}
+
+#[test]
+fn respond_desk_request_decode_is_byte_identical() {
+    // The `quote` arm.
+    let vq = json!({
+        "session_token": "t",
+        "request_id": "req-1",
+        "quote": { "price": 0.041, "notional": 1_000_000.0, "valid_for_ms": 5_000, "trader": "tdr" },
+        "principal": principal_json(),
+        "correlation_id": "corr-1"
+    });
+    let oq = vq.as_object().expect("object");
+    assert_decode_eq(
+        "RespondDeskRequest(quote)",
+        generated::decode_respond_desk_request(oq),
+        hand::hand_respond_desk_request_from_json(oq),
+    );
+    // The `reject` arm.
+    let vr = json!({
+        "request_id": "req-1",
+        "reject": { "reason": "off-the-run" }
+    });
+    let or = vr.as_object().expect("object");
+    assert_decode_eq(
+        "RespondDeskRequest(reject)",
+        generated::decode_respond_desk_request(or),
+        hand::hand_respond_desk_request_from_json(or),
+    );
+    // Neither arm ⇒ `response: None`.
+    let vn = json!({ "request_id": "req-1" });
+    let on = vn.as_object().expect("object");
+    assert_decode_eq(
+        "RespondDeskRequest(neither)",
+        generated::decode_respond_desk_request(on),
+        hand::hand_respond_desk_request_from_json(on),
+    );
+    // BOTH arms present ⇒ BOTH decoders error (the mutual-exclusion quirk).
+    let vb = json!({
+        "request_id": "req-1",
+        "quote": { "price": 0.04, "notional": 1.0 },
+        "reject": { "reason": "x" }
+    });
+    let ob = vb.as_object().expect("object");
+    assert!(
+        generated::decode_respond_desk_request(ob).is_err(),
+        "both arms present must error (generated)"
+    );
+    assert!(
+        hand::hand_respond_desk_request_from_json(ob).is_err(),
+        "both arms present must error (hand)"
+    );
+}
+
+#[test]
+fn accept_desk_quote_decode_is_byte_identical() {
+    let v = json!({
+        "session_token": "t",
+        "request_id": "req-1",
+        "principal": principal_json(),
+        "correlation_id": "corr-1"
+    });
+    let o = v.as_object().expect("object");
+    assert_decode_eq(
+        "AcceptDeskQuote",
+        generated::decode_accept_desk_quote(o),
+        hand::hand_accept_desk_quote_from_json(o),
+    );
+}
+
+#[test]
+fn list_desk_requests_decode_is_byte_identical() {
+    let v = json!({
+        "session_token": "t",
+        "scope": { "states": [1, 2, 3], "desk": "USD-RATES" },
+        "principal": principal_json(),
+        "correlation_id": "corr-1"
+    });
+    let o = v.as_object().expect("object");
+    assert_decode_eq(
+        "ListDeskRequests",
+        generated::decode_list_desk_requests(o),
+        hand::hand_list_desk_requests_from_json(o),
+    );
+    // No scope.
+    let v0 = json!({ "session_token": "t" });
+    let o0 = v0.as_object().expect("object");
+    assert_decode_eq(
+        "ListDeskRequests(no-scope)",
+        generated::decode_list_desk_requests(o0),
+        hand::hand_list_desk_requests_from_json(o0),
+    );
+}
+
+#[test]
+fn list_deals_decode_is_byte_identical() {
+    // Object scope.
+    let v = json!({
+        "session_token": "t",
+        "scope": { "desk": "USD-RATES" },
+        "principal": principal_json(),
+        "correlation_id": "corr-1"
+    });
+    let o = v.as_object().expect("object");
+    assert_decode_eq(
+        "ListDeals(object-scope)",
+        generated::decode_list_deals(o),
+        hand::hand_list_deals_from_json(o),
+    );
+    // A NON-OBJECT scope is silently dropped to `None` (the non-erroring quirk) —
+    // both decoders build `scope: None` rather than erroring.
+    let vs = json!({ "session_token": "t", "scope": "all-desks" });
+    let os = vs.as_object().expect("object");
+    assert_decode_eq(
+        "ListDeals(non-object-scope)",
+        generated::decode_list_deals(os),
+        hand::hand_list_deals_from_json(os),
+    );
+    // No scope at all.
+    let v0 = json!({ "session_token": "t" });
+    let o0 = v0.as_object().expect("object");
+    assert_decode_eq(
+        "ListDeals(no-scope)",
+        generated::decode_list_deals(o0),
+        hand::hand_list_deals_from_json(o0),
+    );
+}
+
+#[test]
+fn desk_reply_encode_is_byte_identical() {
+    // SubmitDeskRequestResponse: the captured PENDING request (null quote/corr).
+    let submit = SubmitDeskRequestResponse {
+        request: Some(pending_desk_request()),
+    };
+    let gs = generated::encode_submit_desk_request_response(&submit);
+    assert_eq!(gs["request"].get("quote"), Some(&Value::Null));
+    assert_eq!(gs["request"].get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "SubmitDeskRequestResponse",
+        &gs,
+        &hand::hand_submit_desk_request_response_to_json(&submit),
+    );
+    // Absent request ⇒ null.
+    let submit0 = SubmitDeskRequestResponse { request: None };
+    let gs0 = generated::encode_submit_desk_request_response(&submit0);
+    assert_eq!(gs0.get("request"), Some(&Value::Null));
+    assert_bytes_eq(
+        "SubmitDeskRequestResponse(empty)",
+        &gs0,
+        &hand::hand_submit_desk_request_response_to_json(&submit0),
+    );
+    // RespondDeskRequestResponse: the QUOTED request (all sub-messages present).
+    let respond = RespondDeskRequestResponse {
+        request: Some(full_desk_request()),
+    };
+    let gr = generated::encode_respond_desk_request_response(&respond);
+    // The FI instrument/curve encode tree rides inside the request.
+    assert_eq!(gr["request"]["instrument"]["ois"]["tenor_years"], json!(5));
+    assert_eq!(gr["request"]["curve_set"]["currency"], json!("USD"));
+    assert_bytes_eq(
+        "RespondDeskRequestResponse",
+        &gr,
+        &hand::hand_respond_desk_request_response_to_json(&respond),
+    );
+    // AcceptDeskQuoteResponse: the booked deal + the terminal request.
+    let accept = AcceptDeskQuoteResponse {
+        deal: Some(a_deal()),
+        request: Some(full_desk_request()),
+    };
+    assert_bytes_eq(
+        "AcceptDeskQuoteResponse",
+        &generated::encode_accept_desk_quote_response(&accept),
+        &hand::hand_accept_desk_quote_response_to_json(&accept),
+    );
+    // Absent deal/request ⇒ null.
+    let accept0 = AcceptDeskQuoteResponse {
+        deal: None,
+        request: None,
+    };
+    let ga0 = generated::encode_accept_desk_quote_response(&accept0);
+    assert_eq!(ga0.get("deal"), Some(&Value::Null));
+    assert_eq!(ga0.get("request"), Some(&Value::Null));
+    assert_bytes_eq(
+        "AcceptDeskQuoteResponse(empty)",
+        &ga0,
+        &hand::hand_accept_desk_quote_response_to_json(&accept0),
+    );
+    // ListDeskRequestsResponse.
+    let list_req = ListDeskRequestsResponse {
+        requests: vec![full_desk_request(), pending_desk_request()],
+    };
+    assert_bytes_eq(
+        "ListDeskRequestsResponse",
+        &generated::encode_list_desk_requests_response(&list_req),
+        &hand::hand_list_desk_requests_response_to_json(&list_req),
+    );
+    // ListDealsResponse: a deal with a null position_id/correlation_id too.
+    let deal_null = Deal {
+        position_id: None,
+        correlation_id: None,
+        ..a_deal()
+    };
+    let list_deals = ListDealsResponse {
+        deals: vec![a_deal(), deal_null],
+    };
+    let gd = generated::encode_list_deals_response(&list_deals);
+    assert_eq!(gd["deals"][1].get("position_id"), Some(&Value::Null));
+    assert_eq!(gd["deals"][1].get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "ListDealsResponse",
+        &gd,
+        &hand::hand_list_deals_response_to_json(&list_deals),
+    );
+}

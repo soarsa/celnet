@@ -28,7 +28,7 @@
 //! - **(d)** `Tenor.broken_date` → camelCase `brokenDate` on the wire (snake_case
 //!   in the table) — a plain key rename.
 
-use celnet_proto::{Greeks, MarketContext, Underlying};
+use celnet_proto::{Greeks, MarketContext, Underlying, VanillaInputs};
 use serde_json::{Value, json};
 
 /// The Price-family response messages whose absent proto3-`optional` scalar fields
@@ -66,6 +66,24 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "DealerQuote",
     "MultiDealerQuote",
     "Execution",
+    // The RiskService reply messages: their `json!({ .. })` hand encoders emit every
+    // absent presence-tracked field as JSON `null` — the optional `correlation_id`
+    // echoes (u64), the `RiskPosition.attribution` optional message, and the
+    // `NonAdditiveRisk` VaR/ES/curvature optional scalars (absent ⇒ not-evaluated,
+    // never a spurious zero).
+    "ListPositionsResponse",
+    "AggregateRiskResponse",
+    "AggregateRatesRiskResponse",
+    "DrillRiskResponse",
+    "LimitStatusResponse",
+    "RiskPosition",
+    "NonAdditiveRisk",
+    // The RfqDeskService `DeskRequest` / `Deal` blotter messages: their `json!({ .. })`
+    // hand encoders emit the optional `DeskRequest.quote` message, the
+    // `Deal.position_id` (u64) and both messages' `correlation_id` (string) as JSON
+    // `null` when absent (present-with-null through the RFQ lifecycle).
+    "DeskRequest",
+    "Deal",
 ];
 
 /// How the generated encoder should treat one descriptor field's JSON key.
@@ -96,6 +114,18 @@ pub(crate) fn field_rule(message: &str, proto_name: &str) -> FieldRule {
         //     `carry` message is replaced by the synthesized flat `r_for`.
         ("MarketContext", "discount_rate") => FieldRule::Rename("r_dom"),
         ("MarketContext", "carry") => FieldRule::Suppress,
+        // (b) VanillaInputs carries the SAME FX-legacy carry seam as MarketContext:
+        //     the risk cube's per-position pricing inputs expose the flat FX
+        //     `r_dom`/`r_for` accessors beside the generalized `{discount_rate, carry}`.
+        //     `discount_rate` IS `r_dom`; `carry` is suppressed in favour of the
+        //     synthesized flat `r_for` ([`vanilla_inputs_synth`]).
+        ("VanillaInputs", "discount_rate") => FieldRule::Rename("r_dom"),
+        ("VanillaInputs", "carry") => FieldRule::Suppress,
+        // The risk `OrgKey` carries the position's (FX-only) underlying under the
+        // legacy `ccy_pair` key, encoded via the same FX `{base, quote}` projection
+        // as `Underlying` (quirk a). The generated `Underlying` message projection
+        // resolves the value; this rule only renames the field key.
+        ("OrgKey", "underlying") => FieldRule::Rename("ccy_pair"),
         // (d) camelCase `brokenDate` on the wire (snake_case `broken_date` in the
         //     descriptor field table).
         ("Tenor", "broken_date") => FieldRule::Rename("brokenDate"),
@@ -191,6 +221,15 @@ pub(crate) fn greeks_synth(g: &Greeks) -> Vec<(&'static str, Value)> {
 /// to the hand codec's `market_context_to_json`.
 pub(crate) fn market_context_synth(m: &MarketContext) -> Vec<(&'static str, Value)> {
     vec![("r_for", json!(m.r_for()))]
+}
+
+/// (b) `VanillaInputs` synthesizes the flat foreign rate `r_for` from the FX carry
+/// arm ([`VanillaInputs::r_for`]) — the risk-cube per-position analogue of
+/// [`market_context_synth`]; `carry` is suppressed (see [`field_rule`]) and
+/// `discount_rate` is renamed to `r_dom`. Byte-identical to the hand codec's
+/// `vanilla_inputs_to_json`, which emits the same two FX accessors.
+pub(crate) fn vanilla_inputs_synth(i: &VanillaInputs) -> Vec<(&'static str, Value)> {
+    vec![("r_for", json!(i.r_for()))]
 }
 
 /// (a) `Underlying` → the legacy `{base, quote}` `pair` body of its FX arm, or

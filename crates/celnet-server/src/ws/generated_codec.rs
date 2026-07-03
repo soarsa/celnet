@@ -56,6 +56,27 @@ use celnet_proto::{
     XvaResult as WireXvaResult, XvaSurvivalCurve, XvaTrade, instrument, pillar_tenor,
     rate_sensitivities, rates_instrument, strike_or_delta, tail_risk_fi_position,
 };
+// Wave-3 verb families (arch item G — `ws-codec-from-proto`): the surface
+// (`GetSmile`/`MarkSurface`/`Scenario`), server-side risk (`ListPositions` /
+// `AggregateRisk` / `AggregateRatesRisk` / `DrillRisk` / `LimitStatus` /
+// `BookRatesPosition` / `ListRatesPositions`) and dealer-desk RFQ
+// (`SubmitDeskRequest` / `RespondDeskRequest` / `AcceptDeskQuote` /
+// `ListDeskRequests` / `ListDeals`) message trees.
+use celnet_proto::{
+    AcceptDeskQuoteRequest, AcceptDeskQuoteResponse, AdditiveRisk, AggregateRatesRiskRequest,
+    AggregateRatesRiskResponse, AggregateRiskRequest, AggregateRiskResponse,
+    BookRatesPositionRequest, BookRatesPositionResponse, BrokerQuoteSet, BucketedRisk,
+    CcyExposureLeg, CrossGamma, Deal, DealScope, DeskQuote, DeskReject, DeskRequest,
+    DeskRequestScope, DrillRiskRequest, DrillRiskResponse, GetSmileRequest, KeyRateDv01,
+    LimitStatusRequest, LimitStatusResponse, LimitUtilization, ListDealsRequest, ListDealsResponse,
+    ListDeskRequestsRequest, ListDeskRequestsResponse, ListPositionsRequest, ListPositionsResponse,
+    ListRatesPositionsRequest, ListRatesPositionsResponse, MarkSurfaceRequest, MarkSurfaceResponse,
+    NonAdditiveRisk, NumeraireRate, OrgKey, RatesPosition, RatesRiskNode, RatesRiskScope,
+    ReportingNumeraire, RespondDeskRequestRequest, RespondDeskRequestResponse, RiskBucketRequest,
+    RiskNode, RiskPosition, ScenarioPoint, ScenarioRequest, ScenarioResponse, ShockAxis, Smile,
+    SmileModel, SmilePoint, SubmitDeskRequestRequest, SubmitDeskRequestResponse, VanillaInputs,
+    VegaBucket, VegaLadderBucket, VegaPillar, respond_desk_request_request::Response as RespondArm,
+};
 use serde_json::{Map, Value, json};
 
 use super::codec::CodecError;
@@ -3181,4 +3202,1591 @@ pub fn encode_execution(e: &Execution) -> Value {
 #[must_use]
 pub fn encode_reject_ack(a: &RejectAck) -> Value {
     encode("RejectAck", a)
+}
+
+// ===========================================================================
+// SurfaceService — smile read / broker mark / scenario risk (arch item G —
+// `ws-codec-from-proto`, wave 3)
+// ===========================================================================
+//
+// Three unary verbs (`GetSmile` / `MarkSurface` / `Scenario`). The request tree
+// decodes generically off the descriptor EXCEPT `ScenarioRequest`, which nests
+// the FX-legacy dual-key `Instrument` and so keeps the message-level projection
+// escape hatch ([`decode_scenario_request`], delegating the instrument to
+// [`decode_instrument`]). Two decode quirks the descriptor cannot express are
+// carried in the mechanical builder-placement layer, not the field table:
+// `smile_model` is a presence-tracked enum that also accepts its `SMILE_MODEL_*`
+// string name ([`opt_smile_model`]), and a request-side `VegaBucket` / `CrossGamma`
+// ignores its response-only `vega` / `value` field (hardcoded `0.0`), exactly as
+// the hand codec does. The reply surface (`Smile` / `MarkSurfaceResponse` /
+// `ScenarioResponse` and their sub-trees) encodes straight from the field tables —
+// every absent singular message reaches the wire as JSON `null`, matching the hand
+// `json!({ .. })` encoders, so no override-table entry is needed.
+
+/// Decode an optional smile-model selector (mirrors the hand `opt_smile_model`):
+/// accepts either the proto3 enum integer or its `SMILE_MODEL_*` string name;
+/// absent/null ⇒ `None` (the server's default calibration). The string arm is
+/// re-derived **independently** from the published [`SmileModel`] enum (guardrail:
+/// re-derive constants from the source, never call the hand codec) and accepts
+/// exactly the four selectable families the hand codec does — an unrecognized name
+/// (including `SMILE_MODEL_EXTENDED_SURFACE`, a server-internal repair family, not a
+/// client selector) decodes to `None`, byte-identically. `value` is the field's JSON
+/// value if present-and-non-null (as resolved by [`decode`]), else `None`.
+fn opt_smile_model(value: Option<&Value>) -> Option<i32> {
+    match value {
+        None => None,
+        Some(Value::Number(n)) => n.as_i64().and_then(|v| i32::try_from(v).ok()),
+        Some(Value::String(s)) => match s.as_str() {
+            "SMILE_MODEL_MARKET_HEDGE" => Some(SmileModel::MarketHedge as i32),
+            "SMILE_MODEL_STOCHASTIC_VOL" => Some(SmileModel::StochasticVol as i32),
+            "SMILE_MODEL_PARAMETRIC" => Some(SmileModel::Parametric as i32),
+            "SMILE_MODEL_PARAMETRIC_SURFACE" => Some(SmileModel::ParametricSurface as i32),
+            _ => None,
+        },
+        Some(_) => None,
+    }
+}
+
+// --- surface request WireBuilders (decode) ----------------------------------
+
+impl WireBuilder for BrokerQuoteSet {
+    const MESSAGE: &'static str = "BrokerQuoteSet";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "tenor_years" => self.tenor_years = req_f64(value, "tenor_years")?,
+            "atm_vol" => self.atm_vol = req_f64(value, "atm_vol")?,
+            "rr_25" => self.rr_25 = f64_or_zero(value),
+            "bf_25" => self.bf_25 = f64_or_zero(value),
+            "rr_10" => self.rr_10 = f64_or_zero(value),
+            "bf_10" => self.bf_10 = f64_or_zero(value),
+            "has_ten_delta" => self.has_ten_delta = bool_or_false(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ShockAxis {
+    const MESSAGE: &'static str = "ShockAxis";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "factor" => self.factor = enum_or_zero(value),
+            "relative" => self.relative = bool_or_false(value),
+            "steps" => self.steps = f64_vec(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CrossGamma {
+    const MESSAGE: &'static str = "CrossGamma";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "factor_a" => self.factor_a = enum_or_zero(value),
+            "factor_b" => self.factor_b = enum_or_zero(value),
+            // `value` is a response-only field: a request-side cross-gamma pair only
+            // names the two factors, so the hand codec hardcodes `0.0` regardless of
+            // any JSON value (`cross_gamma_pair_from_json`).
+            "value" => self.value = 0.0,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for VegaBucket {
+    const MESSAGE: &'static str = "VegaBucket";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "tenor_years" => self.tenor_years = req_f64(value, "tenor_years")?,
+            "delta" => self.delta = f64_or_zero(value),
+            // `vega` is a response-only measure: a request-side pillar only selects
+            // the (tenor, delta) bucket, so the hand codec hardcodes `0.0`
+            // (`vega_bucket_from_json`).
+            "vega" => self.vega = 0.0,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RiskBucketRequest {
+    const MESSAGE: &'static str = "RiskBucketRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "vega_pillars" => {
+                self.vega_pillars = opt_repeated::<VegaBucket>(value, "vega_pillars")?
+            }
+            "cross_gamma_pairs" => {
+                self.cross_gamma_pairs = opt_repeated::<CrossGamma>(value, "cross_gamma_pairs")?;
+            }
+            "roll_horizons_years" => self.roll_horizons_years = f64_vec(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for GetSmileRequest {
+    const MESSAGE: &'static str = "GetSmileRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "pair" => self.pair = opt_msg::<CcyPair>(value, "pair")?,
+            "tenor_years" => self.tenor_years = req_f64(value, "tenor_years")?,
+            "conventions" => self.conventions = Some(req_msg::<Conventions>(value, "conventions")?),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for MarkSurfaceRequest {
+    const MESSAGE: &'static str = "MarkSurfaceRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "pair" => self.pair = opt_msg::<CcyPair>(value, "pair")?,
+            "broker_quotes" => {
+                self.broker_quotes = req_repeated::<BrokerQuoteSet>(value, "broker_quotes")?;
+            }
+            "conventions" => self.conventions = Some(req_msg::<Conventions>(value, "conventions")?),
+            "smile_model" => self.smile_model = opt_smile_model(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+/// Decode a [`GetSmileRequest`] envelope — fully generic (a plain `CcyPair` +
+/// `Conventions`; no FX-legacy dual-key).
+///
+/// # Errors
+/// A missing required field (`tenor_years` / `conventions`) or a malformed nested
+/// body, as a [`CodecError`].
+pub fn decode_get_smile_request(o: &Map<String, Value>) -> DResult<GetSmileRequest> {
+    decode(GetSmileRequest::MESSAGE, o)
+}
+
+/// Decode a [`MarkSurfaceRequest`] envelope — fully generic; the `smile_model`
+/// selector accepts its enum integer or `SMILE_MODEL_*` string name via
+/// [`opt_smile_model`].
+///
+/// # Errors
+/// A missing required `broker_quotes` array / `conventions`, or a malformed nested
+/// body, as a [`CodecError`].
+pub fn decode_mark_surface_request(o: &Map<String, Value>) -> DResult<MarkSurfaceRequest> {
+    decode(MarkSurfaceRequest::MESSAGE, o)
+}
+
+/// Decode a [`ScenarioRequest`] envelope (mirrors the hand `scenario_request_from_json`)
+/// — a **message-level projection** because it nests the FX-legacy dual-key
+/// [`Instrument`] and FX-legacy [`MarketContext`], delegating both to the shared
+/// generated projections. The `axes` grid is required; `risk_buckets` and
+/// `smile_model` are presence-tracked.
+///
+/// # Errors
+/// A missing required nested field (`instrument` / `base_market` / `conventions` /
+/// `axes`) or a malformed body, as a [`CodecError`].
+pub fn decode_scenario_request(o: &Map<String, Value>) -> DResult<ScenarioRequest> {
+    Ok(ScenarioRequest {
+        instrument: Some(decode_instrument(req_value(
+            o.get("instrument"),
+            "instrument",
+        )?)?),
+        base_market: Some(decode_market_context(req_value(
+            o.get("base_market"),
+            "base_market",
+        )?)?),
+        conventions: Some(decode_conventions(req_value(
+            o.get("conventions"),
+            "conventions",
+        )?)?),
+        axes: req_repeated::<ShockAxis>(o.get("axes"), "axes")?,
+        expiry_years: f64_or_zero(o.get("expiry_years").filter(|v| !v.is_null())),
+        risk_buckets: opt_msg::<RiskBucketRequest>(
+            o.get("risk_buckets").filter(|v| !v.is_null()),
+            "risk_buckets",
+        )?,
+        smile_model: opt_smile_model(o.get("smile_model").filter(|v| !v.is_null())),
+    })
+}
+
+// --- surface reply WireAdapters (encode) ------------------------------------
+
+impl WireAdapter for SmilePoint {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "delta" => Some(WireVal::F64(self.delta)),
+            "tenor_years" => Some(WireVal::F64(self.tenor_years)),
+            "vol" => Some(WireVal::F64(self.vol)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for BrokerQuoteSet {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor_years" => Some(WireVal::F64(self.tenor_years)),
+            "atm_vol" => Some(WireVal::F64(self.atm_vol)),
+            "rr_25" => Some(WireVal::F64(self.rr_25)),
+            "bf_25" => Some(WireVal::F64(self.bf_25)),
+            "rr_10" => Some(WireVal::F64(self.rr_10)),
+            "bf_10" => Some(WireVal::F64(self.bf_10)),
+            "has_ten_delta" => Some(WireVal::Bool(self.has_ten_delta)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for Smile {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "pair" => self
+                .pair
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            "tenor_years" => Some(WireVal::F64(self.tenor_years)),
+            "broker_quotes" => self
+                .broker_quotes
+                .as_ref()
+                .map(|b| WireVal::Msg(b as &dyn WireAdapter)),
+            "points" => Some(WireVal::RepeatedMsg(
+                self.points.iter().map(|p| p as &dyn WireAdapter).collect(),
+            )),
+            "conventions" => self
+                .conventions
+                .as_ref()
+                .map(|c| WireVal::Msg(c as &dyn WireAdapter)),
+            "arbitrage" => self
+                .arbitrage
+                .as_ref()
+                .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for MarkSurfaceResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "pair" => self
+                .pair
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            "surface_version" => Some(WireVal::U64(self.surface_version)),
+            "smiles" => Some(WireVal::RepeatedMsg(
+                self.smiles.iter().map(|s| s as &dyn WireAdapter).collect(),
+            )),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for VegaBucket {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor_years" => Some(WireVal::F64(self.tenor_years)),
+            "delta" => Some(WireVal::F64(self.delta)),
+            "vega" => Some(WireVal::F64(self.vega)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CrossGamma {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "factor_a" => Some(WireVal::Enum(self.factor_a)),
+            "factor_b" => Some(WireVal::Enum(self.factor_b)),
+            "value" => Some(WireVal::F64(self.value)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ScenarioPoint {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "applied_shocks" => Some(WireVal::RepeatedF64(&self.applied_shocks)),
+            "shocked_market" => self
+                .shocked_market
+                .as_ref()
+                .map(|m| WireVal::Msg(m as &dyn WireAdapter)),
+            "greeks" => self
+                .greeks
+                .as_ref()
+                .map(|g| WireVal::Msg(g as &dyn WireAdapter)),
+            "expiry_years" => Some(WireVal::F64(self.expiry_years)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for BucketedRisk {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "vega_buckets" => Some(WireVal::RepeatedMsg(
+                self.vega_buckets
+                    .iter()
+                    .map(|b| b as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "cross_gammas" => Some(WireVal::RepeatedMsg(
+                self.cross_gammas
+                    .iter()
+                    .map(|c| c as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "theta_roll" => Some(WireVal::RepeatedF64(&self.theta_roll)),
+            "roll_horizons_years" => Some(WireVal::RepeatedF64(&self.roll_horizons_years)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ScenarioResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "points" => Some(WireVal::RepeatedMsg(
+                self.points.iter().map(|p| p as &dyn WireAdapter).collect(),
+            )),
+            "bucketed_risk" => self
+                .bucketed_risk
+                .as_ref()
+                .map(|b| WireVal::Msg(b as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+/// Encode a [`Smile`] (the `GetSmile` reply) to its WS JSON — descriptor-driven
+/// (mirrors the hand `smile_reply_to_json` / `smile_to_json`). Absent singular
+/// messages (`pair` / `broker_quotes` / `conventions` / `arbitrage`) reach the wire
+/// as JSON `null`.
+#[must_use]
+pub fn encode_smile(s: &Smile) -> Value {
+    encode("Smile", s)
+}
+
+/// Encode a [`MarkSurfaceResponse`] to its WS JSON (mirrors the hand
+/// `mark_surface_response_to_json`).
+#[must_use]
+pub fn encode_mark_surface_response(r: &MarkSurfaceResponse) -> Value {
+    encode("MarkSurfaceResponse", r)
+}
+
+/// Encode a [`ScenarioResponse`] to its WS JSON (mirrors the hand
+/// `scenario_response_to_json`).
+#[must_use]
+pub fn encode_scenario_response(r: &ScenarioResponse) -> Value {
+    encode("ScenarioResponse", r)
+}
+
+// ===========================================================================
+// RiskService — server-side hierarchical risk + linear-rates book/list/rollup
+// (arch item G — `ws-codec-from-proto`, wave 3)
+// ===========================================================================
+//
+// Seven unary verbs (`ListPositions` / `AggregateRisk` / `AggregateRatesRisk` /
+// `DrillRisk` / `LimitStatus` / `BookRatesPosition` / `ListRatesPositions`). Every
+// request envelope decodes fully generically off the descriptor, reusing the shared
+// `EntitlementPrincipal` tree (built for the fix-admin family) plus the
+// `ReportingNumeraire` / `RiskScope` / `VegaPillar` / `RatesPosition` sub-trees. The
+// rich `RiskNode` / `RiskPosition` / `RatesRiskNode` reply hierarchies encode
+// straight from the field tables, with two curated FX-legacy encode divergences the
+// descriptor cannot express: `VanillaInputs` carries the same `r_dom`/`r_for` carry
+// seam as `MarketContext` (quirk b, [`codec_overrides::vanilla_inputs_synth`]), and
+// `OrgKey.underlying` rides under the legacy `ccy_pair` key via the FX `Underlying`
+// projection (quirk a). Absent presence-tracked reply fields (the `correlation_id`
+// echoes, `RiskPosition.attribution`, the `NonAdditiveRisk` VaR/ES/curvature) reach
+// the wire as JSON `null` (`codec_overrides::null_absent_optional`).
+
+// --- risk request WireBuilders (decode) -------------------------------------
+
+impl WireBuilder for NumeraireRate {
+    const MESSAGE: &'static str = "NumeraireRate";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "ccy" => self.ccy = req_string(value, "ccy")?,
+            "rate" => self.rate = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ReportingNumeraire {
+    const MESSAGE: &'static str = "ReportingNumeraire";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "numeraire" => self.numeraire = req_string(value, "numeraire")?,
+            "rates" => self.rates = opt_repeated::<NumeraireRate>(value, "rates")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for VegaPillar {
+    const MESSAGE: &'static str = "VegaPillar";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "tenor_days" => self.tenor_days = u32_or_zero(value),
+            "delta_bp" => self.delta_bp = i32_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RatesRiskScope {
+    const MESSAGE: &'static str = "RatesRiskScope";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "entity" => self.entity = opt_u32(value),
+            "book" => self.book = opt_u32(value),
+            "ccy" => self.ccy = opt_string(value, "ccy")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RatesPosition {
+    const MESSAGE: &'static str = "RatesPosition";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "position_id" => self.position_id = u64_or_zero(value),
+            "entity" => self.entity = u32_or_zero(value),
+            "book" => self.book = u32_or_zero(value),
+            "instrument" => {
+                self.instrument = Some(req_msg::<RatesInstrument>(value, "instrument")?);
+            }
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListPositionsRequest {
+    const MESSAGE: &'static str = "ListPositionsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "scope" => self.scope = opt_msg::<RiskScope>(value, "scope")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for AggregateRiskRequest {
+    const MESSAGE: &'static str = "AggregateRiskRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "dimension" => self.dimension = enum_or_zero(value),
+            "numeraire" => self.numeraire = opt_msg::<ReportingNumeraire>(value, "numeraire")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "scope" => self.scope = opt_msg::<RiskScope>(value, "scope")?,
+            "vega_pillars" => {
+                self.vega_pillars = opt_repeated::<VegaPillar>(value, "vega_pillars")?
+            }
+            "var_spot_shocks" => self.var_spot_shocks = f64_vec(value),
+            "var_alpha" => self.var_alpha = f64_or_zero(value),
+            "curvature_risk_weight" => self.curvature_risk_weight = f64_or_zero(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DrillRiskRequest {
+    const MESSAGE: &'static str = "DrillRiskRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "node" => self.node = opt_msg::<RiskScope>(value, "node")?,
+            "child_dimension" => self.child_dimension = enum_or_zero(value),
+            "numeraire" => self.numeraire = opt_msg::<ReportingNumeraire>(value, "numeraire")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "vega_pillars" => {
+                self.vega_pillars = opt_repeated::<VegaPillar>(value, "vega_pillars")?
+            }
+            "include_children" => self.include_children = bool_or_false(value),
+            "include_positions" => self.include_positions = bool_or_false(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for LimitStatusRequest {
+    const MESSAGE: &'static str = "LimitStatusRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "scope" => self.scope = opt_msg::<RiskScope>(value, "scope")?,
+            "numeraire" => self.numeraire = opt_msg::<ReportingNumeraire>(value, "numeraire")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "vega_pillars" => {
+                self.vega_pillars = opt_repeated::<VegaPillar>(value, "vega_pillars")?
+            }
+            "var_spot_shocks" => self.var_spot_shocks = f64_vec(value),
+            "var_alpha" => self.var_alpha = f64_or_zero(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for AggregateRatesRiskRequest {
+    const MESSAGE: &'static str = "AggregateRatesRiskRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "curve_set" => self.curve_set = Some(req_msg::<CurveSet>(value, "curve_set")?),
+            "positions" => self.positions = opt_repeated::<RatesPosition>(value, "positions")?,
+            "scope" => self.scope = opt_msg::<RatesRiskScope>(value, "scope")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for BookRatesPositionRequest {
+    const MESSAGE: &'static str = "BookRatesPositionRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            "position" => self.position = Some(req_msg::<RatesPosition>(value, "position")?),
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_string(value, "correlation_id")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListRatesPositionsRequest {
+    const MESSAGE: &'static str = "ListRatesPositionsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            "scope" => self.scope = opt_msg::<RatesRiskScope>(value, "scope")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_string(value, "correlation_id")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+/// Decode a [`ListPositionsRequest`] envelope — fully generic (shared
+/// `RiskScope` + `EntitlementPrincipal`).
+///
+/// # Errors
+/// A malformed nested body, as a [`CodecError`].
+pub fn decode_list_positions_request(o: &Map<String, Value>) -> DResult<ListPositionsRequest> {
+    decode(ListPositionsRequest::MESSAGE, o)
+}
+
+/// Decode an [`AggregateRiskRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A malformed nested body, as a [`CodecError`].
+pub fn decode_aggregate_risk_request(o: &Map<String, Value>) -> DResult<AggregateRiskRequest> {
+    decode(AggregateRiskRequest::MESSAGE, o)
+}
+
+/// Decode a [`DrillRiskRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A malformed nested body, as a [`CodecError`].
+pub fn decode_drill_risk_request(o: &Map<String, Value>) -> DResult<DrillRiskRequest> {
+    decode(DrillRiskRequest::MESSAGE, o)
+}
+
+/// Decode a [`LimitStatusRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A malformed nested body, as a [`CodecError`].
+pub fn decode_limit_status_request(o: &Map<String, Value>) -> DResult<LimitStatusRequest> {
+    decode(LimitStatusRequest::MESSAGE, o)
+}
+
+/// Decode an [`AggregateRatesRiskRequest`] envelope — fully generic; the
+/// `curve_set` / `positions` reuse the shared `CurveSet` / `RatesInstrument`
+/// builders the `PriceRates` request decode does.
+///
+/// # Errors
+/// A missing required `curve_set` (or `RatesInstrument` arm) or a malformed body.
+pub fn decode_aggregate_rates_risk_request(
+    o: &Map<String, Value>,
+) -> DResult<AggregateRatesRiskRequest> {
+    decode(AggregateRatesRiskRequest::MESSAGE, o)
+}
+
+/// Decode a [`BookRatesPositionRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing required `position` (or `RatesInstrument` arm) or a malformed body.
+pub fn decode_book_rates_position_request(
+    o: &Map<String, Value>,
+) -> DResult<BookRatesPositionRequest> {
+    decode(BookRatesPositionRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListRatesPositionsRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A malformed nested body, as a [`CodecError`].
+pub fn decode_list_rates_positions_request(
+    o: &Map<String, Value>,
+) -> DResult<ListRatesPositionsRequest> {
+    decode(ListRatesPositionsRequest::MESSAGE, o)
+}
+
+// --- shared linear-rates instrument/curve encode adapters (used by the rates
+// risk rollup AND the dealer-desk `DeskRequest`/`Deal` blotter). The pure rates
+// tree carries no FX-legacy quirk; every absent singular message (a bond
+// `maturity_date`, a curve `reference_date`, a pillar `tenor`) reaches the wire as
+// JSON `null`, matching the hand `rates_instrument_to_json` / `curve_set_to_json`.
+
+impl WireAdapter for OisInstrument {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor_years" => Some(WireVal::U64(u64::from(self.tenor_years))),
+            "fixed_rate" => Some(WireVal::F64(self.fixed_rate)),
+            "notional" => Some(WireVal::F64(self.notional)),
+            "side" => Some(WireVal::Enum(self.side)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for VanillaIrsInstrument {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor_years" => Some(WireVal::U64(u64::from(self.tenor_years))),
+            "fixed_rate" => Some(WireVal::F64(self.fixed_rate)),
+            "notional" => Some(WireVal::F64(self.notional)),
+            "side" => Some(WireVal::Enum(self.side)),
+            "fixed_frequency" => Some(WireVal::Enum(self.fixed_frequency)),
+            "fixed_day_count" => Some(WireVal::Enum(self.fixed_day_count)),
+            "float_frequency" => Some(WireVal::Enum(self.float_frequency)),
+            "float_day_count" => Some(WireVal::Enum(self.float_day_count)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for FraInstrument {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "start_months" => Some(WireVal::U64(u64::from(self.start_months))),
+            "end_months" => Some(WireVal::U64(u64::from(self.end_months))),
+            "fixed_rate" => Some(WireVal::F64(self.fixed_rate)),
+            "notional" => Some(WireVal::F64(self.notional)),
+            "side" => Some(WireVal::Enum(self.side)),
+            "accrual_basis" => Some(WireVal::Enum(self.accrual_basis)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for BondInstrument {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "coupon_rate" => Some(WireVal::F64(self.coupon_rate)),
+            "coupon_frequency" => Some(WireVal::Enum(self.coupon_frequency)),
+            "day_count" => Some(WireVal::Enum(self.day_count)),
+            "maturity_date" => self
+                .maturity_date
+                .as_ref()
+                .map(|d| WireVal::Msg(d as &dyn WireAdapter)),
+            "redemption" => Some(WireVal::F64(self.redemption)),
+            "side" => Some(WireVal::Enum(self.side)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RatesInstrument {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        use rates_instrument::Instrument;
+        match (proto_name, &self.instrument) {
+            ("ois", Some(Instrument::Ois(x))) => Some(WireVal::Msg(x as &dyn WireAdapter)),
+            ("irs", Some(Instrument::Irs(x))) => Some(WireVal::Msg(x as &dyn WireAdapter)),
+            ("fra", Some(Instrument::Fra(x))) => Some(WireVal::Msg(x as &dyn WireAdapter)),
+            ("bond", Some(Instrument::Bond(x))) => Some(WireVal::Msg(x as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for PillarTenor {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        use pillar_tenor::Point;
+        match (proto_name, &self.point) {
+            ("years", Some(Point::Years(y))) => Some(WireVal::U64(u64::from(*y))),
+            ("months", Some(Point::Months(m))) => Some(WireVal::U64(u64::from(*m))),
+            ("maturity_date", Some(Point::MaturityDate(d))) => {
+                Some(WireVal::Msg(d as &dyn WireAdapter))
+            }
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for OisPillar {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor" => self
+                .tenor
+                .as_ref()
+                .map(|t| WireVal::Msg(t as &dyn WireAdapter)),
+            "par_rate" => Some(WireVal::F64(self.par_rate)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CurveSet {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "currency" => Some(WireVal::Str(&self.currency)),
+            "reference_date" => self
+                .reference_date
+                .as_ref()
+                .map(|d| WireVal::Msg(d as &dyn WireAdapter)),
+            "ois_pillars" => Some(WireVal::RepeatedMsg(
+                self.ois_pillars
+                    .iter()
+                    .map(|p| p as &dyn WireAdapter)
+                    .collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RatesPosition {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "position_id" => Some(WireVal::U64(self.position_id)),
+            "entity" => Some(WireVal::U64(u64::from(self.entity))),
+            "book" => Some(WireVal::U64(u64::from(self.book))),
+            "instrument" => self
+                .instrument
+                .as_ref()
+                .map(|i| WireVal::Msg(i as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+// --- risk reply WireAdapters (encode) ---------------------------------------
+
+impl WireAdapter for RiskScope {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "dimension" => Some(WireVal::Enum(self.dimension)),
+            "value" => Some(WireVal::U64(self.value)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for VanillaInputs {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "spot" => Some(WireVal::F64(self.spot)),
+            "strike" => Some(WireVal::F64(self.strike)),
+            "vol" => Some(WireVal::F64(self.vol)),
+            "t" => Some(WireVal::F64(self.t)),
+            // Renamed to `r_dom` by the override; `carry` is suppressed and reaches
+            // the wire as the synthesized `r_for` instead (the FX carry seam, quirk b).
+            "discount_rate" => Some(WireVal::F64(self.discount_rate)),
+            _ => None,
+        }
+    }
+
+    fn synthesized(&self) -> Vec<(&'static str, Value)> {
+        codec_overrides::vanilla_inputs_synth(self)
+    }
+}
+
+impl WireAdapter for OrgKey {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "trader" => Some(WireVal::U64(u64::from(self.trader))),
+            "book" => Some(WireVal::U64(u64::from(self.book))),
+            "desk" => Some(WireVal::U64(u64::from(self.desk))),
+            // Renamed to the legacy `ccy_pair` key by the override; the value is the
+            // FX `{base, quote}` projection produced by the `Underlying` adapter.
+            "underlying" => self
+                .underlying
+                .as_ref()
+                .map(|u| WireVal::Msg(u as &dyn WireAdapter)),
+            "location" => Some(WireVal::U64(u64::from(self.location))),
+            "entity" => Some(WireVal::U64(u64::from(self.entity))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RiskPosition {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "position_id" => Some(WireVal::U64(self.position_id)),
+            "org" => self
+                .org
+                .as_ref()
+                .map(|o| WireVal::Msg(o as &dyn WireAdapter)),
+            "option_type" => Some(WireVal::Enum(self.option_type)),
+            "notional_base" => Some(WireVal::F64(self.notional_base)),
+            "inputs" => self
+                .inputs
+                .as_ref()
+                .map(|i| WireVal::Msg(i as &dyn WireAdapter)),
+            "quoted_delta" => Some(WireVal::Enum(self.quoted_delta)),
+            "premium_style" => Some(WireVal::Enum(self.premium_style)),
+            "surface_version" => Some(WireVal::U64(self.surface_version)),
+            "attribution" => self
+                .attribution
+                .as_ref()
+                .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for VegaPillar {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor_days" => Some(WireVal::U64(u64::from(self.tenor_days))),
+            "delta_bp" => Some(WireVal::I64(i64::from(self.delta_bp))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for VegaLadderBucket {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "pillar" => self
+                .pillar
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            "vega" => Some(WireVal::F64(self.vega)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CcyExposureLeg {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "ccy" => Some(WireVal::Str(&self.ccy)),
+            "amount" => Some(WireVal::F64(self.amount)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AdditiveRisk {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "delta_numeraire" => Some(WireVal::F64(self.delta_numeraire)),
+            "delta_vector" => Some(WireVal::RepeatedMsg(
+                self.delta_vector
+                    .iter()
+                    .map(|l| l as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "gamma" => Some(WireVal::F64(self.gamma)),
+            "vega_numeraire" => Some(WireVal::F64(self.vega_numeraire)),
+            "theta" => Some(WireVal::F64(self.theta)),
+            "vanna" => Some(WireVal::F64(self.vanna)),
+            "volga" => Some(WireVal::F64(self.volga)),
+            "charm" => Some(WireVal::F64(self.charm)),
+            "speed" => Some(WireVal::F64(self.speed)),
+            "zomma" => Some(WireVal::F64(self.zomma)),
+            "color" => Some(WireVal::F64(self.color)),
+            "premium_numeraire" => Some(WireVal::F64(self.premium_numeraire)),
+            "vega_ladder" => Some(WireVal::RepeatedMsg(
+                self.vega_ladder
+                    .iter()
+                    .map(|b| b as &dyn WireAdapter)
+                    .collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for NonAdditiveRisk {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        // Every field is a presence-tracked optional scalar: absent ⇒ `None` here,
+        // rendered as JSON `null` by the `null_absent_optional` policy for this
+        // message (a not-evaluated measure is `null`, never a spurious zero).
+        match proto_name {
+            "var" => self.var.map(WireVal::F64),
+            "es" => self.es.map(WireVal::F64),
+            "var_alpha" => self.var_alpha.map(WireVal::F64),
+            "curvature_spot" => self.curvature_spot.map(WireVal::F64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RiskNode {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "dimension" => Some(WireVal::Enum(self.dimension)),
+            "group" => Some(WireVal::U64(self.group)),
+            "additive" => self
+                .additive
+                .as_ref()
+                .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            "nonadditive" => self
+                .nonadditive
+                .as_ref()
+                .map(|n| WireVal::Msg(n as &dyn WireAdapter)),
+            "position_count" => Some(WireVal::U64(u64::from(self.position_count))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for LimitUtilization {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "metric" => Some(WireVal::Enum(self.metric)),
+            "vega_pillar" => self
+                .vega_pillar
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            "tenor_days" => Some(WireVal::U64(u64::from(self.tenor_days))),
+            "cap" => Some(WireVal::F64(self.cap)),
+            "exposure" => Some(WireVal::F64(self.exposure)),
+            "ratio" => Some(WireVal::F64(self.ratio)),
+            "status" => Some(WireVal::Enum(self.status)),
+            "enforcement" => Some(WireVal::Enum(self.enforcement)),
+            "headroom" => Some(WireVal::F64(self.headroom)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for KeyRateDv01 {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor_years" => Some(WireVal::U64(u64::from(self.tenor_years))),
+            "dv01" => Some(WireVal::F64(self.dv01)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RatesRiskNode {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "ccy" => Some(WireVal::Str(&self.ccy)),
+            "net_pv" => Some(WireVal::F64(self.net_pv)),
+            "net_pv01" => Some(WireVal::F64(self.net_pv01)),
+            "net_dv01" => Some(WireVal::F64(self.net_dv01)),
+            "key_rate_ladder" => Some(WireVal::RepeatedMsg(
+                self.key_rate_ladder
+                    .iter()
+                    .map(|k| k as &dyn WireAdapter)
+                    .collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListPositionsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "positions" => Some(WireVal::RepeatedMsg(
+                self.positions
+                    .iter()
+                    .map(|p| p as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AggregateRiskResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "dimension" => Some(WireVal::Enum(self.dimension)),
+            "numeraire" => Some(WireVal::Str(&self.numeraire)),
+            "nodes" => Some(WireVal::RepeatedMsg(
+                self.nodes.iter().map(|n| n as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DrillRiskResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "node" => self
+                .node
+                .as_ref()
+                .map(|n| WireVal::Msg(n as &dyn WireAdapter)),
+            "children" => Some(WireVal::RepeatedMsg(
+                self.children
+                    .iter()
+                    .map(|n| n as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "positions" => Some(WireVal::RepeatedMsg(
+                self.positions
+                    .iter()
+                    .map(|p| p as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for LimitStatusResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "scope" => self
+                .scope
+                .as_ref()
+                .map(|s| WireVal::Msg(s as &dyn WireAdapter)),
+            "limits" => Some(WireVal::RepeatedMsg(
+                self.limits.iter().map(|l| l as &dyn WireAdapter).collect(),
+            )),
+            "worst" => Some(WireVal::Enum(self.worst)),
+            "hard_breach" => Some(WireVal::Bool(self.hard_breach)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AggregateRatesRiskResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "nodes" => Some(WireVal::RepeatedMsg(
+                self.nodes.iter().map(|n| n as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for BookRatesPositionResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "position" => self
+                .position
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListRatesPositionsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "positions" => Some(WireVal::RepeatedMsg(
+                self.positions
+                    .iter()
+                    .map(|p| p as &dyn WireAdapter)
+                    .collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// Encode a [`ListPositionsResponse`] to its WS JSON (mirrors the hand
+/// `list_positions_response_to_json`).
+#[must_use]
+pub fn encode_list_positions_response(r: &ListPositionsResponse) -> Value {
+    encode("ListPositionsResponse", r)
+}
+
+/// Encode an [`AggregateRiskResponse`] to its WS JSON (mirrors the hand
+/// `aggregate_risk_response_to_json`).
+#[must_use]
+pub fn encode_aggregate_risk_response(r: &AggregateRiskResponse) -> Value {
+    encode("AggregateRiskResponse", r)
+}
+
+/// Encode a [`DrillRiskResponse`] to its WS JSON (mirrors the hand
+/// `drill_risk_response_to_json`).
+#[must_use]
+pub fn encode_drill_risk_response(r: &DrillRiskResponse) -> Value {
+    encode("DrillRiskResponse", r)
+}
+
+/// Encode a [`LimitStatusResponse`] to its WS JSON (mirrors the hand
+/// `limit_status_response_to_json`).
+#[must_use]
+pub fn encode_limit_status_response(r: &LimitStatusResponse) -> Value {
+    encode("LimitStatusResponse", r)
+}
+
+/// Encode an [`AggregateRatesRiskResponse`] to its WS JSON (mirrors the hand
+/// `aggregate_rates_risk_response_to_json`).
+#[must_use]
+pub fn encode_aggregate_rates_risk_response(r: &AggregateRatesRiskResponse) -> Value {
+    encode("AggregateRatesRiskResponse", r)
+}
+
+/// Encode a [`BookRatesPositionResponse`] to its WS JSON (mirrors the hand
+/// `book_rates_position_response_to_json`).
+#[must_use]
+pub fn encode_book_rates_position_response(r: &BookRatesPositionResponse) -> Value {
+    encode("BookRatesPositionResponse", r)
+}
+
+/// Encode a [`ListRatesPositionsResponse`] to its WS JSON (mirrors the hand
+/// `list_rates_positions_response_to_json`).
+#[must_use]
+pub fn encode_list_rates_positions_response(r: &ListRatesPositionsResponse) -> Value {
+    encode("ListRatesPositionsResponse", r)
+}
+
+// ===========================================================================
+// RfqDeskService — dealer-side RFQ/IOI desk inbox + deal blotter (arch item G —
+// `ws-codec-from-proto`, wave 3)
+// ===========================================================================
+//
+// Five unary verbs (`SubmitDeskRequest` / `RespondDeskRequest` / `AcceptDeskQuote` /
+// `ListDeskRequests` / `ListDeals`). `SubmitDeskRequest` / `AcceptDeskQuote` /
+// `ListDeskRequests` decode fully generically (the FI `RatesInstrument`/`CurveSet`
+// reuse the shared rates builders). Two decode quirks the field table cannot express
+// keep the message-level projection escape hatch: `RespondDeskRequest`'s `response`
+// oneof errors when BOTH `quote` and `reject` are present (a mutual-exclusion the
+// generic first-arm-wins walk cannot express, plus `contains_key` — not
+// present-and-non-null — presence, [`decode_respond_desk_request`]); and `ListDeals`'
+// `scope` is silently dropped when it is not a JSON object rather than erroring
+// (`and_then(as_object)`, [`decode_list_deals`]). The reply surface (`DeskRequest` /
+// `Deal`, reusing the rates encode tree) renders every absent presence-tracked field
+// (`quote` / `position_id` / `correlation_id`) as JSON `null`
+// (`codec_overrides::null_absent_optional`).
+
+/// A repeated proto enum (`Vec<i32>`) defaulting to empty (mirrors the hand
+/// `DeskRequestScope.states` decode): absent/non-array ⇒ empty, and each present
+/// element is a truncating `as i32` cast of its JSON integer (byte-identical to the
+/// hand `filter_map(as_i64).map(|n| n as i32)`), silently dropping non-integers.
+fn enum_vec(value: Option<&Value>) -> Vec<i32> {
+    value
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_i64)
+                .map(|n| n as i32)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+// --- desk request WireBuilders (decode) -------------------------------------
+
+impl WireBuilder for DeskQuote {
+    const MESSAGE: &'static str = "DeskQuote";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "price" => self.price = req_f64(value, "price")?,
+            "notional" => self.notional = req_f64(value, "notional")?,
+            "valid_for_ms" => self.valid_for_ms = u32_or_zero(value),
+            "trader" => self.trader = string_or_empty(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeskReject {
+    const MESSAGE: &'static str = "DeskReject";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "reason" => self.reason = string_or_empty(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DealScope {
+    const MESSAGE: &'static str = "DealScope";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "desk" => self.desk = opt_string(value, "desk")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeskRequestScope {
+    const MESSAGE: &'static str = "DeskRequestScope";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "states" => self.states = enum_vec(value),
+            "desk" => self.desk = opt_string(value, "desk")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for SubmitDeskRequestRequest {
+    const MESSAGE: &'static str = "SubmitDeskRequestRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            "kind" => self.kind = enum_or_zero(value),
+            "counterparty" => self.counterparty = string_or_empty(value),
+            "desk" => self.desk = string_or_empty(value),
+            "instrument" => {
+                self.instrument = Some(req_msg::<RatesInstrument>(value, "instrument")?);
+            }
+            "curve_set" => self.curve_set = Some(req_msg::<CurveSet>(value, "curve_set")?),
+            "side" => self.side = enum_or_zero(value),
+            "notional" => self.notional = f64_or_zero(value),
+            "ttl_ms" => self.ttl_ms = u32_or_zero(value),
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_string(value, "correlation_id")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for AcceptDeskQuoteRequest {
+    const MESSAGE: &'static str = "AcceptDeskQuoteRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            "request_id" => self.request_id = string_or_empty(value),
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_string(value, "correlation_id")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListDeskRequestsRequest {
+    const MESSAGE: &'static str = "ListDeskRequestsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            "scope" => self.scope = opt_msg::<DeskRequestScope>(value, "scope")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_string(value, "correlation_id")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+/// Decode a [`SubmitDeskRequestRequest`] envelope — fully generic (the FI
+/// `RatesInstrument` / `CurveSet` reuse the shared rates builders).
+///
+/// # Errors
+/// A missing required `instrument` / `curve_set` (or the `RatesInstrument` arm) or a
+/// malformed body, as a [`CodecError`].
+pub fn decode_submit_desk_request(o: &Map<String, Value>) -> DResult<SubmitDeskRequestRequest> {
+    decode(SubmitDeskRequestRequest::MESSAGE, o)
+}
+
+/// Decode a [`RespondDeskRequestRequest`] envelope (mirrors the hand
+/// `respond_desk_request_from_json`) — a **message-level projection** because its
+/// `response` oneof is mutually exclusive: exactly one of `quote` / `reject` selects
+/// the arm, BOTH present is an error, and presence is by key (`contains_key`, so a
+/// `quote: null` reaches the `DeskQuote` decoder and is rejected as a non-object),
+/// neither of which the generic first-arm-wins oneof walk expresses. The two arm
+/// bodies decode through the shared generated `DeskQuote` / `DeskReject` builders.
+///
+/// # Errors
+/// Both arms present, a malformed arm/principal body, as a [`CodecError`].
+pub fn decode_respond_desk_request(o: &Map<String, Value>) -> DResult<RespondDeskRequestRequest> {
+    let response = match (o.contains_key("quote"), o.contains_key("reject")) {
+        (true, false) => Some(RespondArm::Quote(decode::<DeskQuote>(
+            DeskQuote::MESSAGE,
+            obj(o.get("quote").expect("present by contains_key"), "quote")?,
+        )?)),
+        (false, true) => Some(RespondArm::Reject(decode::<DeskReject>(
+            DeskReject::MESSAGE,
+            obj(o.get("reject").expect("present by contains_key"), "reject")?,
+        )?)),
+        (false, false) => None,
+        (true, true) => {
+            return Err(CodecError(
+                "respond: set exactly one of `quote` / `reject`, not both".to_owned(),
+            ));
+        }
+    };
+    Ok(RespondDeskRequestRequest {
+        session_token: opt_string(
+            o.get("session_token").filter(|v| !v.is_null()),
+            "session_token",
+        )?,
+        request_id: string_or_empty(o.get("request_id").filter(|v| !v.is_null())),
+        principal: opt_msg::<EntitlementPrincipal>(
+            o.get("principal").filter(|v| !v.is_null()),
+            "principal",
+        )?,
+        correlation_id: opt_string(
+            o.get("correlation_id").filter(|v| !v.is_null()),
+            "correlation_id",
+        )?,
+        response,
+    })
+}
+
+/// Decode an [`AcceptDeskQuoteRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A malformed nested body, as a [`CodecError`].
+pub fn decode_accept_desk_quote(o: &Map<String, Value>) -> DResult<AcceptDeskQuoteRequest> {
+    decode(AcceptDeskQuoteRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListDeskRequestsRequest`] envelope — fully generic (the `scope`
+/// `DeskRequestScope` decodes through its generic builder, erroring on a non-object
+/// scope exactly as the hand `opt_nested` does).
+///
+/// # Errors
+/// A malformed nested body, as a [`CodecError`].
+pub fn decode_list_desk_requests(o: &Map<String, Value>) -> DResult<ListDeskRequestsRequest> {
+    decode(ListDeskRequestsRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListDealsRequest`] envelope (mirrors the hand `list_deals_from_json`)
+/// — a **message-level projection** for the `scope` quirk: a `DealScope` present but
+/// NOT a JSON object (or `null`) is silently dropped to `None` rather than erroring
+/// (`and_then(as_object)`), unlike the erroring `opt_nested`/`opt_msg` the other
+/// scoped verbs use. A present-object scope decodes through the generic `DealScope`
+/// builder.
+///
+/// # Errors
+/// A malformed `principal` body, as a [`CodecError`].
+pub fn decode_list_deals(o: &Map<String, Value>) -> DResult<ListDealsRequest> {
+    // The non-erroring scope: absent / null / non-object ⇒ `None`; a JSON object ⇒
+    // the decoded `DealScope`.
+    let scope = match o.get("scope") {
+        Some(Value::Object(s)) => Some(decode::<DealScope>(DealScope::MESSAGE, s)?),
+        _ => None,
+    };
+    Ok(ListDealsRequest {
+        session_token: opt_string(
+            o.get("session_token").filter(|v| !v.is_null()),
+            "session_token",
+        )?,
+        scope,
+        principal: opt_msg::<EntitlementPrincipal>(
+            o.get("principal").filter(|v| !v.is_null()),
+            "principal",
+        )?,
+        correlation_id: opt_string(
+            o.get("correlation_id").filter(|v| !v.is_null()),
+            "correlation_id",
+        )?,
+    })
+}
+
+// --- desk reply WireAdapters (encode) ---------------------------------------
+
+impl WireAdapter for DeskQuote {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "price" => Some(WireVal::F64(self.price)),
+            "notional" => Some(WireVal::F64(self.notional)),
+            "valid_for_ms" => Some(WireVal::U64(u64::from(self.valid_for_ms))),
+            "trader" => Some(WireVal::Str(&self.trader)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeskRequest {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "request_id" => Some(WireVal::Str(&self.request_id)),
+            "kind" => Some(WireVal::Enum(self.kind)),
+            "counterparty" => Some(WireVal::Str(&self.counterparty)),
+            "desk" => Some(WireVal::Str(&self.desk)),
+            "instrument" => self
+                .instrument
+                .as_ref()
+                .map(|i| WireVal::Msg(i as &dyn WireAdapter)),
+            "curve_set" => self
+                .curve_set
+                .as_ref()
+                .map(|c| WireVal::Msg(c as &dyn WireAdapter)),
+            "side" => Some(WireVal::Enum(self.side)),
+            "notional" => Some(WireVal::F64(self.notional)),
+            "received_at_nanos" => Some(WireVal::I64(self.received_at_nanos)),
+            "expires_at_nanos" => Some(WireVal::I64(self.expires_at_nanos)),
+            "state" => Some(WireVal::Enum(self.state)),
+            "quote" => self
+                .quote
+                .as_ref()
+                .map(|q| WireVal::Msg(q as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.as_deref().map(WireVal::Str),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for Deal {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "deal_id" => Some(WireVal::Str(&self.deal_id)),
+            "request_id" => Some(WireVal::Str(&self.request_id)),
+            "kind" => Some(WireVal::Enum(self.kind)),
+            "counterparty" => Some(WireVal::Str(&self.counterparty)),
+            "desk" => Some(WireVal::Str(&self.desk)),
+            "instrument" => self
+                .instrument
+                .as_ref()
+                .map(|i| WireVal::Msg(i as &dyn WireAdapter)),
+            "curve_set" => self
+                .curve_set
+                .as_ref()
+                .map(|c| WireVal::Msg(c as &dyn WireAdapter)),
+            "side" => Some(WireVal::Enum(self.side)),
+            "notional" => Some(WireVal::F64(self.notional)),
+            "price" => Some(WireVal::F64(self.price)),
+            "executed_at_nanos" => Some(WireVal::I64(self.executed_at_nanos)),
+            "trader" => Some(WireVal::Str(&self.trader)),
+            "position_id" => self.position_id.map(WireVal::U64),
+            "correlation_id" => self.correlation_id.as_deref().map(WireVal::Str),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for SubmitDeskRequestResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "request" => self
+                .request
+                .as_ref()
+                .map(|r| WireVal::Msg(r as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RespondDeskRequestResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "request" => self
+                .request
+                .as_ref()
+                .map(|r| WireVal::Msg(r as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AcceptDeskQuoteResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "deal" => self
+                .deal
+                .as_ref()
+                .map(|d| WireVal::Msg(d as &dyn WireAdapter)),
+            "request" => self
+                .request
+                .as_ref()
+                .map(|r| WireVal::Msg(r as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListDeskRequestsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "requests" => Some(WireVal::RepeatedMsg(
+                self.requests
+                    .iter()
+                    .map(|r| r as &dyn WireAdapter)
+                    .collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListDealsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "deals" => Some(WireVal::RepeatedMsg(
+                self.deals.iter().map(|d| d as &dyn WireAdapter).collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// Encode a [`SubmitDeskRequestResponse`] to its WS JSON (mirrors the hand
+/// `submit_desk_request_response_to_json`).
+#[must_use]
+pub fn encode_submit_desk_request_response(r: &SubmitDeskRequestResponse) -> Value {
+    encode("SubmitDeskRequestResponse", r)
+}
+
+/// Encode a [`RespondDeskRequestResponse`] to its WS JSON (mirrors the hand
+/// `respond_desk_request_response_to_json`).
+#[must_use]
+pub fn encode_respond_desk_request_response(r: &RespondDeskRequestResponse) -> Value {
+    encode("RespondDeskRequestResponse", r)
+}
+
+/// Encode an [`AcceptDeskQuoteResponse`] to its WS JSON (mirrors the hand
+/// `accept_desk_quote_response_to_json`).
+#[must_use]
+pub fn encode_accept_desk_quote_response(r: &AcceptDeskQuoteResponse) -> Value {
+    encode("AcceptDeskQuoteResponse", r)
+}
+
+/// Encode a [`ListDeskRequestsResponse`] to its WS JSON (mirrors the hand
+/// `list_desk_requests_response_to_json`).
+#[must_use]
+pub fn encode_list_desk_requests_response(r: &ListDeskRequestsResponse) -> Value {
+    encode("ListDeskRequestsResponse", r)
+}
+
+/// Encode a [`ListDealsResponse`] to its WS JSON (mirrors the hand
+/// `list_deals_response_to_json`).
+#[must_use]
+pub fn encode_list_deals_response(r: &ListDealsResponse) -> Value {
+    encode("ListDealsResponse", r)
 }

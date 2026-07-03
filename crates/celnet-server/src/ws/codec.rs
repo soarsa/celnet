@@ -3806,6 +3806,19 @@ pub mod diff_support {
         Strategy, StrikeOrDelta, Symbol, Tenor, Underlying, UpdateFixConnectionRequest,
         UpdateFixConnectionResponse, Vanilla,
     };
+    // Wave-3 verb families (arch item G): the surface / server-side-risk / dealer-desk
+    // hand-codec references the generated codec is proven byte-identical to.
+    use celnet_proto::{
+        AcceptDeskQuoteRequest, AcceptDeskQuoteResponse, AggregateRatesRiskRequest,
+        AggregateRatesRiskResponse, AggregateRiskRequest, AggregateRiskResponse,
+        BookRatesPositionRequest, BookRatesPositionResponse, DrillRiskRequest, DrillRiskResponse,
+        GetSmileRequest, LimitStatusRequest, LimitStatusResponse, ListDealsRequest,
+        ListDealsResponse, ListDeskRequestsRequest, ListDeskRequestsResponse, ListPositionsRequest,
+        ListPositionsResponse, ListRatesPositionsRequest, ListRatesPositionsResponse,
+        MarkSurfaceRequest, MarkSurfaceResponse, RespondDeskRequestRequest,
+        RespondDeskRequestResponse, ScenarioRequest, ScenarioResponse, Smile,
+        SubmitDeskRequestRequest, SubmitDeskRequestResponse,
+    };
     use serde_json::{Map, Value};
 
     use super::CodecError;
@@ -4215,6 +4228,262 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_reject_ack_to_json(a: &RejectAck) -> Value {
         super::reject_ack_to_json(a)
+    }
+
+    // --- SurfaceService references (wave 3): the smile-read / broker-mark / scenario
+    // request decoders + reply encoders the generated surface codec is proven
+    // byte-identical to (incl. the `smile_model` dual int/string enum, the
+    // `VegaBucket`/`CrossGamma` hardcoded-field decode, and the `Smile` sub-tree).
+
+    /// Hand-codec `GetSmileRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_get_smile_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<GetSmileRequest, CodecError> {
+        super::get_smile_request_from_json(o)
+    }
+
+    /// Hand-codec `MarkSurfaceRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_mark_surface_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<MarkSurfaceRequest, CodecError> {
+        super::mark_surface_request_from_json(o)
+    }
+
+    /// Hand-codec `ScenarioRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_scenario_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ScenarioRequest, CodecError> {
+        super::scenario_request_from_json(o)
+    }
+
+    /// Hand-codec reference for the `GetSmile` reply (`Smile`).
+    #[must_use]
+    pub fn hand_smile_reply_to_json(s: &Smile) -> Value {
+        super::smile_reply_to_json(s)
+    }
+
+    /// Hand-codec reference for the `MarkSurfaceResponse` reply.
+    #[must_use]
+    pub fn hand_mark_surface_response_to_json(r: &MarkSurfaceResponse) -> Value {
+        super::mark_surface_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `ScenarioResponse` reply.
+    #[must_use]
+    pub fn hand_scenario_response_to_json(r: &ScenarioResponse) -> Value {
+        super::scenario_response_to_json(r)
+    }
+
+    // --- RiskService references (wave 3): the position / aggregate / drill / limit
+    // request decoders + response encoders (incl. the FX-legacy `VanillaInputs`
+    // `r_dom`/`r_for` and `OrgKey.underlying`→`ccy_pair` projections, the shared
+    // `EntitlementPrincipal`/`ReportingNumeraire` trees, and the linear-rates
+    // book/list + firm rollup).
+
+    /// Hand-codec `ListPositionsRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_positions_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListPositionsRequest, CodecError> {
+        super::list_positions_request_from_json(o)
+    }
+
+    /// Hand-codec `AggregateRiskRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_aggregate_risk_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<AggregateRiskRequest, CodecError> {
+        super::aggregate_risk_request_from_json(o)
+    }
+
+    /// Hand-codec `AggregateRatesRiskRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_aggregate_rates_risk_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<AggregateRatesRiskRequest, CodecError> {
+        super::aggregate_rates_risk_request_from_json(o)
+    }
+
+    /// Hand-codec `DrillRiskRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_drill_risk_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<DrillRiskRequest, CodecError> {
+        super::drill_risk_request_from_json(o)
+    }
+
+    /// Hand-codec `LimitStatusRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_limit_status_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<LimitStatusRequest, CodecError> {
+        super::limit_status_request_from_json(o)
+    }
+
+    /// Hand-codec `BookRatesPositionRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_book_rates_position_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<BookRatesPositionRequest, CodecError> {
+        super::book_rates_position_request_from_json(o)
+    }
+
+    /// Hand-codec `ListRatesPositionsRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_rates_positions_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListRatesPositionsRequest, CodecError> {
+        super::list_rates_positions_request_from_json(o)
+    }
+
+    /// Hand-codec reference for the `ListPositionsResponse` reply.
+    #[must_use]
+    pub fn hand_list_positions_response_to_json(r: &ListPositionsResponse) -> Value {
+        super::list_positions_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `AggregateRiskResponse` reply.
+    #[must_use]
+    pub fn hand_aggregate_risk_response_to_json(r: &AggregateRiskResponse) -> Value {
+        super::aggregate_risk_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `AggregateRatesRiskResponse` reply.
+    #[must_use]
+    pub fn hand_aggregate_rates_risk_response_to_json(r: &AggregateRatesRiskResponse) -> Value {
+        super::aggregate_rates_risk_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `DrillRiskResponse` reply.
+    #[must_use]
+    pub fn hand_drill_risk_response_to_json(r: &DrillRiskResponse) -> Value {
+        super::drill_risk_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `LimitStatusResponse` reply.
+    #[must_use]
+    pub fn hand_limit_status_response_to_json(r: &LimitStatusResponse) -> Value {
+        super::limit_status_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `BookRatesPositionResponse` reply.
+    #[must_use]
+    pub fn hand_book_rates_position_response_to_json(r: &BookRatesPositionResponse) -> Value {
+        super::book_rates_position_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `ListRatesPositionsResponse` reply.
+    #[must_use]
+    pub fn hand_list_rates_positions_response_to_json(r: &ListRatesPositionsResponse) -> Value {
+        super::list_rates_positions_response_to_json(r)
+    }
+
+    // --- RfqDeskService references (wave 3): the desk submit/respond/accept/list
+    // request decoders + response encoders (incl. the `respond` oneof
+    // error-on-both quirk, the `list_deals` non-erroring scope, and the
+    // `RatesInstrument`/`CurveSet` encode tree in `DeskRequest`/`Deal`).
+
+    /// Hand-codec `SubmitDeskRequestRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_submit_desk_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<SubmitDeskRequestRequest, CodecError> {
+        super::submit_desk_request_from_json(o)
+    }
+
+    /// Hand-codec `RespondDeskRequestRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_respond_desk_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<RespondDeskRequestRequest, CodecError> {
+        super::respond_desk_request_from_json(o)
+    }
+
+    /// Hand-codec `AcceptDeskQuoteRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_accept_desk_quote_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<AcceptDeskQuoteRequest, CodecError> {
+        super::accept_desk_quote_from_json(o)
+    }
+
+    /// Hand-codec `ListDeskRequestsRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_desk_requests_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListDeskRequestsRequest, CodecError> {
+        super::list_desk_requests_from_json(o)
+    }
+
+    /// Hand-codec `ListDealsRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_deals_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListDealsRequest, CodecError> {
+        super::list_deals_from_json(o)
+    }
+
+    /// Hand-codec reference for the `SubmitDeskRequest` reply.
+    #[must_use]
+    pub fn hand_submit_desk_request_response_to_json(r: &SubmitDeskRequestResponse) -> Value {
+        super::submit_desk_request_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `RespondDeskRequest` reply.
+    #[must_use]
+    pub fn hand_respond_desk_request_response_to_json(r: &RespondDeskRequestResponse) -> Value {
+        super::respond_desk_request_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `AcceptDeskQuote` reply.
+    #[must_use]
+    pub fn hand_accept_desk_quote_response_to_json(r: &AcceptDeskQuoteResponse) -> Value {
+        super::accept_desk_quote_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `ListDeskRequests` reply.
+    #[must_use]
+    pub fn hand_list_desk_requests_response_to_json(r: &ListDeskRequestsResponse) -> Value {
+        super::list_desk_requests_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `ListDeals` reply.
+    #[must_use]
+    pub fn hand_list_deals_response_to_json(r: &ListDealsResponse) -> Value {
+        super::list_deals_response_to_json(r)
     }
 }
 

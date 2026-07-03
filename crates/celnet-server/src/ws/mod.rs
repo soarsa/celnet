@@ -804,53 +804,67 @@ async fn handle_unary(
                 generated_codec::encode_reject_ack
             )
         }
+        // The SurfaceService verbs run on the descriptor-driven generated codec
+        // (arch item G — `ws-codec-from-proto`, wave 3): the `ws_codec_differential`
+        // harness proves the generated request-decode + reply-encode is byte-identical
+        // to the hand codec (retained as the frozen oracle in `codec::diff_support`)
+        // over the smile/mark/scenario conformance shapes + edge vectors (the
+        // `smile_model` dual enum, the response-only-field hardcode, the FX-legacy
+        // scenario instrument/market), so the swap is contract-preserving.
         "get_smile" => {
-            let req = decode!(codec::get_smile_request_from_json(o));
+            let req = decode!(generated_codec::decode_get_smile_request(o));
             call!(
                 services.surface.get_smile(Request::new(req)),
                 "smile",
-                codec::smile_reply_to_json
+                generated_codec::encode_smile
             )
         }
         "mark_surface" => {
-            let req = decode!(codec::mark_surface_request_from_json(o));
+            let req = decode!(generated_codec::decode_mark_surface_request(o));
             call!(
                 services.surface.mark_surface(Request::new(req)),
                 "mark_surface_response",
-                codec::mark_surface_response_to_json
+                generated_codec::encode_mark_surface_response
             )
         }
         "scenario" => {
-            let req = decode!(codec::scenario_request_from_json(o));
+            let req = decode!(generated_codec::decode_scenario_request(o));
             call!(
                 services.surface.scenario(Request::new(req)),
                 "scenario_response",
-                codec::scenario_response_to_json
+                generated_codec::encode_scenario_response
             )
         }
         // ---- risk: server-side hierarchical risk over the live book ----------
+        // The RiskService verbs run on the descriptor-driven generated codec (arch
+        // item G — `ws-codec-from-proto`, wave 3): the `ws_codec_differential` harness
+        // proves the generated request-decode + reply-encode is byte-identical to the
+        // hand codec (retained as the frozen oracle in `codec::diff_support`) over the
+        // risk conformance shapes + edge vectors — the shared `EntitlementPrincipal`
+        // tree, the FX-legacy `VanillaInputs`/`OrgKey` projections, and the null-absent
+        // presence-tracked fields — so the swap is contract-preserving.
         "list_positions" => {
-            let req = decode!(codec::list_positions_request_from_json(o));
+            let req = decode!(generated_codec::decode_list_positions_request(o));
             call!(
                 services.risk.list_positions(Request::new(req)),
                 "list_positions_response",
-                codec::list_positions_response_to_json
+                generated_codec::encode_list_positions_response
             )
         }
         "aggregate_risk" => {
-            let req = decode!(codec::aggregate_risk_request_from_json(o));
+            let req = decode!(generated_codec::decode_aggregate_risk_request(o));
             call!(
                 services.risk.aggregate_risk(Request::new(req)),
                 "aggregate_risk_response",
-                codec::aggregate_risk_response_to_json
+                generated_codec::encode_aggregate_risk_response
             )
         }
         "aggregate_rates_risk" => {
-            let req = decode!(codec::aggregate_rates_risk_request_from_json(o));
+            let req = decode!(generated_codec::decode_aggregate_rates_risk_request(o));
             call!(
                 services.risk.aggregate_rates_risk(Request::new(req)),
                 "aggregate_rates_risk_response",
-                codec::aggregate_rates_risk_response_to_json
+                generated_codec::encode_aggregate_rates_risk_response
             )
         }
         // The C2c unified joint options+FI tail-risk cube. Its request/response run on
@@ -867,77 +881,84 @@ async fn handle_unary(
             )
         }
         "drill_risk" => {
-            let req = decode!(codec::drill_risk_request_from_json(o));
+            let req = decode!(generated_codec::decode_drill_risk_request(o));
             call!(
                 services.risk.drill_risk(Request::new(req)),
                 "drill_risk_response",
-                codec::drill_risk_response_to_json
+                generated_codec::encode_drill_risk_response
             )
         }
         "limit_status" => {
-            let req = decode!(codec::limit_status_request_from_json(o));
+            let req = decode!(generated_codec::decode_limit_status_request(o));
             call!(
                 services.risk.limit_status(Request::new(req)),
                 "limit_status_response",
-                codec::limit_status_response_to_json
+                generated_codec::encode_limit_status_response
             )
         }
         // ---- linear-rates Book/List (RiskService rates positions) ------------
         "book_rates_position" => {
-            let req = decode!(codec::book_rates_position_request_from_json(o));
+            let req = decode!(generated_codec::decode_book_rates_position_request(o));
             call!(
                 services.risk.book_rates_position(Request::new(req)),
                 "book_rates_position_response",
-                codec::book_rates_position_response_to_json
+                generated_codec::encode_book_rates_position_response
             )
         }
         "list_rates_positions" => {
-            let req = decode!(codec::list_rates_positions_request_from_json(o));
+            let req = decode!(generated_codec::decode_list_rates_positions_request(o));
             call!(
                 services.risk.list_rates_positions(Request::new(req)),
                 "list_rates_positions_response",
-                codec::list_rates_positions_response_to_json
+                generated_codec::encode_list_rates_positions_response
             )
         }
         // ---- dealer-quoting desk (RfqDeskService) ----------------------------
+        // The RfqDeskService verbs run on the descriptor-driven generated codec (arch
+        // item G — `ws-codec-from-proto`, wave 3): the `ws_codec_differential` harness
+        // proves the generated request-decode + reply-encode is byte-identical to the
+        // hand codec (retained as the frozen oracle in `codec::diff_support`) over the
+        // desk conformance shapes + edge vectors — the FI `RatesInstrument`/`CurveSet`
+        // encode tree, the `respond` oneof error-on-both quirk, and the `list_deals`
+        // non-erroring scope — so the swap is contract-preserving.
         "submit_desk_request" => {
-            let req = decode!(codec::submit_desk_request_from_json(o));
+            let req = decode!(generated_codec::decode_submit_desk_request(o));
             call!(
                 services.rfq_desk.submit_desk_request(Request::new(req)),
                 "submit_desk_request_response",
-                codec::submit_desk_request_response_to_json
+                generated_codec::encode_submit_desk_request_response
             )
         }
         "respond_desk_request" => {
-            let req = decode!(codec::respond_desk_request_from_json(o));
+            let req = decode!(generated_codec::decode_respond_desk_request(o));
             call!(
                 services.rfq_desk.respond_desk_request(Request::new(req)),
                 "respond_desk_request_response",
-                codec::respond_desk_request_response_to_json
+                generated_codec::encode_respond_desk_request_response
             )
         }
         "accept_desk_quote" => {
-            let req = decode!(codec::accept_desk_quote_from_json(o));
+            let req = decode!(generated_codec::decode_accept_desk_quote(o));
             call!(
                 services.rfq_desk.accept_desk_quote(Request::new(req)),
                 "accept_desk_quote_response",
-                codec::accept_desk_quote_response_to_json
+                generated_codec::encode_accept_desk_quote_response
             )
         }
         "list_desk_requests" => {
-            let req = decode!(codec::list_desk_requests_from_json(o));
+            let req = decode!(generated_codec::decode_list_desk_requests(o));
             call!(
                 services.rfq_desk.list_desk_requests(Request::new(req)),
                 "list_desk_requests_response",
-                codec::list_desk_requests_response_to_json
+                generated_codec::encode_list_desk_requests_response
             )
         }
         "list_deals" => {
-            let req = decode!(codec::list_deals_from_json(o));
+            let req = decode!(generated_codec::decode_list_deals(o));
             call!(
                 services.rfq_desk.list_deals(Request::new(req)),
                 "list_deals_response",
-                codec::list_deals_response_to_json
+                generated_codec::encode_list_deals_response
             )
         }
         // The FixAdminService connection/message administration verbs run on the
