@@ -85,7 +85,7 @@ std model / FRTB worked examples) ≤1e-12; options paths stay byte-identical.
 **2a Wire/contract — BE**
 | id | what | scope | deps | gate | size |
 |---|---|---|---|---|---|
-| `ws-codec-from-proto` | **G INC3+4** (land `arch/G-ws-codec-full-swap`): descriptor-driven codec + override table + differential byte-identity harness + handle_unary swap; retire the via_contract seams. **Blocks all new codec work.** | celnet-server/ws, celnet-proto/build.rs | — | T2 | L |
+| `ws-codec-from-proto` | **G INC3+4** (land `arch/G-ws-codec-full-swap`): descriptor-driven codec + override table + differential byte-identity harness + handle_unary swap. **Blocks all new codec work.** (Correction: the `price_*_via_contract` seams are the C2 `RiskMeasure` risk seam per ADR-0017 — NOT retired here; retiring them would orphan live `FxSurfaceResolver`/`RatesOisEngine` leaves.) | celnet-server/ws, celnet-proto/build.rs | — | T2 | L |
 | `unified-price-rpc` | **⚑ DECISION** collapse `Price`/`PriceRates`/`PriceXva` → one `Price(oneof Instrument)` so any asset class is first-class without a new RPC | celnet-proto, server, client, GUI, Excel | ws-codec-from-proto | T2 | L |
 | `rates-stream-ws` | FI streaming on WS StreamService (`handle_series_subscribe` unimplemented non-FX) + rates fanout ring | celnet-server/{stream,pricefanout}, celnet-proto | unified-price-rpc | T2 | L |
 | `rates-rfq-ws` | FI RFQ on WS QuoteService + `RatesQuoteRequest` | celnet-proto, celnet-server/ws | ws-codec-from-proto | T2 | M |
