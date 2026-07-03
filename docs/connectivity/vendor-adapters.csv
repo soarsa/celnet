@@ -1,0 +1,254 @@
+# CelNet connectivity — vendor TARGET catalog (imported intelligence).
+# HONEST STATUS: the "status" column below reflects the SOURCE repo's own scaffold
+# round-trips (a loopback StubCounterparty test passing), NOT CelNet build/cert status.
+# In CelNet, ONLY bloomberg_fxgo_price, bloomberg_fxgo_order, rabofx_esp_order are REAL
+# (seeded as data in crates/celnet-connectivity). Every other row is a TARGET in a
+# demand-driven backlog — see docs/connectivity/README.md + CELNET-CONNECTIVITY-INTEGRATION.md.
+code,tier,vendor,product,conn_type,status,spec_version,last_cert_run,notes
+# Adapter program burndown — one row per (vendor × product × connection-type) tuple.
+# See VENDOR_ADAPTERS_PLAN.md §8 for the column contract.
+#
+# Status enum (in order):
+#   TODO            no module under src/adapter/
+#   SPEC_INGESTED   XML file in place (extracted or scaffolded stub)
+#   IMPL            messages.rs + mod.rs filled in for the primary flows
+#   CONFORMING      wire-driven conformance test passes (cargo test conformance_<code>)
+#   DONE            full vendor cert checklist passes
+#   DEFERRED        T4 — see notes column for rationale
+#
+# code naming convention: <vendor>_<product>_<conntype> in lower_snake.
+# Bank LPs typically need multiple rows (Spot ESP + RFS + STP + Algo + ...).
+
+# ─── Tier 1 (Bank LPs + dominant ECNs/aggregators) ─────────────────────────────
+bloomberg_fxgo_order,T1,Bloomberg,FXGO OE,ORDER,CONFORMING,FIX44 BLOOMBERG,,Implemented — wire-driven conformance green
+bloomberg_fxgo_price,T1,Bloomberg,FXGO MD,PRICE,CONFORMING,FIX44 BLOOMBERG,,Implemented — wire-driven conformance green; W/X override fires MD_SUBSCRIPTION_OK
+bloomberg_fxgo_algo,T1,Bloomberg,FXGO Algo,ORDER,CONFORMING,BBG Order Algo 4.4,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+bloomberg_fxgo_batch,T1,Bloomberg,FXGO Batch,STP,CONFORMING,FX BatchesCertification 1.5,,Unblocked by ConnectionType::Stp enum extension
+bloomberg_fxgo_rfq,T1,Bloomberg,FXGO RFS,RFQ,CONFORMING,FXGO RFS Certification,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+citi_esp_order,T1,Citi,Spot ESP,ORDER,CONFORMING,ESP+FWDs v5-1 (v1 detected 6 msg types),,
+citi_esp_price,T1,Citi,Spot ESP,PRICE,CONFORMING,ESP+FWDs v5-1 (v1 detected 6 + V/W injected),,
+citi_rfs,T1,Citi,RFS,RFQ,CONFORMING,RFS v4.9 (v1 detected 6 msg types/23 fields),,Cert plan present (Citi UAT)
+citi_stp,T1,Citi,STP,STP,CONFORMING,CitiFX FIX STP Spec v1.8,,
+citi_colo,T1,Citi,COLO,ORDER,CONFORMING,COLO Spot v7.0.16 (v1 detected 6 msg types/35 fields),,
+citi_forwards,T1,Citi,Forwards,ORDER,CONFORMING,CitiFX Spot ESP+FWDs v5-1,,Shared spec with ESP; FIX 4.4 catalogue defaults
+jpm_spot_order,T1,JPM,FX Spot,ORDER,CONFORMING,JPMC FX v1-3-41 (v1 detected 8 msg types),,
+jpm_algo_order,T1,JPM,FX Algo,ORDER,CONFORMING,JPMC FX Algo v1-83 (v1 detected 5 msg types),,Multiple algo versions
+jpm_commod_order,T1,JPM,Commodities,ORDER,CONFORMING,Commod v1.0.0,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+goldmans_spot_order,T1,Goldmans,Spot,ORDER,CONFORMING,GS FX FIX Spec v7.14 (v1 detected 8 msg types — no field tables),,
+goldmans_rfq,T1,Goldmans,RFQ,RFQ,CONFORMING,GS FX FIX Spec v7.26,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+goldmans_algo_order,T1,Goldmans,Algo,ORDER,CONFORMING,GS FX FIX Spec v7.26,,Algo flow uses same FIX shape as Spot — fields are Algo strategy params on D
+ubs_b2b_order,T1,UBS,B2B RoE,ORDER,CONFORMING,UBS B2B RoE v1.35 (starter catalogue),,PDF text unparseable; cert docs present
+ubs_algo_order,T1,UBS,FX Algo,ORDER,CONFORMING,UBS FX Algo API v2.4 (v1 detected 5 msg types),,
+ubs_price,T1,UBS,Liquidity/MD,PRICE,CONFORMING,UBS Fx2B Liquidity v2.6 (starter catalogue),,
+baml_instinctfx_order,T1,BAML,InstinctFX Spot,ORDER,CONFORMING,InstinctFX FIX Spec v9.7.6.15 (v1 detected 9 msg types — no field tables),,
+baml_instinctfx_price,T1,BAML,InstinctFX MD,PRICE,CONFORMING,InstinctFX FIX Spec v9.7.6.15 (v1 detected 9 msg types — V/W injected via --conn-type),,PDF is order-focused — no MD msgs detected
+baml_options_order,T1,BAML,Options,ORDER,CONFORMING,BAMLX v1.0 (v1 detected 5 msg types),,
+bofa_fxtransact_order,T1,BOFA,FXtransact,ORDER,CONFORMING,FXO v1.25 (v1 detected 7 msg types),,Cert plan present (FXtransact Cert v1.0)
+bofa_instinctfx_price,T1,BOFA,InstinctFX,PRICE,CONFORMING,InstinctFX v9.4.3 (v1 detected 12 msg types),,
+bofa_dropcopy,T1,BOFA,Drop Copy,STP,CONFORMING,InstinctFX FIX v9.4.3,,Shared InstinctFX spec; STP conn-type variant
+bnp_efx_rfq,T1,BNP Paribas,eFX RFQ,RFQ,CONFORMING,eFX FIX RFQ v1.2.7 (v1 detected 7 msg types),,
+bnp_efx_price,T1,BNP Paribas,Streaming Prices,PRICE,CONFORMING,Streaming v1.3.8 (v1 detected 4 msg types — V/W injected),,Streaming spec uses Quote not MD
+db_autobahn_order,T1,Deutsche Bank,AutobahnFX Spot,ORDER,CONFORMING,Autobahn (Single-Leg) 3.5.5 (v1 detected 5 msg types),,Multi-product family
+db_autobahn_algo,T1,Deutsche Bank,Algo,ORDER,CONFORMING,Autobahn Algo 2.3 (v1 detected 5 msg types),,
+db_autobahn_rapid,T1,Deutsche Bank,RAPID,ORDER,CONFORMING,Autobahn RAPID (v1 detected 9 msg types),,
+db_autobahn_rfq,T1,Deutsche Bank,RFQ,RFQ,CONFORMING,AutobahnFX Single-Leg 3.5.5,,Shared Single-Leg spec; FIX 4.4 catalogue defaults via --conn-type rfq
+db_autobahn_stp,T1,Deutsche Bank,STP,STP,CONFORMING,AutobahnFX Single-Leg 3.5.5,,Shared spec; STP conn-type variant
+cs_rfs,T1,Credit Suisse,RFS,RFQ,CONFORMING,CS_FIX_RFS_2.0.6a (starter catalogue),,PDF text unparseable
+cs_ser_spot_order,T1,Credit Suisse,SER Spot,ORDER,CONFORMING,CS_FIX_SER-SPOT (starter catalogue),,PDF text unparseable
+cs_client_order,T1,Credit Suisse,Client,ORDER,CONFORMING,CS_Fix_Client_Specification (starter catalogue),,PDF text unparseable
+ms_spot_order,T1,MorganStanley,Spot,ORDER,CONFORMING,FX FIX Core API.doc,,Cert docs present; .doc via textutil — msg types detected (5) but no field tables; FIX 4.4 catalogue defaults
+ms_laddered_price,T1,MorganStanley,Laddered Pricing,PRICE,CONFORMING,FX FIX Laddered Pricing.doc,,.doc via textutil — 7 msg types detected; FIX 4.4 catalogue defaults
+ms_algo_order,T1,MorganStanley,Algo,ORDER,CONFORMING,FX FIX Implementation Details.doc,,.doc via textutil — 5 msg types detected; FIX 4.4 catalogue defaults
+barclays_barx_order,T1,Barclays,BARX Spot,ORDER,CONFORMING,BARX FX ROE 4.6.1 (v1 detected 5 msg types),,
+barclays_barx_price,T1,Barclays,BARX MD,PRICE,CONFORMING,BARX FX ROE 4.6.1,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults via --conn-type price
+barclays_forwards_order,T1,Barclays,Forwards,ORDER,CONFORMING,FIX Orders ROE v3.2 (v1 detected 5 msg types/16 fields),,
+hsbc_rfsq,T1,HSBC,RFSQ,RFQ,CONFORMING,HSBC FX RFSQ v8.6.4 (v1 detected 6 msg types),,
+hsbc_mds_price,T1,HSBC,Market Data,PRICE,CONFORMING,HSBC MDS V6 v2.1.0 (v1 detected 6 msg types),,
+hsbc_fxfo_order,T1,HSBC,FXFO,ORDER,CONFORMING,HSBC FXFO RFSQ v8.46,,Only Pricing variant PDF available; spec tables unparseable — FIX 4.4 catalogue defaults
+ebs_brokertec_order,T1,EBS,Brokertec Gateway,ORDER,CONFORMING,EBSBrokertec Gateway v4.4 (envelope-only fallback),,
+ebs_ai_price,T1,EBS,Ai,PRICE,CONFORMING,Ai 6.10 FIX 2.0.0 (v1 detected 11 msg types),,
+ebs_maker_price,T1,EBS,Maker,PRICE,CONFORMING,EBS Maker API 2.3,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+ebs_direct_order,T1,EBS,Direct,ORDER,CONFORMING,EBS Direct Taker v2.0.1,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+hotspot_spot_order,T1,HOTSPOT,Spot OE,ORDER,CONFORMING,FIXProxy_Spec_SPOT.pdf (v1 extracted 1 msg type/4 fields),,Cert docs present
+hotspot_bookfeed_price,T1,HOTSPOT,BookFeed,PRICE,CONFORMING,Maker api - spot BookFeed_Spec.pdf (envelope-only fallback — needs manual spec ingest),,
+hotspot_forwards_order,T1,HOTSPOT,Forwards/Swaps,ORDER,CONFORMING,Forwards-Swaps-FIX_OE_Spec.pdf (envelope-only fallback),,
+hotspot_ndf_order,T1,HOTSPOT,NDF,ORDER,CONFORMING,Forwards-NDFs-FIX_OE_Spec,,PDF text unparseable — FIX 4.4 catalogue defaults via --conn-type order
+hotspot_maker_price,T1,HOTSPOT,Maker,PRICE,CONFORMING,Maker spot BookFeed_Spec,,PDF text unparseable — FIX 4.4 catalogue defaults via --conn-type price
+fxall_spot_order,T1,FXAll,Spot Trading,ORDER,CONFORMING,FXall FX Trading v4.5 (v1 detected 2 msg types),,
+fxall_stp,T1,FXAll,STP,STP,CONFORMING,FXall STP FIX 4.4 Interface v120919,,
+fxall_tcpi,T1,FXAll,TCPI,ORDER,TODO,TR Liquidity Provider TCPI,,Non-FIX TCPI protocol
+currenex_esp_order,T1,Currenex,Spot ESP,ORDER,CONFORMING,FIX-Order-Spec.pdf (v1 extracted 8 msg types/56 fields),,Phase B lead-off — toolchain proof
+currenex_esp_price,T1,Currenex,Spot ESP,—,DEFERRED,FIX-ESP-Maker-Spec.pdf,,Scaffolded then removed — ESP Maker PDF uses Quote (S/R/Z) not MarketData (V/W/X); needs RFQ-shaped re-scaffold
+currenex_rfq_maker,T1,Currenex,RFQ Maker,RFQ,CONFORMING,FIX-RFQ-Maker-Spec-3.0.pdf (v1 extracted 6 msg types/38 fields),,
+currenex_rfq_taker,T1,Currenex,RFQ Taker,RFQ,CONFORMING,FIX-RFQ-Taker-Spec.pdf (v1 extracted 4 msg types/24 fields),,
+currenex_stp,T1,Currenex,STP,STP,CONFORMING,Currenex FIX-STP-Spec,,
+# 360T codes start with `t360_` not `360t_` — adapter codes must begin with a letter (validator in new-adapter.sh)
+t360_rfq_mm,T1,360T,RFQ MM,RFQ,CONFORMING,360T RFQ MM v1.20.2 (starter catalogue — PDF text unparseable),,Cert acceptance tests present
+t360_order_mm,T1,360T,Order MM,ORDER,CONFORMING,Order MM v6.0,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+t360_stp,T1,360T,SuperSonicTex,STP,CONFORMING,360T SuperSonicTex FIX MarketMaker 1.5.2,,
+fxspotstream_spot_order,T1,FXSpotStream,Spot,ORDER,CONFORMING,FSS FIX ROE v1.1.4 (v1 detected 2 msg types — no field tables),,
+fxspotstream_algo_order,T1,FXSpotStream,Algo,ORDER,CONFORMING,OSPP Algo Pre-Post 3.15.21,,Envelope-only fallback — FIX 4.4 catalogue defaults via --conn-type order
+fxspotstream_dropcopy,T1,FXSpotStream,Drop Copy,STP,CONFORMING,FSS Drop Copy 1.2,,
+fastmatch_client_order,T1,FastMatch,Client,ORDER,CONFORMING,FASTMATCH Client 4.0.1 (v1 detected 9 msg types — no field tables extractable),,
+fastmatch_stream_price,T1,FastMatch,Stream,PRICE,CONFORMING,FASTMATCH Stream 2.3,,Clean extraction — 9 msg types + 51 fields
+fastmatch_voice_rfq,T1,FastMatch,Voice,RFQ,CONFORMING,FASTMATCH Client 4.0.1,,No dedicated Voice PDF — used Client 4.0.1 with --conn-type rfq
+lmax_spot_order,T1,LMAX,Spot OE,ORDER,CONFORMING,LMAX FIX 4.2 v2.8.6 (v1 extracted 0 fields — fallback to FIX 4.4 catalogue),,LMAX tables aren't pdfplumber-parsable
+lmax_spot_price,T1,LMAX,Spot MD,PRICE,CONFORMING,scaffolded stub,,Scaffolded with generator stub — needs real spec ingest
+lmax_forward_order,T1,LMAX,Forwards,ORDER,CONFORMING,LMAX FIX 4.2 v2.8.6 (v1 detected 10 msg types — same spec as Spot),,
+lmax_swap_order,T1,LMAX,Swaps,ORDER,CONFORMING,LMAX FIX 4.2 v2.8.6,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+lmax_rfs,T1,LMAX,RFS,RFQ,CONFORMING,LMAX MTF Members v2.7.8,,Spec PDF tables unparseable — RFQ primaries injected via --conn-type rfq
+lmax_mtf_dropcopy,T1,LMAX,MTF Drop Copy,STP,CONFORMING,LMAX MTF Drop Copy v2.3,,Cert template present
+
+# ─── Tier 2 (secondary banks + regional dealers + established aggregators) ─────
+rbs_natwest_spot_order,T2,RBS,NatWest FX Spot,ORDER,CONFORMING,NatWest Markets RoE v5.0.22 (v1 detected 12 msg types/84 fields),,Best extraction yet — clean PDF tables
+rbs_natwest_price,T2,RBS,NatWest MD,PRICE,CONFORMING,Natwest Markets RoE v5.0.22,,Clean extraction — 12 msg types + 84 fields
+rbs_pb_stp,T2,RBS,Prime Brokerage,STP,CONFORMING,NatWest Markets RoE v5.0.22,,Shared NatWest spec; STP conn-type variant
+socgen_sgcib_order,T2,Societe Generale,SGCIB Spot,ORDER,CONFORMING,SGCIB FIX 4.4 v1.3.g (v1 detected 7 msg types),,
+socgen_sgcib_price,T2,Societe Generale,SGCIB Spot,PRICE,CONFORMING,SGCIB FIX 4.4 v1.3.g,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+stanchart_s2bx_order,T2,StandardChart,S2BX FX,ORDER,CONFORMING,S2BX RoE v4.7 (v1 detected 8 msg types/117 fields),,Biggest field-table extraction in v1
+stanchart_scale_order,T2,StandardChart,SCALE,ORDER,CONFORMING,FX_FIX_SCALE_ROE_V0.1,,Cert docs present; spec tables unparseable — FIX 4.4 catalogue defaults
+seb_spot_price,T2,SEB,Spot FX MD,PRICE,CONFORMING,SEB FIX 4.3 v3.40 MD (v1 detected 13 msg types/20 fields),,Cert docs present
+seb_oms_order,T2,SEB,OMS,ORDER,CONFORMING,OMS45-FOTA Dev Guide (v1 detected 5 msg types),,
+anz_rfs,T2,ANZ,RFS Spot,RFQ,CONFORMING,DAPI RFS v2.5 (v1 detected 6 msg types),,
+anz_spot_price,T2,ANZ,Spot,PRICE,CONFORMING,ANZ DAPI v2.5,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+commerz_spot_order,T2,Commerzbank,Spot (Commander),ORDER,CONFORMING,Commander RoE V1.13b (v1 detected 10 msg types),,
+commerz_forwards_order,T2,Commerzbank,Forwards,ORDER,CONFORMING,Commander RoE V1.13b,,Shared spec with Spot adapter
+commerz_swaps_rfq,T2,Commerzbank,Swaps,RFQ,CONFORMING,Commander RoE V1.13b,,Shared spec with Spot adapter
+mufg_efx_order,T2,MUFG,Spot,ORDER,CONFORMING,MUFG-eFX-API-2.0.docx,,Clean .docx extraction via textutil — 5 msg types + 59 fields (the CSV note about REST was wrong)
+mufg_laddered_price,T2,MUFG,Laddered,PRICE,CONFORMING,MUFG-eFX-API-2.0.docx,,Shared spec with mufg_efx_order
+mufg_rfq,T2,MUFG,RFQ,RFQ,CONFORMING,MUFG-eFX-API-2.0.docx,,Shared spec with mufg_efx_order
+rabofx_esp_order,T2,Rabobank,ESP,ORDER,CONFORMING,hand-curated 4.4,,Implemented — wire-driven conformance green
+rabofx_rfs_rfq,T2,Rabobank,RFS,RFQ,CONFORMING,Rabobank FX RFS FIX Spec 2.0.2 (HTML),,Cleanest extraction in the build — 8 msg types + 181 fields via direct HTML path
+rabofx_limit_order,T2,Rabobank,Limit Orders,ORDER,CONFORMING,Rabobank FX Spot ESP FIX Spec 1.1.5 (HTML),,Clean HTML extraction — 6 msg types + 58 fields
+nomura_rfq,T2,Nomura,RFQ,RFQ,CONFORMING,Nomura RFQ RoE v1.7 (v1 detected 5 msg types),,Cert docs present
+nomura_streaming_price,T2,Nomura,Streaming,PRICE,CONFORMING,Nomura RFQ FIX RoE v1.7,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+nomura_broker_order,T2,Nomura,Broker,ORDER,CONFORMING,Nomura FX FIX Conformance v1.02,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+uob_spot_order,T2,UOB,FX Spot,ORDER,CONFORMING,UOB FX API v1.0 (v1 detected 5 msg types),,
+uob_spot_price,T2,UOB,FX Spot,PRICE,CONFORMING,UOB FX API v1.0,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+integral_maker_rfs,T2,Integral,Maker RFS,RFQ,CONFORMING,FX_Inside_FIX_Client_API_5.0,,Cert plan present; spec tables unparseable — FIX 4.4 catalogue defaults
+integral_taker_order,T2,Integral,Taker,ORDER,CONFORMING,Integral FX_Inside v5.0 (v1 detected 9 msg types),,
+integral_esp_price,T2,Integral,ESP,PRICE,CONFORMING,FX_Inside_FIX_Client_API_5.0,,Shared spec with Maker RFS; spec tables unparseable — FIX 4.4 catalogue defaults
+bidfx_spot_order,T2,bidFx,Spot,ORDER,CONFORMING,BidFX 4.4 ROE (v1 detected 3 msg types),,
+bidfx_md_price,T2,bidFx,Multi-bank MD,PRICE,CONFORMING,BidFX 4.4 ROE,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults via --conn-type price
+fxconnect_rfs_rfq,T2,FXCONNECT,RFS,RFQ,CONFORMING,FIX-RFQ-Maker-Spec,,Clean extraction — 6 msg types + 44 fields
+fxconnect_price,T2,FXCONNECT,Pricing,PRICE,CONFORMING,FIX-RFQ-Maker-Spec,,Same FXC spec; PRICE conn type variant
+fxcmpb_stp,T2,FXCM PB,STP,STP,CONFORMING,FXCMPRO FIX STP Publisher v1.0,,
+icap_ndf_order,T2,ICAP,NDF,ORDER,CONFORMING,TP ICAP NDF FIX 5.0 v3.0.6 (v1 detected 9 msg types),,
+icap_forwards_order,T2,ICAP,Forwards,ORDER,CONFORMING,TP ICAP NDF FIX 5.0 v3.0.6,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+icap_swaps_order,T2,ICAP,Swaps,ORDER,CONFORMING,TP ICAP NDF FIX 5.0 v3.0.6,,Shared NDF spec; spec tables unparseable — FIX 4.4 catalogue defaults
+talos_spot_price,T2,Talos,Spot Crypto MD,PRICE,CONFORMING,Talos FIX API 9.21,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+talos_spot_order,T2,Talos,Spot Crypto OE,ORDER,CONFORMING,Talos FIX API 9.21 (v1 detected 6 msg types),,
+b2c2_spot_order,T2,B2C2,Spot Crypto,ORDER,CONFORMING,B2C2 FIX API v2.5.4 (v1 detected 6 msg types — no field tables),,
+b2c2_derivs_order,T2,B2C2,Derivatives,ORDER,CONFORMING,B2C2 FIX API v2.5.4,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+primexm_spot_order,T2,PrimeXM,Spot,ORDER,CONFORMING,PrimeXM FIX 4.4 Trading API v1.5.7 (v1 detected 6 msg types/27 fields),,Cert plan present (Saxo Cert List)
+primexm_cfd_order,T2,PrimeXM,CFD,ORDER,CONFORMING,Divisa CFD Specifications 04.05.17,,Envelope-only fallback — FIX 4.4 catalogue defaults via --conn-type order
+primexm_algo_order,T2,PrimeXM,Algo,ORDER,CONFORMING,PrimeXM FIX 4.4 v1.5.7,,Clean extraction — 6 msg types + 27 fields
+onezero_spot_order,T2,oneZero,Spot,ORDER,CONFORMING,oneZero External FIX 4.4 v1.1.2 (v1 detected 9 msg types),,Cert docs present
+onezero_maker_price,T2,oneZero,Maker,PRICE,CONFORMING,oneZero Maker Conformance,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+onezero_taker_order,T2,oneZero,Taker,ORDER,CONFORMING,oneZero External FIX 4.4 1.1.2,,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+smarttrade_maker_price,T2,smartTrade,Maker,PRICE,CONFORMING,LiquidityFX RoE 3.5.10.2 (in FXSpotStream dir),,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+smarttrade_liquidityfx_order,T2,smartTrade,LiquidityFX,ORDER,CONFORMING,LiquidityFX RoE 3.5.10.2 (in FXSpotStream dir),,Spec PDF tables unparseable — FIX 4.4 catalogue defaults
+cobalt_spot_price,T2,Cobalt,FX Spot,PRICE,CONFORMING,FIXRulesOfEngagement v1.8.18 (v1 detected 1 msg type — V/W injected),,
+cobalt_stp,T2,Cobalt,STP,STP,CONFORMING,Cobalt FIX RoE v1.8.18,,
+tradition_tcdf_price,T2,Tradition,TCDF MD,PRICE,CONFORMING,tcdf_specification,,Envelope-only fallback — FIX 4.4 catalogue defaults via --conn-type price
+refinitiv_tn_price,T2,Reuters-Refinitiv,Trade Notification,PRICE,CONFORMING,TN FIX Gateway 5.0 SP1,,Envelope-only fallback — FIX 4.4 catalogue defaults via --conn-type price
+refinitiv_ad_price,T2,Reuters-Refinitiv,Pricing,PRICE,CONFORMING,RET-AD 3.4 Pricing,,Envelope-only fallback — FIX 4.4 catalogue defaults via --conn-type price
+iex_equities_order,T2,IEX,Equities OE,ORDER,DEFERRED,IEX FIX Spec,,Out of FX scope unless expansion
+
+# ─── Tier 3 (long-tail — build on demand) ──────────────────────────────────────
+twentyfourx_esp_order,T3,24Exchange,Spot ESP,ORDER,CONFORMING,24X-Celer Cert ESP-RFQ-TAKER.docx,,Cert plan only — .docx extracted 7 msg types via textutil; FIX 4.4 catalogue defaults
+twentyfourx_rfq,T3,24Exchange,RFQ,RFQ,CONFORMING,24X-Celer Cert ESP-RFQ-TAKER.docx,,Shared cert plan; FIX 4.4 catalogue defaults via --conn-type rfq
+bgc_voice_rfq,T3,BGC,Voice RFQ,RFQ,CONFORMING,BGC & GFI FIX Spec v1.2.1,,
+bierbaum_client_order,T3,Bierbaum,Client OE,ORDER,CONFORMING,BierbaumPro Client v2.0.4,,
+bierbaum_stp,T3,Bierbaum,STP,STP,CONFORMING,BierbaumPro STP FIX v1.3,,
+broadway_order,T3,Broadway,FIX Client,ORDER,CONFORMING,Broadway FIX Client Protocol 2.0 R08,,
+ccm_fund_order,T3,CCM Alpha Fund,FIX,ORDER,CONFORMING,CCM_FIX_Spec_v2.3,,
+cfh_clearing_order,T3,CFH Clearing,Clearing,ORDER,CONFORMING,CFH Clearing FIX API v2.5,,
+citadel_fx_order,T3,Citadel,FX OE,ORDER,CONFORMING,Citadel FIX Order Spec FX v1.10,,
+cmc_spot_order,T3,CMC Markets,Spot/CFD,ORDER,CONFORMING,FIX API User Guide 6.1.10,,
+cmc_spot_price,T3,CMC Markets,Spot/CFD,PRICE,CONFORMING,FIX API User Guide 6.1.10,,
+datatec_smf_order,T3,Datatec,SMF,ORDER,CONFORMING,20160713 FIX Implementation,,
+edgewater_edgefx_price,T3,Edgewater - Vision,EdgeFX,PRICE,CONFORMING,Edgewater NDF API,,Cert docs present
+edgewater_ndf_price,T3,Edgewater - Vision,NDF,PRICE,CONFORMING,Edgewater NDF API,,
+fidessa_buyside_order,T3,fidessa,Buy-side,ORDER,CONFORMING,FO 17.2.9 Buy Side Order Flow RoE,,
+fd_ads_rfs,T3,First Derivatives,ADS Liquidity,RFQ,CONFORMING,FIX-Liquidity-Provider 4.2,,Cert docs present
+fd_r5_taker_order,T3,First Derivatives,R5 Taker,ORDER,CONFORMING,FIX-Liquidity-Provider 4.2,,Shared spec with fd_ads_rfs
+flextrade_order,T3,FlexTrade,OE,ORDER,CONFORMING,ISAM FX FIX Spec OrderStatus v1.1,,Cert docs present
+fluent_spot_order,T3,Fluent,Spot,ORDER,CONFORMING,FluentStream FIXSpecs v3.9.1.2,,
+fortex_direct_order,T3,Fortex,Spot,ORDER,CONFORMING,FortexFIX_Direct V1.6 (v1 extracted 7 msg types/45 fields),,
+fxopen_spot_order,T3,FxOpen,Spot,ORDER,CONFORMING,FIX44 ext.1.59.xml,,Vendor's own QuickFIX dictionary dropped in directly (single→double quote normalisation)
+gaingtx_oe_order,T3,GainGTX,OE,ORDER,CONFORMING,GainGTX FIX RoE,,
+gaingtx_lp_price,T3,GainGTX,LP,PRICE,CONFORMING,GainGTX FIX RoE,,Shared spec with gaingtx_oe_order
+isprime_spot_order,T3,Isprime,Spot,ORDER,CONFORMING,ISPrime FX FIX Client Protocol v1.0,,
+jeffries_mahi_order,T3,Jeffries Mahi,Spot,ORDER,CONFORMING,MFXCompass Client Pricing/Orders,,Vendor dir is "Jeffries Mahi" (with space); shared spec with mahifx
+jeffries_mahi_price,T3,Jeffries Mahi,Pricing,PRICE,CONFORMING,MFXCompass Client Pricing/Orders,,Shared spec with jeffries_mahi_order
+jump_counterparty_order,T3,Jump,Counterparty,ORDER,CONFORMING,JLQD FIX Spec v2.7.2,,Cert docs present
+kondor_spot_order,T3,Kondor,Spot,ORDER,CONFORMING,kondor_connectivity_KPLUSFEEED,,Has XML scenarios on disk; PDF used for scaffold
+kondor_fwd_order,T3,Kondor,Forwards,ORDER,CONFORMING,kondor_connectivity_KPLUSFEEED,,Shared spec with kondor_spot_order
+kondor_swap_order,T3,Kondor,Swaps,ORDER,CONFORMING,kondor_connectivity_KPLUSFEEED,,Shared spec with kondor_spot_order
+lucera_order,T3,Lucera / Lumefx,Spot OE,ORDER,CONFORMING,lumefx_client_msgspec 2.1,,Cert docs present
+lucera_price,T3,Lucera / Lumefx,MD,PRICE,CONFORMING,lumefx_client_msgspec 2.1,,Shared spec with lucera_order
+lucera_rfq,T3,Lucera / Lumefx,RFQ,RFQ,CONFORMING,lumefx_client_msgspec 2.1,,Shared spec with lucera_order
+lucidmarkets_spot_order,T3,LucidMarkets,Spot,ORDER,CONFORMING,Lucid Markets FX FIX Specification,,
+lucidmarkets_forward_order,T3,LucidMarkets,Forward,ORDER,CONFORMING,Lucid Markets FX FIX Specification,,Shared spec with lucidmarkets_spot_order
+mahifx_spot_order,T3,mahifx,Spot,ORDER,CONFORMING,mfxcompass-integration-guide,,
+mahifx_md_price,T3,mahifx,MD,PRICE,CONFORMING,mfxcompass-integration-guide,,Shared spec with mahifx_spot_order
+mako_trader_order,T3,Mako,Trader OE,ORDER,CONFORMING,Mako FX Trader Spec Sep 2011,,Cert docs present
+mako_liquidity_price,T3,Mako,LiquidityPool,PRICE,CONFORMING,Mako FX Trader Spec Sep 2011,,Shared spec with mako_trader_order
+marketfactory_order,T3,MarketFactory,OE,ORDER,CONFORMING,apidoc,,
+marketfactory_price,T3,MarketFactory,MD,PRICE,CONFORMING,apidoc,,Shared spec with marketfactory_order
+markit_md_price,T3,Markit,Market Data,PRICE,CONFORMING,MarkitSERV FX FIX v1.15,,
+newchangefx_spot_price,T3,NewChangeFX,Spot,PRICE,CONFORMING,API Conformance Test NCFX,,Cert docs present
+newchangefx_stp,T3,NewChangeFX,STP,STP,CONFORMING,API Conformance Test NCFX,,Cert plan only; FIX 4.4 catalogue defaults via --conn-type stp
+parfx_md_price,T3,ParFX,MD,PRICE,CONFORMING,ParFX OE FIX API v2.0.6,,Shared OE spec used for MD scaffold
+parfx_oe_order,T3,ParFX,OE,ORDER,CONFORMING,ParFX OE FIX API v2.0.6,,
+pricemarkets_md_price,T3,PriceMarkets,MD,PRICE,CONFORMING,priceMARKETSFIXProtocol,,
+quantitativebrokers_order,T3,QuantitativeBrokers,Spot/OTC,ORDER,CONFORMING,QB FIX Specifications,,Clean extraction — 5 msg types + 73 fields; vendor dir is "QuantitiveBrokers" (misspelled in Downloads)
+rcmx_futures_order,T3,RCMX,Futures Algos,ORDER,CONFORMING,RCMFuturesAlgosFIXManual,,Out of FX scope?
+reactivemarkets_maker_price,T3,ReactiveMarkets,Maker,PRICE,CONFORMING,Reactive Markets FIX Maker API v1.4.8,,
+solidfx_spot_order,T3,Solid FX,Spot,ORDER,CONFORMING,Solid FX LP Interface v1.8,,
+solidfx_lp_price,T3,Solid FX,LP Interface,PRICE,CONFORMING,Solid FX LP Interface v1.8,,Shared spec with solidfx_spot_order
+spectra_spax_order,T3,Spectra,SPAX,ORDER,CONFORMING,Spectra Trading FIX API,,Has QuickFIX XML; scaffolded from PDF
+spotex_lastlook_order,T3,Spotex,Last Look,ORDER,CONFORMING,Spotex LastLook FIX Specification,,
+statestreet_oe_order,T3,StateStreet,OE Custody,ORDER,CONFORMING,State Street FIX Order Spec v1.9.0,,Cert docs present
+synoption_taker_order,T3,Synoption,Taker,ORDER,CONFORMING,Synoption Taker RoE 1.3,,
+tera_md_price,T3,Tera / TerraExchange,MD,PRICE,CONFORMING,TeraExchange MD FIX v1.6,,
+tradair_taker_order,T3,Tradair,Taker,ORDER,CONFORMING,TradAir Taker FIX API v1.3.5,,
+tradair_rfs,T3,Tradair,RFS,RFQ,CONFORMING,TradAir Taker FIX API v1.3.5,,Shared spec with tradair_taker_order; --conn-type rfq injection
+tradertools_oe_order,T3,Tradertools,OE,ORDER,CONFORMING,TraderTools FIX Spec May 2017,,
+ukfx_datasoft_esp_price,T3,UKFX_Datasoft,ESP,PRICE,CONFORMING,Celer Certification ESP-RFQ-TAKER Apr2021.docx,,Cert plan only — .docx via textutil; FIX 4.4 catalogue defaults
+ukfx_datasoft_rfq,T3,UKFX_Datasoft,RFQ Taker,RFQ,CONFORMING,Celer Certification ESP-RFQ-TAKER Apr2021.docx,,Shared cert plan
+vidarr_capital_order,T3,Vidarr,Capital,ORDER,CONFORMING,Vidarr Capital FIX Spec v1.3.0,,
+virtu_vfx_price,T3,Virtu,VFX MD,PRICE,CONFORMING,VFX_fix v2.1.1,,Shared spec with virtu_vfx_order
+virtu_vfx_order,T3,Virtu,VFX OE,ORDER,CONFORMING,VFX_fix v2.1.1,,
+wolverine_wfx_order,T3,Wolverine,Spot Liquidity,ORDER,CONFORMING,WFX Spot Liquidity v2.0,,
+wolverine_trade_data_price,T3,Wolverine,Trade Data,PRICE,CONFORMING,WFX Spot Liquidity v2.0,,Shared spec with wolverine_wfx_order
+xtx_efx_order,T3,XTX,EFX Spot,ORDER,CONFORMING,XTX Markets eFX FIX specs 1.3,,
+xtx_efx_rfq,T3,XTX,EFX RFQ,RFQ,CONFORMING,XTX Markets eFX FIX specs 1.3,,Shared spec with xtx_efx_order
+xtx_algo_order,T3,XTX,Algo,ORDER,CONFORMING,XTX Markets eFX FIX specs 1.3,,Shared spec with xtx_efx_order
+xtx_fwds_order,T3,XTX,Fwds,ORDER,CONFORMING,XTX Markets eFX FIX specs 1.3,,Shared spec with xtx_efx_order
+netdania_spot_order,T3,Netdania,Spot,ORDER,CONFORMING,NetDania FIX API v1.3,,
+netdania_md_price,T3,Netdania,MD,PRICE,CONFORMING,NetDania FIX API v1.3,,Shared spec with netdania_spot_order
+
+# ─── Tier 4 (skip / triage) ────────────────────────────────────────────────────
+para,T4,para,—,—,DEFERRED,—,,Empty folder
+tradeweb,T4,TradeWeb,—,—,DEFERRED,—,,Empty folder
+cloudera,T4,Cloudera,—,—,DEFERRED,—,,Big-data platform — not a FIX vendor
+beeks,T4,beeks,—,—,DEFERRED,—,,Network/connectivity infra — not a FIX adapter
+sungard,T4,Sungard,—,—,DEFERRED,—,,Vendor JAR library — not a FIX integration
+vela,T4,vela,—,—,DEFERRED,—,,MAMA library + NDA docs — vendor library
+interactivedata,T4,interactiveData,—,—,DEFERRED,—,,Agreements only — no technical spec
+traiana,T4,Traiana,—,—,DEFERRED,—,,Reference file only
+ripe,T4,RIPE,—,—,DEFERRED,—,,Login text file only
+silverlakecbs,T4,silverLakeCBS,—,—,DEFERRED,—,,Typo folder — minimal content
+cambridgefx,T4,Cambridge FX,—,—,DEFERRED,—,,REST/JSON only — not FIX
+bitstamp,T4,Bitstamp,—,—,DEFERRED,—,,REST only
+mextrader,T4,MexTrader,—,—,DEFERRED,—,,REST API — promote to T3 if customer demand
+mt5,T4,MT5,—,—,DEFERRED,—,,MetaTrader 5 — spec missing
+nationalstockexchange,T4,NationalStockExchange,—,—,DEFERRED,—,,NNF protocol — not FIX
+murex,T4,Murex,—,—,DEFERRED,—,,Download incomplete (.crdownload) — re-acquire spec
+fow,T4,FOW,—,—,DEFERRED,—,,Equity data dump — not a FIX vendor
+itarle,T4,ITarle,—,—,DEFERRED,—,,Equities/futures focus — out of FX scope
+otl,T4,OTL,—,—,DEFERRED,—,,Multi-exchange (Eurex/ICE/LME) — not FX
+cme,T4,CME,—,—,DEFERRED,—,,Futures exchange — outside FX scope
+rtns,T4,RTNS,—,—,DEFERRED,—,,Refinitiv install/config docs only — no FIX spec
