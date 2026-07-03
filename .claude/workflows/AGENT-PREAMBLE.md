@@ -21,8 +21,11 @@ P=github.com-soarsa-celnet
 ```
 
 Health probe before trusting it: `lodestar doctor --json` must report `ok:true` /
-`problems:0`, and `price_instrument` must resolve (graph ≈18k nodes). A sharp drop or a
-missing hot symbol ⇒ `lodestar index --full .` (~2s, deterministic, byte-identical).
+`problems:0`, and `price_instrument` must resolve (graph ≈27k nodes). A sharp drop or a
+missing hot symbol ⇒ `lodestar index --full "$(git rev-parse --show-toplevel)"` (deterministic).
+**NEVER `lodestar index --full .`** — a relative path records `root_path="."`, corrupts the
+projects table, and AUTO-DELETES the shared db (wiping the graph for every session). When in
+doubt use the CLI (`lodestar cli <tool> …`) which reads the on-disk db directly.
 Grep/Read are the fallback for non-code text only. lodestar self-invalidates — claims go
 stale when code changes, so re-query rather than trusting cached understanding.
 
