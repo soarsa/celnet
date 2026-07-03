@@ -71,8 +71,9 @@ use celnet_proto::{
 };
 // Linear-rates (fixed-income) contract — the WS mirror of PricingService::PriceRates.
 use celnet_proto::{
-    CurveSet, OisInstrument, OisPillar, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
-    RatesPricingResult, rates_instrument,
+    BondInstrument, CurveSet, FraInstrument, OisInstrument, OisPillar, RatesInstrument,
+    RatesPriceRequest, RatesPriceResponse, RatesPricingResult, VanillaIrsInstrument,
+    rates_instrument,
 };
 // XVA (valuation-adjustment) contract — the WS mirror of PricingService::PriceXva.
 use celnet_proto::{
@@ -1381,13 +1382,66 @@ fn ois_instrument_from_json(v: &Value) -> Result<OisInstrument> {
     })
 }
 
-/// Decode a `RatesInstrument` oneof — exactly the `ois` arm in the P0 contract.
+/// Decode a `VanillaIrsInstrument` `{ tenor_years, fixed_rate, notional, side,
+/// fixed_frequency, fixed_day_count, float_frequency, float_day_count }`.
+fn vanilla_irs_instrument_from_json(v: &Value) -> Result<VanillaIrsInstrument> {
+    let o = obj(v, "irs")?;
+    Ok(VanillaIrsInstrument {
+        tenor_years: u32_field(o, "tenor_years")?,
+        fixed_rate: f64_field(o, "fixed_rate")?,
+        notional: f64_field(o, "notional")?,
+        side: enum_or_zero(o, "side"),
+        fixed_frequency: enum_or_zero(o, "fixed_frequency"),
+        fixed_day_count: enum_or_zero(o, "fixed_day_count"),
+        float_frequency: enum_or_zero(o, "float_frequency"),
+        float_day_count: enum_or_zero(o, "float_day_count"),
+    })
+}
+
+/// Decode a `FraInstrument` `{ start_months, end_months, fixed_rate, notional,
+/// side, accrual_basis }`.
+fn fra_instrument_from_json(v: &Value) -> Result<FraInstrument> {
+    let o = obj(v, "fra")?;
+    Ok(FraInstrument {
+        start_months: u32_field(o, "start_months")?,
+        end_months: u32_field(o, "end_months")?,
+        fixed_rate: f64_field(o, "fixed_rate")?,
+        notional: f64_field(o, "notional")?,
+        side: enum_or_zero(o, "side"),
+        accrual_basis: enum_or_zero(o, "accrual_basis"),
+    })
+}
+
+/// Decode a `BondInstrument` `{ coupon_rate, coupon_frequency, day_count,
+/// maturity_date, redemption, side }`.
+fn bond_instrument_from_json(v: &Value) -> Result<BondInstrument> {
+    let o = obj(v, "bond")?;
+    Ok(BondInstrument {
+        coupon_rate: f64_field(o, "coupon_rate")?,
+        coupon_frequency: enum_or_zero(o, "coupon_frequency"),
+        day_count: enum_or_zero(o, "day_count"),
+        maturity_date: Some(nested(o, "maturity_date", broken_date_from_json)?),
+        redemption: f64_field(o, "redemption")?,
+        side: enum_or_zero(o, "side"),
+    })
+}
+
+/// Decode a `RatesInstrument` oneof — the `ois` / `irs` / `fra` / `bond` arms. The
+/// first present arm in declaration order wins (mirrors the generated codec).
 fn rates_instrument_from_json(v: &Value) -> Result<RatesInstrument> {
     let o = obj(v, "instrument")?;
     let arm = if o.contains_key("ois") {
         rates_instrument::Instrument::Ois(ois_instrument_from_json(o.get("ois").unwrap())?)
+    } else if o.contains_key("irs") {
+        rates_instrument::Instrument::Irs(vanilla_irs_instrument_from_json(o.get("irs").unwrap())?)
+    } else if o.contains_key("fra") {
+        rates_instrument::Instrument::Fra(fra_instrument_from_json(o.get("fra").unwrap())?)
+    } else if o.contains_key("bond") {
+        rates_instrument::Instrument::Bond(bond_instrument_from_json(o.get("bond").unwrap())?)
     } else {
-        return Err(err("rates `instrument` oneof: expected an `ois` arm"));
+        return Err(err(
+            "rates `instrument` oneof: expected an `ois`, `irs`, `fra`, or `bond` arm",
+        ));
     };
     Ok(RatesInstrument {
         instrument: Some(arm),
@@ -2352,7 +2406,7 @@ fn curve_set_to_json(c: &CurveSet) -> Value {
     })
 }
 
-/// Encode a `RatesInstrument` oneof — the `ois` arm in the P0 contract.
+/// Encode a `RatesInstrument` oneof — the `ois` / `irs` / `fra` / `bond` arms.
 fn rates_instrument_to_json(i: &RatesInstrument) -> Value {
     match i.instrument.as_ref() {
         Some(rates_instrument::Instrument::Ois(ois)) => json!({
@@ -2361,6 +2415,38 @@ fn rates_instrument_to_json(i: &RatesInstrument) -> Value {
                 "fixed_rate": ois.fixed_rate,
                 "notional": ois.notional,
                 "side": ois.side,
+            }
+        }),
+        Some(rates_instrument::Instrument::Irs(irs)) => json!({
+            "irs": {
+                "tenor_years": irs.tenor_years,
+                "fixed_rate": irs.fixed_rate,
+                "notional": irs.notional,
+                "side": irs.side,
+                "fixed_frequency": irs.fixed_frequency,
+                "fixed_day_count": irs.fixed_day_count,
+                "float_frequency": irs.float_frequency,
+                "float_day_count": irs.float_day_count,
+            }
+        }),
+        Some(rates_instrument::Instrument::Fra(fra)) => json!({
+            "fra": {
+                "start_months": fra.start_months,
+                "end_months": fra.end_months,
+                "fixed_rate": fra.fixed_rate,
+                "notional": fra.notional,
+                "side": fra.side,
+                "accrual_basis": fra.accrual_basis,
+            }
+        }),
+        Some(rates_instrument::Instrument::Bond(bond)) => json!({
+            "bond": {
+                "coupon_rate": bond.coupon_rate,
+                "coupon_frequency": bond.coupon_frequency,
+                "day_count": bond.day_count,
+                "maturity_date": bond.maturity_date.as_ref().map(broken_date_to_json),
+                "redemption": bond.redemption,
+                "side": bond.side,
             }
         }),
         None => json!({}),

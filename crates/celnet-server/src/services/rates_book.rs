@@ -269,6 +269,39 @@ fn rates_linear_exposure(position: &RatesPosition) -> f64 {
                 _ => magnitude,
             }
         }
+        // A vanilla IRS carries the same first-order linear-delta proxy as an OIS
+        // (notional × rate-sensitive years × 1bp); receive-fixed (SIDE_SELL) nets
+        // opposite pay-fixed, as for the OIS.
+        rates_instrument::Instrument::Irs(irs) => {
+            let magnitude = irs.notional.abs() * f64::from(irs.tenor_years) * ONE_BP;
+            match Side::try_from(irs.side) {
+                Ok(Side::Sell) => -magnitude,
+                _ => magnitude,
+            }
+        }
+        // A FRA's rate-sensitive span is its single accrual window; the receive-fixed
+        // (SIDE_SELL) leg nets opposite the pay-fixed leg.
+        rates_instrument::Instrument::Fra(fra) => {
+            let window_years = f64::from(fra.end_months.saturating_sub(fra.start_months)) / 12.0;
+            let magnitude = fra.notional.abs() * window_years * ONE_BP;
+            match Side::try_from(fra.side) {
+                Ok(Side::Sell) => -magnitude,
+                _ => magnitude,
+            }
+        }
+        // A cash bond's precise curve DV01 needs the discount curve, which this
+        // curve-free pre-trade proxy does not carry; the per-1bp face redemption is a
+        // coarse linear-exposure proxy pending the bond booking path (not reachable
+        // through the current OIS-only desk booking, so it never feeds a live limit
+        // today). A long (SIDE_BUY) bond carries long-duration exposure — the same
+        // netting sign as a receive-fixed swap.
+        rates_instrument::Instrument::Bond(bond) => {
+            let magnitude = bond.redemption.abs() * ONE_BP;
+            match Side::try_from(bond.side) {
+                Ok(Side::Buy) => -magnitude,
+                _ => magnitude,
+            }
+        }
     }
 }
 

@@ -215,7 +215,9 @@ pub fn price_desk_request(
 fn ois_of(instrument: Option<&RatesInstrument>) -> Option<&OisInstrument> {
     match instrument.and_then(|i| i.instrument.as_ref()) {
         Some(rates_instrument::Instrument::Ois(ois)) => Some(ois),
-        None => None,
+        // The desk booking flow prices/books the OIS arm only; the IRS / FRA / bond
+        // arms are not desk-bookable here, so there is no OIS to extract.
+        _ => None,
     }
 }
 

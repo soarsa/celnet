@@ -54,7 +54,10 @@ use celnet_proto::{RatesPriceRequest, RatesPricingResult, rates_instrument};
 use celnet_rates::{AccrualBasis, Curve, OisQuote, bootstrap_ois};
 use time::Date;
 
-use super::{RatesPriceError, build_quotes, price_ois, resolve_date};
+use super::{
+    RatesPriceError, build_quotes, price_bond_instrument, price_fra, price_irs, price_ois,
+    resolve_date,
+};
 
 /// The resolved **rates conventions** a linear-FI [`ResolvedMarket`] carries — the
 /// FI counterpart of the FX `ConventionSet`.
@@ -321,6 +324,14 @@ pub fn price_rates_via_contract(
             };
             <RatesOisEngine as Priceable>::price(&RatesOisEngine, &market, &ctx)
         }
+        // The IRS / FRA / cash-bond arms share the identical established pricing
+        // bodies as the dispatch path (`super::price_*`, which wrap the
+        // `celnet-rates` / `celnet-bond` engines verbatim); a dedicated `Priceable`
+        // contract engine is the OIS/bond risk-leaf seam only. Delegating here keeps
+        // this contract entry byte-identical to `super::price_rates` for every arm.
+        rates_instrument::Instrument::Irs(irs) => price_irs(irs, &quotes, reference),
+        rates_instrument::Instrument::Fra(fra) => price_fra(fra, &quotes, reference),
+        rates_instrument::Instrument::Bond(bond) => price_bond_instrument(bond, &quotes, reference),
     }
 }
 

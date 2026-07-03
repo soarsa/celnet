@@ -35,16 +35,16 @@
 
 use celnet_proto::wire_contract::{self, WireField, WireLabel};
 use celnet_proto::{
-    Accumulator, AmericanOption, ArbReport, AsianOption, BasketLeg, BasketOption, BrokenDate,
-    CcyPair, Cliquet, CommodityRef, Conventions, CryptoPair, CurveSet, Digital, DoubleBarrier,
-    EquityRef, FixingSchedule, ForwardStart, FxForward, FxSwap, Greeks, Instrument, Leg,
-    ListedFutureOption, Lookback, MarketContext, MetalPair, Ndf, OisInstrument, OisPillar,
-    PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse, PriceXvaRequest,
-    PriceXvaResponse, Quantity, Quanto, RateSensitivities, RatesInstrument, RatesPriceRequest,
-    RatesPriceResponse, RatesPricingResult, SingleBarrier, Solve, Strategy, StrikeOrDelta, Symbol,
-    Tarf, Tenor, Touch, Underlying, Vanilla, VarianceSwap, VolatilitySwap, WindowBarrier,
-    XvaResult as WireXvaResult, XvaSurvivalCurve, XvaTrade, instrument, pillar_tenor,
-    rate_sensitivities, rates_instrument, strike_or_delta,
+    Accumulator, AmericanOption, ArbReport, AsianOption, BasketLeg, BasketOption, BondInstrument,
+    BrokenDate, CcyPair, Cliquet, CommodityRef, Conventions, CryptoPair, CurveSet, Digital,
+    DoubleBarrier, EquityRef, FixingSchedule, ForwardStart, FraInstrument, FxForward, FxSwap,
+    Greeks, Instrument, Leg, ListedFutureOption, Lookback, MarketContext, MetalPair, Ndf,
+    OisInstrument, OisPillar, PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse,
+    PriceXvaRequest, PriceXvaResponse, Quantity, Quanto, RateSensitivities, RatesInstrument,
+    RatesPriceRequest, RatesPriceResponse, RatesPricingResult, SingleBarrier, Solve, Strategy,
+    StrikeOrDelta, Symbol, Tarf, Tenor, Touch, Underlying, Vanilla, VanillaIrsInstrument,
+    VarianceSwap, VolatilitySwap, WindowBarrier, XvaResult as WireXvaResult, XvaSurvivalCurve,
+    XvaTrade, instrument, pillar_tenor, rate_sensitivities, rates_instrument, strike_or_delta,
 };
 use serde_json::{Map, Value, json};
 
@@ -1776,6 +1776,58 @@ impl WireBuilder for OisInstrument {
     }
 }
 
+impl WireBuilder for VanillaIrsInstrument {
+    const MESSAGE: &'static str = "VanillaIrsInstrument";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "tenor_years" => self.tenor_years = req_u32(value, "tenor_years")?,
+            "fixed_rate" => self.fixed_rate = req_f64(value, "fixed_rate")?,
+            "notional" => self.notional = req_f64(value, "notional")?,
+            "side" => self.side = enum_or_zero(value),
+            "fixed_frequency" => self.fixed_frequency = enum_or_zero(value),
+            "fixed_day_count" => self.fixed_day_count = enum_or_zero(value),
+            "float_frequency" => self.float_frequency = enum_or_zero(value),
+            "float_day_count" => self.float_day_count = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for FraInstrument {
+    const MESSAGE: &'static str = "FraInstrument";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "start_months" => self.start_months = req_u32(value, "start_months")?,
+            "end_months" => self.end_months = req_u32(value, "end_months")?,
+            "fixed_rate" => self.fixed_rate = req_f64(value, "fixed_rate")?,
+            "notional" => self.notional = req_f64(value, "notional")?,
+            "side" => self.side = enum_or_zero(value),
+            "accrual_basis" => self.accrual_basis = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for BondInstrument {
+    const MESSAGE: &'static str = "BondInstrument";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "coupon_rate" => self.coupon_rate = req_f64(value, "coupon_rate")?,
+            "coupon_frequency" => self.coupon_frequency = enum_or_zero(value),
+            "day_count" => self.day_count = enum_or_zero(value),
+            "maturity_date" => {
+                self.maturity_date = Some(req_msg::<BrokenDate>(value, "maturity_date")?);
+            }
+            "redemption" => self.redemption = req_f64(value, "redemption")?,
+            "side" => self.side = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for RatesInstrument {
     const MESSAGE: &'static str = "RatesInstrument";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -1784,6 +1836,17 @@ impl WireBuilder for RatesInstrument {
         match field.proto_name {
             "ois" => {
                 self.instrument = Some(Instrument::Ois(req_msg::<OisInstrument>(value, "ois")?))
+            }
+            "irs" => {
+                self.instrument = Some(Instrument::Irs(req_msg::<VanillaIrsInstrument>(
+                    value, "irs",
+                )?))
+            }
+            "fra" => {
+                self.instrument = Some(Instrument::Fra(req_msg::<FraInstrument>(value, "fra")?))
+            }
+            "bond" => {
+                self.instrument = Some(Instrument::Bond(req_msg::<BondInstrument>(value, "bond")?))
             }
             other => return Err(unhandled(Self::MESSAGE, other)),
         }

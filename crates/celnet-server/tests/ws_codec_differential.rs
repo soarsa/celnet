@@ -841,6 +841,63 @@ fn rates_price_request_envelope_decode_byte_identical() {
 }
 
 #[test]
+fn rates_price_request_new_arms_decode_byte_identical() {
+    // The IRS / FRA / cash-bond arms decode through the generic descriptor-driven
+    // rates tree byte-identically to the hand oracle — every field, including the
+    // new PaymentFrequency / DayCount / AccrualBasis enum selectors and the bond's
+    // nested `maturity_date` message.
+    let curve_set = json!({
+        "currency": "USD",
+        "reference_date": { "year": 2026, "month": 6, "day": 30 },
+        "ois_pillars": [
+            { "tenor": { "years": 1 }, "par_rate": 0.043 },
+            { "tenor": { "years": 2 }, "par_rate": 0.0418 },
+            { "tenor": { "years": 5 }, "par_rate": 0.0405 },
+            { "tenor": { "years": 10 }, "par_rate": 0.0415 }
+        ]
+    });
+    let arms = [
+        (
+            "irs",
+            json!({ "irs": {
+                "tenor_years": 5, "fixed_rate": 0.041, "notional": 100_000_000.0, "side": 1,
+                "fixed_frequency": 1, "fixed_day_count": 1,
+                "float_frequency": 2, "float_day_count": 1
+            }}),
+        ),
+        (
+            "fra",
+            json!({ "fra": {
+                "start_months": 3, "end_months": 6, "fixed_rate": 0.033,
+                "notional": 25_000_000.0, "side": 1, "accrual_basis": 0
+            }}),
+        ),
+        (
+            "bond",
+            json!({ "bond": {
+                "coupon_rate": 0.06, "coupon_frequency": 1, "day_count": 2,
+                "maturity_date": { "year": 2035, "month": 6, "day": 15 },
+                "redemption": 100.0, "side": 0
+            }}),
+        ),
+    ];
+    for (arm, instrument) in arms {
+        let body = json!({
+            "request_id": 3,
+            "curve_set": curve_set.clone(),
+            "instrument": instrument,
+            "correlation_id": 9
+        });
+        let o = body.as_object().expect("rates request object");
+        assert_decode_eq(
+            &format!("RatesPriceRequest({arm})"),
+            generated::decode_rates_price_request(o),
+            hand::hand_rates_price_request_from_json(o),
+        );
+    }
+}
+
+#[test]
 fn price_xva_request_envelope_decode_byte_identical() {
     let body = json!({
         "request_id": 4,

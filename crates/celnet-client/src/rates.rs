@@ -241,9 +241,10 @@ impl Ois {
     }
 
     /// Decode the OIS arm of a wire [`RatesInstrument`] into the typed builder value.
-    /// The linear-rates oneof carries exactly one arm today (OIS); a message with no
-    /// arm — or an arm the SDK cannot type — is a contract violation surfaced as a
-    /// typed error, never a silent default.
+    /// The linear-rates oneof now carries several arms (OIS / IRS / FRA / bond); this
+    /// `Ois` builder types the OIS arm only, so a message with no arm — or an
+    /// IRS / FRA / bond arm the OIS builder cannot type — is a contract violation
+    /// surfaced as a typed error, never a silent default.
     pub(crate) fn from_wire(w: &RatesInstrument) -> ClientResult<Self> {
         match w.instrument.as_ref() {
             Some(rates_instrument::Instrument::Ois(ois)) => Ok(Self {
@@ -252,6 +253,9 @@ impl Ois {
                 notional: ois.notional,
                 side: OisSide::from_wire(ois.side)?,
             }),
+            // An IRS / FRA / bond arm: the OIS builder cannot type it — surface the
+            // absent expected `ois` arm as a typed error.
+            Some(_) => Err(ClientError::MissingField("RatesInstrument.ois")),
             None => Err(ClientError::MissingField("RatesInstrument.instrument")),
         }
     }
@@ -658,7 +662,9 @@ mod tests {
         let wire = Ois::receive_fixed(5, 0.0405)
             .notional(100_000_000.0)
             .to_wire();
-        let rates_instrument::Instrument::Ois(ois) = wire.instrument.unwrap();
+        let Some(rates_instrument::Instrument::Ois(ois)) = wire.instrument else {
+            unreachable!("receive_fixed builds an OIS arm");
+        };
         assert_eq!(ois.tenor_years, 5);
         assert_eq!(ois.notional, 100_000_000.0);
         assert_eq!(ois.side, Side::Sell as i32);
@@ -667,7 +673,9 @@ mod tests {
     #[test]
     fn ois_pay_fixed_maps_to_buy() {
         let wire = Ois::pay_fixed(10, 0.0415).to_wire();
-        let rates_instrument::Instrument::Ois(ois) = wire.instrument.unwrap();
+        let Some(rates_instrument::Instrument::Ois(ois)) = wire.instrument else {
+            unreachable!("pay_fixed builds an OIS arm");
+        };
         assert_eq!(ois.side, Side::Buy as i32);
         assert_eq!(ois.notional, 1.0); // default unit notional
     }

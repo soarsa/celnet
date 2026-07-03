@@ -4358,6 +4358,103 @@ message OisInstrument {
   Side side = 4;
 }
 
+// Coupon / leg payment frequency for a linear-rates product (an IRS leg schedule
+// or a bond coupon schedule): the number of coupon periods per year the schedule
+// rolls at. proto3 zero default is annual.
+enum PaymentFrequency {
+  // One coupon per year.
+  PAYMENT_FREQUENCY_ANNUAL = 0;
+  // Two coupons per year (every 6 months).
+  PAYMENT_FREQUENCY_SEMI_ANNUAL = 1;
+  // Four coupons per year (every 3 months).
+  PAYMENT_FREQUENCY_QUARTERLY = 2;
+}
+
+// Accrual day-count basis a linear-rates leg turns an accrual period into a year
+// fraction on — the instrument-level superset of `DayCount` that additionally
+// carries 30/360 Bond Basis (the standard USD fixed-bond / fixed-swap basis). Kept
+// distinct from `DayCount` (the curve/vol time axis, which is never measured
+// 30/360). proto3 zero default is ACT/360, the money-market default.
+enum AccrualBasis {
+  // Actual/360 — USD/EUR money-market accrual (the linear-book default).
+  ACCRUAL_BASIS_ACT_360 = 0;
+  // Actual/365 fixed.
+  ACCRUAL_BASIS_ACT_365_FIXED = 1;
+  // 30/360 Bond Basis (ISDA 2006 4.16(f)) — the standard USD fixed-bond/swap basis.
+  ACCRUAL_BASIS_THIRTY_360_BOND_BASIS = 2;
+}
+
+// A vanilla fixed-vs-float interest-rate swap (IRS) to price: a fixed leg vs a
+// projected floating leg on the single self-discounting curve. Both legs are the
+// spot-starting schedules of `tenor_years`, reconstructed server-side from the
+// `CurveSet` reference date, each at its own payment frequency and accrual basis
+// (so the standard "semi-annual fixed vs quarterly float" shape is expressible).
+// The PV is `N * (K * A_fixed - F_float)` (receive-fixed); `side` is from the
+// client's perspective: SIDE_SELL receives fixed, SIDE_BUY pays fixed.
+// SIDE_TWO_WAY is rejected for an outright price.
+message VanillaIrsInstrument {
+  // The swap tenor in whole years from spot (e.g. 2, 5, 10). Must be >= 1.
+  uint32 tenor_years = 1;
+  // The fixed-leg rate as a decimal (0.041 = 4.10%).
+  double fixed_rate = 2;
+  // The notional in the curve currency (always positive; direction is `side`).
+  double notional = 3;
+  // SIDE_BUY = pay fixed (payer); SIDE_SELL = receive fixed. SIDE_TWO_WAY rejected.
+  Side side = 4;
+  // Fixed-leg payment frequency (USD market: semi-annual).
+  PaymentFrequency fixed_frequency = 5;
+  // Fixed-leg accrual day-count (ACT/365F or ACT/360; the market 30/360 fixed leg
+  // awaits the shared curve-time day-count extension and is not offered here yet).
+  DayCount fixed_day_count = 6;
+  // Float-leg payment frequency (USD market: quarterly).
+  PaymentFrequency float_frequency = 7;
+  // Float-leg accrual day-count (ACT/360 typical for USD).
+  DayCount float_day_count = 8;
+}
+
+// A forward rate agreement (FRA) to price: a single accrual window on the
+// projected float index, from `start_months` to `end_months` after spot (a 3x6
+// FRA is start_months = 3, end_months = 6). Both are reconstructed server-side to
+// roll-adjusted dates from the `CurveSet` reference date; the contractual accrual
+// fraction tau uses `accrual_basis`. The PV is the single-period swaplet
+// `N * (K * tau * DF(end) - (DF(start) - DF(end)))` (receive-fixed); `side`:
+// SIDE_SELL receives fixed, SIDE_BUY pays fixed. SIDE_TWO_WAY is rejected.
+message FraInstrument {
+  // The window start (fixing) tenor in months from spot (e.g. 3). Must be < end.
+  uint32 start_months = 1;
+  // The window end (maturity) tenor in months from spot (e.g. 6). Must be > start.
+  uint32 end_months = 2;
+  // The contractual fixed rate K as a decimal (0.033 = 3.30%).
+  double fixed_rate = 3;
+  // The notional in the curve currency (always positive; direction is `side`).
+  double notional = 4;
+  // SIDE_BUY = pay fixed; SIDE_SELL = receive fixed. SIDE_TWO_WAY rejected.
+  Side side = 5;
+  // The accrual day-count basis for tau (ACT/360 typical; 30/360 supported).
+  AccrualBasis accrual_basis = 6;
+}
+
+// A fixed-coupon cash bond to price off the calibrated curve: PV each cashflow at
+// the bootstrapped discount curve (dirty price) and report the implied yield-risk
+// set. Settlement is the `CurveSet` reference (spot-anchor) date; the coupon
+// schedule is the regular month-step dates rolled back from `maturity_date` at
+// `coupon_frequency`. `side` is the position direction: SIDE_BUY = long (a bought
+// bond, positive PV), SIDE_SELL = short (negative PV). SIDE_TWO_WAY is rejected.
+message BondInstrument {
+  // The annual coupon rate as a decimal (0.06 = 6%); 0 for a zero-coupon bond.
+  double coupon_rate = 1;
+  // The coupon payment frequency (also the yield compounding basis).
+  PaymentFrequency coupon_frequency = 2;
+  // The accrual day-count basis for accrued interest (ACT/365F / ACT/360 / 30/360).
+  AccrualBasis day_count = 3;
+  // The maturity (final-redemption) date; must be strictly after settlement.
+  BrokenDate maturity_date = 4;
+  // The par redemption / face value (e.g. 100); required, strictly positive.
+  double redemption = 5;
+  // SIDE_BUY = long (+PV); SIDE_SELL = short (-PV). SIDE_TWO_WAY rejected.
+  Side side = 6;
+}
+
 // A linear interest-rate instrument to price: exactly one arm is set. The oneof
 // grows additively (FRA, vanilla IRS, tenor/cross-ccy basis, STIR/bond futures)
 // as each is backed end-to-end by the rates engine; no arm ships on the wire
@@ -4367,6 +4464,12 @@ message RatesInstrument {
   oneof instrument {
     // An overnight-indexed swap (the USD-SOFR P0 arm).
     OisInstrument ois = 1;
+    // A vanilla fixed-vs-float interest-rate swap.
+    VanillaIrsInstrument irs = 2;
+    // A forward rate agreement.
+    FraInstrument fra = 3;
+    // A fixed-coupon cash bond priced off the curve.
+    BondInstrument bond = 4;
   }
 }
 
