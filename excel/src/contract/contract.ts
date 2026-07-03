@@ -1508,6 +1508,42 @@ export interface GetCurveResponse {
 }
 
 /**
+ * A request to mark/persist a bootstrapped discount curve under a fresh pinned
+ * version (`celnet.wire.MarkCurveRequest`) — the FI analogue of a surface mark
+ * (`MarkSurfaceRequest`). The `curveSet` is bootstrapped and deposited through the
+ * same versioning seam a surface mark uses, so a later `GetCurve` pinned to the
+ * returned `curveVersion` reproduces this exact curve.
+ */
+export interface MarkCurveRequest {
+  /** The calibrating curve set to bootstrap and persist. */
+  curveSet: RatesCurveSet;
+}
+
+/**
+ * The result of a curve mark (`celnet.wire.MarkCurveResponse`): a server-assigned
+ * curve version id, the resolved calibrating par pillars, and the bootstrapped
+ * points at the pillar tenors — the FI analogue of a `MarkSurfaceResponse`. The
+ * returned `curveVersion` is always present (a mark always stamps a version) and
+ * is the id a subsequent `GetCurve(pinnedVersion)` reproduces the curve from.
+ */
+export interface MarkCurveResponse {
+  /** ISO-4217 currency of the marked curve. */
+  currency: string;
+  /**
+   * The monotonic server-assigned curve version id this mark stamped — always
+   * present (unlike a read's presence-tracked pin). A `data` field selecting a
+   * marked curve, never an API version (the contract is unversioned, rule 9).
+   */
+  curveVersion: bigint;
+  /** The resolved calibrating par pillars marked (resolved tenor + par rate). */
+  parPillars: readonly CurveParPillar[];
+  /** The bootstrapped points (zero rate + discount factor) at the pillar tenors. */
+  points: readonly CurveQueryPoint[];
+  /** Mark time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+}
+
+/**
  * The fixed-leg direction of an OIS from the client's perspective. The wire
  * `Side` carries this: SIDE_BUY pays fixed (payer), SIDE_SELL receives fixed.
  */

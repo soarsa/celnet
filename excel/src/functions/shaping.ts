@@ -59,6 +59,8 @@ import type {
   LookbackMonitoring,
   LookbackStyle,
   Margining,
+  MarkCurveRequest,
+  MarkCurveResponse,
   MarketObservable,
   Metal,
   MetalPair,
@@ -4802,6 +4804,68 @@ export function formatGetCurveSpill(reply: GetCurveResponse): SpillMatrix {
   });
   const version = reply.curveVersion === undefined ? "live" : `v${reply.curveVersion}`;
   rows.push(["version", version, "currency", reply.currency]);
+  return rectangular(rows);
+}
+
+// ---------------------------------------------------------------------------
+// curve mark (`mark_curve` / `SurfaceService.MarkCurve`, ADR-0021) — the
+// CELNET.MARKCURVE add-in path, the FI analogue of CELNET.MARKSURFACE. Shape a
+// `[tenorYears, parRate]` curve range + reference date into the typed
+// `MarkCurveRequest` (reusing the shared `RatesCurveSet` shaping verbatim), and lay
+// out the `MarkCurveResponse` — the server-assigned pinned `curve_version` (the key
+// output: a later CELNET.GETCURVE(…, pinnedVersion) reproduces this exact curve),
+// the echoed calibrating par pillars, and the bootstrapped points. A MARK is a
+// side-effecting write (it deposits a fresh version), never a live formula — the
+// add-in holds no curve math: the live `celnet-rates` engine bootstraps + persists
+// the authoritative curve and stamps the version.
+// ---------------------------------------------------------------------------
+
+/** The curve-range + reference-date + currency a CELNET.MARKCURVE call shapes into a `MarkCurveRequest`. */
+export interface MarkCurveArgs {
+  /** The 2-column `[tenorYears, parRate]` curve range (one row per pillar). */
+  readonly curve: readonly (readonly (string | number | boolean)[])[];
+  /** The curve reference (spot-anchor) civil date (Excel date serial or `YYYY-MM-DD`). */
+  readonly referenceDate: number | string;
+  /** ISO-4217 currency; defaults to USD (the USD-SOFR P0 arm). */
+  readonly currency?: string | undefined;
+}
+
+/**
+ * Shape a `[tenorYears, parRate]` curve range + reference date into the typed
+ * `MarkCurveRequest`. The curve reuses the shared `RatesCurveSet` shaping
+ * (`shapeRatesCurve`) verbatim — identical to CELNET.GETCURVE / CELNET.CURVE — so a
+ * mark and a live read bootstrap byte-identically. A mark carries no tenor axis (it
+ * reports at the calibrating pillars) and no pinned version (it CREATES one).
+ */
+export function shapeMarkCurveRequest(args: MarkCurveArgs): MarkCurveRequest {
+  const curveSet = shapeRatesCurve({
+    curve: args.curve,
+    referenceDate: args.referenceDate,
+    currency: args.currency,
+  });
+  return { curveSet };
+}
+
+/**
+ * Format a `MarkCurveResponse` as a labelled spill: a bootstrapped-points block
+ * (`point`, `tenor_years`, `discount_factor`, `zero_rate`), then a par-pillars block
+ * (`par_pillar`, `tenor_years`, `par_rate`) padded to width, then a footer row
+ * carrying the assigned pinned version (`v<n>` — ALWAYS a concrete version, since a
+ * mark always stamps one) and the reply currency. The footer version is the id a
+ * subsequent CELNET.GETCURVE(…, pinnedVersion) reproduces the curve from. Every
+ * measure is the server's own authoritative mark — the cell only lays it out.
+ * Returns a rectangular `(2 + points + parPillars + 1)×4` matrix.
+ */
+export function formatMarkCurveSpill(reply: MarkCurveResponse): SpillMatrix {
+  const rows: SpillMatrix = [["point", "tenor_years", "discount_factor", "zero_rate"]];
+  reply.points.forEach((p, i) => {
+    rows.push([`point[${i}]`, p.tenorYears, p.discountFactor, p.zeroRate]);
+  });
+  rows.push(["par_pillar", "tenor_years", "par_rate", ""]);
+  reply.parPillars.forEach((p, i) => {
+    rows.push([`par[${i}]`, p.tenorYears, p.parRate, ""]);
+  });
+  rows.push(["version", `v${reply.curveVersion}`, "currency", reply.currency]);
   return rectangular(rows);
 }
 
