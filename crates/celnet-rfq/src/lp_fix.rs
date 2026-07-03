@@ -35,14 +35,20 @@
 
 use std::time::Duration;
 
+use celnet_fix::dialect_rates::{
+    self, BondQuoteRequestParams, RatesQuoteRequestParams, RatesSide, SubscriptionRequest,
+};
 use celnet_fix::framing::FrameEncoder;
 use celnet_fix::initiator::{Initiator, LiftPolicy};
 use celnet_fix::messages::Header;
 use celnet_fix::session::{InMemoryStore, Role, Session, SessionConfig};
+use celnet_proto::{AccrualBasis, BrokenDate, PaymentFrequency, Side, rates_instrument};
 use celnet_types::{Ccy, OptionType};
 use tokio::net::TcpStream;
 
-use crate::panel::{QuoteSource, QuoteSourceReply, RfqRequest, TwoWay};
+use crate::panel::{
+    FxOptionLeg, QuoteSource, QuoteSourceReply, RatesLeg, RfqLeg, RfqRequest, TwoWay,
+};
 
 /// Static configuration for one external FIX LP: how to address its session and
 /// what audit identity / validity window to stamp on its quotes.
@@ -87,10 +93,16 @@ impl FixLpAdapter {
     }
 
     /// Run one real FIX `QuoteRequest → Quote` cycle and translate the result.
-    /// `Ok(None)` means a clean no-quote (declined / no `Quote` returned);
-    /// `Err` is a transport/protocol failure — both map to
-    /// [`QuoteSourceReply::NoQuote`] at the call site (an LP is dropped, never an
-    /// error).
+    /// `Ok(None)` means a clean no-quote (declined / no `Quote` returned, or a leg
+    /// the FIX dialect does not encode); `Err` is a transport/protocol failure —
+    /// both map to [`QuoteSourceReply::NoQuote`] at the call site (an LP is
+    /// dropped, never an error).
+    ///
+    /// The instrument block is built from the [`RfqLeg`] via the class-appropriate
+    /// `celnet-fix` dialect: an FX-option leg through the FX vanilla tags, a
+    /// fixed-income leg through the rates dialect (`SecurityType(167)=OIS` /
+    /// `BOND`). The `Quote(S)` reply is parsed identically for both — the panel
+    /// ranks the same `TwoWay`, so a rates LP and an FX LP share one seam.
     async fn run_cycle(&self, request: &RfqRequest) -> std::io::Result<Option<TwoWay>> {
         let stream = TcpStream::connect(&self.cfg.dial_addr).await?;
         let cfg = SessionConfig {
@@ -101,44 +113,160 @@ impl FixLpAdapter {
         };
         let mut init = Initiator::new(Session::new(cfg, InMemoryStore::new()), LiftPolicy::Observe);
 
-        // Translate the Celnet RFQ into the FIX instrument block. The strike
-        // currency is the pair's quote currency (the dialect's convention guard
-        // rejects anything else).
-        let symbol = fix_symbol(request);
-        let strike = request.strike;
-        let put_or_call: &[u8] = match request.option_type {
-            OptionType::Call => b"1",
-            OptionType::Put => b"0",
-        };
-        let strike_ccy = ccy_bytes(request.pair.quote);
         let req_id = request.request_id.clone().into_bytes();
+        let sending_time = self.cfg.sending_time.clone();
 
-        let build_req = move |h: &Header<'_>, e: &mut FrameEncoder| {
-            e.clear();
-            h.encode(celnet_fix::MsgType::QuoteRequest, e);
-            e.push(131, &req_id);
-            e.push(55, &symbol);
-            e.push(460, b"4"); // Product = CURRENCY
-            e.push(167, b"FXVO"); // deliverable FX vanilla option
-            e.push(201, put_or_call);
-            push_strike(e, strike);
-            e.push(947, &strike_ccy);
-            e.push(1194, b"0"); // European exercise
-            e.finish()
+        // Build the FIX instrument block from the class-specific leg. An
+        // unsupported / malformed rates leg (an IRS/FRA the OIS+bond dialect does
+        // not encode, or a bad enum) is a clean no-quote — the LP is simply absent.
+        let result = match &request.leg {
+            RfqLeg::FxOption(fx) => {
+                let symbol = fx_symbol(fx);
+                let strike = fx.strike;
+                let put_or_call: &[u8] = match fx.option_type {
+                    OptionType::Call => b"1",
+                    OptionType::Put => b"0",
+                };
+                let strike_ccy = ccy_bytes(fx.pair.quote);
+                let build_req = move |h: &Header<'_>, e: &mut FrameEncoder| {
+                    e.clear();
+                    h.encode(celnet_fix::MsgType::QuoteRequest, e);
+                    e.push(131, &req_id);
+                    e.push(55, &symbol);
+                    e.push(460, b"4"); // Product = CURRENCY
+                    e.push(167, b"FXVO"); // deliverable FX vanilla option
+                    e.push(201, put_or_call);
+                    push_strike(e, strike);
+                    e.push(947, &strike_ccy);
+                    e.push(1194, b"0"); // European exercise
+                    e.finish()
+                };
+                init.request_and_lift(stream, sending_time, build_req)
+                    .await?
+            }
+            RfqLeg::Rates(rates) => {
+                let Some(spec) = rates_fix_spec(rates) else {
+                    return Ok(None); // a leg the FIX rates dialect does not encode.
+                };
+                let symbol = rates.symbol.clone();
+                let build_req = move |h: &Header<'_>, e: &mut FrameEncoder| {
+                    // Reuse the `celnet-fix` rates dialect builders verbatim — the
+                    // SAME wire an inbound FI RFQ decodes on the acceptor side.
+                    match &spec {
+                        RatesFixSpec::Ois {
+                            tenor_years,
+                            side,
+                            notional,
+                        } => dialect_rates::build_rates_quote_request(
+                            h,
+                            &RatesQuoteRequestParams {
+                                quote_req_id: &req_id,
+                                symbol: &symbol,
+                                tenor_years: *tenor_years,
+                                notional: *notional,
+                                side: *side,
+                                subscription: SubscriptionRequest::Snapshot,
+                            },
+                            e,
+                        ),
+                        RatesFixSpec::Bond {
+                            coupon_rate,
+                            coupon_frequency,
+                            day_count,
+                            maturity,
+                            redemption,
+                            notional,
+                            side,
+                        } => dialect_rates::build_bond_quote_request(
+                            h,
+                            &BondQuoteRequestParams {
+                                quote_req_id: &req_id,
+                                symbol: &symbol,
+                                coupon_rate: *coupon_rate,
+                                coupon_frequency: *coupon_frequency,
+                                day_count: *day_count,
+                                maturity: *maturity,
+                                redemption: *redemption,
+                                notional: *notional,
+                                side: *side,
+                                subscription: SubscriptionRequest::Snapshot,
+                            },
+                            e,
+                        ),
+                    }
+                };
+                init.request_and_lift(stream, sending_time, build_req)
+                    .await?
+            }
         };
 
-        let result = init
-            .request_and_lift(stream, self.cfg.sending_time.clone(), build_req)
-            .await?;
-
-        // Prefer the round-trip-exact dialect tags (full f64) over the 8-dp wire
-        // price fields when the maker stamped them — but `InitiatorResult` only
-        // surfaces the standard parsed bid/offer, which is exact to wire
-        // precision and what the panel ranks on.
+        // `InitiatorResult` surfaces the standard parsed bid/offer, exact to wire
+        // precision and what the panel ranks on — identical for FX and rates.
         match (result.bid, result.offer) {
             (Some(bid), Some(offer)) => Ok(Some(TwoWay { bid, offer })),
             _ => Ok(None),
         }
+    }
+}
+
+/// The rates-dialect FIX instrument block for a [`RatesLeg`], pre-validated so the
+/// builder closure is infallible. `None` for a leg the OIS+bond dialect does not
+/// encode (an IRS/FRA arm, an unset arm, or a malformed bond enum) — a clean
+/// no-quote, never a partial/faked request.
+enum RatesFixSpec {
+    /// An OIS `QuoteRequest(R)` (`SecurityType(167)=OIS`).
+    Ois {
+        tenor_years: u32,
+        side: RatesSide,
+        notional: f64,
+    },
+    /// A cash-bond `QuoteRequest(R)` (`SecurityType(167)=BOND`).
+    Bond {
+        coupon_rate: f64,
+        coupon_frequency: PaymentFrequency,
+        day_count: AccrualBasis,
+        maturity: BrokenDate,
+        redemption: f64,
+        notional: f64,
+        side: Side,
+    },
+}
+
+/// Extract the FIX rates-dialect request spec from a [`RatesLeg`], mapping the
+/// wire instrument arm onto the OIS or cash-bond `QuoteRequest(R)` the
+/// `celnet-fix` rates dialect encodes. Returns `None` for an arm the dialect does
+/// not carry (vanilla IRS / FRA — the dialect is OIS + bond only), an unset arm,
+/// or a bond with a malformed enum / missing maturity (all clean no-quotes).
+fn rates_fix_spec(rates: &RatesLeg) -> Option<RatesFixSpec> {
+    match rates.instrument.instrument.as_ref()? {
+        rates_instrument::Instrument::Ois(ois) => Some(RatesFixSpec::Ois {
+            tenor_years: ois.tenor_years,
+            side: proto_side_to_rates(rates.side),
+            notional: rates.notional,
+        }),
+        rates_instrument::Instrument::Bond(bond) => Some(RatesFixSpec::Bond {
+            coupon_rate: bond.coupon_rate,
+            coupon_frequency: PaymentFrequency::try_from(bond.coupon_frequency).ok()?,
+            day_count: AccrualBasis::try_from(bond.day_count).ok()?,
+            maturity: bond.maturity_date?,
+            redemption: bond.redemption,
+            notional: rates.notional,
+            side: rates.side,
+        }),
+        // The FIX rates dialect encodes OIS + cash bond only; a vanilla IRS / FRA
+        // leg is honestly a no-quote on the FIX LP route (the native in-process
+        // source still prices it).
+        rates_instrument::Instrument::Irs(_) | rates_instrument::Instrument::Fra(_) => None,
+    }
+}
+
+/// Map a wire [`Side`] to the rates dialect [`RatesSide`]: pay-fixed is a
+/// (fixed-rate) buy, receive-fixed a sell, a two-way request carries no firm side.
+fn proto_side_to_rates(side: Side) -> RatesSide {
+    match side {
+        Side::Buy => RatesSide::PayFixed,
+        Side::Sell => RatesSide::ReceiveFixed,
+        Side::TwoWay => RatesSide::TwoWay,
     }
 }
 
@@ -170,11 +298,11 @@ impl QuoteSource for FixLpAdapter {
     }
 }
 
-/// The 6-byte `Symbol(55)` for an RFQ's pair (e.g. `b"EURUSD"`).
-fn fix_symbol(request: &RfqRequest) -> Vec<u8> {
+/// The 6-byte `Symbol(55)` for an FX-option leg's pair (e.g. `b"EURUSD"`).
+fn fx_symbol(fx: &FxOptionLeg) -> Vec<u8> {
     let mut s = Vec::with_capacity(6);
-    s.extend_from_slice(request.pair.base.as_str().as_bytes());
-    s.extend_from_slice(request.pair.quote.as_str().as_bytes());
+    s.extend_from_slice(fx.pair.base.as_str().as_bytes());
+    s.extend_from_slice(fx.pair.quote.as_str().as_bytes());
     s
 }
 

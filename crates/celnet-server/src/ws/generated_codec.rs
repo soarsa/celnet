@@ -42,12 +42,12 @@ use celnet_proto::{
     ListedFutureOption, Lookback, MarketContext, MetalPair, Ndf, OisFixedPeriod, OisInstrument,
     OisPillar, OisSwapLeg, PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse,
     PriceXvaRequest, PriceXvaResponse, Quantity, Quanto, RateSensitivities, RatesInstrument,
-    RatesPriceRequest, RatesPriceResponse, RatesPricingResult, SingleBarrier, Solve, Strategy,
-    StrikeOrDelta, Symbol, TailRiskCurvePillar, TailRiskFiPosition, TailRiskKeyRate,
-    TailRiskOptionLeg, Tarf, Tenor, Touch, Underlying, Vanilla, VanillaIrsInstrument, VarEs,
-    VarianceSwap, VolatilitySwap, WindowBarrier, XvaResult as WireXvaResult, XvaSurvivalCurve,
-    XvaTrade, instrument, pillar_tenor, rate_sensitivities, rates_instrument, strike_or_delta,
-    tail_risk_fi_position,
+    RatesPriceRequest, RatesPriceResponse, RatesPricingResult, RatesQuote, RatesQuoteRequest,
+    SingleBarrier, Solve, Strategy, StrikeOrDelta, Symbol, TailRiskCurvePillar, TailRiskFiPosition,
+    TailRiskKeyRate, TailRiskOptionLeg, Tarf, Tenor, Touch, TwoWayPrice, Underlying, Vanilla,
+    VanillaIrsInstrument, VarEs, VarianceSwap, VolatilitySwap, WindowBarrier,
+    XvaResult as WireXvaResult, XvaSurvivalCurve, XvaTrade, instrument, pillar_tenor,
+    rate_sensitivities, rates_instrument, strike_or_delta, tail_risk_fi_position,
 };
 use serde_json::{Map, Value, json};
 
@@ -275,6 +275,17 @@ pub fn encode_price_response(r: &PriceResponse) -> Value {
 #[must_use]
 pub fn encode_rates_price_response(r: &RatesPriceResponse) -> Value {
     encode("RatesPriceResponse", r)
+}
+
+/// Encode a [`RatesQuote`] (the fixed-income taker RFQ reply of
+/// `QuoteService.RequestRatesQuote`) to its WS JSON — the two-way bid/offer, the
+/// full FI risk `result`, size, timestamps, and the presence-tracked
+/// `correlation_id` emitted as `null` when absent (see
+/// [`super::codec_overrides::null_absent_optional`]). Descriptor-driven, so a WS
+/// FI RFQ reply is byte-identical to the gRPC `RatesQuote`.
+#[must_use]
+pub fn encode_rates_quote(q: &RatesQuote) -> Value {
+    encode("RatesQuote", q)
 }
 
 /// Encode a [`PriceXvaResponse`] to its WS JSON (mirrors the hand
@@ -520,6 +531,38 @@ impl WireAdapter for RatesPriceResponse {
                 .result
                 .as_ref()
                 .map(|r| WireVal::Msg(r as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for TwoWayPrice {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "bid" => Some(WireVal::F64(self.bid)),
+            "offer" => Some(WireVal::F64(self.offer)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RatesQuote {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "quote_id" => Some(WireVal::U64(self.quote_id)),
+            "idempotency_key" => Some(WireVal::Str(&self.idempotency_key)),
+            "price" => self
+                .price
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            "result" => self
+                .result
+                .as_ref()
+                .map(|r| WireVal::Msg(r as &dyn WireAdapter)),
+            "notional" => Some(WireVal::F64(self.notional)),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            "valid_until_nanos" => Some(WireVal::I64(self.valid_until_nanos)),
             "correlation_id" => self.correlation_id.map(WireVal::U64),
             _ => None,
         }
@@ -1395,6 +1438,19 @@ pub fn decode_rates_price_request(o: &Map<String, Value>) -> DResult<RatesPriceR
     decode(RatesPriceRequest::MESSAGE, o)
 }
 
+/// Decode a [`RatesQuoteRequest`] envelope (the fixed-income taker RFQ of
+/// `QuoteService.RequestRatesQuote`). The pure rates tree carries no FX-legacy
+/// divergence, so it decodes fully generically through the descriptor — the
+/// `curve_set` / `instrument` reuse the SAME nested `CurveSet` / `RatesInstrument`
+/// builders the outright `PriceRates` request decode does.
+///
+/// # Errors
+/// A missing required nested field (`curve_set` / `instrument`, or the required
+/// `RatesInstrument` arm) or a malformed body.
+pub fn decode_rates_quote_request(o: &Map<String, Value>) -> DResult<RatesQuoteRequest> {
+    decode(RatesQuoteRequest::MESSAGE, o)
+}
+
 /// Decode a [`PriceXvaRequest`] envelope (mirrors the hand
 /// `price_xva_request_from_json`). The pure XVA tree decodes fully generically.
 ///
@@ -1941,6 +1997,24 @@ impl WireBuilder for RatesPriceRequest {
             "instrument" => {
                 self.instrument = Some(req_msg::<RatesInstrument>(value, "instrument")?);
             }
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RatesQuoteRequest {
+    const MESSAGE: &'static str = "RatesQuoteRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "idempotency_key" => self.idempotency_key = string_or_empty(value),
+            "curve_set" => self.curve_set = Some(req_msg::<CurveSet>(value, "curve_set")?),
+            "instrument" => {
+                self.instrument = Some(req_msg::<RatesInstrument>(value, "instrument")?);
+            }
+            "notional" => self.notional = f64_or_zero(value),
+            "side" => self.side = enum_or_zero(value),
             "correlation_id" => self.correlation_id = opt_u64(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }

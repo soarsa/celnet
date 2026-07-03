@@ -1019,10 +1019,10 @@ struct PricedLine {
     size: f64,
 }
 
-/// The P0 maker half-spread for a fixed-income two-way rate market, in absolute
-/// rate (`0.00005` = 0.5bp each side ⇒ a 1bp-wide market). A documented constant
-/// until a rates-specific spread model lands.
-const RATES_HALF_SPREAD: f64 = 0.000_05;
+/// The P0 maker half-spread for a fixed-income two-way rate market — single-homed
+/// in [`crate::rates_pricing::RATES_RFQ_HALF_SPREAD`], shared with the WS/gRPC
+/// taker RFQ two-way so the FIX and contract FI RFQ markets are struck identically.
+use crate::rates_pricing::RATES_RFQ_HALF_SPREAD as RATES_HALF_SPREAD;
 
 /// The rates request intent a fixed-income acceptor serves: a one-shot RFQ vs a
 /// streaming RFS. Derived from the connection's [`AcceptorKind`] and matched
@@ -1102,11 +1102,10 @@ fn rates_line(frame: &FrameCursor<'_>, expected: Option<RatesIntent>) -> Result<
     })
 }
 
-/// The P0 maker half-spread for a fixed-income two-way **bond price** market, in price
-/// points per 100 face (`0.05` = 5 cents each side ⇒ a 10-cent-wide market). The bond
-/// analogue of [`RATES_HALF_SPREAD`] (which is in rate); a documented constant until a
-/// bond-specific spread model lands.
-const BOND_HALF_SPREAD: f64 = 0.05;
+/// The P0 maker half-spread for a fixed-income two-way **bond price** market —
+/// single-homed in [`crate::rates_pricing::BOND_RFQ_HALF_SPREAD`], shared with the
+/// WS/gRPC taker bond RFQ two-way.
+use crate::rates_pricing::BOND_RFQ_HALF_SPREAD as BOND_HALF_SPREAD;
 
 /// Price an inbound cash-bond RFQ to a two-way **clean-price** line: the clean (quoted)
 /// price of the bond discounted off the P0 static USD-SOFR curve — the LANDED

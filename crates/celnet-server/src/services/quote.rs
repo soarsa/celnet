@@ -97,7 +97,8 @@ use crate::tick::TickSource;
 use celnet_proto::quote_service_server::QuoteService;
 use celnet_proto::{
     AttributionRecord, BookId, DealerQuote, Execution, MarketContext, MultiDealerQuote, Owner,
-    Quote, QuoteAccept, QuoteReject, QuoteRequest, RejectAck, Side, TwoWayPrice, owner,
+    Quote, QuoteAccept, QuoteReject, QuoteRequest, RatesQuote, RatesQuoteRequest, RejectAck, Side,
+    TwoWayPrice, owner,
 };
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
@@ -117,7 +118,9 @@ use crate::readiness::ReadinessGate;
 use crate::services::access::{
     RequiredAuthority, ResolvedCaller, authorize_caller, resolve_caller,
 };
-use crate::services::error_status::{link_error_to_status, price_error_to_status};
+use crate::services::error_status::{
+    link_error_to_status, price_error_to_status, rates_price_error_to_status,
+};
 use crate::services::forward::{Serve, route_underlying, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::services::risk::federate::Fleet;
@@ -1162,6 +1165,70 @@ impl QuoteService for QuoteEdge {
             "multi-dealer panel returned"
         );
         Ok(Response::new(multi))
+    }
+
+    async fn request_rates_quote(
+        &self,
+        request: Request<RatesQuoteRequest>,
+    ) -> Result<Response<RatesQuote>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+
+        // A pure fixed-income price-discovery calculation — the caller supplies the
+        // whole market (`curve_set`), exactly as `PricingService.PriceRates` does,
+        // so it reads no live market, stores nothing and books nothing (every
+        // replica computes the identical quote). This is the taker's two-way,
+        // mirroring the FIX venue auto-quote (`services::fix::on_rates_quote_request`);
+        // the stateful maker-side FI booking flow that binds a caller/requester is
+        // `RfqDeskService`, so — like `PriceRates` — this calculation RPC needs no
+        // per-caller gate beyond the readiness admission above.
+        let curve_set = req
+            .curve_set
+            .as_ref()
+            .ok_or_else(|| Status::invalid_argument("missing `curve_set`"))?;
+        let instrument = req
+            .instrument
+            .as_ref()
+            .ok_or_else(|| Status::invalid_argument("missing `instrument`"))?;
+        if !(req.notional.is_finite() && req.notional > 0.0) {
+            return Err(Status::invalid_argument(
+                "`notional` must be a positive, finite RFQ size",
+            ));
+        }
+        let side = Side::try_from(req.side)
+            .map_err(|_| Status::invalid_argument("unknown `side` value"))?;
+
+        // The one FI pricing path: the two-way is struck around the side-independent
+        // fair level (par rate for OIS/IRS/FRA, clean price for a cash bond), and
+        // `result` is the full `price_rates` risk — the SAME engine numbers the
+        // outright `PriceRates` RPC returns (no second pricing implementation).
+        let two_way = crate::rates_pricing::quote_rates_two_way(curve_set, instrument, side)
+            .map_err(|e| rates_price_error_to_status(&e))?;
+        let (bid, offer) = (two_way.bid, two_way.offer);
+
+        let now = self.clock.now_nanos();
+        let quote_id = self.mint_quote_id();
+        let quote = RatesQuote {
+            quote_id,
+            idempotency_key: req.idempotency_key.clone(),
+            price: Some(TwoWayPrice { bid, offer }),
+            result: Some(two_way.result),
+            notional: req.notional,
+            epoch_nanos: now,
+            valid_until_nanos: now + QUOTE_VALIDITY_NANOS,
+            correlation_id: req.correlation_id,
+        };
+
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            idempotency_key = %req.idempotency_key,
+            quote_id = quote.quote_id,
+            bid,
+            offer,
+            "rates quote returned"
+        );
+        Ok(Response::new(quote))
     }
 
     async fn accept_quote(

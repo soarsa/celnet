@@ -770,6 +770,19 @@ async fn handle_unary(
                 codec::multi_dealer_quote_to_json
             )
         }
+        // The fixed-income taker RFQ (`QuoteService.RequestRatesQuote`) — request
+        // decode + reply encode both run on the descriptor-driven generated codec
+        // (arch item G — `ws-codec-from-proto`): the pure rates RFQ messages carry no
+        // FX-legacy quirks, so they decode/encode straight from the field tables
+        // (round-trip proven in `tests/ws_codec_differential.rs`).
+        "request_rates_quote" => {
+            let req = decode!(generated_codec::decode_rates_quote_request(o));
+            call!(
+                services.quote.request_rates_quote(Request::new(req)),
+                "rates_quote",
+                generated_codec::encode_rates_quote
+            )
+        }
         "accept_quote" => {
             let req = decode!(codec::quote_accept_from_json(o));
             call!(

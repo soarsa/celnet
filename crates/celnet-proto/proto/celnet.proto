@@ -3093,6 +3093,18 @@ service QuoteService {
   // instrument; returns the pre-ranked dealer ladder with the best bid/offer
   // touch dealers named. Idempotent on the request's `idempotency_key`.
   rpc RequestMultiDealerQuote(QuoteRequest) returns (MultiDealerQuote);
+  // Request a tradeable two-way quote on a linear-rates (fixed-income) instrument
+  // — the fixed-income analogue of `RequestQuote`, bringing request-for-quote
+  // parity to the WS/gRPC surface (FI RFQ previously existed only over FIX). The
+  // taker supplies the whole market (`curve_set`) and the `instrument`; the maker
+  // returns a `RatesQuote` two-way struck around the side-independent fair level
+  // (the par rate for an OIS/IRS/FRA, the clean price for a cash bond) plus the
+  // full PV / PV01 / DV01 / key-rate risk. Like `PricingService.PriceRates`, the
+  // caller supplies the market explicitly, so this is a calculation RPC needing no
+  // live-market read (every replica computes the identical quote). The stateful
+  // maker-side FI booking flow is `RfqDeskService`; this is the taker's
+  // price-discovery two-way (mirroring the FIX venue auto-quote).
+  rpc RequestRatesQuote(RatesQuoteRequest) returns (RatesQuote);
   // Accept a quote and book the resulting execution.
   rpc AcceptQuote(QuoteAccept) returns (Execution);
   // Reject a quote (decline to trade); returns a typed acknowledgement, not an
@@ -4606,6 +4618,66 @@ message RatesPriceResponse {
   RatesPricingResult result = 2;
   // Echo of the originating `RatesPriceRequest.correlation_id`, if supplied.
   optional uint64 correlation_id = 3;
+}
+
+// Request a tradeable two-way RFQ on a linear-rates (fixed-income) instrument —
+// the fixed-income analogue of `QuoteRequest` (`QuoteService.RequestRatesQuote`).
+// The taker supplies the calibrated `curve_set` and the `instrument` to quote; the
+// maker prices the side-independent fair level (the par rate for an OIS/IRS/FRA,
+// the clean price for a cash bond — the LANDED `price_rates` / `quote_bond` result)
+// and returns a `RatesQuote` two-way struck around it. `notional` is the RFQ size
+// the two-way is good for; `side` is the taker's directional intent, and selects
+// the sign of the returned risk (a two-way request reports the receive-fixed /
+// long magnitude). Additive (rule 9): the taker RFQ envelope over the existing FI
+// pricing arm, no reshaping of `RatesInstrument` / `CurveSet`.
+message RatesQuoteRequest {
+  // Client-supplied idempotency/correlation token, echoed on the `RatesQuote`.
+  string idempotency_key = 1;
+  // The calibrated curve set the instrument prices against.
+  CurveSet curve_set = 2;
+  // The instrument to quote (OIS / vanilla IRS / FRA / cash bond).
+  RatesInstrument instrument = 3;
+  // The RFQ size the two-way is good for (curve currency, strictly positive).
+  double notional = 4;
+  // The taker's directional intent: SIDE_BUY (pay fixed / long bond), SIDE_SELL
+  // (receive fixed / short bond), or SIDE_TWO_WAY to request a two-way market with
+  // no firm direction. The returned two-way is always struck around the
+  // side-independent fair level; `side` selects the sign of the returned risk (a
+  // SIDE_TWO_WAY request reports the receive-fixed / long magnitude).
+  Side side = 5;
+  // Optional caller correlation id, echoed verbatim on the `RatesQuote`. A *data*
+  // field selecting a correlation, never an API version (rule 9). Absent ⇒ none.
+  optional uint64 correlation_id = 6;
+}
+
+// A tradeable two-way quote for a linear-rates instrument — the fixed-income
+// analogue of `Quote`, returned for a `RatesQuoteRequest`. `price` is the two-way
+// struck around the fair level: a RATE market (bid/offer around the par rate) for
+// an OIS/IRS/FRA, a clean-PRICE market (bid/offer around the clean price per 100
+// face) for a cash bond, so `(bid+offer)/2` is the fair level the FI pricing path
+// computed (`result.par_rate` for an OIS/IRS/FRA; the clean price for a bond).
+message RatesQuote {
+  // Server-assigned stable, unguessable quote identifier (minted exactly like
+  // `Quote.quote_id`).
+  uint64 quote_id = 1;
+  // Echo of the originating request's idempotency key.
+  string idempotency_key = 2;
+  // The two-way bid/offer: a rate market for an OIS/IRS/FRA, a clean-price market
+  // for a cash bond. `(bid+offer)/2` is the side-independent fair level.
+  TwoWayPrice price = 3;
+  // The full linear-rates risk (PV, par rate, PV01, DV01, key-rate ladder) of the
+  // quoted position at the requested `side`.
+  RatesPricingResult result = 4;
+  // The RFQ size the two-way is good for (curve currency), echoed from the request.
+  double notional = 5;
+  // Publication time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 6;
+  // Quote validity deadline (last-look window), nanoseconds since the Unix epoch
+  // (UTC). An accept after this instant is treated as expired.
+  int64 valid_until_nanos = 7;
+  // Echo of the originating `RatesQuoteRequest.correlation_id`, if one was supplied
+  // (presence-tracked), so a client joins this reply to its request.
+  optional uint64 correlation_id = 8;
 }
 
 // ===========================================================================

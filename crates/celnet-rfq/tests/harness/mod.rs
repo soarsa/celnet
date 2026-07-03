@@ -24,7 +24,12 @@ use std::time::Duration;
 
 use celnet_fix::acceptor::{Acceptor, FixedQuoteSource};
 use celnet_fix::dialect_fx::{self, MarketSnapshot, VanillaPricer};
+use celnet_fix::dialect_rates;
+use celnet_fix::dictionary::MsgType;
+use celnet_fix::framing::FrameCursor;
+use celnet_fix::messages::{self, QuoteParams};
 use celnet_fix::session::{InMemoryStore, Role, Session, SessionConfig};
+use celnet_fix::transport::{FrameReader, write_frame};
 use celnet_rfq::panel::{QuoteSource, QuoteSourceReply, RfqRequest, TwoWay};
 use celnet_rfq::{FixLpAdapter, FixLpConfig};
 use celnet_types::Tenor;
@@ -132,6 +137,9 @@ pub async fn spawn_fix_lp(
     request: &RfqRequest,
 ) -> (FixLpAdapter, TwoWay) {
     let pricer: VanillaPricer = celnet_vanilla::price;
+    let fx = request
+        .fx()
+        .expect("spawn_fix_lp expects an FX-option RFQ leg");
 
     let qs = FixedQuoteSource {
         snapshot,
@@ -140,14 +148,9 @@ pub async fn spawn_fix_lp(
         validity_ticks: 1_000_000,
         pricer,
         securities: vec![dialect_fx::SecurityDef::new(
-            format!(
-                "{}{}",
-                request.pair.base.as_str(),
-                request.pair.quote.as_str()
-            )
-            .as_bytes(),
+            format!("{}{}", fx.pair.base.as_str(), fx.pair.quote.as_str()).as_bytes(),
             dialect_fx::SEC_TYPE_FXVO,
-            request.pair.quote.as_str().as_bytes(),
+            fx.pair.quote.as_str().as_bytes(),
         )],
     };
 
@@ -181,10 +184,10 @@ pub async fn spawn_fix_lp(
     // the injected snapshot, ± the half-spread. Computed here, NOT read back
     // from the adapter.
     let desc = dialect_fx::OptionDescriptor {
-        pair: request.pair,
-        option_type: request.option_type,
-        strike: request.strike,
-        strike_ccy: request.pair.quote,
+        pair: fx.pair,
+        option_type: fx.option_type,
+        strike: fx.strike,
+        strike_ccy: fx.pair.quote,
         exercise: dialect_fx::ExerciseStyle::European,
         tenor,
         settlement: celnet_types::Settlement::Deliverable,
@@ -205,4 +208,95 @@ fn acc_cfg() -> SessionConfig {
         heart_bt_int: 30,
         role: Role::Acceptor,
     }
+}
+
+/// Boot a **real** loopback FIX 4.4 rates LP: a synthetic fixed-income liquidity
+/// provider on an ephemeral `127.0.0.1` port that answers a rates `QuoteRequest(R)`
+/// — decoding it through the `celnet-fix` rates dialect (`SecurityType(167)=OIS` /
+/// `BOND`), so the [`FixLpAdapter`]'s rates request is proven a valid dialect frame
+/// — with a `Quote(S)` carrying the **injected** two-way `market` (the oracle's
+/// KNOWN ground truth, exactly like [`LadderSource`], but over a genuine FIX
+/// session — no mock). Returns a real [`FixLpAdapter`] wired to dial it.
+///
+/// The injected two-way must be representable at the 8-dp wire precision the
+/// `Quote(S)` price fields carry (choose clean values, e.g. `0.0404` / `98.50`), so
+/// it round-trips to the adapter bit-for-bit and the oracle can assert the winner.
+pub async fn spawn_fix_rates_lp(
+    lp_id: &str,
+    market: TwoWay,
+    epoch_nanos: u64,
+    valid_for_nanos: u64,
+) -> FixLpAdapter {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let bid = market.bid;
+    let offer = market.offer;
+
+    tokio::spawn(async move {
+        // Serve sequential sessions (each RFQ opens a fresh one), mirroring the FX
+        // acceptor loop but replying a rates two-way for a rates QuoteRequest.
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut session = Session::new(acc_cfg(), InMemoryStore::new());
+            let (read_half, mut write_half) = tokio::io::split(stream);
+            let mut reader = FrameReader::new(read_half);
+            while let Ok(Some(frame)) = reader.next_frame().await {
+                let Ok(action) = session.on_inbound(&frame, SENDING_TIME) else {
+                    break; // a session/dialect fault: end this connection.
+                };
+                let mut fault = false;
+                for f in &action.outbound {
+                    if write_frame(&mut write_half, f).await.is_err() {
+                        fault = true;
+                        break;
+                    }
+                }
+                if fault {
+                    break;
+                }
+                if action.deliver == Some(MsgType::QuoteRequest) {
+                    let Ok(cursor) = FrameCursor::parse(&frame) else {
+                        continue;
+                    };
+                    // Prove the adapter sent a valid rates-dialect QuoteRequest: it
+                    // must decode as an OIS or a cash-bond RFQ. A frame that is
+                    // neither is not quoted (the LP shows no price).
+                    let is_rates = dialect_rates::decode_rates_rfq(&cursor).is_ok()
+                        || dialect_rates::decode_bond_rfq(&cursor).is_ok();
+                    if !is_rates {
+                        continue;
+                    }
+                    let req_id = cursor.get(131).map(<[u8]>::to_vec).unwrap_or_default();
+                    let symbol = cursor.get(55).map(<[u8]>::to_vec).unwrap_or_default();
+                    let out = session.send_app(SENDING_TIME, |h, e| {
+                        let p = QuoteParams {
+                            quote_req_id: &req_id,
+                            quote_id: b"RQ-RATES-1",
+                            symbol: &symbol,
+                            bid_px: bid,
+                            offer_px: offer,
+                            size: 1_000_000.0,
+                            valid_until: b"20260608-12:00:05.000",
+                        };
+                        messages::build_quote(h, &p, e)
+                    });
+                    if write_frame(&mut write_half, &out).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    FixLpAdapter::new(FixLpConfig {
+        lp_id: lp_id.to_owned(),
+        dial_addr: format!("{addr}"),
+        sender_comp_id: b"TAKER".to_vec(),
+        target_comp_id: b"VENUE".to_vec(),
+        sending_time: SENDING_TIME.to_vec(),
+        epoch_nanos,
+        valid_for_nanos,
+    })
 }

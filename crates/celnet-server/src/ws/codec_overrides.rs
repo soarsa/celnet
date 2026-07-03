@@ -40,8 +40,15 @@ use serde_json::{Value, json};
 /// proto3-`optional` fields are **omitted** by the hand `.map(..)` / conditional-insert
 /// encoders; the divergence is genuinely per-message, so it is recorded here rather
 /// than baked into the generic encoder. Keyed on the simple message type name.
-const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] =
-    &["PriceResponse", "RatesPriceResponse", "PriceXvaResponse"];
+const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
+    "PriceResponse",
+    "RatesPriceResponse",
+    "PriceXvaResponse",
+    // The fixed-income taker RFQ reply (`QuoteService.RequestRatesQuote`): its
+    // presence-tracked `correlation_id` reaches the wire as `null` when absent,
+    // consistent with the other one-shot reply messages above.
+    "RatesQuote",
+];
 
 /// How the generated encoder should treat one descriptor field's JSON key.
 ///

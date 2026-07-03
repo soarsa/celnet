@@ -46,6 +46,6 @@ pub mod panel;
 pub use internal::InternalPricerSource;
 pub use lp_fix::{FixLpAdapter, FixLpConfig};
 pub use panel::{
-    DealerQuote, MultiDealerEngine, PanelError, QuoteSource, QuoteSourceReply, RankedPanel,
-    RfqRequest, TwoWay,
+    DealerQuote, FxOptionLeg, MultiDealerEngine, PanelError, QuoteSource, QuoteSourceReply,
+    RankedPanel, RatesLeg, RfqLeg, RfqRequest, TwoWay,
 };

@@ -32,20 +32,16 @@
 
 use std::time::Duration;
 
+use celnet_proto::{RatesInstrument, Side as WireSide};
 use celnet_types::{CcyPair, OptionType, Tenor};
 use futures_util::future::join_all;
 
-/// A Celnet RFQ — the request fanned to every panel source. This is the
-/// vendor-neutral, asset-class-correct descriptor of the option the client wants
-/// a two-way market on; the [`crate::lp_fix::FixLpAdapter`] translates it into a
-/// FIX `QuoteRequest(R)` and the [`crate::internal::InternalPricerSource`] prices
-/// it in-process. It carries exactly the fields both routes need (pair, type,
-/// strike, tenor) plus a stable client-minted request id for audit correlation.
+/// One FX-option RFQ leg: the vendor-neutral descriptor the
+/// [`crate::lp_fix::FixLpAdapter`] translates into a FIX `QuoteRequest(R)`
+/// instrument block. Exactly the fields the FX route needs (pair, type, strike,
+/// tenor).
 #[derive(Debug, Clone, PartialEq)]
-pub struct RfqRequest {
-    /// A stable, client-minted request identifier (audit correlation key). Every
-    /// [`DealerQuote`] in the resulting panel echoes the request this answered.
-    pub request_id: String,
+pub struct FxOptionLeg {
     /// The currency pair (`BASE/QUOTE`).
     pub pair: CcyPair,
     /// Call or put.
@@ -56,8 +52,59 @@ pub struct RfqRequest {
     pub tenor: Tenor,
 }
 
+/// One linear-rates (fixed-income) RFQ leg: the instrument the taker wants a
+/// two-way on, at `notional` on `side`, plus the FIX `Symbol(55)` an external LP
+/// is addressed with. The [`crate::lp_fix::FixLpAdapter`] translates it into a
+/// rates FIX `QuoteRequest(R)` via the `celnet-fix` rates dialect (OIS / cash
+/// bond); the native [`crate::internal::InternalPricerSource`] ignores it (its mid
+/// is injected by the edge). This is the fixed-income analogue of [`FxOptionLeg`]
+/// on the SAME [`QuoteSource`] / [`MultiDealerEngine`] ranking seam (ADR-0021
+/// uniform-asset-class — generalize the seam, never fork a bespoke FI RFQ stack).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RatesLeg {
+    /// The FIX `Symbol(55)` an external LP is addressed with (e.g. `b"USD-OIS"`).
+    pub symbol: Vec<u8>,
+    /// The instrument to quote (OIS / vanilla IRS / FRA / cash bond).
+    pub instrument: RatesInstrument,
+    /// The RFQ size the two-way is good for (curve currency, strictly positive).
+    pub notional: f64,
+    /// The taker's directional intent (`SIDE_BUY` pay-fixed / long, `SIDE_SELL`
+    /// receive-fixed / short, `SIDE_TWO_WAY` a two-way market with no firm side).
+    pub side: WireSide,
+}
+
+/// The asset-class-specific payload of an RFQ leg (ADR-0021 uniform-asset-class):
+/// exactly one variant is set. The aggregation / ranking / tie-break / last-look /
+/// booking machinery in [`MultiDealerEngine`] below stays **asset-class-agnostic**
+/// (it ranks [`TwoWay`] + timestamps only), so a fixed-income RFQ rides the SAME
+/// ranking seam as an FX-option RFQ; each [`QuoteSource`] interprets the leg it
+/// understands. This is the "generalize the seam, don't fork" contract.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RfqLeg {
+    /// An FX-option leg (pair / call-put / strike / tenor).
+    FxOption(FxOptionLeg),
+    /// A linear-rates (fixed-income) leg.
+    Rates(RatesLeg),
+}
+
+/// A Celnet RFQ — the request fanned to every panel source. This is the
+/// vendor-neutral, asset-class-correct descriptor of the instrument the client
+/// wants a two-way market on; the [`crate::lp_fix::FixLpAdapter`] translates the
+/// [`RfqLeg`] into a FIX `QuoteRequest(R)` and the
+/// [`crate::internal::InternalPricerSource`] prices it in-process. It carries the
+/// class-specific leg plus a stable client-minted request id for audit correlation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RfqRequest {
+    /// A stable, client-minted request identifier (audit correlation key). Every
+    /// [`DealerQuote`] in the resulting panel echoes the request this answered.
+    pub request_id: String,
+    /// The class-specific leg (FX option or fixed-income).
+    pub leg: RfqLeg,
+}
+
 impl RfqRequest {
-    /// Construct an RFQ for one FX-option leg.
+    /// Construct an RFQ for one FX-option leg (unchanged signature — the FX RFQ
+    /// path is byte-identical to before the [`RfqLeg`] generalization).
     #[must_use]
     pub fn new(
         request_id: impl Into<String>,
@@ -68,10 +115,52 @@ impl RfqRequest {
     ) -> Self {
         Self {
             request_id: request_id.into(),
-            pair,
-            option_type,
-            strike,
-            tenor,
+            leg: RfqLeg::FxOption(FxOptionLeg {
+                pair,
+                option_type,
+                strike,
+                tenor,
+            }),
+        }
+    }
+
+    /// Construct an RFQ for one linear-rates (fixed-income) leg — the FI analogue
+    /// of [`RfqRequest::new`], routed to a rates FIX `QuoteRequest(R)` by the
+    /// [`crate::lp_fix::FixLpAdapter`].
+    #[must_use]
+    pub fn new_rates(
+        request_id: impl Into<String>,
+        symbol: impl Into<Vec<u8>>,
+        instrument: RatesInstrument,
+        notional: f64,
+        side: WireSide,
+    ) -> Self {
+        Self {
+            request_id: request_id.into(),
+            leg: RfqLeg::Rates(RatesLeg {
+                symbol: symbol.into(),
+                instrument,
+                notional,
+                side,
+            }),
+        }
+    }
+
+    /// The FX-option leg, if this RFQ is an FX-option request; else `None`.
+    #[must_use]
+    pub fn fx(&self) -> Option<&FxOptionLeg> {
+        match &self.leg {
+            RfqLeg::FxOption(l) => Some(l),
+            RfqLeg::Rates(_) => None,
+        }
+    }
+
+    /// The linear-rates leg, if this RFQ is a fixed-income request; else `None`.
+    #[must_use]
+    pub fn rates(&self) -> Option<&RatesLeg> {
+        match &self.leg {
+            RfqLeg::Rates(l) => Some(l),
+            RfqLeg::FxOption(_) => None,
         }
     }
 }

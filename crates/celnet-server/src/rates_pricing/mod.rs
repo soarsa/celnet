@@ -32,8 +32,8 @@ use celnet_calendar::{RollRule, add_months};
 use celnet_proto::{
     AccrualBasis as WireAccrualBasis, BondInstrument, BrokenDate, CurveSet,
     DayCount as WireDayCount, FraInstrument, OisInstrument, OisPillar,
-    PaymentFrequency as WirePaymentFrequency, PillarTenor, RatesPriceRequest, RatesPricingResult,
-    Side, VanillaIrsInstrument, pillar_tenor, rates_instrument,
+    PaymentFrequency as WirePaymentFrequency, PillarTenor, RatesInstrument, RatesPriceRequest,
+    RatesPricingResult, Side, VanillaIrsInstrument, pillar_tenor, rates_instrument,
 };
 use celnet_rates::{
     AccrualBasis, BootstrapError, Fra, FraError, OisQuote, OisSchedule, PaymentFrequency,
@@ -688,6 +688,127 @@ pub fn quote_bond(bond: &BondInstrument, curve: &CurveSet) -> Result<BondQuote, 
         dv01: risk.dv01,
         yield_to_maturity: risk.yield_to_maturity.0,
     })
+}
+
+/// The maker half-spread for a fixed-income two-way **rate** market, in absolute
+/// rate (`0.00005` = 0.5bp each side ⇒ a 1bp-wide market). The single-homed
+/// constant the FIX RFQ line ([`crate::services::fix`]) and the WS/gRPC
+/// `RequestRatesQuote` taker two-way ([`quote_rates_two_way`]) both centre an
+/// OIS/IRS/FRA market on. A documented constant until a rates-specific spread
+/// model lands.
+pub const RATES_RFQ_HALF_SPREAD: f64 = 0.000_05;
+
+/// The maker half-spread for a fixed-income two-way **clean-price** market, in
+/// price points per 100 face (`0.05` = 5 cents each side ⇒ a 10-cent-wide market).
+/// The bond analogue of [`RATES_RFQ_HALF_SPREAD`] (which is in rate), single-homed
+/// for the FIX bond line and the WS/gRPC bond RFQ two-way alike.
+pub const BOND_RFQ_HALF_SPREAD: f64 = 0.05;
+
+/// A tradeable two-way FI RFQ line plus the full priced risk — the return of
+/// [`quote_rates_two_way`], the taker-side analogue of the FIX maker `PricedLine`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RatesTwoWay {
+    /// The two-way bid struck around the side-independent fair level (a rate for
+    /// OIS/IRS/FRA, a clean price for a cash bond).
+    pub bid: f64,
+    /// The two-way offer.
+    pub offer: f64,
+    /// The full linear-rates risk (PV, par rate, PV01, DV01, key-rate ladder) of
+    /// the position at the requested side.
+    pub result: RatesPricingResult,
+}
+
+/// The directional pricing side the RFQ `side` resolves to for the RISK measures.
+/// A firm `SIDE_BUY` / `SIDE_SELL` is honoured verbatim; a `SIDE_TWO_WAY` request
+/// (which [`price_rates`] rejects) reports the canonical magnitude — receive-fixed
+/// (`SIDE_SELL`, the engine-native `+1`) for a swap/FRA, long (`SIDE_BUY`, the
+/// native `+1`) for a cash bond — so the two-way always carries a well-defined
+/// risk sign while the price itself stays struck around the side-independent fair
+/// level (the par rate / clean price, neither of which depends on side).
+fn resolve_pricing_side(side: Side, is_bond: bool) -> Side {
+    match side {
+        Side::Buy => Side::Buy,
+        Side::Sell => Side::Sell,
+        Side::TwoWay => {
+            if is_bond {
+                Side::Buy
+            } else {
+                Side::Sell
+            }
+        }
+    }
+}
+
+/// Override the set instrument arm's `side` (the RFQ envelope side governs the
+/// risk sign, not any side carried on the wire instrument arm).
+fn override_arm_side(instrument: &mut RatesInstrument, side: Side) -> Result<(), RatesPriceError> {
+    match instrument
+        .instrument
+        .as_mut()
+        .ok_or(RatesPriceError::MissingInstrument)?
+    {
+        rates_instrument::Instrument::Ois(o) => o.side = side as i32,
+        rates_instrument::Instrument::Irs(i) => i.side = side as i32,
+        rates_instrument::Instrument::Fra(f) => f.side = side as i32,
+        rates_instrument::Instrument::Bond(b) => b.side = side as i32,
+    }
+    Ok(())
+}
+
+/// Price a linear-rates instrument to a tradeable two-way RFQ line — the taker-side
+/// FI quote the WS/gRPC `QuoteService.RequestRatesQuote` returns, generalising the
+/// FIX maker `rates_line` / `bond_line` clean-price machinery across ALL four
+/// instrument arms.
+///
+/// The two-way is struck around the **side-independent fair level** — the par
+/// (fair fixed) rate for an OIS/IRS/FRA (the LANDED [`price_rates`] `par_rate`),
+/// the clean price for a cash bond (the LANDED [`quote_bond`] `clean_price`) — split
+/// [`RATES_RFQ_HALF_SPREAD`] / [`BOND_RFQ_HALF_SPREAD`] either side, exactly as the
+/// FIX edge centres its markets. The returned [`RatesTwoWay::result`] is the FULL
+/// [`price_rates`] risk (PV / PV01 / DV01 / key-rate ladder) signed to the RFQ
+/// `side` (see [`resolve_pricing_side`]), so the caller sees the same authoritative
+/// engine numbers the outright `PriceRates` RPC returns — one FI pricing path, no
+/// second implementation (gated by `tests::rates_two_way_mid_matches_engine`).
+///
+/// # Errors
+///
+/// Returns [`RatesPriceError`] for a missing/invalid curve set or instrument,
+/// malformed economics, or a numeric schedule/bootstrap/yield-solve failure.
+pub fn quote_rates_two_way(
+    curve_set: &CurveSet,
+    instrument: &RatesInstrument,
+    side: Side,
+) -> Result<RatesTwoWay, RatesPriceError> {
+    let arm = instrument
+        .instrument
+        .as_ref()
+        .ok_or(RatesPriceError::MissingInstrument)?;
+    let is_bond = matches!(arm, rates_instrument::Instrument::Bond(_));
+    let pricing_side = resolve_pricing_side(side, is_bond);
+
+    // The full risk at the resolved directional side — the RFQ envelope side
+    // governs the sign, so the wire instrument arm's own `side` is overridden.
+    let mut priced = *instrument;
+    override_arm_side(&mut priced, pricing_side)?;
+    let result = price_rates(&RatesPriceRequest {
+        request_id: 0,
+        curve_set: Some(curve_set.clone()),
+        instrument: Some(priced),
+        correlation_id: None,
+    })?;
+
+    // The two-way struck around the side-independent fair level: the par rate for a
+    // swap/FRA, the clean price for a cash bond (the FIX `rates_line` / `bond_line`
+    // discipline, generalised — one `celnet-fix` `two_way_rates` helper, single-homed).
+    let (bid, offer) = match arm {
+        rates_instrument::Instrument::Bond(bond) => {
+            let clean = quote_bond(bond, curve_set)?.clean_price;
+            celnet_fix::dialect_rates::two_way_rates(clean, BOND_RFQ_HALF_SPREAD)
+        }
+        _ => celnet_fix::dialect_rates::two_way_rates(result.par_rate, RATES_RFQ_HALF_SPREAD),
+    };
+
+    Ok(RatesTwoWay { bid, offer, result })
 }
 
 #[cfg(test)]
