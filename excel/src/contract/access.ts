@@ -190,6 +190,7 @@ export type EntryPointId =
   | "ratesbook"
   | "curve"
   | "getcurve"
+  | "markcurve"
   | "instruments"
   | "marksurface"
   | "mark";
@@ -407,6 +408,20 @@ export const ENTRY_POINTS: Record<EntryPointId, EntryPoint> = {
     asset: "fixed_income",
     requiresSignIn: false,
     signInLabel: "query curves",
+  },
+  markcurve: {
+    id: "markcurve",
+    label: "CELNET.MARKCURVE",
+    surface: "cell",
+    // Mark/persist a discount curve under a fresh version — the fixed-income WRITE
+    // authority, the FI analogue of `marksurface` (a mark contributes a marked
+    // artifact). It maps to the `price` action on `fixed_income`: the same mark/write
+    // bucket as MARKSURFACE (`price · fx_options`) but for the rates asset class.
+    // Anonymous stays permissive client-side (preview); the server enforces the mark.
+    action: "price",
+    asset: "fixed_income",
+    requiresSignIn: false,
+    signInLabel: "mark a curve",
   },
   instruments: {
     id: "instruments",
