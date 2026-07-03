@@ -77,6 +77,14 @@ use celnet_proto::{
     SmileModel, SmilePoint, SubmitDeskRequestRequest, SubmitDeskRequestResponse, VanillaInputs,
     VegaBucket, VegaLadderBucket, VegaPillar, respond_desk_request_request::Response as RespondArm,
 };
+// Curve-query verb family (SurfaceService `GetCurve` / `MarkCurve` / `CurveScenario`
+// — the fixed-income market-data query surface, ADR-0021). Pure rates messages with
+// no FX-legacy wire quirks, so they encode/decode straight from the field tables
+// (round-trip proven in `tests/curve_query_ws.rs`).
+use celnet_proto::{
+    CurveParPillar, CurvePoint, CurveScenarioReprice, CurveScenarioRequest, CurveScenarioResponse,
+    GetCurveRequest, GetCurveResponse, MarkCurveRequest, MarkCurveResponse,
+};
 // Wave-4 verb family (arch item G — `ws-codec-from-proto`): the AuthService surface
 // — login/session, the user / desk / entity / book CRUD, capabilities + roles, the
 // instrument registry (`InstrumentDefDesc` + its `definition` family oneof), and the
@@ -365,6 +373,55 @@ pub fn encode_price_xva_response(r: &PriceXvaResponse) -> Value {
 #[must_use]
 pub fn encode_arb_report(a: &ArbReport) -> Value {
     encode("ArbReport", a)
+}
+
+// --- curve-query entry points (SurfaceService GetCurve / MarkCurve / CurveScenario —
+//     the fixed-income market-data query surface, ADR-0021). Descriptor-driven, so a
+//     WS curve read is byte-identical to the gRPC reply. --------------------------
+
+/// Decode a WS `get_curve` body into a [`GetCurveRequest`].
+///
+/// # Errors
+/// Malformed `curve_set` / tenor body, as a [`CodecError`].
+pub fn decode_get_curve_request(o: &Map<String, Value>) -> DResult<GetCurveRequest> {
+    decode(GetCurveRequest::MESSAGE, o)
+}
+
+/// Encode a [`GetCurveResponse`] (the read curve: points, par pillars, version) to
+/// its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_get_curve_response(r: &GetCurveResponse) -> Value {
+    encode("GetCurveResponse", r)
+}
+
+/// Decode a WS `mark_curve` body into a [`MarkCurveRequest`].
+///
+/// # Errors
+/// Malformed `curve_set` body, as a [`CodecError`].
+pub fn decode_mark_curve_request(o: &Map<String, Value>) -> DResult<MarkCurveRequest> {
+    decode(MarkCurveRequest::MESSAGE, o)
+}
+
+/// Encode a [`MarkCurveResponse`] (the marked version + bootstrapped points) to its
+/// WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_mark_curve_response(r: &MarkCurveResponse) -> Value {
+    encode("MarkCurveResponse", r)
+}
+
+/// Decode a WS `curve_scenario` body into a [`CurveScenarioRequest`].
+///
+/// # Errors
+/// Malformed `curve_set` / `instrument` / shift body, as a [`CodecError`].
+pub fn decode_curve_scenario_request(o: &Map<String, Value>) -> DResult<CurveScenarioRequest> {
+    decode(CurveScenarioRequest::MESSAGE, o)
+}
+
+/// Encode a [`CurveScenarioResponse`] (the shifted curve + optional repriced leg) to
+/// its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_curve_scenario_response(r: &CurveScenarioResponse) -> Value {
+    encode("CurveScenarioResponse", r)
 }
 
 // ---------------------------------------------------------------------------
@@ -2096,6 +2153,50 @@ impl WireBuilder for CurveSet {
                 self.reference_date = Some(req_msg::<BrokenDate>(value, "reference_date")?);
             }
             "ois_pillars" => self.ois_pillars = req_repeated::<OisPillar>(value, "ois_pillar")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+// --- curve-query request WireBuilders (decode; SurfaceService GetCurve / MarkCurve /
+//     CurveScenario). The curve source (`curve_set`) is decoded optionally — the
+//     handler enforces the required-vs-pinned rule — and the shift/tenor axes are
+//     proto3-default repeated doubles. ----------------------------------------------
+
+impl WireBuilder for GetCurveRequest {
+    const MESSAGE: &'static str = "GetCurveRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "curve_set" => self.curve_set = opt_msg::<CurveSet>(value, "curve_set")?,
+            "query_tenor_years" => self.query_tenor_years = f64_vec(value),
+            "curve_version" => self.curve_version = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for MarkCurveRequest {
+    const MESSAGE: &'static str = "MarkCurveRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "curve_set" => self.curve_set = opt_msg::<CurveSet>(value, "curve_set")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CurveScenarioRequest {
+    const MESSAGE: &'static str = "CurveScenarioRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "curve_set" => self.curve_set = opt_msg::<CurveSet>(value, "curve_set")?,
+            "parallel_shift_bp" => self.parallel_shift_bp = f64_or_zero(value),
+            "key_rate_shift_bp" => self.key_rate_shift_bp = f64_vec(value),
+            "query_tenor_years" => self.query_tenor_years = f64_vec(value),
+            "instrument" => self.instrument = opt_msg::<RatesInstrument>(value, "instrument")?,
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -4030,6 +4131,103 @@ impl WireAdapter for CurveSet {
                     .map(|p| p as &dyn WireAdapter)
                     .collect(),
             )),
+            _ => None,
+        }
+    }
+}
+
+// --- curve-query reply WireAdapters (encode; SurfaceService GetCurve / MarkCurve /
+//     CurveScenario — the fixed-income market-data query surface, ADR-0021). Pure
+//     rates tree, no FX-legacy quirks. ---------------------------------------------
+
+impl WireAdapter for CurvePoint {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor_years" => Some(WireVal::F64(self.tenor_years)),
+            "zero_rate" => Some(WireVal::F64(self.zero_rate)),
+            "discount_factor" => Some(WireVal::F64(self.discount_factor)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CurveParPillar {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "tenor_years" => Some(WireVal::F64(self.tenor_years)),
+            "par_rate" => Some(WireVal::F64(self.par_rate)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for GetCurveResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "currency" => Some(WireVal::Str(&self.currency)),
+            "reference_date" => self
+                .reference_date
+                .as_ref()
+                .map(|d| WireVal::Msg(d as &dyn WireAdapter)),
+            "points" => Some(WireVal::RepeatedMsg(
+                self.points.iter().map(|p| p as &dyn WireAdapter).collect(),
+            )),
+            "par_pillars" => Some(WireVal::RepeatedMsg(
+                self.par_pillars
+                    .iter()
+                    .map(|p| p as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "curve_version" => self.curve_version.map(WireVal::U64),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for MarkCurveResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "currency" => Some(WireVal::Str(&self.currency)),
+            "curve_version" => Some(WireVal::U64(self.curve_version)),
+            "par_pillars" => Some(WireVal::RepeatedMsg(
+                self.par_pillars
+                    .iter()
+                    .map(|p| p as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "points" => Some(WireVal::RepeatedMsg(
+                self.points.iter().map(|p| p as &dyn WireAdapter).collect(),
+            )),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CurveScenarioReprice {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "base_pv" => Some(WireVal::F64(self.base_pv)),
+            "shifted_pv" => Some(WireVal::F64(self.shifted_pv)),
+            "pv_change" => Some(WireVal::F64(self.pv_change)),
+            "dv01" => Some(WireVal::F64(self.dv01)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CurveScenarioResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "currency" => Some(WireVal::Str(&self.currency)),
+            "points" => Some(WireVal::RepeatedMsg(
+                self.points.iter().map(|p| p as &dyn WireAdapter).collect(),
+            )),
+            "reprice" => self
+                .reprice
+                .as_ref()
+                .map(|r| WireVal::Msg(r as &dyn WireAdapter)),
             _ => None,
         }
     }

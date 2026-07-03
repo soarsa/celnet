@@ -101,7 +101,7 @@ pub use readiness::{ReadinessGate, ServiceState};
 pub use services::pricefanout::{PriceTick, pair_seed, spot_at, underlying_seed};
 pub use services::quote::LpPanelConfig;
 pub use spread::SpreadModel;
-pub use surface_book::{PinError, SurfaceBook};
+pub use surface_book::{MarkedCurve, PinError, SurfaceBook};
 pub use tick::TickSource;
 pub use ws::{WsMirror, WsServices};
 

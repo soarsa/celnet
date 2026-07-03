@@ -21,8 +21,10 @@ use std::sync::Arc;
 
 use celnet_proto::surface_service_server::SurfaceService;
 use celnet_proto::{
-    ArbReport, BrokerQuoteSet, BucketedRisk, Conventions, CrossGamma, GetSmileRequest,
-    MarkSurfaceRequest, MarkSurfaceResponse, MarketContext as WireMarketContext, ScenarioPoint,
+    ArbReport, BrokenDate, BrokerQuoteSet, BucketedRisk, Conventions, CrossGamma, CurveParPillar,
+    CurvePoint, CurveScenarioReprice, CurveScenarioRequest, CurveScenarioResponse, GetCurveRequest,
+    GetCurveResponse, GetSmileRequest, MarkCurveRequest, MarkCurveResponse, MarkSurfaceRequest,
+    MarkSurfaceResponse, MarketContext as WireMarketContext, RatesPriceRequest, ScenarioPoint,
     ScenarioRequest, ScenarioResponse, Smile, SmilePoint, VegaBucket, shock_axis,
 };
 use tonic::{Request, Response, Status};
@@ -36,13 +38,16 @@ use celnet_types::{
     AtmConvention, Cut, DayCount, DeltaConvention, OptionType, PremiumStyle, Settlement,
 };
 
+use celnet_types::Time;
+
 use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
+use crate::rates_pricing::{RatesPriceError, ResolvedCurveSet, price_rates, resolve_curve_set};
 use crate::readiness::ReadinessGate;
 use crate::services::forward::{Serve, route_pair, route_underlying, serve_mode};
 use crate::services::risk::federate::Fleet;
-use crate::surface_book::SurfaceBook;
+use crate::surface_book::{MarkedCurve, SurfaceBook};
 
 /// The delta pillars (signed convention deltas) the smile is reported on: the
 /// 10Δ and 25Δ wings plus the 50Δ (ATM) — the market-standard read axis.
@@ -361,6 +366,35 @@ fn conv_to_wire(c: &ConventionSet) -> Conventions {
 /// Decode the wire conventions, mapping a decode error to `invalid_argument`.
 fn decode_conv(w: &Conventions) -> Result<ConventionSet, Status> {
     ConventionSet::decode(w).map_err(|e| Status::invalid_argument(e.to_string()))
+}
+
+/// One basis point as a decimal rate (1bp = 0.0001) — the unit the curve-scenario
+/// par-rate shifts are quoted in.
+const BP: f64 = 1e-4;
+
+/// Map a [`RatesPriceError`] to a tonic [`Status`], byte-identical to the rates
+/// pricing edge's mapping: a [`RatesPriceError::Bootstrap`] (a numeric failure on
+/// otherwise-valid input) is `internal`; every other (malformed-input) variant is
+/// `invalid_argument`.
+fn rates_err_to_status(e: RatesPriceError) -> Status {
+    let message = e.to_string();
+    match e {
+        RatesPriceError::Bootstrap(_) => Status::internal(message),
+        _ => Status::invalid_argument(message),
+    }
+}
+
+/// Project a resolved curve set's calibrating quotes onto the wire par-pillar echo:
+/// each quote's resolved final-payment year fraction paired with its par rate.
+fn par_pillars_of(resolved: &ResolvedCurveSet) -> Vec<CurveParPillar> {
+    resolved
+        .quotes
+        .iter()
+        .map(|q| CurveParPillar {
+            tenor_years: q.schedule.maturity().0,
+            par_rate: q.par_rate.0,
+        })
+        .collect()
 }
 
 /// Apply a single market-factor shock step to a market context along one axis.
@@ -700,6 +734,220 @@ impl SurfaceService for SurfaceEdge {
         Ok(Response::new(ScenarioResponse {
             points,
             bucketed_risk,
+        }))
+    }
+
+    async fn get_curve(
+        &self,
+        request: Request<GetCurveRequest>,
+    ) -> Result<Response<GetCurveResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+
+        // Linear-rates curve reads are a pure calculation over the request (bootstrap
+        // or marked-curve read) with no per-pair market snapshot to route, so — like
+        // `price_rates` — every replica computes the identical result and no fleet
+        // forwarding is needed. A pinned read resolves against the process-local
+        // marked-curve store the same node's `MarkCurve` deposited.
+
+        // Pinned: reproduce the exact marked curve of `curve_version` bit-for-bit.
+        if let Some(version) = req.curve_version {
+            let marked = self
+                .surface_book
+                .pinned_curve(version)
+                .map_err(|e| Status::failed_precondition(e.to_string()))?;
+            let points = req
+                .query_tenor_years
+                .iter()
+                .map(|&t| CurvePoint {
+                    tenor_years: t,
+                    zero_rate: marked.zero_rate(t),
+                    discount_factor: marked.discount_factor(t),
+                })
+                .collect();
+            let (year, month, day) = marked.reference_date();
+            return Ok(Response::new(GetCurveResponse {
+                currency: marked.currency().to_owned(),
+                reference_date: Some(BrokenDate { year, month, day }),
+                points,
+                par_pillars: marked
+                    .par_pillars()
+                    .iter()
+                    .map(|&(tenor_years, par_rate)| CurveParPillar {
+                        tenor_years,
+                        par_rate,
+                    })
+                    .collect(),
+                curve_version: Some(version),
+                epoch_nanos: self.clock.now_nanos(),
+            }));
+        }
+
+        // Live: bootstrap the inline curve set (wrapping the same rates path a
+        // `price_rates` uses) and read it on the requested tenor axis.
+        let curve_set = req.curve_set.ok_or_else(|| {
+            Status::invalid_argument("get_curve requires either `curve_version` or `curve_set`")
+        })?;
+        let resolved = resolve_curve_set(&curve_set).map_err(rates_err_to_status)?;
+        let points = req
+            .query_tenor_years
+            .iter()
+            .map(|&t| CurvePoint {
+                tenor_years: t,
+                zero_rate: resolved.curve.zero_rate(Time(t)).0,
+                discount_factor: resolved.curve.discount_factor(Time(t)).0,
+            })
+            .collect();
+        let par_pillars = par_pillars_of(&resolved);
+        Ok(Response::new(GetCurveResponse {
+            currency: curve_set.currency,
+            reference_date: curve_set.reference_date,
+            points,
+            par_pillars,
+            curve_version: None,
+            epoch_nanos: self.clock.now_nanos(),
+        }))
+    }
+
+    async fn mark_curve(
+        &self,
+        request: Request<MarkCurveRequest>,
+    ) -> Result<Response<MarkCurveResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+
+        let curve_set = req
+            .curve_set
+            .ok_or_else(|| Status::invalid_argument("mark_curve requires a `curve_set`"))?;
+        let resolved = resolve_curve_set(&curve_set).map_err(rates_err_to_status)?;
+
+        // The reference civil date is guaranteed present once resolution succeeds.
+        let reference = curve_set.reference_date.as_ref().ok_or_else(|| {
+            Status::invalid_argument("mark_curve requires a `curve_set.reference_date`")
+        })?;
+        let ref_tuple = (reference.year, reference.month, reference.day);
+
+        let ResolvedCurveSet { quotes, curve } = resolved;
+        let par_pillars: Vec<(f64, f64)> = quotes
+            .iter()
+            .map(|q| (q.schedule.maturity().0, q.par_rate.0))
+            .collect();
+        // The self-describing marked points, read off the SAME bootstrapped curve
+        // that is deposited — so a later pinned `GetCurve` at these tenors is
+        // bit-for-bit identical (the FI mark/pin reproducibility invariant).
+        let points: Vec<CurvePoint> = par_pillars
+            .iter()
+            .map(|&(tenor_years, _)| CurvePoint {
+                tenor_years,
+                zero_rate: curve.zero_rate(Time(tenor_years)).0,
+                discount_factor: curve.discount_factor(Time(tenor_years)).0,
+            })
+            .collect();
+
+        let version = self.surface_book.next_version();
+        self.surface_book.deposit_curve(
+            version,
+            MarkedCurve::new(
+                curve,
+                curve_set.currency.clone(),
+                ref_tuple,
+                par_pillars.clone(),
+            ),
+        );
+
+        Ok(Response::new(MarkCurveResponse {
+            currency: curve_set.currency,
+            curve_version: version,
+            par_pillars: par_pillars
+                .iter()
+                .map(|&(tenor_years, par_rate)| CurveParPillar {
+                    tenor_years,
+                    par_rate,
+                })
+                .collect(),
+            points,
+            epoch_nanos: self.clock.now_nanos(),
+        }))
+    }
+
+    async fn curve_scenario(
+        &self,
+        request: Request<CurveScenarioRequest>,
+    ) -> Result<Response<CurveScenarioResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+
+        let base_set = req
+            .curve_set
+            .ok_or_else(|| Status::invalid_argument("curve_scenario requires a `curve_set`"))?;
+        if !req.key_rate_shift_bp.is_empty()
+            && req.key_rate_shift_bp.len() != base_set.ois_pillars.len()
+        {
+            return Err(Status::invalid_argument(format!(
+                "key_rate_shift_bp length {} must match the {} curve pillars",
+                req.key_rate_shift_bp.len(),
+                base_set.ois_pillars.len()
+            )));
+        }
+
+        // Bump the calibrating par rates (parallel + optional per-pillar key-rate),
+        // in basis points, then re-bootstrap: the DV01-consistent curve shift (DV01
+        // is defined as the PV move per +1bp parallel pillar bump), so a repricing
+        // moves by ~dv01·shift_bp.
+        let parallel = req.parallel_shift_bp * BP;
+        let mut shifted_set = base_set.clone();
+        for (i, pillar) in shifted_set.ois_pillars.iter_mut().enumerate() {
+            let key_rate = req.key_rate_shift_bp.get(i).copied().unwrap_or(0.0) * BP;
+            pillar.par_rate += parallel + key_rate;
+        }
+        let shifted = resolve_curve_set(&shifted_set).map_err(rates_err_to_status)?;
+        let points = req
+            .query_tenor_years
+            .iter()
+            .map(|&t| CurvePoint {
+                tenor_years: t,
+                zero_rate: shifted.curve.zero_rate(Time(t)).0,
+                discount_factor: shifted.curve.discount_factor(Time(t)).0,
+            })
+            .collect();
+
+        // Optional repricing: price the instrument on the base and shifted curves
+        // through the SAME `price_rates` path (no forked pricer), so the PV move is a
+        // real re-bootstrap-and-reprice, and report the base DV01 as its first-order
+        // predictor.
+        let reprice = if let Some(instrument) = req.instrument {
+            // `RatesInstrument` is `Copy`, so it rides both requests by value.
+            let base_req = RatesPriceRequest {
+                request_id: 0,
+                curve_set: Some(base_set.clone()),
+                instrument: Some(instrument),
+                correlation_id: None,
+            };
+            let shifted_req = RatesPriceRequest {
+                request_id: 0,
+                curve_set: Some(shifted_set.clone()),
+                instrument: Some(instrument),
+                correlation_id: None,
+            };
+            let base = price_rates(&base_req).map_err(rates_err_to_status)?;
+            let shocked = price_rates(&shifted_req).map_err(rates_err_to_status)?;
+            Some(CurveScenarioReprice {
+                base_pv: base.pv,
+                shifted_pv: shocked.pv,
+                pv_change: shocked.pv - base.pv,
+                dv01: base.dv01,
+            })
+        } else {
+            None
+        };
+
+        Ok(Response::new(CurveScenarioResponse {
+            currency: shifted_set.currency,
+            points,
+            reprice,
         }))
     }
 }

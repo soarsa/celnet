@@ -36,7 +36,7 @@ use celnet_proto::{
     RatesPricingResult, Side, VanillaIrsInstrument, pillar_tenor, rates_instrument,
 };
 use celnet_rates::{
-    AccrualBasis, BootstrapError, Fra, FraError, OisQuote, OisSchedule, PaymentFrequency,
+    AccrualBasis, BootstrapError, Curve, Fra, FraError, OisQuote, OisSchedule, PaymentFrequency,
     ScheduleError, SwapError, VanillaSwap, bootstrap_ois, fra_par_rate, fra_risk, ois_par_rate,
     ois_risk, swap_leg_schedule, swap_par_rate, swap_risk, us_settlement_calendar,
     usd_ois_schedule_for_months, usd_ois_schedule_to_maturity, usd_sofr_ois_schedule,
@@ -293,6 +293,41 @@ fn build_quotes(curve: &CurveSet, reference: Date) -> Result<Vec<OisQuote>, Rate
         });
     }
     Ok(quotes)
+}
+
+/// The resolved + bootstrapped market for a wire [`CurveSet`]: the reference date,
+/// the calibrating OIS quotes, and the bootstrapped self-discounting discount
+/// [`Curve`]. This is the EXACT seam [`price_rates`] builds internally
+/// (`resolve_date` → `build_quotes` → `bootstrap_ois`), exposed for the
+/// `SurfaceService` curve-query verbs (`GetCurve` / `MarkCurve` / `CurveScenario`)
+/// to WRAP rather than fork — so a queried curve is bit-identical to the one a
+/// `price_rates` prices against for the same market inputs.
+pub(crate) struct ResolvedCurveSet {
+    /// The calibrating OIS quotes (one spot-starting USD-SOFR schedule per pillar);
+    /// each quote's resolved maturity + par rate is the source of the echoed
+    /// [`celnet_proto::CurveParPillar`] set.
+    pub(crate) quotes: Vec<OisQuote>,
+    /// The bootstrapped self-discounting discount curve.
+    pub(crate) curve: Curve,
+}
+
+/// Resolve and bootstrap a wire [`CurveSet`] into a [`ResolvedCurveSet`], reusing
+/// the same validation + schedule + bootstrap path [`price_rates`] uses.
+///
+/// # Errors
+///
+/// Any [`RatesPriceError`] the shared resolve/bootstrap path raises (missing/invalid
+/// reference date, unsupported currency, empty/non-increasing pillars, or a
+/// [`RatesPriceError::Bootstrap`] numeric failure).
+pub(crate) fn resolve_curve_set(curve: &CurveSet) -> Result<ResolvedCurveSet, RatesPriceError> {
+    let reference_date = curve
+        .reference_date
+        .as_ref()
+        .ok_or(RatesPriceError::MissingReferenceDate)?;
+    let reference = resolve_date(reference_date)?;
+    let quotes = build_quotes(curve, reference)?;
+    let curve = bootstrap_ois(&quotes)?;
+    Ok(ResolvedCurveSet { quotes, curve })
 }
 
 /// Price a single [`OisInstrument`] against the calibrating `quotes`, returning

@@ -1,7 +1,20 @@
-//! The marked-surface registry: a versioned book of calibrated smiles the edge
-//! prices *pinned* requests against, so a quote / stream / scenario tied to a
-//! `surface_version` reproduces exactly the surface a [`MarkSurface`] published —
-//! independent of any subsequent live re-mark.
+//! The versioned marked market-data registry: a book of calibrated
+//! [smiles](MarkedSlice) AND bootstrapped discount [curves](MarkedCurve) the edge
+//! serves *pinned* requests against, so a quote / stream / scenario / curve read
+//! tied to a version reproduces exactly the market-data a `MarkSurface` /
+//! `MarkCurve` published — independent of any subsequent live re-mark.
+//!
+//! # One store, two asset-class-agnostic market-data families (ADR-0021)
+//!
+//! The FX vol surface and the fixed-income discount curve are the two marked
+//! market-data families a desk pins against, and they share the SAME versioning
+//! seam: one monotonic [version authority](SurfaceBook::next_version) stamps both,
+//! and each family has its own version→mark map ([`versions`](SurfaceBook) for
+//! surfaces, [`curves`](SurfaceBook) for curves). `MarkSurface` deposits a
+//! calibrated smile under a fresh version; `MarkCurve` deposits a bootstrapped curve
+//! under a fresh version through the *same* authority — the store is generalized to
+//! hold curves alongside surfaces rather than forked into a bespoke curve book, so
+//! fixed income rides the market-data query seam the FX surface already has.
 //!
 //! # Why versioned marks (the contract's `surface_version`)
 //!
@@ -39,7 +52,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use celnet_core::Smile;
+use celnet_rates::Curve;
 use celnet_surface::CalibratedSmile;
+use celnet_types::Time;
 
 /// One calibrated tenor slice deposited under a surface version: the smile plus
 /// the forward and vol-time it was calibrated at (needed to read its vol).
@@ -101,19 +116,99 @@ struct MarkedVersion {
     pairs: HashMap<String, MarkedPair>,
 }
 
-/// The versioned marked-surface registry shared across the edge services.
+/// One marked (versioned, pinned) discount curve — the fixed-income analogue of a
+/// [`MarkedVersion`]'s per-pair smiles. Holds the bootstrapped discount [`Curve`]
+/// (behind an `Arc` so a pinned read is a cheap handle clone, never a curve copy)
+/// plus the metadata a `GetCurve` echoes: the currency, the reference (spot-anchor)
+/// date, and the resolved calibrating par pillars.
+///
+/// A pinned `GetCurve` reads its zero rates / discount factors straight off this
+/// stored curve, so it is bit-for-bit identical to the curve the `MarkCurve`
+/// bootstrapped (the FI counterpart of the pinned-surface reproducibility).
+#[derive(Debug, Clone)]
+pub struct MarkedCurve {
+    /// The bootstrapped self-discounting discount curve.
+    curve: Arc<Curve>,
+    /// ISO 4217 currency of the curve (echoed on a `GetCurve`).
+    currency: String,
+    /// The curve reference (spot-anchor) civil date `(year, month, day)`, echoed as
+    /// the `GetCurveResponse.reference_date`.
+    reference_date: (i32, u32, u32),
+    /// The resolved calibrating par pillars `(tenor_years, par_rate)`, echoed as the
+    /// `GetCurveResponse.par_pillars`.
+    par_pillars: Vec<(f64, f64)>,
+}
+
+impl MarkedCurve {
+    /// Assemble a marked curve from a bootstrapped [`Curve`], its currency, the
+    /// reference civil date `(year, month, day)`, and the resolved par pillars.
+    #[must_use]
+    pub fn new(
+        curve: Curve,
+        currency: String,
+        reference_date: (i32, u32, u32),
+        par_pillars: Vec<(f64, f64)>,
+    ) -> Self {
+        Self {
+            curve: Arc::new(curve),
+            currency,
+            reference_date,
+            par_pillars,
+        }
+    }
+
+    /// The continuously-compounded zero rate z(t) at `tenor_years` off the marked
+    /// curve.
+    #[must_use]
+    pub fn zero_rate(&self, tenor_years: f64) -> f64 {
+        self.curve.zero_rate(Time(tenor_years)).0
+    }
+
+    /// The discount factor DF(t) at `tenor_years` off the marked curve.
+    #[must_use]
+    pub fn discount_factor(&self, tenor_years: f64) -> f64 {
+        self.curve.discount_factor(Time(tenor_years)).0
+    }
+
+    /// The curve currency.
+    #[must_use]
+    pub fn currency(&self) -> &str {
+        &self.currency
+    }
+
+    /// The curve reference (spot-anchor) civil date `(year, month, day)`.
+    #[must_use]
+    pub fn reference_date(&self) -> (i32, u32, u32) {
+        self.reference_date
+    }
+
+    /// The resolved calibrating par pillars `(tenor_years, par_rate)`.
+    #[must_use]
+    pub fn par_pillars(&self) -> &[(f64, f64)] {
+        &self.par_pillars
+    }
+}
+
+/// The versioned marked market-data registry shared across the edge services.
 ///
 /// Construct one with [`SurfaceBook::new`], share it behind an `Arc`, and hand it
-/// to every edge. `MarkSurface` deposits via [`SurfaceBook::deposit`]; pinned
-/// price paths resolve via [`SurfaceBook::pinned_vol`].
+/// to every edge. `MarkSurface` deposits via [`SurfaceBook::deposit`] and pinned
+/// price paths resolve via [`SurfaceBook::pinned_vol`]; `MarkCurve` deposits via
+/// [`SurfaceBook::deposit_curve`] and a pinned `GetCurve` resolves via
+/// [`SurfaceBook::pinned_curve`] — both stamped by the same
+/// [version authority](SurfaceBook::next_version).
 #[derive(Debug)]
 pub struct SurfaceBook {
-    /// The monotonic version stamped on the next [`SurfaceBook::deposit`]. Starts
-    /// at 1 so version `0` is never a valid mark (a sentinel a client can treat as
-    /// "unmarked").
+    /// The monotonic version stamped on the next [`SurfaceBook::deposit`] /
+    /// [`SurfaceBook::deposit_curve`]. Starts at 1 so version `0` is never a valid
+    /// mark (a sentinel a client can treat as "unmarked"). One authority stamps
+    /// both the surface and the curve families.
     next_version: AtomicU64,
-    /// The deposited versions, keyed by their stamped version id.
+    /// The deposited surface versions, keyed by their stamped version id.
     versions: RwLock<HashMap<u64, MarkedVersion>>,
+    /// The deposited curve versions, keyed by their stamped version id — the
+    /// fixed-income family alongside the surfaces (never a forked store).
+    curves: RwLock<HashMap<u64, MarkedCurve>>,
 }
 
 impl Default for SurfaceBook {
@@ -129,6 +224,7 @@ impl SurfaceBook {
         Self {
             next_version: AtomicU64::new(1),
             versions: RwLock::new(HashMap::new()),
+            curves: RwLock::new(HashMap::new()),
         }
     }
 
@@ -202,6 +298,43 @@ impl SurfaceBook {
     #[must_use]
     pub fn has_version(&self, version: u64) -> bool {
         self.versions
+            .read()
+            .expect("surface book not poisoned")
+            .contains_key(&version)
+    }
+
+    /// Deposit a bootstrapped discount [`MarkedCurve`] under `version` (the
+    /// fixed-income analogue of [`SurfaceBook::deposit`]). The `version` must come
+    /// from [`SurfaceBook::next_version`], so surfaces and curves share one
+    /// monotonic version space.
+    pub fn deposit_curve(&self, version: u64, curve: MarkedCurve) {
+        self.curves
+            .write()
+            .expect("surface book not poisoned")
+            .insert(version, curve);
+    }
+
+    /// Resolve the marked curve deposited under `version` (a cheap handle clone; the
+    /// curve itself is `Arc`-backed). The fixed-income analogue of
+    /// [`SurfaceBook::pinned_vol`].
+    ///
+    /// # Errors
+    ///
+    /// [`PinError::UnknownVersion`] if no curve was deposited under `version` (the
+    /// pin cannot be honoured — the caller surfaces `failed_precondition`).
+    pub fn pinned_curve(&self, version: u64) -> Result<MarkedCurve, PinError> {
+        self.curves
+            .read()
+            .expect("surface book not poisoned")
+            .get(&version)
+            .cloned()
+            .ok_or(PinError::UnknownVersion(version))
+    }
+
+    /// `true` if a curve has been deposited under `version`.
+    #[must_use]
+    pub fn has_curve_version(&self, version: u64) -> bool {
+        self.curves
             .read()
             .expect("surface book not poisoned")
             .contains_key(&version)

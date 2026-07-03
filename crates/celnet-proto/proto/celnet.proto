@@ -3180,6 +3180,162 @@ service SurfaceService {
   rpc MarkSurface(MarkSurfaceRequest) returns (MarkSurfaceResponse);
   // Reprice an instrument across a spot/vol/rate shock grid.
   rpc Scenario(ScenarioRequest) returns (ScenarioResponse);
+  // Read a marked/bootstrapped discount curve on a tenor axis — the fixed-income
+  // market-data-query analogue of `GetSmile` (zero rates / discount factors / par
+  // pillars). Bootstraps an inline `curve_set` or reads a `MarkCurve`d version.
+  rpc GetCurve(GetCurveRequest) returns (GetCurveResponse);
+  // Mark/persist a bootstrapped discount curve under a fresh pinned version — the
+  // FI analogue of `MarkSurface` (same versioning/pinning seam, so a later
+  // `GetCurve` reproduces the exact marked curve).
+  rpc MarkCurve(MarkCurveRequest) returns (MarkCurveResponse);
+  // Bump-and-reprice curve scenario: a parallel (+ optional per-pillar key-rate)
+  // shift of the calibrating par rates → the shifted curve (+ optional repriced PV)
+  // — the FI analogue of the vol-surface `Scenario`.
+  rpc CurveScenario(CurveScenarioRequest) returns (CurveScenarioResponse);
+}
+
+// ===========================================================================
+// curve query — the fixed-income market-data query surface (ADR-0021: the
+// asset-class-agnostic market-data query seam the FX vol surface already has,
+// generalized so fixed income rides it too). Mirrors the `GetSmile` /
+// `MarkSurface` / `Scenario` verb shapes on the discount-curve domain.
+// ===========================================================================
+
+// A queried point on a discount curve: the continuously-compounded zero rate and
+// the discount factor at `tenor_years` (a year fraction measured from the curve
+// reference/spot-anchor date). The curve analogue of a `SmilePoint`.
+message CurvePoint {
+  // The tenor (year fraction from the reference date) this point reports.
+  double tenor_years = 1;
+  // The continuously-compounded zero rate z(t) = -ln DF(t) / t.
+  double zero_rate = 2;
+  // The discount factor DF(t) = exp(-z(t)·t).
+  double discount_factor = 3;
+}
+
+// A calibrating par pillar of a curve resolved to its final-payment year fraction
+// (from spot) and its observed par (fair fixed) rate — the curve analogue of a
+// `Smile`'s echoed `broker_quotes`.
+message CurveParPillar {
+  // The resolved final-payment year fraction from spot for this pillar.
+  double tenor_years = 1;
+  // The observed par (fair fixed) rate as a decimal (0.0405 = 4.05%).
+  double par_rate = 2;
+}
+
+// A request to read a marked/bootstrapped discount curve on a tenor axis — the
+// fixed-income analogue of `GetSmileRequest`. Exactly one curve source: when
+// `curve_version` is present the marked curve of that version is read from the
+// store (mirroring the pinned-price path); otherwise the inline `curve_set` is
+// bootstrapped live.
+message GetCurveRequest {
+  // The calibrating curve set to bootstrap and read. Required when no
+  // `curve_version` is pinned; ignored when a `curve_version` is supplied.
+  CurveSet curve_set = 1;
+  // The tenors (year fractions from the reference date) to report zero rates /
+  // discount factors at.
+  repeated double query_tenor_years = 2;
+  // Optional pin to a `MarkCurve`d version (presence-tracked): present ⇒ read the
+  // marked curve from the store; absent ⇒ bootstrap `curve_set` live. A *data*
+  // field selecting a marked curve, never an API version (the contract is
+  // unversioned, rule 9). An unknown version is `failed_precondition`.
+  optional uint64 curve_version = 3;
+}
+
+// The read curve: the currency + reference date, the queried points, the echoed
+// calibrating par pillars, and (when pinned) the marked version — the FI analogue
+// of `Smile`.
+message GetCurveResponse {
+  // ISO 4217 currency of the curve (USD for the P0 arm).
+  string currency = 1;
+  // The curve reference (spot-anchor) date the tenor axis is measured from.
+  BrokenDate reference_date = 2;
+  // The queried points (zero rate + discount factor per requested tenor).
+  repeated CurvePoint points = 3;
+  // The calibrating par pillars echoed (resolved tenor + par rate).
+  repeated CurveParPillar par_pillars = 4;
+  // The marked version this curve was read from (presence-tracked): present when
+  // the request pinned a `curve_version`; absent for a live inline bootstrap.
+  optional uint64 curve_version = 5;
+  // Read time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 6;
+}
+
+// A request to mark/persist a bootstrapped discount curve under a fresh pinned
+// version — the FI analogue of `MarkSurfaceRequest`. The curve is bootstrapped
+// from the calibrating `curve_set` and deposited through the same versioning seam
+// `MarkSurface` uses, so a later `GetCurve` pinned to the returned version
+// reproduces this exact curve.
+message MarkCurveRequest {
+  // The calibrating curve set to bootstrap and persist.
+  CurveSet curve_set = 1;
+}
+
+// The result of a curve mark: a server-assigned curve version id, the resolved par
+// pillars, and the bootstrapped points at the pillar tenors — the FI analogue of
+// `MarkSurfaceResponse`.
+message MarkCurveResponse {
+  // ISO 4217 currency of the marked curve.
+  string currency = 1;
+  // A monotonic server-assigned curve version id for this mark (the same version
+  // authority `MarkSurface` stamps; a `GetCurve` pins against it).
+  uint64 curve_version = 2;
+  // The resolved calibrating par pillars marked.
+  repeated CurveParPillar par_pillars = 3;
+  // The bootstrapped points (zero rate + discount factor) at the pillar tenors —
+  // the self-describing marked curve.
+  repeated CurvePoint points = 4;
+  // Mark time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 5;
+}
+
+// The repriced instrument leg of a curve scenario: the PV before and after the
+// shift, the resulting PV change, and the base curve DV01 (PV change per +1bp
+// parallel pillar bump) so a consumer can check `pv_change ~= dv01 · shift_bp`.
+message CurveScenarioReprice {
+  // The instrument PV on the unshifted (base) curve.
+  double base_pv = 1;
+  // The instrument PV on the shifted curve.
+  double shifted_pv = 2;
+  // The PV change (`shifted_pv - base_pv`).
+  double pv_change = 3;
+  // The base curve DV01 (PV change per +1bp parallel bump of every pillar), signed
+  // per the instrument `side` — the first-order predictor of `pv_change`.
+  double dv01 = 4;
+}
+
+// A bump-and-reprice curve scenario — the FI analogue of the vol-surface
+// `ScenarioRequest`. Applies a parallel (and optional per-pillar key-rate) shift to
+// the calibrating par rates, re-bootstraps, and reports the shifted curve on the
+// query axis; if an `instrument` is supplied it is repriced on the base and shifted
+// curves so the desk sees the PV impact.
+message CurveScenarioRequest {
+  // The base calibrating curve set to shift and reprice against.
+  CurveSet curve_set = 1;
+  // The parallel shift applied to every pillar's par rate, in basis points
+  // (e.g. 25.0 = +25bp). Positive raises rates (lowers discount factors).
+  double parallel_shift_bp = 2;
+  // Optional per-pillar key-rate shifts in basis points, parallel to
+  // `curve_set.ois_pillars`. Empty ⇒ parallel-only; otherwise its length must equal
+  // the pillar count and each entry is added to the corresponding pillar on top of
+  // the parallel shift (the key-rate scenario).
+  repeated double key_rate_shift_bp = 3;
+  // The tenors (year fractions) to report the shifted curve at.
+  repeated double query_tenor_years = 4;
+  // Optional instrument to reprice on the base and shifted curves
+  // (presence-tracked): absent ⇒ only the shifted curve is returned.
+  RatesInstrument instrument = 5;
+}
+
+// The shifted curve on the query axis, plus the optional repriced instrument leg —
+// the FI analogue of `ScenarioResponse`.
+message CurveScenarioResponse {
+  // ISO 4217 currency of the curve.
+  string currency = 1;
+  // The shifted curve points (zero rate + discount factor per requested tenor).
+  repeated CurvePoint points = 2;
+  // The repriced instrument leg, present when the request carried an `instrument`.
+  CurveScenarioReprice reprice = 3;
 }
 
 // ===========================================================================

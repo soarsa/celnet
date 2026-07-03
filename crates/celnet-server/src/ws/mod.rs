@@ -835,6 +835,35 @@ async fn handle_unary(
                 generated_codec::encode_scenario_response
             )
         }
+        // The SurfaceService curve-query verbs (the fixed-income market-data query
+        // surface, ADR-0021) run on the descriptor-driven generated codec: pure rates
+        // messages with no FX-legacy quirks, so they decode/encode straight from the
+        // field tables (round-trip proven in `generated_codec`'s unit tests + the WS
+        // e2e in `tests/curve_query_ws.rs`).
+        "get_curve" => {
+            let req = decode!(generated_codec::decode_get_curve_request(o));
+            call!(
+                services.surface.get_curve(Request::new(req)),
+                "get_curve_response",
+                generated_codec::encode_get_curve_response
+            )
+        }
+        "mark_curve" => {
+            let req = decode!(generated_codec::decode_mark_curve_request(o));
+            call!(
+                services.surface.mark_curve(Request::new(req)),
+                "mark_curve_response",
+                generated_codec::encode_mark_curve_response
+            )
+        }
+        "curve_scenario" => {
+            let req = decode!(generated_codec::decode_curve_scenario_request(o));
+            call!(
+                services.surface.curve_scenario(Request::new(req)),
+                "curve_scenario_response",
+                generated_codec::encode_curve_scenario_response
+            )
+        }
         // ---- risk: server-side hierarchical risk over the live book ----------
         // The RiskService verbs run on the descriptor-driven generated codec (arch
         // item G — `ws-codec-from-proto`, wave 3): the `ws_codec_differential` harness
