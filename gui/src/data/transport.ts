@@ -22,6 +22,8 @@ import type {
   AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
+  CombinedTailRiskRequest,
+  CombinedTailRiskResponse,
   BookRatesPositionRequest,
   BookRatesPositionResponse,
   BrokerQuoteSet,
@@ -322,6 +324,22 @@ export interface CelnetTransport {
     request: AggregateRatesRiskRequest,
     conventions: Conventions,
   ): Promise<AggregateRatesRiskResponse>;
+
+  /**
+   * RiskService.CombinedTailRisk — the C2c "true single VaR engine": ONE
+   * non-additive tail cube over a portfolio's vanilla FX option legs AND its
+   * linear-FI (OIS-swap) legs, by full joint bump-and-revalue over aligned
+   * (options-shock, rate-shock) scenarios, plus the FI signed key-rate DV01
+   * ladder and signed parallel DV01. Pure of the edge — the whole portfolio +
+   * scenario config travels inline — so both transports satisfy it identically:
+   * the offline source reprices + reduces in-browser (mirroring
+   * `celnet_risk_cube::fi::combined_tail_risk`); the live transport issues the
+   * `combined_tail_risk` RPC to celnet-server. Options-only ⇒ the options VaR;
+   * FI-only ⇒ the rate VaR; a mixed book shows the joint diversification.
+   */
+  combinedTailRisk(
+    request: CombinedTailRiskRequest,
+  ): Promise<CombinedTailRiskResponse>;
 
   /**
    * RiskService.DrillRisk — drill one node into child sub-nodes at a finer

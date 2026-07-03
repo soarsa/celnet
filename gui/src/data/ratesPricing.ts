@@ -33,7 +33,11 @@
 import type {
   BondInstrument,
   BrokenDate,
+  CombinedTailRiskRequest,
+  CombinedTailRiskResponse,
   FraInstrument,
+  JointTailScenario,
+  MarketContext,
   OisInstrument,
   PaymentFrequency,
   PillarTenor,
@@ -42,8 +46,15 @@ import type {
   RatesInstrument,
   RatesLegDayCount,
   RatesPricingResult,
+  TailRiskCurvePillar,
+  TailRiskFiPosition,
+  TailRiskKeyRate,
+  TailRiskOptionLeg,
   VanillaIrsInstrument,
+  VarEs,
 } from "./contract";
+import { pillarYears } from "./contract";
+import { vanillaLegGreeks } from "./pricing";
 
 /** One basis point, in absolute rate terms. */
 const ONE_BP = 1e-4;
@@ -1438,6 +1449,207 @@ export function sampleCurve(
       zero: zeroRateAt(discount, t),
       forward: instantaneousForwardAt(discount, t),
     };
+  }
+  return out;
+}
+
+// ===========================================================================
+// combined options+FI JOINT tail risk (RiskService.CombinedTailRisk) — the
+// in-browser engine mirroring `celnet_risk_cube::fi::combined_tail_risk`.
+// ===========================================================================
+//
+// ONE non-additive tail cube over a portfolio's vanilla FX option legs AND its
+// linear-FI (OIS-swap) legs, by full JOINT bump-and-revalue over aligned
+// (options-shock, rate-shock) scenarios. Each engine primitive reproduces the
+// server's exact formula — the FI side is bit-faithful (the SAME log-linear-on-
+// log-DF discounting + self-discounting OIS PV `N·(K·A − (DF(start) − DF(mat)))`
+// the offline rates pricer already validates against the live edge), and the
+// options side reuses the identical Garman-Kohlhagen closed form
+// ({@link vanillaLegGreeks}) under the SAME carry shift (`r_dom += Δr`,
+// `r_for += Δr − Δb`) the server's `shift_carry` applies — reduced by the SAME
+// tail primitive `celnet_core::tail_var_es`. So it agrees with the live edge to
+// floating-point rounding AND satisfies the reduction identities: options-only ⇒
+// the options VaR, FI-only ⇒ the rate VaR, mixed ⇒ the joint (diversifying) tail.
+
+/** The default VaR/ES confidence level (mirrors the server's `DEFAULT_ALPHA`). */
+const DEFAULT_TAIL_ALPHA = 0.99;
+
+/** Build a discount curve from `(t, continuously-compounded zero rate)` pillars —
+ * the origin `(0, DF = 1)` prepended, then log-linear-on-log-DF (mirrors
+ * `celnet_rates::Curve::from_zero_rates`). */
+function curveFromZeroPillars(
+  pillars: readonly TailRiskCurvePillar[],
+): DiscountCurve {
+  const dfs = [
+    { t: 0, df: 1 },
+    ...pillars.map((p) => ({ t: p.t, df: Math.exp(-p.zeroRate * p.t) })),
+  ];
+  return curveFromDiscountFactors(dfs);
+}
+
+/** The scenario's shocked curve: every pillar zero rate shifted by its aligned
+ * `rateShifts` entry (mirrors `RatePillars::shocked_curve`). */
+function shockedZeroCurve(
+  pillars: readonly TailRiskCurvePillar[],
+  shifts: readonly number[],
+): DiscountCurve {
+  return curveFromZeroPillars(
+    pillars.map((p, i) => ({ t: p.t, zeroRate: p.zeroRate + (shifts[i] ?? 0) })),
+  );
+}
+
+/** The signed PV of one OIS swap leg on `curve`: the self-discounting identity
+ * `N·(K·A − (DF(start) − DF(maturity)))` (receive-fixed), negated for pay-fixed
+ * (mirrors `celnet_rates::ois_pv` + `FiPosition::OisSwap::pv_on_curve`). */
+function tailOisPvOnCurve(
+  curve: DiscountCurve,
+  swap: TailRiskFiPosition["oisSwap"],
+): number {
+  let annuity = 0;
+  for (const p of swap.periods) annuity += p.accrual * discountFactor(curve, p.pay);
+  const dfStart = discountFactor(curve, swap.start);
+  const dfMat = discountFactor(curve, swap.periods[swap.periods.length - 1]!.pay);
+  const receive = swap.notional * (swap.fixedRate * annuity - (dfStart - dfMat));
+  return swap.receiveFixed ? receive : -receive;
+}
+
+/** The FI book present value on `curve`, summed across the OIS legs. */
+function fiPortfolioPv(
+  curve: DiscountCurve,
+  legs: readonly TailRiskFiPosition[],
+): number {
+  let pv = 0;
+  for (const leg of legs) pv += tailOisPvOnCurve(curve, leg.oisSwap);
+  return pv;
+}
+
+/** One option leg's P&L under a joint scenario: `(price(shocked) − price(base)) ·
+ * notionalBase`, the shocked market applying spot·(1+spotRel), vol+volAbs and the
+ * carry shift `r_dom += discountAbs`, `r_for += discountAbs − carryAbs` (mirrors
+ * `position_pnl` + `shift_carry`). */
+function optionLegPnl(leg: TailRiskOptionLeg, s: JointTailScenario): number {
+  const isCall = leg.optionType === "CALL";
+  const base: MarketContext = {
+    spot: leg.spot,
+    vol: leg.vol,
+    rDom: leg.rDom,
+    rFor: leg.rFor,
+  };
+  const shocked: MarketContext = {
+    spot: leg.spot * (1 + s.spotRel),
+    vol: leg.vol + s.volAbs,
+    rDom: leg.rDom + s.discountAbs,
+    rFor: leg.rFor + (s.discountAbs - s.carryAbs),
+  };
+  const basePrice = vanillaLegGreeks(isCall, leg.strike, base, leg.t).price;
+  const shockedPrice = vanillaLegGreeks(isCall, leg.strike, shocked, leg.t).price;
+  return (shockedPrice - basePrice) * leg.notionalBase;
+}
+
+/** The shared VaR/ES tail reduction over a P&L slice — sort ascending, take the
+ * `⌊(1−α)·n⌋`-tail (floored at 1, capped at n): VaR is the tail-boundary loss, ES
+ * the mean tail loss, both floored at 0 (bit-identical to `celnet_core::tail_var_es`). */
+function tailVarEs(pnl: readonly number[], alpha: number): VarEs {
+  if (pnl.length === 0) return { var: 0, es: 0 };
+  const sorted = [...pnl].sort((a, b) => a - b);
+  const n = sorted.length;
+  const tail = Math.min(Math.max(Math.floor((1 - alpha) * n), 1), n);
+  let tailSum = 0;
+  for (let i = 0; i < tail; i += 1) tailSum += sorted[i]!;
+  const es = -(tailSum / tail);
+  const varv = -sorted[tail - 1]!;
+  return { var: Math.max(varv, 0), es: Math.max(es, 0) };
+}
+
+/**
+ * Compute the joint options+FI tail risk for one inline request — the offline
+ * counterpart of `RiskService.CombinedTailRisk`. Reproduces the cube engine's
+ * exact algorithm: per aligned joint scenario the option legs reprice under the
+ * spot/vol/carry shock and the FI legs reprice on the aligned shocked curve, their
+ * P&L is SUMMED, and the distribution is reduced by the one tail primitive; the FI
+ * key-rate DV01 ladder and signed parallel DV01 are the per-pillar / all-pillar
+ * +1bp bumps (independent of the scenario set).
+ *
+ * @throws {RatesPricingError} when FI legs are present but a scenario's
+ * `rateShifts` length does not match the base-curve pillar count — exactly the
+ * server's `RateRiskError::ShockLength` refusal (the FI reprice is undefined
+ * otherwise), never a fabricated result.
+ */
+export function combinedTailRiskOffline(
+  req: CombinedTailRiskRequest,
+): CombinedTailRiskResponse {
+  const alpha =
+    req.alpha !== undefined && req.alpha !== 0 ? req.alpha : DEFAULT_TAIL_ALPHA;
+  const pillars = req.baseCurve;
+  const legs = req.fiPositions;
+  const hasFi = legs.length > 0;
+
+  // An empty FI book contributes zero and needs no base curve (the options-only
+  // case is a pure options reduction), exactly as `node_var_es_joint` short-circuits.
+  const baseCurve = hasFi ? curveFromZeroPillars(pillars) : undefined;
+  const basePv = baseCurve ? fiPortfolioPv(baseCurve, legs) : 0;
+
+  // Joint per-scenario portfolio P&L: options (spot/vol/carry) PLUS FI (aligned
+  // rate shock) — one market state per scenario index.
+  const pnl = req.scenarios.map((s) => {
+    const optPnl = req.optionLegs.reduce(
+      (acc, leg) => acc + optionLegPnl(leg, s),
+      0,
+    );
+    let fiPnl = 0;
+    if (baseCurve) {
+      if (s.rateShifts.length !== pillars.length) {
+        throw new RatesPricingError(
+          `rate shock length ${s.rateShifts.length} does not match base-curve pillar count ${pillars.length}`,
+        );
+      }
+      fiPnl = fiPortfolioPv(shockedZeroCurve(pillars, s.rateShifts), legs) - basePv;
+    }
+    return optPnl + fiPnl;
+  });
+  const jointVarEs = tailVarEs(pnl, alpha);
+
+  // The FI key-rate axis + signed parallel DV01 — the per-pillar / all-pillar +1bp
+  // bumps, independent of the scenario set (empty / zero when there are no FI legs).
+  let keyRate: TailRiskKeyRate[] = [];
+  let fiParallelDv01 = 0;
+  if (baseCurve) {
+    keyRate = pillars.map((p, i) => {
+      const shifts = pillars.map((_, j) => (j === i ? ONE_BP : 0));
+      return {
+        tenorYears: p.t,
+        dv01: fiPortfolioPv(shockedZeroCurve(pillars, shifts), legs) - basePv,
+      };
+    });
+    const parallel = pillars.map(() => ONE_BP);
+    fiParallelDv01 =
+      fiPortfolioPv(shockedZeroCurve(pillars, parallel), legs) - basePv;
+  }
+
+  const res: CombinedTailRiskResponse = { jointVarEs, keyRate, fiParallelDv01 };
+  if (req.correlationId !== undefined) res.correlationId = req.correlationId;
+  return res;
+}
+
+/**
+ * A genuine base discount curve for the joint-tail view: the default USD-SOFR
+ * ladder bootstrapped to a self-discounting curve, sampled as
+ * `(integer-year tenor, continuously-compounded zero rate)` pillars. A real
+ * calibrating market (not a stub) — the SAME curve the rates lens prices off — so
+ * an offline joint tail agrees with a live edge that uses the same curve.
+ */
+export function defaultTailRiskBaseCurve(): TailRiskCurvePillar[] {
+  const curve = bootstrapCurveFromSet(DEFAULT_USD_SOFR_CURVE);
+  const ref = DEFAULT_USD_SOFR_CURVE.referenceDate;
+  const out: TailRiskCurvePillar[] = [];
+  for (const pillar of DEFAULT_USD_SOFR_CURVE.pillars) {
+    const years = pillarYears(pillar.tenor);
+    if (years === undefined) continue;
+    // Sample the zero rate at the pillar's true ACT/365F maturity, but label the
+    // pillar by its whole-year tenor so the key-rate ladder reads cleanly and the
+    // annual OIS pay-times align.
+    const zeroRate = zeroRateAt(curve, pillarMaturityYears(pillar.tenor, ref));
+    out.push({ t: years, zeroRate });
   }
   return out;
 }

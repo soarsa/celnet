@@ -18,6 +18,8 @@ import type {
   AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
+  CombinedTailRiskRequest,
+  CombinedTailRiskResponse,
   BookRatesPositionRequest,
   BookRatesPositionResponse,
   BrokerQuoteSet,
@@ -113,6 +115,7 @@ import { CAPABILITY_ACTIONS, CAPABILITY_ASSETS, pillarYears } from "./contract";
 import { forward, priceInstrument, strikeFromDelta } from "./pricing";
 import {
   DEFAULT_USD_SOFR_CURVE,
+  combinedTailRiskOffline,
   priceRatesOffline,
   priceRatesInstrumentOffline,
   bootstrapCurveFromSet,
@@ -1324,6 +1327,21 @@ export class MockTransport implements CelnetTransport {
     if (request.correlationId !== undefined)
       res.correlationId = request.correlationId;
     return res;
+  }
+
+  async combinedTailRisk(
+    request: CombinedTailRiskRequest,
+  ): Promise<CombinedTailRiskResponse> {
+    // A genuine in-browser JOINT tail cube — NOT a fabricated stub. The option
+    // legs + FI legs are repriced through the SAME closed forms the live edge
+    // mirrors (Garman-Kohlhagen via `pricing`, the self-discounting OIS PV via
+    // `ratesPricing`), summed per aligned scenario, and reduced by the one
+    // platform-wide VaR/ES tail primitive — reproducing
+    // `celnet_risk_cube::fi::combined_tail_risk` (options-only ⇒ the options VaR,
+    // FI-only ⇒ the rate VaR, mixed ⇒ the joint diversifying tail). A malformed
+    // request (a rate shock whose length ≠ the base-curve pillar count) rejects
+    // the whole call, exactly as the live edge does.
+    return combinedTailRiskOffline(request);
   }
 
   async drillRisk(request: DrillRiskRequest): Promise<DrillRiskResponse> {

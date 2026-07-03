@@ -2799,6 +2799,197 @@ export interface AggregateRatesRiskResponse {
 }
 
 // ---------------------------------------------------------------------------
+// combined options+FI JOINT tail risk (`RiskService.CombinedTailRisk`) — the C2c
+// "true single VaR engine". ONE non-additive cube over a portfolio's vanilla FX
+// option legs AND its linear-FI (OIS-swap) legs, by full joint bump-and-revalue
+// over aligned (options-shock, rate-shock) scenarios, plus the FI signed key-rate
+// DV01 ladder and signed parallel DV01. Mirrors `celnet.wire` field-for-field
+// (`crates/celnet-proto/proto/celnet.proto`); the whole portfolio + scenario
+// config travels INLINE on the request (a pure calculation — no store/market
+// read), so every replica computes the identical result. Options-only ⇒ empty
+// `fiPositions` (reduces to the options VaR); FI-only ⇒ empty `optionLegs`
+// (reduces to the rate VaR); a mixed book shows the joint cross-risk-class
+// diversification.
+// ---------------------------------------------------------------------------
+
+/**
+ * One vanilla FX option leg of the joint tail-risk portfolio
+ * (`celnet.wire.TailRiskOptionLeg`): the raw Garman-Kohlhagen inputs plus quoted
+ * conventions — exactly the arguments of the server's `PositionRisk::fx`. The
+ * canonical convention-free risk is re-derived server-side from these inputs; the
+ * carry rides as flat `rDom`/`rFor` (the FX two-rate carry).
+ */
+export interface TailRiskOptionLeg {
+  /** The currency pair (BASE/QUOTE). */
+  pair: CcyPair;
+  /** Call or put on the base currency. */
+  optionType: OptionType;
+  /** Signed base-currency notional (positive = long the option). */
+  notionalBase: number;
+  /** Spot FX rate (quote per 1 unit of base). */
+  spot: number;
+  /** Strike (quote per 1 unit of base). */
+  strike: number;
+  /** Annualized volatility (absolute, e.g. 0.10 = 10 vol). */
+  vol: number;
+  /** Time to expiry in years (vol-time). */
+  t: number;
+  /** Continuously-compounded domestic (quote / numeraire) rate `r_dom`. */
+  rDom: number;
+  /** Continuously-compounded foreign (base) rate `r_for`. */
+  rFor: number;
+  /** The delta convention the leg was quoted under (provenance only). */
+  quotedDelta: DeltaConvention;
+  /** The premium style the leg was quoted under (provenance only). */
+  premiumStyle: PremiumStyle;
+}
+
+/**
+ * One accrual period of an OIS fixed leg in curve year-fraction coordinates
+ * (`celnet.wire.OisFixedPeriod`, mirrors `celnet_rates::FixedPeriod`).
+ */
+export interface TailRiskOisFixedPeriod {
+  /** Payment time (period end) in curve year-fraction coordinates (strictly increasing). */
+  pay: number;
+  /** Year-fraction accrual for the period (e.g. ACT/360; strictly positive). */
+  accrual: number;
+}
+
+/**
+ * A fixed-vs-OIS swap leg priced off the (shocked) discount curve
+ * (`celnet.wire.OisSwapLeg`, mirrors `celnet_rates_risk::FiPosition::OisSwap`).
+ * Valued by the self-discounting OIS identity `N·(K·A − (DF(start) − DF(mat)))`,
+ * the receive-fixed sign, negated for pay-fixed.
+ */
+export interface TailRiskOisSwap {
+  /** The swap effective (start) time in curve year-fraction coordinates. */
+  start: number;
+  /** The ordered fixed-leg accrual periods (the final period's `pay` is maturity). */
+  periods: readonly TailRiskOisFixedPeriod[];
+  /** The fixed rate `K` paid/received (decimal, e.g. 0.033). */
+  fixedRate: number;
+  /** The swap notional `N` in curve-currency units (positive). */
+  notional: number;
+  /** True to receive fixed (the raw OIS-PV sign), false to pay fixed (negated). */
+  receiveFixed: boolean;
+}
+
+/**
+ * One linear-FI position of the joint tail-risk portfolio
+ * (`celnet.wire.TailRiskFiPosition`): a oneof mirroring
+ * `celnet_rates_risk::FiPosition`; the swap arm is wired now (the cash-bond arm
+ * grows additively — one contract, no versioning).
+ */
+export interface TailRiskFiPosition {
+  /** The fixed-vs-OIS swap arm (the only wired arm today). */
+  oisSwap: TailRiskOisSwap;
+}
+
+/**
+ * One dated pillar of the base discount curve the FI legs reprice off
+ * (`celnet.wire.TailRiskCurvePillar`): a `(time, continuously-compounded zero
+ * rate)` knot. The curve origin `(0, DF=1)` is implicit.
+ */
+export interface TailRiskCurvePillar {
+  /** The pillar time in curve year-fraction coordinates (strictly increasing, > 0). */
+  t: number;
+  /** The continuously-compounded zero rate at `t`. */
+  zeroRate: number;
+}
+
+/**
+ * One joint cross-risk-class scenario (`celnet.wire.JointTailScenario`, mirrors
+ * `celnet_risk_cube::JointScenario`): an options spot/vol/carry shock applied to
+ * the option legs AND a per-pillar rate shock applied to the FI legs, as ONE
+ * market state (aligned by scenario index).
+ */
+export interface JointTailScenario {
+  /** Relative spot shock (0.01 = +1%): `spot *= 1 + spotRel`. */
+  spotRel: number;
+  /** Absolute vol shock in vol units (0.01 = +1 vol point): `vol += volAbs`. */
+  volAbs: number;
+  /** Absolute discount-rate shock `Δr` (the numeraire rate; `r_dom` for FX). */
+  discountAbs: number;
+  /** Absolute net-carry shock `Δb` (`r_dom − r_for` for FX). */
+  carryAbs: number;
+  /**
+   * Per-pillar absolute additive zero-rate shifts, aligned with `baseCurve` (the
+   * `RateShock`). Its length must equal the base-curve pillar count when FI legs
+   * are present; ignored (and may be empty) when there are no FI legs.
+   */
+  rateShifts: readonly number[];
+}
+
+/**
+ * A value-at-risk / expected-shortfall pair (`celnet.wire.VarEs`, mirrors
+ * `celnet_risk_cube::VarEs`): the alpha-quantile loss and the mean tail loss
+ * beyond it (both non-negative loss magnitudes).
+ */
+export interface VarEs {
+  /** Value-at-Risk: the `alpha`-quantile loss. */
+  var: number;
+  /** Expected Shortfall: the mean loss in the tail beyond VaR. */
+  es: number;
+}
+
+/**
+ * One point of the FI signed key-rate DV01 ladder
+ * (`celnet.wire.TailRiskKeyRate`, mirrors `celnet_rates_risk::KeyRatePoint`): the
+ * signed ΔPV per +1bp up-bump of one curve pillar's zero rate. The tenor is a
+ * real pillar time (fractional tenors allowed).
+ */
+export interface TailRiskKeyRate {
+  /** The pillar tenor in years. */
+  tenorYears: number;
+  /** The signed DV01 at this tenor (a rate rise is a loss ⇒ negative for a long bond / receiver). */
+  dv01: number;
+}
+
+/**
+ * `RiskService.CombinedTailRisk` request — one-cube joint options+FI tail risk
+ * over an inline portfolio + scenario config.
+ */
+export interface CombinedTailRiskRequest {
+  /** The vanilla FX option legs (may be empty for an FI-only request). */
+  optionLegs: readonly TailRiskOptionLeg[];
+  /** The linear-FI legs (may be empty for an options-only request). */
+  fiPositions: readonly TailRiskFiPosition[];
+  /**
+   * The base discount-curve zero-rate pillars the rate shocks perturb and the FI
+   * key-rate ladder is measured off (required, ≥ 1 pillar, strictly increasing in
+   * time). Present even for an options-only request (the FI ladder is then empty).
+   */
+  baseCurve: readonly TailRiskCurvePillar[];
+  /** The aligned joint scenarios (one market state each) reduced to the tail. */
+  scenarios: readonly JointTailScenario[];
+  /** The VaR/ES confidence level (e.g. 0.99). Defaults to 0.99 when 0/absent. */
+  alpha?: number;
+  /** Optional caller correlation id, echoed on the response. */
+  correlationId?: bigint;
+}
+
+/**
+ * `RiskService.CombinedTailRisk` response — the joint tail plus the FI key-rate
+ * axis and signed parallel DV01 (mirrors `celnet_risk_cube::CombinedTailRisk`).
+ */
+export interface CombinedTailRiskResponse {
+  /** The joint options-spot/vol + FI-rate tail — one non-additive VaR/ES over the union. */
+  jointVarEs: VarEs;
+  /**
+   * The FI per-tenor signed key-rate DV01 ladder, ascending by pillar tenor (empty
+   * when there are no FI legs; one point per base-curve pillar otherwise).
+   */
+  keyRate: readonly TailRiskKeyRate[];
+  /**
+   * The FI signed parallel DV01 (a rate rise is a loss ⇒ negative for a long bond
+   * / receiver; 0 when there are no FI legs).
+   */
+  fiParallelDv01: number;
+  /** Echo of the request's `correlationId`, if supplied. */
+  correlationId?: bigint;
+}
+
+// ---------------------------------------------------------------------------
 // dealer-quoting desk + linear-rates Book/List + notification push. The WS
 // mirror of RfqDeskService / RiskService(BookRatesPosition, ListRatesPositions)
 // / NotificationService (crates/celnet-proto/proto/celnet.proto). One current
