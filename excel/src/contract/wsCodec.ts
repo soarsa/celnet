@@ -39,6 +39,7 @@ import type {
   Executed,
   Execution,
   FixingSchedule,
+  FraInstrument,
   FxForward,
   Greeks,
   Heartbeat,
@@ -71,6 +72,7 @@ import type {
   Solve,
   StrategyKind,
   StreamReject,
+  VanillaIrsInstrument,
   StrikeOrDelta,
   Tarf,
   TradableToken,
@@ -1270,6 +1272,88 @@ export function bondInstrumentToWire(bond: BondInstrument): WireObject {
       },
       redemption: bond.redemption,
       side: bond.side === "SHORT" ? 1 : 0,
+    },
+  };
+}
+
+/**
+ * The wire `PaymentFrequency` tag (proto enum: ANNUAL=0, SEMI_ANNUAL=1,
+ * QUARTERLY=2) — the frequency the IRS legs (and the bond coupon) roll at. The
+ * server reads it with `enum_or_zero`, so the raw integer is the exact numeric the
+ * descriptor codec decodes.
+ */
+const PAYMENT_FREQUENCY_TO_WIRE: Record<VanillaIrsInstrument["fixedFrequency"], number> = {
+  ANNUAL: 0,
+  SEMI_ANNUAL: 1,
+  QUARTERLY: 2,
+};
+
+/**
+ * The wire `DayCount` tag for an IRS leg day-count (proto enum: ACT_365_FIXED=0,
+ * ACT_360=1 — the money-market subset a swap leg accrues on, no 30/360 arm). Read
+ * server-side with `enum_or_zero`; ACT_365_FIXED is the zero default.
+ */
+const RATES_LEG_DAY_COUNT_TO_WIRE: Record<VanillaIrsInstrument["fixedDayCount"], number> = {
+  ACT_365_FIXED: 0,
+  ACT_360: 1,
+};
+
+/**
+ * The wire `AccrualBasis` tag for a FRA accrual day-count (proto enum: ACT_360=0,
+ * ACT_365_FIXED=1, THIRTY_360_BOND_BASIS=2). `AccrualBasis` is the instrument-level
+ * superset of the leg `DayCount`; the same numeric table as the bond `day_count`.
+ */
+const RATES_ACCRUAL_BASIS_TO_WIRE: Record<FraInstrument["accrualBasis"], number> = {
+  ACT_360: 0,
+  ACT_365_FIXED: 1,
+  THIRTY_360_BOND_BASIS: 2,
+};
+
+/**
+ * Encode a `VanillaIrsInstrument` to the wire `instrument` object (the `irs` oneof
+ * arm of `RatesInstrument`). The EXACT shape the server's
+ * `vanilla_irs_instrument_from_json` (and the byte-identical descriptor codec)
+ * decodes: every field is a FLAT scalar or numeric enum tag (no nested date, unlike
+ * the bond arm — the IRS is spot-starting, so its schedule is reconstructed from the
+ * curve reference date + `tenor_years`). Key order + field names mirror the server
+ * encoder so a request is byte-identical to the server round-trip, and identical to
+ * the GUI's `ratesInstrumentUnionToWire` `irs` arm. `side` is the numeric wire `Side`
+ * (PAY_FIXED → SIDE_BUY = 0, RECEIVE_FIXED → SIDE_SELL = 1).
+ */
+export function irsInstrumentToWire(irs: VanillaIrsInstrument): WireObject {
+  return {
+    irs: {
+      tenor_years: irs.tenorYears,
+      fixed_rate: irs.fixedRate,
+      notional: irs.notional,
+      side: oisDirectionToSide(irs.direction),
+      fixed_frequency: PAYMENT_FREQUENCY_TO_WIRE[irs.fixedFrequency],
+      fixed_day_count: RATES_LEG_DAY_COUNT_TO_WIRE[irs.fixedDayCount],
+      float_frequency: PAYMENT_FREQUENCY_TO_WIRE[irs.floatFrequency],
+      float_day_count: RATES_LEG_DAY_COUNT_TO_WIRE[irs.floatDayCount],
+    },
+  };
+}
+
+/**
+ * Encode a `FraInstrument` to the wire `instrument` object (the `fra` oneof arm of
+ * `RatesInstrument`). The EXACT shape the server's `fra_instrument_from_json` (and
+ * the byte-identical descriptor codec) decodes: the accrual window is quoted as FLAT
+ * `start_months` / `end_months` whole-month tenors from spot (the "3x6 FRA" market
+ * convention — no nested date), the rate/notional are scalars, and `side` /
+ * `accrual_basis` are numeric enum tags. Byte-identical to the server round-trip and
+ * the GUI's `ratesInstrumentUnionToWire` `fra` arm. `side` is the numeric wire `Side`
+ * (PAY_FIXED → SIDE_BUY = 0, RECEIVE_FIXED → SIDE_SELL = 1).
+ */
+export function fraInstrumentToWire(fra: FraInstrument): WireObject {
+  return {
+    fra: {
+      start_months: fra.startMonths,
+      end_months: fra.endMonths,
+      fixed_rate: fra.fixedRate,
+      notional: fra.notional,
+      side: oisDirectionToSide(fra.direction),
+      accrual_basis: RATES_ACCRUAL_BASIS_TO_WIRE[fra.accrualBasis],
     },
   };
 }

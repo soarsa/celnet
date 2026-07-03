@@ -154,7 +154,7 @@ export function capabilityDenialTitle(
 //   * book (click-to-trade accept)                → execute · fx_options
 //   * SUBSCRIBE / SERIES (live streams)           → stream  · fx_options
 //   * contribute a mark / MARKSURFACE / MARK      → price   · fx_options
-//   * RATES (OIS pricing) / RATESRISK (book risk) → price   · fixed_income
+//   * RATES/BOND/IRS/FRA (pricing) / RATESRISK    → price   · fixed_income
 //   * RATESBOOK (book ledger) / INSTRUMENTS (ref) → view    · fixed_income
 //
 // Every FX-options PRODUCT (incl. the cross-asset equity/commodity/crypto leaves
@@ -179,6 +179,8 @@ export type EntryPointId =
   | "series"
   | "rates"
   | "bond"
+  | "irs"
+  | "fra"
   | "ratesrisk"
   | "ratesbook"
   | "curve"
@@ -299,6 +301,24 @@ export const ENTRY_POINTS: Record<EntryPointId, EntryPoint> = {
     asset: "fixed_income",
     requiresSignIn: false,
     signInLabel: "price bonds",
+  },
+  irs: {
+    id: "irs",
+    label: "CELNET.IRS",
+    surface: "cell",
+    action: "price",
+    asset: "fixed_income",
+    requiresSignIn: false,
+    signInLabel: "price swaps",
+  },
+  fra: {
+    id: "fra",
+    label: "CELNET.FRA",
+    surface: "cell",
+    action: "price",
+    asset: "fixed_income",
+    requiresSignIn: false,
+    signInLabel: "price FRAs",
   },
   ratesrisk: {
     id: "ratesrisk",

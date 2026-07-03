@@ -47,6 +47,7 @@ import type {
   ExerciseStyle,
   FixingSchedule,
   FixingSource,
+  FraInstrument,
   Greeks,
   Heartbeat,
   Instrument,
@@ -64,11 +65,14 @@ import type {
   OisDirection,
   OisInstrument,
   OptionType,
+  PaymentFrequency,
   Pivot,
   PricingModel,
   Product,
   QuantoPayoff,
+  RatesAccrualBasis,
   RatesCurveSet,
+  RatesLegDayCount,
   RatesPricingResult,
   SettlementStyle,
   Side,
@@ -83,6 +87,7 @@ import type {
   Touch,
   TouchKind,
   Underlying,
+  VanillaIrsInstrument,
   WindowBarrier,
 } from "../contract/contract";
 import type {
@@ -3873,10 +3878,10 @@ export function parseOisDirection(raw: string): OisDirection {
   throw new ShapingError(`invalid OIS direction \`${raw}\` (expected PAY_FIXED or RECEIVE_FIXED)`);
 }
 
-/** Validate a positive OIS notional (direction carries the sign, never the notional). */
-function shapeOisNotional(raw: number): number {
+/** Validate a positive rates notional (direction carries the sign, never the notional). */
+function shapeRatesNotional(raw: number, product: string): number {
   if (!Number.isFinite(raw) || raw <= 0) {
-    throw new ShapingError(`OIS notional must be a positive number (got \`${raw}\`)`);
+    throw new ShapingError(`${product} notional must be a positive number (got \`${raw}\`)`);
   }
   return raw;
 }
@@ -3955,7 +3960,7 @@ export function shapeOisInstrument(args: OisInstrumentArgs): OisInstrument {
   return {
     tenorYears: parseOisTenorYears(args.tenor),
     fixedRate: args.fixedRate,
-    notional: shapeOisNotional(args.notional),
+    notional: shapeRatesNotional(args.notional, "OIS"),
     direction: parseOisDirection(args.direction),
   };
 }
@@ -3987,22 +3992,26 @@ export function formatRatesSpill(
 }
 
 // ---------------------------------------------------------------------------
-// fixed-income (rates) — cash-bond arm: parse the scalar bond terms into the
-// typed `BondInstrument` the `price_rates` RPC carries on its `RatesInstrument
-// .bond` oneof arm, and format the server's `RatesPricingResult` (with bond
-// semantics) as a labelled spill. The add-in holds NO bond math: it only shapes
-// the inputs the `celnet-rates` bond engine prices and lays out its result.
+// fixed-income (rates) — swap/FRA arms: parse the scalar IRS + FRA terms into the
+// typed `VanillaIrsInstrument` / `FraInstrument` the `price_rates` RPC carries on
+// its `RatesInstrument.irs` / `.fra` oneof arms. Both reuse the OIS curve-set + the
+// OIS result spill (`formatRatesSpill`): a swap and a FRA return the same
+// `RatesPricingResult` shape (pv/par_rate/pv01/dv01 + a pillar-shaped key-rate
+// ladder). The add-in holds NO rates math — it only shapes the inputs the live
+// `celnet-rates` engine prices and lays out its authoritative result.
 // ---------------------------------------------------------------------------
 
 /**
- * Parse the bond coupon frequency (also the yield-compounding basis). Accepts the
- * canonical contract names and the desk short/synonym forms, case-/separator-
- * insensitive: ANNUAL/ANN/A/1Y; SEMI_ANNUAL/SEMI/SA/6M/2; QUARTERLY/QTR/Q/3M/4.
- * Empty/absent ⇒ SEMI_ANNUAL — the standard cash-bond convention (a USD Treasury
- * / corporate pays semi-annually), the ergonomic default for an omitted argument.
+ * Parse a leg / coupon payment frequency (`PaymentFrequency`) to the canonical
+ * name. Accepts the contract names and desk short/synonym forms, case-/separator-
+ * insensitive: ANNUAL/ANN/A/1Y/1; SEMI_ANNUAL/SEMI/SA/6M/2; QUARTERLY/QTR/Q/3M/4.
+ * Empty/absent ⇒ the supplied `fallback` (the leg's market default).
  */
-export function parseBondCouponFrequency(raw: string | number | undefined): BondCouponFrequency {
-  if (raw === undefined || raw === "") return "SEMI_ANNUAL";
+export function parsePaymentFrequency(
+  raw: string | number | undefined,
+  fallback: PaymentFrequency,
+): PaymentFrequency {
+  if (raw === undefined || raw === "") return fallback;
   const t = String(raw).trim().toUpperCase().replace(/[._\s-]/g, "");
   switch (t) {
     case "ANNUAL":
@@ -4025,20 +4034,22 @@ export function parseBondCouponFrequency(raw: string | number | undefined): Bond
       return "QUARTERLY";
     default:
       throw new ShapingError(
-        `invalid coupon frequency \`${raw}\` (expected ANNUAL, SEMI_ANNUAL or QUARTERLY)`,
+        `invalid payment frequency \`${raw}\` (expected ANNUAL, SEMI_ANNUAL or QUARTERLY)`,
       );
   }
 }
 
 /**
- * Parse the bond accrual day-count basis (`AccrualBasis`). Accepts the canonical
- * contract names and the desk short forms, case-/separator-insensitive:
- * ACT_360/ACT360; ACT_365_FIXED/ACT365/ACT365F; THIRTY_360_BOND_BASIS/30_360/
- * 30360/30/BONDBASIS/BOND. Empty/absent ⇒ THIRTY_360_BOND_BASIS — the standard
- * USD fixed-bond basis (the proto `AccrualBasis` doc default for a cash bond).
+ * Parse an instrument-level accrual basis (`RatesAccrualBasis` / the bond + FRA
+ * accrual day-count). Accepts the contract names + desk short forms, case-/
+ * separator-insensitive: ACT_360/ACT360; ACT_365_FIXED/ACT365/ACT365F;
+ * THIRTY_360_BOND_BASIS/30_360/30360/30/BONDBASIS/BOND. Empty/absent ⇒ `fallback`.
  */
-export function parseBondDayCount(raw: string | undefined): BondDayCount {
-  if (raw === undefined || raw.trim() === "") return "THIRTY_360_BOND_BASIS";
+export function parseRatesAccrualBasis(
+  raw: string | undefined,
+  fallback: RatesAccrualBasis,
+): RatesAccrualBasis {
+  if (raw === undefined || raw.trim() === "") return fallback;
   const t = raw.trim().toUpperCase().replace(/[._\s/-]/g, "");
   switch (t) {
     case "ACT360":
@@ -4061,6 +4072,199 @@ export function parseBondDayCount(raw: string | undefined): BondDayCount {
         `invalid day count \`${raw}\` (expected ACT_360, ACT_365_FIXED or THIRTY_360_BOND_BASIS)`,
       );
   }
+}
+
+/**
+ * Parse an IRS leg day-count (`RatesLegDayCount`) — the money-market subset a swap
+ * leg accrues on: ACT_360 or ACT_365_FIXED only (an IRS leg carries no 30/360 arm,
+ * matching the server `VanillaIrsInstrument`). Accepts the same short forms as the
+ * accrual basis; 30/360 is rejected with an explicit reason (not silently coerced).
+ * Empty/absent ⇒ `fallback` (the leg's market default).
+ */
+export function parseRatesLegDayCount(
+  raw: string | undefined,
+  fallback: RatesLegDayCount,
+): RatesLegDayCount {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const t = raw.trim().toUpperCase().replace(/[._\s/-]/g, "");
+  switch (t) {
+    case "ACT360":
+    case "ACTUAL360":
+      return "ACT_360";
+    case "ACT365FIXED":
+    case "ACT365F":
+    case "ACT365":
+    case "ACTUAL365FIXED":
+      return "ACT_365_FIXED";
+    case "THIRTY360BONDBASIS":
+    case "30360BONDBASIS":
+    case "30360":
+    case "30":
+    case "BONDBASIS":
+    case "BOND":
+      throw new ShapingError(
+        `invalid IRS leg day count \`${raw}\` (a swap leg accrues ACT_360 or ACT_365_FIXED — 30/360 is not a leg basis)`,
+      );
+    default:
+      throw new ShapingError(
+        `invalid IRS leg day count \`${raw}\` (expected ACT_360 or ACT_365_FIXED)`,
+      );
+  }
+}
+
+/**
+ * Parse the fixed-leg direction with an optional fallback for the swap/FRA cells
+ * (where `side` is an optional argument). Empty/absent ⇒ `fallback` (default
+ * PAY_FIXED — a bought swap pays fixed, matching the wire `Side` zero = SIDE_BUY);
+ * a present value is parsed by {@link parseOisDirection} (PAY/RECEIVE + aliases).
+ */
+export function parseRatesSide(
+  raw: string | undefined,
+  fallback: OisDirection = "PAY_FIXED",
+): OisDirection {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  return parseOisDirection(raw);
+}
+
+/** Parse a FRA window tenor as a whole number of months (`>= 0`); accepts `3` or `"3M"`. */
+export function parseFraMonths(raw: number | string, label: string): number {
+  let n: number;
+  if (typeof raw === "number") {
+    n = raw;
+  } else {
+    const m = /^(\d+)\s*M?$/.exec(raw.trim().toUpperCase());
+    if (!m) {
+      throw new ShapingError(`invalid FRA ${label} \`${raw}\` (expected whole months, e.g. 3 or 3M)`);
+    }
+    n = Number(m[1]);
+  }
+  if (!Number.isInteger(n) || n < 0) {
+    throw new ShapingError(`FRA ${label} must be a whole number of months >= 0 (got \`${raw}\`)`);
+  }
+  return n;
+}
+
+/** The scalar IRS terms a CELNET.IRS call shapes into a `VanillaIrsInstrument`. */
+export interface IrsInstrumentArgs {
+  /** The swap tenor in whole years (`5` or `"5Y"`). */
+  readonly tenor: number | string;
+  /** The fixed-leg rate as a decimal (0.041 = 4.10%). */
+  readonly fixedRate: number;
+  /** The (positive) notional in the curve currency. */
+  readonly notional: number;
+  /** Pay-fixed (payer) or receive-fixed (receiver); absent ⇒ PAY_FIXED. */
+  readonly side?: string | undefined;
+  /** Fixed-leg payment frequency; absent ⇒ SEMI_ANNUAL (USD market). */
+  readonly fixedFrequency?: string | undefined;
+  /** Fixed-leg accrual day-count; absent ⇒ ACT_360. */
+  readonly fixedDayCount?: string | undefined;
+  /** Float-leg payment frequency; absent ⇒ QUARTERLY (USD market). */
+  readonly floatFrequency?: string | undefined;
+  /** Float-leg accrual day-count; absent ⇒ ACT_360. */
+  readonly floatDayCount?: string | undefined;
+}
+
+/**
+ * Shape the scalar IRS terms into the typed `VanillaIrsInstrument`. The fixed rate
+ * must be a finite decimal; the notional must be strictly positive (direction carries
+ * the sign). The leg conventions default to the USD-market swap (SEMI_ANNUAL/ACT_360
+ * fixed vs QUARTERLY/ACT_360 float) when omitted. The tenor is validated as a whole
+ * number of years `>= 1` (the swap is spot-starting, its schedule rebuilt server-side
+ * from the curve reference date + tenor).
+ */
+export function shapeIrsInstrument(args: IrsInstrumentArgs): VanillaIrsInstrument {
+  if (!Number.isFinite(args.fixedRate)) {
+    throw new ShapingError(`IRS fixed rate must be a finite decimal (got \`${args.fixedRate}\`)`);
+  }
+  return {
+    tenorYears: parseOisTenorYears(args.tenor),
+    fixedRate: args.fixedRate,
+    notional: shapeRatesNotional(args.notional, "IRS"),
+    direction: parseRatesSide(args.side),
+    fixedFrequency: parsePaymentFrequency(args.fixedFrequency, "SEMI_ANNUAL"),
+    fixedDayCount: parseRatesLegDayCount(args.fixedDayCount, "ACT_360"),
+    floatFrequency: parsePaymentFrequency(args.floatFrequency, "QUARTERLY"),
+    floatDayCount: parseRatesLegDayCount(args.floatDayCount, "ACT_360"),
+  };
+}
+
+/** The scalar FRA terms a CELNET.FRA call shapes into a `FraInstrument`. */
+export interface FraInstrumentArgs {
+  /** The window start (fixing) tenor in months from spot (`3` or `"3M"`). */
+  readonly startMonths: number | string;
+  /** The window end (maturity) tenor in months from spot (`6` or `"6M"`); `> startMonths`. */
+  readonly endMonths: number | string;
+  /** The contractual fixed rate K as a decimal (0.033 = 3.30%). */
+  readonly fixedRate: number;
+  /** The (positive) notional in the curve currency. */
+  readonly notional: number;
+  /** Pay-fixed (payer) or receive-fixed (receiver); absent ⇒ PAY_FIXED. */
+  readonly side?: string | undefined;
+  /** The accrual day-count basis for τ; absent ⇒ ACT_360 (the market FRA basis). */
+  readonly accrualBasis?: string | undefined;
+}
+
+/**
+ * Shape the scalar FRA terms into the typed `FraInstrument`. The fixed rate must be
+ * a finite decimal; the notional strictly positive (direction carries the sign). The
+ * accrual window is validated as whole months from spot with `endMonths >
+ * startMonths` (a degenerate/inverted window is rejected here with a friendly message
+ * rather than a wire round-trip). The accrual basis defaults to ACT_360 (the standard
+ * money-market FRA basis) when omitted.
+ */
+export function shapeFraInstrument(args: FraInstrumentArgs): FraInstrument {
+  if (!Number.isFinite(args.fixedRate)) {
+    throw new ShapingError(`FRA fixed rate must be a finite decimal (got \`${args.fixedRate}\`)`);
+  }
+  const startMonths = parseFraMonths(args.startMonths, "start");
+  const endMonths = parseFraMonths(args.endMonths, "end");
+  if (endMonths <= startMonths) {
+    throw new ShapingError(
+      `FRA window end (${endMonths}M) must be strictly after the start (${startMonths}M)`,
+    );
+  }
+  return {
+    startMonths,
+    endMonths,
+    fixedRate: args.fixedRate,
+    notional: shapeRatesNotional(args.notional, "FRA"),
+    direction: parseRatesSide(args.side),
+    accrualBasis: parseRatesAccrualBasis(args.accrualBasis, "ACT_360"),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// fixed-income (rates) — cash-bond arm: parse the scalar bond terms into the
+// typed `BondInstrument` the `price_rates` RPC carries on its `RatesInstrument
+// .bond` oneof arm, and format the server's `RatesPricingResult` (with bond
+// semantics) as a labelled spill. The add-in holds NO bond math: it only shapes
+// the inputs the `celnet-rates` bond engine prices and lays out its result.
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the bond coupon frequency (also the yield-compounding basis). Accepts the
+ * canonical contract names and the desk short/synonym forms, case-/separator-
+ * insensitive: ANNUAL/ANN/A/1Y; SEMI_ANNUAL/SEMI/SA/6M/2; QUARTERLY/QTR/Q/3M/4.
+ * Empty/absent ⇒ SEMI_ANNUAL — the standard cash-bond convention (a USD Treasury
+ * / corporate pays semi-annually), the ergonomic default for an omitted argument.
+ */
+export function parseBondCouponFrequency(raw: string | number | undefined): BondCouponFrequency {
+  // A bond coupon frequency IS a `PaymentFrequency` (one canonical wire enum); the
+  // cash-bond default is SEMI_ANNUAL (a USD Treasury / corporate pays semi-annually).
+  return parsePaymentFrequency(raw, "SEMI_ANNUAL");
+}
+
+/**
+ * Parse the bond accrual day-count basis (`AccrualBasis`). Accepts the canonical
+ * contract names and the desk short forms, case-/separator-insensitive:
+ * ACT_360/ACT360; ACT_365_FIXED/ACT365/ACT365F; THIRTY_360_BOND_BASIS/30_360/
+ * 30360/30/BONDBASIS/BOND. Empty/absent ⇒ THIRTY_360_BOND_BASIS — the standard
+ * USD fixed-bond basis (the proto `AccrualBasis` doc default for a cash bond).
+ */
+export function parseBondDayCount(raw: string | undefined): BondDayCount {
+  // A bond day-count IS an instrument-level `RatesAccrualBasis` (one canonical wire
+  // enum); the cash-bond default is 30/360 Bond Basis (the standard USD fixed basis).
+  return parseRatesAccrualBasis(raw, "THIRTY_360_BOND_BASIS");
 }
 
 /**
@@ -4318,7 +4522,7 @@ export function shapeRatesRiskPositions(
     const tenorYears = parseOisTenorYears(tenorCell);
     const fixedRate = ratesCell(row[1]!, "position fixedRate");
     const direction = parseOisDirection(String(row[2]));
-    const notional = shapeOisNotional(ratesCell(row[3]!, "position notional"));
+    const notional = shapeRatesNotional(ratesCell(row[3]!, "position notional"), "OIS");
     const entity = shapeBookingId(row[4], "entity");
     const book = shapeBookingId(row[5], "book");
     seq += 1;
