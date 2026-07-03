@@ -1604,3 +1604,106 @@ export interface BondInstrument {
   /** LONG (+PV) or SHORT (−PV); the position direction carries the PV sign. */
   side: BondPositionSide;
 }
+
+// ---------------------------------------------------------------------------
+// XVA — counterparty valuation adjustments (CVA / DVA / FVA) over a netting set
+// (`PricingService.PriceXva`). A netting set of FX vanillas is priced for its
+// all-in credit / funding valuation adjustments: CVA (counterparty default), DVA
+// (own default), FVA (funding of the uncollateralised net expected exposure). The
+// wire request carries the netting set, the single-factor exposure-model market
+// (spot / vol / rates + the MC path/step budget), the counterparty & own survival
+// (hazard) curves, the two LGDs and the funding spread; the wire response
+// (`XvaResult`) carries ONLY the four scalar adjustments — the simulated exposure
+// PROFILE (EPE/ENE per bucket) is a server-internal of the estimator and is NOT
+// projected onto the contract. Mirrors `celnet.wire.PriceXvaRequest` / `XvaResult`
+// field-for-field (the Excel port of `gui/src/data/contract.ts`). The add-in holds
+// no XVA math — the live `celnet-xva` engine prices; this only shapes/lays out.
+// ---------------------------------------------------------------------------
+
+/**
+ * One trade of an XVA netting set (`celnet.wire.XvaTrade`): a single FX vanilla
+ * carried by its payoff terms. `notional` is SIGNED (a negative notional is the
+ * opposite direction), so the netting set's value is the signed sum of its trade
+ * marks.
+ */
+export interface XvaTrade {
+  optionType: OptionType;
+  /** Absolute strike `K` (quote per 1 unit of base); `> 0`. */
+  strike: number;
+  /** Time to expiry in years; `> 0`. */
+  expiryYears: number;
+  /** Annualised lognormal volatility of this trade's mark; `> 0`. */
+  vol: number;
+  /** Signed notional (a negative notional flips the trade direction). */
+  notional: number;
+}
+
+/**
+ * A survival (hazard-rate) curve for one party (`celnet.wire.XvaSurvivalCurve`).
+ * Two shapes share the one message: a FLAT curve carries a single `hazardRates`
+ * entry and NO `pillarTimes` (constant hazard `λ`, survival `e^{−λt}`); a
+ * PIECEWISE-constant curve carries equal-length, strictly-increasing positive
+ * `pillarTimes` and their per-segment `hazardRates`. The server validates the
+ * shape and rejects a malformed curve.
+ */
+export interface XvaSurvivalCurve {
+  /** Segment end times (years), strictly increasing; EMPTY for the flat curve. */
+  pillarTimes: readonly number[];
+  /** Per-segment hazard rates (≥ 0); exactly one entry for the flat curve. */
+  hazardRates: readonly number[];
+}
+
+/**
+ * A request to price a netting set's XVA (`celnet.wire.PriceXvaRequest`). The
+ * exposure profile is simulated under a single-factor lognormal spot model
+ * (`spot0` / `sigma` with carry `rDom − rFor`) over `exposureSteps` buckets to the
+ * set's horizon, `paths` Monte-Carlo paths at the given `seed`; the adjustments
+ * integrate the discounted expected exposure against each party's marginal default
+ * probability (`counterparty` / `own`) scaled by its LGD, plus the funding spread
+ * on the net expected exposure.
+ */
+export interface XvaPricingRequest {
+  /** The netting set (at least one trade). */
+  trades: readonly XvaTrade[];
+  /** Continuously-compounded domestic (quote) rate. */
+  rDom: number;
+  /** Continuously-compounded foreign (base) rate. */
+  rFor: number;
+  /** Initial spot `S₀` (quote per 1 unit of base); `> 0`. */
+  spot0: number;
+  /** Exposure-model annualised volatility `σ` (`≥ 0`). */
+  sigma: number;
+  /** Monte-Carlo paths for the exposure estimator; `≥ 1`. */
+  paths: number;
+  /** Counter-RNG seed (identical seeds reproduce the estimate bit-for-bit). */
+  seed: number;
+  /** Exposure time buckets to the set horizon; `≥ 1`. */
+  exposureSteps: number;
+  /** The counterparty's survival (hazard) curve — drives CVA. */
+  counterparty: XvaSurvivalCurve;
+  /** Our own survival (hazard) curve — drives DVA. */
+  own: XvaSurvivalCurve;
+  /** Counterparty loss-given-default `∈ [0, 1]`. */
+  lgdCounterparty: number;
+  /** Own loss-given-default `∈ [0, 1]`. */
+  lgdOwn: number;
+  /** Funding spread over the risk-free rate (absolute, e.g. 0.008 = 80bp). */
+  fundingSpread: number;
+}
+
+/**
+ * The all-in XVA of a netting set (`celnet.wire.XvaResult`): the three adjustment
+ * legs plus their signed total. `totalAdjustment = cva − dva + fva` is the amount
+ * subtracted from the risk-free value. This is the WHOLE wire result — no exposure
+ * profile crosses the contract.
+ */
+export interface XvaResult {
+  /** Credit valuation adjustment (`≥ 0`): expected loss from counterparty default. */
+  cva: number;
+  /** Debit valuation adjustment (`≥ 0`): expected benefit from own default. */
+  dva: number;
+  /** Funding valuation adjustment (signed): funding cost/benefit of the net exposure. */
+  fva: number;
+  /** The all-in adjustment `cva − dva + fva` subtracted from the risk-free value. */
+  totalAdjustment: number;
+}

@@ -404,6 +404,88 @@
       ]
     },
     {
+      "id": "XVA",
+      "name": "XVA",
+      "description": "Price the all-in CVA / DVA / FVA of a netting set of FX vanilla options via the live price_xva engine RPC (PricingService.PriceXva); spills [cva, dva, fva, total_adjustment] (total = cva - dva + fva) then a provenance footer. The four scalars are the whole wire result - the simulated exposure profile is a server-internal and is never shown.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "trades",
+          "description": "Row-per-trade netting-set range [callPut, strike, expiryYears, vol, notional]; one FX vanilla per row (callPut C/P; notional SIGNED so the set nets long against short).",
+          "type": "any",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "spot0",
+          "description": "Initial spot S0 (quote per 1 unit of base); > 0.",
+          "type": "number"
+        },
+        {
+          "name": "sigma",
+          "description": "Exposure-model annualised volatility as a decimal (0.1 = 10%); >= 0.",
+          "type": "number"
+        },
+        {
+          "name": "rDom",
+          "description": "Continuously-compounded domestic (quote) rate, a decimal.",
+          "type": "number"
+        },
+        {
+          "name": "rFor",
+          "description": "Continuously-compounded foreign (base) rate, a decimal.",
+          "type": "number"
+        },
+        {
+          "name": "counterparty",
+          "description": "Counterparty survival curve: a flat hazard lambda (single cell) or a 2-column [pillarYears, hazard] range (strictly increasing).",
+          "type": "any",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "own",
+          "description": "Own survival curve: a flat hazard lambda (single cell) or a 2-column [pillarYears, hazard] range (strictly increasing).",
+          "type": "any",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "lgdCounterparty",
+          "description": "Counterparty loss-given-default, a decimal in [0, 1].",
+          "type": "number"
+        },
+        {
+          "name": "lgdOwn",
+          "description": "Own loss-given-default, a decimal in [0, 1].",
+          "type": "number"
+        },
+        {
+          "name": "fundingSpread",
+          "description": "Funding spread over risk-free, an absolute decimal (0.008 = 80bp).",
+          "type": "number"
+        },
+        {
+          "name": "paths",
+          "description": "Optional Monte-Carlo exposure paths (whole number >= 1; default 4096).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "seed",
+          "description": "Optional exposure-RNG seed (whole number >= 0; default 1); a fixed seed reproduces the estimate.",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "exposureSteps",
+          "description": "Optional exposure time buckets to the set horizon (whole number >= 1; default 16).",
+          "type": "number",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "RATESBOOK",
       "name": "RATESBOOK",
       "description": "List the desk's standing linear-rates BOOK (the server-owned OIS position ledger) via the live list_rates_positions engine RPC; resolves each numeric (entity, book) key to its registry NAME (list_entities/list_books, falling back to #<key>) and spills [position_id, entity, book, instrument, fixed_rate, notional, direction] per booked OIS.",
