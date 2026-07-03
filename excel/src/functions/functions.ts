@@ -71,6 +71,8 @@ import {
   shapeBondInstrument,
   shapeBuildCurveRequest,
   shapeCalibration,
+  shapeFraInstrument,
+  shapeIrsInstrument,
   shapeOisInstrument,
   shapeRatesCurve,
   shapeRatesRiskPositions,
@@ -493,6 +495,125 @@ export async function BOND(
     });
     const result = await getConnection().priceRatesBond(curveSet, bond);
     return formatBondSpill(result);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a vanilla fixed-vs-float interest-rate swap off a self-discounting curve via
+ * the live `price_rates` engine RPC (the SAME RPC as CELNET.RATES/BOND, carrying the
+ * `RatesInstrument.irs` arm), and spill the priced PV + first-order risk. The add-in
+ * carries NO swap math: the calibrated `curve` (its par-OIS pillars) and the swap
+ * terms are sent to the `celnet-rates` engine, which bootstraps the discount/forward
+ * curve, PVs each leg, and returns the authoritative result; this cell only shapes
+ * the inputs and lays out the reply.
+ *
+ * The swap is SPOT-STARTING: its schedule of `tenor` whole years is reconstructed
+ * server-side from the curve reference date (there is no separate effective date on
+ * the wire). The spill is the labelled `(4 + pillars)×2` matrix: `pv`, `par_rate`
+ * (the fair fixed rate), `pv01`, `dv01`, then the key-rate DV01 ladder — one
+ * `kr_dv01[<tenor>Y]` row per curve pillar (the ladder sums to `dv01` to first order).
+ * All measures are in the curve currency and carry the `side` sign (a payer and a
+ * receiver of the same swap report equal-and-opposite numbers).
+ * @customfunction IRS
+ * @param curve The 2-column `[tenorYears, parRate]` curve range — one row per self-discounting OIS pillar, in strictly increasing tenor order.
+ * @param referenceDate The curve reference (spot-anchor) date — an Excel date cell or "YYYY-MM-DD".
+ * @param tenor The swap tenor in whole years (e.g. 5 or "5Y").
+ * @param fixedRate The fixed-leg rate as a decimal (0.041 = 4.10%).
+ * @param notional The (positive) notional in the curve currency.
+ * @param side Optional direction: PAY_FIXED (payer, default) or RECEIVE_FIXED (receiver).
+ * @param fixedFrequency Optional fixed-leg frequency: ANNUAL, SEMI_ANNUAL (default) or QUARTERLY.
+ * @param fixedDayCount Optional fixed-leg day-count: ACT_360 (default) or ACT_365_FIXED.
+ * @param floatFrequency Optional float-leg frequency: ANNUAL, SEMI_ANNUAL or QUARTERLY (default).
+ * @param floatDayCount Optional float-leg day-count: ACT_360 (default) or ACT_365_FIXED.
+ * @param currency Optional ISO-4217 curve currency (defaults to USD).
+ * @returns A `(4 + pillars)×2` spill: pv, par_rate, pv01, dv01, then the key-rate DV01 ladder.
+ */
+export async function IRS(
+  curve: (string | number | boolean)[][],
+  referenceDate: number | string,
+  tenor: number | string,
+  fixedRate: number,
+  notional: number,
+  side?: string,
+  fixedFrequency?: string,
+  fixedDayCount?: string,
+  floatFrequency?: string,
+  floatDayCount?: string,
+  currency?: string,
+): Promise<SpillMatrix> {
+  try {
+    denyIfUngated("irs");
+    const curveSet = shapeRatesCurve({ curve, referenceDate, currency });
+    const irs = shapeIrsInstrument({
+      tenor,
+      fixedRate,
+      notional,
+      side,
+      fixedFrequency,
+      fixedDayCount,
+      floatFrequency,
+      floatDayCount,
+    });
+    const result = await getConnection().priceRatesIrs(curveSet, irs);
+    return formatRatesSpill(result, curveSet.pillars);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a forward rate agreement (FRA) off a self-discounting curve via the live
+ * `price_rates` engine RPC (the SAME RPC as CELNET.RATES/BOND/IRS, carrying the
+ * `RatesInstrument.fra` arm), and spill the priced PV + first-order risk. The add-in
+ * carries NO FRA math: the calibrated `curve` and the FRA terms are sent to the
+ * `celnet-rates` engine, which rebuilds the roll-adjusted accrual window and prices
+ * the single-period swaplet; this cell only shapes the inputs and lays out the reply.
+ *
+ * The accrual window is quoted in whole MONTHS from spot — the standard "3x6 FRA"
+ * market convention: `startMonths` = 3, `endMonths` = 6 for a 3×6. The spill is the
+ * labelled `(4 + pillars)×2` matrix: `pv`, `par_rate` (the break-even rate), `pv01`,
+ * `dv01`, then the key-rate DV01 ladder — one `kr_dv01[<tenor>Y]` row per curve
+ * pillar (the ladder sums to `dv01` to first order). All measures are in the curve
+ * currency and carry the `side` sign (payer and receiver report equal-and-opposite
+ * numbers).
+ * @customfunction FRA
+ * @param curve The 2-column `[tenorYears, parRate]` curve range — one row per self-discounting OIS pillar, in strictly increasing tenor order.
+ * @param referenceDate The curve reference (spot-anchor) date — an Excel date cell or "YYYY-MM-DD".
+ * @param startMonths The window start (fixing) tenor in whole months from spot (e.g. 3 or "3M").
+ * @param endMonths The window end (maturity) tenor in whole months from spot (e.g. 6 or "6M"); must be after startMonths.
+ * @param fixedRate The contractual fixed rate as a decimal (0.033 = 3.30%).
+ * @param notional The (positive) notional in the curve currency.
+ * @param side Optional direction: PAY_FIXED (payer, default) or RECEIVE_FIXED (receiver).
+ * @param accrualBasis Optional accrual day-count: ACT_360 (default), ACT_365_FIXED or THIRTY_360_BOND_BASIS.
+ * @param currency Optional ISO-4217 curve currency (defaults to USD).
+ * @returns A `(4 + pillars)×2` spill: pv, par_rate, pv01, dv01, then the key-rate DV01 ladder.
+ */
+export async function FRA(
+  curve: (string | number | boolean)[][],
+  referenceDate: number | string,
+  startMonths: number | string,
+  endMonths: number | string,
+  fixedRate: number,
+  notional: number,
+  side?: string,
+  accrualBasis?: string,
+  currency?: string,
+): Promise<SpillMatrix> {
+  try {
+    denyIfUngated("fra");
+    const curveSet = shapeRatesCurve({ curve, referenceDate, currency });
+    const fra = shapeFraInstrument({
+      startMonths,
+      endMonths,
+      fixedRate,
+      notional,
+      side,
+      accrualBasis,
+    });
+    const result = await getConnection().priceRatesFra(curveSet, fra);
+    return formatRatesSpill(result, curveSet.pillars);
   } catch (err) {
     throw toCfError(err);
   }
@@ -1215,6 +1336,8 @@ function registerAll(): void {
   cf.associate("GREEKS", GREEKS as (...a: never[]) => unknown);
   cf.associate("RATES", RATES as (...a: never[]) => unknown);
   cf.associate("BOND", BOND as (...a: never[]) => unknown);
+  cf.associate("IRS", IRS as (...a: never[]) => unknown);
+  cf.associate("FRA", FRA as (...a: never[]) => unknown);
   cf.associate("RATESRISK", RATESRISK as (...a: never[]) => unknown);
   cf.associate("RATESBOOK", RATESBOOK as (...a: never[]) => unknown);
   cf.associate("CURVE", CURVE as (...a: never[]) => unknown);

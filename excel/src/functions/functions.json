@@ -231,6 +231,139 @@
       ]
     },
     {
+      "id": "IRS",
+      "name": "IRS",
+      "description": "Price a spot-starting vanilla fixed-vs-float interest-rate swap off a self-discounting curve via the live price_rates engine RPC (the RatesInstrument.irs arm); spills [pv, par_rate, pv01, dv01] then the key-rate DV01 ladder (one kr_dv01[<tenor>Y] row per curve pillar).",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "curve",
+          "description": "2-column [tenorYears, parRate] curve range; one row per OIS pillar, strictly increasing tenor.",
+          "type": "any",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "referenceDate",
+          "description": "Curve reference (spot-anchor) date: an Excel date cell or YYYY-MM-DD.",
+          "type": "any"
+        },
+        {
+          "name": "tenor",
+          "description": "Swap tenor in whole years (e.g. 5 or 5Y).",
+          "type": "any"
+        },
+        {
+          "name": "fixedRate",
+          "description": "Fixed-leg rate as a decimal (0.041 = 4.10%).",
+          "type": "number"
+        },
+        {
+          "name": "notional",
+          "description": "Positive notional in the curve currency.",
+          "type": "number"
+        },
+        {
+          "name": "side",
+          "description": "Optional direction: PAY_FIXED (payer, default) or RECEIVE_FIXED (receiver).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "fixedFrequency",
+          "description": "Optional fixed-leg frequency: ANNUAL, SEMI_ANNUAL (default) or QUARTERLY.",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "fixedDayCount",
+          "description": "Optional fixed-leg day-count: ACT_360 (default) or ACT_365_FIXED.",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "floatFrequency",
+          "description": "Optional float-leg frequency: ANNUAL, SEMI_ANNUAL or QUARTERLY (default).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "floatDayCount",
+          "description": "Optional float-leg day-count: ACT_360 (default) or ACT_365_FIXED.",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "currency",
+          "description": "Optional ISO-4217 curve currency (defaults to USD).",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "FRA",
+      "name": "FRA",
+      "description": "Price a forward rate agreement off a self-discounting curve via the live price_rates engine RPC (the RatesInstrument.fra arm); the accrual window is quoted in whole months from spot (the 3x6 FRA convention). Spills [pv, par_rate, pv01, dv01] then the key-rate DV01 ladder (one kr_dv01[<tenor>Y] row per curve pillar).",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "curve",
+          "description": "2-column [tenorYears, parRate] curve range; one row per OIS pillar, strictly increasing tenor.",
+          "type": "any",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "referenceDate",
+          "description": "Curve reference (spot-anchor) date: an Excel date cell or YYYY-MM-DD.",
+          "type": "any"
+        },
+        {
+          "name": "startMonths",
+          "description": "Window start (fixing) tenor in whole months from spot (e.g. 3 or 3M).",
+          "type": "any"
+        },
+        {
+          "name": "endMonths",
+          "description": "Window end (maturity) tenor in whole months from spot (e.g. 6 or 6M); must be after startMonths.",
+          "type": "any"
+        },
+        {
+          "name": "fixedRate",
+          "description": "Contractual fixed rate as a decimal (0.033 = 3.30%).",
+          "type": "number"
+        },
+        {
+          "name": "notional",
+          "description": "Positive notional in the curve currency.",
+          "type": "number"
+        },
+        {
+          "name": "side",
+          "description": "Optional direction: PAY_FIXED (payer, default) or RECEIVE_FIXED (receiver).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "accrualBasis",
+          "description": "Optional accrual day-count: ACT_360 (default), ACT_365_FIXED or THIRTY_360_BOND_BASIS.",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "currency",
+          "description": "Optional ISO-4217 curve currency (defaults to USD).",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "RATESRISK",
       "name": "RATESRISK",
       "description": "Net a linear-rates OIS book against one shared curve via the live aggregate_rates_risk engine RPC; spills one server-netted node per settlement currency: [ccy, net_pv, net_pv01, net_dv01] then the key-rate DV01 ladder (one kr_dv01[<tenor>Y] column per curve pillar).",

@@ -33,6 +33,7 @@ import type {
   Conventions,
   Executed,
   Execution,
+  FraInstrument,
   Heartbeat,
   Instrument,
   MarketObservable,
@@ -48,6 +49,7 @@ import type {
   StreamReject,
   Tenor,
   Update,
+  VanillaIrsInstrument,
 } from "../contract/contract";
 import {
   bondInstrumentToWire,
@@ -57,9 +59,11 @@ import {
   conventionsToWire,
   executedFromWire,
   executionFromWire,
+  fraInstrumentToWire,
   greeksFromWire,
   heartbeatFromWire,
   instrumentToWire,
+  irsInstrumentToWire,
   marketSeriesPointFromWire,
   marketSeriesSnapshotFromWire,
   marketToWire,
@@ -888,6 +892,60 @@ export class Connection {
       {
         curve_set: ratesCurveSetToWire(curve),
         instrument: bondInstrumentToWire(bond),
+      },
+      "rates_price_response",
+    );
+    return ratesPricingResultFromWire(reply);
+  }
+
+  /**
+   * Price a vanilla fixed-vs-float interest-rate swap over the SAME `price_rates`
+   * RPC (the WS mirror), carrying the `RatesInstrument.irs` oneof arm: send the
+   * calibrated `curve_set` + the `irs` `instrument` body (a spot-starting whole-year
+   * swap, each leg at its own frequency + day-count) and decode the server-computed
+   * `RatesPricingResult` — PV, par (fair fixed) rate, PV01, DV01, and the key-rate
+   * DV01 ladder (one entry per curve pillar). The add-in carries no swap math of its
+   * own — the live `celnet-rates` engine bootstraps the discount/forward curve and
+   * prices the swap; the one unversioned contract makes the result authoritative.
+   * Anonymous-OK: `price_rates` is a pure calculation against the caller-supplied
+   * curve, so it carries no session token.
+   */
+  async priceRatesIrs(
+    curve: RatesCurveSet,
+    irs: VanillaIrsInstrument,
+  ): Promise<RatesPricingResult> {
+    const reply = await this.request(
+      "price_rates",
+      {
+        curve_set: ratesCurveSetToWire(curve),
+        instrument: irsInstrumentToWire(irs),
+      },
+      "rates_price_response",
+    );
+    return ratesPricingResultFromWire(reply);
+  }
+
+  /**
+   * Price a forward rate agreement over the SAME `price_rates` RPC (the WS mirror),
+   * carrying the `RatesInstrument.fra` oneof arm: send the calibrated `curve_set` +
+   * the `fra` `instrument` body (a single `[startMonths, endMonths]` accrual window on
+   * the projected float index) and decode the server-computed `RatesPricingResult` —
+   * PV, par (break-even) rate, PV01, DV01, and the key-rate DV01 ladder (one entry
+   * per curve pillar). The add-in carries no FRA math of its own — the live
+   * `celnet-rates` engine rebuilds the roll-adjusted window and prices the swaplet;
+   * the one unversioned contract makes the result authoritative. Anonymous-OK:
+   * `price_rates` is a pure calculation against the caller-supplied curve, so it
+   * carries no session token.
+   */
+  async priceRatesFra(
+    curve: RatesCurveSet,
+    fra: FraInstrument,
+  ): Promise<RatesPricingResult> {
+    const reply = await this.request(
+      "price_rates",
+      {
+        curve_set: ratesCurveSetToWire(curve),
+        instrument: fraInstrumentToWire(fra),
       },
       "rates_price_response",
     );
