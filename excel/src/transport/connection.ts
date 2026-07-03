@@ -34,6 +34,8 @@ import type {
   Executed,
   Execution,
   FraInstrument,
+  GetCurveRequest,
+  GetCurveResponse,
   Heartbeat,
   Instrument,
   MarketObservable,
@@ -67,6 +69,8 @@ import {
   executedFromWire,
   executionFromWire,
   fraInstrumentToWire,
+  getCurveRequestToWire,
+  getCurveResponseFromWire,
   greeksFromWire,
   heartbeatFromWire,
   instrumentToWire,
@@ -1176,6 +1180,22 @@ export class Connection {
     if (this.sessionToken !== null) body["session_token"] = this.sessionToken;
     const reply = await this.request("build_curve", body, "calibrated_curve");
     return calibratedCurveFromWire(reply);
+  }
+
+  /**
+   * Read a discount curve over the `get_curve` RPC (the WS mirror of
+   * `SurfaceService.GetCurve`, ADR-0021 — the FI analogue of `get_smile`): send the
+   * calibrating `curve_set` + tenor axis (+ an optional pinned `curve_version`) and
+   * decode the server-read `get_curve_response` (per-tenor zero rate + discount
+   * factor, the echoed calibrating par pillars, the marked version and the read
+   * timestamp). Like `get_smile` / `price_rates` this is a PURE calculation against
+   * the request (a live bootstrap or a pinned marked-curve read), so it carries no
+   * session token — the add-in holds no curve math, the live `celnet-rates` engine
+   * computes the authoritative reply over the one unversioned contract.
+   */
+  async getCurve(request: GetCurveRequest): Promise<GetCurveResponse> {
+    const reply = await this.request("get_curve", getCurveRequestToWire(request), "get_curve_response");
+    return getCurveResponseFromWire(reply);
   }
 
   async requestQuote(

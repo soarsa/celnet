@@ -42,6 +42,7 @@ import {
   formatBondSpill,
   formatCalibratedCurveSpill,
   formatCalibratedSmileSpill,
+  formatGetCurveSpill,
   formatGreeksSpill,
   formatInstrumentsSpill,
   formatLimitsSpill,
@@ -77,6 +78,7 @@ import {
   shapeBuildCurveRequest,
   shapeCalibration,
   shapeFraInstrument,
+  shapeGetCurveRequest,
   shapeIrsInstrument,
   shapeOisInstrument,
   shapeRatesCurve,
@@ -739,6 +741,52 @@ export async function CURVE(
     const request = shapeBuildCurveRequest({ pillars, referenceDate, currency });
     const curve = await getConnection().buildCurve(request);
     return formatCalibratedCurveSpill(curve);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Read a discount curve — marked or live-bootstrapped — via the live `get_curve`
+ * engine RPC (the WS mirror of `SurfaceService.GetCurve`, ADR-0021; the
+ * fixed-income analogue of CELNET.SURFACE/GetSmile), and spill the read curve. The
+ * add-in carries NO curve math: the `curve` par pillars + reference date are sent
+ * to the `celnet-rates` engine, which bootstraps the discount/forward term
+ * structure (or, when `pinnedVersion` is supplied, reads the exact `MarkCurve`d
+ * curve of that version from the store) and reports the zero rate + discount factor
+ * at each pillar tenor; this cell only shapes the inputs and lays out the
+ * authoritative reply — bit-identical to the GUI CurveWorkspace over the one
+ * unversioned contract.
+ *
+ * The `curve` range is 2-column `[tenorYears, parRate]`: one row per self-
+ * discounting OIS pillar (whole-year tenor from spot, then its observed par rate as
+ * a decimal, 0.0405 = 4.05%), in strictly increasing tenor order. When
+ * `pinnedVersion` is supplied the marked curve of that version is read (the `curve`
+ * range then only supplies the tenor axis the read reports at); otherwise the curve
+ * is bootstrapped live.
+ *
+ * The spill is a labelled `(2 + points + parPillars + 1)×4` matrix: a `[point,
+ * tenor_years, discount_factor, zero_rate]` header then one queried point per pillar
+ * tenor, a `[par_pillar, tenor_years, par_rate, ]` header then the echoed
+ * calibrating par pillars, and a footer `[version, v<n>|live, currency, <ccy>]`.
+ * @customfunction GETCURVE
+ * @param curve The 2-column `[tenorYears, parRate]` curve range — one row per OIS pillar, strictly increasing tenor.
+ * @param referenceDate The curve reference (spot-anchor) date — an Excel date cell or "YYYY-MM-DD".
+ * @param pinnedVersion Optional MarkCurve version to read from the store (omit ⇒ bootstrap the curve live).
+ * @param currency Optional ISO-4217 curve currency (defaults to USD).
+ * @returns A `(2 + points + parPillars + 1)×4` spill: the queried points, the echoed par pillars, then a version/currency footer.
+ */
+export async function GETCURVE(
+  curve: (string | number | boolean)[][],
+  referenceDate: number | string,
+  pinnedVersion?: number | string,
+  currency?: string,
+): Promise<SpillMatrix> {
+  try {
+    denyIfUngated("getcurve");
+    const request = shapeGetCurveRequest({ curve, referenceDate, pinnedVersion, currency });
+    const reply = await getConnection().getCurve(request);
+    return formatGetCurveSpill(reply);
   } catch (err) {
     throw toCfError(err);
   }
@@ -1577,6 +1625,7 @@ function registerAll(): void {
   cf.associate("XVA", XVA as (...a: never[]) => unknown);
   cf.associate("RATESBOOK", RATESBOOK as (...a: never[]) => unknown);
   cf.associate("CURVE", CURVE as (...a: never[]) => unknown);
+  cf.associate("GETCURVE", GETCURVE as (...a: never[]) => unknown);
   cf.associate("INSTRUMENTS", INSTRUMENTS as (...a: never[]) => unknown);
   cf.associate("RFQ", RFQ as (...a: never[]) => unknown);
   cf.associate("SUBSCRIBE", SUBSCRIBE as (...a: never[]) => unknown);
