@@ -176,60 +176,36 @@ RATES_AUTO_TENORS=(2 3 5 7 10)                 # on-the-run ⇒ auto-quoted (35=
 RATES_MANUAL_TENOR="${FIXSIM_MANUAL_TENOR:-15}"  # non-standard ⇒ routed to a human desk
 FIXSIM_MANUAL_EVERY="${FIXSIM_MANUAL_EVERY:-4}"  # every Nth RFQ is a manual one
 
-run_once() {
-  local req="RFQ-$(date +%s)-$RANDOM"
+# Build the client argv. The client (fix-rfq-client) owns the request loop and, for
+# fixed income, the tenor rotation (on-the-run auto-quoted; every Nth a `--manual-tenor`
+# routed to a human desk), so ONE persistent invocation streams many RFQs over a SINGLE
+# logon — no logon/logout churn per request.
+build_client_args() {
+  CLIENT_ARGS=("${RUNNER[@]}" --addr "$FIXSIM_HOST:$FIXSIM_PORT" \
+    --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" --req-id "FIXSIM-$(date +%s)")
   if [ "$FIXSIM_ASSET" = "fi" ]; then
-    # Fixed-income OIS RFQ — auto-quoted on an on-the-run tenor, else routed to the
-    # rates desk (a human prices it in the GUI). The inbox shows both; the client does
-    # NOT block on a routed (no-quote) RFQ, so the sim keeps sending.
-    local rside="${RATES_SIDES[$((RANDOM % ${#RATES_SIDES[@]}))]}"
-    local n="${RUN_N:-0}" tenor notional="$FIXSIM_NOTIONAL" mode
-    if [ "${FIXSIM_VARY:-1}" != "0" ] && [ "$FIXSIM_MANUAL_EVERY" -gt 0 ] \
-       && [ $(( (n + 1) % FIXSIM_MANUAL_EVERY )) -eq 0 ]; then
-      tenor="$RATES_MANUAL_TENOR"; mode="MANUAL(desk)"
-    else
-      tenor="${RATES_AUTO_TENORS[$(( n % ${#RATES_AUTO_TENORS[@]} ))]}"; mode="AUTO"
-    fi
-    log ">>> FI RFQ [$mode] curve=$FIXSIM_CURVE tenor=${tenor}y side=$rside notional=$notional req=$req"
-    if "${RUNNER[@]}" --asset fi --addr "$FIXSIM_HOST:$FIXSIM_PORT" \
-        --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" \
-        --curve "$FIXSIM_CURVE" --tenor "$tenor" --notional "$notional" \
-        --side "$rside" --req-id "$req"; then
-      log "<<< FI RFQ $req complete"
-    else
-      log "<<< FI RFQ $req exited non-zero ($?) — see the client output above"
-    fi
+    CLIENT_ARGS+=(--asset fi --curve "$FIXSIM_CURVE" --tenor "$FIXSIM_TENOR" \
+      --notional "$FIXSIM_NOTIONAL" --side pay \
+      --manual-every "$FIXSIM_MANUAL_EVERY" --manual-tenor "$RATES_MANUAL_TENOR")
   else
-    # FX-option RFQ — auto-quoted off a surface snapshot (may be lifted).
-    local pair="${PAIRS[$((RANDOM % ${#PAIRS[@]}))]}"
-    local side="${SIDES[$((RANDOM % ${#SIDES[@]}))]}"
-    local otype="${TYPES[$((RANDOM % ${#TYPES[@]}))]}"
-    local strike
-    strike="$(awk "BEGIN{printf \"%.4f\", 1.00 + (${RANDOM} % 40) / 100.0}")"
-    log ">>> FX RFQ pair=$pair type=$otype side=$side strike=$strike req=$req"
-    if "${RUNNER[@]}" --asset fx --addr "$FIXSIM_HOST:$FIXSIM_PORT" \
-        --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" \
-        --pair "$pair" --type "$otype" --side "$side" --strike "$strike" --req-id "$req"; then
-      log "<<< FX RFQ $req complete"
-    else
-      log "<<< FX RFQ $req exited non-zero ($?) — see the client output above"
-    fi
+    CLIENT_ARGS+=(--asset fx --pair EURUSD --type call --side buy --strike 1.10)
   fi
 }
 
 if [ "$FIXSIM_ONESHOT" = "1" ]; then
-  run_once
+  # A single RFQ (the client's default --repeat 1).
+  build_client_args
+  "${CLIENT_ARGS[@]}"
   exit 0
 fi
 
-log "looping RFQs every ${FIXSIM_PERIOD}s +/-${FIXSIM_JITTER}s (Ctrl-C to stop)."
-RUN_N=0
+# Persistent stream: log on ONCE and stream RFQs over the SAME session, one every
+# FIXSIM_PERIOD seconds (the client sleeps between requests; it does not re-logon). A
+# supervisor restarts the client if the session ever drops.
+build_client_args
+CLIENT_ARGS+=(--repeat 0 --interval "$FIXSIM_PERIOD")
+log "streaming RFQs over ONE persistent session every ${FIXSIM_PERIOD}s (Ctrl-C to stop)."
 while true; do
-  export RUN_N
-  run_once || true
-  RUN_N=$(( RUN_N + 1 ))
-  span=$(( FIXSIM_PERIOD + (RANDOM % (2 * FIXSIM_JITTER + 1)) - FIXSIM_JITTER ))
-  [ "$span" -lt 5 ] && span=5
-  log "sleeping ${span}s"
-  sleep "$span"
+  "${CLIENT_ARGS[@]}" || log "sim client exited ($?) — reconnecting in 5s"
+  sleep 5
 done

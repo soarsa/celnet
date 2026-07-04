@@ -101,6 +101,11 @@ struct Args {
     sender: String,
     target: String,
     req_id: String,
+    // Persistent-session loop controls (see the local defaults in `parse_args`).
+    repeat: u64,
+    interval_secs: u64,
+    manual_every: u64,
+    manual_tenor: u32,
 }
 
 fn usage_and_exit(msg: &str) -> ! {
@@ -141,6 +146,15 @@ fn parse_args() -> Args {
     let mut sender = String::from("CELNET-CPTY");
     let mut target = String::from("CELNET");
     let mut req_id = String::from("RFQ-CLI");
+    // Persistent-session loop controls: with `--repeat != 1` the client logs on ONCE
+    // and streams that many RFQs (0 = forever) over the SAME session, `--interval`
+    // seconds apart — no logon/logout churn per request. For fixed income the loop
+    // rotates the tenor: mostly on-the-run (auto-quoted), every `--manual-every`-th a
+    // `--manual-tenor` request the venue routes to a human desk.
+    let mut repeat = 1_u64;
+    let mut interval_secs = 180_u64;
+    let mut manual_every = 4_u64;
+    let mut manual_tenor = 15_u32;
     // `--side` means different things per asset and flags arrive in any order, so
     // capture it raw and interpret it after the loop once `--asset` is known.
     let mut side_raw: Option<String> = None;
@@ -213,6 +227,26 @@ fn parse_args() -> Args {
             "--sender" => sender = val,
             "--target" => target = val,
             "--req-id" => req_id = val,
+            "--repeat" => {
+                repeat = val
+                    .parse()
+                    .unwrap_or_else(|_| usage_and_exit("--repeat must be a whole number (0 = forever)"))
+            }
+            "--interval" => {
+                interval_secs = val
+                    .parse()
+                    .unwrap_or_else(|_| usage_and_exit("--interval must be a whole number of seconds"))
+            }
+            "--manual-every" => {
+                manual_every = val
+                    .parse()
+                    .unwrap_or_else(|_| usage_and_exit("--manual-every must be a whole number (0 = never)"))
+            }
+            "--manual-tenor" => {
+                manual_tenor = val
+                    .parse()
+                    .unwrap_or_else(|_| usage_and_exit("--manual-tenor must be a whole number of years"))
+            }
             other => usage_and_exit(&format!("unknown flag `{other}`")),
         }
     }
@@ -305,6 +339,10 @@ fn parse_args() -> Args {
         sender,
         target,
         req_id,
+        repeat,
+        interval_secs,
+        manual_every,
+        manual_tenor,
     }
 }
 
@@ -413,81 +451,109 @@ async fn main() -> std::io::Result<()> {
     let session = Session::new(cfg, InMemoryStore::new());
     let mut initiator = Initiator::new(session, args.policy);
 
-    match args.asset {
-        AssetClass::FixedIncome => {
-            // Backing bytes for the request must outlive the (single) async send.
-            let req_id = args.req_id.clone().into_bytes();
-            let symbol = args.curve.clone().into_bytes();
-            let params = RatesQuoteRequestParams {
-                quote_req_id: &req_id,
-                symbol: &symbol,
-                tenor_years: args.tenor_years,
-                notional: args.notional,
-                side: args.rates_side,
-                subscription: SubscriptionRequest::Snapshot, // one-shot RFQ
-            };
+    // On-the-run tenors the venue auto-quotes; the loop rotates through these and every
+    // `--manual-every`-th request injects the non-standard `--manual-tenor` (desk-routed).
+    const AUTO_TENORS: &[u32] = &[2, 3, 5, 7, 10];
 
-            let sending_time = fix_utc_timestamp().into_bytes();
-            let result = initiator
-                .request_and_lift(stream, sending_time, |hdr, enc| {
-                    dialect_rates::build_rates_quote_request(hdr, &params, enc)
-                })
-                .await?;
+    // Log on ONCE and stream requests over the SAME session — no logon/logout per RFQ.
+    let mut sess = initiator.open(stream, fix_utc_timestamp().as_bytes()).await?;
 
-            match (result.bid, result.offer) {
-                (Some(bid), Some(offer)) => {
-                    print_quote(result.quote_id.as_deref(), bid, offer);
-                }
-                _ => {
-                    // Rates are priced by the human desk out of band, so no quote on
-                    // the reply is the expected happy path for an OIS RFQ, not a
-                    // failure: the ticket is now queued with the rates desk.
-                    println!("✓ RFQ submitted to the rates desk (awaiting a trader's price)");
-                }
-            }
-        }
-        AssetClass::FxOption => {
-            // Backing bytes for the request must outlive the (single) async send.
-            let req_id = args.req_id.clone().into_bytes();
-            let symbol = args.pair.clone().into_bytes();
-            let strike_ccy = args.strike_ccy.clone().into_bytes();
-            let params = QuoteRequestParams {
-                quote_req_id: &req_id,
-                symbol: &symbol,
-                option_type: args.option_type,
-                strike: args.strike,
-                expiry_years: args.expiry_years,
-                settlement: args.settlement,
-                exercise: args.exercise,
-                strike_ccy: &strike_ccy,
-            };
+    let forever = args.repeat == 0;
+    let mut i: u64 = 0;
+    loop {
+        // A unique request id per RFQ (stable base for a one-shot, base+counter in a stream).
+        let this_req = if args.repeat == 1 {
+            args.req_id.clone()
+        } else {
+            format!("{}-{i}", args.req_id)
+        };
+        let req_id = this_req.into_bytes();
+        let sending_time = fix_utc_timestamp().into_bytes();
 
-            let sending_time = fix_utc_timestamp().into_bytes();
-            let result = initiator
-                .request_and_lift(stream, sending_time, |hdr, enc| {
-                    dialect_fx::build_quote_request(hdr, &params, enc)
-                })
-                .await?;
-
-            match (result.bid, result.offer) {
-                (Some(bid), Some(offer)) => {
-                    print_quote(result.quote_id.as_deref(), bid, offer);
-                }
-                _ => {
-                    eprintln!("✗ no quote returned (the venue declined or the session closed)");
-                    std::process::exit(1);
-                }
-            }
-
-            if !matches!(args.policy, LiftPolicy::Observe) {
-                if result.filled {
-                    let px = result.fill_px.unwrap_or(f64::NAN);
-                    println!("✓ FILLED @ {px:.8}");
+        let result = match args.asset {
+            AssetClass::FixedIncome => {
+                // A one-shot honours --tenor; a stream rotates on-the-run tenors and
+                // injects a manual (desk-routed) tenor every `--manual-every`-th request.
+                let tenor = if args.repeat == 1 {
+                    args.tenor_years
+                } else if args.manual_every > 0 && (i + 1) % args.manual_every == 0 {
+                    args.manual_tenor
                 } else {
-                    println!("✗ NOT FILLED (last-look declined or quote expired)");
+                    AUTO_TENORS[(i as usize) % AUTO_TENORS.len()]
+                };
+                let symbol = args.curve.clone().into_bytes();
+                let params = RatesQuoteRequestParams {
+                    quote_req_id: &req_id,
+                    symbol: &symbol,
+                    tenor_years: tenor,
+                    notional: args.notional,
+                    side: args.rates_side,
+                    subscription: SubscriptionRequest::Snapshot,
+                };
+                let r = sess
+                    .request(&sending_time, |hdr, enc| {
+                        dialect_rates::build_rates_quote_request(hdr, &params, enc)
+                    })
+                    .await?;
+                match (r.bid, r.offer) {
+                    (Some(bid), Some(offer)) => {
+                        println!("[{i}] {tenor}y OIS — auto-quoted:");
+                        print_quote(r.quote_id.as_deref(), bid, offer);
+                    }
+                    // No quote = the venue routed this tenor to a human desk (expected).
+                    _ => println!("[{i}] {tenor}y OIS — ✓ submitted to the rates desk (manual price)"),
                 }
+                r
+            }
+            AssetClass::FxOption => {
+                let symbol = args.pair.clone().into_bytes();
+                let strike_ccy = args.strike_ccy.clone().into_bytes();
+                let params = QuoteRequestParams {
+                    quote_req_id: &req_id,
+                    symbol: &symbol,
+                    option_type: args.option_type,
+                    strike: args.strike,
+                    expiry_years: args.expiry_years,
+                    settlement: args.settlement,
+                    exercise: args.exercise,
+                    strike_ccy: &strike_ccy,
+                };
+                let r = sess
+                    .request(&sending_time, |hdr, enc| {
+                        dialect_fx::build_quote_request(hdr, &params, enc)
+                    })
+                    .await?;
+                match (r.bid, r.offer) {
+                    (Some(bid), Some(offer)) => {
+                        println!("[{i}] FX option — quoted:");
+                        print_quote(r.quote_id.as_deref(), bid, offer);
+                    }
+                    // A one-shot with no quote is an error; a stream just notes it and moves on.
+                    _ if args.repeat == 1 => {
+                        eprintln!("✗ no quote returned (the venue declined or the session closed)");
+                        std::process::exit(1);
+                    }
+                    _ => println!("[{i}] FX option — no quote (venue declined)"),
+                }
+                r
+            }
+        };
+
+        // Auto-accept/trade visibility: when the lift policy trades, report the fill.
+        if !matches!(args.policy, LiftPolicy::Observe) && result.bid.is_some() {
+            if result.filled {
+                let px = result.fill_px.unwrap_or(f64::NAN);
+                println!("[{i}] ✓ auto-accepted & FILLED @ {px:.8}");
+            } else {
+                println!("[{i}] ✗ NOT FILLED (last-look declined or quote expired)");
             }
         }
+
+        i += 1;
+        if !forever && i >= args.repeat {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(args.interval_secs)).await;
     }
 
     Ok(())

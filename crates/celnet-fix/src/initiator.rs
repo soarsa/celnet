@@ -107,32 +107,98 @@ impl<S: MessageStore> Initiator<S> {
     {
         let (read_half, mut write_half) = tokio::io::split(stream);
         let mut reader = FrameReader::new(read_half);
+        if !self.do_logon(&mut reader, &mut write_half, &sending_time).await? {
+            return Ok(InitiatorResult::default());
+        }
+        self.send_request(&mut write_half, &sending_time, build_request)
+            .await?;
+        self.collect(&mut reader, &mut write_half, &sending_time).await
+    }
 
-        // 1. Logon and wait for the mirror.
-        let logon = self.session.start_logon(&sending_time, false);
-        write_frame(&mut write_half, &logon).await?;
+    /// Open a **persistent** session: log on ONCE and return an [`InitiatorSession`]
+    /// handle that sends many requests over the SAME FIX session (the sequence number
+    /// increments; no re-logon per request). The session stays up until the handle is
+    /// dropped — this is how the quote simulator stays logged in across a stream of
+    /// RFQs instead of a logon/logout churn per request.
+    ///
+    /// # Errors
+    /// Propagates transport I/O errors, or fails if the peer closes before logon completes.
+    pub async fn open<RW>(
+        &mut self,
+        stream: RW,
+        sending_time: &[u8],
+    ) -> std::io::Result<InitiatorSession<'_, S, RW>>
+    where
+        RW: AsyncRead + AsyncWrite + Unpin,
+    {
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        let mut reader = FrameReader::new(read_half);
+        if !self.do_logon(&mut reader, &mut write_half, sending_time).await? {
+            return Err(std::io::Error::other("peer closed before logon completed"));
+        }
+        Ok(InitiatorSession {
+            initiator: self,
+            reader,
+            write_half,
+        })
+    }
+
+    /// Logon and wait for the mirror. Returns `Ok(true)` once the session is Active,
+    /// `Ok(false)` if the peer closed before logon completed. Shared by the one-shot
+    /// [`Self::request_and_lift`] and the persistent [`Self::open`].
+    async fn do_logon<R, W>(
+        &mut self,
+        reader: &mut FrameReader<R>,
+        write_half: &mut W,
+        sending_time: &[u8],
+    ) -> std::io::Result<bool>
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        let logon = self.session.start_logon(sending_time, false);
+        write_frame(write_half, &logon).await?;
         loop {
             let Some(frame_bytes) = reader.next_frame().await? else {
-                return Ok(InitiatorResult::default());
+                return Ok(false);
             };
-            let action = self
-                .drive(&frame_bytes, &sending_time, &mut write_half)
-                .await?;
+            let action = self.drive(&frame_bytes, sending_time, write_half).await?;
             if matches!(action, Some(MsgType::Logon))
                 && self.session.state() == crate::session::SessionState::Active
             {
-                break;
+                return Ok(true);
             }
         }
+    }
 
-        // 2. Send the quote request.
-        let req = self.session.send_app(&sending_time, build_request);
-        write_frame(&mut write_half, &req).await?;
+    /// Send one application quote request over the (already logged-on) session.
+    async fn send_request<W>(
+        &mut self,
+        write_half: &mut W,
+        sending_time: &[u8],
+        build_request: impl FnOnce(&Header<'_>, &mut crate::framing::FrameEncoder) -> Vec<u8>,
+    ) -> std::io::Result<()>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        let req = self.session.send_app(sending_time, build_request);
+        write_frame(write_half, &req).await
+    }
 
-        // 3. Collect the quote, optionally lift, collect the exec report. Bounded by a
-        //    deadline so a venue that routes the RFQ to a human desk (no auto-quote, so
-        //    no reply frame ever arrives — only periodic heartbeats) returns no-quote
-        //    instead of blocking forever. Heartbeats do not extend the deadline.
+    /// Collect the quote, optionally lift, collect the exec report. Bounded by a
+    /// deadline so a venue that routes the RFQ to a human desk (no auto-quote reply —
+    /// only periodic heartbeats) returns no-quote instead of blocking forever.
+    /// Heartbeats do not extend the deadline.
+    async fn collect<R, W>(
+        &mut self,
+        reader: &mut FrameReader<R>,
+        write_half: &mut W,
+        sending_time: &[u8],
+    ) -> std::io::Result<InitiatorResult>
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
         let mut result = InitiatorResult::default();
         let mut awaiting_exec = false;
         let deadline = tokio::time::Instant::now() + self.quote_timeout;
@@ -146,9 +212,7 @@ impl<S: MessageStore> Initiator<S> {
                 // A transport error propagates as before.
                 Ok(Err(e)) => return Err(e),
             };
-            let mt = self
-                .drive(&frame_bytes, &sending_time, &mut write_half)
-                .await?;
+            let mt = self.drive(&frame_bytes, sending_time, write_half).await?;
             match mt {
                 Some(MsgType::Quote) => {
                     let frame = FrameCursor::parse(&frame_bytes)
@@ -171,7 +235,7 @@ impl<S: MessageStore> Initiator<S> {
                                 .symbol()
                                 .map(<[u8]>::to_vec)
                                 .unwrap_or_else(|| b"EURUSD".to_vec());
-                            let order = self.session.send_app(&sending_time, |h, e| {
+                            let order = self.session.send_app(sending_time, |h, e| {
                                 let p = NewOrderParams {
                                     cl_ord_id: &cl,
                                     quote_id: &qid,
@@ -182,7 +246,7 @@ impl<S: MessageStore> Initiator<S> {
                                 };
                                 messages::build_new_order_single(h, &p, e)
                             });
-                            write_frame(&mut write_half, &order).await?;
+                            write_frame(write_half, &order).await?;
                             awaiting_exec = true;
                         }
                     }
@@ -231,5 +295,37 @@ impl<S: MessageStore> Initiator<S> {
             return Ok(Some(MsgType::Logon));
         }
         Ok(None)
+    }
+}
+
+/// A **persistent, logged-on** initiator session: send many quote requests over ONE
+/// FIX session (no logon/logout per request). Created by [`Initiator::open`]; the
+/// session stays up until this handle is dropped. The simulator uses it to log on once
+/// and stream RFQs with incrementing sequence numbers.
+pub struct InitiatorSession<'a, S: MessageStore, RW: AsyncRead + AsyncWrite + Unpin> {
+    initiator: &'a mut Initiator<S>,
+    reader: FrameReader<tokio::io::ReadHalf<RW>>,
+    write_half: tokio::io::WriteHalf<RW>,
+}
+
+impl<S: MessageStore, RW: AsyncRead + AsyncWrite + Unpin> InitiatorSession<'_, S, RW> {
+    /// Send one quote request over the already-open session and collect the quote (and
+    /// lift, per the initiator's [`LiftPolicy`]). Reuses the SAME session — the sequence
+    /// number increments, no new logon. Bounded by the initiator's quote timeout so a
+    /// desk-routed (no-quote) RFQ returns cleanly and the caller can send the next one.
+    ///
+    /// # Errors
+    /// Propagates transport I/O errors.
+    pub async fn request(
+        &mut self,
+        sending_time: &[u8],
+        build_request: impl FnOnce(&Header<'_>, &mut crate::framing::FrameEncoder) -> Vec<u8>,
+    ) -> std::io::Result<InitiatorResult> {
+        self.initiator
+            .send_request(&mut self.write_half, sending_time, build_request)
+            .await?;
+        self.initiator
+            .collect(&mut self.reader, &mut self.write_half, sending_time)
+            .await
     }
 }
