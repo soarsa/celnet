@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
+import { useDesktopNotifications } from "../hooks/useDesktopNotifications";
 import { fmtClock } from "../lib/format";
 import type { Notification, NotificationKind } from "../data/contract";
 import styles from "./NotificationCenter.module.css";
@@ -52,9 +53,30 @@ function kindClass(kind: NotificationKind): string {
   }
 }
 
+/** The a11y label + tooltip for the desktop-notifications toggle, per its state. */
+function desktopToggleTitle(d: {
+  supported: boolean;
+  permission: string;
+  enabled: boolean;
+}): string {
+  if (!d.supported) return "Desktop notifications not supported in this browser";
+  if (d.permission === "denied")
+    return "Desktop notifications blocked — allow them in your browser settings";
+  if (d.permission === "default") return "Enable desktop notifications";
+  return d.enabled
+    ? "Desktop notifications on — click to mute"
+    : "Desktop notifications off — click to enable";
+}
+
 export function NotificationCenter(): React.ReactElement | null {
   const app = useApp();
   const signedIn = app.auth.user !== null;
+
+  // Native OS ("growl") escalation: raise a desktop notification for a desk event
+  // only when the tab is hidden/unfocused (the hook enforces that). Clicking the
+  // OS notification focuses the window and routes to the Quoting desk.
+  const desktop = useDesktopNotifications(() => app.setWorkspace("quoting"));
+  const { notify: notifyDesktop } = desktop;
 
   const [items, setItems] = useState<Notification[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -88,10 +110,13 @@ export function NotificationCenter(): React.ReactElement | null {
         setToasts((ts) => [...ts, toast].slice(-MAX_TOASTS));
         window.setTimeout(() => dismissToast(toast.key), TOAST_TTL_MS);
       }
+      // Escalate to a native OS notification when the tab is backgrounded (the
+      // hook no-ops when the tab is on screen, so we never double-notify).
+      notifyDesktop(n);
     };
     const dispose = app.transport.streamNotifications(undefined, onNotification);
     return dispose;
-  }, [app.transport, signedIn, dismissToast]);
+  }, [app.transport, signedIn, dismissToast, notifyDesktop]);
 
   const toggleOpen = useCallback(() => {
     setOpen((o) => {
@@ -113,8 +138,24 @@ export function NotificationCenter(): React.ReactElement | null {
 
   if (!signedIn) return null;
 
+  const desktopTitle = desktopToggleTitle(desktop);
+  const desktopDisabled = !desktop.supported || desktop.permission === "denied";
+
   return (
     <div className={styles.root}>
+      <button
+        type="button"
+        className={styles.toggle}
+        aria-pressed={desktop.enabled}
+        aria-label={desktopTitle}
+        title={desktopTitle}
+        disabled={desktopDisabled}
+        onClick={desktop.toggle}
+      >
+        <span className={styles.toggleGlyph} aria-hidden>
+          {desktop.enabled ? "◉" : "◎"}
+        </span>
+      </button>
       <button
         type="button"
         className={styles.bell}

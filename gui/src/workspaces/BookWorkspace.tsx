@@ -11,6 +11,10 @@
  *     risk rollup (the former BookWorkspace body, now the local `AggregateRiskLens`
  *     below): Firm→Desk→Book tree, common reporting numeraire, P&L attribution,
  *     limits RAG, and the Book→Risk drill.
+ *   • Quotes (`quotes`) — the shown-quotes blotter (`QuotesBlotterWorkspace`):
+ *     every RFQ/IOI the desk has quoted (trader-sent OR auto-quoted), newest
+ *     first, refreshing live on push notifications. The read-only sibling of
+ *     Deals — Quotes is what was SHOWN, Deals is what was BOOKED.
  *   • Deals (`deals`) — the executed-deals blotter (the former standalone
  *     `DealsBlotterWorkspace`, composed here VERBATIM): every booked deal, newest
  *     first, refreshing live on push notifications.
@@ -67,15 +71,17 @@ import { fmtPnlAdaptive } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
 import { RatesBookWorkspace } from "./RatesBookWorkspace";
 import { DealsBlotterWorkspace } from "./DealsBlotterWorkspace";
+import { QuotesBlotterWorkspace } from "./QuotesBlotterWorkspace";
 import styles from "./BookWorkspace.module.css";
 
 /** The VIEW lens the unified Book workspace renders under (a view, not a class). */
-export type BookLens = "positions" | "risk" | "deals";
+export type BookLens = "positions" | "risk" | "deals" | "quotes";
 
 /** One row per view the Book spans: its lens id + the toggle label. */
 const LENSES: readonly { lens: BookLens; label: string }[] = [
   { lens: "positions", label: "Positions & Booking" },
   { lens: "risk", label: "Aggregate Risk" },
+  { lens: "quotes", label: "Quotes" },
   { lens: "deals", label: "Deals" },
 ];
 
@@ -112,6 +118,8 @@ export function BookWorkspace({
           <RatesBookWorkspace />
         ) : lens === "deals" ? (
           <DealsBlotterWorkspace />
+        ) : lens === "quotes" ? (
+          <QuotesBlotterWorkspace />
         ) : (
           <AggregateRiskLens />
         )}

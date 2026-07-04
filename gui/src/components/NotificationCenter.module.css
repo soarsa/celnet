@@ -1,6 +1,49 @@
 .root {
   position: relative;
   display: inline-flex;
+  gap: var(--space-2);
+}
+
+/* Desktop ("growl") notifications toggle — sits left of the bell, same metrics. */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  border: var(--hairline) solid var(--grid-line);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: border-color var(--workspace-switch) var(--ease-out),
+    color var(--workspace-switch) var(--ease-out);
+}
+
+.toggle:hover:not(:disabled) {
+  border-color: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* On (granted + unmuted): accent-lit so the live desktop-alert state reads at a glance. */
+.toggle[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+}
+
+.toggleGlyph {
+  font-size: 1.05rem;
+  line-height: 1;
 }
 
 .bell {

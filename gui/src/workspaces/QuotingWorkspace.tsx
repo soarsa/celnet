@@ -53,7 +53,7 @@ const ARM_LABELS: Record<RfqArm, string> = {
 const RFQ_SIDES: readonly Side[] = ["BUY", "SELL", "TWO_WAY"];
 
 /** A human label for a request's OIS direction (carried on the wire `Side`). */
-function sideLabel(side: Side): string {
+export function sideLabel(side: Side): string {
   if (side === "BUY") return "Pay fixed";
   if (side === "SELL") return "Receive fixed";
   return "Two-way";
@@ -76,7 +76,7 @@ function stateClass(state: DeskRequest["state"]): string {
 }
 
 /** Format a notional (curve ccy) as a compact millions figure. */
-function fmtMm(notional: number): string {
+export function fmtMm(notional: number): string {
   return `${(notional / MM).toLocaleString(undefined, { maximumFractionDigits: 1 })}mm`;
 }
 
