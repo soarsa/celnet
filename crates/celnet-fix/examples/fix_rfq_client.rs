@@ -106,6 +106,15 @@ struct Args {
     interval_secs: u64,
     manual_every: u64,
     manual_tenor: u32,
+    // Every Nth successful auto-quote is LIFTED (executed → booked deal); 0 = never
+    // (pure observe). Lets one RFQ/RFS stream show both quoted-only and booked-deal rows.
+    lift_every: u64,
+    // Run the fixed-income venue as an RFS *stream* (Subscribe → continuous re-priced
+    // quotes) instead of a one-shot RFQ (Snapshot); each cycle holds the stream.
+    stream: bool,
+    // The RFS hold per cycle (seconds): how long to read streamed updates before the
+    // next cycle / lift. Only used in `--intent rfs` mode.
+    stream_hold_secs: u64,
 }
 
 fn usage_and_exit(msg: &str) -> ! {
@@ -155,6 +164,9 @@ fn parse_args() -> Args {
     let mut interval_secs = 180_u64;
     let mut manual_every = 4_u64;
     let mut manual_tenor = 15_u32;
+    let mut lift_every = 0_u64;
+    let mut stream = false;
+    let mut stream_hold_secs = 20_u64;
     // `--side` means different things per asset and flags arrive in any order, so
     // capture it raw and interpret it after the loop once `--asset` is known.
     let mut side_raw: Option<String> = None;
@@ -228,24 +240,41 @@ fn parse_args() -> Args {
             "--target" => target = val,
             "--req-id" => req_id = val,
             "--repeat" => {
-                repeat = val
-                    .parse()
-                    .unwrap_or_else(|_| usage_and_exit("--repeat must be a whole number (0 = forever)"))
+                repeat = val.parse().unwrap_or_else(|_| {
+                    usage_and_exit("--repeat must be a whole number (0 = forever)")
+                })
             }
             "--interval" => {
-                interval_secs = val
-                    .parse()
-                    .unwrap_or_else(|_| usage_and_exit("--interval must be a whole number of seconds"))
+                interval_secs = val.parse().unwrap_or_else(|_| {
+                    usage_and_exit("--interval must be a whole number of seconds")
+                })
             }
             "--manual-every" => {
-                manual_every = val
-                    .parse()
-                    .unwrap_or_else(|_| usage_and_exit("--manual-every must be a whole number (0 = never)"))
+                manual_every = val.parse().unwrap_or_else(|_| {
+                    usage_and_exit("--manual-every must be a whole number (0 = never)")
+                })
             }
             "--manual-tenor" => {
-                manual_tenor = val
-                    .parse()
-                    .unwrap_or_else(|_| usage_and_exit("--manual-tenor must be a whole number of years"))
+                manual_tenor = val.parse().unwrap_or_else(|_| {
+                    usage_and_exit("--manual-tenor must be a whole number of years")
+                })
+            }
+            "--lift-every" => {
+                lift_every = val.parse().unwrap_or_else(|_| {
+                    usage_and_exit("--lift-every must be a whole number (0 = never)")
+                })
+            }
+            "--intent" => {
+                stream = match val.to_lowercase().as_str() {
+                    "rfs" | "stream" | "subscribe" => true,
+                    "rfq" | "snapshot" => false,
+                    other => usage_and_exit(&format!("--intent must be rfq|rfs, got `{other}`")),
+                }
+            }
+            "--stream-hold" => {
+                stream_hold_secs = val.parse().unwrap_or_else(|_| {
+                    usage_and_exit("--stream-hold must be a whole number of seconds")
+                })
             }
             other => usage_and_exit(&format!("unknown flag `{other}`")),
         }
@@ -343,6 +372,9 @@ fn parse_args() -> Args {
         interval_secs,
         manual_every,
         manual_tenor,
+        lift_every,
+        stream,
+        stream_hold_secs,
     }
 }
 
@@ -456,7 +488,9 @@ async fn main() -> std::io::Result<()> {
     const AUTO_TENORS: &[u32] = &[2, 3, 5, 7, 10];
 
     // Log on ONCE and stream requests over the SAME session — no logon/logout per RFQ.
-    let mut sess = initiator.open(stream, fix_utc_timestamp().as_bytes()).await?;
+    let mut sess = initiator
+        .open(stream, fix_utc_timestamp().as_bytes())
+        .await?;
 
     let forever = args.repeat == 0;
     let mut i: u64 = 0;
@@ -474,36 +508,105 @@ async fn main() -> std::io::Result<()> {
             AssetClass::FixedIncome => {
                 // A one-shot honours --tenor; a stream rotates on-the-run tenors and
                 // injects a manual (desk-routed) tenor every `--manual-every`-th request.
+                let is_manual = args.repeat != 1
+                    && args.manual_every > 0
+                    && (i + 1).is_multiple_of(args.manual_every);
                 let tenor = if args.repeat == 1 {
                     args.tenor_years
-                } else if args.manual_every > 0 && (i + 1) % args.manual_every == 0 {
+                } else if is_manual {
                     args.manual_tenor
                 } else {
                     AUTO_TENORS[(i as usize) % AUTO_TENORS.len()]
                 };
                 let symbol = args.curve.clone().into_bytes();
-                let params = RatesQuoteRequestParams {
-                    quote_req_id: &req_id,
-                    symbol: &symbol,
-                    tenor_years: tenor,
-                    notional: args.notional,
-                    side: args.rates_side,
-                    subscription: SubscriptionRequest::Snapshot,
-                };
-                let r = sess
-                    .request(&sending_time, |hdr, enc| {
-                        dialect_rates::build_rates_quote_request(hdr, &params, enc)
-                    })
-                    .await?;
-                match (r.bid, r.offer) {
-                    (Some(bid), Some(offer)) => {
-                        println!("[{i}] {tenor}y OIS — auto-quoted:");
-                        print_quote(r.quote_id.as_deref(), bid, offer);
+                // Lift (execute + book) an auto-quote every `--lift-every`-th cycle; a
+                // manual (desk-routed) tenor has no quote to lift, so it is never lifted.
+                let should_lift =
+                    !is_manual && args.lift_every > 0 && (i + 1).is_multiple_of(args.lift_every);
+
+                if args.stream {
+                    // RFS: Subscribe → the venue streams continuous re-priced quotes; hold
+                    // the session reading updates, and lift one mid-hold when due (executing
+                    // a streaming deal that books).
+                    let params = RatesQuoteRequestParams {
+                        quote_req_id: &req_id,
+                        symbol: &symbol,
+                        tenor_years: tenor,
+                        notional: args.notional,
+                        side: args.rates_side,
+                        subscription: SubscriptionRequest::Subscribe,
+                    };
+                    let hold = std::time::Duration::from_secs(args.stream_hold_secs.max(1));
+                    let lift_after = should_lift.then(|| hold / 2);
+                    let outcome = sess
+                        .stream(
+                            &sending_time,
+                            |hdr, enc| dialect_rates::build_rates_quote_request(hdr, &params, enc),
+                            hold,
+                            lift_after,
+                        )
+                        .await?;
+                    println!(
+                        "[{i}] {tenor}y OIS RFS — streamed {} update(s)",
+                        outcome.updates
+                    );
+                    if let (Some(bid), Some(offer)) = (outcome.result.bid, outcome.result.offer) {
+                        print_quote(outcome.result.quote_id.as_deref(), bid, offer);
                     }
-                    // No quote = the venue routed this tenor to a human desk (expected).
-                    _ => println!("[{i}] {tenor}y OIS — ✓ submitted to the rates desk (manual price)"),
+                    if should_lift {
+                        if outcome.result.filled {
+                            let px = outcome.result.fill_px.unwrap_or(f64::NAN);
+                            println!(
+                                "[{i}] ✓ streamed quote LIFTED & FILLED @ {px:.8} — deal booked"
+                            );
+                        } else {
+                            println!(
+                                "[{i}] ✗ stream lift NOT filled (last-look declined / expired)"
+                            );
+                        }
+                    }
+                    outcome.result
+                } else {
+                    // RFQ snapshot: auto-quoted or desk-routed. Lift some auto-quotes so they
+                    // execute and book as completed deals; observe the rest (quoted only).
+                    sess.set_policy(if should_lift {
+                        LiftPolicy::LiftOffer
+                    } else {
+                        LiftPolicy::Observe
+                    });
+                    let params = RatesQuoteRequestParams {
+                        quote_req_id: &req_id,
+                        symbol: &symbol,
+                        tenor_years: tenor,
+                        notional: args.notional,
+                        side: args.rates_side,
+                        subscription: SubscriptionRequest::Snapshot,
+                    };
+                    let r = sess
+                        .request(&sending_time, |hdr, enc| {
+                            dialect_rates::build_rates_quote_request(hdr, &params, enc)
+                        })
+                        .await?;
+                    match (r.bid, r.offer) {
+                        (Some(bid), Some(offer)) => {
+                            println!("[{i}] {tenor}y OIS — auto-quoted:");
+                            print_quote(r.quote_id.as_deref(), bid, offer);
+                        }
+                        // No quote = the venue routed this tenor to a human desk (expected).
+                        _ => println!(
+                            "[{i}] {tenor}y OIS — ✓ submitted to the rates desk (manual price)"
+                        ),
+                    }
+                    if should_lift {
+                        if r.filled {
+                            let px = r.fill_px.unwrap_or(f64::NAN);
+                            println!("[{i}] ✓ auto-quote LIFTED & FILLED @ {px:.8} — deal booked");
+                        } else if r.bid.is_some() {
+                            println!("[{i}] ✗ lift NOT filled (last-look declined / expired)");
+                        }
+                    }
+                    r
                 }
-                r
             }
             AssetClass::FxOption => {
                 let symbol = args.pair.clone().into_bytes();

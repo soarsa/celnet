@@ -27,8 +27,16 @@ export FIXSIM_NOTIONAL="{{ celnet_fixsim_notional | default('10000000') }}"
 {% if celnet_fixsim_port is defined %}export FIXSIM_PORT="{{ celnet_fixsim_port }}"
 {% endif %}{% if celnet_fixsim_sender is defined %}export FIXSIM_SENDER="{{ celnet_fixsim_sender }}"
 {% endif %}{% if celnet_fixsim_target is defined %}export FIXSIM_TARGET="{{ celnet_fixsim_target }}"
-{% endif %}export FIXSIM_PERIOD="{{ celnet_fixsim_period | default('180') }}"
+{% endif %}export FIXSIM_PERIOD="{{ celnet_fixsim_period | default('20') }}"
 export FIXSIM_JITTER="{{ celnet_fixsim_jitter | default('60') }}"
+# Every Nth auto-quote is LIFTED (executed → booked deal); the rest stay quoted-only.
+export FIXSIM_LIFT_EVERY="{{ celnet_fixsim_lift_every | default('3') }}"
+{% if celnet_fixsim_stream_port is defined and celnet_fixsim_stream_port %}
+# RFS (streaming) leg: a second client subscribes to this fixed-income STREAM acceptor.
+export FIXSIM_STREAM_PORT="{{ celnet_fixsim_stream_port }}"
+export FIXSIM_STREAM_SENDER="{{ celnet_fixsim_stream_sender | default('CELER_RATES_STREAM') }}"
+export FIXSIM_STREAM_HOLD="{{ celnet_fixsim_stream_hold | default('15') }}"
+{% endif %}
 PIDFILE="$FIXSIM_RUN_DIR/fix-sim.pid"
 
 is_running() {

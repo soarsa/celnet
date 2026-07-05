@@ -68,8 +68,17 @@ fi
 FIXSIM_CURVE="${FIXSIM_CURVE:-USD-OIS}"
 FIXSIM_TENOR="${FIXSIM_TENOR:-5}"
 FIXSIM_NOTIONAL="${FIXSIM_NOTIONAL:-10000000}"
-FIXSIM_PERIOD="${FIXSIM_PERIOD:-180}"
+FIXSIM_PERIOD="${FIXSIM_PERIOD:-20}"
 FIXSIM_JITTER="${FIXSIM_JITTER:-60}"
+# Every Nth auto-quote is LIFTED (executed → booked deal) so the blotter fills with
+# completed rates deals, not just shown quotes; the rest stay quoted-only. 0 = never lift.
+FIXSIM_LIFT_EVERY="${FIXSIM_LIFT_EVERY:-3}"
+# Optional RFS (streaming) leg: when a fixed-income STREAM acceptor is reachable at
+# FIXSIM_STREAM_PORT, a SECOND supervised client subscribes and receives continuous
+# re-priced quotes, lifting one per cycle (an executed streaming deal). Empty ⇒ disabled.
+FIXSIM_STREAM_PORT="${FIXSIM_STREAM_PORT:-}"
+FIXSIM_STREAM_SENDER="${FIXSIM_STREAM_SENDER:-CELER_RATES_STREAM}"
+FIXSIM_STREAM_HOLD="${FIXSIM_STREAM_HOLD:-15}"
 FIXSIM_ONESHOT="${FIXSIM_ONESHOT:-0}"
 FIXSIM_DAEMON="${FIXSIM_DAEMON:-0}"
 
@@ -186,7 +195,8 @@ build_client_args() {
   if [ "$FIXSIM_ASSET" = "fi" ]; then
     CLIENT_ARGS+=(--asset fi --curve "$FIXSIM_CURVE" --tenor "$FIXSIM_TENOR" \
       --notional "$FIXSIM_NOTIONAL" --side pay \
-      --manual-every "$FIXSIM_MANUAL_EVERY" --manual-tenor "$RATES_MANUAL_TENOR")
+      --manual-every "$FIXSIM_MANUAL_EVERY" --manual-tenor "$RATES_MANUAL_TENOR" \
+      --lift-every "$FIXSIM_LIFT_EVERY")
   else
     CLIENT_ARGS+=(--asset fx --pair EURUSD --type call --side buy --strike 1.10)
   fi
@@ -197,6 +207,35 @@ if [ "$FIXSIM_ONESHOT" = "1" ]; then
   build_client_args
   "${CLIENT_ARGS[@]}"
   exit 0
+fi
+
+# --- Optional RFS (streaming) leg -------------------------------------------------
+# When a fixed-income STREAM acceptor is reachable at FIXSIM_STREAM_PORT, run a SECOND
+# supervised client that SUBSCRIBES (RFS) and receives continuous re-priced quotes over
+# ONE session, lifting one per cycle (an executed streaming deal). Backgrounded so the RFQ
+# leg below stays in the foreground; reaped when this script exits. Skipped (with a loud,
+# actionable log) when no stream acceptor is present, so the RFQ leg never breaks.
+if [ -n "$FIXSIM_STREAM_PORT" ]; then
+  stream_up=1
+  if command -v nc >/dev/null 2>&1; then
+    nc -z -w 3 "$FIXSIM_HOST" "$FIXSIM_STREAM_PORT" >/dev/null 2>&1 || stream_up=0
+  else
+    timeout 3 bash -c "exec 3<>/dev/tcp/$FIXSIM_HOST/$FIXSIM_STREAM_PORT" >/dev/null 2>&1 || stream_up=0
+  fi
+  if [ "$stream_up" = 1 ]; then
+    STREAM_ARGS=("${RUNNER[@]}" --addr "$FIXSIM_HOST:$FIXSIM_STREAM_PORT" \
+      --sender "$FIXSIM_STREAM_SENDER" --target "$FIXSIM_TARGET" \
+      --req-id "FIXSIM-RFS-$(date +%s)" \
+      --asset fi --intent rfs --curve "$FIXSIM_CURVE" --notional "$FIXSIM_NOTIONAL" \
+      --side pay --manual-every 0 --lift-every "$FIXSIM_LIFT_EVERY" \
+      --stream-hold "$FIXSIM_STREAM_HOLD" --repeat 0 --interval 2)
+    log "RFS leg: streaming from $FIXSIM_HOST:$FIXSIM_STREAM_PORT ($FIXSIM_STREAM_SENDER); hold ${FIXSIM_STREAM_HOLD}s, lift every ${FIXSIM_LIFT_EVERY}."
+    ( while true; do "${STREAM_ARGS[@]}" || log "RFS client exited ($?) — reconnecting in 5s"; sleep 5; done ) &
+    STREAM_PID=$!
+    trap 'kill "$STREAM_PID" 2>/dev/null || true' EXIT INT TERM
+  else
+    log "RFS leg: acceptor $FIXSIM_HOST:$FIXSIM_STREAM_PORT NOT reachable — skipping (RFQ leg continues)."
+  fi
 fi
 
 # Persistent stream: log on ONCE and stream RFQs over the SAME session, one every

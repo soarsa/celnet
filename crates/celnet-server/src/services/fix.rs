@@ -114,6 +114,37 @@ struct FixQuote {
     /// notional). `None` for a rates line — an OIS quote carries no canonical-vanilla
     /// risk leaf and so is never limit-gated.
     fx: Option<BookedPosition>,
+    /// The desk request id an auto-quoted OIS RFQ / RFS stream created (if any). A
+    /// `NewOrderSingle` lift of this quote books that request as a completed deal via
+    /// [`crate::services::desk::RfqDeskEdge::book_fix_lift`] — so a FIX taker executing a
+    /// rates auto-quote surfaces as a booked deal + live position. `None` for an FX line
+    /// or a venue that is not desk-routed.
+    rates_request_id: Option<String>,
+}
+
+/// A live **RFS** (request-for-stream) subscription on a fixed-income STREAM venue: the
+/// venue re-prices this line off the P0 curve on every session tick and pushes a fresh
+/// two-way `Quote(S)` until the taker Unsubscribes (or the session drops). Each streamed
+/// update supersedes the prior one — only `last_quote_id` stays liftable, which keeps the
+/// live-quote table bounded to one entry per subscription rather than growing per tick.
+#[derive(Debug, Clone)]
+struct RfsSubscription {
+    /// The wire `QuoteReqID(131)` correlating every streamed update (and the Unsubscribe).
+    req_id: Vec<u8>,
+    /// The curve symbol echoed on each streamed `Quote(S)`.
+    symbol: Vec<u8>,
+    /// The RFQ notional carried as the streamed quote size.
+    notional: f64,
+    /// The static P0 par rate this stream oscillates a small demo movement around.
+    base_par: f64,
+    /// The desk history row id this subscription opened, so a lift of any streamed update
+    /// books it as a completed deal (`None` when the venue is not desk-routed).
+    request_id: Option<String>,
+    /// A monotonic tick ordinal driving the deterministic (no wall-clock/RNG) movement.
+    tick: u64,
+    /// The most recent streamed quote's `QuoteID(117)`; retired when the next update is
+    /// emitted so only the latest update is liftable (bounded live-quote table).
+    last_quote_id: Option<Vec<u8>>,
 }
 
 /// The shared, immutable pricing context every FIX session on this edge prices and
@@ -396,6 +427,12 @@ struct FixSession {
     next_line: u64,
     /// A counter minting unique `QuoteID`/`OrderID`/`ExecID` strings.
     seq: u64,
+    /// Live RFS subscriptions keyed by the wire `QuoteReqID(131)`: on a fixed-income
+    /// STREAM venue, the session's periodic ticker re-prices each and pushes a fresh
+    /// `Quote(S)`. Empty on a quote/RFQ venue (and while an idle stream venue has no
+    /// subscription) — so the ticker branch is dormant and the loop stays byte-identical
+    /// to the request-response path.
+    rfs: HashMap<Vec<u8>, RfsSubscription>,
 }
 
 impl FixSession {
@@ -408,6 +445,7 @@ impl FixSession {
             live: HashMap::new(),
             next_line: 0,
             seq: 0,
+            rfs: HashMap::new(),
         }
     }
 
@@ -429,29 +467,62 @@ impl FixSession {
     {
         let (read_half, mut write_half) = tokio::io::split(stream);
         let mut reader = FrameReader::new(read_half);
-        while let Some(frame) = reader.next_frame().await? {
-            // Capture the inbound frame for the monitor screen, then the responses we
-            // emit — both tagged with this acceptor's connection id (best-effort
-            // observability off the pricing core; see `fix_monitor`).
-            let now = self.ctx.clock.now_nanos();
-            self.ctx
-                .monitor
-                .record(&self.ctx.connection_id, FixDirection::Inbound, &frame, now);
-            let st = self.sending_time();
-            let outbound = self.handle_frame(&frame, &st).await;
-            for f in outbound {
-                self.ctx.monitor.record(
-                    &self.ctx.connection_id,
-                    FixDirection::Outbound,
-                    &f,
-                    self.ctx.clock.now_nanos(),
-                );
-                write_frame(&mut write_half, &f).await?;
-            }
-            if self.session.state() == celnet_fix::session::SessionState::Disconnected
-                && self.session.next_outbound() > 1
-            {
-                break;
+        // The RFS streaming cadence. A fixed-income STREAM venue re-prices every live
+        // subscription on this interval and pushes fresh two-way quotes; the ticker branch
+        // is armed only while at least one subscription is live (`!self.rfs.is_empty()`),
+        // so a quote/RFQ venue — or an idle stream venue — stays byte-identical to the
+        // pure request-response loop. `next_frame` is cancellation-safe (its only await
+        // commits the socket read into a struct-field buffer before any further await), so
+        // `select!` dropping the read future on a tick loses no bytes.
+        let mut ticker = tokio::time::interval(RFS_STREAM_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await; // consume the immediate first tick (interval fires at t=0)
+        loop {
+            tokio::select! {
+                frame = reader.next_frame() => {
+                    let Some(frame) = frame? else { break };
+                    // Capture the inbound frame for the monitor screen, then the responses
+                    // we emit — both tagged with this acceptor's connection id (best-effort
+                    // observability off the pricing core; see `fix_monitor`).
+                    let now = self.ctx.clock.now_nanos();
+                    self.ctx.monitor.record(
+                        &self.ctx.connection_id,
+                        FixDirection::Inbound,
+                        &frame,
+                        now,
+                    );
+                    let st = self.sending_time();
+                    let outbound = self.handle_frame(&frame, &st).await;
+                    for f in outbound {
+                        self.ctx.monitor.record(
+                            &self.ctx.connection_id,
+                            FixDirection::Outbound,
+                            &f,
+                            self.ctx.clock.now_nanos(),
+                        );
+                        write_frame(&mut write_half, &f).await?;
+                    }
+                    if self.session.state() == celnet_fix::session::SessionState::Disconnected
+                        && self.session.next_outbound() > 1
+                    {
+                        break;
+                    }
+                }
+                // Re-price + push every live RFS subscription. Dormant (guard false, never
+                // polled) while no subscription is live, so an RFQ venue is unaffected.
+                _ = ticker.tick(), if !self.rfs.is_empty() => {
+                    let st = self.sending_time();
+                    let frames = self.tick_rfs_stream(&st);
+                    for f in frames {
+                        self.ctx.monitor.record(
+                            &self.ctx.connection_id,
+                            FixDirection::Outbound,
+                            &f,
+                            self.ctx.clock.now_nanos(),
+                        );
+                        write_frame(&mut write_half, &f).await?;
+                    }
+                }
             }
         }
         Ok(())
@@ -516,7 +587,7 @@ impl FixSession {
             Ok(p) => p,
             Err(_) => return,
         };
-        self.emit_two_way_quote(st, &req_id, &symbol, &priced, fx, out);
+        self.emit_two_way_quote(st, &req_id, &symbol, &priced, fx, None, out);
     }
 
     /// Mint the keyed-MAC two-way tokens for a priced line and send the `Quote(S)`,
@@ -525,6 +596,12 @@ impl FixSession {
     /// numbers/wire are byte-identical to before this extraction. `fx` is the BUY-side
     /// pre-trade [`BookedPosition`] template (ADR-0016 A1) an FX line carries for the
     /// lift-time limit gate; a rates line passes `None` (no canonical-vanilla risk leaf).
+    ///
+    /// `rates_request_id` is the desk history row a rates auto-quote/stream opened, so a
+    /// lift of this quote books it as a completed deal (an FX line passes `None`). Returns
+    /// the wire `QuoteID(117)` of the emitted quote so a streaming caller can retire the
+    /// prior update.
+    #[allow(clippy::too_many_arguments)] // the shared quote-emit inputs + the pre-trade/desk hooks.
     fn emit_two_way_quote(
         &mut self,
         st: &[u8],
@@ -532,8 +609,9 @@ impl FixSession {
         symbol: &[u8],
         priced: &PricedLine,
         fx: Option<BookedPosition>,
+        rates_request_id: Option<String>,
         out: &mut Vec<Vec<u8>>,
-    ) {
+    ) -> Vec<u8> {
         let now = self.ctx.clock.now_nanos();
         let line_id = {
             self.next_line += 1;
@@ -576,6 +654,7 @@ impl FixSession {
                 buy_token,
                 sell_token,
                 fx,
+                rates_request_id,
             },
         );
 
@@ -593,6 +672,7 @@ impl FixSession {
             messages::build_quote(h, &p, e)
         });
         out.push(frame_out);
+        quote_id
     }
 
     /// Handle an inbound rates `QuoteRequest(R)` on a dedicated fixed-income venue:
@@ -624,6 +704,15 @@ impl FixSession {
         if !subscription_matches_intent(intent, rfq.subscription) {
             return;
         }
+        // An RFS Unsubscribe tears down the live stream for this correlation id and stops
+        // (no quote, no desk row) — the session ticker no longer re-prices it.
+        if matches!(
+            rfq.subscription,
+            dialect_rates::SubscriptionRequest::Unsubscribe
+        ) {
+            self.rfs.remove(req_id);
+            return;
+        }
         let side = rates_side_to_side(rfq.side);
         let curve = crate::rates_pricing::default_usd_sofr_curve_set();
         // Auto-quote only a policy-admitted RFQ that the venue can actually price; a
@@ -637,12 +726,40 @@ impl FixSession {
         };
         match priced {
             Some(priced) => {
-                // Auto-quote: the SAME shared rates line + `Quote(S)` as before, plus a
-                // QUOTED history row at the two-way mid. A rates line carries no FX
-                // pre-trade template (no canonical-vanilla leaf).
-                self.emit_two_way_quote(st, req_id, symbol, &priced, None, out);
+                // Auto-quote: the SAME shared rates line + `Quote(S)`, plus a QUOTED
+                // history row at the two-way mid whose id rides the live quote so a lift
+                // books it as a completed deal. A rates line carries no FX pre-trade
+                // template (no canonical-vanilla leaf).
                 let mid = 0.5 * (priced.bid + priced.offer);
-                self.record_rates_rfq(&rfq, side, &curve, Some(mid));
+                let request_id = self.record_rates_rfq(&rfq, side, &curve, Some(mid));
+                let quote_id = self.emit_two_way_quote(
+                    st,
+                    req_id,
+                    symbol,
+                    &priced,
+                    None,
+                    request_id.clone(),
+                    out,
+                );
+                // On a STREAM (RFS) venue a Subscribe opens a CONTINUOUS stream: register
+                // the subscription so the session ticker re-prices and pushes updates until
+                // an Unsubscribe (or session close). The quote just emitted is the first
+                // update; the desk row id rides every update so a lift of any one books the
+                // same deal and closes the stream.
+                if intent == RatesIntent::Rfs {
+                    self.rfs.insert(
+                        req_id.to_vec(),
+                        RfsSubscription {
+                            req_id: req_id.to_vec(),
+                            symbol: symbol.to_vec(),
+                            notional: rfq.notional,
+                            base_par: mid,
+                            request_id,
+                            tick: 0,
+                            last_quote_id: Some(quote_id),
+                        },
+                    );
+                }
             }
             None => {
                 // Route to a human desk: PENDING, no auto `Quote(S)` (the desk prices it).
@@ -651,22 +768,74 @@ impl FixSession {
         }
     }
 
+    /// Re-price every live RFS subscription off the P0 curve (with a small deterministic
+    /// demo movement) and return the fresh two-way `Quote(S)` frames to push. Each update
+    /// retires the subscription's prior live quote so only the latest stays liftable,
+    /// keeping the live-quote table bounded to one entry per subscription. Driven by the
+    /// session loop's streaming ticker; returns an empty vec when no subscription is live.
+    fn tick_rfs_stream(&mut self, st: &[u8]) -> Vec<Vec<u8>> {
+        let mut frames = Vec::new();
+        // Snapshot the keys so the loop can re-borrow `self` (live table, quote minter)
+        // between subscriptions while mutating the subscription set in place.
+        let keys: Vec<Vec<u8>> = self.rfs.keys().cloned().collect();
+        for key in keys {
+            let (req_id, symbol, notional, base_par, request_id, tick, prior) = {
+                let Some(sub) = self.rfs.get_mut(&key) else {
+                    continue;
+                };
+                sub.tick += 1;
+                (
+                    sub.req_id.clone(),
+                    sub.symbol.clone(),
+                    sub.notional,
+                    sub.base_par,
+                    sub.request_id.clone(),
+                    sub.tick,
+                    sub.last_quote_id.take(),
+                )
+            };
+            // Retire the superseded quote — only the latest streamed update is liftable.
+            if let Some(prior) = prior {
+                self.live.remove(&prior);
+            }
+            let moved_par = rfs_streamed_rate(base_par, tick);
+            let (bid, offer) = dialect_rates::two_way_rates(moved_par, RATES_HALF_SPREAD);
+            let priced = PricedLine {
+                bid,
+                offer,
+                size: notional,
+            };
+            let quote_id = self.emit_two_way_quote(
+                st,
+                &req_id,
+                &symbol,
+                &priced,
+                None,
+                request_id,
+                &mut frames,
+            );
+            if let Some(sub) = self.rfs.get_mut(&key) {
+                sub.last_quote_id = Some(quote_id);
+            }
+        }
+        frames
+    }
+
     /// Record an inbound rates RFQ into the desk inbox under this venue's desk. When
     /// `auto_level` is `Some`, the venue auto-quoted → stored QUOTED at that level;
-    /// otherwise stored PENDING for a human trader. A no-op when the acceptor is not
-    /// desk-routed (legacy env seed / tests) or carries no desk.
+    /// otherwise stored PENDING for a human trader. Returns the stored request id (so a
+    /// lift can book it), or `None` when the acceptor is not desk-routed (legacy env seed /
+    /// tests) or carries no desk.
     fn record_rates_rfq(
         &self,
         rfq: &dialect_rates::RatesRfq,
         side: Side,
         curve: &CurveSet,
         auto_level: Option<f64>,
-    ) {
-        let Some(edge) = self.ctx.desk_edge.as_ref() else {
-            return;
-        };
+    ) -> Option<String> {
+        let edge = self.ctx.desk_edge.as_ref()?;
         if self.ctx.desk.trim().is_empty() {
-            return;
+            return None;
         }
         let counterparty = String::from_utf8_lossy(&self.ctx.counterparty).into_owned();
         let instrument = RatesInstrument {
@@ -683,7 +852,7 @@ impl FixSession {
             valid_for_ms: RATES_AUTO_QUOTE_VALID_MS,
             trader: "auto".to_owned(),
         });
-        edge.ingest_fix_rfq(
+        let stored = edge.ingest_fix_rfq(
             &self.ctx.desk,
             &counterparty,
             instrument,
@@ -692,6 +861,7 @@ impl FixSession {
             rfq.notional,
             quote,
         );
+        Some(stored.request_id)
     }
 
     /// Handle an inbound cash-bond `QuoteRequest(R)` on a dedicated fixed-income venue —
@@ -730,7 +900,7 @@ impl FixSession {
         };
         match priced {
             Some(priced) => {
-                self.emit_two_way_quote(st, req_id, symbol, &priced, None, out);
+                self.emit_two_way_quote(st, req_id, symbol, &priced, None, None, out);
                 let mid = 0.5 * (priced.bid + priced.offer);
                 self.record_bond_rfq(&rfq, &curve, Some(mid));
             }
@@ -818,6 +988,12 @@ impl FixSession {
             .as_ref()
             .and_then(|q| self.live.get(q))
             .and_then(|lq| lq.fx);
+        // The desk request id a rates auto-quote / RFS stream created for this line; a
+        // filled lift books it as a completed deal (below). `None` for an FX/unknown line.
+        let rates_request_id = quote_id
+            .as_ref()
+            .and_then(|q| self.live.get(q))
+            .and_then(|lq| lq.rates_request_id.clone());
 
         // Book through the SAME last-look ledger the RFS stream uses. An unknown
         // quote/side ⇒ UnknownToken (no live token), exactly as a forged token.
@@ -866,6 +1042,18 @@ impl FixSession {
         // is NOT retired, but its token is already consumed, so a re-lift still rejects.
         if filled && let Some(q) = quote_id.as_ref() {
             self.live.remove(q);
+        }
+
+        // A filled rates auto-quote / RFS-stream lift books the desk request it created as
+        // a completed deal (dealt position + Deal + ACCEPTED) and closes any live RFS
+        // stream for it — so the FIX taker's execution shows in the deal blotter and the
+        // rates Book, exactly like a GUI desk accept.
+        if filled && let Some(request_id) = rates_request_id {
+            if let Some(edge) = self.ctx.desk_edge.as_ref() {
+                let _ = edge.book_fix_lift(&request_id);
+            }
+            self.rfs
+                .retain(|_, sub| sub.request_id.as_deref() != Some(request_id.as_str()));
         }
 
         let order_id = self.mint_id("O");
@@ -1023,6 +1211,29 @@ struct PricedLine {
 /// in [`crate::rates_pricing::RATES_RFQ_HALF_SPREAD`], shared with the WS/gRPC
 /// taker RFQ two-way so the FIX and contract FI RFQ markets are struck identically.
 use crate::rates_pricing::RATES_RFQ_HALF_SPREAD as RATES_HALF_SPREAD;
+
+/// The RFS streaming re-price cadence: a fixed-income STREAM venue pushes a fresh two-way
+/// on this interval for a lively demo, well within the 30s session heartbeat window.
+const RFS_STREAM_INTERVAL_SECS: u64 = 5;
+const RFS_STREAM_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(RFS_STREAM_INTERVAL_SECS);
+
+/// The demo movement amplitude a streamed rate oscillates around its static P0 par —
+/// ±2bp, a realistic intraday wiggle that keeps the live stream visibly moving without
+/// misrepresenting the curve level.
+const RFS_MOVE_AMPLITUDE: f64 = 0.0002;
+
+/// A deterministic small oscillation of a streamed par rate driven by the subscription
+/// tick ordinal — a triangle wave in `[-1, 1]` over an 8-tick period, scaled by
+/// [`RFS_MOVE_AMPLITUDE`]. Pure arithmetic (no wall-clock, no RNG, no libm), so the
+/// stream is reproducible and stays off the pricing hot path while looking alive.
+fn rfs_streamed_rate(base_par: f64, tick: u64) -> f64 {
+    const PERIOD: u64 = 8;
+    let phase = (tick % PERIOD) as f64 / PERIOD as f64; // [0, 1)
+    let saw = 2.0 * phase - 1.0; // [-1, 1)
+    let triangle = 1.0 - 2.0 * saw.abs(); // [-1, 1], peak at phase 0.5
+    base_par + RFS_MOVE_AMPLITUDE * triangle
+}
 
 /// The rates request intent a fixed-income acceptor serves: a one-shot RFQ vs a
 /// streaming RFS. Derived from the connection's [`AcceptorKind`] and matched
@@ -1266,6 +1477,23 @@ mod tests {
         assert_eq!(rates_side_to_side(RatesSide::PayFixed), Side::Buy);
         assert_eq!(rates_side_to_side(RatesSide::ReceiveFixed), Side::Sell);
         assert_eq!(rates_side_to_side(RatesSide::TwoWay), Side::TwoWay);
+    }
+
+    /// The streamed RFS rate oscillates a small bounded movement around the static P0 par:
+    /// deterministic (same tick ⇒ same rate), centred, within ±the amplitude, and actually
+    /// moving — the wiggle that makes the live stream visibly alive without misquoting the
+    /// curve level.
+    #[test]
+    fn rfs_streamed_rate_oscillates_within_amplitude() {
+        let base = 0.0405;
+        for tick in 0..64u64 {
+            let r = rfs_streamed_rate(base, tick);
+            assert!((r - base).abs() <= RFS_MOVE_AMPLITUDE + 1e-12);
+        }
+        // Deterministic + periodic (period 8).
+        assert_eq!(rfs_streamed_rate(base, 3), rfs_streamed_rate(base, 11));
+        // The wave actually moves (not a constant line).
+        assert_ne!(rfs_streamed_rate(base, 0), rfs_streamed_rate(base, 4));
     }
 
     // --- fixed-income dialect dispatch --------------------------------------

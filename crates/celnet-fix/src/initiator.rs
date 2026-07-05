@@ -44,6 +44,17 @@ pub struct InitiatorResult {
     pub filled: bool,
 }
 
+/// Outcome of an RFS **subscribe-and-hold** cycle: how many streamed `Quote` updates the
+/// venue pushed during the hold, plus the last quote seen and the fill state (set when a
+/// streamed update was lifted to execute a deal).
+#[derive(Debug, Clone, Default)]
+pub struct StreamOutcome {
+    /// The number of streamed `Quote` updates received during the hold.
+    pub updates: u64,
+    /// The last streamed quote observed + the fill outcome (if a lift executed).
+    pub result: InitiatorResult,
+}
+
 /// The default time the initiator waits for a `Quote` before giving up: a venue that
 /// routes an RFQ to a human desk (rather than auto-quoting) sends no reply, so without
 /// a bound the request/lift cycle would block forever. Five seconds comfortably covers
@@ -107,12 +118,16 @@ impl<S: MessageStore> Initiator<S> {
     {
         let (read_half, mut write_half) = tokio::io::split(stream);
         let mut reader = FrameReader::new(read_half);
-        if !self.do_logon(&mut reader, &mut write_half, &sending_time).await? {
+        if !self
+            .do_logon(&mut reader, &mut write_half, &sending_time)
+            .await?
+        {
             return Ok(InitiatorResult::default());
         }
         self.send_request(&mut write_half, &sending_time, build_request)
             .await?;
-        self.collect(&mut reader, &mut write_half, &sending_time).await
+        self.collect(&mut reader, &mut write_half, &sending_time)
+            .await
     }
 
     /// Open a **persistent** session: log on ONCE and return an [`InitiatorSession`]
@@ -133,7 +148,10 @@ impl<S: MessageStore> Initiator<S> {
     {
         let (read_half, mut write_half) = tokio::io::split(stream);
         let mut reader = FrameReader::new(read_half);
-        if !self.do_logon(&mut reader, &mut write_half, sending_time).await? {
+        if !self
+            .do_logon(&mut reader, &mut write_half, sending_time)
+            .await?
+        {
             return Err(std::io::Error::other("peer closed before logon completed"));
         }
         Ok(InitiatorSession {
@@ -265,6 +283,91 @@ impl<S: MessageStore> Initiator<S> {
         Ok(result)
     }
 
+    /// Subscribe-and-hold: drive the session for `hold`, collecting EVERY streamed `Quote`
+    /// the RFS venue pushes (unlike [`Self::collect`], which breaks on the first quote),
+    /// answering heartbeats so the session stays alive. If `lift_after` is set, lift the
+    /// first update received at/after that elapsed point with a `NewOrderSingle` (BUY the
+    /// offer — executing a streaming deal) and collect its `ExecutionReport`. Returns the
+    /// update count and the last quote / fill state.
+    async fn collect_stream<R, W>(
+        &mut self,
+        reader: &mut FrameReader<R>,
+        write_half: &mut W,
+        sending_time: &[u8],
+        hold: Duration,
+        lift_after: Option<Duration>,
+    ) -> std::io::Result<StreamOutcome>
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        let start = tokio::time::Instant::now();
+        // The hold bounds the stream; a lift near the end extends the deadline just enough
+        // to collect the exec report (the venue books synchronously on the order).
+        let mut deadline = start + hold;
+        let lift_at = lift_after.map(|d| start + d);
+        let mut outcome = StreamOutcome::default();
+        let mut awaiting_exec = false;
+        loop {
+            let frame_bytes = match tokio::time::timeout_at(deadline, reader.next_frame()).await {
+                Err(_elapsed) => break,
+                Ok(Ok(Some(bytes))) => bytes,
+                Ok(Ok(None)) => break,
+                Ok(Err(e)) => return Err(e),
+            };
+            let mt = self.drive(&frame_bytes, sending_time, write_half).await?;
+            match mt {
+                Some(MsgType::Quote) => {
+                    let frame = FrameCursor::parse(&frame_bytes)
+                        .map_err(|_| std::io::Error::other("bad quote frame"))?;
+                    let view = QuoteView::new(frame);
+                    outcome.updates += 1;
+                    outcome.result.quote_id = view.quote_id().map(<[u8]>::to_vec);
+                    outcome.result.bid = view.bid();
+                    outcome.result.offer = view.offer();
+                    let lift_due = lift_at.is_some_and(|t| tokio::time::Instant::now() >= t);
+                    if lift_due && !awaiting_exec && !outcome.result.filled {
+                        // Lift the offer (BUY) of this streamed update — execute a deal.
+                        let cl = self.mint("C");
+                        let qid = outcome.result.quote_id.clone().unwrap_or_default();
+                        let symbol = view
+                            .symbol()
+                            .map(<[u8]>::to_vec)
+                            .unwrap_or_else(|| b"USD-OIS".to_vec());
+                        let order = self.session.send_app(sending_time, |h, e| {
+                            let p = NewOrderParams {
+                                cl_ord_id: &cl,
+                                quote_id: &qid,
+                                symbol: &symbol,
+                                side: crate::dialect_fx::SIDE_BUY,
+                                qty: 1_000_000.0,
+                                transact_time: b"20260530-12:00:01.000",
+                            };
+                            messages::build_new_order_single(h, &p, e)
+                        });
+                        write_frame(write_half, &order).await?;
+                        awaiting_exec = true;
+                        // Keep the session open long enough to collect the fill.
+                        let exec_deadline = tokio::time::Instant::now() + self.quote_timeout;
+                        if exec_deadline > deadline {
+                            deadline = exec_deadline;
+                        }
+                    }
+                }
+                Some(MsgType::ExecutionReport) if awaiting_exec => {
+                    let frame = FrameCursor::parse(&frame_bytes)
+                        .map_err(|_| std::io::Error::other("bad exec frame"))?;
+                    let view = messages::ExecReportView::new(frame);
+                    outcome.result.filled = view.exec_type() == Some(messages::EXEC_FILLED);
+                    outcome.result.fill_px = view.last_px();
+                    break;
+                }
+                _ => {}
+            }
+        }
+        Ok(outcome)
+    }
+
     /// Feed one inbound frame to the session and transmit any session-level
     /// outbound. Returns the inbound application `MsgType` (if delivered).
     async fn drive<W>(
@@ -327,5 +430,41 @@ impl<S: MessageStore, RW: AsyncRead + AsyncWrite + Unpin> InitiatorSession<'_, S
         self.initiator
             .collect(&mut self.reader, &mut self.write_half, sending_time)
             .await
+    }
+
+    /// Open an RFS **stream**: send a subscribe (`build_subscribe`) over the already-open
+    /// session, then hold for `hold`, collecting every streamed `Quote` the venue pushes
+    /// and answering heartbeats. If `lift_after` is set, lift the first update at/after
+    /// that point with a `NewOrderSingle` (executing a streaming deal) and collect its
+    /// fill. Reuses the SAME session — the sequence increments, no new logon.
+    ///
+    /// # Errors
+    /// Propagates transport I/O errors.
+    pub async fn stream(
+        &mut self,
+        sending_time: &[u8],
+        build_subscribe: impl FnOnce(&Header<'_>, &mut crate::framing::FrameEncoder) -> Vec<u8>,
+        hold: Duration,
+        lift_after: Option<Duration>,
+    ) -> std::io::Result<StreamOutcome> {
+        self.initiator
+            .send_request(&mut self.write_half, sending_time, build_subscribe)
+            .await?;
+        self.initiator
+            .collect_stream(
+                &mut self.reader,
+                &mut self.write_half,
+                sending_time,
+                hold,
+                lift_after,
+            )
+            .await
+    }
+
+    /// Switch the lift policy applied to subsequent [`Self::request`] cycles on this open
+    /// session — so a driver can OBSERVE some auto-quotes (leaving them QUOTED) and LIFT
+    /// others (executing + booking them) over a single logon, without re-connecting.
+    pub fn set_policy(&mut self, policy: LiftPolicy) {
+        self.initiator.policy = policy;
     }
 }

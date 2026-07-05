@@ -358,6 +358,85 @@ impl RfqDeskEdge {
         stored
     }
 
+    /// Book a FIX-venue auto-quote **lift**: the taker sent a `NewOrderSingle(D)` against
+    /// a live auto-quote on the FIX edge, so the QUOTED desk request that auto-quote
+    /// created transitions to ACCEPTED and books the dealt rates position + [`Deal`] at
+    /// the quoted level — the SAME booking body as the gRPC [`Self::accept_desk_quote`],
+    /// minus the RPC auth/gate (the FIX transport already authenticated the pre-agreed
+    /// counterparty). Returns the booked [`Deal`], or `None` when the request is unknown /
+    /// not QUOTED / carries no OIS leaf / breaches a hard limit (the position book refuses
+    /// the booking) — in which case the request is left untouched so nothing half-books.
+    /// This is what makes a FIX auto-quote that the taker executes appear as a **booked
+    /// deal** in the blotter and a live position in the rates Book, not merely a shown
+    /// price.
+    #[must_use]
+    pub fn book_fix_lift(&self, request_id: &str) -> Option<Deal> {
+        let mut current = self.requests.get(request_id)?;
+        if current.state != DeskRequestState::Quoted as i32 {
+            return None;
+        }
+        let quote: DeskQuote = current.quote.clone()?;
+
+        // The desk's traded direction is the opposite of the counterparty's firm
+        // instrument side (validated priceable at ingest, so always Buy/Sell).
+        let ois = ois_of(current.instrument.as_ref())?;
+        let traded_side = Side::try_from(ois.side).ok()?;
+        let desk_side = opposite_side(traded_side);
+
+        // Book the dealt rates position (desk perspective) at the lifted level.
+        let booked_instrument = RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+                tenor_years: ois.tenor_years,
+                fixed_rate: quote.price,
+                notional: quote.notional,
+                side: desk_side as i32,
+            })),
+        };
+        // The position book enforces the SAME pre-trade limit tree the gRPC accept path
+        // consults; a hard breach refuses the booking (Err) → leave the request QUOTED.
+        let booked = self
+            .rates
+            .book(RatesPosition {
+                position_id: 0,
+                entity: 0,
+                book: 0,
+                instrument: Some(booked_instrument),
+            })
+            .ok()?;
+
+        let now = self.clock.now_nanos();
+        let deal = Deal {
+            deal_id: self.deals.next_deal_id(),
+            request_id: current.request_id.clone(),
+            kind: current.kind,
+            counterparty: current.counterparty.clone(),
+            desk: current.desk.clone(),
+            instrument: Some(booked_instrument),
+            curve_set: current.curve_set.clone(),
+            side: desk_side as i32,
+            notional: quote.notional,
+            price: quote.price,
+            executed_at_nanos: now,
+            trader: quote.trader.clone(),
+            position_id: Some(booked.position_id),
+            correlation_id: current.correlation_id.clone(),
+        };
+        self.deals.insert(deal.clone());
+
+        current.state = DeskRequestState::Accepted as i32;
+        let stored = self.requests.replace(current)?;
+        self.publish_notification(
+            NotificationKind::QuoteAccepted,
+            &stored,
+            format!("FIX lift — deal {} booked", deal.deal_id),
+            Some(format!(
+                "{} {:.4} on {:.0} notional — executed on the FIX venue",
+                stored.desk, deal.price, deal.notional
+            )),
+        );
+        Some(deal)
+    }
+
     /// A deterministic, broker-scoped notification id.
     fn notify_id(&self) -> String {
         // The broker owns no id space (it is a pure fan-out); deals/requests own
