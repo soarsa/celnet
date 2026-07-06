@@ -142,9 +142,13 @@ struct RfsSubscription {
     request_id: Option<String>,
     /// A monotonic tick ordinal driving the deterministic (no wall-clock/RNG) movement.
     tick: u64,
-    /// The most recent streamed quote's `QuoteID(117)`; retired when the next update is
-    /// emitted so only the latest update is liftable (bounded live-quote table).
+    /// The most recent streamed quote's `QuoteID(117)`.
     last_quote_id: Option<Vec<u8>>,
+    /// The immediately-superseded quote's `QuoteID(117)`, kept liftable for ONE extra
+    /// tick so a lift that races the re-price (the taker lifts the update they just saw
+    /// in the same instant the next tick supersedes it) still fills. Retired the tick
+    /// after — 2-deep, so the live-quote table stays bounded (two entries per stream).
+    prev_quote_id: Option<Vec<u8>>,
 }
 
 /// The shared, immutable pricing context every FIX session on this edge prices and
@@ -757,6 +761,7 @@ impl FixSession {
                             request_id,
                             tick: 0,
                             last_quote_id: Some(quote_id),
+                            prev_quote_id: None,
                         },
                     );
                 }
@@ -779,7 +784,7 @@ impl FixSession {
         // between subscriptions while mutating the subscription set in place.
         let keys: Vec<Vec<u8>> = self.rfs.keys().cloned().collect();
         for key in keys {
-            let (req_id, symbol, notional, base_par, request_id, tick, prior) = {
+            let (req_id, symbol, notional, base_par, request_id, tick, to_retire, superseded) = {
                 let Some(sub) = self.rfs.get_mut(&key) else {
                     continue;
                 };
@@ -791,12 +796,14 @@ impl FixSession {
                     sub.base_par,
                     sub.request_id.clone(),
                     sub.tick,
-                    sub.last_quote_id.take(),
+                    sub.prev_quote_id.take(), // 2 ticks old — safe to retire now
+                    sub.last_quote_id.take(), // 1 tick old — keep liftable one more tick
                 )
             };
-            // Retire the superseded quote — only the latest streamed update is liftable.
-            if let Some(prior) = prior {
-                self.live.remove(&prior);
+            // Retire only the 2-ticks-old quote; the immediately-superseded update stays
+            // liftable through this tick so a lift racing the re-price still fills.
+            if let Some(q) = to_retire {
+                self.live.remove(&q);
             }
             let moved_par = rfs_streamed_rate(base_par, tick);
             let (bid, offer) = dialect_rates::two_way_rates(moved_par, RATES_HALF_SPREAD);
@@ -815,6 +822,7 @@ impl FixSession {
                 &mut frames,
             );
             if let Some(sub) = self.rfs.get_mut(&key) {
+                sub.prev_quote_id = superseded;
                 sub.last_quote_id = Some(quote_id);
             }
         }

@@ -527,9 +527,12 @@ async fn main() -> std::io::Result<()> {
                 if args.stream {
                     // RFS: Subscribe → the venue streams continuous re-priced quotes; hold
                     // the session reading updates, and lift one mid-hold when due (executing
-                    // a streaming deal that books).
+                    // a streaming deal that books). Use a STABLE QuoteReqID across cycles so
+                    // each re-subscribe REPLACES the one live stream on the venue (keyed by
+                    // QuoteReqID) instead of piling up a fresh subscription every cycle.
+                    let stream_req_id = format!("{}-RFS", args.req_id).into_bytes();
                     let params = RatesQuoteRequestParams {
-                        quote_req_id: &req_id,
+                        quote_req_id: &stream_req_id,
                         symbol: &symbol,
                         tenor_years: tenor,
                         notional: args.notional,
