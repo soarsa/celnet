@@ -24,6 +24,7 @@ import {
   type ScopeNode,
   type ScopeState,
 } from "./scope";
+import { DOMAINS, type Domain } from "./commands";
 
 /**
  * The rail workspace the view is parked on. Mirrors `commands.WorkspaceId` exactly
@@ -82,6 +83,13 @@ export interface AnalyticsSelection {
 /** The full reproducible view state: where + what-slice + what-analytics. */
 export interface ViewState {
   workspace: WorkspaceId;
+  /**
+   * The active product-DOMAIN tab (fe-fi-migration re-add). Restored alongside the
+   * workspace so a deep-link/saved-view recalls the correct tab AND, for a shared
+   * screen, its FX/FI lens (Model A). Defaults to `fx_options` when absent (an old
+   * link predating the tab bar decodes to the FX tab — forward-compatible).
+   */
+  domain: Domain;
   scope: ScopeState;
   analytics: AnalyticsSelection;
 }
@@ -100,6 +108,7 @@ export interface SavedView {
 // not clobber it. The saved-view params are orthogonal to the transport params.
 const PARAM = {
   workspace: "view",
+  domain: "dom",
   scope: "scope",
   groupBy: "group",
   model: "model",
@@ -107,6 +116,16 @@ const PARAM = {
   axes: "axes",
   trend: "trend",
 } as const;
+
+/** The default domain tab — an absent `dom` param (and old links) decode to this. */
+const DEFAULT_DOMAIN: Domain = "fx_options";
+
+/** The valid domain ids (from the single {@link DOMAINS} source), for decode guarding. */
+const DOMAIN_IDS: ReadonlySet<string> = new Set(DOMAINS.map((d) => d.id));
+
+function isDomain(s: string | null): s is Domain {
+  return s !== null && DOMAIN_IDS.has(s);
+}
 
 const ANALYTICS_PARAMS: readonly (keyof AnalyticsSelection)[] = [
   "model",
@@ -129,6 +148,9 @@ function isWorkspace(s: string | null): s is WorkspaceId {
 export function encodeView(state: ViewState): URLSearchParams {
   const p = new URLSearchParams();
   p.set(PARAM.workspace, state.workspace);
+  // Emit `dom` only for a NON-default domain, so an FX-default view's URL stays
+  // byte-identical to the pre-tab-bar form (the default decodes back to fx_options).
+  if (state.domain !== DEFAULT_DOMAIN) p.set(PARAM.domain, state.domain);
   const scopeTok = encodeScopePath(state.scope.path);
   if (scopeTok.length > 0) p.set(PARAM.scope, scopeTok);
   if (state.scope.groupBy !== "none") p.set(PARAM.groupBy, state.scope.groupBy);
@@ -157,6 +179,9 @@ export function decodeView(input: URLSearchParams | string): ViewState {
   const wsRaw = p.get(PARAM.workspace);
   const workspace: WorkspaceId = isWorkspace(wsRaw) ? wsRaw : "stream";
 
+  const domRaw = p.get(PARAM.domain);
+  const domain: Domain = isDomain(domRaw) ? domRaw : DEFAULT_DOMAIN;
+
   const path: ScopeNode[] = decodeScopePath(p.get(PARAM.scope) ?? "");
   const groupRaw = p.get(PARAM.groupBy);
   const groupBy: ScopeGroupBy = groupRaw !== null && isScopeGroupBy(groupRaw) ? groupRaw : "none";
@@ -171,7 +196,7 @@ export function decodeView(input: URLSearchParams | string): ViewState {
   const trend = p.get(PARAM.trend);
   if (trend !== null) analytics.trend = trend;
 
-  return { workspace, scope: { path, groupBy }, analytics };
+  return { workspace, domain, scope: { path, groupBy }, analytics };
 }
 
 /** Drop the analytics axes that have no value (normalises for deep-equality). */

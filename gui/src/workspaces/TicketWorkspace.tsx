@@ -20,7 +20,7 @@
  * without the former 3606-line monolith.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import { configuredLicense } from "../lib/commands";
@@ -47,6 +47,7 @@ import { ConventionRow } from "../components/ConventionChip";
 import {
   PRODUCT_REGISTRY,
   isRatesSpec,
+  OIS_STRUCTURE_ID,
   specById,
   StructureGallery,
   PayoffChart,
@@ -490,6 +491,33 @@ export function TicketWorkspace({
     () => (fiVisible ? PRODUCT_REGISTRY : PRODUCT_REGISTRY.filter((s) => !isRatesSpec(s))),
     [fiVisible],
   );
+
+  // Model A: the ticket has no FX/FI lens — its asset class IS the selected product
+  // FAMILY. Pre-select the family class for the ACTIVE DOMAIN tab on a domain switch:
+  // entering Fixed Income seeds the rates (OIS) family if the current family isn't
+  // already a rates one (and FI is viewable/licensed — `fiVisible`); entering FX
+  // Options restores the FX vanilla (RISK_REVERSAL) if the current family is rates.
+  // Fires ONLY on a domain CHANGE (the initial mount is skipped so a seeded
+  // `initialStructure` / the default family is honoured), so it never fights the
+  // trader's manual family selection between switches; a structure change
+  // invalidates any priced state.
+  const domainSynced = useRef(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sync on domain change only
+  useEffect(() => {
+    if (!domainSynced.current) {
+      domainSynced.current = true;
+      return;
+    }
+    if (app.activeDomain === "fixed_income") {
+      if (!isRates && fiVisible) {
+        setStructure(OIS_STRUCTURE_ID);
+        clearPriced();
+      }
+    } else if (app.activeDomain === "fx_options" && isRates) {
+      setStructure("RISK_REVERSAL");
+      clearPriced();
+    }
+  }, [app.activeDomain]);
 
   // A trader-facing expiry label that is honest for every mode: a declared
   // no-expiry family (the perpetual) reads "PERP" (it has no expiry date to

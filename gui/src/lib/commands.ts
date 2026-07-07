@@ -196,10 +196,75 @@ export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
  * if none — the redirect target when the active workspace's domain becomes
  * inaccessible. Excel is always reachable, so a signed-in identity always has at
  * least one accessible workspace; `null` is a defensive degenerate only.
+ *
+ * When `domain` is given, the search is restricted to the rows belonging to that
+ * domain tab (see {@link workspaceDomains}); if that domain has no accessible row
+ * it falls back to the GLOBAL first accessible workspace, so a caller can prefer
+ * landing WITHIN the active domain without risking a `null` when the domain is
+ * empty but other domains are reachable.
  */
-export function firstAccessibleWorkspace(auth: NavAuth): WorkspaceId | null {
+export function firstAccessibleWorkspace(
+  auth: NavAuth,
+  domain?: Domain,
+): WorkspaceId | null {
+  if (domain !== undefined) {
+    const inDomain = railForDomain(domain).find((r) => workspaceAccessible(r.id, auth));
+    if (inDomain) return inDomain.id;
+    // Domain has no reachable row — fall back to the global first accessible.
+  }
   const entry = RAIL.find((r) => workspaceAccessible(r.id, auth));
   return entry ? entry.id : null;
+}
+
+// ---------------------------------------------------------------------------
+// Domain layer (fe-fi-migration re-add) — a top-level product-DOMAIN tab bar
+// (FX Options / Fixed Income / Administration) ABOVE the single class-parametric
+// rail. Membership is DERIVED from each row's served `assets` (+ the admin-only
+// set), never a redundant per-row `domain` field: a cross-asset row appears under
+// BOTH trading tabs (Model A), a single-asset row under its one tab, admin/ops
+// rows under the single "admin" domain. The tab only selects a LENS for the
+// shared screens; the rail still applies {@link railState} per row.
+// ---------------------------------------------------------------------------
+
+/** A top-level product domain (tab). Trading domains ARE their CapabilityAsset. */
+export type Domain = CapabilityAsset | "admin";
+
+/** The top-level domain tabs, in bar order. */
+export const DOMAINS: readonly { id: Domain; label: string }[] = [
+  { id: "fx_options", label: "FX Options" },
+  { id: "fixed_income", label: "Fixed Income" },
+  { id: "admin", label: "Administration" },
+] as const;
+
+/**
+ * The domain tab(s) a workspace appears under — DERIVED from its served assets.
+ * Cross-asset rows appear under BOTH FX and FI (Model A); admin/ops rows (which
+ * serve no asset) under the single "admin" domain.
+ */
+export function workspaceDomains(id: WorkspaceId): readonly Domain[] {
+  if (ADMIN_ONLY_WORKSPACES.has(id)) return ["admin"];
+  const assets = workspaceAssets(id);
+  return assets.length > 0 ? assets : ["admin"];
+}
+
+/**
+ * Whether a top-level DOMAIN tab is accessible: admin → `isAdmin`; a trading
+ * domain → `view` on its class. Signed-out `can` is permissive ⇒ both trading
+ * tabs render pre-login; the Administration tab stays `isAdmin`-gated (hidden
+ * signed out — matches the existing admin-pane hide; no special-case).
+ */
+export function domainAccessible(domain: Domain, auth: NavAuth): boolean {
+  if (domain === "admin") return auth.isAdmin;
+  return auth.can("view", domain);
+}
+
+/**
+ * The rail rows belonging to `domain`, in {@link RAIL} order (structural
+ * membership only; the Shell still applies {@link railState} per row for the
+ * present / gated-upsell / hidden three-state).
+ */
+export function railForDomain(domain: Domain): readonly (typeof RAIL)[number][] {
+  return RAIL.filter((r) => workspaceDomains(r.id).includes(domain));
 }
 
 // ---------------------------------------------------------------------------

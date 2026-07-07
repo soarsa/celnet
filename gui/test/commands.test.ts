@@ -19,12 +19,16 @@ import {
   buildCommands,
   cheatsheet,
   COMMAND_META,
+  domainAccessible,
+  DOMAINS,
   firstAccessibleWorkspace,
   RAIL,
   railChord,
+  railForDomain,
   resolveChord,
   workspaceAccessible,
   workspaceAssets,
+  workspaceDomains,
   type CommandContext,
   type NavAuth,
 } from "../src/lib/commands";
@@ -207,6 +211,142 @@ describe("buildCommands — dispatch wiring & context gating", () => {
     const { ctx } = spyContext();
     const known = new Set(COMMAND_META.map((c) => c.id));
     for (const cmd of buildCommands(ctx)) expect(known.has(cmd.id)).toBe(true);
+  });
+});
+
+describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railForDomain", () => {
+  /** A NavAuth whose `can` admits exactly the given set of `action·asset` keys. */
+  function navAuth(opts: { isAdmin: boolean; allow?: ReadonlySet<string> }): NavAuth {
+    return {
+      isAdmin: opts.isAdmin,
+      can: (action, asset) => opts.allow?.has(`${action}·${asset}`) ?? false,
+    };
+  }
+  const signedOut: NavAuth = { isAdmin: false, can: () => true };
+
+  it("DOMAINS is exactly FX / FI / Administration, in bar order", () => {
+    expect(DOMAINS.map((d) => d.id)).toEqual(["fx_options", "fixed_income", "admin"]);
+    expect(DOMAINS.map((d) => d.label)).toEqual(["FX Options", "Fixed Income", "Administration"]);
+  });
+
+  describe("workspaceDomains (derived from served assets — Model A)", () => {
+    it("shared cross-asset rows appear under BOTH trading domains", () => {
+      for (const id of ["ticket", "surface", "risk", "book"] as const) {
+        expect([...workspaceDomains(id)].sort()).toEqual(["fixed_income", "fx_options"]);
+      }
+    });
+
+    it("single-asset rows appear under their one trading domain only", () => {
+      expect(workspaceDomains("stream")).toEqual(["fx_options"]);
+      expect(workspaceDomains("xva")).toEqual(["fx_options"]);
+      expect(workspaceDomains("excel")).toEqual(["fx_options"]);
+      expect(workspaceDomains("quoting")).toEqual(["fixed_income"]);
+    });
+
+    it("admin/ops rows appear under the single admin domain", () => {
+      for (const id of ADMIN_ONLY_WORKSPACES) {
+        expect(workspaceDomains(id)).toEqual(["admin"]);
+      }
+    });
+
+    it("derives membership from `assets` — no row's domains diverge from its served assets", () => {
+      for (const r of RAIL) {
+        const doms = workspaceDomains(r.id);
+        if (ADMIN_ONLY_WORKSPACES.has(r.id)) {
+          expect(doms).toEqual(["admin"]);
+        } else {
+          expect([...doms].sort()).toEqual([...r.assets].sort());
+        }
+      }
+    });
+  });
+
+  describe("domainAccessible", () => {
+    it("the Administration tab requires isAdmin (hidden signed out)", () => {
+      expect(domainAccessible("admin", navAuth({ isAdmin: true }))).toBe(true);
+      expect(domainAccessible("admin", navAuth({ isAdmin: false }))).toBe(false);
+      expect(domainAccessible("admin", signedOut)).toBe(false);
+    });
+
+    it("a trading tab follows the class view capability", () => {
+      const fxOnly = navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) });
+      expect(domainAccessible("fx_options", fxOnly)).toBe(true);
+      expect(domainAccessible("fixed_income", fxOnly)).toBe(false);
+    });
+
+    it("signed out: both trading tabs are accessible (permissive can)", () => {
+      expect(domainAccessible("fx_options", signedOut)).toBe(true);
+      expect(domainAccessible("fixed_income", signedOut)).toBe(true);
+    });
+  });
+
+  describe("railForDomain (structural membership, RAIL order)", () => {
+    it("FX Options = the FX-only rows + the shared rows, in RAIL order", () => {
+      expect(railForDomain("fx_options").map((r) => r.id)).toEqual([
+        "ticket",
+        "stream",
+        "surface",
+        "risk",
+        "book",
+        "xva",
+        "excel",
+      ]);
+    });
+
+    it("Fixed Income = quoting + the shared rows, in RAIL order", () => {
+      expect(railForDomain("fixed_income").map((r) => r.id)).toEqual([
+        "ticket",
+        "surface",
+        "risk",
+        "book",
+        "quoting",
+      ]);
+    });
+
+    it("Administration = exactly the admin/ops rows", () => {
+      expect(railForDomain("admin").map((r) => r.id)).toEqual([
+        "connections",
+        "admin",
+        "permissions",
+        "refdata",
+      ]);
+    });
+
+    it("every RAIL row belongs to at least one domain and only to its derived domains", () => {
+      for (const r of RAIL) {
+        for (const d of workspaceDomains(r.id)) {
+          expect(railForDomain(d).some((x) => x.id === r.id)).toBe(true);
+        }
+      }
+    });
+  });
+
+  describe("firstAccessibleWorkspace(auth, domain) — domain-aware landing", () => {
+    it("prefers a row WITHIN the given domain", () => {
+      const both = navAuth({
+        isAdmin: false,
+        allow: new Set(["view·fx_options", "view·fixed_income"]),
+      });
+      // FI tab lands on the first FI row in RAIL order (shared Ticket, reachable).
+      expect(firstAccessibleWorkspace(both, "fixed_income")).toBe("ticket");
+      // FX tab likewise leads with Ticket.
+      expect(firstAccessibleWorkspace(both, "fx_options")).toBe("ticket");
+    });
+
+    it("falls back to the GLOBAL first accessible when the domain has no reachable row", () => {
+      // A non-admin: the Administration domain has no reachable row, so a request for
+      // it falls back to the global first accessible (Ticket via a trading view).
+      const trader = navAuth({
+        isAdmin: false,
+        allow: new Set(["view·fx_options", "view·fixed_income"]),
+      });
+      expect(firstAccessibleWorkspace(trader, "admin")).toBe("ticket");
+    });
+
+    it("without a domain arg behaves exactly as before (global first accessible)", () => {
+      const fiOnly = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
+      expect(firstAccessibleWorkspace(fiOnly)).toBe(firstAccessibleWorkspace(fiOnly, "fixed_income"));
+    });
   });
 });
 

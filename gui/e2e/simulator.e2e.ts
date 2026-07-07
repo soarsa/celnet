@@ -30,10 +30,19 @@ const SIM_DENIED_TITLE =
  * class-parametric rail — no product-domain tab to select first.
  */
 async function railClick(page: Page, label: string): Promise<void> {
-  await page
+  const btn = page
     .getByRole("complementary", { name: "workspaces" })
-    .locator(`button[title^="${label} ("]`)
-    .click();
+    .locator(`button[title^="${label} ("]`);
+  // fe-fi-migration re-add: the rail is filtered to the active domain. If the row
+  // isn't under the current tab, select whichever domain tab surfaces it first.
+  if ((await btn.count()) === 0) {
+    const tabs = page.getByRole("tablist", { name: "product domains" }).getByRole("tab");
+    for (let i = 0; i < (await tabs.count()); i += 1) {
+      await tabs.nth(i).click();
+      if ((await btn.count()) > 0) break;
+    }
+  }
+  await btn.click();
 }
 
 test("admin: a popout window injects an RFQ into the live RFQ/IOI inbox", async ({

@@ -45,11 +45,17 @@ import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import {
   buildCommands,
   configuredLicense,
+  domainAccessible,
+  DOMAINS,
+  firstAccessibleWorkspace,
   LICENSE_UPSELL_TITLE,
   RAIL,
   railChord,
+  railForDomain,
   railState,
   resolveChord,
+  workspaceDomains,
+  type Domain,
   type RailState,
   type WorkspaceId,
 } from "../lib/commands";
@@ -118,10 +124,68 @@ export function Shell(): React.ReactElement {
   // Signed out, `can` is permissive ⇒ every trading workspace is reachable.
   const licensed = useMemo(() => configuredLicense(), []);
   const stateOfWs = (r: (typeof RAIL)[number]): RailState => railState(r.id, app.auth, licensed);
-  // Shown in the rail: everything NOT hidden (present OR gated-upsell). ONE rail —
-  // every reachable workspace across the whole platform in registry order, with no
-  // per-domain tab filter; the admin/ops rows are simply hidden for a non-admin.
-  const navRail = RAIL.filter((r) => stateOfWs(r) !== "hidden");
+  // The top-level product-DOMAIN tab three-state (fe-fi-migration re-add): a tab is
+  // HIDDEN when its domain is inaccessible (admin for a non-admin; a trading class
+  // the identity can't `view`), GATED-UPSELL when a trading domain's class is
+  // unlicensed (present + lock + "license this class"), else PRESENT. With the
+  // default all-licensed predicate this collapses to present-or-hidden, so signed
+  // out both trading tabs are present and Administration is hidden.
+  const domainStateOf = (d: Domain): RailState => {
+    if (!domainAccessible(d, app.auth)) return "hidden";
+    if (d !== "admin" && !licensed(d)) return "gated-upsell";
+    return "present";
+  };
+  const domainTabs = DOMAINS.map((d) => ({ def: d, state: domainStateOf(d.id) })).filter(
+    (t) => t.state !== "hidden",
+  );
+
+  // Per-domain last-active workspace memory (Model A): switching back to a domain
+  // returns to the screen you left there, defaulting to that domain's first
+  // accessible workspace. Recorded for the active domain as the workspace changes.
+  const lastByDomain = useRef<Partial<Record<Domain, WorkspaceId>>>({});
+  useEffect(() => {
+    lastByDomain.current[app.activeDomain] = app.workspace;
+  }, [app.activeDomain, app.workspace]);
+
+  // Select a top-level domain tab. A gated/hidden tab is a no-op (the upsell lock).
+  // For a PRESENT tab: flip the active domain (Model A — a shared screen keeps its
+  // pane and only flips its lens), and if the current workspace is NOT in the new
+  // domain, navigate to that domain's remembered (still-present) workspace or its
+  // first accessible one. `setActiveDomain` runs FIRST so the composed `navigate`
+  // observes the just-set domain and leaves it in place for the shared target.
+  const selectDomain = (d: Domain): void => {
+    if (domainStateOf(d) !== "present") return;
+    app.setActiveDomain(d);
+    if (workspaceDomains(app.workspace).includes(d)) return; // shared → keep the screen
+    const remembered = lastByDomain.current[d];
+    const target =
+      remembered !== undefined && railState(remembered, app.auth, licensed) === "present"
+        ? remembered
+        : firstAccessibleWorkspace(app.auth, d);
+    if (target) app.setWorkspace(target);
+  };
+
+  // Move keyboard focus between domain tabs (WAI-ARIA tablist roving-tabindex):
+  // Arrow Left/Right wrap across the visible tabs, Home/End jump to the ends.
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const onTabKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, index: number): void => {
+    const n = domainTabs.length;
+    if (n === 0) return;
+    let next = index;
+    if (e.key === "ArrowRight") next = (index + 1) % n;
+    else if (e.key === "ArrowLeft") next = (index - 1 + n) % n;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = n - 1;
+    else return;
+    e.preventDefault();
+    tabRefs.current[next]?.focus();
+  };
+
+  // Shown in the rail: the rows of the ACTIVE domain that are NOT hidden (present
+  // OR gated-upsell), in registry order. The tab bar selects the domain; the rail
+  // shows only that domain's workspaces (cross-asset rows appear under both trading
+  // tabs — Model A). The admin/ops rows are hidden for a non-admin as before.
+  const navRail = railForDomain(app.activeDomain).filter((r) => stateOfWs(r) !== "hidden");
   // Fully usable (licensed + reachable): the only entries that MOUNT a pane and
   // that keyboard/command navigation may target — a wholly-unlicensed class never
   // mounts a workspace it cannot use. (Default all-licensed ⇒ usable == shown.)
@@ -268,6 +332,47 @@ export function Shell(): React.ReactElement {
       </aside>
 
       <div className={styles.main}>
+        {/*
+         * Top-level product-DOMAIN tab bar (fe-fi-migration re-add): FX Options /
+         * Fixed Income / Administration, each capability-gated. The tab selects the
+         * domain LENS for the shared cross-asset screens (Ticket / Market Data /
+         * Risk / Book appear under both trading tabs — Model A) and filters the rail
+         * to the active domain's rows. A gated (unlicensed) trading tab is present
+         * but locked (upsell); an inaccessible tab is hidden entirely.
+         */}
+        <div className={styles.tabBar} role="tablist" aria-label="product domains">
+          {domainTabs.map((t, i) => {
+            const id = t.def.id;
+            const active = app.activeDomain === id;
+            const gated = t.state === "gated-upsell";
+            return (
+              <button
+                key={id}
+                ref={(el) => {
+                  tabRefs.current[i] = el;
+                }}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-disabled={gated || undefined}
+                tabIndex={active ? 0 : -1}
+                title={gated ? LICENSE_UPSELL_TITLE : undefined}
+                className={`${styles.tab} ${active ? styles.tabActive : ""} ${
+                  gated ? styles.tabLocked : ""
+                }`}
+                onClick={() => selectDomain(id)}
+                onKeyDown={(e) => onTabKeyDown(e, i)}
+              >
+                {t.def.label}
+                {gated && (
+                  <span className={styles.tabLock} aria-hidden>
+                    {"🔒︎"}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
         <TitleBar />
         {/*
          * P0-11: every workspace stays MOUNTED; we toggle visibility rather than

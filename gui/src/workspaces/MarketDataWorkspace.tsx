@@ -25,7 +25,7 @@
  * re-implemented here (the shell is purely the class-parametric gate + toggle).
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type { CapabilityAsset } from "../data/contract";
 import { configuredLicense, type LicensePredicate } from "../lib/commands";
@@ -70,6 +70,23 @@ export function MarketDataWorkspace({
       setLens(available[0]!.lens);
     }
   }, [available, lens]);
+
+  // Model A: pre-select the lens for the ACTIVE DOMAIN tab — fixed_income → the
+  // rates lens, fx_options → the FX lens — so flipping tabs while on this shared
+  // screen flips the surface's lens. Fires ONLY on a domain CHANGE (the initial
+  // mount is skipped so the useState-seeded / `initialLens` lens is honoured, and
+  // manual lens selection between switches is never fought), and only switches to a
+  // lens the identity has available; the runtime-clamp effect above still guards it.
+  const domainSynced = useRef(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sync on domain change only
+  useEffect(() => {
+    if (!domainSynced.current) {
+      domainSynced.current = true;
+      return;
+    }
+    const want: MarketDataLens = app.activeDomain === "fixed_income" ? "rates" : "fx";
+    if (available.some((l) => l.lens === want)) setLens(want);
+  }, [app.activeDomain]);
 
   if (available.length === 0) {
     // Defensive: the Shell hides the pane when the class is gated, so this is only

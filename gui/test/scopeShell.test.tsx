@@ -19,7 +19,12 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { AppProvider } from "../src/app/AppContext";
 import { Shell } from "../src/app/Shell";
-import { ADMIN_ONLY_WORKSPACES, RAIL, railChord } from "../src/lib/commands";
+import {
+  ADMIN_ONLY_WORKSPACES,
+  RAIL,
+  railChord,
+  railForDomain,
+} from "../src/lib/commands";
 
 beforeEach(() => {
   window.history.replaceState(null, "", "/?mock");
@@ -43,17 +48,19 @@ async function renderShell(): Promise<void> {
 }
 
 describe("data-driven single class-parametric rail + glyph fix (GW1-S1 / #6)", () => {
-  it("renders one rail button per registry view with its ⌘N hint (admin-only views hidden)", async () => {
+  it("renders the ACTIVE (default FX) domain's rail rows with their ⌘N hints (others hidden)", async () => {
     await renderShell();
     const rail = screen.getByRole("complementary", { name: "workspaces" });
-    // fe-fi-migration #6: ONE rail — every non-admin workspace is shown TOGETHER
-    // (no per-domain tab filter). The default render is an anonymous session, so the
-    // admin-only ops panes are hidden; every trading workspace appears with its
-    // registry ⌘N hint (⌘1..⌘9 for the first nine, ⌘0 for the tenth, none beyond).
+    // fe-fi-migration re-add: the rail is FILTERED to the active domain (default
+    // fx_options). Every FX-domain row appears with its registry ⌘N hint (the hint
+    // still derives from the FULL RAIL index — ⌘1..⌘9, ⌘0 for the tenth); an FI-only
+    // row (Quoting) and the anonymous-hidden admin/ops panes are NOT in the FX rail.
+    const fxRows = new Set(railForDomain("fx_options").map((r) => r.id));
     for (let i = 0; i < RAIL.length; i += 1) {
       const r = RAIL[i]!;
       const btn = within(rail).queryByRole("button", { name: new RegExp(r.label, "i") });
-      if (ADMIN_ONLY_WORKSPACES.has(r.id)) {
+      const shouldShow = fxRows.has(r.id) && !ADMIN_ONLY_WORKSPACES.has(r.id);
+      if (!shouldShow) {
         expect(btn).toBeNull();
         continue;
       }
@@ -61,6 +68,8 @@ describe("data-driven single class-parametric rail + glyph fix (GW1-S1 / #6)", (
       const chord = railChord(i).join("");
       if (chord.length > 0) expect(btn!.getAttribute("title")).toContain(chord);
     }
+    // The FI-only Quoting row is NOT reachable from the FX tab.
+    expect(within(rail).queryByRole("button", { name: /Quoting/i })).toBeNull();
   });
 
   it("Book uses the ledger glyph ▤ and Σ is not a rail glyph (one glyph, one meaning)", async () => {
@@ -76,6 +85,83 @@ describe("data-driven single class-parametric rail + glyph fix (GW1-S1 / #6)", (
       .getAllByRole("button")
       .find((b) => b.getAttribute("title")?.startsWith("Book "));
     expect(bookBtn?.textContent).toContain("▤");
+  });
+});
+
+describe("product-domain tab bar (fe-fi-migration re-add — Model A)", () => {
+  it("shows FX Options + Fixed Income tabs signed out; Administration hidden; FX active", async () => {
+    await renderShell();
+    const tablist = screen.getByRole("tablist", { name: "product domains" });
+    const names = within(tablist)
+      .getAllByRole("tab")
+      .map((t) => t.textContent ?? "");
+    expect(names.some((n) => n.includes("FX Options"))).toBe(true);
+    expect(names.some((n) => n.includes("Fixed Income"))).toBe(true);
+    // Administration is isAdmin-gated ⇒ hidden for the anonymous session.
+    expect(names.some((n) => n.includes("Administration"))).toBe(false);
+    expect(
+      within(tablist).getByRole("tab", { name: /FX Options/i }).getAttribute("aria-selected"),
+    ).toBe("true");
+  });
+
+  it("selecting Fixed Income filters the rail (Quoting appears, Stream hidden) + selects the FI tab", async () => {
+    await renderShell();
+    const tablist = screen.getByRole("tablist", { name: "product domains" });
+    let rail = screen.getByRole("complementary", { name: "workspaces" });
+    // Under the FX tab: Stream (FX-only) present, Quoting (FI-only) absent.
+    expect(within(rail).queryByRole("button", { name: /Stream/i })).not.toBeNull();
+    expect(within(rail).queryByRole("button", { name: /Quoting/i })).toBeNull();
+    act(() => {
+      fireEvent.click(within(tablist).getByRole("tab", { name: /Fixed Income/i }));
+    });
+    rail = screen.getByRole("complementary", { name: "workspaces" });
+    // Under the FI tab: Quoting present, Stream hidden — the rail follows the domain.
+    expect(within(rail).queryByRole("button", { name: /Quoting/i })).not.toBeNull();
+    expect(within(rail).queryByRole("button", { name: /Stream/i })).toBeNull();
+    expect(
+      within(tablist).getByRole("tab", { name: /Fixed Income/i }).getAttribute("aria-selected"),
+    ).toBe("true");
+  });
+
+  it("switching tabs on a SHARED screen keeps the screen and flips its lens (Model A)", async () => {
+    await renderShell();
+    // Enter the shared Market Data screen from the FX tab.
+    act(() => {
+      fireEvent.click(
+        within(screen.getByRole("complementary", { name: "workspaces" })).getByRole("button", {
+          name: /Market Data/i,
+        }),
+      );
+    });
+    const mdBtn = (): HTMLElement =>
+      within(screen.getByRole("complementary", { name: "workspaces" })).getByRole("button", {
+        name: /Market Data/i,
+      });
+    const lensGroup = (): HTMLElement => screen.getByRole("group", { name: "market data asset class" });
+    // On the FX tab the shared surface pre-selects the FX lens.
+    expect(mdBtn().getAttribute("aria-current")).toBe("true");
+    expect(
+      within(lensGroup()).getByRole("button", { name: /FX Options/i }).getAttribute("aria-pressed"),
+    ).toBe("true");
+
+    // Flip to the Fixed Income tab: the SHARED Market Data screen is KEPT (Model A)…
+    act(() => {
+      fireEvent.click(
+        within(screen.getByRole("tablist", { name: "product domains" })).getByRole("tab", {
+          name: /Fixed Income/i,
+        }),
+      );
+    });
+    expect(mdBtn().getAttribute("aria-current")).toBe("true"); // still on Market Data
+    // …and its lens flipped to the rates (Fixed Income) lens.
+    expect(
+      within(lensGroup())
+        .getByRole("button", { name: /Fixed Income/i })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      within(lensGroup()).getByRole("button", { name: /FX Options/i }).getAttribute("aria-pressed"),
+    ).toBe("false");
   });
 });
 

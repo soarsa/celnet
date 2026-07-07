@@ -21,7 +21,7 @@
  * never re-keyed.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type {
   CapabilityAsset,
@@ -138,6 +138,23 @@ export function RiskWorkspace({
       setLens(available[0]!.lens);
     }
   }, [available, lens]);
+
+  // Model A: pre-select the lens for the ACTIVE DOMAIN tab — fixed_income → the
+  // rates lens, fx_options → the FX lens — so flipping tabs on this shared Risk
+  // screen flips its lens. The "combined" lens is a manual choice only (no domain
+  // maps onto it). Fires ONLY on a domain CHANGE (the initial mount is skipped so
+  // the useState-seeded initial lens / `initialLens` prop is honoured), and only
+  // when the target lens is available; the runtime-clamp above still guards it.
+  const domainSynced = useRef(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sync on domain change only
+  useEffect(() => {
+    if (!domainSynced.current) {
+      domainSynced.current = true;
+      return;
+    }
+    const want: RiskLens = app.activeDomain === "fixed_income" ? "rates" : "fx";
+    if (available.some((l) => l.lens === want)) setLens(want);
+  }, [app.activeDomain]);
 
   if (available.length === 0) {
     // Defensive: the Shell hides the pane when the class is gated, so this is only

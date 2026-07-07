@@ -97,6 +97,12 @@ export function BookWorkspace({
 }: {
   initialLens?: BookLens;
 } = {}): React.ReactElement {
+  // Model A note: Book is a SHARED cross-asset screen and appears under BOTH the FX
+  // and FI tabs, but its {@link BookLens} (positions / risk / deals / quotes) are
+  // VIEW tabs, NOT an FX/FI asset-class split — the class is driven by the active
+  // scope/underlier its sub-lenses read from `useApp()` themselves. There is thus no
+  // asset-class lens to pre-select, so a domain-tab switch is intentionally a NO-OP
+  // here (no lens-sync effect, unlike Market Data / Risk / Ticket).
   const [lens, setLens] = useState<BookLens>(initialLens);
   return (
     <div className={styles.classShell}>
