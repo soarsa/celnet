@@ -120,9 +120,83 @@
   color: var(--text-primary);
 }
 
+.dropHeadRight {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 .dropCount {
   font: var(--type-caption) / 1 var(--font-mono);
   color: var(--text-tertiary);
+}
+
+/* Clear-all — header-weight ghost action, only shown when items exist. */
+.clearAll {
+  padding: 2px var(--space-2);
+  border: var(--hairline) solid var(--grid-line);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: var(--type-micro) / 1 var(--font-ui);
+  font-weight: var(--weight-emphasis);
+  cursor: pointer;
+  transition: border-color var(--workspace-switch) var(--ease-out),
+    color var(--workspace-switch) var(--ease-out),
+    background var(--workspace-switch) var(--ease-out);
+}
+
+.clearAll:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.clearAll:active {
+  background: var(--bg-inset);
+}
+
+.clearAll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A row wraps the item button + its dismiss × so the × sits outside the routing hit-box. */
+.dropRow {
+  display: flex;
+  align-items: stretch;
+  border-bottom: var(--hairline) solid var(--grid-line);
+}
+
+.dropRow:hover {
+  background: var(--bg-inset);
+}
+
+.dropRow .dropItem {
+  border-bottom: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Per-item dismiss ×. */
+.dismiss {
+  flex: none;
+  width: var(--control-h);
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--workspace-switch) var(--ease-out);
+}
+
+.dismiss:hover {
+  color: var(--danger);
+}
+
+.dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .dropEmpty {

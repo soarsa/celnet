@@ -72,8 +72,10 @@
 
 .reqActive {
   border-color: var(--accent);
-  background: var(--bg-raised);
-  transform: translateX(2px);
+  background: var(--accent-soft);
+  /* Left accent rail via inset shadow — signals selection without a
+     layout-shifting transform, so the row stays aligned to the list column. */
+  box-shadow: inset 3px 0 0 0 var(--accent);
 }
 
 .reqTop {

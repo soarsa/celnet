@@ -11,10 +11,8 @@
  */
 
 import type { Deal, Side } from "../data/contract";
-import { fmtRate, fmtClock } from "../lib/format";
+import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
 import styles from "./DealTicket.module.css";
-
-const MM = 1_000_000;
 
 function directionLabel(side: Side): string {
   if (side === "BUY") return "Pay fixed (payer)";
@@ -54,7 +52,7 @@ export function DealTicket({ deal, onClose }: DealTicketProps): React.ReactEleme
   const ref = deal.curveSet.referenceDate;
   // OIS is spot-starting off the curve anchor; maturity is anchor + tenor years.
   const maturity = { year: ref.year + deal.instrument.tenorYears, month: ref.month, day: ref.day };
-  const notionalMm = (deal.notional / MM).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const notionalText = fmtCompact(deal.notional);
 
   return (
     <aside
@@ -84,7 +82,7 @@ export function DealTicket({ deal, onClose }: DealTicketProps): React.ReactEleme
           <Row label="Product" value={`${ccy} SOFR OIS`} />
           <Row label="Tenor" value={`${deal.instrument.tenorYears}Y`} />
           <Row label="Direction (desk)" value={directionLabel(deal.side)} />
-          <Row label="Notional" value={`${notionalMm}mm ${ccy}`} mono />
+          <Row label="Notional" value={`${notionalText} ${ccy}`} mono />
           <Row label="Dealt rate" value={fmtRate(deal.price)} mono />
           <Row label="Fixed coupon" value={fmtRate(deal.instrument.fixedRate)} mono />
         </dl>

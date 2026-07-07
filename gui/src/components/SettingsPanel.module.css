@@ -1,0 +1,276 @@
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Gear trigger — same metrics as the notification bell/toggle for header rhythm. */
+.gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  border: var(--hairline) solid var(--grid-line);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color var(--workspace-switch) var(--ease-out),
+    color var(--workspace-switch) var(--ease-out),
+    transform var(--workspace-switch) var(--ease-out);
+}
+
+.gear:hover {
+  border-color: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.gear:active {
+  transform: rotate(30deg);
+}
+
+.gear[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+}
+
+.gear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.gearGlyph {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+/* --- popover --- */
+
+.panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  width: 340px;
+  max-height: 78vh;
+  overflow: auto;
+  z-index: 50;
+  border: var(--hairline) solid var(--grid-line);
+  border-radius: var(--r-lg);
+  background: var(--bg-overlay-solid);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(var(--blur-float));
+}
+
+.panel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.panelHead {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--hairline) solid var(--grid-line);
+  background: var(--bg-overlay-solid);
+}
+
+.panelTitle {
+  margin: 0;
+  font: var(--type-callout) / 1 var(--font-ui);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+.closeBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--workspace-switch) var(--ease-out),
+    background var(--workspace-switch) var(--ease-out);
+}
+
+.closeBtn:hover {
+  color: var(--danger);
+  background: var(--bg-inset);
+}
+
+.closeBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- sections --- */
+
+.section {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--hairline) solid var(--grid-line);
+}
+
+.section:last-child {
+  border-bottom: 0;
+}
+
+.sectionTitle {
+  margin: 0 0 var(--space-2);
+  font: var(--type-micro) / 1 var(--font-ui);
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  /* --text-secondary (>=5.91:1) — accent fails WCAG AA at this 10px size. */
+  color: var(--text-secondary);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 30px;
+}
+
+.rowLabel {
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  color: var(--text-primary);
+}
+
+.hint {
+  margin: var(--space-1) 0 0;
+  font: var(--type-micro) / var(--type-micro-lh) var(--font-ui);
+  color: var(--text-tertiary);
+}
+
+/* --- switch --- */
+
+.switch {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.switchTrack {
+  display: inline-flex;
+  align-items: center;
+  width: 38px;
+  height: 20px;
+  padding: 2px;
+  border-radius: var(--r-full);
+  background: var(--bg-inset);
+  border: var(--hairline) solid var(--grid-line);
+  transition: background var(--workspace-switch) var(--ease-out),
+    border-color var(--workspace-switch) var(--ease-out);
+}
+
+.switch[aria-checked="true"] .switchTrack {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switchThumb {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-full);
+  background: var(--bg-overlay-solid);
+  box-shadow: var(--shadow-float);
+  transform: translateX(0);
+  transition: transform var(--workspace-switch) var(--ease-out);
+}
+
+.switch[aria-checked="true"] .switchThumb {
+  transform: translateX(18px);
+}
+
+.switch:focus-visible .switchTrack {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- slider --- */
+
+.sliderWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.slider {
+  width: 130px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.sliderValue {
+  min-width: 3ch;
+  text-align: right;
+  font: var(--type-caption) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* --- numeric inputs --- */
+
+.numWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.numInput {
+  width: 96px;
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--grid-line);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font: var(--type-caption) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.numInput:hover:not(:disabled) {
+  border-color: var(--accent-soft);
+}
+
+.numInput:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.numInput:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.numEcho {
+  min-width: 5ch;
+  font: var(--type-micro) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  /* --text-secondary (>=5.91:1) — accent fails WCAG AA at this 10px size. */
+  color: var(--text-secondary);
+}

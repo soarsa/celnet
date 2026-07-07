@@ -30,6 +30,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { DeskRequestKind, DeskRequestState, OisInstrument, Side } from "../data/contract";
 import type { CelnetTransport } from "../data/transport";
 import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
+import { fmtCompact } from "../lib/format";
 import { Button } from "./Button";
 import styles from "./SimulatorPanel.module.css";
 
@@ -62,10 +63,6 @@ function sideLabel(side: Side): string {
   return side === "BUY" ? "Pay fixed" : "Receive fixed";
 }
 
-/** Format a notional (curve ccy) as a compact millions figure. */
-function fmtMm(notional: number): string {
-  return `${(notional / MM).toLocaleString(undefined, { maximumFractionDigits: 1 })}mm`;
-}
 
 export interface SimulatorPanelProps {
   /**
@@ -299,7 +296,7 @@ export function SimulatorPanel({ transport, onClose }: SimulatorPanelProps): Rea
                     </span>
                     <span className={styles.cpty}>{it.counterparty}</span>
                     <span className={styles.terms}>
-                      {it.tenorYears}y OIS · {fmtMm(it.notional)} · {sideLabel(it.side)}
+                      {it.tenorYears}y OIS · {fmtCompact(it.notional)} · {sideLabel(it.side)}
                     </span>
                   </div>
                   <dl className={styles.quote}>

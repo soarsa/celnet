@@ -23,13 +23,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { Panel } from "../components/Panel";
+import { TableSearch } from "../components/TableSearch";
+import { useTableFilter } from "../hooks/useTableFilter";
 import { principalForScope } from "../data/riskView";
-import { fmtRate, fmtClock } from "../lib/format";
-import { sideLabel, fmtMm } from "./QuotingWorkspace";
+import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
+import { sideLabel } from "./QuotingWorkspace";
 import type { DeskRequest } from "../data/contract";
 import styles from "./QuotesBlotterWorkspace.module.css";
 
-const MM = 1_000_000;
+/** All of a shown quote's user-visible textual fields, concatenated for search. */
+function quoteSearchText(r: DeskRequest): string {
+  return [
+    fmtClock(r.receivedAtNanos),
+    r.counterparty,
+    r.desk,
+    r.kind,
+    `${r.instrument.tenorYears}y OIS`,
+    r.curveSet.currency,
+    sideLabel(r.side),
+    r.quote ? fmtRate(r.quote.price) : "",
+    fmtCompact(r.quote?.notional ?? r.notional),
+    r.quote ? `${Math.round(r.quote.validForMs / 1000)}s` : "",
+    r.quote?.trader ?? "",
+    r.state,
+  ].join(" ");
+}
 
 /** The state badge class for a quoted-request lifecycle state. */
 function stateClass(state: DeskRequest["state"]): string {
@@ -86,8 +104,10 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
     [requests],
   );
 
+  const { query, setQuery, filtered, shown, total } = useTableFilter(quotes, quoteSearchText);
+
   const isOffline = !app.transport.label.startsWith("live");
-  const totalMm = quotes.reduce((acc, r) => acc + (r.quote?.notional ?? 0), 0) / MM;
+  const totalQuoted = quotes.reduce((acc, r) => acc + (r.quote?.notional ?? 0), 0);
 
   return (
     <div className={styles.wrap}>
@@ -96,7 +116,7 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
           <span className={styles.engine}>{isOffline ? "in-app desk" : "live desk"}</span>
           <span className={styles.summary}>
             {quotes.length} quote{quotes.length === 1 ? "" : "s"} ·{" "}
-            {totalMm.toLocaleString(undefined, { maximumFractionDigits: 0 })}mm quoted
+            {fmtCompact(totalQuoted)} quoted
           </span>
         </div>
         {error && (
@@ -109,25 +129,37 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
             No quotes shown yet — price a request in the Quoting workspace to show one.
           </p>
         ) : (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Received</th>
-                  <th>Counterparty</th>
-                  <th>Desk</th>
-                  <th>Instrument</th>
-                  <th>Ccy</th>
-                  <th>Side</th>
-                  <th className={styles.num}>Quoted rate</th>
-                  <th className={styles.num}>Notional</th>
-                  <th className={styles.num}>Good for</th>
-                  <th>Trader</th>
-                  <th>State</th>
-                </tr>
-              </thead>
-              <tbody>
-                {quotes.map((r) => (
+          <>
+            <TableSearch
+              query={query}
+              onQueryChange={setQuery}
+              shown={shown}
+              total={total}
+              label="Search quotes"
+              placeholder="Filter quotes…"
+            />
+            {filtered.length === 0 ? (
+              <p className={styles.empty}>No quotes match “{query}”.</p>
+            ) : (
+              <div className={styles.tableWrap}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Received</th>
+                      <th>Counterparty</th>
+                      <th>Desk</th>
+                      <th>Instrument</th>
+                      <th>Ccy</th>
+                      <th>Side</th>
+                      <th className={styles.num}>Quoted rate</th>
+                      <th className={styles.num}>Notional</th>
+                      <th className={styles.num}>Good for</th>
+                      <th>Trader</th>
+                      <th>State</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((r) => (
                   <tr key={r.requestId}>
                     <td className={styles.mono}>{fmtClock(r.receivedAtNanos)}</td>
                     <td className={styles.strong}>{r.counterparty}</td>
@@ -146,7 +178,7 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
                       {r.quote ? fmtRate(r.quote.price) : "—"}
                     </td>
                     <td className={`${styles.num} ${styles.mono}`}>
-                      {fmtMm(r.quote?.notional ?? r.notional)}
+                      {fmtCompact(r.quote?.notional ?? r.notional)}
                     </td>
                     <td className={`${styles.num} ${styles.mono}`}>
                       {r.quote ? `${Math.round(r.quote.validForMs / 1000)}s` : "—"}
@@ -155,11 +187,13 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
                     <td>
                       <span className={`${styles.state} ${stateClass(r.state)}`}>{r.state}</span>
                     </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </Panel>
     </div>

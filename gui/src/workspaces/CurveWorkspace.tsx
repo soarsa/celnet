@@ -94,16 +94,44 @@ const REFERENCE_DATE: BrokenDate = DEFAULT_USD_SOFR_CURVE.referenceDate;
 
 /** One editable par-OIS pillar in the builder (the par rate held in percent). */
 interface EditablePillar {
+  /** Stable identity — the React key, so a row keeps its input/focus when the
+   *  ladder re-sorts by maturity after a tenor edit (index keys would swap it). */
+  readonly id: string;
   readonly tenor: PillarTenor;
   readonly parRatePct: number;
 }
 
+/** Monotonic source of stable pillar ids (client-only; no SSR reuse concern). */
+let pillarIdSeq = 0;
+function nextPillarId(): string {
+  return `pillar-${pillarIdSeq++}`;
+}
+
+/**
+ * Order a pillar set by true maturity — the single year-fraction coordinate
+ * `pillarMaturityYears` yields for every arm (years / months / broken date), so a
+ * `1M` pillar sorts above `1Y`, and a broken date sorts into its real slot. The
+ * bootstrap requires strictly-increasing maturities; holding this as an invariant
+ * after every edit keeps the ladder valid and the horizon picks in tenor order.
+ */
+function sortByMaturity(
+  list: readonly EditablePillar[],
+): readonly EditablePillar[] {
+  return [...list].sort(
+    (a, b) =>
+      pillarMaturityYears(a.tenor, REFERENCE_DATE) -
+      pillarMaturityYears(b.tenor, REFERENCE_DATE),
+  );
+}
+
 /** The DEFAULT pillar ladder, lifted into the editor's percent representation. */
-const INITIAL_PILLARS: readonly EditablePillar[] =
+const INITIAL_PILLARS: readonly EditablePillar[] = sortByMaturity(
   DEFAULT_USD_SOFR_CURVE.pillars.map((p) => ({
+    id: nextPillarId(),
     tenor: p.tenor,
     parRatePct: p.parRate * 100,
-  }));
+  })),
+);
 
 /** One row of the pillar ladder: the quote and its bootstrapped curve readings. */
 interface LadderRow {
@@ -390,8 +418,11 @@ function PillarEditorMode(): React.ReactElement {
   }, []);
 
   const setPillarTenor = useCallback((index: number, tenor: PillarTenor) => {
+    // Re-sort after the tenor changes so the ladder stays in maturity order
+    // (a `1M` edit floats to the top); the stable `id` key keeps the edited
+    // row's input attached to it as it moves.
     setPillars((prev) =>
-      prev.map((p, j) => (j === index ? { ...p, tenor } : p)),
+      sortByMaturity(prev.map((p, j) => (j === index ? { ...p, tenor } : p))),
     );
   }, []);
 
@@ -404,10 +435,14 @@ function PillarEditorMode(): React.ReactElement {
       const last = prev[prev.length - 1];
       const nextYears = last ? representativeYears(last.tenor) + 1 : 1;
       const parRatePct = last ? last.parRatePct : 4;
-      return [
+      return sortByMaturity([
         ...prev,
-        { tenor: { kind: "years", years: nextYears }, parRatePct },
-      ];
+        {
+          id: nextPillarId(),
+          tenor: { kind: "years", years: nextYears },
+          parRatePct,
+        },
+      ]);
     });
   }, []);
 
@@ -501,7 +536,7 @@ function PillarEditorMode(): React.ReactElement {
 
         <ul className={styles.pillarList}>
           {pillars.map((p, i) => (
-            <li key={i} className={styles.pillarItem}>
+            <li key={p.id} className={styles.pillarItem}>
               <select
                 className={styles.pillarKind}
                 value={p.tenor.kind}
@@ -558,7 +593,7 @@ function PillarEditorMode(): React.ReactElement {
               const t = pillarTimes[i]!;
               return (
                 <button
-                  key={i}
+                  key={p.id}
                   type="button"
                   className={`${styles.tenorPill} ${horizonYears === t ? styles.tenorActive : ""}`}
                   onClick={() => setHorizonYears(t)}

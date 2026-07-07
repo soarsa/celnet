@@ -1,0 +1,86 @@
+.wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  max-width: 340px;
+}
+
+.glyph {
+  position: absolute;
+  left: var(--space-3);
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) 26px var(--space-2) 26px;
+  background: var(--bg-inset);
+  border: 1px solid var(--grid-line);
+  border-radius: var(--r-md);
+  color: var(--text-primary);
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+}
+
+.input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+/* Suppress the native WebKit clear affordance — we render our own. */
+.input::-webkit-search-cancel-button,
+.input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.clear {
+  position: absolute;
+  right: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.clear:hover {
+  color: var(--text-primary);
+  background: var(--bg-raised);
+}
+
+.clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.count {
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-mono);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}

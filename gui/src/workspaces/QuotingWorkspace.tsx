@@ -22,8 +22,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
+import { TableSearch } from "../components/TableSearch";
+import { useTableFilter } from "../hooks/useTableFilter";
 import { principalForScope } from "../data/riskView";
-import { fmtPnlAdaptive, fmtRate, fmtClock } from "../lib/format";
+import { fmtPnlAdaptive, fmtRate, fmtClock, fmtCompact } from "../lib/format";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import { configuredLicense } from "../lib/commands";
 import type {
@@ -75,9 +77,17 @@ function stateClass(state: DeskRequest["state"]): string {
   }
 }
 
-/** Format a notional (curve ccy) as a compact millions figure. */
-export function fmtMm(notional: number): string {
-  return `${(notional / MM).toLocaleString(undefined, { maximumFractionDigits: 1 })}mm`;
+/** An inbound request's user-visible textual fields, concatenated for search. */
+function requestSearchText(r: DeskRequest): string {
+  return [
+    r.kind,
+    r.counterparty,
+    r.state,
+    `${r.instrument.tenorYears}y OIS`,
+    fmtCompact(r.notional),
+    sideLabel(r.side),
+    fmtClock(r.expiresAtNanos),
+  ].join(" ");
 }
 
 export function QuotingWorkspace(): React.ReactElement {
@@ -132,6 +142,17 @@ export function QuotingWorkspace(): React.ReactElement {
     setSelectedId(next ? next.requestId : null);
   }, [requests, selectedId]);
 
+  // Filter the inbound-request list (the desk's working orders) on top of its
+  // existing order — selection stays keyed on the full list, so filtering only
+  // narrows what is shown, never what is priced.
+  const {
+    query: reqQuery,
+    setQuery: setReqQuery,
+    filtered: filteredRequests,
+    shown: reqShown,
+    total: reqTotal,
+  } = useTableFilter(requests, requestSearchText);
+
   const isOffline = !app.transport.label.startsWith("live");
 
   return (
@@ -184,8 +205,20 @@ export function QuotingWorkspace(): React.ReactElement {
         {requests.length === 0 ? (
           <p className={styles.empty}>No inbound requests.</p>
         ) : (
+          <>
+            <TableSearch
+              query={reqQuery}
+              onQueryChange={setReqQuery}
+              shown={reqShown}
+              total={reqTotal}
+              label="Search requests"
+              placeholder="Filter requests…"
+            />
+            {filteredRequests.length === 0 ? (
+              <p className={styles.empty}>No requests match “{reqQuery}”.</p>
+            ) : (
           <ul className={styles.reqList} aria-label="inbound requests">
-            {requests.map((r) => {
+            {filteredRequests.map((r) => {
               const active = r.requestId === selectedId;
               return (
                 <li key={r.requestId}>
@@ -204,7 +237,7 @@ export function QuotingWorkspace(): React.ReactElement {
                     </span>
                     <span className={styles.reqMeta}>
                       <span>
-                        {r.instrument.tenorYears}y OIS · {fmtMm(r.notional)} · {sideLabel(r.side)}
+                        {r.instrument.tenorYears}y OIS · {fmtCompact(r.notional)} · {sideLabel(r.side)}
                       </span>
                       <span className={styles.deadline}>exp {fmtClock(r.expiresAtNanos)}</span>
                     </span>
@@ -213,6 +246,8 @@ export function QuotingWorkspace(): React.ReactElement {
               );
             })}
           </ul>
+            )}
+          </>
         )}
       </Panel>
 
@@ -598,7 +633,7 @@ function TakerRfqPanel({ trader }: { trader: string }): React.ReactElement {
             <Metric label="DV01" value={fmtPnlAdaptive(quote.result.dv01)} unit="/bp" />
           </dl>
           <dl className={styles.metrics}>
-            <Metric label="Notional" value={`${(quote.notional / MM).toLocaleString(undefined, { maximumFractionDigits: 1 })}mm`} />
+            <Metric label="Notional" value={fmtCompact(quote.notional)} />
             <Metric label="Key rates" value={`${quote.result.keyRateLadder.length}`} />
             <Metric label="Quote id" value={`${quote.quoteId}`} />
             <Metric label="Good until" value={fmtClock(quote.validUntilNanos)} />
@@ -727,7 +762,7 @@ function PricePanel({
       </header>
 
       <dl className={styles.terms}>
-        <Term label="Notional" value={fmtMm(request.notional)} />
+        <Term label="Notional" value={fmtCompact(request.notional)} />
         <Term label="Side" value={sideLabel(request.side)} />
         <Term label="Curve" value={`${request.curveSet.currency}-SOFR`} />
         <Term label="Desk" value={request.desk} />
@@ -756,7 +791,7 @@ function PricePanel({
           <h3 className={styles.cardTitle}>Standing quote</h3>
           <dl className={styles.metrics}>
             <Metric label="Quoted rate" value={fmtRate(request.quote.price)} emphatic />
-            <Metric label="Notional" value={fmtMm(request.quote.notional)} />
+            <Metric label="Notional" value={fmtCompact(request.quote.notional)} />
             <Metric label="Good for" value={`${Math.round(request.quote.validForMs / 1000)}s`} />
             <Metric label="Trader" value={request.quote.trader} />
           </dl>

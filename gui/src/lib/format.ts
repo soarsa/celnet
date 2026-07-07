@@ -29,6 +29,39 @@ const PIPS = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
+/** Descending magnitude thresholds for compact suffixing. */
+const COMPACT_UNITS: ReadonlyArray<readonly [number, string]> = [
+  [1e12, "t"],
+  [1e9, "b"],
+  [1e6, "m"],
+  [1e3, "k"],
+];
+
+/**
+ * Compact magnitude formatting for large *counting* quantities — notionals,
+ * sizes, order/deal quantities, and whole-currency amounts. Renders a k/m/b/t
+ * suffix with up to `maxFrac` fractional digits, trailing zeros trimmed:
+ *   1_000_000 → "1m", 50_000_000 → "50m", 100_000 → "100k",
+ *   1_250_000_000 → "1.25b", 1_234 → "1.23k", 750 → "750", 0 → "0".
+ * Negatives keep their sign; non-finite values render as an em dash.
+ *
+ * NEVER use this for rates, prices, vols, deltas, or percentages — those keep
+ * full precision (see {@link fmtPct} / {@link fmtVol} / {@link fmtPips}). It is
+ * for magnitudes where "10m" reads better than "10,000,000".
+ */
+export function fmtCompact(value: number, maxFrac = 2): string {
+  if (!Number.isFinite(value)) return "—";
+  const sign = value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  const trim = (s: string): string => s.replace(/\.?0+$/, "");
+  for (const [scale, suffix] of COMPACT_UNITS) {
+    if (abs >= scale) {
+      return `${sign}${trim((abs / scale).toFixed(maxFrac))}${suffix}`;
+    }
+  }
+  return `${sign}${Number.isInteger(abs) ? String(abs) : trim(abs.toFixed(maxFrac))}`;
+}
+
 /**
  * A premium quoted in a *percent* style (PERCENT_FOREIGN / PERCENT_DOMESTIC),
  * rendered as a true percent. The wire premium is a fraction of notional

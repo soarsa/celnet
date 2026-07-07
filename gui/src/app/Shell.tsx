@@ -37,6 +37,8 @@ import { ScopeSwitcher } from "../components/ScopeSwitcher";
 import { SavedViewsMenu } from "../components/SavedViewsMenu";
 import { AuthMenu } from "../components/AuthMenu";
 import { NotificationCenter } from "../components/NotificationCenter";
+import { SettingsPanel } from "../components/SettingsPanel";
+import { SettingsProvider } from "../settings/SettingsProvider";
 import { SimulatorPanel } from "../components/SimulatorPanel";
 import { SignInDialog } from "../components/SignInDialog";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
@@ -184,7 +186,14 @@ export function Shell(): React.ReactElement {
     return () => window.removeEventListener("keydown", onKey);
   }, [commands]);
 
+  // The Shell self-provides settings so its settings-consuming children (the
+  // header gear + NotificationCenter) resolve even when the Shell is mounted in
+  // isolation (component tests render `<AppProvider><Shell/></AppProvider>`
+  // directly). In the running app this nests harmlessly under the root provider
+  // in main.tsx — both hydrate from the same versioned localStorage key, and the
+  // inner instance shadows the outer for this subtree (idiomatic provider nesting).
   return (
+    <SettingsProvider>
     <div className={styles.shell}>
       <aside className={styles.rail} aria-label="workspaces">
         <div className={styles.brand} title="Celnet — a Celer Technologies product">
@@ -294,6 +303,7 @@ export function Shell(): React.ReactElement {
       <SignInDialog />
       <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
+    </SettingsProvider>
   );
 }
 
@@ -337,6 +347,7 @@ function TitleBar(): React.ReactElement {
         </span>
         <span>Simulator</span>
       </button>
+      <SettingsPanel />
       <NotificationCenter />
       <AuthMenu />
       {simOpen && <SimulatorPopout transport={app.transport} onClose={() => setSimOpen(false)} />}

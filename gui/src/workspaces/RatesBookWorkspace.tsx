@@ -27,9 +27,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
+import { TableSearch } from "../components/TableSearch";
+import { useTableFilter } from "../hooks/useTableFilter";
 import { principalForScope } from "../data/riskView";
 import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
-import { fmtRate } from "../lib/format";
+import { fmtRate, fmtCompact } from "../lib/format";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import type {
   BookDesc,
@@ -252,9 +254,22 @@ export function RatesBookWorkspace(): React.ReactElement {
     }
   }, [app.transport, principal, ticket, refresh, canBook]);
 
+  const { query, setQuery, filtered, shown, total } = useTableFilter(
+    positions,
+    (p) =>
+      [
+        p.positionId.toString(),
+        entityName(p.entity),
+        bookName(p.book),
+        `${p.instrument.tenorYears}y OIS`,
+        fmtRate(p.instrument.fixedRate),
+        fmtCompact(p.instrument.notional),
+        directionLabel(p.instrument.direction),
+      ].join(" "),
+  );
+
   const isOffline = !app.transport.label.startsWith("live");
-  const totalMm =
-    positions.reduce((acc, p) => acc + p.instrument.notional, 0) / MM;
+  const totalNotional = positions.reduce((acc, p) => acc + p.instrument.notional, 0);
 
   return (
     <div className={styles.wrap}>
@@ -391,8 +406,7 @@ export function RatesBookWorkspace(): React.ReactElement {
           </span>
           <span className={styles.summary}>
             {positions.length} position{positions.length === 1 ? "" : "s"} ·{" "}
-            {totalMm.toLocaleString(undefined, { maximumFractionDigits: 0 })}mm
-            notional
+            {fmtCompact(totalNotional)} notional
           </span>
         </div>
         {positions.length === 0 ? (
@@ -400,21 +414,33 @@ export function RatesBookWorkspace(): React.ReactElement {
             The rates book is empty — book a position to populate it.
           </p>
         ) : (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th className={styles.num}>Id</th>
-                  <th>Entity</th>
-                  <th>Book</th>
-                  <th>Instrument</th>
-                  <th className={styles.num}>Fixed</th>
-                  <th className={styles.num}>Notional</th>
-                  <th>Side</th>
-                </tr>
-              </thead>
-              <tbody>
-                {positions.map((p) => (
+          <>
+            <TableSearch
+              query={query}
+              onQueryChange={setQuery}
+              shown={shown}
+              total={total}
+              label="Search positions"
+              placeholder="Filter positions…"
+            />
+            {filtered.length === 0 ? (
+              <p className={styles.empty}>No positions match “{query}”.</p>
+            ) : (
+              <div className={styles.tableWrap}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th className={styles.num}>Id</th>
+                      <th>Entity</th>
+                      <th>Book</th>
+                      <th>Instrument</th>
+                      <th className={styles.num}>Fixed</th>
+                      <th className={styles.num}>Notional</th>
+                      <th>Side</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((p) => (
                   <tr key={p.positionId.toString()}>
                     <td
                       className={`${styles.num} ${styles.mono} ${styles.idCell}`}
@@ -432,17 +458,16 @@ export function RatesBookWorkspace(): React.ReactElement {
                       {fmtRate(p.instrument.fixedRate)}
                     </td>
                     <td className={`${styles.num} ${styles.mono}`}>
-                      {(p.instrument.notional / MM).toLocaleString(undefined, {
-                        maximumFractionDigits: 1,
-                      })}
-                      mm
+                      {fmtCompact(p.instrument.notional)}
                     </td>
                     <td>{directionLabel(p.instrument.direction)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </Panel>
     </div>

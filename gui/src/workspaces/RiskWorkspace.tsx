@@ -48,7 +48,7 @@ import { defaultTailRiskBaseCurve } from "../data/ratesPricing";
 import { defaultRatesRiskRows } from "./RatesRiskWorkspace";
 import { ScenarioHeatmap } from "../viz/ScenarioHeatmap";
 import { KeyRateLadder } from "../viz/KeyRateLadder";
-import { fmtPnlAdaptive, fmtSigned } from "../lib/format";
+import { fmtPnlAdaptive, fmtSigned, fmtCompact } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
 import { configuredLicense, type LicensePredicate } from "../lib/commands";
 import { RatesRiskPanel } from "./RatesRiskWorkspace";
@@ -311,8 +311,6 @@ function FxScenarioLens(): React.ReactElement {
     return fmtSigned(v, 4);
   };
 
-  const notionalMm = notional / 1e6;
-
   return (
     <div className={styles.grid}>
       <Panel
@@ -336,7 +334,7 @@ function FxScenarioLens(): React.ReactElement {
             )}
             <span>Risk · {subjectLabel}</span>
             <span className={styles.subjectMeta}>
-              {tenorLabel(instrument.expiryYears)} · {notionalMm % 1 === 0 ? notionalMm : notionalMm.toFixed(1)}mm
+              {tenorLabel(instrument.expiryYears)} · {fmtCompact(notional)}
             </span>
           </span>
         }

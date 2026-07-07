@@ -4,39 +4,26 @@
  * and renders TWO affordances from the same feed:
  *   1. transient TOASTS for new RFQ/IOI-requires-pricing events (auto-dismissed),
  *      announced via an `aria-live` region; and
- *   2. a persistent BELL + unread badge whose dropdown lists recent events;
- *      clicking an item routes to the Quoting workspace.
+ *   2. a persistent BELL + unread badge whose dropdown lists recent events, with a
+ *      Clear-all control and a per-item dismiss ×; clicking an item routes to the
+ *      Quoting workspace.
  *
- * One contract, two transports: the feed is the `CelnetTransport.streamNotifications`
- * seam, so the SAME notifications drive the centre through the deterministic in-app
- * source (local emitter) and the live `NotificationService` edge (a re-opening WS
- * push stream). Styled with the banner family (UpdateBanner / ArbBanner).
+ * All state (items/toasts/unread/open) + the settings gates (alerts, sound, size
+ * threshold, desktop growl) + the auto-clear policies live in
+ * {@link useNotificationStore}; this component is the presentation layer. Human
+ * headlines/details are rendered through {@link compactNotionals} so a raw
+ * "10000000 notional" reads as "10m notional". Styled with the banner family.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
-import { useDesktopNotifications } from "../hooks/useDesktopNotifications";
+import {
+  useNotificationStore,
+  isTerminalKind,
+} from "../hooks/useNotificationStore";
 import { fmtClock } from "../lib/format";
-import type { Notification, NotificationKind } from "../data/contract";
+import { compactNotionals } from "../lib/notificationText";
+import type { NotificationKind } from "../data/contract";
 import styles from "./NotificationCenter.module.css";
-
-/** Cap the retained notification history (newest-first ring). */
-const MAX_HISTORY = 50;
-/** Cap concurrently-visible toasts (oldest dropped). */
-const MAX_TOASTS = 4;
-/** Toast auto-dismiss after this long (ms). */
-const TOAST_TTL_MS = 6_000;
-
-/** A live toast: a notification plus its own dismissal timer id. */
-interface Toast {
-  readonly key: string;
-  readonly notification: Notification;
-}
-
-/** The kinds that raise a transient toast (a new inbound request needing a price). */
-function isToastKind(kind: NotificationKind): boolean {
-  return kind === "RFQ_RECEIVED" || kind === "IOI_RECEIVED";
-}
 
 /** The badge accent class for a notification kind. */
 function kindClass(kind: NotificationKind): string {
@@ -72,69 +59,9 @@ export function NotificationCenter(): React.ReactElement | null {
   const app = useApp();
   const signedIn = app.auth.user !== null;
 
-  // Native OS ("growl") escalation: raise a desktop notification for a desk event
-  // only when the tab is hidden/unfocused (the hook enforces that). Clicking the
-  // OS notification focuses the window and routes to the Quoting desk.
-  const desktop = useDesktopNotifications(() => app.setWorkspace("quoting"));
-  const { notify: notifyDesktop } = desktop;
-
-  const [items, setItems] = useState<Notification[]>([]);
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const [unread, setUnread] = useState(0);
-  const [open, setOpen] = useState(false);
-
-  // A ref mirror of `open` so the push handler knows whether to bump the unread
-  // count WITHOUT being re-created (which would re-subscribe the stream).
-  const openRef = useRef(open);
-  openRef.current = open;
-
-  const dismissToast = useCallback((key: string) => {
-    setToasts((ts) => ts.filter((t) => t.key !== key));
-  }, []);
-
-  // Open the push stream while signed in. The handler prepends to history, bumps
-  // the unread count (unless the dropdown is open), and raises a toast for a new
-  // inbound request. The returned disposer unsubscribes on sign-out / unmount.
-  useEffect(() => {
-    if (!signedIn) {
-      setItems([]);
-      setToasts([]);
-      setUnread(0);
-      return;
-    }
-    const onNotification = (n: Notification): void => {
-      setItems((prev) => [n, ...prev].slice(0, MAX_HISTORY));
-      if (!openRef.current) setUnread((u) => u + 1);
-      if (isToastKind(n.kind)) {
-        const toast: Toast = { key: `${n.notificationId}-${n.atNanos.toString()}`, notification: n };
-        setToasts((ts) => [...ts, toast].slice(-MAX_TOASTS));
-        window.setTimeout(() => dismissToast(toast.key), TOAST_TTL_MS);
-      }
-      // Escalate to a native OS notification when the tab is backgrounded (the
-      // hook no-ops when the tab is on screen, so we never double-notify).
-      notifyDesktop(n);
-    };
-    const dispose = app.transport.streamNotifications(undefined, onNotification);
-    return dispose;
-  }, [app.transport, signedIn, dismissToast, notifyDesktop]);
-
-  const toggleOpen = useCallback(() => {
-    setOpen((o) => {
-      const next = !o;
-      if (next) setUnread(0);
-      return next;
-    });
-  }, []);
-
-  const openRequest = useCallback(
-    (n: Notification) => {
-      app.setWorkspace("quoting");
-      setOpen(false);
-      setUnread(0);
-      void n;
-    },
-    [app],
-  );
+  const store = useNotificationStore();
+  const { items, toasts, unread, open, toggleOpen, dismiss, clearAll, openRequest, desktop } =
+    store;
 
   if (!signedIn) return null;
 
@@ -163,7 +90,7 @@ export function NotificationCenter(): React.ReactElement | null {
           unread > 0 ? `Notifications, ${unread} unread` : "Notifications, none unread"
         }
         aria-expanded={open}
-        aria-haspopup="menu"
+        aria-haspopup="true"
         onClick={toggleOpen}
       >
         <span className={styles.bellGlyph} aria-hidden>
@@ -177,29 +104,53 @@ export function NotificationCenter(): React.ReactElement | null {
       </button>
 
       {open && (
-        <div className={styles.dropdown} role="menu" aria-label="Recent notifications">
-          <header className={styles.dropHead}>
+        <div className={styles.dropdown} role="group" aria-label="Recent notifications">
+          <div className={styles.dropHead}>
             <span>Notifications</span>
-            <span className={styles.dropCount}>{items.length}</span>
-          </header>
+            <span className={styles.dropHeadRight}>
+              <span className={styles.dropCount}>{items.length}</span>
+              {items.length > 0 && (
+                <button
+                  type="button"
+                  className={styles.clearAll}
+                  aria-label="Clear all notifications"
+                  onClick={clearAll}
+                >
+                  Clear all
+                </button>
+              )}
+            </span>
+          </div>
           {items.length === 0 ? (
             <p className={styles.dropEmpty}>No notifications yet.</p>
           ) : (
             <ul className={styles.dropList}>
               {items.map((n) => (
-                <li key={`${n.notificationId}-${n.atNanos.toString()}`}>
+                <li key={`${n.notificationId}-${n.atNanos.toString()}`} className={styles.dropRow}>
                   <button
                     type="button"
-                    role="menuitem"
                     className={styles.dropItem}
                     onClick={() => openRequest(n)}
                   >
                     <span className={`${styles.dot} ${kindClass(n.kind)}`} aria-hidden />
                     <span className={styles.dropBody}>
-                      <span className={styles.dropHeadline}>{n.headline}</span>
-                      {n.detail && <span className={styles.dropDetail}>{n.detail}</span>}
+                      <span className={styles.dropHeadline}>{compactNotionals(n.headline)}</span>
+                      {n.detail && (
+                        <span className={styles.dropDetail}>{compactNotionals(n.detail)}</span>
+                      )}
                     </span>
                     <span className={styles.dropTime}>{fmtClock(n.atNanos)}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.dismiss}
+                    aria-label="Dismiss notification"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      dismiss(n.notificationId);
+                    }}
+                  >
+                    <span aria-hidden>×</span>
                   </button>
                 </li>
               ))}
@@ -215,19 +166,22 @@ export function NotificationCenter(): React.ReactElement | null {
             type="button"
             key={t.key}
             className={styles.toast}
-            onClick={() => {
-              openRequest(t.notification);
-              dismissToast(t.key);
-            }}
+            onClick={() => openRequest(t.notification)}
           >
             <span className={`${styles.dot} ${kindClass(t.notification.kind)}`} aria-hidden />
             <span className={styles.toastBody}>
-              <span className={styles.toastHeadline}>{t.notification.headline}</span>
+              <span className={styles.toastHeadline}>
+                {compactNotionals(t.notification.headline)}
+              </span>
               {t.notification.detail && (
-                <span className={styles.toastDetail}>{t.notification.detail}</span>
+                <span className={styles.toastDetail}>
+                  {compactNotionals(t.notification.detail)}
+                </span>
               )}
             </span>
-            <span className={styles.toastAction}>Price →</span>
+            <span className={styles.toastAction}>
+              {isTerminalKind(t.notification.kind) ? "View →" : "Price →"}
+            </span>
           </button>
         ))}
       </div>

@@ -16,13 +16,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { Panel } from "../components/Panel";
+import { TableSearch } from "../components/TableSearch";
+import { useTableFilter } from "../hooks/useTableFilter";
 import { principalForScope } from "../data/riskView";
-import { fmtRate, fmtClock } from "../lib/format";
+import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
 import type { Deal, Side } from "../data/contract";
 import { DealTicket } from "./DealTicket";
 import styles from "./DealsBlotterWorkspace.module.css";
-
-const MM = 1_000_000;
 
 function sideLabel(side: Side): string {
   if (side === "BUY") return "Pay";
@@ -30,8 +30,21 @@ function sideLabel(side: Side): string {
   return "Two-way";
 }
 
-function fmtMm(notional: number): string {
-  return `${(notional / MM).toLocaleString(undefined, { maximumFractionDigits: 1 })}mm`;
+/** All of a deal's user-visible textual fields, concatenated for substring search. */
+function dealSearchText(d: Deal): string {
+  return [
+    fmtClock(d.executedAtNanos),
+    d.counterparty,
+    d.desk,
+    d.kind,
+    `${d.instrument.tenorYears}y OIS`,
+    d.curveSet.currency,
+    fmtCompact(d.notional),
+    fmtRate(d.price),
+    sideLabel(d.side),
+    d.trader,
+    d.dealId,
+  ].join(" ");
 }
 
 export function DealsBlotterWorkspace(): React.ReactElement {
@@ -61,8 +74,10 @@ export function DealsBlotterWorkspace(): React.ReactElement {
     return dispose;
   }, [app.transport]);
 
+  const { query, setQuery, filtered, shown, total } = useTableFilter(deals, dealSearchText);
+
   const isOffline = !app.transport.label.startsWith("live");
-  const totalMm = deals.reduce((acc, d) => acc + d.notional, 0) / MM;
+  const totalNotional = deals.reduce((acc, d) => acc + d.notional, 0);
 
   return (
     <div className={styles.wrap}>
@@ -71,7 +86,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
           <span className={styles.engine}>{isOffline ? "in-app desk" : "live desk"}</span>
           <span className={styles.summary}>
             {deals.length} deal{deals.length === 1 ? "" : "s"} ·{" "}
-            {totalMm.toLocaleString(undefined, { maximumFractionDigits: 0 })}mm notional
+            {fmtCompact(totalNotional)} notional
           </span>
         </div>
         {error && (
@@ -84,24 +99,36 @@ export function DealsBlotterWorkspace(): React.ReactElement {
             No deals yet — accept a quote in the Quoting workspace to book one.
           </p>
         ) : (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Counterparty</th>
-                  <th>Desk</th>
-                  <th>Instrument</th>
-                  <th>Ccy</th>
-                  <th className={styles.num}>Notional</th>
-                  <th className={styles.num}>Price</th>
-                  <th>Side</th>
-                  <th>Trader</th>
-                  <th>Deal</th>
-                </tr>
-              </thead>
-              <tbody>
-                {deals.map((d) => (
+          <>
+            <TableSearch
+              query={query}
+              onQueryChange={setQuery}
+              shown={shown}
+              total={total}
+              label="Search deals"
+              placeholder="Filter deals…"
+            />
+            {filtered.length === 0 ? (
+              <p className={styles.empty}>No deals match “{query}”.</p>
+            ) : (
+              <div className={styles.tableWrap}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Counterparty</th>
+                      <th>Desk</th>
+                      <th>Instrument</th>
+                      <th>Ccy</th>
+                      <th className={styles.num}>Notional</th>
+                      <th className={styles.num}>Price</th>
+                      <th>Side</th>
+                      <th>Trader</th>
+                      <th>Deal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((d) => (
                   <tr
                     key={d.dealId}
                     className={`${styles.row} ${selected?.dealId === d.dealId ? styles.rowSelected : ""}`}
@@ -126,16 +153,18 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                       {d.instrument.tenorYears}y OIS
                     </td>
                     <td className={styles.mono}>{d.curveSet.currency}</td>
-                    <td className={`${styles.num} ${styles.mono}`}>{fmtMm(d.notional)}</td>
+                    <td className={`${styles.num} ${styles.mono}`}>{fmtCompact(d.notional)}</td>
                     <td className={`${styles.num} ${styles.mono} ${styles.price}`}>{fmtRate(d.price)}</td>
                     <td>{sideLabel(d.side)}</td>
                     <td>{d.trader}</td>
                     <td className={styles.dealId}>{d.dealId}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </Panel>
       {selected && <DealTicket deal={selected} onClose={() => setSelected(null)} />}
