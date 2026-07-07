@@ -381,6 +381,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-aggregation"
+version = "0.0.0"
+dependencies = [
+ "celnet-types",
+ "libm",
+]
+
+[[package]]
 name = "celnet-bench"
 version = "0.0.0"
 dependencies = [

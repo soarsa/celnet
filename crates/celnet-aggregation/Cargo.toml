@@ -1,0 +1,22 @@
+[package]
+name = "celnet-aggregation"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet cross-asset venue-aggregation core — continuous consolidated best-bid/offer across N venues (staleness decay + divergent-source exclusion + depth stacking + confidence), a seeded simulated venue feed, and a trader directional-skew risk pricer."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The frozen vocabulary crate at the base of the graph (asset-agnostic instrument
+# identity: Underlying / Tenor / CcyPair). Aggregation is a pure numerical/data
+# core, so this is its ONLY internal dependency — it points strictly downward and
+# introduces no cycle (server / rfq / integration depend on us later, never here).
+celnet-types.workspace = true
+# Correctly-rounded, cross-platform-identical transcendentals (exp/sin), matching
+# the project's determinism convention (celnet-types itself uses libm::exp).
+libm.workspace = true
