@@ -111,7 +111,7 @@ const LENSES: readonly { lens: RiskLens; asset: CapabilityAsset; label: string }
 ];
 
 export function RiskWorkspace({
-  initialLens = "fx",
+  initialLens,
 }: {
   initialLens?: RiskLens;
 } = {}): React.ReactElement {
@@ -125,9 +125,15 @@ export function RiskWorkspace({
     [app.auth, licensed],
   );
 
-  const [lens, setLens] = useState<RiskLens>(() =>
-    available.some((l) => l.lens === initialLens) ? initialLens : (available[0]?.lens ?? "fx"),
-  );
+  // The ENTRY lens: an explicit `initialLens` prop wins (stories/tests/a targeted
+  // rail entry); otherwise it is DERIVED from the active domain tab so the FIRST
+  // render already matches the (possibly deep-linked) domain — fixed_income → the
+  // rates lens, fx_options → the FX lens (Model A). This is the mount counterpart
+  // of the on-domain-change sync below: the sync skips mount so this seed holds.
+  const [lens, setLens] = useState<RiskLens>(() => {
+    const entry: RiskLens = initialLens ?? (app.activeDomain === "fixed_income" ? "rates" : "fx");
+    return available.some((l) => l.lens === entry) ? entry : (available[0]?.lens ?? "fx");
+  });
 
   // If entitlement/license narrows at runtime so the active lens is gone, clamp to
   // an available one (never strand on a lens the identity cannot use). The Shell

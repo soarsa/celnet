@@ -26,7 +26,7 @@
  */
 import { test, expect, type Locator, type Page } from "@playwright/test";
 
-import { openLive, signIn, gotoWorkspace, expectNoSeriousA11y } from "./helpers";
+import { openLive, openLiveAt, signIn, gotoWorkspace, expectNoSeriousA11y } from "./helpers";
 
 const TRADER_EMAIL = `nav-gate-trader-${Date.now()}@celnet.com`;
 const TRADER_PW = "longenoughpw1";
@@ -217,4 +217,42 @@ test("single-rail per-workspace gating: FX-only rows hide, cross-asset rows stay
     "aria-selected",
     "true",
   );
+});
+
+test("deep-link ?dom=… drives the active tab AND the shared-screen lens on first paint (no tab click)", async ({
+  page,
+}) => {
+  // A pasted / reloaded link carries the active DOMAIN as `dom`. On load — through
+  // the login gate, with NO tab click — the domain tab bar AND the shared screen's
+  // FX↔rates lens must both match the URL on the FIRST paint (the regression: the
+  // FX tab/lens showed regardless of `dom`). Admin has every class, so no re-home.
+
+  // 1) Risk deep-linked to Fixed Income → the FI tab AND the rates risk lens.
+  await openLiveAt(page, "dom=fixed_income&view=risk");
+  await expect(domainTab(page, "Fixed Income")).toHaveAttribute("aria-selected", "true");
+  await expect(domainTab(page, "FX Options")).toHaveAttribute("aria-selected", "false");
+  const riskLens = page.getByRole("tablist", { name: "risk asset class lens" });
+  await expect(riskLens.getByRole("tab", { name: "Fixed Income" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  // 2) Market Data deep-linked to Fixed Income → the rates (curve) lens on load.
+  await openLiveAt(page, "dom=fixed_income&view=surface");
+  await expect(domainTab(page, "Fixed Income")).toHaveAttribute("aria-selected", "true");
+  const mdLens = page.getByRole("group", { name: "market data asset class" });
+  await expect(mdLens.getByRole("button", { name: "Fixed Income" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  // 3) An old link with NO `dom` still decodes to the fx_options default (forward-
+  // compat): the FX tab is active and Market Data opens the FX vol-surface lens.
+  await openLiveAt(page, "view=surface");
+  await expect(domainTab(page, "FX Options")).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("group", { name: "market data asset class" }).getByRole("button", {
+      name: "FX Options",
+    }),
+  ).toHaveAttribute("aria-pressed", "true");
 });

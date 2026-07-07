@@ -46,6 +46,21 @@ export async function openLive(page: Page): Promise<void> {
 }
 
 /**
+ * Open the app against the live edge at a DEEP-LINK — `extraQuery` carries the
+ * saved-view params (e.g. `dom=fixed_income&view=risk`) alongside the live `ws`
+ * pin. The params survive the mandatory login gate (one SPA, no navigation), so
+ * after sign-in the Shell mounts with `activeDomain` + the shared-screen lens
+ * SEEDED from the URL on first paint — no tab click. Used to prove the domain
+ * deep-link regression: the tab bar AND the shared screen match the URL on load.
+ */
+export async function openLiveAt(page: Page, extraQuery: string): Promise<void> {
+  const ws = encodeURIComponent(readWsUrl());
+  await page.goto(`/?ws=${ws}&${extraQuery}`);
+  await signIn(page);
+  await expect(page.getByRole("complementary", { name: "workspaces" })).toBeVisible();
+}
+
+/**
  * Sign in through the mandatory full-page login gate ({@link LoginView}). Fills
  * the seeded default admin credentials and submits, then waits for the gate to
  * clear (the login heading disappears as the Shell mounts). The server seeds

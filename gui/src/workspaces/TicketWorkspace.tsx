@@ -305,7 +305,15 @@ export function TicketWorkspace({
   // cross-asset target away to the FX vanilla, and must not double-bind the global
   // keyboard (both ticket panes are persistently mounted at once).
   const isPrimaryTicket = initialStructure === undefined;
-  const [structure, setStructure] = useState<string>(initialStructure ?? "RISK_REVERSAL");
+  // The ENTRY family: an explicit `initialStructure` prop wins (a targeted rail
+  // entry / test); otherwise the PRIMARY ticket derives it from the active domain
+  // tab so the FIRST render already matches the (possibly deep-linked) domain —
+  // fixed_income → the rates (OIS) family, fx_options → the FX vanilla
+  // (RISK_REVERSAL) (Model A). The on-domain-change sync below skips mount, so this
+  // seed holds; `specById` resolves the id regardless of the gallery's class filter.
+  const [structure, setStructure] = useState<string>(
+    () => initialStructure ?? (app.activeDomain === "fixed_income" ? OIS_STRUCTURE_ID : "RISK_REVERSAL"),
+  );
   const [expiryMode, setExpiryMode] = useState<ExpiryMode>("TENOR");
   // Standard-tenor selection (index into TENOR_CHOICES); default 1M.
   const [tenorIdx, setTenorIdx] = useState(5);

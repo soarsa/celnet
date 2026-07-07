@@ -43,7 +43,7 @@ const LENSES: readonly { lens: MarketDataLens; asset: CapabilityAsset; label: st
 ];
 
 export function MarketDataWorkspace({
-  initialLens = "fx",
+  initialLens,
 }: {
   initialLens?: MarketDataLens;
 } = {}): React.ReactElement {
@@ -57,9 +57,16 @@ export function MarketDataWorkspace({
     [app.auth, licensed],
   );
 
-  const [lens, setLens] = useState<MarketDataLens>(() =>
-    available.some((l) => l.lens === initialLens) ? initialLens : (available[0]?.lens ?? "fx"),
-  );
+  // The ENTRY lens: an explicit `initialLens` prop wins (stories/tests/a targeted
+  // rail entry); otherwise it is DERIVED from the active domain tab so the FIRST
+  // render already matches the (possibly deep-linked) domain — fixed_income → the
+  // rates (curve) lens, fx_options → the FX (vol-surface) lens (Model A). The
+  // on-domain-change sync below skips mount, so this seed holds on first paint.
+  const [lens, setLens] = useState<MarketDataLens>(() => {
+    const entry: MarketDataLens =
+      initialLens ?? (app.activeDomain === "fixed_income" ? "rates" : "fx");
+    return available.some((l) => l.lens === entry) ? entry : (available[0]?.lens ?? "fx");
+  });
 
   // If entitlement/license narrows at runtime so the active lens is gone, clamp to
   // an available one (never strand on a lens the identity cannot use). The Shell

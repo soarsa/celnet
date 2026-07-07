@@ -340,6 +340,31 @@ export function useApp(): AppState {
   return v;
 }
 
+/**
+ * The view-param keys the URL carries (the canonical saved-view wire form). Shared
+ * by the boot-seed detector and the live-URL mirror so BOTH agree on which params
+ * are "the view" — notably `dom` (the active product domain), so a domain-only
+ * deep-link seeds on load AND a relaxed-to-default domain is dropped from the URL.
+ */
+const VIEW_PARAM_KEYS = ["view", "dom", "scope", "group", "model", "meas", "axes", "trend"] as const;
+
+/**
+ * Decode the BOOT view from the URL once (module read at first render): a
+ * deep-link / saved-view link seeds the initial workspace + domain + scope +
+ * analytics so the FIRST paint already matches the link — the domain tab bar shows
+ * the URL's domain, and each shared screen (Risk / Market Data / Ticket) derives
+ * its FX↔rates lens from that seeded domain on initial mount (not only after a
+ * user tab-click). Returns `null` for a bare URL (boot the app defaults) and never
+ * throws (the codec is forward-compatible). `dom` counts as a view param so a
+ * domain-only link (`?dom=fixed_income`) seeds too.
+ */
+function bootViewState(): ViewState | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const hasViewParam = VIEW_PARAM_KEYS.some((k) => params.has(k));
+  return hasViewParam ? decodeView(params) : null;
+}
+
 const NOOP = (): void => {};
 
 export function AppProvider({
@@ -378,11 +403,19 @@ export function AppProvider({
   );
   const conventions = DEFAULT_CONVENTIONS;
 
-  const [workspace, setWorkspaceRaw] = useState<WorkspaceId>("stream");
-  // The active top-level domain tab. Default `fx_options` to match the default
-  // `stream` workspace (an FX-only row). Selected by the Shell tab bar; kept
-  // honest with the active workspace by `navigate` below.
-  const [activeDomain, setActiveDomain] = useState<Domain>("fx_options");
+  // The boot view decoded from the URL ONCE (a deep-link / saved-view link). Seeds
+  // the initial workspace + domain + scope + analytics below so the FIRST paint
+  // already matches the link — the tab bar's active domain AND each shared screen's
+  // domain-derived lens are correct on initial mount, with no post-mount re-home
+  // flash. A bare URL yields `null` ⇒ the app boots its defaults.
+  const bootView = useMemo(bootViewState, []);
+
+  const [workspace, setWorkspaceRaw] = useState<WorkspaceId>(() => bootView?.workspace ?? "stream");
+  // The active top-level domain tab. Seeded from the deep-link `dom` when present,
+  // else `fx_options` to match the default `stream` workspace (an FX-only row).
+  // Selected by the Shell tab bar; kept honest with the active workspace by
+  // `navigate` below and re-homed by the gating effect if the identity lacks it.
+  const [activeDomain, setActiveDomain] = useState<Domain>(() => bootView?.domain ?? "fx_options");
   const [pairIndex, setPairIndex] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [scopeSwitcherOpen, setScopeSwitcherOpen] = useState(false);
@@ -401,14 +434,23 @@ export function AppProvider({
   const [ticketTarget, setTicketTarget] = useState<TicketTarget | null>(null);
   const [surface, setSurface] = useState<MarkedSurface | null>(null);
   // The smile-calibration model the surface is marked under (default = the desk's
-  // market-hedge construction; the server's default when the field is absent).
-  const [surfaceModel, setSurfaceModelState] = useState<SmileModel>("MARKET_HEDGE");
+  // market-hedge construction; the server's default when the field is absent). A
+  // deep-link folds the model into `analytics.model`, so seed it from there.
+  const [surfaceModel, setSurfaceModelState] = useState<SmileModel>(() => {
+    const m = bootView?.analytics.model;
+    return m !== undefined && isSmileModel(m) ? m : "MARKET_HEDGE";
+  });
   // Scope (P0-6): the pure drill path + group-by state, owned by `lib/scope.ts`'s
-  // reducer. Default = the firm root, no secondary grouping.
-  const [scopeState, setScopeState] = useState<ScopeState>(INITIAL_SCOPE);
+  // reducer. Seeded from the deep-link scope, else the firm root, no grouping.
+  const [scopeState, setScopeState] = useState<ScopeState>(() => bootView?.scope ?? INITIAL_SCOPE);
   // The analytics selection the inspector strips capture (per-lane axes). A flat
-  // bag merged by `setAnalytics`; restored verbatim by a recalled/URL view.
-  const [analytics, setAnalyticsState] = useState<AnalyticsSelection>({});
+  // bag merged by `setAnalytics`; seeded from a deep-link's analytics (the model
+  // lives in `surfaceModel` above, so it is stripped here — the two never diverge).
+  const [analytics, setAnalyticsState] = useState<AnalyticsSelection>(() => {
+    if (!bootView) return {};
+    const { model: _model, ...rest } = bootView.analytics;
+    return rest;
+  });
   // The persisted named views (localStorage-mirrored via savedViews.ts).
   const [savedViews, setSavedViews] = useState<readonly SavedView[]>(() => loadSavedViews());
   // Shared selection (P0-5): null until a lane selects/drills; Risk falls back to
@@ -727,26 +769,13 @@ export function AppProvider({
     [savedViews, persistViews],
   );
 
-  // URL recall (GW1-S4): on first mount, if the URL carries any saved-view param,
-  // restore that exact (workspace, scope, analytics) triple — a pasted link IS the
-  // view. Runs once (a ref guards re-application on subsequent renders); the
-  // transport params (mock/ws/transport) are untouched.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const hasViewParam =
-      params.has("view") ||
-      params.has("scope") ||
-      params.has("group") ||
-      params.has("model") ||
-      params.has("meas") ||
-      params.has("axes") ||
-      params.has("trend");
-    if (hasViewParam) applyViewState(decodeView(params));
-    // Intentionally mount-only: later URL writes are driven by `viewState` below,
-    // and re-decoding on every render would fight the user's live navigation.
-    // `applyViewState` is a stable useCallback, so an empty dep list is correct.
-  }, [applyViewState]);
+  // URL recall (GW1-S4) is done at INIT, not in a mount effect: `bootView` above
+  // seeds the workspace + domain + scope + analytics + smile model straight into
+  // the useState initializers, so the FIRST render already matches a pasted link —
+  // the domain tab and each shared screen's domain-derived lens are correct on the
+  // initial paint with no post-mount re-home flash. A saved-view recall after mount
+  // still routes through `applyViewState` (see `recallView`). The transport params
+  // (mock/ws/transport) are untouched by both paths.
 
   // Live URL mirror (GW1-S4): keep the address bar in sync with the current view
   // so a bookmark/copy captures the live state. We MERGE the view params over the
@@ -756,8 +785,9 @@ export function AppProvider({
     if (typeof window === "undefined") return;
     const current = new URLSearchParams(window.location.search);
     // Drop the prior view params, then write the fresh ones — so a field that is
-    // no longer present (e.g. group-by relaxed to none) is removed from the URL.
-    for (const key of ["view", "scope", "group", "model", "meas", "axes", "trend"]) {
+    // no longer present (e.g. group-by relaxed to none, or the domain relaxed back
+    // to the fx_options default which emits no `dom`) is removed from the URL.
+    for (const key of VIEW_PARAM_KEYS) {
       current.delete(key);
     }
     for (const [k, v] of encodeView(viewState)) current.set(k, v);
