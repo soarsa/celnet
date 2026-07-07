@@ -26,10 +26,19 @@ const BOOK_DENIED_TITLE = "Your permissions don't allow booking fixed-income pos
 
 /** Click a workspace rail button by its title prefix `"<label> ("` (unique per view). */
 async function railClick(page: Page, label: string): Promise<void> {
-  await page
+  const btn = page
     .getByRole("complementary", { name: "workspaces" })
-    .locator(`button[title^="${label} ("]`)
-    .click();
+    .locator(`button[title^="${label} ("]`);
+  // fe-fi-migration re-add: the rail is filtered to the active domain. If the row
+  // isn't under the current tab, select whichever domain tab surfaces it first.
+  if ((await btn.count()) === 0) {
+    const tabs = page.getByRole("tablist", { name: "product domains" }).getByRole("tab");
+    for (let i = 0; i < (await tabs.count()); i += 1) {
+      await tabs.nth(i).click();
+      if ((await btn.count()) > 0) break;
+    }
+  }
+  await btn.click();
 }
 
 /**

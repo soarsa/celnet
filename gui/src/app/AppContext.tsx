@@ -62,7 +62,14 @@ import {
   type SavedView,
   type ViewState,
 } from "../lib/savedViews";
-import { firstAccessibleWorkspace, workspaceAccessible } from "../lib/commands";
+import {
+  domainAccessible,
+  DOMAINS,
+  firstAccessibleWorkspace,
+  workspaceAccessible,
+  workspaceDomains,
+  type Domain,
+} from "../lib/commands";
 import type { Density } from "../design/density";
 
 // fe-fi-migration #6: the single class-parametric WorkspaceId set (the FX/FI
@@ -174,7 +181,23 @@ interface AppState {
   transport: CelnetTransport;
   conventions: Conventions;
   workspace: WorkspaceId;
+  /**
+   * Navigate to a workspace. Composes the raw setter with an activeDomain sync:
+   * a jump to a SINGLE-domain workspace (e.g. ⌘-jump to `stream`/`quoting`, an
+   * admin pane) re-homes {@link activeDomain} to that workspace's domain so the
+   * tab stays honest; a jump to a SHARED workspace leaves activeDomain unchanged
+   * (Model A — the tab keeps its lens). ALL callers (palette, ⌘N, drillToRisk)
+   * route through this so navigation and the tab bar never disagree.
+   */
   setWorkspace: (w: WorkspaceId) => void;
+  /** The active top-level product domain (tab): FX Options / Fixed Income / admin. */
+  activeDomain: Domain;
+  /**
+   * Select the active domain tab. For a SHARED screen this only flips the pane's
+   * lens (Model A); the Shell decides whether to also navigate. Threaded into the
+   * saved-view / URL codec so a deep-link restores the correct tab + lens.
+   */
+  setActiveDomain: (d: Domain) => void;
   pairCtx: PairContext;
   setPair: (pair: CcyPair) => void;
   pairs: PairContext[];
@@ -355,7 +378,11 @@ export function AppProvider({
   );
   const conventions = DEFAULT_CONVENTIONS;
 
-  const [workspace, setWorkspace] = useState<WorkspaceId>("stream");
+  const [workspace, setWorkspaceRaw] = useState<WorkspaceId>("stream");
+  // The active top-level domain tab. Default `fx_options` to match the default
+  // `stream` workspace (an FX-only row). Selected by the Shell tab bar; kept
+  // honest with the active workspace by `navigate` below.
+  const [activeDomain, setActiveDomain] = useState<Domain>("fx_options");
   const [pairIndex, setPairIndex] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [scopeSwitcherOpen, setScopeSwitcherOpen] = useState(false);
@@ -425,21 +452,50 @@ export function AppProvider({
   // token on the transport flows it onto every gated RPC.
   const auth = useAuth(transport);
 
-  // Enforce navigation gating: if the active workspace is not accessible to this
-  // identity — an admin-only pane for a non-admin, OR a workspace in a domain the
-  // user lacks `view` on (e.g. an FX trader who just had `view·fx_options` denied
-  // and re-logs in while parked on an FX view) — bounce to the first ACCESSIBLE
-  // workspace. Covers every entry path: a recalled/URL saved view, a ⌘-jump, the
-  // command palette, or losing access while parked. Pairs with the Shell hiding
-  // the tab/rail/pane so the user is never stranded on a blank/hidden view.
-  // Signed out, `can` is permissive ⇒ no narrowing, so the anonymous workspace is
-  // untouched (the default `stream` stays accessible). The degenerate case where
-  // nothing is accessible leaves the workspace as-is rather than thrash.
+  // Navigate to a workspace, keeping the active DOMAIN tab honest (Model A): a jump
+  // to a single-domain workspace (⌘-jump to `stream`/`quoting`, an admin pane)
+  // re-homes activeDomain to that workspace's domain; a jump to a SHARED workspace
+  // leaves activeDomain unchanged (the tab keeps its lens). Uses the FUNCTIONAL
+  // updater so it composes correctly when a caller (the Shell tab bar) already
+  // queued a `setActiveDomain(d)` in the same event — the updater observes that
+  // just-set domain, not a stale closure value.
+  const navigate = useCallback((w: WorkspaceId) => {
+    setWorkspaceRaw(w);
+    setActiveDomain((cur) => {
+      const doms = workspaceDomains(w);
+      return doms.includes(cur) ? cur : doms[0]!;
+    });
+  }, []);
+
+  // Enforce navigation gating: keep BOTH the active workspace AND the active domain
+  // tab accessible to this identity. If either is inaccessible — an admin pane / tab
+  // for a non-admin, or a trading workspace/tab in a class the user lacks `view` on
+  // (e.g. an FX-only trader re-logging in while parked on the FX tab) — re-home:
+  //   • the DOMAIN tab: keep activeDomain if its tab is accessible, else pick the
+  //     first accessible domain (DOMAINS order) so the user never sits on a hidden
+  //     tab (an FI-only trader lands on the Fixed Income tab, not a dead FX one);
+  //   • the WORKSPACE: the first accessible workspace WITHIN that landing domain
+  //     (falling back to the global first accessible when the domain has none).
+  // Covers every entry path: a recalled/URL saved view, a ⌘-jump, the command
+  // palette, or losing access while parked. Signed out, `can` is permissive ⇒ both
+  // trading tabs + every trading workspace are accessible, so the anonymous default
+  // is untouched. The degenerate all-inaccessible case leaves state as-is (no thrash).
   useEffect(() => {
-    if (workspaceAccessible(workspace, auth)) return;
-    const target = firstAccessibleWorkspace(auth);
-    if (target && target !== workspace) setWorkspace(target);
-  }, [auth.isAdmin, auth.can, workspace]);
+    const domainOk = domainAccessible(activeDomain, auth);
+    const wsOk = workspaceAccessible(workspace, auth);
+    if (domainOk && wsOk) return;
+    const landingDomain: Domain | undefined = domainOk
+      ? activeDomain
+      : DOMAINS.map((d) => d.id).find((d) => domainAccessible(d, auth));
+    const target =
+      landingDomain !== undefined
+        ? firstAccessibleWorkspace(auth, landingDomain)
+        : firstAccessibleWorkspace(auth);
+    if (landingDomain !== undefined && landingDomain !== activeDomain) {
+      setActiveDomain(landingDomain);
+    }
+    if (target && target !== workspace) setWorkspaceRaw(target);
+  }, [auth.isAdmin, auth.can, workspace, activeDomain]);
 
   const remarkSurface = useMemo(
     () => async (ladder?: BrokerQuoteSet[], model?: SmileModel) => {
@@ -620,10 +676,11 @@ export function AppProvider({
   const viewState: ViewState = useMemo(
     () => ({
       workspace,
+      domain: activeDomain,
       scope: scopeState,
       analytics: { ...analytics, model: surfaceModel },
     }),
-    [workspace, scopeState, analytics, surfaceModel],
+    [workspace, activeDomain, scopeState, analytics, surfaceModel],
   );
 
   // Apply a decoded view state (URL recall / saved-view recall). Restores the
@@ -631,7 +688,8 @@ export function AppProvider({
   // snapshot carried a model it re-selects it (which re-marks the live surface).
   const applyViewState = useCallback(
     (state: ViewState) => {
-      setWorkspace(state.workspace);
+      setWorkspaceRaw(state.workspace);
+      setActiveDomain(state.domain);
       setScopeState(state.scope);
       const { model, ...rest } = state.analytics;
       setAnalyticsState(rest);
@@ -710,14 +768,18 @@ export function AppProvider({
 
   const drillToRisk = (instrument: Instrument, label: string) => {
     setSelected({ instrument, label });
-    setWorkspace("risk");
+    // Risk is a SHARED screen ⇒ navigate leaves activeDomain unchanged (the FX/FI
+    // lens carries over); it only re-homes the tab if drilling in from admin.
+    navigate("risk");
   };
 
   const value: AppState = {
     transport,
     conventions,
     workspace,
-    setWorkspace,
+    setWorkspace: navigate,
+    activeDomain,
+    setActiveDomain,
     pairCtx,
     setPair,
     pairs: PAIRS,

@@ -19,7 +19,17 @@ const TRADER_PW = "longenoughpw1";
 /** Open a workspace via its direct rail button (by `title="<label> (…)"` prefix). */
 async function gotoView(page: Page, label: string) {
   const rail = page.getByRole("complementary", { name: "workspaces" });
-  await rail.locator(`button[title^="${label} ("]`).click();
+  const btn = rail.locator(`button[title^="${label} ("]`);
+  // fe-fi-migration re-add: the rail is filtered to the active domain. If the row
+  // isn't under the current tab, select whichever domain tab surfaces it first.
+  if ((await btn.count()) === 0) {
+    const tabs = page.getByRole("tablist", { name: "product domains" }).getByRole("tab");
+    for (let i = 0; i < (await tabs.count()); i += 1) {
+      await tabs.nth(i).click();
+      if ((await btn.count()) > 0) break;
+    }
+  }
+  await btn.click();
   const pane = page.locator('[aria-hidden="false"]:not([inert])').last();
   await expect(pane).toBeVisible();
   return pane;

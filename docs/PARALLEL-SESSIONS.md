@@ -164,6 +164,7 @@ at their tier.
 | **W5-B-LEAVES** | NEW `celnet-equity-vanilla`, `celnet-commodity-vanilla` | W1 contract | QuantLib AnalyticEuropean (div) + Black-76 golden | **DONE** | coordinator / `lane/w5-b-leaves` |
 | **GW2-STRUCTURING** | `gui/src/products/*` (Ticket→ProductSpec registry) + tests | GW0/GW1 merge | vitest per-ProductSpec round-trip + Playwright e2e + axe | **DONE** | coordinator / `lane/gw2-structuring` |
 | **PERMS-SLICE4-GUI** | `gui/` only: AdminWorkspace capability-overlay editor (CapabilityMatrix + hook + transport/codec/mock + contract types) | server slice 3b `d1c440c` | `npm run build` clean · vitest matrix resolution/deny-wins · live Playwright + axe under Enforce | **CLAIMED** | this-session / `lane/fi-rates-breadth` |
+| **GUI-FX-FI-BREAKOUT** | `gui/` only: RE-ADD the 3-tab product-domain nav (FX Options / Fixed Income / Administration) + gating layer OVER the merged class-parametric workspaces (Model A shared screens; domain-derived membership; savedViews `dom`; lens pre-select) | none (front-end, 0-Rust-delta) | `npm run build` clean · vitest · live Playwright domainNavGating+capabilities + axe | **CLAIMED** | this-session / `lane/gui-fx-fi-breakout` |
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 

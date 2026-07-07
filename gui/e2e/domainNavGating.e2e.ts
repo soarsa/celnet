@@ -24,7 +24,7 @@
  *      axe pass (0 serious).
  *   6. Sign back in as admin → the FX-only + admin rows are present again.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 
 import { openLive, signIn, gotoWorkspace, expectNoSeriousA11y } from "./helpers";
 
@@ -48,7 +48,30 @@ async function expectRail(page: Page, label: string, present: boolean): Promise<
 
 /** Click a workspace rail button by its title prefix `"<label> ("` (unique per view). */
 async function railClick(page: Page, label: string): Promise<void> {
-  await rail(page).locator(`button[title^="${label} ("]`).click();
+  const btn = rail(page).locator(`button[title^="${label} ("]`);
+  // fe-fi-migration re-add: the rail is filtered to the active domain. If the row
+  // isn't under the current tab, select whichever domain tab surfaces it first.
+  if ((await btn.count()) === 0) {
+    const tabs = page.getByRole("tablist", { name: "product domains" }).getByRole("tab");
+    for (let i = 0; i < (await tabs.count()); i += 1) {
+      await tabs.nth(i).click();
+      if ((await btn.count()) > 0) break;
+    }
+  }
+  await btn.click();
+}
+
+/** The product-domain tab bar. */
+function domainTabs(page: Page): Locator {
+  return page.getByRole("tablist", { name: "product domains" });
+}
+/** One domain tab by its exact label. */
+function domainTab(page: Page, label: string): Locator {
+  return domainTabs(page).getByRole("tab", { name: label, exact: true });
+}
+/** Select a domain tab. */
+async function selectDomain(page: Page, label: string): Promise<void> {
+  await domainTab(page, label).click();
 }
 
 test("single-rail per-workspace gating: FX-only rows hide, cross-asset rows stay reachable via FI", async ({
@@ -99,21 +122,29 @@ test("single-rail per-workspace gating: FX-only rows hide, cross-asset rows stay
   await signIn(page, TRADER_EMAIL, TRADER_PW);
   await expect(rail(page)).toBeVisible();
 
-  // 4a) There is NO product-domain tab bar — the FX/FI split is retired.
-  await expect(page.getByRole("tablist", { name: "product domains" })).toHaveCount(0);
+  // 4a) The product-domain TAB BAR gates by `domainAccessible`: the FX Options tab
+  // is HIDDEN (no `view·fx_options`), Administration is HIDDEN (not admin), and the
+  // Fixed Income tab is present AND selected (the redirect re-homed the active domain
+  // to an accessible one so the trader never sits on a dead FX tab).
+  await expect(domainTabs(page)).toBeVisible();
+  await expect(domainTab(page, "FX Options")).toHaveCount(0);
+  await expect(domainTab(page, "Administration")).toHaveCount(0);
+  await expect(domainTab(page, "Fixed Income")).toBeVisible();
+  await expect(domainTab(page, "Fixed Income")).toHaveAttribute("aria-selected", "true");
 
-  // 4b) The FX-ONLY rows are GONE (no `view·fx_options`).
+  // 4b) Under the FI tab the FX-ONLY rows are absent (not FI-domain rows).
   await expectRail(page, "Stream", false);
   await expectRail(page, "XVA", false);
   await expectRail(page, "Excel", false);
 
-  // 4c) The CROSS-ASSET rows remain (reachable via `view·fixed_income`), and the
-  // FI-only Quoting remains — the trader is not stranded on a blank FX view.
+  // 4c) The CROSS-ASSET (shared) rows remain (reachable via `view·fixed_income`),
+  // and the FI-only Quoting is present — the trader is not stranded on a blank view.
   for (const label of ["Ticket", "Market Data", "Risk", "Book", "Quoting"]) {
     await expectRail(page, label, true);
   }
 
-  // 4d) The admin/ops rows are absent (the trader is not an admin).
+  // 4d) The admin/ops rows are absent (the Administration tab is hidden for a
+  // non-admin, so nothing surfaces them).
   for (const label of ["Admin", "Permissions", "Connections", "Reference Data"]) {
     await expectRail(page, label, false);
   }
@@ -129,10 +160,61 @@ test("single-rail per-workspace gating: FX-only rows hide, cross-asset rows stay
   });
   await expectNoSeriousA11y(page, "trader gated single rail (view·fx_options denied)");
 
-  // 6) Sign back in as the admin → the FX-only + admin rows are present again.
+  // 6) Sign back in as the admin → all three domain tabs are present, each with its
+  // own rail rows (the FX-only + FI-only + admin rows return under their tabs).
   await page.getByRole("button", { name: "Sign out" }).click();
   await signIn(page);
-  for (const label of ["Ticket", "Stream", "Market Data", "Risk", "Book", "Quoting", "XVA", "Excel", "Admin", "Permissions"]) {
+  await expect(domainTab(page, "FX Options")).toBeVisible();
+  await expect(domainTab(page, "Fixed Income")).toBeVisible();
+  await expect(domainTab(page, "Administration")).toBeVisible();
+
+  // FX tab: the FX-domain rows present; the FI-only Quoting absent. (activeDomain
+  // persists across the sign-out/in, so select the FX tab explicitly first.)
+  await selectDomain(page, "FX Options");
+  await expect(domainTab(page, "FX Options")).toHaveAttribute("aria-selected", "true");
+  for (const label of ["Ticket", "Stream", "Market Data", "Risk", "Book", "XVA", "Excel"]) {
     await expectRail(page, label, true);
   }
+  await expectRail(page, "Quoting", false);
+
+  // Fixed Income tab: Quoting appears; the FX-only Stream is hidden.
+  await selectDomain(page, "Fixed Income");
+  await expectRail(page, "Quoting", true);
+  await expectRail(page, "Stream", false);
+
+  // Administration tab: the admin/ops rows appear.
+  await selectDomain(page, "Administration");
+  for (const label of ["Admin", "Permissions", "Connections", "Reference Data"]) {
+    await expectRail(page, label, true);
+  }
+
+  // 7) Model A — a SHARED screen appears under BOTH trading tabs and pre-selects the
+  // tab's lens. Market Data: FX tab ⇒ FX lens; FI tab ⇒ rates lens (screen kept).
+  await selectDomain(page, "FX Options");
+  await railClick(page, "Market Data");
+  const mdLens = page.getByRole("group", { name: "market data asset class" });
+  await expect(mdLens.getByRole("button", { name: "FX Options" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await selectDomain(page, "Fixed Income");
+  await expect(rail(page).locator('button[title^="Market Data ("]')).toBeVisible(); // kept
+  await expect(mdLens.getByRole("button", { name: "Fixed Income" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  // Risk: its lens is a tablist — FX tab ⇒ FX lens tab; FI tab ⇒ rates lens tab.
+  await selectDomain(page, "FX Options");
+  await railClick(page, "Risk");
+  const riskLens = page.getByRole("tablist", { name: "risk asset class lens" });
+  await expect(riskLens.getByRole("tab", { name: "FX Options" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await selectDomain(page, "Fixed Income");
+  await expect(riskLens.getByRole("tab", { name: "Fixed Income" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });

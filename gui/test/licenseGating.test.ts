@@ -18,13 +18,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   ALL_LICENSED,
+  domainAccessible,
+  DOMAINS,
   LICENSE_UPSELL_TITLE,
   makeLicensePredicate,
   RAIL,
   railState,
   workspaceAccessible,
   workspaceAssets,
+  type Domain,
+  type LicensePredicate,
   type NavAuth,
+  type RailState,
 } from "../src/lib/commands";
 
 /** A NavAuth whose `can` admits exactly the given `action·asset` keys. */
@@ -127,5 +132,48 @@ describe("license gating — per-workspace three-state rail (fe-fi-migration #6)
 
   it("exposes the stable upsell title for the affordance", () => {
     expect(LICENSE_UPSELL_TITLE).toBe("license this class");
+  });
+});
+
+describe("license gating — the top-level DOMAIN tab three-state (fe-fi-migration re-add)", () => {
+  // The Shell derives a domain tab's three-state as: HIDDEN when the domain is
+  // inaccessible (entitlement / non-admin); GATED-UPSELL when a trading domain's
+  // class is unlicensed; else PRESENT. Admin has no license concept. This mirrors
+  // that derivation over the pure lib predicates so the composition is guarded.
+  const domainState = (d: Domain, auth: NavAuth, licensed: LicensePredicate): RailState => {
+    if (!domainAccessible(d, auth)) return "hidden";
+    if (d !== "admin" && !licensed(d)) return "gated-upsell";
+    return "present";
+  };
+  const signedOut: NavAuth = { isAdmin: false, can: () => true };
+
+  it("defaults (all-licensed, signed out): both trading tabs present, Administration hidden", () => {
+    for (const { id } of DOMAINS) {
+      const st = domainState(id, signedOut, ALL_LICENSED);
+      expect(st).toBe(id === "admin" ? "hidden" : "present");
+    }
+  });
+
+  it("an unlicensed trading class ⇒ its tab is GATED-UPSELL (still discoverable), the other stays present", () => {
+    const fxUnlicensed = makeLicensePredicate(["fx_options"]);
+    expect(domainState("fx_options", signedOut, fxUnlicensed)).toBe("gated-upsell");
+    expect(domainState("fixed_income", signedOut, fxUnlicensed)).toBe("present");
+  });
+
+  it("entitlement-deny HIDES a trading tab (wins over any upsell)", () => {
+    const fiOnly = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
+    // No `view·fx_options` ⇒ the FX tab is hidden regardless of license.
+    expect(domainState("fx_options", fiOnly, ALL_LICENSED)).toBe("hidden");
+    expect(domainState("fx_options", fiOnly, makeLicensePredicate(["fx_options"]))).toBe("hidden");
+    expect(domainState("fixed_income", fiOnly, ALL_LICENSED)).toBe("present");
+  });
+
+  it("the Administration tab has NO license concept — present iff admin, never gated", () => {
+    const admin = navAuth({ isAdmin: true });
+    const nonAdmin = navAuth({ isAdmin: false });
+    const noneLicensed = makeLicensePredicate(["fx_options", "fixed_income"]);
+    expect(domainState("admin", admin, noneLicensed)).toBe("present");
+    expect(domainState("admin", nonAdmin, noneLicensed)).toBe("hidden");
+    expect(domainState("admin", admin, ALL_LICENSED)).not.toBe("gated-upsell");
   });
 });

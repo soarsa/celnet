@@ -49,11 +49,18 @@ afterEach(() => {
   localStorage.clear();
 });
 
-/** A generated spread of view states (the round-trip space). */
+/** A generated spread of view states (the round-trip space) — spanning all three
+ *  domains, incl. a default (fx_options ⇒ no `dom` token) and non-default cases. */
 const STATES: ViewState[] = [
-  { workspace: "stream", scope: { path: [FIRM_SCOPE_ROOT], groupBy: "none" }, analytics: {} },
+  {
+    workspace: "stream",
+    domain: "fx_options",
+    scope: { path: [FIRM_SCOPE_ROOT], groupBy: "none" },
+    analytics: {},
+  },
   {
     workspace: "risk",
+    domain: "fixed_income",
     scope: {
       path: [FIRM_SCOPE_ROOT, { level: "desk", label: "EM Vol" }],
       groupBy: "book",
@@ -62,6 +69,7 @@ const STATES: ViewState[] = [
   },
   {
     workspace: "surface",
+    domain: "fx_options",
     scope: {
       path: [
         FIRM_SCOPE_ROOT,
@@ -75,8 +83,15 @@ const STATES: ViewState[] = [
   },
   {
     workspace: "book",
+    domain: "fixed_income",
     scope: { path: [FIRM_SCOPE_ROOT, { level: "desk", label: "FX/Rates" }], groupBy: "none" },
     analytics: { model: "MARKET_HEDGE" },
+  },
+  {
+    workspace: "permissions",
+    domain: "admin",
+    scope: { path: [FIRM_SCOPE_ROOT], groupBy: "none" },
+    analytics: {},
   },
 ];
 
@@ -99,13 +114,21 @@ describe("frozen literal URL ⇄ state fixtures (external truth)", () => {
   // codec bug can't pass because the frozen string is the external reference.
   const FIXTURES: { url: string; state: ViewState }[] = [
     {
+      // Default domain (fx_options) ⇒ NO `dom` token: byte-identical to the
+      // pre-tab-bar URL form (forward/backward compatible).
       url: "view=stream",
-      state: { workspace: "stream", scope: { path: [FIRM_SCOPE_ROOT], groupBy: "none" }, analytics: {} },
+      state: {
+        workspace: "stream",
+        domain: "fx_options",
+        scope: { path: [FIRM_SCOPE_ROOT], groupBy: "none" },
+        analytics: {},
+      },
     },
     {
       url: "view=book&scope=desk%3AEM+Vol&group=book",
       state: {
         workspace: "book",
+        domain: "fx_options",
         scope: { path: [FIRM_SCOPE_ROOT, { level: "desk", label: "EM Vol" }], groupBy: "book" },
         analytics: {},
       },
@@ -114,6 +137,7 @@ describe("frozen literal URL ⇄ state fixtures (external truth)", () => {
       url: "view=surface&scope=desk%3AG10+Vol%3Ebook%3AEUR+Vol%3Epair%3AEUR%2FUSD&model=EXTENDED_SURFACE&trend=1m",
       state: {
         workspace: "surface",
+        domain: "fx_options",
         scope: {
           path: [
             FIRM_SCOPE_ROOT,
@@ -124,6 +148,26 @@ describe("frozen literal URL ⇄ state fixtures (external truth)", () => {
           groupBy: "none",
         },
         analytics: { model: "EXTENDED_SURFACE", trend: "1m" },
+      },
+    },
+    {
+      // Non-default domain (fixed_income) ⇒ `dom` emitted right after `view`.
+      url: "view=risk&dom=fixed_income&scope=desk%3AEM+Vol&group=book",
+      state: {
+        workspace: "risk",
+        domain: "fixed_income",
+        scope: { path: [FIRM_SCOPE_ROOT, { level: "desk", label: "EM Vol" }], groupBy: "book" },
+        analytics: {},
+      },
+    },
+    {
+      // The Administration domain round-trips through `dom=admin`.
+      url: "view=admin&dom=admin",
+      state: {
+        workspace: "admin",
+        domain: "admin",
+        scope: { path: [FIRM_SCOPE_ROOT], groupBy: "none" },
+        analytics: {},
       },
     },
   ];
@@ -154,12 +198,20 @@ describe("forward-compatibility (never throws; defaults applied)", () => {
     expect(decodeView("group=bogus").scope.groupBy).toBe("none");
   });
 
-  it("an empty string decodes to the bare firm-root stream view", () => {
+  it("an empty string decodes to the bare firm-root stream view (default FX domain)", () => {
     expect(decodeView("")).toEqual({
       workspace: "stream",
+      domain: "fx_options",
       scope: { path: [FIRM_SCOPE_ROOT], groupBy: "none" },
       analytics: {},
     });
+  });
+
+  it("a missing/invalid `dom` defaults to fx_options; a known link keeps its domain", () => {
+    expect(decodeView("view=risk").domain).toBe("fx_options"); // absent ⇒ default
+    expect(decodeView("view=risk&dom=bogus").domain).toBe("fx_options"); // invalid ⇒ default
+    expect(decodeView("view=risk&dom=fixed_income").domain).toBe("fixed_income");
+    expect(decodeView("view=admin&dom=admin").domain).toBe("admin");
   });
 });
 
