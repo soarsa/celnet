@@ -30,6 +30,7 @@ pub mod gateway;
 pub mod initiator;
 pub mod messages;
 pub mod session;
+pub mod sim;
 pub mod transport;
 
 pub use backend::{

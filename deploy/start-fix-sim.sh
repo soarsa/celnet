@@ -23,10 +23,14 @@
 #   deploy/start-fix-sim.sh              # loop RFQs in the foreground (tees to log)
 #   FIXSIM_ONESHOT=1 deploy/start-fix-sim.sh   # send one RFQ and exit
 #   FIXSIM_DAEMON=1  deploy/start-fix-sim.sh   # background, write a PID file, log to file
-#   tail -f deploy/fix-sim-run/log/fix-sim.log # watch requests in/out
+#   FIXSIM_ASSET=fx  deploy/start-fix-sim.sh   # drive the FX-options (RFS) leg instead
+#   FIXSIM_ASSET=both FIXSIM_DAEMON=1 deploy/start-fix-sim.sh  # BOTH legs, two daemons
+#   tail -f deploy/fix-sim-run/log/fix-sim.log      # watch a single-asset run
+#   tail -f deploy/fix-sim-run/{fi,fx}/log/fix-sim.log  # watch each leg of a both run
 #
 # Env overrides (defaults match group_vars/all.yml celnet_env FIX settings):
-#   FIXSIM_ASSET (fi)        # fi = fixed income / OIS rates (default); fx = FX options
+#   FIXSIM_ASSET (fi)        # fi = fixed income / OIS rates (default); fx = FX options;
+#                            # both = drive fi AND fx concurrently (two daemons)
 #   FIXSIM_HOST (127.0.0.1)  FIXSIM_PORT (fi:56002 / fx:56001)
 #   FIXSIM_SENDER (fi:CELER_RATES / fx:CELER_FXO)  FIXSIM_TARGET (CELNET)
 #   FIXSIM_CURVE (USD-OIS) FIXSIM_TENOR (5) FIXSIM_NOTIONAL (10000000)   # FI RFQ shape
@@ -49,7 +53,11 @@ FIXSIM_ASSET="${FIXSIM_ASSET:-fi}"
 case "$FIXSIM_ASSET" in
   fi|rates|fixedincome|fixed_income) FIXSIM_ASSET="fi" ;;
   fx|fxo|options)                    FIXSIM_ASSET="fx" ;;
-  *) echo "[fix-sim] ERROR: FIXSIM_ASSET must be fi|fx, got '$FIXSIM_ASSET'" >&2; exit 2 ;;
+  # "both" drives BOTH the fixed-income (rates/OIS) leg and the FX-options leg
+  # concurrently, each as its own supervised daemon with a DISJOINT run dir / PID /
+  # log so they never collide. See the dispatch below.
+  both|all|fi+fx|fifx)               FIXSIM_ASSET="both" ;;
+  *) echo "[fix-sim] ERROR: FIXSIM_ASSET must be fi|fx|both, got '$FIXSIM_ASSET'" >&2; exit 2 ;;
 esac
 
 FIXSIM_HOST="${FIXSIM_HOST:-127.0.0.1}"
@@ -101,6 +109,24 @@ export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 
 ts() { date +%Y-%m-%dT%H:%M:%S%z; }
 log() { echo "[$(ts)] [fix-sim] $*"; }
+
+# --- asset=both: fan out into two independent supervised daemons ------------------
+# Drive the fixed-income (rates/OIS) leg AND the FX-options leg concurrently, each as
+# its own supervised daemon under a DISJOINT run dir (⇒ its own PID file + log), so the
+# two never collide. Each child re-execs this same script with a single asset and
+# FIXSIM_DAEMON=1; all other env (period, jitter, manual/lift cadence, the prebuilt
+# FIXSIM_RFQ_BIN path) is inherited, and each child re-derives its own port/CompIDs for
+# its asset. Follow either leg with:
+#   tail -f <run>/fi/log/fix-sim.log   # rates/OIS leg  (CELER_RATES @ :56002)
+#   tail -f <run>/fx/log/fix-sim.log   # FX-options leg (CELER_FXO   @ :56001)
+if [ "$FIXSIM_ASSET" = "both" ]; then
+  BASE_RUN="${FIXSIM_RUN_DIR:-$REPO_ROOT/deploy/fix-sim-run}"
+  log "asset=both — launching supervised FI and FX legs as separate daemons under $BASE_RUN"
+  FIXSIM_ASSET=fi FIXSIM_DAEMON=1 FIXSIM_RUN_DIR="$BASE_RUN/fi" "$0"
+  FIXSIM_ASSET=fx FIXSIM_DAEMON=1 FIXSIM_RUN_DIR="$BASE_RUN/fx" "$0"
+  log "both legs launched; PID files at $BASE_RUN/fi/fix-sim.pid and $BASE_RUN/fx/fix-sim.pid"
+  exit 0
+fi
 
 # --- Daemon: re-exec self into the logfile, record the child PID, and return. --
 # Serializing shell functions through `bash -c` (the old approach) was brittle;
@@ -206,7 +232,17 @@ build_client_args() {
       --manual-security "$FIXSIM_MANUAL_SECURITY" \
       --lift-every "$FIXSIM_LIFT_EVERY")
   else
-    CLIENT_ARGS+=(--asset fx --pair EURUSD --type call --side buy --strike 1.10)
+    # FX: the client OWNS the rotation (major deliverable pairs, near-the-money strikes,
+    # short-dated expiries, call/put) via its deterministic, seed-free `sim::fx_leg`
+    # grid, so ONE persistent invocation streams many varied vanilla-option RFQs over a
+    # SINGLE logon. Most auto-quote off the surface; every --manual-every-th is a
+    # deliberately UNPRICEABLE leg (American exercise, or an NDF request on a deliverable
+    # major) the venue routes to the FX desk (no Quote(S)); every --lift-every-th
+    # auto-quote is LIFTED → an executed & booked FX deal. No --side ⇒ observe by
+    # default, so the per-cycle lift cadence (not a blanket buy) drives the booking mix.
+    CLIENT_ARGS+=(--asset fx \
+      --manual-every "$FIXSIM_MANUAL_EVERY" \
+      --lift-every "$FIXSIM_LIFT_EVERY")
   fi
 }
 

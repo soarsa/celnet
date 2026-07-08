@@ -13,10 +13,16 @@
 //!     on the reply, reports that the ticket is queued with the rates desk (a
 //!     success — the trader will price it out of band). If a price does return it
 //!     is printed like any two-way quote.
-//!   * **fx** — a single-leg FX-option RFQ (the [`celnet_fix::dialect_fx`]
-//!     vocabulary). Prints the returned two-way `Quote(S)` and — when asked to
-//!     trade — lifts it with a `NewOrderSingle(D)` and prints the
-//!     `ExecutionReport(8)`.
+//!   * **fx** — a single-leg FX vanilla-option RFQ (the [`celnet_fix::dialect_fx`]
+//!     vocabulary). A one-shot (`--repeat 1`) sends the RFQ built from the explicit
+//!     CLI flags, prints the returned two-way `Quote(S)` and — when asked to trade —
+//!     lifts it with a `NewOrderSingle(D)` and prints the `ExecutionReport(8)`. A
+//!     stream (`--repeat != 1`) rotates the deterministic, seed-free
+//!     [`celnet_fix::sim::fx_leg`] grid — major deliverable pairs, near-the-money
+//!     strikes, short-dated expiries, call/put — auto-quoting most, LIFTING (→ booked
+//!     deal) every `--lift-every`-th, and injecting a deliberately UNPRICEABLE leg
+//!     every `--manual-every`-th (American exercise, or an NDF request on a deliverable
+//!     major) so the venue routes it to the FX desk for manual pricing (no `Quote(S)`).
 //!
 //! This is not a stub: it drives the SAME [`celnet_fix::initiator::Initiator`] the
 //! integration tests use over a loopback socket, so it exercises the live RFQ →
@@ -65,6 +71,7 @@ use celnet_fix::dialect_fx::{self, ExerciseStyle, QuoteRequestParams};
 use celnet_fix::dialect_rates::{self, RatesQuoteRequestParams, RatesSide, SubscriptionRequest};
 use celnet_fix::initiator::{Initiator, LiftPolicy};
 use celnet_fix::session::{InMemoryStore, Role, Session, SessionConfig};
+use celnet_fix::sim;
 use celnet_types::{OptionType, Settlement};
 use tokio::net::TcpStream;
 
@@ -83,7 +90,6 @@ struct Args {
     asset: AssetClass,
     // FX-option fields (used when `asset == FxOption`).
     pair: String,
-    strike_ccy: String,
     option_type: OptionType,
     strike: f64,
     expiry_years: f64,
@@ -361,20 +367,10 @@ fn parse_args() -> Args {
             }
         }
     }
-    // The strike currency is the pair's quote (domestic) leg — the last three
-    // letters. Only the FX path reads it; guard the slice so a fixed-income run
-    // with a non-6-letter `--pair` override cannot panic here.
-    let strike_ccy = if pair.len() == 6 {
-        pair[3..6].to_string()
-    } else {
-        String::new()
-    };
-
     Args {
         addr,
         asset,
         pair,
-        strike_ccy,
         option_type,
         strike,
         expiry_years,
@@ -655,16 +651,66 @@ async fn main() -> std::io::Result<()> {
                 }
             }
             AssetClass::FxOption => {
-                let symbol = args.pair.clone().into_bytes();
-                let strike_ccy = args.strike_ccy.clone().into_bytes();
+                // A one-shot (`--repeat 1`) honours the explicit CLI flags exactly
+                // (backward compatible). A stream rotates a realistic grid of major
+                // deliverable pairs / near-the-money strikes / short-dated expiries /
+                // call-put, injecting a deliberately UNPRICEABLE (desk-routed) leg every
+                // `--manual-every`-th request and lifting an auto-quote every
+                // `--lift-every`-th (an executed → booked FX deal). The rotation is the
+                // pure, seed-free `sim::fx_leg` — the same iteration index always yields
+                // the same RFQ (see the gated unit tests in `celnet_fix::sim`).
+                let (pair, option_type, strike, expiry_years, settlement, exercise, kind) =
+                    if args.repeat == 1 {
+                        (
+                            args.pair.clone(),
+                            args.option_type,
+                            args.strike,
+                            args.expiry_years,
+                            args.settlement,
+                            args.exercise,
+                            None,
+                        )
+                    } else {
+                        let leg = sim::fx_leg(i, args.manual_every);
+                        (
+                            leg.pair.to_string(),
+                            leg.option_type,
+                            leg.strike,
+                            leg.expiry_years,
+                            leg.settlement,
+                            leg.exercise,
+                            Some(leg.kind),
+                        )
+                    };
+                let is_manual = matches!(
+                    kind,
+                    Some(sim::FxLegKind::ManualAmerican)
+                        | Some(sim::FxLegKind::ManualNonDeliverable)
+                );
+                // Lift (execute + book) an auto-quote every `--lift-every`-th cycle; a
+                // desk-routed manual leg has no quote to lift, so it is never lifted.
+                let should_lift =
+                    !is_manual && args.lift_every > 0 && (i + 1).is_multiple_of(args.lift_every);
+                // Only override the session policy on the stream path; a one-shot keeps
+                // the policy the `--side` flag constructed the initiator with.
+                if args.repeat != 1 {
+                    sess.set_policy(if should_lift {
+                        LiftPolicy::LiftOffer
+                    } else {
+                        LiftPolicy::Observe
+                    });
+                }
+
+                let symbol = pair.clone().into_bytes();
+                let strike_ccy = sim::strike_ccy_of(&pair).as_bytes().to_vec();
                 let params = QuoteRequestParams {
                     quote_req_id: &req_id,
                     symbol: &symbol,
-                    option_type: args.option_type,
-                    strike: args.strike,
-                    expiry_years: args.expiry_years,
-                    settlement: args.settlement,
-                    exercise: args.exercise,
+                    option_type,
+                    strike,
+                    expiry_years,
+                    settlement,
+                    exercise,
                     strike_ccy: &strike_ccy,
                 };
                 let r = sess
@@ -672,17 +718,41 @@ async fn main() -> std::io::Result<()> {
                         dialect_fx::build_quote_request(hdr, &params, enc)
                     })
                     .await?;
+                let type_label = match option_type {
+                    OptionType::Call => "call",
+                    OptionType::Put => "put",
+                };
                 match (r.bid, r.offer) {
                     (Some(bid), Some(offer)) => {
-                        println!("[{i}] FX option — quoted:");
+                        println!(
+                            "[{i}] FX {pair} {type_label} K={strike} {expiry_years:.4}y — auto-quoted:"
+                        );
                         print_quote(r.quote_id.as_deref(), bid, offer);
                     }
-                    // A one-shot with no quote is an error; a stream just notes it and moves on.
+                    // A one-shot with no quote is an error; a stream notes the disposition.
                     _ if args.repeat == 1 => {
                         eprintln!("✗ no quote returned (the venue declined or the session closed)");
                         std::process::exit(1);
                     }
-                    _ => println!("[{i}] FX option — no quote (venue declined)"),
+                    // No quote = the venue could not auto-price and routed this RFQ to the
+                    // FX desk (expected for a manual variant): an American exercise or a
+                    // non-deliverable request on a deliverable major.
+                    _ => match kind.and_then(sim::FxLegKind::manual_reason) {
+                        Some(reason) => println!(
+                            "[{i}] FX {pair} {type_label} — ✓ submitted to the FX desk (manual: {reason})"
+                        ),
+                        None => {
+                            println!("[{i}] FX {pair} {type_label} — no quote (venue declined)")
+                        }
+                    },
+                }
+                if should_lift {
+                    if r.filled {
+                        let px = r.fill_px.unwrap_or(f64::NAN);
+                        println!("[{i}] ✓ FX auto-quote LIFTED & FILLED @ {px:.8} — deal booked");
+                    } else if r.bid.is_some() {
+                        println!("[{i}] ✗ FX lift NOT filled (last-look declined / expired)");
+                    }
                 }
                 r
             }
