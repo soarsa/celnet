@@ -63,7 +63,9 @@ use celnet_fix::session::{InMemoryStore, Role, Session, SessionAction, SessionCo
 use celnet_fix::transport::{FrameReader, write_frame};
 
 use celnet_proto::{CcyPair, Instrument, MarketContext, Quantity, Side, StrikeOrDelta, Vanilla};
-use celnet_proto::{CurveSet, DeskQuote, OisInstrument, RatesInstrument, rates_instrument};
+use celnet_proto::{
+    CurveSet, DeskQuote, ManualInterventionReason, OisInstrument, RatesInstrument, rates_instrument,
+};
 use celnet_proto::{instrument, strike_or_delta};
 
 use celnet_types::{OptionType, Tenor};
@@ -75,6 +77,7 @@ use crate::pricer::{ConventionSet, price_instrument};
 use crate::services::clicktrade::{
     BookOutcome, MintedToken, TokenLedger, TokenMinter, TwoWayLine, mint_two_way,
 };
+use crate::services::desk::RfqIngestOutcome;
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::services::risk::store::{BookedPosition, PositionStore, limit_breach_message};
 use crate::spread::SpreadModel;
@@ -220,21 +223,60 @@ impl Default for RatesAutoQuotePolicy {
     }
 }
 
-impl RatesAutoQuotePolicy {
-    /// Whether an RFQ of this `notional` and `tenor_years` is auto-quoted (`true`) or
-    /// routed to a human desk (`false`).
-    #[must_use]
-    pub(crate) fn admits(&self, notional: f64, tenor_years: u32) -> bool {
-        notional <= self.max_notional && self.tenors.contains(&tenor_years)
-    }
+/// The curve symbols (`Symbol(55)`) this venue can price on the OIS arm. An inbound RFQ
+/// naming any other symbol is an **unknown security** the desk must handle by hand
+/// (a `MANUAL_INTERVENTION_REQUIRED` alert), never a silently-dropped frame.
+const KNOWN_RATES_SYMBOLS: &[&[u8]] = &[b"USD-OIS"];
 
-    /// Whether a cash-bond RFQ of this `notional` is auto-quoted (`true`) or routed to a
-    /// human desk (`false`). A bond carries no whole-year tenor to match the on-the-run
-    /// set against (its schedule is a maturity date), so the bond admission is the
-    /// notional cap alone — the same clip-size gate the OIS path applies.
-    #[must_use]
-    pub(crate) fn admits_notional(&self, notional: f64) -> bool {
-        notional <= self.max_notional
+/// Whether `symbol` is a rates curve this venue prices (see [`KNOWN_RATES_SYMBOLS`]).
+fn is_known_rates_symbol(symbol: &[u8]) -> bool {
+    KNOWN_RATES_SYMBOLS.contains(&symbol)
+}
+
+/// How the venue admits an inbound rates RFQ it does not fill on the wire itself — the
+/// exception-vs-routine distinction the desk alerts on. Produced by
+/// [`FixSession::classify_ois_rfq`] and consumed by [`FixSession::record_rates_rfq`].
+enum RatesAdmission {
+    /// On-the-run, within cap, priceable ⇒ auto-quote this two-way (quiet history).
+    Auto(PricedLine),
+    /// A routine RFQ a human prices in the normal flow (e.g. a large on-the-run clip):
+    /// routed to the desk (PENDING), but NOT an alert.
+    RoutedToDesk,
+    /// Cannot be auto-priced and needs a human now: routed to the desk (PENDING) with an
+    /// **alert-worthy** `MANUAL_INTERVENTION_REQUIRED` carrying the reason.
+    Manual(ManualInterventionReason),
+}
+
+/// Decide how the venue admits an OIS RFQ, given the auto-quote `policy`, the request's
+/// `symbol` / `tenor_years` / `notional`, and the engine's (already-attempted) two-way
+/// `priced` line (`None` ⇒ either not attempted because a policy gate failed, or the
+/// engine failed to price a gated-in request). Pure — no session/frame — so the
+/// exception-vs-routine policy is directly unit-testable. The order is the policy:
+///
+/// 1. unknown security (symbol the venue does not price) — an exception alert;
+/// 2. unconfigured (off-the-run) tenor — an exception alert;
+/// 3. on-the-run but over the clip cap — routine large clip, routed quietly;
+/// 4. on-the-run + within cap: a present price ⇒ auto-quote; an absent one ⇒ a genuine
+///    pricing failure (exception alert).
+fn classify_ois_admission(
+    policy: &RatesAutoQuotePolicy,
+    symbol: &[u8],
+    tenor_years: u32,
+    notional: f64,
+    priced: Option<PricedLine>,
+) -> RatesAdmission {
+    if !is_known_rates_symbol(symbol) {
+        return RatesAdmission::Manual(ManualInterventionReason::UnknownSecurity);
+    }
+    if !policy.tenors.contains(&tenor_years) {
+        return RatesAdmission::Manual(ManualInterventionReason::UnconfiguredTenor);
+    }
+    if notional > policy.max_notional {
+        return RatesAdmission::RoutedToDesk;
+    }
+    match priced {
+        Some(priced) => RatesAdmission::Auto(priced),
+        None => RatesAdmission::Manual(ManualInterventionReason::PricingFailure),
     }
 }
 
@@ -719,58 +761,73 @@ impl FixSession {
         }
         let side = rates_side_to_side(rfq.side);
         let curve = crate::rates_pricing::default_usd_sofr_curve_set();
-        // Auto-quote only a policy-admitted RFQ that the venue can actually price; a
-        // request the policy declines (over the cap / off-the-run) OR a tenor the venue
-        // cannot price (e.g. one that doesn't exist for this curve) routes to a human
-        // desk as PENDING — never dropped — so it always surfaces in the desk inbox.
-        let priced = if self.ctx.auto_quote.admits(rfq.notional, rfq.tenor_years) {
+        // Classify the RFQ (exception-vs-routine). An admitted, priceable on-the-run clip
+        // is auto-quoted; a routine large clip is routed quietly; an unknown security /
+        // unconfigured tenor / pricing failure is routed as an ALERT-worthy manual
+        // intervention. Every case records to the desk inbox — nothing is dropped.
+        let admission = self.classify_ois_rfq(&rfq, intent, frame);
+        // Record the inbox row first (its id rides an auto-quote so a lift books the deal).
+        let request_id = self.record_rates_rfq(&rfq, side, &curve, &admission);
+        // Only an auto-quote shows a `Quote(S)`; routed / manual-intervention RFQs carry no
+        // price (the desk prices them).
+        if let RatesAdmission::Auto(priced) = &admission {
+            let mid = 0.5 * (priced.bid + priced.offer);
+            let quote_id =
+                self.emit_two_way_quote(st, req_id, symbol, priced, None, request_id.clone(), out);
+            // On a STREAM (RFS) venue a Subscribe opens a CONTINUOUS stream: register the
+            // subscription so the session ticker re-prices and pushes updates until an
+            // Unsubscribe (or session close). The quote just emitted is the first update;
+            // the desk row id rides every update so a lift of any one books the same deal
+            // and closes the stream.
+            if intent == RatesIntent::Rfs {
+                self.rfs.insert(
+                    req_id.to_vec(),
+                    RfsSubscription {
+                        req_id: req_id.to_vec(),
+                        symbol: symbol.to_vec(),
+                        notional: rfq.notional,
+                        base_par: mid,
+                        request_id,
+                        tick: 0,
+                        last_quote_id: Some(quote_id),
+                        prev_quote_id: None,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Classify an inbound OIS RFQ into the venue's admission decision (see
+    /// [`RatesAdmission`]). The order encodes the exception-vs-routine policy: an unknown
+    /// security and an unconfigured (off-the-run) tenor are exceptions a human is alerted
+    /// to; a large on-the-run clip over the auto-quote cap is routine desk work (routed,
+    /// quiet); an on-the-run, within-cap request that the engine still fails to price is a
+    /// genuine pricing failure (alert).
+    fn classify_ois_rfq(
+        &self,
+        rfq: &dialect_rates::RatesRfq,
+        intent: RatesIntent,
+        frame: &FrameCursor<'_>,
+    ) -> RatesAdmission {
+        // Only touch the engine when the RFQ clears the cheap policy gates (known symbol,
+        // on-the-run tenor, within the clip cap); otherwise the pure classifier reports the
+        // exact reason without pricing. A cleared-but-unpriceable RFQ reports a genuine
+        // pricing failure (engine `Err`), distinct from an off-the-run tenor.
+        let priced = if is_known_rates_symbol(&rfq.symbol)
+            && self.ctx.auto_quote.tenors.contains(&rfq.tenor_years)
+            && rfq.notional <= self.ctx.auto_quote.max_notional
+        {
             rates_line(frame, Some(intent)).ok()
         } else {
             None
         };
-        match priced {
-            Some(priced) => {
-                // Auto-quote: the SAME shared rates line + `Quote(S)`, plus a QUOTED
-                // history row at the two-way mid whose id rides the live quote so a lift
-                // books it as a completed deal. A rates line carries no FX pre-trade
-                // template (no canonical-vanilla leaf).
-                let mid = 0.5 * (priced.bid + priced.offer);
-                let request_id = self.record_rates_rfq(&rfq, side, &curve, Some(mid));
-                let quote_id = self.emit_two_way_quote(
-                    st,
-                    req_id,
-                    symbol,
-                    &priced,
-                    None,
-                    request_id.clone(),
-                    out,
-                );
-                // On a STREAM (RFS) venue a Subscribe opens a CONTINUOUS stream: register
-                // the subscription so the session ticker re-prices and pushes updates until
-                // an Unsubscribe (or session close). The quote just emitted is the first
-                // update; the desk row id rides every update so a lift of any one books the
-                // same deal and closes the stream.
-                if intent == RatesIntent::Rfs {
-                    self.rfs.insert(
-                        req_id.to_vec(),
-                        RfsSubscription {
-                            req_id: req_id.to_vec(),
-                            symbol: symbol.to_vec(),
-                            notional: rfq.notional,
-                            base_par: mid,
-                            request_id,
-                            tick: 0,
-                            last_quote_id: Some(quote_id),
-                            prev_quote_id: None,
-                        },
-                    );
-                }
-            }
-            None => {
-                // Route to a human desk: PENDING, no auto `Quote(S)` (the desk prices it).
-                self.record_rates_rfq(&rfq, side, &curve, None);
-            }
-        }
+        classify_ois_admission(
+            &self.ctx.auto_quote,
+            &rfq.symbol,
+            rfq.tenor_years,
+            rfq.notional,
+            priced,
+        )
     }
 
     /// Re-price every live RFS subscription off the P0 curve (with a small deterministic
@@ -829,37 +886,49 @@ impl FixSession {
         frames
     }
 
-    /// Record an inbound rates RFQ into the desk inbox under this venue's desk. When
-    /// `auto_level` is `Some`, the venue auto-quoted → stored QUOTED at that level;
-    /// otherwise stored PENDING for a human trader. Returns the stored request id (so a
-    /// lift can book it), or `None` when the acceptor is not desk-routed (legacy env seed /
-    /// tests) or carries no desk.
+    /// Record an inbound rates RFQ into the desk inbox under this venue's desk, mapping the
+    /// [`RatesAdmission`] to the desk-edge [`RfqIngestOutcome`]:
+    /// [`Auto`](RatesAdmission::Auto) ⇒ QUOTED at the two-way mid;
+    /// [`RoutedToDesk`](RatesAdmission::RoutedToDesk) ⇒ PENDING (quiet);
+    /// [`Manual`](RatesAdmission::Manual) ⇒ PENDING with an alert-worthy reason. Returns
+    /// the stored request id (so a lift can book an auto-quote), or `None` when the
+    /// acceptor is not desk-routed (legacy env seed / tests) or carries no desk.
     fn record_rates_rfq(
         &self,
         rfq: &dialect_rates::RatesRfq,
         side: Side,
         curve: &CurveSet,
-        auto_level: Option<f64>,
+        admission: &RatesAdmission,
     ) -> Option<String> {
         let edge = self.ctx.desk_edge.as_ref()?;
         if self.ctx.desk.trim().is_empty() {
             return None;
         }
         let counterparty = String::from_utf8_lossy(&self.ctx.counterparty).into_owned();
+        let (fixed_rate, outcome) = match admission {
+            RatesAdmission::Auto(priced) => {
+                let mid = 0.5 * (priced.bid + priced.offer);
+                (
+                    mid,
+                    RfqIngestOutcome::AutoQuoted(DeskQuote {
+                        price: mid,
+                        notional: rfq.notional,
+                        valid_for_ms: RATES_AUTO_QUOTE_VALID_MS,
+                        trader: "auto".to_owned(),
+                    }),
+                )
+            }
+            RatesAdmission::RoutedToDesk => (0.0, RfqIngestOutcome::RoutedToDesk),
+            RatesAdmission::Manual(reason) => (0.0, RfqIngestOutcome::ManualIntervention(*reason)),
+        };
         let instrument = RatesInstrument {
             instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
                 tenor_years: rfq.tenor_years,
-                fixed_rate: auto_level.unwrap_or(0.0),
+                fixed_rate,
                 notional: rfq.notional,
                 side: side as i32,
             })),
         };
-        let quote = auto_level.map(|lvl| DeskQuote {
-            price: lvl,
-            notional: rfq.notional,
-            valid_for_ms: RATES_AUTO_QUOTE_VALID_MS,
-            trader: "auto".to_owned(),
-        });
         let stored = edge.ingest_fix_rfq(
             &self.ctx.desk,
             &counterparty,
@@ -867,7 +936,7 @@ impl FixSession {
             curve.clone(),
             side,
             rfq.notional,
-            quote,
+            outcome,
         );
         Some(stored.request_id)
     }
@@ -898,24 +967,22 @@ impl FixSession {
             return;
         }
         let curve = crate::rates_pricing::default_usd_sofr_curve_set();
-        // Auto-quote only a policy-admitted RFQ the venue can actually price; a request
-        // over the notional cap OR one the engine cannot price (e.g. a maturity that does
-        // not resolve) routes to a human desk as PENDING — never dropped.
-        let priced = if self.ctx.auto_quote.admits_notional(rfq.notional) {
-            bond_line(frame, Some(intent)).ok()
+        // Classify (bond arm has no whole-year tenor to gate, so the clip cap is the only
+        // routine route): over the cap ⇒ routed quietly to the desk; within the cap and
+        // priceable ⇒ auto-quote; within the cap but the engine cannot price it (e.g. a
+        // maturity that does not resolve) ⇒ an ALERT-worthy pricing failure.
+        let admission = if rfq.notional > self.ctx.auto_quote.max_notional {
+            RatesAdmission::RoutedToDesk
         } else {
-            None
+            match bond_line(frame, Some(intent)) {
+                Ok(priced) => RatesAdmission::Auto(priced),
+                Err(()) => RatesAdmission::Manual(ManualInterventionReason::PricingFailure),
+            }
         };
-        match priced {
-            Some(priced) => {
-                self.emit_two_way_quote(st, req_id, symbol, &priced, None, None, out);
-                let mid = 0.5 * (priced.bid + priced.offer);
-                self.record_bond_rfq(&rfq, &curve, Some(mid));
-            }
-            None => {
-                self.record_bond_rfq(&rfq, &curve, None);
-            }
+        if let RatesAdmission::Auto(priced) = &admission {
+            self.emit_two_way_quote(st, req_id, symbol, priced, None, None, out);
         }
+        self.record_bond_rfq(&rfq, &curve, &admission);
     }
 
     /// Record an inbound cash-bond RFQ into the desk inbox under this venue's desk — the
@@ -929,7 +996,7 @@ impl FixSession {
         &self,
         rfq: &dialect_rates::BondRfq,
         curve: &CurveSet,
-        auto_level: Option<f64>,
+        admission: &RatesAdmission,
     ) {
         let Some(edge) = self.ctx.desk_edge.as_ref() else {
             return;
@@ -942,12 +1009,16 @@ impl FixSession {
         let instrument = RatesInstrument {
             instrument: Some(rates_instrument::Instrument::Bond(rfq.instrument)),
         };
-        let quote = auto_level.map(|lvl| DeskQuote {
-            price: lvl,
-            notional: rfq.notional,
-            valid_for_ms: RATES_AUTO_QUOTE_VALID_MS,
-            trader: "auto".to_owned(),
-        });
+        let outcome = match admission {
+            RatesAdmission::Auto(priced) => RfqIngestOutcome::AutoQuoted(DeskQuote {
+                price: 0.5 * (priced.bid + priced.offer),
+                notional: rfq.notional,
+                valid_for_ms: RATES_AUTO_QUOTE_VALID_MS,
+                trader: "auto".to_owned(),
+            }),
+            RatesAdmission::RoutedToDesk => RfqIngestOutcome::RoutedToDesk,
+            RatesAdmission::Manual(reason) => RfqIngestOutcome::ManualIntervention(*reason),
+        };
         edge.ingest_fix_rfq(
             &self.ctx.desk,
             &counterparty,
@@ -955,7 +1026,7 @@ impl FixSession {
             curve.clone(),
             side,
             rfq.notional,
-            quote,
+            outcome,
         );
     }
 
@@ -1469,14 +1540,60 @@ mod tests {
     }
 
     /// The auto-quote policy admits small, on-the-run clips and routes larger or
-    /// off-the-run risk to a human desk — the mix the desk inbox surfaces.
+    /// off-the-run risk to a human desk — the mix the desk inbox surfaces. Asserts the
+    /// exact predicate `classify_ois_rfq` reads (tenor in the on-the-run set AND notional
+    /// within the clip cap).
     #[test]
     fn auto_quote_policy_admits_small_on_the_run_only() {
         let p = RatesAutoQuotePolicy::default();
-        assert!(p.admits(10_000_000.0, 5)); // small + on-the-run ⇒ auto
-        assert!(p.admits(25_000_000.0, 2)); // at the cap ⇒ auto
-        assert!(!p.admits(50_000_000.0, 5)); // over the cap ⇒ desk
-        assert!(!p.admits(10_000_000.0, 30)); // off-the-run tenor ⇒ desk
+        let admits =
+            |notional: f64, tenor: u32| p.tenors.contains(&tenor) && notional <= p.max_notional;
+        assert!(admits(10_000_000.0, 5)); // small + on-the-run ⇒ auto
+        assert!(admits(25_000_000.0, 2)); // at the cap ⇒ auto
+        assert!(!admits(50_000_000.0, 5)); // over the cap ⇒ desk
+        assert!(!admits(10_000_000.0, 30)); // off-the-run tenor ⇒ desk
+    }
+
+    /// The exception-only classification: an on-the-run, within-cap, priceable RFQ
+    /// auto-quotes (quiet); an unknown security / unconfigured tenor / pricing failure is
+    /// a manual-intervention with the right reason; a large on-the-run clip is routed
+    /// quietly (not an exception).
+    #[test]
+    fn classify_ois_admission_maps_every_reason() {
+        let p = RatesAutoQuotePolicy::default();
+        let line = || PricedLine {
+            bid: 0.0400,
+            offer: 0.0410,
+            size: 10_000_000.0,
+        };
+
+        // On-the-run + within cap + priced ⇒ auto-quote (quiet).
+        assert!(matches!(
+            classify_ois_admission(&p, b"USD-OIS", 5, 10_000_000.0, Some(line())),
+            RatesAdmission::Auto(_)
+        ));
+        // Unknown security (bogus symbol) ⇒ manual UNKNOWN_SECURITY — checked before the
+        // tenor, even for an on-the-run tenor.
+        assert!(matches!(
+            classify_ois_admission(&p, b"XXX-UNKNOWN", 5, 10_000_000.0, Some(line())),
+            RatesAdmission::Manual(ManualInterventionReason::UnknownSecurity)
+        ));
+        // Off-the-run tenor on the valid curve ⇒ manual UNCONFIGURED_TENOR.
+        assert!(matches!(
+            classify_ois_admission(&p, b"USD-OIS", 15, 10_000_000.0, None),
+            RatesAdmission::Manual(ManualInterventionReason::UnconfiguredTenor)
+        ));
+        // On-the-run + within cap but the engine could not price it ⇒ manual
+        // PRICING_FAILURE (distinct from an off-the-run tenor).
+        assert!(matches!(
+            classify_ois_admission(&p, b"USD-OIS", 5, 10_000_000.0, None),
+            RatesAdmission::Manual(ManualInterventionReason::PricingFailure)
+        ));
+        // On-the-run but over the clip cap ⇒ routed to the desk quietly (NOT an alert).
+        assert!(matches!(
+            classify_ois_admission(&p, b"USD-OIS", 5, 500_000_000.0, Some(line())),
+            RatesAdmission::RoutedToDesk
+        ));
     }
 
     /// A dialect rates side maps to the canonical proto side (pay⇒buy, receive⇒sell).

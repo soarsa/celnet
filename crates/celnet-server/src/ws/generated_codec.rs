@@ -114,6 +114,7 @@ use serde_json::{Map, Value, json};
 
 use super::codec::CodecError;
 use super::codec_overrides::{self, FieldRule};
+use celnet_proto::Notification;
 
 // ---------------------------------------------------------------------------
 // value model + reflection bridge
@@ -4869,6 +4870,42 @@ pub fn decode_list_deals(o: &Map<String, Value>) -> DResult<ListDealsRequest> {
             "correlation_id",
         )?,
     })
+}
+
+// --- notification push WireAdapter (encode) ---------------------------------
+
+impl WireAdapter for Notification {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "notification_id" => Some(WireVal::Str(&self.notification_id)),
+            "kind" => Some(WireVal::Enum(self.kind)),
+            "at_nanos" => Some(WireVal::I64(self.at_nanos)),
+            "request_id" => self.request_id.as_deref().map(WireVal::Str),
+            "desk" => Some(WireVal::Str(&self.desk)),
+            "counterparty" => Some(WireVal::Str(&self.counterparty)),
+            "request_kind" => Some(WireVal::Enum(self.request_kind)),
+            "headline" => Some(WireVal::Str(&self.headline)),
+            "detail" => self.detail.as_deref().map(WireVal::Str),
+            "alert_worthy" => Some(WireVal::Bool(self.alert_worthy)),
+            "reason" => self.reason.map(WireVal::Enum),
+            _ => None,
+        }
+    }
+
+    fn synthesized(&self) -> Vec<(&'static str, Value)> {
+        // The push-frame discriminator the WS drain stamps ahead of the proto field
+        // body (mirrors `codec::notification_to_json`'s inline `"type":"notification"`).
+        vec![("type", json!("notification"))]
+    }
+}
+
+/// Encode a `Notification` push frame — the descriptor-driven mirror of the hand
+/// [`super::codec::notification_to_json`]. Proven byte-identical by the differential
+/// harness (`ws_codec_differential`), including the `alert_worthy` flag and the
+/// presence-tracked manual-intervention `reason`.
+#[must_use]
+pub fn encode_notification(n: &Notification) -> Value {
+    encode("Notification", n)
 }
 
 // --- desk reply WireAdapters (encode) ---------------------------------------

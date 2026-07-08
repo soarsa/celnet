@@ -5561,6 +5561,27 @@ enum NotificationKind {
   NOTIFICATION_KIND_QUOTE_ACCEPTED = 5;
   // A desk quote was rejected by the counterparty.
   NOTIFICATION_KIND_QUOTE_REJECTED = 6;
+  // An inbound RFQ/RFS could NOT be auto-priced and needs a human — the ONLY
+  // alert-worthy kind (the GUI pops a toast). Carries a machine-readable `reason`
+  // (see ManualInterventionReason). Distinct from RFQ_RECEIVED, which is a routine
+  // routed RFQ the desk prices in the normal flow (quiet, no popup).
+  NOTIFICATION_KIND_MANUAL_INTERVENTION_REQUIRED = 7;
+}
+// Why an inbound RFQ/RFS cannot be auto-priced and must be handled by a trader. The
+// machine-readable signal the GUI renders on a manual-intervention alert. Extensible:
+// new reasons append with the next number (one unversioned contract — no negotiation).
+enum ManualInterventionReason {
+  // Default/unset — carried by every non-manual-intervention notification.
+  MANUAL_INTERVENTION_REASON_UNSPECIFIED = 0;
+  // The requested tenor is not configured for auto-quoting (off the venue's
+  // on-the-run set) — the desk must price it by hand.
+  MANUAL_INTERVENTION_REASON_UNCONFIGURED_TENOR = 1;
+  // A pre-trade credit check against the counterparty failed — a human must clear it.
+  MANUAL_INTERVENTION_REASON_CREDIT_RISK_BREAK = 2;
+  // The named security/curve symbol is not one the venue prices — unknown instrument.
+  MANUAL_INTERVENTION_REASON_UNKNOWN_SECURITY = 3;
+  // The pricing engine failed to produce a price for an otherwise-admitted request.
+  MANUAL_INTERVENTION_REASON_PRICING_FAILURE = 4;
 }
 // One pushed notification event the desk surfaces as a toast/inbox item.
 message Notification {
@@ -5582,6 +5603,13 @@ message Notification {
   string headline = 8;
   // Optional longer detail line. Presence-tracked.
   optional string detail = 9;
+  // Whether this event is alert-worthy: the GUI pops a toast ONLY when true.
+  // Manual-intervention events set it true; received/auto-quoted/booked/rejected
+  // events are quiet (false) — they still land in the blotter/inbox silently.
+  bool alert_worthy = 10;
+  // The machine-readable manual-intervention reason. Present ONLY on a
+  // MANUAL_INTERVENTION_REQUIRED event (absent otherwise). Presence-tracked.
+  optional ManualInterventionReason reason = 11;
 }
 // The desks a notification subscription covers.
 message NotificationScope {

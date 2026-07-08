@@ -2580,6 +2580,8 @@ pub(super) fn notification_to_json(n: &Notification) -> Value {
         "request_kind": n.request_kind,
         "headline": n.headline,
         "detail": n.detail,
+        "alert_worthy": n.alert_worthy,
+        "reason": n.reason,
     })
 }
 
@@ -4248,6 +4250,14 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_quote_to_json(q: &Quote) -> Value {
         super::quote_to_json(q)
+    }
+
+    /// Hand-codec reference for the server→client `Notification` push frame (including
+    /// the `alert_worthy` flag + presence-tracked manual-intervention `reason`), so the
+    /// differential harness can prove the generated mirror is byte-identical.
+    #[must_use]
+    pub fn hand_notification(n: &super::Notification) -> Value {
+        super::notification_to_json(n)
     }
 
     /// Hand-codec reference for the ranked-panel `MultiDealerQuote` encode.
@@ -6369,6 +6379,8 @@ mod tests {
             request_kind: celnet_proto::DeskRequestKind::Rfq as i32,
             headline: "New RFQ".to_owned(),
             detail: Some("needs pricing".to_owned()),
+            alert_worthy: false,
+            reason: None,
         };
         let v = notification_to_json(&n);
         assert_eq!(v["type"], json!("notification"));
@@ -6376,6 +6388,9 @@ mod tests {
         assert_eq!(v["desk"], json!("g10"));
         assert_eq!(v["request_id"], json!("desk-req-1"));
         assert_eq!(v["detail"], json!("needs pricing"));
+        // A quiet (received) notification: not alert-worthy, no reason (present-with-null).
+        assert_eq!(v["alert_worthy"], json!(false));
+        assert_eq!(v["reason"], json!(null));
     }
 
     /// The `subscribe_notifications` frame decodes its desk scope + principal.

@@ -106,6 +106,11 @@ struct Args {
     interval_secs: u64,
     manual_every: u64,
     manual_tenor: u32,
+    // The bogus curve symbol used for the "unknown security" manual variant: half the
+    // manual RFQs name this (unrecognised) `Symbol(55)` on a valid on-the-run tenor, so
+    // the venue routes them to the desk as an UNKNOWN_SECURITY manual intervention. The
+    // other half use `manual_tenor` (an unconfigured tenor on the valid curve).
+    manual_security: String,
     // Every Nth successful auto-quote is LIFTED (executed → booked deal); 0 = never
     // (pure observe). Lets one RFQ/RFS stream show both quoted-only and booked-deal rows.
     lift_every: u64,
@@ -132,10 +137,23 @@ fn print_help() -> ! {
          fi:  --curve USD-OIS  --tenor 5  --notional 10000000  --side pay|receive|two-way\n  \
          fx:  --pair EURUSD  --type call|put  --strike 1.10  --expiry-years 1.0\n       \
          --side observe|buy|sell  --settlement deliverable|ndf  --exercise european|american\n  \
+         loop: --repeat 0  --interval 120  --manual-every 3  --manual-tenor 15  --manual-security XXX-UNKNOWN  --lift-every 3\n  \
          common: --sender CELNET-CPTY  --target CELNET  --req-id RFQ-CLI"
     );
     std::process::exit(0);
 }
+
+/// Default cadence between streamed RFQs (seconds) when `--interval` is not given — the
+/// operator-standard 120s heartbeat. The deploy simulator overrides it via `--interval`
+/// (`FIXSIM_PERIOD`); never a bare magic number at the call site.
+const DEFAULT_INTERVAL_SECS: u64 = 120;
+
+/// Default `--manual-every`: 1 in 3 streamed RFQs is a manual (desk-routed) one, giving a
+/// ~2/3 auto-quoted : ~1/3 manual mix.
+const DEFAULT_MANUAL_EVERY: u64 = 3;
+
+/// Default bogus `Symbol(55)` for the unknown-security manual variant (see [`Args`]).
+const DEFAULT_MANUAL_SECURITY: &str = "XXX-UNKNOWN";
 
 fn parse_args() -> Args {
     let mut addr = String::from("127.0.0.1:9099");
@@ -161,9 +179,10 @@ fn parse_args() -> Args {
     // rotates the tenor: mostly on-the-run (auto-quoted), every `--manual-every`-th a
     // `--manual-tenor` request the venue routes to a human desk.
     let mut repeat = 1_u64;
-    let mut interval_secs = 180_u64;
-    let mut manual_every = 4_u64;
+    let mut interval_secs = DEFAULT_INTERVAL_SECS;
+    let mut manual_every = DEFAULT_MANUAL_EVERY;
     let mut manual_tenor = 15_u32;
+    let mut manual_security = String::from(DEFAULT_MANUAL_SECURITY);
     let mut lift_every = 0_u64;
     let mut stream = false;
     let mut stream_hold_secs = 20_u64;
@@ -259,6 +278,7 @@ fn parse_args() -> Args {
                     usage_and_exit("--manual-tenor must be a whole number of years")
                 })
             }
+            "--manual-security" => manual_security = val.to_uppercase(),
             "--lift-every" => {
                 lift_every = val.parse().unwrap_or_else(|_| {
                     usage_and_exit("--lift-every must be a whole number (0 = never)")
@@ -372,6 +392,7 @@ fn parse_args() -> Args {
         interval_secs,
         manual_every,
         manual_tenor,
+        manual_security,
         lift_every,
         stream,
         stream_hold_secs,
@@ -511,14 +532,29 @@ async fn main() -> std::io::Result<()> {
                 let is_manual = args.repeat != 1
                     && args.manual_every > 0
                     && (i + 1).is_multiple_of(args.manual_every);
-                let tenor = if args.repeat == 1 {
-                    args.tenor_years
+                // Alternate the two manual variants deterministically by the manual
+                // occurrence ordinal (no RNG — varies by iteration index): odd ⇒
+                // unconfigured tenor (valid curve on an off-the-run tenor → the venue
+                // routes it as UNCONFIGURED_TENOR); even ⇒ unknown security (a bogus curve
+                // symbol on a valid on-the-run tenor → routed as UNKNOWN_SECURITY).
+                let manual_unknown_security =
+                    is_manual && ((i + 1) / args.manual_every).is_multiple_of(2);
+                let (symbol_str, tenor) = if args.repeat == 1 {
+                    (args.curve.as_str(), args.tenor_years)
+                } else if manual_unknown_security {
+                    (
+                        args.manual_security.as_str(),
+                        AUTO_TENORS[(i as usize) % AUTO_TENORS.len()],
+                    )
                 } else if is_manual {
-                    args.manual_tenor
+                    (args.curve.as_str(), args.manual_tenor)
                 } else {
-                    AUTO_TENORS[(i as usize) % AUTO_TENORS.len()]
+                    (
+                        args.curve.as_str(),
+                        AUTO_TENORS[(i as usize) % AUTO_TENORS.len()],
+                    )
                 };
-                let symbol = args.curve.clone().into_bytes();
+                let symbol = symbol_str.as_bytes().to_vec();
                 // Lift (execute + book) an auto-quote every `--lift-every`-th cycle; a
                 // manual (desk-routed) tenor has no quote to lift, so it is never lifted.
                 let should_lift =
@@ -595,9 +631,16 @@ async fn main() -> std::io::Result<()> {
                             println!("[{i}] {tenor}y OIS — auto-quoted:");
                             print_quote(r.quote_id.as_deref(), bid, offer);
                         }
-                        // No quote = the venue routed this tenor to a human desk (expected).
+                        // No quote = the venue routed this RFQ to a human desk (expected
+                        // for a manual variant): either an unknown security or an
+                        // unconfigured tenor.
                         _ => println!(
-                            "[{i}] {tenor}y OIS — ✓ submitted to the rates desk (manual price)"
+                            "[{i}] {symbol_str} {tenor}y OIS — ✓ submitted to the rates desk (manual: {})",
+                            if manual_unknown_security {
+                                "unknown security"
+                            } else {
+                                "unconfigured tenor"
+                            }
                         ),
                     }
                     if should_lift {

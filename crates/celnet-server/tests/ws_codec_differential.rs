@@ -4061,3 +4061,64 @@ fn auth_calibrated_curve_encode_byte_identical() {
         &hand::hand_calibrated_curve_to_json(&bare),
     );
 }
+
+// ---------------------------------------------------------------------------
+// Notification push frame — the exception-only alert fields (`alert_worthy`,
+// presence-tracked manual-intervention `reason`) mirror byte-for-byte.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn notification_manual_intervention_is_byte_identical() {
+    // A MANUAL_INTERVENTION_REQUIRED push: alert_worthy=true, a present reason, and
+    // present optional request_id/detail — exercises every field on the frame.
+    let n = celnet_proto::Notification {
+        notification_id: "notif-42".to_owned(),
+        kind: celnet_proto::NotificationKind::ManualInterventionRequired as i32,
+        at_nanos: 1_700_000_000_123_000_000,
+        request_id: Some("desk-req-7".to_owned()),
+        desk: "g10-rates".to_owned(),
+        counterparty: "CELER_RATES".to_owned(),
+        request_kind: celnet_proto::DeskRequestKind::Rfq as i32,
+        headline: "Manual pricing needed".to_owned(),
+        detail: Some("15y OIS — unconfigured tenor".to_owned()),
+        alert_worthy: true,
+        reason: Some(celnet_proto::ManualInterventionReason::UnconfiguredTenor as i32),
+    };
+    let g = generated::encode_notification(&n);
+    // The alert fields the GUI gates the popup on + renders.
+    assert_eq!(g.get("alert_worthy"), Some(&json!(true)));
+    assert_eq!(
+        g.get("reason"),
+        Some(&json!(
+            celnet_proto::ManualInterventionReason::UnconfiguredTenor as i32
+        ))
+    );
+    assert_eq!(g.get("type"), Some(&json!("notification")));
+    assert_bytes_eq("Notification(manual)", &g, &hand::hand_notification(&n));
+}
+
+#[test]
+fn notification_quiet_absent_optionals_is_byte_identical() {
+    // A quiet (auto-quoted/received) push with absent optional request_id/detail/reason:
+    // the presence-tracked fields reach the wire as JSON `null` (present-with-null),
+    // exactly as the hand codec's `json!({ .. })` emits them.
+    let n = celnet_proto::Notification {
+        notification_id: "notif-1".to_owned(),
+        kind: celnet_proto::NotificationKind::QuoteAccepted as i32,
+        at_nanos: 1_700_000_000_000_000_000,
+        request_id: None,
+        desk: "g10".to_owned(),
+        counterparty: "CP".to_owned(),
+        request_kind: celnet_proto::DeskRequestKind::Rfq as i32,
+        headline: "Auto-quoted".to_owned(),
+        detail: None,
+        alert_worthy: false,
+        reason: None,
+    };
+    let g = generated::encode_notification(&n);
+    assert_eq!(g.get("alert_worthy"), Some(&json!(false)));
+    assert_eq!(g.get("reason"), Some(&Value::Null));
+    assert_eq!(g.get("request_id"), Some(&Value::Null));
+    assert_eq!(g.get("detail"), Some(&Value::Null));
+    assert_bytes_eq("Notification(quiet)", &g, &hand::hand_notification(&n));
+}

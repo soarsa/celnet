@@ -45,8 +45,8 @@ use celnet_proto::rfq_desk_service_server::RfqDeskService;
 use celnet_proto::{
     AcceptDeskQuoteRequest, AcceptDeskQuoteResponse, CurveSet, Deal, DeskQuote, DeskRequest,
     DeskRequestKind, DeskRequestState, ListDealsRequest, ListDealsResponse,
-    ListDeskRequestsRequest, ListDeskRequestsResponse, Notification, NotificationKind,
-    OisInstrument, RatesInstrument, RatesPosition, RespondDeskRequestRequest,
+    ListDeskRequestsRequest, ListDeskRequestsResponse, ManualInterventionReason, Notification,
+    NotificationKind, OisInstrument, RatesInstrument, RatesPosition, RespondDeskRequestRequest,
     RespondDeskRequestResponse, Side, SubmitDeskRequestRequest, SubmitDeskRequestResponse,
     rates_instrument, respond_desk_request_request::Response as RespondArm,
 };
@@ -71,6 +71,27 @@ use celnet_proto::RatesPriceRequest;
 /// The default time-to-live (ms) granted to a submitted request when the caller
 /// supplies `ttl_ms == 0`: two minutes, a generous desk-response window.
 const DEFAULT_TTL_MS: u32 = 120_000;
+
+/// The outcome of ingesting an inbound (FIX-venue) RFQ into the desk inbox — it decides
+/// the stored [`DeskRequestState`], whether a firm [`DeskQuote`] rides the row, and which
+/// notification the desk sees (and crucially whether it is **alert-worthy**):
+///
+/// * [`AutoQuoted`](RfqIngestOutcome::AutoQuoted) — the venue priced it; QUOTED history +
+///   a quiet `QUOTE_ACCEPTED`.
+/// * [`RoutedToDesk`](RfqIngestOutcome::RoutedToDesk) — a routine RFQ a human prices in
+///   the normal flow (e.g. a large on-the-run clip); PENDING + a quiet `RFQ_RECEIVED`.
+/// * [`ManualIntervention`](RfqIngestOutcome::ManualIntervention) — it CANNOT be
+///   auto-priced and needs a human now; PENDING + an **alert** `MANUAL_INTERVENTION_REQUIRED`
+///   carrying the machine-readable [`ManualInterventionReason`].
+#[derive(Debug, Clone)]
+pub enum RfqIngestOutcome {
+    /// Auto-quoted at a firm level — QUOTED history, quiet `QUOTE_ACCEPTED`.
+    AutoQuoted(DeskQuote),
+    /// Routed to a human desk as a routine RFQ — PENDING, quiet `RFQ_RECEIVED`.
+    RoutedToDesk,
+    /// Cannot be auto-priced — PENDING, ALERT `MANUAL_INTERVENTION_REQUIRED` + reason.
+    ManualIntervention(ManualInterventionReason),
+}
 
 /// The `RfqDeskService` edge over the shared desk inbox, received-deals blotter,
 /// rates position book, and notification broker. Cheap to clone behind an [`Arc`].
@@ -235,6 +256,19 @@ fn opposite_side(side: Side) -> Side {
     }
 }
 
+/// A short human label for a manual-intervention reason (headline/detail text only — the
+/// machine-readable signal the GUI gates on is the enum on the `Notification.reason`
+/// field, never this string).
+fn manual_reason_label(reason: ManualInterventionReason) -> &'static str {
+    match reason {
+        ManualInterventionReason::Unspecified => "manual pricing",
+        ManualInterventionReason::UnconfiguredTenor => "unconfigured tenor",
+        ManualInterventionReason::CreditRiskBreak => "credit risk break",
+        ManualInterventionReason::UnknownSecurity => "unknown security",
+        ManualInterventionReason::PricingFailure => "pricing failure",
+    }
+}
+
 /// Map a caller's session [`DeskScope`] + a requested desk filter into the effective
 /// per-subscriber [`DeskFilter`] for the notification stream (intersection).
 #[must_use]
@@ -268,7 +302,9 @@ fn desk_visible(row_desk: &str, caller_scope: &DeskScope, requested: Option<&str
 }
 
 impl RfqDeskEdge {
-    /// Build + publish a notification for a desk lifecycle event (off the hot path).
+    /// Build + publish a **quiet** (not alert-worthy) notification for a desk lifecycle
+    /// event (received / auto-quoted / booked / rejected) — off the hot path. These land
+    /// in the blotter/inbox without popping a toast (`alert_worthy = false`, no `reason`).
     fn publish_notification(
         &self,
         kind: NotificationKind,
@@ -286,6 +322,35 @@ impl RfqDeskEdge {
             request_kind: request.kind,
             headline,
             detail,
+            alert_worthy: false,
+            reason: None,
+        };
+        self.notify.publish(&notification);
+    }
+
+    /// Build + publish an **alert-worthy** `MANUAL_INTERVENTION_REQUIRED` notification for
+    /// an inbound RFQ that cannot be auto-priced and needs a human. Carries the
+    /// machine-readable [`ManualInterventionReason`] the GUI renders and gates the popup
+    /// on (`alert_worthy = true`). The ONLY path that sets the alert flag.
+    fn publish_manual_intervention(
+        &self,
+        request: &DeskRequest,
+        reason: ManualInterventionReason,
+        headline: String,
+        detail: Option<String>,
+    ) {
+        let notification = Notification {
+            notification_id: self.notify_id(),
+            kind: NotificationKind::ManualInterventionRequired as i32,
+            at_nanos: self.clock.now_nanos(),
+            request_id: Some(request.request_id.clone()),
+            desk: request.desk.clone(),
+            counterparty: request.counterparty.clone(),
+            request_kind: request.kind,
+            headline,
+            detail,
+            alert_worthy: true,
+            reason: Some(reason as i32),
         };
         self.notify.publish(&notification);
     }
@@ -295,11 +360,15 @@ impl RfqDeskEdge {
     /// authenticated the counterparty at the transport (CompID) layer, so this is the
     /// venue recording what it received — not an unauthenticated RPC caller.
     ///
-    /// When `quote` is `Some` the venue auto-quoted the RFQ, so it is stored
-    /// [`DeskRequestState::Quoted`] at that firm level (processed history the GUI shows
-    /// alongside live work); otherwise it is stored [`DeskRequestState::Pending`] for a
-    /// human trader to price. Either way the SAME notification the RPC submit path emits
-    /// is published, so a subscribed desk sees the inbound RFQ instantly.
+    /// The `outcome` decides the stored state + notification (see [`RfqIngestOutcome`]):
+    /// an [`AutoQuoted`](RfqIngestOutcome::AutoQuoted) RFQ lands
+    /// [`DeskRequestState::Quoted`] at the firm level (processed history the GUI shows
+    /// alongside live work) with a quiet `QUOTE_ACCEPTED`; a
+    /// [`RoutedToDesk`](RfqIngestOutcome::RoutedToDesk) RFQ lands PENDING with a quiet
+    /// `RFQ_RECEIVED`; a [`ManualIntervention`](RfqIngestOutcome::ManualIntervention) RFQ
+    /// lands PENDING with an **alert-worthy** `MANUAL_INTERVENTION_REQUIRED` carrying the
+    /// machine-readable reason. Every case fans a notification so a subscribed desk sees
+    /// the inbound RFQ instantly; only the manual-intervention case gates a popup.
     ///
     /// Returns the stored [`DeskRequest`] (for logging/tests).
     #[allow(clippy::too_many_arguments)] // the request's identifying fields, no natural sub-struct.
@@ -311,14 +380,15 @@ impl RfqDeskEdge {
         curve_set: CurveSet,
         side: Side,
         notional: f64,
-        quote: Option<DeskQuote>,
+        outcome: RfqIngestOutcome,
     ) -> DeskRequest {
         let now = self.clock.now_nanos();
         let expires_at = now.saturating_add(i64::from(DEFAULT_TTL_MS).saturating_mul(1_000_000));
-        let state = if quote.is_some() {
-            DeskRequestState::Quoted
-        } else {
-            DeskRequestState::Pending
+        let (state, quote) = match &outcome {
+            RfqIngestOutcome::AutoQuoted(q) => (DeskRequestState::Quoted, Some(q.clone())),
+            RfqIngestOutcome::RoutedToDesk | RfqIngestOutcome::ManualIntervention(_) => {
+                (DeskRequestState::Pending, None)
+            }
         };
         let stored = DeskRequest {
             request_id: self.requests.next_request_id(),
@@ -337,24 +407,36 @@ impl RfqDeskEdge {
         };
         self.requests.insert(stored.clone());
 
-        // Notify the desk: an auto-quoted RFQ is history (QUOTE_ACCEPTED reads as "the
-        // venue showed a price"); a routed RFQ needs a human (RFQ_RECEIVED).
-        let (kind, headline, detail) = if stored.quote.is_some() {
-            (
+        // Notify the desk. Auto-quoted / routed RFQs are quiet (no popup); only a
+        // manual-intervention RFQ is alert-worthy and carries the machine-readable reason.
+        match outcome {
+            RfqIngestOutcome::AutoQuoted(_) => self.publish_notification(
                 NotificationKind::QuoteAccepted,
+                &stored,
                 format!("Auto-quoted RFQ from {counterparty}"),
                 Some(format!(
                     "{notional:.0} notional on desk {desk} — auto-quoted"
                 )),
-            )
-        } else {
-            (
+            ),
+            RfqIngestOutcome::RoutedToDesk => self.publish_notification(
                 NotificationKind::RfqReceived,
+                &stored,
                 format!("New RFQ from {counterparty} — needs pricing"),
                 Some(format!("{notional:.0} notional on desk {desk}")),
-            )
-        };
-        self.publish_notification(kind, &stored, headline, detail);
+            ),
+            RfqIngestOutcome::ManualIntervention(reason) => self.publish_manual_intervention(
+                &stored,
+                reason,
+                format!(
+                    "Manual pricing needed — RFQ from {counterparty} ({})",
+                    manual_reason_label(reason)
+                ),
+                Some(format!(
+                    "{notional:.0} notional on desk {desk} — {}",
+                    manual_reason_label(reason)
+                )),
+            ),
+        }
         stored
     }
 
@@ -1237,7 +1319,7 @@ mod tests {
         let edge = edge();
         let mut sub = edge.notify.subscribe(DeskFilter::All);
 
-        // Auto-quoted: carries a firm quote ⇒ QUOTED history.
+        // Auto-quoted: carries a firm quote ⇒ QUOTED history, quiet QUOTE_ACCEPTED.
         let auto = edge.ingest_fix_rfq(
             "g10-rates",
             "CELER_RATES",
@@ -1245,7 +1327,7 @@ mod tests {
             curve(),
             Side::Buy,
             10_000_000.0,
-            Some(DeskQuote {
+            RfqIngestOutcome::AutoQuoted(DeskQuote {
                 price: 0.0405,
                 notional: 10_000_000.0,
                 valid_for_ms: 30_000,
@@ -1258,8 +1340,10 @@ mod tests {
         assert!(auto.quote.is_some());
         let n = sub.rx.try_recv().expect("auto-quote fans a notification");
         assert_eq!(n.kind, NotificationKind::QuoteAccepted as i32);
+        assert!(!n.alert_worthy, "an auto-quote is quiet (no popup)");
+        assert_eq!(n.reason, None);
 
-        // Routed: no quote ⇒ PENDING for a human.
+        // Routed to a human as a routine RFQ ⇒ PENDING, quiet RFQ_RECEIVED.
         let manual = edge.ingest_fix_rfq(
             "g10-rates",
             "CELER_RATES",
@@ -1267,12 +1351,14 @@ mod tests {
             curve(),
             Side::Sell,
             50_000_000.0,
-            None,
+            RfqIngestOutcome::RoutedToDesk,
         );
         assert_eq!(manual.state, DeskRequestState::Pending as i32);
         assert!(manual.quote.is_none());
         let n = sub.rx.try_recv().expect("a routed RFQ fans a notification");
         assert_eq!(n.kind, NotificationKind::RfqReceived as i32);
+        assert!(!n.alert_worthy, "a routine routed RFQ is quiet (no popup)");
+        assert_eq!(n.reason, None);
 
         // Both are in the snapshot the GUI reads (history + live), newest-first.
         let all = edge.requests.snapshot();
@@ -1284,6 +1370,44 @@ mod tests {
         assert!(
             all.iter()
                 .any(|r| r.state == DeskRequestState::Pending as i32)
+        );
+    }
+
+    /// A manual-intervention ingest lands PENDING and fans an ALERT-worthy
+    /// `MANUAL_INTERVENTION_REQUIRED` notification carrying the machine-readable reason —
+    /// the ONLY path that gates a GUI popup.
+    #[tokio::test]
+    async fn ingest_fix_rfq_manual_intervention_is_alert_worthy_with_reason() {
+        let edge = edge();
+        let mut sub = edge.notify.subscribe(DeskFilter::All);
+        let manual = edge.ingest_fix_rfq(
+            "g10-rates",
+            "CELER_RATES",
+            ois_instrument(Side::Buy),
+            curve(),
+            Side::Buy,
+            10_000_000.0,
+            RfqIngestOutcome::ManualIntervention(ManualInterventionReason::UnconfiguredTenor),
+        );
+        assert_eq!(manual.state, DeskRequestState::Pending as i32);
+        assert!(manual.quote.is_none(), "no auto quote on a manual RFQ");
+        let n = sub
+            .rx
+            .try_recv()
+            .expect("a manual-intervention RFQ fans a notification");
+        assert_eq!(
+            n.kind,
+            NotificationKind::ManualInterventionRequired as i32,
+            "manual-intervention carries the dedicated kind"
+        );
+        assert!(
+            n.alert_worthy,
+            "manual-intervention is alert-worthy (popup)"
+        );
+        assert_eq!(
+            n.reason,
+            Some(ManualInterventionReason::UnconfiguredTenor as i32),
+            "the machine-readable reason rides the notification"
         );
     }
 

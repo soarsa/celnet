@@ -30,7 +30,7 @@
 #   FIXSIM_HOST (127.0.0.1)  FIXSIM_PORT (fi:56002 / fx:56001)
 #   FIXSIM_SENDER (fi:CELER_RATES / fx:CELER_FXO)  FIXSIM_TARGET (CELNET)
 #   FIXSIM_CURVE (USD-OIS) FIXSIM_TENOR (5) FIXSIM_NOTIONAL (10000000)   # FI RFQ shape
-#   FIXSIM_PERIOD (180) FIXSIM_JITTER (60)   # seconds between RFQs
+#   FIXSIM_PERIOD (120) FIXSIM_JITTER (60)   # seconds between RFQs (120s heartbeat)
 #   FIXSIM_BIN (target/release/fix-sim)      # preferred once the full bot is built
 #   FIXSIM_RFQ_BIN ()                        # prebuilt RFQ client (shipped by the release);
 #                                            # used on the server where cargo is unavailable
@@ -68,7 +68,9 @@ fi
 FIXSIM_CURVE="${FIXSIM_CURVE:-USD-OIS}"
 FIXSIM_TENOR="${FIXSIM_TENOR:-5}"
 FIXSIM_NOTIONAL="${FIXSIM_NOTIONAL:-10000000}"
-FIXSIM_PERIOD="${FIXSIM_PERIOD:-20}"
+# Cadence: ~one RFQ/RFS every 120s (the operator-standard heartbeat). Named +
+# env-overridable, no bare magic number; flows to the client's `--interval`.
+FIXSIM_PERIOD="${FIXSIM_PERIOD:-120}"
 FIXSIM_JITTER="${FIXSIM_JITTER:-60}"
 # Every Nth auto-quote is LIFTED (executed → booked deal) so the blotter fills with
 # completed rates deals, not just shown quotes; the rest stay quoted-only. 0 = never lift.
@@ -176,19 +178,24 @@ PAIRS=(EURUSD GBPUSD USDJPY USDCHF AUDUSD EURGBP EURJPY)
 SIDES=(observe buy sell)   # FX: observe = RFQ only; buy = lift the offer; sell = hit the bid
 TYPES=(call put)
 RATES_SIDES=(pay receive two-way)  # FI: pay fixed / receive fixed / two-way request
-# Deterministic desk scenario: send several auto-priceable RFQs, then one that requires
-# a human. The venue auto-quotes on-the-run tenors ({1,2,3,5,7,10}); any OTHER tenor
-# ("one that doesn't exist" in the auto set) routes to the rates desk as a PENDING
-# ticket. Notional is held small (always under the auto-quote cap) so the ONLY thing
-# that forces a manual price is the tenor — exactly the trigger to demonstrate.
+# Deterministic desk scenario: a deliberate MIX of auto-priced and manual RFQs. The venue
+# auto-quotes on-the-run tenors ({2,3,5,7,10}) on the known curve — those get lifted and
+# BOOKED. ~1 in 3 (--manual-every 3 ⇒ ~2/3 auto : ~1/3 manual) is a MANUAL one the venue
+# cannot auto-price and routes to the rates desk as an ALERT-worthy manual intervention.
+# The client alternates the two manual variants deterministically by iteration index:
+#   * unconfigured tenor — the valid curve on RATES_MANUAL_TENOR (off the auto set), and
+#   * unknown security  — a bogus curve symbol (FIXSIM_MANUAL_SECURITY) on a valid tenor.
+# Notional is held small (under the auto-quote cap) so the ONLY thing forcing a manual
+# price is the tenor/security — exactly the exception-only-notification triggers.
 RATES_AUTO_TENORS=(2 3 5 7 10)                 # on-the-run ⇒ auto-quoted (35=S)
-RATES_MANUAL_TENOR="${FIXSIM_MANUAL_TENOR:-15}"  # non-standard ⇒ routed to a human desk
-FIXSIM_MANUAL_EVERY="${FIXSIM_MANUAL_EVERY:-4}"  # every Nth RFQ is a manual one
+RATES_MANUAL_TENOR="${FIXSIM_MANUAL_TENOR:-15}"  # non-standard ⇒ UNCONFIGURED_TENOR
+FIXSIM_MANUAL_SECURITY="${FIXSIM_MANUAL_SECURITY:-XXX-UNKNOWN}"  # bogus ⇒ UNKNOWN_SECURITY
+FIXSIM_MANUAL_EVERY="${FIXSIM_MANUAL_EVERY:-3}"  # every Nth RFQ is manual (~1/3 manual)
 
 # Build the client argv. The client (fix-rfq-client) owns the request loop and, for
-# fixed income, the tenor rotation (on-the-run auto-quoted; every Nth a `--manual-tenor`
-# routed to a human desk), so ONE persistent invocation streams many RFQs over a SINGLE
-# logon — no logon/logout churn per request.
+# fixed income, the tenor/security rotation (on-the-run auto-quoted; every Nth a manual
+# one — a `--manual-tenor` or a `--manual-security` — routed to a human desk), so ONE
+# persistent invocation streams many RFQs over a SINGLE logon — no logon/logout per request.
 build_client_args() {
   CLIENT_ARGS=("${RUNNER[@]}" --addr "$FIXSIM_HOST:$FIXSIM_PORT" \
     --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" --req-id "FIXSIM-$(date +%s)")
@@ -196,6 +203,7 @@ build_client_args() {
     CLIENT_ARGS+=(--asset fi --curve "$FIXSIM_CURVE" --tenor "$FIXSIM_TENOR" \
       --notional "$FIXSIM_NOTIONAL" --side pay \
       --manual-every "$FIXSIM_MANUAL_EVERY" --manual-tenor "$RATES_MANUAL_TENOR" \
+      --manual-security "$FIXSIM_MANUAL_SECURITY" \
       --lift-every "$FIXSIM_LIFT_EVERY")
   else
     CLIENT_ARGS+=(--asset fx --pair EURUSD --type call --side buy --strike 1.10)

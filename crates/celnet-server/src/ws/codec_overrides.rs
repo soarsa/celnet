@@ -84,6 +84,10 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     // `null` when absent (present-with-null through the RFQ lifecycle).
     "DeskRequest",
     "Deal",
+    // The NotificationService push frame: its `json!({ .. })` hand encoder emits the
+    // optional `request_id` / `detail` strings and the presence-tracked
+    // manual-intervention `reason` enum as JSON `null` when absent.
+    "Notification",
     // The AuthService reply envelopes (wave 4 — login/session, user/desk/entity/book
     // CRUD, capabilities, roles, instrument registry): every one is built by a
     // `json!({ .. })` hand encoder that emits the `Option<u64>` `correlation_id` as

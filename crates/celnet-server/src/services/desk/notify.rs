@@ -187,6 +187,8 @@ mod tests {
             request_kind: DeskRequestKind::Rfq as i32,
             headline: "RFQ".to_owned(),
             detail: None,
+            alert_worthy: false,
+            reason: None,
         }
     }
 
