@@ -3220,9 +3220,12 @@ export type DeskRequestState =
 
 /**
  * The kind of a push `Notification` (`celnet.wire.NotificationKind`, proto
- * RFQ_RECEIVED=1 … QUOTE_REJECTED=6). The `*_RECEIVED` kinds signal a new inbound
- * request requiring desk attention; the lifecycle kinds report a request's
- * resolution.
+ * RFQ_RECEIVED=1 … QUOTE_REJECTED=6, MANUAL_INTERVENTION_REQUIRED=7). The
+ * `*_RECEIVED` kinds signal a new inbound request requiring desk attention; the
+ * lifecycle kinds report a request's resolution;
+ * `MANUAL_INTERVENTION_REQUIRED` (added by the server exception contract, commit
+ * 542e547) signals the auto-pricer could not handle a request and the desk must
+ * step in — its {@link Notification.reason} names why.
  */
 export type NotificationKind =
   | "RFQ_RECEIVED"
@@ -3230,7 +3233,21 @@ export type NotificationKind =
   | "REQUEST_WITHDRAWN"
   | "REQUEST_EXPIRED"
   | "QUOTE_ACCEPTED"
-  | "QUOTE_REJECTED";
+  | "QUOTE_REJECTED"
+  | "MANUAL_INTERVENTION_REQUIRED";
+
+/**
+ * Why the server raised a `MANUAL_INTERVENTION_REQUIRED` notification
+ * (`celnet.wire.ManualInterventionReason`, proto UNCONFIGURED_TENOR=1,
+ * CREDIT_RISK_BREAK=2, UNKNOWN_SECURITY=3, PRICING_FAILURE=4). Carried on the
+ * wire `reason` field and meaningful ONLY when the notification `kind` is
+ * `MANUAL_INTERVENTION_REQUIRED`.
+ */
+export type ManualInterventionReason =
+  | "UNCONFIGURED_TENOR"
+  | "CREDIT_RISK_BREAK"
+  | "UNKNOWN_SECURITY"
+  | "PRICING_FAILURE";
 
 /**
  * The desk's response to an RFQ/IOI (`celnet.wire.DeskQuote`): the quoted
@@ -3314,9 +3331,9 @@ export interface Deal {
 
 /**
  * A server→client push event (`celnet.wire.Notification`): a desk-attention
- * signal (a new RFQ/IOI) or a lifecycle resolution (accepted/rejected/expired),
- * carrying a human `headline` (+ optional `detail`) and the `requestId` it
- * concerns.
+ * signal (a new RFQ/IOI), a lifecycle resolution (accepted/rejected/expired), or
+ * a manual-intervention exception, carrying a human `headline` (+ optional
+ * `detail`) and the `requestId` it concerns.
  */
 export interface Notification {
   notificationId: string;
@@ -3330,6 +3347,20 @@ export interface Notification {
   requestKind: DeskRequestKind;
   headline: string;
   detail?: string;
+  /**
+   * Wire `alert_worthy` (server exception contract, commit 542e547). The server's
+   * authoritative decision on whether this event warrants a POPUP: `true` ⇒ toast
+   * / desktop growl / sound; `false` ⇒ the notification lands QUIETLY in the
+   * notification centre / blotter only (still stored + counted, no popup, no
+   * sound). ALL client-side popup escalation gates on this flag.
+   */
+  alertWorthy: boolean;
+  /**
+   * Wire `reason` — the {@link ManualInterventionReason} enum ordinal. Present and
+   * meaningful ONLY when `kind === "MANUAL_INTERVENTION_REQUIRED"`; absent /
+   * undefined for every other kind.
+   */
+  reason?: ManualInterventionReason;
 }
 
 // --- desk request/response messages -----------------------------------------

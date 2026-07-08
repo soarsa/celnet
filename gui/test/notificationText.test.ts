@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   compactNotionals,
+  manualInterventionText,
   notionalMagnitude,
 } from "../src/lib/notificationText";
-import type { Notification } from "../src/data/contract";
+import type { ManualInterventionReason, Notification } from "../src/data/contract";
 
 /** A minimal Notification carrying just the text fields the heuristic scans. */
 function note(headline: string, detail?: string): Notification {
@@ -16,6 +17,7 @@ function note(headline: string, detail?: string): Notification {
     requestKind: "RFQ",
     headline,
     detail,
+    alertWorthy: true,
   };
 }
 
@@ -89,5 +91,19 @@ describe("compactNotionals", () => {
 
   it("does not touch a large number immediately followed by %", () => {
     expect(compactNotionals("1500%")).toBe("1500%");
+  });
+});
+
+describe("manualInterventionText", () => {
+  it("maps each ManualInterventionReason ordinal (1–4) to its label", () => {
+    const cases: Array<[ManualInterventionReason, string]> = [
+      ["UNCONFIGURED_TENOR", "Manual pricing needed — unconfigured tenor"],
+      ["CREDIT_RISK_BREAK", "Manual pricing needed — credit risk break"],
+      ["UNKNOWN_SECURITY", "Manual pricing needed — unknown security"],
+      ["PRICING_FAILURE", "Manual pricing needed — pricing failure"],
+    ];
+    for (const [reason, label] of cases) {
+      expect(manualInterventionText(reason)).toBe(label);
+    }
   });
 });

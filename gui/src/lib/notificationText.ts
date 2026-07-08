@@ -19,8 +19,27 @@
  * because no structured field exists on the contract.
  */
 
-import type { Notification } from "../data/contract";
+import type { ManualInterventionReason, Notification } from "../data/contract";
 import { fmtCompact } from "./format";
+
+/**
+ * Human label for a {@link ManualInterventionReason} — the trader-facing "why"
+ * rendered on a `MANUAL_INTERVENTION_REQUIRED` notification's toast + desktop
+ * growl body. Exhaustive over the four ordinals (1–4) the server exception
+ * contract defines (commit 542e547).
+ */
+export function manualInterventionText(reason: ManualInterventionReason): string {
+  switch (reason) {
+    case "UNCONFIGURED_TENOR":
+      return "Manual pricing needed — unconfigured tenor";
+    case "CREDIT_RISK_BREAK":
+      return "Manual pricing needed — credit risk break";
+    case "UNKNOWN_SECURITY":
+      return "Manual pricing needed — unknown security";
+    case "PRICING_FAILURE":
+      return "Manual pricing needed — pricing failure";
+  }
+}
 
 /** Unit-suffix → multiplier. Keys are lower-cased at match time. */
 const SCALE: Readonly<Record<string, number>> = {

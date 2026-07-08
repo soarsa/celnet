@@ -1,16 +1,23 @@
 /**
- * RiskWorkspace — the ONE class-parametric RISK workspace (`fe-fi-migration`).
+ * RiskWorkspace — the ONE class-parametric RISK workspace (`fe-fi-migration`),
+ * under HARD VERTICAL ASSET SEPARATION (W1).
  *
- * There is no FX-vs-FI risk split any more: a single workspace renders the risk
- * LENS for the active asset class — FX/options → the spot×vol scenario grid
- * (`FxScenarioLens` below); fixed-income → the rates netted-risk panel
- * (`RatesRiskPanel`, folded in from the former standalone `RatesRisk` silo). The
- * lens toggle is offered only for the classes the signed-in identity can `view`
- * AND the firm is licensed for (the entitlement×license gate the rail uses), so a
- * rates desk risks its book here under a fixed-income license and an FX desk
- * never sees a lens it cannot use. `initialLens` is the entry-point default (the
- * `ratesrisk` rail row opens the FI lens); a single available lens renders
- * directly, with no toggle.
+ * There is no FX-vs-FI risk split and no in-screen cross-asset lens toggle any
+ * more: the workspace renders EXACTLY ONE risk lens, DERIVED STRICTLY from the
+ * active domain — FX/options → the spot×vol scenario grid (`FxScenarioLens`
+ * below); fixed-income → the rates netted-risk panel (`RatesRiskPanel`, folded in
+ * from the former standalone `RatesRisk` silo). Under Fixed Income the screen
+ * shows ONLY FI content; under FX Options ONLY FX content. The derived lens is
+ * gated by the entitlement×license the rail uses, so a rates desk risks its book
+ * under a fixed-income license and an FX desk never sees a lens it cannot use;
+ * when the derived lens's class is not viewable, the honest empty-state is shown.
+ *
+ * The firm-wide joint options+FI tail cube is NOT a per-domain risk view — it is
+ * a separate cross-asset surface (Book/Combined) and no longer appears here. The
+ * pure joint-tail request helpers (`seedTailRiskOptionLegs`,
+ * `seedTailRiskFiPositions`, `buildJointScenarios`, `buildCombinedTailRequest`)
+ * are retained as the shared contract-shaping seam consumed by that surface and
+ * by tests.
  *
  * FX scenario lens (`FxScenarioLens`, GUI-DESIGN §4.4): a spot×vol shock grid
  * driven by SurfaceService.Scenario (ShockAxis abs/rel) for the selected
@@ -21,13 +28,12 @@
  * never re-keyed.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type {
   CapabilityAsset,
   CcyPair,
   CombinedTailRiskRequest,
-  CombinedTailRiskResponse,
   Conventions,
   Instrument,
   JointTailScenario,
@@ -44,10 +50,8 @@ import { Panel } from "../components/Panel";
 import { Button } from "../components/Button";
 import { strategyInstrument } from "../data/seed";
 import { Rng } from "../data/rng";
-import { defaultTailRiskBaseCurve } from "../data/ratesPricing";
 import { defaultRatesRiskRows } from "./RatesRiskWorkspace";
 import { ScenarioHeatmap } from "../viz/ScenarioHeatmap";
-import { KeyRateLadder } from "../viz/KeyRateLadder";
 import { fmtPnlAdaptive, fmtSigned, fmtCompact } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
 import { configuredLicense, type LicensePredicate } from "../lib/commands";
@@ -97,18 +101,11 @@ const METRICS = [
 ] as const;
 type Metric = (typeof METRICS)[number]["id"];
 
-/** The asset-class lens the shared Risk workspace renders under. */
-export type RiskLens = "fx" | "rates" | "combined";
-
-/** One row per class the workspace spans: its lens id, capability asset, label.
- * The "combined" (joint options+FI) lens is a fixed-income capability — the FI
- * license × entitlement is what unlocks the cross-risk-class cube — so an FX-only
- * desk never sees it and a rates desk risks its joint book here. */
-const LENSES: readonly { lens: RiskLens; asset: CapabilityAsset; label: string }[] = [
-  { lens: "fx", asset: "fx_options", label: "FX Options" },
-  { lens: "rates", asset: "fixed_income", label: "Fixed Income" },
-  { lens: "combined", asset: "fixed_income", label: "Combined tail" },
-];
+/** The asset-class lens the shared Risk workspace renders under. Hard vertical
+ * separation: exactly one lens per domain — FX/options or fixed-income. There is
+ * no cross-asset "combined" lens here (the firm-wide joint tail is a separate
+ * Book/Combined surface, not a per-domain risk view). */
+export type RiskLens = "fx" | "rates";
 
 export function RiskWorkspace({
   initialLens,
@@ -117,95 +114,27 @@ export function RiskWorkspace({
 } = {}): React.ReactElement {
   const app = useApp();
   const licensed: LicensePredicate = useMemo(() => configuredLicense(), []);
-  // A lens is available iff the identity can VIEW its asset class AND the firm is
-  // licensed for it — the same entitlement-first, license-second gate the rail
-  // applies (lib/commands). Signed out, `can` is permissive ⇒ both lenses show.
-  const available = useMemo(
-    () => LENSES.filter((l) => app.auth.can("view", l.asset) && licensed(l.asset)),
-    [app.auth, licensed],
-  );
 
-  // The ENTRY lens: an explicit `initialLens` prop wins (stories/tests/a targeted
-  // rail entry); otherwise it is DERIVED from the active domain tab so the FIRST
-  // render already matches the (possibly deep-linked) domain — fixed_income → the
-  // rates lens, fx_options → the FX lens (Model A). This is the mount counterpart
-  // of the on-domain-change sync below: the sync skips mount so this seed holds.
-  const [lens, setLens] = useState<RiskLens>(() => {
-    const entry: RiskLens = initialLens ?? (app.activeDomain === "fixed_income" ? "rates" : "fx");
-    return available.some((l) => l.lens === entry) ? entry : (available[0]?.lens ?? "fx");
-  });
+  // Hard vertical asset separation (W1): the lens is DERIVED STRICTLY from the
+  // active domain — fixed_income → the rates netted-risk panel, otherwise → the FX
+  // spot×vol scenario grid. There is NO in-screen cross-asset toggle; each domain
+  // renders only its own asset. An explicit `initialLens` (stories/tests) may
+  // override the domain-derived lens for a fixed render, but never reintroduces a
+  // user-facing switch.
+  const lens: RiskLens = initialLens ?? (app.activeDomain === "fixed_income" ? "rates" : "fx");
+  const asset: CapabilityAsset = lens === "rates" ? "fixed_income" : "fx_options";
 
-  // If entitlement/license narrows at runtime so the active lens is gone, clamp to
-  // an available one (never strand on a lens the identity cannot use). The Shell
-  // unmounts the pane when its class is fully gated, so this is a defensive
-  // re-sync, not the primary gate.
-  useEffect(() => {
-    if (available.length > 0 && !available.some((l) => l.lens === lens)) {
-      setLens(available[0]!.lens);
-    }
-  }, [available, lens]);
-
-  // Model A: pre-select the lens for the ACTIVE DOMAIN tab — fixed_income → the
-  // rates lens, fx_options → the FX lens — so flipping tabs on this shared Risk
-  // screen flips its lens. The "combined" lens is a manual choice only (no domain
-  // maps onto it). Fires ONLY on a domain CHANGE (the initial mount is skipped so
-  // the useState-seeded initial lens / `initialLens` prop is honoured), and only
-  // when the target lens is available; the runtime-clamp above still guards it.
-  const domainSynced = useRef(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- sync on domain change only
-  useEffect(() => {
-    if (!domainSynced.current) {
-      domainSynced.current = true;
-      return;
-    }
-    const want: RiskLens = app.activeDomain === "fixed_income" ? "rates" : "fx";
-    if (available.some((l) => l.lens === want)) setLens(want);
-  }, [app.activeDomain]);
-
-  if (available.length === 0) {
-    // Defensive: the Shell hides the pane when the class is gated, so this is only
-    // reachable in a degenerate mid-transition — shown honestly, never faked.
+  // Honest gate for the DERIVED lens only: render it iff the identity can VIEW its
+  // asset class AND the firm is licensed for it (entitlement-first, license-second
+  // — the rail's gate). Otherwise show the honest empty-state, never a faked view.
+  if (!(app.auth.can("view", asset) && licensed(asset))) {
     return <div className={styles.loading}>No risk lens available for your entitlements.</div>;
   }
 
   return (
     <div className={styles.classShell}>
-      {available.length > 1 && (
-        <div
-          className={styles.lensBar}
-          role="tablist"
-          aria-label="risk asset class lens"
-        >
-          {available.map((l) => (
-            <button
-              key={l.lens}
-              type="button"
-              role="tab"
-              id={`risk-lens-tab-${l.lens}`}
-              aria-controls="risk-lens-panel"
-              aria-selected={lens === l.lens}
-              tabIndex={lens === l.lens ? 0 : -1}
-              className={`${styles.lensTab} ${lens === l.lens ? styles.lensTabActive : ""}`}
-              onClick={() => setLens(l.lens)}
-            >
-              {l.label}
-            </button>
-          ))}
-        </div>
-      )}
-      <div
-        className={styles.lensBody}
-        role="tabpanel"
-        id="risk-lens-panel"
-        aria-labelledby={`risk-lens-tab-${lens}`}
-      >
-        {lens === "fx" ? (
-          <FxScenarioLens />
-        ) : lens === "rates" ? (
-          <RatesRiskPanel />
-        ) : (
-          <CombinedTailLens />
-        )}
+      <div className={styles.lensBody}>
+        {lens === "fx" ? <FxScenarioLens /> : <RatesRiskPanel />}
       </div>
     </div>
   );
@@ -587,7 +516,7 @@ function pillarName(delta: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// combined options+FI JOINT tail lens (RiskService.CombinedTailRisk)
+// combined options+FI JOINT tail request seam (RiskService.CombinedTailRisk)
 // ---------------------------------------------------------------------------
 //
 // The C2c "true single VaR engine": ONE non-additive tail cube over the book's
@@ -596,8 +525,11 @@ function pillarName(delta: number): string {
 // FI signed key-rate DV01 ladder and signed parallel DV01. The whole portfolio +
 // scenario config travels inline, so BOTH transports satisfy it identically (the
 // offline source reprices + reduces in-browser; the live edge issues the RPC).
-// The two sub-books toggle so the reduction identities are demonstrable and the
-// honest empty-states (no FI ⇒ options VaR; no options ⇒ rate VaR) are reachable.
+//
+// These are PURE request-shaping helpers, retained as the shared contract seam
+// for the firm-wide joint-tail surface (Book/Combined) and consumed by tests.
+// They are deliberately NOT a per-domain risk lens — the Risk workspace shows
+// exactly one asset's risk (hard vertical separation).
 
 /** One million — FI/option notionals are denominated in millions. */
 const CT_MM = 1_000_000;
@@ -612,17 +544,6 @@ const CT_SCENARIO_COUNT = 256;
 const CT_SCENARIO_SEED = 0x9e3779b97f4a7c15n;
 /** The default VaR/ES confidence level for the joint tail. */
 const CT_ALPHA = 0.99;
-
-/** The active FX pair + market to seed the option legs from, preferring a USD-quote
- * major so the joint VaR/ES stays single-currency (USD) alongside the USD-SOFR FI
- * book; falls back to the active pair (a mixed-currency tail is then flagged). */
-function pickOptionPair(
-  pairCtx: { pair: CcyPair; market: MarketContext },
-  pairs: readonly { pair: CcyPair; market: MarketContext }[],
-): { pair: CcyPair; market: MarketContext } {
-  if (pairCtx.pair.quote === "USD") return pairCtx;
-  return pairs.find((p) => p.pair.quote === "USD") ?? pairCtx;
-}
 
 /**
  * Seed a small vanilla option book from a pair's live market: a long ATM call and
@@ -711,7 +632,7 @@ export function buildJointScenarios(
 }
 
 /** Assemble the `CombinedTailRiskRequest` from the seed books + sub-book toggles.
- * Pure — the React layer just hands it to the transport seam. */
+ * Pure — the caller just hands it to the transport seam. */
 export function buildCombinedTailRequest(opts: {
   includeOptions: boolean;
   includeFi: boolean;
@@ -728,205 +649,4 @@ export function buildCombinedTailRequest(opts: {
     scenarios: opts.scenarios,
     alpha: opts.alpha ?? CT_ALPHA,
   };
-}
-
-/** The joint options+FI tail lens of the shared, class-parametric Risk workspace. */
-function CombinedTailLens(): React.ReactElement {
-  const app = useApp();
-  const [includeOptions, setIncludeOptions] = useState(true);
-  const [includeFi, setIncludeFi] = useState(true);
-  const [result, setResult] = useState<CombinedTailRiskResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const optionSource = useMemo(
-    () => pickOptionPair(app.pairCtx, app.pairs),
-    [app.pairCtx, app.pairs],
-  );
-  const optCcy = optionSource.pair.quote;
-
-  const baseCurve = useMemo(() => defaultTailRiskBaseCurve(), []);
-  const optionLegs = useMemo(
-    () => seedTailRiskOptionLegs(optionSource.pair, optionSource.market, app.conventions),
-    [optionSource, app.conventions],
-  );
-  const fiPositions = useMemo(() => seedTailRiskFiPositions(), []);
-  const scenarios = useMemo(() => buildJointScenarios(baseCurve.length), [baseCurve.length]);
-
-  const request = useMemo<CombinedTailRiskRequest>(
-    () =>
-      buildCombinedTailRequest({
-        includeOptions,
-        includeFi,
-        optionLegs,
-        fiPositions,
-        baseCurve,
-        scenarios,
-      }),
-    [includeOptions, includeFi, optionLegs, fiPositions, baseCurve, scenarios],
-  );
-
-  // One contract, two transports: the SAME request rolls up through the offline
-  // in-app cube and the live `RiskService.CombinedTailRisk` edge — a failure (a
-  // server refusal or an offline validation throw) surfaces honestly, never faked.
-  useEffect(() => {
-    let live = true;
-    void app.transport
-      .combinedTailRisk(request)
-      .then((r) => {
-        if (!live) return;
-        setResult(r);
-        setError(null);
-      })
-      .catch((e) => {
-        if (!live) return;
-        setResult(null);
-        setError(e instanceof Error ? e.message : "combined tail risk failed");
-      });
-    return () => {
-      live = false;
-    };
-  }, [app.transport, request]);
-
-  const emptyBook = !includeOptions && !includeFi;
-  // The options quote ccy carries the joint VaR/ES; the FI axis is USD-SOFR. When a
-  // mixed book crosses currencies the raw sum is flagged (the server's own caveat).
-  const jointCcy = includeOptions ? optCcy : "USD";
-  const crossCcy = includeOptions && includeFi && optCcy !== "USD";
-
-  const reductionNote = emptyBook
-    ? ""
-    : includeOptions && !includeFi
-      ? "Options-only book — the joint tail reduces to the options spot/vol VaR (no FI diversification)."
-      : !includeOptions && includeFi
-        ? "FI-only book — the joint tail reduces to the rate-scenario VaR."
-        : "Joint options + FI tail — ONE non-additive VaR/ES over the union of per-scenario P&L, capturing cross-risk-class diversification.";
-
-  return (
-    <div className={styles.grid}>
-      <Panel
-        glyph="⋈"
-        title="Joint options + FI tail"
-        actions={
-          <fieldset className={styles.subBook}>
-            <legend className={styles.subBookLegend}>book</legend>
-            <label className={styles.subBookToggle}>
-              <input
-                type="checkbox"
-                checked={includeOptions}
-                onChange={(e) => setIncludeOptions(e.target.checked)}
-              />
-              <span>
-                Options ({optionSource.pair.base}/{optionSource.pair.quote})
-              </span>
-            </label>
-            <label className={styles.subBookToggle}>
-              <input
-                type="checkbox"
-                checked={includeFi}
-                onChange={(e) => setIncludeFi(e.target.checked)}
-              />
-              <span>FI (USD-SOFR)</span>
-            </label>
-          </fieldset>
-        }
-      >
-        {error ? (
-          <p className={styles.error} role="alert">
-            {error}
-          </p>
-        ) : emptyBook ? (
-          <div className={styles.emptyState}>
-            <p className={styles.emptyTitle}>No book selected</p>
-            <p className={styles.emptyBody}>
-              Enable the option legs and/or the FI positions above to roll up the
-              desk&apos;s joint tail risk. Nothing is computed for an empty book.
-            </p>
-          </div>
-        ) : !result ? (
-          <div className={styles.loading}>Repricing joint tail…</div>
-        ) : (
-          <>
-            <div className={styles.tailMetrics}>
-              <TailMetric
-                label={`VaR (${(CT_ALPHA * 100).toFixed(0)}%)`}
-                value={fmtPnlAdaptive(result.jointVarEs.var)}
-                unit={jointCcy}
-                emphatic
-              />
-              <TailMetric
-                label={`Expected shortfall (${(CT_ALPHA * 100).toFixed(0)}%)`}
-                value={fmtPnlAdaptive(result.jointVarEs.es)}
-                unit={jointCcy}
-                emphatic
-              />
-              <TailMetric
-                label="FI parallel DV01"
-                value={includeFi ? fmtSigned(result.fiParallelDv01, 0) : "—"}
-                unit={includeFi ? "USD/bp" : ""}
-              />
-            </div>
-            <div className={styles.provLine}>
-              {reductionNote} Reduced from{" "}
-              <strong>{scenarios.length}</strong> aligned joint scenarios via the
-              one platform-wide VaR/ES tail primitive
-              {crossCcy && (
-                <>
-                  {" "}
-                  · <strong>mixed-currency</strong>: the joint number sums{" "}
-                  {optCcy} option P&amp;L with USD FI P&amp;L (numeraire-normalize
-                  for a true cross-ccy tail)
-                </>
-              )}
-              .
-            </div>
-          </>
-        )}
-      </Panel>
-
-      <Panel glyph="Σ" title="FI key-rate DV01" className={styles.ladderPanel}>
-        {result && includeFi && result.keyRate.length > 0 ? (
-          <KeyRateLadder
-            data={result.keyRate.map((k) => ({
-              pillar: `${k.tenorYears}y`,
-              dv01: k.dv01,
-            }))}
-            parallelDv01={result.fiParallelDv01}
-            unit="USD/bp"
-          />
-        ) : (
-          <div className={styles.emptyState}>
-            <p className={styles.emptyTitle}>No fixed-income key-rate axis</p>
-            <p className={styles.emptyBody}>
-              {includeFi
-                ? "The FI book exposes no calibrating pillars for a key-rate ladder."
-                : "No fixed-income positions in the book — the joint tail reduces to the options VaR, and there is no rate ladder or parallel DV01 to show."}
-            </p>
-          </div>
-        )}
-      </Panel>
-    </div>
-  );
-}
-
-/** One headline tail measure: a labelled value + unit tile in the joint-tail lens. */
-function TailMetric({
-  label,
-  value,
-  unit,
-  emphatic,
-}: {
-  label: string;
-  value: string;
-  unit?: string;
-  emphatic?: boolean;
-}): React.ReactElement {
-  return (
-    <div className={`${styles.tailMetric} ${emphatic ? styles.tailMetricEmphatic : ""}`}>
-      <span className={styles.tailMetricLabel}>{label}</span>
-      <span className={styles.tailMetricValue}>
-        {value}
-        {unit && <span className={styles.tailUnit}>{unit}</span>}
-      </span>
-    </div>
-  );
 }

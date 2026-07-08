@@ -82,6 +82,7 @@ export type WorkspaceId =
   | "risk"
   | "book"
   | "quoting"
+  | "fistreaming"
   | "xva"
   | "excel"
   | "connections"

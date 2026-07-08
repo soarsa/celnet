@@ -21,9 +21,22 @@ import {
   isTerminalKind,
 } from "../hooks/useNotificationStore";
 import { fmtClock } from "../lib/format";
-import { compactNotionals } from "../lib/notificationText";
-import type { NotificationKind } from "../data/contract";
+import { compactNotionals, manualInterventionText } from "../lib/notificationText";
+import type { Notification, NotificationKind } from "../data/contract";
 import styles from "./NotificationCenter.module.css";
+
+/**
+ * The body detail line for a notification: for a `MANUAL_INTERVENTION_REQUIRED`
+ * event carrying a `reason`, the trader-facing reason label; otherwise the
+ * compacted `detail`. Returns null when there is nothing to render.
+ */
+function detailLine(n: Notification): string | null {
+  if (n.kind === "MANUAL_INTERVENTION_REQUIRED" && n.reason !== undefined) {
+    const reasonText = manualInterventionText(n.reason);
+    return n.detail ? `${compactNotionals(n.detail)} — ${reasonText}` : reasonText;
+  }
+  return n.detail ? compactNotionals(n.detail) : null;
+}
 
 /** The badge accent class for a notification kind. */
 function kindClass(kind: NotificationKind): string {
@@ -135,8 +148,8 @@ export function NotificationCenter(): React.ReactElement | null {
                     <span className={`${styles.dot} ${kindClass(n.kind)}`} aria-hidden />
                     <span className={styles.dropBody}>
                       <span className={styles.dropHeadline}>{compactNotionals(n.headline)}</span>
-                      {n.detail && (
-                        <span className={styles.dropDetail}>{compactNotionals(n.detail)}</span>
+                      {detailLine(n) && (
+                        <span className={styles.dropDetail}>{detailLine(n)}</span>
                       )}
                     </span>
                     <span className={styles.dropTime}>{fmtClock(n.atNanos)}</span>
@@ -173,9 +186,9 @@ export function NotificationCenter(): React.ReactElement | null {
               <span className={styles.toastHeadline}>
                 {compactNotionals(t.notification.headline)}
               </span>
-              {t.notification.detail && (
+              {detailLine(t.notification) && (
                 <span className={styles.toastDetail}>
-                  {compactNotionals(t.notification.detail)}
+                  {detailLine(t.notification)}
                 </span>
               )}
             </span>

@@ -293,13 +293,14 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
       ]);
     });
 
-    it("Fixed Income = quoting + the shared rows, in RAIL order", () => {
+    it("Fixed Income = quoting + fistreaming + the shared rows, in RAIL order", () => {
       expect(railForDomain("fixed_income").map((r) => r.id)).toEqual([
         "ticket",
         "surface",
         "risk",
         "book",
         "quoting",
+        "fistreaming",
       ]);
     });
 

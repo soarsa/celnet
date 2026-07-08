@@ -155,6 +155,13 @@ import type {
 
 const NS_PER_MS = 1_000_000n;
 
+/** The desk the exception-contract sample notifications are attributed to. */
+const SAMPLE_DESK = "g10-rates";
+/** Delay before the quiet (alertWorthy:false) auto-priced sample fires (ms). */
+const SAMPLE_QUIET_DELAY_MS = 1_500;
+/** Delay before the growl-worthy manual-intervention sample fires (ms). */
+const SAMPLE_ALERT_DELAY_MS = 3_000;
+
 /**
  * The per-curve additive parallel-shift magnitude per tick, in decimal rate
  * (`0.0001` = ±1 basis point). The offline mirror of the server fan-out's
@@ -1043,6 +1050,10 @@ export class MockTransport implements CelnetTransport {
   private dealSeq = 1n;
   private notificationSeq = 1n;
   private ratesPositionSeq = 1n;
+  /** One-shot guard: the sample exception-contract alerts are scheduled once. */
+  private sampleAlertsScheduled = false;
+  /** Pending sample-alert timers, cleared when the last subscriber disposes. */
+  private sampleAlertTimers: ReturnType<typeof setTimeout>[] = [];
 
   constructor(opts: { seed?: bigint; tickMs?: number } = {}) {
     this.seed = opts.seed ?? 0xce1_5eed_d00dn;
@@ -2490,6 +2501,7 @@ export class MockTransport implements CelnetTransport {
         requestKind: existing.kind,
         headline: `${existing.counterparty} ${existing.kind} declined`,
         detail: request.response.reject.reason,
+        alertWorthy: true,
       });
     }
     this.deskRequests.set(existing.requestId, updated);
@@ -2550,6 +2562,7 @@ export class MockTransport implements CelnetTransport {
       requestKind: existing.kind,
       headline: `${existing.counterparty} lifted ${existing.kind}: ${existing.instrument.tenorYears}y OIS @ ${(quote.price * 100).toFixed(3)}%`,
       detail: `deal ${dealId} · ${(quote.notional / 1_000_000).toFixed(0)}mm`,
+      alertWorthy: true,
     });
     return { deal, request: updated };
   }
@@ -2619,9 +2632,67 @@ export class MockTransport implements CelnetTransport {
   ): () => void {
     const sub = { scope, onNotification };
     this.notificationSubs.add(sub);
+    // On the first UNSCOPED subscription (the live NotificationCenter path),
+    // schedule a small, bounded set of exception-contract sample events so the
+    // e2e can observe both a growl-worthy manual-intervention alert AND a quiet
+    // auto-priced event. Scoped subscribers (desk-filtered) never trigger it.
+    if (scope === undefined) this.scheduleSampleAlerts();
     return () => {
       this.notificationSubs.delete(sub);
+      // Once no one is listening, drop any still-pending sample timers so a
+      // unit-test teardown never leaks a live timer.
+      if (this.notificationSubs.size === 0) this.clearSampleAlertTimers();
     };
+  }
+
+  /** Cancel and forget any pending sample-alert timers. */
+  private clearSampleAlertTimers(): void {
+    for (const t of this.sampleAlertTimers) clearTimeout(t);
+    this.sampleAlertTimers = [];
+  }
+
+  /**
+   * Fire a bounded, one-shot pair of exception-contract sample notifications
+   * shortly after a client subscribes: (1) an AUTO-priced event with
+   * `alertWorthy:false` that must land QUIETLY (no popup), then (2) a
+   * `MANUAL_INTERVENTION_REQUIRED` event with `alertWorthy:true` + an
+   * `UNCONFIGURED_TENOR` reason that must escalate (toast + growl). Timers are
+   * `unref`'d where supported so they never keep a test/process event loop alive.
+   */
+  private scheduleSampleAlerts(): void {
+    if (this.sampleAlertsScheduled) return;
+    this.sampleAlertsScheduled = true;
+    const schedule = (delayMs: number, build: () => Notification): void => {
+      const t = setTimeout(() => this.emitNotification(build()), delayMs);
+      // Node's timer object exposes `unref`; the browser's numeric id does not.
+      (t as unknown as { unref?: () => void }).unref?.();
+      this.sampleAlertTimers.push(t);
+    };
+    // (1) Quiet auto-priced confirmation — alertWorthy:false ⇒ centre-only.
+    schedule(SAMPLE_QUIET_DELAY_MS, () => ({
+      notificationId: `ntf-${this.notificationSeq++}`,
+      kind: "QUOTE_ACCEPTED",
+      atNanos: nowNanos(),
+      desk: SAMPLE_DESK,
+      counterparty: "Aster Global",
+      requestKind: "RFQ",
+      headline: "Auto-priced RFQ from Aster Global: 2y OIS 25mm",
+      detail: "auto-quoted · no action needed",
+      alertWorthy: false,
+    }));
+    // (2) Growl-worthy manual-intervention exception — alertWorthy:true.
+    schedule(SAMPLE_ALERT_DELAY_MS, () => ({
+      notificationId: `ntf-${this.notificationSeq++}`,
+      kind: "MANUAL_INTERVENTION_REQUIRED",
+      atNanos: nowNanos(),
+      desk: SAMPLE_DESK,
+      counterparty: "Meridian Capital",
+      requestKind: "RFQ",
+      headline: "Manual pricing needed",
+      detail: "USD-OIS 15Y",
+      reason: "UNCONFIGURED_TENOR",
+      alertWorthy: true,
+    }));
   }
 
   /** Enqueue a fresh PENDING desk request and push its `*_RECEIVED` notification. */
@@ -2655,6 +2726,7 @@ export class MockTransport implements CelnetTransport {
       requestKind: request.kind,
       headline: `${request.kind} from ${request.counterparty}: ${request.instrument.tenorYears}y OIS ${(request.notional / 1_000_000).toFixed(0)}mm`,
       detail: `${request.desk} · ${request.side === "BUY" ? "pay" : "receive"} fixed`,
+      alertWorthy: true,
     });
     return desk;
   }

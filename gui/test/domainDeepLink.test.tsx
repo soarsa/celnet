@@ -1,13 +1,14 @@
 /**
- * Domain deep-link + shared-screen lens pre-select (regression for the 3-tab
- * domain bar, commit 333c458).
+ * Domain deep-link + hard vertical asset separation on the shared screens
+ * (regression for the 3-tab domain bar, commit 333c458; updated for W1).
  *
  * The saved-view / URL codec encodes the active product DOMAIN as `dom`. A
  * deep-link / reload must seed `activeDomain` on FIRST paint so:
  *   • the domain TAB BAR renders the URL's domain as active (not the fx_options
  *     default), and
- *   • each SHARED screen (Risk / Market Data) pre-selects its FX↔rates lens to the
- *     active domain on the initial mount — not only after a user tab-click.
+ *   • each SHARED screen (Risk / Market Data) renders ONLY the active domain's
+ *     asset on the initial mount — the lens is DERIVED STRICTLY from the domain,
+ *     with NO in-screen cross-asset toggle (hard vertical separation).
  *
  * These render the REAL Shell inside the REAL AppProvider (offline `?mock`) and
  * assert the first-paint state for both domains, plus that an old (no-`dom`) link
@@ -47,17 +48,15 @@ afterEach(() => {
 function domainTabs() {
   return screen.getByRole("tablist", { name: "product domains" });
 }
-/** The Risk workspace's FX↔rates lens tablist. */
-function riskLens() {
-  return screen.getByRole("tablist", { name: "risk asset class lens" });
-}
-/** The Market Data workspace's FX↔rates lens group. */
-function marketDataLens() {
-  return screen.getByRole("group", { name: "market data asset class" });
+
+/** The removed cross-asset lens toggles must never appear on a shared screen. */
+function noAssetLensToggle(): void {
+  expect(screen.queryByRole("tablist", { name: "risk asset class lens" })).toBeNull();
+  expect(screen.queryByRole("group", { name: "market data asset class" })).toBeNull();
 }
 
-describe("domain deep-link seeds activeDomain + shared-screen lens on first paint", () => {
-  it("?dom=fixed_income&view=risk activates the FI tab AND the FI risk lens", async () => {
+describe("domain deep-link seeds activeDomain + the shared screen's single asset on first paint", () => {
+  it("?dom=fixed_income&view=risk activates the FI tab AND renders ONLY the FI risk lens (no FX tab)", async () => {
     await renderAt("/?mock&dom=fixed_income&view=risk");
 
     // The domain tab bar reflects the URL's domain (not the fx_options default).
@@ -68,10 +67,11 @@ describe("domain deep-link seeds activeDomain + shared-screen lens on first pain
       within(domainTabs()).getByRole("tab", { name: "FX Options", exact: true }),
     ).toHaveAttribute("aria-selected", "false");
 
-    // The shared Risk screen pre-selects the rates lens for the FI domain.
-    expect(
-      within(riskLens()).getByRole("tab", { name: "Fixed Income", exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
+    // The shared Risk screen renders ONLY the FI rates panel — no cross-asset
+    // toggle and no FX scenario grid.
+    expect(await screen.findByText("Netted rates risk")).toBeInTheDocument();
+    noAssetLensToggle();
+    expect(screen.queryByLabelText(/scenario heatmap/i)).toBeNull();
   });
 
   it("?dom=fixed_income ALONE (no other view param) still seeds the FI domain", async () => {
@@ -82,30 +82,35 @@ describe("domain deep-link seeds activeDomain + shared-screen lens on first pain
     ).toHaveAttribute("aria-selected", "true");
   });
 
-  it("an old link with NO dom (view=risk only) decodes to the fx_options default", async () => {
+  it("an old link with NO dom (view=risk only) decodes to the fx_options default and renders ONLY the FX lens", async () => {
     await renderAt("/?mock&view=risk");
 
     expect(
       within(domainTabs()).getByRole("tab", { name: "FX Options", exact: true }),
     ).toHaveAttribute("aria-selected", "true");
-    expect(
-      within(riskLens()).getByRole("tab", { name: "FX Options", exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
+
+    // The shared Risk screen renders ONLY the FX scenario grid — no cross-asset
+    // toggle and no FI rates panel.
+    expect(await screen.findByLabelText(/scenario heatmap/i)).toBeInTheDocument();
+    noAssetLensToggle();
+    expect(screen.queryByText("Netted rates risk")).toBeNull();
   });
 
-  it("Market Data initial lens follows activeDomain — FI on ?dom=fixed_income", async () => {
+  it("Market Data renders ONLY the FI (curve) lens on ?dom=fixed_income — no toggle, no FX surface", async () => {
     await renderAt("/?mock&dom=fixed_income&view=surface");
 
     expect(
-      within(marketDataLens()).getByRole("button", { name: "Fixed Income" }),
-    ).toHaveAttribute("aria-pressed", "true");
+      await screen.findByRole("tablist", { name: "curve authoring mode" }),
+    ).toBeInTheDocument();
+    noAssetLensToggle();
+    expect(screen.queryByRole("group", { name: "surface view" })).toBeNull();
   });
 
-  it("Market Data initial lens follows activeDomain — FX on ?dom=fx_options", async () => {
+  it("Market Data renders ONLY the FX (vol-surface) lens on ?dom=fx_options — no toggle, no FI curve", async () => {
     await renderAt("/?mock&dom=fx_options&view=surface");
 
-    expect(
-      within(marketDataLens()).getByRole("button", { name: "FX Options" }),
-    ).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByRole("group", { name: "surface view" })).toBeInTheDocument();
+    noAssetLensToggle();
+    expect(screen.queryByRole("tablist", { name: "curve authoring mode" })).toBeNull();
   });
 });

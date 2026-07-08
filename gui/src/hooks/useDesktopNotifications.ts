@@ -21,6 +21,21 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Notification as DeskNotification } from "../data/contract";
+import { manualInterventionText } from "../lib/notificationText";
+
+/**
+ * The body text for the native OS notification. For a
+ * `MANUAL_INTERVENTION_REQUIRED` event carrying a `reason`, render the
+ * trader-facing reason (via {@link manualInterventionText}) combined with any
+ * `detail`; otherwise fall back to the plain `detail` string.
+ */
+function desktopBody(n: DeskNotification): string {
+  if (n.kind === "MANUAL_INTERVENTION_REQUIRED" && n.reason !== undefined) {
+    const reasonText = manualInterventionText(n.reason);
+    return n.detail ? `${n.detail} — ${reasonText}` : reasonText;
+  }
+  return n.detail ?? "";
+}
 
 /** The user preference (mute/unmute), independent of the browser grant. */
 const PREF_KEY = "celnet.desktopNotifications.enabled";
@@ -174,7 +189,7 @@ export function useDesktopNotifications(onActivate?: () => void): DesktopNotific
       // notification with the same `tag` replaces an earlier one) but is absent from
       // TS's lib.dom `NotificationOptions`, so we widen the literal's type.
       const options: NotificationOptions & { renotify?: boolean } = {
-        body: n.detail ?? "",
+        body: desktopBody(n),
         tag: n.notificationId,
         renotify: false,
       };

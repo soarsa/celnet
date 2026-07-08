@@ -47,6 +47,7 @@ export type WorkspaceId =
   | "risk"
   | "book"
   | "quoting"
+  | "fistreaming"
   | "xva"
   | "excel"
   | "connections"
@@ -110,6 +111,9 @@ export const RAIL: readonly {
   { id: "risk", glyph: "⊞", label: "Risk", assets: CAPABILITY_ASSETS },
   { id: "book", glyph: "▤", label: "Book", assets: CAPABILITY_ASSETS },
   { id: "quoting", glyph: "⇌", label: "Quoting", assets: ["fixed_income"] },
+  // FI live streaming (bond + swap prices) with the RFS request sidebar — a
+  // single-asset FI row, so it derives to the Fixed Income tab ONLY (never FX).
+  { id: "fistreaming", glyph: "⇉", label: "Streaming", assets: ["fixed_income"] },
   { id: "xva", glyph: "⊗", label: "XVA", assets: ["fx_options"] },
   { id: "excel", glyph: "▦", label: "Excel", assets: ["fx_options"] },
   // Administration / ops — admin-gated, no license concept.

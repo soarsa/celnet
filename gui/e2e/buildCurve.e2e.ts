@@ -2,8 +2,10 @@
  * LIVE e2e — the FI rates-curve build-by-instrument-reference mode against the
  * REAL demo edge under `CELNET_ACCESS_MODE=enforce`. fe-fi-migration #6 collapsed
  * the standalone Curve rail row into the single class-parametric Market Data
- * workspace: the curve is now the Fixed Income lens of Market Data. Logs in, opens
- * Market Data, flips to its Fixed Income asset-class lens (the curve builder),
+ * workspace: the curve is now the Fixed Income lens of Market Data. W1 hard
+ * vertical separation then removed the in-screen asset-class toggle — the lens is
+ * derived strictly from the active domain. Logs in, selects the Fixed Income domain
+ * tab, opens Market Data (which renders the Fixed Income curve builder directly),
  * confirms the slice-A pillar editor still renders, switches to the
  * instrument-reference mode, picks seeded reference-data registry instruments,
  * supplies a calibrating quote each, calls the server's `BuildCurve` over the WS
@@ -29,13 +31,15 @@ test("Curve workspace builds a discount curve from registry instruments", async 
   page,
 }) => {
   await openLive(page);
-  // The curve lives on the single class-parametric Market Data workspace; flip to
-  // its Fixed Income asset-class lens to reach the rates-curve builder.
-  const pane = await gotoWorkspace(page, "surface");
-  await pane
-    .getByRole("group", { name: "market data asset class" })
-    .getByRole("button", { name: "Fixed Income" })
+  // W1 hard vertical separation: the curve is the Fixed Income lens of the single
+  // Market Data workspace, and there is NO in-screen asset-class toggle — the lens
+  // is derived strictly from the active domain. Select the Fixed Income domain tab,
+  // then open Market Data to reach the rates-curve builder directly.
+  await page
+    .getByRole("tablist", { name: "product domains" })
+    .getByRole("tab", { name: "Fixed Income", exact: true })
     .click();
+  const pane = await gotoWorkspace(page, "surface");
 
   // Slice-A pillar editor is the default mode and still renders its ladder.
   await expect(

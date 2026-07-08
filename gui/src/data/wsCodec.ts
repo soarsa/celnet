@@ -1816,11 +1816,21 @@ export function notificationFromWire(o: WireObject): Notification {
     counterparty: str(o, "counterparty"),
     requestKind: e.deskRequestKind.fromWire(enumNum(o, "request_kind")),
     headline: str(o, "headline"),
+    // Server exception contract (commit 542e547): the authoritative popup gate.
+    // Missing / non-`true` ⇒ the event lands quietly (no toast/growl/sound).
+    alertWorthy: o["alert_worthy"] === true,
   };
   const rid = o["request_id"];
   if (typeof rid === "string" && rid.length > 0) n.requestId = rid;
   const detail = o["detail"];
   if (typeof detail === "string" && detail.length > 0) n.detail = detail;
+  // `reason` (ManualInterventionReason ordinal) is meaningful only for the
+  // manual-intervention kind; decode only when present as a positive ordinal so a
+  // null / absent / unspecified(0) `reason` yields NO `reason` field.
+  const reason = o["reason"];
+  if (typeof reason === "number" && reason > 0) {
+    n.reason = e.manualInterventionReason.fromWire(reason);
+  }
   return n;
 }
 

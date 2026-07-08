@@ -35,6 +35,7 @@ import type {
   LimitMetricKind,
   LookbackMonitoring,
   LookbackStyle,
+  ManualInterventionReason,
   Margining,
   MarketObservable,
   Metal,
@@ -390,7 +391,8 @@ export const deskRequestState = offsetEnumCodec<DeskRequestState>(
 /**
  * `NotificationKind` ↔ proto `NotificationKind` (UNSPECIFIED=0, RFQ_RECEIVED=1,
  * IOI_RECEIVED=2, REQUEST_WITHDRAWN=3, REQUEST_EXPIRED=4, QUOTE_ACCEPTED=5,
- * QUOTE_REJECTED=6).
+ * QUOTE_REJECTED=6, MANUAL_INTERVENTION_REQUIRED=7). The 7th member was added by
+ * the server exception contract (commit 542e547).
  */
 export const notificationKind = offsetEnumCodec<NotificationKind>(
   [
@@ -400,6 +402,24 @@ export const notificationKind = offsetEnumCodec<NotificationKind>(
     "REQUEST_EXPIRED",
     "QUOTE_ACCEPTED",
     "QUOTE_REJECTED",
+    "MANUAL_INTERVENTION_REQUIRED",
+  ],
+  1,
+);
+
+/**
+ * `ManualInterventionReason` ↔ proto `ManualInterventionReason` (UNSPECIFIED=0,
+ * UNCONFIGURED_TENOR=1, CREDIT_RISK_BREAK=2, UNKNOWN_SECURITY=3,
+ * PRICING_FAILURE=4). Carried on the wire `reason` field of a
+ * `MANUAL_INTERVENTION_REQUIRED` notification (server exception contract, commit
+ * 542e547). Ordinals start at 1; `0` (unspecified) decodes to the first member.
+ */
+export const manualInterventionReason = offsetEnumCodec<ManualInterventionReason>(
+  [
+    "UNCONFIGURED_TENOR",
+    "CREDIT_RISK_BREAK",
+    "UNKNOWN_SECURITY",
+    "PRICING_FAILURE",
   ],
   1,
 );

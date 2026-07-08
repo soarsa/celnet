@@ -355,3 +355,96 @@ describe("desk quoting — codec round-trips (wire shape)", () => {
     expect(ntf.detail).toBe("deal-3");
   });
 });
+
+describe("notificationFromWire — server exception contract (alert_worthy + reason)", () => {
+  it("defaults alertWorthy to false and omits reason when the fields are absent", () => {
+    const ntf = notificationFromWire({
+      type: "notification",
+      notification_id: "ntf-1",
+      kind: 1, // RFQ_RECEIVED
+      at_nanos: 1n,
+      desk: "g10-rates",
+      counterparty: "ACME",
+      request_kind: 1,
+      headline: "RFQ",
+    });
+    expect(ntf.alertWorthy).toBe(false);
+    expect(ntf.reason).toBeUndefined();
+  });
+
+  it("decodes alert_worthy:true", () => {
+    const ntf = notificationFromWire({
+      type: "notification",
+      notification_id: "ntf-2",
+      kind: 1,
+      at_nanos: 1n,
+      desk: "g10-rates",
+      counterparty: "ACME",
+      request_kind: 1,
+      headline: "RFQ",
+      alert_worthy: true,
+    });
+    expect(ntf.alertWorthy).toBe(true);
+  });
+
+  it("round-trips a MANUAL_INTERVENTION_REQUIRED frame with its reason ordinal", () => {
+    const ntf = notificationFromWire({
+      type: "notification",
+      notification_id: "ntf-3",
+      kind: 7, // MANUAL_INTERVENTION_REQUIRED
+      at_nanos: 1n,
+      desk: "g10-rates",
+      counterparty: "Meridian Capital",
+      request_kind: 1,
+      headline: "Manual pricing needed",
+      detail: "USD-OIS 15Y",
+      alert_worthy: true,
+      reason: 1, // UNCONFIGURED_TENOR
+    });
+    expect(ntf.kind).toBe("MANUAL_INTERVENTION_REQUIRED");
+    expect(ntf.alertWorthy).toBe(true);
+    expect(ntf.reason).toBe("UNCONFIGURED_TENOR");
+  });
+
+  it("maps every reason ordinal (1–4) to its enum member", () => {
+    const expected: Record<number, string> = {
+      1: "UNCONFIGURED_TENOR",
+      2: "CREDIT_RISK_BREAK",
+      3: "UNKNOWN_SECURITY",
+      4: "PRICING_FAILURE",
+    };
+    for (const [ord, member] of Object.entries(expected)) {
+      const ntf = notificationFromWire({
+        type: "notification",
+        notification_id: `ntf-r${ord}`,
+        kind: 7,
+        at_nanos: 1n,
+        desk: "g10-rates",
+        counterparty: "X",
+        request_kind: 1,
+        headline: "Manual pricing needed",
+        alert_worthy: true,
+        reason: Number(ord),
+      });
+      expect(ntf.reason).toBe(member);
+    }
+  });
+
+  it("omits reason for a null / zero (unspecified) ordinal", () => {
+    for (const bad of [null, 0] as const) {
+      const ntf = notificationFromWire({
+        type: "notification",
+        notification_id: "ntf-z",
+        kind: 7,
+        at_nanos: 1n,
+        desk: "g10-rates",
+        counterparty: "X",
+        request_kind: 1,
+        headline: "Manual pricing needed",
+        alert_worthy: true,
+        reason: bad as unknown as number,
+      });
+      expect(ntf.reason).toBeUndefined();
+    }
+  });
+});

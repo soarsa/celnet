@@ -188,71 +188,70 @@ test("single-rail per-workspace gating: FX-only rows hide, cross-asset rows stay
     await expectRail(page, label, true);
   }
 
-  // 7) Model A — a SHARED screen appears under BOTH trading tabs and pre-selects the
-  // tab's lens. Market Data: FX tab ⇒ FX lens; FI tab ⇒ rates lens (screen kept).
+  // 7) Model A + W1 hard vertical separation — a SHARED screen appears under BOTH
+  // trading tabs, but renders ONLY the active domain's asset with NO in-screen
+  // cross-asset lens toggle (W1 removed the FX↔rates toggles). Market Data: FX tab ⇒
+  // the FX vol-surface lens; FI tab ⇒ the rates curve lens (the screen is kept, the
+  // toggle is gone).
   await selectDomain(page, "FX Options");
   await railClick(page, "Market Data");
-  const mdLens = page.getByRole("group", { name: "market data asset class" });
-  await expect(mdLens.getByRole("button", { name: "FX Options" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(page.getByRole("group", { name: "surface view" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "market data asset class" })).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "curve authoring mode" })).toHaveCount(0);
+
   await selectDomain(page, "Fixed Income");
   await expect(rail(page).locator('button[title^="Market Data ("]')).toBeVisible(); // kept
-  await expect(mdLens.getByRole("button", { name: "Fixed Income" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(page.getByRole("tablist", { name: "curve authoring mode" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "market data asset class" })).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "surface view" })).toHaveCount(0);
 
-  // Risk: its lens is a tablist — FX tab ⇒ FX lens tab; FI tab ⇒ rates lens tab.
+  // Risk: FX tab ⇒ the FX scenario grid; FI tab ⇒ the netted rates risk — a single
+  // asset per domain, with NO `risk asset class lens` tablist / no FX↔FI tabs.
   await selectDomain(page, "FX Options");
   await railClick(page, "Risk");
-  const riskLens = page.getByRole("tablist", { name: "risk asset class lens" });
-  await expect(riskLens.getByRole("tab", { name: "FX Options" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(page.getByLabel(/scenario heatmap/i)).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "risk asset class lens" })).toHaveCount(0);
+  await expect(page.getByText("Netted rates risk")).toHaveCount(0);
+
   await selectDomain(page, "Fixed Income");
-  await expect(riskLens.getByRole("tab", { name: "Fixed Income" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(page.getByText("Netted rates risk")).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "risk asset class lens" })).toHaveCount(0);
+  await expect(page.getByLabel(/scenario heatmap/i)).toHaveCount(0);
 });
 
-test("deep-link ?dom=… drives the active tab AND the shared-screen lens on first paint (no tab click)", async ({
+test("deep-link ?dom=… drives the active tab AND renders ONLY that domain's single asset on first paint (no toggle)", async ({
   page,
 }) => {
   // A pasted / reloaded link carries the active DOMAIN as `dom`. On load — through
   // the login gate, with NO tab click — the domain tab bar AND the shared screen's
-  // FX↔rates lens must both match the URL on the FIRST paint (the regression: the
-  // FX tab/lens showed regardless of `dom`). Admin has every class, so no re-home.
+  // SINGLE asset must both match the URL on the FIRST paint. W1 hard vertical
+  // separation: the lens is DERIVED STRICTLY from the domain, with NO in-screen
+  // cross-asset toggle (the regression this guards: the FX asset showed regardless
+  // of `dom`). Admin has every class, so no re-home.
 
-  // 1) Risk deep-linked to Fixed Income → the FI tab AND the rates risk lens.
+  // 1) Risk deep-linked to Fixed Income → the FI tab AND ONLY the netted rates risk
+  //    panel — no lens tablist, no FX scenario grid.
   await openLiveAt(page, "dom=fixed_income&view=risk");
   await expect(domainTab(page, "Fixed Income")).toHaveAttribute("aria-selected", "true");
   await expect(domainTab(page, "FX Options")).toHaveAttribute("aria-selected", "false");
-  const riskLens = page.getByRole("tablist", { name: "risk asset class lens" });
-  await expect(riskLens.getByRole("tab", { name: "Fixed Income" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(page.getByText("Netted rates risk")).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "risk asset class lens" })).toHaveCount(0);
+  await expect(page.getByLabel(/scenario heatmap/i)).toHaveCount(0);
 
-  // 2) Market Data deep-linked to Fixed Income → the rates (curve) lens on load.
+  // 2) Market Data deep-linked to Fixed Income → ONLY the rates (curve) lens on load
+  //    (the curve-authoring tablist), no cross-asset toggle, no FX vol surface.
   await openLiveAt(page, "dom=fixed_income&view=surface");
   await expect(domainTab(page, "Fixed Income")).toHaveAttribute("aria-selected", "true");
-  const mdLens = page.getByRole("group", { name: "market data asset class" });
-  await expect(mdLens.getByRole("button", { name: "Fixed Income" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(page.getByRole("tablist", { name: "curve authoring mode" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "market data asset class" })).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "surface view" })).toHaveCount(0);
 
   // 3) An old link with NO `dom` still decodes to the fx_options default (forward-
-  // compat): the FX tab is active and Market Data opens the FX vol-surface lens.
+  //    compat): the FX tab is active and Market Data renders ONLY the FX vol-surface
+  //    lens — no cross-asset toggle, no FI curve.
   await openLiveAt(page, "view=surface");
   await expect(domainTab(page, "FX Options")).toHaveAttribute("aria-selected", "true");
-  await expect(
-    page.getByRole("group", { name: "market data asset class" }).getByRole("button", {
-      name: "FX Options",
-    }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("group", { name: "surface view" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "market data asset class" })).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "curve authoring mode" })).toHaveCount(0);
 });

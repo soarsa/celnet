@@ -1,66 +1,64 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 
 import { AppProvider } from "../src/app/AppContext";
 import { createMockTransport } from "../src/data/mockSource";
 import { RiskWorkspace } from "../src/workspaces/RiskWorkspace";
 
 /**
- * The joint options+FI tail LENS of the shared Risk workspace, rendered against
- * the REAL offline transport (`?mock`). Proves the lens sources a genuine book,
- * calls `CombinedTailRisk`, and renders the headline joint VaR/ES, the signed
- * parallel DV01 and the FI key-rate ladder — with an honest empty-state when the
- * FI sub-book is turned off (the reduction-to-options-VaR branch) — and that the
- * lens bar is an a11y tablist with the combined tab selected.
+ * Hard vertical asset separation (W1): the shared Risk workspace renders EXACTLY
+ * ONE asset's risk, derived from the active domain, with NO in-screen cross-asset
+ * toggle. The former joint options+FI "Combined tail" LENS is no longer a
+ * per-domain risk view and MUST NOT be reachable from RiskWorkspace under any
+ * domain. (The pure joint-tail request seam — `seedTailRiskOptionLegs`,
+ * `seedTailRiskFiPositions`, `buildJointScenarios`, `buildCombinedTailRequest` —
+ * is retained and exercised by `combinedTailRisk.test.ts`; only the in-screen
+ * lens is gone.)
  */
 
-function renderCombinedLens(): void {
+/** Render RiskWorkspace under the real offline transport at a given derived lens. */
+function renderRisk(initialLens?: "fx" | "rates"): void {
   render(
     <AppProvider transport={createMockTransport()}>
-      <RiskWorkspace initialLens="combined" />
+      <RiskWorkspace initialLens={initialLens} />
     </AppProvider>,
   );
 }
 
-afterEach(() => cleanup());
+/** Assert none of the removed Combined-tail lens artifacts are on screen. */
+function expectNoCombinedLens(): void {
+  // No cross-asset lens tablist / toggle.
+  expect(screen.queryByRole("tablist", { name: "risk asset class lens" })).toBeNull();
+  // No "Combined tail" tab label.
+  expect(screen.queryByText(/Combined tail/i)).toBeNull();
+  // No joint-tail lens body: its panel title, its ES headline, its FI sub-book toggle.
+  expect(screen.queryByText(/Joint options \+ FI tail/i)).toBeNull();
+  expect(screen.queryByText(/Expected shortfall/i)).toBeNull();
+  expect(screen.queryByText(/FI \(USD-SOFR\)/i)).toBeNull();
+}
 
-describe("RiskWorkspace — combined options+FI tail lens", () => {
-  it("renders the joint VaR/ES, parallel DV01 and the key-rate ladder from a real roll-up", async () => {
-    renderCombinedLens();
+afterEach(() => {
+  cleanup();
+});
 
-    // Headline joint tail: VaR + Expected shortfall + the signed parallel DV01.
-    expect(await screen.findByText(/VaR \(99%\)/)).toBeTruthy();
-    expect(await screen.findByText(/Expected shortfall \(99%\)/)).toBeTruthy();
-    expect(await screen.findByText("FI parallel DV01")).toBeTruthy();
-
-    // The FI key-rate DV01 ladder viz (the reused KeyRateLadder), by its accessible name.
-    expect(
-      await screen.findByRole("img", { name: /Key-rate DV01 ladder/ }),
-    ).toBeTruthy();
+describe("Risk workspace hard vertical asset separation — Combined-tail lens is unreachable", () => {
+  it("under the FX domain renders ONLY the FX scenario grid — no combined lens, no asset toggle", async () => {
+    renderRisk("fx");
+    // The FX single-asset content is present…
+    expect(await screen.findByLabelText(/scenario heatmap/i)).toBeInTheDocument();
+    // …and none of the combined-lens artifacts are reachable.
+    expectNoCombinedLens();
+    // The FI rates panel is not rendered under the FX lens.
+    expect(screen.queryByText("Netted rates risk")).toBeNull();
   });
 
-  it("exposes the lens bar as a tablist with the combined tab selected (a11y)", async () => {
-    renderCombinedLens();
-    await screen.findByText(/VaR \(99%\)/);
-
-    const tablist = screen.getByRole("tablist", { name: "risk asset class lens" });
-    expect(tablist).toBeTruthy();
-    const combinedTab = screen.getByRole("tab", { name: "Combined tail" });
-    expect(combinedTab.getAttribute("aria-selected")).toBe("true");
-  });
-
-  it("falls back to an honest empty-state for the FI axis when the FI book is disabled", async () => {
-    renderCombinedLens();
-    await screen.findByRole("img", { name: /Key-rate DV01 ladder/ });
-
-    // Turn the FI sub-book off ⇒ options-only ⇒ no rate ladder / parallel DV01.
-    const fiToggle = screen.getByRole("checkbox", { name: /FI \(USD-SOFR\)/ });
-    fireEvent.click(fiToggle);
-
-    expect(
-      await screen.findByText(/No fixed-income positions in the book/),
-    ).toBeTruthy();
-    // The options VaR headline still renders (the tail reduced to the options leg).
-    expect(await screen.findByText(/VaR \(99%\)/)).toBeTruthy();
+  it("under the FI domain renders ONLY the rates panel — no combined lens, no asset toggle", async () => {
+    renderRisk("rates");
+    // The FI single-asset content is present…
+    expect(await screen.findByText("Netted rates risk")).toBeInTheDocument();
+    // …and none of the combined-lens artifacts are reachable.
+    expectNoCombinedLens();
+    // The FX scenario grid is not rendered under the rates lens.
+    expect(screen.queryByLabelText(/scenario heatmap/i)).toBeNull();
   });
 });

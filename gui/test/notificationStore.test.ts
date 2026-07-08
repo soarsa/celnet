@@ -12,7 +12,14 @@ import type { Notification, NotificationKind } from "../src/data/contract";
 
 function note(
   kind: NotificationKind,
-  opts: { headline?: string; detail?: string; requestId?: string; atNanos?: bigint; id?: string } = {},
+  opts: {
+    headline?: string;
+    detail?: string;
+    requestId?: string;
+    atNanos?: bigint;
+    id?: string;
+    alertWorthy?: boolean;
+  } = {},
 ): Notification {
   return {
     notificationId: opts.id ?? "n1",
@@ -24,6 +31,9 @@ function note(
     requestKind: "RFQ",
     headline: opts.headline ?? "RFQ from ACME",
     detail: opts.detail,
+    // Default alert-worthy so the pre-existing gating tests keep exercising the
+    // popup path; the quiet-path tests below pass `alertWorthy: false` explicitly.
+    alertWorthy: opts.alertWorthy ?? true,
   };
 }
 
@@ -95,9 +105,42 @@ describe("planNotification", () => {
     expect(planNotification(n, settings(), true).bumpUnread).toBe(false);
   });
 
-  it("a terminal event does not raise a toast", () => {
-    const n = note("QUOTE_ACCEPTED", { headline: "accepted 75mm" });
-    expect(planNotification(n, settings(), false).toast).toBe(false);
+  it("an alert-worthy event pops a toast (server owns the popup gate)", () => {
+    const n = note("QUOTE_ACCEPTED", { headline: "accepted 75mm", alertWorthy: true });
+    expect(planNotification(n, settings(), false).toast).toBe(true);
+  });
+
+  it("a quiet (alertWorthy:false) event lands in the centre but raises NO popup", () => {
+    const n = note("QUOTE_ACCEPTED", { headline: "auto-priced 75mm", alertWorthy: false });
+    const plan = planNotification(n, settings(), false);
+    // Still stored + counted, but no toast / sound / growl.
+    expect(plan.suppressed).toBe(false);
+    expect(plan.addItem).toBe(true);
+    expect(plan.bumpUnread).toBe(true);
+    expect(plan.toast).toBe(false);
+    expect(plan.sound).toBe(false);
+    expect(plan.growl).toBe(false);
+  });
+
+  it("a quiet event stays quiet even with sound + growl enabled", () => {
+    const n = note("RFQ_RECEIVED", { headline: "RFQ 75mm", alertWorthy: false });
+    const plan = planNotification(n, settings({ soundsEnabled: true, growlEnabled: true }), false);
+    expect(plan.toast).toBe(false);
+    expect(plan.sound).toBe(false);
+    expect(plan.growl).toBe(false);
+  });
+
+  it("a MANUAL_INTERVENTION_REQUIRED alert pops a toast + growl (when growl enabled)", () => {
+    const n = note("MANUAL_INTERVENTION_REQUIRED", {
+      headline: "Manual pricing needed",
+      detail: "USD-OIS 15Y",
+      alertWorthy: true,
+    });
+    const plan = planNotification(n, settings({ growlEnabled: true, soundsEnabled: true }), false);
+    expect(plan.toast).toBe(true);
+    expect(plan.growl).toBe(true);
+    expect(plan.sound).toBe(true);
+    expect(plan.addItem).toBe(true);
   });
 });
 

@@ -108,22 +108,27 @@ describe("product-domain tab bar (fe-fi-migration re-add — Model A)", () => {
     await renderShell();
     const tablist = screen.getByRole("tablist", { name: "product domains" });
     let rail = screen.getByRole("complementary", { name: "workspaces" });
-    // Under the FX tab: Stream (FX-only) present, Quoting (FI-only) absent.
-    expect(within(rail).queryByRole("button", { name: /Stream/i })).not.toBeNull();
+    // Under the FX tab: Stream (FX-only) present, Quoting + Streaming (FI-only)
+    // absent. `/Stream$/i` matches the FX "Stream" row but NOT the FI "Streaming"
+    // row (which ends in "…ing"), so the two rows are disambiguated cleanly.
+    expect(within(rail).queryByRole("button", { name: /Stream$/i })).not.toBeNull();
+    expect(within(rail).queryByRole("button", { name: /Streaming/i })).toBeNull();
     expect(within(rail).queryByRole("button", { name: /Quoting/i })).toBeNull();
     act(() => {
       fireEvent.click(within(tablist).getByRole("tab", { name: /Fixed Income/i }));
     });
     rail = screen.getByRole("complementary", { name: "workspaces" });
-    // Under the FI tab: Quoting present, Stream hidden — the rail follows the domain.
+    // Under the FI tab: Quoting + Streaming (FI) present, the FX-only Stream hidden
+    // — the rail follows the domain.
     expect(within(rail).queryByRole("button", { name: /Quoting/i })).not.toBeNull();
-    expect(within(rail).queryByRole("button", { name: /Stream/i })).toBeNull();
+    expect(within(rail).queryByRole("button", { name: /Streaming/i })).not.toBeNull();
+    expect(within(rail).queryByRole("button", { name: /Stream$/i })).toBeNull();
     expect(
       within(tablist).getByRole("tab", { name: /Fixed Income/i }).getAttribute("aria-selected"),
     ).toBe("true");
   });
 
-  it("switching tabs on a SHARED screen keeps the screen and flips its lens (Model A)", async () => {
+  it("switching tabs on a SHARED screen keeps the screen and renders the new domain's single asset (hard separation — no lens toggle)", async () => {
     await renderShell();
     // Enter the shared Market Data screen from the FX tab.
     act(() => {
@@ -137,14 +142,16 @@ describe("product-domain tab bar (fe-fi-migration re-add — Model A)", () => {
       within(screen.getByRole("complementary", { name: "workspaces" })).getByRole("button", {
         name: /Market Data/i,
       });
-    const lensGroup = (): HTMLElement => screen.getByRole("group", { name: "market data asset class" });
-    // On the FX tab the shared surface pre-selects the FX lens.
+    // Hard vertical asset separation: on the FX tab the shared Market Data screen
+    // renders ONLY the FX (vol-surface) lens — its own "surface view" sub-control
+    // is present — and there is NO cross-asset lens toggle.
     expect(mdBtn().getAttribute("aria-current")).toBe("true");
-    expect(
-      within(lensGroup()).getByRole("button", { name: /FX Options/i }).getAttribute("aria-pressed"),
-    ).toBe("true");
+    expect(await screen.findByRole("group", { name: "surface view" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "market data asset class" })).toBeNull();
+    // The FI (curve) lens is not rendered under the FX domain — no FI tab/content.
+    expect(screen.queryByRole("tablist", { name: "curve authoring mode" })).toBeNull();
 
-    // Flip to the Fixed Income tab: the SHARED Market Data screen is KEPT (Model A)…
+    // Flip to the Fixed Income tab: the SHARED Market Data screen is KEPT…
     act(() => {
       fireEvent.click(
         within(screen.getByRole("tablist", { name: "product domains" })).getByRole("tab", {
@@ -153,15 +160,13 @@ describe("product-domain tab bar (fe-fi-migration re-add — Model A)", () => {
       );
     });
     expect(mdBtn().getAttribute("aria-current")).toBe("true"); // still on Market Data
-    // …and its lens flipped to the rates (Fixed Income) lens.
+    // …and it now renders ONLY the FI (rates curve) lens, derived from the domain —
+    // still no cross-asset toggle, and the FX surface lens is gone.
     expect(
-      within(lensGroup())
-        .getByRole("button", { name: /Fixed Income/i })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
-    expect(
-      within(lensGroup()).getByRole("button", { name: /FX Options/i }).getAttribute("aria-pressed"),
-    ).toBe("false");
+      await screen.findByRole("tablist", { name: "curve authoring mode" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "market data asset class" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "surface view" })).toBeNull();
   });
 });
 

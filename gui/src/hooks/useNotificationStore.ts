@@ -45,11 +45,6 @@ export interface Toast {
   readonly notification: Notification;
 }
 
-/** The kinds that raise a transient toast (a new inbound request needing a price). */
-export function isToastKind(kind: NotificationKind): boolean {
-  return kind === "RFQ_RECEIVED" || kind === "IOI_RECEIVED";
-}
-
 /** The PENDING (unresolved-request) kinds. */
 function isPendingKind(kind: NotificationKind): boolean {
   return kind === "RFQ_RECEIVED" || kind === "IOI_RECEIVED";
@@ -120,12 +115,19 @@ export function planNotification(
       bumpUnread: false,
     };
   }
+  // Server exception contract (commit 542e547): the server's `alert_worthy` flag
+  // is the authoritative POPUP gate. An `alertWorthy:false` event still lands in
+  // the centre (addItem) and still bumps the unseen count when closed, but raises
+  // NO popup — no toast, no desktop growl, no sound. The kind no longer gates the
+  // popup: the server now owns that decision via `alert_worthy` (so a manual-
+  // intervention kind 7, neither a *_RECEIVED nor a terminal kind, still pops when
+  // alert-worthy; an auto-priced event with alert_worthy:false stays quiet).
   return {
     suppressed: false,
     addItem: true,
-    toast: isToastKind(n.kind),
-    sound: settings.soundsEnabled,
-    growl: settings.growlEnabled,
+    toast: n.alertWorthy,
+    sound: n.alertWorthy && settings.soundsEnabled,
+    growl: n.alertWorthy && settings.growlEnabled,
     bumpUnread: !isOpen,
   };
 }

@@ -23,6 +23,7 @@ import { MarketDataWorkspace } from "../workspaces/MarketDataWorkspace";
 import { QuotingWorkspace } from "../workspaces/QuotingWorkspace";
 import { ReferenceDataWorkspace } from "../workspaces/ReferenceDataWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
+import { FiStreamingWorkspace } from "../workspaces/FiStreamingWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { XvaWorkspace } from "../workspaces/XvaWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
@@ -82,6 +83,9 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // pre-targets the cross-asset spec (#3). Opens the default (FX) structure.
   ticket: TicketWorkspace,
   stream: StreamWorkspace,
+  // FI Streaming: live bond + swap prices with the right-hand RFS request sidebar.
+  // A Fixed-Income-only row (never under the FX tab).
+  fistreaming: FiStreamingWorkspace,
   // Market Data: FX vol surface + FI rates curve as two lenses of ONE workspace
   // (#2). Opens the FX surface lens by default; the FI curve is the rates lens.
   surface: MarketDataWorkspace,
