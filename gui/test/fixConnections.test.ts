@@ -33,8 +33,9 @@ function spec(overrides: Partial<FixConnectionSpec> = {}): FixConnectionSpec {
     senderCompId: "CELNET",
     targetCompId: "CELNET-CPTY",
     enabled: true,
-    // Every managed connection belongs to a desk (no unowned "house" acceptors).
-    desk: "g10",
+    // The routing desk is OPTIONAL — the default spec is unrouted; routing-desk
+    // tests create a desk first and pass its id explicitly.
+    desk: "",
     ...overrides,
   };
 }
@@ -67,7 +68,7 @@ describe("fix-admin wire codec", () => {
     expect((body.principal as Record<string, unknown>).grant_all).toBe(true);
   });
 
-  it("carries the owning desk both ways (descriptor + spec)", () => {
+  it("carries the routing desk both ways (descriptor + spec)", () => {
     const c = fixConnectionFromWire({
       id: "opt-1",
       name: "Bank A",
@@ -81,16 +82,36 @@ describe("fix-admin wire codec", () => {
       desk: "g10",
     });
     expect(c.desk).toBe("g10");
-    // The owning desk rides through to the wire spec (every connection has one).
+    // The routing desk rides through to the wire spec (submitted by id).
     const body = createFixConnectionRequestToWire(spec({ desk: "em" }));
     expect((body.spec as Record<string, unknown>).desk).toBe("em");
+    // A blank (unrouted) desk is encoded as "" — the server accepts it.
+    const unrouted = createFixConnectionRequestToWire(spec({ desk: "" }));
+    expect((unrouted.spec as Record<string, unknown>).desk).toBe("");
   });
 
-  it("the mock rejects a deskless connection (no unowned house acceptors)", async () => {
+  it("the mock accepts an unrouted (deskless) connection", async () => {
+    const t = new MockTransport();
+    const created = await t.createFixConnection(
+      spec({ name: "Unrouted", bindAddr: "127.0.0.1:9600", desk: "" }),
+    );
+    expect(created.desk).toBe("");
+  });
+
+  it("the mock rejects a non-blank routing desk that is not defined", async () => {
     const t = new MockTransport();
     await expect(
-      t.createFixConnection(spec({ name: "Deskless", bindAddr: "127.0.0.1:9600", desk: "" })),
-    ).rejects.toThrow(/must belong to a desk/);
+      t.createFixConnection(spec({ name: "Ghost", bindAddr: "127.0.0.1:9601", desk: "nope" })),
+    ).rejects.toThrow(/not a defined desk/);
+  });
+
+  it("the mock routes to a defined desk (submitted by id)", async () => {
+    const t = new MockTransport();
+    const desk = await t.createDesk("G10 Options");
+    const created = await t.createFixConnection(
+      spec({ name: "Routed", bindAddr: "127.0.0.1:9602", desk: desk.id }),
+    );
+    expect(created.desk).toBe(desk.id);
   });
 });
 

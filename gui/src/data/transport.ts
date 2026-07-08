@@ -544,6 +544,15 @@ export interface CelnetTransport {
   /** AuthService.CreateDesk (admin) — create a desk; resolves to the created desk. */
   createDesk(name: string): Promise<DeskDesc>;
 
+  /**
+   * AuthService.UpdateDesk (admin) — rename a desk. `id` is the stable routing
+   * key (immutable — RFQ/deal delivery, `User.deskId` and connection routing all
+   * key on it); only the display `name` changes. Rejects on an unknown id
+   * (NotFound), a blank name (InvalidArgument), or a name that case-insensitively
+   * collides with another desk (AlreadyExists). Resolves to the renamed desk.
+   */
+  updateDesk(id: string, name: string): Promise<DeskDesc>;
+
   /** AuthService.DeleteDesk (admin) — remove a desk (its members become unassigned). */
   deleteDesk(id: string): Promise<boolean>;
 

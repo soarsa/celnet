@@ -66,6 +66,13 @@ export interface AdminApi {
   resetPassword: (id: string, newPassword: string) => Promise<void>;
   /** Create a desk; resolves to the created desk or rejects. */
   createDesk: (name: string) => Promise<DeskDesc>;
+  /**
+   * Rename a desk OPTIMISTICALLY: the desk roster shows the new label immediately,
+   * reconciles to the server's returned desk on success, and rolls back
+   * (rethrowing) on failure so the caller can surface the error inline. The desk
+   * `id` (the routing key) never changes — only the display `name`.
+   */
+  updateDesk: (id: string, name: string) => Promise<DeskDesc>;
   /** Delete a desk (its members become unassigned). */
   deleteDesk: (id: string) => Promise<void>;
   /** Create a legal entity; resolves to the created entity or rejects. */
@@ -190,6 +197,25 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
     [transport, refetch],
   );
 
+  const updateDesk = useCallback(
+    async (id: string, name: string): Promise<DeskDesc> => {
+      const snapshot = desks;
+      // Optimistic: reflect the new label immediately (other rows keep identity).
+      setDesks((prev) => prev.map((d) => (d.id === id ? { ...d, name } : d)));
+      try {
+        const updated = await transport.updateDesk(id, name);
+        // Reconcile the single authoritative row from the server's response.
+        setDesks((prev) => prev.map((d) => (d.id === id ? updated : d)));
+        return updated;
+      } catch (e: unknown) {
+        // Roll back to the pre-attempt roster and rethrow so the UI shows the error.
+        setDesks(snapshot);
+        throw e;
+      }
+    },
+    [transport, desks],
+  );
+
   const deleteDesk = useCallback(
     async (id: string): Promise<void> => {
       await transport.deleteDesk(id);
@@ -264,6 +290,7 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
     deleteUser,
     resetPassword,
     createDesk,
+    updateDesk,
     deleteDesk,
     createEntity,
     updateEntity,

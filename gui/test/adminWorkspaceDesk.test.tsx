@@ -53,6 +53,7 @@ function makeAdmin(overrides: Record<string, unknown> = {}) {
     deleteUser: vi.fn(),
     resetPassword: vi.fn(),
     createDesk: vi.fn(),
+    updateDesk: vi.fn(async () => ({ id: "g10", name: "G10 Vol" })),
     deleteDesk: vi.fn(),
     createEntity: vi.fn(),
     updateEntity: vi.fn(),
@@ -109,6 +110,55 @@ describe("AdminWorkspace — inline desk assignment", () => {
     fireEvent.change(select, { target: { value: "g10" } });
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("permission_denied"),
+    );
+  });
+
+  it("displays a desk by NAME while assigning by id (the option value is the id)", () => {
+    state.app = makeApp(true, { id: "admin1", email: "admin@celnet.com" });
+    state.admin = makeAdmin();
+    render(<AdminWorkspace />);
+
+    // The user's desk <option> shows the human name but carries the id as its value.
+    const option = screen.getByRole("option", { name: "G10 Options" }) as HTMLOptionElement;
+    expect(option.value).toBe("g10");
+  });
+});
+
+describe("AdminWorkspace — inline desk rename", () => {
+  it("calls updateDesk(id, newName) when an admin saves an inline rename", async () => {
+    const updateDesk = vi.fn(async () => ({ id: "g10", name: "G10 Vol" }));
+    state.app = makeApp(true, { id: "admin1", email: "admin@celnet.com" });
+    state.admin = makeAdmin({ updateDesk });
+    render(<AdminWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    const input = screen.getByRole("textbox", { name: "Rename desk G10 Options" });
+    fireEvent.change(input, { target: { value: "G10 Vol" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(updateDesk).toHaveBeenCalledWith("g10", "G10 Vol");
+    // The inline editor closes once the (successful) rename settles.
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox", { name: "Rename desk G10 Options" })).toBeNull(),
+    );
+  });
+
+  it("surfaces a friendly per-row error when a rename hits a duplicate name", async () => {
+    const updateDesk = vi.fn(async () => {
+      throw new Error("a desk named `EM Rates` already exists");
+    });
+    state.app = makeApp(true, { id: "admin1", email: "admin@celnet.com" });
+    state.admin = makeAdmin({ updateDesk });
+    render(<AdminWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Rename desk G10 Options" }), {
+      target: { value: "EM Rates" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/already used by another desk/),
     );
   });
 });

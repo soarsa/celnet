@@ -99,3 +99,45 @@ describe("FixConnectionWizard — fixed-income dialect cards", () => {
     );
   });
 });
+
+describe("FixConnectionWizard — routing desk (optional)", () => {
+  /** Advance from the (default OPTIONS) dialect step into the identity step. */
+  function toIdentity(name: string): void {
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/ })); // → identity
+    fireEvent.change(screen.getByPlaceholderText(/Bank A/), { target: { value: name } });
+  }
+
+  it("shows each desk by NAME but submits its id", async () => {
+    const { onCreate } = renderWizard(() => true);
+    toIdentity("Named Venue");
+
+    const select = screen.getByRole("combobox", { name: "Routing desk" });
+    // The option label is the human name, not the id.
+    expect(screen.getByRole("option", { name: "G10 Rates" })).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "g10" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/ })); // → compids
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/ })); // → review
+    fireEvent.click(screen.getByRole("button", { name: /Create connection/ }));
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ desk: "g10" })),
+    );
+  });
+
+  it("creates an UNROUTED connection (blank desk) and warns about it", async () => {
+    const { onCreate } = renderWizard(() => true);
+    toIdentity("Unrouted Venue");
+
+    // Default selection is "— unrouted —" (blank), and the step surfaces a warning
+    // without blocking progress (the routing desk is optional).
+    expect(screen.getByRole("combobox", { name: "Routing desk" })).toHaveValue("");
+    expect(screen.getByText(/Unrouted —/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/ })); // → compids
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/ })); // → review
+    fireEvent.click(screen.getByRole("button", { name: /Create connection/ }));
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ desk: "" })),
+    );
+  });
+});

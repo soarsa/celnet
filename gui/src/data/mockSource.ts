@@ -1679,13 +1679,12 @@ export class MockTransport implements CelnetTransport {
 
   /** Build a descriptor from a spec, reflecting `enabled` into the offline runtime status. */
   private fixFromSpec(spec: FixConnectionSpec, id: string): FixConnection {
-    // Every managed connection belongs to a desk — no unowned "house" acceptors
-    // (server parity: `def_from_spec` rejects a blank desk with `invalid_argument`).
+    // Server parity: the routing desk is OPTIONAL — a blank desk is a valid,
+    // intentionally-unrouted connection (no desk's users receive its RFQs/deals).
+    // A NON-blank desk must name a defined desk, else the server rejects it.
     const desk = (spec.desk ?? "").trim();
-    if (desk.length === 0) {
-      throw new Error(
-        "a FIX connection must belong to a desk (select the owning desk)",
-      );
+    if (desk.length > 0 && !this.mockDesks.some((d) => d.id === desk)) {
+      throw new Error(`routing desk \`${desk}\` is not a defined desk`);
     }
     return {
       id,
@@ -1944,6 +1943,22 @@ export class MockTransport implements CelnetTransport {
     }
     const desk: DeskDesc = { id, name: label };
     this.mockDesks.push(desk);
+    return { ...desk };
+  }
+
+  async updateDesk(id: string, name: string): Promise<DeskDesc> {
+    // Server parity: unknown id ⇒ not_found; blank name ⇒ invalid_argument; a name
+    // that case-insensitively collides with ANOTHER desk ⇒ already_exists. The `id`
+    // is the immutable routing key — only the display label changes.
+    const desk = this.mockDesks.find((d) => d.id === id);
+    if (!desk) throw new Error(`no desk with id \`${id}\``);
+    const label = name.trim();
+    if (label.length === 0) throw new Error("desk name is required");
+    const clash = this.mockDesks.some(
+      (d) => d.id !== id && d.name.toLowerCase() === label.toLowerCase(),
+    );
+    if (clash) throw new Error(`a desk named \`${label}\` already exists`);
+    desk.name = label;
     return { ...desk };
   }
 

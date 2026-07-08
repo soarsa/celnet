@@ -208,6 +208,41 @@ describe("MockTransport auth (offline parity)", () => {
     expect(await t.listDesks()).toHaveLength(0);
   });
 
+  it("renames a desk (label changes; the id/routing key is immutable)", async () => {
+    const t = new MockTransport();
+    const desk = await t.createDesk("G10 Options");
+    const jane = await t.createUser({
+      email: "jane@celnet.com",
+      displayName: "Jane",
+      role: "TRADER",
+      deskId: desk.id,
+      password: "longenoughpw1",
+    });
+
+    const renamed = await t.updateDesk(desk.id, "G10 Vol");
+    expect(renamed).toEqual({ id: desk.id, name: "G10 Vol" });
+    // The member keeps its desk — routing keys on the immutable id, not the label.
+    const users = await t.listUsers();
+    expect(users.find((u) => u.id === jane.id)?.deskId).toBe(desk.id);
+    expect((await t.listDesks()).find((d) => d.id === desk.id)?.name).toBe("G10 Vol");
+  });
+
+  it("rejects a desk rename that is unknown, blank, or a duplicate label", async () => {
+    const t = new MockTransport();
+    const g10 = await t.createDesk("G10 Options");
+    await t.createDesk("EM Rates");
+
+    await expect(t.updateDesk("ghost", "X")).rejects.toThrow(/no desk/); // NotFound
+    await expect(t.updateDesk(g10.id, "   ")).rejects.toThrow(/required/); // InvalidArgument
+    // Duplicate is case-insensitive vs OTHER desks (AlreadyExists).
+    await expect(t.updateDesk(g10.id, "em rates")).rejects.toThrow(/already exists/);
+    // Renaming a desk to its OWN current label (any case) is allowed.
+    await expect(t.updateDesk(g10.id, "G10 OPTIONS")).resolves.toEqual({
+      id: g10.id,
+      name: "G10 OPTIONS",
+    });
+  });
+
   it("refuses to remove the last administrator", async () => {
     const t = new MockTransport();
     const [admin] = await t.listUsers();

@@ -139,6 +139,18 @@
   outline-offset: 1px;
 }
 
+/* Inline desk-rename: a compact input + Save/Cancel that replaces the name cell
+   in place while editing (the id/routing-key column stays fixed alongside). */
+.renameForm {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.renameForm .deskInput {
+  min-width: 10rem;
+}
+
 /* Routing hint — an informational surface (not an error banner) explaining that
    desk assignment is what permissions a trader's quote/deal reception. */
 .hint {

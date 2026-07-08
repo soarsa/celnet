@@ -106,9 +106,10 @@ export interface FixConnectionWizardProps {
   /** The current connections, for client-side uniqueness/address pre-checks. */
   existing: readonly FixConnection[];
   /**
-   * The desks a connection may belong to. Every managed FIX connection is owned
-   * by a desk (there are no unowned "house" acceptors), so the wizard requires
-   * selecting one of these; an empty roster blocks creation until a desk exists.
+   * The desks a connection may be routed to. The routing desk is OPTIONAL — it
+   * determines which desk's users receive the venue's RFQs/deals; a blank desk
+   * ("— unrouted —") accepts the session without delivering its traffic anywhere.
+   * The picker shows the desk `name` but submits the stable `id`.
    */
   desks: readonly DeskDesc[];
   /**
@@ -188,11 +189,10 @@ export function FixConnectionWizard({
     if (enabled && addrClash) {
       return `Address ${bindAddr} is already used by an enabled connection.`;
     }
-    if (desk.trim().length === 0) {
-      return "Select the owning desk — every connection belongs to a desk.";
-    }
+    // The routing desk is OPTIONAL — a blank desk is a valid, intentionally-
+    // unrouted connection (the review step flags it), so it never blocks the step.
     return null;
-  }, [nameTrimmed, nameClash, host, portNum, enabled, addrClash, bindAddr, desk]);
+  }, [nameTrimmed, nameClash, host, portNum, enabled, addrClash, bindAddr]);
 
   const compIdError = useMemo((): string | null => {
     if (senderCompId.trim().length === 0) return "SenderCompID is required.";
@@ -426,23 +426,35 @@ export function FixConnectionWizard({
                 </label>
               </div>
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Owning desk</span>
+                <span className={styles.fieldLabel}>Routing desk (optional)</span>
                 <select
                   className={styles.input}
                   value={desk}
                   onChange={(e) => setDesk(e.target.value)}
+                  aria-label="Routing desk"
                 >
-                  <option value="">Select a desk…</option>
+                  <option value="">— unrouted —</option>
                   {desks.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.name} ({d.id})
+                      {d.name}
                     </option>
                   ))}
                 </select>
+                <p className={styles.hint}>
+                  The routing desk determines which desk&apos;s users receive this
+                  venue&apos;s RFQs and executed deals. Leave it unrouted to accept
+                  the session without delivering its traffic to any desk.
+                </p>
+                {desk.trim().length === 0 && (
+                  <p className={styles.warn} role="status">
+                    ⚠ Unrouted — no desk&apos;s users will receive this connection&apos;s
+                    RFQs or deals.
+                  </p>
+                )}
                 {desks.length === 0 && (
                   <p className={styles.hint}>
-                    No desks yet — create one in the Admin workspace first. Every FIX
-                    connection must belong to a desk.
+                    No desks defined yet — create one in the Admin workspace to route
+                    this connection&apos;s traffic to a desk.
                   </p>
                 )}
               </label>
@@ -509,8 +521,16 @@ export function FixConnectionWizard({
                   <dd>{targetCompId.trim()}</dd>
                 </div>
                 <div className={styles.summaryRow}>
-                  <dt>Owning desk</dt>
-                  <dd>{deskLabel(desks, desk)}</dd>
+                  <dt>Routing desk</dt>
+                  <dd>
+                    {desk.trim().length === 0 ? (
+                      <span className={styles.warn}>
+                        ⚠ Unrouted — traffic reaches no desk
+                      </span>
+                    ) : (
+                      deskLabel(desks, desk)
+                    )}
+                  </dd>
                 </div>
                 <div className={styles.summaryRow}>
                   <dt>On create</dt>

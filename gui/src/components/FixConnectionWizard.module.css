@@ -273,6 +273,16 @@
   color: var(--danger, oklch(62% 0.2 25));
 }
 
+/* Unrouted-connection warning: an amber advisory (not an error — an unrouted
+   connection is valid), distinct from the destructive .error tone above. */
+.warn {
+  margin: 0;
+  font-size: var(--type-caption);
+  font-weight: 600;
+  color: var(--warning, oklch(72% 0.15 75));
+  line-height: 1.5;
+}
+
 /* Footer */
 .foot {
   display: flex;

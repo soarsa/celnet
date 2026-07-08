@@ -22,7 +22,10 @@ import {
   conventionsFromWire,
   conventionsToWire,
   createBookRequestToWire,
+  createDeskRequestToWire,
   createEntityRequestToWire,
+  deskResponseFromWire,
+  updateDeskRequestToWire,
   deleteBookRequestToWire,
   deleteEntityRequestToWire,
   drillRiskRequestToWire,
@@ -821,5 +824,20 @@ describe("wsCodec — fixed-income LIVE STREAMING (rates_subscribe + snapshot/up
     };
     const snap = ratesStreamSnapshotFromWire(frame);
     expect("correlationId" in snap).toBe(false);
+  });
+});
+
+describe("desk create/rename codecs", () => {
+  it("createDeskRequestToWire carries only the name (token auto-injected)", () => {
+    expect(createDeskRequestToWire("G10 Options")).toEqual({ name: "G10 Options" });
+  });
+
+  it("updateDeskRequestToWire carries (id, name) — id is the routing key", () => {
+    expect(updateDeskRequestToWire("g10", "G10 Vol")).toEqual({ id: "g10", name: "G10 Vol" });
+  });
+
+  it("deskResponseFromWire decodes the desk_updated reply `{ desk: {...} }`", () => {
+    const desk = deskResponseFromWire({ desk: { id: "g10", name: "G10 Vol" } });
+    expect(desk).toEqual({ id: "g10", name: "G10 Vol" });
   });
 });

@@ -30,6 +30,11 @@ import {
 } from "../lib/fixClientConfig";
 import styles from "./ConnectionsWorkspace.module.css";
 
+/** Resolve a routing-desk id to its display name, falling back to the bare id. */
+function deskName(desks: readonly DeskDesc[], deskId: string): string {
+  return desks.find((d) => d.id === deskId)?.name ?? deskId;
+}
+
 /** The display label for a connection's dialect. */
 function kindLabel(c: FixConnection): string {
   switch (c.kind) {
@@ -50,11 +55,12 @@ export function ConnectionsWorkspace(): React.ReactElement {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [monitorId, setMonitorId] = useState<string | null>(null);
-  // The desks a new connection may be assigned to (every connection belongs to a
-  // desk). Loaded for the wizard's desk picker; desk admin is admin-gated, so a
-  // non-admin simply sees an empty roster (and the server rejects a deskless
-  // create anyway). Refreshed when the wizard opens so a desk just created in the
-  // Admin workspace is selectable.
+  // The desks a new connection may be routed to (routing is OPTIONAL — a blank
+  // desk is a valid unrouted connection). Loaded for the wizard's routing-desk
+  // picker AND to resolve each row's routing-desk id to its display name. Desk
+  // admin is admin-gated, so a non-admin simply sees an empty roster. Refreshed
+  // when the wizard opens so a desk just created in the Admin workspace is
+  // selectable.
   const [desks, setDesks] = useState<DeskDesc[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -176,7 +182,18 @@ export function ConnectionsWorkspace(): React.ReactElement {
                   <td className={styles.nameCell}>{c.name}</td>
                   <td>{kindLabel(c)}</td>
                   <td className={styles.mono}>{c.running && c.boundAddr ? c.boundAddr : c.bindAddr}</td>
-                  <td className={styles.mono}>{c.desk || "—"}</td>
+                  <td>
+                    {c.desk ? (
+                      <span className={styles.nameCell}>{deskName(desks, c.desk)}</span>
+                    ) : (
+                      <span
+                        className={styles.unrouted}
+                        title="Unrouted — no desk's users receive this connection's RFQs or deals."
+                      >
+                        ⚠ unrouted
+                      </span>
+                    )}
+                  </td>
                   <td className={styles.mono}>{c.senderCompId}</td>
                   <td className={styles.mono}>{c.targetCompId}</td>
                   <td className={styles.actionsCol}>

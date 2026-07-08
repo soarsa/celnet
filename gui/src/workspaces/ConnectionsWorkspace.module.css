@@ -77,6 +77,18 @@
   color: var(--text-secondary);
 }
 
+/* Unrouted-connection marker in the routing-desk column: an amber advisory that a
+   connection delivers to no desk (a valid but attention-worthy state). */
+.unrouted {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-caption);
+  font-weight: 600;
+  color: var(--warning, oklch(72% 0.15 75));
+  white-space: nowrap;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

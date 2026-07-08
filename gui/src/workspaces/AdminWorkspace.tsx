@@ -37,6 +37,27 @@ function RoleBadge({ user }: { user: UserDesc }): React.ReactElement {
   );
 }
 
+/**
+ * Map a desk-rename failure to a friendly, actionable line. The server rejects a
+ * rename three ways — a name that collides with another desk (AlreadyExists), a
+ * blank name (InvalidArgument), or an unknown desk (NotFound); each carries a
+ * recognisable token in its message. Anything unrecognised falls through to the
+ * raw server text (never swallowed).
+ */
+function friendlyDeskRenameError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes("already") || m.includes("exists") || m.includes("duplicate")) {
+    return "That name is already used by another desk — pick a different one.";
+  }
+  if (m.includes("required") || m.includes("blank") || m.includes("invalid")) {
+    return "Enter a desk name.";
+  }
+  if (m.includes("not_found") || m.includes("no desk")) {
+    return "That desk no longer exists — refresh the roster.";
+  }
+  return message;
+}
+
 /** The compact per-asset abbreviation for the capability chips. */
 const ASSET_ABBR: Record<CapabilityAsset, string> = {
   fx_options: "FX",
@@ -76,6 +97,12 @@ export function AdminWorkspace(): React.ReactElement {
   const [capUserId, setCapUserId] = useState<string | null>(null);
   // Per-row desk-assignment errors, keyed by user id (cleared at each attempt).
   const [deskErrors, setDeskErrors] = useState<Record<string, string>>({});
+  // Inline desk-rename state: the desk being edited (its id), its draft label, and
+  // per-desk rename errors keyed by desk id. The id is the immutable routing key —
+  // only the label changes.
+  const [renameDeskId, setRenameDeskId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameErrors, setRenameErrors] = useState<Record<string, string>>({});
 
   // --- the sign-in / insufficient-role gate --------------------------------
   if (!auth.isAdmin) {
@@ -131,6 +158,43 @@ export function AdminWorkspace(): React.ReactElement {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "desk assignment failed";
       setDeskErrors((prev) => ({ ...prev, [userId]: message }));
+    }
+  };
+
+  // --- inline desk rename --------------------------------------------------
+  const beginRename = (d: DeskDesc): void => {
+    setRenameDeskId(d.id);
+    setRenameDraft(d.name);
+    setRenameErrors((prev) => {
+      const { [d.id]: _cleared, ...rest } = prev;
+      return rest;
+    });
+  };
+
+  const cancelRename = (): void => {
+    setRenameDeskId(null);
+    setRenameDraft("");
+  };
+
+  // Commit a rename OPTIMISTICALLY via the hook; a failure surfaces as a per-row
+  // inline error and the roster rolls back. The id (routing key) is immutable.
+  const commitRename = async (id: string): Promise<void> => {
+    const next = renameDraft.trim();
+    if (next.length === 0) {
+      setRenameErrors((prev) => ({ ...prev, [id]: "Enter a desk name." }));
+      return;
+    }
+    setRenameErrors((prev) => {
+      const { [id]: _cleared, ...rest } = prev;
+      return rest;
+    });
+    try {
+      await admin.updateDesk(id, next);
+      setRenameDeskId(null);
+      setRenameDraft("");
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "rename failed";
+      setRenameErrors((prev) => ({ ...prev, [id]: friendlyDeskRenameError(message) }));
     }
   };
 
@@ -285,20 +349,60 @@ export function AdminWorkspace(): React.ReactElement {
               </tr>
             </thead>
             <tbody>
-              {admin.desks.map((d: DeskDesc) => (
-                <tr key={d.id}>
-                  <td className={styles.mono}>{d.id}</td>
-                  <td className={styles.nameCell}>{d.name}</td>
-                  <td className={styles.mono}>{memberCount(d.id)}</td>
-                  <td className={styles.actionsCol}>
-                    <div className={styles.rowActions}>
-                      <Button variant="ghost" onClick={() => void runAction(() => admin.deleteDesk(d.id))}>
-                        Delete
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {admin.desks.map((d: DeskDesc) => {
+                const editing = renameDeskId === d.id;
+                return (
+                  <tr key={d.id}>
+                    <td className={styles.mono}>{d.id}</td>
+                    <td className={styles.nameCell}>
+                      {editing ? (
+                        <form
+                          className={styles.renameForm}
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void commitRename(d.id);
+                          }}
+                        >
+                          <input
+                            className={styles.deskInput}
+                            type="text"
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            aria-label={`Rename desk ${d.name}`}
+                            autoFocus
+                          />
+                          <Button type="submit" variant="primary" disabled={renameDraft.trim().length === 0}>
+                            Save
+                          </Button>
+                          <Button type="button" variant="ghost" onClick={cancelRename}>
+                            Cancel
+                          </Button>
+                        </form>
+                      ) : (
+                        d.name
+                      )}
+                      {renameErrors[d.id] && (
+                        <p className={styles.rowError} role="alert">
+                          {renameErrors[d.id]}
+                        </p>
+                      )}
+                    </td>
+                    <td className={styles.mono}>{memberCount(d.id)}</td>
+                    <td className={styles.actionsCol}>
+                      <div className={styles.rowActions}>
+                        {!editing && (
+                          <Button variant="secondary" onClick={() => beginRename(d)}>
+                            Rename
+                          </Button>
+                        )}
+                        <Button variant="ghost" onClick={() => void runAction(() => admin.deleteDesk(d.id))}>
+                          Delete
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

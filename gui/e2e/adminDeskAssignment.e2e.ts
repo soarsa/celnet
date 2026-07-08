@@ -18,6 +18,8 @@ const STAMP = Date.now();
 const TRADER_EMAIL = `desk-assign-trader-${STAMP}@celnet.com`;
 const TRADER_PW = "longenoughpw1";
 const DESK_NAME = `Desk Assign ${STAMP}`;
+const DESK_RENAMED = `Desk Assign ${STAMP} Vol`;
+const CONN_NAME = `Desk Route Conn ${STAMP}`;
 
 /** Click a workspace rail button by its title prefix `"<label> ("` (unique per view). */
 async function railClick(page: Page, label: string): Promise<void> {
@@ -34,7 +36,7 @@ async function railClick(page: Page, label: string): Promise<void> {
   await btn.click();
 }
 
-test("admin creates a desk + trader and assigns the desk inline, persisted end-to-end", async ({
+test("admin creates + assigns + renames a desk and binds a connection to it, persisted end-to-end", async ({
   page,
 }) => {
   // 1) Admin signs in and opens the Admin workspace.
@@ -67,6 +69,62 @@ test("admin creates a desk + trader and assigns the desk inline, persisted end-t
   await page.getByRole("button", { name: "Refresh" }).click();
   const deskSelectAfter = page.getByRole("combobox", { name: `Desk for ${TRADER_EMAIL}` });
   await expect(deskSelectAfter.locator("option:checked")).toHaveText(DESK_NAME);
+
+  // 6) Rename the desk INLINE. The id (routing key) is immutable — only the label
+  //    changes — and the new label must survive a real server round trip.
+  // Scope to the Desks panel — the renamed label also shows in the Users desk
+  // <select>, so an unscoped cell locator is ambiguous.
+  const desksPanel = page
+    .locator("section")
+    .filter({ has: page.getByRole("heading", { name: "Desks", exact: true }) });
+  const deskRow = desksPanel
+    .getByRole("row")
+    .filter({ has: page.getByRole("cell", { name: DESK_NAME, exact: true }) });
+  await deskRow.getByRole("button", { name: "Rename" }).click();
+  await page.getByRole("textbox", { name: `Rename desk ${DESK_NAME}` }).fill(DESK_RENAMED);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(desksPanel.getByRole("cell", { name: DESK_RENAMED, exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(desksPanel.getByRole("cell", { name: DESK_RENAMED, exact: true })).toBeVisible();
+  // The member keeps its desk (routing keys on the immutable id); it now displays
+  // under the NEW label after the roster reloads from the server.
+  await expect(
+    page
+      .getByRole("combobox", { name: `Desk for ${TRADER_EMAIL}` })
+      .locator("option:checked"),
+  ).toHaveText(DESK_RENAMED);
+
+  // 7) Bind a NEW FIX connection to the renamed desk in the Connections workspace.
+  await railClick(page, "Connections");
+  await page.getByRole("button", { name: "New connection" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click(); // kind (OPTIONS) → identity
+  await page.getByPlaceholder(/Bank A/).fill(CONN_NAME);
+  // A unique high port + "saved, not bound" so the e2e never contends for a socket.
+  await page.getByPlaceholder("9100").fill(String(19000 + (STAMP % 4000)));
+  await page.getByRole("combobox", { name: "Routing desk" }).selectOption({ label: DESK_RENAMED });
+  await page.getByLabel(/Bind immediately/).uncheck();
+  await page.getByRole("button", { name: "Next", exact: true }).click(); // identity → compids
+  await page.getByRole("button", { name: "Next", exact: true }).click(); // compids → review
+  await page.getByRole("button", { name: "Create connection" }).click();
+
+  // The new connection's routing-desk cell resolves the id to the desk NAME.
+  const connRow = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("cell", { name: CONN_NAME, exact: true }) });
+  await expect(connRow.getByText(DESK_RENAMED)).toBeVisible();
+
+  // Persistence: reload the connections roster from the server and re-assert the bind.
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(
+    page
+      .getByRole("row")
+      .filter({ has: page.getByRole("cell", { name: CONN_NAME, exact: true }) })
+      .getByText(DESK_RENAMED),
+  ).toBeVisible();
+
+  // Back to the Admin workspace for the screenshot + a11y pass.
+  await railClick(page, "Admin");
 
   // Screenshot the Admin workspace at 1440.
   await page.setViewportSize({ width: 1440, height: 900 });

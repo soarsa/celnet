@@ -1742,9 +1742,11 @@ export interface FixConnection {
   /** The actually-bound address when running (resolves an ephemeral `:0`); else "". */
   boundAddr: string;
   /**
-   * The owning desk id (`DeskDef.id`). Every managed connection belongs to a
-   * desk; a desk-scoped (non-admin) session sees only the connections whose
-   * `desk` matches its own, while an admin sees all of them.
+   * The routing desk id (`DeskDesc.id`), or `""` when the connection is
+   * intentionally unrouted. The routing desk determines which desk's users
+   * receive this venue's RFQs/deals; a desk-scoped (non-admin) session sees only
+   * the connections whose `desk` matches its own, while an admin sees all of them.
+   * An unrouted (blank) connection accepts the session but delivers to no desk.
    */
   desk: string;
 }
@@ -1764,10 +1766,11 @@ export interface FixConnectionSpec {
   targetCompId: string;
   enabled: boolean;
   /**
-   * The owning desk id (`DeskDef.id`). Required by the server on create/update —
-   * every connection belongs to a desk; the wizard picks it from the desk roster.
-   * Optional in the type only because the wire codec defaults an absent value to
-   * `""`, which the server then rejects.
+   * The routing desk id (`DeskDesc.id`), OPTIONAL. When set (non-blank) it must
+   * name a defined desk — the server validates this on create/update and rejects
+   * an unknown id — and it determines which desk's users receive the venue's
+   * RFQs/deals. Absent/blank ⇒ the wire codec sends `""` and the connection is
+   * accepted as intentionally unrouted (delivers to no desk).
    */
   desk?: string;
 }

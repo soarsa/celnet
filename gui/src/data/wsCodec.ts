@@ -3216,7 +3216,16 @@ export function createDeskRequestToWire(name: string): WireObject {
   return { name };
 }
 
-/** A single-desk response (`{ desk: {...} }`) from create. */
+/**
+ * Rename a desk: `id` is the stable routing key (immutable), `name` the new
+ * editable label. The `session_token` + framing `correlation_id` are auto-
+ * injected by `WsConnection.request`, so the body carries only `(id, name)`.
+ */
+export function updateDeskRequestToWire(id: string, name: string): WireObject {
+  return { id, name };
+}
+
+/** A single-desk response (`{ desk: {...} }`) from create / update. */
 export function deskResponseFromWire(o: WireObject): DeskDesc {
   const d = o["desk"];
   return deskDescFromWire(d && typeof d === "object" ? (d as WireObject) : {});

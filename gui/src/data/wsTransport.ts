@@ -136,6 +136,7 @@ import {
   listFixMessagesRequestToWire,
   listFixMessagesResponseFromWire,
   createDeskRequestToWire,
+  updateDeskRequestToWire,
   createUserRequestToWire,
   deleteDeskRequestToWire,
   listEntitiesRequestToWire,
@@ -1619,6 +1620,15 @@ export class WsTransport implements CelnetTransport {
 
   async createDesk(name: string): Promise<DeskDesc> {
     const reply = await this.conn.request("create_desk", createDeskRequestToWire(name), "desk_created");
+    return deskResponseFromWire(reply);
+  }
+
+  async updateDesk(id: string, name: string): Promise<DeskDesc> {
+    const reply = await this.conn.request(
+      "update_desk",
+      updateDeskRequestToWire(id, name),
+      "desk_updated",
+    );
     return deskResponseFromWire(reply);
   }
 
