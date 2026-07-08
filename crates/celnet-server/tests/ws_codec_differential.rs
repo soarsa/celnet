@@ -3057,8 +3057,8 @@ use celnet_proto::{
     InstrumentDefDesc, ListBooksResponse, ListDesksResponse, ListEntitiesResponse,
     ListInstrumentsResponse, ListUsersResponse, LoginResponse, LogoutResponse, OisDef,
     ResetPasswordResponse, SetRoleCapabilitiesResponse, SetUserCapabilitiesResponse, StirFutureDef,
-    UpdateBookResponse, UpdateEntityResponse, UpdateInstrumentResponse, UpdateUserResponse,
-    UserDesc, VanillaIrsDef, instrument_def_desc::Definition,
+    UpdateBookResponse, UpdateDeskResponse, UpdateEntityResponse, UpdateInstrumentResponse,
+    UpdateUserResponse, UserDesc, VanillaIrsDef, instrument_def_desc::Definition,
 };
 
 // --- fixtures ----------------------------------------------------------------
@@ -3363,6 +3363,14 @@ fn auth_desk_crud_decode_byte_identical() {
         "CreateDeskRequest",
         generated::decode_create_desk_request(o),
         hand::hand_create_desk_request_from_json(o),
+    );
+
+    let upd = json!({ "session_token": "tok", "id": "d-1", "name": "FX Vol EMEA" });
+    let o = upd.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateDeskRequest",
+        generated::decode_update_desk_request(o),
+        hand::hand_update_desk_request_from_json(o),
     );
 
     let del = json!({ "session_token": "tok", "id": "d-1" });
@@ -3803,6 +3811,21 @@ fn auth_desk_replies_encode_byte_identical() {
             &format!("CreateDeskResponse({label})"),
             &generated::encode_create_desk_response(&created),
             &hand::hand_create_desk_response_to_json(&created),
+        );
+    }
+    let renamed = DeskDesc {
+        id: "d-1".to_owned(),
+        name: "FX Vol EMEA".to_owned(),
+    };
+    for (label, d) in [("with", Some(renamed)), ("null", None)] {
+        let updated = UpdateDeskResponse {
+            desk: d,
+            correlation_id: Some(7),
+        };
+        assert_bytes_eq(
+            &format!("UpdateDeskResponse({label})"),
+            &generated::encode_update_desk_response(&updated),
+            &hand::hand_update_desk_response_to_json(&updated),
         );
     }
     let del = DeleteDeskResponse {

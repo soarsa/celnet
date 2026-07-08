@@ -105,9 +105,9 @@ use celnet_proto::{
     ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, OisDef,
     ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
     SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
-    StirFutureDef, UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest,
-    UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest,
-    UpdateUserResponse, UserDesc, VanillaIrsDef,
+    StirFutureDef, UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse,
+    UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse,
+    UpdateUserRequest, UpdateUserResponse, UserDesc, VanillaIrsDef,
     instrument_def_desc::Definition as InstrumentDefinition,
 };
 use serde_json::{Map, Value, json};
@@ -5476,6 +5476,20 @@ impl WireBuilder for CreateDeskRequest {
     }
 }
 
+impl WireBuilder for UpdateDeskRequest {
+    const MESSAGE: &'static str = "UpdateDeskRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "name" => self.name = req_string(value, "name")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for DeleteDeskRequest {
     const MESSAGE: &'static str = "DeleteDeskRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -5803,6 +5817,14 @@ pub fn decode_list_desks_request(o: &Map<String, Value>) -> DResult<ListDesksReq
 /// A missing `session_token`/`name`, as a [`CodecError`].
 pub fn decode_create_desk_request(o: &Map<String, Value>) -> DResult<CreateDeskRequest> {
     decode(CreateDeskRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateDeskRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`id`/`name`, as a [`CodecError`].
+pub fn decode_update_desk_request(o: &Map<String, Value>) -> DResult<UpdateDeskRequest> {
+    decode(UpdateDeskRequest::MESSAGE, o)
 }
 
 /// Decode a [`DeleteDeskRequest`] envelope — fully generic.
@@ -6356,6 +6378,16 @@ impl WireAdapter for CreateDeskResponse {
     }
 }
 
+impl WireAdapter for UpdateDeskResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "desk" => self.desk.as_ref().map(|d| WireVal::Msg(d)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for DeleteDeskResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -6586,6 +6618,12 @@ pub fn encode_list_desks_response(r: &ListDesksResponse) -> Value {
 #[must_use]
 pub fn encode_create_desk_response(r: &CreateDeskResponse) -> Value {
     encode("CreateDeskResponse", r)
+}
+
+/// Encode an [`UpdateDeskResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_desk_response(r: &UpdateDeskResponse) -> Value {
+    encode("UpdateDeskResponse", r)
 }
 
 /// Encode a [`DeleteDeskResponse`] to its WS JSON — descriptor-driven.

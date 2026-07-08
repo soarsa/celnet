@@ -3802,6 +3802,28 @@ message CreateDeskResponse {
   optional uint64 correlation_id = 2;
 }
 
+// Rename a desk (admin only). Only the human-facing display `name` changes; the
+// stable `id` is immutable, so a rename never disturbs routing — RFQ/deal
+// notification delivery and connection ownership both key on `DeskDesc.id`, never
+// on the display name, and user→desk membership (`UserDesc.desk_id`) is untouched.
+message UpdateDeskRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the desk to rename.
+  string id = 2;
+  // The new display name (must be unique across desks, case-insensitive).
+  string name = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+// The renamed desk.
+message UpdateDeskResponse {
+  // The desk after the rename (same `id`, new `name`).
+  DeskDesc desk = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
 // Delete a desk (admin only). Members of the deleted desk become unassigned.
 message DeleteDeskRequest {
   // The caller's bearer token (must resolve to an admin).
@@ -4493,6 +4515,8 @@ service AuthService {
   rpc ListDesks(ListDesksRequest) returns (ListDesksResponse);
   // Create a desk (admin only).
   rpc CreateDesk(CreateDeskRequest) returns (CreateDeskResponse);
+  // Rename a desk's display name (admin only); routing keys on the immutable id.
+  rpc UpdateDesk(UpdateDeskRequest) returns (UpdateDeskResponse);
   // Delete a desk (admin only).
   rpc DeleteDesk(DeleteDeskRequest) returns (DeleteDeskResponse);
   // List the named legal entities / accounts (any authenticated caller — the rates

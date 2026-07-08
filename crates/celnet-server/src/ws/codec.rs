@@ -53,8 +53,9 @@ use celnet_proto::{
     ListEntitiesResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
     LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
     SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
-    SetUserCapabilitiesResponse, UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest,
-    UpdateEntityResponse, UpdateUserRequest, UpdateUserResponse, UserDesc,
+    SetUserCapabilitiesResponse, UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest,
+    UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse, UpdateUserRequest,
+    UpdateUserResponse, UserDesc,
 };
 // AuthService — instrument reference-data registry (WS mirror of the instrument RPCs).
 use celnet_proto::{
@@ -3270,6 +3271,22 @@ pub(super) fn delete_desk_request_from_json(o: &Map<String, Value>) -> Result<De
     })
 }
 
+pub(super) fn update_desk_request_from_json(o: &Map<String, Value>) -> Result<UpdateDeskRequest> {
+    Ok(UpdateDeskRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        name: string_field(o, "name")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_desk_response_to_json(r: &UpdateDeskResponse) -> Value {
+    json!({
+        "desk": r.desk.as_ref().map(desk_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
 pub(super) fn delete_desk_response_to_json(r: &DeleteDeskResponse) -> Value {
     json!({ "removed": r.removed, "correlation_id": r.correlation_id })
 }
@@ -3836,8 +3853,9 @@ pub mod diff_support {
         ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse,
         ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
         SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
-        UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest, UpdateEntityResponse,
-        UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest, UpdateUserResponse,
+        UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse,
+        UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest,
+        UpdateInstrumentResponse, UpdateUserRequest, UpdateUserResponse,
     };
     use serde_json::{Map, Value};
 
@@ -4719,6 +4737,22 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_create_desk_response_to_json(r: &CreateDeskResponse) -> Value {
         super::create_desk_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdateDeskRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_desk_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateDeskRequest, CodecError> {
+        super::update_desk_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateDeskResponse` encoder.
+    #[must_use]
+    pub fn hand_update_desk_response_to_json(r: &UpdateDeskResponse) -> Value {
+        super::update_desk_response_to_json(r)
     }
 
     /// Hand-codec `DeleteDeskRequest` decoder.

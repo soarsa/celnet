@@ -47,9 +47,9 @@ use celnet_proto::{
     ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse,
     ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
     SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
-    UpdateBookRequest, UpdateBookResponse, UpdateEntityRequest, UpdateEntityResponse,
-    UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest, UpdateUserResponse,
-    UserDesc, UserRole,
+    UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse,
+    UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse,
+    UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
 };
 use celnet_rates::{CalibrationInstrument, bootstrap_curve};
 use tonic::{Request, Response, Status};
@@ -801,6 +801,55 @@ impl AuthService for AuthEdge {
         next.desks.push(desk.clone());
         self.persist_and_commit(&mut guard, next)?;
         Ok(Response::new(CreateDeskResponse {
+            desk: Some(desk_to_wire(&desk)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_desk(
+        &self,
+        request: Request<UpdateDeskRequest>,
+    ) -> Result<Response<UpdateDeskResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let name = req.name.trim().to_string();
+        if name.is_empty() {
+            return Err(Status::invalid_argument("desk name is required"));
+        }
+        let mut guard = self.lock();
+        if guard.desk(&req.id).is_none() {
+            return Err(Status::not_found(format!("no desk with id `{}`", req.id)));
+        }
+        // Uniqueness is checked against every OTHER desk (the edited one may keep its
+        // own name). The new name is only a display label — a desk's stable `id`
+        // never changes, so this rename does NOT touch routing: RFQ/deal notification
+        // delivery and connection ownership both key on `DeskDef::id`, and every
+        // user's `desk_id` membership is untouched. No session is revoked (no
+        // authority or routing change), so live sessions stay valid.
+        if guard
+            .desks
+            .iter()
+            .any(|d| d.id != req.id && d.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(Status::already_exists(format!(
+                "a desk named `{name}` already exists"
+            )));
+        }
+        let mut next = guard.clone();
+        let desk = {
+            let slot = next
+                .desks
+                .iter_mut()
+                .find(|d| d.id == req.id)
+                .expect("desk existence checked above");
+            slot.name = name;
+            slot.clone()
+        };
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(UpdateDeskResponse {
             desk: Some(desk_to_wire(&desk)),
             correlation_id: req.correlation_id,
         }))
@@ -2757,6 +2806,110 @@ mod tests {
             jane_after.desk_id, None,
             "deleting a desk unassigns its members"
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn update_desk_renames_display_name_and_preserves_routing() {
+        let (edge, path, _s) = edge("desk-rename");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let tok = admin.session_token.clone();
+        let desk = edge
+            .create_desk(Request::new(CreateDeskRequest {
+                session_token: tok.clone(),
+                name: "G10 Options".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .desk
+            .unwrap();
+        // A trader whose membership keys on the stable desk id.
+        let jane = edge
+            .create_user(Request::new(CreateUserRequest {
+                session_token: tok.clone(),
+                email: "jane@celnet.com".into(),
+                display_name: "Jane".into(),
+                role: UserRole::Trader as i32,
+                desk_id: Some(desk.id.clone()),
+                password: "trader-pw-123".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .user
+            .unwrap();
+
+        // Rename the desk's display name.
+        let renamed = edge
+            .update_desk(Request::new(UpdateDeskRequest {
+                session_token: tok.clone(),
+                id: desk.id.clone(),
+                name: "G10 Vol".into(),
+                correlation_id: Some(7),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(renamed.correlation_id, Some(7));
+        let renamed = renamed.desk.unwrap();
+        assert_eq!(renamed.id, desk.id, "the stable id must never change");
+        assert_eq!(renamed.name, "G10 Vol", "the display name is updated");
+
+        // Routing membership is untouched: the trader still points at the same id.
+        let users = edge
+            .list_users(Request::new(ListUsersRequest {
+                session_token: tok.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .users;
+        let jane_after = users.into_iter().find(|u| u.id == jane.id).unwrap();
+        assert_eq!(
+            jane_after.desk_id.as_deref(),
+            Some(desk.id.as_str()),
+            "renaming a desk must not disturb user→desk routing"
+        );
+
+        // A second desk cannot be renamed onto an existing name (case-insensitive).
+        let other = edge
+            .create_desk(Request::new(CreateDeskRequest {
+                session_token: tok.clone(),
+                name: "EM Vol".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .desk
+            .unwrap();
+        let clash = edge
+            .update_desk(Request::new(UpdateDeskRequest {
+                session_token: tok.clone(),
+                id: other.id.clone(),
+                name: "g10 vol".into(),
+                correlation_id: None,
+            }))
+            .await
+            .expect_err("a duplicate display name is rejected");
+        assert_eq!(clash.code(), tonic::Code::AlreadyExists);
+
+        // An unknown desk id is a clean not-found.
+        let missing = edge
+            .update_desk(Request::new(UpdateDeskRequest {
+                session_token: tok,
+                id: "no-such-desk".into(),
+                name: "Whatever".into(),
+                correlation_id: None,
+            }))
+            .await
+            .expect_err("an unknown desk id is rejected");
+        assert_eq!(missing.code(), tonic::Code::NotFound);
+
         let _ = std::fs::remove_file(&path);
     }
 

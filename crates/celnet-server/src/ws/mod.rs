@@ -1160,6 +1160,14 @@ async fn handle_unary(
                 generated_codec::encode_create_desk_response
             )
         }
+        "update_desk" => {
+            let req = decode!(generated_codec::decode_update_desk_request(o));
+            call!(
+                services.auth.update_desk(Request::new(req)),
+                "desk_updated",
+                generated_codec::encode_update_desk_response
+            )
+        }
         "delete_desk" => {
             let req = decode!(generated_codec::decode_delete_desk_request(o));
             call!(

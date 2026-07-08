@@ -605,8 +605,15 @@ impl Edge {
             rates_store.set_consensus(Arc::clone(handle));
         }
 
+        // The shared identity store backs both the AuthService (users/desks CRUD)
+        // and the FIX registry's routing-desk directory, so a connection's routing
+        // desk is validated against the SAME live desk set an admin edits. Injected
+        // set-once before `start_enabled` binds acceptors, so the boot-time guard can
+        // warn on an unresolved routing desk.
+        let identity_arc = Arc::new(std::sync::Mutex::new(identity_store));
+        fix_registry.set_desk_directory(Arc::clone(&identity_arc) as _);
         let auth_edge = Arc::new(AuthEdge::new(
-            Arc::new(std::sync::Mutex::new(identity_store)),
+            Arc::clone(&identity_arc),
             identity_path,
             Arc::clone(&sessions),
             Arc::clone(&gate),
