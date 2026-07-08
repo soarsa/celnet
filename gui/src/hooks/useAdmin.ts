@@ -26,6 +26,7 @@ import type {
   UserDesc,
 } from "../data/contract";
 import type { CelnetTransport } from "../data/transport";
+import { updateInputForDeskChange, withUserDesk } from "../lib/deskAssignment";
 
 /** Narrow an unknown thrown value to a display string. */
 function messageOf(error: unknown): string {
@@ -52,6 +53,13 @@ export interface AdminApi {
   createUser: (input: CreateUserInput) => Promise<UserDesc>;
   /** Update a user's profile/role/desk/disabled flag. */
   updateUser: (id: string, input: UpdateUserInput) => Promise<UserDesc>;
+  /**
+   * Assign (or clear, with `undefined`) a user's desk OPTIMISTICALLY: the roster
+   * updates in place immediately, reconciles to the server's returned user on
+   * success, and rolls back (rethrowing) on failure. Desk membership scopes which
+   * inbound quotes/deals the user receives, so this is the routing control.
+   */
+  assignDesk: (userId: string, deskId: string | undefined) => Promise<void>;
   /** Delete a user. */
   deleteUser: (id: string) => Promise<void>;
   /** Set a user's password (the seeded-admin rotation + general reset path). */
@@ -132,6 +140,30 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
       return updated;
     },
     [transport, refetch],
+  );
+
+  const assignDesk = useCallback(
+    async (userId: string, deskId: string | undefined): Promise<void> => {
+      const target = users.find((u) => u.id === userId);
+      if (!target) return;
+      const snapshot = users;
+      // Optimistic: reflect the new desk immediately (untouched rows keep identity).
+      setUsers((prev) => withUserDesk(prev, userId, deskId));
+      try {
+        const updated = await transport.updateUser(
+          userId,
+          updateInputForDeskChange(target, deskId),
+        );
+        // Reconcile the single authoritative row (no full refetch — keep the
+        // optimistic path); other rows stay referentially unchanged.
+        setUsers((prev) => prev.map((u) => (u.id === userId ? updated : u)));
+      } catch (e: unknown) {
+        // Roll back to the pre-attempt roster and rethrow so the UI shows the error.
+        setUsers(snapshot);
+        throw e;
+      }
+    },
+    [transport, users],
   );
 
   const deleteUser = useCallback(
@@ -228,6 +260,7 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
     refetch,
     createUser,
     updateUser,
+    assignDesk,
     deleteUser,
     resetPassword,
     createDesk,

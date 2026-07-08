@@ -19,7 +19,8 @@ import { CapabilityMatrix } from "../components/CapabilityMatrix";
 import { Panel } from "../components/Panel";
 import { UserDialog, type UserDialogMode } from "../components/UserDialog";
 import { BooksPanel, EntitiesPanel } from "./RegistryPanels";
-import type { DeskDesc, UserDesc } from "../data/contract";
+import type { CapabilityAsset, DeskDesc, UserDesc, UserRole } from "../data/contract";
+import { ASSET_LABELS, roleBaselineSummary } from "../lib/capabilityMatrix";
 import { useAdmin } from "../hooks/useAdmin";
 import styles from "./AdminWorkspace.module.css";
 
@@ -36,6 +37,34 @@ function RoleBadge({ user }: { user: UserDesc }): React.ReactElement {
   );
 }
 
+/** The compact per-asset abbreviation for the capability chips. */
+const ASSET_ABBR: Record<CapabilityAsset, string> = {
+  fx_options: "FX",
+  fixed_income: "FI",
+};
+
+/**
+ * The role-baseline capability chips for a user row — e.g. "FX 10/10 · FI 10/10"
+ * for an admin, "FX 9/10 · FI 9/10" for a trader. This is the honest role
+ * baseline; the full overlay-adjusted set is edited via the Permissions button.
+ */
+function CapabilityChips({ role }: { role: UserRole }): React.ReactElement {
+  const summary = roleBaselineSummary(role);
+  return (
+    <span className={styles.capSummary}>
+      {summary.map((s) => (
+        <span
+          key={s.asset}
+          className={styles.capChip}
+          title={`${ASSET_LABELS[s.asset]}: ${s.allowed} of ${s.total} actions (role baseline)`}
+        >
+          {ASSET_ABBR[s.asset]} {s.allowed}/{s.total}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function AdminWorkspace(): React.ReactElement {
   const app = useApp();
   const { auth } = app;
@@ -45,6 +74,8 @@ export function AdminWorkspace(): React.ReactElement {
   const [deskName, setDeskName] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [capUserId, setCapUserId] = useState<string | null>(null);
+  // Per-row desk-assignment errors, keyed by user id (cleared at each attempt).
+  const [deskErrors, setDeskErrors] = useState<Record<string, string>>({});
 
   // --- the sign-in / insufficient-role gate --------------------------------
   if (!auth.isAdmin) {
@@ -88,15 +119,25 @@ export function AdminWorkspace(): React.ReactElement {
     }
   };
 
+  // Inline desk (re)assignment — optimistic via the hook; a failure surfaces as a
+  // per-row inline error and the roster rolls back. The empty option ⇒ unassigned.
+  const changeDesk = async (userId: string, deskId: string): Promise<void> => {
+    setDeskErrors((prev) => {
+      const { [userId]: _cleared, ...rest } = prev;
+      return rest;
+    });
+    try {
+      await admin.assignDesk(userId, deskId || undefined);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "desk assignment failed";
+      setDeskErrors((prev) => ({ ...prev, [userId]: message }));
+    }
+  };
+
   const deskName_ = deskName.trim();
   const capUser = capUserId ? (admin.users.find((u) => u.id === capUserId) ?? null) : null;
   const memberCount = (deskId: string): number =>
     admin.users.filter((u) => u.deskId === deskId).length;
-  const deskLabel = (deskId: string | undefined): string => {
-    if (!deskId) return "—";
-    const desk = admin.desks.find((d) => d.id === deskId);
-    return desk ? desk.name : deskId;
-  };
 
   const usersActions = (
     <div className={styles.headActions}>
@@ -123,6 +164,10 @@ export function AdminWorkspace(): React.ReactElement {
       <Panel title="Users" glyph="⚇" actions={usersActions}>
         {admin.error && <p className={styles.banner}>{admin.error}</p>}
         {actionError && <p className={styles.banner}>{actionError}</p>}
+        <p className={styles.hint}>
+          A trader only receives quotes and executed deals for the desk they&apos;re assigned to.
+          Set a desk below to permission what a user sees.
+        </p>
         {admin.users.length === 0 ? (
           <p className={styles.empty}>No users.</p>
         ) : (
@@ -132,6 +177,7 @@ export function AdminWorkspace(): React.ReactElement {
                 <th>Email</th>
                 <th>Name</th>
                 <th>Role</th>
+                <th>Capabilities (role baseline)</th>
                 <th>Desk</th>
                 <th className={styles.actionsCol}>Actions</th>
               </tr>
@@ -144,7 +190,39 @@ export function AdminWorkspace(): React.ReactElement {
                   <td>
                     <RoleBadge user={u} />
                   </td>
-                  <td className={styles.mono}>{deskLabel(u.deskId)}</td>
+                  <td>
+                    <CapabilityChips role={u.role} />
+                  </td>
+                  <td>
+                    <div className={styles.deskCell}>
+                      <select
+                        className={styles.deskSelect}
+                        aria-label={`Desk for ${u.email}`}
+                        value={u.deskId ?? ""}
+                        onChange={(e) => void changeDesk(u.id, e.target.value)}
+                      >
+                        <option value="">Unassigned</option>
+                        {admin.desks.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                      {!u.deskId && (
+                        <span
+                          className={styles.unassignedFlag}
+                          title="An unassigned trader receives no inbound quotes or deals."
+                        >
+                          receives no quotes
+                        </span>
+                      )}
+                    </div>
+                    {deskErrors[u.id] && (
+                      <p className={styles.rowError} role="alert">
+                        {deskErrors[u.id]}
+                      </p>
+                    )}
+                  </td>
                   <td className={styles.actionsCol}>
                     <div className={styles.rowActions}>
                       <Button variant="secondary" onClick={() => setDialog({ mode: "edit", user: u })}>

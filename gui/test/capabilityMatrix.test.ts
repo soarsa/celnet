@@ -19,6 +19,7 @@ import {
   resolveCell,
   resolveEffective,
   roleAllows,
+  roleBaselineSummary,
 } from "../src/lib/capabilityMatrix";
 
 describe("roleAllows — the role bundle baseline", () => {
@@ -129,6 +130,31 @@ describe("resolveEffective — full enumeration matches the server algebra", () 
     const keys = new Set(resolveEffective("ADMIN", map).map((c) => capKey(c.action, c.asset)));
     expect(keys.has(capKey("book", "fx_options"))).toBe(false);
     expect(keys.has(capKey("book", "fixed_income"))).toBe(true);
+  });
+});
+
+describe("roleBaselineSummary — the honest per-asset role-baseline chip counts", () => {
+  it("admin holds every action on both assets (10/10 · 10/10)", () => {
+    const summary = roleBaselineSummary("ADMIN");
+    expect(summary).toEqual([
+      { asset: "fx_options", allowed: CAPABILITY_ACTIONS.length, total: CAPABILITY_ACTIONS.length },
+      { asset: "fixed_income", allowed: CAPABILITY_ACTIONS.length, total: CAPABILITY_ACTIONS.length },
+    ]);
+  });
+
+  it("trader holds every action except administer on both assets (9/10 · 9/10)", () => {
+    const summary = roleBaselineSummary("TRADER");
+    const total = CAPABILITY_ACTIONS.length;
+    expect(summary).toEqual([
+      { asset: "fx_options", allowed: total - 1, total },
+      { asset: "fixed_income", allowed: total - 1, total },
+    ]);
+    // Sanity: exactly `administer` is the one dropped action, per asset.
+    expect(total).toBe(10);
+  });
+
+  it("emits one entry per asset in canonical order", () => {
+    expect(roleBaselineSummary("TRADER").map((s) => s.asset)).toEqual(CAPABILITY_ASSETS);
   });
 });
 

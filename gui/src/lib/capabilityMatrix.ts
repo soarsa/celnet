@@ -487,3 +487,29 @@ export function setOverlayFor(
   }
   return next;
 }
+
+/** One asset class's role-baseline count: `allowed` of `total` actions held. */
+export interface RoleAssetSummary {
+  asset: CapabilityAsset;
+  allowed: number;
+  total: number;
+}
+
+/**
+ * The honest ROLE-BASELINE capability summary for a user row: for each asset
+ * class, how many of the {@link CAPABILITY_ACTIONS} the role holds with NO
+ * per-user overlay (`resolveEffective(role, ∅)`). This is the baseline the role
+ * confers (admin ⇒ 10/10 both; trader ⇒ 9/10 both — every action except
+ * `administer`); the full, overlay-adjusted effective set stays reachable through
+ * the per-user Permissions editor. Deliberately overlay-free so a compact roster
+ * chip never misrepresents a per-user grant/deny as a role property.
+ */
+export function roleBaselineSummary(role: UserRole): RoleAssetSummary[] {
+  const effective = resolveEffective(role, new Map());
+  const total = CAPABILITY_ACTIONS.length;
+  return CAPABILITY_ASSETS.map((asset) => ({
+    asset,
+    allowed: effective.filter((c) => c.asset === asset).length,
+    total,
+  }));
+}

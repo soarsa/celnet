@@ -138,3 +138,84 @@
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+/* Routing hint — an informational surface (not an error banner) explaining that
+   desk assignment is what permissions a trader's quote/deal reception. */
+.hint {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  line-height: 1.5;
+}
+
+/* Role-baseline capability chips in the Users table. */
+.capSummary {
+  display: inline-flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.capChip {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: color-mix(in oklch, var(--accent) 8%, transparent);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--type-micro, 0.65rem);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* Inline desk picker cell. */
+.deskCell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.deskSelect {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font-size: var(--type-body);
+  min-width: 11rem;
+  cursor: pointer;
+  transition: border-color var(--dur-fast, 120ms) ease;
+}
+.deskSelect:hover {
+  border-color: color-mix(in oklch, var(--accent) 45%, transparent);
+}
+.deskSelect:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Deny-by-default marker: an unassigned trader receives nothing. */
+.unassignedFlag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklch, var(--danger, oklch(62% 0.2 25)) 45%, transparent);
+  background: color-mix(in oklch, var(--danger, oklch(62% 0.2 25)) 10%, transparent);
+  color: var(--danger, oklch(62% 0.2 25));
+  font-size: var(--type-micro, 0.65rem);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+/* Per-row desk-assignment failure. */
+.rowError {
+  margin: var(--space-2) 0 0;
+  color: var(--danger, oklch(62% 0.2 25));
+  font-size: var(--type-caption);
+}
