@@ -29,6 +29,7 @@ import { principalForScope } from "../data/riskView";
 import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
 import { sideLabel } from "./QuotingWorkspace";
 import type { DeskRequest } from "../data/contract";
+import { capabilityAssetForDomain, deskRequestAsset } from "../data/assetClass";
 import styles from "./QuotesBlotterWorkspace.module.css";
 
 /** All of a shown quote's user-visible textual fields, concatenated for search. */
@@ -63,6 +64,10 @@ function hasShownQuote(r: DeskRequest): boolean {
 export function QuotesBlotterWorkspace(): React.ReactElement {
   const app = useApp();
   const principal = useMemo(() => principalForScope(app.scope), [app.scope]);
+  // Hard asset separation: the Book's Quotes lens shows ONLY the active domain's
+  // asset class. Desk quotes are structurally OIS (rates), so under the FX Options
+  // domain this lens is correctly empty and under Fixed Income it shows them.
+  const activeAsset = capabilityAssetForDomain(app.activeDomain);
 
   const [requests, setRequests] = useState<DeskRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -88,11 +93,13 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
     return dispose;
   }, [app.transport]);
 
-  // Only shown quotes (QUOTED / ACCEPTED), newest received first.
+  // Only shown quotes (QUOTED / ACCEPTED) for the ACTIVE domain's asset class,
+  // newest received first. The asset filter runs BEFORE the search filter below.
   const quotes = useMemo(
     () =>
       requests
         .filter(hasShownQuote)
+        .filter((r) => deskRequestAsset(r) === activeAsset)
         .slice()
         .sort((a, b) =>
           b.receivedAtNanos > a.receivedAtNanos
@@ -101,7 +108,7 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
               ? -1
               : 0,
         ),
-    [requests],
+    [requests, activeAsset],
   );
 
   const { query, setQuery, filtered, shown, total } = useTableFilter(quotes, quoteSearchText);
@@ -126,7 +133,9 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
         )}
         {quotes.length === 0 ? (
           <p className={styles.empty}>
-            No quotes shown yet — price a request in the Quoting workspace to show one.
+            {activeAsset === "fixed_income"
+              ? "No quotes shown yet — price a request in the Quoting workspace to show one."
+              : "No FX-option desk quotes — the RFQ desk quotes rates (OIS). Switch to the Fixed Income domain to see shown quotes."}
           </p>
         ) : (
           <>

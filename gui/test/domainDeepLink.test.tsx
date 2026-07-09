@@ -68,8 +68,13 @@ describe("domain deep-link seeds activeDomain + the shared screen's single asset
     ).toHaveAttribute("aria-selected", "false");
 
     // The shared Risk screen renders ONLY the FI rates panel — no cross-asset
-    // toggle and no FX scenario grid.
-    expect(await screen.findByText("Netted rates risk")).toBeInTheDocument();
+    // toggle and no FX scenario grid. Scope to the VISIBLE heading via role: the
+    // always-mounted Book pane's Aggregate-Risk lens also renders the rates panel
+    // under FI, but it is `aria-hidden`/`inert`, so the role query (hidden:false)
+    // resolves to the one active Risk screen.
+    expect(
+      await screen.findByRole("heading", { name: "Netted rates risk" }),
+    ).toBeInTheDocument();
     noAssetLensToggle();
     expect(screen.queryByLabelText(/scenario heatmap/i)).toBeNull();
   });

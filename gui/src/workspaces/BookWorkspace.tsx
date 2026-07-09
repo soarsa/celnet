@@ -70,6 +70,7 @@ import { Provenance } from "../components/Provenance";
 import { fmtPnlAdaptive } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
 import { RatesBookWorkspace } from "./RatesBookWorkspace";
+import { RatesRiskPanel } from "./RatesRiskWorkspace";
 import { DealsBlotterWorkspace } from "./DealsBlotterWorkspace";
 import { QuotesBlotterWorkspace } from "./QuotesBlotterWorkspace";
 import styles from "./BookWorkspace.module.css";
@@ -97,12 +98,15 @@ export function BookWorkspace({
 }: {
   initialLens?: BookLens;
 } = {}): React.ReactElement {
-  // Model A note: Book is a SHARED cross-asset screen and appears under BOTH the FX
-  // and FI tabs, but its {@link BookLens} (positions / risk / deals / quotes) are
-  // VIEW tabs, NOT an FX/FI asset-class split — the class is driven by the active
-  // scope/underlier its sub-lenses read from `useApp()` themselves. There is thus no
-  // asset-class lens to pre-select, so a domain-tab switch is intentionally a NO-OP
-  // here (no lens-sync effect, unlike Market Data / Risk / Ticket).
+  // Book is a SHARED cross-asset screen that appears under BOTH the FX and FI tabs.
+  // Its {@link BookLens} (positions / risk / deals / quotes) are VIEW tabs that are
+  // PRESERVED across domains — but each lens body is HARD asset-separated by the
+  // active domain (matching Market Data / Risk / Quotes): the desk-quoting / rates
+  // lenses (positions / quotes / deals) self-filter their rows to the active asset,
+  // and the Aggregate Risk lens renders the rates netted-risk panel under Fixed
+  // Income and the FX options aggregate otherwise. So the Book never leaks one
+  // asset class into the other domain's tab.
+  const app = useApp();
   const [lens, setLens] = useState<BookLens>(initialLens);
   return (
     <div className={styles.classShell}>
@@ -126,6 +130,8 @@ export function BookWorkspace({
           <DealsBlotterWorkspace />
         ) : lens === "quotes" ? (
           <QuotesBlotterWorkspace />
+        ) : app.activeDomain === "fixed_income" ? (
+          <RatesRiskPanel />
         ) : (
           <AggregateRiskLens />
         )}

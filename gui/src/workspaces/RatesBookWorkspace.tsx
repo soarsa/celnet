@@ -40,6 +40,7 @@ import type {
   RatesPosition,
 } from "../data/contract";
 import { pillarYears } from "../data/contract";
+import { capabilityAssetForDomain, ratesPositionAsset } from "../data/assetClass";
 import styles from "./RatesBookWorkspace.module.css";
 
 const MM = 1_000_000;
@@ -78,6 +79,12 @@ function directionLabel(direction: OisDirection): string {
 export function RatesBookWorkspace(): React.ReactElement {
   const app = useApp();
   const principal = useMemo(() => principalForScope(app.scope), [app.scope]);
+  // Hard asset separation: the Book's Positions & Booking lens shows ONLY the
+  // active domain's asset class. The rates book (booking ticket + positions) is
+  // fixed-income (OIS); under the FX Options domain the positions table is empty
+  // and the rates booking ticket is replaced by an honest note.
+  const activeAsset = capabilityAssetForDomain(app.activeDomain);
+  const isRatesDomain = activeAsset === "fixed_income";
 
   const [positions, setPositions] = useState<RatesPosition[]>([]);
   const [entities, setEntities] = useState<EntityDesc[]>([]);
@@ -254,8 +261,15 @@ export function RatesBookWorkspace(): React.ReactElement {
     }
   }, [app.transport, principal, ticket, refresh, canBook]);
 
+  // Asset-scope the book to the active domain BEFORE the search filter composes
+  // on top (rates positions ⇒ shown under Fixed Income, hidden under FX Options).
+  const scopedPositions = useMemo(
+    () => positions.filter((p) => ratesPositionAsset(p) === activeAsset),
+    [positions, activeAsset],
+  );
+
   const { query, setQuery, filtered, shown, total } = useTableFilter(
-    positions,
+    scopedPositions,
     (p) =>
       [
         p.positionId.toString(),
@@ -269,12 +283,17 @@ export function RatesBookWorkspace(): React.ReactElement {
   );
 
   const isOffline = !app.transport.label.startsWith("live");
-  const totalNotional = positions.reduce((acc, p) => acc + p.instrument.notional, 0);
+  const totalNotional = scopedPositions.reduce((acc, p) => acc + p.instrument.notional, 0);
 
   return (
     <div className={styles.wrap}>
       <Panel material="float" className={styles.ticket} title="Book position">
-        {registryEmpty ? (
+        {!isRatesDomain ? (
+          <p className={styles.empty}>
+            Booking here is the fixed-income (OIS) rates book. Switch to the Fixed
+            Income domain to book and view rates positions.
+          </p>
+        ) : registryEmpty ? (
           <p className={styles.empty}>
             No legal entities are registered yet. Add entities and books in
             Administration before booking a position.
@@ -405,13 +424,15 @@ export function RatesBookWorkspace(): React.ReactElement {
             {isOffline ? "in-app book" : "live book"}
           </span>
           <span className={styles.summary}>
-            {positions.length} position{positions.length === 1 ? "" : "s"} ·{" "}
+            {scopedPositions.length} position{scopedPositions.length === 1 ? "" : "s"} ·{" "}
             {fmtCompact(totalNotional)} notional
           </span>
         </div>
-        {positions.length === 0 ? (
+        {scopedPositions.length === 0 ? (
           <p className={styles.empty}>
-            The rates book is empty — book a position to populate it.
+            {isRatesDomain
+              ? "The rates book is empty — book a position to populate it."
+              : "No FX-option positions in this book. The rates book is fixed-income (OIS) — switch to the Fixed Income domain to book and view positions; the FX options book's risk is under the Aggregate Risk lens."}
           </p>
         ) : (
           <>

@@ -21,6 +21,7 @@ import { useTableFilter } from "../hooks/useTableFilter";
 import { principalForScope } from "../data/riskView";
 import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
 import type { Deal, Side } from "../data/contract";
+import { capabilityAssetForDomain, dealAsset } from "../data/assetClass";
 import { DealTicket } from "./DealTicket";
 import styles from "./DealsBlotterWorkspace.module.css";
 
@@ -50,8 +51,12 @@ function dealSearchText(d: Deal): string {
 export function DealsBlotterWorkspace(): React.ReactElement {
   const app = useApp();
   const principal = useMemo(() => principalForScope(app.scope), [app.scope]);
+  // Hard asset separation: the Book's Deals lens shows ONLY the active domain's
+  // asset class. Booked deals are structurally OIS (rates), so under the FX Options
+  // domain this lens is correctly empty and under Fixed Income it shows them.
+  const activeAsset = capabilityAssetForDomain(app.activeDomain);
 
-  const [deals, setDeals] = useState<Deal[]>([]);
+  const [allDeals, setAllDeals] = useState<Deal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Deal | null>(null);
 
@@ -59,7 +64,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
     void app.transport
       .listDeals({ ...(principal ? { principal } : {}) })
       .then((res) => {
-        setDeals(res.deals);
+        setAllDeals(res.deals);
         setError(null);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "failed to load deals"));
@@ -73,6 +78,12 @@ export function DealsBlotterWorkspace(): React.ReactElement {
     const dispose = app.transport.streamNotifications(undefined, () => refreshRef.current());
     return dispose;
   }, [app.transport]);
+
+  // Asset-scope to the active domain BEFORE the search filter composes on top.
+  const deals = useMemo(
+    () => allDeals.filter((d) => dealAsset(d) === activeAsset),
+    [allDeals, activeAsset],
+  );
 
   const { query, setQuery, filtered, shown, total } = useTableFilter(deals, dealSearchText);
 
@@ -96,7 +107,9 @@ export function DealsBlotterWorkspace(): React.ReactElement {
         )}
         {deals.length === 0 ? (
           <p className={styles.empty}>
-            No deals yet — accept a quote in the Quoting workspace to book one.
+            {activeAsset === "fixed_income"
+              ? "No deals yet — accept a quote in the Quoting workspace to book one."
+              : "No FX-option deals — the RFQ desk books rates (OIS). Switch to the Fixed Income domain to see booked deals."}
           </p>
         ) : (
           <>

@@ -14,7 +14,10 @@ import { entityNameOf } from "../src/workspaces/RegistryPanels";
  */
 
 beforeEach(() => {
-  window.history.replaceState(null, "", "/?mock");
+  // The rates book is fixed-income (OIS): its booking ticket + positions only
+  // render under the Fixed Income domain (hard asset separation). Seed the FI
+  // domain via the `dom` deep-link so the ticket's entity/book selects mount.
+  window.history.replaceState(null, "", "/?mock&dom=fixed_income");
 });
 afterEach(() => {
   window.history.replaceState(null, "", "/");
