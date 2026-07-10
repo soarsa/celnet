@@ -380,7 +380,7 @@ impl AuthService for AuthEdge {
         }
         check_password_strength(&req.password)?;
         let role = role_from_wire(req.role)?;
-        let desk_id = normalize_desk(req.desk_id);
+        let (all_desks, desk_ids) = normalize_membership(req.desk_ids, req.all_desks);
 
         // Hash off the async worker before taking the lock.
         let password_hash = hash_async(req.password.clone())
@@ -393,19 +393,21 @@ impl AuthService for AuthEdge {
                 "a user with email `{email}` already exists"
             )));
         }
-        if let Some(desk) = &desk_id
-            && guard.desk(desk).is_none()
-        {
-            return Err(Status::failed_precondition(format!(
-                "no desk with id `{desk}`"
-            )));
+        // Every named desk must exist (an `all_desks` user carries no explicit set).
+        for desk in &desk_ids {
+            if guard.desk(desk).is_none() {
+                return Err(Status::failed_precondition(format!(
+                    "no desk with id `{desk}`"
+                )));
+            }
         }
         let new_user = UserDef {
             id: mint_user_id(&email, &guard.users),
             email,
             display_name,
             role,
-            desk_id,
+            desk_ids,
+            all_desks,
             password_hash,
             disabled: false,
             // A new account starts with no per-user overlay — pure role-derived
@@ -443,18 +445,19 @@ impl AuthService for AuthEdge {
             return Err(Status::invalid_argument("display name is required"));
         }
         let role = role_from_wire(req.role)?;
-        let desk_id = normalize_desk(req.desk_id);
+        let (all_desks, desk_ids) = normalize_membership(req.desk_ids, req.all_desks);
 
         let mut guard = self.lock();
         let Some(old) = guard.user(&req.id).cloned() else {
             return Err(Status::not_found(format!("no user with id `{}`", req.id)));
         };
-        if let Some(desk) = &desk_id
-            && guard.desk(desk).is_none()
-        {
-            return Err(Status::failed_precondition(format!(
-                "no desk with id `{desk}`"
-            )));
+        // Every named desk must exist (an `all_desks` user carries no explicit set).
+        for desk in &desk_ids {
+            if guard.desk(desk).is_none() {
+                return Err(Status::failed_precondition(format!(
+                    "no desk with id `{desk}`"
+                )));
+            }
         }
         let becomes_enabled_admin = role.is_admin() && !req.disabled;
         if !becomes_enabled_admin && was_sole_enabled_admin(&guard, &old) {
@@ -468,7 +471,8 @@ impl AuthService for AuthEdge {
             email: old.email.clone(),
             display_name,
             role,
-            desk_id,
+            desk_ids,
+            all_desks,
             password_hash: old.password_hash.clone(),
             disabled: req.disabled,
             // Preserve the per-user capability overlay — this RPC edits identity
@@ -478,7 +482,8 @@ impl AuthService for AuthEdge {
             capability_denies: old.capability_denies.clone(),
         };
         let authority_changed = updated.role != old.role
-            || updated.desk_id != old.desk_id
+            || updated.desk_ids != old.desk_ids
+            || updated.all_desks != old.all_desks
             || updated.disabled != old.disabled;
 
         let mut next = guard.clone();
@@ -644,7 +649,8 @@ impl AuthService for AuthEdge {
             email: old.email.clone(),
             display_name: old.display_name.clone(),
             role: old.role,
-            desk_id: old.desk_id.clone(),
+            desk_ids: old.desk_ids.clone(),
+            all_desks: old.all_desks,
             password_hash: old.password_hash.clone(),
             disabled: old.disabled,
             // The overlay is replaced wholesale (it is the full new set, not a
@@ -827,7 +833,7 @@ impl AuthService for AuthEdge {
         // own name). The new name is only a display label — a desk's stable `id`
         // never changes, so this rename does NOT touch routing: RFQ/deal notification
         // delivery and connection ownership both key on `DeskDef::id`, and every
-        // user's `desk_id` membership is untouched. No session is revoked (no
+        // user's desk membership (`desk_ids`) is untouched. No session is revoked (no
         // authority or routing change), so live sessions stay valid.
         if guard
             .desks
@@ -871,20 +877,20 @@ impl AuthService for AuthEdge {
                 correlation_id: req.correlation_id,
             }));
         }
-        // Members of the deleted desk become unassigned; their snapshots change, so
-        // their sessions are revoked after commit.
+        // The deleted desk is dropped from every member's set (a multi-desk member
+        // keeps its other desks); their snapshots change, so their sessions are
+        // revoked after commit. An `all_desks` user carries no explicit set and is
+        // unaffected.
         let affected: Vec<String> = guard
             .users
             .iter()
-            .filter(|u| u.desk_id.as_deref() == Some(req.id.as_str()))
+            .filter(|u| u.desk_ids.iter().any(|d| d == &req.id))
             .map(|u| u.id.clone())
             .collect();
         let mut next = guard.clone();
         next.desks.retain(|d| d.id != req.id);
         for u in &mut next.users {
-            if u.desk_id.as_deref() == Some(req.id.as_str()) {
-                u.desk_id = None;
-            }
+            u.desk_ids.retain(|d| d != &req.id);
         }
         self.persist_and_commit(&mut guard, next)?;
         drop(guard);
@@ -1474,8 +1480,9 @@ fn user_to_wire(u: &UserDef) -> UserDesc {
         email: u.email.clone(),
         display_name: u.display_name.clone(),
         role: role_to_wire(u.role),
-        desk_id: u.desk_id.clone(),
+        desk_ids: u.desk_ids.clone(),
         disabled: u.disabled,
+        all_desks: u.all_desks,
     }
 }
 
@@ -1614,11 +1621,26 @@ fn check_password_strength(password: &str) -> Result<(), Status> {
     Ok(())
 }
 
-/// Normalize an optional wire desk id: a present-but-blank value means unassigned.
-fn normalize_desk(desk_id: Option<String>) -> Option<String> {
-    desk_id
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+/// Normalize a wire desk membership (`desk_ids` + `all_desks`) into a canonical
+/// `(all_desks, desk_ids)` pair for the store.
+///
+/// `all_desks` **wins**: when set, the explicit set is dropped (an all-desks user
+/// carries no `desk_ids` — the canonical form). Otherwise the ids are trimmed,
+/// blanks dropped, and duplicates removed while preserving first-seen order, so the
+/// stored set round-trips stably and set-equality comparisons (authority-change
+/// detection) are meaningful.
+fn normalize_membership(desk_ids: Vec<String>, all_desks: bool) -> (bool, Vec<String>) {
+    if all_desks {
+        return (true, Vec::new());
+    }
+    let mut out: Vec<String> = Vec::new();
+    for d in desk_ids {
+        let trimmed = d.trim().to_string();
+        if !trimmed.is_empty() && !out.contains(&trimmed) {
+            out.push(trimmed);
+        }
+    }
+    (false, out)
 }
 
 /// Whether `target` is the only enabled admin in the store (so removing or
@@ -1709,9 +1731,20 @@ mod tests {
         assert!(!valid_email("nope"));
         assert!(!valid_email("a@b"));
         assert!(!valid_email("a@@b.com"));
-        assert_eq!(normalize_desk(Some("  ".into())), None);
-        assert_eq!(normalize_desk(Some(" g10 ".into())), Some("g10".into()));
-        assert_eq!(normalize_desk(None), None);
+        // Membership normalization: trim, drop blanks, dedup, preserve order.
+        assert_eq!(
+            normalize_membership(
+                vec![" g10 ".into(), "".into(), "g10".into(), "em".into()],
+                false
+            ),
+            (false, vec!["g10".to_owned(), "em".to_owned()])
+        );
+        assert_eq!(normalize_membership(vec![], false), (false, vec![]));
+        // all_desks wins: the explicit set is dropped to the canonical empty form.
+        assert_eq!(
+            normalize_membership(vec!["g10".into()], true),
+            (true, vec![])
+        );
         assert!(role_from_wire(99).is_err());
         // Password strength: empty and short rejected; >= MIN accepted.
         assert!(check_password_strength("").is_err());
@@ -1757,7 +1790,8 @@ mod tests {
             email: "a2@celnet.com".into(),
             display_name: "A2".into(),
             role: Role::Admin,
-            desk_id: None,
+            desk_ids: Vec::new(),
+            all_desks: false,
             password_hash: "x".into(),
             disabled: false,
             capability_grants: Vec::new(),
@@ -1770,7 +1804,8 @@ mod tests {
             email: "t@celnet.com".into(),
             display_name: "T".into(),
             role: Role::Trader,
-            desk_id: None,
+            desk_ids: Vec::new(),
+            all_desks: false,
             password_hash: "x".into(),
             disabled: false,
             capability_grants: Vec::new(),
@@ -2331,7 +2366,8 @@ mod tests {
                 email: "jane@celnet.com".into(),
                 display_name: "Jane".into(),
                 role: UserRole::Trader as i32,
-                desk_id: None,
+                desk_ids: Vec::new(),
+                all_desks: false,
                 password: "trader-pw-123".into(),
                 correlation_id: None,
             }))
@@ -2363,7 +2399,8 @@ mod tests {
                 email: email.into(),
                 display_name: "Trader".into(),
                 role: UserRole::Trader as i32,
-                desk_id: None,
+                desk_ids: Vec::new(),
+                all_desks: false,
                 password: "trader-pw-123".into(),
                 correlation_id: None,
             }))
@@ -2731,7 +2768,8 @@ mod tests {
                 id: admin_id.clone(),
                 display_name: "Administrator".into(),
                 role: UserRole::Trader as i32,
-                desk_id: None,
+                desk_ids: Vec::new(),
+                all_desks: false,
                 disabled: false,
                 correlation_id: None,
             }))
@@ -2748,6 +2786,108 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(del.code(), tonic::Code::FailedPrecondition);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `update_user` sets a MULTI-desk membership, rejects an unknown desk id, and
+    /// clearing the set (empty + `!all_desks`) makes the user deskless; `all_desks`
+    /// canonicalizes away any provided set.
+    #[tokio::test]
+    async fn update_user_multi_desk_set_reject_and_clear() {
+        let (edge, path, _s) = edge("multi-desk");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let tok = admin.session_token.clone();
+        let mk_desk = |name: &str| {
+            let edge = &edge;
+            let tok = tok.clone();
+            let name = name.to_owned();
+            async move {
+                edge.create_desk(Request::new(CreateDeskRequest {
+                    session_token: tok,
+                    name,
+                    correlation_id: None,
+                }))
+                .await
+                .unwrap()
+                .into_inner()
+                .desk
+                .unwrap()
+            }
+        };
+        let a = mk_desk("Desk A").await;
+        let b = mk_desk("Desk B").await;
+
+        let jane = edge
+            .create_user(Request::new(CreateUserRequest {
+                session_token: tok.clone(),
+                email: "jane@celnet.com".into(),
+                display_name: "Jane".into(),
+                role: UserRole::Trader as i32,
+                desk_ids: vec![a.id.clone()],
+                all_desks: false,
+                password: "trader-pw-123".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .user
+            .unwrap();
+
+        let jid = jane.id.clone();
+        let update = |desk_ids: Vec<String>, all_desks: bool| {
+            let edge = &edge;
+            let tok = tok.clone();
+            let id = jid.clone();
+            async move {
+                edge.update_user(Request::new(UpdateUserRequest {
+                    session_token: tok,
+                    id,
+                    display_name: "Jane".into(),
+                    role: UserRole::Trader as i32,
+                    desk_ids,
+                    all_desks,
+                    disabled: false,
+                    correlation_id: None,
+                }))
+                .await
+            }
+        };
+
+        // Set a multi-desk membership {A, B}.
+        let set = update(vec![a.id.clone(), b.id.clone()], false)
+            .await
+            .unwrap()
+            .into_inner()
+            .user
+            .unwrap();
+        assert_eq!(set.desk_ids, vec![a.id.clone(), b.id.clone()]);
+        assert!(!set.all_desks);
+
+        // An unknown desk id is rejected (like the single-desk validation).
+        let bad = update(vec![a.id.clone(), "no-such-desk".into()], false)
+            .await
+            .unwrap_err();
+        assert_eq!(bad.code(), tonic::Code::FailedPrecondition);
+
+        // all_desks canonicalizes away a provided set.
+        let all = update(vec![a.id.clone()], true)
+            .await
+            .unwrap()
+            .into_inner()
+            .user
+            .unwrap();
+        assert!(all.all_desks && all.desk_ids.is_empty());
+
+        // Clearing to empty (+ !all_desks) makes the user deskless.
+        let cleared = update(Vec::new(), false)
+            .await
+            .unwrap()
+            .into_inner()
+            .user
+            .unwrap();
+        assert!(cleared.desk_ids.is_empty() && !cleared.all_desks);
+
         let _ = std::fs::remove_file(&path);
     }
 
@@ -2774,7 +2914,8 @@ mod tests {
                 email: "jane@celnet.com".into(),
                 display_name: "Jane".into(),
                 role: UserRole::Trader as i32,
-                desk_id: Some(desk.id.clone()),
+                desk_ids: vec![desk.id.clone()],
+                all_desks: false,
                 password: "trader-pw-123".into(),
                 correlation_id: None,
             }))
@@ -2783,7 +2924,8 @@ mod tests {
             .into_inner()
             .user
             .unwrap();
-        assert_eq!(jane.desk_id.as_deref(), Some(desk.id.as_str()));
+        assert_eq!(jane.desk_ids, vec![desk.id.clone()]);
+        assert!(!jane.all_desks);
         // Delete the desk ⇒ the trader is unassigned.
         edge.delete_desk(Request::new(DeleteDeskRequest {
             session_token: tok.clone(),
@@ -2802,8 +2944,8 @@ mod tests {
             .into_inner()
             .users;
         let jane_after = users.into_iter().find(|u| u.id == jane.id).unwrap();
-        assert_eq!(
-            jane_after.desk_id, None,
+        assert!(
+            jane_after.desk_ids.is_empty() && !jane_after.all_desks,
             "deleting a desk unassigns its members"
         );
         let _ = std::fs::remove_file(&path);
@@ -2832,7 +2974,8 @@ mod tests {
                 email: "jane@celnet.com".into(),
                 display_name: "Jane".into(),
                 role: UserRole::Trader as i32,
-                desk_id: Some(desk.id.clone()),
+                desk_ids: vec![desk.id.clone()],
+                all_desks: false,
                 password: "trader-pw-123".into(),
                 correlation_id: None,
             }))
@@ -2870,8 +3013,8 @@ mod tests {
             .users;
         let jane_after = users.into_iter().find(|u| u.id == jane.id).unwrap();
         assert_eq!(
-            jane_after.desk_id.as_deref(),
-            Some(desk.id.as_str()),
+            jane_after.desk_ids,
+            vec![desk.id.clone()],
             "renaming a desk must not disturb user→desk routing"
         );
 

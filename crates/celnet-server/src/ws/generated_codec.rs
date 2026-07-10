@@ -5378,9 +5378,10 @@ impl WireBuilder for CreateUserRequest {
             "email" => self.email = req_string(value, "email")?,
             "display_name" => self.display_name = req_string(value, "display_name")?,
             "role" => self.role = enum_or_zero(value),
-            "desk_id" => self.desk_id = opt_string(value, "desk_id")?,
+            "desk_ids" => self.desk_ids = string_vec(value),
             "password" => self.password = req_string(value, "password")?,
             "correlation_id" => self.correlation_id = opt_u64(value),
+            "all_desks" => self.all_desks = bool_or_false(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -5395,9 +5396,10 @@ impl WireBuilder for UpdateUserRequest {
             "id" => self.id = req_string(value, "id")?,
             "display_name" => self.display_name = req_string(value, "display_name")?,
             "role" => self.role = enum_or_zero(value),
-            "desk_id" => self.desk_id = opt_string(value, "desk_id")?,
+            "desk_ids" => self.desk_ids = string_vec(value),
             "disabled" => self.disabled = bool_or_false(value),
             "correlation_id" => self.correlation_id = opt_u64(value),
+            "all_desks" => self.all_desks = bool_or_false(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -6008,9 +6010,10 @@ impl WireAdapter for UserDesc {
             "email" => Some(WireVal::Str(&self.email)),
             "display_name" => Some(WireVal::Str(&self.display_name)),
             "role" => Some(WireVal::Enum(self.role)),
-            // `optional string desk_id`: absent ⇒ `null` (UserDesc ∈ null-absent-optional).
-            "desk_id" => self.desk_id.as_deref().map(WireVal::Str),
+            // `repeated string desk_ids`: always present (an empty set ⇒ `[]`).
+            "desk_ids" => Some(WireVal::RepeatedStr(&self.desk_ids)),
             "disabled" => Some(WireVal::Bool(self.disabled)),
+            "all_desks" => Some(WireVal::Bool(self.all_desks)),
             _ => None,
         }
     }

@@ -135,23 +135,44 @@ pub fn principal_of(principal: Option<&EntitlementPrincipal>) -> Result<Principa
 /// deskless trader's narrowed view.
 #[must_use]
 pub fn narrow_to_desk(base: Principal, desk_value: u64) -> Principal {
+    narrow_to_desks(base, &[desk_value])
+}
+
+/// **Many-to-many desk narrowing** — the union generalization of
+/// [`narrow_to_desk`] for a caller who belongs to a **set** of desks. The narrowed
+/// view is the *union* of the per-desk narrowings (a fact is visible iff it belongs
+/// to ANY of the caller's desks), still bounded below by the asserted scope so it
+/// can never widen past what the body principal grants:
+///
+/// * a **grant-all** `base` becomes `scoped()` with one `grant(Desk = d)` per desk
+///   `d` in `desk_values` — the grants are disjunctive, so their union is exactly
+///   "any of the caller's desks", never wider; deny barriers carried (deny wins);
+/// * a **scoped** `base` conjoins **each** asserted grant with **each** desk
+///   (`Rule::and`), emitting the cartesian set of `grant(g ∧ Desk = d)` — the
+///   asserted scope intersected with the desk union; denies carried unchanged.
+///
+/// An empty `desk_values` yields a scoped principal with no grants (sees nothing) —
+/// the security-conservative direction; in practice the caller's set is non-empty
+/// (a deskless trader narrows to the house desk `0` via [`narrow_to_desk`]).
+#[must_use]
+pub fn narrow_to_desks(base: Principal, desk_values: &[u64]) -> Principal {
     let dim = DimensionId::Desk;
+    let mut p = Principal::scoped();
     if base.is_grant_all() {
-        let mut p = Principal::scoped().grant(Rule::on(dim, desk_value));
-        for d in base.denies() {
-            p = p.deny(d.clone());
+        for &desk_value in desk_values {
+            p = p.grant(Rule::on(dim, desk_value));
         }
-        p
     } else {
-        let mut p = Principal::scoped();
         for g in base.grants() {
-            p = p.grant(g.clone().and(dim, desk_value));
+            for &desk_value in desk_values {
+                p = p.grant(g.clone().and(dim, desk_value));
+            }
         }
-        for d in base.denies() {
-            p = p.deny(d.clone());
-        }
-        p
     }
+    for d in base.denies() {
+        p = p.deny(d.clone());
+    }
+    p
 }
 
 /// Map a domain [`Rule`] back onto a wire [`EntitlementRule`](celnet_proto::EntitlementRule)

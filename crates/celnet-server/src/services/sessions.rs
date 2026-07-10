@@ -60,8 +60,14 @@ pub struct AuthenticatedUser {
     pub display_name: String,
     /// The user's role at the time the session was issued.
     pub role: Role,
-    /// The desk the user belonged to at login, if any.
-    pub desk_id: Option<String>,
+    /// The desks the user belonged to at login (snapshot of [`UserDef::desk_ids`]).
+    /// Empty + `!all_desks` ⇒ deskless. The access boundary maps this to a
+    /// [`DeskScope`](super::access::DeskScope) for RFQ/notification/risk narrowing.
+    pub desk_ids: Vec<String>,
+    /// When set, the user belonged to **every** desk at login (snapshot of
+    /// [`UserDef::all_desks`]) — mapped to `DeskScope::All`. An admin is always
+    /// all-desks (via [`is_admin`](Self::is_admin)) regardless of this flag.
+    pub all_desks: bool,
     /// The resolved capability **base** the user's role conferred at login — the
     /// admin-editable per-role bundle snapshot
     /// ([`IdentityStore::role_base`](crate::config::identity::IdentityStore::role_base)),
@@ -122,7 +128,8 @@ impl AuthenticatedUser {
             email: user.email.clone(),
             display_name: user.display_name.clone(),
             role: user.role,
-            desk_id: user.desk_id.clone(),
+            desk_ids: user.desk_ids.clone(),
+            all_desks: user.all_desks,
             role_caps,
             cap_grants,
             cap_denies,
@@ -349,7 +356,8 @@ mod tests {
             email: "alice@celnet.com".into(),
             display_name: "Alice".into(),
             role: Role::Trader,
-            desk_id: Some("g10".into()),
+            desk_ids: vec!["g10".into()],
+            all_desks: false,
             role_caps: default_trader_bundle(),
             cap_grants: Vec::new(),
             cap_denies: Vec::new(),
@@ -484,7 +492,8 @@ mod tests {
             email: "u@celnet.com".into(),
             display_name: "U".into(),
             role: Role::Trader,
-            desk_id: None,
+            desk_ids: Vec::new(),
+            all_desks: false,
             password_hash: "x".into(),
             disabled: false,
             capability_grants: vec![PermissionGrant::of(fi_admin)],

@@ -3006,8 +3006,9 @@ fn user_desc_to_json(u: &UserDesc) -> Value {
         "email": u.email,
         "display_name": u.display_name,
         "role": u.role,
-        "desk_id": u.desk_id,
+        "desk_ids": u.desk_ids,
         "disabled": u.disabled,
+        "all_desks": u.all_desks,
     })
 }
 
@@ -3066,9 +3067,10 @@ pub(super) fn create_user_request_from_json(o: &Map<String, Value>) -> Result<Cr
         email: string_field(o, "email")?,
         display_name: string_field(o, "display_name")?,
         role: enum_or_zero(o, "role"),
-        desk_id: opt_string(o, "desk_id"),
+        desk_ids: string_array(o, "desk_ids"),
         password: string_field(o, "password")?,
         correlation_id: opt_u64(o, "correlation_id"),
+        all_desks: bool_or_false(o, "all_desks"),
     })
 }
 
@@ -3085,9 +3087,10 @@ pub(super) fn update_user_request_from_json(o: &Map<String, Value>) -> Result<Up
         id: string_field(o, "id")?,
         display_name: string_field(o, "display_name")?,
         role: enum_or_zero(o, "role"),
-        desk_id: opt_string(o, "desk_id"),
+        desk_ids: string_array(o, "desk_ids"),
         disabled: bool_or_false(o, "disabled"),
         correlation_id: opt_u64(o, "correlation_id"),
+        all_desks: bool_or_false(o, "all_desks"),
     })
 }
 

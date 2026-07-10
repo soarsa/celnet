@@ -281,14 +281,21 @@ pub fn effective_desk_filter(requested: &[String], caller_scope: &DeskScope) -> 
                 DeskFilter::Desks(requested.iter().cloned().collect())
             }
         }
-        DeskScope::Desk(d) => {
-            // The caller may see only their desk; intersect with any requested set.
-            let admit = requested.is_empty() || requested.iter().any(|r| r == d);
-            if admit {
-                DeskFilter::Desks([d.clone()].into_iter().collect())
+        DeskScope::Desks(owned) => {
+            // The caller may see only their desks; intersect with any requested set.
+            // No request ⇒ the caller's full desk set; a request narrows to the
+            // intersection (a notification for desk D reaches the caller iff D is in
+            // their set and, when a scope was requested, in the requested set too).
+            let effective: std::collections::HashSet<String> = if requested.is_empty() {
+                owned.clone()
             } else {
-                DeskFilter::Desks(std::collections::HashSet::new())
-            }
+                requested
+                    .iter()
+                    .filter(|r| owned.contains(*r))
+                    .cloned()
+                    .collect()
+            };
+            DeskFilter::Desks(effective)
         }
         // A deskless trader: notifications always target a named desk, so none match.
         DeskScope::Deskless => DeskFilter::Desks(std::collections::HashSet::new()),
@@ -986,7 +993,8 @@ mod tests {
                 email: "trader@celnet.com".to_owned(),
                 display_name: "Desk Trader".to_owned(),
                 role: crate::config::identity::Role::Trader,
-                desk_id: Some("g10".to_owned()),
+                desk_ids: vec!["g10".to_owned()],
+                all_desks: false,
                 role_caps: crate::config::identity::default_trader_bundle(),
                 cap_grants: Vec::new(),
                 cap_denies: Vec::new(),
@@ -1414,19 +1422,40 @@ mod tests {
     /// `effective_desk_filter` intersects requested desks with the caller's scope.
     #[test]
     fn desk_filter_intersects_scope() {
+        let g10 = || DeskScope::Desks(["g10".to_owned()].into_iter().collect());
         assert_eq!(effective_desk_filter(&[], &DeskScope::All), DeskFilter::All);
         assert_eq!(
-            effective_desk_filter(&[], &DeskScope::Desk("g10".to_owned())),
+            effective_desk_filter(&[], &g10()),
             DeskFilter::Desks(["g10".to_owned()].into_iter().collect())
         );
         // Requesting a desk the caller cannot see yields an empty filter.
         assert_eq!(
-            effective_desk_filter(&["em".to_owned()], &DeskScope::Desk("g10".to_owned())),
+            effective_desk_filter(&["em".to_owned()], &g10()),
             DeskFilter::Desks(std::collections::HashSet::new())
         );
         assert_eq!(
             effective_desk_filter(&["em".to_owned()], &DeskScope::Deskless),
             DeskFilter::Desks(std::collections::HashSet::new())
         );
+    }
+
+    /// A multi-desk caller (desks {g10, em}) receives notifications for BOTH desks
+    /// when no scope is requested, and the intersection when a scope is requested.
+    #[test]
+    fn desk_filter_multi_desk_membership() {
+        let both = DeskScope::Desks(["g10".to_owned(), "em".to_owned()].into_iter().collect());
+        // No request ⇒ the caller's full set.
+        assert_eq!(
+            effective_desk_filter(&[], &both),
+            DeskFilter::Desks(["g10".to_owned(), "em".to_owned()].into_iter().collect())
+        );
+        // A request narrows to the intersection (em kept, ny dropped).
+        assert_eq!(
+            effective_desk_filter(&["em".to_owned(), "ny".to_owned()], &both),
+            DeskFilter::Desks(["em".to_owned()].into_iter().collect())
+        );
+        // The resulting filter admits both owned desks, not a third.
+        let f = effective_desk_filter(&[], &both);
+        assert!(f.allows("g10") && f.allows("em") && !f.allows("ny"));
     }
 }

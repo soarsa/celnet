@@ -3043,7 +3043,7 @@ fn desk_reply_encode_is_byte_identical() {
 // request decoders (login/session, user/desk/entity/book CRUD, capabilities +
 // roles, the instrument registry with its `definition` family oneof, and
 // `BuildCurve`) and the reply encoders, byte-identical to the hand codec incl. the
-// presence-tracked-null policy (`correlation_id`, `UserDesc.desk_id`, `BondDef`
+// presence-tracked-null policy (`correlation_id`, `BondDef`
 // coupon dates), the `capabilities` repeated-message lists and the `calendars`
 // repeated-string.
 // ===========================================================================
@@ -3070,14 +3070,15 @@ fn a_capability(action: &str, asset: &str) -> CapabilityDesc {
     }
 }
 
-fn a_user_desc(desk_id: Option<&str>) -> UserDesc {
+fn a_user_desc(desk_ids: &[&str], all_desks: bool) -> UserDesc {
     UserDesc {
         id: "u-1".to_owned(),
         email: "trader@celer.example".to_owned(),
         display_name: "A Trader".to_owned(),
         role: 2,
-        desk_id: desk_id.map(str::to_owned),
+        desk_ids: desk_ids.iter().map(|s| (*s).to_owned()).collect(),
         disabled: false,
+        all_desks,
     }
 }
 
@@ -3247,11 +3248,12 @@ fn auth_session_verbs_decode_byte_identical() {
 fn auth_user_crud_decode_byte_identical() {
     let cases = [
         (
-            "create-full",
+            "create-multi-desk",
             json!({ "session_token": "tok", "email": "a@b.c", "display_name": "A",
-                    "role": 2, "desk_id": "fx", "password": "pw", "correlation_id": 3 }),
+                    "role": 2, "desk_ids": ["fx", "rates"], "password": "pw",
+                    "correlation_id": 3 }),
         ),
-        // Absent desk_id (⇒ None) + empty desk_id (⇒ None via opt_string filter).
+        // Absent desk_ids (⇒ empty vec) — a deskless new user.
         (
             "create-no-desk",
             json!({ "session_token": "tok", "email": "a@b.c", "display_name": "A",
@@ -3260,7 +3262,13 @@ fn auth_user_crud_decode_byte_identical() {
         (
             "create-empty-desk",
             json!({ "session_token": "tok", "email": "a@b.c", "display_name": "A",
-                    "role": 1, "desk_id": "", "password": "pw" }),
+                    "role": 1, "desk_ids": [], "password": "pw" }),
+        ),
+        // all_desks set (with a stray desk_ids the server canonicalizes away later).
+        (
+            "create-all-desks",
+            json!({ "session_token": "tok", "email": "a@b.c", "display_name": "A",
+                    "role": 2, "desk_ids": ["fx"], "all_desks": true, "password": "pw" }),
         ),
     ];
     for (label, body) in &cases {
@@ -3272,14 +3280,21 @@ fn auth_user_crud_decode_byte_identical() {
         );
     }
 
-    let update = json!({ "session_token": "tok", "id": "u-1", "display_name": "A2",
-        "role": 3, "desk_id": "rates", "disabled": true, "correlation_id": 9 });
-    let o = update.as_object().expect("object");
-    assert_decode_eq(
-        "UpdateUserRequest",
-        generated::decode_update_user_request(o),
-        hand::hand_update_user_request_from_json(o),
-    );
+    let updates = [
+        json!({ "session_token": "tok", "id": "u-1", "display_name": "A2",
+            "role": 3, "desk_ids": ["rates", "credit"], "disabled": true,
+            "correlation_id": 9 }),
+        json!({ "session_token": "tok", "id": "u-1", "display_name": "A2",
+            "role": 3, "all_desks": true, "disabled": false }),
+    ];
+    for update in &updates {
+        let o = update.as_object().expect("object");
+        assert_decode_eq(
+            "UpdateUserRequest",
+            generated::decode_update_user_request(o),
+            hand::hand_update_user_request_from_json(o),
+        );
+    }
 
     let del = json!({ "session_token": "tok", "id": "u-1" });
     let o = del.as_object().expect("object");
@@ -3623,7 +3638,7 @@ fn auth_build_curve_decode_byte_identical() {
 fn auth_session_replies_encode_byte_identical() {
     let login = LoginResponse {
         session_token: "sess-abc".to_owned(),
-        user: Some(a_user_desc(Some("fx"))),
+        user: Some(a_user_desc(&["fx"], false)),
         expires_nanos: 1_720_000_000_000_000_000,
         capabilities: vec![
             a_capability("view", "fx_options"),
@@ -3666,13 +3681,23 @@ fn auth_session_replies_encode_byte_identical() {
         );
     }
 
-    // ListUsersResponse: a user with desk_id None ⇒ nested `desk_id` renders `null`.
+    // ListUsersResponse: a multi-desk user renders `desk_ids` as a JSON array; a
+    // deskless user renders `desk_ids: []` (an empty array, never `null`); an
+    // all-desks user renders `all_desks: true` with an empty `desk_ids`.
     let users = ListUsersResponse {
-        users: vec![a_user_desc(Some("fx")), a_user_desc(None)],
+        users: vec![
+            a_user_desc(&["fx", "rates"], false),
+            a_user_desc(&[], false),
+            a_user_desc(&[], true),
+        ],
         correlation_id: Some(2),
     };
     let g = generated::encode_list_users_response(&users);
-    assert_eq!(g["users"][1].get("desk_id"), Some(&Value::Null));
+    assert_eq!(g["users"][0]["desk_ids"], json!(["fx", "rates"]));
+    assert_eq!(g["users"][1]["desk_ids"], json!([]));
+    assert_eq!(g["users"][1]["all_desks"], json!(false));
+    assert_eq!(g["users"][2]["all_desks"], json!(true));
+    assert_eq!(g["users"][2]["desk_ids"], json!([]));
     assert_bytes_eq(
         "ListUsersResponse",
         &g,
@@ -3692,7 +3717,7 @@ fn auth_session_replies_encode_byte_identical() {
 #[test]
 fn auth_user_crud_replies_encode_byte_identical() {
     for (label, user) in [
-        ("with-user", Some(a_user_desc(Some("fx")))),
+        ("with-user", Some(a_user_desc(&["fx"], false))),
         ("no-user", None),
     ] {
         let created = CreateUserResponse {

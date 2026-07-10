@@ -20,8 +20,9 @@
 //!
 //! A [`Role`] is either [`Role::Admin`] (may administer users, desks and
 //! connections) or [`Role::Trader`] (a desk member who sees their desk's inbound
-//! RFQ traffic). A user optionally belongs to one [`DeskDef`] by `desk_id`; desk
-//! membership is what scopes RFQ/monitor visibility (built on top of this store).
+//! RFQ traffic). A user belongs to zero, one, or many [`DeskDef`]s by `desk_ids`
+//! (or to every desk via `all_desks`); desk membership is what scopes RFQ/monitor
+//! visibility (built on top of this store).
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -110,7 +111,19 @@ pub fn default_trader_bundle() -> Vec<Capability> {
 }
 
 /// One persisted user account.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Desk membership is **many-to-many**: a user belongs to [`all_desks`] (every desk,
+/// present and future) or to the set named in [`desk_ids`] (zero, one, or many). A
+/// notification routed to desk `D` reaches every user whose membership is `all_desks`
+/// or whose [`desk_ids`] contains `D`; an empty set with `all_desks == false` is a
+/// **deskless** user (receives nothing desk-routed). Deserialization migrates the
+/// legacy single `desk_id` string into a one-element [`desk_ids`] set (see the manual
+/// [`Deserialize`] impl below), so an `identity.json` written before this contract
+/// loads without losing membership.
+///
+/// [`all_desks`]: UserDef::all_desks
+/// [`desk_ids`]: UserDef::desk_ids
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UserDef {
     /// Stable identifier (the store/API key). Never reused; minted from the email.
     pub id: String,
@@ -120,9 +133,17 @@ pub struct UserDef {
     pub display_name: String,
     /// What the user may do.
     pub role: Role,
-    /// The desk this user belongs to, by [`DeskDef::id`]; `None` ⇒ unassigned.
+    /// The desks this user belongs to, by [`DeskDef::id`] (order-preserving, unique).
+    /// Empty + `!all_desks` ⇒ deskless. Ignored (kept empty, the canonical form) when
+    /// [`all_desks`](Self::all_desks) is set.
     #[serde(default)]
-    pub desk_id: Option<String>,
+    pub desk_ids: Vec<String>,
+    /// When set, the user belongs to **every** desk (present and future); the
+    /// [`desk_ids`](Self::desk_ids) set is then ignored and canonically empty. An admin
+    /// role is always all-desks regardless of this flag; a trader expresses firm-wide
+    /// desk visibility through it.
+    #[serde(default)]
+    pub all_desks: bool,
     /// The Argon2id PHC hash of the user's password. Never the plaintext.
     pub password_hash: String,
     /// Whether the account is disabled (cannot log in) without being deleted.
@@ -167,6 +188,64 @@ impl UserDef {
             .map(PermissionGrant::parse)
             .collect::<Result<Vec<_>, _>>()?;
         Ok((grants, denies))
+    }
+}
+
+/// Deserialize a [`UserDef`], migrating the legacy single-desk membership.
+///
+/// A `UserDef` written before the many-to-many contract carried a single
+/// `optional string desk_id`; a current one carries `desk_ids` + `all_desks`. This
+/// manual impl accepts **both**: a present legacy `desk_id` folds into the
+/// `desk_ids` set (deduped, order-preserving) so an old `identity.json` loads with
+/// its membership intact and nothing is lost. New writes emit only `desk_ids` /
+/// `all_desks` (the derived [`Serialize`]), so the legacy key never round-trips back.
+impl<'de> Deserialize<'de> for UserDef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            id: String,
+            email: String,
+            display_name: String,
+            role: Role,
+            /// Legacy single-desk membership (pre-many-to-many); migrated below.
+            #[serde(default)]
+            desk_id: Option<String>,
+            #[serde(default)]
+            desk_ids: Vec<String>,
+            #[serde(default)]
+            all_desks: bool,
+            password_hash: String,
+            #[serde(default)]
+            disabled: bool,
+            #[serde(default)]
+            capability_grants: Vec<PermissionGrant>,
+            #[serde(default)]
+            capability_denies: Vec<PermissionGrant>,
+        }
+
+        let raw = Raw::deserialize(deserializer)?;
+        let mut desk_ids = raw.desk_ids;
+        if let Some(legacy) = raw.desk_id
+            && !legacy.trim().is_empty()
+            && !desk_ids.iter().any(|d| d == &legacy)
+        {
+            desk_ids.push(legacy);
+        }
+        Ok(UserDef {
+            id: raw.id,
+            email: raw.email,
+            display_name: raw.display_name,
+            role: raw.role,
+            desk_ids,
+            all_desks: raw.all_desks,
+            password_hash: raw.password_hash,
+            disabled: raw.disabled,
+            capability_grants: raw.capability_grants,
+            capability_denies: raw.capability_denies,
+        })
     }
 }
 
@@ -602,7 +681,8 @@ impl IdentityStore {
             email: SEED_ADMIN_EMAIL.to_string(),
             display_name: "Administrator".to_string(),
             role: Role::Admin,
-            desk_id: None,
+            desk_ids: Vec::new(),
+            all_desks: false,
             password_hash: hash,
             disabled: false,
             capability_grants: Vec::new(),
@@ -778,7 +858,8 @@ mod tests {
             email: "a@celnet.com".into(),
             display_name: "A".into(),
             role: Role::Trader,
-            desk_id: None,
+            desk_ids: Vec::new(),
+            all_desks: false,
             password_hash: hash_password("pw").unwrap(),
             disabled: false,
             capability_grants: Vec::new(),
@@ -807,7 +888,8 @@ mod tests {
             email: "jane@celnet.com".into(),
             display_name: "Jane".into(),
             role: Role::Trader,
-            desk_id: None,
+            desk_ids: Vec::new(),
+            all_desks: false,
             password_hash: "x".into(),
             disabled: false,
             capability_grants: Vec::new(),
@@ -887,7 +969,8 @@ mod tests {
             email: "u@celnet.com".into(),
             display_name: "U".into(),
             role: Role::Trader,
-            desk_id: None,
+            desk_ids: Vec::new(),
+            all_desks: false,
             password_hash: "x".into(),
             disabled: false,
             capability_grants: vec![PermissionGrant::of(fi_book)],
@@ -918,6 +1001,59 @@ mod tests {
         let back: IdentityStore = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(store, back);
         assert_eq!(back.role_base(Role::Trader), vec![only]);
+    }
+
+    /// Migration: an identity record carrying the legacy single `desk_id` string
+    /// loads as a one-element `desk_ids` set (membership preserved, nothing lost),
+    /// and a blank legacy `desk_id` loads as the empty (deskless) set.
+    #[test]
+    fn legacy_single_desk_id_migrates_to_set() {
+        let json = r#"{
+            "users": [
+                { "id": "jane", "email": "jane@celnet.com", "display_name": "Jane",
+                  "role": "trader", "desk_id": "g10", "password_hash": "x" },
+                { "id": "joe", "email": "joe@celnet.com", "display_name": "Joe",
+                  "role": "trader", "desk_id": "  ", "password_hash": "y" }
+            ],
+            "desks": []
+        }"#;
+        let store: IdentityStore = serde_json::from_str(json).unwrap();
+        let jane = store.user("jane").unwrap();
+        assert_eq!(jane.desk_ids, vec!["g10".to_owned()]);
+        assert!(!jane.all_desks);
+        // A blank legacy id ⇒ deskless, not a `[""]` set.
+        let joe = store.user("joe").unwrap();
+        assert!(joe.desk_ids.is_empty() && !joe.all_desks);
+    }
+
+    /// A current record carrying `desk_ids` + `all_desks` loads verbatim, and a new
+    /// write emits only the new keys (the legacy `desk_id` never round-trips back).
+    #[test]
+    fn new_membership_round_trips_without_legacy_key() {
+        let json = r#"{
+            "users": [
+                { "id": "u", "email": "u@celnet.com", "display_name": "U",
+                  "role": "trader", "desk_ids": ["a", "b"], "password_hash": "x" },
+                { "id": "v", "email": "v@celnet.com", "display_name": "V",
+                  "role": "trader", "all_desks": true, "password_hash": "y" }
+            ],
+            "desks": []
+        }"#;
+        let store: IdentityStore = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            store.user("u").unwrap().desk_ids,
+            vec!["a".to_owned(), "b".to_owned()]
+        );
+        assert!(store.user("v").unwrap().all_desks);
+        // Serialize → the legacy key is absent; reload is equal (stable round-trip).
+        let bytes = serde_json::to_vec(&store).unwrap();
+        assert!(
+            !String::from_utf8(bytes.clone())
+                .unwrap()
+                .contains("\"desk_id\"")
+        );
+        let back: IdentityStore = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(store, back);
     }
 
     /// An identity file carrying an unknown role-bundle label is rejected at load

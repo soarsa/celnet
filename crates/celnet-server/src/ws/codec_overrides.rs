@@ -121,9 +121,6 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "CreateInstrumentResponse",
     "UpdateInstrumentResponse",
     "DeleteInstrumentResponse",
-    // The `UserDesc` blotter row: its `optional string desk_id` (absent ⇒ unassigned)
-    // is emitted as JSON `null` by `user_desc_to_json`'s `json!({ .. })`.
-    "UserDesc",
     // The `BondDef` instrument family block: its `optional BrokenDate` coupon-schedule
     // dates (`issue_date` / `dated_date` / `first_coupon_date`) are emitted as JSON
     // `null` when absent by `family_to_json`'s `.as_ref().map(..)` (the `maturity_date`

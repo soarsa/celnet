@@ -228,12 +228,15 @@ pub enum RequiredAuthority {
 /// resolved caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeskScope {
-    /// Full visibility — an **admin** session, or the no-session legacy/demo path
-    /// (which keeps the historical "sees everything" behaviour so the permissive
-    /// demo edge and the principal-only tests are unchanged).
+    /// Full visibility — an **admin** session, an `all_desks` trader, or the
+    /// no-session legacy/demo path (which keeps the historical "sees everything"
+    /// behaviour so the permissive demo edge and the principal-only tests are
+    /// unchanged).
     All,
-    /// Only resources owned by **this** desk — a trader session bound to a desk.
-    Desk(String),
+    /// Only resources owned by one of **these** desks — a trader session bound to a
+    /// non-empty set of desks (one or many). A resource owned by desk `D` is visible
+    /// iff the set contains `D`.
+    Desks(std::collections::HashSet<String>),
     /// Only **unowned** ("house") resources — a trader session with no desk
     /// assigned sees only connections whose owning desk is empty.
     Deskless,
@@ -246,7 +249,7 @@ impl DeskScope {
     pub fn allows(&self, owner_desk: &str) -> bool {
         match self {
             DeskScope::All => true,
-            DeskScope::Desk(d) => owner_desk == d,
+            DeskScope::Desks(set) => set.contains(owner_desk),
             DeskScope::Deskless => owner_desk.is_empty(),
         }
     }
@@ -311,18 +314,20 @@ impl ResolvedCaller {
     /// * an **admin** session, or **no** session (the legacy/demo path) ⇒
     ///   [`DeskScope::All`] — full visibility, so the permissive demo edge and the
     ///   principal-only tests keep seeing every connection;
-    /// * a **trader** session bound to a desk ⇒ [`DeskScope::Desk`] of that desk;
-    /// * a **trader** session with no desk ⇒ [`DeskScope::Deskless`] (only
+    /// * a **trader** session with `all_desks` ⇒ [`DeskScope::All`];
+    /// * a **trader** session bound to a non-empty desk set ⇒ [`DeskScope::Desks`]
+    ///   of that set (one or many desks);
+    /// * a **trader** session with no desks ⇒ [`DeskScope::Deskless`] (only
     ///   unowned "house" connections).
     #[must_use]
     pub fn desk_scope(&self) -> DeskScope {
         match self.user.as_ref() {
             None => DeskScope::All,
-            Some(u) if u.is_admin() => DeskScope::All,
-            Some(u) => match &u.desk_id {
-                Some(desk) => DeskScope::Desk(desk.clone()),
-                None => DeskScope::Deskless,
-            },
+            Some(u) if u.is_admin() || u.all_desks => DeskScope::All,
+            Some(u) if !u.desk_ids.is_empty() => {
+                DeskScope::Desks(u.desk_ids.iter().cloned().collect())
+            }
+            Some(_) => DeskScope::Deskless,
         }
     }
 }
@@ -570,7 +575,8 @@ mod tests {
             email: "trader@celnet.com".into(),
             display_name: "Trader".into(),
             role,
-            desk_id: Some("g10".into()),
+            desk_ids: vec!["g10".into()],
+            all_desks: false,
             role_caps: crate::config::identity::default_trader_bundle(),
             cap_grants: Vec::new(),
             cap_denies: Vec::new(),
@@ -840,7 +846,10 @@ mod tests {
         let token = reg.issue(user(Role::Trader)).unwrap().token;
         let caller = resolve_caller(&reg, Some(&token), None).unwrap();
         let scope = caller.desk_scope();
-        assert_eq!(scope, DeskScope::Desk("g10".into()));
+        assert_eq!(
+            scope,
+            DeskScope::Desks(["g10".to_owned()].into_iter().collect())
+        );
         assert!(scope.allows("g10"));
         assert!(!scope.allows("em")); // another desk
         assert!(!scope.allows("")); // unowned/house
@@ -852,7 +861,8 @@ mod tests {
     fn desk_scope_deskless_trader_sees_only_unowned() {
         let reg = SessionRegistry::new(Clock::manual(0));
         let deskless = AuthenticatedUser {
-            desk_id: None,
+            desk_ids: Vec::new(),
+            all_desks: false,
             ..user(Role::Trader)
         };
         let token = reg.issue(deskless).unwrap().token;
@@ -861,5 +871,45 @@ mod tests {
         assert_eq!(scope, DeskScope::Deskless);
         assert!(scope.allows(""));
         assert!(!scope.allows("g10"));
+    }
+
+    /// A trader belonging to a SET of desks {g10, em} sees resources owned by either,
+    /// but not a third desk nor the unowned house connections.
+    #[test]
+    fn desk_scope_multi_desk_trader_sees_their_set() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let multi = AuthenticatedUser {
+            desk_ids: vec!["g10".to_owned(), "em".to_owned()],
+            all_desks: false,
+            ..user(Role::Trader)
+        };
+        let token = reg.issue(multi).unwrap().token;
+        let caller = resolve_caller(&reg, Some(&token), None).unwrap();
+        let scope = caller.desk_scope();
+        assert_eq!(
+            scope,
+            DeskScope::Desks(["g10".to_owned(), "em".to_owned()].into_iter().collect())
+        );
+        assert!(scope.allows("g10") && scope.allows("em"));
+        assert!(!scope.allows("ny")); // a desk they do not belong to
+        assert!(!scope.allows("")); // unowned/house
+        assert!(!scope.is_all());
+    }
+
+    /// An `all_desks` trader (non-admin) resolves to full visibility, exactly like an
+    /// admin — the firm-wide desk-visibility arm of the membership.
+    #[test]
+    fn desk_scope_all_desks_trader_sees_all() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let firmwide = AuthenticatedUser {
+            desk_ids: Vec::new(),
+            all_desks: true,
+            ..user(Role::Trader)
+        };
+        let token = reg.issue(firmwide).unwrap().token;
+        let caller = resolve_caller(&reg, Some(&token), None).unwrap();
+        let scope = caller.desk_scope();
+        assert_eq!(scope, DeskScope::All);
+        assert!(scope.allows("g10") && scope.allows("em") && scope.allows("") && scope.is_all());
     }
 }

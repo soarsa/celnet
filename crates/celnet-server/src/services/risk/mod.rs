@@ -376,8 +376,15 @@ impl RiskEdge {
         let base = convert::principal_of(asserted)?;
         Ok(match caller.desk_scope() {
             DeskScope::All => base,
-            DeskScope::Desk(slug) => {
-                convert::narrow_to_desk(base, u64::from(self.store.intern(&slug)))
+            DeskScope::Desks(slugs) => {
+                // Union over the caller's desks: intern each slug to its canonical
+                // numeric desk id and narrow to the set (a fact is visible iff it
+                // belongs to ANY of the caller's desks).
+                let desk_ids: Vec<u64> = slugs
+                    .iter()
+                    .map(|slug| u64::from(self.store.intern(slug)))
+                    .collect();
+                convert::narrow_to_desks(base, &desk_ids)
             }
             // House/unowned facts (DeskId 0) — a deskless trader sees only those.
             DeskScope::Deskless => convert::narrow_to_desk(base, 0),
@@ -1607,7 +1614,8 @@ mod tests {
                 email: "trader@celnet.com".to_owned(),
                 display_name: "Rates Trader".to_owned(),
                 role: crate::config::identity::Role::Trader,
-                desk_id: Some("g10".to_owned()),
+                desk_ids: vec!["g10".to_owned()],
+                all_desks: false,
                 role_caps: crate::config::identity::default_trader_bundle(),
                 cap_grants: Vec::new(),
                 cap_denies: Vec::new(),
@@ -1688,7 +1696,8 @@ mod tests {
                 email: "trader@celnet.com".to_owned(),
                 display_name: "Rates Trader".to_owned(),
                 role: crate::config::identity::Role::Trader,
-                desk_id: Some("g10".to_owned()),
+                desk_ids: vec!["g10".to_owned()],
+                all_desks: false,
                 role_caps: crate::config::identity::default_trader_bundle(),
                 cap_grants: Vec::new(),
                 cap_denies: Vec::new(),
@@ -1791,7 +1800,8 @@ mod tests {
             email: format!("{id}@celnet.com"),
             display_name: id.to_owned(),
             role,
-            desk_id: desk.map(str::to_owned),
+            desk_ids: desk.into_iter().map(str::to_owned).collect(),
+            all_desks: false,
             role_caps: crate::config::identity::default_trader_bundle(),
             cap_grants: Vec::new(),
             cap_denies: Vec::new(),

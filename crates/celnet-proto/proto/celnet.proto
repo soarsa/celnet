@@ -3614,10 +3614,15 @@ message UserDesc {
   string display_name = 3;
   // The user's authority level.
   UserRole role = 4;
-  // The desk the user belongs to, by `DeskDesc.id`; absent ⇒ unassigned.
-  optional string desk_id = 5;
+  // The desks the user belongs to, by `DeskDesc.id`. A user may belong to zero,
+  // one, or many desks; a notification routed to any desk in this set reaches the
+  // user. Empty ⇒ deskless (sees no desk-routed traffic) unless `all_desks` is set.
+  repeated string desk_ids = 5;
   // Whether the account is disabled (retained but cannot log in).
   bool disabled = 6;
+  // When true the user belongs to EVERY desk (present and future) and `desk_ids` is
+  // ignored — the "all" arm of the membership; false ⇒ the `desk_ids` set applies.
+  bool all_desks = 7;
 }
 
 // A desk: a named group traders belong to.
@@ -3694,12 +3699,15 @@ message CreateUserRequest {
   string display_name = 3;
   // The new user's authority level.
   UserRole role = 4;
-  // The desk to assign, by `DeskDesc.id`; absent ⇒ unassigned.
-  optional string desk_id = 5;
+  // The desks to assign, by `DeskDesc.id` (zero, one, or many). Ignored when
+  // `all_desks` is set. Every id must name an existing desk.
+  repeated string desk_ids = 5;
   // The initial plaintext password (hashed at rest, never stored in the clear).
   string password = 6;
   // Echoed request correlation id.
   optional uint64 correlation_id = 7;
+  // When true the user belongs to EVERY desk; `desk_ids` is then ignored.
+  bool all_desks = 8;
 }
 // The created user.
 message CreateUserResponse {
@@ -3720,12 +3728,16 @@ message UpdateUserRequest {
   string display_name = 3;
   // The new authority level.
   UserRole role = 4;
-  // The new desk assignment, by `DeskDesc.id`; absent ⇒ unassigned.
-  optional string desk_id = 5;
+  // The new desk membership, by `DeskDesc.id` (zero, one, or many). Ignored when
+  // `all_desks` is set. Every id must name an existing desk. Empty + all_desks=false
+  // ⇒ the user becomes deskless.
+  repeated string desk_ids = 5;
   // The new disabled flag.
   bool disabled = 6;
   // Echoed request correlation id.
   optional uint64 correlation_id = 7;
+  // When true the user belongs to EVERY desk; `desk_ids` is then ignored.
+  bool all_desks = 8;
 }
 // The updated user.
 message UpdateUserResponse {
@@ -3805,7 +3817,7 @@ message CreateDeskResponse {
 // Rename a desk (admin only). Only the human-facing display `name` changes; the
 // stable `id` is immutable, so a rename never disturbs routing — RFQ/deal
 // notification delivery and connection ownership both key on `DeskDesc.id`, never
-// on the display name, and user→desk membership (`UserDesc.desk_id`) is untouched.
+// on the display name, and user→desk membership (`UserDesc.desk_ids` / `all_desks`) is untouched.
 message UpdateDeskRequest {
   // The caller's bearer token (must resolve to an admin).
   string session_token = 1;

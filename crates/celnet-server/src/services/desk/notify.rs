@@ -223,6 +223,40 @@ mod tests {
         );
     }
 
+    /// Many-to-many routing: a subscriber scoped to the SET {A, B} receives
+    /// notifications routed to A and to B, but NOT to a third desk C. An all-desks
+    /// subscriber receives A/B/C; a deskless subscriber (empty set) receives none.
+    #[tokio::test]
+    async fn publish_routes_to_multi_desk_subscriber() {
+        let broker = NotificationBroker::new();
+        let mut ab = broker.subscribe(DeskFilter::Desks(["a".to_owned(), "b".to_owned()].into()));
+        let mut all = broker.subscribe(DeskFilter::All);
+        let mut none = broker.subscribe(DeskFilter::Desks(std::collections::HashSet::new()));
+
+        for desk in ["a", "b", "c"] {
+            broker.publish(&notification(desk));
+        }
+
+        // The {a,b} subscriber gets a and b, never c.
+        assert_eq!(ab.rx.try_recv().expect("a delivered").desk, "a");
+        assert_eq!(ab.rx.try_recv().expect("b delivered").desk, "b");
+        assert!(
+            ab.rx.try_recv().is_err(),
+            "c must not reach an {{a,b}} subscriber"
+        );
+
+        // The all-desks subscriber gets every desk.
+        for desk in ["a", "b", "c"] {
+            assert_eq!(all.rx.try_recv().expect("all-desks delivered").desk, desk);
+        }
+
+        // The deskless subscriber gets nothing.
+        assert!(
+            none.rx.try_recv().is_err(),
+            "a deskless subscriber receives none"
+        );
+    }
+
     /// Fan-out: two subscribers both matching a desk both receive the notification.
     #[tokio::test]
     async fn publish_fans_out_to_all_matching() {
