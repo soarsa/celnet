@@ -20,7 +20,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { AppProvider } from "../src/app/AppContext";
 import { FiStreamingWorkspace } from "../src/workspaces/FiStreamingWorkspace";
-import { RAIL, workspaceDomains } from "../src/lib/commands";
+import { RAIL, railForDomain, workspaceDomains } from "../src/lib/commands";
 import { MockTransport } from "../src/data/mockSource";
 import { DEFAULT_USD_SOFR_CURVE } from "../src/data/ratesPricing";
 import type { CelnetTransport, StreamSession } from "../src/data/transport";
@@ -93,6 +93,23 @@ describe("FI Streaming — domain membership (Fixed Income ONLY)", () => {
     expect(row!.assets).toEqual(["fixed_income"]);
     expect(row!.label).toBe("Streaming");
   });
+
+  it("LEADS the Fixed Income rail (the primary FI surface) — above the shared widgets", () => {
+    const fi = railForDomain("fixed_income").map((r) => r.id);
+    expect(fi[0]).toBe("fistreaming");
+    // Above every other FI widget (Market Data / Risk / Book / Quoting).
+    for (const other of ["surface", "risk", "book", "quoting"] as const) {
+      expect(fi.indexOf("fistreaming")).toBeLessThan(fi.indexOf(other));
+    }
+  });
+
+  it("Ticket is NOT in the Fixed Income rail (re-scoped to FX only)", () => {
+    const fi = railForDomain("fixed_income").map((r) => r.id);
+    expect(fi).not.toContain("ticket");
+    expect(workspaceDomains("ticket")).toEqual(["fx_options"]);
+    // Ticket still leads the FX rail (unchanged there).
+    expect(railForDomain("fx_options").map((r) => r.id)[0]).toBe("ticket");
+  });
 });
 
 describe("FI Streaming — RFS request path (subscribeRates)", () => {
@@ -124,7 +141,9 @@ describe("FI Streaming — RFS request path (subscribeRates)", () => {
     const { transport, subscribeRatesSpy } = instrumentedTransport();
     await renderFi(transport);
 
-    fireEvent.click(screen.getByRole("button", { name: "Swap · IRS" }));
+    // The sidebar RFS form's short arm badges (OIS/IRS/FRA/BOND) refine the request.
+    const rfsForm = screen.getByRole("group", { name: "instrument type" });
+    fireEvent.click(within(rfsForm).getByRole("button", { name: "IRS" }));
     fireEvent.click(screen.getByRole("button", { name: "Receive" }));
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /request price/i }));
@@ -136,6 +155,66 @@ describe("FI Streaming — RFS request path (subscribeRates)", () => {
     expect(irs.irs.tenorYears).toBe(5);
     expect(irs.irs.direction).toBe("RECEIVE_FIXED");
     expect(irs.irs.notional).toBe(50_000_000);
+  });
+});
+
+describe("FI Streaming — instrument selector (the four registry families)", () => {
+  it("lists the four FI families with their product-registry labels", async () => {
+    const { transport } = instrumentedTransport();
+    await renderFi(transport);
+    const selector = screen.getByRole("group", { name: "stream instrument family" });
+    for (const label of [
+      "OIS (SOFR swap)",
+      "IRS (fixed vs float)",
+      "FRA (forward rate)",
+      "Bond (cash)",
+    ]) {
+      expect(within(selector).getByRole("button", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("selecting a family drives the stream subscription for that family (FRA)", async () => {
+    const { transport, subscribeRatesSpy } = instrumentedTransport();
+    await renderFi(transport);
+    const selector = screen.getByRole("group", { name: "stream instrument family" });
+    await act(async () => {
+      fireEvent.click(within(selector).getByRole("button", { name: "FRA (forward rate)" }));
+    });
+    // The selector alone opened the live line (streaming-first primary gesture).
+    expect(subscribeRatesSpy).toHaveBeenCalledTimes(1);
+    const [instrument, curveSet] = subscribeRatesSpy.mock.calls[0]!;
+    const fra = instrument as Extract<RatesInstrument, { kind: "fra" }>;
+    expect(fra.kind).toBe("fra");
+    // Default tenor 5Y → the standard 3-month forward window starting there (60×63M).
+    expect(fra.fra.startMonths).toBe(60);
+    expect(fra.fra.endMonths).toBe(63);
+    expect(curveSet).toBe(DEFAULT_USD_SOFR_CURVE);
+    const table = screen.getByRole("table", { name: /fixed-income streaming lines/i });
+    expect(within(table).getByText(/FRA 5Y×3M/)).toBeInTheDocument();
+  });
+
+  it("renders the dealer-style two-way rates blotter columns", async () => {
+    const { transport } = instrumentedTransport();
+    await renderFi(transport);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /request price/i }));
+    });
+    const table = screen.getByRole("table", { name: /fixed-income streaming lines/i });
+    // Each dealer column maps to a REAL streamed field; Mid is the honest indicative
+    // mid (the FI stream carries no two-way bid/offer or size — a flagged GAP).
+    for (const col of [
+      "Instrument",
+      "Tenor",
+      "Mid",
+      "PV",
+      "PV01",
+      "DV01",
+      "Δbp",
+      "PV trend",
+      "Updated",
+    ]) {
+      expect(within(table).getByRole("columnheader", { name: col })).toBeInTheDocument();
+    }
   });
 });
 
@@ -170,7 +249,8 @@ describe("FI Streaming — Execute routes through the real desk RFQ path", () =>
     const { transport, submitDeskRequestSpy } = instrumentedTransport();
     await renderFi(transport);
 
-    fireEvent.click(screen.getByRole("button", { name: "Bond" }));
+    const rfsForm = screen.getByRole("group", { name: "instrument type" });
+    fireEvent.click(within(rfsForm).getByRole("button", { name: "BOND" }));
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /request price/i }));
     });

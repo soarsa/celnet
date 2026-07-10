@@ -73,6 +73,16 @@
   white-space: nowrap;
 }
 
+.selector {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle, var(--border, rgba(255, 255, 255, 0.08)));
+  margin-bottom: var(--space-1);
+}
+
 .presets {
   display: flex;
   align-items: center;
@@ -107,9 +117,10 @@
 .headerRow,
 .row {
   display: grid;
+  /* Instrument · Tenor · Mid · PV · PV01 · DV01 · Δbp · Trend · Updated · actions */
   grid-template-columns:
-    minmax(140px, 1.6fr) minmax(72px, 1fr) 72px minmax(72px, 1fr)
-    minmax(72px, 1fr) 56px 96px 28px;
+    minmax(130px, 1.5fr) 64px 72px minmax(72px, 1fr) minmax(64px, 0.9fr)
+    minmax(64px, 0.9fr) 52px 84px 68px 24px;
   align-items: center;
   gap: var(--space-3);
   height: 30px;
@@ -155,6 +166,26 @@
   text-align: right;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
+}
+
+.colTenor,
+.tenorCell {
+  text-align: left;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-micro);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.colUpdated,
+.updatedCell {
+  text-align: right;
+  color: var(--text-tertiary, var(--text-secondary));
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-micro);
+  white-space: nowrap;
 }
 
 .colTrend,

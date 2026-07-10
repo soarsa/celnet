@@ -86,17 +86,21 @@ describe("license gating — per-workspace three-state rail (fe-fi-migration #6)
   it("a CROSS-asset workspace stays PRESENT while EITHER served class is licensed", () => {
     const fiUnlicensed = makeLicensePredicate(["fixed_income"]);
     const fxUnlicensed = makeLicensePredicate(["fx_options"]);
-    // Ticket / Market Data / Risk / Book serve both classes: one class unlicensed
-    // still leaves the row present (the unlicensed lens is gated per-lens inside).
-    for (const id of ["ticket", "surface", "risk", "book"] as const) {
+    // Market Data / Risk / Book serve both classes: one class unlicensed still
+    // leaves the row present (the unlicensed lens is gated per-lens inside).
+    for (const id of ["surface", "risk", "book"] as const) {
       expect(railState(id, signedOut, fiUnlicensed)).toBe("present");
       expect(railState(id, signedOut, fxUnlicensed)).toBe("present");
     }
+    // Ticket is now FX-only: its single class governs — FX unlicensed ⇒ gated-upsell,
+    // FI unlicensed is moot (Ticket no longer serves FI).
+    expect(railState("ticket", signedOut, fiUnlicensed)).toBe("present");
+    expect(railState("ticket", signedOut, fxUnlicensed)).toBe("gated-upsell");
   });
 
   it("a cross-asset workspace is gated-upsell only when ALL served classes are unlicensed", () => {
     const noneLicensed = makeLicensePredicate(["fx_options", "fixed_income"]);
-    for (const id of ["ticket", "surface", "risk", "book"] as const) {
+    for (const id of ["surface", "risk", "book"] as const) {
       expect(railState(id, signedOut, noneLicensed)).toBe("gated-upsell");
     }
   });
@@ -123,10 +127,12 @@ describe("license gating — per-workspace three-state rail (fe-fi-migration #6)
   });
 
   it("workspaceAssets maps each workspace to the class(es) it serves", () => {
-    expect(new Set(workspaceAssets("ticket"))).toEqual(
+    expect(new Set(workspaceAssets("surface"))).toEqual(
       new Set(["fx_options", "fixed_income"]),
     );
+    expect(workspaceAssets("ticket")).toEqual(["fx_options"]);
     expect(workspaceAssets("quoting")).toEqual(["fixed_income"]);
+    expect(workspaceAssets("fistreaming")).toEqual(["fixed_income"]);
     expect(workspaceAssets("stream")).toEqual(["fx_options"]);
   });
 

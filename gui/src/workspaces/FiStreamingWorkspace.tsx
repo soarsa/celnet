@@ -50,11 +50,30 @@ import type {
   SubmitDeskRequestRequest,
 } from "../data/contract";
 import type { RatesStreamRow } from "../hooks/useStreamSession";
-import { fmtCompact, fmtPnlAdaptive, fmtSigned } from "../lib/format";
+import { fmtClock, fmtCompact, fmtPnlAdaptive, fmtSigned } from "../lib/format";
+import { oisSpec, irsSpec, fraSpec, bondSpec } from "../products";
 import styles from "./FiStreamingWorkspace.module.css";
 
-/** The RFS instrument families the sidebar can request (Swap · OIS / IRS, or Bond). */
-type RfsKind = "ois" | "irs" | "bond";
+/** The FI instrument families this hub can stream — the FOUR rates families from
+ *  the Ticket product registry (OIS / IRS / FRA / Bond), each an additive
+ *  `RatesInstrument` oneof arm. `RatesInstrument["kind"]` sans the arms this hub
+ *  builds is exactly this set, so the streamed line prices through the SAME
+ *  `priceRates` seam the Ticket uses. */
+type RfsKind = Extract<RatesInstrument["kind"], "ois" | "irs" | "fra" | "bond">;
+
+/**
+ * The instrument-selector families — REUSED straight from the shared product
+ * registry (`gui/src/products`), NOT re-declared here: each row carries its
+ * canonical `id` / `label` / `summary` from the same {@link RatesProductSpec}
+ * the Ticket gallery renders, so the selector and the Ticket can never drift.
+ * The `kind` maps the spec onto the `RatesInstrument` oneof arm this hub streams.
+ */
+const FI_FAMILIES = [
+  { kind: "ois" as const, spec: oisSpec },
+  { kind: "irs" as const, spec: irsSpec },
+  { kind: "fra" as const, spec: fraSpec },
+  { kind: "bond" as const, spec: bondSpec },
+] as const;
 /** A swap side (Pay/Receive fixed); a bond side (Buy/Sell). */
 type SwapDir = "PAY" | "RECEIVE";
 type BondSide = "BUY" | "SELL";
@@ -120,6 +139,23 @@ function buildRfsInstrument(
       },
     };
   }
+  if (kind === "fra") {
+    // The tenor pillar selects the FORWARD-START point; the streamed FRA is the
+    // standard 3-month rate starting there (e.g. tenor 2Y → a 24×27 FRA — the 3M
+    // rate fixing in 2Y). The pillar par rate seeds a near-ATM fixed strike K.
+    const startMonths = tenor * 12;
+    return {
+      kind: "fra",
+      fra: {
+        startMonths,
+        endMonths: startMonths + 3,
+        fixedRate,
+        notional,
+        direction: oisDirection(swapDir),
+        accrualBasis: "ACT_360",
+      },
+    };
+  }
   const ref = curve.referenceDate;
   return {
     kind: "bond",
@@ -138,7 +174,27 @@ function buildRfsInstrument(
 function rfsLabel(kind: RfsKind, tenor: number, swapDir: SwapDir, bondSide: BondSide): string {
   if (kind === "bond") return `Bond ${tenor}Y ${bondSide === "BUY" ? "long" : "short"}`;
   const side = swapDir === "PAY" ? "pay" : "rec";
+  // A FRA carries a forward window, not a single tenor: label it as its 3M window
+  // starting at the pillar (e.g. "FRA 2Y×3M pay") — never a bare "FRA 2Y".
+  if (kind === "fra") return `FRA ${tenor}Y×3M ${side}`;
   return `${kind.toUpperCase()} ${tenor}Y ${side}`;
+}
+
+/** The tenor/maturity token for the blotter's Tenor column, per instrument arm. */
+function instrumentTenor(instrument: RatesInstrument): string {
+  switch (instrument.kind) {
+    case "ois":
+      return `${instrument.ois.tenorYears}Y`;
+    case "irs":
+      return `${instrument.irs.tenorYears}Y`;
+    case "fra": {
+      // A FRA is a forward window, not a point tenor: show start×end in months.
+      const { startMonths, endMonths } = instrument.fra;
+      return `${startMonths}×${endMonths}M`;
+    }
+    case "bond":
+      return `${instrument.bond.maturityDate.year} mat`;
+  }
 }
 
 interface RatesPreset {
@@ -147,12 +203,13 @@ interface RatesPreset {
   instrument: RatesInstrument;
 }
 
-/** The default streamable FI lines (OIS / IRS swaps + a cash bond). */
+/** The default streamable FI lines — one per family (OIS / IRS / FRA swaps + a cash bond). */
 function defaultPresets(curve: typeof DEFAULT_USD_SOFR_CURVE): RatesPreset[] {
   return [
     { id: "ois2y", label: "OIS 2Y rec", instrument: buildRfsInstrument("ois", 2, DEFAULT_NOTIONAL, "RECEIVE", "BUY", curve) },
     { id: "ois10y", label: "OIS 10Y pay", instrument: buildRfsInstrument("ois", 10, DEFAULT_NOTIONAL, "PAY", "BUY", curve) },
     { id: "irs5y", label: "IRS 5Y pay", instrument: buildRfsInstrument("irs", 5, DEFAULT_NOTIONAL, "PAY", "BUY", curve) },
+    { id: "fra2y", label: "FRA 2Y×3M pay", instrument: buildRfsInstrument("fra", 2, DEFAULT_NOTIONAL, "PAY", "BUY", curve) },
     { id: "bond10y", label: "Bond 10Y long", instrument: buildRfsInstrument("bond", 10, DEFAULT_NOTIONAL, "PAY", "BUY", curve) },
   ];
 }
@@ -167,6 +224,23 @@ function RatesLineRow({
 }): React.ReactElement {
   const pvDir = sparklineDirection(row.pvHistory);
   const hasTrend = row.pvHistory.length >= 2;
+  // DEALER-STYLE RATES BLOTTER ROW — each cell maps to a REAL streamed field of
+  // `RatesStreamRow` (from `app.stream.ratesRows`). Column → source field:
+  //   Instrument → row.label + row.kind (arm badge)
+  //   Tenor      → row.instrument (tenorYears / FRA window / bond maturity)
+  //   Mid (rate) → row.result.parRate   (the fair/par rate = the indicative MID)
+  //   PV         → row.result.pv
+  //   PV01       → row.result.pv01
+  //   DV01       → row.result.dv01
+  //   Δbp        → row.curveShift (parallel curve shift this tick, ×1e4 → bp)
+  //   Trend      → row.pvHistory (PV sparkline)
+  //   Updated    → row.epochNanos (last-tick wall-clock time)
+  // GAP: the FI rates stream (`RatesPricingResult`) carries only an indicative
+  // MID (par rate) — there is NO dealer two-way bid/offer and NO bid/ask SIZE on
+  // the one contract. So this blotter streams the honest MID and does NOT
+  // fabricate a Bid/Offer spread or a size column; when the desk contract grows a
+  // streamed two-way ladder (bid/offer/size), add those columns here off the real
+  // fields. (Executable two-way is the desk RFQ path in the sidebar.)
   return (
     <div className={styles.row} role="row">
       <span className={styles.instr} role="cell">
@@ -175,11 +249,14 @@ function RatesLineRow({
         </span>
         <span className={styles.instrLabel}>{row.label}</span>
       </span>
+      <span className={styles.tenorCell} role="cell" title="Tenor / forward window / maturity">
+        {instrumentTenor(row.instrument)}
+      </span>
+      <span className={`num ${styles.numCell}`} role="cell" title="Indicative MID rate (par / fair fixed rate) — no dealer two-way on the FI stream">
+        {fmtParPct(row.result.parRate)}
+      </span>
       <span className={`num ${styles.numCell}`} role="cell" title="Present value (curve ccy)">
         {fmtPnlAdaptive(row.result.pv)}
-      </span>
-      <span className={`num ${styles.numCell}`} role="cell" title="Par (fair fixed) rate">
-        {fmtParPct(row.result.parRate)}
       </span>
       <span className={`num ${styles.numCell}`} role="cell" title="Analytic PV01 (PV per 1bp of the fixed rate)">
         {fmtPnlAdaptive(row.result.pv01)}
@@ -198,6 +275,9 @@ function RatesLineRow({
             …
           </span>
         )}
+      </span>
+      <span className={`num ${styles.updatedCell}`} role="cell" title="Last tick (wall-clock)">
+        {fmtClock(row.epochNanos)}
       </span>
       <span className={styles.actions} role="cell">
         <button
@@ -262,6 +342,18 @@ export function FiStreamingWorkspace(): React.ReactElement {
       : requestedRow === undefined
         ? "Request a price first, then execute the risk trade"
         : "Submit the risk trade to the rates desk (RFQ)";
+
+  // The primary instrument selector: picking a family (a) makes it the active RFS
+  // arm and (b) immediately STREAMS a live line for it at the current tenor / side /
+  // notional — the streaming-first "primary FI surface" gesture. It builds the SAME
+  // `RatesInstrument` (via buildRfsInstrument) the sidebar Request + presets use and
+  // opens the line through the SAME `subscribeRates` path — no side channel.
+  const onSelectFamily = (next: RfsKind): void => {
+    setKind(next);
+    if (!streamable || !notionalValid) return;
+    const instrument = buildRfsInstrument(next, tenor, notional, swapDir, bondSide, curve);
+    app.stream.subscribeRates(instrument, curve, rfsLabel(next, tenor, swapDir, bondSide));
+  };
 
   const onRequest = (): void => {
     if (!streamable || !notionalValid) return;
@@ -342,8 +434,9 @@ export function FiStreamingWorkspace(): React.ReactElement {
           <div className={styles.head}>
             <span className={styles.title}>Fixed income — live streaming</span>
             <span className={styles.note}>
-              indicative PV + risk · re-priced each tick vs the USD-SOFR curve ·{" "}
-              <abbr title="request for quote / voice desk">RFQ/desk</abbr> to trade
+              indicative mid + risk · re-priced each tick vs the USD-SOFR curve ·{" "}
+              <abbr title="request for quote / voice desk">RFQ/desk</abbr> for an
+              executable two-way
             </span>
             {!streamable && (
               <span className={styles.lock} title={lockTitle}>
@@ -353,8 +446,26 @@ export function FiStreamingWorkspace(): React.ReactElement {
           </div>
 
           {streamable && (
+            <div className={styles.selector} role="group" aria-label="stream instrument family">
+              <span className={styles.controlLabel}>Instrument</span>
+              {FI_FAMILIES.map((f) => (
+                <button
+                  key={f.spec.id}
+                  type="button"
+                  className={`${styles.segBtn} ${kind === f.kind ? styles.segBtnActive : ""}`}
+                  aria-pressed={kind === f.kind}
+                  onClick={() => onSelectFamily(f.kind)}
+                  title={f.spec.summary}
+                >
+                  {f.spec.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {streamable && (
             <div className={styles.presets} role="group" aria-label="stream a preset line">
-              <span className={styles.controlLabel}>Stream</span>
+              <span className={styles.controlLabel}>Quick lines</span>
               {presets.map((p) => (
                 <button
                   key={p.id}
@@ -372,20 +483,26 @@ export function FiStreamingWorkspace(): React.ReactElement {
           {streamable ? (
             rows.length === 0 ? (
               <div className={styles.empty}>
-                No streaming lines. Pick a preset above, or request one on the right, to
-                stream its live PV + risk.
+                No streaming lines. Pick an instrument above, or request one on the right,
+                to stream its live mid + risk.
               </div>
             ) : (
               <div className={styles.grid} role="table" aria-label="fixed-income streaming lines">
+                {/* Dealer-style two-way rates blotter header. The FI stream carries an
+                    indicative MID only (no dealer bid/offer or size on the contract),
+                    so Mid is the honest streamed price — see the GAP note in RatesLineRow. */}
                 <div className={styles.headerRow} role="row">
                   <span className={styles.colLeft} role="columnheader">
                     Instrument
                   </span>
-                  <span className={`num ${styles.colNum}`} role="columnheader">
-                    PV
+                  <span className={styles.colTenor} role="columnheader">
+                    Tenor
+                  </span>
+                  <span className={`num ${styles.colNum}`} role="columnheader" title="Indicative mid (par) rate — no dealer two-way on the FI stream">
+                    Mid
                   </span>
                   <span className={`num ${styles.colNum}`} role="columnheader">
-                    Par
+                    PV
                   </span>
                   <span className={`num ${styles.colNum}`} role="columnheader">
                     PV01
@@ -398,6 +515,9 @@ export function FiStreamingWorkspace(): React.ReactElement {
                   </span>
                   <span className={styles.colTrend} role="columnheader">
                     PV trend
+                  </span>
+                  <span className={styles.colUpdated} role="columnheader" title="Last tick (wall-clock)">
+                    Updated
                   </span>
                   <span className={styles.colActions} role="columnheader" aria-label="actions" />
                 </div>
@@ -430,22 +550,20 @@ export function FiStreamingWorkspace(): React.ReactElement {
 
             <div className={styles.field}>
               <span className={styles.fieldLabel}>Instrument</span>
+              {/* The SAME four registry families as the primary selector (shared
+                  `kind` state); short arm badges here (the full labels are up top)
+                  — the sidebar refines the active family's RFQ request, no auto-stream. */}
               <div className={styles.seg} role="group" aria-label="instrument type">
-                {(
-                  [
-                    ["ois", "Swap · OIS"],
-                    ["irs", "Swap · IRS"],
-                    ["bond", "Bond"],
-                  ] as const
-                ).map(([k, label]) => (
+                {FI_FAMILIES.map((f) => (
                   <button
-                    key={k}
+                    key={f.spec.id}
                     type="button"
-                    className={`${styles.segBtn} ${kind === k ? styles.segBtnActive : ""}`}
-                    aria-pressed={kind === k}
-                    onClick={() => setKind(k)}
+                    className={`${styles.segBtn} ${kind === f.kind ? styles.segBtnActive : ""}`}
+                    aria-pressed={kind === f.kind}
+                    onClick={() => setKind(f.kind)}
+                    title={f.spec.label}
                   >
-                    {label}
+                    {ratesArmBadge(f.kind)}
                   </button>
                 ))}
               </div>

@@ -105,15 +105,19 @@ export const RAIL: readonly {
   assets: readonly CapabilityAsset[];
 }[] = [
   // Trading capabilities — class chosen by scope/underlier + lens INSIDE the pane.
-  { id: "ticket", glyph: "⌁", label: "Ticket", assets: CAPABILITY_ASSETS },
+  // Ticket (Price) is FX-only: FI is booked/streamed through the Streaming hub +
+  // Quoting rows, so the Ticket row derives to the FX Options tab ONLY (it no
+  // longer appears under Fixed Income — FI pricing lives on the Streaming surface).
+  { id: "ticket", glyph: "⌁", label: "Ticket", assets: ["fx_options"] },
   { id: "stream", glyph: "≋", label: "Stream", assets: ["fx_options"] },
+  // FI live streaming (bond + swap prices) with the instrument selector + RFS
+  // request sidebar — a single-asset FI row (never FX), and the PRIMARY Fixed
+  // Income surface, so it leads the FI rail (top of railForDomain("fixed_income")).
+  { id: "fistreaming", glyph: "⇉", label: "Streaming", assets: ["fixed_income"] },
   { id: "surface", glyph: "◷", label: "Market Data", assets: CAPABILITY_ASSETS },
   { id: "risk", glyph: "⊞", label: "Risk", assets: CAPABILITY_ASSETS },
   { id: "book", glyph: "▤", label: "Book", assets: CAPABILITY_ASSETS },
   { id: "quoting", glyph: "⇌", label: "Quoting", assets: ["fixed_income"] },
-  // FI live streaming (bond + swap prices) with the RFS request sidebar — a
-  // single-asset FI row, so it derives to the Fixed Income tab ONLY (never FX).
-  { id: "fistreaming", glyph: "⇉", label: "Streaming", assets: ["fixed_income"] },
   { id: "xva", glyph: "⊗", label: "XVA", assets: ["fx_options"] },
   { id: "excel", glyph: "▦", label: "Excel", assets: ["fx_options"] },
   // Administration / ops — admin-gated, no license concept.

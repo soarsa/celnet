@@ -121,12 +121,14 @@ describe("single class-parametric rail (fe-fi-migration #6 — domain-tab collap
 
   it("every rail row declares the asset class(es) it serves (workspaceAssets)", () => {
     for (const r of RAIL) expect(workspaceAssets(r.id)).toEqual(r.assets);
-    // The four collapsed trading capabilities are cross-asset (both classes).
-    for (const id of ["ticket", "surface", "risk", "book"] as const) {
+    // The collapsed shared-market trading capabilities are cross-asset (both classes).
+    for (const id of ["surface", "risk", "book"] as const) {
       expect(new Set(workspaceAssets(id))).toEqual(new Set(["fx_options", "fixed_income"]));
     }
-    // Quoting (no FX twin) is single-asset FI; Stream is single-asset FX.
+    // Quoting + Streaming (no FX twin) are single-asset FI; Ticket + Stream are FX.
     expect(workspaceAssets("quoting")).toEqual(["fixed_income"]);
+    expect(workspaceAssets("fistreaming")).toEqual(["fixed_income"]);
+    expect(workspaceAssets("ticket")).toEqual(["fx_options"]);
     expect(workspaceAssets("stream")).toEqual(["fx_options"]);
     // Admin/ops rows serve no asset class (gated by isAdmin, no license concept).
     for (const id of ADMIN_ONLY_WORKSPACES) expect(workspaceAssets(id)).toEqual([]);
@@ -231,16 +233,19 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
 
   describe("workspaceDomains (derived from served assets — Model A)", () => {
     it("shared cross-asset rows appear under BOTH trading domains", () => {
-      for (const id of ["ticket", "surface", "risk", "book"] as const) {
+      for (const id of ["surface", "risk", "book"] as const) {
         expect([...workspaceDomains(id)].sort()).toEqual(["fixed_income", "fx_options"]);
       }
     });
 
     it("single-asset rows appear under their one trading domain only", () => {
+      // Ticket is now FX-only (FI prices on the Streaming hub) — off the FI tab.
+      expect(workspaceDomains("ticket")).toEqual(["fx_options"]);
       expect(workspaceDomains("stream")).toEqual(["fx_options"]);
       expect(workspaceDomains("xva")).toEqual(["fx_options"]);
       expect(workspaceDomains("excel")).toEqual(["fx_options"]);
       expect(workspaceDomains("quoting")).toEqual(["fixed_income"]);
+      expect(workspaceDomains("fistreaming")).toEqual(["fixed_income"]);
     });
 
     it("admin/ops rows appear under the single admin domain", () => {
@@ -293,14 +298,13 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
       ]);
     });
 
-    it("Fixed Income = quoting + fistreaming + the shared rows, in RAIL order", () => {
+    it("Fixed Income = Streaming (primary FI surface, top) + the shared rows + quoting, in RAIL order", () => {
       expect(railForDomain("fixed_income").map((r) => r.id)).toEqual([
-        "ticket",
+        "fistreaming",
         "surface",
         "risk",
         "book",
         "quoting",
-        "fistreaming",
       ]);
     });
 
@@ -328,9 +332,10 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         isAdmin: false,
         allow: new Set(["view·fx_options", "view·fixed_income"]),
       });
-      // FI tab lands on the first FI row in RAIL order (shared Ticket, reachable).
-      expect(firstAccessibleWorkspace(both, "fixed_income")).toBe("ticket");
-      // FX tab likewise leads with Ticket.
+      // FI tab lands on the first FI row in RAIL order — the Streaming hub, the
+      // primary FI surface (Ticket is now FX-only, so it no longer leads FI).
+      expect(firstAccessibleWorkspace(both, "fixed_income")).toBe("fistreaming");
+      // FX tab leads with Ticket (unchanged).
       expect(firstAccessibleWorkspace(both, "fx_options")).toBe("ticket");
     });
 
@@ -379,9 +384,9 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
     it("a cross-asset (class-parametric) workspace is reachable via EITHER class", () => {
       const fxOnly = navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) });
       const fiOnly = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
-      // Ticket / Market Data / Risk / Book each serve BOTH classes — a view on
-      // either FX or FI reaches them (the denied class is gated per-lens inside).
-      for (const id of ["ticket", "surface", "risk", "book"] as const) {
+      // Market Data / Risk / Book each serve BOTH classes — a view on either FX or
+      // FI reaches them (the denied class is gated per-lens inside).
+      for (const id of ["surface", "risk", "book"] as const) {
         expect(workspaceAccessible(id, fxOnly)).toBe(true);
         expect(workspaceAccessible(id, fiOnly)).toBe(true);
       }
@@ -390,11 +395,15 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
     it("single-asset workspaces follow their one class's view capability", () => {
       const fxOnly = navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) });
       const fiOnly = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
-      // Stream is FX-only; Quoting is FI-only; Excel/XVA stay FX-scoped.
+      // Ticket + Stream are FX-only; Quoting + Streaming are FI-only; Excel/XVA FX.
+      expect(workspaceAccessible("ticket", fxOnly)).toBe(true);
+      expect(workspaceAccessible("ticket", fiOnly)).toBe(false);
       expect(workspaceAccessible("stream", fxOnly)).toBe(true);
       expect(workspaceAccessible("stream", fiOnly)).toBe(false);
       expect(workspaceAccessible("quoting", fiOnly)).toBe(true);
       expect(workspaceAccessible("quoting", fxOnly)).toBe(false);
+      expect(workspaceAccessible("fistreaming", fiOnly)).toBe(true);
+      expect(workspaceAccessible("fistreaming", fxOnly)).toBe(false);
       expect(workspaceAccessible("excel", fiOnly)).toBe(false);
       expect(workspaceAccessible("excel", fxOnly)).toBe(true);
     });
@@ -410,9 +419,9 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
   describe("firstAccessibleWorkspace", () => {
     it("returns the first RAIL workspace the identity can reach", () => {
       const fiOnly = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
-      // The rail now LEADS with the cross-asset Ticket (reachable via FI view), so a
-      // FI-only trader lands there — no per-domain detour to a separate FI section.
-      expect(firstAccessibleWorkspace(fiOnly)).toBe("ticket");
+      // Ticket + Stream now lead the rail but are FX-only, so a FI-only trader skips
+      // them and lands on the first FI-serving row — the Streaming hub.
+      expect(firstAccessibleWorkspace(fiOnly)).toBe("fistreaming");
       expect(RAIL[0]!.id).toBe("ticket");
     });
 
