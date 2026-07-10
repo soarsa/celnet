@@ -44,19 +44,16 @@ import { useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type { ScopeContext } from "../app/AppContext";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
-import { configuredLicense, LICENSE_UPSELL_TITLE, type LicensePredicate } from "../lib/commands";
 import { PriceTile } from "../components/PriceTile";
 import { Sparkline, sparklineDirection, type SparklineDir } from "../components/Sparkline";
 import { StatusBadge } from "../components/StatusBadge";
 import { GreeksStrip } from "../components/GreeksStrip";
 import { Button } from "../components/Button";
-import { ownerLabel, type RatesStreamRow, type StreamRow } from "../hooks/useStreamSession";
+import { ownerLabel, type StreamRow } from "../hooks/useStreamSession";
 import { useTrendSeries, type TrendRowKey, type TrendSeries } from "../hooks/useTrendSeries";
 import { pairId, pairLabel } from "../lib/universe";
 import { useVirtualWindow } from "../lib/virtual";
-import { fmtPnlAdaptive, fmtPremiumPct, fmtRate, fmtSigned, fmtVol, fmtVolPoint, premiumUnit } from "../lib/format";
-import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
-import type { RatesInstrument } from "../data/contract";
+import { fmtPremiumPct, fmtRate, fmtSigned, fmtVol, fmtVolPoint, premiumUnit } from "../lib/format";
 import {
   TREND_MODES,
   DEFAULT_TREND_MODE,
@@ -616,271 +613,6 @@ function sortGlyph(col: ColumnSpec, sort: SortState | null): string {
   return sort.dir === "asc" ? " ▲" : " ▼";
 }
 
-// --- fixed-income (linear-rates) streaming lines ----------------------------
-//
-// The FI subject of the one Stream workspace: OIS / IRS / FRA / cash-bond lines
-// stream an INDICATIVE PV + first-order risk (par / PV01 / DV01), re-priced each
-// tick against the same baseline curve shifted by a deterministic ±1bp parallel
-// move — the FI analogue of the FX two-way line, but with NO click-to-trade side
-// (rates click-to-trade books through the RFQ/desk path, shown honestly). Lines
-// are few, so the panel is a plain (non-virtualised) grid, class-parametric with
-// the FX blotter above it. Gated by license × entitlement on `stream·fixed_income`.
-
-interface RatesPreset {
-  id: string;
-  label: string;
-  instrument: RatesInstrument;
-}
-
-/** The par (fair fixed) rate at a whole-year curve pillar, or a sane fallback. */
-function pillarPar(curve: typeof DEFAULT_USD_SOFR_CURVE, years: number): number {
-  const p = curve.pillars.find((q) => q.tenor.kind === "years" && q.tenor.years === years);
-  return p ? p.parRate : 0.04;
-}
-
-/**
- * The streamable fixed-income preset lines, one per linear-rates arm, struck
- * against the default USD-SOFR curve. OIS/IRS strike at their curve par (an
- * at-market line whose PV breathes around 0 as the curve ticks — the DV01 is the
- * story); the FRA and bond are real off-market lines. All price through the SAME
- * offline `price_rates` mirror the rates unary edge uses.
- */
-function ratesPresets(curve: typeof DEFAULT_USD_SOFR_CURVE): RatesPreset[] {
-  const ref = curve.referenceDate;
-  const N = 50_000_000;
-  return [
-    {
-      id: "ois2y",
-      label: "OIS 2Y rec",
-      instrument: {
-        kind: "ois",
-        ois: { tenorYears: 2, fixedRate: pillarPar(curve, 2), notional: N, direction: "RECEIVE_FIXED" },
-      },
-    },
-    {
-      id: "ois5y",
-      label: "OIS 5Y pay",
-      instrument: {
-        kind: "ois",
-        ois: { tenorYears: 5, fixedRate: pillarPar(curve, 5), notional: N, direction: "PAY_FIXED" },
-      },
-    },
-    {
-      id: "ois10y",
-      label: "OIS 10Y rec",
-      instrument: {
-        kind: "ois",
-        ois: { tenorYears: 10, fixedRate: pillarPar(curve, 10), notional: N, direction: "RECEIVE_FIXED" },
-      },
-    },
-    {
-      id: "irs5y",
-      label: "IRS 5Y pay",
-      instrument: {
-        kind: "irs",
-        irs: {
-          tenorYears: 5,
-          fixedRate: pillarPar(curve, 5),
-          notional: N,
-          direction: "PAY_FIXED",
-          fixedFrequency: "SEMI_ANNUAL",
-          fixedDayCount: "ACT_360",
-          floatFrequency: "QUARTERLY",
-          floatDayCount: "ACT_360",
-        },
-      },
-    },
-    {
-      id: "fra3x6",
-      label: "FRA 3×6",
-      instrument: {
-        kind: "fra",
-        fra: {
-          startMonths: 3,
-          endMonths: 6,
-          fixedRate: pillarPar(curve, 2),
-          notional: N,
-          direction: "PAY_FIXED",
-          accrualBasis: "ACT_360",
-        },
-      },
-    },
-    {
-      id: "bond10y",
-      label: "Bond 10Y 4%",
-      instrument: {
-        kind: "bond",
-        bond: {
-          couponRate: 0.04,
-          couponFrequency: "SEMI_ANNUAL",
-          dayCount: "THIRTY_360_BOND_BASIS",
-          maturityDate: { year: ref.year + 10, month: ref.month, day: ref.day },
-          redemption: 100,
-          position: "LONG",
-        },
-      },
-    },
-  ];
-}
-
-/** A short arm badge for a fixed-income row ("OIS" / "IRS" / "FRA" / "BOND"). */
-function ratesArmBadge(kind: RatesInstrument["kind"]): string {
-  return kind.toUpperCase();
-}
-
-/** A par (fair fixed) rate rendered as a percentage, e.g. 0.0409 → "4.090%". */
-function fmtParPct(rate: number): string {
-  return `${(rate * 100).toFixed(3)}%`;
-}
-
-/** One live fixed-income streaming row (PV / par / PV01 / DV01 / Δcurve + trend). */
-function RatesLineRow({
-  row,
-  onRemove,
-}: {
-  row: RatesStreamRow;
-  onRemove: () => void;
-}): React.ReactElement {
-  const pvDir = sparklineDirection(row.pvHistory);
-  const hasTrend = row.pvHistory.length >= 2;
-  return (
-    <div className={styles.ratesRow} role="row">
-      <span className={styles.ratesInstr} role="cell">
-        <span className={styles.ratesArm} aria-label={`${ratesArmBadge(row.kind)} instrument`}>
-          {ratesArmBadge(row.kind)}
-        </span>
-        <span className={styles.ratesLabel}>{row.label}</span>
-      </span>
-      <span className={`num ${styles.ratesNum}`} role="cell" title="Present value (curve ccy)">
-        {fmtPnlAdaptive(row.result.pv)}
-      </span>
-      <span className={`num ${styles.ratesNum}`} role="cell" title="Par (fair fixed) rate">
-        {fmtParPct(row.result.parRate)}
-      </span>
-      <span className={`num ${styles.ratesNum}`} role="cell" title="Analytic PV01 (PV per 1bp of the fixed rate)">
-        {fmtPnlAdaptive(row.result.pv01)}
-      </span>
-      <span className={`num ${styles.ratesNum}`} role="cell" title="DV01 (PV per +1bp parallel curve bump)">
-        {fmtPnlAdaptive(row.result.dv01)}
-      </span>
-      <span className={`num ${styles.ratesNum}`} role="cell" title="Parallel curve shift this tick (bp)">
-        {fmtSigned(row.curveShift * 1e4, 2)}
-      </span>
-      <span className={styles.ratesTrend} role="cell">
-        {hasTrend ? (
-          <Sparkline values={row.pvHistory} direction={pvDir} ariaLabel={`PV trend, ${pvDir}`} />
-        ) : (
-          <span className={styles.ratesAwait} aria-label="awaiting ticks">
-            …
-          </span>
-        )}
-      </span>
-      <span className={styles.ratesActions} role="cell">
-        <button
-          type="button"
-          className={styles.ratesRemove}
-          onClick={onRemove}
-          aria-label={`Stop streaming ${row.label}`}
-          title="Stop streaming this line"
-        >
-          ✕
-        </button>
-      </span>
-    </div>
-  );
-}
-
-/**
- * The fixed-income streaming panel — the FI subject of the one Stream workspace.
- * License-gated on `stream·fixed_income` (entitlement × license): when the caller
- * lacks the capability or the firm is unlicensed, the panel is present but locked
- * (honest, discoverable), never hidden and never fabricating a line. There is NO
- * click-to-trade side — the honest desk note says rates route to RFQ/desk.
- */
-function RatesStreamPanel(): React.ReactElement {
-  const app = useApp();
-  const licensed: LicensePredicate = useMemo(() => configuredLicense(), []);
-  const canStream = app.auth.can("stream", "fixed_income");
-  const isLicensed = licensed("fixed_income");
-  const streamable = canStream && isLicensed;
-  const lockTitle = !canStream
-    ? capabilityDenialTitle("stream", "fixed_income")
-    : !isLicensed
-      ? LICENSE_UPSELL_TITLE
-      : undefined;
-
-  const presets = useMemo(() => ratesPresets(DEFAULT_USD_SOFR_CURVE), []);
-  const rows = app.stream.ratesRows;
-
-  return (
-    <section className={styles.ratesPanel} aria-label="streaming fixed-income lines">
-      <div className={styles.ratesHead}>
-        <span className={styles.ratesTitle}>Fixed income — live</span>
-        <span className={styles.ratesNote}>
-          indicative PV + risk · rates route to{" "}
-          <abbr title="request for quote / voice desk">RFQ/desk</abbr> to trade
-        </span>
-        {!streamable && (
-          <span className={styles.ratesLock} title={lockTitle}>
-            <span aria-hidden="true">🔒</span> {lockTitle}
-          </span>
-        )}
-      </div>
-
-      {streamable && (
-        <div className={styles.ratesSubscribe} role="group" aria-label="subscribe a fixed-income line">
-          <span className={styles.controlLabel}>Stream</span>
-          {presets.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={styles.segBtn}
-              onClick={() =>
-                app.stream.subscribeRates(p.instrument, DEFAULT_USD_SOFR_CURVE, p.label)
-              }
-              title={`Stream ${p.label} against the USD-SOFR curve`}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {streamable ? (
-        rows.length === 0 ? (
-          <div className={styles.ratesEmpty}>
-            No fixed-income lines. Pick a line above to stream its live PV + risk.
-          </div>
-        ) : (
-          <div className={styles.ratesGrid} role="table" aria-label="fixed-income streaming lines">
-            <div className={styles.ratesHeaderRow} role="row">
-              <span className={styles.ratesColLeft} role="columnheader">Instrument</span>
-              <span className={`num ${styles.ratesColNum}`} role="columnheader">PV</span>
-              <span className={`num ${styles.ratesColNum}`} role="columnheader">Par</span>
-              <span className={`num ${styles.ratesColNum}`} role="columnheader">PV01</span>
-              <span className={`num ${styles.ratesColNum}`} role="columnheader">DV01</span>
-              <span className={`num ${styles.ratesColNum}`} role="columnheader" title="Parallel curve shift (bp)">Δbp</span>
-              <span className={styles.ratesColTrend} role="columnheader">PV trend</span>
-              <span className={styles.ratesColActions} role="columnheader" aria-label="actions" />
-            </div>
-            {rows.map((row) => (
-              <RatesLineRow
-                key={row.subscriptionId.toString()}
-                row={row}
-                onRemove={() => app.stream.unsubscribeRates(row.subscriptionId)}
-              />
-            ))}
-          </div>
-        )
-      ) : (
-        <div className={styles.ratesEmpty}>
-          Fixed-income streaming is {canStream ? "not licensed for this firm" : "not enabled for your role"}.
-        </div>
-      )}
-    </section>
-  );
-}
-
 export function StreamWorkspace(): React.ReactElement {
   const app = useApp();
   // Entitlement-readiness: route the live rows through the firm-grant scope. It
@@ -1117,12 +849,6 @@ export function StreamWorkspace(): React.ReactElement {
         )}
       </div>
       </section>
-
-      {/* The fixed-income (linear-rates) streaming subject — OIS/IRS/FRA/bond lines
-          streaming live PV + first-order risk, coexisting with the FX two-way
-          blotter above in the ONE Stream workspace. Class-parametric, license-gated,
-          and honestly indicative-only (rates click-to-trade routes to RFQ/desk). */}
-      <RatesStreamPanel />
 
       {/* The selected line's FULL, asset-class-correct Greeks strip — the streamed
           edge of the carry seam reaching the blotter. GreeksStrip relabels the
