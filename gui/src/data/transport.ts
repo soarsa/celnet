@@ -546,8 +546,8 @@ export interface CelnetTransport {
 
   /**
    * AuthService.UpdateDesk (admin) — rename a desk. `id` is the stable routing
-   * key (immutable — RFQ/deal delivery, `User.deskId` and connection routing all
-   * key on it); only the display `name` changes. Rejects on an unknown id
+   * key (immutable — RFQ/deal delivery, `User.deskIds` membership and connection
+   * routing all key on it); only the display `name` changes. Rejects on an unknown id
    * (NotFound), a blank name (InvalidArgument), or a name that case-insensitively
    * collides with another desk (AlreadyExists). Resolves to the renamed desk.
    */

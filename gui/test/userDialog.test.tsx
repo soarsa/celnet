@@ -49,9 +49,78 @@ describe("UserDialog — create", () => {
         displayName: "Jane",
         role: "TRADER",
         password: "longenoughpw1",
+        // No desks ticked ⇒ a deskless user (empty set, not all-desks).
+        deskIds: [],
+        allDesks: false,
       }),
     );
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("submits the ticked desks as a multi-desk set (allDesks:false)", async () => {
+    const onCreate = vi.fn().mockResolvedValue({});
+    render(
+      <UserDialog
+        open
+        mode="create"
+        desks={[
+          { id: "g10", name: "G10 Options" },
+          { id: "em", name: "EM Rates" },
+        ]}
+        onClose={vi.fn()}
+        onCreate={onCreate}
+        onUpdate={noop}
+        onReset={noop}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("trader@celnet.com"), {
+      target: { value: "jane@celnet.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("at least 12 characters"), {
+      target: { value: "longenoughpw1" },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "G10 Options" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "EM Rates" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create user" }));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ deskIds: ["g10", "em"], allDesks: false }),
+    );
+  });
+
+  it("submits allDesks:true with an empty set when All desks is toggled on", async () => {
+    const onCreate = vi.fn().mockResolvedValue({});
+    render(
+      <UserDialog
+        open
+        mode="create"
+        desks={[{ id: "g10", name: "G10 Options" }]}
+        onClose={vi.fn()}
+        onCreate={onCreate}
+        onUpdate={noop}
+        onReset={noop}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("trader@celnet.com"), {
+      target: { value: "chief@celnet.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("at least 12 characters"), {
+      target: { value: "longenoughpw1" },
+    });
+    // Tick a desk first, then All desks — All supersedes the explicit set.
+    fireEvent.click(screen.getByRole("checkbox", { name: "G10 Options" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /All desks/ }));
+    // The per-desk list is hidden once All desks is on.
+    expect(screen.queryByRole("checkbox", { name: "G10 Options" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Create user" }));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ deskIds: [], allDesks: true }),
+    );
   });
 
   it("shows an inline reason (not a dead button) when the password is too short", () => {

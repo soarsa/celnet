@@ -67,7 +67,8 @@ export function UserDialog({
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [role, setRole] = useState<UserRole>("TRADER");
-  const [deskId, setDeskId] = useState("");
+  const [deskIds, setDeskIds] = useState<string[]>([]);
+  const [allDesks, setAllDesks] = useState(false);
   const [password, setPassword] = useState("");
   const [disabled, setDisabled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -80,7 +81,8 @@ export function UserDialog({
     setEmail(user?.email ?? "");
     setDisplayName(user?.displayName ?? "");
     setRole(user?.role ?? "TRADER");
-    setDeskId(user?.deskId ?? "");
+    setDeskIds(user?.deskIds ?? []);
+    setAllDesks(user?.allDesks ?? false);
     setPassword("");
     setDisabled(user?.disabled ?? false);
     setSubmitting(false);
@@ -122,7 +124,8 @@ export function UserDialog({
     }
     setSubmitting(true);
     setError(null);
-    const desk = deskId.trim();
+    // `all_desks` supersedes the explicit set — an all-desks user carries `[]`.
+    const desks = allDesks ? [] : deskIds;
     const run = async (): Promise<void> => {
       if (mode === "create") {
         const input: CreateUserInput = {
@@ -130,16 +133,18 @@ export function UserDialog({
           displayName: displayName.trim(),
           role,
           password,
+          deskIds: desks,
+          allDesks,
         };
-        if (desk.length > 0) input.deskId = desk;
         await onCreate(input);
       } else if (mode === "edit" && user) {
         const input: UpdateUserInput = {
           displayName: displayName.trim(),
           role,
           disabled,
+          deskIds: desks,
+          allDesks,
         };
-        if (desk.length > 0) input.deskId = desk;
         await onUpdate(user.id, input);
       } else if (mode === "reset" && user) {
         await onReset(user.id, password);
@@ -219,21 +224,53 @@ export function UserDialog({
                 </select>
               </label>
 
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Desk</span>
-                <select
-                  className={styles.select}
-                  value={deskId}
-                  onChange={(e) => setDeskId(e.target.value)}
-                >
-                  <option value="">— unassigned</option>
-                  {desks.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name} ({d.id})
-                    </option>
+              <fieldset className={styles.deskField}>
+                <legend className={styles.fieldLabel}>Desks</legend>
+                <label className={styles.checkRow}>
+                  <input
+                    type="checkbox"
+                    checked={allDesks}
+                    onChange={(e) => setAllDesks(e.target.checked)}
+                  />
+                  <span>All desks (receives every desk&apos;s quotes and deals)</span>
+                </label>
+                {!allDesks &&
+                  (desks.length === 0 ? (
+                    <p className={styles.hint}>
+                      No desks defined yet — create one in the Desks section.
+                    </p>
+                  ) : (
+                    <>
+                      <div className={styles.deskList} role="group" aria-label="Desk membership">
+                        {desks.map((d) => {
+                          const checked = deskIds.includes(d.id);
+                          return (
+                            <label key={d.id} className={styles.deskOption}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) =>
+                                  setDeskIds((prev) =>
+                                    e.target.checked
+                                      ? [...prev, d.id]
+                                      : prev.filter((x) => x !== d.id),
+                                  )
+                                }
+                              />
+                              <span>{d.name}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {deskIds.length === 0 && (
+                        <p className={styles.hint}>
+                          No desks selected — this trader is deskless and receives no
+                          quotes or deals.
+                        </p>
+                      )}
+                    </>
                   ))}
-                </select>
-              </label>
+              </fieldset>
             </>
           )}
 

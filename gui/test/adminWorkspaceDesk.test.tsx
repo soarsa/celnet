@@ -1,27 +1,20 @@
 /**
- * AdminWorkspace — the admin gate + the inline desk picker.
+ * AdminWorkspace — the tabbed admin screen + MANY-TO-MANY desk membership.
  *
- * (a) A non-admin session renders the sign-in / insufficient-role gate and NO
- *     desk `<select>` (admin gating — the desk control is admin-only).
- * (b) An admin changing a user's inline Desk `<select>` calls `assignDesk(userId,
- *     deskId)`, and a REJECTED assignment surfaces a per-row inline error.
- *
- * `useApp` and `useAdmin` are mocked so the test drives the workspace's own
- * routing/gating logic in isolation; deny-wins capability algebra is covered in
- * capabilityMatrix.test.ts.
+ * Drives the workspace with `useApp`/`useAdmin` mocked so we inject a fixed roster
+ * and observe the mutations. Covers: the sign-in gate, the four section TABS (one
+ * pane at a time, Users default), the Users row layout (role badge + capability
+ * chips + the four action controls all present), and the desk-membership cell —
+ * the three states (All desks / a desk set / deskless) render, editing sends
+ * `setUserDesks(deskIds[], allDesks)`, and a rejected change surfaces inline.
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen, fireEvent, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { UserDesc } from "../src/data/contract";
 
-// Mutable state the hoisted mocks read (set per test before render).
-const state = vi.hoisted(() => ({
-  app: null as unknown,
-  admin: null as unknown,
-}));
-
+const state: { app: unknown; admin: unknown } = { app: null, admin: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 vi.mock("../src/hooks/useAdmin", () => ({ useAdmin: () => state.admin }));
 
@@ -33,6 +26,8 @@ function trader(overrides: Partial<UserDesc> = {}): UserDesc {
     email: "trader@celnet.com",
     displayName: "Jane Trader",
     role: "TRADER",
+    deskIds: [],
+    allDesks: false,
     disabled: false,
     ...overrides,
   };
@@ -41,7 +36,10 @@ function trader(overrides: Partial<UserDesc> = {}): UserDesc {
 function makeAdmin(overrides: Record<string, unknown> = {}) {
   return {
     users: [trader()],
-    desks: [{ id: "g10", name: "G10 Options" }],
+    desks: [
+      { id: "g10", name: "G10 Options" },
+      { id: "em", name: "EM Rates" },
+    ],
     entities: [],
     books: [],
     isLoading: false,
@@ -49,7 +47,7 @@ function makeAdmin(overrides: Record<string, unknown> = {}) {
     refetch: vi.fn(async () => {}),
     createUser: vi.fn(),
     updateUser: vi.fn(),
-    assignDesk: vi.fn(async () => {}),
+    setUserDesks: vi.fn(async () => {}),
     deleteUser: vi.fn(),
     resetPassword: vi.fn(),
     createDesk: vi.fn(),
@@ -73,92 +71,143 @@ function makeApp(isAdmin: boolean, user: { id: string; email: string } | null) {
   };
 }
 
-describe("AdminWorkspace — admin gate", () => {
-  it("renders the sign-in gate and NO desk select for a non-admin session", () => {
+/** Sign in as the seeded admin with one trader + two desks, and render. */
+function renderAsAdmin(overrides: Record<string, unknown> = {}) {
+  state.app = makeApp(true, { id: "admin1", email: "admin@celnet.com" });
+  state.admin = makeAdmin(overrides);
+  return render(<AdminWorkspace />);
+}
+
+/** The Users roster row for the seeded trader (the row holding its Edit button). */
+function traderRow(): HTMLElement {
+  return screen
+    .getAllByRole("row")
+    .find((r) => within(r).queryByRole("button", { name: "Permissions" }) !== null)!;
+}
+
+beforeEach(() => {
+  state.app = null;
+  state.admin = null;
+  vi.clearAllMocks();
+});
+
+describe("AdminWorkspace — sign-in gate", () => {
+  it("shows a sign-in card (not the tabs) for an anonymous session", () => {
     state.app = makeApp(false, null);
     state.admin = makeAdmin();
     render(<AdminWorkspace />);
-
-    expect(screen.getByRole("heading", { name: "Administration" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
-    // The inline desk control must be absent behind the admin gate.
-    expect(screen.queryByRole("combobox", { name: /Desk for/ })).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "administration sections" })).toBeNull();
   });
 });
 
-describe("AdminWorkspace — inline desk assignment", () => {
-  it("calls assignDesk(userId, deskId) when an admin changes the desk select", async () => {
-    const assignDesk = vi.fn(async () => {});
-    state.app = makeApp(true, { id: "admin1", email: "admin@celnet.com" });
-    state.admin = makeAdmin({ assignDesk });
-    render(<AdminWorkspace />);
+describe("AdminWorkspace — the four section tabs", () => {
+  it("renders the four tabs, defaults to Users, and switches one pane at a time", () => {
+    renderAsAdmin();
+    const tabs = screen.getByRole("tablist", { name: "administration sections" });
+    for (const label of ["Users", "Desks", "Legal Entities", "Netting Books"]) {
+      expect(within(tabs).getByRole("tab", { name: label })).toBeInTheDocument();
+    }
+    // Users is the default selected pane.
+    expect(within(tabs).getByRole("tab", { name: "Users" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("heading", { name: "Users" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Desks" })).toBeNull();
 
-    const select = screen.getByRole("combobox", { name: "Desk for trader@celnet.com" });
-    fireEvent.change(select, { target: { value: "g10" } });
-    expect(assignDesk).toHaveBeenCalledWith("u1", "g10");
+    // Switching swaps the pane (only one section mounted at a time).
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Desks" }));
+    expect(screen.getByRole("heading", { name: "Desks" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Add desk" })).toBeInTheDocument();
+
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Legal Entities" }));
+    expect(screen.getByRole("heading", { name: "Legal entities" })).toBeInTheDocument();
+
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Netting Books" }));
+    expect(screen.getByRole("heading", { name: "Netting books" })).toBeInTheDocument();
+  });
+});
+
+describe("AdminWorkspace — Users row layout", () => {
+  it("renders the role badge, capability chips and all four action controls in one row", () => {
+    renderAsAdmin();
+    const row = traderRow();
+    expect(within(row).getByText("Trader")).toBeInTheDocument();
+    expect(within(row).getByText(/FX \d+\/\d+/)).toBeInTheDocument();
+    for (const name of ["Edit", "Reset password", "Permissions", "Delete"]) {
+      expect(within(row).getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+});
+
+describe("AdminWorkspace — desk membership renders the three states", () => {
+  it("a deskless trader shows the 'receives no quotes' marker with nothing checked", () => {
+    renderAsAdmin();
+    const row = traderRow();
+    expect(within(row).getByText("receives no quotes")).toBeInTheDocument();
+    expect(
+      within(row).getByRole("checkbox", { name: "All desks for trader@celnet.com" }),
+    ).not.toBeChecked();
+    expect(within(row).getByRole("checkbox", { name: "G10 Options" })).not.toBeChecked();
   });
 
-  it("surfaces a per-row inline error when assignDesk rejects", async () => {
-    const assignDesk = vi.fn(async () => {
+  it("a set-membership trader shows the desk chips and checks the matching boxes", () => {
+    renderAsAdmin({ users: [trader({ deskIds: ["g10", "em"] })] });
+    const row = traderRow();
+    expect(within(row).getByRole("checkbox", { name: "G10 Options" })).toBeChecked();
+    expect(within(row).getByRole("checkbox", { name: "EM Rates" })).toBeChecked();
+    // The at-a-glance summary chips name both desks (label text + chip ⇒ ≥2 each).
+    expect(within(row).getAllByText("G10 Options").length).toBeGreaterThanOrEqual(2);
+    expect(within(row).queryByText("receives no quotes")).toBeNull();
+  });
+
+  it("an all-desks trader checks the toggle, hides the desk list, and shows the All-desks chip", () => {
+    renderAsAdmin({ users: [trader({ allDesks: true })] });
+    const row = traderRow();
+    expect(
+      within(row).getByRole("checkbox", { name: "All desks for trader@celnet.com" }),
+    ).toBeChecked();
+    // No per-desk checkboxes while All-desks is on.
+    expect(within(row).queryByRole("checkbox", { name: "G10 Options" })).toBeNull();
+    // The summary shows the "All desks" chip (toggle label + chip ⇒ ≥2).
+    expect(within(row).getAllByText("All desks").length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("AdminWorkspace — editing membership sends setUserDesks", () => {
+  it("checking a desk sends the new desk_ids set with allDesks=false", () => {
+    const setUserDesks = vi.fn(async () => {});
+    renderAsAdmin({ users: [trader({ deskIds: ["g10"] })], setUserDesks });
+    const row = traderRow();
+    fireEvent.click(within(row).getByRole("checkbox", { name: "EM Rates" }));
+    expect(setUserDesks).toHaveBeenCalledWith("u1", ["g10", "em"], false);
+  });
+
+  it("unchecking the last desk sends an empty set (deskless)", () => {
+    const setUserDesks = vi.fn(async () => {});
+    renderAsAdmin({ users: [trader({ deskIds: ["g10"] })], setUserDesks });
+    const row = traderRow();
+    fireEvent.click(within(row).getByRole("checkbox", { name: "G10 Options" }));
+    expect(setUserDesks).toHaveBeenCalledWith("u1", [], false);
+  });
+
+  it("toggling All desks sends allDesks=true with an empty desk set", () => {
+    const setUserDesks = vi.fn(async () => {});
+    renderAsAdmin({ users: [trader({ deskIds: ["g10"] })], setUserDesks });
+    const row = traderRow();
+    fireEvent.click(within(row).getByRole("checkbox", { name: "All desks for trader@celnet.com" }));
+    expect(setUserDesks).toHaveBeenCalledWith("u1", [], true);
+  });
+
+  it("surfaces an inline error in the row when the change is rejected", async () => {
+    const setUserDesks = vi.fn(async () => {
       throw new Error("permission_denied");
     });
-    state.app = makeApp(true, { id: "admin1", email: "admin@celnet.com" });
-    state.admin = makeAdmin({ assignDesk });
-    render(<AdminWorkspace />);
-
-    const select = screen.getByRole("combobox", { name: "Desk for trader@celnet.com" });
-    fireEvent.change(select, { target: { value: "g10" } });
-    await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent("permission_denied"),
-    );
-  });
-
-  it("displays a desk by NAME while assigning by id (the option value is the id)", () => {
-    state.app = makeApp(true, { id: "admin1", email: "admin@celnet.com" });
-    state.admin = makeAdmin();
-    render(<AdminWorkspace />);
-
-    // The user's desk <option> shows the human name but carries the id as its value.
-    const option = screen.getByRole("option", { name: "G10 Options" }) as HTMLOptionElement;
-    expect(option.value).toBe("g10");
-  });
-});
-
-describe("AdminWorkspace — inline desk rename", () => {
-  it("calls updateDesk(id, newName) when an admin saves an inline rename", async () => {
-    const updateDesk = vi.fn(async () => ({ id: "g10", name: "G10 Vol" }));
-    state.app = makeApp(true, { id: "admin1", email: "admin@celnet.com" });
-    state.admin = makeAdmin({ updateDesk });
-    render(<AdminWorkspace />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-    const input = screen.getByRole("textbox", { name: "Rename desk G10 Options" });
-    fireEvent.change(input, { target: { value: "G10 Vol" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(updateDesk).toHaveBeenCalledWith("g10", "G10 Vol");
-    // The inline editor closes once the (successful) rename settles.
-    await waitFor(() =>
-      expect(screen.queryByRole("textbox", { name: "Rename desk G10 Options" })).toBeNull(),
-    );
-  });
-
-  it("surfaces a friendly per-row error when a rename hits a duplicate name", async () => {
-    const updateDesk = vi.fn(async () => {
-      throw new Error("a desk named `EM Rates` already exists");
-    });
-    state.app = makeApp(true, { id: "admin1", email: "admin@celnet.com" });
-    state.admin = makeAdmin({ updateDesk });
-    render(<AdminWorkspace />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Rename desk G10 Options" }), {
-      target: { value: "EM Rates" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(/already used by another desk/),
-    );
+    renderAsAdmin({ users: [trader({ deskIds: ["g10"] })], setUserDesks });
+    const row = traderRow();
+    fireEvent.click(within(row).getByRole("checkbox", { name: "EM Rates" }));
+    expect(await within(row).findByRole("alert")).toHaveTextContent("permission_denied");
   });
 });

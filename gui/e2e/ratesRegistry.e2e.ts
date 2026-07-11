@@ -68,11 +68,15 @@ test("admin registry → named rates booking renders names, not numbers", async 
   // --- Admin workspace: create the legal entity + a book under it -------------
   const admin = await gotoView(page, "Admin");
 
+  // Legal entities live in their own section tab now.
+  await admin.getByRole("tab", { name: "Legal Entities" }).click();
   await admin.getByLabel("entity name").fill(entityName);
   await admin.getByLabel("entity code").fill(entityCode);
   await admin.getByRole("button", { name: "Add entity" }).click();
   await expect(admin.getByRole("cell", { name: entityName, exact: true })).toBeVisible();
 
+  // Netting books live in the Netting Books section tab.
+  await admin.getByRole("tab", { name: "Netting Books" }).click();
   await admin.getByLabel("book name").fill(bookName);
   await admin.getByLabel("owning entity").selectOption({ label: entityName });
   await admin.getByRole("button", { name: "Add book" }).click();

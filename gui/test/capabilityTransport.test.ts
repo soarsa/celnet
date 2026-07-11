@@ -15,6 +15,8 @@ async function freshTrader(transport: MockTransport): Promise<string> {
     email: "trader@celnet.com",
     displayName: "Trader",
     role: "TRADER",
+    deskIds: [],
+    allDesks: false,
     password: "longenoughpw1",
   });
   return created.id;
@@ -130,6 +132,8 @@ describe("MockTransport role bundles", () => {
       email: "after@celnet.com",
       displayName: "After",
       role: "TRADER",
+      deskIds: [],
+      allDesks: false,
       password: "longenoughpw1",
     });
     const after = await t.getUserCapabilities(created.id);

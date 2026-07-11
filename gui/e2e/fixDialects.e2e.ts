@@ -29,6 +29,8 @@ test("admin sees the FI dialect cards and creates an FI-quote venue", async ({ p
     .click();
   const rail = page.getByRole("complementary", { name: "workspaces" });
   await rail.getByRole("button", { name: "Admin", exact: false }).click();
+  // Desk management lives in the Desks section tab of the Admin workspace.
+  await page.getByRole("tab", { name: "Desks" }).click();
   await page.getByRole("textbox", { name: "new desk name" }).fill(DESK_NAME);
   await page.getByRole("button", { name: "Add desk" }).click();
   await expect(page.getByText(DESK_NAME)).toBeVisible();

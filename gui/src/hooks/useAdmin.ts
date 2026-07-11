@@ -26,7 +26,7 @@ import type {
   UserDesc,
 } from "../data/contract";
 import type { CelnetTransport } from "../data/transport";
-import { updateInputForDeskChange, withUserDesk } from "../lib/deskAssignment";
+import { updateInputForDeskChange, withUserDesks } from "../lib/deskAssignment";
 
 /** Narrow an unknown thrown value to a display string. */
 function messageOf(error: unknown): string {
@@ -54,12 +54,18 @@ export interface AdminApi {
   /** Update a user's profile/role/desk/disabled flag. */
   updateUser: (id: string, input: UpdateUserInput) => Promise<UserDesc>;
   /**
-   * Assign (or clear, with `undefined`) a user's desk OPTIMISTICALLY: the roster
-   * updates in place immediately, reconciles to the server's returned user on
-   * success, and rolls back (rethrowing) on failure. Desk membership scopes which
-   * inbound quotes/deals the user receives, so this is the routing control.
+   * Set a user's desk membership OPTIMISTICALLY: the roster updates in place
+   * immediately, reconciles to the server's returned user on success, and rolls
+   * back (rethrowing) on failure. Membership is many-to-many — `allDesks:true`
+   * ⇒ every desk (`deskIds` ignored); a non-empty `deskIds` ⇒ that set; `[]` +
+   * `allDesks:false` ⇒ deskless (receives no quotes/deals). This is the routing
+   * control that scopes which inbound quotes/deals the user receives.
    */
-  assignDesk: (userId: string, deskId: string | undefined) => Promise<void>;
+  setUserDesks: (
+    userId: string,
+    deskIds: readonly string[],
+    allDesks: boolean,
+  ) => Promise<void>;
   /** Delete a user. */
   deleteUser: (id: string) => Promise<void>;
   /** Set a user's password (the seeded-admin rotation + general reset path). */
@@ -149,17 +155,21 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
     [transport, refetch],
   );
 
-  const assignDesk = useCallback(
-    async (userId: string, deskId: string | undefined): Promise<void> => {
+  const setUserDesks = useCallback(
+    async (
+      userId: string,
+      deskIds: readonly string[],
+      allDesks: boolean,
+    ): Promise<void> => {
       const target = users.find((u) => u.id === userId);
       if (!target) return;
       const snapshot = users;
-      // Optimistic: reflect the new desk immediately (untouched rows keep identity).
-      setUsers((prev) => withUserDesk(prev, userId, deskId));
+      // Optimistic: reflect the new membership immediately (untouched rows keep identity).
+      setUsers((prev) => withUserDesks(prev, userId, deskIds, allDesks));
       try {
         const updated = await transport.updateUser(
           userId,
-          updateInputForDeskChange(target, deskId),
+          updateInputForDeskChange(target, deskIds, allDesks),
         );
         // Reconcile the single authoritative row (no full refetch — keep the
         // optimistic path); other rows stay referentially unchanged.
@@ -286,7 +296,7 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
     refetch,
     createUser,
     updateUser,
-    assignDesk,
+    setUserDesks,
     deleteUser,
     resetPassword,
     createDesk,

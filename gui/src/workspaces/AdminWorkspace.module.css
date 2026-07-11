@@ -14,6 +14,44 @@
   gap: var(--space-3);
 }
 
+/* In-workspace section tabs — the app's lens-tab / segmented-control pattern,
+   identical to the Book (positions/risk/deals/quotes) and Market-Data lens tabs,
+   so the four admin sections (Users · Desks · Legal Entities · Netting Books)
+   each render in their own readable pane, one at a time. */
+.tabBar {
+  display: flex;
+  gap: 2px;
+  align-self: start;
+  background: var(--bg-inset);
+  border-radius: var(--r-sm);
+  padding: 2px;
+}
+.tab {
+  padding: var(--space-1) var(--space-4);
+  border-radius: 4px;
+  font-size: var(--type-caption);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.tab:hover {
+  color: var(--text-primary);
+}
+.tabActive {
+  background: var(--accent-soft);
+  /* High-contrast label (AA ≥4.5:1); the accent reads as an underline indicator,
+     not the text colour. Reuses the Book/Risk/Market-Data lens-tab pattern. */
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent);
+  font-weight: var(--weight-emphasis);
+}
+.tabBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-height: 0;
+}
+
 .banner {
   margin: 0 0 var(--space-4);
   padding: var(--space-3) var(--space-4);
@@ -56,6 +94,13 @@
   width: 100%;
   border-collapse: collapse;
   font-size: var(--type-body);
+}
+/* The Users roster carries six columns plus a four-control action group; a
+   min-width keeps every column at a legible size and lets the enclosing Panel
+   body scroll horizontally instead of crushing cells so the action buttons
+   overlap the capability chips. */
+.usersTable {
+  min-width: 62rem;
 }
 .table thead th {
   text-align: left;
@@ -110,6 +155,10 @@
   display: inline-flex;
   gap: var(--space-2);
   justify-content: flex-end;
+  /* On a narrow pane the four controls wrap within the actions cell rather than
+     overflowing across the capability chips (the Users table also min-widths +
+     horizontally scrolls in its Panel body — see .usersTable). */
+  flex-wrap: wrap;
 }
 
 .empty {
@@ -183,30 +232,52 @@
   white-space: nowrap;
 }
 
-/* Inline desk picker cell. */
+/* Inline multi-desk membership cell: an "All desks" toggle over a per-desk
+   checkbox multi-select and an at-a-glance summary strip. */
 .deskCell {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 12rem;
+}
+.allDesksToggle,
+.deskCheck {
+  display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  font-size: var(--type-body);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
 }
-.deskSelect {
+.deskChecks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 8.5rem;
+  overflow-y: auto;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--r-sm);
   border: var(--hairline);
   background: var(--bg-inset);
+}
+.deskSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+.deskChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
   color: var(--text-primary);
-  font-size: var(--type-body);
-  min-width: 11rem;
-  cursor: pointer;
-  transition: border-color var(--dur-fast, 120ms) ease;
-}
-.deskSelect:hover {
-  border-color: color-mix(in oklch, var(--accent) 45%, transparent);
-}
-.deskSelect:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  font-size: var(--type-micro, 0.65rem);
+  white-space: nowrap;
 }
 
 /* Deny-by-default marker: an unassigned trader receives nothing. */

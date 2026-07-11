@@ -103,6 +103,34 @@
   color: var(--text-tertiary);
   line-height: 1.5;
 }
+
+/* Desk membership: an "All desks" toggle over a scrollable desk checkbox list. */
+.deskField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.deskList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 168px;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+}
+.deskOption {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--type-body);
+  color: var(--text-primary);
+}
 .error {
   margin: 0;
   font-size: var(--type-caption);

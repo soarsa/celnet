@@ -4,11 +4,11 @@
  * Desk membership is what permissions a trader's inbound quote/deal reception, so
  * assigning a desk from the Users table is a real routing action. This drives the
  * production bundle + live WS mirror end to end: sign in as the seeded admin,
- * create a desk via the Desks form, create an UNASSIGNED trader, then use that
- * trader's inline Desk `<select>` to assign the desk, click Refresh, and confirm
- * the assignment PERSISTED across a real server round trip (the select still shows
- * the desk and the "receives no quotes" deny-by-default marker is gone). Then a
- * 1440 screenshot + an axe pass (0 serious/critical).
+ * create a desk via the Desks form, create an UNASSIGNED trader, then tick that
+ * trader's inline desk checkbox (membership is MANY-TO-MANY) to assign the desk,
+ * click Refresh, and confirm the assignment PERSISTED across a real server round
+ * trip (the checkbox stays checked and the "receives no quotes" deny-by-default
+ * marker is gone). Then a 1440 screenshot + an axe pass (0 serious/critical).
  */
 import { test, expect, type Page } from "@playwright/test";
 
@@ -43,12 +43,14 @@ test("admin creates + assigns + renames a desk and binds a connection to it, per
   await openLive(page);
   await railClick(page, "Admin");
 
-  // 2) Create a fresh desk via the Desks form.
+  // 2) Create a fresh desk via the Desks form (the Desks section tab).
+  await page.getByRole("tab", { name: "Desks" }).click();
   await page.getByLabel("new desk name").fill(DESK_NAME);
   await page.getByRole("button", { name: "Add desk" }).click();
   await expect(page.getByRole("cell", { name: DESK_NAME })).toBeVisible();
 
-  // 3) Create an UNASSIGNED trader via the New user dialog.
+  // 3) Create an UNASSIGNED trader via the New user dialog (back on the Users tab).
+  await page.getByRole("tab", { name: "Users" }).click();
   await page.getByRole("button", { name: "New user" }).click();
   await page.getByPlaceholder("trader@celnet.com").fill(TRADER_EMAIL);
   await page.getByPlaceholder("Jane Trader").fill("Desk Assign Trader");
@@ -56,24 +58,26 @@ test("admin creates + assigns + renames a desk and binds a connection to it, per
   await page.getByRole("button", { name: "Create user" }).click();
 
   // The new trader's row carries the deny-by-default marker (no desk ⇒ no quotes).
-  const deskSelect = page.getByRole("combobox", { name: `Desk for ${TRADER_EMAIL}` });
-  await expect(deskSelect).toBeVisible();
-  await expect(deskSelect.locator("option:checked")).toHaveText("Unassigned");
+  // Membership is MANY-TO-MANY: a per-desk checkbox multi-select, not a single select.
+  const traderRow = () =>
+    page.getByRole("row").filter({ has: page.getByText(TRADER_EMAIL) });
+  await expect(traderRow().getByText("receives no quotes")).toBeVisible();
+  await expect(traderRow().getByRole("checkbox", { name: DESK_NAME })).not.toBeChecked();
 
-  // 4) Assign the desk inline (optimistic through `assignDesk`).
-  await deskSelect.selectOption({ label: DESK_NAME });
-  await expect(deskSelect.locator("option:checked")).toHaveText(DESK_NAME);
+  // 4) Assign the desk inline (optimistic through `setUserDesks`).
+  await traderRow().getByRole("checkbox", { name: DESK_NAME }).check();
+  await expect(traderRow().getByRole("checkbox", { name: DESK_NAME })).toBeChecked();
 
   // 5) Refresh — re-load the roster from the server; the assignment must survive a
   // real round trip (not merely the optimistic local state).
   await page.getByRole("button", { name: "Refresh" }).click();
-  const deskSelectAfter = page.getByRole("combobox", { name: `Desk for ${TRADER_EMAIL}` });
-  await expect(deskSelectAfter.locator("option:checked")).toHaveText(DESK_NAME);
+  await expect(traderRow().getByRole("checkbox", { name: DESK_NAME })).toBeChecked();
 
-  // 6) Rename the desk INLINE. The id (routing key) is immutable — only the label
-  //    changes — and the new label must survive a real server round trip.
+  // 6) Rename the desk INLINE on the Desks tab. The id (routing key) is immutable
+  //    — only the label changes — and the new label must survive a round trip.
+  await page.getByRole("tab", { name: "Desks" }).click();
   // Scope to the Desks panel — the renamed label also shows in the Users desk
-  // <select>, so an unscoped cell locator is ambiguous.
+  // multi-select (checkbox label + chip), so an unscoped cell locator is ambiguous.
   const desksPanel = page
     .locator("section")
     .filter({ has: page.getByRole("heading", { name: "Desks", exact: true }) });
@@ -85,15 +89,22 @@ test("admin creates + assigns + renames a desk and binds a connection to it, per
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(desksPanel.getByRole("cell", { name: DESK_RENAMED, exact: true })).toBeVisible();
 
+  // Refresh the roster from the server. The Refresh action lives in the Users pane
+  // header, and a refetch re-loads BOTH desks and users, so switch there to click
+  // it; the rename must persist across the real round trip.
+  await page.getByRole("tab", { name: "Users" }).click();
   await page.getByRole("button", { name: "Refresh" }).click();
-  await expect(desksPanel.getByRole("cell", { name: DESK_RENAMED, exact: true })).toBeVisible();
-  // The member keeps its desk (routing keys on the immutable id); it now displays
-  // under the NEW label after the roster reloads from the server.
+  // The member keeps its desk (routing keys on the immutable id); its membership
+  // checkbox now carries the NEW label after the roster reloads from the server.
   await expect(
     page
-      .getByRole("combobox", { name: `Desk for ${TRADER_EMAIL}` })
-      .locator("option:checked"),
-  ).toHaveText(DESK_RENAMED);
+      .getByRole("row")
+      .filter({ has: page.getByText(TRADER_EMAIL) })
+      .getByRole("checkbox", { name: DESK_RENAMED }),
+  ).toBeChecked();
+  // The Desks pane shows the persisted new label after the reload.
+  await page.getByRole("tab", { name: "Desks" }).click();
+  await expect(desksPanel.getByRole("cell", { name: DESK_RENAMED, exact: true })).toBeVisible();
 
   // 7) Bind a NEW FIX connection to the renamed desk in the Connections workspace.
   await railClick(page, "Connections");

@@ -3034,18 +3034,25 @@ export function userRoleFromWire(tag: number): UserRole {
   return tag === USER_ROLE_ADMIN ? "ADMIN" : "TRADER";
 }
 
-/** A user descriptor from its wire form (`desk_id` absent/empty ⇒ unassigned). */
+/**
+ * A user descriptor from its wire form. `desk_ids` is a repeated string (always
+ * present, `[]` when none); `all_desks` a bool. Empty `desk_ids` + `all_desks:false`
+ * ⇒ deskless (receives no desk-routed traffic).
+ */
 export function userDescFromWire(o: WireObject): UserDesc {
-  const deskId = o["desk_id"];
-  const user: UserDesc = {
+  const rawDeskIds = o["desk_ids"];
+  const deskIds = Array.isArray(rawDeskIds)
+    ? rawDeskIds.filter((d): d is string => typeof d === "string" && d.length > 0)
+    : [];
+  return {
     id: str(o, "id"),
     email: str(o, "email"),
     displayName: str(o, "display_name"),
     role: userRoleFromWire(enumNum(o, "role")),
+    deskIds,
+    allDesks: o["all_desks"] === true,
     disabled: o["disabled"] === true,
   };
-  if (typeof deskId === "string" && deskId.length > 0) user.deskId = deskId;
-  return user;
 }
 
 /** A desk descriptor from its wire form. */
@@ -3095,28 +3102,30 @@ export function listUsersResponseFromWire(o: WireObject): UserDesc[] {
 }
 
 export function createUserRequestToWire(input: CreateUserInput): WireObject {
-  const body: WireObject = {
+  return {
     email: input.email,
     display_name: input.displayName,
     role: userRoleToWire(input.role),
     password: input.password,
+    // `all_desks` supersedes `desk_ids` — send an empty set when it's true.
+    desk_ids: input.allDesks ? [] : [...input.deskIds],
+    all_desks: input.allDesks,
   };
-  if (input.deskId && input.deskId.length > 0) body.desk_id = input.deskId;
-  return body;
 }
 
 export function updateUserRequestToWire(
   id: string,
   input: UpdateUserInput,
 ): WireObject {
-  const body: WireObject = {
+  return {
     id,
     display_name: input.displayName,
     role: userRoleToWire(input.role),
     disabled: input.disabled,
+    // `all_desks` supersedes `desk_ids` — send an empty set when it's true.
+    desk_ids: input.allDesks ? [] : [...input.deskIds],
+    all_desks: input.allDesks,
   };
-  if (input.deskId && input.deskId.length > 0) body.desk_id = input.deskId;
-  return body;
 }
 
 /** A single-user response (`{ user: {...} }`) from create/update. */

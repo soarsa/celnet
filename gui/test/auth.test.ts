@@ -35,13 +35,14 @@ describe("auth wire codec", () => {
     expect(userRoleFromWire(7)).toBe("TRADER");
   });
 
-  it("round-trips a user descriptor (presence-tracked desk_id)", () => {
+  it("round-trips a user descriptor (repeated desk_ids + all_desks)", () => {
     const assigned = userDescFromWire({
       id: "u-1",
       email: "jane@celnet.com",
       display_name: "Jane Trader",
       role: 0,
-      desk_id: "g10",
+      desk_ids: ["g10", "em"],
+      all_desks: false,
       disabled: false,
     });
     expect(assigned).toEqual({
@@ -49,19 +50,33 @@ describe("auth wire codec", () => {
       email: "jane@celnet.com",
       displayName: "Jane Trader",
       role: "TRADER",
-      deskId: "g10",
+      deskIds: ["g10", "em"],
+      allDesks: false,
       disabled: false,
     });
-    // An absent/empty desk_id decodes to an unassigned user (no `deskId` key).
-    const unassigned = userDescFromWire({
+    // An all-desks user carries `all_desks:true` (desk_ids empty).
+    const everyDesk = userDescFromWire({
+      id: "u-2",
+      email: "chief@celnet.com",
+      display_name: "Chief",
+      role: 0,
+      desk_ids: [],
+      all_desks: true,
+      disabled: false,
+    });
+    expect(everyDesk.allDesks).toBe(true);
+    expect(everyDesk.deskIds).toEqual([]);
+    // An absent desk_ids decodes to a deskless user (empty array, never absent).
+    const deskless = userDescFromWire({
       id: "admin",
       email: "admin@celnet.com",
       display_name: "Administrator",
       role: 1,
       disabled: false,
     });
-    expect(unassigned.deskId).toBeUndefined();
-    expect(unassigned.role).toBe("ADMIN");
+    expect(deskless.deskIds).toEqual([]);
+    expect(deskless.allDesks).toBe(false);
+    expect(deskless.role).toBe("ADMIN");
   });
 
   it("decodes a login result and builds the user request envelopes", () => {
@@ -99,36 +114,56 @@ describe("auth wire codec", () => {
     });
     expect(noCaps.capabilities).toEqual([]);
 
-    // create: a supplied desk rides through; the role maps to its wire tag.
+    // create: a multi-desk set rides through as repeated desk_ids + all_desks:false.
     const create = createUserRequestToWire({
       email: "jane@celnet.com",
       displayName: "Jane",
       role: "TRADER",
-      deskId: "g10",
+      deskIds: ["g10", "em"],
+      allDesks: false,
       password: "longenoughpw1",
     });
     expect(create.role).toBe(0);
-    expect(create.desk_id).toBe("g10");
+    expect(create.desk_ids).toEqual(["g10", "em"]);
+    expect(create.all_desks).toBe(false);
     expect(create.password).toBe("longenoughpw1");
-    // create without a desk omits desk_id (unassigned).
+    // create with All desks: all_desks:true supersedes the set (empty desk_ids).
+    const allDeskCreate = createUserRequestToWire({
+      email: "chief@celnet.com",
+      displayName: "Chief",
+      role: "ADMIN",
+      deskIds: ["g10"],
+      allDesks: true,
+      password: "longenoughpw1",
+    });
+    expect(allDeskCreate.all_desks).toBe(true);
+    expect(allDeskCreate.desk_ids).toEqual([]);
+    // create with no desks: a deskless user sends an empty set, all_desks:false.
     const houseCreate = createUserRequestToWire({
       email: "bob@celnet.com",
       displayName: "Bob",
       role: "ADMIN",
+      deskIds: [],
+      allDesks: false,
       password: "longenoughpw1",
     });
-    expect("desk_id" in houseCreate).toBe(false);
+    expect(houseCreate.desk_ids).toEqual([]);
+    expect(houseCreate.all_desks).toBe(false);
     expect(houseCreate.role).toBe(1);
 
+    // update: the new membership rides through as desk_ids + all_desks.
     const update = updateUserRequestToWire("u-1", {
       displayName: "Jane R",
       role: "ADMIN",
+      deskIds: ["em"],
+      allDesks: false,
       disabled: true,
     });
     expect(update.id).toBe("u-1");
     expect(update.role).toBe(1);
     expect(update.disabled).toBe(true);
-    expect("desk_id" in update).toBe(false);
+    expect(update.desk_ids).toEqual(["em"]);
+    expect(update.all_desks).toBe(false);
   });
 });
 
@@ -164,6 +199,8 @@ describe("MockTransport auth (offline parity)", () => {
       email: "trader@celnet.com",
       displayName: "T",
       role: "TRADER",
+      deskIds: [],
+      allDesks: false,
       password: "traderpass12",
     });
     const trader = await t.login("trader@celnet.com", "traderpass12");
@@ -174,38 +211,73 @@ describe("MockTransport auth (offline parity)", () => {
   it("creates users with unique emails and the 12-char minimum", async () => {
     const t = new MockTransport();
     await expect(
-      t.createUser({ email: "weak@celnet.com", displayName: "W", role: "TRADER", password: "short" }),
+      t.createUser({
+        email: "weak@celnet.com",
+        displayName: "W",
+        role: "TRADER",
+        deskIds: [],
+        allDesks: false,
+        password: "short",
+      }),
     ).rejects.toThrow(/at least 12 characters/);
     const jane = await t.createUser({
       email: "jane@celnet.com",
       displayName: "Jane",
       role: "TRADER",
+      deskIds: [],
+      allDesks: false,
       password: "longenoughpw1",
     });
     expect(jane.role).toBe("TRADER");
     const users = await t.listUsers();
     expect(users.some((u) => u.email === "jane@celnet.com")).toBe(true);
     await expect(
-      t.createUser({ email: "JANE@celnet.com", displayName: "Dup", role: "TRADER", password: "longenoughpw1" }),
+      t.createUser({
+        email: "JANE@celnet.com",
+        displayName: "Dup",
+        role: "TRADER",
+        deskIds: [],
+        allDesks: false,
+        password: "longenoughpw1",
+      }),
     ).rejects.toThrow(/already exists/);
   });
 
-  it("groups users on a desk and unassigns members when the desk is deleted", async () => {
+  it("groups users across many desks and drops one when it is deleted", async () => {
     const t = new MockTransport();
-    const desk = await t.createDesk("G10 Options");
-    expect(desk.id).toBe("g10-options");
+    const g10 = await t.createDesk("G10 Options");
+    const em = await t.createDesk("EM Rates");
+    expect(g10.id).toBe("g10-options");
     const jane = await t.createUser({
       email: "jane@celnet.com",
       displayName: "Jane",
       role: "TRADER",
-      deskId: desk.id,
+      deskIds: [g10.id, em.id],
+      allDesks: false,
       password: "longenoughpw1",
     });
-    expect(jane.deskId).toBe("g10-options");
-    await t.deleteDesk(desk.id);
+    expect(jane.deskIds).toEqual([g10.id, em.id]);
+    // Deleting one desk drops it from membership; the other survives.
+    await t.deleteDesk(g10.id);
     const users = await t.listUsers();
-    expect(users.find((u) => u.id === jane.id)?.deskId).toBeUndefined();
-    expect(await t.listDesks()).toHaveLength(0);
+    expect(users.find((u) => u.id === jane.id)?.deskIds).toEqual([em.id]);
+    expect(await t.listDesks()).toHaveLength(1);
+  });
+
+  it("assigns a user to every desk via all_desks", async () => {
+    const t = new MockTransport();
+    await t.createDesk("G10 Options");
+    const chief = await t.createUser({
+      email: "chief@celnet.com",
+      displayName: "Chief",
+      role: "TRADER",
+      deskIds: ["g10-options"],
+      allDesks: true,
+      password: "longenoughpw1",
+    });
+    // all_desks supersedes the explicit set — it is stored empty.
+    expect(chief.allDesks).toBe(true);
+    expect(chief.deskIds).toEqual([]);
   });
 
   it("renames a desk (label changes; the id/routing key is immutable)", async () => {
@@ -215,7 +287,8 @@ describe("MockTransport auth (offline parity)", () => {
       email: "jane@celnet.com",
       displayName: "Jane",
       role: "TRADER",
-      deskId: desk.id,
+      deskIds: [desk.id],
+      allDesks: false,
       password: "longenoughpw1",
     });
 
@@ -223,7 +296,7 @@ describe("MockTransport auth (offline parity)", () => {
     expect(renamed).toEqual({ id: desk.id, name: "G10 Vol" });
     // The member keeps its desk — routing keys on the immutable id, not the label.
     const users = await t.listUsers();
-    expect(users.find((u) => u.id === jane.id)?.deskId).toBe(desk.id);
+    expect(users.find((u) => u.id === jane.id)?.deskIds).toEqual([desk.id]);
     expect((await t.listDesks()).find((d) => d.id === desk.id)?.name).toBe("G10 Vol");
   });
 
@@ -256,6 +329,8 @@ describe("MockTransport auth (offline parity)", () => {
       email: "admin2@celnet.com",
       displayName: "Second",
       role: "ADMIN",
+      deskIds: [],
+      allDesks: false,
       password: "longenoughpw1",
     });
     expect(await t.deleteUser(admin!.id)).toBe(true);

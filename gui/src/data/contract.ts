@@ -1837,8 +1837,15 @@ export interface UserDesc {
   displayName: string;
   /** The user's authority level. */
   role: UserRole;
-  /** The desk the user belongs to (`DeskDesc.id`); omitted ⇒ unassigned. */
-  deskId?: string;
+  /**
+   * The desks the user belongs to, by `DeskDesc.id`. A user may belong to zero,
+   * one, or many desks; a quote/deal routed to ANY desk in this set reaches the
+   * user. ALWAYS an array (`[]` when none) — never absent. Empty ⇒ deskless (sees
+   * no desk-routed traffic) unless `allDesks` is set.
+   */
+  deskIds: string[];
+  /** When true the user belongs to EVERY desk; `deskIds` is then empty/ignored. */
+  allDesks: boolean;
   /** Whether the account is disabled (retained but cannot log in). */
   disabled: boolean;
 }
@@ -2178,8 +2185,13 @@ export interface CreateUserInput {
   email: string;
   displayName: string;
   role: UserRole;
-  /** The desk to assign (`DeskDesc.id`); omitted ⇒ unassigned. */
-  deskId?: string;
+  /**
+   * The desks to assign, by `DeskDesc.id` (zero, one, or many). Ignored when
+   * `allDesks` is set. Always an array (`[]` for none/all).
+   */
+  deskIds: string[];
+  /** When true the new user belongs to EVERY desk; `deskIds` is then ignored. */
+  allDesks: boolean;
   /** The initial plaintext password (hashed at rest; min length enforced server-side). */
   password: string;
 }
@@ -2191,8 +2203,13 @@ export interface CreateUserInput {
 export interface UpdateUserInput {
   displayName: string;
   role: UserRole;
-  /** The new desk assignment (`DeskDesc.id`); omitted ⇒ unassigned. */
-  deskId?: string;
+  /**
+   * The new desk membership, by `DeskDesc.id` (zero, one, or many). Ignored when
+   * `allDesks` is set. Always an array (`[]` for none/all).
+   */
+  deskIds: string[];
+  /** When true the user belongs to EVERY desk; `deskIds` is then ignored. */
+  allDesks: boolean;
   disabled: boolean;
 }
 

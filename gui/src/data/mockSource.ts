@@ -940,6 +940,8 @@ export class MockTransport implements CelnetTransport {
         email: "admin@celnet.com",
         displayName: "Administrator",
         role: "ADMIN",
+        deskIds: [],
+        allDesks: false,
         disabled: false,
       },
       password: "password",
@@ -1785,9 +1787,10 @@ export class MockTransport implements CelnetTransport {
       email,
       displayName: input.displayName.trim() || email,
       role: input.role,
+      deskIds: input.allDesks ? [] : [...input.deskIds],
+      allDesks: input.allDesks,
       disabled: false,
     };
-    if (input.deskId && input.deskId.length > 0) user.deskId = input.deskId;
     this.mockUsers.push({
       user,
       password: input.password,
@@ -1811,9 +1814,10 @@ export class MockTransport implements CelnetTransport {
       email: entry.user.email,
       displayName: input.displayName.trim() || entry.user.email,
       role: input.role,
+      deskIds: input.allDesks ? [] : [...input.deskIds],
+      allDesks: input.allDesks,
       disabled: input.disabled,
     };
-    if (input.deskId && input.deskId.length > 0) next.deskId = input.deskId;
     entry.user = next;
     return { ...next };
   }
@@ -1977,11 +1981,13 @@ export class MockTransport implements CelnetTransport {
     const idx = this.mockDesks.findIndex((d) => d.id === id);
     if (idx < 0) return false;
     this.mockDesks.splice(idx, 1);
-    // Members of the deleted desk become unassigned (server parity).
+    // Members of the deleted desk drop it from their membership (server parity).
     for (const entry of this.mockUsers) {
-      if (entry.user.deskId === id) {
-        const { deskId: _dropped, ...rest } = entry.user;
-        entry.user = rest;
+      if (entry.user.deskIds.includes(id)) {
+        entry.user = {
+          ...entry.user,
+          deskIds: entry.user.deskIds.filter((d) => d !== id),
+        };
       }
     }
     return true;

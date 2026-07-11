@@ -1,95 +1,99 @@
 /**
- * deskAssignment — the pure transforms behind the Admin inline desk picker.
- * Asserts the roster update is immutable (new array; only the target row changes;
- * every other row keeps its identity) and that "unassigned" is encoded as an
- * OMITTED `deskId`, never a blank string, on both the roster row and the
- * `UpdateUserInput` payload — with the other user fields preserved verbatim.
+ * deskAssignment — the pure, immutable transforms behind the Admin workspace's
+ * MANY-TO-MANY desk membership editor. Membership has three states: All
+ * (`allDesks:true`, `deskIds:[]`), a Set (`allDesks:false`, non-empty), and
+ * Deskless (`allDesks:false`, `[]`). These helpers keep the roster update immutable
+ * (untouched rows keep identity) and the `UpdateUser` payload contract-faithful.
  */
 
 import { describe, expect, it } from "vitest";
 
 import type { UserDesc } from "../src/data/contract";
-import { updateInputForDeskChange, withUserDesk } from "../src/lib/deskAssignment";
+import {
+  normalizeDeskIds,
+  updateInputForDeskChange,
+  withUserDesks,
+} from "../src/lib/deskAssignment";
 
-function user(overrides: Partial<UserDesc> = {}): UserDesc {
+function makeUser(overrides: Partial<UserDesc> = {}): UserDesc {
   return {
     id: "u1",
     email: "trader@celnet.com",
     displayName: "Jane Trader",
     role: "TRADER",
+    deskIds: [],
+    allDesks: false,
     disabled: false,
     ...overrides,
   };
 }
 
-const roster: UserDesc[] = [
-  user({ id: "u1", email: "one@celnet.com" }),
-  user({ id: "u2", email: "two@celnet.com", deskId: "g10" }),
-  user({ id: "u3", email: "three@celnet.com", role: "ADMIN" }),
+const roster = (): UserDesc[] => [
+  makeUser(),
+  makeUser({ id: "u2", email: "other@celnet.com", deskIds: ["em"] }),
 ];
 
-describe("withUserDesk — immutable roster update", () => {
-  it("returns a NEW array (never mutates the input)", () => {
-    const next = withUserDesk(roster, "u1", "g10");
-    expect(next).not.toBe(roster);
-    // The original roster row is untouched (still unassigned).
-    expect(roster[0].deskId).toBeUndefined();
+describe("normalizeDeskIds", () => {
+  it("collapses to [] when allDesks is set (the set is then ignored)", () => {
+    expect(normalizeDeskIds(["g10", "em"], true)).toEqual([]);
   });
 
-  it("sets the target user's deskId and leaves other rows referentially unchanged", () => {
-    const next = withUserDesk(roster, "u1", "g10");
-    expect(next[0]).not.toBe(roster[0]); // target replaced
-    expect(next[0].deskId).toBe("g10");
-    expect(next[1]).toBe(roster[1]); // untouched rows keep identity (memo-safe)
-    expect(next[2]).toBe(roster[2]);
-  });
-
-  it("removes deskId when assigning undefined (unassigned)", () => {
-    const next = withUserDesk(roster, "u2", undefined);
-    expect(next[1].deskId).toBeUndefined();
-    expect("deskId" in next[1]).toBe(false); // property omitted, not set to undefined
-  });
-
-  it("treats an empty / whitespace deskId as unassigned (omits the property)", () => {
-    const next = withUserDesk(roster, "u2", "");
-    expect("deskId" in next[1]).toBe(false);
-    const nextWs = withUserDesk(roster, "u2", "   ");
-    expect("deskId" in nextWs[1]).toBe(false);
-  });
-
-  it("is a no-op (equivalent new array) for an unknown user id", () => {
-    const next = withUserDesk(roster, "nope", "g10");
-    expect(next).not.toBe(roster);
-    next.forEach((u, i) => expect(u).toBe(roster[i]));
+  it("drops blanks and duplicates, preserving first-seen order", () => {
+    expect(normalizeDeskIds([" g10 ", "em", "g10", "", "  "], false)).toEqual(["g10", "em"]);
   });
 });
 
-describe("updateInputForDeskChange — the UpdateUser payload", () => {
-  it("preserves displayName, role and disabled and sets a non-empty deskId", () => {
-    const u = user({ displayName: "Kai", role: "ADMIN", disabled: true });
-    const input = updateInputForDeskChange(u, "g10");
-    expect(input).toEqual({
-      displayName: "Kai",
-      role: "ADMIN",
-      disabled: true,
-      deskId: "g10",
+describe("withUserDesks", () => {
+  it("sets a non-empty desk set on the target user only (Set state)", () => {
+    const before = roster();
+    const after = withUserDesks(before, "u1", ["g10", "em"], false);
+    expect(after[0]).toMatchObject({ id: "u1", deskIds: ["g10", "em"], allDesks: false });
+    // Untouched row keeps referential identity so a memoized row never re-renders.
+    expect(after[1]).toBe(before[1]);
+    // Immutable — the input roster is unchanged.
+    expect(before[0].deskIds).toEqual([]);
+  });
+
+  it("encodes All desks as allDesks:true with an empty set", () => {
+    const after = withUserDesks(roster(), "u1", ["g10"], true);
+    expect(after[0]).toMatchObject({ deskIds: [], allDesks: true });
+  });
+
+  it("encodes deskless as allDesks:false with an empty set", () => {
+    const after = withUserDesks([makeUser({ deskIds: ["g10"] })], "u1", [], false);
+    expect(after[0]).toMatchObject({ deskIds: [], allDesks: false });
+  });
+
+  it("returns an equivalent new array for an unknown user id (no-op)", () => {
+    const before = roster();
+    const after = withUserDesks(before, "nope", ["g10"], false);
+    expect(after).not.toBe(before);
+    expect(after).toEqual(before);
+  });
+});
+
+describe("updateInputForDeskChange", () => {
+  it("preserves displayName/role/disabled and carries the normalised set", () => {
+    const user = makeUser({ displayName: "Jane", role: "TRADER", disabled: false });
+    expect(updateInputForDeskChange(user, [" g10 ", "g10", "em"], false)).toEqual({
+      displayName: "Jane",
+      role: "TRADER",
+      disabled: false,
+      deskIds: ["g10", "em"],
+      allDesks: false,
     });
   });
 
-  it("OMITS deskId for an unassigning change (undefined)", () => {
-    const input = updateInputForDeskChange(user({ deskId: "g10" }), undefined);
-    expect("deskId" in input).toBe(false);
-    expect(input).toEqual({ displayName: "Jane Trader", role: "TRADER", disabled: false });
-  });
-
-  it("OMITS deskId for an empty / whitespace desk", () => {
-    expect("deskId" in updateInputForDeskChange(user(), "")).toBe(false);
-    expect("deskId" in updateInputForDeskChange(user(), "  ")).toBe(false);
+  it("emits allDesks:true with an empty set when All desks is chosen", () => {
+    expect(updateInputForDeskChange(makeUser(), ["g10"], true)).toMatchObject({
+      deskIds: [],
+      allDesks: true,
+    });
   });
 
   it("does not mutate the input user", () => {
-    const u = user({ deskId: "g10" });
-    updateInputForDeskChange(u, undefined);
-    expect(u.deskId).toBe("g10");
+    const user = makeUser({ deskIds: ["g10"] });
+    updateInputForDeskChange(user, ["em"], false);
+    expect(user.deskIds).toEqual(["g10"]);
   });
 });

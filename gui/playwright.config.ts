@@ -43,7 +43,12 @@ const PREVIEW_PORT = 4317;
  * gate). Declared once so the `chromium` project can ignore them and the `fidelity`
  * project can match exactly them — the two topologies never run each other's specs.
  */
-const FIDELITY_SPECS = [/visualRegression\.e2e\.ts/, /mockupFidelity\.e2e\.ts/];
+const FIDELITY_SPECS = [
+  /visualRegression\.e2e\.ts/,
+  /mockupFidelity\.e2e\.ts/,
+  // Admin section-tabs interaction test — offline (mock transport), no cargo edge.
+  /adminSectionTabs\.e2e\.ts/,
+];
 
 /**
  * A fixed desktop viewport for the fidelity project so the visual baselines are

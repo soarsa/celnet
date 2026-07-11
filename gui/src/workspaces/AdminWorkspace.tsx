@@ -1,13 +1,17 @@
 /**
  * AdminWorkspace — user administration + desk grouping (the `AuthService` admin
- * surface). Lists every user (email, name, role, desk, status) with inline
- * edit / reset-password / delete, and every desk with create / delete; a desk is
- * the group a trader belongs to, and desk membership is what scopes a trader's
- * view of inbound RFQ traffic (the Increment-3 FIX-monitor desk scoping).
+ * surface). The four sections — Users, Desks, Legal Entities, Netting Books —
+ * are TAB panes (one visible at a time) using the app's in-workspace lens-tab
+ * pattern (identical to the Book / Market-Data lens tabs), so each renders in
+ * its own readable pane instead of one long scroll. Users lists every user
+ * (email, name, role, capabilities, desk, status) with inline edit /
+ * reset-password / permissions / delete + inline desk assignment; a desk is the
+ * group a trader belongs to, and desk membership is what scopes a trader's view
+ * of inbound RFQ traffic (the Increment-3 FIX-monitor desk scoping).
  *
  * Administration is admin-only server-side, so the workspace gates on the signed-
  * in identity: anonymous or trader sessions see a sign-in / insufficient-role
- * card instead of the tables (the admin RPCs would be `permission_denied`). All
+ * card instead of the tabs (the admin RPCs would be `permission_denied`). All
  * state is server-owned — the hook re-fetches after each mutation.
  */
 
@@ -23,6 +27,19 @@ import type { CapabilityAsset, DeskDesc, UserDesc, UserRole } from "../data/cont
 import { ASSET_LABELS, roleBaselineSummary } from "../lib/capabilityMatrix";
 import { useAdmin } from "../hooks/useAdmin";
 import styles from "./AdminWorkspace.module.css";
+
+/**
+ * The four administration sections. Each renders in its own tab pane so a single
+ * readable section is visible at a time (previously all four stacked on one long
+ * scrolling page). Users is the default.
+ */
+type AdminTab = "users" | "desks" | "entities" | "books";
+const ADMIN_TABS: readonly { readonly id: AdminTab; readonly label: string }[] = [
+  { id: "users", label: "Users" },
+  { id: "desks", label: "Desks" },
+  { id: "entities", label: "Legal Entities" },
+  { id: "books", label: "Netting Books" },
+];
 
 /** The role badge for a user row. */
 function RoleBadge({ user }: { user: UserDesc }): React.ReactElement {
@@ -86,11 +103,96 @@ function CapabilityChips({ role }: { role: UserRole }): React.ReactElement {
   );
 }
 
+/**
+ * The Users-table desk-membership cell: an "All desks" toggle over a per-desk
+ * checkbox multi-select (membership is MANY-TO-MANY), committing each change
+ * OPTIMISTICALLY through `onChange`. Shows membership at a glance — an "All desks"
+ * chip, the assigned desk-name chips, or the deskless "receives no quotes" marker
+ * (a deskless trader receives no inbound quotes or deals).
+ */
+function DeskMembershipCell({
+  user,
+  desks,
+  onChange,
+  error,
+}: {
+  user: UserDesc;
+  desks: readonly DeskDesc[];
+  onChange: (userId: string, deskIds: readonly string[], allDesks: boolean) => void;
+  error?: string | undefined;
+}): React.ReactElement {
+  const nameOf = (id: string): string => desks.find((d) => d.id === id)?.name ?? id;
+  const toggleDesk = (deskId: string, on: boolean): void => {
+    const next = on ? [...user.deskIds, deskId] : user.deskIds.filter((d) => d !== deskId);
+    onChange(user.id, next, false);
+  };
+  return (
+    <div className={styles.deskCell}>
+      <label className={styles.allDesksToggle}>
+        <input
+          type="checkbox"
+          checked={user.allDesks}
+          aria-label={`All desks for ${user.email}`}
+          onChange={(e) => onChange(user.id, [], e.target.checked)}
+        />
+        <span>All desks</span>
+      </label>
+
+      {!user.allDesks && desks.length > 0 && (
+        <div
+          className={styles.deskChecks}
+          role="group"
+          aria-label={`Desk membership for ${user.email}`}
+        >
+          {desks.map((d) => (
+            <label key={d.id} className={styles.deskCheck}>
+              <input
+                type="checkbox"
+                checked={user.deskIds.includes(d.id)}
+                onChange={(e) => toggleDesk(d.id, e.target.checked)}
+              />
+              <span>{d.name}</span>
+            </label>
+          ))}
+        </div>
+      )}
+
+      <div className={styles.deskSummary}>
+        {user.allDesks ? (
+          <span className={styles.deskChip} title="Belongs to every desk.">
+            All desks
+          </span>
+        ) : user.deskIds.length > 0 ? (
+          user.deskIds.map((id) => (
+            <span key={id} className={styles.deskChip}>
+              {nameOf(id)}
+            </span>
+          ))
+        ) : (
+          <span
+            className={styles.unassignedFlag}
+            title="A deskless trader receives no inbound quotes or deals."
+          >
+            receives no quotes
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <p className={styles.rowError} role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function AdminWorkspace(): React.ReactElement {
   const app = useApp();
   const { auth } = app;
   const admin = useAdmin(app.transport, auth.isAdmin);
 
+  const [tab, setTab] = useState<AdminTab>("users");
   const [dialog, setDialog] = useState<{ mode: UserDialogMode; user?: UserDesc } | null>(null);
   const [deskName, setDeskName] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -146,15 +248,20 @@ export function AdminWorkspace(): React.ReactElement {
     }
   };
 
-  // Inline desk (re)assignment — optimistic via the hook; a failure surfaces as a
-  // per-row inline error and the roster rolls back. The empty option ⇒ unassigned.
-  const changeDesk = async (userId: string, deskId: string): Promise<void> => {
+  // Inline desk membership change — optimistic via the hook; a failure surfaces as
+  // a per-row inline error and the roster rolls back. Many-to-many: an "All desks"
+  // toggle plus a per-desk multi-select; an empty set (not all) ⇒ deskless.
+  const changeUserDesks = async (
+    userId: string,
+    deskIds: readonly string[],
+    allDesks: boolean,
+  ): Promise<void> => {
     setDeskErrors((prev) => {
       const { [userId]: _cleared, ...rest } = prev;
       return rest;
     });
     try {
-      await admin.assignDesk(userId, deskId || undefined);
+      await admin.setUserDesks(userId, deskIds, allDesks);
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "desk assignment failed";
       setDeskErrors((prev) => ({ ...prev, [userId]: message }));
@@ -200,8 +307,9 @@ export function AdminWorkspace(): React.ReactElement {
 
   const deskName_ = deskName.trim();
   const capUser = capUserId ? (admin.users.find((u) => u.id === capUserId) ?? null) : null;
+  // A user is a member if they belong to every desk (`allDesks`) or name this desk.
   const memberCount = (deskId: string): number =>
-    admin.users.filter((u) => u.deskId === deskId).length;
+    admin.users.filter((u) => u.allDesks || u.deskIds.includes(deskId)).length;
 
   const usersActions = (
     <div className={styles.headActions}>
@@ -223,26 +331,28 @@ export function AdminWorkspace(): React.ReactElement {
     });
   };
 
-  return (
-    <div className={styles.root}>
+  // --- Users pane: roster table + inline desk picker + capability matrix ----
+  const usersPane = (
+    <>
       <Panel title="Users" glyph="⚇" actions={usersActions}>
         {admin.error && <p className={styles.banner}>{admin.error}</p>}
         {actionError && <p className={styles.banner}>{actionError}</p>}
         <p className={styles.hint}>
-          A trader only receives quotes and executed deals for the desk they&apos;re assigned to.
-          Set a desk below to permission what a user sees.
+          A trader receives quotes and executed deals for any desk they belong to. Toggle
+          <strong> All desks</strong> or pick one or more desks below to permission what a
+          user sees; a deskless trader receives nothing.
         </p>
         {admin.users.length === 0 ? (
           <p className={styles.empty}>No users.</p>
         ) : (
-          <table className={styles.table}>
+          <table className={`${styles.table} ${styles.usersTable}`}>
             <thead>
               <tr>
                 <th>Email</th>
                 <th>Name</th>
                 <th>Role</th>
                 <th>Capabilities (role baseline)</th>
-                <th>Desk</th>
+                <th>Desks</th>
                 <th className={styles.actionsCol}>Actions</th>
               </tr>
             </thead>
@@ -258,34 +368,14 @@ export function AdminWorkspace(): React.ReactElement {
                     <CapabilityChips role={u.role} />
                   </td>
                   <td>
-                    <div className={styles.deskCell}>
-                      <select
-                        className={styles.deskSelect}
-                        aria-label={`Desk for ${u.email}`}
-                        value={u.deskId ?? ""}
-                        onChange={(e) => void changeDesk(u.id, e.target.value)}
-                      >
-                        <option value="">Unassigned</option>
-                        {admin.desks.map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
-                      {!u.deskId && (
-                        <span
-                          className={styles.unassignedFlag}
-                          title="An unassigned trader receives no inbound quotes or deals."
-                        >
-                          receives no quotes
-                        </span>
-                      )}
-                    </div>
-                    {deskErrors[u.id] && (
-                      <p className={styles.rowError} role="alert">
-                        {deskErrors[u.id]}
-                      </p>
-                    )}
+                    <DeskMembershipCell
+                      user={u}
+                      desks={admin.desks}
+                      onChange={(id, deskIds, allDesks) =>
+                        void changeUserDesks(id, deskIds, allDesks)
+                      }
+                      error={deskErrors[u.id]}
+                    />
                   </td>
                   <td className={styles.actionsCol}>
                     <div className={styles.rowActions}>
@@ -332,112 +422,148 @@ export function AdminWorkspace(): React.ReactElement {
           />
         </Panel>
       )}
+    </>
+  );
 
-      <Panel title="Desks" glyph="▦">
-        {admin.desks.length === 0 ? (
-          <p className={styles.empty}>
-            No desks yet. A desk groups traders so they see their desk&apos;s inbound RFQs.
-          </p>
-        ) : (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Id</th>
-                <th>Name</th>
-                <th>Members</th>
-                <th className={styles.actionsCol}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {admin.desks.map((d: DeskDesc) => {
-                const editing = renameDeskId === d.id;
-                return (
-                  <tr key={d.id}>
-                    <td className={styles.mono}>{d.id}</td>
-                    <td className={styles.nameCell}>
-                      {editing ? (
-                        <form
-                          className={styles.renameForm}
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            void commitRename(d.id);
-                          }}
-                        >
-                          <input
-                            className={styles.deskInput}
-                            type="text"
-                            value={renameDraft}
-                            onChange={(e) => setRenameDraft(e.target.value)}
-                            aria-label={`Rename desk ${d.name}`}
-                            autoFocus
-                          />
-                          <Button type="submit" variant="primary" disabled={renameDraft.trim().length === 0}>
-                            Save
-                          </Button>
-                          <Button type="button" variant="ghost" onClick={cancelRename}>
-                            Cancel
-                          </Button>
-                        </form>
-                      ) : (
-                        d.name
-                      )}
-                      {renameErrors[d.id] && (
-                        <p className={styles.rowError} role="alert">
-                          {renameErrors[d.id]}
-                        </p>
-                      )}
-                    </td>
-                    <td className={styles.mono}>{memberCount(d.id)}</td>
-                    <td className={styles.actionsCol}>
-                      <div className={styles.rowActions}>
-                        {!editing && (
-                          <Button variant="secondary" onClick={() => beginRename(d)}>
-                            Rename
-                          </Button>
-                        )}
-                        <Button variant="ghost" onClick={() => void runAction(() => admin.deleteDesk(d.id))}>
-                          Delete
+  // --- Desks pane: roster + create/rename/delete ----------------------------
+  const desksPane = (
+    <Panel title="Desks" glyph="▦">
+      {admin.desks.length === 0 ? (
+        <p className={styles.empty}>
+          No desks yet. A desk groups traders so they see their desk&apos;s inbound RFQs.
+        </p>
+      ) : (
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Name</th>
+              <th>Members</th>
+              <th className={styles.actionsCol}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {admin.desks.map((d: DeskDesc) => {
+              const editing = renameDeskId === d.id;
+              return (
+                <tr key={d.id}>
+                  <td className={styles.mono}>{d.id}</td>
+                  <td className={styles.nameCell}>
+                    {editing ? (
+                      <form
+                        className={styles.renameForm}
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          void commitRename(d.id);
+                        }}
+                      >
+                        <input
+                          className={styles.deskInput}
+                          type="text"
+                          value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          aria-label={`Rename desk ${d.name}`}
+                          autoFocus
+                        />
+                        <Button type="submit" variant="primary" disabled={renameDraft.trim().length === 0}>
+                          Save
                         </Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-        <form className={styles.deskForm} onSubmit={submitDesk}>
-          <input
-            className={styles.deskInput}
-            type="text"
-            value={deskName}
-            onChange={(e) => setDeskName(e.target.value)}
-            placeholder="New desk name, e.g. G10 Options"
-            aria-label="new desk name"
+                        <Button type="button" variant="ghost" onClick={cancelRename}>
+                          Cancel
+                        </Button>
+                      </form>
+                    ) : (
+                      d.name
+                    )}
+                    {renameErrors[d.id] && (
+                      <p className={styles.rowError} role="alert">
+                        {renameErrors[d.id]}
+                      </p>
+                    )}
+                  </td>
+                  <td className={styles.mono}>{memberCount(d.id)}</td>
+                  <td className={styles.actionsCol}>
+                    <div className={styles.rowActions}>
+                      {!editing && (
+                        <Button variant="secondary" onClick={() => beginRename(d)}>
+                          Rename
+                        </Button>
+                      )}
+                      <Button variant="ghost" onClick={() => void runAction(() => admin.deleteDesk(d.id))}>
+                        Delete
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      <form className={styles.deskForm} onSubmit={submitDesk}>
+        <input
+          className={styles.deskInput}
+          type="text"
+          value={deskName}
+          onChange={(e) => setDeskName(e.target.value)}
+          placeholder="New desk name, e.g. G10 Options"
+          aria-label="new desk name"
+        />
+        <Button type="submit" variant="secondary" disabled={deskName_.length === 0}>
+          Add desk
+        </Button>
+      </form>
+    </Panel>
+  );
+
+  return (
+    <div className={styles.root}>
+      <div className={styles.tabBar} role="tablist" aria-label="administration sections">
+        {ADMIN_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            id={`admin-tab-${t.id}`}
+            aria-selected={tab === t.id}
+            aria-controls={`admin-panel-${t.id}`}
+            className={`${styles.tab} ${tab === t.id ? styles.tabActive : ""}`}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div
+        className={styles.tabBody}
+        role="tabpanel"
+        id={`admin-panel-${tab}`}
+        aria-labelledby={`admin-tab-${tab}`}
+      >
+        {tab === "users" && usersPane}
+        {tab === "desks" && desksPane}
+        {tab === "entities" && (
+          <EntitiesPanel
+            entities={admin.entities}
+            books={admin.books}
+            onCreate={admin.createEntity}
+            onUpdate={admin.updateEntity}
+            onDelete={admin.deleteEntity}
+            run={runAction}
           />
-          <Button type="submit" variant="secondary" disabled={deskName_.length === 0}>
-            Add desk
-          </Button>
-        </form>
-      </Panel>
-
-      <EntitiesPanel
-        entities={admin.entities}
-        books={admin.books}
-        onCreate={admin.createEntity}
-        onUpdate={admin.updateEntity}
-        onDelete={admin.deleteEntity}
-        run={runAction}
-      />
-
-      <BooksPanel
-        entities={admin.entities}
-        books={admin.books}
-        onCreate={admin.createBook}
-        onUpdate={admin.updateBook}
-        onDelete={admin.deleteBook}
-        run={runAction}
-      />
+        )}
+        {tab === "books" && (
+          <BooksPanel
+            entities={admin.entities}
+            books={admin.books}
+            onCreate={admin.createBook}
+            onUpdate={admin.updateBook}
+            onDelete={admin.deleteBook}
+            run={runAction}
+          />
+        )}
+      </div>
 
       <UserDialog
         open={dialog !== null}

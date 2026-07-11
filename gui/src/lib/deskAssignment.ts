@@ -1,62 +1,79 @@
 /**
  * deskAssignment — the pure, immutable transforms behind the Admin workspace's
- * inline desk picker.
+ * inline desk membership editor.
  *
- * A desk is what scopes a trader's inbound quote/deal reception: a trader only
- * receives quotes and executed deals for the desk they are assigned to
- * (deny-by-default — an unassigned trader receives nothing). Assigning a desk is
- * therefore a routing/permissioning action, not cosmetic. These helpers keep that
- * one mutation total, referentially-honest, and independently testable: the roster
- * update is immutable (untouched rows keep their identity so React skips them), and
- * the `UpdateUserInput` payload preserves every other field the wire contract
- * requires while encoding "unassigned" as an OMITTED `deskId` (the proto's
- * presence-tracked absence), never an empty string.
+ * Desk membership is what scopes a trader's inbound quote/deal reception: a trader
+ * receives quotes and executed deals for ANY desk they belong to. Membership is
+ * MANY-TO-MANY — a user may belong to zero, one, or many desks, or to EVERY desk
+ * (`allDesks`). A deskless user (no desks, not all-desks) receives nothing
+ * (deny-by-default). Editing membership is therefore a routing/permissioning
+ * action, not cosmetic. These helpers keep that one mutation total,
+ * referentially-honest, and independently testable: the roster update is immutable
+ * (untouched rows keep their identity so React skips them), and the
+ * `UpdateUserInput` payload preserves every other field the wire contract requires
+ * while encoding the three membership states exactly:
+ *   - All      → `allDesks:true`,  `deskIds:[]`
+ *   - Set      → `allDesks:false`, `deskIds:[…]` (non-empty)
+ *   - Deskless → `allDesks:false`, `deskIds:[]`
  */
 
 import type { UpdateUserInput, UserDesc } from "../data/contract";
 
 /**
- * Return a new roster with `userId`'s desk set to `deskId` (or UNASSIGNED when
- * `deskId` is `undefined`/empty). Immutable: a fresh array, only the target user
- * replaced with a new object; every other user is referentially unchanged so a
- * memoized row never re-renders. An empty/whitespace `deskId` omits the property
- * entirely (the contract's "unassigned" encoding — never a blank string on the
- * wire). An unknown `userId` returns an equivalent new array (no-op change).
+ * Normalise a desk-id set: drop blanks and duplicates (preserving first-seen
+ * order). An `allDesks` membership carries no explicit desks, so it collapses to
+ * `[]`.
  */
-export function withUserDesk(
-  users: readonly UserDesc[],
-  userId: string,
-  deskId: string | undefined,
-): UserDesc[] {
-  const normalized = deskId?.trim() ? deskId : undefined;
-  return users.map((user) => {
-    if (user.id !== userId) return user;
-    if (normalized === undefined) {
-      // Omit the property so an unassigned user carries no `deskId` key.
-      const { deskId: _dropped, ...rest } = user;
-      return rest;
-    }
-    return { ...user, deskId: normalized };
-  });
+export function normalizeDeskIds(
+  deskIds: readonly string[],
+  allDesks: boolean,
+): string[] {
+  if (allDesks) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of deskIds) {
+    const id = raw.trim();
+    if (id.length === 0 || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
 }
 
 /**
- * Build the `UpdateUser` payload for a desk (re)assignment: preserve the user's
- * `displayName`, `role`, and `disabled` verbatim, and set `deskId` ONLY when a
- * non-empty desk is chosen — an unassigning change omits the field so the server
- * clears the membership (proto presence-tracked absence, guardrail #9's one
- * contract). Never mutates the input user.
+ * Return a new roster with `userId`'s membership set to (`deskIds`, `allDesks`).
+ * Immutable: a fresh array, only the target user replaced with a new object; every
+ * other user is referentially unchanged so a memoized row never re-renders. The id
+ * set is normalised (blanks/dupes dropped; `[]` when `allDesks`). An unknown
+ * `userId` returns an equivalent new array (no-op change).
+ */
+export function withUserDesks(
+  users: readonly UserDesc[],
+  userId: string,
+  deskIds: readonly string[],
+  allDesks: boolean,
+): UserDesc[] {
+  const normalized = normalizeDeskIds(deskIds, allDesks);
+  return users.map((user) =>
+    user.id === userId ? { ...user, deskIds: normalized, allDesks } : user,
+  );
+}
+
+/**
+ * Build the `UpdateUser` payload for a membership change: preserve the user's
+ * `displayName`, `role`, and `disabled` verbatim, and set the normalised
+ * (`deskIds`, `allDesks`) pair. Never mutates the input user.
  */
 export function updateInputForDeskChange(
   user: UserDesc,
-  deskId: string | undefined,
+  deskIds: readonly string[],
+  allDesks: boolean,
 ): UpdateUserInput {
-  const normalized = deskId?.trim() ? deskId : undefined;
-  const input: UpdateUserInput = {
+  return {
     displayName: user.displayName,
     role: user.role,
     disabled: user.disabled,
+    deskIds: normalizeDeskIds(deskIds, allDesks),
+    allDesks,
   };
-  if (normalized !== undefined) input.deskId = normalized;
-  return input;
 }

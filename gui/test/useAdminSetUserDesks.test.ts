@@ -1,11 +1,11 @@
 /**
- * useAdmin.assignDesk — the OPTIMISTIC inline desk-assignment path.
+ * useAdmin.setUserDesks — the OPTIMISTIC inline desk-membership path.
  *
- * Desk membership scopes which inbound quotes/deals a trader receives, so the
- * roster must reflect a reassignment instantly, reconcile to the server's
- * authoritative row on success, and roll back (rethrowing) on failure — never a
- * full refetch (which would defeat the optimistic path). Driven through a minimal
- * fake transport implementing only the methods the hook touches.
+ * Desk membership (MANY-TO-MANY) scopes which inbound quotes/deals a trader
+ * receives, so the roster must reflect a change instantly, reconcile to the
+ * server's authoritative row on success, and roll back (rethrowing) on failure —
+ * never a full refetch (which would defeat the optimistic path). Driven through a
+ * minimal fake transport implementing only the methods the hook touches.
  */
 
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -21,6 +21,8 @@ function makeUser(overrides: Partial<UserDesc> = {}): UserDesc {
     email: "trader@celnet.com",
     displayName: "Jane Trader",
     role: "TRADER",
+    deskIds: [],
+    allDesks: false,
     disabled: false,
     ...overrides,
   };
@@ -53,7 +55,10 @@ function fakeTransport(
   const updateCalls: Array<{ id: string; input: unknown }> = [];
   const transport = {
     listUsers: async () => initialUsers,
-    listDesks: async () => [{ id: "g10", name: "G10 Options" }],
+    listDesks: async () => [
+      { id: "g10", name: "G10 Options" },
+      { id: "em", name: "EM Rates" },
+    ],
     listEntities: async () => [],
     listBooks: async () => [],
     updateUser: async (id: string, input: unknown) => {
@@ -64,29 +69,39 @@ function fakeTransport(
   return { transport, updateCalls };
 }
 
-describe("useAdmin.assignDesk — optimistic desk assignment", () => {
-  it("updates the roster optimistically, then reconciles to the returned user", async () => {
+describe("useAdmin.setUserDesks — optimistic multi-desk membership", () => {
+  it("applies a two-desk set optimistically, sends desk_ids+all_desks, then reconciles", async () => {
     const deferred = defer<UserDesc>();
     const { transport, updateCalls } = fakeTransport([makeUser()], deferred);
     const { result } = renderHook(() => useAdmin(transport, true));
 
     await waitFor(() => expect(result.current.users).toHaveLength(1));
-    expect(result.current.users[0].deskId).toBeUndefined();
+    expect(result.current.users[0].deskIds).toEqual([]);
 
-    // Kick off the assignment but DO NOT resolve the transport yet.
+    // Kick off the membership change but DO NOT resolve the transport yet.
     let pending!: Promise<void>;
     act(() => {
-      pending = result.current.assignDesk("u1", "g10");
+      pending = result.current.setUserDesks("u1", ["g10", "em"], false);
     });
 
-    // Optimistic: the desk shows immediately, before the server replies.
-    expect(result.current.users[0].deskId).toBe("g10");
+    // Optimistic: both desks show immediately, before the server replies.
+    expect(result.current.users[0].deskIds).toEqual(["g10", "em"]);
+    expect(result.current.users[0].allDesks).toBe(false);
     expect(updateCalls).toEqual([
-      { id: "u1", input: { displayName: "Jane Trader", role: "TRADER", disabled: false, deskId: "g10" } },
+      {
+        id: "u1",
+        input: {
+          displayName: "Jane Trader",
+          role: "TRADER",
+          disabled: false,
+          deskIds: ["g10", "em"],
+          allDesks: false,
+        },
+      },
     ]);
 
     // The server returns a canonical row (distinct object) — reconcile to it.
-    const reconciled = makeUser({ deskId: "g10", displayName: "Jane Trader (server)" });
+    const reconciled = makeUser({ deskIds: ["g10", "em"], displayName: "Jane Trader (server)" });
     await act(async () => {
       deferred.resolve(reconciled);
       await pending;
@@ -95,18 +110,41 @@ describe("useAdmin.assignDesk — optimistic desk assignment", () => {
     expect(result.current.users[0].displayName).toBe("Jane Trader (server)");
   });
 
-  it("rolls the roster back and rejects when the update fails", async () => {
+  it("sends allDesks=true with an empty set when All desks is toggled on", async () => {
     const deferred = defer<UserDesc>();
-    const { transport } = fakeTransport([makeUser({ deskId: undefined })], deferred);
+    const { transport, updateCalls } = fakeTransport([makeUser({ deskIds: ["g10"] })], deferred);
     const { result } = renderHook(() => useAdmin(transport, true));
 
     await waitFor(() => expect(result.current.users).toHaveLength(1));
 
     let pending!: Promise<void>;
     act(() => {
-      pending = result.current.assignDesk("u1", "g10");
+      pending = result.current.setUserDesks("u1", [], true);
     });
-    expect(result.current.users[0].deskId).toBe("g10"); // optimistic
+
+    expect(result.current.users[0].allDesks).toBe(true);
+    expect(result.current.users[0].deskIds).toEqual([]);
+    expect(updateCalls[0].input).toMatchObject({ deskIds: [], allDesks: true });
+
+    await act(async () => {
+      deferred.resolve(makeUser({ allDesks: true }));
+      await pending;
+    });
+    expect(result.current.users[0].allDesks).toBe(true);
+  });
+
+  it("rolls the roster back and rejects when the update fails", async () => {
+    const deferred = defer<UserDesc>();
+    const { transport } = fakeTransport([makeUser({ deskIds: ["g10"] })], deferred);
+    const { result } = renderHook(() => useAdmin(transport, true));
+
+    await waitFor(() => expect(result.current.users).toHaveLength(1));
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.setUserDesks("u1", ["g10", "em"], false);
+    });
+    expect(result.current.users[0].deskIds).toEqual(["g10", "em"]); // optimistic
 
     await act(async () => {
       deferred.reject(new Error("permission_denied"));
@@ -114,6 +152,6 @@ describe("useAdmin.assignDesk — optimistic desk assignment", () => {
     });
 
     // Rolled back to the pre-attempt roster.
-    expect(result.current.users[0].deskId).toBeUndefined();
+    expect(result.current.users[0].deskIds).toEqual(["g10"]);
   });
 });
