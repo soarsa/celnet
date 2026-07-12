@@ -65,15 +65,32 @@ export type UserRole = "TRADER" | "ADMIN";
 
 /**
  * A user account as exposed on the wire (`celnet.wire.UserDesc`) — carries NO
- * password material. `deskId` is omitted when the user is unassigned.
+ * password material. Desk membership is many-to-many, with three states:
+ *   - All      → `allDesks:true`,  `deskIds:[]`      (belongs to EVERY desk)
+ *   - Set      → `allDesks:false`, `deskIds:[…]`     (belongs to those desks)
+ *   - Deskless → `allDesks:false`, `deskIds:[]`      (no desk-routed traffic)
+ * `deskIds` is ALWAYS an array (`[]` when none/all) — never absent. Use
+ * {@link isUserOnDesk} to test membership rather than reading the fields raw.
  */
 export interface UserDesc {
   readonly id: string;
   readonly email: string;
   readonly displayName: string;
   readonly role: UserRole;
-  readonly deskId?: string;
+  /** The desks the user belongs to, by `DeskDesc.id`; `[]` when none/all. */
+  readonly deskIds: readonly string[];
+  /** When true the user belongs to EVERY desk; `deskIds` is then empty/ignored. */
+  readonly allDesks: boolean;
   readonly disabled: boolean;
+}
+
+/**
+ * Is `user` a member of the desk `deskId`? True when the user belongs to every
+ * desk (`allDesks`) or explicitly names this desk. Mirrors the server's routing
+ * predicate exactly, so desk-scoped affordances agree with what the server sends.
+ */
+export function isUserOnDesk(user: UserDesc, deskId: string): boolean {
+  return user.allDesks || user.deskIds.includes(deskId);
 }
 
 /** The issued session on a successful login (`celnet.wire.LoginResponse`). */

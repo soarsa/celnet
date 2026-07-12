@@ -50,20 +50,25 @@ export function userRoleFromWire(tag: number): UserRole {
   return tag === USER_ROLE_ADMIN ? "ADMIN" : "TRADER";
 }
 
-/** A user descriptor from its wire form (`desk_id` absent/empty ⇒ unassigned). */
+/**
+ * A user descriptor from its wire form. `desk_ids` is a repeated string (always
+ * present, `[]` when none); `all_desks` a bool. Empty `desk_ids` + `all_desks:false`
+ * ⇒ deskless (receives no desk-routed traffic).
+ */
 export function userDescFromWire(o: WireObject): UserDesc {
-  const deskId = o["desk_id"];
-  const base: UserDesc = {
+  const rawDeskIds = o["desk_ids"];
+  const deskIds = Array.isArray(rawDeskIds)
+    ? rawDeskIds.filter((d): d is string => typeof d === "string" && d.length > 0)
+    : [];
+  return {
     id: str(o, "id"),
     email: str(o, "email"),
     displayName: str(o, "display_name"),
     role: userRoleFromWire(enumNum(o, "role")),
+    deskIds,
+    allDesks: o["all_desks"] === true,
     disabled: o["disabled"] === true,
   };
-  if (typeof deskId === "string" && deskId.length > 0) {
-    return { ...base, deskId };
-  }
-  return base;
 }
 
 // --- capabilities -------------------------------------------------------------

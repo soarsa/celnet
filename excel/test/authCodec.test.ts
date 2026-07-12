@@ -13,6 +13,7 @@ import {
   userDescFromWire,
   userRoleFromWire,
 } from "../src/contract/authCodec";
+import { isUserOnDesk } from "../src/contract/access";
 
 describe("loginRequestToWire", () => {
   it("encodes the email + password body verbatim", () => {
@@ -32,7 +33,7 @@ describe("userRoleFromWire", () => {
 });
 
 describe("userDescFromWire", () => {
-  it("decodes a full descriptor and omits an empty desk", () => {
+  it("decodes a full descriptor as deskless when desk_ids is absent", () => {
     const u = userDescFromWire({
       id: "u-1",
       email: "a@celnet.com",
@@ -45,15 +46,43 @@ describe("userDescFromWire", () => {
       email: "a@celnet.com",
       displayName: "Ada",
       role: "ADMIN",
+      deskIds: [],
+      allDesks: false,
       disabled: false,
     });
     expect("deskId" in u).toBe(false);
   });
 
-  it("carries a non-empty desk id", () => {
-    const u = userDescFromWire({ id: "u-2", email: "b@x", display_name: "Bo", role: 0, desk_id: "fx-emea" });
-    expect(u.deskId).toBe("fx-emea");
+  it("carries a non-empty desk set (Set membership), filtering blanks/non-strings", () => {
+    const u = userDescFromWire({
+      id: "u-2",
+      email: "b@x",
+      display_name: "Bo",
+      role: 0,
+      desk_ids: ["fx-emea", "", "fx-apac", 7],
+      all_desks: false,
+    });
+    expect(u.deskIds).toEqual(["fx-emea", "fx-apac"]);
+    expect(u.allDesks).toBe(false);
     expect(u.role).toBe("TRADER");
+    expect(isUserOnDesk(u, "fx-apac")).toBe(true);
+    expect(isUserOnDesk(u, "fx-us")).toBe(false);
+  });
+
+  it("decodes all_desks membership (All) with an empty desk set", () => {
+    const u = userDescFromWire({
+      id: "u-3",
+      email: "c@x",
+      display_name: "Cy",
+      role: 0,
+      desk_ids: [],
+      all_desks: true,
+    });
+    expect(u.deskIds).toEqual([]);
+    expect(u.allDesks).toBe(true);
+    // An all-desks user is on EVERY desk, including ones it never names.
+    expect(isUserOnDesk(u, "fx-emea")).toBe(true);
+    expect(isUserOnDesk(u, "anything")).toBe(true);
   });
 });
 

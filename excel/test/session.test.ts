@@ -40,6 +40,8 @@ function loginResult(
       email: "t@celnet.com",
       displayName: "Trader",
       role: opts?.role ?? "TRADER",
+      deskIds: [],
+      allDesks: false,
       disabled: false,
     },
     expiresNanos: opts?.expiresNanos ?? 10_000_000_000_000_000_000n,
