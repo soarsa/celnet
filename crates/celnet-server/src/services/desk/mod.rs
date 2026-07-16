@@ -46,7 +46,7 @@ use celnet_proto::{
     AcceptDeskQuoteRequest, AcceptDeskQuoteResponse, CurveSet, Deal, DeskQuote, DeskRequest,
     DeskRequestKind, DeskRequestState, ListDealsRequest, ListDealsResponse,
     ListDeskRequestsRequest, ListDeskRequestsResponse, ManualInterventionReason, Notification,
-    NotificationKind, OisInstrument, RatesInstrument, RatesPosition, RespondDeskRequestRequest,
+    NotificationKind, RatesInstrument, RatesPosition, RespondDeskRequestRequest,
     RespondDeskRequestResponse, Side, SubmitDeskRequestRequest, SubmitDeskRequestResponse,
     rates_instrument, respond_desk_request_request::Response as RespondArm,
 };
@@ -232,14 +232,82 @@ pub fn price_desk_request(
     })
 }
 
-/// The OIS arm of a rates instrument, if present.
-fn ois_of(instrument: Option<&RatesInstrument>) -> Option<&OisInstrument> {
-    match instrument.and_then(|i| i.instrument.as_ref()) {
-        Some(rates_instrument::Instrument::Ois(ois)) => Some(ois),
-        // The desk booking flow prices/books the OIS arm only; the IRS / FRA / bond
-        // arms are not desk-bookable here, so there is no OIS to extract.
-        _ => None,
-    }
+/// The counterparty's submitted direction, read from whichever FI arm the request
+/// carries (OIS / IRS / FRA / cash bond). `None` for a missing arm or an
+/// unrecognised `side` enum — the caller treats that as an unbookable request.
+fn traded_side_of(instrument: Option<&RatesInstrument>) -> Option<Side> {
+    let arm = instrument.and_then(|i| i.instrument.as_ref())?;
+    let side = match arm {
+        rates_instrument::Instrument::Ois(o) => o.side,
+        rates_instrument::Instrument::Irs(i) => i.side,
+        rates_instrument::Instrument::Fra(f) => f.side,
+        rates_instrument::Instrument::Bond(b) => b.side,
+    };
+    Side::try_from(side).ok()
+}
+
+/// Rebuild the traded instrument at the **dealt level** on the desk's side, ready to
+/// book as a firm position — generalised across every streamed FI family (the desk
+/// executes a risk trade on whichever line the counterparty lifted, not OIS alone).
+///
+/// The arm is preserved (all schedule/economics carry through — it is a scalar
+/// `Copy` POD) and only the executed terms are overwritten:
+/// - **OIS / IRS / FRA** (rate markets): the fixed rate is struck at the dealt
+///   `level` (the quoted par rate), the `notional` set to the dealt size, `side` to
+///   the desk's side. Priced/booked through the swap engines in `celnet-rates`.
+/// - **cash bond** (a clean-price market): the coupon and maturity are the security's
+///   own and never change; the dealt `level` is the executed **clean price**, recorded
+///   on the [`Deal`] (not on the instrument), so only the `redemption` (face/size) and
+///   `side` are set here. Priced/booked through `celnet-bond`.
+///
+/// `None` for a missing / unrecognised arm (the request is then rejected as
+/// unbookable), so the caller never fabricates a position.
+fn rebook_at_dealt_level(
+    instrument: Option<&RatesInstrument>,
+    level: f64,
+    notional: f64,
+    desk_side: Side,
+) -> Option<RatesInstrument> {
+    let arm = instrument.and_then(|i| i.instrument.as_ref())?;
+    let side = desk_side as i32;
+    let booked = match arm {
+        rates_instrument::Instrument::Ois(o) => {
+            let mut o = *o;
+            o.fixed_rate = level;
+            o.notional = notional;
+            o.side = side;
+            rates_instrument::Instrument::Ois(o)
+        }
+        rates_instrument::Instrument::Irs(i) => {
+            let mut i = *i;
+            i.fixed_rate = level;
+            i.notional = notional;
+            i.side = side;
+            rates_instrument::Instrument::Irs(i)
+        }
+        rates_instrument::Instrument::Fra(f) => {
+            let mut f = *f;
+            f.fixed_rate = level;
+            f.notional = notional;
+            f.side = side;
+            rates_instrument::Instrument::Fra(f)
+        }
+        rates_instrument::Instrument::Bond(b) => {
+            // A cash bond's coupon and maturity are the security's own and never change
+            // with the trade; the executed clean price is recorded on the Deal. The
+            // booked position size is the traded face (a `RatesPosition` carries no
+            // separate quantity, so the redemption face IS the position size), set from
+            // the dealt notional, plus the desk's direction. (celnet-bond's YTM solve
+            // is price-scale-relative, so a large face books correctly.)
+            let mut b = *b;
+            b.redemption = notional;
+            b.side = side;
+            rates_instrument::Instrument::Bond(b)
+        }
+    };
+    Some(RatesInstrument {
+        instrument: Some(booked),
+    })
 }
 
 /// The desk's side of a deal: the opposite of the counterparty's submitted
@@ -467,20 +535,20 @@ impl RfqDeskEdge {
         let quote: DeskQuote = current.quote.clone()?;
 
         // The desk's traded direction is the opposite of the counterparty's firm
-        // instrument side (validated priceable at ingest, so always Buy/Sell).
-        let ois = ois_of(current.instrument.as_ref())?;
-        let traded_side = Side::try_from(ois.side).ok()?;
+        // instrument side (validated priceable at ingest, so always Buy/Sell) — read
+        // from whichever FI family (OIS / IRS / FRA / bond) the request carries.
+        let traded_side = traded_side_of(current.instrument.as_ref())?;
         let desk_side = opposite_side(traded_side);
 
-        // Book the dealt rates position (desk perspective) at the lifted level.
-        let booked_instrument = RatesInstrument {
-            instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
-                tenor_years: ois.tenor_years,
-                fixed_rate: quote.price,
-                notional: quote.notional,
-                side: desk_side as i32,
-            })),
-        };
+        // Book the dealt rates position (desk perspective) at the lifted level, on the
+        // ACTUAL traded family — the swap/FRA fixed rate (or the bond face) struck at
+        // the dealt terms, priced/booked through celnet-rates / celnet-bond.
+        let booked_instrument = rebook_at_dealt_level(
+            current.instrument.as_ref(),
+            quote.price,
+            quote.notional,
+            desk_side,
+        )?;
         // The position book enforces the SAME pre-trade limit tree the gRPC accept path
         // consults; a hard breach refuses the booking (Err) → leave the request QUOTED.
         let booked = self
@@ -742,22 +810,22 @@ impl RfqDeskService for RfqDeskEdge {
             .ok_or_else(|| Status::internal("QUOTED request carries no quote"))?;
 
         // The desk's traded direction is the opposite of the counterparty's firm
-        // instrument side (validated priceable at submit, so always Buy/Sell).
-        let ois = ois_of(current.instrument.as_ref())
-            .ok_or_else(|| Status::invalid_argument("request carries no OIS instrument to book"))?;
-        let traded_side = Side::try_from(ois.side)
-            .map_err(|_| Status::invalid_argument("unknown instrument Side"))?;
+        // instrument side (validated priceable at submit, so always Buy/Sell) — read
+        // from whichever FI family (OIS / IRS / FRA / bond) the request carries.
+        let traded_side = traded_side_of(current.instrument.as_ref())
+            .ok_or_else(|| Status::invalid_argument("request carries no bookable FI instrument"))?;
         let desk_side = opposite_side(traded_side);
 
-        // Book the dealt rates position (desk perspective) at the lifted level.
-        let booked_instrument = RatesInstrument {
-            instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
-                tenor_years: ois.tenor_years,
-                fixed_rate: quote.price,
-                notional: quote.notional,
-                side: desk_side as i32,
-            })),
-        };
+        // Book the dealt rates position (desk perspective) at the lifted level, on the
+        // ACTUAL traded family — the swap/FRA fixed rate (or bond face) struck at the
+        // dealt terms, priced/booked through celnet-rates / celnet-bond.
+        let booked_instrument = rebook_at_dealt_level(
+            current.instrument.as_ref(),
+            quote.price,
+            quote.notional,
+            desk_side,
+        )
+        .ok_or_else(|| Status::invalid_argument("request carries no bookable FI instrument"))?;
         let booked = self.rates.book(RatesPosition {
             position_id: 0,
             entity: 0,
@@ -910,7 +978,7 @@ mod tests {
     use super::*;
     use crate::services::rates_book::RatesPositionStore;
     use celnet_limits::{LimitScope, LimitSpec};
-    use celnet_proto::{CurveSet, RatesInstrument};
+    use celnet_proto::{CurveSet, OisInstrument, RatesInstrument};
 
     fn curve() -> CurveSet {
         crate::rates_pricing::default_usd_sofr_curve_set()
@@ -943,12 +1011,22 @@ mod tests {
     }
 
     fn submit_req(kind: DeskRequestKind, side: Side) -> SubmitDeskRequestRequest {
+        submit_req_for(kind, side, ois_instrument(side))
+    }
+
+    /// A submit request carrying an arbitrary FI instrument (any of OIS / IRS / FRA /
+    /// bond) — so the execute/booking path is exercised across every streamed family.
+    fn submit_req_for(
+        kind: DeskRequestKind,
+        side: Side,
+        instrument: RatesInstrument,
+    ) -> SubmitDeskRequestRequest {
         SubmitDeskRequestRequest {
             session_token: None,
             kind: kind as i32,
             counterparty: "cp-bank".to_owned(),
             desk: "g10".to_owned(),
-            instrument: Some(ois_instrument(side)),
+            instrument: Some(instrument),
             curve_set: Some(curve()),
             side: side as i32,
             notional: 25_000_000.0,
@@ -960,6 +1038,61 @@ mod tests {
                 denies: vec![],
             }),
             correlation_id: Some("corr-1".to_owned()),
+        }
+    }
+
+    /// A par-ish 5y vanilla IRS on the `curve()` pillars (side-parametrised). Wire
+    /// enums match the canonical `rates_pricing` IRS fixture exactly.
+    fn irs_instrument(side: Side) -> RatesInstrument {
+        RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Irs(
+                celnet_proto::VanillaIrsInstrument {
+                    tenor_years: 5,
+                    fixed_rate: 0.041,
+                    notional: 25_000_000.0,
+                    side: side as i32,
+                    fixed_frequency: celnet_proto::PaymentFrequency::SemiAnnual as i32,
+                    fixed_day_count: celnet_proto::AccrualBasis::Act360 as i32,
+                    float_frequency: celnet_proto::PaymentFrequency::Quarterly as i32,
+                    float_day_count: celnet_proto::AccrualBasis::Act360 as i32,
+                },
+            )),
+        }
+    }
+
+    /// A 3x6 FRA on the `curve()` pillars (side-parametrised).
+    fn fra_instrument(side: Side) -> RatesInstrument {
+        RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Fra(
+                celnet_proto::FraInstrument {
+                    start_months: 3,
+                    end_months: 6,
+                    fixed_rate: 0.042,
+                    notional: 25_000_000.0,
+                    side: side as i32,
+                    accrual_basis: celnet_proto::AccrualBasis::Act360 as i32,
+                },
+            )),
+        }
+    }
+
+    /// A 5y 4% semi-annual cash bond redeeming at par (side-parametrised).
+    fn bond_instrument(side: Side) -> RatesInstrument {
+        RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Bond(
+                celnet_proto::BondInstrument {
+                    coupon_rate: 0.04,
+                    coupon_frequency: celnet_proto::PaymentFrequency::SemiAnnual as i32,
+                    day_count: celnet_proto::AccrualBasis::Thirty360BondBasis as i32,
+                    maturity_date: Some(celnet_proto::BrokenDate {
+                        year: 2031,
+                        month: 6,
+                        day: 1,
+                    }),
+                    redemption: 100.0,
+                    side: side as i32,
+                },
+            )),
         }
     }
 
@@ -1066,11 +1199,192 @@ mod tests {
         assert!(deal.position_id.is_some());
         assert_eq!(edge.deals.len(), 1);
         assert_eq!(edge.rates.len(), 1);
-        // The booked position carries the dealt level + desk side.
+        // The booked position carries the dealt level + desk side, on the OIS arm.
         let pos = &edge.rates.snapshot()[0];
-        let booked_ois = ois_of(pos.instrument.as_ref()).unwrap();
+        let Some(rates_instrument::Instrument::Ois(booked_ois)) =
+            pos.instrument.as_ref().and_then(|i| i.instrument.as_ref())
+        else {
+            panic!("booked position must carry the OIS arm");
+        };
         assert_eq!(booked_ois.side, Side::Sell as i32);
         assert_eq!(booked_ois.fixed_rate.to_bits(), 0.0411_f64.to_bits());
+    }
+
+    /// Drive submit → respond(quote@`dealt`) → accept for an arbitrary FI family and
+    /// return the booked rates position. Asserts the deal books (desk side = opposite
+    /// of the counterparty's) and exactly one position lands.
+    async fn book_family_and_return_position(
+        instrument: RatesInstrument,
+        dealt: f64,
+    ) -> (RfqDeskEdge, RatesPosition) {
+        let edge = edge();
+        let token = trader_token(&edge);
+        let submitted = edge
+            .submit_desk_request(Request::new(submit_req_for(
+                DeskRequestKind::Rfq,
+                Side::Buy,
+                instrument,
+            )))
+            .await
+            .expect("submit")
+            .into_inner()
+            .request
+            .expect("request");
+        let id = submitted.request_id.clone();
+
+        edge.respond_desk_request(Request::new(RespondDeskRequestRequest {
+            session_token: Some(token.clone()),
+            request_id: id.clone(),
+            principal: Some(celnet_proto::EntitlementPrincipal {
+                grant_all: true,
+                grants: vec![],
+                denies: vec![],
+            }),
+            correlation_id: None,
+            response: Some(RespondArm::Quote(DeskQuote {
+                price: dealt,
+                notional: 25_000_000.0,
+                valid_for_ms: 30_000,
+                trader: "alice".to_owned(),
+            })),
+        }))
+        .await
+        .expect("respond");
+
+        let accept = edge
+            .accept_desk_quote(Request::new(AcceptDeskQuoteRequest {
+                session_token: Some(token.clone()),
+                request_id: id.clone(),
+                principal: Some(celnet_proto::EntitlementPrincipal {
+                    grant_all: true,
+                    grants: vec![],
+                    denies: vec![],
+                }),
+                correlation_id: None,
+            }))
+            .await
+            .expect("accept")
+            .into_inner();
+        let deal = accept.deal.expect("deal");
+        // Counterparty bought ⇒ desk sells.
+        assert_eq!(deal.side, Side::Sell as i32);
+        assert!(deal.position_id.is_some());
+        assert_eq!(edge.rates.len(), 1);
+        let pos = edge.rates.snapshot()[0];
+        (edge, pos)
+    }
+
+    /// The booked position prices to a finite, non-trivial PV and DV01 through the
+    /// shared pricer — proving it is a *real* booked risk trade, not a fabricated fill.
+    fn assert_position_has_live_risk(pos: &RatesPosition) {
+        let priced = price_rates(&RatesPriceRequest {
+            request_id: 0,
+            curve_set: Some(curve()),
+            instrument: pos.instrument,
+            correlation_id: None,
+        })
+        .expect("booked position prices");
+        assert!(priced.pv.is_finite(), "booked PV must be finite");
+        assert!(priced.dv01.is_finite(), "booked DV01 must be finite");
+        assert!(
+            priced.dv01.abs() > 0.0,
+            "a booked rate/price position carries non-zero DV01"
+        );
+    }
+
+    /// PART B: an **IRS** desk request executes and books a correct IRS position on the
+    /// desk's side at the dealt fixed rate — priced/booked through `celnet-rates`.
+    #[tokio::test]
+    async fn irs_desk_request_books_a_correct_position() {
+        let (_edge, pos) = book_family_and_return_position(irs_instrument(Side::Buy), 0.0415).await;
+        let Some(rates_instrument::Instrument::Irs(booked)) =
+            pos.instrument.as_ref().and_then(|i| i.instrument.as_ref())
+        else {
+            panic!("booked position must carry the IRS arm");
+        };
+        assert_eq!(booked.side, Side::Sell as i32, "desk receives fixed");
+        assert_eq!(booked.fixed_rate.to_bits(), 0.0415_f64.to_bits());
+        assert_eq!(booked.tenor_years, 5, "the traded schedule is preserved");
+        assert_position_has_live_risk(&pos);
+    }
+
+    /// PART B: an **FRA** desk request executes and books a correct FRA position on the
+    /// desk's side at the dealt fixed rate — priced/booked through `celnet-rates`.
+    #[tokio::test]
+    async fn fra_desk_request_books_a_correct_position() {
+        let (_edge, pos) = book_family_and_return_position(fra_instrument(Side::Buy), 0.0435).await;
+        let Some(rates_instrument::Instrument::Fra(booked)) =
+            pos.instrument.as_ref().and_then(|i| i.instrument.as_ref())
+        else {
+            panic!("booked position must carry the FRA arm");
+        };
+        assert_eq!(booked.side, Side::Sell as i32);
+        assert_eq!(booked.fixed_rate.to_bits(), 0.0435_f64.to_bits());
+        assert_eq!(booked.start_months, 3, "the traded window is preserved");
+        assert_eq!(booked.end_months, 6);
+        assert_position_has_live_risk(&pos);
+    }
+
+    /// PART B: a **cash bond** desk request executes and books a correct bond position
+    /// on the desk's side at the dealt clean price — priced/booked through `celnet-bond`.
+    /// The bond's coupon/maturity are the security's own (unchanged); the dealt clean
+    /// price is recorded on the deal, and only face + side are set on the position.
+    #[tokio::test]
+    async fn bond_desk_request_books_a_correct_position() {
+        let dealt_clean = 99.25;
+        let (edge, pos) =
+            book_family_and_return_position(bond_instrument(Side::Buy), dealt_clean).await;
+        let Some(rates_instrument::Instrument::Bond(booked)) =
+            pos.instrument.as_ref().and_then(|i| i.instrument.as_ref())
+        else {
+            panic!("booked position must carry the bond arm");
+        };
+        assert_eq!(booked.side, Side::Sell as i32);
+        // The security's coupon is the traded bond's, unchanged by the dealt price; the
+        // booked face is the traded notional (the position's size), and the executed
+        // clean price lives on the deal.
+        assert_eq!(booked.coupon_rate.to_bits(), 0.04_f64.to_bits());
+        assert_eq!(booked.redemption.to_bits(), 25_000_000.0_f64.to_bits());
+        // The executed clean price lives on the deal, not the instrument.
+        assert_eq!(
+            edge.deals.snapshot()[0].price.to_bits(),
+            dealt_clean.to_bits()
+        );
+        assert_position_has_live_risk(&pos);
+    }
+
+    /// PART B: OIS still executes and books correctly after the generalisation (the
+    /// legacy path is preserved, not regressed).
+    #[tokio::test]
+    async fn ois_desk_request_still_books_after_generalisation() {
+        let (_edge, pos) = book_family_and_return_position(ois_instrument(Side::Buy), 0.0409).await;
+        let Some(rates_instrument::Instrument::Ois(booked)) =
+            pos.instrument.as_ref().and_then(|i| i.instrument.as_ref())
+        else {
+            panic!("booked position must carry the OIS arm");
+        };
+        assert_eq!(booked.side, Side::Sell as i32);
+        assert_eq!(booked.fixed_rate.to_bits(), 0.0409_f64.to_bits());
+        assert_position_has_live_risk(&pos);
+    }
+
+    /// PART B: a desk request carrying no instrument arm is rejected cleanly at submit
+    /// (unpriceable), never reaching the booking path.
+    #[tokio::test]
+    async fn desk_request_with_no_instrument_is_rejected() {
+        let edge = edge();
+        let mut req = submit_req(DeskRequestKind::Rfq, Side::Buy);
+        req.instrument = Some(RatesInstrument { instrument: None });
+        let err = edge
+            .submit_desk_request(Request::new(req))
+            .await
+            .expect_err("an armless instrument must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(
+            edge.rates.len(),
+            0,
+            "nothing is booked on a rejected request"
+        );
     }
 
     /// FRONT-END 4 (`RfqDeskService::AcceptDeskQuote`, ADR-0016 A1): accepting a desk

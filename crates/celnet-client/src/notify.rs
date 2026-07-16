@@ -227,6 +227,7 @@ mod tests {
             request_kind: celnet_proto::DeskRequestKind::Rfq as i32,
             headline: "New RFQ".to_owned(),
             detail: Some("5y OIS".to_owned()),
+            ..Default::default()
         };
         let n = Notification::from_wire(&wire).expect("decodes");
         assert_eq!(n.kind, NotificationKind::RfqReceived);

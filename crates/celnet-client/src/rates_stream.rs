@@ -266,6 +266,7 @@ mod tests {
             pv01: 480.0,
             dv01: -455.0,
             key_rate_ladder: vec![-100.0, -155.0, -200.0],
+            ..Default::default()
         }
     }
 

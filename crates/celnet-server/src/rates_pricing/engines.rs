@@ -189,6 +189,9 @@ fn measures_to_result(m: RatesMeasures) -> RatesPricingResult {
         pv01: m.pv01,
         dv01: m.dv01,
         key_rate_ladder: m.key_rate_ladder,
+        // Two-way + size stay proto3-zero on the priced core; the streaming edge
+        // enriches them via `stream_spread`.
+        ..Default::default()
     }
 }
 

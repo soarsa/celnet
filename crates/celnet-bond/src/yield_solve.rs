@@ -20,6 +20,10 @@ const PRICE_TOL: f64 = 1e-12;
 const YIELD_TOL: f64 = 1e-14;
 /// Acceptance tolerance on the final residual (guards against a stalled iteration reported as solved).
 const RESIDUAL_ACCEPT: f64 = 1e-8;
+/// The conventional bond price quote scale (per-100 face). Prices at or below this
+/// keep the exact absolute [`PRICE_TOL`] / [`RESIDUAL_ACCEPT`]; a larger redemption
+/// face widens the price gates proportionally so the solve stays f64-representable.
+const PRICE_QUOTE_REFERENCE: f64 = 100.0;
 /// Cap on bracket expansion doublings when searching for an upper yield bound.
 const MAX_EXPANSIONS: usize = 64;
 
@@ -47,6 +51,19 @@ pub fn yield_to_maturity(bond: &Bond, market_dirty_price: f64) -> Result<Rate, B
     // g(y) = price(y) − market is strictly decreasing; g(low_yield) > 0, g(high_yield) < 0.
     let residual = |y: f64| schedule.dirty_price_at_yield(y) - market_dirty_price;
     let residual_slope = |y: f64| schedule.dirty_price_first_derivative(y);
+
+    // The price residual `g` lives in the market's price units, so its acceptance
+    // tolerances must be RELATIVE to that scale: a par-100 quote and a 25,000,000
+    // face are the same trade at ~1e5× the price magnitude, and an absolute 1e-8
+    // residual floor is unreachable once the price exceeds ~1e6 (f64 loses the last
+    // digits). We scale `PRICE_TOL` / `RESIDUAL_ACCEPT` by `price / 100` floored at 1,
+    // so a conventional per-100 quote (and anything below par) keeps the EXACT original
+    // absolute precision — existing bond prices stay byte-identical — while a large
+    // redemption face widens the gate just enough to converge. The yield-step break
+    // (`YIELD_TOL`) is already scale-free, so this only touches the price gates.
+    let price_scale = (market_dirty_price / PRICE_QUOTE_REFERENCE).max(1.0);
+    let price_tol = PRICE_TOL * price_scale;
+    let residual_accept = RESIDUAL_ACCEPT * price_scale;
 
     // Lower yield bound keeps 1 + y/f > 0; the price there is enormous, so g(low) > 0 for any
     // sensible target. If it is not, the target price is larger than the bond's maximum value.
@@ -101,12 +118,12 @@ pub fn yield_to_maturity(bond: &Bond, market_dirty_price: f64) -> Result<Rate, B
         } else {
             neg = y;
         }
-        if g.abs() < PRICE_TOL {
+        if g.abs() < price_tol {
             break;
         }
     }
 
-    if residual(y).abs() > RESIDUAL_ACCEPT {
+    if residual(y).abs() > residual_accept {
         return Err(BondError::YieldDidNotConverge);
     }
     Ok(Rate(y))
@@ -173,6 +190,33 @@ mod tests {
             assert!(
                 (y.0 - coupon).abs() < 1e-10,
                 "coupon {coupon} → ytm {}",
+                y.0
+            );
+        }
+    }
+
+    #[test]
+    fn converges_at_a_large_redemption_face() {
+        // The price residual lives in price units, so its acceptance tolerance must be
+        // relative to the price scale: a 25,000,000 face is the same trade as a par-100
+        // quote at 1e5× the magnitude. With an absolute residual floor this solve
+        // stalled (YieldDidNotConverge); with the price-scaled tolerance it converges to
+        // the same yield the par-100 bond gives — the face only scales the price.
+        for &face in &[100.0, 1_000_000.0, 25_000_000.0, 500_000_000.0] {
+            let b = Bond::new(
+                d(2032, Month::June, 15),
+                d(2039, Month::June, 15),
+                0.05,
+                PaymentFrequency::SemiAnnual,
+                AccrualBasis::Thirty360BondBasis,
+                face,
+            )
+            .expect("valid bond");
+            // Priced at par-for-its-face (redemption on a coupon date) ⇒ YTM == coupon.
+            let y = yield_to_maturity(&b, face).expect("ytm at large face");
+            assert!(
+                (y.0 - 0.05).abs() < 1e-10,
+                "face {face} → ytm {} (expected the 5% coupon)",
                 y.0
             );
         }

@@ -4786,6 +4786,24 @@ message RatesPricingResult {
   // pillar order, each the PV change for a +1bp bump of that pillar alone. Sums
   // to `dv01` to first order (the residual is curve cross-gamma).
   repeated double key_rate_ladder = 5;
+  // The executable two-way struck around the indicative fair level (`par_rate`
+  // for a swap/FRA, the clean price for a cash bond). Populated ONLY on the
+  // streaming path (`RatesStreamSnapshot`/`RatesStreamUpdate`), where the row is
+  // a firm dealer market a taker can lift; left at proto3 zero on the one-shot
+  // `PriceRates` result, which stays purely indicative. `bid <= fair <= offer`
+  // and `bid < offer` whenever a two-way is present. In the same units as the
+  // fair level: a decimal rate for OIS/IRS/FRA, a clean price per 100 face for a
+  // bond. Half-spread model: see `rates_pricing::stream_spread`.
+  double bid = 6;
+  // The offer side of the streamed two-way (see `bid`).
+  double offer = 7;
+  // The available notional (in the instrument's own currency face) firm on the
+  // BID side of the streamed market — the size a taker can hit. Positive when a
+  // two-way is present, proto3 zero on the indicative one-shot path.
+  double bid_size = 8;
+  // The available notional firm on the OFFER side of the streamed market — the
+  // size a taker can lift (see `bid_size`).
+  double offer_size = 9;
 }
 
 // Request: price one `RatesInstrument` against one `CurveSet`. The linear-rates

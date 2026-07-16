@@ -51,6 +51,8 @@ mod engines;
 pub(crate) use engines::dispatch_rates_live;
 pub use engines::install_fi_house_models;
 
+pub mod stream_spread;
+
 /// The ISO 4217 code of the only currency the P0 rates arm supports.
 const SUPPORTED_CURRENCY: &str = "USD";
 
@@ -360,6 +362,10 @@ fn price_ois(
         pv01: sign * risk.pv01,
         dv01: sign * risk.dv01,
         key_rate_ladder: risk.key_rate.iter().map(|k| sign * k).collect(),
+        // The two-way + size are an additive *streaming* enrichment: proto3-zero
+        // here (the indicative one-shot / RFQ-priced core), populated only on the
+        // streaming edge by `stream_spread`. See `celnet.proto` RatesPricingResult.
+        ..Default::default()
     })
 }
 
@@ -450,6 +456,10 @@ fn price_irs(
         pv01: sign * risk.pv01,
         dv01: sign * risk.dv01,
         key_rate_ladder: risk.key_rate.iter().map(|k| sign * k).collect(),
+        // The two-way + size are an additive *streaming* enrichment: proto3-zero
+        // here (the indicative one-shot / RFQ-priced core), populated only on the
+        // streaming edge by `stream_spread`. See `celnet.proto` RatesPricingResult.
+        ..Default::default()
     })
 }
 
@@ -505,6 +515,10 @@ fn price_fra(
         pv01: sign * risk.pv01,
         dv01: sign * risk.dv01,
         key_rate_ladder: risk.key_rate.iter().map(|k| sign * k).collect(),
+        // The two-way + size are an additive *streaming* enrichment: proto3-zero
+        // here (the indicative one-shot / RFQ-priced core), populated only on the
+        // streaming edge by `stream_spread`. See `celnet.proto` RatesPricingResult.
+        ..Default::default()
     })
 }
 
@@ -542,6 +556,8 @@ fn price_bond_instrument(
         pv01: sign * risk.dv01,
         dv01: sign * risk.dv01,
         key_rate_ladder: Vec::new(),
+        // Streaming-only two-way (see the swap arms above / `stream_spread`).
+        ..Default::default()
     })
 }
 
@@ -756,12 +772,56 @@ pub fn quote_bond(bond: &BondInstrument, curve: &CurveSet) -> Result<BondQuote, 
     })
 }
 
+/// Derive the streamed two-way (bid/offer) + available size for a priced rates
+/// line, dispatching on the instrument arm: a cash bond is quoted around its clean
+/// price (from [`quote_bond`]), every swap/FRA arm around the par rate the priced
+/// [`RatesPricingResult`] already carries. The half-spread and size come from the
+/// duration-scaled [`stream_spread`] model — see its module doc for the convention.
+/// This is the single choke point the streaming edge ([`crate::services::stream`])
+/// calls to enrich an indicative line into a tradeable one; the one-shot `PriceRates`
+/// RPC never calls it, so its result stays proto3-zero on the two-way fields.
+///
+/// # Errors
+///
+/// Returns [`RatesPriceError`] for a missing instrument arm, or (bond only) any
+/// clean-price re-derivation failure from [`quote_bond`].
+pub fn stream_two_way(
+    instrument: &RatesInstrument,
+    curve: &CurveSet,
+    result: &RatesPricingResult,
+) -> Result<stream_spread::StreamTwoWay, RatesPriceError> {
+    let arm = instrument
+        .instrument
+        .as_ref()
+        .ok_or(RatesPriceError::MissingInstrument)?;
+    let two_way = match arm {
+        rates_instrument::Instrument::Bond(bond) => {
+            let clean = quote_bond(bond, curve)?.clean_price;
+            // The bond's face (redemption) is the size unit; the two-way is a
+            // clean-price market.
+            stream_spread::two_way_price(clean, result, bond.redemption)
+        }
+        rates_instrument::Instrument::Ois(ois) => {
+            stream_spread::two_way_rate(result.par_rate, result, ois.notional)
+        }
+        rates_instrument::Instrument::Irs(irs) => {
+            stream_spread::two_way_rate(result.par_rate, result, irs.notional)
+        }
+        rates_instrument::Instrument::Fra(fra) => {
+            stream_spread::two_way_rate(result.par_rate, result, fra.notional)
+        }
+    };
+    Ok(two_way)
+}
+
 /// The maker half-spread for a fixed-income two-way **rate** market, in absolute
 /// rate (`0.00005` = 0.5bp each side ⇒ a 1bp-wide market). The single-homed
 /// constant the FIX RFQ line ([`crate::services::fix`]) and the WS/gRPC
 /// `RequestRatesQuote` taker two-way ([`quote_rates_two_way`]) both centre an
-/// OIS/IRS/FRA market on. A documented constant until a rates-specific spread
-/// model lands.
+/// OIS/IRS/FRA market on. This is the *indicative* (flat) RFQ floor; the live
+/// **streaming** line widens it with the line's modified duration via
+/// [`stream_spread`] — of which this constant is the zero-duration floor, so the
+/// RFQ line and the streamed line are one consistent family.
 pub const RATES_RFQ_HALF_SPREAD: f64 = 0.000_05;
 
 /// The maker half-spread for a fixed-income two-way **clean-price** market, in

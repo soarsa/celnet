@@ -84,7 +84,7 @@ use tonic::{Request, Response, Status, Streaming};
 use crate::clock::Clock;
 use crate::core_link::{CoreLink, Observable, ObservableQuery};
 use crate::pricer::{ConventionSet, Priced, price_instrument};
-use crate::rates_pricing::{RatesPriceError, price_rates};
+use crate::rates_pricing::{RatesPriceError, price_rates, stream_two_way};
 use crate::readiness::ReadinessGate;
 use crate::services::clicktrade::{
     BookOutcome, TokenLedger, TokenMinter, TwoWayLine, mint_two_way,
@@ -416,15 +416,29 @@ impl RatesSubscription {
     /// curve is a per-tick clone on the drain edge (never the pinned hot core), the
     /// exact FI analogue of the FX line's per-tick `price_instrument` on the edge.
     fn reprice(&self, shift: f64) -> Result<RatesPricingResult, Status> {
+        let shifted = shifted_curve(&self.curve_set, shift);
         let req = RatesPriceRequest {
             request_id: 0,
-            curve_set: Some(shifted_curve(&self.curve_set, shift)),
+            curve_set: Some(shifted.clone()),
             // `RatesInstrument` is a small `Copy` POD (scalar-only arms), so this is
             // a register copy, not an allocation.
             instrument: Some(self.instrument),
             correlation_id: None,
         };
-        price_rates(&req).map_err(rates_error_to_status)
+        let mut result = price_rates(&req).map_err(rates_error_to_status)?;
+        // A streamed line is a *tradeable* dealer market, not just an indicative
+        // mid: enrich the priced core with a genuine two-way (bid/offer) + size
+        // struck around the fair mid, via the duration-scaled `stream_spread` model.
+        // The one-shot `PriceRates` RPC never calls `reprice`, so its result stays
+        // proto3-zero on these fields (the indicative core), exactly as the
+        // `RatesPricingResult` proto contract specifies.
+        let two_way =
+            stream_two_way(&self.instrument, &shifted, &result).map_err(rates_error_to_status)?;
+        result.bid = two_way.bid;
+        result.offer = two_way.offer;
+        result.bid_size = two_way.bid_size;
+        result.offer_size = two_way.offer_size;
+        Ok(result)
     }
 }
 
@@ -2260,13 +2274,17 @@ mod tests {
         }
     }
 
-    /// **Faithfulness (the FI gate).** A streamed FI line's re-price at shift 0 is
-    /// byte-for-byte `price_rates(instrument, curve)` — the streamed snapshot equals
-    /// the landed pricer exactly. A parallel-shifted re-price equals
-    /// `price_rates(shifted curve)` exactly AND moves PV in the direction/magnitude
-    /// the reported `dv01` predicts — an INDEPENDENT cross-check (the engine computes
-    /// `dv01` by its own internal bump-and-reprice, a different code path than the
-    /// streamed re-price's direct PV, so PV(+1bp)−PV(0) ≈ dv01 is not circular).
+    /// **Faithfulness (the FI gate).** A streamed FI line's re-price at shift 0
+    /// carries the landed `price_rates(instrument, curve)` **core** (pv / par_rate /
+    /// pv01 / dv01 / ladder) byte-for-byte — the streamed snapshot's priced numbers
+    /// equal the landed pricer exactly (`assert_rates_result_bit_eq` compares the
+    /// core; the streamed line additionally carries a two-way + size, which the
+    /// one-shot line leaves proto3-zero — asserted separately below). A
+    /// parallel-shifted re-price equals `price_rates(shifted curve)` on the core
+    /// exactly AND moves PV in the direction/magnitude the reported `dv01` predicts —
+    /// an INDEPENDENT cross-check (the engine computes `dv01` by its own internal
+    /// bump-and-reprice, a different code path than the streamed re-price's direct
+    /// PV, so PV(+1bp)−PV(0) ≈ dv01 is not circular).
     #[test]
     fn rates_reprice_is_faithful_and_dv01_consistent() {
         let curve = crate::rates_pricing::default_usd_sofr_curve_set();
@@ -2305,6 +2323,62 @@ mod tests {
             (dpv - dv01).abs() <= dv01.abs() * 5e-3 + 1e-6,
             "PV move {dpv} must match the reported DV01 {dv01} to first order"
         );
+        drop(hub);
+    }
+
+    /// **Streamed two-way + size (PART A).** A streamed rates line carries a genuine
+    /// tradeable two-way: `bid <= par_rate <= offer`, `bid < offer`, and strictly
+    /// positive sizes. The one-shot `price_rates` line leaves those fields proto3-zero
+    /// (indicative only) — so the enrichment is stream-exclusive.
+    #[test]
+    fn streamed_line_carries_a_well_formed_two_way_the_one_shot_line_omits() {
+        let curve = crate::rates_pricing::default_usd_sofr_curve_set();
+        let instrument = ois_line();
+        let hub = PriceFanout::start();
+        let tick = hub.subscribe_rates(&curve).expect("the curve's rates ring");
+        let sub = RatesSubscription {
+            id: SubscriptionId { value: 11 },
+            instrument,
+            curve_set: curve.clone(),
+            tick,
+            sequence: 1,
+            delivered: 0,
+            correlation_id: None,
+        };
+
+        let streamed = sub.reprice(0.0).expect("streamed reprice");
+        let mid = streamed.par_rate;
+        assert!(
+            streamed.bid <= mid,
+            "bid {} must be <= mid {mid}",
+            streamed.bid
+        );
+        assert!(
+            streamed.offer >= mid,
+            "offer {} must be >= mid {mid}",
+            streamed.offer
+        );
+        assert!(
+            streamed.bid < streamed.offer,
+            "bid {} must be strictly below offer {}",
+            streamed.bid,
+            streamed.offer
+        );
+        assert!(
+            streamed.bid_size > 0.0,
+            "bid size must be strictly positive"
+        );
+        assert!(
+            streamed.offer_size > 0.0,
+            "offer size must be strictly positive"
+        );
+
+        // The one-shot RPC path (price_rates directly) leaves the two-way proto3-zero.
+        let one_shot = oracle_price(&instrument, &curve);
+        assert_eq!(one_shot.bid, 0.0, "one-shot line is indicative: no bid");
+        assert_eq!(one_shot.offer, 0.0, "one-shot line is indicative: no offer");
+        assert_eq!(one_shot.bid_size, 0.0);
+        assert_eq!(one_shot.offer_size, 0.0);
         drop(hub);
     }
 

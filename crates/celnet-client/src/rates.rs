@@ -1258,6 +1258,7 @@ mod tests {
             pv01: 50.0,
             dv01: 49.5,
             key_rate_ladder: vec![10.0, 15.0, 24.5],
+            ..Default::default()
         };
         let priced = RatesPriced::from_wire(wire);
         assert_eq!(priced.pv, -1234.5);

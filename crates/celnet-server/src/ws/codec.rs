@@ -1467,6 +1467,11 @@ fn rates_pricing_result_to_json(r: &RatesPricingResult) -> Value {
         "pv01": r.pv01,
         "dv01": r.dv01,
         "key_rate_ladder": r.key_rate_ladder,
+        // Streamed two-way + size (proto3-zero on the indicative one-shot line).
+        "bid": r.bid,
+        "offer": r.offer,
+        "bid_size": r.bid_size,
+        "offer_size": r.offer_size,
     })
 }
 

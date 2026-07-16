@@ -638,6 +638,10 @@ impl WireAdapter for RatesPricingResult {
             "pv01" => Some(WireVal::F64(self.pv01)),
             "dv01" => Some(WireVal::F64(self.dv01)),
             "key_rate_ladder" => Some(WireVal::RepeatedF64(&self.key_rate_ladder)),
+            "bid" => Some(WireVal::F64(self.bid)),
+            "offer" => Some(WireVal::F64(self.offer)),
+            "bid_size" => Some(WireVal::F64(self.bid_size)),
+            "offer_size" => Some(WireVal::F64(self.offer_size)),
             _ => None,
         }
     }
