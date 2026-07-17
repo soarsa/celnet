@@ -49,6 +49,11 @@ frontend celnet_https_in
     # WebSocket upgrade -> celnet-server mirror (raw WS server).
     # Everything else -> the GUI SPA served by nginx (or a health string if the
     # GUI is not being served).
+{% if celnet_softek_var_enabled | bool %}
+    # Softek VAR app — host-routed (takes precedence) to the loopback var-server.
+    acl is_softek_var hdr(host) -i {{ celnet_softek_var_host }}
+    use_backend celnet_softek_var if is_softek_var
+{% endif %}
     acl is_ws hdr(Upgrade) -i websocket
     use_backend celnet_ws if is_ws
 {% if celnet_serve_gui | bool %}
@@ -63,6 +68,15 @@ backend celnet_ws
     option forwardfor
     # HAProxy auto-handles the WebSocket Upgrade/Connection handshake in http mode.
     server celnet1 {{ celnet_backend_ws }} check inter 5s rise 2 fall 3
+{% if celnet_softek_var_enabled | bool %}
+
+backend celnet_softek_var
+    mode http
+    option forwardfor
+    # celertech-softek var-server (Rust/axum REST) bound loopback on this host.
+    # HMAC request-signing is end-to-end, so HAProxy only terminates TLS + proxies.
+    server softek_var1 {{ celnet_softek_var_backend }} check inter 5s rise 2 fall 3
+{% endif %}
 {% if celnet_serve_gui | bool %}
 
 backend celnet_web

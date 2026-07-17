@@ -30,7 +30,7 @@
     openssl req -x509 -newkey rsa:2048 -nodes
     -keyout /tmp/celnet_tls.key -out /tmp/celnet_tls.crt -days 825
     -subj "/CN={{ celnet_domain }}/O=Celnet/OU=UAT"
-    -addext "subjectAltName=DNS:{{ celnet_domain }}" &&
+    -addext "subjectAltName=DNS:{{ celnet_domain }}{% if celnet_softek_var_enabled | bool %},DNS:{{ celnet_softek_var_host }}{% endif %}" &&
     cat /tmp/celnet_tls.crt /tmp/celnet_tls.key > {{ celnet_tls_pem }} &&
     rm -f /tmp/celnet_tls.key /tmp/celnet_tls.crt
   args:

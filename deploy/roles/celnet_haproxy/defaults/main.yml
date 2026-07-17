@@ -6,3 +6,18 @@ celnet_https_port: 443
 celnet_expose_grpc: false
 celnet_grpc_https_port: 8443
 celnet_tls_generate_self_signed: true
+
+# --- Softek VAR app (celertech-softek/var-server) --------------------------
+# Host-route a second hostname on the same :443 edge to the loopback var-server
+# REST API deployed at /opt/celertech-softek/current (see the celertech-softek
+# Ansible repo). var-server is HMAC-signed end-to-end, so HAProxy is a plain
+# TLS-terminating proxy. Off by default; enabled per-environment (UAT).
+#
+# NOTE: var-server defaults to 127.0.0.1:8080, which COLLIDES with celnet's
+# nginx GUI (celnet_nginx_port) on the shared host — so the VAR app must bind a
+# distinct loopback port. Keep this in lockstep with `softek_var_port` in the
+# celertech-softek deploy's group_vars.
+celnet_softek_var_enabled: false
+celnet_softek_var_host: "var.uat.celnet.uk"
+celnet_softek_var_port: 8090
+celnet_softek_var_backend: "127.0.0.1:{{ celnet_softek_var_port }}"
