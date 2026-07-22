@@ -25,7 +25,23 @@ celnet-types.workspace = true
 # Correctly-rounded, cross-platform-identical transcendentals (exp), matching the
 # project determinism convention used by celnet-aggregation::sim.
 libm.workspace = true
-
-[dev-dependencies]
-# Civil-date arithmetic to build reference Bonds in the stochastic-mode tests.
+# The bundled US-Treasury reference universe (data/treasury-universe.json) is
+# parsed into typed `TreasuryBond` records by the `universe` loader. serde derives
+# the record shape; serde_json parses the embedded document.
+serde.workspace = true
+serde_json.workspace = true
+# Civil-date arithmetic: the loader maps a bond's coupon/maturity schedule onto a
+# real `celnet_bond::Bond` (`universe::TreasuryBond::to_reference_bond`) so the
+# stochastic feed prices off the REAL analytics leaf, not a fabricated handle.
 time.workspace = true
+# The `lp-sim` runnable feed binary's CLI surface (--lp-name/--book/--interval/…),
+# mirroring the fix-sim client's flag style.
+clap.workspace = true
+
+# The runnable LP-SIM liquidity feed: loads the bundled Treasury universe, stands
+# up the named `LP-SIM` member panel, and streams the consolidated composite
+# (best bid/offer + per-LP contributions) for each bond on an interval — the
+# deployable feed the `lpsimctl`/`start-lp-sim.sh` wrapper supervises.
+[[bin]]
+name = "lp-sim"
+path = "src/bin/lp-sim.rs"

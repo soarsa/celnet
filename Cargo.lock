@@ -684,7 +684,10 @@ dependencies = [
  "celnet-aggregation",
  "celnet-bond",
  "celnet-types",
+ "clap",
  "libm",
+ "serde",
+ "serde_json",
  "time",
 ]
 

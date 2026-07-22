@@ -76,12 +76,20 @@
 
 pub mod fleet;
 pub mod lp;
+pub mod lpsim;
 pub mod price;
 mod rng;
+pub mod universe;
 
 pub use fleet::{FleetConfig, FleetInstrument, fleet, into_feeds};
 pub use lp::{Fault, InstrumentModel, LpParams, SimLp};
+pub use lpsim::{
+    BondComposite, DEFAULT_LP_NAME, LpQuoteSnapshot, LpSimConfig, build_fleet, composite_for,
+};
 pub use price::{MidSource, YieldModel};
+pub use universe::{
+    SecurityType, TreasuryBond, load_coupon_universe, load_universe, parse_universe,
+};
 
 // Re-export the seam types a caller builds LPs and reads books with, so the crate
 // is usable without also reaching into `celnet-aggregation` for the vocabulary.

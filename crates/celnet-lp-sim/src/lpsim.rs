@@ -1,0 +1,256 @@
+//! The **LP-SIM feed assembly** — the glue that turns the loaded Treasury universe
+//! into a running, consolidating liquidity-provider feed named `LP-SIM`.
+//!
+//! This is the shared core behind both the `lp-sim` runnable binary and the
+//! Treasury aggregation integration test: it builds a panel of decorrelated
+//! [`SimLp`]s (the `LP-SIM` connection and, optionally, sibling members
+//! `LP-SIM-01`…) that each stream a stochastic two-way for every selected
+//! [`TreasuryBond`], then consolidates the panel per bond through the REAL
+//! [`celnet_aggregation::ConsolidatedBook`] engine — the same engine an
+//! operator-defined FI Aggregated Book uses server-side.
+//!
+//! The per-bond mid is the reference-seeded mean-reverting yield priced through the
+//! `celnet-bond` analytics leaf (see [`TreasuryBond::yield_model`]), so the prices
+//! are oracle-anchored, and each member leans/decorrelates so the consolidated
+//! best-bid/offer and per-LP contributions are non-trivial.
+
+use celnet_aggregation::{
+    ConsolidatedBook, ConsolidationConfig, ConsolidationError, VenueId, VenueQuote,
+};
+use celnet_types::BrokenDate;
+
+use crate::lp::{InstrumentModel, LpParams, SimLp};
+use crate::price::MidSource;
+use crate::rng::{child_seed, seeded_unit};
+use crate::universe::TreasuryBond;
+
+/// The default LP connection name the feed advertises — the venue id a subscriber
+/// sees as the price contributor.
+pub const DEFAULT_LP_NAME: &str = "LP-SIM";
+
+/// How the `LP-SIM` feed is assembled: the LP identity, the number of decorrelated
+/// member connections, the stochastic-yield knobs, the quoting shape, and the
+/// consolidation tuning.
+#[derive(Debug, Clone)]
+pub struct LpSimConfig {
+    /// The base LP connection name (venue id). With one member the venue is exactly
+    /// this; with N > 1 the members are `"{lp_name}-01"`, `"{lp_name}-02"`, ….
+    pub lp_name: String,
+    /// Number of decorrelated LP member connections feeding the book (`≥ 1`). More
+    /// members ⇒ a richer composite (median-consensus gating needs ≥ 3 to be
+    /// decidable).
+    pub members: usize,
+    /// The root seed; the same `(seed, config, universe)` yields a byte-identical
+    /// feed.
+    pub seed: u64,
+    /// The settlement/valuation date used to build each bond's reference schedule
+    /// and invert its reference yield.
+    pub settlement: BrokenDate,
+    /// Mean-reversion speed `κ` per second of the yield process.
+    pub reversion_per_sec: f64,
+    /// Yield jitter amplitude `σ` (decimal yield), e.g. `2e-4` = ±2 bp.
+    pub perturbation: f64,
+    /// The half-spread each member quotes around its (skewed) mid, in price points
+    /// per 100 face.
+    pub half_spread: f64,
+    /// The firm size each member shows on both sides (face units).
+    pub size: f64,
+    /// The per-member increment of directional skew (price points): the panel is
+    /// centred so the middle member is unbiased and the ends lean opposite ways.
+    pub skew_step: f64,
+    /// The per-member dispersion of the initial yield (decimal yield), decorrelating
+    /// the members' starting mids.
+    pub yield_dispersion: f64,
+    /// Consolidation staleness half-life in seconds.
+    pub tau_secs: f64,
+    /// Consolidation hard staleness cutoff in seconds.
+    pub cutoff_secs: f64,
+    /// Consolidation divergence tolerance in price points per 100 face.
+    pub divergence_tolerance: f64,
+}
+
+impl Default for LpSimConfig {
+    fn default() -> Self {
+        Self {
+            lp_name: DEFAULT_LP_NAME.to_string(),
+            members: 4,
+            seed: 0x1234_5678,
+            settlement: BrokenDate::new(2026, 4, 16),
+            reversion_per_sec: 0.02,
+            perturbation: 3.0e-4,
+            half_spread: 2.0e-2, // ~2 bp of a 100.0 price handle
+            size: 1_000_000.0,
+            skew_step: 8.0e-3,
+            yield_dispersion: 4.0e-4,
+            tau_secs: 30.0,
+            cutoff_secs: 60.0,
+            divergence_tolerance: 0.50,
+        }
+    }
+}
+
+impl LpSimConfig {
+    /// The consolidation config the engine consumes for this feed.
+    #[must_use]
+    pub fn consolidation(&self) -> ConsolidationConfig {
+        ConsolidationConfig {
+            staleness_half_life_secs: self.tau_secs.max(f64::MIN_POSITIVE),
+            staleness_cutoff_secs: self.cutoff_secs,
+            divergence_tolerance: self.divergence_tolerance,
+        }
+    }
+
+    /// The venue id of member `i` (`0`-based). With a single member this is exactly
+    /// [`lp_name`](Self::lp_name); otherwise it is suffixed `-01`, `-02`, … so every
+    /// contribution is attributable to a named connection.
+    #[must_use]
+    pub fn member_venue(&self, i: usize) -> String {
+        if self.members <= 1 {
+            self.lp_name.clone()
+        } else {
+            format!("{}-{:02}", self.lp_name, i + 1)
+        }
+    }
+}
+
+/// Build the `LP-SIM` panel: one [`SimLp`] per member, each quoting every bond in
+/// `bonds` that can be modelled at the config's settlement (a stochastic
+/// reference-seeded yield). Bonds with no solvable reference yield (e.g. Bills the
+/// coupon solver cannot bracket) are skipped. Reproducible for a fixed
+/// `(config, bonds)`.
+#[must_use]
+pub fn build_fleet(cfg: &LpSimConfig, bonds: &[TreasuryBond]) -> Vec<SimLp> {
+    // The stochastic yield-model template per bond, built once (oracle-anchored).
+    let templated: Vec<(&TreasuryBond, crate::price::YieldModel)> = bonds
+        .iter()
+        .filter_map(|b| {
+            b.yield_model(cfg.settlement, cfg.reversion_per_sec, cfg.perturbation)
+                .map(|m| (b, m))
+        })
+        .collect();
+
+    let n = cfg.members.max(1);
+    let centre = (n as f64 - 1.0) / 2.0;
+    (0..n)
+        .map(|i| {
+            let venue = VenueId::new(cfg.member_venue(i));
+            let lp_seed = child_seed(cfg.seed, i);
+            let skew = (i as f64 - centre) * cfg.skew_step;
+
+            let books = templated
+                .iter()
+                .map(|(bond, template)| {
+                    let instrument = bond.engine_instrument();
+                    // Disperse this member's initial yield around the reference,
+                    // keyed the same way the runtime tick noise is (tick 0).
+                    let u = seeded_unit(lp_seed, &venue, &instrument, 0);
+                    let mut model = *template;
+                    model.initial_yield += cfg.yield_dispersion * u;
+                    InstrumentModel {
+                        instrument,
+                        mid: MidSource::MeanRevertingYield(model),
+                    }
+                })
+                .collect();
+
+            let params = LpParams {
+                half_spread: cfg.half_spread,
+                skew,
+                size: cfg.size,
+                tick_nanos: 100_000_000, // 100 ms resample cadence
+                latency_nanos: 0,
+                quality: 1.0,
+            };
+            SimLp::new(venue, lp_seed, params, books)
+        })
+        .collect()
+}
+
+/// One bond's consolidated composite plus the bond identity a subscriber renders.
+#[derive(Debug, Clone)]
+pub struct BondComposite {
+    /// The consolidated book from the real engine.
+    pub book: ConsolidatedBook,
+    /// The best-bid two-way as a human line (identity + price + per-LP legs).
+    pub rendered: String,
+}
+
+/// Consolidate the panel for `bond` at `now_nanos` and render the composite as a
+/// subscriber-facing line: the bond identity (name + ISIN + CUSIP), the composite
+/// best bid/offer + size, the confidence, and each contributing LP's mid.
+///
+/// # Errors
+/// Propagates [`ConsolidationError`] (e.g. every member excluded / no market).
+pub fn composite_for(
+    feeds: &[Box<dyn celnet_aggregation::VenueFeed>],
+    bond: &TreasuryBond,
+    now_nanos: i64,
+    cfg: &ConsolidationConfig,
+) -> Result<BondComposite, ConsolidationError> {
+    let book = ConsolidatedBook::consolidate(feeds, &bond.engine_instrument(), now_nanos, cfg)?;
+    let legs: Vec<String> = book
+        .contributions
+        .iter()
+        .map(|c| {
+            let tag = match c.excluded {
+                None => format!("{:.4}", c.mid),
+                Some(reason) => format!("{:.4}✗{reason:?}", c.mid),
+            };
+            format!("{}={tag}", c.venue.as_str())
+        })
+        .collect();
+    let rendered = format!(
+        "{name} [{isin} / {cusip}]  bid {bid:.4} x{bsz:.0}  offer {offer:.4} x{osz:.0}  \
+         mid {mid:.4}  conf {conf:.2}  [{legs}]",
+        name = bond.display_name(),
+        isin = bond.isin,
+        cusip = bond.cusip,
+        bid = book.best_bid,
+        bsz = book.best_bid_size,
+        offer = book.best_offer,
+        osz = book.best_offer_size,
+        mid = book.composite_mid,
+        conf = book.confidence,
+        legs = legs.join(", "),
+    );
+    Ok(BondComposite { book, rendered })
+}
+
+/// A quote snapshot for one member on one bond at an instant — the shape an LP
+/// pushes to a server ingest (`lp_name`, `instrument_id`, two-way, ts). Exposed so
+/// the binary can also emit the raw per-LP wire view, and to make the mapping from
+/// a [`VenueQuote`] to the canonical `instrument_id` explicit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LpQuoteSnapshot {
+    /// The LP connection name (venue id).
+    pub lp_name: String,
+    /// The canonical server `instrument_id` (the bond's CUSIP).
+    pub instrument_id: String,
+    /// Bid / offer per 100 face and firm sizes.
+    pub bid: f64,
+    /// Offer per 100 face.
+    pub offer: f64,
+    /// Firm bid size.
+    pub bid_size: f64,
+    /// Firm offer size.
+    pub offer_size: f64,
+    /// Observation instant (epoch nanoseconds).
+    pub ts: i64,
+}
+
+impl LpQuoteSnapshot {
+    /// Build a snapshot from a member's [`VenueQuote`] and the bond it prices — the
+    /// bridge that stamps the canonical `instrument_id` (CUSIP) onto the wire view.
+    #[must_use]
+    pub fn from_quote(q: &VenueQuote, bond: &TreasuryBond) -> Self {
+        Self {
+            lp_name: q.venue.as_str().to_string(),
+            instrument_id: bond.instrument_id().to_string(),
+            bid: q.bid,
+            offer: q.offer,
+            bid_size: q.bid_size,
+            offer_size: q.offer_size,
+            ts: q.ts,
+        }
+    }
+}

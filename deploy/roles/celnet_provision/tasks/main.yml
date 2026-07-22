@@ -127,3 +127,12 @@
     group: "{{ celnet_group }}"
     mode: "0755"
   when: celnet_fixsim_enabled | default(true) | bool
+
+- name: Install the lpsimctl LP-SIM Treasury-feed control script
+  ansible.builtin.template:
+    src: lpsimctl.sh.j2
+    dest: "{{ celnet_bin_dir }}/lpsimctl"
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0755"
+  when: celnet_lpsim_enabled | default(true) | bool

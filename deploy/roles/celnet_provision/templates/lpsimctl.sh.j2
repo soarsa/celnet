@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# lpsimctl — start/once/stop/status/tail for the celnet LP-SIM Treasury feed.
+# MANAGED BY ANSIBLE. Installed at {{ celnet_bin_dir }}/lpsimctl.
+#
+#   lpsimctl start | once | stop | status | tail [n]
+#
+# Thin wrapper over {{ celnet_bin_dir }}/start-lp-sim.sh: it points the launcher at
+# the release-shipped lp-sim binary (no cargo needed on the host), daemonizes, and
+# logs into the shared log dir. The feed streams the consolidated composite for the
+# selected Treasuries into the named aggregated book; override the LP name / book /
+# members / interval / instruments with the celnet_lpsim_* group_vars.
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+LAUNCHER="{{ celnet_bin_dir }}/start-lp-sim.sh"
+export LPSIM_RELEASE_BIN="{{ celnet_current_link }}/bin/lp-sim"
+export LPSIM_RUN_DIR="{{ celnet_run_dir }}/lpsim"
+export LPSIM_LOG="{{ celnet_log_dir }}/lp-sim.out.log"
+export LPSIM_LP_NAME="{{ celnet_lpsim_lp_name | default('LP-SIM') }}"
+export LPSIM_BOOK="{{ celnet_lpsim_book | default('ust-composite') }}"
+export LPSIM_MEMBERS="{{ celnet_lpsim_members | default('4') }}"
+export LPSIM_INTERVAL="{{ celnet_lpsim_interval | default('2') }}"
+export LPSIM_INSTRUMENTS="{{ celnet_lpsim_instruments | default('all') }}"
+export LPSIM_MAX_INSTRUMENTS="{{ celnet_lpsim_max_instruments | default('12') }}"
+export LPSIM_SEED="{{ celnet_lpsim_seed | default('305419896') }}"
+export LPSIM_SETTLEMENT="{{ celnet_lpsim_settlement | default('2026-04-16') }}"
+export LPSIM_INCLUDE_BILLS="{{ celnet_lpsim_include_bills | default('0') }}"
+
+PIDFILE="$LPSIM_RUN_DIR/lp-sim.pid"
+
+is_running() {
+  [[ -f "$PIDFILE" ]] || return 1
+  local pid; pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+case "${1:-}" in
+  start)
+    if is_running; then echo "lp-sim already running (pid $(cat "$PIDFILE"))"; exit 0; fi
+    [[ -x "$LPSIM_RELEASE_BIN" ]] || { echo "ERROR: $LPSIM_RELEASE_BIN missing (deploy a release with celnet_lpsim_enabled)"; exit 1; }
+    LPSIM_DAEMON=1 "$LAUNCHER"
+    ;;
+  once)
+    LPSIM_ONESHOT=1 "$LAUNCHER"
+    ;;
+  stop)
+    if is_running; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; echo "Stopped."; else echo "lp-sim not running"; rm -f "$PIDFILE"; fi
+    ;;
+  status)
+    if is_running; then echo "lp-sim: RUNNING (pid $(cat "$PIDFILE"))"; echo "  log: $LPSIM_LOG"; echo "  feed: $LPSIM_LP_NAME -> book $LPSIM_BOOK ($LPSIM_MEMBERS members, ${LPSIM_INTERVAL}s)"; else echo "lp-sim: STOPPED"; exit 3; fi
+    ;;
+  tail)
+    tail -n "${2:-50}" -f "$LPSIM_LOG"
+    ;;
+  *)
+    echo "usage: lpsimctl {start|once|stop|status|tail [n]}"; exit 64
+    ;;
+esac

@@ -57,6 +57,25 @@ celnet_rust_profile: minimal
 # override with celnet_fixsim_host/port/sender/target if the GUI FIX admin changes it.
 celnet_fixsim_enabled: true
 
+# --- LP-SIM Treasury liquidity feed -----------------------------------------
+# When true, the release builds the celnet-lp-sim `lp-sim` binary, ships it as
+# <release>/bin/lp-sim, and installs the launcher + `lpsimctl` control script. Run
+# it on the host with:  lpsimctl start | once | stop | status | tail
+# LP-SIM loads the bundled US-Treasury universe (embedded in the binary), stands up
+# a named `LP-SIM` member panel, and streams the consolidated composite (best
+# bid/offer + size + confidence + contributing LP legs) for the selected bonds into
+# the named aggregated book, through the real celnet-aggregation engine.
+celnet_lpsim_enabled: true
+celnet_lpsim_lp_name: "LP-SIM"           # the LP connection name shown as the contributor
+celnet_lpsim_book: "ust-composite"       # the aggregated-book id label
+celnet_lpsim_members: 4                   # decorrelated LP member connections (>=3 for gating)
+celnet_lpsim_interval: 2                  # seconds between composite emissions
+celnet_lpsim_instruments: "all"          # all, or a CSV of ISINs/CUSIPs
+celnet_lpsim_max_instruments: 12          # cap on instruments streamed (log readability)
+celnet_lpsim_seed: 305419896              # reproducibility seed
+celnet_lpsim_settlement: "2026-04-16"    # valuation date (YYYY-MM-DD)
+celnet_lpsim_include_bills: 0             # 1 = also stream zero-coupon Bills
+
 # --- Runtime environment (templated into shared/config/celnet.env) ----------
 # The celnet-server binary reads these. WS mirror gets a FIXED port so HAProxy
 # can front it (see crates/celnet-server/src/main.rs : CELNET_WS_ADDR).
