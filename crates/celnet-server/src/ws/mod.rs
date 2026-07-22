@@ -1240,6 +1240,38 @@ async fn handle_unary(
                 generated_codec::encode_delete_book_response
             )
         }
+        "list_aggregated_books" => {
+            let req = decode!(generated_codec::decode_list_aggregated_books_request(o));
+            call!(
+                services.auth.list_aggregated_books(Request::new(req)),
+                "aggregated_books",
+                generated_codec::encode_list_aggregated_books_response
+            )
+        }
+        "create_aggregated_book" => {
+            let req = decode!(generated_codec::decode_create_aggregated_book_request(o));
+            call!(
+                services.auth.create_aggregated_book(Request::new(req)),
+                "aggregated_book_created",
+                generated_codec::encode_create_aggregated_book_response
+            )
+        }
+        "update_aggregated_book" => {
+            let req = decode!(generated_codec::decode_update_aggregated_book_request(o));
+            call!(
+                services.auth.update_aggregated_book(Request::new(req)),
+                "aggregated_book_updated",
+                generated_codec::encode_update_aggregated_book_response
+            )
+        }
+        "delete_aggregated_book" => {
+            let req = decode!(generated_codec::decode_delete_aggregated_book_request(o));
+            call!(
+                services.auth.delete_aggregated_book(Request::new(req)),
+                "aggregated_book_deleted",
+                generated_codec::encode_delete_aggregated_book_response
+            )
+        }
         "list_instruments" => {
             let req = decode!(generated_codec::decode_list_instruments_request(o));
             call!(

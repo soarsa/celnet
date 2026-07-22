@@ -31,8 +31,10 @@
 //! `Underlying`, `RateSensitivities`).
 
 use celnet_proto::{
-    BrokenDate, CcyPair, Greeks, Leg, MarketContext, MetalPair, RateSensitivities, Strategy,
-    StrategyKind, StrikeOrDelta, Tenor, Underlying,
+    AggregatedBookDesc, AggregationParamsDesc, AggregationScopeMode, BrokenDate, CcyPair,
+    CreateAggregatedBookResponse, DeleteAggregatedBookResponse, Greeks, Leg,
+    ListAggregatedBooksResponse, MarketContext, MetalPair, RateSensitivities, Strategy,
+    StrategyKind, StrikeOrDelta, Tenor, Underlying, UpdateAggregatedBookResponse,
 };
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
@@ -4153,4 +4155,194 @@ fn notification_quiet_absent_optionals_is_byte_identical() {
     assert_eq!(g.get("request_id"), Some(&Value::Null));
     assert_eq!(g.get("detail"), Some(&Value::Null));
     assert_bytes_eq("Notification(quiet)", &g, &hand::hand_notification(&n));
+}
+
+// --- FI aggregated books (AuthService aggregated-book RPCs, ADR-0022) --------
+//
+// The dual codec proven byte-identical over the admin CRUD: the nested `params`
+// message, the repeated members/instrument-id arrays, and the `scope_mode` enum.
+
+/// A fully-populated consolidation-params JSON body.
+fn agg_params_body() -> Value {
+    json!({
+        "staleness_tau_ms": 500, "max_quote_age_ms": 2500,
+        "divergence_gating": true, "min_contributors": 2, "depth_levels": 3
+    })
+}
+
+/// A fully-populated aggregated-book spec JSON body.
+fn agg_spec_body() -> Value {
+    json!({
+        "id": "g10", "name": "G10 Composite",
+        "member_connection_ids": ["lp-one", "lp-two"],
+        "scope_mode": 1, "instrument_ids": ["ust-10y", "ust-2y"],
+        "params": agg_params_body(), "enabled": true
+    })
+}
+
+#[test]
+fn list_aggregated_books_request_decode_byte_identical() {
+    for (label, body) in [
+        (
+            "full",
+            json!({ "session_token": "tok", "correlation_id": 5 }),
+        ),
+        ("minimal", json!({ "session_token": "tok" })),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("ListAggregatedBooksRequest({label})"),
+            generated::decode_list_aggregated_books_request(o),
+            hand::hand_list_aggregated_books_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn create_aggregated_book_request_decode_byte_identical() {
+    let body = json!({ "session_token": "tok", "spec": agg_spec_body(), "correlation_id": 7 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "CreateAggregatedBookRequest",
+        generated::decode_create_aggregated_book_request(o),
+        hand::hand_create_aggregated_book_request_from_json(o),
+    );
+    // Minimal spec: no params (⇒ None on both sides), all-members-quote, no ids/members.
+    let minimal = json!({ "session_token": "t", "spec": { "name": "Mini" } });
+    let mo = minimal.as_object().expect("object");
+    assert_decode_eq(
+        "CreateAggregatedBookRequest(minimal spec)",
+        generated::decode_create_aggregated_book_request(mo),
+        hand::hand_create_aggregated_book_request_from_json(mo),
+    );
+}
+
+#[test]
+fn update_aggregated_book_request_decode_byte_identical() {
+    let body = json!({
+        "session_token": "tok", "id": "g10", "spec": agg_spec_body(), "correlation_id": 8
+    });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateAggregatedBookRequest",
+        generated::decode_update_aggregated_book_request(o),
+        hand::hand_update_aggregated_book_request_from_json(o),
+    );
+}
+
+#[test]
+fn delete_aggregated_book_request_decode_byte_identical() {
+    let body = json!({ "session_token": "tok", "id": "g10", "correlation_id": 3 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "DeleteAggregatedBookRequest",
+        generated::decode_delete_aggregated_book_request(o),
+        hand::hand_delete_aggregated_book_request_from_json(o),
+    );
+}
+
+/// A fully-populated aggregated-book descriptor (explicit scope + nested params).
+fn agg_book_desc() -> AggregatedBookDesc {
+    AggregatedBookDesc {
+        id: "g10".to_owned(),
+        name: "G10 Composite".to_owned(),
+        member_connection_ids: vec!["lp-one".to_owned(), "lp-two".to_owned()],
+        scope_mode: AggregationScopeMode::Explicit as i32,
+        instrument_ids: vec!["ust-10y".to_owned()],
+        params: Some(AggregationParamsDesc {
+            staleness_tau_ms: 500,
+            max_quote_age_ms: 2500,
+            divergence_gating: true,
+            min_contributors: 2,
+            depth_levels: 3,
+        }),
+        enabled: true,
+    }
+}
+
+#[test]
+fn list_aggregated_books_response_encode_byte_identical() {
+    // Full (a rich book beside a proto3-default one) + empty are both proven.
+    let full = ListAggregatedBooksResponse {
+        books: vec![agg_book_desc(), AggregatedBookDesc::default()],
+        correlation_id: Some(42),
+    };
+    assert_bytes_eq(
+        "ListAggregatedBooksResponse(full)",
+        &generated::encode_list_aggregated_books_response(&full),
+        &hand::hand_list_aggregated_books_response_to_json(&full),
+    );
+    let empty = ListAggregatedBooksResponse {
+        books: vec![],
+        correlation_id: None,
+    };
+    let g = generated::encode_list_aggregated_books_response(&empty);
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_eq!(g.get("books"), Some(&Value::Array(vec![])));
+    assert_bytes_eq(
+        "ListAggregatedBooksResponse(empty)",
+        &g,
+        &hand::hand_list_aggregated_books_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn create_update_aggregated_book_response_encode_byte_identical() {
+    let created = CreateAggregatedBookResponse {
+        book: Some(agg_book_desc()),
+        correlation_id: Some(7),
+    };
+    assert_bytes_eq(
+        "CreateAggregatedBookResponse",
+        &generated::encode_create_aggregated_book_response(&created),
+        &hand::hand_create_aggregated_book_response_to_json(&created),
+    );
+    // Absent book + correlation_id ⇒ both `null` (singular-message + null-optional rules).
+    let absent = CreateAggregatedBookResponse {
+        book: None,
+        correlation_id: None,
+    };
+    let g = generated::encode_create_aggregated_book_response(&absent);
+    assert_eq!(g.get("book"), Some(&Value::Null));
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "CreateAggregatedBookResponse(absent)",
+        &g,
+        &hand::hand_create_aggregated_book_response_to_json(&absent),
+    );
+    let updated = UpdateAggregatedBookResponse {
+        book: Some(agg_book_desc()),
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "UpdateAggregatedBookResponse",
+        &generated::encode_update_aggregated_book_response(&updated),
+        &hand::hand_update_aggregated_book_response_to_json(&updated),
+    );
+}
+
+#[test]
+fn delete_aggregated_book_response_encode_byte_identical() {
+    for (label, resp) in [
+        (
+            "removed",
+            DeleteAggregatedBookResponse {
+                removed: true,
+                correlation_id: Some(3),
+            },
+        ),
+        (
+            "no-op",
+            DeleteAggregatedBookResponse {
+                removed: false,
+                correlation_id: None,
+            },
+        ),
+    ] {
+        assert_bytes_eq(
+            &format!("DeleteAggregatedBookResponse({label})"),
+            &generated::encode_delete_aggregated_book_response(&resp),
+            &hand::hand_delete_aggregated_book_response_to_json(&resp),
+        );
+    }
 }

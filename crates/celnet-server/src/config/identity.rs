@@ -331,6 +331,117 @@ pub struct BookDef {
     pub entity_key: u32,
 }
 
+/// The **instrument coverage** of an [`AggregatedBookDef`]: which instruments the
+/// composite is produced for.
+///
+/// serde uses the **adjacently-tagged** encoding (a `mode` discriminant plus an
+/// `instrument_ids` payload) so `identity.json` stays human-readable and round-trips
+/// exactly: `{"mode":"all_members_quote"}` or
+/// `{"mode":"explicit","instrument_ids":["ust-10y", …]}`. (The default externally-
+/// tagged form — `{"explicit":[…]}` — is terser but less self-describing in a
+/// hand-edited operator file, so the tagged form is preferred here.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", content = "instrument_ids", rename_all = "snake_case")]
+pub enum Scope {
+    /// Aggregate **every** instrument any member quotes — the composite tracks the
+    /// union of the members' live streams with no pre-declared instrument list. The
+    /// coverage is discovered from the ingest side at runtime (decision E), so an
+    /// operator need not enumerate instruments to stand a book up.
+    AllMembersQuote,
+    /// Aggregate only the explicitly listed instruments, by canonical server
+    /// [`InstrumentDef::instrument_id`](reference_data::InstrumentDef::instrument_id)
+    /// (decision D — one instrument identity across reference data, GUI, and the
+    /// composite). Every id must resolve to an existing instrument in the store's
+    /// reference-data registry (validated at load and at every admin write).
+    Explicit(Vec<String>),
+}
+
+/// The consolidation-engine tuning of an [`AggregatedBookDef`] — the knobs the
+/// `celnet-aggregation` engine consumes once a book is wired (P2). Persisted with the
+/// book so a composite reproduces byte-for-byte across restarts; each field is an
+/// operator-facing control surfaced on the Aggregation admin form.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AggregationParams {
+    /// Staleness half-life **τ** in milliseconds: a member quote's contribution
+    /// decays as `2^{-Δt/τ}` with age `Δt`, so a lagging feed fades smoothly rather
+    /// than dropping in a step (the engine's exponential staleness weight). Must be
+    /// `> 0` (a zero half-life is undefined — validated at load and at every write).
+    pub staleness_tau_ms: u64,
+    /// Hard maximum quote age in milliseconds: a member quote older than this is
+    /// **fully excluded** from the composite (the engine's hard staleness cutoff),
+    /// independent of the soft `τ` decay above.
+    pub max_quote_age_ms: u64,
+    /// Whether MAD-based **divergence gating** is enabled: an outlier member whose
+    /// mid diverges beyond the median-absolute-deviation band is dropped before the
+    /// composite is formed, so one mispriced feed cannot skew the book.
+    pub divergence_gating: bool,
+    /// Minimum number of surviving member contributors required to publish a
+    /// composite — below this the book produces no price (avoids a "composite" that
+    /// is really a single feed). Must be `>= 1` (validated at load and at every write).
+    pub min_contributors: u32,
+    /// How many stacked depth levels the composite exposes: `1` = top-of-book only,
+    /// `n` = the best `n` price levels of consolidated depth.
+    pub depth_levels: u32,
+}
+
+impl Default for AggregationParams {
+    /// Sane consolidation defaults for a freshly created book: a 500 ms staleness
+    /// half-life, a 2500 ms hard age cutoff, divergence gating on, a single required
+    /// contributor, and top-of-book depth. An operator narrows/widens these on the
+    /// Aggregation admin form.
+    fn default() -> Self {
+        Self {
+            staleness_tau_ms: 500,
+            max_quote_age_ms: 2500,
+            divergence_gating: true,
+            min_contributors: 1,
+            depth_levels: 1,
+        }
+    }
+}
+
+/// One persisted **aggregated book**: an operator-defined, named set of inbound
+/// liquidity members whose per-instrument top-of-book is consolidated into one
+/// composite price (best bid/offer + size + depth), managed from the Administration
+/// surface (ADR-0022).
+///
+/// Unlike [`BookDef`] (a numeric netting/accounting partition) and [`DeskDef`] (a
+/// trader grouping), an aggregated book is **global and not desk-owned** (decision
+/// C): any authenticated user may view its composite and — subject to their own FI
+/// action capabilities — quote/book off it; only an admin may define or edit one. It
+/// therefore carries no `desk_id`/`entity_key` ownership key.
+///
+/// Members are recorded as **transport-agnostic connection ids** (decision A), not a
+/// FIX-specific type: a member is any inbound liquidity connection (FIX RFS today, any
+/// other API adapter tomorrow) behind the `celnet-aggregation::VenueFeed` seam.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AggregatedBookDef {
+    /// Stable identifier (the store/API key). Never reused; minted from the name via
+    /// [`mint_aggregated_book_id`].
+    pub id: String,
+    /// Human-friendly book label, e.g. `G10 Rates Composite` — unique across the store
+    /// (case-insensitive), validated at load and at every admin write.
+    pub name: String,
+    /// The inbound liquidity members whose quotes feed the composite, by **connection
+    /// id** (decision A — transport-agnostic; a FIX RFS connection today, any other API
+    /// adapter tomorrow). Order-preserving and unique **within this book** (duplicate
+    /// member ids are rejected). These ids reference the **separate** fix/connection
+    /// registry (`super::fix_connections`), which is **not** part of [`IdentityStore`],
+    /// so cross-store resolution — confirming each id names a live connection — is a
+    /// service-layer concern (task T1.3) and is deliberately **not** checked here.
+    pub member_connection_ids: Vec<String>,
+    /// Which instruments the composite is produced for — every member's instruments
+    /// ([`Scope::AllMembersQuote`]) or an explicit reference-data id list
+    /// ([`Scope::Explicit`], each id resolving to an [`InstrumentDef`]).
+    pub instrument_scope: Scope,
+    /// The consolidation-engine tuning (staleness, gating, depth, quorum) applied when
+    /// the book is wired to the `celnet-aggregation` engine (P2).
+    pub params: AggregationParams,
+    /// Whether the book is active. A disabled book is persisted and editable but stands
+    /// up no engine and publishes no composite — the operator's on/off switch.
+    pub enabled: bool,
+}
+
 /// The persisted document: the users and desks of the edge.
 ///
 /// `Eq` is intentionally **not** derived: the instrument reference-data registry
@@ -376,6 +487,13 @@ pub struct IdentityStore {
     /// `instruments`) loads unchanged.
     #[serde(default)]
     pub instruments: Vec<InstrumentDef>,
+    /// The operator-defined **aggregated books**: named sets of inbound liquidity
+    /// members whose per-instrument top-of-book is consolidated into one composite
+    /// price (ADR-0022). Global (not desk-owned) and admin-managed. An additive
+    /// serde-default field (no `schema_version`), so an existing `identity.json` (which
+    /// carries no `aggregated_books`) loads unchanged.
+    #[serde(default)]
+    pub aggregated_books: Vec<AggregatedBookDef>,
 }
 
 impl IdentityStore {
@@ -414,6 +532,13 @@ impl IdentityStore {
                 // ids, an unknown convention label, or a missing required field) is
                 // rejected at load too, so a ref always resolves to a sound definition.
                 validate_instruments(&store.instruments)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                // A corrupt aggregated-book set (duplicate/empty name, duplicate member
+                // id within a book, an explicit-scope instrument id that dangles, or an
+                // out-of-range param) is rejected at load too, so a composite is only
+                // ever stood up from a sound definition.
+                store
+                    .validate_aggregated_books()
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
                 Ok(store)
             }
@@ -490,6 +615,83 @@ impl IdentityStore {
                     "book {:?} (key {}) references unknown entity_key {}",
                     b.name, b.key, b.entity_key
                 ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate the aggregated-book set: names are non-empty and unique
+    /// case-insensitively across the set, and every book satisfies its own invariants
+    /// ([`check_aggregated_book`](Self::check_aggregated_book) — no duplicate member ids,
+    /// in-range params, and every explicit-scope instrument id resolving to an
+    /// [`InstrumentDef`]). Called at [`load`](IdentityStore::load) so a corrupt set
+    /// fails loudly rather than standing up a composite from an unsound definition.
+    ///
+    /// Member connection ids are **not** resolved here: they reference the separate
+    /// fix/connection registry (not part of this document), so cross-store resolution
+    /// is a service-layer concern (task T1.3).
+    ///
+    /// # Errors
+    /// The first empty/duplicate name, or the first book failing its invariants.
+    fn validate_aggregated_books(&self) -> Result<(), String> {
+        let mut names = std::collections::HashSet::new();
+        for b in &self.aggregated_books {
+            if b.name.trim().is_empty() {
+                return Err(format!("aggregated book {:?} has an empty name", b.id));
+            }
+            if !names.insert(b.name.to_ascii_lowercase()) {
+                return Err(format!("duplicate aggregated book name {:?}", b.name));
+            }
+            self.check_aggregated_book(b)?;
+        }
+        Ok(())
+    }
+
+    /// Validate a single aggregated book's **document-resolvable** invariants, used by
+    /// both load-time validation and every admin write (so a bad definition is rejected
+    /// identically whichever path creates it):
+    ///
+    /// * no duplicate `member_connection_ids` within the book;
+    /// * `params.min_contributors >= 1` and `params.staleness_tau_ms > 0`;
+    /// * every [`Scope::Explicit`] instrument id resolves to an existing
+    ///   [`InstrumentDef`] in [`instruments`](Self::instruments).
+    ///
+    /// Name uniqueness is **not** checked here (it needs the surrounding set — the
+    /// callers layer it on); member connection ids are **not** resolved here (they
+    /// live in the separate connection registry — a service-layer concern, T1.3).
+    ///
+    /// # Errors
+    /// The first duplicate member id, out-of-range param, or dangling instrument id.
+    fn check_aggregated_book(&self, def: &AggregatedBookDef) -> Result<(), String> {
+        let mut seen_members = std::collections::HashSet::new();
+        for member in &def.member_connection_ids {
+            if !seen_members.insert(member) {
+                return Err(format!(
+                    "aggregated book {:?} lists member {:?} more than once",
+                    def.name, member
+                ));
+            }
+        }
+        if def.params.min_contributors < 1 {
+            return Err(format!(
+                "aggregated book {:?} requires min_contributors >= 1",
+                def.name
+            ));
+        }
+        if def.params.staleness_tau_ms == 0 {
+            return Err(format!(
+                "aggregated book {:?} requires staleness_tau_ms > 0",
+                def.name
+            ));
+        }
+        if let Scope::Explicit(ids) = &def.instrument_scope {
+            for id in ids {
+                if self.instrument_by_id(id).is_none() {
+                    return Err(format!(
+                        "aggregated book {:?} scopes unknown instrument_id {:?}",
+                        def.name, id
+                    ));
+                }
             }
         }
         Ok(())
@@ -711,6 +913,117 @@ impl IdentityStore {
     pub fn desk(&self, id: &str) -> Option<&DeskDef> {
         self.desks.iter().find(|d| d.id == id)
     }
+
+    /// Borrow an aggregated book by id.
+    #[must_use]
+    pub fn aggregated_book(&self, id: &str) -> Option<&AggregatedBookDef> {
+        self.aggregated_books.iter().find(|b| b.id == id)
+    }
+
+    /// Create an aggregated book from operator input: trims and uniqueness-checks the
+    /// name, mints a stable id, validates the definition's document-resolvable
+    /// invariants ([`check_aggregated_book`](Self::check_aggregated_book)), appends it,
+    /// and returns the created definition. Mirrors the inline create-validation the
+    /// entity/book admin RPCs run, so the config layer rejects a bad book identically
+    /// whether it arrives at load or over the wire (T1.3 calls this).
+    ///
+    /// Note member connection ids are **not** resolved here (they live in the separate
+    /// connection registry — a service-layer concern).
+    ///
+    /// # Errors
+    /// An empty or (case-insensitively) duplicate name, or a definition failing its
+    /// invariants (duplicate member id, out-of-range param, dangling instrument id).
+    pub fn create_aggregated_book(
+        &mut self,
+        name: impl Into<String>,
+        member_connection_ids: Vec<String>,
+        instrument_scope: Scope,
+        params: AggregationParams,
+        enabled: bool,
+    ) -> Result<AggregatedBookDef, String> {
+        let name = name.into().trim().to_string();
+        if name.is_empty() {
+            return Err("aggregated book name is required".to_string());
+        }
+        if self
+            .aggregated_books
+            .iter()
+            .any(|b| b.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(format!("an aggregated book named {name:?} already exists"));
+        }
+        let def = AggregatedBookDef {
+            id: mint_aggregated_book_id(&name, &self.aggregated_books),
+            name,
+            member_connection_ids,
+            instrument_scope,
+            params,
+            enabled,
+        };
+        self.check_aggregated_book(&def)?;
+        self.aggregated_books.push(def.clone());
+        Ok(def)
+    }
+
+    /// Update an existing aggregated book in place (id preserved): trims and
+    /// uniqueness-checks the name against **every other** book (the edited one may keep
+    /// its own name), validates the new definition's invariants, replaces the slot, and
+    /// returns the updated definition.
+    ///
+    /// # Errors
+    /// No book with `id`; an empty or duplicate name; or a definition failing its
+    /// invariants.
+    pub fn update_aggregated_book(
+        &mut self,
+        id: &str,
+        name: impl Into<String>,
+        member_connection_ids: Vec<String>,
+        instrument_scope: Scope,
+        params: AggregationParams,
+        enabled: bool,
+    ) -> Result<AggregatedBookDef, String> {
+        if self.aggregated_book(id).is_none() {
+            return Err(format!("no aggregated book with id {id:?}"));
+        }
+        let name = name.into().trim().to_string();
+        if name.is_empty() {
+            return Err("aggregated book name is required".to_string());
+        }
+        if self
+            .aggregated_books
+            .iter()
+            .any(|b| b.id != id && b.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(format!("an aggregated book named {name:?} already exists"));
+        }
+        let def = AggregatedBookDef {
+            id: id.to_string(),
+            name,
+            member_connection_ids,
+            instrument_scope,
+            params,
+            enabled,
+        };
+        self.check_aggregated_book(&def)?;
+        if let Some(slot) = self.aggregated_books.iter_mut().find(|b| b.id == id) {
+            *slot = def.clone();
+        }
+        Ok(def)
+    }
+
+    /// Delete an aggregated book by id, reporting whether one was removed (a missing id
+    /// is a no-op that reports `false`, mirroring the entity/book delete RPCs). An
+    /// aggregated book is global and owns no downstream rows, so — unlike an entity —
+    /// there is no referential-integrity guard to run first.
+    ///
+    /// # Errors
+    /// Reserved for signature consistency with the other CRUD helpers; deletion has no
+    /// document-resolvable failure mode, so this is always `Ok`.
+    pub fn delete_aggregated_book(&mut self, id: &str) -> Result<bool, String> {
+        let before = self.aggregated_books.len();
+        self.aggregated_books.retain(|b| b.id != id);
+        Ok(self.aggregated_books.len() != before)
+    }
 }
 
 /// Argon2id-hash a plaintext password into a self-describing PHC string (salt and
@@ -763,6 +1076,20 @@ pub fn mint_desk_id(name: &str, existing: &[DeskDef]) -> String {
         base
     };
     unique_id(&base, |cand| existing.iter().any(|d| d.id == cand))
+}
+
+/// Mint a stable, unique, URL-safe id for a new aggregated book from its name,
+/// disambiguating against the existing set with a numeric suffix (mirrors
+/// [`mint_desk_id`]).
+#[must_use]
+pub fn mint_aggregated_book_id(name: &str, existing: &[AggregatedBookDef]) -> String {
+    let base = slugify(name);
+    let base = if base.is_empty() {
+        "aggregated-book".to_string()
+    } else {
+        base
+    };
+    unique_id(&base, |cand| existing.iter().any(|b| b.id == cand))
 }
 
 /// Lowercase, replace any run of non-alphanumeric chars with a single `-`, and
@@ -1184,5 +1511,273 @@ mod tests {
         let err = IdentityStore::load(&path).expect_err("unknown label must be rejected");
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Create an aggregated book, read it back by id, then delete it. The default
+    /// `all_members_quote` scope needs no reference data.
+    #[test]
+    fn aggregated_book_create_get_and_delete() {
+        let mut store = IdentityStore::default();
+        let def = store
+            .create_aggregated_book(
+                "G10 Rates Composite",
+                vec!["fix-lp-a".into(), "fix-lp-b".into()],
+                Scope::AllMembersQuote,
+                AggregationParams::default(),
+                true,
+            )
+            .expect("valid book creates");
+        assert_eq!(def.id, "g10-rates-composite");
+        assert_eq!(store.aggregated_book(&def.id), Some(&def));
+        assert!(def.enabled);
+        assert_eq!(def.params, AggregationParams::default());
+        // Delete reports removal; a second delete is a no-op.
+        assert!(store.delete_aggregated_book(&def.id).unwrap());
+        assert!(store.aggregated_book(&def.id).is_none());
+        assert!(!store.delete_aggregated_book(&def.id).unwrap());
+    }
+
+    /// Renaming keeps the id stable and rejects a name that collides with another book.
+    #[test]
+    fn aggregated_book_rename_keeps_id() {
+        let mut store = IdentityStore::default();
+        let a = store
+            .create_aggregated_book(
+                "Alpha",
+                vec![],
+                Scope::AllMembersQuote,
+                AggregationParams::default(),
+                true,
+            )
+            .unwrap();
+        let updated = store
+            .update_aggregated_book(
+                &a.id,
+                "Alpha Prime",
+                vec!["lp-1".into()],
+                Scope::AllMembersQuote,
+                AggregationParams::default(),
+                false,
+            )
+            .expect("rename succeeds");
+        assert_eq!(updated.id, a.id, "id is preserved across a rename");
+        assert_eq!(store.aggregated_book(&a.id).unwrap().name, "Alpha Prime");
+        assert!(!store.aggregated_book(&a.id).unwrap().enabled);
+    }
+
+    /// A name that duplicates an existing book (case-insensitively) is rejected on both
+    /// create and update.
+    #[test]
+    fn aggregated_book_duplicate_name_rejected() {
+        let mut store = IdentityStore::default();
+        store
+            .create_aggregated_book(
+                "Composite One",
+                vec![],
+                Scope::AllMembersQuote,
+                AggregationParams::default(),
+                true,
+            )
+            .unwrap();
+        let err = store
+            .create_aggregated_book(
+                "  composite one  ",
+                vec![],
+                Scope::AllMembersQuote,
+                AggregationParams::default(),
+                true,
+            )
+            .expect_err("case-insensitive duplicate name must be rejected");
+        assert!(err.contains("already exists"));
+        // The edited book may keep its own name, but not take another's.
+        let two = store
+            .create_aggregated_book(
+                "Composite Two",
+                vec![],
+                Scope::AllMembersQuote,
+                AggregationParams::default(),
+                true,
+            )
+            .unwrap();
+        let err = store
+            .update_aggregated_book(
+                &two.id,
+                "COMPOSITE ONE",
+                vec![],
+                Scope::AllMembersQuote,
+                AggregationParams::default(),
+                true,
+            )
+            .expect_err("rename onto another book's name must be rejected");
+        assert!(err.contains("already exists"));
+    }
+
+    /// An explicit scope with an instrument id that does not resolve to an
+    /// [`InstrumentDef`] is rejected; a valid seeded id is accepted.
+    #[test]
+    fn aggregated_book_explicit_unknown_instrument_rejected() {
+        let mut store = IdentityStore::default();
+        store.ensure_seed_instruments();
+        let known = store.instruments[0].instrument_id.clone();
+
+        let err = store
+            .create_aggregated_book(
+                "Explicit Bad",
+                vec![],
+                Scope::Explicit(vec![known.clone(), "no-such-instrument".into()]),
+                AggregationParams::default(),
+                true,
+            )
+            .expect_err("an unknown explicit instrument id must be rejected");
+        assert!(err.contains("unknown instrument_id"));
+
+        // A scope of only known ids is accepted.
+        store
+            .create_aggregated_book(
+                "Explicit Good",
+                vec![],
+                Scope::Explicit(vec![known]),
+                AggregationParams::default(),
+                true,
+            )
+            .expect("a resolvable explicit scope is accepted");
+    }
+
+    /// A book listing the same member connection id twice is rejected.
+    #[test]
+    fn aggregated_book_duplicate_member_rejected() {
+        let mut store = IdentityStore::default();
+        let err = store
+            .create_aggregated_book(
+                "Dup Members",
+                vec!["lp-x".into(), "lp-x".into()],
+                Scope::AllMembersQuote,
+                AggregationParams::default(),
+                true,
+            )
+            .expect_err("a duplicate member id must be rejected");
+        assert!(err.contains("more than once"));
+    }
+
+    /// Out-of-range params are rejected: `min_contributors` must be `>= 1` and
+    /// `staleness_tau_ms` must be `> 0`.
+    #[test]
+    fn aggregated_book_out_of_range_params_rejected() {
+        let mut store = IdentityStore::default();
+        let zero_contrib = AggregationParams {
+            min_contributors: 0,
+            ..AggregationParams::default()
+        };
+        let err = store
+            .create_aggregated_book(
+                "Zero Quorum",
+                vec![],
+                Scope::AllMembersQuote,
+                zero_contrib,
+                true,
+            )
+            .expect_err("min_contributors = 0 must be rejected");
+        assert!(err.contains("min_contributors >= 1"));
+
+        let zero_tau = AggregationParams {
+            staleness_tau_ms: 0,
+            ..AggregationParams::default()
+        };
+        let err = store
+            .create_aggregated_book("Zero Tau", vec![], Scope::AllMembersQuote, zero_tau, true)
+            .expect_err("staleness_tau_ms = 0 must be rejected");
+        assert!(err.contains("staleness_tau_ms > 0"));
+    }
+
+    /// A full `identity.json` carrying an aggregated book (members + explicit scope +
+    /// tuned params) survives a save/reload byte-for-byte (the load path re-validates).
+    #[test]
+    fn aggregated_book_json_round_trips() {
+        let mut store = IdentityStore::default();
+        store.ensure_seed_admin().unwrap();
+        store.ensure_seed_instruments();
+        let known = store.instruments[0].instrument_id.clone();
+        store
+            .create_aggregated_book(
+                "Round Trip Composite",
+                vec!["fix-lp-a".into(), "api-lp-b".into()],
+                Scope::Explicit(vec![known]),
+                AggregationParams {
+                    staleness_tau_ms: 750,
+                    max_quote_age_ms: 3000,
+                    divergence_gating: false,
+                    min_contributors: 2,
+                    depth_levels: 5,
+                },
+                true,
+            )
+            .unwrap();
+
+        let path = std::env::temp_dir().join(format!(
+            "celnet-identity-aggbook-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        store.save(&path).unwrap();
+        let reloaded = IdentityStore::load(&path).unwrap();
+        assert_eq!(store, reloaded);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An `identity.json` with no `aggregated_books` key loads (serde-default empty vec)
+    /// — existing files behave unchanged.
+    #[test]
+    fn load_without_aggregated_books_is_empty() {
+        let json = r#"{ "users": [], "desks": [] }"#;
+        let path = std::env::temp_dir().join("celnet-identity-noaggbook.json");
+        std::fs::write(&path, json).unwrap();
+        let store = IdentityStore::load(&path).unwrap();
+        assert!(store.aggregated_books.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An identity file carrying an aggregated book with a dangling explicit instrument
+    /// id is rejected at load (`InvalidData`), exactly like a bad registry.
+    #[test]
+    fn load_rejects_dangling_aggregated_book_instrument() {
+        let json = r#"{
+            "users": [], "desks": [],
+            "aggregated_books": [{
+                "id": "c1", "name": "C1", "member_connection_ids": [],
+                "instrument_scope": {"mode": "explicit", "instrument_ids": ["ghost"]},
+                "params": {"staleness_tau_ms": 500, "max_quote_age_ms": 2500,
+                           "divergence_gating": true, "min_contributors": 1, "depth_levels": 1},
+                "enabled": true
+            }]
+        }"#;
+        let path = std::env::temp_dir().join("celnet-identity-aggghost.json");
+        std::fs::write(&path, json).unwrap();
+        let err = IdentityStore::load(&path).expect_err("dangling instrument must be rejected");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The adjacently-tagged `Scope` encoding round-trips human-readably: the unit
+    /// variant is `{"mode":"all_members_quote"}` and the payload variant carries its
+    /// `instrument_ids` list.
+    #[test]
+    fn scope_tagged_encoding_round_trips() {
+        let all = serde_json::to_string(&Scope::AllMembersQuote).unwrap();
+        assert_eq!(all, r#"{"mode":"all_members_quote"}"#);
+        let explicit = Scope::Explicit(vec!["a".into(), "b".into()]);
+        let json = serde_json::to_string(&explicit).unwrap();
+        assert_eq!(json, r#"{"mode":"explicit","instrument_ids":["a","b"]}"#);
+        assert_eq!(serde_json::from_str::<Scope>(&json).unwrap(), explicit);
+
+        // `mint_aggregated_book_id` disambiguates a colliding slug.
+        let existing = vec![AggregatedBookDef {
+            id: "alpha".into(),
+            name: "Alpha".into(),
+            member_connection_ids: vec![],
+            instrument_scope: Scope::AllMembersQuote,
+            params: AggregationParams::default(),
+            enabled: true,
+        }];
+        assert_eq!(mint_aggregated_book_id("Alpha", &existing), "alpha-2");
     }
 }

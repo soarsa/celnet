@@ -116,6 +116,14 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "CreateBookResponse",
     "UpdateBookResponse",
     "DeleteBookResponse",
+    // The AuthService aggregated-book reply envelopes (ADR-0022): each `json!({ .. })`
+    // hand encoder emits the `Option<u64>` `correlation_id` as JSON `null` when absent;
+    // the `book` singular-message payload already renders `null`-when-absent via the
+    // generic singular-message rule and needs no entry.
+    "ListAggregatedBooksResponse",
+    "CreateAggregatedBookResponse",
+    "UpdateAggregatedBookResponse",
+    "DeleteAggregatedBookResponse",
     "ListInstrumentsResponse",
     "GetInstrumentResponse",
     "CreateInstrumentResponse",

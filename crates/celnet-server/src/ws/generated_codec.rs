@@ -91,23 +91,27 @@ use celnet_proto::{
 // `BuildCurve` curve-calibration verb. This is the final family; after it every WS
 // unary verb runs on the descriptor-driven generated codec.
 use celnet_proto::{
-    BondDef, BookDesc, BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
-    CreateBookRequest, CreateBookResponse, CreateDeskRequest, CreateDeskResponse,
-    CreateEntityRequest, CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse,
-    CreateUserRequest, CreateUserResponse, DatePillar, DeleteBookRequest, DeleteBookResponse,
-    DeleteDeskRequest, DeleteDeskResponse, DeleteEntityRequest, DeleteEntityResponse,
-    DeleteInstrumentRequest, DeleteInstrumentResponse, DeleteUserRequest, DeleteUserResponse,
-    DepositDef, DeskDesc, EntityDesc, ExternalId, FraDef, GetInstrumentRequest,
-    GetInstrumentResponse, GetRoleCapabilitiesRequest, GetRoleCapabilitiesResponse,
-    GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, InstrumentDefDesc, InstrumentQuote,
+    AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, BondDef, BookDesc,
+    BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
+    CreateAggregatedBookRequest, CreateAggregatedBookResponse, CreateBookRequest,
+    CreateBookResponse, CreateDeskRequest, CreateDeskResponse, CreateEntityRequest,
+    CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse, CreateUserRequest,
+    CreateUserResponse, DatePillar, DeleteAggregatedBookRequest, DeleteAggregatedBookResponse,
+    DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest, DeleteDeskResponse,
+    DeleteEntityRequest, DeleteEntityResponse, DeleteInstrumentRequest, DeleteInstrumentResponse,
+    DeleteUserRequest, DeleteUserResponse, DepositDef, DeskDesc, EntityDesc, ExternalId, FraDef,
+    GetInstrumentRequest, GetInstrumentResponse, GetRoleCapabilitiesRequest,
+    GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest, GetUserCapabilitiesResponse,
+    InstrumentDefDesc, InstrumentQuote, ListAggregatedBooksRequest, ListAggregatedBooksResponse,
     ListBooksRequest, ListBooksResponse, ListDesksRequest, ListDesksResponse, ListEntitiesRequest,
     ListEntitiesResponse, ListInstrumentsRequest, ListInstrumentsResponse, ListUsersRequest,
     ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, OisDef,
     ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
     SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
-    StirFutureDef, UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse,
-    UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse,
-    UpdateUserRequest, UpdateUserResponse, UserDesc, VanillaIrsDef,
+    StirFutureDef, UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookRequest,
+    UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest,
+    UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest,
+    UpdateUserResponse, UserDesc, VanillaIrsDef,
     instrument_def_desc::Definition as InstrumentDefinition,
 };
 use serde_json::{Map, Value, json};
@@ -5657,6 +5661,90 @@ impl WireBuilder for DeleteBookRequest {
     }
 }
 
+impl WireBuilder for AggregationParamsDesc {
+    const MESSAGE: &'static str = "AggregationParamsDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "staleness_tau_ms" => self.staleness_tau_ms = req_u64(value, "staleness_tau_ms")?,
+            "max_quote_age_ms" => self.max_quote_age_ms = req_u64(value, "max_quote_age_ms")?,
+            "divergence_gating" => self.divergence_gating = bool_or_false(value),
+            "min_contributors" => self.min_contributors = req_u32(value, "min_contributors")?,
+            "depth_levels" => self.depth_levels = req_u32(value, "depth_levels")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for AggregatedBookSpec {
+    const MESSAGE: &'static str = "AggregatedBookSpec";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "id" => self.id = string_or_empty(value),
+            "name" => self.name = req_string(value, "name")?,
+            "member_connection_ids" => self.member_connection_ids = string_vec(value),
+            "scope_mode" => self.scope_mode = enum_or_zero(value),
+            "instrument_ids" => self.instrument_ids = string_vec(value),
+            "params" => self.params = opt_msg::<AggregationParamsDesc>(value, "params")?,
+            "enabled" => self.enabled = bool_or_false(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListAggregatedBooksRequest {
+    const MESSAGE: &'static str = "ListAggregatedBooksRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CreateAggregatedBookRequest {
+    const MESSAGE: &'static str = "CreateAggregatedBookRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "spec" => self.spec = Some(req_msg::<AggregatedBookSpec>(value, "spec")?),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateAggregatedBookRequest {
+    const MESSAGE: &'static str = "UpdateAggregatedBookRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "spec" => self.spec = Some(req_msg::<AggregatedBookSpec>(value, "spec")?),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeleteAggregatedBookRequest {
+    const MESSAGE: &'static str = "DeleteAggregatedBookRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for ListInstrumentsRequest {
     const MESSAGE: &'static str = "ListInstrumentsRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -5943,6 +6031,48 @@ pub fn decode_update_book_request(o: &Map<String, Value>) -> DResult<UpdateBookR
 /// A missing `session_token`, a missing/out-of-range `key`, as a [`CodecError`].
 pub fn decode_delete_book_request(o: &Map<String, Value>) -> DResult<DeleteBookRequest> {
     decode(DeleteBookRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListAggregatedBooksRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_aggregated_books_request(
+    o: &Map<String, Value>,
+) -> DResult<ListAggregatedBooksRequest> {
+    decode(ListAggregatedBooksRequest::MESSAGE, o)
+}
+
+/// Decode a [`CreateAggregatedBookRequest`] envelope — the required `spec` nests the
+/// [`AggregatedBookSpec`] body (its repeated members/ids, the `scope_mode` enum and the
+/// nested `params`).
+///
+/// # Errors
+/// A missing `session_token`, a missing/malformed `spec`, as a [`CodecError`].
+pub fn decode_create_aggregated_book_request(
+    o: &Map<String, Value>,
+) -> DResult<CreateAggregatedBookRequest> {
+    decode(CreateAggregatedBookRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateAggregatedBookRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`id`, a missing/malformed `spec`, as a [`CodecError`].
+pub fn decode_update_aggregated_book_request(
+    o: &Map<String, Value>,
+) -> DResult<UpdateAggregatedBookRequest> {
+    decode(UpdateAggregatedBookRequest::MESSAGE, o)
+}
+
+/// Decode a [`DeleteAggregatedBookRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`id`, as a [`CodecError`].
+pub fn decode_delete_aggregated_book_request(
+    o: &Map<String, Value>,
+) -> DResult<DeleteAggregatedBookRequest> {
+    decode(DeleteAggregatedBookRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListInstrumentsRequest`] envelope — fully generic.
@@ -6529,6 +6659,76 @@ impl WireAdapter for DeleteBookResponse {
     }
 }
 
+impl WireAdapter for AggregationParamsDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "staleness_tau_ms" => Some(WireVal::U64(self.staleness_tau_ms)),
+            "max_quote_age_ms" => Some(WireVal::U64(self.max_quote_age_ms)),
+            "divergence_gating" => Some(WireVal::Bool(self.divergence_gating)),
+            "min_contributors" => Some(WireVal::U64(u64::from(self.min_contributors))),
+            "depth_levels" => Some(WireVal::U64(u64::from(self.depth_levels))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AggregatedBookDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "id" => Some(WireVal::Str(&self.id)),
+            "name" => Some(WireVal::Str(&self.name)),
+            "member_connection_ids" => Some(WireVal::RepeatedStr(&self.member_connection_ids)),
+            "scope_mode" => Some(WireVal::Enum(self.scope_mode)),
+            "instrument_ids" => Some(WireVal::RepeatedStr(&self.instrument_ids)),
+            "params" => self.params.as_ref().map(|p| WireVal::Msg(p)),
+            "enabled" => Some(WireVal::Bool(self.enabled)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListAggregatedBooksResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "books" => Some(WireVal::RepeatedMsg(
+                self.books.iter().map(|b| b as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CreateAggregatedBookResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book" => self.book.as_ref().map(|b| WireVal::Msg(b)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateAggregatedBookResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book" => self.book.as_ref().map(|b| WireVal::Msg(b)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeleteAggregatedBookResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "removed" => Some(WireVal::Bool(self.removed)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for ListInstrumentsResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -6722,6 +6922,30 @@ pub fn encode_update_book_response(r: &UpdateBookResponse) -> Value {
 #[must_use]
 pub fn encode_delete_book_response(r: &DeleteBookResponse) -> Value {
     encode("DeleteBookResponse", r)
+}
+
+/// Encode a [`ListAggregatedBooksResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_aggregated_books_response(r: &ListAggregatedBooksResponse) -> Value {
+    encode("ListAggregatedBooksResponse", r)
+}
+
+/// Encode a [`CreateAggregatedBookResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_create_aggregated_book_response(r: &CreateAggregatedBookResponse) -> Value {
+    encode("CreateAggregatedBookResponse", r)
+}
+
+/// Encode an [`UpdateAggregatedBookResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_aggregated_book_response(r: &UpdateAggregatedBookResponse) -> Value {
+    encode("UpdateAggregatedBookResponse", r)
+}
+
+/// Encode a [`DeleteAggregatedBookResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_delete_aggregated_book_response(r: &DeleteAggregatedBookResponse) -> Value {
+    encode("DeleteAggregatedBookResponse", r)
 }
 
 /// Encode a [`ListInstrumentsResponse`] to its WS JSON — descriptor-driven.

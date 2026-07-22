@@ -34,19 +34,23 @@ use std::sync::{Arc, Mutex, OnceLock};
 use celnet_entitlements::{Action, AssetClass, Capability};
 use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
-    BookDesc, BrokenDate, BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
-    CreateBookRequest, CreateBookResponse, CreateDeskRequest, CreateDeskResponse,
-    CreateEntityRequest, CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse,
-    CreateUserRequest, CreateUserResponse, DeleteBookRequest, DeleteBookResponse,
-    DeleteDeskRequest, DeleteDeskResponse, DeleteEntityRequest, DeleteEntityResponse,
-    DeleteInstrumentRequest, DeleteInstrumentResponse, DeleteUserRequest, DeleteUserResponse,
-    DeskDesc, EntityDesc, GetInstrumentRequest, GetInstrumentResponse, GetRoleCapabilitiesRequest,
-    GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest, GetUserCapabilitiesResponse,
-    ListBooksRequest, ListBooksResponse, ListDesksRequest, ListDesksResponse, ListEntitiesRequest,
-    ListEntitiesResponse, ListInstrumentsRequest, ListInstrumentsResponse, ListUsersRequest,
-    ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse,
-    ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
-    SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
+    AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, AggregationScopeMode, BookDesc,
+    BrokenDate, BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
+    CreateAggregatedBookRequest, CreateAggregatedBookResponse, CreateBookRequest,
+    CreateBookResponse, CreateDeskRequest, CreateDeskResponse, CreateEntityRequest,
+    CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse, CreateUserRequest,
+    CreateUserResponse, DeleteAggregatedBookRequest, DeleteAggregatedBookResponse,
+    DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest, DeleteDeskResponse,
+    DeleteEntityRequest, DeleteEntityResponse, DeleteInstrumentRequest, DeleteInstrumentResponse,
+    DeleteUserRequest, DeleteUserResponse, DeskDesc, EntityDesc, GetInstrumentRequest,
+    GetInstrumentResponse, GetRoleCapabilitiesRequest, GetRoleCapabilitiesResponse,
+    GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, ListAggregatedBooksRequest,
+    ListAggregatedBooksResponse, ListBooksRequest, ListBooksResponse, ListDesksRequest,
+    ListDesksResponse, ListEntitiesRequest, ListEntitiesResponse, ListInstrumentsRequest,
+    ListInstrumentsResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
+    LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
+    SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
+    SetUserCapabilitiesResponse, UpdateAggregatedBookRequest, UpdateAggregatedBookResponse,
     UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse,
     UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse,
     UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
@@ -59,8 +63,9 @@ use crate::config::curve_calibration::{
     CurveCalibrationError, calibration_set, date_pillar_instrument,
 };
 use crate::config::identity::{
-    BookDef, DeskDef, EntityDef, IdentityStore, PermissionGrant, Role, UserDef, hash_password,
-    mint_desk_id, mint_user_id, verify_password,
+    AggregatedBookDef, AggregationParams, BookDef, DeskDef, EntityDef, IdentityStore,
+    PermissionGrant, Role, Scope, UserDef, hash_password, mint_desk_id, mint_user_id,
+    verify_password,
 };
 use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
@@ -1215,6 +1220,115 @@ impl AuthService for AuthEdge {
         }))
     }
 
+    // --- FI aggregated books (ADR-0022) ----------------------------------------
+
+    async fn list_aggregated_books(
+        &self,
+        request: Request<ListAggregatedBooksRequest>,
+    ) -> Result<Response<ListAggregatedBooksResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Read-only roster: a book is global (ADR-0022 decision C), so any
+        // authenticated caller may read its composite — NOT admin-gated.
+        self.authenticate(&req.session_token)?;
+        let books = self
+            .lock()
+            .aggregated_books
+            .iter()
+            .map(aggregated_book_to_wire)
+            .collect();
+        Ok(Response::new(ListAggregatedBooksResponse {
+            books,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn create_aggregated_book(
+        &self,
+        request: Request<CreateAggregatedBookRequest>,
+    ) -> Result<Response<CreateAggregatedBookResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let spec = req
+            .spec
+            .ok_or_else(|| Status::invalid_argument("aggregated book spec is required"))?;
+        let (name, members, scope, params, enabled) = spec_parts(spec);
+
+        // The store validates the definition's document-resolvable invariants (unique
+        // name, no duplicate members, in-range params, explicit-scope instrument ids
+        // resolving) inside `create_aggregated_book`, so disk and the wire reject a bad
+        // book identically. Build on a clone and commit only after the atomic persist.
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        let def = next
+            .create_aggregated_book(name, members, scope, params, enabled)
+            .map_err(aggregated_book_status)?;
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(CreateAggregatedBookResponse {
+            book: Some(aggregated_book_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_aggregated_book(
+        &self,
+        request: Request<UpdateAggregatedBookRequest>,
+    ) -> Result<Response<UpdateAggregatedBookResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let spec = req
+            .spec
+            .ok_or_else(|| Status::invalid_argument("aggregated book spec is required"))?;
+        let (name, members, scope, params, enabled) = spec_parts(spec);
+
+        let mut guard = self.lock();
+        if guard.aggregated_book(&req.id).is_none() {
+            return Err(Status::not_found(format!(
+                "no aggregated book with id `{}`",
+                req.id
+            )));
+        }
+        let mut next = guard.clone();
+        let def = next
+            .update_aggregated_book(&req.id, name, members, scope, params, enabled)
+            .map_err(aggregated_book_status)?;
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(UpdateAggregatedBookResponse {
+            book: Some(aggregated_book_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn delete_aggregated_book(
+        &self,
+        request: Request<DeleteAggregatedBookRequest>,
+    ) -> Result<Response<DeleteAggregatedBookResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        let removed = next
+            .delete_aggregated_book(&req.id)
+            .map_err(aggregated_book_status)?;
+        if removed {
+            self.persist_and_commit(&mut guard, next)?;
+        }
+        Ok(Response::new(DeleteAggregatedBookResponse {
+            removed,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
     // --- instrument reference data ---------------------------------------------
 
     async fn list_instruments(
@@ -1575,6 +1689,94 @@ fn book_to_wire(b: &BookDef) -> BookDesc {
         key: b.key,
         name: b.name.clone(),
         entity_key: b.entity_key,
+    }
+}
+
+/// Map a stored [`AggregationParams`] onto its wire [`AggregationParamsDesc`]
+/// (field-for-field; the store and the wire carry the same shape).
+fn params_to_wire(p: &AggregationParams) -> AggregationParamsDesc {
+    AggregationParamsDesc {
+        staleness_tau_ms: p.staleness_tau_ms,
+        max_quote_age_ms: p.max_quote_age_ms,
+        divergence_gating: p.divergence_gating,
+        min_contributors: p.min_contributors,
+        depth_levels: p.depth_levels,
+    }
+}
+
+/// Split a stored [`Scope`] into its wire `(scope_mode, instrument_ids)` pair. The
+/// store's adjacently-tagged enum becomes a flat enum + repeated-string on the wire;
+/// `AllMembersQuote` carries no ids.
+fn scope_to_wire(scope: &Scope) -> (i32, Vec<String>) {
+    match scope {
+        Scope::AllMembersQuote => (AggregationScopeMode::AllMembersQuote as i32, Vec::new()),
+        Scope::Explicit(ids) => (AggregationScopeMode::Explicit as i32, ids.clone()),
+    }
+}
+
+/// Map a stored [`AggregatedBookDef`] onto its wire [`AggregatedBookDesc`].
+fn aggregated_book_to_wire(def: &AggregatedBookDef) -> AggregatedBookDesc {
+    let (scope_mode, instrument_ids) = scope_to_wire(&def.instrument_scope);
+    AggregatedBookDesc {
+        id: def.id.clone(),
+        name: def.name.clone(),
+        member_connection_ids: def.member_connection_ids.clone(),
+        scope_mode,
+        instrument_ids,
+        params: Some(params_to_wire(&def.params)),
+        enabled: def.enabled,
+    }
+}
+
+/// Reconstruct the store [`Scope`] from a wire `(scope_mode, instrument_ids)` pair.
+/// An `AllMembersQuote` book drops any stray ids (they are meaningless in that mode);
+/// an unknown enum value defaults to `AllMembersQuote` (the proto3 zero default).
+fn scope_from_wire(scope_mode: i32, instrument_ids: Vec<String>) -> Scope {
+    match AggregationScopeMode::try_from(scope_mode).unwrap_or_default() {
+        AggregationScopeMode::Explicit => Scope::Explicit(instrument_ids),
+        AggregationScopeMode::AllMembersQuote => Scope::AllMembersQuote,
+    }
+}
+
+/// Reconstruct the store [`AggregationParams`] from its wire form, defaulting an
+/// absent params message to the store's sane defaults (so a minimal spec stands a book
+/// up rather than failing the required-field parse; the store still validates ranges).
+fn params_from_wire(params: Option<AggregationParamsDesc>) -> AggregationParams {
+    params.map_or_else(AggregationParams::default, |p| AggregationParams {
+        staleness_tau_ms: p.staleness_tau_ms,
+        max_quote_age_ms: p.max_quote_age_ms,
+        divergence_gating: p.divergence_gating,
+        min_contributors: p.min_contributors,
+        depth_levels: p.depth_levels,
+    })
+}
+
+/// Split an [`AggregatedBookSpec`] into the argument tuple the store's
+/// `create_aggregated_book` / `update_aggregated_book` take. The spec's own `id` is
+/// intentionally dropped — create mints a fresh id and update keeps the request `id`.
+fn spec_parts(spec: AggregatedBookSpec) -> (String, Vec<String>, Scope, AggregationParams, bool) {
+    let scope = scope_from_wire(spec.scope_mode, spec.instrument_ids);
+    let params = params_from_wire(spec.params);
+    (
+        spec.name,
+        spec.member_connection_ids,
+        scope,
+        params,
+        spec.enabled,
+    )
+}
+
+/// Map the store's aggregated-book validation error string onto a gRPC [`Status`]: a
+/// name collision is `already_exists`, a missing id on update is `not_found`, and every
+/// other document-resolvable failure (duplicate member, out-of-range param, dangling
+/// instrument id) is `invalid_argument`. The store's message is surfaced verbatim.
+fn aggregated_book_status(msg: String) -> Status {
+    if msg.contains("already exists") {
+        Status::already_exists(msg)
+    } else if msg.starts_with("no aggregated book with id") {
+        Status::not_found(msg)
+    } else {
+        Status::invalid_argument(msg)
     }
 }
 
@@ -3307,6 +3509,198 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(anon.code(), tonic::Code::Unauthenticated);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // --- FI aggregated books (ADR-0022) ----------------------------------------
+
+    /// A default `AllMembersQuote` aggregated-book spec (needs no seeded instruments).
+    fn agg_spec(name: &str, members: Vec<String>) -> AggregatedBookSpec {
+        AggregatedBookSpec {
+            id: String::new(),
+            name: name.into(),
+            member_connection_ids: members,
+            scope_mode: AggregationScopeMode::AllMembersQuote as i32,
+            instrument_ids: Vec::new(),
+            params: Some(AggregationParamsDesc {
+                staleness_tau_ms: 500,
+                max_quote_age_ms: 2500,
+                divergence_gating: true,
+                min_contributors: 1,
+                depth_levels: 1,
+            }),
+            enabled: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn aggregated_book_create_list_update_delete_round_trip() {
+        let (edge, path, _s) = edge("agg-crud");
+        let tok = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+
+        // Create returns the minted id and echoes the definition.
+        let created = edge
+            .create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: tok.clone(),
+                spec: Some(agg_spec(
+                    "G10 Rates Composite",
+                    vec!["lp-one".into(), "lp-two".into()],
+                )),
+                correlation_id: Some(7),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let book = created.book.unwrap();
+        assert_eq!(book.id, "g10-rates-composite");
+        assert_eq!(book.member_connection_ids, vec!["lp-one", "lp-two"]);
+        assert_eq!(
+            book.scope_mode,
+            AggregationScopeMode::AllMembersQuote as i32
+        );
+        assert_eq!(created.correlation_id, Some(7));
+
+        // List (any authenticated caller) sees it.
+        let listed = edge
+            .list_aggregated_books(Request::new(ListAggregatedBooksRequest {
+                session_token: tok.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(listed.books.len(), 1);
+        assert_eq!(listed.books[0].name, "G10 Rates Composite");
+
+        // Update in place (id preserved): rename + disable + swap members.
+        let mut spec = agg_spec("G10 Rates (paused)", vec!["lp-three".into()]);
+        spec.enabled = false;
+        let updated = edge
+            .update_aggregated_book(Request::new(UpdateAggregatedBookRequest {
+                session_token: tok.clone(),
+                id: book.id.clone(),
+                spec: Some(spec),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .book
+            .unwrap();
+        assert_eq!(updated.id, "g10-rates-composite");
+        assert_eq!(updated.name, "G10 Rates (paused)");
+        assert!(!updated.enabled);
+        assert_eq!(updated.member_connection_ids, vec!["lp-three"]);
+
+        // Delete reports removal; a second delete is a no-op.
+        let del = edge
+            .delete_aggregated_book(Request::new(DeleteAggregatedBookRequest {
+                session_token: tok.clone(),
+                id: book.id.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(del.removed);
+        let del2 = edge
+            .delete_aggregated_book(Request::new(DeleteAggregatedBookRequest {
+                session_token: tok.clone(),
+                id: book.id,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!del2.removed);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn aggregated_book_rejects_duplicate_name() {
+        let (edge, path, _s) = edge("agg-dup");
+        let tok = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        edge.create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+            session_token: tok.clone(),
+            spec: Some(agg_spec("EM Composite", vec![])),
+            correlation_id: None,
+        }))
+        .await
+        .unwrap();
+        // Duplicate name (case-insensitive) surfaces the store's error as already_exists.
+        let dup = edge
+            .create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: tok,
+                spec: Some(agg_spec("em composite", vec![])),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(dup.code(), tonic::Code::AlreadyExists);
+        assert!(dup.message().contains("already exists"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn aggregated_book_admin_gate_denies_non_admin() {
+        let (edge, path, _s) = edge("agg-gate");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let (_id, trader) = make_trader(&edge, &admin, "trader@celnet.com").await;
+
+        // A non-admin may NOT define a book (the administration gate).
+        let denied = edge
+            .create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: trader.clone(),
+                spec: Some(agg_spec("Trader Book", vec![])),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+
+        // …but a non-admin MAY read the roster (a book is global, decision C).
+        let listed = edge
+            .list_aggregated_books(Request::new(ListAggregatedBooksRequest {
+                session_token: trader,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(listed.books.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn aggregated_book_persists_across_reload() {
+        let (edge, path, _s) = edge("agg-reload");
+        let tok = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        edge.create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+            session_token: tok,
+            spec: Some(agg_spec("Persisted Composite", vec!["lp-a".into()])),
+            correlation_id: None,
+        }))
+        .await
+        .unwrap();
+        // The book survives a fresh load of the same identity file.
+        let reloaded = IdentityStore::load(&path).unwrap();
+        assert_eq!(reloaded.aggregated_books.len(), 1);
+        let def = &reloaded.aggregated_books[0];
+        assert_eq!(def.name, "Persisted Composite");
+        assert_eq!(def.member_connection_ids, vec!["lp-a"]);
+        assert_eq!(def.instrument_scope, Scope::AllMembersQuote);
         let _ = std::fs::remove_file(&path);
     }
 }

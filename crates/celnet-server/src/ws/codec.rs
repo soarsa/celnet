@@ -43,19 +43,22 @@ use celnet_proto::{
 };
 // AuthService — server-enforced sessions + user/desk/entity/book administration (WS mirror).
 use celnet_proto::{
-    BookDesc, CapabilityDesc, CreateBookRequest, CreateBookResponse, CreateDeskRequest,
-    CreateDeskResponse, CreateEntityRequest, CreateEntityResponse, CreateUserRequest,
-    CreateUserResponse, DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest,
+    AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, BookDesc, CapabilityDesc,
+    CreateAggregatedBookRequest, CreateAggregatedBookResponse, CreateBookRequest,
+    CreateBookResponse, CreateDeskRequest, CreateDeskResponse, CreateEntityRequest,
+    CreateEntityResponse, CreateUserRequest, CreateUserResponse, DeleteAggregatedBookRequest,
+    DeleteAggregatedBookResponse, DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest,
     DeleteDeskResponse, DeleteEntityRequest, DeleteEntityResponse, DeleteUserRequest,
     DeleteUserResponse, DeskDesc, EntityDesc, GetRoleCapabilitiesRequest,
     GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest, GetUserCapabilitiesResponse,
-    ListBooksRequest, ListBooksResponse, ListDesksRequest, ListDesksResponse, ListEntitiesRequest,
-    ListEntitiesResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
-    LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
-    SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
-    SetUserCapabilitiesResponse, UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest,
-    UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse, UpdateUserRequest,
-    UpdateUserResponse, UserDesc,
+    ListAggregatedBooksRequest, ListAggregatedBooksResponse, ListBooksRequest, ListBooksResponse,
+    ListDesksRequest, ListDesksResponse, ListEntitiesRequest, ListEntitiesResponse,
+    ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest,
+    LogoutResponse, ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
+    SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
+    UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookRequest,
+    UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest,
+    UpdateEntityResponse, UpdateUserRequest, UpdateUserResponse, UserDesc,
 };
 // AuthService — instrument reference-data registry (WS mirror of the instrument RPCs).
 use celnet_proto::{
@@ -3439,6 +3442,129 @@ pub(super) fn delete_book_response_to_json(r: &DeleteBookResponse) -> Value {
     json!({ "removed": r.removed, "correlation_id": r.correlation_id })
 }
 
+// --- FI aggregated books (AuthService aggregated-book RPCs, ADR-0022) --------
+//
+// The WS mirror of the aggregated-book admin CRUD. The store's adjacently-tagged
+// `Scope` is carried flat on the wire as `scope_mode` (an enum tag) + a repeated
+// `instrument_ids`, and the consolidation knobs nest under `params`. Every field is
+// snake_case (the GUI codec maps camelCase ⇄ snake_case in lockstep).
+
+/// The consolidation-engine tuning → JSON.
+fn aggregation_params_desc_to_json(p: &AggregationParamsDesc) -> Value {
+    json!({
+        "staleness_tau_ms": p.staleness_tau_ms,
+        "max_quote_age_ms": p.max_quote_age_ms,
+        "divergence_gating": p.divergence_gating,
+        "min_contributors": p.min_contributors,
+        "depth_levels": p.depth_levels,
+    })
+}
+
+/// The consolidation-engine tuning ← JSON (a nested `params` object).
+fn aggregation_params_desc_from_json(v: &Value) -> Result<AggregationParamsDesc> {
+    let o = obj(v, "params")?;
+    Ok(AggregationParamsDesc {
+        staleness_tau_ms: u64_field(o, "staleness_tau_ms")?,
+        max_quote_age_ms: u64_field(o, "max_quote_age_ms")?,
+        divergence_gating: bool_or_false(o, "divergence_gating"),
+        min_contributors: u32_field(o, "min_contributors")?,
+        depth_levels: u32_field(o, "depth_levels")?,
+    })
+}
+
+/// An aggregated book → JSON. An absent `params` renders as `null` (the singular-
+/// message convention shared with the descriptor-driven encoder).
+fn aggregated_book_desc_to_json(d: &AggregatedBookDesc) -> Value {
+    json!({
+        "id": d.id,
+        "name": d.name,
+        "member_connection_ids": d.member_connection_ids,
+        "scope_mode": d.scope_mode,
+        "instrument_ids": d.instrument_ids,
+        "params": d.params.as_ref().map(aggregation_params_desc_to_json),
+        "enabled": d.enabled,
+    })
+}
+
+/// The editable aggregated-book fields (a nested `spec` object on create/update).
+fn aggregated_book_spec_from_json(v: &Value) -> Result<AggregatedBookSpec> {
+    let o = obj(v, "spec")?;
+    Ok(AggregatedBookSpec {
+        id: string_or_empty(o, "id"),
+        name: string_field(o, "name")?,
+        member_connection_ids: string_array(o, "member_connection_ids"),
+        scope_mode: enum_or_zero(o, "scope_mode"),
+        instrument_ids: string_array(o, "instrument_ids"),
+        params: opt_nested(o, "params", aggregation_params_desc_from_json)?,
+        enabled: bool_or_false(o, "enabled"),
+    })
+}
+
+pub(super) fn list_aggregated_books_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListAggregatedBooksRequest> {
+    Ok(ListAggregatedBooksRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_aggregated_books_response_to_json(r: &ListAggregatedBooksResponse) -> Value {
+    json!({
+        "books": Value::Array(r.books.iter().map(aggregated_book_desc_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn create_aggregated_book_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<CreateAggregatedBookRequest> {
+    Ok(CreateAggregatedBookRequest {
+        session_token: string_field(o, "session_token")?,
+        spec: Some(nested(o, "spec", aggregated_book_spec_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn create_aggregated_book_response_to_json(r: &CreateAggregatedBookResponse) -> Value {
+    json!({
+        "book": r.book.as_ref().map(aggregated_book_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_aggregated_book_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdateAggregatedBookRequest> {
+    Ok(UpdateAggregatedBookRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        spec: Some(nested(o, "spec", aggregated_book_spec_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_aggregated_book_response_to_json(r: &UpdateAggregatedBookResponse) -> Value {
+    json!({
+        "book": r.book.as_ref().map(aggregated_book_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn delete_aggregated_book_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<DeleteAggregatedBookRequest> {
+    Ok(DeleteAggregatedBookRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn delete_aggregated_book_response_to_json(r: &DeleteAggregatedBookResponse) -> Value {
+    json!({ "removed": r.removed, "correlation_id": r.correlation_id })
+}
+
 // --- instrument reference data (AuthService instrument RPCs) ----------------
 //
 // The WS mirror of the instrument registry. The `InstrumentDefDesc.definition`
@@ -3848,7 +3974,8 @@ pub mod diff_support {
     };
     // Wave-4 verb family (arch item G): the AuthService admin + session surface the
     // generated codec is proven byte-identical to (login/session, user/desk/entity/book
-    // CRUD, capabilities + roles, the instrument registry, and `BuildCurve`).
+    // CRUD, aggregated-book CRUD, capabilities + roles, the instrument registry, and
+    // `BuildCurve`).
     use celnet_proto::{
         BuildCurveRequest, CalibratedCurve, CreateBookRequest, CreateBookResponse,
         CreateDeskRequest, CreateDeskResponse, CreateEntityRequest, CreateEntityResponse,
@@ -3866,6 +3993,11 @@ pub mod diff_support {
         UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse,
         UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest,
         UpdateInstrumentResponse, UpdateUserRequest, UpdateUserResponse,
+    };
+    use celnet_proto::{
+        CreateAggregatedBookRequest, CreateAggregatedBookResponse, DeleteAggregatedBookRequest,
+        DeleteAggregatedBookResponse, ListAggregatedBooksRequest, ListAggregatedBooksResponse,
+        UpdateAggregatedBookRequest, UpdateAggregatedBookResponse,
     };
     use serde_json::{Map, Value};
 
@@ -4915,6 +5047,70 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_delete_book_response_to_json(r: &DeleteBookResponse) -> Value {
         super::delete_book_response_to_json(r)
+    }
+
+    /// Hand-codec `ListAggregatedBooksRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_aggregated_books_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListAggregatedBooksRequest, CodecError> {
+        super::list_aggregated_books_request_from_json(o)
+    }
+
+    /// Hand-codec `ListAggregatedBooksResponse` encoder.
+    #[must_use]
+    pub fn hand_list_aggregated_books_response_to_json(r: &ListAggregatedBooksResponse) -> Value {
+        super::list_aggregated_books_response_to_json(r)
+    }
+
+    /// Hand-codec `CreateAggregatedBookRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_create_aggregated_book_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<CreateAggregatedBookRequest, CodecError> {
+        super::create_aggregated_book_request_from_json(o)
+    }
+
+    /// Hand-codec `CreateAggregatedBookResponse` encoder.
+    #[must_use]
+    pub fn hand_create_aggregated_book_response_to_json(r: &CreateAggregatedBookResponse) -> Value {
+        super::create_aggregated_book_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdateAggregatedBookRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_aggregated_book_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateAggregatedBookRequest, CodecError> {
+        super::update_aggregated_book_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateAggregatedBookResponse` encoder.
+    #[must_use]
+    pub fn hand_update_aggregated_book_response_to_json(r: &UpdateAggregatedBookResponse) -> Value {
+        super::update_aggregated_book_response_to_json(r)
+    }
+
+    /// Hand-codec `DeleteAggregatedBookRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_delete_aggregated_book_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<DeleteAggregatedBookRequest, CodecError> {
+        super::delete_aggregated_book_request_from_json(o)
+    }
+
+    /// Hand-codec `DeleteAggregatedBookResponse` encoder.
+    #[must_use]
+    pub fn hand_delete_aggregated_book_response_to_json(r: &DeleteAggregatedBookResponse) -> Value {
+        super::delete_aggregated_book_response_to_json(r)
     }
 
     /// Hand-codec `ListInstrumentsRequest` decoder.

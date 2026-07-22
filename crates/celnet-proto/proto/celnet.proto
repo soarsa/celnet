@@ -4030,6 +4030,158 @@ message DeleteBookResponse {
 }
 
 // ===========================================================================
+// FI aggregated book — operator-defined multi-LP price consolidation
+// (ADR-0022). A named set of inbound liquidity members whose per-instrument
+// top-of-book is consolidated into one composite price, managed from the
+// Administration surface. Global (not desk-owned): any authenticated user may
+// read a book's composite, only an admin may define or edit one. The messages
+// mirror the entity/book admin CRUD conventions on this same service (a required
+// `session_token`, an optional echoed `correlation_id`).
+
+// The instrument-coverage mode of an aggregated book (mirrors the store
+// `config::identity::Scope` discriminant).
+enum AggregationScopeMode {
+  // Aggregate EVERY instrument any member quotes — the composite tracks the
+  // union of the members' live streams with no pre-declared instrument list
+  // (proto3 zero default). `instrument_ids` is ignored in this mode.
+  AGGREGATION_SCOPE_MODE_ALL_MEMBERS_QUOTE = 0;
+  // Aggregate only the explicitly listed `instrument_ids`, each resolving to a
+  // canonical reference-data `InstrumentDefDesc.instrument_id`.
+  AGGREGATION_SCOPE_MODE_EXPLICIT = 1;
+}
+
+// The consolidation-engine tuning of an aggregated book (mirrors the store
+// `config::identity::AggregationParams`): the knobs the `celnet-aggregation`
+// engine consumes once a book is wired.
+message AggregationParamsDesc {
+  // Staleness half-life tau in milliseconds: a member quote's contribution decays
+  // as 2^{-dt/tau} with age dt. Must be > 0.
+  uint64 staleness_tau_ms = 1;
+  // Hard maximum quote age in milliseconds: a member quote older than this is
+  // fully excluded from the composite.
+  uint64 max_quote_age_ms = 2;
+  // Whether MAD-based divergence gating drops outlier members before consolidation.
+  bool divergence_gating = 3;
+  // Minimum surviving member contributors required to publish a composite. Must be >= 1.
+  uint32 min_contributors = 4;
+  // How many stacked depth levels the composite exposes (1 = top-of-book only).
+  uint32 depth_levels = 5;
+}
+
+// The editable fields of an aggregated book (the create/update payload). The
+// server-minted `id` on `AggregatedBookDesc` is not part of the spec except as a
+// client-suggested slug on create (mirrors `FixConnectionSpec.id`).
+message AggregatedBookSpec {
+  // On create: a client-suggested id (a slug of `name` is used when empty). On
+  // update: ignored in favour of the request's `id`.
+  string id = 1;
+  // Human-friendly book label (unique across the store, case-insensitive).
+  string name = 2;
+  // The inbound liquidity members whose quotes feed the composite, by connection
+  // id (transport-agnostic; unique within this book).
+  repeated string member_connection_ids = 3;
+  // Which instruments the composite is produced for.
+  AggregationScopeMode scope_mode = 4;
+  // The explicit instrument ids when `scope_mode == EXPLICIT` (each must resolve to
+  // an instrument in the reference-data registry); ignored for `ALL_MEMBERS_QUOTE`.
+  repeated string instrument_ids = 5;
+  // The consolidation-engine tuning applied when the book is wired to the engine.
+  AggregationParamsDesc params = 6;
+  // Whether the book is active (a disabled book is persisted and editable but stands
+  // up no engine and publishes no composite).
+  bool enabled = 7;
+}
+
+// A persisted aggregated book (mirrors the store `config::identity::AggregatedBookDef`
+// field-for-field).
+message AggregatedBookDesc {
+  // Stable identifier (the store/API key), minted from `name` on create.
+  string id = 1;
+  // Human-friendly book label (unique, case-insensitive).
+  string name = 2;
+  // The inbound liquidity members whose quotes feed the composite, by connection id.
+  repeated string member_connection_ids = 3;
+  // Which instruments the composite is produced for.
+  AggregationScopeMode scope_mode = 4;
+  // The explicit instrument ids when `scope_mode == EXPLICIT`; empty otherwise.
+  repeated string instrument_ids = 5;
+  // The consolidation-engine tuning.
+  AggregationParamsDesc params = 6;
+  // Whether the book is active.
+  bool enabled = 7;
+}
+
+// List the aggregated books (any authenticated caller — a book is global and its
+// composite is readable by any user, so this is NOT admin-only).
+message ListAggregatedBooksRequest {
+  // The caller's bearer token (must resolve to a valid session; not admin-gated).
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The full aggregated-book roster.
+message ListAggregatedBooksResponse {
+  // Every aggregated book, in creation order.
+  repeated AggregatedBookDesc books = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Define a new aggregated book (admin only).
+message CreateAggregatedBookRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The editable fields of the book to define.
+  AggregatedBookSpec spec = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The created aggregated book.
+message CreateAggregatedBookResponse {
+  // The created book with its server-minted id.
+  AggregatedBookDesc book = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Replace an existing aggregated book's definition (admin only). The `id` is
+// immutable identity; the spec's own `id` field is ignored.
+message UpdateAggregatedBookRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the book to replace (immutable identity).
+  string id = 2;
+  // The new definition.
+  AggregatedBookSpec spec = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+// The updated aggregated book.
+message UpdateAggregatedBookResponse {
+  // The book after the update.
+  AggregatedBookDesc book = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Delete an aggregated book (admin only).
+message DeleteAggregatedBookRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the book to delete.
+  string id = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// Delete acknowledgement.
+message DeleteAggregatedBookResponse {
+  // Whether a book was removed.
+  bool removed = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// ===========================================================================
 // instrument reference data — the persisted, admin-managed registry of
 // instrument DEFINITIONS (static / reference data) that curve-building and
 // pricing later resolve against
@@ -4550,6 +4702,15 @@ service AuthService {
   rpc UpdateBook(UpdateBookRequest) returns (UpdateBookResponse);
   // Delete a named netting book (admin only).
   rpc DeleteBook(DeleteBookRequest) returns (DeleteBookResponse);
+  // List the aggregated books (any authenticated caller — a book's composite is
+  // global and readable by any user, so this is NOT admin-only).
+  rpc ListAggregatedBooks(ListAggregatedBooksRequest) returns (ListAggregatedBooksResponse);
+  // Define a new aggregated book (admin only).
+  rpc CreateAggregatedBook(CreateAggregatedBookRequest) returns (CreateAggregatedBookResponse);
+  // Replace an existing aggregated book's definition (admin only).
+  rpc UpdateAggregatedBook(UpdateAggregatedBookRequest) returns (UpdateAggregatedBookResponse);
+  // Delete an aggregated book (admin only).
+  rpc DeleteAggregatedBook(DeleteAggregatedBookRequest) returns (DeleteAggregatedBookResponse);
   // List the instrument reference-data definitions (any authenticated caller —
   // curve-building and pricing resolve against this, so it is NOT admin-only).
   rpc ListInstruments(ListInstrumentsRequest) returns (ListInstrumentsResponse);
