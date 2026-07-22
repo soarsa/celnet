@@ -678,6 +678,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-lp-sim"
+version = "0.0.0"
+dependencies = [
+ "celnet-aggregation",
+ "celnet-bond",
+ "celnet-types",
+ "libm",
+ "time",
+]
+
+[[package]]
 name = "celnet-observability"
 version = "0.0.0"
 dependencies = [

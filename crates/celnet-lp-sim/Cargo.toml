@@ -1,0 +1,31 @@
+[package]
+name = "celnet-lp-sim"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet fixed-income liquidity-provider (LP) feed simulator — a fleet of deterministic-seeded synthetic bond LPs that implement celnet-aggregation::VenueFeed, so they flow through the REAL consolidation engine. Ground-truth ladder mode gives analytic best-bid/offer for tests; stochastic mean-reverting-yield mode (priced via celnet-bond) gives soak/demo realism. Injectable staleness and outlier faults exercise the consolidator's staleness decay and MAD divergence gating."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The integration seam under test: the LP feeds implement VenueFeed and are
+# consolidated by THIS crate's real engine (path dep, never modified from here).
+celnet-aggregation.workspace = true
+# The reference yield->clean-price relation for the stochastic mode. Depending on
+# the real analytics leaf (rather than re-deriving a bond price here) means the
+# simulator's prices ARE the oracle, satisfying the "validate against a reference"
+# guardrail by construction. Points strictly downward — no dependency cycle.
+celnet-bond.workspace = true
+# The frozen instrument/rate vocabulary (Rate, Underlying, Tenor, CcyPair).
+celnet-types.workspace = true
+# Correctly-rounded, cross-platform-identical transcendentals (exp), matching the
+# project determinism convention used by celnet-aggregation::sim.
+libm.workspace = true
+
+[dev-dependencies]
+# Civil-date arithmetic to build reference Bonds in the stochastic-mode tests.
+time.workspace = true
