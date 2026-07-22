@@ -2113,6 +2113,10 @@ message ClientStreamMessage {
     StreamAuth authenticate = 9;
     // Open a fixed-income (linear-rates) streaming line on the SAME session.
     RatesSubscribe rates_subscribe = 10;
+    // Open an aggregated-book composite line on the SAME session.
+    AggregatedBookSubscribe aggregated_book_subscribe = 11;
+    // Close an aggregated-book composite line.
+    AggregatedBookUnsubscribe aggregated_book_unsubscribe = 12;
   }
 }
 
@@ -2156,6 +2160,10 @@ message ServerStreamMessage {
     RatesStreamSnapshot rates_stream_snapshot = 9;
     // A sequenced delta advancing a streamed fixed-income line.
     RatesStreamUpdate rates_stream_update = 10;
+    // The baseline composite state of a subscribed aggregated book.
+    AggregatedBookStreamSnapshot aggregated_book_stream_snapshot = 11;
+    // A sequenced delta advancing a subscribed aggregated book's composite.
+    AggregatedBookStreamUpdate aggregated_book_stream_update = 12;
   }
 }
 
@@ -4179,6 +4187,178 @@ message DeleteAggregatedBookResponse {
   bool removed = 1;
   // Echoed request correlation id.
   optional uint64 correlation_id = 2;
+}
+
+// ===========================================================================
+// LP liquidity ingest — the machine-to-machine feed by which an inbound
+// liquidity connection (the `lp-sim` binary today, any FIX/API LP adapter
+// tomorrow) pushes its per-instrument two-way top-of-book INTO the server, where
+// the enabled `AggregatedBook`s consolidate it (`celnet-aggregation`). This is a
+// backend feed, not a client-facing surface: an LP speaks gRPC directly, so this
+// path has NO WS mirror / codec. A member is identified by its `lp_name` (the
+// consolidation `VenueId`) and matched to the books that list it as a member.
+// ===========================================================================
+
+// One inbound LP's two-way top-of-book for a single instrument, at an instant.
+// Prices are in the instrument's natural cash units (a clean price per 100 face
+// for a Treasury, a rate/yield for a money-market line — the consolidation math is
+// unit-agnostic). Sizes are the firm quantity available on each side. A member
+// streams a sequence of these (one per instrument it makes a market in, re-sent as
+// its quote moves); the server keeps only the latest per `(book, lp_name,
+// instrument_id)` and decays it by age against the book's staleness tuning.
+message LpQuote {
+  // The LP connection name — the consolidation `VenueId` a subscriber attributes
+  // the contribution to, and the key matched against a book's member list.
+  string lp_name = 1;
+  // The canonical server `instrument_id` this quote is for (ADR-0022 decision D —
+  // the one identity shared across reference data, the wire and the composite; the
+  // Treasury CUSIP for the bundled universe).
+  string instrument_id = 2;
+  // Bid price (the LP buys the asset here).
+  double bid = 3;
+  // Offer price (the LP sells the asset here).
+  double offer = 4;
+  // Firm size available at the bid.
+  double bid_size = 5;
+  // Firm size available at the offer.
+  double offer_size = 6;
+  // Observation instant, epoch nanoseconds (UTC) — the valuation clock decays the
+  // quote by its age, and drops it past the book's hard max age.
+  int64 ts_nanos = 7;
+}
+
+// The server's acknowledgement of a completed `LpFeed` stream: how many pushed
+// `LpQuote`s were accepted into at least one enabled aggregated book (a quote for
+// an instrument no enabled book scopes, or from an unknown member, is received but
+// not accepted). Returned once, when the client half-closes the stream.
+message LpFeedAck {
+  // The number of `LpQuote`s routed into at least one enabled book.
+  uint64 accepted = 1;
+}
+
+// The backend liquidity-feed ingest. An inbound LP opens a client-streaming
+// `LpFeed`, pushes its live two-ways, and half-closes to receive an `LpFeedAck`.
+// Machine-to-machine only (no WS mirror): the composite it feeds is what GUI
+// subscribers read over `StreamService.StreamSession`.
+service LiquidityFeedService {
+  // Push a stream of `LpQuote`s into the server's aggregated-book engines.
+  rpc LpFeed(stream LpQuote) returns (LpFeedAck);
+}
+
+// ===========================================================================
+// aggregated-book composite publish — the consolidated price a GUI subscriber
+// reads for an aggregated book over the multiplexed `StreamService.StreamSession`
+// (the SAME bidi stream the FX/rates lines use). A client opens the line with an
+// `AggregatedBookSubscribe` and receives a baseline `AggregatedBookStreamSnapshot`
+// then `AggregatedBookStreamUpdate`s as the members' quotes evolve. Additive
+// (rule 9): new oneof arms + new messages; no existing field is touched.
+// ===========================================================================
+
+// One inbound member's contribution to an instrument's composite: the member's
+// own two-way, and whether it was excluded from the consolidated best price
+// (aged out past the book's max quote age, or gated as a divergent outlier).
+message LpContribution {
+  // The contributing LP connection name (the consolidation `VenueId`).
+  string lp_name = 1;
+  // The member's own bid for this instrument.
+  double bid = 2;
+  // The member's own offer for this instrument.
+  double offer = 3;
+  // Whether the member was excluded from the consolidated best bid/offer (stale
+  // past the book's max age, or gated as a divergent outlier) — a subscriber greys
+  // a contributor that is not currently setting the composite.
+  bool stale = 4;
+}
+
+// The consolidated composite for one instrument in an aggregated book: the best
+// bid/offer + firm size across the fresh members, a confidence measure, and the
+// per-member contribution report. Identity fields (`display_name`/`isin`/`cusip`)
+// are resolved from the server's instrument reference-data registry, best-effort
+// (empty when the `instrument_id` is not in the registry).
+message AggregatedInstrument {
+  // The canonical server `instrument_id` (the composite line's identity key).
+  string instrument_id = 1;
+  // Human-friendly label from reference data (empty if unresolved).
+  string display_name = 2;
+  // ISO 6166 ISIN from reference data (empty if unresolved).
+  string isin = 3;
+  // CUSIP from reference data (empty if unresolved).
+  string cusip = 4;
+  // Consolidated best bid — the max fresh member bid.
+  double best_bid = 5;
+  // Consolidated best offer — the min fresh member offer.
+  double best_offer = 6;
+  // Firm size stacked at the consolidated best bid.
+  double bid_size = 7;
+  // Firm size stacked at the consolidated best offer.
+  double offer_size = 8;
+  // Confidence in the composite, `∈ [0, 1]` (coverage · freshness · agreement).
+  double confidence = 9;
+  // The per-member contribution / exclusion report, one entry per member that has
+  // quoted this instrument (member id order).
+  repeated LpContribution contributions = 10;
+}
+
+// The full composite state of an aggregated book at a sequence point: the priced
+// composite for every in-scope instrument that currently meets the book's quorum.
+message AggregatedBookSnapshot {
+  // The aggregated-book id this composite is for.
+  string book_id = 1;
+  // The composite for each in-scope instrument, in `instrument_id` order.
+  repeated AggregatedInstrument instruments = 2;
+}
+
+// Open an aggregated-book composite line within the multiplexed session, keyed by
+// a client-assigned `SubscriptionId` (the SAME id space as the FX price / market
+// series / rates lines). The server emits a baseline `AggregatedBookStreamSnapshot`
+// then `AggregatedBookStreamUpdate`s as the book's members re-quote.
+message AggregatedBookSubscribe {
+  // The client-assigned subscription id this composite line is keyed on.
+  SubscriptionId subscription = 1;
+  // The aggregated-book id to stream the composite of.
+  string book_id = 2;
+  // A client throttle hint: minimum nanoseconds between updates (the server
+  // conflates to honour it). 0 = no throttling.
+  uint64 throttle_nanos = 3;
+  // Optional caller correlation id, echoed on the baseline snapshot.
+  optional uint64 correlation_id = 4;
+}
+
+// Close an aggregated-book composite line (the rest of the session is unaffected).
+message AggregatedBookUnsubscribe {
+  // The composite subscription to tear down.
+  SubscriptionId subscription = 1;
+}
+
+// The baseline composite state of a subscribed aggregated book at a sequence point
+// — the full `AggregatedBookSnapshot` a consumer applies whole before consuming
+// deltas.
+message AggregatedBookStreamSnapshot {
+  // The subscription this snapshot answers.
+  SubscriptionId subscription = 1;
+  // The monotonic per-subscription sequence number of this snapshot (1).
+  uint64 sequence = 2;
+  // The full composite state at this snapshot.
+  AggregatedBookSnapshot book = 3;
+  // Echo of the opening `AggregatedBookSubscribe.correlation_id`, if one was
+  // supplied (presence-tracked). Absent ⇒ none.
+  optional uint64 correlation_id = 4;
+  // Snapshot time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 5;
+}
+
+// A sequenced delta on a subscribed aggregated book: the full re-consolidated
+// composite at the next sequence. A gap in `sequence` signals loss and prompts a
+// `Resync`.
+message AggregatedBookStreamUpdate {
+  // The subscription this update advances.
+  SubscriptionId subscription = 1;
+  // The monotonic per-subscription sequence number (snapshot seq + n).
+  uint64 sequence = 2;
+  // The re-consolidated composite at this sequence.
+  AggregatedBookSnapshot book = 3;
+  // Update time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 4;
 }
 
 // ===========================================================================

@@ -31,10 +31,12 @@
 //! `Underlying`, `RateSensitivities`).
 
 use celnet_proto::{
-    AggregatedBookDesc, AggregationParamsDesc, AggregationScopeMode, BrokenDate, CcyPair,
-    CreateAggregatedBookResponse, DeleteAggregatedBookResponse, Greeks, Leg,
-    ListAggregatedBooksResponse, MarketContext, MetalPair, RateSensitivities, Strategy,
-    StrategyKind, StrikeOrDelta, Tenor, Underlying, UpdateAggregatedBookResponse,
+    AggregatedBookDesc, AggregatedBookSnapshot, AggregatedBookStreamSnapshot,
+    AggregatedBookStreamUpdate, AggregatedInstrument, AggregationParamsDesc, AggregationScopeMode,
+    BrokenDate, CcyPair, CreateAggregatedBookResponse, DeleteAggregatedBookResponse, Greeks, Leg,
+    ListAggregatedBooksResponse, LpContribution, MarketContext, MetalPair, RateSensitivities,
+    Strategy, StrategyKind, StrikeOrDelta, SubscriptionId, Tenor, Underlying,
+    UpdateAggregatedBookResponse,
 };
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
@@ -4345,4 +4347,104 @@ fn delete_aggregated_book_response_encode_byte_identical() {
             &hand::hand_delete_aggregated_book_response_to_json(&resp),
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// aggregated-book composite publish frames (D3) — encode byte-identity
+// ---------------------------------------------------------------------------
+
+/// A two-instrument composite body with per-LP contributions (one flagged stale).
+fn agg_book_body() -> AggregatedBookSnapshot {
+    AggregatedBookSnapshot {
+        book_id: "ust-composite".to_string(),
+        instruments: vec![
+            AggregatedInstrument {
+                instrument_id: "912797TS6".to_string(),
+                display_name: "10-Year Note".to_string(),
+                isin: "US912797TS67".to_string(),
+                cusip: "912797TS6".to_string(),
+                best_bid: 99.9531,
+                best_offer: 100.0625,
+                bid_size: 3_000_000.0,
+                offer_size: 1_000_000.0,
+                confidence: 0.87,
+                contributions: vec![
+                    LpContribution {
+                        lp_name: "LP-SIM-01".to_string(),
+                        bid: 99.95,
+                        offer: 100.07,
+                        stale: false,
+                    },
+                    LpContribution {
+                        lp_name: "LP-SIM-02".to_string(),
+                        bid: 99.90,
+                        offer: 100.10,
+                        stale: true,
+                    },
+                ],
+            },
+            AggregatedInstrument {
+                instrument_id: "912810TW8".to_string(),
+                display_name: String::new(),
+                isin: String::new(),
+                cusip: String::new(),
+                best_bid: 95.5,
+                best_offer: 95.75,
+                bid_size: 500_000.0,
+                offer_size: 500_000.0,
+                confidence: 0.5,
+                contributions: vec![],
+            },
+        ],
+    }
+}
+
+#[test]
+fn aggregated_book_stream_snapshot_encode_byte_identical() {
+    // Full: subscription + book + correlation echo present.
+    let full = AggregatedBookStreamSnapshot {
+        subscription: Some(SubscriptionId { value: 7 }),
+        sequence: 1,
+        book: Some(agg_book_body()),
+        correlation_id: Some(42),
+        epoch_nanos: 1_700_000_000_000_000_000,
+    };
+    assert_bytes_eq(
+        "AggregatedBookStreamSnapshot(full)",
+        &generated::encode_aggregated_book_stream_snapshot(&full),
+        &hand::hand_aggregated_book_stream_snapshot_to_json(&full),
+    );
+    // Minimal: absent correlation_id ⇒ `null` (present-with-null), empty book.
+    let minimal = AggregatedBookStreamSnapshot {
+        subscription: Some(SubscriptionId { value: 1 }),
+        sequence: 1,
+        book: Some(AggregatedBookSnapshot {
+            book_id: "empty".to_string(),
+            instruments: vec![],
+        }),
+        correlation_id: None,
+        epoch_nanos: 0,
+    };
+    let g = generated::encode_aggregated_book_stream_snapshot(&minimal);
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "AggregatedBookStreamSnapshot(minimal)",
+        &g,
+        &hand::hand_aggregated_book_stream_snapshot_to_json(&minimal),
+    );
+}
+
+#[test]
+fn aggregated_book_stream_update_encode_byte_identical() {
+    let update = AggregatedBookStreamUpdate {
+        subscription: Some(SubscriptionId { value: 7 }),
+        sequence: 2,
+        book: Some(agg_book_body()),
+        epoch_nanos: 1_700_000_000_000_000_001,
+    };
+    assert_bytes_eq(
+        "AggregatedBookStreamUpdate(full)",
+        &generated::encode_aggregated_book_stream_update(&update),
+        &hand::hand_aggregated_book_stream_update_to_json(&update),
+    );
 }

@@ -70,12 +70,12 @@ use celnet_fanout::Consumer;
 use celnet_observability::LatencyRecorder;
 use celnet_proto::stream_service_server::StreamService;
 use celnet_proto::{
-    ClientStreamMessage, Conventions, CurveSet, Execute, Executed, Heartbeat, Instrument,
-    MarketContext, MarketObservable, MarketSeriesPoint, MarketSeriesSnapshot,
-    MarketSeriesSubscribe, RatesInstrument, RatesPriceRequest, RatesPricingResult,
-    RatesStreamSnapshot, RatesStreamUpdate, RatesSubscribe, ServerStreamMessage, Side, Snapshot,
-    StreamEnd, StreamReject, SubscriptionId, TradableToken, TwoWayPrice, Update,
-    client_stream_message, server_stream_message, stream_end, stream_reject,
+    AggregatedBookSubscribe, ClientStreamMessage, Conventions, CurveSet, Execute, Executed,
+    Heartbeat, Instrument, MarketContext, MarketObservable, MarketSeriesPoint,
+    MarketSeriesSnapshot, MarketSeriesSubscribe, RatesInstrument, RatesPriceRequest,
+    RatesPricingResult, RatesStreamSnapshot, RatesStreamUpdate, RatesSubscribe,
+    ServerStreamMessage, Side, Snapshot, StreamEnd, StreamReject, SubscriptionId, TradableToken,
+    TwoWayPrice, Update, client_stream_message, server_stream_message, stream_end, stream_reject,
 };
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
@@ -86,6 +86,7 @@ use crate::core_link::{CoreLink, Observable, ObservableQuery};
 use crate::pricer::{ConventionSet, Priced, price_instrument};
 use crate::rates_pricing::{RatesPriceError, price_rates, stream_two_way};
 use crate::readiness::ReadinessGate;
+use crate::services::aggregation::AggregationHub;
 use crate::services::clicktrade::{
     BookOutcome, TokenLedger, TokenMinter, TwoWayLine, mint_two_way,
 };
@@ -187,6 +188,11 @@ pub struct StreamEdge {
     /// token, so the isolated stream tests never touch it); the boot path overrides
     /// it with the edge-wide registry via [`StreamEdge::with_sessions`].
     sessions: Arc<SessionRegistry>,
+    /// The edge-wide aggregated-book engine hub: an `AggregatedBookSubscribe` reads
+    /// its live composite here. `None` for an isolated stream test (composite
+    /// subscriptions are then refused rather than faked); the boot path injects it
+    /// via [`StreamEdge::with_aggregation_hub`].
+    aggregation_hub: Option<Arc<AggregationHub>>,
 }
 
 /// A fresh, empty [`SessionRegistry`] the [`StreamEdge`] constructors default to —
@@ -220,6 +226,7 @@ impl StreamEdge {
             fleet: None,
             fanout: PriceFanout::start(),
             sessions: default_sessions(),
+            aggregation_hub: None,
         }
     }
 
@@ -246,6 +253,7 @@ impl StreamEdge {
             fleet: None,
             fanout: PriceFanout::start(),
             sessions: default_sessions(),
+            aggregation_hub: None,
         }
     }
 
@@ -274,6 +282,7 @@ impl StreamEdge {
             fleet,
             fanout: PriceFanout::start(),
             sessions: default_sessions(),
+            aggregation_hub: None,
         }
     }
 
@@ -285,6 +294,15 @@ impl StreamEdge {
     #[must_use]
     pub fn with_sessions(mut self, sessions: Arc<SessionRegistry>) -> Self {
         self.sessions = sessions;
+        self
+    }
+
+    /// Inject the edge-wide aggregated-book engine hub so a client can subscribe to
+    /// a book's live composite over this session (the boot path shares the SAME hub
+    /// the LP ingest service feeds).
+    #[must_use]
+    pub fn with_aggregation_hub(mut self, hub: Arc<AggregationHub>) -> Self {
+        self.aggregation_hub = Some(hub);
         self
     }
 
@@ -664,6 +682,50 @@ fn rates_update_msg(
     }
 }
 
+/// Build an [`AggregatedBookStreamSnapshot`] (the baseline composite of a subscribed
+/// aggregated book) at `seq`.
+fn agg_book_snapshot_msg(
+    id: SubscriptionId,
+    seq: u64,
+    book: celnet_proto::AggregatedBookSnapshot,
+    correlation_id: Option<u64>,
+    now: i64,
+) -> ServerStreamMessage {
+    ServerStreamMessage {
+        message: Some(
+            server_stream_message::Message::AggregatedBookStreamSnapshot(
+                celnet_proto::AggregatedBookStreamSnapshot {
+                    subscription: Some(id),
+                    sequence: seq,
+                    book: Some(book),
+                    correlation_id,
+                    epoch_nanos: now,
+                },
+            ),
+        ),
+    }
+}
+
+/// Build an [`AggregatedBookStreamUpdate`] (a re-consolidated composite delta) at
+/// `seq`.
+fn agg_book_update_msg(
+    id: SubscriptionId,
+    seq: u64,
+    book: celnet_proto::AggregatedBookSnapshot,
+    now: i64,
+) -> ServerStreamMessage {
+    ServerStreamMessage {
+        message: Some(server_stream_message::Message::AggregatedBookStreamUpdate(
+            celnet_proto::AggregatedBookStreamUpdate {
+                subscription: Some(id),
+                sequence: seq,
+                book: Some(book),
+                epoch_nanos: now,
+            },
+        )),
+    }
+}
+
 /// Build the wire [`celnet_proto::Greeks`] for a streamed Snapshot/Update,
 /// carry-tagging the rate-sensitivity arm by the instrument's asset class: an FX /
 /// metal line keeps the two-rho `Fx` arm **byte-identical** to today, a cross-asset
@@ -760,6 +822,7 @@ impl StreamEdge {
             subs: HashMap::new(),
             series: HashMap::new(),
             rates_subs: HashMap::new(),
+            agg_subs: HashMap::new(),
             link: Arc::clone(&self.link),
             spread: self.spread,
             clock: self.clock.clone(),
@@ -774,6 +837,7 @@ impl StreamEdge {
             caller: ResolvedCaller::anonymous(),
             sessions: Arc::clone(&self.sessions),
             access_mode: self.access_mode(),
+            aggregation_hub: self.aggregation_hub.clone(),
         }
     }
 }
@@ -948,6 +1012,12 @@ pub(crate) async fn run_session<S>(
                 if !session.series.is_empty() && !session.drive_market_series(&out_tx).await {
                     break; // channel closed: client gone.
                 }
+                // Aggregated-book composite updates: poll the shared hub's memoised
+                // composite per subscribed book and emit a delta when its version
+                // advanced (consolidation happens in the hub, off the hot core).
+                if !session.agg_subs.is_empty() && !session.drive_agg_tick(&out_tx) {
+                    break; // channel closed: client gone.
+                }
             }
         }
     }
@@ -1063,6 +1133,11 @@ pub(crate) struct Session {
     /// [`PriceFanout`] and re-prices through the landed `price_rates` path — folded
     /// into the same fan-out the FX/cross-asset lines use, not a parallel FI path.
     rates_subs: HashMap<u64, RatesSubscription>,
+    /// The live **aggregated-book composite** lines multiplexed on this session,
+    /// keyed by their `SubscriptionId` (the SAME id space as every other line). Each
+    /// polls the shared [`AggregationHub`] for its book's memoised composite and
+    /// emits an update whenever the book's version advances.
+    agg_subs: HashMap<u64, AggBookSubscription>,
     link: Arc<CoreLink>,
     spread: SpreadModel,
     clock: Clock,
@@ -1090,6 +1165,22 @@ pub(crate) struct Session {
     /// production, [`AccessMode::Permissive`] for an isolated (store-less) stream
     /// test (where the gate is a no-op).
     access_mode: AccessMode,
+    /// The edge-wide aggregated-book engine hub (shared from the [`StreamEdge`]);
+    /// `None` for an isolated stream test (a composite subscribe is then refused).
+    aggregation_hub: Option<Arc<AggregationHub>>,
+}
+
+/// One live aggregated-book composite subscription on a session.
+struct AggBookSubscription {
+    /// The client-assigned subscription id.
+    id: SubscriptionId,
+    /// The aggregated-book id this line streams the composite of.
+    book_id: String,
+    /// The hub composite version last delivered to the client (0 = only the
+    /// baseline snapshot so far).
+    last_version: u64,
+    /// The last sequence number emitted (baseline snapshot is 1).
+    sequence: u64,
 }
 
 impl Session {
@@ -1157,6 +1248,13 @@ impl Session {
             client_stream_message::Message::RatesSubscribe(_) => Some(
                 RequiredAuthority::Capability(Action::Stream, AssetClass::FixedIncome),
             ),
+            // An aggregated-book composite is a fixed-income liquidity view, so it
+            // needs the Stream capability for the FixedIncome asset class — the same
+            // franchise gate a rates line passes (a book is global, but reading its
+            // composite still passes the FI streaming entitlement).
+            client_stream_message::Message::AggregatedBookSubscribe(_) => Some(
+                RequiredAuthority::Capability(Action::Stream, AssetClass::FixedIncome),
+            ),
             _ => None,
         };
         if let Some(required) = required
@@ -1197,14 +1295,32 @@ impl Session {
             client_stream_message::Message::RatesSubscribe(s) => {
                 self.handle_rates_subscribe(s, out_tx).await
             }
+            client_stream_message::Message::AggregatedBookSubscribe(s) => {
+                self.handle_aggregated_book_subscribe(s, out_tx).await
+            }
+            client_stream_message::Message::AggregatedBookUnsubscribe(u) => {
+                if let Some(id) = u.subscription
+                    && self.agg_subs.remove(&id.value).is_some()
+                {
+                    let end = ServerStreamMessage {
+                        message: Some(server_stream_message::Message::StreamEnd(StreamEnd {
+                            subscription: Some(id),
+                            reason: stream_end::Reason::Unsubscribed as i32,
+                        })),
+                    };
+                    let _ = out_tx.send(Ok(end)).await;
+                }
+                true
+            }
             client_stream_message::Message::Modify(m) => self.handle_modify(m, out_tx).await,
             client_stream_message::Message::Unsubscribe(u) => {
                 // The subscription id space is shared across FX price, market-series,
-                // and fixed-income lines: a single id keys at most one of them, so
-                // tear down whichever this id names.
+                // fixed-income, and aggregated-book lines: a single id keys at most
+                // one of them, so tear down whichever this id names.
                 if let Some(id) = u.subscription
                     && (self.subs.remove(&id.value).is_some()
-                        || self.rates_subs.remove(&id.value).is_some())
+                        || self.rates_subs.remove(&id.value).is_some()
+                        || self.agg_subs.remove(&id.value).is_some())
                 {
                     let end = ServerStreamMessage {
                         message: Some(server_stream_message::Message::StreamEnd(StreamEnd {
@@ -1429,6 +1545,68 @@ impl Session {
         }
         sub.delivered = 1;
         self.rates_subs.insert(id.value, sub);
+        true
+    }
+
+    /// Open an aggregated-book composite line: send the current composite as the
+    /// baseline `AggregatedBookStreamSnapshot`, then register the subscription so
+    /// [`Session::drive_agg_tick`] streams deltas as the book's members re-quote.
+    /// An unknown / disabled book id is refused `not_found` (no line opened).
+    async fn handle_aggregated_book_subscribe(
+        &mut self,
+        s: AggregatedBookSubscribe,
+        out_tx: &mpsc::Sender<Result<ServerStreamMessage, Status>>,
+    ) -> bool {
+        let Some(id) = s.subscription else {
+            return true;
+        };
+        if s.book_id.is_empty() {
+            let _ = out_tx
+                .send(Err(Status::invalid_argument(
+                    "aggregated book subscribe requires a `book_id`",
+                )))
+                .await;
+            return true;
+        }
+        let Some(hub) = self.aggregation_hub.as_ref() else {
+            let _ = out_tx
+                .send(Err(Status::unavailable(
+                    "aggregated-book engine not available on this edge",
+                )))
+                .await;
+            return true;
+        };
+        // The current composite (empty `instruments` until members quote). An
+        // unknown or disabled book has no running engine.
+        let Some(published) = hub.snapshot(&s.book_id) else {
+            let _ = out_tx
+                .send(Err(Status::not_found(format!(
+                    "no enabled aggregated book with id `{}`",
+                    s.book_id
+                ))))
+                .await;
+            return true;
+        };
+        let snap = agg_book_snapshot_msg(
+            id,
+            1,
+            published.snapshot.clone(),
+            s.correlation_id,
+            self.clock.now_nanos(),
+        );
+        // Blocking send for the baseline so it is never dropped.
+        if out_tx.send(Ok(snap)).await.is_err() {
+            return false;
+        }
+        self.agg_subs.insert(
+            id.value,
+            AggBookSubscription {
+                id,
+                book_id: s.book_id,
+                last_version: published.version,
+                sequence: 1,
+            },
+        );
         true
     }
 
@@ -1949,6 +2127,42 @@ impl Session {
                 Ok(()) => {
                     sub.sequence = seq;
                     sub.delivered = seq;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => return false,
+                Err(mpsc::error::TrySendError::Full(_)) => {}
+            }
+        }
+        true
+    }
+
+    /// Drive every aggregated-book composite subscription: poll the shared hub for
+    /// each book's memoised composite and, when its version has advanced since the
+    /// last delivery, emit an `AggregatedBookStreamUpdate`. Non-blocking (`try_send`)
+    /// so a slow client never stalls the tick loop; a lagged update is simply
+    /// dropped and re-sent on the next version bump (the composite is a whole-state
+    /// snapshot, so the newest one supersedes any it skipped). Returns `false` only
+    /// on a fatal channel close.
+    fn drive_agg_tick(
+        &mut self,
+        out_tx: &mpsc::Sender<Result<ServerStreamMessage, Status>>,
+    ) -> bool {
+        let Some(hub) = self.aggregation_hub.clone() else {
+            return true;
+        };
+        let now = self.clock.now_nanos();
+        for sub in self.agg_subs.values_mut() {
+            let Some(published) = hub.snapshot(&sub.book_id) else {
+                continue;
+            };
+            if published.version <= sub.last_version {
+                continue;
+            }
+            let seq = sub.sequence + 1;
+            let update = agg_book_update_msg(sub.id, seq, published.snapshot.clone(), now);
+            match out_tx.try_send(Ok(update)) {
+                Ok(()) => {
+                    sub.sequence = seq;
+                    sub.last_version = published.version;
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => return false,
                 Err(mpsc::error::TrySendError::Full(_)) => {}
@@ -2558,6 +2772,7 @@ mod tests {
             subs: HashMap::new(),
             series: HashMap::new(),
             rates_subs: HashMap::new(),
+            agg_subs: HashMap::new(),
             link,
             spread: SpreadModel::default(),
             clock: clock.clone(),
@@ -2568,6 +2783,7 @@ mod tests {
             fanout,
             caller: ResolvedCaller::anonymous(),
             sessions: default_sessions(),
+            aggregation_hub: None,
             access_mode: AccessMode::Permissive,
         };
         let mut sub = Subscription {
@@ -2624,6 +2840,7 @@ mod tests {
             subs: HashMap::new(),
             series: HashMap::new(),
             rates_subs: HashMap::new(),
+            agg_subs: HashMap::new(),
             link,
             spread: SpreadModel::default(),
             clock,
@@ -2634,6 +2851,7 @@ mod tests {
             fanout: PriceFanout::start(),
             caller: ResolvedCaller::anonymous(),
             sessions,
+            aggregation_hub: None,
             access_mode: AccessMode::Enforce,
         }
     }

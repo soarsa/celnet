@@ -667,6 +667,12 @@ fn decode_stream_control(
         "rates_subscribe" => {
             client_stream_message::Message::RatesSubscribe(codec::rates_subscribe_from_json(o)?)
         }
+        "aggregated_book_subscribe" => client_stream_message::Message::AggregatedBookSubscribe(
+            codec::aggregated_book_subscribe_from_json(o)?,
+        ),
+        "aggregated_book_unsubscribe" => client_stream_message::Message::AggregatedBookUnsubscribe(
+            codec::aggregated_book_unsubscribe_from_json(o)?,
+        ),
         "modify" => client_stream_message::Message::Modify(codec::modify_from_json(o)?),
         "unsubscribe" => {
             client_stream_message::Message::Unsubscribe(codec::unsubscribe_from_json(o)?)
@@ -1410,6 +1416,11 @@ mod tests {
             // The fixed-income streaming line folded onto the SAME multiplexed
             // session (rates-stream-ws): a WS client sends `{"type":"rates_subscribe"}`.
             "rates_subscribe",
+            // The aggregated-book composite line on the SAME multiplexed session
+            // (D3): a WS client sends `{"type":"aggregated_book_subscribe"}` /
+            // `{"type":"aggregated_book_unsubscribe"}`.
+            "aggregated_book_subscribe",
+            "aggregated_book_unsubscribe",
         ];
         frozen.sort_unstable();
         assert_eq!(

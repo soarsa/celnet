@@ -1080,6 +1080,12 @@ async fn handle_frame(
             .await;
             SessionFlow::Continue
         }
+        // Aggregated-book composite frames (D3): this SDK does not yet open
+        // aggregated-book subscriptions, so it never solicits these frames; skip any
+        // that arrive rather than mis-route them (composite consumption is a separate
+        // SDK lane, alongside the D4 GUI view).
+        server_stream_message::Message::AggregatedBookStreamSnapshot(_)
+        | server_stream_message::Message::AggregatedBookStreamUpdate(_) => SessionFlow::Continue,
     }
 }
 

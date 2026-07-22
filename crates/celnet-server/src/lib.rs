@@ -374,6 +374,13 @@ impl Edge {
         // looping positions client-side).
         let store = Arc::new(PositionStore::new());
 
+        // The edge-wide aggregated-book engine hub (D3): shared by the LP ingest
+        // service (which feeds it) and the stream service (which reads its
+        // composite). Reconciled to the persisted enabled books once the identity
+        // store is loaded (below), and again on every admin book CRUD (via the
+        // AuthEdge). Bound to the edge clock so staleness decay measures quote age.
+        let aggregation_hub = services::aggregation::AggregationHub::new(clock.clone());
+
         // Connect the backend fleet ONCE for a distributed topology (one
         // `celnet_client::Client` per endpoint, sharing its HTTP/2 channel) and share
         // the SAME `Fleet` across every edge — the unary pricing/quote/surface services
@@ -431,7 +438,8 @@ impl Edge {
                 Arc::clone(&store),
                 fleet.clone(),
             )
-            .with_sessions(Arc::clone(&sessions)),
+            .with_sessions(Arc::clone(&sessions))
+            .with_aggregation_hub(Arc::clone(&aggregation_hub)),
         );
         let surface = SurfaceServiceServer::new(SurfaceEdge::with_fleet(
             Arc::clone(&link),
@@ -581,6 +589,12 @@ impl Edge {
             store.configure_desk(&d.id, &d.books);
         }
 
+        // Stand up an engine for every persisted ENABLED aggregated book (D3), so a
+        // GUI can subscribe to its composite and an LP feed lands into it from first
+        // boot. Runs before `identity_store` is moved into the `AuthEdge`; every
+        // admin book CRUD re-reconciles (see `AuthEdge::with_aggregation_hub`).
+        aggregation_hub.reconcile(&identity_store);
+
         // ADR-0015 §2.1: activate the configurable consistency tier — Raft **wired
         // everywhere but forced nowhere**. A `RaftNode` is booted ONLY when a
         // `Strong`-tier book / desk / tenant is configured (else zero overhead: a
@@ -612,14 +626,30 @@ impl Edge {
         // warn on an unresolved routing desk.
         let identity_arc = Arc::new(std::sync::Mutex::new(identity_store));
         fix_registry.set_desk_directory(Arc::clone(&identity_arc) as _);
-        let auth_edge = Arc::new(AuthEdge::new(
-            Arc::clone(&identity_arc),
-            identity_path,
-            Arc::clone(&sessions),
-            Arc::clone(&gate),
-            clock.clone(),
-        ));
+        let auth_edge = Arc::new(
+            AuthEdge::new(
+                Arc::clone(&identity_arc),
+                identity_path,
+                Arc::clone(&sessions),
+                Arc::clone(&gate),
+                clock.clone(),
+            )
+            // Re-reconcile the aggregated-book engines after every admin book CRUD
+            // (create/update/delete) so a new/edited/disabled book stands up or tears
+            // down its engine immediately (D3).
+            .with_aggregation_hub(Arc::clone(&aggregation_hub)),
+        );
         let auth = AuthServiceServer::from_arc(Arc::clone(&auth_edge));
+
+        // The backend LP-quote ingest (D3): a machine-to-machine feed that routes
+        // pushed `LpQuote`s into the shared aggregation hub. gRPC only (no WS mirror).
+        let liquidity_feed =
+            celnet_proto::liquidity_feed_service_server::LiquidityFeedServiceServer::new(
+                services::liquidity_feed::LiquidityFeedEdge::new(
+                    Arc::clone(&aggregation_hub),
+                    Arc::clone(&gate),
+                ),
+            );
 
         let incoming = tonic::transport::server::TcpIncoming::from_listener(listener, true, None)
             .map_err(std::io::Error::other)?;
@@ -634,6 +664,7 @@ impl Edge {
                 .add_service(auth)
                 .add_service(rfq_desk)
                 .add_service(notifications)
+                .add_service(liquidity_feed)
                 .serve_with_incoming_shutdown(incoming, async {
                     let _ = grpc_rx.await;
                 })

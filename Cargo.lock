@@ -683,12 +683,17 @@ version = "0.0.0"
 dependencies = [
  "celnet-aggregation",
  "celnet-bond",
+ "celnet-proto",
  "celnet-types",
  "clap",
+ "futures-util",
  "libm",
  "serde",
  "serde_json",
  "time",
+ "tokio",
+ "tonic",
+ "tracing",
 ]
 
 [[package]]
@@ -885,6 +890,7 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "blake3",
+ "celnet-aggregation",
  "celnet-bond",
  "celnet-calendar",
  "celnet-client",

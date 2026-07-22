@@ -44,6 +44,7 @@ celnet-crypto-vanilla.workspace = true
 # {vanilla, types, qmc}, all already in the server tree, so no cycle.
 celnet-xva.workspace = true
 celnet-rfq.workspace = true
+celnet-aggregation.workspace = true
 celnet-engine.workspace = true
 # User-extensible analytics: the tiered plugin host whose ModelRegistry the
 # pricer's ProductEngine (options) + FiProductEngine (fixed income, ADR-0021)

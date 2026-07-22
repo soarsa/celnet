@@ -150,6 +150,10 @@ pub struct AuthEdge {
     sessions: Arc<SessionRegistry>,
     gate: Arc<ReadinessGate>,
     throttle: LoginThrottle,
+    /// The edge-wide aggregated-book engine hub, re-reconciled after every admin
+    /// book create/update/delete so an engine stands up / tears down immediately
+    /// (D3). `None` in an isolated auth test (book CRUD then persists only).
+    aggregation_hub: Option<Arc<crate::services::aggregation::AggregationHub>>,
 }
 
 impl AuthEdge {
@@ -170,6 +174,27 @@ impl AuthEdge {
             sessions,
             gate,
             throttle: LoginThrottle::new(clock),
+            aggregation_hub: None,
+        }
+    }
+
+    /// Inject the edge-wide aggregated-book engine hub so book CRUD re-reconciles the
+    /// running engines (the boot path shares the SAME hub the stream + LP ingest
+    /// services use).
+    #[must_use]
+    pub fn with_aggregation_hub(
+        mut self,
+        hub: Arc<crate::services::aggregation::AggregationHub>,
+    ) -> Self {
+        self.aggregation_hub = Some(hub);
+        self
+    }
+
+    /// Re-reconcile the aggregated-book engines from the committed store (a no-op
+    /// when no hub is wired).
+    fn reconcile_aggregation(&self, store: &IdentityStore) {
+        if let Some(hub) = &self.aggregation_hub {
+            hub.reconcile(store);
         }
     }
 
@@ -1268,6 +1293,7 @@ impl AuthService for AuthEdge {
             .create_aggregated_book(name, members, scope, params, enabled)
             .map_err(aggregated_book_status)?;
         self.persist_and_commit(&mut guard, next)?;
+        self.reconcile_aggregation(&guard);
         Ok(Response::new(CreateAggregatedBookResponse {
             book: Some(aggregated_book_to_wire(&def)),
             correlation_id: req.correlation_id,
@@ -1300,6 +1326,7 @@ impl AuthService for AuthEdge {
             .update_aggregated_book(&req.id, name, members, scope, params, enabled)
             .map_err(aggregated_book_status)?;
         self.persist_and_commit(&mut guard, next)?;
+        self.reconcile_aggregation(&guard);
         Ok(Response::new(UpdateAggregatedBookResponse {
             book: Some(aggregated_book_to_wire(&def)),
             correlation_id: req.correlation_id,
@@ -1322,6 +1349,7 @@ impl AuthService for AuthEdge {
             .map_err(aggregated_book_status)?;
         if removed {
             self.persist_and_commit(&mut guard, next)?;
+            self.reconcile_aggregation(&guard);
         }
         Ok(Response::new(DeleteAggregatedBookResponse {
             removed,

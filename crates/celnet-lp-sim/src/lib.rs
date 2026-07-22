@@ -77,6 +77,7 @@
 pub mod fleet;
 pub mod lp;
 pub mod lpsim;
+pub mod net;
 pub mod price;
 mod rng;
 pub mod universe;

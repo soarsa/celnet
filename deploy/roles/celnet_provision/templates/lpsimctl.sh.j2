@@ -26,6 +26,9 @@ export LPSIM_MAX_INSTRUMENTS="{{ celnet_lpsim_max_instruments | default('12') }}
 export LPSIM_SEED="{{ celnet_lpsim_seed | default('305419896') }}"
 export LPSIM_SETTLEMENT="{{ celnet_lpsim_settlement | default('2026-04-16') }}"
 export LPSIM_INCLUDE_BILLS="{{ celnet_lpsim_include_bills | default('0') }}"
+# Network feed endpoint: when set, lp-sim streams LpQuotes to the server's LpFeed
+# ingest so the composite surfaces to GUI subscribers (default: the local gRPC edge).
+export LPSIM_ADDR="{{ celnet_lpsim_addr | default('http://127.0.0.1:' ~ (celnet_grpc_port | default('50051'))) }}"
 
 PIDFILE="$LPSIM_RUN_DIR/lp-sim.pid"
 

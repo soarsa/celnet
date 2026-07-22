@@ -37,6 +37,18 @@ time.workspace = true
 # The `lp-sim` runnable feed binary's CLI surface (--lp-name/--book/--interval/…),
 # mirroring the fix-sim client's flag style.
 clap.workspace = true
+# The wire contract + gRPC client for the network feed mode (`--addr`): the
+# `LiquidityFeedServiceClient` the LP-SIM feed pushes `LpQuote`s to, so the
+# consolidated composite surfaces to server subscribers rather than printing
+# locally. The SAME single contract the server ingests (guardrail 9).
+celnet-proto.workspace = true
+tonic.workspace = true
+# The async runtime + stream combinators for the client-streaming push (the local
+# in-process mode stays synchronous; the runtime is only built in `--addr` mode).
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+futures-util.workspace = true
+# Structured logging for the network feed's connect / reconnect lifecycle.
+tracing.workspace = true
 
 # The runnable LP-SIM liquidity feed: loads the bundled Treasury universe, stands
 # up the named `LP-SIM` member panel, and streams the consolidated composite

@@ -134,6 +134,12 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     // `null` when absent by `family_to_json`'s `.as_ref().map(..)` (the `maturity_date`
     // singular message already renders `null`-when-absent via the generic rule).
     "BondDef",
+    // The aggregated-book composite BASELINE stream frame (D3): its `json!({ .. })`
+    // hand encoder emits the `Option<u64>` `correlation_id` as JSON `null` when
+    // absent; the `subscription` / `book` singular-message payloads already render
+    // `null`-when-absent via the generic singular-message rule and need no entry.
+    // (`AggregatedBookStreamUpdate` carries no optional field, so it is not listed.)
+    "AggregatedBookStreamSnapshot",
 ];
 
 /// How the generated encoder should treat one descriptor field's JSON key.

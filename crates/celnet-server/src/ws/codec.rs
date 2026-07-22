@@ -1801,8 +1801,95 @@ pub(super) fn server_stream_message_to_json(
             ("rates_stream_snapshot", rates_stream_snapshot_to_json(s))
         }
         Message::RatesStreamUpdate(u) => ("rates_stream_update", rates_stream_update_to_json(u)),
+        Message::AggregatedBookStreamSnapshot(s) => (
+            "aggregated_book_stream_snapshot",
+            aggregated_book_stream_snapshot_to_json(s),
+        ),
+        Message::AggregatedBookStreamUpdate(u) => (
+            "aggregated_book_stream_update",
+            aggregated_book_stream_update_to_json(u),
+        ),
     };
     Some(tagged(tag, body))
+}
+
+/// Encode one member's contribution to a composite instrument.
+fn lp_contribution_to_json(c: &celnet_proto::LpContribution) -> Value {
+    json!({
+        "lp_name": c.lp_name,
+        "bid": c.bid,
+        "offer": c.offer,
+        "stale": c.stale,
+    })
+}
+
+/// Encode one instrument's consolidated composite line.
+fn aggregated_instrument_to_json(i: &celnet_proto::AggregatedInstrument) -> Value {
+    json!({
+        "instrument_id": i.instrument_id,
+        "display_name": i.display_name,
+        "isin": i.isin,
+        "cusip": i.cusip,
+        "best_bid": i.best_bid,
+        "best_offer": i.best_offer,
+        "bid_size": i.bid_size,
+        "offer_size": i.offer_size,
+        "confidence": i.confidence,
+        "contributions": i.contributions.iter().map(lp_contribution_to_json).collect::<Vec<_>>(),
+    })
+}
+
+/// Encode an aggregated book's full composite state (book id + per-instrument lines).
+fn aggregated_book_snapshot_body_to_json(b: &celnet_proto::AggregatedBookSnapshot) -> Value {
+    json!({
+        "book_id": b.book_id,
+        "instruments": b.instruments.iter().map(aggregated_instrument_to_json).collect::<Vec<_>>(),
+    })
+}
+
+/// Encode the baseline aggregated-book composite stream frame.
+fn aggregated_book_stream_snapshot_to_json(
+    s: &celnet_proto::AggregatedBookStreamSnapshot,
+) -> Value {
+    json!({
+        "subscription": s.subscription.as_ref().map(subscription_id_to_json),
+        "sequence": s.sequence,
+        "book": s.book.as_ref().map(aggregated_book_snapshot_body_to_json),
+        "correlation_id": s.correlation_id,
+        "epoch_nanos": s.epoch_nanos,
+    })
+}
+
+/// Encode a sequenced aggregated-book composite delta frame.
+fn aggregated_book_stream_update_to_json(u: &celnet_proto::AggregatedBookStreamUpdate) -> Value {
+    json!({
+        "subscription": u.subscription.as_ref().map(subscription_id_to_json),
+        "sequence": u.sequence,
+        "book": u.book.as_ref().map(aggregated_book_snapshot_body_to_json),
+        "epoch_nanos": u.epoch_nanos,
+    })
+}
+
+/// Decode an `AggregatedBookSubscribe` (open an aggregated-book composite line) from
+/// the WS JSON mirror — the composite counterpart of [`rates_subscribe_from_json`].
+pub(super) fn aggregated_book_subscribe_from_json(
+    o: &Map<String, Value>,
+) -> Result<celnet_proto::AggregatedBookSubscribe> {
+    Ok(celnet_proto::AggregatedBookSubscribe {
+        subscription: Some(nested(o, "subscription", subscription_id_from_json)?),
+        book_id: string_field(o, "book_id")?,
+        throttle_nanos: u64_or_zero(o, "throttle_nanos"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+/// Decode an `AggregatedBookUnsubscribe` (close a composite line) from the WS mirror.
+pub(super) fn aggregated_book_unsubscribe_from_json(
+    o: &Map<String, Value>,
+) -> Result<celnet_proto::AggregatedBookUnsubscribe> {
+    Ok(celnet_proto::AggregatedBookUnsubscribe {
+        subscription: Some(nested(o, "subscription", subscription_id_from_json)?),
+    })
 }
 
 fn rates_stream_snapshot_to_json(s: &celnet_proto::RatesStreamSnapshot) -> Value {
@@ -3947,6 +4034,7 @@ const _: fn() = || {
 /// verification seam.
 #[doc(hidden)]
 pub mod diff_support {
+    use celnet_proto::{AggregatedBookStreamSnapshot, AggregatedBookStreamUpdate};
     use celnet_proto::{
         ArbReport, CcyPair, CommodityRef, Conventions, CreateFixConnectionRequest,
         CreateFixConnectionResponse, CryptoPair, DeleteFixConnectionRequest,
@@ -4321,6 +4409,18 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_list_fix_connections_response_to_json(r: &ListFixConnectionsResponse) -> Value {
         super::list_fix_connections_response_to_json(r)
+    }
+
+    /// Hand-codec reference for the `AggregatedBookStreamSnapshot` encode (D3).
+    #[must_use]
+    pub fn hand_aggregated_book_stream_snapshot_to_json(s: &AggregatedBookStreamSnapshot) -> Value {
+        super::aggregated_book_stream_snapshot_to_json(s)
+    }
+
+    /// Hand-codec reference for the `AggregatedBookStreamUpdate` encode (D3).
+    #[must_use]
+    pub fn hand_aggregated_book_stream_update_to_json(u: &AggregatedBookStreamUpdate) -> Value {
+        super::aggregated_book_stream_update_to_json(u)
     }
 
     /// Hand-codec reference for the `CreateFixConnectionResponse` encode.

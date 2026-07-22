@@ -23,9 +23,11 @@
 //! refuses new work with `UNAVAILABLE` while the edge is starting or draining.
 
 pub mod access;
+pub mod aggregation;
 pub mod consensus;
 pub mod desk;
 pub mod error_status;
+pub mod liquidity_feed;
 pub mod pricing;
 pub mod quote;
 pub mod rates_book;

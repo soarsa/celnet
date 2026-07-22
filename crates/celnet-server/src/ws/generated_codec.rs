@@ -114,6 +114,13 @@ use celnet_proto::{
     UpdateUserResponse, UserDesc, VanillaIrsDef,
     instrument_def_desc::Definition as InstrumentDefinition,
 };
+// Aggregated-book composite publish frames (D3): the descriptor-driven ENCODE side
+// of the GUI-facing composite a subscriber reads over `StreamService.StreamSession`,
+// proven byte-identical to the hand codec by `tests/ws_codec_differential.rs`.
+use celnet_proto::{
+    AggregatedBookSnapshot, AggregatedBookStreamSnapshot, AggregatedBookStreamUpdate,
+    AggregatedInstrument, LpContribution, SubscriptionId,
+};
 use serde_json::{Map, Value, json};
 
 use super::codec::CodecError;
@@ -6983,4 +6990,104 @@ pub fn encode_delete_instrument_response(r: &DeleteInstrumentResponse) -> Value 
 #[must_use]
 pub fn encode_calibrated_curve(c: &CalibratedCurve) -> Value {
     encode("CalibratedCurve", c)
+}
+
+// --- aggregated-book composite publish frames (D3) --------------------------
+
+impl WireAdapter for SubscriptionId {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "value" => Some(WireVal::U64(self.value)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for LpContribution {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "lp_name" => Some(WireVal::Str(&self.lp_name)),
+            "bid" => Some(WireVal::F64(self.bid)),
+            "offer" => Some(WireVal::F64(self.offer)),
+            "stale" => Some(WireVal::Bool(self.stale)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AggregatedInstrument {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "instrument_id" => Some(WireVal::Str(&self.instrument_id)),
+            "display_name" => Some(WireVal::Str(&self.display_name)),
+            "isin" => Some(WireVal::Str(&self.isin)),
+            "cusip" => Some(WireVal::Str(&self.cusip)),
+            "best_bid" => Some(WireVal::F64(self.best_bid)),
+            "best_offer" => Some(WireVal::F64(self.best_offer)),
+            "bid_size" => Some(WireVal::F64(self.bid_size)),
+            "offer_size" => Some(WireVal::F64(self.offer_size)),
+            "confidence" => Some(WireVal::F64(self.confidence)),
+            "contributions" => Some(WireVal::RepeatedMsg(
+                self.contributions
+                    .iter()
+                    .map(|c| c as &dyn WireAdapter)
+                    .collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AggregatedBookSnapshot {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book_id" => Some(WireVal::Str(&self.book_id)),
+            "instruments" => Some(WireVal::RepeatedMsg(
+                self.instruments
+                    .iter()
+                    .map(|i| i as &dyn WireAdapter)
+                    .collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AggregatedBookStreamSnapshot {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "subscription" => self.subscription.as_ref().map(|s| WireVal::Msg(s)),
+            "sequence" => Some(WireVal::U64(self.sequence)),
+            "book" => self.book.as_ref().map(|b| WireVal::Msg(b)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AggregatedBookStreamUpdate {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "subscription" => self.subscription.as_ref().map(|s| WireVal::Msg(s)),
+            "sequence" => Some(WireVal::U64(self.sequence)),
+            "book" => self.book.as_ref().map(|b| WireVal::Msg(b)),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            _ => None,
+        }
+    }
+}
+
+/// Encode an [`AggregatedBookStreamSnapshot`] (the baseline composite frame) to its
+/// WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_aggregated_book_stream_snapshot(s: &AggregatedBookStreamSnapshot) -> Value {
+    encode("AggregatedBookStreamSnapshot", s)
+}
+
+/// Encode an [`AggregatedBookStreamUpdate`] (a composite delta frame) to its WS JSON
+/// — descriptor-driven.
+#[must_use]
+pub fn encode_aggregated_book_stream_update(u: &AggregatedBookStreamUpdate) -> Value {
+    encode("AggregatedBookStreamUpdate", u)
 }

@@ -45,6 +45,11 @@ LPSIM_SETTLEMENT="${LPSIM_SETTLEMENT:-2026-04-16}"
 LPSIM_INCLUDE_BILLS="${LPSIM_INCLUDE_BILLS:-0}"
 LPSIM_ONESHOT="${LPSIM_ONESHOT:-0}"
 LPSIM_DAEMON="${LPSIM_DAEMON:-0}"
+# Network feed mode: when set to a server gRPC endpoint (e.g.
+# http://127.0.0.1:50051), lp-sim streams LpQuotes to the server's LpFeed ingest so
+# the composite surfaces to GUI subscribers, instead of printing it locally. Absent
+# ⇒ the local in-process composite print (the prior behaviour).
+LPSIM_ADDR="${LPSIM_ADDR:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -114,6 +119,9 @@ build_args() {
     --instruments "$LPSIM_INSTRUMENTS" --max-instruments "$LPSIM_MAX_INSTRUMENTS" \
     --seed "$LPSIM_SEED" --settlement "$LPSIM_SETTLEMENT")
   if [ "$LPSIM_INCLUDE_BILLS" = "1" ]; then ARGS+=(--include-bills); fi
+  # Network feed: push LpQuotes to the server ingest so the composite surfaces to
+  # GUI subscribers (mirrors how the FIX sim passes --addr to its acceptor).
+  if [ -n "$LPSIM_ADDR" ]; then ARGS+=(--addr "$LPSIM_ADDR"); fi
 }
 
 if [ "$LPSIM_ONESHOT" = "1" ]; then

@@ -82,6 +82,19 @@ struct Args {
     /// Emit a single round and exit (default: stream forever).
     #[arg(long, default_value_t = false)]
     once: bool,
+
+    /// Network feed mode: the gRPC endpoint of a running celnet server (e.g.
+    /// `http://127.0.0.1:50051`). When set, the feed connects and streams `LpQuote`s
+    /// to the server's `LiquidityFeedService.LpFeed` ingest — so the consolidated
+    /// composite surfaces to the server's GUI subscribers — instead of printing the
+    /// composite locally. Absent ⇒ the default in-process local mode.
+    #[arg(long)]
+    addr: Option<String>,
+
+    /// Force the in-process local mode even if `--addr` is given (prints the
+    /// composite locally; the default when `--addr` is absent).
+    #[arg(long, default_value_t = false)]
+    local: bool,
 }
 
 fn main() -> std::process::ExitCode {
@@ -129,9 +142,6 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(1);
     }
 
-    let feeds = into_feeds(build_fleet(&cfg, &selection));
-    let ccfg = cfg.consolidation();
-
     eprintln!(
         "[lp-sim] feed '{}' → book '{}' : {} members, {} instrument(s), interval {}s, seed {:#x}",
         cfg.lp_name,
@@ -142,6 +152,34 @@ fn main() -> std::process::ExitCode {
         cfg.seed,
     );
     eprintln!("[lp-sim] members: {}", member_names(&cfg).join(", "));
+
+    // Network feed mode (`--addr`, not overridden by `--local`): push the panel's
+    // two-ways to a running server so the composite surfaces to GUI subscribers.
+    if let Some(addr) = args.addr.as_deref()
+        && !args.local
+    {
+        eprintln!(
+            "[lp-sim] network mode → pushing LpFeed to {addr} (book '{}')",
+            args.book
+        );
+        return match celnet_lp_sim::net::run_network_feed(
+            &cfg,
+            &selection,
+            addr,
+            args.interval,
+            args.once,
+        ) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("[lp-sim] ERROR: network feed failed: {e}");
+                std::process::ExitCode::from(1)
+            }
+        };
+    }
+
+    // Local in-process mode (default): consolidate + print the composite here.
+    let feeds = into_feeds(build_fleet(&cfg, &selection));
+    let ccfg = cfg.consolidation();
 
     let start = SystemTime::now();
     let mut round: u64 = 0;
