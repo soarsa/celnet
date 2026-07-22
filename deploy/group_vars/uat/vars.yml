@@ -5,7 +5,12 @@
 # Host: celnet@136.115.32.199  ->  https://app.uat.celnet.uk
 # ============================================================================
 celnet_deploy_name: uat
-celnet_domain: app.uat.celnet.uk
+# Canonical host users hit (DNS: app.uat.celnet.uk is a CNAME → celnetapp → this host).
+celnet_domain: celnetapp.uat.celnet.uk
+# Extra DNS names to include in the self-signed cert's SAN so the old CNAME name
+# (and any additional aliases) still validate without a browser warning.
+celnet_domain_aliases:
+  - app.uat.celnet.uk
 
 # UAT keeps the default loopback bind ( only HAProxy is internet-facing ).
 celnet_grpc_addr: "127.0.0.1:50051"

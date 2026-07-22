@@ -17,16 +17,26 @@
  * The live endpoint is configurable (without changing the live default):
  *   - URL param `?ws=ws://host:port`, or
  *   - build-time env `VITE_CELNET_WS_URL=ws://host:port`.
- * No runtime mixing: a session is one transport, matching the platform's
- * single-uniform-version deploy model (CLAUDE.md rule 9).
+ * With neither set, the live transport dials the **same origin** that served the
+ * GUI (`wss://<current-host>/`): HAProxy fronts BOTH the SPA and the WS mirror on
+ * one host (WS-upgrade is host-agnostic), so the socket always follows the domain
+ * the page was loaded from — a domain change needs no GUI rebuild, and a
+ * self-signed cert accepted for the page origin is reused for the socket. Local
+ * dev (vite on localhost) has no co-located mirror, so it falls back to
+ * {@link DEV_WS_URL}. No runtime mixing: a session is one transport, matching the
+ * platform's single-uniform-version deploy model (CLAUDE.md rule 9).
  */
 
 import { createMockTransport } from "./mockSource";
 import type { CelnetTransport } from "./transport";
 import { WsTransport } from "./wsTransport";
 
-/** The default WS endpoint the live transport dials when none is configured. */
-const DEFAULT_WS_URL = "ws://127.0.0.1:8081";
+/**
+ * The WS endpoint dialed in LOCAL DEV, where the page (vite dev server) and the
+ * celnet-server WS mirror are NOT co-located on one origin. Production derives a
+ * same-origin URL instead (see {@link sameOriginWsUrl}).
+ */
+const DEV_WS_URL = "ws://127.0.0.1:8081";
 
 /** Which transport this session selected, plus a human label for diagnostics. */
 export interface TransportSelection {
@@ -52,6 +62,30 @@ function searchParams(): URLSearchParams {
 }
 
 /**
+ * Same-origin live WS endpoint derived from the page's own origin, so the socket
+ * always follows the host that served the GUI. Returns `wss://<host>/` over HTTPS
+ * (`ws://` over HTTP). Returns `undefined` outside a browser and for local-dev
+ * hosts (localhost / loopback), where the vite dev server has no co-located WS
+ * mirror and the caller falls back to {@link DEV_WS_URL}.
+ */
+function sameOriginWsUrl(): string | undefined {
+  if (typeof window === "undefined" || typeof window.location === "undefined") {
+    return undefined;
+  }
+  const { protocol, hostname, host } = window.location;
+  if (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  ) {
+    return undefined;
+  }
+  const scheme = protocol === "https:" ? "wss:" : "ws:";
+  return `${scheme}//${host}/`;
+}
+
+/**
  * Resolve the configured transport. The DEFAULT is the live WS mirror; mock is an
  * explicit offline opt-in. Pure of side effects beyond constructing the chosen
  * transport (the WS one dials lazily on the first session). Called once at the app
@@ -68,7 +102,11 @@ export function resolveTransport(): TransportSelection {
     return { transport: createMockTransport(), mode: "mock" };
   }
 
-  // Live by default. The endpoint is configurable but the mode stays live.
-  const url = params.get("ws") ?? envString("VITE_CELNET_WS_URL") ?? DEFAULT_WS_URL;
+  // Live by default. The endpoint is configurable but the mode stays live:
+  // explicit `?ws=` / `VITE_CELNET_WS_URL` win; otherwise dial the same origin
+  // that served the page (production behind HAProxy); local dev falls back to the
+  // co-located dev endpoint.
+  const url =
+    params.get("ws") ?? envString("VITE_CELNET_WS_URL") ?? sameOriginWsUrl() ?? DEV_WS_URL;
   return { transport: new WsTransport({ url }), mode: "ws" };
 }

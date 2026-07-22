@@ -164,3 +164,17 @@
         | sort(attribute='mtime', reverse=true)
         | map(attribute='path') | list)[celnet_keep_releases | int:] }}
   when: celnet_all_releases.files | length > (celnet_keep_releases | int)
+
+# --- Reclaim the cargo build cache (disk hygiene) ---------------------------
+# The build dir keeps target/ for incremental builds, but on this disk-tight box
+# that cache (GBs) accumulates and has filled the disk. Every artifact needed
+# from target/ was already copied into the release above, so after a successful
+# publish we drop it. Trade-off: the next deploy is a full (non-incremental)
+# rebuild. node_modules is deliberately KEPT (npm ci OOMs on the small box).
+# Set celnet_clean_build_cache: false to keep the incremental cache instead.
+- name: Reclaim the cargo build cache after publish (celnet_clean_build_cache)
+  ansible.builtin.file:
+    path: "{{ celnet_build_dir }}/target"
+    state: absent
+  become: false
+  when: celnet_clean_build_cache | default(true) | bool

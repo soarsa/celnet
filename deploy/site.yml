@@ -27,6 +27,7 @@
     - role: celnet_haproxy
       become: true
       when: celnet_haproxy_enabled | bool
+      tags: ['haproxy']
   post_tasks:
     - name: Start (or restart) celnet-server via celnetctl
       ansible.builtin.command: "{{ celnet_bin_dir }}/celnetctl restart"

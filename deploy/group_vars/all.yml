@@ -106,4 +106,8 @@ celnet_tls_pem: "{{ celnet_tls_dir }}/{{ celnet_domain }}.pem"
 celnet_serve_gui: true
 celnet_node_major: 20                       # Node.js major (NodeSource) for the Vite build
 celnet_nginx_port: 8080                      # loopback port nginx serves the SPA on
-celnet_web_ws_url: "wss://{{ celnet_domain }}/"   # baked into the build (VITE_CELNET_WS_URL)
+# Empty ⇒ the GUI derives a SAME-ORIGIN WS URL at runtime (wss://<page-host>/), so
+# the socket always follows the domain that served the SPA (HAProxy fronts both the
+# SPA and the WS mirror host-agnostically). Set to an absolute `wss://host/` only to
+# pin a cross-origin mirror. See gui/src/data/transportConfig.ts (sameOriginWsUrl).
+celnet_web_ws_url: ""                              # baked into the build (VITE_CELNET_WS_URL)
