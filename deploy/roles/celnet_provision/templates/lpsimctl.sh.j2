@@ -7,9 +7,12 @@
 #
 # Thin wrapper over {{ celnet_bin_dir }}/start-lp-sim.sh: it points the launcher at
 # the release-shipped lp-sim binary (no cargo needed on the host), daemonizes, and
-# logs into the shared log dir. The feed streams the consolidated composite for the
-# selected Treasuries into the named aggregated book; override the LP name / book /
-# members / interval / instruments with the celnet_lpsim_* group_vars.
+# logs into the shared log dir. lpsimctl start runs the 5-LP, BOOK-AWARE daemon
+# against the LOCAL server ingest (LPSIM_ADDR): it logs in as the service user, polls
+# the enabled aggregated books every LPSIM_BOOK_POLL secs, and streams LP-SIM-01..05
+# two-ways for exactly the bonds each book scopes — auto-starting/stopping as books
+# change. Override the members / book-poll / login / instruments with celnet_lpsim_*.
+# Set celnet_lpsim_no_book_poll=1 for the broadcast fallback (whole universe, no poll).
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -19,15 +22,22 @@ export LPSIM_RUN_DIR="{{ celnet_run_dir }}/lpsim"
 export LPSIM_LOG="{{ celnet_log_dir }}/lp-sim.out.log"
 export LPSIM_LP_NAME="{{ celnet_lpsim_lp_name | default('LP-SIM') }}"
 export LPSIM_BOOK="{{ celnet_lpsim_book | default('ust-composite') }}"
-export LPSIM_MEMBERS="{{ celnet_lpsim_members | default('4') }}"
+export LPSIM_MEMBERS="{{ celnet_lpsim_members | default('5') }}"
 export LPSIM_INTERVAL="{{ celnet_lpsim_interval | default('2') }}"
+export LPSIM_BOOK_POLL="{{ celnet_lpsim_book_poll | default('5') }}"
+export LPSIM_NO_BOOK_POLL="{{ celnet_lpsim_no_book_poll | default('0') }}"
 export LPSIM_INSTRUMENTS="{{ celnet_lpsim_instruments | default('all') }}"
 export LPSIM_MAX_INSTRUMENTS="{{ celnet_lpsim_max_instruments | default('12') }}"
 export LPSIM_SEED="{{ celnet_lpsim_seed | default('305419896') }}"
 export LPSIM_SETTLEMENT="{{ celnet_lpsim_settlement | default('2026-04-16') }}"
 export LPSIM_INCLUDE_BILLS="{{ celnet_lpsim_include_bills | default('0') }}"
-# Network feed endpoint: when set, lp-sim streams LpQuotes to the server's LpFeed
-# ingest so the composite surfaces to GUI subscribers (default: the local gRPC edge).
+export LPSIM_NO_FAULTS="{{ celnet_lpsim_no_faults | default('0') }}"
+# Service login for the book poll (AuthService.Login); defaults to the seeded admin.
+export LPSIM_USER="{{ celnet_lpsim_user | default('admin@celnet.com') }}"
+export LPSIM_PASSWORD="{{ celnet_lpsim_password | default('password') }}"
+# Network feed endpoint: lp-sim streams LpQuotes to the server's LpFeed ingest so the
+# composite surfaces to GUI subscribers (default: the local gRPC edge). Book-aware
+# mode requires this to be set (it is, by default).
 export LPSIM_ADDR="{{ celnet_lpsim_addr | default('http://127.0.0.1:' ~ (celnet_grpc_port | default('50051'))) }}"
 
 PIDFILE="$LPSIM_RUN_DIR/lp-sim.pid"
@@ -51,7 +61,15 @@ case "${1:-}" in
     if is_running; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; echo "Stopped."; else echo "lp-sim not running"; rm -f "$PIDFILE"; fi
     ;;
   status)
-    if is_running; then echo "lp-sim: RUNNING (pid $(cat "$PIDFILE"))"; echo "  log: $LPSIM_LOG"; echo "  feed: $LPSIM_LP_NAME -> book $LPSIM_BOOK ($LPSIM_MEMBERS members, ${LPSIM_INTERVAL}s)"; else echo "lp-sim: STOPPED"; exit 3; fi
+    if is_running; then
+      echo "lp-sim: RUNNING (pid $(cat "$PIDFILE"))"
+      echo "  log: $LPSIM_LOG"
+      if [ "$LPSIM_NO_BOOK_POLL" = "1" ]; then
+        echo "  mode: broadcast ($LPSIM_MEMBERS LPs, ${LPSIM_INTERVAL}s, whole universe → $LPSIM_ADDR)"
+      else
+        echo "  mode: book-aware ($LPSIM_MEMBERS LPs → $LPSIM_ADDR, book-poll ${LPSIM_BOOK_POLL}s, login $LPSIM_USER)"
+      fi
+    else echo "lp-sim: STOPPED"; exit 3; fi
     ;;
   tail)
     tail -n "${2:-50}" -f "$LPSIM_LOG"

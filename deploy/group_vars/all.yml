@@ -61,20 +61,31 @@ celnet_fixsim_enabled: true
 # When true, the release builds the celnet-lp-sim `lp-sim` binary, ships it as
 # <release>/bin/lp-sim, and installs the launcher + `lpsimctl` control script. Run
 # it on the host with:  lpsimctl start | once | stop | status | tail
-# LP-SIM loads the bundled US-Treasury universe (embedded in the binary), stands up
-# a named `LP-SIM` member panel, and streams the consolidated composite (best
-# bid/offer + size + confidence + contributing LP legs) for the selected bonds into
-# the named aggregated book, through the real celnet-aggregation engine.
+#
+# lpsimctl start launches the 5-LP, BOOK-AWARE daemon against the LOCAL server ingest
+# (celnet_lpsim_addr, default the local gRPC edge): it authenticates as the service
+# user, polls the enabled aggregated books every celnet_lpsim_book_poll seconds, and
+# streams LP-SIM-01..05 two-ways for exactly the bonds each book scopes — starting and
+# stopping pricing automatically as a user creates or edits a book. Books with no
+# LP-SIM member are ignored. Pass celnet_lpsim_no_book_poll=1 for the broadcast
+# fallback (stream the whole universe as the N LPs, no book polling).
 celnet_lpsim_enabled: true
-celnet_lpsim_lp_name: "LP-SIM"           # the LP connection name shown as the contributor
-celnet_lpsim_book: "ust-composite"       # the aggregated-book id label
-celnet_lpsim_members: 4                   # decorrelated LP member connections (>=3 for gating)
-celnet_lpsim_interval: 2                  # seconds between composite emissions
-celnet_lpsim_instruments: "all"          # all, or a CSV of ISINs/CUSIPs
-celnet_lpsim_max_instruments: 12          # cap on instruments streamed (log readability)
+celnet_lpsim_lp_name: "LP-SIM"           # base LP connection name → LP-SIM-01..LP-SIM-0N
+celnet_lpsim_book: "ust-composite"       # cosmetic book label (book-aware mode discovers books)
+celnet_lpsim_members: 5                   # 5 distinct-character LPs by default (LP-SIM-01..05)
+celnet_lpsim_interval: 2                  # seconds between quote-emission rounds
+celnet_lpsim_book_poll: 5                 # seconds between aggregated-book polls (book-aware)
+celnet_lpsim_no_book_poll: 0             # 1 = broadcast fallback (no book polling)
+celnet_lpsim_instruments: "all"          # all (book-aware default), or a CSV of ISINs/CUSIPs
+celnet_lpsim_max_instruments: 12          # cap on instruments (broadcast/local modes only)
 celnet_lpsim_seed: 305419896              # reproducibility seed
 celnet_lpsim_settlement: "2026-04-16"    # valuation date (YYYY-MM-DD)
 celnet_lpsim_include_bills: 0             # 1 = also stream zero-coupon Bills
+celnet_lpsim_no_faults: 0                # 1 = disable occasional injected staleness/outlier
+# Service login for the book poll (AuthService.Login). Defaults to the seeded admin so
+# the daemon authenticates out-of-the-box; override on a hardened box.
+celnet_lpsim_user: "admin@celnet.com"
+celnet_lpsim_password: "password"
 
 # --- Runtime environment (templated into shared/config/celnet.env) ----------
 # The celnet-server binary reads these. WS mirror gets a FIXED port so HAProxy
