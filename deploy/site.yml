@@ -33,6 +33,13 @@
       ansible.builtin.command: "{{ celnet_bin_dir }}/celnetctl restart"
       become: false
       changed_when: true
+    # LP-SIM Treasury feed is a managed service — (re)start it on every full deploy too,
+    # so a freshly provisioned/released box always has the sim streaming into the books.
+    - name: (Re)start the LP-SIM Treasury feed via lpsimctl
+      ansible.builtin.command: "{{ celnet_bin_dir }}/lpsimctl restart"
+      become: false
+      changed_when: true
+      when: celnet_lpsim_enabled | default(true) | bool
     - name: Deployment summary
       ansible.builtin.debug:
         msg:
