@@ -21,7 +21,7 @@ use celnet_types::BrokenDate;
 
 use crate::lp::{InstrumentModel, LpParams, SimLp};
 use crate::price::MidSource;
-use crate::rng::{child_seed, seeded_unit};
+use crate::rng::{child_seed, seeded_unit, unit01};
 use crate::universe::TreasuryBond;
 
 /// The default LP connection name the feed advertises — the venue id a subscriber
@@ -153,17 +153,48 @@ pub fn build_fleet(cfg: &LpSimConfig, bonds: &[TreasuryBond]) -> Vec<SimLp> {
                 })
                 .collect();
 
-            let params = LpParams {
-                half_spread: cfg.half_spread,
-                skew,
-                size: cfg.size,
-                tick_nanos: 100_000_000, // 100 ms resample cadence
-                latency_nanos: 0,
-                quality: 1.0,
-            };
+            let params = member_params(cfg, lp_seed, skew);
             SimLp::new(venue, lp_seed, params, books)
         })
         .collect()
+}
+
+/// Derive one member's distinct, seeded quoting *character* from its child seed and
+/// centred panel `skew`. Each member disperses its half-spread, firm size, refresh
+/// cadence, and self-reported quality reproducibly off `lp_seed`, so the five LPs are
+/// visibly different market-makers (and the consolidated best-bid/best-offer across
+/// them is a meaningful winner rather than five identical two-ways). Feed latency is
+/// left at zero here — occasional per-round staleness/outlier faults are injected at
+/// *stream* time (see [`crate::net`]) so the built panel is always fresh and its
+/// analytic BBO is exact for the ground-truth tests.
+fn member_params(cfg: &LpSimConfig, lp_seed: u64, skew: f64) -> LpParams {
+    // Salts key four independent draws off the same member seed (any distinct set
+    // works; these are arbitrary odd constants).
+    const SALT_SPREAD: u64 = 0x0000_0000_0000_00A1;
+    const SALT_SIZE: u64 = 0x0000_0000_0000_00B3;
+    const SALT_TICK: u64 = 0x0000_0000_0000_00C7;
+    const SALT_QUALITY: u64 = 0x0000_0000_0000_00D9;
+
+    // Half-spread in [0.6, 1.4)× the base — some LPs quote tighter than others.
+    let half_spread = cfg.half_spread * (0.6 + 0.8 * unit01(lp_seed, SALT_SPREAD));
+    // Firm size in [0.5, 1.5)× the base, snapped to the nearest 100k (min 100k) so
+    // sizes read like real quantities.
+    let raw_size = cfg.size * (0.5 + unit01(lp_seed, SALT_SIZE));
+    let size = ((raw_size / 100_000.0).round() * 100_000.0).max(100_000.0);
+    // Refresh cadence in [100 ms, 600 ms) — a faster LP re-quotes its stochastic mid
+    // more often within an emission interval.
+    let tick_nanos = 100_000_000 + (unit01(lp_seed, SALT_TICK) * 500_000_000.0) as i64;
+    // Self-reported quality in [0.85, 1.0).
+    let quality = 0.85 + 0.15 * unit01(lp_seed, SALT_QUALITY);
+
+    LpParams {
+        half_spread,
+        skew,
+        size,
+        tick_nanos,
+        latency_nanos: 0,
+        quality,
+    }
 }
 
 /// One bond's consolidated composite plus the bond identity a subscriber renders.

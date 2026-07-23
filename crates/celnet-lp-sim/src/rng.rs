@@ -55,3 +55,14 @@ pub(crate) fn seeded_unit(seed: u64, venue: &VenueId, instrument: &Instrument, t
 pub(crate) fn child_seed(seed: u64, index: usize) -> u64 {
     splitmix64(seed ^ splitmix64(index as u64))
 }
+
+/// A deterministic scalar draw in `[0, 1)` keyed on `(seed, salt)` — the
+/// scalar-parameter analogue of [`seeded_unit`] (which keys on a venue/instrument/
+/// tick). Used to disperse a member's quoting *character* (half-spread, size,
+/// cadence, quality) and to schedule occasional faults per round, all reproducibly.
+/// Uses the top 53 bits so the mapping is uniform and rounding-free.
+#[must_use]
+pub(crate) fn unit01(seed: u64, salt: u64) -> f64 {
+    let bits = splitmix64(seed ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    (bits >> 11) as f64 * (1.0 / 9_007_199_254_740_992.0) // 2^-53
+}
