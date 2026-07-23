@@ -25,8 +25,11 @@ use celnet_proto::{
     ClientStreamMessage, CreateAggregatedBookRequest, LpQuote, ServerStreamMessage, SubscriptionId,
     client_stream_message, server_stream_message,
 };
-use futures_util::{Stream, StreamExt};
+use futures_util::{SinkExt, Stream, StreamExt};
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use common::{STEP_DEADLINE, TEST_DEADLINE, login_seed_admin, start_ready_edge};
 
@@ -272,4 +275,175 @@ async fn lp_feed_flows_through_to_aggregated_book_subscribers() {
     })
     .await
     .expect("the end-to-end composite test completes before the deadline");
+}
+
+/// Regression (WS mirror): the SAME end-to-end composite subscribe, but over the
+/// **WebSocket mirror** the GUI actually uses — not the gRPC `StreamSession` the
+/// test above exercises. This pins the wiring the defect broke: the WS mirror's
+/// `StreamEdge` was built WITHOUT the shared aggregation hub
+/// (`WsServices::new` never received it, so `Session::aggregation_hub` was `None`),
+/// so every WS `aggregated_book_subscribe` was refused
+/// `unavailable` ("aggregated-book engine not available on this edge") — the GUI's
+/// "Awaiting the first composite snapshot…" that never resolves — even though the
+/// gRPC-only `LpFeed` ingest was landing quotes into the very same hub. With the hub
+/// wired, a WS subscriber receives the baseline `aggregated_book_stream_snapshot`
+/// carrying the consolidated composite. A gRPC-minted session token is honoured over
+/// WS because both edges share ONE session registry.
+#[tokio::test]
+async fn ws_mirror_aggregated_book_subscribe_receives_a_composite_snapshot() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, addr, _data_dir) = start_ready_edge().await;
+        let base = format!("http://{addr}");
+        let ws_url = format!("ws://{}", edge.ws_addr());
+        let token = login_seed_admin(&base).await;
+
+        // Create the book + push quotes over the real gRPC admin/ingest paths (the
+        // ingest is gRPC-only by design); the WS mirror shares the same hub.
+        let mut auth = AuthServiceClient::connect(base.clone())
+            .await
+            .expect("auth client connects");
+        let book_id = tokio::time::timeout(
+            STEP_DEADLINE,
+            auth.create_aggregated_book(CreateAggregatedBookRequest {
+                session_token: token.clone(),
+                spec: Some(AggregatedBookSpec {
+                    id: String::new(),
+                    name: "UST Composite WS".to_string(),
+                    member_connection_ids: vec!["LP-SIM-01".to_string(), "LP-SIM-02".to_string()],
+                    scope_mode: AggregationScopeMode::Explicit as i32,
+                    instrument_ids: vec!["ust-2y-note".to_string(), "acme-5y-corp".to_string()],
+                    params: Some(AggregationParamsDesc {
+                        staleness_tau_ms: 30_000,
+                        max_quote_age_ms: 5_000,
+                        divergence_gating: false,
+                        min_contributors: 1,
+                        depth_levels: 1,
+                    }),
+                    enabled: true,
+                }),
+                correlation_id: Some(1),
+            }),
+        )
+        .await
+        .expect("create resolves in time")
+        .expect("create succeeds")
+        .into_inner()
+        .book
+        .expect("created book echoed")
+        .id;
+
+        let now = epoch_now();
+        let quotes = vec![
+            lpq("LP-SIM-01", "ust-2y-note", 99.90, 100.10, now),
+            lpq("LP-SIM-02", "ust-2y-note", 99.95, 100.05, now),
+            lpq("LP-SIM-01", "acme-5y-corp", 98.00, 98.50, now),
+            lpq("LP-SIM-02", "acme-5y-corp", 98.20, 98.30, now),
+        ];
+        let mut feed = LiquidityFeedServiceClient::connect(base.clone())
+            .await
+            .expect("liquidity feed client connects");
+        let ack = tokio::time::timeout(
+            STEP_DEADLINE,
+            feed.lp_feed(tonic::Request::new(futures_util::stream::iter(quotes))),
+        )
+        .await
+        .expect("lp_feed resolves in time")
+        .expect("lp_feed succeeds")
+        .into_inner();
+        assert_eq!(ack.accepted, 4, "all four quotes routed into the book");
+
+        // Subscribe to the composite over the WS mirror exactly as the GUI does:
+        // authenticate (carrying the gRPC-minted session token), then
+        // `aggregated_book_subscribe`.
+        let (mut ws, _resp) = tokio::time::timeout(STEP_DEADLINE, connect_async(ws_url))
+            .await
+            .expect("WS connects in time")
+            .expect("WS mirror accepts the connection");
+
+        let authenticate = json!({
+            "type": "authenticate",
+            "principal": { "grant_all": true, "grants": [], "denies": [] },
+            "session_token": token,
+        });
+        tokio::time::timeout(
+            STEP_DEADLINE,
+            ws.send(WsMessage::Text(authenticate.to_string())),
+        )
+        .await
+        .expect("authenticate sends in time")
+        .expect("authenticate sends");
+
+        let subscribe = json!({
+            "type": "aggregated_book_subscribe",
+            "subscription": { "value": 7 },
+            "book_id": book_id,
+            "throttle_nanos": 0,
+            "correlation_id": 9,
+            "session_token": token,
+        });
+        tokio::time::timeout(
+            STEP_DEADLINE,
+            ws.send(WsMessage::Text(subscribe.to_string())),
+        )
+        .await
+        .expect("subscribe sends in time")
+        .expect("subscribe sends");
+
+        // Read text frames until a non-empty composite snapshot arrives. An `error`
+        // frame (the defect's `unavailable`) fails the test immediately.
+        let book = loop {
+            let msg = tokio::time::timeout(STEP_DEADLINE, ws.next())
+                .await
+                .expect("a WS frame arrives before the deadline")
+                .expect("the socket stays open")
+                .expect("the frame is well-formed");
+            let v: Value = match msg {
+                WsMessage::Text(t) => serde_json::from_str(&t).expect("frame is valid JSON"),
+                WsMessage::Ping(_) | WsMessage::Pong(_) => continue,
+                other => panic!("expected a text frame, got: {other:?}"),
+            };
+            match v.get("type").and_then(Value::as_str) {
+                Some("error") => {
+                    panic!("WS aggregated_book_subscribe was refused (the regressed defect): {v}")
+                }
+                Some("aggregated_book_stream_snapshot") | Some("aggregated_book_stream_update") => {
+                    let book = v.get("book").cloned().unwrap_or(Value::Null);
+                    let instruments = book
+                        .get("instruments")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    if !instruments.is_empty() {
+                        break book;
+                    }
+                }
+                _ => continue,
+            }
+        };
+
+        assert_eq!(
+            book.get("book_id").and_then(Value::as_str),
+            Some(book_id.as_str()),
+            "the composite is for the subscribed book",
+        );
+        let instruments = book
+            .get("instruments")
+            .and_then(Value::as_array)
+            .expect("instruments array");
+        assert_eq!(
+            instruments.len(),
+            2,
+            "both in-scope instruments consolidated"
+        );
+        // Each line carries its per-member contributions (the composite the GUI renders).
+        for inst in instruments {
+            let contribs = inst
+                .get("contributions")
+                .and_then(Value::as_array)
+                .expect("contributions array");
+            assert_eq!(contribs.len(), 2, "both members reported per instrument");
+        }
+    })
+    .await
+    .expect("the WS composite regression test completes before the deadline");
 }

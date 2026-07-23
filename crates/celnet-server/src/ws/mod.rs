@@ -97,6 +97,7 @@ use celnet_proto::{ClientStreamMessage, ServerStreamMessage, client_stream_messa
 use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::readiness::{InFlightGuard, ReadinessGate};
+use crate::services::aggregation::AggregationHub;
 use crate::services::auth::AuthEdge;
 use crate::services::desk::RfqDeskEdge;
 use crate::services::desk::notify::NotificationBroker;
@@ -166,6 +167,7 @@ impl WsServices {
         rfq_desk: Arc<RfqDeskEdge>,
         fleet: Option<Arc<crate::services::risk::federate::Fleet>>,
         panel: LpPanelConfig,
+        aggregation_hub: Arc<AggregationHub>,
     ) -> Self {
         // The SAME shared backend fleet the gRPC edges use (or `None` in-process), so
         // the WS unary mirror forwards owned-pair requests identically (API-first
@@ -213,7 +215,16 @@ impl WsServices {
             // only from an authenticated session) could never be satisfied over WS.
             // The gRPC `StreamEdge` was already wired this way (lib.rs); this brings
             // the WS mirror to the same one coherent session policy.
-            .with_sessions(Arc::clone(&sessions)),
+            .with_sessions(Arc::clone(&sessions))
+            // Install the SAME edge-wide aggregated-book engine hub the gRPC
+            // `StreamEdge` and the `LiquidityFeedService` ingest share, so a WS
+            // `aggregated_book_subscribe` reaches the running engines. Without this
+            // the WS `StreamEdge` defaulted to `aggregation_hub: None`, so every WS
+            // composite subscribe was refused `unavailable`
+            // ("aggregated-book engine not available on this edge") — the GUI's
+            // "Awaiting the first composite snapshot…" that never resolves — even
+            // though ingest (gRPC-only) was landing quotes into the very same hub.
+            .with_aggregation_hub(Arc::clone(&aggregation_hub)),
         );
         let surface = Arc::new(SurfaceEdge::with_fleet(
             Arc::clone(&link),

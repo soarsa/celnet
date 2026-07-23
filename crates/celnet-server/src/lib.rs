@@ -693,6 +693,7 @@ impl Edge {
             Arc::clone(&rfq_desk_edge),
             fleet.clone(),
             panel,
+            Arc::clone(&aggregation_hub),
         );
         let ws_mirror = ws::WsMirror::start(ws_addr, ws_services).await?;
 

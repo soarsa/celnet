@@ -241,6 +241,7 @@ mod tests {
             rfq_desk,
             None,
             LpPanelConfig { synthetic_lps: 0 },
+            crate::services::aggregation::AggregationHub::new(Clock::system()),
         );
         WsMirror::start(
             "127.0.0.1:0".parse().expect("loopback bind addr parses"),
