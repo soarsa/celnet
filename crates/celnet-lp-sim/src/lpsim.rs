@@ -80,8 +80,14 @@ impl Default for LpSimConfig {
             perturbation: 3.0e-4,
             half_spread: 2.0e-2, // ~2 bp of a 100.0 price handle
             size: 1_000_000.0,
-            skew_step: 8.0e-3,
-            yield_dispersion: 4.0e-4,
+            // Per-member skew + starting-yield dispersion kept to realistic
+            // competing-dealer levels (~sub-bp to ~1.5 bp of yield). Wider values
+            // push a *fresh* member's mid past the absolute divergence tolerance on
+            // long-duration bonds (dev ≈ duration × Δy × price), which would falsely
+            // gate a legitimate quote — the divergence gate is for outliers, not for
+            // normal cross-dealer spread. See ConsolidationConfig::divergence_tolerance.
+            skew_step: 4.0e-3,
+            yield_dispersion: 1.5e-4,
             tau_secs: 30.0,
             cutoff_secs: 60.0,
             divergence_tolerance: 0.50,
