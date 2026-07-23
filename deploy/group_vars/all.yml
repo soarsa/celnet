@@ -85,7 +85,11 @@ celnet_lpsim_no_faults: 0                # 1 = disable occasional injected stale
 # Service login for the book poll (AuthService.Login). Defaults to the seeded admin so
 # the daemon authenticates out-of-the-box; override on a hardened box.
 celnet_lpsim_user: "admin@celnet.com"
+# Dev default only. Do NOT put a real credential here (this file is committed). On a box
+# whose admin password was rotated, create the host-local file below instead (mode 600),
+# which overrides this at runtime and stays out of git.
 celnet_lpsim_password: "password"
+celnet_lpsim_password_file: "/home/{{ celnet_user | default('celnet') }}/.lpsim_pw"
 
 # --- Runtime environment (templated into shared/config/celnet.env) ----------
 # The celnet-server binary reads these. WS mirror gets a FIXED port so HAProxy

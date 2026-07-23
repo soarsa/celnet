@@ -35,6 +35,10 @@ export LPSIM_NO_FAULTS="{{ celnet_lpsim_no_faults | default('0') }}"
 # Service login for the book poll (AuthService.Login); defaults to the seeded admin.
 export LPSIM_USER="{{ celnet_lpsim_user | default('admin@celnet.com') }}"
 export LPSIM_PASSWORD="{{ celnet_lpsim_password | default('password') }}"
+# A host-local password file (mode 600, NOT in git) overrides LPSIM_PASSWORD when present
+# — put the real service credential here on the box so no secret lives in group_vars:
+#   printf '%s' 'THE_PASSWORD' > {{ celnet_lpsim_password_file | default('/home/' ~ (celnet_user | default('celnet')) ~ '/.lpsim_pw') }} && chmod 600 "$_"
+export LPSIM_PASSWORD_FILE="{{ celnet_lpsim_password_file | default('/home/' ~ (celnet_user | default('celnet')) ~ '/.lpsim_pw') }}"
 # Network feed endpoint: lp-sim streams LpQuotes to the server's LpFeed ingest so the
 # composite surfaces to GUI subscribers (default: the local gRPC edge). Book-aware
 # mode requires this to be set (it is, by default).
@@ -57,6 +61,13 @@ case "${1:-}" in
   once)
     LPSIM_ONESHOT=1 "$LAUNCHER"
     ;;
+  restart)
+    # Managed-service restart: stop any running daemon, then start a fresh one. Used by
+    # the deploy (deploy.yml post_tasks) so every release re-launches the feed.
+    "$0" stop || true
+    sleep 1
+    "$0" start
+    ;;
   stop)
     if is_running; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; echo "Stopped."; else echo "lp-sim not running"; rm -f "$PIDFILE"; fi
     ;;
@@ -75,6 +86,6 @@ case "${1:-}" in
     tail -n "${2:-50}" -f "$LPSIM_LOG"
     ;;
   *)
-    echo "usage: lpsimctl {start|once|stop|status|tail [n]}"; exit 64
+    echo "usage: lpsimctl {start|once|restart|stop|status|tail [n]}"; exit 64
     ;;
 esac

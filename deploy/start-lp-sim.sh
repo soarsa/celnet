@@ -49,6 +49,11 @@ LPSIM_NO_FAULTS="${LPSIM_NO_FAULTS:-0}"
 # Service login for the book poll (AuthService.Login); defaults to the seeded admin.
 LPSIM_USER="${LPSIM_USER:-admin@celnet.com}"
 LPSIM_PASSWORD="${LPSIM_PASSWORD:-password}"
+# Prefer a host-local password file (kept OUT of the committed repo) when present, so the
+# real service credential never lives in group_vars / git; falls back to LPSIM_PASSWORD.
+if [ -n "${LPSIM_PASSWORD_FILE:-}" ] && [ -r "${LPSIM_PASSWORD_FILE}" ]; then
+  LPSIM_PASSWORD="$(cat "$LPSIM_PASSWORD_FILE")"
+fi
 LPSIM_ONESHOT="${LPSIM_ONESHOT:-0}"
 LPSIM_DAEMON="${LPSIM_DAEMON:-0}"
 # Network feed mode: when set to a server gRPC endpoint (e.g.
@@ -125,9 +130,19 @@ build_args() {
     --instruments "$LPSIM_INSTRUMENTS" --max-instruments "$LPSIM_MAX_INSTRUMENTS" \
     --seed "$LPSIM_SEED" --settlement "$LPSIM_SETTLEMENT")
   if [ "$LPSIM_INCLUDE_BILLS" = "1" ]; then ARGS+=(--include-bills); fi
-  # Network feed: push LpQuotes to the server ingest so the composite surfaces to
-  # GUI subscribers (mirrors how the FIX sim passes --addr to its acceptor).
-  if [ -n "$LPSIM_ADDR" ]; then ARGS+=(--addr "$LPSIM_ADDR"); fi
+  # Network feed: push LpQuotes to the server ingest so the composite surfaces to GUI
+  # subscribers (mirrors how the FIX sim passes --addr to its acceptor). In this
+  # book-aware network mode the binary MUST also receive the service login and poll
+  # cadence — without them it silently falls back to its own defaults and cannot
+  # authenticate on a box whose admin password was rotated (the book poll then fails
+  # and no composite ever surfaces).
+  if [ -n "$LPSIM_ADDR" ]; then
+    ARGS+=(--addr "$LPSIM_ADDR")
+    [ -n "${LPSIM_USER:-}" ] && ARGS+=(--user "$LPSIM_USER")
+    [ -n "${LPSIM_PASSWORD:-}" ] && ARGS+=(--password "$LPSIM_PASSWORD")
+    [ -n "${LPSIM_BOOK_POLL:-}" ] && ARGS+=(--book-poll "$LPSIM_BOOK_POLL")
+    [ "${LPSIM_NO_BOOK_POLL:-0}" = "1" ] && ARGS+=(--no-book-poll)
+  fi
 }
 
 if [ "$LPSIM_ONESHOT" = "1" ]; then
