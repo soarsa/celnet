@@ -143,6 +143,12 @@ build_args() {
     [ -n "${LPSIM_BOOK_POLL:-}" ] && ARGS+=(--book-poll "$LPSIM_BOOK_POLL")
     [ "${LPSIM_NO_BOOK_POLL:-0}" = "1" ] && ARGS+=(--no-book-poll)
   fi
+  # IMPORTANT: end with an explicit success. The last expression above is a
+  # short-circuit `[ … ] && …` that returns 1 whenever NO_BOOK_POLL=0 (the normal
+  # case); as the function's final command that makes build_args return 1, and
+  # under `set -e` the caller (`build_args` on its own line) would abort BEFORE
+  # ever launching lp-sim — the daemon then logs its banner and dies silently.
+  return 0
 }
 
 if [ "$LPSIM_ONESHOT" = "1" ]; then
