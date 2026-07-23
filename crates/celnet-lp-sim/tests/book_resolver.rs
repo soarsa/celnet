@@ -55,7 +55,10 @@ fn selection(n: usize) -> Vec<TreasuryBond> {
 }
 
 fn ids_of(bonds: &[TreasuryBond]) -> BTreeSet<String> {
-    bonds.iter().map(|b| b.instrument_id().to_string()).collect()
+    bonds
+        .iter()
+        .map(|b| b.instrument_id().to_string())
+        .collect()
 }
 
 /// Build a wire book descriptor for the resolver.
@@ -81,7 +84,10 @@ fn book(
 fn resolves_the_exact_member_by_instrument_stream_set() {
     let bonds = selection(3);
     assert_eq!(bonds.len(), 3, "need three modellable coupon bonds");
-    let ids: Vec<String> = bonds.iter().map(|b| b.instrument_id().to_string()).collect();
+    let ids: Vec<String> = bonds
+        .iter()
+        .map(|b| b.instrument_id().to_string())
+        .collect();
     let priceable = ids_of(&bonds);
 
     let books = vec![
@@ -122,7 +128,11 @@ fn resolves_the_exact_member_by_instrument_stream_set() {
     let plan = resolve_from_descs(&books, &impersonated(), &priceable);
 
     // ust-all: 3 members × 3 instruments = 9; ust-explicit: 2 members × 2 = 4.
-    assert_eq!(plan.len(), 9 + 4, "exact (member × instrument) stream count");
+    assert_eq!(
+        plan.len(),
+        9 + 4,
+        "exact (member × instrument) stream count"
+    );
 
     // All-members-quote fans LP-SIM-01..03 over every priceable instrument.
     for m in ["LP-SIM-01", "LP-SIM-02", "LP-SIM-03"] {
@@ -134,27 +144,47 @@ fn resolves_the_exact_member_by_instrument_stream_set() {
     for m in ["LP-SIM-04", "LP-SIM-05"] {
         assert!(plan.contains(m, &ids[0]));
         assert!(plan.contains(m, &ids[1]));
-        assert!(!plan.contains(m, &ids[2]), "{m} must NOT quote the unlisted {}", ids[2]);
+        assert!(
+            !plan.contains(m, &ids[2]),
+            "{m} must NOT quote the unlisted {}",
+            ids[2]
+        );
     }
     // The external book's members never appear.
     assert!(!plan.members().contains("FIX-BOX-CELER"));
     assert!(!plan.members().contains("API-LP-7"));
     // The disabled book contributes nothing beyond what ust-all already gave.
-    assert_eq!(plan.members(), BTreeSet::from([
-        "LP-SIM-01", "LP-SIM-02", "LP-SIM-03", "LP-SIM-04", "LP-SIM-05",
-    ]));
+    assert_eq!(
+        plan.members(),
+        BTreeSet::from([
+            "LP-SIM-01",
+            "LP-SIM-02",
+            "LP-SIM-03",
+            "LP-SIM-04",
+            "LP-SIM-05",
+        ])
+    );
 }
 
 #[test]
 fn plan_updates_when_books_are_added_removed_and_edited() {
     let bonds = selection(3);
-    let ids: Vec<String> = bonds.iter().map(|b| b.instrument_id().to_string()).collect();
+    let ids: Vec<String> = bonds
+        .iter()
+        .map(|b| b.instrument_id().to_string())
+        .collect();
     let priceable = ids_of(&bonds);
     let members = impersonated();
 
     // Start with only ignored books → an empty plan.
     let start = resolve_from_descs(
-        &[book("external", true, &["OTHER"], AggregationScopeMode::AllMembersQuote, &[])],
+        &[book(
+            "external",
+            true,
+            &["OTHER"],
+            AggregationScopeMode::AllMembersQuote,
+            &[],
+        )],
         &members,
         &priceable,
     );
@@ -215,7 +245,13 @@ fn priced_streams_stay_within_the_surviving_member_envelope() {
     let books = vec![book(
         "ust-one",
         true,
-        &["LP-SIM-01", "LP-SIM-02", "LP-SIM-03", "LP-SIM-04", "LP-SIM-05"],
+        &[
+            "LP-SIM-01",
+            "LP-SIM-02",
+            "LP-SIM-03",
+            "LP-SIM-04",
+            "LP-SIM-05",
+        ],
         AggregationScopeMode::AllMembersQuote,
         &[],
     )];
@@ -225,19 +261,39 @@ fn priced_streams_stay_within_the_surviving_member_envelope() {
     // Emit one round with faults OFF so every member is fresh (analytic envelope).
     let by_cusip = bonds.iter().map(|b| (b.instrument_id(), b)).collect();
     let fleet = build_fleet(&cfg, &bonds);
-    let quotes = plan_quotes_round(&cfg, &fleet, &by_cusip, &plan, NOW, 0, &FaultSchedule::off());
+    let quotes = plan_quotes_round(
+        &cfg,
+        &fleet,
+        &by_cusip,
+        &plan,
+        NOW,
+        0,
+        &FaultSchedule::off(),
+    );
     assert_eq!(quotes.len(), 5);
     // Each LP's OWN two-way is uncrossed (offer ≥ bid); the composite BBO may cross.
     for q in &quotes {
         assert!(q.offer >= q.bid, "an LP's own two-way must not be crossed");
-        assert_eq!(q.ts_nanos, NOW, "a fresh (unfaulted) member reports the query ts");
+        assert_eq!(
+            q.ts_nanos, NOW,
+            "a fresh (unfaulted) member reports the query ts"
+        );
     }
 
     // Analytic envelope over the five members' own top-of-book at NOW.
     let instrument = bond.engine_instrument();
-    let bids: Vec<f64> = fleet.iter().map(|m| m.top_of_book(&instrument, NOW).unwrap().bid).collect();
-    let offers: Vec<f64> = fleet.iter().map(|m| m.top_of_book(&instrument, NOW).unwrap().offer).collect();
-    let mids: Vec<f64> = fleet.iter().map(|m| m.top_of_book(&instrument, NOW).unwrap().mid()).collect();
+    let bids: Vec<f64> = fleet
+        .iter()
+        .map(|m| m.top_of_book(&instrument, NOW).unwrap().bid)
+        .collect();
+    let offers: Vec<f64> = fleet
+        .iter()
+        .map(|m| m.top_of_book(&instrument, NOW).unwrap().offer)
+        .collect();
+    let mids: Vec<f64> = fleet
+        .iter()
+        .map(|m| m.top_of_book(&instrument, NOW).unwrap().mid())
+        .collect();
     let max_bid = bids.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let min_offer = offers.iter().copied().fold(f64::INFINITY, f64::min);
     let min_mid = mids.iter().copied().fold(f64::INFINITY, f64::min);
@@ -245,9 +301,18 @@ fn priced_streams_stay_within_the_surviving_member_envelope() {
 
     // The REAL consolidation engine over the same fleet must reproduce the envelope.
     let feeds = into_feeds(fleet);
-    let book = ConsolidatedBook::consolidate(&feeds, &instrument, NOW, &cfg.consolidation()).unwrap();
-    assert_eq!(book.best_bid.to_bits(), max_bid.to_bits(), "best-bid = max surviving bid");
-    assert_eq!(book.best_offer.to_bits(), min_offer.to_bits(), "best-offer = min surviving offer");
+    let book =
+        ConsolidatedBook::consolidate(&feeds, &instrument, NOW, &cfg.consolidation()).unwrap();
+    assert_eq!(
+        book.best_bid.to_bits(),
+        max_bid.to_bits(),
+        "best-bid = max surviving bid"
+    );
+    assert_eq!(
+        book.best_offer.to_bits(),
+        min_offer.to_bits(),
+        "best-offer = min surviving offer"
+    );
     assert!(
         book.composite_mid >= min_mid && book.composite_mid <= max_mid,
         "composite mid {} outside surviving envelope [{min_mid}, {max_mid}]",

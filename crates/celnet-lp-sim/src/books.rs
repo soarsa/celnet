@@ -128,7 +128,9 @@ impl StreamPlan {
     /// Whether the plan contains a specific `(member, instrument)` stream.
     #[must_use]
     pub fn contains(&self, lp_name: &str, instrument_id: &str) -> bool {
-        self.keys.iter().any(|k| k.lp_name == lp_name && k.instrument_id == instrument_id)
+        self.keys
+            .iter()
+            .any(|k| k.lp_name == lp_name && k.instrument_id == instrument_id)
     }
 
     /// Iterate the plan's stream keys in deterministic order.
@@ -154,7 +156,9 @@ impl StreamPlan {
     pub fn grouped_by_member(&self) -> BTreeMap<&str, BTreeSet<&str>> {
         let mut out: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
         for k in &self.keys {
-            out.entry(k.lp_name.as_str()).or_default().insert(k.instrument_id.as_str());
+            out.entry(k.lp_name.as_str())
+                .or_default()
+                .insert(k.instrument_id.as_str());
         }
         out
     }
@@ -187,8 +191,11 @@ pub fn resolve_plan(
             continue;
         }
         // The members we stream *as* for this book: the ones it lists that we own.
-        let mut ours: Vec<&String> =
-            book.member_connection_ids.iter().filter(|m| members.contains(*m)).collect();
+        let mut ours: Vec<&String> = book
+            .member_connection_ids
+            .iter()
+            .filter(|m| members.contains(*m))
+            .collect();
         ours.sort();
         ours.dedup();
         if ours.is_empty() {
@@ -197,9 +204,10 @@ pub fn resolve_plan(
         // The instruments to quote for this book, intersected with what we can price.
         let ids: Vec<&String> = match &book.scope {
             BookScope::AllMembersQuote => priceable_ids.iter().collect(),
-            BookScope::Explicit(list) => {
-                list.iter().filter(|id| priceable_ids.contains(*id)).collect()
-            }
+            BookScope::Explicit(list) => list
+                .iter()
+                .filter(|id| priceable_ids.contains(*id))
+                .collect(),
         };
         for m in &ours {
             for id in &ids {
@@ -246,7 +254,12 @@ mod tests {
 
     #[test]
     fn all_members_quote_fans_out_over_the_whole_priceable_universe() {
-        let books = [book("b1", true, &["LP-SIM-01", "LP-SIM-02"], BookScope::AllMembersQuote)];
+        let books = [book(
+            "b1",
+            true,
+            &["LP-SIM-01", "LP-SIM-02"],
+            BookScope::AllMembersQuote,
+        )];
         let plan = resolve_plan(
             &books,
             &members(&["LP-SIM-01", "LP-SIM-02", "LP-SIM-03"]),
@@ -269,7 +282,11 @@ mod tests {
             BookScope::Explicit(vec!["CUSIP-A".into(), "CUSIP-Z".into()]),
         )];
         // CUSIP-Z is not priceable → skipped; only CUSIP-A remains.
-        let plan = resolve_plan(&books, &members(&["LP-SIM-04"]), &ids(&["CUSIP-A", "CUSIP-B"]));
+        let plan = resolve_plan(
+            &books,
+            &members(&["LP-SIM-04"]),
+            &ids(&["CUSIP-A", "CUSIP-B"]),
+        );
         assert_eq!(plan.len(), 1);
         assert!(plan.contains("LP-SIM-04", "CUSIP-A"));
         assert!(!plan.contains("LP-SIM-04", "CUSIP-Z"));
@@ -278,8 +295,18 @@ mod tests {
     #[test]
     fn disabled_and_memberless_books_are_ignored() {
         let books = [
-            book("disabled", false, &["LP-SIM-01"], BookScope::AllMembersQuote),
-            book("no-members", true, &["OTHER-LP"], BookScope::AllMembersQuote),
+            book(
+                "disabled",
+                false,
+                &["LP-SIM-01"],
+                BookScope::AllMembersQuote,
+            ),
+            book(
+                "no-members",
+                true,
+                &["OTHER-LP"],
+                BookScope::AllMembersQuote,
+            ),
         ];
         let plan = resolve_plan(&books, &members(&["LP-SIM-01"]), &ids(&["CUSIP-A"]));
         assert!(plan.is_empty());

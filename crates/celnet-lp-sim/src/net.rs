@@ -302,7 +302,13 @@ impl FaultSchedule {
     /// emits. Returns `None` when faults are disabled, the panel is too small to keep
     /// ≥ 3 survivors, or no member's draw falls under [`probability`](Self::probability).
     #[must_use]
-    fn round_fault(&self, n: usize, price_seed: u64, round: u64, now_nanos: i64) -> Option<(usize, Fault)> {
+    fn round_fault(
+        &self,
+        n: usize,
+        price_seed: u64,
+        round: u64,
+        now_nanos: i64,
+    ) -> Option<(usize, Fault)> {
         // Need ≥ 3 survivors after excluding the one faulted member for the server's
         // median-consensus gate to stay decidable.
         if !self.enabled || n < 4 {
@@ -325,11 +331,25 @@ impl FaultSchedule {
         let ms = child_seed(price_seed, i) ^ self.seed;
         // Independent draws choose outlier-vs-stale and the outlier sign.
         if unit01(ms, round ^ 0xF00D) < 0.5 {
-            let sign = if unit01(ms, round ^ 0xBEEF) < 0.5 { -1.0 } else { 1.0 };
-            Some((i, Fault::Outlier { shift: sign * self.outlier_shift }))
+            let sign = if unit01(ms, round ^ 0xBEEF) < 0.5 {
+                -1.0
+            } else {
+                1.0
+            };
+            Some((
+                i,
+                Fault::Outlier {
+                    shift: sign * self.outlier_shift,
+                },
+            ))
         } else {
             let age = (self.stale_age_secs * 1e9) as i64;
-            Some((i, Fault::Stale { frozen_at_nanos: now_nanos.saturating_sub(age) }))
+            Some((
+                i,
+                Fault::Stale {
+                    frozen_at_nanos: now_nanos.saturating_sub(age),
+                },
+            ))
         }
     }
 }
@@ -368,7 +388,10 @@ async fn login(channel: Channel, creds: &LoginCredentials) -> Result<String, Str
 
 /// Poll `AuthService.ListAggregatedBooks` on `channel` with the bearer `token`,
 /// returning the current roster.
-async fn list_books(channel: Channel, token: &str) -> Result<Vec<celnet_proto::AggregatedBookDesc>, String> {
+async fn list_books(
+    channel: Channel,
+    token: &str,
+) -> Result<Vec<celnet_proto::AggregatedBookDesc>, String> {
     let mut auth = AuthServiceClient::new(channel);
     let resp = auth
         .list_aggregated_books(ListAggregatedBooksRequest {
@@ -397,8 +420,11 @@ pub fn plan_quotes_round(
     faults: &FaultSchedule,
 ) -> Vec<LpQuote> {
     // Name → (index, member) for the plan's member lookups.
-    let by_name: BTreeMap<&str, (usize, &SimLp)> =
-        fleet.iter().enumerate().map(|(i, m)| (m.venue().as_str(), (i, m))).collect();
+    let by_name: BTreeMap<&str, (usize, &SimLp)> = fleet
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.venue().as_str(), (i, m)))
+        .collect();
 
     // At most one member is faulted this round; build its transient faulted clone once.
     let flaky: Option<(usize, SimLp)> = faults
@@ -480,7 +506,9 @@ async fn book_feed_supervise(
                     return Err(e);
                 }
                 tracing::warn!(error = %e, "lp-sim: book-aware feed error; reconnecting");
-                eprintln!("[lp-sim] book-aware feed error: {e} — reconnecting in {RECONNECT_BACKOFF:?}");
+                eprintln!(
+                    "[lp-sim] book-aware feed error: {e} — reconnecting in {RECONNECT_BACKOFF:?}"
+                );
             }
         }
         tokio::time::sleep(RECONNECT_BACKOFF).await;
@@ -505,8 +533,13 @@ async fn book_feed_session(
     tracing::info!(addr, user = %opts.credentials.email, "lp-sim: authenticated; book-aware feed");
 
     // The members we impersonate and the instruments we can price.
-    let members: BTreeSet<String> = (0..cfg.members.max(1)).map(|i| cfg.member_venue(i)).collect();
-    let priceable: BTreeSet<String> = universe.iter().map(|b| b.instrument_id().to_string()).collect();
+    let members: BTreeSet<String> = (0..cfg.members.max(1))
+        .map(|i| cfg.member_venue(i))
+        .collect();
+    let priceable: BTreeSet<String> = universe
+        .iter()
+        .map(|b| b.instrument_id().to_string())
+        .collect();
 
     // Resolve the initial plan synchronously so the first stream round is correct.
     let shared: SharedPlan = Arc::new(Mutex::new(Arc::new(StreamPlan::default())));
