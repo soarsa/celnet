@@ -13,15 +13,30 @@
 //! The local in-process mode (the crate's default) stays fully synchronous; the
 //! tokio runtime here is built only when `--addr` is passed.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use celnet_aggregation::VenueFeed;
-use celnet_proto::LpQuote;
+use celnet_proto::auth_service_client::AuthServiceClient;
 use celnet_proto::liquidity_feed_service_client::LiquidityFeedServiceClient;
+use celnet_proto::{ListAggregatedBooksRequest, LoginRequest, LpQuote};
+use tonic::transport::{Channel, Endpoint};
 
+use crate::books::{StreamPlan, resolve_from_descs};
+use crate::lp::Fault;
 use crate::lpsim::LpQuoteSnapshot;
+use crate::rng::{child_seed, unit01};
 use crate::universe::TreasuryBond;
 use crate::{LpSimConfig, SimLp, build_fleet};
+
+/// The seeded admin account the server ensures on first boot — the out-of-the-box
+/// service login so the daemon authenticates against a fresh UAT box with no extra
+/// provisioning. (The value mirrors the server's `SEED_ADMIN_EMAIL` /
+/// `SEED_ADMIN_PASSWORD`; deployments override via `--user`/`--password`.)
+pub const DEFAULT_SERVICE_EMAIL: &str = "admin@celnet.com";
+/// The seeded admin password (see [`DEFAULT_SERVICE_EMAIL`]).
+pub const DEFAULT_SERVICE_PASSWORD: &str = "password";
 
 /// The reconnect backoff after a dropped / failed feed connection.
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
@@ -202,6 +217,516 @@ impl FeedState {
 
     /// The valuation clock in epoch nanoseconds (real wall time so the server's
     /// staleness decay sees a monotonically advancing observation instant).
+    fn now_nanos(&self) -> i64 {
+        let since_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        i64::try_from(since_epoch.as_nanos()).unwrap_or(i64::MAX)
+            + i64::try_from(self.start.elapsed().as_nanos()).unwrap_or(0)
+    }
+}
+
+// ===========================================================================
+// Book-aware network feed — the deployed daemon (`--book-poll`)
+// ===========================================================================
+
+/// The service credentials the daemon logs in with (only `ListAggregatedBooks`
+/// needs auth; the `LpFeed` ingest itself is an unauthenticated backend feed).
+#[derive(Debug, Clone)]
+pub struct LoginCredentials {
+    /// The login email.
+    pub email: String,
+    /// The plaintext password (checked against the server's Argon2id hash).
+    pub password: String,
+}
+
+impl Default for LoginCredentials {
+    fn default() -> Self {
+        Self {
+            email: DEFAULT_SERVICE_EMAIL.to_string(),
+            password: DEFAULT_SERVICE_PASSWORD.to_string(),
+        }
+    }
+}
+
+/// The seeded schedule of occasional, transient LP faults applied at stream time.
+///
+/// At most **one** member is faulted in any round (the one with the lowest seeded
+/// draw, and only if that draw falls under [`probability`](Self::probability)), so at
+/// least `members − 1` fresh contributors always remain — the surviving panel is
+/// never crossed and divergence gating stays decidable. A faulted member emits either
+/// an [`Fault::Outlier`] (a divergent print the server's MAD gate excludes and
+/// reports) or an [`Fault::Stale`] (a frozen observation the server staleness-decays
+/// then drops). Deterministic in `(seed, member, round)`, so a re-run reproduces the
+/// exact fault tape.
+#[derive(Debug, Clone)]
+pub struct FaultSchedule {
+    /// Whether faults are injected at all.
+    pub enabled: bool,
+    /// Per-round probability that the round's flakiest member is faulted.
+    pub probability: f64,
+    /// The signed price-point displacement of an injected outlier print (its
+    /// magnitude should exceed the book's divergence tolerance so the gate excludes
+    /// it).
+    pub outlier_shift: f64,
+    /// How far back (seconds) an injected stale print's observation ts is frozen —
+    /// beyond the book's hard max-age so the server drops it.
+    pub stale_age_secs: f64,
+    /// The fault-tape seed (independent of the price seed).
+    pub seed: u64,
+}
+
+impl Default for FaultSchedule {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            probability: 0.18,
+            outlier_shift: 0.9,
+            stale_age_secs: 90.0,
+            seed: 0x00FA_0175_2026_0723,
+        }
+    }
+}
+
+impl FaultSchedule {
+    /// A schedule that never injects a fault (broadcast/local demo, or tests).
+    #[must_use]
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
+    /// Pick the single member (if any) that is faulted this round, and the fault it
+    /// emits. Returns `None` when faults are disabled, the panel is too small to keep
+    /// ≥ 3 survivors, or no member's draw falls under [`probability`](Self::probability).
+    #[must_use]
+    fn round_fault(
+        &self,
+        n: usize,
+        price_seed: u64,
+        round: u64,
+        now_nanos: i64,
+    ) -> Option<(usize, Fault)> {
+        // Need ≥ 3 survivors after excluding the one faulted member for the server's
+        // median-consensus gate to stay decidable.
+        if !self.enabled || n < 4 {
+            return None;
+        }
+        // The member with the lowest per-round draw is the candidate; fault it only if
+        // that draw is under the probability threshold.
+        let mut best: (f64, usize) = (f64::INFINITY, 0);
+        for i in 0..n {
+            let ms = child_seed(price_seed, i) ^ self.seed;
+            let u = unit01(ms, round);
+            if u < best.0 {
+                best = (u, i);
+            }
+        }
+        if best.0 >= self.probability {
+            return None;
+        }
+        let i = best.1;
+        let ms = child_seed(price_seed, i) ^ self.seed;
+        // Independent draws choose outlier-vs-stale and the outlier sign.
+        if unit01(ms, round ^ 0xF00D) < 0.5 {
+            let sign = if unit01(ms, round ^ 0xBEEF) < 0.5 {
+                -1.0
+            } else {
+                1.0
+            };
+            Some((
+                i,
+                Fault::Outlier {
+                    shift: sign * self.outlier_shift,
+                },
+            ))
+        } else {
+            let age = (self.stale_age_secs * 1e9) as i64;
+            Some((
+                i,
+                Fault::Stale {
+                    frozen_at_nanos: now_nanos.saturating_sub(age),
+                },
+            ))
+        }
+    }
+}
+
+/// The tunables of a book-aware feed run (beyond the fleet [`LpSimConfig`]).
+#[derive(Debug, Clone)]
+pub struct BookFeedOptions {
+    /// How often to poll `ListAggregatedBooks` and re-resolve the streaming plan.
+    pub book_poll: Duration,
+    /// How often to emit a fresh round of two-ways for the current plan.
+    pub quote_interval: Duration,
+    /// The service login used to authenticate the book poll.
+    pub credentials: LoginCredentials,
+    /// The occasional-fault schedule applied at stream time.
+    pub faults: FaultSchedule,
+    /// Emit a single round against the first resolved plan, then exit.
+    pub once: bool,
+}
+
+/// Authenticate against `AuthService.Login` on `channel`, returning the bearer
+/// `session_token`. Reuses the same generated gRPC client the rest of the estate
+/// logs in with — no hand-rolled auth.
+async fn login(channel: Channel, creds: &LoginCredentials) -> Result<String, String> {
+    let mut auth = AuthServiceClient::new(channel);
+    let resp = auth
+        .login(LoginRequest {
+            email: creds.email.clone(),
+            password: creds.password.clone(),
+            correlation_id: None,
+        })
+        .await
+        .map_err(|s| format!("login as {}: {}", creds.email, s.message()))?
+        .into_inner();
+    Ok(resp.session_token)
+}
+
+/// Poll `AuthService.ListAggregatedBooks` on `channel` with the bearer `token`,
+/// returning the current roster.
+async fn list_books(
+    channel: Channel,
+    token: &str,
+) -> Result<Vec<celnet_proto::AggregatedBookDesc>, String> {
+    let mut auth = AuthServiceClient::new(channel);
+    let resp = auth
+        .list_aggregated_books(ListAggregatedBooksRequest {
+            session_token: token.to_string(),
+            correlation_id: None,
+        })
+        .await
+        .map_err(|s| format!("list aggregated books: {}", s.message()))?
+        .into_inner();
+    Ok(resp.books)
+}
+
+/// Produce one round of wire [`LpQuote`]s for exactly the `(member, instrument)`
+/// pairs in `plan`, at `now_nanos`. `by_cusip` resolves a plan's canonical
+/// `instrument_id` to the bond that prices it; `by_name` resolves a member name to
+/// its [`SimLp`]. At most one member is transiently faulted this round per `faults`.
+/// Pure and deterministic for a fixed `(fleet, plan, now, round)`.
+#[must_use]
+pub fn plan_quotes_round(
+    cfg: &LpSimConfig,
+    fleet: &[SimLp],
+    by_cusip: &BTreeMap<&str, &TreasuryBond>,
+    plan: &StreamPlan,
+    now_nanos: i64,
+    round: u64,
+    faults: &FaultSchedule,
+) -> Vec<LpQuote> {
+    // Name → (index, member) for the plan's member lookups.
+    let by_name: BTreeMap<&str, (usize, &SimLp)> = fleet
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.venue().as_str(), (i, m)))
+        .collect();
+
+    // At most one member is faulted this round; build its transient faulted clone once.
+    let flaky: Option<(usize, SimLp)> = faults
+        .round_fault(fleet.len(), cfg.seed, round, now_nanos)
+        .map(|(idx, fault)| (idx, fleet[idx].clone().with_fault(fault)));
+
+    let mut out = Vec::with_capacity(plan.len());
+    for key in plan.keys() {
+        let Some(&(idx, member)) = by_name.get(key.lp_name.as_str()) else {
+            continue;
+        };
+        let Some(bond) = by_cusip.get(key.instrument_id.as_str()) else {
+            continue;
+        };
+        let instrument = bond.engine_instrument();
+        let quote = match &flaky {
+            Some((fidx, faulted)) if *fidx == idx => faulted.top_of_book(&instrument, now_nanos),
+            _ => member.top_of_book(&instrument, now_nanos),
+        };
+        if let Some(q) = quote {
+            let snap = LpQuoteSnapshot::from_quote(&q, bond);
+            out.push(LpQuote {
+                lp_name: snap.lp_name,
+                instrument_id: snap.instrument_id,
+                bid: snap.bid,
+                offer: snap.offer,
+                bid_size: snap.bid_size,
+                offer_size: snap.offer_size,
+                ts_nanos: snap.ts,
+            });
+        }
+    }
+    out
+}
+
+/// The plan the streaming generator reads each round, shared with the poll task.
+type SharedPlan = Arc<Mutex<Arc<StreamPlan>>>;
+
+/// Run the **book-aware** network feed to `addr`: authenticate, poll the enabled
+/// aggregated books on `opts.book_poll`, resolve the `(LP-SIM member × instrument)`
+/// streams the sim owns, and push those two-ways to the server's `LpFeed` ingest,
+/// picking up book creates/edits/deletes automatically. `universe` is the sim's full
+/// priceable Treasury set (all modellable bonds); each book selects from it.
+/// Blocks the calling thread on a private tokio runtime; supervises reconnects.
+///
+/// # Errors
+/// Returns a message only for an unrecoverable setup failure (the runtime cannot be
+/// built) or, in `--once` mode, the first connection/login/list error.
+pub fn run_book_aware_feed(
+    cfg: &LpSimConfig,
+    universe: &[TreasuryBond],
+    addr: &str,
+    opts: &BookFeedOptions,
+) -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("build tokio runtime: {e}"))?;
+    runtime.block_on(book_feed_supervise(cfg, universe, addr, opts))
+}
+
+/// The connect → login → poll+stream → (reconnect) supervision loop.
+async fn book_feed_supervise(
+    cfg: &LpSimConfig,
+    universe: &[TreasuryBond],
+    addr: &str,
+    opts: &BookFeedOptions,
+) -> Result<(), String> {
+    loop {
+        match book_feed_session(cfg, universe, addr, opts).await {
+            Ok(()) => {
+                if opts.once {
+                    return Ok(());
+                }
+                tracing::warn!("lp-sim: book-aware feed stream ended; reconnecting");
+            }
+            Err(e) => {
+                if opts.once {
+                    return Err(e);
+                }
+                tracing::warn!(error = %e, "lp-sim: book-aware feed error; reconnecting");
+                eprintln!(
+                    "[lp-sim] book-aware feed error: {e} — reconnecting in {RECONNECT_BACKOFF:?}"
+                );
+            }
+        }
+        tokio::time::sleep(RECONNECT_BACKOFF).await;
+    }
+}
+
+/// One connected session: dial + login, do an initial poll, spawn the background
+/// book poller, then run the `LpFeed` client stream until it ends.
+async fn book_feed_session(
+    cfg: &LpSimConfig,
+    universe: &[TreasuryBond],
+    addr: &str,
+    opts: &BookFeedOptions,
+) -> Result<(), String> {
+    let channel = Endpoint::from_shared(addr.to_owned())
+        .map_err(|e| format!("invalid endpoint {addr}: {e}"))?
+        .connect()
+        .await
+        .map_err(|e| format!("connect {addr}: {e}"))?;
+
+    let token = login(channel.clone(), &opts.credentials).await?;
+    tracing::info!(addr, user = %opts.credentials.email, "lp-sim: authenticated; book-aware feed");
+
+    // The members we impersonate and the instruments we can price.
+    let members: BTreeSet<String> = (0..cfg.members.max(1))
+        .map(|i| cfg.member_venue(i))
+        .collect();
+    let priceable: BTreeSet<String> = universe
+        .iter()
+        .map(|b| b.instrument_id().to_string())
+        .collect();
+
+    // Resolve the initial plan synchronously so the first stream round is correct.
+    let shared: SharedPlan = Arc::new(Mutex::new(Arc::new(StreamPlan::default())));
+    match list_books(channel.clone(), &token).await {
+        Ok(books) => {
+            let plan = resolve_from_descs(&books, &members, &priceable);
+            log_plan("initial", &StreamPlan::default(), &plan);
+            *shared.lock().expect("plan mutex") = Arc::new(plan);
+        }
+        Err(e) => {
+            eprintln!("[lp-sim] initial book poll failed: {e} — starting empty, will retry");
+        }
+    }
+
+    // Background poller (skipped in --once: the initial plan is streamed once).
+    let poll_handle = if opts.once {
+        None
+    } else {
+        let ch = channel.clone();
+        let mem = members.clone();
+        let pri = priceable.clone();
+        let sh = Arc::clone(&shared);
+        let creds = opts.credentials.clone();
+        let poll = opts.book_poll;
+        Some(tokio::spawn(async move {
+            book_poll_loop(ch, token, creds, mem, pri, sh, poll).await;
+        }))
+    };
+
+    // The client-streaming feed: reads the current plan each round.
+    let result = run_plan_stream(channel, cfg, universe, Arc::clone(&shared), opts).await;
+
+    if let Some(h) = poll_handle {
+        h.abort();
+    }
+    result
+}
+
+/// The background loop that re-polls the books and republishes the resolved plan,
+/// logging the add/remove diff. Re-logins on an auth error so an expired session
+/// self-heals without dropping the feed stream.
+async fn book_poll_loop(
+    channel: Channel,
+    mut token: String,
+    creds: LoginCredentials,
+    members: BTreeSet<String>,
+    priceable: BTreeSet<String>,
+    shared: SharedPlan,
+    poll: Duration,
+) {
+    loop {
+        tokio::time::sleep(poll).await;
+        match list_books(channel.clone(), &token).await {
+            Ok(books) => {
+                let next = resolve_from_descs(&books, &members, &priceable);
+                let prev = { shared.lock().expect("plan mutex").clone() };
+                if next != *prev {
+                    log_plan("poll", &prev, &next);
+                    *shared.lock().expect("plan mutex") = Arc::new(next);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "lp-sim: book poll failed; re-authenticating");
+                if let Ok(fresh) = login(channel.clone(), &creds).await {
+                    token = fresh;
+                }
+            }
+        }
+    }
+}
+
+/// Log a plan transition as a compact add/remove diff line.
+fn log_plan(phase: &str, prev: &StreamPlan, next: &StreamPlan) {
+    let diff = prev.diff(next);
+    eprintln!(
+        "[lp-sim] {phase} plan: {} stream(s) over {} member(s) × {} instrument(s) (+{} / -{})",
+        next.len(),
+        next.members().len(),
+        next.instruments().len(),
+        diff.added.len(),
+        diff.removed.len(),
+    );
+}
+
+/// Drive the `LpFeed` client-streaming RPC from the shared plan. Owns everything the
+/// generator touches (so the stream is `'static`); ends when the server closes it.
+async fn run_plan_stream(
+    channel: Channel,
+    cfg: &LpSimConfig,
+    universe: &[TreasuryBond],
+    shared: SharedPlan,
+    opts: &BookFeedOptions,
+) -> Result<(), String> {
+    let mut client = LiquidityFeedServiceClient::new(channel);
+    let state = PlanFeedState {
+        cfg: cfg.clone(),
+        fleet: build_fleet(cfg, universe),
+        bonds: universe.to_vec(),
+        shared,
+        faults: opts.faults.clone(),
+        interval: opts.quote_interval.max(Duration::from_secs(1)),
+        once: opts.once,
+        round: 0,
+        pending: Vec::new(),
+        cursor: 0,
+        started: false,
+        start: std::time::Instant::now(),
+    };
+    let request = futures_util::stream::unfold(state, |mut st| async move {
+        st.next_quote().await.map(|q| (q, st))
+    });
+    let ack = client
+        .lp_feed(request)
+        .await
+        .map_err(|e| format!("lp_feed stream: {e}"))?
+        .into_inner();
+    tracing::info!(accepted = ack.accepted, "lp-sim: book-aware feed accepted");
+    if opts.once {
+        println!("[lp-sim] server accepted {} quote(s)", ack.accepted);
+    }
+    Ok(())
+}
+
+/// The unfold generator state for the book-aware client stream. Owns the fleet, the
+/// full universe, and the shared plan handle.
+struct PlanFeedState {
+    cfg: LpSimConfig,
+    fleet: Vec<SimLp>,
+    bonds: Vec<TreasuryBond>,
+    shared: SharedPlan,
+    faults: FaultSchedule,
+    interval: Duration,
+    once: bool,
+    round: u64,
+    pending: Vec<LpQuote>,
+    cursor: usize,
+    started: bool,
+    start: std::time::Instant,
+}
+
+impl PlanFeedState {
+    /// The next `LpQuote` to stream, or `None` to end the stream (only in `--once`
+    /// after one round). Buffers a full round from the current plan, then paces the
+    /// next round by the interval.
+    async fn next_quote(&mut self) -> Option<LpQuote> {
+        loop {
+            if self.cursor < self.pending.len() {
+                let q = self.pending[self.cursor].clone();
+                self.cursor += 1;
+                return Some(q);
+            }
+            if self.once && self.started {
+                return None;
+            }
+            if self.started {
+                tokio::time::sleep(self.interval).await;
+            }
+            let now = self.now_nanos();
+            let plan = { self.shared.lock().expect("plan mutex").clone() };
+            let by_cusip: BTreeMap<&str, &TreasuryBond> =
+                self.bonds.iter().map(|b| (b.instrument_id(), b)).collect();
+            self.pending = plan_quotes_round(
+                &self.cfg,
+                &self.fleet,
+                &by_cusip,
+                &plan,
+                now,
+                self.round,
+                &self.faults,
+            );
+            self.cursor = 0;
+            self.round += 1;
+            self.started = true;
+            // An empty plan (no participating book yet) must NOT end the stream — keep
+            // the connection open and re-poll next interval, so a book created later is
+            // picked up. In --once we return None (nothing to stream this round).
+            if self.pending.is_empty() {
+                if self.once {
+                    return None;
+                }
+                tokio::time::sleep(self.interval).await;
+            }
+        }
+    }
+
+    /// The valuation clock in epoch nanoseconds (real wall time plus elapsed, so the
+    /// server's staleness decay sees a monotonically advancing instant).
     fn now_nanos(&self) -> i64 {
         let since_epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

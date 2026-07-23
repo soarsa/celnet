@@ -22,11 +22,11 @@
 //! this binary already computes ([`celnet_lp_sim::LpQuoteSnapshot`]) is exactly the
 //! payload that ingest consumes.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use celnet_lp_sim::{
-    LpSimConfig, TreasuryBond, build_fleet, composite_for, into_feeds, load_coupon_universe,
-    load_universe,
+    BookFeedOptions, FaultSchedule, LoginCredentials, LpSimConfig, TreasuryBond, build_fleet,
+    composite_for, into_feeds, load_coupon_universe, load_universe, run_book_aware_feed,
 };
 use celnet_types::BrokenDate;
 use clap::Parser;
@@ -35,7 +35,24 @@ use clap::Parser;
 #[derive(Debug, Parser)]
 #[command(
     name = "lp-sim",
-    about = "LP-SIM — synthetic Treasury liquidity-provider feed"
+    about = "LP-SIM — 5-LP, book-aware synthetic Treasury liquidity-provider feed",
+    long_about = "LP-SIM — a fleet of 5 synthetic bond liquidity providers \
+(LP-SIM-01…LP-SIM-05), each with a distinct seeded pricing character, that push \
+oracle-anchored two-way Treasury quotes into a running celnet server's LpFeed ingest.\n\n\
+DEPLOYED (book-aware) MODE — the default when --addr is set:\n  \
+  lp-sim --addr http://127.0.0.1:50051 --members 5 --book-poll 5 \\\n         \
+     --user admin@celnet.com --password ****\n  \
+  The feed authenticates (AuthService.Login), polls the enabled aggregated books \
+(ListAggregatedBooks) every --book-poll seconds, and for each book resolves which \
+LP-SIM-0N members it should impersonate and which instruments to quote \
+(all-members-quote ⇒ the full Treasury universe; explicit ⇒ the listed instrument ids). \
+It streams exactly those (member × instrument) two-ways, and starts/stops pricing bonds \
+automatically as a user creates or edits a book. Books with no LP-SIM member are ignored.\n\n\
+BROADCAST FALLBACK — --no-book-poll (or an explicit --instruments list):\n  \
+  Streams the whole (or listed) universe as the N LPs without polling books — for when \
+no books exist yet.\n\n\
+LOCAL DEMO — no --addr (or --local):\n  \
+  Consolidates the fleet in-process and prints the composite each interval."
 )]
 struct Args {
     /// The LP connection name advertised as the price contributor (venue id).
@@ -47,9 +64,12 @@ struct Args {
     #[arg(long, default_value = "ust-composite")]
     book: String,
 
-    /// Number of decorrelated LP member connections (≥ 1). ≥ 3 makes the
-    /// consolidator's divergence gating decidable.
-    #[arg(long, default_value_t = 4)]
+    /// Number of decorrelated LP member connections (≥ 1). The default 5 stands up
+    /// `LP-SIM-01`…`LP-SIM-05`, each with a distinct seeded pricing character
+    /// (half-spread, size, refresh cadence, quality) so the server's
+    /// best-bid=max / best-offer=min consolidation across them is meaningful. ≥ 3
+    /// makes the consolidator's divergence gating decidable.
+    #[arg(long, default_value_t = 5)]
     members: usize,
 
     /// Seconds between composite emissions.
@@ -95,6 +115,35 @@ struct Args {
     /// composite locally; the default when `--addr` is absent).
     #[arg(long, default_value_t = false)]
     local: bool,
+
+    /// Book-aware poll cadence in seconds: how often the daemon re-reads the enabled
+    /// aggregated books (`ListAggregatedBooks`) and starts/stops instrument×LP streams
+    /// as books change. Only used in the network book-aware mode.
+    #[arg(long, default_value_t = 5)]
+    book_poll: u64,
+
+    /// Disable book polling: stream the selected universe as the N LPs regardless of
+    /// any server-side books (the broadcast fallback). Also implied by passing an
+    /// explicit `--instruments` list rather than `all`.
+    #[arg(long, default_value_t = false)]
+    no_book_poll: bool,
+
+    /// Service login email for the book poll (`AuthService.Login`). Falls back to the
+    /// `LPSIM_USER` env var, then to the seeded admin (`admin@celnet.com`) so the
+    /// daemon authenticates out-of-the-box on a fresh box.
+    #[arg(long)]
+    user: Option<String>,
+
+    /// Service login password. Falls back to `LPSIM_PASSWORD`, then the seeded admin
+    /// password.
+    #[arg(long)]
+    password: Option<String>,
+
+    /// Disable the occasional injected staleness/outlier faults (network modes emit,
+    /// by default, an occasional divergent or stale print on at most one member per
+    /// round to exercise the server's MAD gate and staleness decay).
+    #[arg(long, default_value_t = false)]
+    no_faults: bool,
 }
 
 fn main() -> std::process::ExitCode {
@@ -119,18 +168,88 @@ fn main() -> std::process::ExitCode {
         ..LpSimConfig::default()
     };
 
-    // Load and select the instruments to quote.
+    // Load the reference universe and keep only bonds the analytics leaf can model at
+    // this settlement — the sim's full priceable set (books select from this).
     let universe = if args.include_bills {
         load_universe()
     } else {
         load_coupon_universe()
     };
-    let mut selection = filter_instruments(universe, &args.instruments);
-    // Keep only bonds the analytics leaf can model at this settlement.
-    selection.retain(|b| {
-        b.yield_model(cfg.settlement, cfg.reversion_per_sec, cfg.perturbation)
-            .is_some()
-    });
+    let priceable: Vec<TreasuryBond> = universe
+        .into_iter()
+        .filter(|b| {
+            b.yield_model(cfg.settlement, cfg.reversion_per_sec, cfg.perturbation)
+                .is_some()
+        })
+        .collect();
+    if priceable.is_empty() {
+        eprintln!(
+            "[lp-sim] ERROR: no modellable instruments at settlement {}",
+            args.settlement
+        );
+        return std::process::ExitCode::from(1);
+    }
+
+    // Mode selection: book-aware daemon is the default when --addr is set (and books
+    // are not explicitly opted out of); an explicit instrument list or --no-book-poll
+    // is the broadcast fallback; no --addr (or --local) is the in-process demo.
+    let network = args.addr.is_some() && !args.local;
+    let instruments_is_all = args.instruments.trim().eq_ignore_ascii_case("all");
+    let book_aware = network && !args.no_book_poll && instruments_is_all;
+
+    eprintln!(
+        "[lp-sim] feed '{}' : {} members ({}), interval {}s, seed {:#x}",
+        cfg.lp_name,
+        cfg.members,
+        member_names(&cfg).join(", "),
+        args.interval,
+        cfg.seed,
+    );
+
+    // ---- Book-aware network daemon (the deployed default when --addr is set) -------
+    if book_aware {
+        let addr = args.addr.as_deref().expect("network implies --addr");
+        let email = args
+            .user
+            .clone()
+            .or_else(|| std::env::var("LPSIM_USER").ok())
+            .unwrap_or_else(|| celnet_lp_sim::net::DEFAULT_SERVICE_EMAIL.to_string());
+        let password = args
+            .password
+            .clone()
+            .or_else(|| std::env::var("LPSIM_PASSWORD").ok())
+            .unwrap_or_else(|| celnet_lp_sim::net::DEFAULT_SERVICE_PASSWORD.to_string());
+        let faults = FaultSchedule {
+            enabled: !args.no_faults,
+            seed: args.seed ^ 0x00FA_0175_0000_0000,
+            ..FaultSchedule::default()
+        };
+        let opts = BookFeedOptions {
+            book_poll: Duration::from_secs(args.book_poll.max(1)),
+            quote_interval: Duration::from_secs(args.interval.max(1)),
+            credentials: LoginCredentials {
+                email: email.clone(),
+                password,
+            },
+            faults,
+            once: args.once,
+        };
+        eprintln!(
+            "[lp-sim] book-aware mode → {addr} : login {email}, book-poll {}s, {} priceable instrument(s)",
+            args.book_poll.max(1),
+            priceable.len(),
+        );
+        return match run_book_aware_feed(&cfg, &priceable, addr, &opts) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("[lp-sim] ERROR: book-aware feed failed: {e}");
+                std::process::ExitCode::from(1)
+            }
+        };
+    }
+
+    // ---- Broadcast / local: select the instruments to quote (filter + cap) --------
+    let mut selection = filter_instruments(priceable, &args.instruments);
     if selection.len() > args.max_instruments {
         selection.truncate(args.max_instruments);
     }
@@ -141,25 +260,13 @@ fn main() -> std::process::ExitCode {
         );
         return std::process::ExitCode::from(1);
     }
+    eprintln!("[lp-sim] {} instrument(s) selected", selection.len());
 
-    eprintln!(
-        "[lp-sim] feed '{}' → book '{}' : {} members, {} instrument(s), interval {}s, seed {:#x}",
-        cfg.lp_name,
-        args.book,
-        cfg.members,
-        selection.len(),
-        args.interval,
-        cfg.seed,
-    );
-    eprintln!("[lp-sim] members: {}", member_names(&cfg).join(", "));
-
-    // Network feed mode (`--addr`, not overridden by `--local`): push the panel's
-    // two-ways to a running server so the composite surfaces to GUI subscribers.
-    if let Some(addr) = args.addr.as_deref()
-        && !args.local
-    {
+    // Broadcast network fallback: stream the selected universe as the N LPs, no books.
+    if network {
+        let addr = args.addr.as_deref().expect("network implies --addr");
         eprintln!(
-            "[lp-sim] network mode → pushing LpFeed to {addr} (book '{}')",
+            "[lp-sim] broadcast network mode → pushing LpFeed to {addr} (book '{}')",
             args.book
         );
         return match celnet_lp_sim::net::run_network_feed(
