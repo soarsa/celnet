@@ -34,6 +34,11 @@ import type {
   EntityInput,
   BookDesc,
   BookInput,
+  AggregatedBookDesc,
+  AggregatedBookSpec,
+  AggregatedBookComposite,
+  AggregatedInstrument,
+  LpContribution,
   InstrumentDef,
   InstrumentInput,
   Deal,
@@ -344,6 +349,138 @@ interface LiveRatesSubscription {
 }
 
 /**
+ * One instrument in the offline aggregated-book universe — the static identity
+ * (`instrumentId`/`displayName`/`isin`/`cusip`) plus a base clean price the
+ * synthetic member two-ways walk around. Prices are clean prices per 100 face,
+ * exactly as the LP-SIM Treasury feed publishes.
+ */
+interface MockAggInstrumentSeed {
+  instrumentId: string;
+  displayName: string;
+  isin: string;
+  cusip: string;
+  baseMid: number;
+}
+
+/**
+ * A faithful offline Treasury universe for the aggregated-book composite — the
+ * SAME shape the LP-SIM Treasury feed streams into the live server (clean prices
+ * per 100 face, real-looking on-the-run identities). NOT a placeholder: the mock
+ * consolidates synthetic member two-ways around these bases exactly as the server
+ * consolidates the LP feed, so the offline price view exercises the whole render
+ * path. The live transport reads the server's real composite instead.
+ */
+const MOCK_AGG_TREASURY_UNIVERSE: readonly MockAggInstrumentSeed[] = [
+  { instrumentId: "912797KX5", displayName: "T-Bill 3M", isin: "US912797KX52", cusip: "912797KX5", baseMid: 98.72 },
+  { instrumentId: "91282CJL6", displayName: "UST 2Y 4.25%", isin: "US91282CJL63", cusip: "91282CJL6", baseMid: 99.61 },
+  { instrumentId: "91282CJK8", displayName: "UST 3Y 4.00%", isin: "US91282CJK80", cusip: "91282CJK8", baseMid: 99.18 },
+  { instrumentId: "91282CJM4", displayName: "UST 5Y 4.125%", isin: "US91282CJM47", cusip: "91282CJM4", baseMid: 98.84 },
+  { instrumentId: "91282CJN2", displayName: "UST 7Y 4.25%", isin: "US91282CJN20", cusip: "91282CJN2", baseMid: 98.05 },
+  { instrumentId: "91282CJP7", displayName: "UST 10Y 4.375%", isin: "US91282CJP77", cusip: "91282CJP7", baseMid: 97.41 },
+  { instrumentId: "912810UC8", displayName: "UST 30Y 4.625%", isin: "US912810UC80", cusip: "912810UC8", baseMid: 95.62 },
+];
+
+/** The default synthetic LP members when a book names none (the LP-SIM fleet). */
+const MOCK_AGG_DEFAULT_MEMBERS: readonly string[] = [
+  "LP-SIM-01",
+  "LP-SIM-02",
+  "LP-SIM-03",
+  "LP-SIM-04",
+];
+
+/** A live offline aggregated-book composite line. */
+interface LiveAggBook {
+  id: bigint;
+  bookId: string;
+  /** The members whose synthetic two-ways feed the composite (resolved at subscribe). */
+  members: readonly string[];
+  /** The in-scope instruments (the universe, filtered to an EXPLICIT book's scope). */
+  seeds: readonly MockAggInstrumentSeed[];
+  sequence: bigint;
+  rng: Rng;
+}
+
+/**
+ * Consolidate the members' synthetic two-ways for one instrument into a composite
+ * line — the offline mirror of the server's `celnet-aggregation` pass. Each member
+ * quotes a tight two-way around the instrument's base mid (a small deterministic
+ * offset + spread); one member per instrument is occasionally marked STALE and
+ * excluded from the best price (exactly the wire semantics). The best bid is the
+ * max fresh member bid; the best offer the min fresh member offer; confidence is
+ * coverage · agreement over the fresh members.
+ */
+function synthAggInstrument(
+  seed: MockAggInstrumentSeed,
+  members: readonly string[],
+  rng: Rng,
+): AggregatedInstrument {
+  const contributions: LpContribution[] = [];
+  // Deterministically stale at most one member (when > 2 members quote) so the
+  // exclusion path is exercised without ever dropping below the quorum.
+  const staleIdx = members.length > 2 && rng.next() < 0.35 ? Math.floor(rng.next() * members.length) : -1;
+  let bestBid = Number.NEGATIVE_INFINITY;
+  let bestOffer = Number.POSITIVE_INFINITY;
+  let bidSize = 0;
+  let offerSize = 0;
+  let freshCount = 0;
+  members.forEach((lpName, i) => {
+    // A per-member mid skew kept STRICTLY below the half-spread so the consolidated
+    // top-of-book stays uncrossed (max fresh bid < min fresh offer) — a healthy
+    // composite, exactly as divergence gating would keep it. The dispersion still
+    // shows in each member's own two-way (the per-LP breakdown).
+    const skew = (rng.next() * 2 - 1) * 0.012;
+    const halfSpread = 0.025 + rng.next() * 0.015;
+    const mid = seed.baseMid + skew;
+    const bid = round3(mid - halfSpread);
+    const offer = round3(mid + halfSpread);
+    const stale = i === staleIdx;
+    contributions.push({ lpName, bid, offer, stale });
+    if (!stale) {
+      freshCount += 1;
+      if (bid > bestBid) {
+        bestBid = bid;
+        bidSize = 1_000_000 + Math.floor(rng.next() * 4) * 1_000_000;
+      }
+      if (offer < bestOffer) {
+        bestOffer = offer;
+        offerSize = 1_000_000 + Math.floor(rng.next() * 4) * 1_000_000;
+      }
+    }
+  });
+  // Confidence: coverage (fresh / total) tempered by two-way agreement (a tight
+  // consolidated spread ⇒ high agreement). Clamped to [0, 1]; honest, not faked.
+  const coverage = members.length === 0 ? 0 : freshCount / members.length;
+  const spread = Number.isFinite(bestOffer - bestBid) ? bestOffer - bestBid : 1;
+  const agreement = Math.max(0, 1 - spread / 0.5);
+  const confidence = Math.max(0, Math.min(1, coverage * (0.6 + 0.4 * agreement)));
+  return {
+    instrumentId: seed.instrumentId,
+    displayName: seed.displayName,
+    isin: seed.isin,
+    cusip: seed.cusip,
+    bestBid: freshCount > 0 ? bestBid : 0,
+    bestOffer: freshCount > 0 ? bestOffer : 0,
+    bidSize,
+    offerSize,
+    confidence: round3(confidence),
+    contributions,
+  };
+}
+
+/** Round to 3 decimals (clean-price cent resolution) without float drift artifacts. */
+function round3(x: number): number {
+  return Math.round(x * 1000) / 1000;
+}
+
+/** Build the full composite body for a live aggregated-book line at this tick. */
+function synthAggComposite(live: LiveAggBook): AggregatedBookComposite {
+  return {
+    bookId: live.bookId,
+    instruments: live.seeds.map((seed) => synthAggInstrument(seed, live.members, live.rng)),
+  };
+}
+
+/**
  * The mock multiplexed stream session. One instance multiplexes many
  * subscriptions over a single ticking loop, exactly as the contract's single
  * bidirectional `StreamSession` multiplexes by `SubscriptionId`.
@@ -354,6 +491,8 @@ class MockStreamSession implements StreamSession {
   private readonly series = new Map<bigint, LiveSeries>();
   /** Live fixed-income streaming lines (same id space as price/market streams). */
   private readonly ratesSubs = new Map<bigint, LiveRatesSubscription>();
+  /** Live aggregated-book composite lines (same id space as the other streams). */
+  private readonly aggBooks = new Map<bigint, LiveAggBook>();
   private readonly listeners = new Set<(e: StreamEvent) => void>();
   private nextSubId = 1n;
   private nextToken = 1n;
@@ -362,10 +501,22 @@ class MockStreamSession implements StreamSession {
   private readonly consumedTokens = new Set<bigint>();
   private readonly tickMs: number;
   private readonly seed: bigint;
+  /**
+   * Resolve an aggregated-book definition by id (the transport's in-memory
+   * store), so the offline composite reflects the admin-created book's actual
+   * members + instrument scope. Returns undefined for an unknown id (the mock
+   * then falls back to the LP-SIM fleet over the full Treasury universe).
+   */
+  private readonly resolveAggBook: (id: string) => AggregatedBookDesc | undefined;
 
-  constructor(seed: bigint, tickMs: number) {
+  constructor(
+    seed: bigint,
+    tickMs: number,
+    resolveAggBook: (id: string) => AggregatedBookDesc | undefined = () => undefined,
+  ) {
     this.seed = seed;
     this.tickMs = tickMs;
+    this.resolveAggBook = resolveAggBook;
   }
 
   private emit(event: StreamEvent): void {
@@ -568,6 +719,53 @@ class MockStreamSession implements StreamSession {
     this.stopIfIdle();
   }
 
+  subscribeAggregatedBook(bookId: string, throttleNanos = 0n): bigint {
+    void throttleNanos; // the offline mock ticks at its own cadence
+    const id = this.nextSubId;
+    this.nextSubId += 1n;
+    // Resolve the book's actual members + instrument scope so the composite the
+    // offline view renders is faithful to the admin-created definition. An unknown
+    // book (or one that names no members) falls back to the LP-SIM fleet.
+    const def = this.resolveAggBook(bookId);
+    const members =
+      def && def.memberConnectionIds.length > 0
+        ? def.memberConnectionIds
+        : MOCK_AGG_DEFAULT_MEMBERS;
+    const seeds =
+      def && def.scopeMode === "EXPLICIT" && def.instrumentIds.length > 0
+        ? MOCK_AGG_TREASURY_UNIVERSE.filter((s) =>
+            def.instrumentIds.includes(s.instrumentId),
+          )
+        : MOCK_AGG_TREASURY_UNIVERSE;
+    const live: LiveAggBook = {
+      id,
+      bookId,
+      members,
+      seeds,
+      sequence: 0n,
+      rng: new Rng(this.seed ^ (id * 0xc2b2_ae35n)),
+    };
+    this.aggBooks.set(id, live);
+    // Immediate baseline snapshot (sequence 1), exactly as the server emits.
+    live.sequence += 1n;
+    this.emit({
+      kind: "aggregatedBookSnapshot",
+      snapshot: {
+        subscriptionId: id,
+        sequence: live.sequence,
+        book: synthAggComposite(live),
+        epochNanos: nowNanos(),
+      },
+    });
+    this.ensureRunning();
+    return id;
+  }
+
+  unsubscribeAggregatedBook(subscriptionId: bigint): void {
+    this.aggBooks.delete(subscriptionId);
+    this.stopIfIdle();
+  }
+
   /**
    * Build the baseline [`RatesStreamSnapshot`] for a line: the offline
    * `price_rates` at the un-shifted baseline curve (shift 0), so a consumer's
@@ -588,12 +786,13 @@ class MockStreamSession implements StreamSession {
     };
   }
 
-  /** Stop the tick timer once no price / market-series / rates line remains. */
+  /** Stop the tick timer once no price / market-series / rates / composite line remains. */
   private stopIfIdle(): void {
     if (
       this.subs.size === 0 &&
       this.series.size === 0 &&
       this.ratesSubs.size === 0 &&
+      this.aggBooks.size === 0 &&
       this.timer !== undefined
     ) {
       clearInterval(this.timer);
@@ -653,6 +852,7 @@ class MockStreamSession implements StreamSession {
     this.subs.clear();
     this.series.clear();
     this.ratesSubs.clear();
+    this.aggBooks.clear();
     this.listeners.clear();
   }
 
@@ -773,6 +973,22 @@ class MockStreamSession implements StreamSession {
         epochNanos: nowNanos(),
       };
       this.emit({ kind: "ratesUpdate", update });
+    }
+    // Advance every live aggregated-book composite line: re-consolidate the
+    // members' synthetic two-ways into a fresh composite and emit ONE conflated
+    // `AggregatedBookStreamUpdate` (the offline mirror of the server's per-book
+    // re-consolidation on member re-quote).
+    for (const ab of this.aggBooks.values()) {
+      ab.sequence += 1n;
+      this.emit({
+        kind: "aggregatedBookUpdate",
+        update: {
+          subscriptionId: ab.id,
+          sequence: ab.sequence,
+          book: synthAggComposite(ab),
+          epochNanos: nowNanos(),
+        },
+      });
     }
     // Advance every live market series: a deterministic mean-reverting walk around
     // the observable's anchor, appended at the series' cadence (throttle hint).
@@ -966,6 +1182,30 @@ export class MockTransport implements CelnetTransport {
     { key: 2, name: "Rates Relative Value", entityKey: 1 },
     { key: 3, name: "Government Bonds", entityKey: 2 },
     { key: 4, name: "Swaps", entityKey: 2 },
+  ];
+  /**
+   * The offline aggregated-book registry (a GENUINE in-memory store, not a stub):
+   * admin CRUD mutates it and `openStreamSession` reads it so the offline price
+   * view renders the composite for the admin-created book. Seeded with one book
+   * over the LP-SIM fleet so the price view is exercisable end-to-end with no
+   * server; the live server owns its own store.
+   */
+  private readonly mockAggregatedBooks: AggregatedBookDesc[] = [
+    {
+      id: "us-treasuries",
+      name: "US Treasuries",
+      memberConnectionIds: ["LP-SIM-01", "LP-SIM-02", "LP-SIM-03", "LP-SIM-04"],
+      scopeMode: "ALL_MEMBERS_QUOTE",
+      instrumentIds: [],
+      params: {
+        stalenessTauMs: 2000,
+        maxQuoteAgeMs: 5000,
+        divergenceGating: true,
+        minContributors: 2,
+        depthLevels: 1,
+      },
+      enabled: true,
+    },
   ];
   /**
    * The offline instrument reference-data registry (a GENUINE in-memory store,
@@ -1272,7 +1512,11 @@ export class MockTransport implements CelnetTransport {
   }
 
   openStreamSession(): StreamSession {
-    return new MockStreamSession(this.seed, this.tickMs);
+    // Pass a live resolver so an offline composite reflects the admin-created
+    // book's actual members + instrument scope (the store the CRUD methods mutate).
+    return new MockStreamSession(this.seed, this.tickMs, (id) =>
+      this.mockAggregatedBooks.find((b) => b.id === id),
+    );
   }
 
   async getSmile(
@@ -2110,6 +2354,65 @@ export class MockTransport implements CelnetTransport {
     return true;
   }
 
+  // --- FI Aggregated Book (ADR-0022) — offline in-memory registry -------------
+  //
+  // A GENUINE in-memory registry (not a stub): admin CRUD mutates the store and
+  // create mints an id from `name` (or honours a client-suggested slug), exactly
+  // like the server. Listing is unauthenticated offline; the live server enforces
+  // admin-only mutation and any-user listing.
+
+  async listAggregatedBooks(): Promise<AggregatedBookDesc[]> {
+    return this.mockAggregatedBooks.map((b) => cloneAggBook(b));
+  }
+
+  async createAggregatedBook(spec: AggregatedBookSpec): Promise<AggregatedBookDesc> {
+    const name = spec.name.trim();
+    if (name.length === 0) throw new Error("aggregated-book name is required");
+    const id = spec.id.trim().length > 0 ? mockSlugify(spec.id) : mockSlugify(name);
+    if (this.mockAggregatedBooks.some((b) => b.id === id)) {
+      throw new Error(`an aggregated book with id \`${id}\` already exists`);
+    }
+    if (
+      this.mockAggregatedBooks.some(
+        (b) => b.name.toLowerCase() === name.toLowerCase(),
+      )
+    ) {
+      throw new Error(`an aggregated book named \`${name}\` already exists`);
+    }
+    const book = aggBookFromSpec(id, name, spec);
+    this.mockAggregatedBooks.push(book);
+    return cloneAggBook(book);
+  }
+
+  async updateAggregatedBook(
+    id: string,
+    spec: AggregatedBookSpec,
+  ): Promise<AggregatedBookDesc> {
+    const existing = this.mockAggregatedBooks.find((b) => b.id === id);
+    if (!existing) throw new Error(`no aggregated book with id \`${id}\``);
+    const name = spec.name.trim();
+    if (name.length === 0) throw new Error("aggregated-book name is required");
+    if (
+      this.mockAggregatedBooks.some(
+        (b) => b.id !== id && b.name.toLowerCase() === name.toLowerCase(),
+      )
+    ) {
+      throw new Error(`an aggregated book named \`${name}\` already exists`);
+    }
+    // The `id` is the immutable identity; the spec's own `id` field is ignored.
+    const updated = aggBookFromSpec(id, name, spec);
+    const idx = this.mockAggregatedBooks.indexOf(existing);
+    this.mockAggregatedBooks.splice(idx, 1, updated);
+    return cloneAggBook(updated);
+  }
+
+  async deleteAggregatedBook(id: string): Promise<boolean> {
+    const idx = this.mockAggregatedBooks.findIndex((b) => b.id === id);
+    if (idx < 0) return false;
+    this.mockAggregatedBooks.splice(idx, 1);
+    return true;
+  }
+
   // --- instrument reference-data registry (offline) --------------------------
 
   /** Mint a stable instrument id from a name (mirrors the server's slugify). */
@@ -2922,6 +3225,33 @@ function mockSlugify(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return slug.length > 0 ? slug : "connection";
+}
+
+/** Deep-clone a persisted aggregated book so a caller can never mutate the store. */
+function cloneAggBook(b: AggregatedBookDesc): AggregatedBookDesc {
+  return {
+    ...b,
+    memberConnectionIds: [...b.memberConnectionIds],
+    instrumentIds: [...b.instrumentIds],
+    params: { ...b.params },
+  };
+}
+
+/** Materialize a persisted aggregated book from a create/update spec + resolved id. */
+function aggBookFromSpec(
+  id: string,
+  name: string,
+  spec: AggregatedBookSpec,
+): AggregatedBookDesc {
+  return {
+    id,
+    name,
+    memberConnectionIds: [...spec.memberConnectionIds],
+    scopeMode: spec.scopeMode,
+    instrumentIds: [...spec.instrumentIds],
+    params: { ...spec.params },
+    enabled: spec.enabled,
+  };
 }
 
 /**

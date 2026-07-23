@@ -24,6 +24,7 @@ import { QuotingWorkspace } from "../workspaces/QuotingWorkspace";
 import { ReferenceDataWorkspace } from "../workspaces/ReferenceDataWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { FiStreamingWorkspace } from "../workspaces/FiStreamingWorkspace";
+import { AggregatedBookWorkspace } from "../workspaces/AggregatedBookWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { XvaWorkspace } from "../workspaces/XvaWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
@@ -86,6 +87,9 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // FI Streaming: live bond + swap prices with the right-hand RFS request sidebar.
   // A Fixed-Income-only row (never under the FX tab).
   fistreaming: FiStreamingWorkspace,
+  // Agg Book: the FI aggregated-book live composite view (consolidated best
+  // bid/offer across a book's inbound liquidity members). Fixed-Income-only.
+  aggbook: AggregatedBookWorkspace,
   // Market Data: FX vol surface + FI rates curve as two lenses of ONE workspace
   // (#2). Opens the FX surface lens by default; the FI curve is the rates lens.
   surface: MarketDataWorkspace,

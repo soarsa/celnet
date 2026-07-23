@@ -39,6 +39,8 @@ import type {
   EntityInput,
   BookDesc,
   BookInput,
+  AggregatedBookDesc,
+  AggregatedBookSpec,
   InstrumentDef,
   InstrumentInput,
   BuildCurveRequest,
@@ -207,6 +209,15 @@ import {
   ratesStreamSnapshotFromWire,
   ratesStreamUpdateFromWire,
   ratesSubscribeToWire,
+  listAggregatedBooksRequestToWire,
+  aggregatedBooksResponseFromWire,
+  createAggregatedBookRequestToWire,
+  updateAggregatedBookRequestToWire,
+  deleteAggregatedBookRequestToWire,
+  aggregatedBookResponseFromWire,
+  aggregatedBookSubscribeToWire,
+  aggregatedBookSnapshotFromWire,
+  aggregatedBookUpdateFromWire,
   riskBucketRequestToWire,
   xvaResultFromWire,
   scenarioResultFromWire,
@@ -685,6 +696,22 @@ interface WsRatesSub {
 }
 
 /**
+ * A live aggregated-book composite line — the consolidated best bid/offer + per-
+ * member contribution report for one book. Carries the `bookId` so a reconnect
+ * re-opens the exact line; its last good sequence detects gaps (a snapshot
+ * re-baselines whole).
+ */
+interface WsAggSub {
+  readonly id: bigint;
+  readonly bookId: string;
+  readonly throttleNanos: bigint;
+  /** The last in-sequence number successfully applied (0 until first snapshot). */
+  lastSequence: bigint;
+  /** True once the baseline snapshot has been seen. */
+  baselined: boolean;
+}
+
+/**
  * The live multiplexed RFS session over the WS connection. Implements the same
  * `StreamSession` seam the mock does, so workspaces and the streaming store are
  * transport-agnostic. It assigns each subscription a client `SubscriptionId`
@@ -708,6 +735,13 @@ class WsStreamSession implements StreamSession {
    * rates snapshot/update frames route by id.
    */
   private readonly ratesSubs = new Map<bigint, WsRatesSub>();
+  /**
+   * Live aggregated-book composite lines, keyed by the SAME id space as the FX /
+   * market-series / rates streams (the contract multiplexes all of them on one
+   * `SubscriptionId` space). Held so a reconnect re-opens each line and the
+   * composite snapshot/update frames route by id.
+   */
+  private readonly aggBookSubs = new Map<bigint, WsAggSub>();
   private readonly listeners = new Set<(e: StreamEvent) => void>();
   private nextSubId = 1n;
   private closed = false;
@@ -844,6 +878,37 @@ class WsStreamSession implements StreamSession {
     });
   }
 
+  subscribeAggregatedBook(bookId: string, throttleNanos = 0n): bigint {
+    const id = this.nextSubId++;
+    this.aggBookSubs.set(id, {
+      id,
+      bookId,
+      throttleNanos,
+      lastSequence: 0n,
+      baselined: false,
+    });
+    this.sendAggregatedBookSubscribe(id, bookId, throttleNanos);
+    return id;
+  }
+
+  private sendAggregatedBookSubscribe(id: bigint, bookId: string, throttleNanos: bigint): void {
+    this.conn.send({
+      type: "aggregated_book_subscribe",
+      ...aggregatedBookSubscribeToWire({ subscriptionId: id, bookId, throttleNanos }),
+    });
+  }
+
+  unsubscribeAggregatedBook(subscriptionId: bigint): void {
+    if (!this.aggBookSubs.delete(subscriptionId)) return;
+    // The composite line has its OWN unsubscribe verb (unlike the rates line,
+    // which shares the generic `unsubscribe`): the server routes it to the
+    // aggregated-book subscription map (crates/celnet-server/src/ws/mod.rs).
+    this.conn.send({
+      type: "aggregated_book_unsubscribe",
+      subscription: { value: Number(subscriptionId) },
+    });
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -859,9 +924,16 @@ class WsStreamSession implements StreamSession {
     for (const id of this.ratesSubs.keys()) {
       this.conn.send({ type: "unsubscribe", subscription: { value: Number(id) } });
     }
+    for (const id of this.aggBookSubs.keys()) {
+      this.conn.send({
+        type: "aggregated_book_unsubscribe",
+        subscription: { value: Number(id) },
+      });
+    }
     this.subs.clear();
     this.series.clear();
     this.ratesSubs.clear();
+    this.aggBookSubs.clear();
     this.listeners.clear();
     this.conn.bindSession(null);
   }
@@ -896,6 +968,14 @@ class WsStreamSession implements StreamSession {
     for (const sub of this.ratesSubs.values()) {
       sub.baselined = false;
       this.sendRatesSubscribe(sub.id, sub.instrument, sub.curveSet);
+    }
+    // Re-open every live aggregated-book composite line — the server re-baselines
+    // each with a fresh `aggregated_book_stream_snapshot` (the composite is
+    // conflatable and re-consolidates from the members' live quotes, so no
+    // client-side sequence resync).
+    for (const sub of this.aggBookSubs.values()) {
+      sub.baselined = false;
+      this.sendAggregatedBookSubscribe(sub.id, sub.bookId, sub.throttleNanos);
     }
   }
 
@@ -1010,6 +1090,26 @@ class WsStreamSession implements StreamSession {
         if (!sub || !sub.baselined) break;
         if (update.sequence > sub.lastSequence) sub.lastSequence = update.sequence;
         this.emit({ kind: "ratesUpdate", update });
+        break;
+      }
+      case "aggregated_book_stream_snapshot": {
+        const snapshot = aggregatedBookSnapshotFromWire(frame);
+        const sub = this.aggBookSubs.get(snapshot.subscriptionId);
+        if (!sub) break;
+        // The baseline is authoritative: accept its sequence whole.
+        sub.lastSequence = snapshot.sequence;
+        sub.baselined = true;
+        this.emit({ kind: "aggregatedBookSnapshot", snapshot });
+        break;
+      }
+      case "aggregated_book_stream_update": {
+        const update = aggregatedBookUpdateFromWire(frame);
+        const sub = this.aggBookSubs.get(update.subscriptionId);
+        // A composite line is conflatable and re-consolidates from the members'
+        // live quotes each tick, so a gap needs no client resync — apply the latest.
+        if (!sub || !sub.baselined) break;
+        if (update.sequence > sub.lastSequence) sub.lastSequence = update.sequence;
+        this.emit({ kind: "aggregatedBookUpdate", update });
         break;
       }
       default:
@@ -1707,6 +1807,47 @@ export class WsTransport implements CelnetTransport {
       "delete_book",
       deleteBookRequestToWire(key),
       "book_deleted",
+    );
+    return reply["removed"] === true;
+  }
+
+  // --- FI Aggregated Book (ADR-0022) admin CRUD ------------------------------
+
+  async listAggregatedBooks(): Promise<AggregatedBookDesc[]> {
+    const reply = await this.conn.request(
+      "list_aggregated_books",
+      listAggregatedBooksRequestToWire(),
+      "aggregated_books",
+    );
+    return aggregatedBooksResponseFromWire(reply);
+  }
+
+  async createAggregatedBook(spec: AggregatedBookSpec): Promise<AggregatedBookDesc> {
+    const reply = await this.conn.request(
+      "create_aggregated_book",
+      createAggregatedBookRequestToWire(spec),
+      "aggregated_book_created",
+    );
+    return aggregatedBookResponseFromWire(reply);
+  }
+
+  async updateAggregatedBook(
+    id: string,
+    spec: AggregatedBookSpec,
+  ): Promise<AggregatedBookDesc> {
+    const reply = await this.conn.request(
+      "update_aggregated_book",
+      updateAggregatedBookRequestToWire(id, spec),
+      "aggregated_book_updated",
+    );
+    return aggregatedBookResponseFromWire(reply);
+  }
+
+  async deleteAggregatedBook(id: string): Promise<boolean> {
+    const reply = await this.conn.request(
+      "delete_aggregated_book",
+      deleteAggregatedBookRequestToWire(id),
+      "aggregated_book_deleted",
     );
     return reply["removed"] === true;
   }

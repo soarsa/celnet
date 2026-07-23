@@ -1,0 +1,435 @@
+/* AggregatedBookWorkspace — the FI Aggregated Book live composite grid. A dealer-
+   style price grid with monospace numerics and bid/offer colour semantics, plus an
+   expandable per-LP breakdown. Uses the app design tokens so both themes are
+   honoured automatically. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  height: 100%;
+  min-height: 0;
+}
+
+/* --- header --------------------------------------------------------------- */
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.headMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  font-family: var(--font-brand, var(--font-ui));
+  font-size: var(--type-headline);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+
+.note {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  max-width: 64ch;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--r-full, 999px);
+  background: var(--bg-inset);
+  border: var(--hairline);
+}
+
+.statusText .num,
+.status .num {
+  font-family: var(--font-mono);
+}
+
+.statusDot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--bid);
+  box-shadow: 0 0 0 0 color-mix(in oklch, var(--bid) 60%, transparent);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--bid) 55%, transparent); }
+  70% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statusDot { animation: none; }
+}
+
+.banner {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  background: color-mix(in oklch, var(--danger) 14%, transparent);
+  color: var(--danger);
+  font-size: var(--type-caption);
+}
+
+/* --- book selector -------------------------------------------------------- */
+
+.selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.bookBtn {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--r-md);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  font-size: var(--type-body);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.bookBtn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.bookBtnActive {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  font-weight: var(--weight-emphasis);
+}
+
+.bookBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bookOff {
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+}
+
+/* --- grid ----------------------------------------------------------------- */
+
+.gridWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+}
+
+.grid {
+  display: flex;
+  flex-direction: column;
+  min-width: 46rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns:
+    1.6rem
+    minmax(12rem, 2.4fr)
+    minmax(4.5rem, 1fr)
+    minmax(3.5rem, 0.8fr)
+    minmax(4.5rem, 1fr)
+    minmax(3.5rem, 0.8fr)
+    minmax(7rem, 1.4fr)
+    minmax(3.5rem, 0.7fr);
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: var(--hairline);
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.row:hover:not(.headerRow) {
+  background: var(--accent-soft);
+}
+
+.rowOpen {
+  background: color-mix(in oklch, var(--accent-soft) 60%, transparent);
+}
+
+.headerRow {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  cursor: default;
+  background: var(--bg-inset);
+  border-bottom: var(--hairline);
+  font-size: var(--type-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-header);
+}
+
+.discloseCell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.disclose {
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  transition: transform 140ms ease, color 140ms ease;
+  display: inline-block;
+}
+
+.discloseOpen {
+  transform: rotate(90deg);
+  color: var(--accent);
+}
+
+.identCell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.identName {
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.identCodes {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.bidCell {
+  text-align: right;
+  color: var(--bid);
+  font-weight: var(--weight-emphasis);
+}
+
+.offerCell {
+  text-align: right;
+  color: var(--offer);
+  font-weight: var(--weight-emphasis);
+}
+
+.headerRow .bidCell,
+.headerRow .offerCell {
+  color: var(--text-tertiary);
+  font-weight: var(--weight-header);
+}
+
+.sizeCell {
+  text-align: right;
+  color: var(--text-secondary);
+}
+
+.confCell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.headerRow .confCell {
+  color: var(--text-tertiary);
+}
+
+.confMeter {
+  flex: 1;
+  height: 0.4rem;
+  border-radius: var(--r-full, 999px);
+  background: var(--bg-inset);
+  overflow: hidden;
+  min-width: 3rem;
+}
+
+.headerRow .confMeter {
+  display: none;
+}
+
+.confFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--warn), var(--bid));
+  transition: width 200ms ease;
+}
+
+.confPct {
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  min-width: 2.6rem;
+  text-align: right;
+}
+
+.contribCell {
+  text-align: right;
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+}
+
+.contribSlash {
+  color: var(--text-tertiary);
+  margin: 0 1px;
+}
+
+.contribTotal {
+  color: var(--text-tertiary);
+}
+
+/* --- per-LP breakdown ----------------------------------------------------- */
+
+.breakdown {
+  background: var(--bg-inset);
+  border-bottom: var(--hairline);
+  padding: var(--space-2) var(--space-4) var(--space-3) 2.4rem;
+}
+
+.breakdownInner {
+  display: flex;
+  flex-direction: column;
+  border-left: 2px solid var(--accent-soft);
+  padding-left: var(--space-4);
+}
+
+.breakdownHead,
+.bkRow {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1.4fr) minmax(4rem, 1fr) minmax(4rem, 1fr) minmax(4rem, 0.8fr);
+  gap: var(--space-3);
+  align-items: center;
+  padding: 3px 0;
+}
+
+.breakdownHead {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  border-bottom: var(--hairline);
+  padding-bottom: var(--space-1);
+  margin-bottom: 2px;
+}
+
+.bkLp {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  font-size: var(--type-caption);
+}
+
+.bkNum {
+  text-align: right;
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+}
+
+.breakdownHead .bkNum {
+  color: var(--text-tertiary);
+}
+
+.bkBest {
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
+}
+
+.bkState {
+  text-align: right;
+}
+
+.bkStale .bkLp,
+.bkStale .bkNum {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklch, var(--text-tertiary) 60%, transparent);
+}
+
+.staleTag {
+  display: inline-block;
+  font-size: var(--type-micro);
+  padding: 1px var(--space-2);
+  border-radius: var(--r-sm);
+  background: color-mix(in oklch, var(--warn) 18%, transparent);
+  color: var(--warn);
+}
+
+.liveTag {
+  display: inline-block;
+  font-size: var(--type-micro);
+  padding: 1px var(--space-2);
+  border-radius: var(--r-sm);
+  background: color-mix(in oklch, var(--bid) 14%, transparent);
+  color: var(--bid);
+}
+
+.bkEmpty {
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  padding: var(--space-2) 0;
+}
+
+/* --- empty / gate --------------------------------------------------------- */
+
+.empty {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--type-body);
+}
+
+.gate {
+  margin: auto;
+  max-width: 30rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-8) var(--space-5);
+}
+
+.gateTitle {
+  font-family: var(--font-brand, var(--font-ui));
+  font-size: var(--type-title);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.gateHint {
+  color: var(--text-secondary);
+  font-size: var(--type-body);
+  margin: 0;
+}

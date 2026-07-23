@@ -16,6 +16,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type {
+  AggregatedBookDesc,
+  AggregatedBookSpec,
   BookDesc,
   BookInput,
   CreateUserInput,
@@ -43,6 +45,8 @@ export interface AdminApi {
   entities: EntityDesc[];
   /** The current netting-book registry. */
   books: BookDesc[];
+  /** The current FI aggregated-book registry (ADR-0022). */
+  aggregatedBooks: AggregatedBookDesc[];
   /** True while a load (or refetch) is in flight. */
   isLoading: boolean;
   /** The last load error as a display string, or `null`. */
@@ -93,6 +97,12 @@ export interface AdminApi {
   updateBook: (key: number, input: BookInput) => Promise<BookDesc>;
   /** Delete a netting book. */
   deleteBook: (key: number) => Promise<void>;
+  /** Create an FI aggregated book; resolves to the created book or rejects. */
+  createAggregatedBook: (spec: AggregatedBookSpec) => Promise<AggregatedBookDesc>;
+  /** Replace an FI aggregated book's definition (the `id` is immutable). */
+  updateAggregatedBook: (id: string, spec: AggregatedBookSpec) => Promise<AggregatedBookDesc>;
+  /** Delete an FI aggregated book. */
+  deleteAggregatedBook: (id: string) => Promise<void>;
 }
 
 export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi {
@@ -100,6 +110,7 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
   const [desks, setDesks] = useState<DeskDesc[]>([]);
   const [entities, setEntities] = useState<EntityDesc[]>([]);
   const [books, setBooks] = useState<BookDesc[]>([]);
+  const [aggregatedBooks, setAggregatedBooks] = useState<AggregatedBookDesc[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -109,22 +120,26 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
       setDesks([]);
       setEntities([]);
       setBooks([]);
+      setAggregatedBooks([]);
       setError(null);
       return;
     }
     setIsLoading(true);
     try {
       // Independent rosters — fetch in parallel (no request waterfall).
-      const [nextUsers, nextDesks, nextEntities, nextBooks] = await Promise.all([
-        transport.listUsers(),
-        transport.listDesks(),
-        transport.listEntities(),
-        transport.listBooks(),
-      ]);
+      const [nextUsers, nextDesks, nextEntities, nextBooks, nextAggBooks] =
+        await Promise.all([
+          transport.listUsers(),
+          transport.listDesks(),
+          transport.listEntities(),
+          transport.listBooks(),
+          transport.listAggregatedBooks(),
+        ]);
       setUsers(nextUsers);
       setDesks(nextDesks);
       setEntities(nextEntities);
       setBooks(nextBooks);
+      setAggregatedBooks(nextAggBooks);
       setError(null);
     } catch (e: unknown) {
       setError(messageOf(e));
@@ -286,11 +301,38 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
     [transport, refetch],
   );
 
+  const createAggregatedBook = useCallback(
+    async (spec: AggregatedBookSpec): Promise<AggregatedBookDesc> => {
+      const created = await transport.createAggregatedBook(spec);
+      await refetch();
+      return created;
+    },
+    [transport, refetch],
+  );
+
+  const updateAggregatedBook = useCallback(
+    async (id: string, spec: AggregatedBookSpec): Promise<AggregatedBookDesc> => {
+      const updated = await transport.updateAggregatedBook(id, spec);
+      await refetch();
+      return updated;
+    },
+    [transport, refetch],
+  );
+
+  const deleteAggregatedBook = useCallback(
+    async (id: string): Promise<void> => {
+      await transport.deleteAggregatedBook(id);
+      await refetch();
+    },
+    [transport, refetch],
+  );
+
   return {
     users,
     desks,
     entities,
     books,
+    aggregatedBooks,
     isLoading,
     error,
     refetch,
@@ -308,5 +350,8 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
     createBook,
     updateBook,
     deleteBook,
+    createAggregatedBook,
+    updateAggregatedBook,
+    deleteAggregatedBook,
   };
 }

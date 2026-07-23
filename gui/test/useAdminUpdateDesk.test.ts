@@ -46,6 +46,7 @@ function fakeTransport(
     listDesks: async () => initialDesks,
     listEntities: async () => [],
     listBooks: async () => [],
+    listAggregatedBooks: async () => [],
     updateDesk: async (id: string, name: string) => {
       updateCalls.push({ id, name });
       return updateDeferred.promise;

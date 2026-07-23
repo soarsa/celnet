@@ -23,9 +23,11 @@ import { CapabilityMatrix } from "../components/CapabilityMatrix";
 import { Panel } from "../components/Panel";
 import { UserDialog, type UserDialogMode } from "../components/UserDialog";
 import { BooksPanel, EntitiesPanel } from "./RegistryPanels";
+import { AggregationPanel } from "./AggregationPanel";
 import type { CapabilityAsset, DeskDesc, UserDesc, UserRole } from "../data/contract";
 import { ASSET_LABELS, roleBaselineSummary } from "../lib/capabilityMatrix";
 import { useAdmin } from "../hooks/useAdmin";
+import { useFixConnections } from "../hooks/useFixConnections";
 import styles from "./AdminWorkspace.module.css";
 
 /**
@@ -33,12 +35,13 @@ import styles from "./AdminWorkspace.module.css";
  * readable section is visible at a time (previously all four stacked on one long
  * scrolling page). Users is the default.
  */
-type AdminTab = "users" | "desks" | "entities" | "books";
+type AdminTab = "users" | "desks" | "entities" | "books" | "aggregation";
 const ADMIN_TABS: readonly { readonly id: AdminTab; readonly label: string }[] = [
   { id: "users", label: "Users" },
   { id: "desks", label: "Desks" },
   { id: "entities", label: "Legal Entities" },
   { id: "books", label: "Netting Books" },
+  { id: "aggregation", label: "Aggregation" },
 ];
 
 /** The role badge for a user row. */
@@ -191,6 +194,9 @@ export function AdminWorkspace(): React.ReactElement {
   const app = useApp();
   const { auth } = app;
   const admin = useAdmin(app.transport, auth.isAdmin);
+  // The managed FIX-connection registry feeds the Aggregation editor's member
+  // candidates (an aggregated book's members are FIX acceptors + LP-feed ids).
+  const fix = useFixConnections(app.transport);
 
   const [tab, setTab] = useState<AdminTab>("users");
   const [dialog, setDialog] = useState<{ mode: UserDialogMode; user?: UserDesc } | null>(null);
@@ -560,6 +566,16 @@ export function AdminWorkspace(): React.ReactElement {
             onCreate={admin.createBook}
             onUpdate={admin.updateBook}
             onDelete={admin.deleteBook}
+            run={runAction}
+          />
+        )}
+        {tab === "aggregation" && (
+          <AggregationPanel
+            books={admin.aggregatedBooks}
+            connections={fix.connections}
+            onCreate={admin.createAggregatedBook}
+            onUpdate={admin.updateAggregatedBook}
+            onDelete={admin.deleteAggregatedBook}
             run={runAction}
           />
         )}

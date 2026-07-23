@@ -48,6 +48,7 @@ export type WorkspaceId =
   | "book"
   | "quoting"
   | "fistreaming"
+  | "aggbook"
   | "xva"
   | "excel"
   | "connections"
@@ -114,6 +115,9 @@ export const RAIL: readonly {
   // request sidebar — a single-asset FI row (never FX), and the PRIMARY Fixed
   // Income surface, so it leads the FI rail (top of railForDomain("fixed_income")).
   { id: "fistreaming", glyph: "⇉", label: "Streaming", assets: ["fixed_income"] },
+  // FI aggregated-book live composite view (ADR-0022): consolidated best bid/offer
+  // across a book's inbound liquidity members — a single-asset FI read surface.
+  { id: "aggbook", glyph: "◫", label: "Agg Book", assets: ["fixed_income"] },
   { id: "surface", glyph: "◷", label: "Market Data", assets: CAPABILITY_ASSETS },
   { id: "risk", glyph: "⊞", label: "Risk", assets: CAPABILITY_ASSETS },
   { id: "book", glyph: "▤", label: "Book", assets: CAPABILITY_ASSETS },

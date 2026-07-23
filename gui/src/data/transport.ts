@@ -36,6 +36,10 @@ import type {
   EntityInput,
   BookDesc,
   BookInput,
+  AggregatedBookDesc,
+  AggregatedBookSpec,
+  AggregatedBookStreamSnapshot,
+  AggregatedBookStreamUpdate,
   InstrumentDef,
   InstrumentInput,
   BuildCurveRequest,
@@ -129,7 +133,9 @@ export type StreamEvent =
   | { kind: "marketSeriesSnapshot"; snapshot: MarketSeriesSnapshot }
   | { kind: "marketSeriesPoint"; point: MarketSeriesPoint }
   | { kind: "ratesSnapshot"; snapshot: RatesStreamSnapshot }
-  | { kind: "ratesUpdate"; update: RatesStreamUpdate };
+  | { kind: "ratesUpdate"; update: RatesStreamUpdate }
+  | { kind: "aggregatedBookSnapshot"; snapshot: AggregatedBookStreamSnapshot }
+  | { kind: "aggregatedBookUpdate"; update: AggregatedBookStreamUpdate };
 
 /** Parameters for opening a market-series subscription on the stream session. */
 export interface MarketSeriesParams {
@@ -173,6 +179,18 @@ export interface StreamSession {
   subscribeRates(instrument: RatesInstrument, curveSet: RatesCurveSet, label: string): bigint;
   /** Tear down a fixed-income streaming line (the SAME id space as the FX lines). */
   unsubscribeRates(subscriptionId: bigint): void;
+  /**
+   * Open an aggregated-book composite line on the SAME multiplexed session — the
+   * consolidated best bid/offer + per-member contribution report for the book
+   * `bookId`. Returns its client subscription id. The server replies with a
+   * baseline `aggregatedBookSnapshot` (sequence 1) then `aggregatedBookUpdate`
+   * deltas as the book's members re-quote. `throttleNanos` is a client conflation
+   * hint (0 = none). This is a READ line (any authenticated user); there is no
+   * click-to-trade token on it.
+   */
+  subscribeAggregatedBook(bookId: string, throttleNanos?: bigint): bigint;
+  /** Tear down an aggregated-book composite line (the SAME id space as the FX lines). */
+  unsubscribeAggregatedBook(subscriptionId: bigint): void;
   /** Subscribe to server→client events; returns an unsubscribe disposer. */
   onEvent(listener: (event: StreamEvent) => void): () => void;
   /** Close the whole session. */
@@ -586,6 +604,26 @@ export interface CelnetTransport {
 
   /** AuthService.DeleteBook (admin) — remove a book. */
   deleteBook(key: number): Promise<boolean>;
+
+  // --- FI Aggregated Book (ADR-0022) admin CRUD ------------------------------
+  //
+  // The admin-defined composite books that consolidate N inbound liquidity
+  // members into ONE best bid/offer per instrument. Listing is open to any
+  // authenticated user (the composite is globally readable); create/update/delete
+  // are admin-only (server-enforced). The live composite is read over
+  // {@link StreamSession.subscribeAggregatedBook}.
+
+  /** AuthService.ListAggregatedBooks — the full aggregated-book roster (any authenticated user). */
+  listAggregatedBooks(): Promise<AggregatedBookDesc[]>;
+
+  /** AuthService.CreateAggregatedBook (admin) — define a new book; resolves to the created book. */
+  createAggregatedBook(spec: AggregatedBookSpec): Promise<AggregatedBookDesc>;
+
+  /** AuthService.UpdateAggregatedBook (admin) — replace a book's definition (the `id` is immutable). */
+  updateAggregatedBook(id: string, spec: AggregatedBookSpec): Promise<AggregatedBookDesc>;
+
+  /** AuthService.DeleteAggregatedBook (admin) — remove a book; resolves to whether one was removed. */
+  deleteAggregatedBook(id: string): Promise<boolean>;
 
   // --- instrument reference-data registry ------------------------------------
 

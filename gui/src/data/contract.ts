@@ -2617,6 +2617,183 @@ export interface RatesStreamUpdate {
 }
 
 // ---------------------------------------------------------------------------
+// FI Aggregated Book (ADR-0022) — an admin-defined composite book that
+// consolidates N inbound liquidity members' two-way quotes into ONE best
+// bid/offer per instrument. Two surfaces on the single contract:
+//   • admin CRUD (`AuthService.{List,Create,Update,Delete}AggregatedBook`) — the
+//     persisted definition (members, instrument scope, consolidation tuning);
+//   • the live composite (`StreamService.StreamSession`, keyed by the SAME
+//     `SubscriptionId` space as the FX/rates lines) — the consolidated best
+//     bid/offer + per-member contribution report a subscriber renders.
+// The `id` is the store/API key; `member_connection_ids` are transport-agnostic
+// connection identities (a FIX acceptor id, or an LP-feed member name such as
+// `LP-SIM-01`). Mirrors `celnet.wire` `AggregatedBookDesc`/`AggregatedBookSpec`.
+
+/**
+ * The instrument-coverage mode of an aggregated book. `ALL_MEMBERS_QUOTE`
+ * consolidates every instrument any member quotes (the union of the members'
+ * live streams); `EXPLICIT` consolidates only the listed `instrumentIds`. Maps
+ * onto the wire `AggregationScopeMode` enum (`ALL_MEMBERS_QUOTE = 0`,
+ * `EXPLICIT = 1`).
+ */
+export type AggregationScopeMode = "ALL_MEMBERS_QUOTE" | "EXPLICIT";
+
+/**
+ * The consolidation-engine tuning of an aggregated book (`celnet.wire
+ * .AggregationParamsDesc`): the knobs the `celnet-aggregation` engine consumes
+ * once a book is wired. `stalenessTauMs`/`maxQuoteAgeMs` are millisecond
+ * durations (held as `number` — well within the JS safe-integer range); the
+ * counts are small non-negative integers.
+ */
+export interface AggregationParams {
+  /** Staleness half-life τ (ms): a member quote decays as `2^{-dt/τ}` with age `dt`. `> 0`. */
+  stalenessTauMs: number;
+  /** Hard maximum quote age (ms): a member quote older than this is fully excluded. */
+  maxQuoteAgeMs: number;
+  /** Whether MAD-based divergence gating drops outlier members before consolidation. */
+  divergenceGating: boolean;
+  /** Minimum surviving contributors required to publish a composite. `>= 1`. */
+  minContributors: number;
+  /** How many stacked depth levels the composite exposes (1 = top-of-book only). */
+  depthLevels: number;
+}
+
+/** A persisted aggregated book (`celnet.wire.AggregatedBookDesc`). */
+export interface AggregatedBookDesc {
+  /** Stable identifier (the store/API key), minted from `name` on create. */
+  id: string;
+  /** Human-friendly book label (unique, case-insensitive). */
+  name: string;
+  /** The inbound liquidity members whose quotes feed the composite, by connection id. */
+  memberConnectionIds: string[];
+  /** Which instruments the composite is produced for. */
+  scopeMode: AggregationScopeMode;
+  /** The explicit instrument ids when `scopeMode === "EXPLICIT"`; empty otherwise. */
+  instrumentIds: string[];
+  /** The consolidation-engine tuning. */
+  params: AggregationParams;
+  /** Whether the book is active (a disabled book stands up no engine, publishes nothing). */
+  enabled: boolean;
+}
+
+/**
+ * The editable fields of an aggregated book (the create/update payload,
+ * `celnet.wire.AggregatedBookSpec`). On create `id` is a client-suggested slug
+ * (a slug of `name` is minted when empty); on update the request's own `id`
+ * governs and this `id` is ignored.
+ */
+export interface AggregatedBookSpec {
+  /** On create: a client-suggested id (slug of `name` when empty). On update: ignored. */
+  id: string;
+  /** Human-friendly book label (unique across the store, case-insensitive). */
+  name: string;
+  /** The inbound liquidity members whose quotes feed the composite, by connection id. */
+  memberConnectionIds: string[];
+  /** Which instruments the composite is produced for. */
+  scopeMode: AggregationScopeMode;
+  /** The explicit instrument ids when `scopeMode === "EXPLICIT"`; ignored for ALL_MEMBERS_QUOTE. */
+  instrumentIds: string[];
+  /** The consolidation-engine tuning applied when the book is wired to the engine. */
+  params: AggregationParams;
+  /** Whether the book is active. */
+  enabled: boolean;
+}
+
+/**
+ * One inbound member's contribution to an instrument's composite (`celnet.wire
+ * .LpContribution`): the member's own two-way, and whether it was excluded from
+ * the consolidated best price (`stale` — aged out past the book's max age, or
+ * gated as a divergent outlier; a subscriber greys a stale contributor).
+ */
+export interface LpContribution {
+  /** The contributing LP connection name (the consolidation venue id). */
+  lpName: string;
+  /** The member's own bid for this instrument. */
+  bid: number;
+  /** The member's own offer for this instrument. */
+  offer: number;
+  /** Whether the member was excluded from the consolidated best bid/offer. */
+  stale: boolean;
+}
+
+/**
+ * The consolidated composite for one instrument in an aggregated book
+ * (`celnet.wire.AggregatedInstrument`): the best bid/offer + firm size across
+ * the fresh members, a confidence measure, and the per-member contribution
+ * report. Identity fields (`displayName`/`isin`/`cusip`) are resolved from the
+ * server's reference-data registry best-effort (empty when unresolved).
+ */
+export interface AggregatedInstrument {
+  /** The canonical server `instrument_id` (the composite line's identity key). */
+  instrumentId: string;
+  /** Human-friendly label from reference data (empty if unresolved). */
+  displayName: string;
+  /** ISO 6166 ISIN from reference data (empty if unresolved). */
+  isin: string;
+  /** CUSIP from reference data (empty if unresolved). */
+  cusip: string;
+  /** Consolidated best bid — the max fresh member bid. */
+  bestBid: number;
+  /** Consolidated best offer — the min fresh member offer. */
+  bestOffer: number;
+  /** Firm size stacked at the consolidated best bid. */
+  bidSize: number;
+  /** Firm size stacked at the consolidated best offer. */
+  offerSize: number;
+  /** Confidence in the composite, `∈ [0, 1]` (coverage · freshness · agreement). */
+  confidence: number;
+  /** The per-member contribution / exclusion report (member id order). */
+  contributions: LpContribution[];
+}
+
+/**
+ * The full composite state of an aggregated book at a sequence point
+ * (`celnet.wire.AggregatedBookSnapshot`): the priced composite for every
+ * in-scope instrument that currently meets the book's quorum, in `instrumentId`
+ * order. A consumer applies a snapshot whole before consuming deltas.
+ */
+export interface AggregatedBookComposite {
+  /** The aggregated-book id this composite is for. */
+  bookId: string;
+  /** The composite for each in-scope instrument, in `instrumentId` order. */
+  instruments: AggregatedInstrument[];
+}
+
+/**
+ * The baseline composite of a subscribed aggregated book (`celnet.wire
+ * .AggregatedBookStreamSnapshot`). `sequence` starts at 1; a consumer applies
+ * the whole `book` before consuming `AggregatedBookStreamUpdate` deltas.
+ */
+export interface AggregatedBookStreamSnapshot {
+  /** The client-assigned subscription id this snapshot answers. */
+  subscriptionId: bigint;
+  /** The monotonic per-subscription sequence number of this snapshot (1). */
+  sequence: bigint;
+  /** The full composite state at this snapshot. */
+  book: AggregatedBookComposite;
+  /** Echo of the opening subscribe correlation id, when one was supplied. */
+  correlationId?: bigint;
+  /** Snapshot time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+}
+
+/**
+ * A sequenced delta on a subscribed aggregated book (`celnet.wire
+ * .AggregatedBookStreamUpdate`): the full re-consolidated composite at the next
+ * sequence. A gap in `sequence` signals loss and prompts a resync.
+ */
+export interface AggregatedBookStreamUpdate {
+  /** The subscription this update advances. */
+  subscriptionId: bigint;
+  /** The monotonic per-subscription sequence number (snapshot seq + n). */
+  sequence: bigint;
+  /** The re-consolidated composite at this sequence. */
+  book: AggregatedBookComposite;
+  /** Update time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+}
+
+// ---------------------------------------------------------------------------
 // XVA — counterparty valuation adjustments (`PricingService.PriceXva`).
 //
 // A netting set of FX vanillas priced for its all-in credit / funding valuation

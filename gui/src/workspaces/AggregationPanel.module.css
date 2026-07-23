@@ -1,0 +1,339 @@
+/* AggregationPanel — the FI Aggregated Book admin surface. Two columns: the book
+   roster (left) and the definition editor (right). Reuses the app's design tokens
+   so both light and dark themes are honoured automatically. */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 60rem) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: var(--type-body);
+  line-height: var(--type-body-lh);
+  margin: 0;
+  padding: var(--space-4) 0;
+  max-width: 42ch;
+}
+
+/* --- roster table --------------------------------------------------------- */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-body);
+}
+
+.table th {
+  text-align: left;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--hairline);
+}
+
+.table td {
+  padding: var(--space-3);
+  border-bottom: var(--hairline);
+  vertical-align: middle;
+}
+
+.rowSelected td {
+  background: var(--accent-soft);
+}
+
+.nameCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bookName {
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+.bookId {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.scopeTag {
+  display: inline-block;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  padding: 2px var(--space-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  white-space: nowrap;
+}
+
+.stateBadge {
+  display: inline-block;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  padding: 2px var(--space-2);
+  border-radius: var(--r-full, 999px);
+  white-space: nowrap;
+}
+
+.stateOn {
+  color: var(--bid);
+  background: color-mix(in oklch, var(--bid) 16%, transparent);
+}
+
+.stateOff {
+  color: var(--text-tertiary);
+  background: var(--bg-inset);
+}
+
+.actionsCol {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: inline-flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* --- editor form ---------------------------------------------------------- */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fieldLabel {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.fieldHint {
+  font-weight: var(--weight-regular);
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+}
+
+.input {
+  padding: var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font-size: var(--type-body);
+  width: 100%;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.numInput {
+  font-family: var(--font-mono);
+  min-width: 0;
+}
+
+.addRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: stretch;
+}
+
+.addRow .input {
+  flex: 1;
+}
+
+/* --- chips (members / explicit instruments) ------------------------------- */
+
+.chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-2) 4px var(--space-3);
+  border-radius: var(--r-full, 999px);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+}
+
+.chipLabel {
+  font-weight: var(--weight-emphasis);
+}
+
+.chipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: none;
+  border-radius: var(--r-full, 999px);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: var(--type-micro);
+  line-height: 1;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.chipRemove:hover {
+  color: var(--offer);
+  background: color-mix(in oklch, var(--offer) 18%, transparent);
+}
+
+.chipsEmpty {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+}
+
+.candidates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.candidate {
+  padding: 4px var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.candidate:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.candidateSim {
+  font-family: var(--font-mono);
+}
+
+/* --- segmented control (scope) -------------------------------------------- */
+
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-md);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  width: fit-content;
+}
+
+.segBtn {
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.segBtn:hover {
+  color: var(--text-primary);
+}
+
+.segBtnActive {
+  background: var(--accent);
+  color: white;
+  font-weight: var(--weight-emphasis);
+}
+
+.explicitBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: color-mix(in oklch, var(--bg-inset) 60%, transparent);
+}
+
+/* --- params grid ---------------------------------------------------------- */
+
+.paramsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.param {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.paramLabel {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+.toggleRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--type-body);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.toggleRow input {
+  accent-color: var(--accent);
+}
+
+.formActions {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}

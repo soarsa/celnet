@@ -41,6 +41,7 @@ export type WorkspaceId =
   | "book"
   | "quoting"
   | "fistreaming"
+  | "aggbook"
   | "xva"
   | "excel"
   | "connections"
@@ -56,6 +57,7 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "book",
   "quoting",
   "fistreaming",
+  "aggbook",
   "xva",
   "excel",
   "connections",

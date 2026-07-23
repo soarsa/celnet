@@ -61,6 +61,7 @@ function fakeTransport(
     ],
     listEntities: async () => [],
     listBooks: async () => [],
+    listAggregatedBooks: async () => [],
     updateUser: async (id: string, input: unknown) => {
       updateCalls.push({ id, input });
       return updateDeferred.promise;

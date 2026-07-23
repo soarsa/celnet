@@ -81,6 +81,15 @@ import type {
   EntityInput,
   BookDesc,
   BookInput,
+  AggregatedBookDesc,
+  AggregatedBookSpec,
+  AggregationParams,
+  AggregationScopeMode,
+  AggregatedInstrument,
+  AggregatedBookComposite,
+  AggregatedBookStreamSnapshot,
+  AggregatedBookStreamUpdate,
+  LpContribution,
   InstrumentDef,
   InstrumentInput,
   ExternalIdEntry,
@@ -3341,6 +3350,222 @@ export function bookResponseFromWire(o: WireObject): BookDesc {
 
 export function deleteBookRequestToWire(key: number): WireObject {
   return { key };
+}
+
+// --- FI Aggregated Book (ADR-0022) — admin CRUD + live composite ------------
+//
+// The WS mirror of `AuthService.{List,Create,Update,Delete}AggregatedBook` and
+// the `StreamService.StreamSession` composite line. Byte-compatible with the
+// server codec (`crates/celnet-server/src/ws/codec.rs`
+// aggregated_book_*_from_json / *_to_json + mod.rs frame-type dispatch): the
+// exact snake_case field names and the numeric `AggregationScopeMode` enum it
+// reads/writes. `session_token` + framing `correlation_id` are auto-injected by
+// `WsConnection.request` for the CRUD calls, so the request encoders carry only
+// the business body (`spec` / `id`). The scope-mode enum: ALL_MEMBERS_QUOTE = 0,
+// EXPLICIT = 1 (proto3 zero-default is ALL_MEMBERS_QUOTE).
+
+/** The wire `AggregationScopeMode` int for a GUI scope mode (ALL=0, EXPLICIT=1). */
+function scopeModeToWire(mode: AggregationScopeMode): number {
+  return mode === "EXPLICIT" ? 1 : 0;
+}
+
+/** A GUI scope mode from the wire int (1 ⇒ EXPLICIT; everything else ⇒ ALL_MEMBERS_QUOTE). */
+function scopeModeFromWire(n: number): AggregationScopeMode {
+  return n === 1 ? "EXPLICIT" : "ALL_MEMBERS_QUOTE";
+}
+
+/** Encode the consolidation-engine tuning to its nested `params` wire object. */
+function aggregationParamsToWire(p: AggregationParams): WireObject {
+  return {
+    staleness_tau_ms: p.stalenessTauMs,
+    max_quote_age_ms: p.maxQuoteAgeMs,
+    divergence_gating: p.divergenceGating,
+    min_contributors: p.minContributors,
+    depth_levels: p.depthLevels,
+  };
+}
+
+/** Decode the consolidation-engine tuning from a nested `params` wire object. */
+function aggregationParamsFromWire(o: WireObject): AggregationParams {
+  return {
+    stalenessTauMs: num(o, "staleness_tau_ms"),
+    maxQuoteAgeMs: num(o, "max_quote_age_ms"),
+    divergenceGating: o["divergence_gating"] === true,
+    minContributors: num(o, "min_contributors"),
+    depthLevels: num(o, "depth_levels"),
+  };
+}
+
+/** A string array off a wire object (absent/non-array ⇒ empty). */
+function strArrayOf(o: WireObject, key: string): string[] {
+  const v = o[key];
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+/** Decode an `AggregatedBookDesc` from its wire form (`params` may be null). */
+export function aggregatedBookDescFromWire(o: WireObject): AggregatedBookDesc {
+  const rawParams = o["params"];
+  return {
+    id: str(o, "id"),
+    name: str(o, "name"),
+    memberConnectionIds: strArrayOf(o, "member_connection_ids"),
+    scopeMode: scopeModeFromWire(enumNum(o, "scope_mode")),
+    instrumentIds: strArrayOf(o, "instrument_ids"),
+    params:
+      rawParams && typeof rawParams === "object"
+        ? aggregationParamsFromWire(rawParams as WireObject)
+        : DEFAULT_AGGREGATION_PARAMS,
+    enabled: o["enabled"] === true,
+  };
+}
+
+/**
+ * The neutral default tuning used when a persisted book carries no `params`
+ * (the server renders an absent `params` as `null`). Mirrors sane engine
+ * defaults; the admin form always sends an explicit `params` on create/update.
+ */
+export const DEFAULT_AGGREGATION_PARAMS: AggregationParams = {
+  stalenessTauMs: 2000,
+  maxQuoteAgeMs: 5000,
+  divergenceGating: true,
+  minContributors: 1,
+  depthLevels: 1,
+};
+
+/** Encode the editable spec into its nested `spec` wire object (create/update body). */
+function aggregatedBookSpecToWire(spec: AggregatedBookSpec): WireObject {
+  return {
+    id: spec.id,
+    name: spec.name,
+    member_connection_ids: [...spec.memberConnectionIds],
+    scope_mode: scopeModeToWire(spec.scopeMode),
+    instrument_ids: [...spec.instrumentIds],
+    params: aggregationParamsToWire(spec.params),
+    enabled: spec.enabled,
+  };
+}
+
+export function listAggregatedBooksRequestToWire(): WireObject {
+  return {};
+}
+
+/** Decode the `aggregated_books` roster reply (`{ books: [...] }`). */
+export function aggregatedBooksResponseFromWire(o: WireObject): AggregatedBookDesc[] {
+  return array(o, "books").map(aggregatedBookDescFromWire);
+}
+
+export function createAggregatedBookRequestToWire(spec: AggregatedBookSpec): WireObject {
+  return { spec: aggregatedBookSpecToWire(spec) };
+}
+
+export function updateAggregatedBookRequestToWire(
+  id: string,
+  spec: AggregatedBookSpec,
+): WireObject {
+  return { id, spec: aggregatedBookSpecToWire(spec) };
+}
+
+export function deleteAggregatedBookRequestToWire(id: string): WireObject {
+  return { id };
+}
+
+/** A single-book response (`{ book: {...} }`) from create / update. */
+export function aggregatedBookResponseFromWire(o: WireObject): AggregatedBookDesc {
+  return aggregatedBookDescFromWire(child(o, "book"));
+}
+
+// --- live composite: subscribe + snapshot/update -----------------------------
+//
+// The composite line is opened with an `aggregated_book_subscribe` control frame
+// keyed by the SAME `SubscriptionId` space as the FX/rates lines, and torn down
+// with `aggregated_book_unsubscribe`. The server replies with a baseline
+// `aggregated_book_stream_snapshot` (sequence 1) then
+// `aggregated_book_stream_update` deltas — each carrying a full
+// `AggregatedBookSnapshot` a consumer applies whole. Byte-compatible with the
+// server's `aggregated_book_subscribe_from_json` /
+// `aggregated_book_stream_{snapshot,update}_to_json`.
+
+/**
+ * Encode an `aggregated_book_subscribe` control-frame body (the `type` is added
+ * by the caller / connection). `correlation_id` is presence-tracked (omitted ⇒
+ * none). `throttle_nanos` is a client conflation hint (0 = no throttling).
+ */
+export function aggregatedBookSubscribeToWire(args: {
+  subscriptionId: bigint;
+  bookId: string;
+  throttleNanos?: bigint;
+  correlationId?: bigint;
+}): WireObject {
+  const body: WireObject = {
+    subscription: { value: Number(args.subscriptionId) },
+    book_id: args.bookId,
+    throttle_nanos: Number(args.throttleNanos ?? 0n),
+  };
+  if (args.correlationId !== undefined) {
+    body["correlation_id"] = Number(args.correlationId);
+  }
+  return body;
+}
+
+/** Decode one member contribution (`LpContribution`). */
+function lpContributionFromWire(o: WireObject): LpContribution {
+  return {
+    lpName: str(o, "lp_name"),
+    bid: num(o, "bid"),
+    offer: num(o, "offer"),
+    stale: o["stale"] === true,
+  };
+}
+
+/** Decode one consolidated composite line (`AggregatedInstrument`). */
+function aggregatedInstrumentFromWire(o: WireObject): AggregatedInstrument {
+  return {
+    instrumentId: str(o, "instrument_id"),
+    displayName: str(o, "display_name"),
+    isin: str(o, "isin"),
+    cusip: str(o, "cusip"),
+    bestBid: num(o, "best_bid"),
+    bestOffer: num(o, "best_offer"),
+    bidSize: num(o, "bid_size"),
+    offerSize: num(o, "offer_size"),
+    confidence: num(o, "confidence"),
+    contributions: array(o, "contributions").map(lpContributionFromWire),
+  };
+}
+
+/** Decode an aggregated book's full composite body (`AggregatedBookSnapshot`). */
+function aggregatedBookCompositeFromWire(o: WireObject): AggregatedBookComposite {
+  return {
+    bookId: str(o, "book_id"),
+    instruments: array(o, "instruments").map(aggregatedInstrumentFromWire),
+  };
+}
+
+/** Decode an `aggregated_book_stream_snapshot` frame. */
+export function aggregatedBookSnapshotFromWire(
+  o: WireObject,
+): AggregatedBookStreamSnapshot {
+  const snap: AggregatedBookStreamSnapshot = {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    book: aggregatedBookCompositeFromWire(child(o, "book")),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) snap.correlationId = corr;
+  return snap;
+}
+
+/** Decode an `aggregated_book_stream_update` frame. */
+export function aggregatedBookUpdateFromWire(
+  o: WireObject,
+): AggregatedBookStreamUpdate {
+  return {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    book: aggregatedBookCompositeFromWire(child(o, "book")),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
 }
 
 // --- instrument reference-data registry (instrument admin) -----------------
