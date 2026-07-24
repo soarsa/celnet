@@ -19,8 +19,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
-import type { AggregatedBookDesc, AggregatedInstrument } from "../data/contract";
+import type {
+  AggregatedBookDesc,
+  AggregatedInstrument,
+  BondDef,
+} from "../data/contract";
 import { useAggregatedBook } from "../hooks/useAggregatedBook";
+import { useReferenceData } from "../hooks/useReferenceData";
+import { bondTermRows, indexBondDefs, resolveBondDef } from "../lib/bondTerms";
 import { fmtClock, fmtCompact } from "../lib/format";
 import styles from "./AggregatedBookWorkspace.module.css";
 
@@ -52,13 +58,16 @@ function confBand(c: number): "hi" | "mid" | "lo" {
   return "lo";
 }
 
-/** One price tile: identity + consolidated two-way + confidence + expandable LPs. */
+/** One price tile: identity + bond terms + consolidated two-way + confidence + expandable LPs. */
 function InstrumentTile({
   instrument,
+  bond,
   expanded,
   onToggle,
 }: {
   instrument: AggregatedInstrument;
+  /** The joined reference-data bond terms, or `null` (non-bond / unseeded). */
+  bond: BondDef | null;
   expanded: boolean;
   onToggle: () => void;
 }): React.ReactElement {
@@ -67,6 +76,7 @@ function InstrumentTile({
   const freshCount = instrument.contributions.filter((c) => !c.stale).length;
   const band = confBand(conf);
   const twoSided = instrument.bestBid > 0 && instrument.bestOffer > 0;
+  const terms = bond ? bondTermRows(bond) : [];
 
   return (
     <article
@@ -91,6 +101,17 @@ function InstrumentTile({
           <span className="num">{fmtConfidence(conf)}</span>
         </span>
       </header>
+
+      {terms.length > 0 && (
+        <dl className={styles.terms} aria-label="security terms">
+          {terms.map((row) => (
+            <div key={row.key} className={styles.termPair}>
+              <dt className={styles.termLabel}>{row.label}</dt>
+              <dd className={`${styles.termValue} ${row.numeric ? "num" : ""}`}>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
 
       <div className={styles.tileQuote} role="group" aria-label="consolidated two-way">
         <div className={`${styles.side} ${styles.sideBid}`}>
@@ -234,6 +255,18 @@ export function AggregatedBookWorkspace(): React.ReactElement {
     [books, selectedId],
   );
 
+  // The instrument reference-data registry (any authenticated user may list it),
+  // indexed by instrument id + ISIN/CUSIP so each composite line's static bond
+  // terms (issuer · coupon · frequency · day-count · maturity) can be surfaced on
+  // the tile. The composite wire message carries only identity + prices; the terms
+  // are joined here, client-side — no proto/server/codec change. Degrades to no
+  // extra terms when a line has no matching bond definition.
+  const refData = useReferenceData(app.transport, signedIn);
+  const bondIndex = useMemo(
+    () => indexBondDefs(refData.instruments),
+    [refData.instruments],
+  );
+
   const toggleRow = useCallback((instrumentId: string): void => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -333,6 +366,7 @@ export function AggregatedBookWorkspace(): React.ReactElement {
                 <InstrumentTile
                   key={inst.instrumentId}
                   instrument={inst}
+                  bond={resolveBondDef(bondIndex, inst)}
                   expanded={expanded.has(inst.instrumentId)}
                   onToggle={() => toggleRow(inst.instrumentId)}
                 />

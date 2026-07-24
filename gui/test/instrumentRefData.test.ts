@@ -154,10 +154,16 @@ describe("wsCodec instrumentDef round-trip", () => {
 });
 
 describe("MockTransport instrument CRUD", () => {
-  it("seeds an OIS and a bond, returning immutable copies", async () => {
+  it("seeds an OIS and the curated bond universe, returning immutable copies", async () => {
     const t = new MockTransport();
     const list = await t.listInstruments();
-    expect(list.map((d) => d.family).sort()).toEqual(["bond", "ois"]);
+    // The registry seeds exactly two families: an OIS plus the curated Treasury
+    // bond universe backing the offline Aggregated Book (id/ISIN/CUSIP-matched to
+    // its composite lines). Assert the family SET (not an exact multiset) so the
+    // curated bond list can grow without churning this immutability test.
+    expect([...new Set(list.map((d) => d.family))].sort()).toEqual(["bond", "ois"]);
+    expect(list.filter((d) => d.family === "ois")).toHaveLength(1);
+    expect(list.filter((d) => d.family === "bond").length).toBeGreaterThan(1);
     // Mutating a returned copy must not affect the store.
     list[0]!.name = "tampered";
     const again = await t.listInstruments();
