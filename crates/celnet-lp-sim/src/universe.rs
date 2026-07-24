@@ -44,7 +44,7 @@ use time::{Date, Month};
 
 /// The committed Treasury securities-master snapshot, embedded so the binary is
 /// self-contained (see the module docs).
-pub const UNIVERSE_JSON: &str = include_str!("../data/treasury-universe.json");
+pub const UNIVERSE_JSON: &str = celnet_refdata::TREASURY_UNIVERSE_JSON;
 
 /// The maximum sane price per 100 face: a coupon Treasury trades near par, so a
 /// quote at or beyond this (or at/below zero) is a data error and is filtered out

@@ -20,6 +20,11 @@ celnet-aggregation.workspace = true
 # simulator's prices ARE the oracle, satisfying the "validate against a reference"
 # guardrail by construction. Points strictly downward — no dependency cycle.
 celnet-bond.workspace = true
+# The single source of truth for the bundled US-Treasury securities-master snapshot
+# (`celnet_refdata::TREASURY_UNIVERSE_JSON`). The feed parses the SAME committed
+# document the server seeds its reference registry from, so a streamed CUSIP always
+# resolves to a registry `instrument_id` (no drift between the namer and the quoter).
+celnet-refdata.workspace = true
 # The frozen instrument/rate vocabulary (Rate, Underlying, Tenor, CcyPair).
 celnet-types.workspace = true
 # Correctly-rounded, cross-platform-identical transcendentals (exp), matching the

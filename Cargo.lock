@@ -684,6 +684,7 @@ dependencies = [
  "celnet-aggregation",
  "celnet-bond",
  "celnet-proto",
+ "celnet-refdata",
  "celnet-types",
  "clap",
  "futures-util",
@@ -799,6 +800,16 @@ dependencies = [
  "celnet-core",
  "celnet-rates",
  "celnet-types",
+ "time",
+]
+
+[[package]]
+name = "celnet-refdata"
+version = "0.0.0"
+dependencies = [
+ "celnet-bond",
+ "serde",
+ "serde_json",
  "time",
 ]
 

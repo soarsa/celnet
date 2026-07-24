@@ -1,0 +1,28 @@
+[package]
+name = "celnet-refdata"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet government-bond static reference-data universe — the single source of truth for the curated on-the-run government curves (US Treasuries from the bundled securities-master snapshot, plus curated UK gilts and EUR govvies: German Bunds, French OATs, Italian BTPs). Emits vendor-neutral, fully-specified GovBondSpec records (issuer, coupon, real conventions, ISO-6166 check-valid ISINs) that the server maps to reference-data InstrumentDefs and the LP simulator prices off the celnet-bond leaf. Pure data + ISIN integrity; no IO, no wire."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The embedded US-Treasury securities-master snapshot (data/treasury-universe.json)
+# is parsed into typed GovBondSpec records. serde derives the raw record shape;
+# serde_json parses the embedded document.
+serde.workspace = true
+serde_json.workspace = true
+# Civil-date validation: every spec's coupon/maturity triple is checked against the
+# real Gregorian calendar so a malformed date never reaches the registry.
+time.workspace = true
+
+[dev-dependencies]
+# The oracle for the curated-curve validation tests: every coupon-bearing spec's
+# schedule is rebuilt as a celnet_bond::Bond and round-tripped price<->yield through
+# the real analytics leaf, so the curated data is validated, never asserted plausible.
+celnet-bond.workspace = true

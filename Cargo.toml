@@ -54,6 +54,7 @@ celnet-rfq = { path = "crates/celnet-rfq" }
 celnet-aggregation = { path = "crates/celnet-aggregation" }
 celnet-rates = { path = "crates/celnet-rates" }
 celnet-bond = { path = "crates/celnet-bond" }
+celnet-refdata = { path = "crates/celnet-refdata" }
 celnet-rates-risk = { path = "crates/celnet-rates-risk" }
 # External — pinned once, used everywhere (OSS / permissively licensed only)
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
