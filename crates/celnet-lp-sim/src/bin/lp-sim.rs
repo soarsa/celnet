@@ -26,7 +26,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use celnet_lp_sim::{
     BookFeedOptions, FaultSchedule, LoginCredentials, LpSimConfig, TreasuryBond, build_fleet,
-    composite_for, into_feeds, load_coupon_universe, load_universe, run_book_aware_feed,
+    composite_for, into_feeds, load_government_universe, run_book_aware_feed,
 };
 use celnet_types::BrokenDate;
 use clap::Parser;
@@ -168,13 +168,10 @@ fn main() -> std::process::ExitCode {
         ..LpSimConfig::default()
     };
 
-    // Load the reference universe and keep only bonds the analytics leaf can model at
-    // this settlement — the sim's full priceable set (books select from this).
-    let universe = if args.include_bills {
-        load_universe()
-    } else {
-        load_coupon_universe()
-    };
+    // Load the full government reference universe (US Treasuries + curated non-US
+    // govvies) and keep only bonds the analytics leaf can model at this settlement —
+    // the sim's full priceable set (books select from this).
+    let universe = load_government_universe(args.include_bills);
     let priceable: Vec<TreasuryBond> = universe
         .into_iter()
         .filter(|b| {

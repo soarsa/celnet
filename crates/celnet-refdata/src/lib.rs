@@ -19,10 +19,12 @@
 //! # Who consumes it
 //!
 //! * The **server** maps each [`GovBondSpec`] onto a reference-data `InstrumentDef`
-//!   (name → the composite/blotter display name; ISIN/CUSIP → external ids;
-//!   `region`/`sub_asset_type` → the download taxonomy) and seeds the registry on
-//!   boot, so the FI Aggregated Book tiles show a real bond name and the FIX / RFS
-//!   security-list download can filter by region and sub-asset-type.
+//!   (name → the composite/blotter display name; ISIN/CUSIP → external ids) and seeds
+//!   the registry on boot, so the FI Aggregated Book tiles show a real bond name
+//!   instead of a bare code. The `region` / `sub_asset_type` taxonomy lives on the
+//!   [`GovBondSpec`] and is available for future region / sub-asset filtering of the
+//!   FIX / RFS security-list download, but no download-time filter is wired today —
+//!   the security list is answered verbatim from the advertised universe.
 //! * The **LP simulator** prices each spec off the real `celnet_bond` analytics leaf
 //!   (never a fabricated handle), so the same universe that names an instrument also
 //!   quotes it.

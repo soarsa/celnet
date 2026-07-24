@@ -94,7 +94,8 @@ pub use lpsim::{
 pub use net::{BookFeedOptions, FaultSchedule, LoginCredentials, run_book_aware_feed};
 pub use price::{MidSource, YieldModel};
 pub use universe::{
-    SecurityType, TreasuryBond, load_coupon_universe, load_universe, parse_universe,
+    SecurityType, TreasuryBond, load_coupon_universe, load_curated_universe,
+    load_government_universe, load_universe, parse_universe,
 };
 
 // Re-export the seam types a caller builds LPs and reads books with, so the crate

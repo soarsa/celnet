@@ -669,9 +669,11 @@ fn unique_id(base: &str, mut taken: impl FnMut(&str) -> bool) -> String {
 /// the friendly name becomes the composite / blotter display name and the ISIN (+ CUSIP
 /// for US) become external cross-refs. Each `instrument_id` matches what the LP-SIM feed
 /// streams, so a seeded entry resolves the exact wire id and the FI Aggregated Book tiles
-/// show a real bond name instead of a bare code. The download taxonomy (region /
-/// sub-asset-type) is not stored on the registry entry: it is resolved from the
-/// [`celnet_refdata`] government universe by `instrument_id` at download time.
+/// show a real bond name instead of a bare code. The region / sub-asset-type taxonomy is
+/// not stored on the registry entry: it lives on [`celnet_refdata::GovBondSpec`] and is
+/// available for future region / sub-asset filtering of the security-list download, but no
+/// download-time filter is wired today (the FIX / RFS security list is answered verbatim
+/// from the advertised universe).
 #[must_use]
 pub fn government_bond_defs() -> Vec<InstrumentDef> {
     celnet_refdata::government_universe()

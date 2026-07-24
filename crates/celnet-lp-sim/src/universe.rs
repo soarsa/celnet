@@ -1,9 +1,12 @@
-//! The bundled **US-Treasury reference universe** loader.
+//! The bundled **government reference universe** loader.
 //!
-//! Parses the committed `data/treasury-universe.json` (a real snapshot of the US
-//! Treasury securities master: 267 CUSIPs with auction/quote prices) into typed
-//! [`TreasuryBond`] records, and maps each one onto the two identities the rest of
-//! the stack keys on:
+//! Parses the committed US-Treasury securities-master snapshot (267 CUSIPs with
+//! auction/quote prices) into typed [`TreasuryBond`] records, and — via
+//! [`load_curated_universe`] / [`load_government_universe`] — extends the priced set
+//! with the curated non-US govvies (UK gilts + EUR govvies) from
+//! [`celnet_refdata::curated_universe`], so the whole
+//! [`celnet_refdata::government_universe`] the server seeds also streams a real price.
+//! Each record maps onto the two identities the rest of the stack keys on:
 //!
 //! - the **canonical server `instrument_id`** (ADR-0022 decision D) — the one
 //!   identity shared across reference data, the wire, the GUI and the composite.
@@ -87,20 +90,41 @@ impl SecurityType {
     }
 }
 
-/// One priced, well-formed Treasury security from the reference universe.
+/// One priced, well-formed government reference bond.
 ///
-/// Built only by the loader from a validated raw record, so every field here is
-/// known-good: the ISIN passes its check digit, both prices are finite and in a
-/// sane band, and the maturity is a real calendar date.
+/// Covers the whole [`celnet_refdata`] government universe: US Treasuries (parsed
+/// from the embedded snapshot, priced off the snapshot's real ask/bid, CUSIP
+/// identity) **and** the curated non-US govvies (UK gilts + EUR govvies, built from a
+/// [`celnet_refdata::GovBondSpec`] via [`TreasuryBond::from_gov_spec`], slug identity,
+/// seeded at par). Built only by the loaders from validated inputs, so every field
+/// here is known-good: the ISIN passes its check digit, both prices are finite and in
+/// a sane band, and the maturity is a real calendar date.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreasuryBond {
-    /// The 9-character CUSIP — the **canonical `instrument_id`** (ADR-0022 D).
+    /// The canonical server `instrument_id` (ADR-0022 D) — the CUSIP for a US
+    /// Treasury (the wire id the feed already streams), or the curated slug for a
+    /// non-US govvie (e.g. `uk-gilt-10y-2036`). This is the key the server's identity
+    /// join attaches the seeded name/ISIN to.
+    pub instrument_id: String,
+    /// The pricing/settlement currency — the currency leg of the engine key. `USD`
+    /// for Treasuries; `GBP`/`EUR` for the curated non-US govvies.
+    pub currency: Ccy,
+    /// The region label (`us` / `uk` / `de` / `fr` / `it`).
+    pub region: &'static str,
+    /// A pre-built friendly blotter/GUI name for the curated non-US govvies (their
+    /// `GovBondSpec.name`); `None` for a Treasury, whose display name is composed
+    /// from its auction `term` + class.
+    pub name: Option<String>,
+    /// The 9-character CUSIP for a US Treasury; empty for a non-US govvie (which
+    /// carries no CUSIP). Retained as an external cross-ref / display id.
     pub cusip: String,
     /// The 12-character ISIN (check-digit valid), carried for display/cross-ref.
     pub isin: String,
-    /// The coarse security class.
+    /// The coarse security class (Treasury auction class; a curated coupon govvie is
+    /// classed as [`SecurityType::Bond`]).
     pub security_type: SecurityType,
-    /// The auction term label, e.g. `4-Week`, `10-Year`, `19-Year 10-Month`.
+    /// The auction term label, e.g. `4-Week`, `10-Year`, `19-Year 10-Month`; empty
+    /// for a curated non-US govvie (which supplies its own [`name`](Self::name)).
     pub term: String,
     /// The final-redemption date.
     pub maturity: BrokenDate,
@@ -112,24 +136,29 @@ pub struct TreasuryBond {
     /// The coupon frequency, or `None` for a zero-coupon Bill.
     pub frequency: Option<PaymentFrequency>,
     /// The reference **ask** (`buyPrice`) per 100 face — the price to *buy* the
-    /// bond, i.e. the LP's offer side.
+    /// bond, i.e. the LP's offer side. Seeded at par for a curated non-US govvie.
     pub ask: f64,
     /// The reference **bid** (`sellPrice`) per 100 face — the price to *sell* the
-    /// bond, i.e. the LP's bid side.
+    /// bond, i.e. the LP's bid side. Seeded at par for a curated non-US govvie.
     pub bid: f64,
 }
 
 impl TreasuryBond {
-    /// The canonical server `instrument_id` (ADR-0022 D) — the CUSIP.
+    /// The canonical server `instrument_id` (ADR-0022 D) — the CUSIP for a Treasury,
+    /// or the curated slug for a non-US govvie.
     #[must_use]
     pub fn instrument_id(&self) -> &str {
-        &self.cusip
+        &self.instrument_id
     }
 
-    /// A short human label for the security (its auction term + class), e.g.
-    /// `10-Year Note` — the GUI blotter name.
+    /// A short human label for the security. For a curated non-US govvie this is its
+    /// pre-built [`name`](Self::name); for a Treasury it is composed from the auction
+    /// term + class, e.g. `10-Year Note` — the GUI blotter name.
     #[must_use]
     pub fn display_name(&self) -> String {
+        if let Some(name) = &self.name {
+            return name.clone();
+        }
         let class = match self.security_type {
             SecurityType::Bill => "Bill",
             SecurityType::Note => "Note",
@@ -152,15 +181,17 @@ impl TreasuryBond {
     }
 
     /// The aggregation engine's asset-agnostic [`Instrument`] key for this bond:
-    /// the CUSIP as a vendor-neutral free-form commodity ticker (guardrail #8) plus
-    /// the maturity as a [`Tenor::BrokenDate`]. Injective over CUSIPs, so two
-    /// distinct securities never consolidate into one line.
+    /// the canonical `instrument_id` as a vendor-neutral free-form commodity ticker
+    /// (guardrail #8) carried in the bond's pricing currency, plus the maturity as a
+    /// [`Tenor::BrokenDate`]. Injective over `instrument_id`, so two distinct
+    /// securities never consolidate into one line. (For a US Treasury the id is the
+    /// CUSIP and the currency is `USD`, so the key is byte-identical to before.)
     #[must_use]
     pub fn engine_instrument(&self) -> Instrument {
         Instrument::new(
             Underlying::Commodity(CommodityRef::new(
-                Symbol::new(self.cusip.clone(), ""),
-                Ccy::USD,
+                Symbol::new(self.instrument_id.clone(), ""),
+                self.currency,
             )),
             Tenor::BrokenDate(self.maturity),
         )
@@ -226,6 +257,60 @@ impl TreasuryBond {
             100.0,
         )
         .map_err(ReferenceBondError::Bond)
+    }
+
+    /// Build a priced reference bond from a curated [`celnet_refdata::GovBondSpec`]
+    /// (a non-US govvie — UK gilt or EUR govvie), reusing the same real cashflow
+    /// schedule + mean-reverting-yield feed as the Treasury path.
+    ///
+    /// The curated on-the-run govvies carry no market snapshot price, so the
+    /// reference is seeded at **par** (100.0 per 100 face): the yield the
+    /// mean-reverting model reverts to is then the bond's par yield (≈ its coupon),
+    /// inverted through the REAL analytics leaf — never a fabricated handle. The
+    /// `instrument_id` is the spec's slug (the identity the server's join keys on),
+    /// the currency is the spec's ISO-4217 label, and act/act maps to the engine's
+    /// 30/360 bond basis — the same closest-basis choice the Treasury path makes.
+    ///
+    /// Returns `None` if the spec is not modellable: a currency label the engine does
+    /// not recognise, a maturity that is not a real calendar date, or a fixed-coupon
+    /// bond whose frequency label does not map to an engine payment frequency.
+    #[must_use]
+    pub fn from_gov_spec(spec: &celnet_refdata::GovBondSpec) -> Option<Self> {
+        /// The par reference clean price per 100 face for a curated on-the-run.
+        const PAR_PER_100: f64 = 100.0;
+
+        let currency = Ccy::parse(spec.currency)?;
+        let maturity = civil_to_broken(spec.maturity_date)?;
+        if !spec.coupon_rate.is_finite() {
+            return None;
+        }
+        let dated_date = spec.dated_date.and_then(civil_to_broken);
+
+        // A zero-coupon spec carries no schedule frequency; a fixed-coupon spec MUST
+        // carry a frequency the engine can represent, else it is not modellable.
+        let (security_type, frequency) = if spec.coupon_type.eq_ignore_ascii_case("zero") {
+            (SecurityType::Bill, None)
+        } else {
+            let freq = parse_frequency(Some(spec.coupon_frequency))?;
+            (SecurityType::Bond, Some(freq))
+        };
+
+        Some(Self {
+            instrument_id: spec.instrument_id.clone(),
+            currency,
+            region: spec.region,
+            name: Some(spec.name.clone()),
+            cusip: spec.cusip.clone().unwrap_or_default(),
+            isin: spec.isin.clone(),
+            security_type,
+            term: String::new(),
+            maturity,
+            dated_date,
+            coupon: spec.coupon_rate,
+            frequency,
+            ask: PAR_PER_100,
+            bid: PAR_PER_100,
+        })
     }
 }
 
@@ -309,6 +394,13 @@ impl RawRecord {
         let dated_date = parse_civil_date(&self.dated_date);
 
         Some(TreasuryBond {
+            // A US Treasury's canonical id IS its CUSIP, and it prices in USD in the
+            // `us` region — the wire id, engine-key currency and identity are all
+            // exactly what the feed streamed before this record grew the non-US fields.
+            instrument_id: self.cusip.clone(),
+            currency: Ccy::USD,
+            region: "us",
+            name: None,
             cusip: self.cusip,
             isin: self.isin,
             security_type,
@@ -339,6 +431,41 @@ pub fn load_coupon_universe() -> Vec<TreasuryBond> {
         .into_iter()
         .filter(|b| b.security_type.is_coupon_bearing())
         .collect()
+}
+
+/// The curated **non-US** government reference bonds — UK gilts + EUR govvies (DE /
+/// FR / IT) — from [`celnet_refdata::curated_universe`], each built into a real
+/// [`celnet_bond::Bond`] schedule and seeded at par (see
+/// [`TreasuryBond::from_gov_spec`]). All are coupon-bearing fixed govvies. Any spec
+/// not modellable (unrecognised currency, bad date, unmappable frequency) is dropped.
+#[must_use]
+pub fn load_curated_universe() -> Vec<TreasuryBond> {
+    celnet_refdata::curated_universe()
+        .iter()
+        .filter_map(TreasuryBond::from_gov_spec)
+        .collect()
+}
+
+/// The **full government reference universe** the feed advertises and prices: the US
+/// Treasuries (real snapshot prices, CUSIP identity — byte-identical to
+/// [`load_coupon_universe`] / [`load_universe`]) followed by the curated non-US
+/// govvies ([`load_curated_universe`]). With `include_bills`, the US zero-coupon
+/// Bills are included alongside the coupon Notes/Bonds; the curated set is
+/// coupon-bearing either way.
+///
+/// This is the entry point the deployed `lp-sim` daemon builds its priceable set
+/// from, so every instrument the server seeds into the registry from
+/// [`celnet_refdata::government_universe`] also streams a real price — not just the
+/// Treasuries.
+#[must_use]
+pub fn load_government_universe(include_bills: bool) -> Vec<TreasuryBond> {
+    let mut universe = if include_bills {
+        load_universe()
+    } else {
+        load_coupon_universe()
+    };
+    universe.extend(load_curated_universe());
+    universe
 }
 
 /// Parse a Treasury-universe JSON document into validated [`TreasuryBond`]s.
@@ -410,6 +537,16 @@ pub fn parse_civil_date(s: &str) -> Option<BrokenDate> {
 fn broken_to_date(b: BrokenDate) -> Option<Date> {
     let month = Month::try_from(b.month).ok()?;
     Date::from_calendar_date(b.year, month, b.day).ok()
+}
+
+/// Convert a [`celnet_refdata::CivilYmd`] to a [`BrokenDate`], validated against the
+/// real Gregorian calendar (rejects e.g. 2036-02-30). `None` for a non-date triple.
+fn civil_to_broken(d: celnet_refdata::CivilYmd) -> Option<BrokenDate> {
+    let month_u8 = u8::try_from(d.month).ok()?;
+    let day_u8 = u8::try_from(d.day).ok()?;
+    let month = Month::try_from(month_u8).ok()?;
+    Date::from_calendar_date(d.year, month, day_u8).ok()?;
+    Some(BrokenDate::new(d.year, month_u8, day_u8))
 }
 
 /// Whether an ISIN is well-formed: 12 chars, two leading letters, and a valid
@@ -590,5 +727,111 @@ mod tests {
         );
         assert_eq!(parse_frequency(Some("None")), None);
         assert_eq!(parse_frequency(None), None);
+    }
+
+    // --- the extended non-US government universe ---------------------------------
+
+    #[test]
+    fn curated_non_us_bonds_build_real_schedules_and_price_on_the_leaf() {
+        let curated = load_curated_universe();
+        // 10 UK gilts + 8 DE Bunds + 6 FR OATs + 6 IT BTPs.
+        assert_eq!(curated.len(), 30, "expected the full curated non-US set");
+
+        // The sim's default settlement; every curated maturity (2028+) is after it.
+        let settle = BrokenDate::new(2026, 4, 16);
+        let (mut uk, mut de, mut fr, mut it) = (0, 0, 0, 0);
+        for b in &curated {
+            match b.region {
+                "uk" => uk += 1,
+                "de" => de += 1,
+                "fr" => fr += 1,
+                "it" => it += 1,
+                other => panic!("unexpected curated region {other}"),
+            }
+            assert!(b.cusip.is_empty(), "a non-US govvie carries no CUSIP");
+            assert_ne!(b.currency, Ccy::USD, "a non-US govvie prices in GBP/EUR");
+            assert!(b.name.is_some(), "a curated govvie carries a friendly name");
+            // The slug is the wire id the server's identity join keys on.
+            assert!(
+                b.instrument_id().contains('-'),
+                "curated id is a slug: {}",
+                b.instrument_id()
+            );
+
+            // A real cashflow schedule builds at the sim settlement...
+            let bond = b
+                .to_reference_bond(settle)
+                .unwrap_or_else(|e| panic!("real schedule rejected for {}: {e}", b.instrument_id));
+            // ...and the reference (par) mid round-trips price↔yield through the REAL
+            // analytics leaf — an oracle round-trip, not a plausibility check.
+            let mid = b.reference_mid();
+            let y = celnet_bond::yield_to_maturity(&bond, mid)
+                .unwrap_or_else(|e| panic!("ytm failed for {}: {e:?}", b.instrument_id));
+            let repriced = celnet_bond::dirty_price(&bond, y)
+                .unwrap_or_else(|e| panic!("reprice failed for {}: {e:?}", b.instrument_id));
+            assert!(
+                (repriced - mid).abs() < 1e-6,
+                "price↔yield round-trip drift for {}: repriced {repriced}",
+                b.instrument_id
+            );
+
+            // The mean-reverting-yield feed model builds and prices finitely.
+            let model = b
+                .yield_model(settle, 0.02, 3.0e-4)
+                .unwrap_or_else(|| panic!("no yield model for {}", b.instrument_id));
+            let px = model.clean_price_at(1_000_000_000, 0.0);
+            assert!(
+                px.is_finite() && px > 0.0,
+                "non-finite feed price for {}: {px}",
+                b.instrument_id
+            );
+        }
+        assert_eq!((uk, de, fr, it), (10, 8, 6, 6), "curated region breakdown");
+    }
+
+    #[test]
+    fn government_universe_covers_all_regions_and_preserves_treasuries() {
+        let treasuries = load_coupon_universe();
+        let curated = load_curated_universe();
+        let gov = load_government_universe(false);
+
+        // The government universe is exactly the treasuries followed by the curated
+        // set — byte-identical on the Treasury prefix (unchanged wire ids + prices).
+        assert_eq!(gov.len(), treasuries.len() + curated.len());
+        assert_eq!(
+            &gov[..treasuries.len()],
+            &treasuries[..],
+            "the Treasury feed must be byte-identical after the non-US extension"
+        );
+
+        // Every Treasury keeps its 9-char CUSIP identity in USD in the `us` region.
+        for b in &treasuries {
+            assert_eq!(b.instrument_id(), b.cusip, "treasury id is its CUSIP");
+            assert_eq!(b.cusip.len(), 9);
+            assert_eq!(b.currency, Ccy::USD);
+            assert_eq!(b.region, "us");
+        }
+
+        // All five regions are represented in the combined universe.
+        for region in ["us", "uk", "de", "fr", "it"] {
+            assert!(
+                gov.iter().any(|b| b.region == region),
+                "region {region} not represented"
+            );
+        }
+
+        // instrument_ids and engine keys are globally unique — the server keys the
+        // registry by instrument_id and the consolidator by the engine key, so a
+        // collision would silently merge two securities across regions.
+        let ids: std::collections::HashSet<&str> =
+            gov.iter().map(TreasuryBond::instrument_id).collect();
+        assert_eq!(
+            ids.len(),
+            gov.len(),
+            "instrument_id collision across regions"
+        );
+        let keys: std::collections::HashSet<Instrument> =
+            gov.iter().map(TreasuryBond::engine_instrument).collect();
+        assert_eq!(keys.len(), gov.len(), "engine key collision across regions");
     }
 }
