@@ -767,8 +767,6 @@ mod tests {
                 },
                 redemption: 100.0,
                 calendars: vec!["united_states".to_string()],
-                region: "us".to_string(),
-                sub_asset_type: "government".to_string(),
             }),
         );
         let err = calibration_instrument(&bond, 0.04, value_date()).expect_err("bond rejected");
