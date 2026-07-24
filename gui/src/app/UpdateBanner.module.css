@@ -1,55 +1,81 @@
 /*
- * UpdateBanner — a floating "new release" pill, fixed to the top-centre of the
- * viewport above the workspace. Uses the accent surface + float shadow so it
- * reads as a deliberate, dismissible call to action, not a system chrome bar. It
- * sits below the reconnect scrim (which is fully blocking when shown).
+ * UpdateBanner — a centred **modal** shown when a newer release has been deployed.
+ * Rendered over a dimmed scrim so it reads as a deliberate "please refresh" call
+ * to action. Sits above the workspace but below the reconnect scrim (which is
+ * fully blocking). Reuses the app design tokens for surface, accent, and type.
  */
 
-.banner {
+.scrim {
   position: fixed;
-  top: var(--space-4);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 40;
+  inset: 0;
+  z-index: 50;
 
   display: flex;
   align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+
+  background: oklch(from var(--bg-base) l c h / 0.62);
+  backdrop-filter: blur(2px);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-3);
-  max-width: min(92vw, 560px);
-  padding: var(--space-2) var(--space-3);
+  width: min(92vw, 460px);
+  padding: var(--space-4);
 
   background: var(--bg-raised);
   border: 1px solid oklch(from var(--accent) l c h / 0.45);
-  border-left: 2px solid var(--accent);
+  border-top: 2px solid var(--accent);
   border-radius: var(--r-sm);
   box-shadow: var(--shadow-float);
-  font-size: var(--type-caption);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .glyph {
-  font-size: 13px;
+  font-size: 16px;
   color: var(--accent);
   line-height: 1;
 }
 
-.text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+.title {
+  margin: 0;
+  font-size: var(--type-body);
   font-weight: var(--weight-emphasis);
   color: var(--text-primary);
 }
 
+.body {
+  margin: 0;
+  font-size: var(--type-caption);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
 .detail {
+  margin: 0;
   font-size: var(--type-micro);
   color: var(--text-secondary);
   font-weight: var(--weight-regular);
   font-variant-numeric: tabular-nums;
 }
 
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
 .reload {
-  margin-left: var(--space-3);
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-1) var(--space-4);
   border: 0;
   border-radius: var(--r-sm);
   background: var(--accent);
@@ -69,28 +95,23 @@
   outline-offset: 2px;
 }
 
-.dismiss {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 0;
+.later {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border, oklch(from var(--text-secondary) l c h / 0.3));
   border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 15px;
-  line-height: 1;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
   cursor: pointer;
   transition: color var(--motion-fast, 120ms) ease;
 }
 
-.dismiss:hover {
+.later:hover {
   color: var(--text-primary);
 }
 
-.dismiss:focus-visible {
+.later:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
