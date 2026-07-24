@@ -130,6 +130,9 @@ the risk cube's new credit dimension.
 net position/axe (sell-side: long inventory => skew to encourage selling). Tiering reads the
 entitlements/capability tier. **Architectural note:** fair value (mid) stays clean; skew and
 tier are bid/ask *adjustments downstream* of pricing — not co-inputs to fair value.
+The full tiering methodology (flat/inventory/vol/size/toxicity strategies, math, guardrails,
+bond bps convention, and the `celnet-tiering` seam) is designed in
+[`FI-TIERING-RESEARCH.md`](FI-TIERING-RESEARCH.md).
 
 ### 6.4 Fill -> inventory -> auto-hedge loop
 On fill (from the journal/transaction log): update `Book` -> recompute net DV01/CR01 -> check
