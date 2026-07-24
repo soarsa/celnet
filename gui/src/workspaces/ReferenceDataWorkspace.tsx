@@ -16,10 +16,10 @@ import { useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
+import { InstrumentDialog } from "../components/InstrumentDialog";
 import { Panel } from "../components/Panel";
 import { INSTRUMENT_FAMILY_LABELS, type InstrumentDef } from "../data/contract";
 import { useReferenceData } from "../hooks/useReferenceData";
-import { InstrumentForm } from "./ReferenceDataForms";
 import admin from "./AdminWorkspace.module.css";
 import styles from "./ReferenceDataWorkspace.module.css";
 
@@ -171,26 +171,15 @@ export function ReferenceDataWorkspace(): React.ReactElement {
         )}
       </Panel>
 
-      {formOpen && (
-        <Panel
-          title={editing ? `Edit ${editing.name}` : "New instrument"}
-          glyph="✎"
-          actions={
-            <Button variant="ghost" onClick={closeForm}>
-              Close
-            </Button>
-          }
-        >
-          <InstrumentForm
-            key={editing ? editing.instrumentId : "new"}
-            editing={editing}
-            onCreate={data.createInstrument}
-            onUpdate={data.updateInstrument}
-            onDone={closeForm}
-            run={runAction}
-          />
-        </Panel>
-      )}
+      <InstrumentDialog
+        open={formOpen}
+        editing={editing}
+        error={actionError}
+        onClose={closeForm}
+        onCreate={data.createInstrument}
+        onUpdate={data.updateInstrument}
+        run={runAction}
+      />
     </div>
   );
 }
