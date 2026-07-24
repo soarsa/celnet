@@ -2463,6 +2463,8 @@ mod tests {
                 },
                 redemption: 100.0,
                 calendars: vec!["united_states".to_string()],
+                region: "us".to_string(),
+                sub_asset_type: "government".to_string(),
             }),
         );
         let (edge, path) = curve_edge("bond", vec![bond]);

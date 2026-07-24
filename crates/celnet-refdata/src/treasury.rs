@@ -83,7 +83,10 @@ fn into_spec(r: RawRecord) -> Option<GovBondSpec> {
     let (coupon_type, coupon_frequency) = if is_bill || coupon_rate <= 0.0 {
         ("zero", "")
     } else {
-        ("fixed", frequency_label(r.interest_payment_frequency.as_deref()))
+        (
+            "fixed",
+            frequency_label(r.interest_payment_frequency.as_deref()),
+        )
     };
 
     let name = us_name(&r.security_term, coupon_rate, coupon_type, maturity_date);
@@ -209,7 +212,11 @@ mod tests {
         let specs = treasury_universe();
         let ids: std::collections::HashSet<&str> =
             specs.iter().map(|s| s.instrument_id.as_str()).collect();
-        assert_eq!(ids.len(), specs.len(), "CUSIP instrument_ids must be unique");
+        assert_eq!(
+            ids.len(),
+            specs.len(),
+            "CUSIP instrument_ids must be unique"
+        );
     }
 
     #[test]

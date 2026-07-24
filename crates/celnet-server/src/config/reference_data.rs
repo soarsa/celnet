@@ -275,6 +275,16 @@ pub struct BondDef {
     /// Settlement calendar centre labels (at least one).
     #[serde(default)]
     pub calendars: Vec<String>,
+    /// The issuer-region label — the download taxonomy's region axis (`us` / `uk` /
+    /// `eu` / issuer countries `de` / `fr` / `it` / `es`). Empty ⇒ unspecified (a
+    /// pre-taxonomy or admin-added bond); blank is accepted so existing registries
+    /// round-trip unchanged.
+    #[serde(default)]
+    pub region: String,
+    /// The sub-asset-type label — the download taxonomy's product axis (`government`
+    /// / `corporate` / `agency` / `ssa`). Empty ⇒ unspecified.
+    #[serde(default)]
+    pub sub_asset_type: String,
 }
 
 /// The family-specific convention block of an instrument definition — exactly one
@@ -414,6 +424,28 @@ pub fn coupon_type_is_known(label: &str) -> bool {
     matches!(
         label.trim().to_ascii_lowercase().as_str(),
         "fixed" | "frn" | "zero"
+    )
+}
+
+/// Whether an issuer-region token is recognised — the download taxonomy's region
+/// axis. Empty (`""`) is accepted as *unspecified* so pre-taxonomy / admin-added
+/// bonds validate; `eu` is the roll-up label, `de`/`fr`/`it`/`es` the EUR issuer
+/// countries.
+#[must_use]
+pub fn region_is_known(label: &str) -> bool {
+    matches!(
+        label.trim().to_ascii_lowercase().as_str(),
+        "" | "us" | "uk" | "eu" | "de" | "fr" | "it" | "es"
+    )
+}
+
+/// Whether a sub-asset-type token is recognised — the download taxonomy's product
+/// axis. Empty (`""`) is accepted as *unspecified*.
+#[must_use]
+pub fn sub_asset_type_is_known(label: &str) -> bool {
+    matches!(
+        label.trim().to_ascii_lowercase().as_str(),
+        "" | "government" | "corporate" | "agency" | "ssa"
     )
 }
 
@@ -571,6 +603,15 @@ fn validate_family(id: &str, fam: &InstrumentFamily) -> Result<(), String> {
             if !(b.coupon_rate.is_finite() && b.coupon_rate >= 0.0) {
                 return Err(ctx("coupon_rate must be a finite, non-negative number"));
             }
+            if !region_is_known(&b.region) {
+                return Err(ctx(&format!("unknown region {:?}", b.region)));
+            }
+            if !sub_asset_type_is_known(&b.sub_asset_type) {
+                return Err(ctx(&format!(
+                    "unknown sub_asset_type {:?}",
+                    b.sub_asset_type
+                )));
+            }
         }
     }
     Ok(())
@@ -663,6 +704,64 @@ fn unique_id(base: &str, mut taken: impl FnMut(&str) -> bool) -> String {
 }
 
 // --- seed -------------------------------------------------------------------
+
+/// Map the curated [`celnet_refdata`] government universe (US Treasuries + UK gilts +
+/// EUR govvies) onto instrument reference-data definitions ready to seed the registry:
+/// the friendly name becomes the composite / blotter display name, the ISIN (+ CUSIP
+/// for US) become external cross-refs, and the `region` / `sub_asset_type` labels carry
+/// the download taxonomy. Each `instrument_id` matches what the LP-SIM feed streams, so
+/// a seeded entry resolves the exact wire id and the FI Aggregated Book tiles show a
+/// real bond name instead of a bare code.
+#[must_use]
+pub fn government_bond_defs() -> Vec<InstrumentDef> {
+    celnet_refdata::government_universe()
+        .into_iter()
+        .map(gov_bond_to_instrument_def)
+        .collect()
+}
+
+/// Convert one curated [`celnet_refdata::GovBondSpec`] into an [`InstrumentDef`] with a
+/// [`InstrumentFamily::Bond`] family block, mirroring the crate's civil date onto the
+/// server's [`CivilDate`].
+fn gov_bond_to_instrument_def(s: celnet_refdata::GovBondSpec) -> InstrumentDef {
+    let civil = |d: celnet_refdata::CivilYmd| CivilDate {
+        year: d.year,
+        month: d.month,
+        day: d.day,
+    };
+    let mut external_ids = vec![ExternalId {
+        scheme: "isin".to_string(),
+        value: s.isin.clone(),
+    }];
+    if let Some(cusip) = &s.cusip {
+        external_ids.push(ExternalId {
+            scheme: "cusip".to_string(),
+            value: cusip.clone(),
+        });
+    }
+    InstrumentDef {
+        instrument_id: s.instrument_id.clone(),
+        name: s.name.clone(),
+        description: String::new(),
+        currency: s.currency.to_string(),
+        external_ids,
+        definition: InstrumentFamily::Bond(BondDef {
+            issuer: s.issuer.clone(),
+            coupon_rate: s.coupon_rate,
+            coupon_type: s.coupon_type.to_string(),
+            coupon_frequency: s.coupon_frequency.to_string(),
+            day_count: s.day_count.to_string(),
+            issue_date: None,
+            dated_date: s.dated_date.map(civil),
+            first_coupon_date: None,
+            maturity_date: civil(s.maturity_date),
+            redemption: s.redemption,
+            calendars: s.calendars.iter().map(|c| (*c).to_string()).collect(),
+            region: s.region.to_string(),
+            sub_asset_type: s.sub_asset_type.to_string(),
+        }),
+    }
+}
 
 /// Seed a small, realistic default registry on an **empty** instrument list, so a
 /// fresh edge can resolve curve/booking instruments immediately; report `true`
@@ -836,6 +935,8 @@ fn seed_instruments() -> Vec<InstrumentDef> {
                 },
                 redemption: 100.0,
                 calendars: us(),
+                region: "us".to_string(),
+                sub_asset_type: "government".to_string(),
             }),
         },
         InstrumentDef {
@@ -875,6 +976,8 @@ fn seed_instruments() -> Vec<InstrumentDef> {
                 },
                 redemption: 100.0,
                 calendars: us(),
+                region: "us".to_string(),
+                sub_asset_type: "corporate".to_string(),
             }),
         },
     ]
@@ -996,6 +1099,39 @@ mod tests {
         }
         let err = validate_instruments(&[a]).expect_err("unknown label rejected");
         assert!(err.contains("business_day_convention"), "{err}");
+    }
+
+    #[test]
+    fn government_bond_defs_are_registry_valid_and_tagged() {
+        let defs = government_bond_defs();
+        // The mapped curated universe passes the SAME validation the registry enforces
+        // at load / admin-write, so seeding it can never corrupt the store.
+        validate_instruments(&defs).expect("curated government defs are registry-valid");
+        assert!(
+            defs.len() >= 230,
+            "expected the full universe, got {}",
+            defs.len()
+        );
+
+        // Every def is a government bond carrying a region label; every region we ship
+        // is represented.
+        let mut regions = std::collections::HashSet::new();
+        for d in &defs {
+            let InstrumentFamily::Bond(b) = &d.definition else {
+                panic!("{} is not a bond", d.instrument_id);
+            };
+            assert_eq!(b.sub_asset_type, "government", "{}", d.instrument_id);
+            assert!(!b.region.is_empty(), "{} has no region", d.instrument_id);
+            assert!(
+                region_is_known(&b.region) && sub_asset_type_is_known(&b.sub_asset_type),
+                "{} carries an unknown taxonomy label",
+                d.instrument_id
+            );
+            regions.insert(b.region.clone());
+        }
+        for r in ["us", "uk", "de", "fr", "it"] {
+            assert!(regions.contains(r), "no {r} government bonds mapped");
+        }
     }
 
     #[test]

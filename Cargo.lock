@@ -925,6 +925,7 @@ dependencies = [
  "celnet-proto",
  "celnet-rates",
  "celnet-rates-risk",
+ "celnet-refdata",
  "celnet-replog",
  "celnet-rfq",
  "celnet-risk-cube",

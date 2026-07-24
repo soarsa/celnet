@@ -111,7 +111,10 @@ mod tests {
     fn build_rejects_bad_bodies() {
         assert!(build("US912797TS").is_none(), "10-char body rejected");
         assert!(build("us912797TS6X").is_none(), "wrong length rejected");
-        assert!(build("1S00GILT10Y").is_none(), "non-letter country rejected");
+        assert!(
+            build("1S00GILT10Y").is_none(),
+            "non-letter country rejected"
+        );
         let ok = build("GBGILT10Y36").expect("valid GB body builds");
         assert!(is_well_formed(&ok), "built ISIN self-verifies");
         assert_eq!(ok.len(), 12);

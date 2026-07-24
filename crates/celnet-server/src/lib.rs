@@ -575,7 +575,14 @@ impl Edge {
         // resolvable instrument definitions from first boot. Idempotent — a no-op once
         // any instrument exists.
         let instruments_seeded = identity_store.ensure_seed_instruments();
-        if admin_seeded || registry_seeded || instruments_seeded {
+        // Additively ensure the curated government-bond universe (US Treasuries + UK
+        // gilts + EUR govvies) is registered — on EVERY boot, so an already-populated
+        // store gains the bonds without clobbering admin edits. This is what makes the
+        // FI Aggregated Book tiles resolve real names + ISIN/CUSIP (the LP-SIM feed
+        // streams the same instrument_ids) and powers the region/sub-asset-type
+        // security-list download.
+        let gov_bonds_seeded = identity_store.ensure_seed_government_bonds();
+        if admin_seeded || registry_seeded || instruments_seeded || gov_bonds_seeded {
             identity_store
                 .save(&identity_path)
                 .map_err(|e| std::io::Error::new(e.kind(), format!("seed identity: {e}")))?;

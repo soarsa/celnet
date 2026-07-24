@@ -30,6 +30,11 @@ celnet-rates.workspace = true
 # options families. One-way edge (server → bond); bond's leaf graph is
 # {rates, types, calendar}, all already in the server tree, so no cycle.
 celnet-bond.workspace = true
+# The curated government-bond static reference universe seeded into the instrument
+# registry on boot (config/reference_data.rs::government_bond_defs), so the FI
+# Aggregated Book tiles resolve real names + ISIN/CUSIP and the security-list
+# download can filter by region + sub-asset-type.
+celnet-refdata.workspace = true
 # Instrument reference-data convention labels (config/reference_data.rs) reuse the
 # shared calendar vocabularies (RollRule business-day convention, CentreId
 # settlement centres) so the registry can never drift from what the engine resolves.

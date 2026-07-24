@@ -34,7 +34,8 @@ use celnet_entitlements::{Action, AssetClass, Capability};
 use serde::{Deserialize, Serialize};
 
 use super::reference_data::{
-    self, ExternalScheme, InstrumentDef, ensure_seed_instruments, validate_instruments,
+    self, ExternalScheme, InstrumentDef, ensure_seed_instruments, government_bond_defs,
+    validate_instruments,
 };
 
 /// Env var naming the identity JSON file. Absent ⇒ [`DEFAULT_CONFIG_PATH`].
@@ -775,6 +776,47 @@ impl IdentityStore {
     /// (idempotent, mirroring [`ensure_seed_registry`](Self::ensure_seed_registry)).
     pub fn ensure_seed_instruments(&mut self) -> bool {
         ensure_seed_instruments(&mut self.instruments)
+    }
+
+    /// **Additively** ensure the curated government-bond reference universe (US
+    /// Treasuries + UK gilts + EUR govvies from [`government_bond_defs`]) is present,
+    /// adding only the definitions whose `instrument_id` is not already registered and
+    /// whose external ids do not collide with an existing entry; report `true` when any
+    /// were added (the caller should persist). Unlike [`ensure_seed_instruments`], this
+    /// runs on EVERY boot (not only an empty store) so an already-populated registry
+    /// gains the government universe without wiping admin-added instruments — the FI
+    /// Aggregated Book tiles then resolve real names and the security-list download can
+    /// filter by region + sub-asset-type. Idempotent: a second call adds nothing.
+    pub fn ensure_seed_government_bonds(&mut self) -> bool {
+        let mut have_ids: std::collections::HashSet<String> = self
+            .instruments
+            .iter()
+            .map(|d| d.instrument_id.to_ascii_lowercase())
+            .collect();
+        let mut have_ext: std::collections::HashSet<(String, String)> = self
+            .instruments
+            .iter()
+            .flat_map(|d| &d.external_ids)
+            .map(|e| (e.scheme.to_ascii_lowercase(), e.value.to_ascii_lowercase()))
+            .collect();
+        let mut added = 0usize;
+        for def in government_bond_defs() {
+            if have_ids.contains(&def.instrument_id.to_ascii_lowercase()) {
+                continue;
+            }
+            if def.external_ids.iter().any(|e| {
+                have_ext.contains(&(e.scheme.to_ascii_lowercase(), e.value.to_ascii_lowercase()))
+            }) {
+                continue;
+            }
+            have_ids.insert(def.instrument_id.to_ascii_lowercase());
+            for e in &def.external_ids {
+                have_ext.insert((e.scheme.to_ascii_lowercase(), e.value.to_ascii_lowercase()));
+            }
+            self.instruments.push(def);
+            added += 1;
+        }
+        added > 0
     }
 
     /// Resolve an instrument definition by its internal `instrument_id` — the
