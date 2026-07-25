@@ -1,0 +1,19 @@
+[package]
+name = "celnet-tiering"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet outbound price tiering — the pure, asset-agnostic engine that margins/skews an outbound two-way from a composite mid (flat markup + inventory skew, pluggable strategy seam, guardrails)."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true
