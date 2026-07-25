@@ -50,6 +50,9 @@ celnet-crypto-vanilla.workspace = true
 celnet-xva.workspace = true
 celnet-rfq.workspace = true
 celnet-aggregation.workspace = true
+# Outbound price tiering (FI-first, asset-agnostic): margins/skews the aggregation
+# composite before publish (docs/FI-TIERING-RESEARCH.md; Phase 2a wiring).
+celnet-tiering.workspace = true
 celnet-engine.workspace = true
 # User-extensible analytics: the tiered plugin host whose ModelRegistry the
 # pricer's ProductEngine (options) + FiProductEngine (fixed income, ADR-0021)

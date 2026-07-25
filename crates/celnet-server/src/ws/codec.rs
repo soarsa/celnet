@@ -56,9 +56,10 @@ use celnet_proto::{
     ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest,
     LogoutResponse, ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
     SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
-    UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookRequest,
-    UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest,
-    UpdateEntityResponse, UpdateUserRequest, UpdateUserResponse, UserDesc,
+    TieringConfigDesc, TieringGuardrailsDesc, TieringStrategyDesc, UpdateAggregatedBookRequest,
+    UpdateAggregatedBookResponse, UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest,
+    UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse, UpdateUserRequest,
+    UpdateUserResponse, UserDesc,
 };
 // AuthService — instrument reference-data registry (WS mirror of the instrument RPCs).
 use celnet_proto::{
@@ -3559,8 +3560,82 @@ fn aggregation_params_desc_from_json(v: &Value) -> Result<AggregationParamsDesc>
     })
 }
 
-/// An aggregated book → JSON. An absent `params` renders as `null` (the singular-
-/// message convention shared with the descriptor-driven encoder).
+/// One tiering strategy → JSON. Every field is always emitted (matching the
+/// descriptor-driven encoder's full field walk); the magnitudes a `kind` does not
+/// use render as their proto3 zero.
+fn tiering_strategy_desc_to_json(s: &TieringStrategyDesc) -> Value {
+    json!({
+        "kind": s.kind,
+        "half_spread": s.half_spread,
+        "kappa": s.kappa,
+        "s_max": s.s_max,
+    })
+}
+
+/// The tiering guardrail bounds → JSON.
+fn tiering_guardrails_desc_to_json(g: &TieringGuardrailsDesc) -> Value {
+    json!({
+        "h_min": g.h_min,
+        "h_max": g.h_max,
+        "s_max": g.s_max,
+        "spread_floor": g.spread_floor,
+    })
+}
+
+/// A book's outbound-tiering config → JSON. An absent `guardrails` renders as `null`
+/// (the singular-message convention shared with the descriptor-driven encoder).
+fn tiering_config_desc_to_json(c: &TieringConfigDesc) -> Value {
+    json!({
+        "unit": c.unit,
+        "strategies": Value::Array(c.strategies.iter().map(tiering_strategy_desc_to_json).collect()),
+        "guardrails": c.guardrails.as_ref().map(tiering_guardrails_desc_to_json),
+        "stale_policy": c.stale_policy,
+    })
+}
+
+/// One tiering strategy ← JSON (a nested object in the `strategies` array).
+fn tiering_strategy_desc_from_json(v: &Value) -> Result<TieringStrategyDesc> {
+    let o = obj(v, "strategy")?;
+    Ok(TieringStrategyDesc {
+        kind: enum_or_zero(o, "kind"),
+        half_spread: f64_or_zero(o, "half_spread"),
+        kappa: f64_or_zero(o, "kappa"),
+        s_max: f64_or_zero(o, "s_max"),
+    })
+}
+
+/// The tiering guardrail bounds ← JSON.
+fn tiering_guardrails_desc_from_json(v: &Value) -> Result<TieringGuardrailsDesc> {
+    let o = obj(v, "guardrails")?;
+    Ok(TieringGuardrailsDesc {
+        h_min: f64_or_zero(o, "h_min"),
+        h_max: f64_or_zero(o, "h_max"),
+        s_max: f64_or_zero(o, "s_max"),
+        spread_floor: f64_or_zero(o, "spread_floor"),
+    })
+}
+
+/// A book's outbound-tiering config ← JSON (a nested `tiering` object).
+fn tiering_config_desc_from_json(v: &Value) -> Result<TieringConfigDesc> {
+    let o = obj(v, "tiering")?;
+    let strategies = o.get("strategies").and_then(Value::as_array).map_or_else(
+        || Ok(Vec::new()),
+        |arr| {
+            arr.iter()
+                .map(tiering_strategy_desc_from_json)
+                .collect::<Result<Vec<_>>>()
+        },
+    )?;
+    Ok(TieringConfigDesc {
+        unit: enum_or_zero(o, "unit"),
+        strategies,
+        guardrails: opt_nested(o, "guardrails", tiering_guardrails_desc_from_json)?,
+        stale_policy: enum_or_zero(o, "stale_policy"),
+    })
+}
+
+/// An aggregated book → JSON. An absent `params` / `tiering` renders as `null` (the
+/// singular-message convention shared with the descriptor-driven encoder).
 fn aggregated_book_desc_to_json(d: &AggregatedBookDesc) -> Value {
     json!({
         "id": d.id,
@@ -3570,6 +3645,7 @@ fn aggregated_book_desc_to_json(d: &AggregatedBookDesc) -> Value {
         "instrument_ids": d.instrument_ids,
         "params": d.params.as_ref().map(aggregation_params_desc_to_json),
         "enabled": d.enabled,
+        "tiering": d.tiering.as_ref().map(tiering_config_desc_to_json),
     })
 }
 
@@ -3584,6 +3660,7 @@ fn aggregated_book_spec_from_json(v: &Value) -> Result<AggregatedBookSpec> {
         instrument_ids: string_array(o, "instrument_ids"),
         params: opt_nested(o, "params", aggregation_params_desc_from_json)?,
         enabled: bool_or_false(o, "enabled"),
+        tiering: opt_nested(o, "tiering", tiering_config_desc_from_json)?,
     })
 }
 

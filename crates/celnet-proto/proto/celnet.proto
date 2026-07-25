@@ -4076,6 +4076,87 @@ message AggregationParamsDesc {
   uint32 depth_levels = 5;
 }
 
+// The unit an outbound-tiering spread magnitude is expressed in (mirrors the
+// engine `celnet_tiering::SpreadUnit`). A bond "25 bps" is ambiguous — price bps
+// vs duration-consistent yield bps — so the unit is carried explicitly and the
+// engine converts each magnitude to a price offset per quote.
+enum TieringSpreadUnit {
+  // Price basis points: 1 bp = 0.01 price points per 100 face (proto3 zero
+  // default; the flat-markup baseline unit that matches the worked example).
+  TIERING_SPREAD_UNIT_PRICE_BPS = 0;
+  // Yield basis points: converted to a price offset via the bond's DV01
+  // (duration-consistent across the curve; requires bond DV01/ModDur).
+  TIERING_SPREAD_UNIT_YIELD_BPS = 1;
+  // Price points per 100 face — the magnitude IS the price offset.
+  TIERING_SPREAD_UNIT_PRICE_POINTS = 2;
+  // Percent of the mid — a magnitude of 1.0 is an offset of mid/100.
+  TIERING_SPREAD_UNIT_PERCENT = 3;
+}
+
+// What the engine does when the upstream composite is stale / the LP quorum is
+// lost (mirrors `celnet_tiering::StalePolicy`).
+enum TieringStalePolicy {
+  // Publish no quote for the line — the safe default (proto3 zero).
+  TIERING_STALE_POLICY_SUPPRESS = 0;
+  // Keep a market but widen to the guardrail `h_max` with zero skew.
+  TIERING_STALE_POLICY_WIDEN_TO_MAX = 1;
+}
+
+// Which pluggable tiering strategy a `TieringStrategyDesc` carries (mirrors the
+// `celnet_tiering::StrategySpec` variants). Phase 2a ships the two streaming-
+// relevant strategies; the remaining four (vol scale, size ladder, toxicity,
+// per-client tier) slot in additively as new enum values behind the same seam.
+enum TieringStrategyKind {
+  // Flat markup: a constant symmetric half-spread `half_spread`, no skew
+  // (proto3 zero default). `kappa` / `s_max` are ignored.
+  TIERING_STRATEGY_KIND_FLAT_MARKUP = 0;
+  // Inventory skew: base `half_spread` plus `clamp(kappa*q, +-s_max)` skew.
+  TIERING_STRATEGY_KIND_INVENTORY_SKEW = 1;
+}
+
+// One enabled tiering strategy and its parameters (mirrors a
+// `celnet_tiering::StrategySpec` variant). Magnitudes are in the parent
+// `TieringConfigDesc.unit`. Fields not used by `kind` are ignored (e.g. a
+// FLAT_MARKUP strategy ignores `kappa` / `s_max`).
+message TieringStrategyDesc {
+  // Which strategy this entry configures.
+  TieringStrategyKind kind = 1;
+  // The (base) half-spread magnitude `H` (both strategy kinds).
+  double half_spread = 2;
+  // Inventory-skew gain `kappa` (magnitude per unit inventory); INVENTORY_SKEW only.
+  double kappa = 3;
+  // Inventory-skew strategy-local cap `s_max` (magnitude); INVENTORY_SKEW only.
+  double s_max = 4;
+}
+
+// The price-space guardrail bounds (mirrors `celnet_tiering::Guardrails`); all
+// four are absolute price offsets (points), independent of the spread unit.
+message TieringGuardrailsDesc {
+  // Minimum half-spread `h_min >= 0`.
+  double h_min = 1;
+  // Maximum half-spread `h_max >= h_min` (also the widen-to-max width).
+  double h_max = 2;
+  // Maximum absolute skew `s_max >= 0`.
+  double s_max = 3;
+  // Minimum tradeable spread `spread_floor > 0` (`offer - bid >= spread_floor`).
+  double spread_floor = 4;
+}
+
+// A book's complete outbound-tiering configuration (mirrors
+// `celnet_tiering::TieringConfig`). Absent on `AggregatedBookSpec` /
+// `AggregatedBookDesc` ⇒ tiering disabled: the book publishes the raw composite
+// unchanged (zero behaviour change for a book with no tiering config).
+message TieringConfigDesc {
+  // The unit every strategy magnitude below is expressed in.
+  TieringSpreadUnit unit = 1;
+  // The enabled strategies, composed additively in order.
+  repeated TieringStrategyDesc strategies = 2;
+  // The price-space guardrail bounds clamping the composed result.
+  TieringGuardrailsDesc guardrails = 3;
+  // What to do on stale/absent upstream inputs.
+  TieringStalePolicy stale_policy = 4;
+}
+
 // The editable fields of an aggregated book (the create/update payload). The
 // server-minted `id` on `AggregatedBookDesc` is not part of the spec except as a
 // client-suggested slug on create (mirrors `FixConnectionSpec.id`).
@@ -4098,6 +4179,11 @@ message AggregatedBookSpec {
   // Whether the book is active (a disabled book is persisted and editable but stands
   // up no engine and publishes no composite).
   bool enabled = 7;
+  // The optional outbound-tiering configuration applied to this book's composite
+  // before publish. Absent ⇒ tiering disabled (the raw composite is published
+  // unchanged). Additive (rule 9) — an existing book with no tiering block loads
+  // and round-trips exactly as before.
+  TieringConfigDesc tiering = 8;
 }
 
 // A persisted aggregated book (mirrors the store `config::identity::AggregatedBookDef`
@@ -4117,6 +4203,9 @@ message AggregatedBookDesc {
   AggregationParamsDesc params = 6;
   // Whether the book is active.
   bool enabled = 7;
+  // The outbound-tiering configuration (absent ⇒ tiering disabled; see
+  // `AggregatedBookSpec.tiering`).
+  TieringConfigDesc tiering = 8;
 }
 
 // List the aggregated books (any authenticated caller — a book is global and its

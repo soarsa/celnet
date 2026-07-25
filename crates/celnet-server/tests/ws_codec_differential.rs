@@ -35,8 +35,9 @@ use celnet_proto::{
     AggregatedBookStreamUpdate, AggregatedInstrument, AggregationParamsDesc, AggregationScopeMode,
     BrokenDate, CcyPair, CreateAggregatedBookResponse, DeleteAggregatedBookResponse, Greeks, Leg,
     ListAggregatedBooksResponse, LpContribution, MarketContext, MetalPair, RateSensitivities,
-    Strategy, StrategyKind, StrikeOrDelta, SubscriptionId, Tenor, Underlying,
-    UpdateAggregatedBookResponse,
+    Strategy, StrategyKind, StrikeOrDelta, SubscriptionId, Tenor, TieringConfigDesc,
+    TieringGuardrailsDesc, TieringSpreadUnit, TieringStalePolicy, TieringStrategyDesc,
+    TieringStrategyKind, Underlying, UpdateAggregatedBookResponse,
 };
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
@@ -4178,7 +4179,22 @@ fn agg_spec_body() -> Value {
         "id": "g10", "name": "G10 Composite",
         "member_connection_ids": ["lp-one", "lp-two"],
         "scope_mode": 1, "instrument_ids": ["ust-10y", "ust-2y"],
-        "params": agg_params_body(), "enabled": true
+        "params": agg_params_body(), "enabled": true,
+        "tiering": agg_tiering_body()
+    })
+}
+
+/// A fully-populated tiering config body (both strategy kinds + guardrails), so the
+/// aggregated-book decode differential covers the nested tiering messages.
+fn agg_tiering_body() -> Value {
+    json!({
+        "unit": 0,
+        "strategies": [
+            { "kind": 0, "half_spread": 25.0, "kappa": 0.0, "s_max": 0.0 },
+            { "kind": 1, "half_spread": 25.0, "kappa": 1.5, "s_max": 100.0 }
+        ],
+        "guardrails": { "h_min": 0.0, "h_max": 5.0, "s_max": 2.0, "spread_floor": 0.01 },
+        "stale_policy": 1
     })
 }
 
@@ -4259,6 +4275,30 @@ fn agg_book_desc() -> AggregatedBookDesc {
             depth_levels: 3,
         }),
         enabled: true,
+        tiering: Some(TieringConfigDesc {
+            unit: TieringSpreadUnit::PriceBps as i32,
+            strategies: vec![
+                TieringStrategyDesc {
+                    kind: TieringStrategyKind::FlatMarkup as i32,
+                    half_spread: 25.0,
+                    kappa: 0.0,
+                    s_max: 0.0,
+                },
+                TieringStrategyDesc {
+                    kind: TieringStrategyKind::InventorySkew as i32,
+                    half_spread: 25.0,
+                    kappa: 1.5,
+                    s_max: 100.0,
+                },
+            ],
+            guardrails: Some(TieringGuardrailsDesc {
+                h_min: 0.0,
+                h_max: 5.0,
+                s_max: 2.0,
+                spread_floor: 0.01,
+            }),
+            stale_policy: TieringStalePolicy::WidenToMax as i32,
+        }),
     }
 }
 

@@ -50,10 +50,11 @@ use celnet_proto::{
     ListInstrumentsResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
     LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
     SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
-    SetUserCapabilitiesResponse, UpdateAggregatedBookRequest, UpdateAggregatedBookResponse,
-    UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse,
-    UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse,
-    UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
+    SetUserCapabilitiesResponse, TieringConfigDesc, TieringGuardrailsDesc, TieringSpreadUnit,
+    TieringStalePolicy, TieringStrategyDesc, TieringStrategyKind, UpdateAggregatedBookRequest,
+    UpdateAggregatedBookResponse, UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest,
+    UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest,
+    UpdateInstrumentResponse, UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
 };
 use celnet_rates::{CalibrationInstrument, bootstrap_curve};
 use tonic::{Request, Response, Status};
@@ -63,9 +64,9 @@ use crate::config::curve_calibration::{
     CurveCalibrationError, calibration_set, date_pillar_instrument,
 };
 use crate::config::identity::{
-    AggregatedBookDef, AggregationParams, BookDef, DeskDef, EntityDef, IdentityStore,
-    PermissionGrant, Role, Scope, UserDef, hash_password, mint_desk_id, mint_user_id,
-    verify_password,
+    AggregatedBookDef, AggregatedBookEdit, AggregationParams, BookDef, DeskDef, EntityDef,
+    IdentityStore, PermissionGrant, Role, Scope, UserDef, hash_password, mint_desk_id,
+    mint_user_id, verify_password,
 };
 use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
@@ -1281,7 +1282,7 @@ impl AuthService for AuthEdge {
         let spec = req
             .spec
             .ok_or_else(|| Status::invalid_argument("aggregated book spec is required"))?;
-        let (name, members, scope, params, enabled) = spec_parts(spec);
+        let edit = spec_parts(spec);
 
         // The store validates the definition's document-resolvable invariants (unique
         // name, no duplicate members, in-range params, explicit-scope instrument ids
@@ -1290,7 +1291,7 @@ impl AuthService for AuthEdge {
         let mut guard = self.lock();
         let mut next = guard.clone();
         let def = next
-            .create_aggregated_book(name, members, scope, params, enabled)
+            .create_aggregated_book(edit)
             .map_err(aggregated_book_status)?;
         self.persist_and_commit(&mut guard, next)?;
         self.reconcile_aggregation(&guard);
@@ -1312,7 +1313,7 @@ impl AuthService for AuthEdge {
         let spec = req
             .spec
             .ok_or_else(|| Status::invalid_argument("aggregated book spec is required"))?;
-        let (name, members, scope, params, enabled) = spec_parts(spec);
+        let edit = spec_parts(spec);
 
         let mut guard = self.lock();
         if guard.aggregated_book(&req.id).is_none() {
@@ -1323,7 +1324,7 @@ impl AuthService for AuthEdge {
         }
         let mut next = guard.clone();
         let def = next
-            .update_aggregated_book(&req.id, name, members, scope, params, enabled)
+            .update_aggregated_book(&req.id, edit)
             .map_err(aggregated_book_status)?;
         self.persist_and_commit(&mut guard, next)?;
         self.reconcile_aggregation(&guard);
@@ -1753,7 +1754,106 @@ fn aggregated_book_to_wire(def: &AggregatedBookDef) -> AggregatedBookDesc {
         instrument_ids,
         params: Some(params_to_wire(&def.params)),
         enabled: def.enabled,
+        tiering: def.tiering.as_ref().map(tiering_to_wire),
     }
+}
+
+/// Map a stored [`celnet_tiering::TieringConfig`] onto its wire [`TieringConfigDesc`]
+/// (Phase 2a). Every strategy variant becomes a `kind`-tagged [`TieringStrategyDesc`];
+/// magnitudes a variant does not carry are left at proto3 zero and ignored on decode.
+fn tiering_to_wire(cfg: &celnet_tiering::TieringConfig) -> TieringConfigDesc {
+    use celnet_tiering::{SpreadUnit, StalePolicy, StrategySpec};
+    let unit = match cfg.unit {
+        SpreadUnit::PriceBps => TieringSpreadUnit::PriceBps,
+        SpreadUnit::YieldBps => TieringSpreadUnit::YieldBps,
+        SpreadUnit::PricePoints => TieringSpreadUnit::PricePoints,
+        SpreadUnit::Percent => TieringSpreadUnit::Percent,
+    } as i32;
+    let stale_policy = match cfg.stale_policy {
+        StalePolicy::Suppress => TieringStalePolicy::Suppress,
+        StalePolicy::WidenToMax => TieringStalePolicy::WidenToMax,
+    } as i32;
+    let strategies = cfg
+        .strategies
+        .iter()
+        .map(|s| match *s {
+            StrategySpec::FlatMarkup { half_spread } => TieringStrategyDesc {
+                kind: TieringStrategyKind::FlatMarkup as i32,
+                half_spread,
+                kappa: 0.0,
+                s_max: 0.0,
+            },
+            StrategySpec::InventorySkew {
+                half_spread,
+                kappa,
+                s_max,
+            } => TieringStrategyDesc {
+                kind: TieringStrategyKind::InventorySkew as i32,
+                half_spread,
+                kappa,
+                s_max,
+            },
+        })
+        .collect();
+    TieringConfigDesc {
+        unit,
+        strategies,
+        guardrails: Some(TieringGuardrailsDesc {
+            h_min: cfg.guardrails.h_min,
+            h_max: cfg.guardrails.h_max,
+            s_max: cfg.guardrails.s_max,
+            spread_floor: cfg.guardrails.spread_floor,
+        }),
+        stale_policy,
+    }
+}
+
+/// Reconstruct a stored [`celnet_tiering::TieringConfig`] from its wire form. `None`
+/// (an absent `tiering` message) ⇒ tiering disabled. An unknown enum value defaults to
+/// the proto3 zero variant; an absent `guardrails` message defaults to all-zero bounds,
+/// which the store's `validate_tiering_config` then rejects (a bad config fails loudly
+/// at the admin write rather than silently suppressing at runtime).
+fn tiering_from_wire(tiering: Option<TieringConfigDesc>) -> Option<celnet_tiering::TieringConfig> {
+    use celnet_tiering::{Guardrails, SpreadUnit, StalePolicy, StrategySpec, TieringConfig};
+    let d = tiering?;
+    let unit = match TieringSpreadUnit::try_from(d.unit).unwrap_or_default() {
+        TieringSpreadUnit::PriceBps => SpreadUnit::PriceBps,
+        TieringSpreadUnit::YieldBps => SpreadUnit::YieldBps,
+        TieringSpreadUnit::PricePoints => SpreadUnit::PricePoints,
+        TieringSpreadUnit::Percent => SpreadUnit::Percent,
+    };
+    let stale_policy = match TieringStalePolicy::try_from(d.stale_policy).unwrap_or_default() {
+        TieringStalePolicy::Suppress => StalePolicy::Suppress,
+        TieringStalePolicy::WidenToMax => StalePolicy::WidenToMax,
+    };
+    let strategies = d
+        .strategies
+        .into_iter()
+        .map(
+            |s| match TieringStrategyKind::try_from(s.kind).unwrap_or_default() {
+                TieringStrategyKind::FlatMarkup => StrategySpec::FlatMarkup {
+                    half_spread: s.half_spread,
+                },
+                TieringStrategyKind::InventorySkew => StrategySpec::InventorySkew {
+                    half_spread: s.half_spread,
+                    kappa: s.kappa,
+                    s_max: s.s_max,
+                },
+            },
+        )
+        .collect();
+    let g = d.guardrails.unwrap_or(TieringGuardrailsDesc {
+        h_min: 0.0,
+        h_max: 0.0,
+        s_max: 0.0,
+        spread_floor: 0.0,
+    });
+    Some(TieringConfig {
+        unit,
+        strategies,
+        guardrails: Guardrails::new(g.h_min, g.h_max, g.s_max, g.spread_floor),
+        stale_policy,
+    })
 }
 
 /// Reconstruct the store [`Scope`] from a wire `(scope_mode, instrument_ids)` pair.
@@ -1779,19 +1879,20 @@ fn params_from_wire(params: Option<AggregationParamsDesc>) -> AggregationParams 
     })
 }
 
-/// Split an [`AggregatedBookSpec`] into the argument tuple the store's
+/// Map an [`AggregatedBookSpec`] onto the [`AggregatedBookEdit`] the store's
 /// `create_aggregated_book` / `update_aggregated_book` take. The spec's own `id` is
 /// intentionally dropped — create mints a fresh id and update keeps the request `id`.
-fn spec_parts(spec: AggregatedBookSpec) -> (String, Vec<String>, Scope, AggregationParams, bool) {
+fn spec_parts(spec: AggregatedBookSpec) -> AggregatedBookEdit {
     let scope = scope_from_wire(spec.scope_mode, spec.instrument_ids);
     let params = params_from_wire(spec.params);
-    (
+    AggregatedBookEdit::new(
         spec.name,
         spec.member_connection_ids,
         scope,
         params,
         spec.enabled,
     )
+    .with_tiering(tiering_from_wire(spec.tiering))
 }
 
 /// Map the store's aggregated-book validation error string onto a gRPC [`Status`]: a
@@ -3558,7 +3659,107 @@ mod tests {
                 depth_levels: 1,
             }),
             enabled: true,
+            tiering: None,
         }
+    }
+
+    /// A valid tiering config spec body (flat + inventory-skew, price bps).
+    fn agg_tiering_spec() -> TieringConfigDesc {
+        TieringConfigDesc {
+            unit: TieringSpreadUnit::PriceBps as i32,
+            strategies: vec![
+                TieringStrategyDesc {
+                    kind: TieringStrategyKind::FlatMarkup as i32,
+                    half_spread: 25.0,
+                    kappa: 0.0,
+                    s_max: 0.0,
+                },
+                TieringStrategyDesc {
+                    kind: TieringStrategyKind::InventorySkew as i32,
+                    half_spread: 25.0,
+                    kappa: 1.5,
+                    s_max: 100.0,
+                },
+            ],
+            guardrails: Some(TieringGuardrailsDesc {
+                h_min: 0.0,
+                h_max: 5.0,
+                s_max: 2.0,
+                spread_floor: 0.01,
+            }),
+            stale_policy: TieringStalePolicy::WidenToMax as i32,
+        }
+    }
+
+    /// An admin CRUD write carrying a tiering config round-trips it through the store
+    /// persistence and back onto the wire descriptor, and a bad config is rejected.
+    #[tokio::test]
+    async fn aggregated_book_round_trips_and_validates_tiering() {
+        let (edge, path, _s) = edge("agg-tiering");
+        let tok = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+
+        let mut spec = agg_spec("Tiered Book", vec!["lp-a".into()]);
+        spec.tiering = Some(agg_tiering_spec());
+        let created = edge
+            .create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: tok.clone(),
+                spec: Some(spec),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .book
+            .unwrap();
+        // The wire descriptor echoes the tiering config field-for-field.
+        let wire = created.tiering.clone().expect("tiering echoed");
+        assert_eq!(wire, agg_tiering_spec());
+
+        // Persisted to disk: reload and confirm the store carries the config, decoded to
+        // the engine's own `TieringConfig` shape.
+        let reloaded = IdentityStore::load(&path).unwrap();
+        let def = reloaded.aggregated_book(&created.id).expect("book present");
+        let stored = def.tiering.as_ref().expect("tiering persisted");
+        assert_eq!(stored.unit, celnet_tiering::SpreadUnit::PriceBps);
+        assert_eq!(stored.strategies.len(), 2);
+        assert_eq!(
+            stored.strategies[0],
+            celnet_tiering::StrategySpec::FlatMarkup { half_spread: 25.0 }
+        );
+        assert_eq!(
+            stored.strategies[1],
+            celnet_tiering::StrategySpec::InventorySkew {
+                half_spread: 25.0,
+                kappa: 1.5,
+                s_max: 100.0,
+            }
+        );
+        assert_eq!(stored.stale_policy, celnet_tiering::StalePolicy::WidenToMax);
+
+        // A config with inconsistent guardrails (h_max < spread_floor/2) is rejected.
+        let mut bad = agg_spec("Bad Tier", vec!["lp-b".into()]);
+        let mut bad_tier = agg_tiering_spec();
+        bad_tier.guardrails = Some(TieringGuardrailsDesc {
+            h_min: 0.0,
+            h_max: 0.0,
+            s_max: 1.0,
+            spread_floor: 1.0,
+        });
+        bad.tiering = Some(bad_tier);
+        let err = edge
+            .create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: tok.clone(),
+                spec: Some(bad),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]

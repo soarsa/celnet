@@ -415,7 +415,11 @@ impl Default for AggregationParams {
 /// Members are recorded as **transport-agnostic connection ids** (decision A), not a
 /// FIX-specific type: a member is any inbound liquidity connection (FIX RFS today, any
 /// other API adapter tomorrow) behind the `celnet-aggregation::VenueFeed` seam.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Eq` is intentionally **not** derived: the optional [`tiering`](Self::tiering)
+/// block carries `f64` spread/guardrail magnitudes, so the definition is only
+/// `PartialEq` (as [`IdentityStore`] itself already is, for the same reason).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AggregatedBookDef {
     /// Stable identifier (the store/API key). Never reused; minted from the name via
     /// [`mint_aggregated_book_id`].
@@ -441,6 +445,64 @@ pub struct AggregatedBookDef {
     /// Whether the book is active. A disabled book is persisted and editable but stands
     /// up no engine and publishes no composite — the operator's on/off switch.
     pub enabled: bool,
+    /// The optional outbound-**tiering** configuration (`celnet-tiering`): the enabled
+    /// strategies + params + guardrails + unit + stale policy applied to this book's
+    /// composite *before* publish (`docs/FI-TIERING-RESEARCH.md`; Phase 2a). `None`
+    /// (the additive serde-default) ⇒ tiering disabled: the raw composite is published
+    /// unchanged — zero behaviour change for an existing book, which carries no
+    /// `tiering` key and loads exactly as before. Validated at load and every admin
+    /// write (see [`check_aggregated_book`](IdentityStore::check_aggregated_book)).
+    #[serde(default)]
+    pub tiering: Option<celnet_tiering::TieringConfig>,
+}
+
+/// The **editable** fields of an aggregated book (everything but the server-minted
+/// `id`) — the single payload the store's create/update CRUD take, so the config layer
+/// and the admin RPCs pass one value rather than a long positional argument list. The
+/// service layer builds one from an [`AggregatedBookSpec`](celnet_proto::AggregatedBookSpec).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AggregatedBookEdit {
+    /// Human-friendly book label (unique across the store, case-insensitive).
+    pub name: String,
+    /// The inbound liquidity members feeding the composite, by connection id.
+    pub member_connection_ids: Vec<String>,
+    /// Which instruments the composite is produced for.
+    pub instrument_scope: Scope,
+    /// The consolidation-engine tuning.
+    pub params: AggregationParams,
+    /// Whether the book is active.
+    pub enabled: bool,
+    /// The optional outbound-tiering configuration (`None` ⇒ tiering disabled).
+    pub tiering: Option<celnet_tiering::TieringConfig>,
+}
+
+impl AggregatedBookEdit {
+    /// A minimal edit with tiering disabled — the common form; layer a config on with
+    /// [`Self::with_tiering`].
+    #[must_use]
+    pub fn new(
+        name: impl Into<String>,
+        member_connection_ids: Vec<String>,
+        instrument_scope: Scope,
+        params: AggregationParams,
+        enabled: bool,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            member_connection_ids,
+            instrument_scope,
+            params,
+            enabled,
+            tiering: None,
+        }
+    }
+
+    /// Set the outbound-tiering configuration.
+    #[must_use]
+    pub fn with_tiering(mut self, tiering: Option<celnet_tiering::TieringConfig>) -> Self {
+        self.tiering = tiering;
+        self
+    }
 }
 
 /// The persisted document: the users and desks of the edge.
@@ -694,6 +756,9 @@ impl IdentityStore {
                     ));
                 }
             }
+        }
+        if let Some(tiering) = &def.tiering {
+            validate_tiering_config(&def.name, tiering)?;
         }
         Ok(())
     }
@@ -977,13 +1042,9 @@ impl IdentityStore {
     /// invariants (duplicate member id, out-of-range param, dangling instrument id).
     pub fn create_aggregated_book(
         &mut self,
-        name: impl Into<String>,
-        member_connection_ids: Vec<String>,
-        instrument_scope: Scope,
-        params: AggregationParams,
-        enabled: bool,
+        edit: AggregatedBookEdit,
     ) -> Result<AggregatedBookDef, String> {
-        let name = name.into().trim().to_string();
+        let name = edit.name.trim().to_string();
         if name.is_empty() {
             return Err("aggregated book name is required".to_string());
         }
@@ -997,10 +1058,11 @@ impl IdentityStore {
         let def = AggregatedBookDef {
             id: mint_aggregated_book_id(&name, &self.aggregated_books),
             name,
-            member_connection_ids,
-            instrument_scope,
-            params,
-            enabled,
+            member_connection_ids: edit.member_connection_ids,
+            instrument_scope: edit.instrument_scope,
+            params: edit.params,
+            enabled: edit.enabled,
+            tiering: edit.tiering,
         };
         self.check_aggregated_book(&def)?;
         self.aggregated_books.push(def.clone());
@@ -1018,16 +1080,12 @@ impl IdentityStore {
     pub fn update_aggregated_book(
         &mut self,
         id: &str,
-        name: impl Into<String>,
-        member_connection_ids: Vec<String>,
-        instrument_scope: Scope,
-        params: AggregationParams,
-        enabled: bool,
+        edit: AggregatedBookEdit,
     ) -> Result<AggregatedBookDef, String> {
         if self.aggregated_book(id).is_none() {
             return Err(format!("no aggregated book with id {id:?}"));
         }
-        let name = name.into().trim().to_string();
+        let name = edit.name.trim().to_string();
         if name.is_empty() {
             return Err("aggregated book name is required".to_string());
         }
@@ -1041,10 +1099,11 @@ impl IdentityStore {
         let def = AggregatedBookDef {
             id: id.to_string(),
             name,
-            member_connection_ids,
-            instrument_scope,
-            params,
-            enabled,
+            member_connection_ids: edit.member_connection_ids,
+            instrument_scope: edit.instrument_scope,
+            params: edit.params,
+            enabled: edit.enabled,
+            tiering: edit.tiering,
         };
         self.check_aggregated_book(&def)?;
         if let Some(slot) = self.aggregated_books.iter_mut().find(|b| b.id == id) {
@@ -1118,6 +1177,66 @@ pub fn mint_desk_id(name: &str, existing: &[DeskDef]) -> String {
         base
     };
     unique_id(&base, |cand| existing.iter().any(|d| d.id == cand))
+}
+
+/// Validate a book's outbound-[`tiering`](AggregatedBookDef::tiering) configuration
+/// at load and at every admin write (mirroring the `reference_data.rs::validate_*`
+/// discipline — reject non-finite magnitudes, negative-where-magnitude, and
+/// internally inconsistent guardrail bounds), so an unsound config is rejected
+/// loudly here rather than silently suppressing every quote at runtime.
+///
+/// * The guardrail bounds must pass the engine's own invariant (`0 ≤ h_min ≤ h_max`,
+///   `s_max ≥ 0`, `spread_floor > 0`, `h_max ≥ spread_floor/2`).
+/// * At least one strategy must be enabled (an empty strategy list is a mistake —
+///   omit the whole `tiering` block to disable tiering instead).
+/// * Every strategy magnitude is finite, and the half-spread / skew-cap / gain
+///   magnitudes are non-negative.
+///
+/// # Errors
+/// The first inconsistent guardrail, empty strategy list, or non-finite / negative
+/// magnitude, as a human-readable message.
+fn validate_tiering_config(book: &str, cfg: &celnet_tiering::TieringConfig) -> Result<(), String> {
+    use celnet_tiering::StrategySpec;
+    let ctx = |m: String| format!("aggregated book {book:?} tiering {m}");
+    let finite = |v: f64, what: &str| -> Result<(), String> {
+        if v.is_finite() {
+            Ok(())
+        } else {
+            Err(format!("{what} must be finite"))
+        }
+    };
+    let finite_nonneg = |v: f64, what: &str| -> Result<(), String> {
+        if v.is_finite() && v >= 0.0 {
+            Ok(())
+        } else {
+            Err(format!("{what} must be finite and non-negative"))
+        }
+    };
+    cfg.guardrails
+        .validate()
+        .map_err(|e| ctx(format!("guardrails are inconsistent ({:?})", e.reason)))?;
+    if cfg.strategies.is_empty() {
+        return Err(ctx(
+            "enables no strategy (omit the tiering block to disable tiering)".to_string(),
+        ));
+    }
+    for s in &cfg.strategies {
+        match *s {
+            StrategySpec::FlatMarkup { half_spread } => {
+                finite_nonneg(half_spread, "flat-markup half_spread").map_err(ctx)?;
+            }
+            StrategySpec::InventorySkew {
+                half_spread,
+                kappa,
+                s_max,
+            } => {
+                finite_nonneg(half_spread, "inventory-skew half_spread").map_err(ctx)?;
+                finite(kappa, "inventory-skew kappa").map_err(ctx)?;
+                finite_nonneg(s_max, "inventory-skew s_max").map_err(ctx)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Mint a stable, unique, URL-safe id for a new aggregated book from its name,
@@ -1561,13 +1680,13 @@ mod tests {
     fn aggregated_book_create_get_and_delete() {
         let mut store = IdentityStore::default();
         let def = store
-            .create_aggregated_book(
+            .create_aggregated_book(AggregatedBookEdit::new(
                 "G10 Rates Composite",
                 vec!["fix-lp-a".into(), "fix-lp-b".into()],
                 Scope::AllMembersQuote,
                 AggregationParams::default(),
                 true,
-            )
+            ))
             .expect("valid book creates");
         assert_eq!(def.id, "g10-rates-composite");
         assert_eq!(store.aggregated_book(&def.id), Some(&def));
@@ -1584,22 +1703,24 @@ mod tests {
     fn aggregated_book_rename_keeps_id() {
         let mut store = IdentityStore::default();
         let a = store
-            .create_aggregated_book(
+            .create_aggregated_book(AggregatedBookEdit::new(
                 "Alpha",
                 vec![],
                 Scope::AllMembersQuote,
                 AggregationParams::default(),
                 true,
-            )
+            ))
             .unwrap();
         let updated = store
             .update_aggregated_book(
                 &a.id,
-                "Alpha Prime",
-                vec!["lp-1".into()],
-                Scope::AllMembersQuote,
-                AggregationParams::default(),
-                false,
+                AggregatedBookEdit::new(
+                    "Alpha Prime",
+                    vec!["lp-1".into()],
+                    Scope::AllMembersQuote,
+                    AggregationParams::default(),
+                    false,
+                ),
             )
             .expect("rename succeeds");
         assert_eq!(updated.id, a.id, "id is preserved across a rename");
@@ -1613,42 +1734,44 @@ mod tests {
     fn aggregated_book_duplicate_name_rejected() {
         let mut store = IdentityStore::default();
         store
-            .create_aggregated_book(
+            .create_aggregated_book(AggregatedBookEdit::new(
                 "Composite One",
                 vec![],
                 Scope::AllMembersQuote,
                 AggregationParams::default(),
                 true,
-            )
+            ))
             .unwrap();
         let err = store
-            .create_aggregated_book(
+            .create_aggregated_book(AggregatedBookEdit::new(
                 "  composite one  ",
                 vec![],
                 Scope::AllMembersQuote,
                 AggregationParams::default(),
                 true,
-            )
+            ))
             .expect_err("case-insensitive duplicate name must be rejected");
         assert!(err.contains("already exists"));
         // The edited book may keep its own name, but not take another's.
         let two = store
-            .create_aggregated_book(
+            .create_aggregated_book(AggregatedBookEdit::new(
                 "Composite Two",
                 vec![],
                 Scope::AllMembersQuote,
                 AggregationParams::default(),
                 true,
-            )
+            ))
             .unwrap();
         let err = store
             .update_aggregated_book(
                 &two.id,
-                "COMPOSITE ONE",
-                vec![],
-                Scope::AllMembersQuote,
-                AggregationParams::default(),
-                true,
+                AggregatedBookEdit::new(
+                    "COMPOSITE ONE",
+                    vec![],
+                    Scope::AllMembersQuote,
+                    AggregationParams::default(),
+                    true,
+                ),
             )
             .expect_err("rename onto another book's name must be rejected");
         assert!(err.contains("already exists"));
@@ -1663,25 +1786,25 @@ mod tests {
         let known = store.instruments[0].instrument_id.clone();
 
         let err = store
-            .create_aggregated_book(
+            .create_aggregated_book(AggregatedBookEdit::new(
                 "Explicit Bad",
                 vec![],
                 Scope::Explicit(vec![known.clone(), "no-such-instrument".into()]),
                 AggregationParams::default(),
                 true,
-            )
+            ))
             .expect_err("an unknown explicit instrument id must be rejected");
         assert!(err.contains("unknown instrument_id"));
 
         // A scope of only known ids is accepted.
         store
-            .create_aggregated_book(
+            .create_aggregated_book(AggregatedBookEdit::new(
                 "Explicit Good",
                 vec![],
                 Scope::Explicit(vec![known]),
                 AggregationParams::default(),
                 true,
-            )
+            ))
             .expect("a resolvable explicit scope is accepted");
     }
 
@@ -1690,13 +1813,13 @@ mod tests {
     fn aggregated_book_duplicate_member_rejected() {
         let mut store = IdentityStore::default();
         let err = store
-            .create_aggregated_book(
+            .create_aggregated_book(AggregatedBookEdit::new(
                 "Dup Members",
                 vec!["lp-x".into(), "lp-x".into()],
                 Scope::AllMembersQuote,
                 AggregationParams::default(),
                 true,
-            )
+            ))
             .expect_err("a duplicate member id must be rejected");
         assert!(err.contains("more than once"));
     }
@@ -1711,13 +1834,13 @@ mod tests {
             ..AggregationParams::default()
         };
         let err = store
-            .create_aggregated_book(
+            .create_aggregated_book(AggregatedBookEdit::new(
                 "Zero Quorum",
                 vec![],
                 Scope::AllMembersQuote,
                 zero_contrib,
                 true,
-            )
+            ))
             .expect_err("min_contributors = 0 must be rejected");
         assert!(err.contains("min_contributors >= 1"));
 
@@ -1726,7 +1849,13 @@ mod tests {
             ..AggregationParams::default()
         };
         let err = store
-            .create_aggregated_book("Zero Tau", vec![], Scope::AllMembersQuote, zero_tau, true)
+            .create_aggregated_book(AggregatedBookEdit::new(
+                "Zero Tau",
+                vec![],
+                Scope::AllMembersQuote,
+                zero_tau,
+                true,
+            ))
             .expect_err("staleness_tau_ms = 0 must be rejected");
         assert!(err.contains("staleness_tau_ms > 0"));
     }
@@ -1740,7 +1869,7 @@ mod tests {
         store.ensure_seed_instruments();
         let known = store.instruments[0].instrument_id.clone();
         store
-            .create_aggregated_book(
+            .create_aggregated_book(AggregatedBookEdit::new(
                 "Round Trip Composite",
                 vec!["fix-lp-a".into(), "api-lp-b".into()],
                 Scope::Explicit(vec![known]),
@@ -1752,7 +1881,7 @@ mod tests {
                     depth_levels: 5,
                 },
                 true,
-            )
+            ))
             .unwrap();
 
         let path = std::env::temp_dir().join(format!(
@@ -1819,6 +1948,7 @@ mod tests {
             instrument_scope: Scope::AllMembersQuote,
             params: AggregationParams::default(),
             enabled: true,
+            tiering: None,
         }];
         assert_eq!(mint_aggregated_book_id("Alpha", &existing), "alpha-2");
     }

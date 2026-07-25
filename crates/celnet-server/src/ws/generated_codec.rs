@@ -108,7 +108,8 @@ use celnet_proto::{
     ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, OisDef,
     ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
     SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
-    StirFutureDef, UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookRequest,
+    StirFutureDef, TieringConfigDesc, TieringGuardrailsDesc, TieringStrategyDesc,
+    UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookRequest,
     UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest,
     UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest,
     UpdateUserResponse, UserDesc, VanillaIrsDef,
@@ -5694,6 +5695,53 @@ impl WireBuilder for AggregatedBookSpec {
             "instrument_ids" => self.instrument_ids = string_vec(value),
             "params" => self.params = opt_msg::<AggregationParamsDesc>(value, "params")?,
             "enabled" => self.enabled = bool_or_false(value),
+            "tiering" => self.tiering = opt_msg::<TieringConfigDesc>(value, "tiering")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for TieringConfigDesc {
+    const MESSAGE: &'static str = "TieringConfigDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "unit" => self.unit = enum_or_zero(value),
+            "strategies" => {
+                self.strategies = opt_repeated::<TieringStrategyDesc>(value, "strategy")?;
+            }
+            "guardrails" => {
+                self.guardrails = opt_msg::<TieringGuardrailsDesc>(value, "guardrails")?;
+            }
+            "stale_policy" => self.stale_policy = enum_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for TieringStrategyDesc {
+    const MESSAGE: &'static str = "TieringStrategyDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "kind" => self.kind = enum_or_zero(value),
+            "half_spread" => self.half_spread = f64_or_zero(value),
+            "kappa" => self.kappa = f64_or_zero(value),
+            "s_max" => self.s_max = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for TieringGuardrailsDesc {
+    const MESSAGE: &'static str = "TieringGuardrailsDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "h_min" => self.h_min = f64_or_zero(value),
+            "h_max" => self.h_max = f64_or_zero(value),
+            "s_max" => self.s_max = f64_or_zero(value),
+            "spread_floor" => self.spread_floor = f64_or_zero(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -6689,6 +6737,48 @@ impl WireAdapter for AggregatedBookDesc {
             "instrument_ids" => Some(WireVal::RepeatedStr(&self.instrument_ids)),
             "params" => self.params.as_ref().map(|p| WireVal::Msg(p)),
             "enabled" => Some(WireVal::Bool(self.enabled)),
+            "tiering" => self.tiering.as_ref().map(|t| WireVal::Msg(t)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for TieringConfigDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "unit" => Some(WireVal::Enum(self.unit)),
+            "strategies" => Some(WireVal::RepeatedMsg(
+                self.strategies
+                    .iter()
+                    .map(|s| s as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "guardrails" => self.guardrails.as_ref().map(|g| WireVal::Msg(g)),
+            "stale_policy" => Some(WireVal::Enum(self.stale_policy)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for TieringStrategyDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "kind" => Some(WireVal::Enum(self.kind)),
+            "half_spread" => Some(WireVal::F64(self.half_spread)),
+            "kappa" => Some(WireVal::F64(self.kappa)),
+            "s_max" => Some(WireVal::F64(self.s_max)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for TieringGuardrailsDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "h_min" => Some(WireVal::F64(self.h_min)),
+            "h_max" => Some(WireVal::F64(self.h_max)),
+            "s_max" => Some(WireVal::F64(self.s_max)),
+            "spread_floor" => Some(WireVal::F64(self.spread_floor)),
             _ => None,
         }
     }
