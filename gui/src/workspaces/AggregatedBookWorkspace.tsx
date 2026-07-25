@@ -6,7 +6,11 @@
  * sizes, a confidence badge, and an expandable per-LP breakdown (each member's
  * own two-way + a stale indicator when it was excluded from the composite).
  * Registered FI-only in the rail, so it appears only under the Fixed Income
- * domain.
+ * domain. For an ADMIN it additionally offers a "Manage" mode (a View/Manage
+ * toggle) that hosts the aggregated-book definition editor — members, instrument
+ * scope, consolidation tuning, and the per-book OUTBOUND TIERING config (widen /
+ * skew before publish) — so the book + tiering admin is reachable under Fixed
+ * Income, not only under Administration → Aggregation. Non-admins never see it.
  *
  * The composite is a READ line (any authenticated user) — there is NO click-to-
  * trade token on it, so no execute action is offered (honest: executable two-way
@@ -21,10 +25,13 @@ import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
 import type {
   AggregatedBookDesc,
+  AggregatedBookSpec,
   AggregatedInstrument,
   BondDef,
+  FixConnection,
 } from "../data/contract";
 import { useAggregatedBook } from "../hooks/useAggregatedBook";
+import { AggregationPanel } from "./AggregationPanel";
 import { useReferenceData } from "../hooks/useReferenceData";
 import { bondTermRows, indexBondDefs, resolveBondDef } from "../lib/bondTerms";
 import { fmtClock, fmtCompact } from "../lib/format";
@@ -216,11 +223,30 @@ export function AggregatedBookWorkspace(): React.ReactElement {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Admin-only "Manage" mode: an admin edits the book roster + per-book tiering
+  // right here under Fixed Income (the aggregated-book admin lives here AND under
+  // Administration → Aggregation). Non-admins never see the toggle.
+  const isAdmin = auth.isAdmin;
+  const [mode, setMode] = useState<"view" | "manage">("view");
+  const [connections, setConnections] = useState<FixConnection[]>([]);
+  const [manageError, setManageError] = useState<string | null>(null);
 
   const signedIn = auth.user !== undefined && auth.user !== null;
 
-  // Load the roster of defined books (any authenticated user may list them). A
-  // deterministic default selection lands on the first ENABLED book.
+  // Load (and reload after an admin mutation) the roster of defined books — any
+  // authenticated user may list them. A deterministic default selection lands on
+  // the first ENABLED book; an existing selection is preserved when still present.
+  const reloadBooks = useCallback(async (): Promise<void> => {
+    const list = await app.transport.listAggregatedBooks();
+    setBooks(list);
+    setLoadError(null);
+    setSelectedId((prev) => {
+      if (prev && list.some((b) => b.id === prev)) return prev;
+      const firstEnabled = list.find((b) => b.enabled) ?? list[0];
+      return firstEnabled ? firstEnabled.id : null;
+    });
+  }, [app.transport]);
+
   useEffect(() => {
     if (!signedIn) {
       setBooks([]);
@@ -228,26 +254,72 @@ export function AggregatedBookWorkspace(): React.ReactElement {
       return;
     }
     let cancelled = false;
+    void reloadBooks().catch((e: unknown) => {
+      if (cancelled) return;
+      setLoadError(e instanceof Error ? e.message : "failed to load aggregated books");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadBooks, signedIn]);
+
+  // The managed FIX-connection registry feeds the Manage editor's member candidates
+  // — an admin-only list, so it is fetched ONLY for admins (a non-admin never issues
+  // the admin-gated RPC). Failure degrades silently to the free-text member entry.
+  useEffect(() => {
+    if (!isAdmin) {
+      setConnections([]);
+      return;
+    }
+    let cancelled = false;
     void app.transport
-      .listAggregatedBooks()
+      .listFixConnections()
       .then((list) => {
-        if (cancelled) return;
-        setBooks(list);
-        setLoadError(null);
-        setSelectedId((prev) => {
-          if (prev && list.some((b) => b.id === prev)) return prev;
-          const firstEnabled = list.find((b) => b.enabled) ?? list[0];
-          return firstEnabled ? firstEnabled.id : null;
-        });
+        if (!cancelled) setConnections(list);
       })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setLoadError(e instanceof Error ? e.message : "failed to load aggregated books");
+      .catch(() => {
+        if (!cancelled) setConnections([]);
       });
     return () => {
       cancelled = true;
     };
-  }, [app.transport, signedIn]);
+  }, [app.transport, isAdmin]);
+
+  // Manage-mode mutation runner: surfaces a failure inline (the panel refetches the
+  // roster on success via `reloadBooks`, keeping the View selector in sync).
+  const runManage = useCallback(async (action: () => Promise<unknown>): Promise<void> => {
+    setManageError(null);
+    try {
+      await action();
+    } catch (e: unknown) {
+      setManageError(e instanceof Error ? e.message : "action failed");
+    }
+  }, []);
+
+  const createBook = useCallback(
+    async (spec: AggregatedBookSpec): Promise<AggregatedBookDesc> => {
+      const created = await app.transport.createAggregatedBook(spec);
+      await reloadBooks();
+      return created;
+    },
+    [app.transport, reloadBooks],
+  );
+  const updateBook = useCallback(
+    async (id: string, spec: AggregatedBookSpec): Promise<AggregatedBookDesc> => {
+      const updated = await app.transport.updateAggregatedBook(id, spec);
+      await reloadBooks();
+      return updated;
+    },
+    [app.transport, reloadBooks],
+  );
+  const deleteBook = useCallback(
+    async (id: string): Promise<unknown> => {
+      const ok = await app.transport.deleteAggregatedBook(id);
+      await reloadBooks();
+      return ok;
+    },
+    [app.transport, reloadBooks],
+  );
 
   const composite = useAggregatedBook(app.transport, signedIn ? selectedId : null);
   const selectedBook = useMemo(
@@ -300,80 +372,133 @@ export function AggregatedBookWorkspace(): React.ReactElement {
     <div className={styles.wrap}>
       <div className={styles.head}>
         <div className={styles.headMain}>
-          <span className={styles.title}>Aggregated book · live composite</span>
+          <span className={styles.title}>
+            Aggregated book · {mode === "manage" ? "manage & tiering" : "live composite"}
+          </span>
           <span className={styles.note}>
-            consolidated best bid/offer across the book&apos;s inbound liquidity members ·
-            one price tile per security · open a tile for the per-LP breakdown
+            {mode === "manage"
+              ? "define the book's members, instrument scope, consolidation tuning, and outbound price tiering"
+              : "consolidated best bid/offer across the book's inbound liquidity members · one price tile per security · open a tile for the per-LP breakdown"}
           </span>
         </div>
-        {composite.baselined && selectedBook && (
-          <div className={styles.status} aria-live="polite">
-            <span className={styles.statusDot} data-live="true" aria-hidden="true" />
-            <span className={styles.statusText}>
-              seq <span className="num">{composite.sequence.toString()}</span> ·{" "}
-              {fmtClock(composite.epochNanos)}
-            </span>
-          </div>
-        )}
+        <div className={styles.headAside}>
+          {isAdmin && (
+            <div className={styles.modeToggle} role="group" aria-label="aggregated book mode">
+              <button
+                type="button"
+                className={`${styles.modeBtn} ${mode === "view" ? styles.modeBtnActive : ""}`}
+                aria-pressed={mode === "view"}
+                onClick={() => setMode("view")}
+              >
+                View
+              </button>
+              <button
+                type="button"
+                className={`${styles.modeBtn} ${mode === "manage" ? styles.modeBtnActive : ""}`}
+                aria-pressed={mode === "manage"}
+                onClick={() => setMode("manage")}
+              >
+                Manage
+              </button>
+            </div>
+          )}
+          {mode === "view" && composite.baselined && selectedBook && (
+            <div className={styles.status} aria-live="polite">
+              <span className={styles.statusDot} data-live="true" aria-hidden="true" />
+              <span className={styles.statusText}>
+                seq <span className="num">{composite.sequence.toString()}</span> ·{" "}
+                {fmtClock(composite.epochNanos)}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
 
-      {loadError && <p className={styles.banner}>{loadError}</p>}
-
-      {books.length === 0 ? (
-        <div className={styles.empty}>
-          No aggregated books are defined. An administrator can define one in{" "}
-          <strong>Administration → Aggregation</strong>.
-        </div>
-      ) : (
-        <div className={styles.selector} role="group" aria-label="select an aggregated book">
-          {books.map((b) => (
-            <button
-              key={b.id}
-              type="button"
-              className={`${styles.bookBtn} ${selectedId === b.id ? styles.bookBtnActive : ""}`}
-              aria-pressed={selectedId === b.id}
-              onClick={() => setSelectedId(b.id)}
-              disabled={!b.enabled}
-              title={
-                b.enabled
-                  ? `${b.memberConnectionIds.length} member${b.memberConnectionIds.length === 1 ? "" : "s"}`
-                  : "disabled — publishes no composite"
-              }
-            >
-              {b.name}
-              {!b.enabled && <span className={styles.bookOff}> (off)</span>}
-            </button>
-          ))}
-        </div>
+      {isAdmin && mode === "manage" && (
+        <section className={styles.managePanel} aria-label="manage aggregated books">
+          {manageError && <p className={styles.banner}>{manageError}</p>}
+          <AggregationPanel
+            books={books}
+            connections={connections}
+            onCreate={createBook}
+            onUpdate={updateBook}
+            onDelete={deleteBook}
+            run={runManage}
+          />
+        </section>
       )}
 
-      {selectedBook && (
-        <section className={styles.gridWrap} aria-label={`${selectedBook.name} composite`}>
-          {!composite.baselined ? (
+      {mode === "view" && (
+        <>
+          {loadError && <p className={styles.banner}>{loadError}</p>}
+
+          {books.length === 0 ? (
             <div className={styles.empty}>
-              {selectedBook.enabled
-                ? "Awaiting the first composite snapshot…"
-                : "This book is disabled — it publishes no composite."}
-            </div>
-          ) : composite.instruments.length === 0 ? (
-            <div className={styles.empty}>
-              No instrument currently meets the book&apos;s quorum. Composites appear as its
-              members stream fresh quotes.
+              No aggregated books are defined.{" "}
+              {isAdmin ? (
+                <>
+                  Switch to <strong>Manage</strong> above to define one — or use{" "}
+                  <strong>Administration → Aggregation</strong>.
+                </>
+              ) : (
+                <>
+                  An administrator can define one in{" "}
+                  <strong>Administration → Aggregation</strong>.
+                </>
+              )}
             </div>
           ) : (
-            <div className={styles.tileGrid} aria-label="aggregated composite tiles">
-              {composite.instruments.map((inst) => (
-                <InstrumentTile
-                  key={inst.instrumentId}
-                  instrument={inst}
-                  bond={resolveBondDef(bondIndex, inst)}
-                  expanded={expanded.has(inst.instrumentId)}
-                  onToggle={() => toggleRow(inst.instrumentId)}
-                />
+            <div className={styles.selector} role="group" aria-label="select an aggregated book">
+              {books.map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  className={`${styles.bookBtn} ${selectedId === b.id ? styles.bookBtnActive : ""}`}
+                  aria-pressed={selectedId === b.id}
+                  onClick={() => setSelectedId(b.id)}
+                  disabled={!b.enabled}
+                  title={
+                    b.enabled
+                      ? `${b.memberConnectionIds.length} member${b.memberConnectionIds.length === 1 ? "" : "s"}`
+                      : "disabled — publishes no composite"
+                  }
+                >
+                  {b.name}
+                  {!b.enabled && <span className={styles.bookOff}> (off)</span>}
+                </button>
               ))}
             </div>
           )}
-        </section>
+
+          {selectedBook && (
+            <section className={styles.gridWrap} aria-label={`${selectedBook.name} composite`}>
+              {!composite.baselined ? (
+                <div className={styles.empty}>
+                  {selectedBook.enabled
+                    ? "Awaiting the first composite snapshot…"
+                    : "This book is disabled — it publishes no composite."}
+                </div>
+              ) : composite.instruments.length === 0 ? (
+                <div className={styles.empty}>
+                  No instrument currently meets the book&apos;s quorum. Composites appear as its
+                  members stream fresh quotes.
+                </div>
+              ) : (
+                <div className={styles.tileGrid} aria-label="aggregated composite tiles">
+                  {composite.instruments.map((inst) => (
+                    <InstrumentTile
+                      key={inst.instrumentId}
+                      instrument={inst}
+                      bond={resolveBondDef(bondIndex, inst)}
+                      expanded={expanded.has(inst.instrumentId)}
+                      onToggle={() => toggleRow(inst.instrumentId)}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+        </>
       )}
     </div>
   );

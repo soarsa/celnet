@@ -2658,6 +2658,89 @@ export interface AggregationParams {
   depthLevels: number;
 }
 
+// ---------------------------------------------------------------------------
+// Outbound price tiering (FI-TIERING phase 3) — the per-book config the server's
+// `celnet-tiering` engine applies to the raw composite BEFORE publish: it widens
+// around mid (half-spread) and/or skews (inventory), clamped by guardrails.
+// Mirrors `celnet.wire.TieringConfigDesc` field-for-field; an ABSENT config
+// (`tiering: null`) ⇒ tiering disabled (the raw composite is published unchanged).
+// The GUI hand-decodes the WS JSON, so the wire codec (`wsCodec.ts`) matches the
+// server's snake_case names + NUMERIC enums exactly (see `docs/FI-TIERING-RESEARCH.md`).
+
+/**
+ * The unit an outbound-tiering spread magnitude is expressed in (mirrors the wire
+ * `TieringSpreadUnit`: PRICE_BPS=0, YIELD_BPS=1, PRICE_POINTS=2, PERCENT=3). A bond
+ * "25 bps" is ambiguous — price bps (a fixed price offset) vs duration-consistent
+ * yield bps (converted via the bond's DV01) — so the unit is carried explicitly.
+ */
+export type TieringSpreadUnit = "PRICE_BPS" | "YIELD_BPS" | "PRICE_POINTS" | "PERCENT";
+
+/**
+ * What the engine does when the upstream composite is stale / the LP quorum is lost
+ * (mirrors the wire `TieringStalePolicy`: SUPPRESS=0, WIDEN_TO_MAX=1). `SUPPRESS`
+ * publishes no quote for the line (the safe default); `WIDEN_TO_MAX` keeps a market
+ * but widens to the guardrail `hMax` with zero skew.
+ */
+export type TieringStalePolicy = "SUPPRESS" | "WIDEN_TO_MAX";
+
+/**
+ * Which pluggable tiering strategy a {@link TieringStrategy} carries (mirrors the
+ * wire `TieringStrategyKind`: FLAT_MARKUP=0, INVENTORY_SKEW=1). Phase 2a ships the
+ * two streaming-relevant strategies; the remaining four (vol scale, size ladder,
+ * toxicity, per-client tier) slot in additively as new union members later.
+ */
+export type TieringStrategyKind = "FLAT_MARKUP" | "INVENTORY_SKEW";
+
+/**
+ * One enabled tiering strategy and its parameters (mirrors `celnet.wire
+ * .TieringStrategyDesc`). Magnitudes are in the parent {@link TieringConfig.unit}.
+ * Fields a `kind` does not use are ignored (a `FLAT_MARKUP` strategy ignores
+ * `kappa`/`sMax`).
+ */
+export interface TieringStrategy {
+  /** Which strategy this entry configures. */
+  kind: TieringStrategyKind;
+  /** The (base) half-spread magnitude `H` (both strategy kinds). */
+  halfSpread: number;
+  /** Inventory-skew gain `kappa` (magnitude per unit inventory); INVENTORY_SKEW only. */
+  kappa: number;
+  /** Inventory-skew strategy-local cap `sMax` (magnitude); INVENTORY_SKEW only. */
+  sMax: number;
+}
+
+/**
+ * The price-space guardrail bounds (mirrors `celnet.wire.TieringGuardrailsDesc`);
+ * all four are absolute price offsets (points), independent of the spread unit.
+ */
+export interface TieringGuardrails {
+  /** Minimum half-spread `hMin >= 0`. */
+  hMin: number;
+  /** Maximum half-spread `hMax >= hMin` (also the widen-to-max width). */
+  hMax: number;
+  /** Maximum absolute skew `sMax >= 0`. */
+  sMax: number;
+  /** Minimum tradeable spread `spreadFloor > 0` (`offer - bid >= spreadFloor`). */
+  spreadFloor: number;
+}
+
+/**
+ * A book's complete outbound-tiering configuration (mirrors `celnet.wire
+ * .TieringConfigDesc`). Present ⇒ tiering enabled; the raw composite is widened /
+ * skewed by the composed `strategies` and clamped by `guardrails` before publish.
+ * `guardrails` may be `null` on the wire (the server renders an absent guardrails
+ * block as `null`); the admin form always sends a full guardrails block.
+ */
+export interface TieringConfig {
+  /** The unit every strategy magnitude below is expressed in. */
+  unit: TieringSpreadUnit;
+  /** The enabled strategies, composed additively in order. */
+  strategies: TieringStrategy[];
+  /** The price-space guardrail bounds clamping the composed result (`null` ⇒ none). */
+  guardrails: TieringGuardrails | null;
+  /** What to do on stale/absent upstream inputs. */
+  stalePolicy: TieringStalePolicy;
+}
+
 /** A persisted aggregated book (`celnet.wire.AggregatedBookDesc`). */
 export interface AggregatedBookDesc {
   /** Stable identifier (the store/API key), minted from `name` on create. */
@@ -2674,6 +2757,8 @@ export interface AggregatedBookDesc {
   params: AggregationParams;
   /** Whether the book is active (a disabled book stands up no engine, publishes nothing). */
   enabled: boolean;
+  /** The outbound-tiering config applied before publish; `null` ⇒ tiering disabled. */
+  tiering: TieringConfig | null;
 }
 
 /**
@@ -2697,6 +2782,8 @@ export interface AggregatedBookSpec {
   params: AggregationParams;
   /** Whether the book is active. */
   enabled: boolean;
+  /** The outbound-tiering config applied before publish; `null` ⇒ tiering disabled. */
+  tiering: TieringConfig | null;
 }
 
 /**

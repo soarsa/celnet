@@ -38,6 +38,7 @@ import type {
   AggregatedBookSpec,
   AggregatedBookComposite,
   AggregatedInstrument,
+  TieringConfig,
   LpContribution,
   InstrumentDef,
   InstrumentInput,
@@ -1205,6 +1206,7 @@ export class MockTransport implements CelnetTransport {
         depthLevels: 1,
       },
       enabled: true,
+      tiering: null,
     },
   ];
   /**
@@ -3381,12 +3383,24 @@ function mockSlugify(name: string): string {
 }
 
 /** Deep-clone a persisted aggregated book so a caller can never mutate the store. */
+/** Deep-clone a tiering config (or pass through absent) so stores never alias it. */
+function cloneTiering(t: TieringConfig | null | undefined): TieringConfig | null {
+  if (t === null || t === undefined) return null;
+  return {
+    unit: t.unit,
+    strategies: t.strategies.map((s) => ({ ...s })),
+    guardrails: t.guardrails ? { ...t.guardrails } : null,
+    stalePolicy: t.stalePolicy,
+  };
+}
+
 function cloneAggBook(b: AggregatedBookDesc): AggregatedBookDesc {
   return {
     ...b,
     memberConnectionIds: [...b.memberConnectionIds],
     instrumentIds: [...b.instrumentIds],
     params: { ...b.params },
+    tiering: cloneTiering(b.tiering),
   };
 }
 
@@ -3404,6 +3418,7 @@ function aggBookFromSpec(
     instrumentIds: [...spec.instrumentIds],
     params: { ...spec.params },
     enabled: spec.enabled,
+    tiering: cloneTiering(spec.tiering),
   };
 }
 

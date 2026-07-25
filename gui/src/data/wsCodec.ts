@@ -85,6 +85,12 @@ import type {
   AggregatedBookSpec,
   AggregationParams,
   AggregationScopeMode,
+  TieringConfig,
+  TieringGuardrails,
+  TieringSpreadUnit,
+  TieringStalePolicy,
+  TieringStrategy,
+  TieringStrategyKind,
   AggregatedInstrument,
   AggregatedBookComposite,
   AggregatedBookStreamSnapshot,
@@ -3405,6 +3411,7 @@ function strArrayOf(o: WireObject, key: string): string[] {
 /** Decode an `AggregatedBookDesc` from its wire form (`params` may be null). */
 export function aggregatedBookDescFromWire(o: WireObject): AggregatedBookDesc {
   const rawParams = o["params"];
+  const rawTiering = o["tiering"];
   return {
     id: str(o, "id"),
     name: str(o, "name"),
@@ -3416,6 +3423,10 @@ export function aggregatedBookDescFromWire(o: WireObject): AggregatedBookDesc {
         ? aggregationParamsFromWire(rawParams as WireObject)
         : DEFAULT_AGGREGATION_PARAMS,
     enabled: o["enabled"] === true,
+    tiering:
+      rawTiering && typeof rawTiering === "object"
+        ? tieringConfigFromWire(rawTiering as WireObject)
+        : null,
   };
 }
 
@@ -3432,6 +3443,117 @@ export const DEFAULT_AGGREGATION_PARAMS: AggregationParams = {
   depthLevels: 1,
 };
 
+// --- outbound-tiering config codec (FI-TIERING phase 3) ----------------------
+//
+// Byte-compatible with the server codec's tiering_*_{to,from}_json
+// (`crates/celnet-server/src/ws/codec.rs`): the exact snake_case field names and
+// the NUMERIC enum ints proto3 assigns. Enum mappings (proto3 zero-default first):
+//   SpreadUnit  PRICE_BPS=0, YIELD_BPS=1, PRICE_POINTS=2, PERCENT=3
+//   StalePolicy SUPPRESS=0, WIDEN_TO_MAX=1
+//   StrategyKind FLAT_MARKUP=0, INVENTORY_SKEW=1
+// An absent/`null` `tiering` (or `guardrails`) round-trips as tiering disabled.
+
+const SPREAD_UNIT_WIRE: Record<TieringSpreadUnit, number> = {
+  PRICE_BPS: 0,
+  YIELD_BPS: 1,
+  PRICE_POINTS: 2,
+  PERCENT: 3,
+};
+
+/** The wire `TieringSpreadUnit` int for a GUI spread unit. */
+function spreadUnitToWire(u: TieringSpreadUnit): number {
+  return SPREAD_UNIT_WIRE[u];
+}
+
+/** A GUI spread unit from the wire int (unknown ⇒ the proto3 zero, PRICE_BPS). */
+function spreadUnitFromWire(n: number): TieringSpreadUnit {
+  return n === 1 ? "YIELD_BPS" : n === 2 ? "PRICE_POINTS" : n === 3 ? "PERCENT" : "PRICE_BPS";
+}
+
+/** The wire `TieringStalePolicy` int (SUPPRESS=0, WIDEN_TO_MAX=1). */
+function stalePolicyToWire(p: TieringStalePolicy): number {
+  return p === "WIDEN_TO_MAX" ? 1 : 0;
+}
+
+/** A GUI stale policy from the wire int (1 ⇒ WIDEN_TO_MAX; else SUPPRESS). */
+function stalePolicyFromWire(n: number): TieringStalePolicy {
+  return n === 1 ? "WIDEN_TO_MAX" : "SUPPRESS";
+}
+
+/** The wire `TieringStrategyKind` int (FLAT_MARKUP=0, INVENTORY_SKEW=1). */
+function strategyKindToWire(k: TieringStrategyKind): number {
+  return k === "INVENTORY_SKEW" ? 1 : 0;
+}
+
+/** A GUI strategy kind from the wire int (1 ⇒ INVENTORY_SKEW; else FLAT_MARKUP). */
+function strategyKindFromWire(n: number): TieringStrategyKind {
+  return n === 1 ? "INVENTORY_SKEW" : "FLAT_MARKUP";
+}
+
+/** Encode one tiering strategy to its wire object (every field always emitted). */
+function tieringStrategyToWire(s: TieringStrategy): WireObject {
+  return {
+    kind: strategyKindToWire(s.kind),
+    half_spread: s.halfSpread,
+    kappa: s.kappa,
+    s_max: s.sMax,
+  };
+}
+
+/** Decode one tiering strategy from a nested `strategies[]` wire object. */
+function tieringStrategyFromWire(o: WireObject): TieringStrategy {
+  return {
+    kind: strategyKindFromWire(enumNum(o, "kind")),
+    halfSpread: num(o, "half_spread"),
+    kappa: num(o, "kappa"),
+    sMax: num(o, "s_max"),
+  };
+}
+
+/** Encode the tiering guardrail bounds to their wire object. */
+function tieringGuardrailsToWire(g: TieringGuardrails): WireObject {
+  return {
+    h_min: g.hMin,
+    h_max: g.hMax,
+    s_max: g.sMax,
+    spread_floor: g.spreadFloor,
+  };
+}
+
+/** Decode the tiering guardrail bounds from a nested `guardrails` wire object. */
+function tieringGuardrailsFromWire(o: WireObject): TieringGuardrails {
+  return {
+    hMin: num(o, "h_min"),
+    hMax: num(o, "h_max"),
+    sMax: num(o, "s_max"),
+    spreadFloor: num(o, "spread_floor"),
+  };
+}
+
+/** Encode a book's outbound-tiering config (`guardrails` ⇒ `null` when absent). */
+export function tieringConfigToWire(c: TieringConfig): WireObject {
+  return {
+    unit: spreadUnitToWire(c.unit),
+    strategies: c.strategies.map(tieringStrategyToWire),
+    guardrails: c.guardrails ? tieringGuardrailsToWire(c.guardrails) : null,
+    stale_policy: stalePolicyToWire(c.stalePolicy),
+  };
+}
+
+/** Decode a book's outbound-tiering config from a nested `tiering` wire object. */
+export function tieringConfigFromWire(o: WireObject): TieringConfig {
+  const rawGuardrails = o["guardrails"];
+  return {
+    unit: spreadUnitFromWire(enumNum(o, "unit")),
+    strategies: array(o, "strategies").map(tieringStrategyFromWire),
+    guardrails:
+      rawGuardrails && typeof rawGuardrails === "object"
+        ? tieringGuardrailsFromWire(rawGuardrails as WireObject)
+        : null,
+    stalePolicy: stalePolicyFromWire(enumNum(o, "stale_policy")),
+  };
+}
+
 /** Encode the editable spec into its nested `spec` wire object (create/update body). */
 function aggregatedBookSpecToWire(spec: AggregatedBookSpec): WireObject {
   return {
@@ -3442,6 +3564,7 @@ function aggregatedBookSpecToWire(spec: AggregatedBookSpec): WireObject {
     instrument_ids: [...spec.instrumentIds],
     params: aggregationParamsToWire(spec.params),
     enabled: spec.enabled,
+    tiering: spec.tiering ? tieringConfigToWire(spec.tiering) : null,
   };
 }
 

@@ -1,0 +1,203 @@
+/* TieringEditor — the per-book outbound-tiering config editor, embedded in the
+   aggregated-book definition form. Uses the app's design tokens so both themes are
+   honoured automatically; styled to sit inside the AggregationPanel form column. */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--r-md);
+  border: var(--hairline);
+  background: color-mix(in oklch, var(--bg-inset) 45%, transparent);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.title {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.enableRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-body);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.enableRow input {
+  accent-color: var(--accent);
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  max-width: 52ch;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fieldLabel {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.select,
+.input {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font-size: var(--type-body);
+  width: 100%;
+}
+
+.numInput {
+  font-family: var(--font-mono);
+  min-width: 0;
+}
+
+.select:focus-visible,
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.inputError {
+  border-color: var(--danger, oklch(62% 0.2 25));
+}
+
+/* --- strategy list -------------------------------------------------------- */
+
+.strategies {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.strategyCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-surface, var(--bg-inset));
+}
+
+.strategyHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.strategyKind {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.kindBadge {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  color: var(--accent);
+  padding: 2px var(--space-2);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+}
+
+.strategyHint {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+}
+
+.removeBtn {
+  border: var(--hairline);
+  background: transparent;
+  color: var(--text-tertiary);
+  border-radius: var(--r-sm);
+  padding: 2px var(--space-2);
+  font-size: var(--type-caption);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.removeBtn:hover {
+  color: var(--danger, oklch(62% 0.2 25));
+  border-color: color-mix(in oklch, var(--danger, oklch(62% 0.2 25)) 60%, transparent);
+  background: color-mix(in oklch, var(--danger, oklch(62% 0.2 25)) 12%, transparent);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.param {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.paramLabel {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+.addRow {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.addBtn {
+  padding: 4px var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.addBtn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.error {
+  margin: 0;
+  color: var(--danger, oklch(62% 0.2 25));
+  font-size: var(--type-caption);
+}
