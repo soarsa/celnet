@@ -22,16 +22,28 @@ import {
 } from "../src/data/wsCodec";
 import {
   defaultTieringConfig,
+  defaultTieringStrategy,
   hasTieringErrors,
+  TIERING_STRATEGY_KINDS,
+  TIERING_STRATEGY_META,
   validateTiering,
 } from "../src/lib/tiering";
 
-/** A fully-populated config exercising both strategy kinds + guardrails. */
+/** A fully-populated config exercising all three strategy kinds + guardrails. */
 const richConfig: TieringConfig = {
   unit: "YIELD_BPS",
   strategies: [
-    { kind: "FLAT_MARKUP", halfSpread: 25, kappa: 0, sMax: 0 },
-    { kind: "INVENTORY_SKEW", halfSpread: 30, kappa: 0.75, sMax: 0.4 },
+    { ...defaultTieringStrategy("FLAT_MARKUP"), halfSpread: 25 },
+    { ...defaultTieringStrategy("INVENTORY_SKEW"), halfSpread: 30, kappa: 0.75, sMax: 0.4 },
+    {
+      ...defaultTieringStrategy("SCALED_SMOOTHED_SPREAD"),
+      smoothingWeight: 0.3,
+      expectedSpread: 0.00008,
+      maxDivergence: 0.00004,
+      coreSpread: 0.0002,
+      maxOutputSpread: 0.0008,
+      spreadScaleFactor: 1.2,
+    },
   ],
   guardrails: { hMin: 0.05, hMax: 1.25, sMax: 0.5, spreadFloor: 0.02 },
   stalePolicy: "WIDEN_TO_MAX",
@@ -63,8 +75,45 @@ describe("tiering wire codec (byte-for-field with the server)", () => {
     expect(wire.unit).toBe(1);
     expect(wire.stale_policy).toBe(1);
     const strategies = wire.strategies as WireObject[];
-    expect(strategies[0]).toEqual({ kind: 0, half_spread: 25, kappa: 0, s_max: 0 });
-    expect(strategies[1]).toEqual({ kind: 1, half_spread: 30, kappa: 0.75, s_max: 0.4 });
+    // Every strategy emits ALL ten fields (matching the server's full field walk); a
+    // kind's ignored fields are proto3 zero.
+    expect(strategies[0]).toEqual({
+      kind: 0,
+      half_spread: 25,
+      kappa: 0,
+      s_max: 0,
+      smoothing_weight: 0,
+      expected_spread: 0,
+      max_divergence: 0,
+      core_spread: 0,
+      max_output_spread: 0,
+      spread_scale_factor: 0,
+    });
+    expect(strategies[1]).toEqual({
+      kind: 1,
+      half_spread: 30,
+      kappa: 0.75,
+      s_max: 0.4,
+      smoothing_weight: 0,
+      expected_spread: 0,
+      max_divergence: 0,
+      core_spread: 0,
+      max_output_spread: 0,
+      spread_scale_factor: 0,
+    });
+    // SCALED_SMOOTHED_SPREAD: enum int 2 + the six snake_case params.
+    expect(strategies[2]).toEqual({
+      kind: 2,
+      half_spread: 0,
+      kappa: 0,
+      s_max: 0,
+      smoothing_weight: 0.3,
+      expected_spread: 0.00008,
+      max_divergence: 0.00004,
+      core_spread: 0.0002,
+      max_output_spread: 0.0008,
+      spread_scale_factor: 1.2,
+    });
     expect(wire.guardrails).toEqual({
       h_min: 0.05,
       h_max: 1.25,
@@ -184,8 +233,62 @@ describe("tiering validation (mirrors the server guardrail invariants)", () => {
   it("allows a negative kappa (skew may lean either way)", () => {
     const cfg: TieringConfig = {
       ...defaultTieringConfig(),
-      strategies: [{ kind: "INVENTORY_SKEW", halfSpread: 25, kappa: -0.5, sMax: 0.5 }],
+      strategies: [{ ...defaultTieringStrategy("INVENTORY_SKEW"), kappa: -0.5 }],
     };
     expect(hasTieringErrors(validateTiering(cfg))).toBe(false);
+  });
+
+  it("accepts a valid Scaled-Smoothed-Spread strategy", () => {
+    const cfg: TieringConfig = {
+      ...defaultTieringConfig(),
+      strategies: [defaultTieringStrategy("SCALED_SMOOTHED_SPREAD")],
+    };
+    expect(hasTieringErrors(validateTiering(cfg))).toBe(false);
+  });
+
+  it("rejects Scaled-Smoothed smoothing weight outside (0, 1]", () => {
+    const cfg: TieringConfig = {
+      ...defaultTieringConfig(),
+      strategies: [{ ...defaultTieringStrategy("SCALED_SMOOTHED_SPREAD"), smoothingWeight: 1.5 }],
+    };
+    expect(validateTiering(cfg).strategies[0]?.smoothingWeight).toBeDefined();
+  });
+
+  it("rejects Scaled-Smoothed expected spread e <= 0", () => {
+    const cfg: TieringConfig = {
+      ...defaultTieringConfig(),
+      strategies: [{ ...defaultTieringStrategy("SCALED_SMOOTHED_SPREAD"), expectedSpread: 0 }],
+    };
+    expect(validateTiering(cfg).strategies[0]?.expectedSpread).toBeDefined();
+  });
+
+  it("rejects Scaled-Smoothed max output spread m < core spread c", () => {
+    const cfg: TieringConfig = {
+      ...defaultTieringConfig(),
+      strategies: [
+        { ...defaultTieringStrategy("SCALED_SMOOTHED_SPREAD"), coreSpread: 0.5, maxOutputSpread: 0.2 },
+      ],
+    };
+    expect(validateTiering(cfg).strategies[0]?.maxOutputSpread).toBeDefined();
+  });
+
+  it("ignores half-spread for a Scaled-Smoothed strategy (spread source, not additive)", () => {
+    const cfg: TieringConfig = {
+      ...defaultTieringConfig(),
+      strategies: [{ ...defaultTieringStrategy("SCALED_SMOOTHED_SPREAD"), halfSpread: -999 }],
+    };
+    // A negative half-spread is irrelevant to SCALE_SMOOTH ⇒ no error.
+    expect(hasTieringErrors(validateTiering(cfg))).toBe(false);
+  });
+});
+
+describe("per-strategy documentation links", () => {
+  it("provides a title, purpose, and docs link for every strategy kind", () => {
+    for (const kind of TIERING_STRATEGY_KINDS) {
+      const meta = TIERING_STRATEGY_META[kind];
+      expect(meta.title.length).toBeGreaterThan(0);
+      expect(meta.purpose.length).toBeGreaterThan(0);
+      expect(meta.docHref).toMatch(/^https:\/\/.*FI-TIERING-RESEARCH\.md#/);
+    }
   });
 });

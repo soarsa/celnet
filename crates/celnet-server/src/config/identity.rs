@@ -1234,6 +1234,42 @@ fn validate_tiering_config(book: &str, cfg: &celnet_tiering::TieringConfig) -> R
                 finite(kappa, "inventory-skew kappa").map_err(ctx)?;
                 finite_nonneg(s_max, "inventory-skew s_max").map_err(ctx)?;
             }
+            StrategySpec::ScaledSmoothedSpread {
+                smoothing_weight,
+                expected_spread,
+                max_divergence,
+                core_spread,
+                max_output_spread,
+                spread_scale_factor,
+            } => {
+                // Smoothing Weight w ∈ (0, 1].
+                if !(smoothing_weight.is_finite()
+                    && smoothing_weight > 0.0
+                    && smoothing_weight <= 1.0)
+                {
+                    return Err(ctx(
+                        "scaled-smoothed smoothing_weight must be in (0, 1]".to_string()
+                    ));
+                }
+                // Expected Spread e > 0 (it is the divergence denominator).
+                if !(expected_spread.is_finite() && expected_spread > 0.0) {
+                    return Err(ctx(
+                        "scaled-smoothed expected_spread must be finite and > 0".to_string(),
+                    ));
+                }
+                finite_nonneg(max_divergence, "scaled-smoothed max_divergence").map_err(ctx)?;
+                finite_nonneg(core_spread, "scaled-smoothed core_spread").map_err(ctx)?;
+                finite_nonneg(max_output_spread, "scaled-smoothed max_output_spread")
+                    .map_err(ctx)?;
+                finite_nonneg(spread_scale_factor, "scaled-smoothed spread_scale_factor")
+                    .map_err(ctx)?;
+                // Max Output Spread m must be able to contain the Core spread c.
+                if max_output_spread < core_spread {
+                    return Err(ctx(
+                        "scaled-smoothed max_output_spread must be >= core_spread".to_string(),
+                    ));
+                }
+            }
         }
     }
     Ok(())

@@ -4112,6 +4112,15 @@ enum TieringStrategyKind {
   TIERING_STRATEGY_KIND_FLAT_MARKUP = 0;
   // Inventory skew: base `half_spread` plus `clamp(kappa*q, +-s_max)` skew.
   TIERING_STRATEGY_KIND_INVENTORY_SKEW = 1;
+  // Scaled Smoothed Spread: a spread SOURCE that damps spread volatility. From the
+  // fading-memory smoothed observed spread `S` it sets one absolute output spread
+  // `O = min(max_output_spread, core_spread*(1 + f*D/e))` centred on mid (no skew),
+  // where `D = |S - expected_spread|` is zeroed inside the `max_divergence`
+  // dead-band and `f = spread_scale_factor`. Uses the `smoothing_weight` (..10),
+  // `expected_spread`/`max_divergence`/`core_spread`/`max_output_spread` and
+  // `spread_scale_factor` fields; `half_spread`/`kappa`/`s_max` are ignored. Use
+  // instead of FLAT_MARKUP (it sets the half-spread absolutely).
+  TIERING_STRATEGY_KIND_SCALED_SMOOTHED_SPREAD = 2;
 }
 
 // One enabled tiering strategy and its parameters (mirrors a
@@ -4121,12 +4130,30 @@ enum TieringStrategyKind {
 message TieringStrategyDesc {
   // Which strategy this entry configures.
   TieringStrategyKind kind = 1;
-  // The (base) half-spread magnitude `H` (both strategy kinds).
+  // The (base) half-spread magnitude `H` (FLAT_MARKUP / INVENTORY_SKEW).
   double half_spread = 2;
   // Inventory-skew gain `kappa` (magnitude per unit inventory); INVENTORY_SKEW only.
   double kappa = 3;
   // Inventory-skew strategy-local cap `s_max` (magnitude); INVENTORY_SKEW only.
   double s_max = 4;
+  // Scaled-Smoothed-Spread Smoothing Weight `w` in (0, 1] (1 => smoothing off);
+  // SCALED_SMOOTHED_SPREAD only. Drives the stateful EWMA on the observed spread.
+  double smoothing_weight = 5;
+  // Scaled-Smoothed-Spread Expected Spread `e` (> 0), the divergence reference (an
+  // absolute price spread); SCALED_SMOOTHED_SPREAD only.
+  double expected_spread = 6;
+  // Scaled-Smoothed-Spread Max Divergence `d` (>= 0), the dead-band half-width;
+  // SCALED_SMOOTHED_SPREAD only.
+  double max_divergence = 7;
+  // Scaled-Smoothed-Spread Core spread `c` (>= 0), the base output spread at zero
+  // widen; SCALED_SMOOTHED_SPREAD only.
+  double core_spread = 8;
+  // Scaled-Smoothed-Spread Max Output Spread `m` (>= c), the output cap and the
+  // indicative fallback width; SCALED_SMOOTHED_SPREAD only.
+  double max_output_spread = 9;
+  // Scaled-Smoothed-Spread Spread Scale Factor `f` (>= 0), the widening gain on
+  // `D/e`; SCALED_SMOOTHED_SPREAD only.
+  double spread_scale_factor = 10;
 }
 
 // The price-space guardrail bounds (mirrors `celnet_tiering::Guardrails`); all

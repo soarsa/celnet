@@ -3569,6 +3569,12 @@ fn tiering_strategy_desc_to_json(s: &TieringStrategyDesc) -> Value {
         "half_spread": s.half_spread,
         "kappa": s.kappa,
         "s_max": s.s_max,
+        "smoothing_weight": s.smoothing_weight,
+        "expected_spread": s.expected_spread,
+        "max_divergence": s.max_divergence,
+        "core_spread": s.core_spread,
+        "max_output_spread": s.max_output_spread,
+        "spread_scale_factor": s.spread_scale_factor,
     })
 }
 
@@ -3601,6 +3607,12 @@ fn tiering_strategy_desc_from_json(v: &Value) -> Result<TieringStrategyDesc> {
         half_spread: f64_or_zero(o, "half_spread"),
         kappa: f64_or_zero(o, "kappa"),
         s_max: f64_or_zero(o, "s_max"),
+        smoothing_weight: f64_or_zero(o, "smoothing_weight"),
+        expected_spread: f64_or_zero(o, "expected_spread"),
+        max_divergence: f64_or_zero(o, "max_divergence"),
+        core_spread: f64_or_zero(o, "core_spread"),
+        max_output_spread: f64_or_zero(o, "max_output_spread"),
+        spread_scale_factor: f64_or_zero(o, "spread_scale_factor"),
     })
 }
 

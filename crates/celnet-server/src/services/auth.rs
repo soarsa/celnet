@@ -1782,6 +1782,7 @@ fn tiering_to_wire(cfg: &celnet_tiering::TieringConfig) -> TieringConfigDesc {
                 half_spread,
                 kappa: 0.0,
                 s_max: 0.0,
+                ..Default::default()
             },
             StrategySpec::InventorySkew {
                 half_spread,
@@ -1792,6 +1793,24 @@ fn tiering_to_wire(cfg: &celnet_tiering::TieringConfig) -> TieringConfigDesc {
                 half_spread,
                 kappa,
                 s_max,
+                ..Default::default()
+            },
+            StrategySpec::ScaledSmoothedSpread {
+                smoothing_weight,
+                expected_spread,
+                max_divergence,
+                core_spread,
+                max_output_spread,
+                spread_scale_factor,
+            } => TieringStrategyDesc {
+                kind: TieringStrategyKind::ScaledSmoothedSpread as i32,
+                smoothing_weight,
+                expected_spread,
+                max_divergence,
+                core_spread,
+                max_output_spread,
+                spread_scale_factor,
+                ..Default::default()
             },
         })
         .collect();
@@ -1838,6 +1857,14 @@ fn tiering_from_wire(tiering: Option<TieringConfigDesc>) -> Option<celnet_tierin
                     half_spread: s.half_spread,
                     kappa: s.kappa,
                     s_max: s.s_max,
+                },
+                TieringStrategyKind::ScaledSmoothedSpread => StrategySpec::ScaledSmoothedSpread {
+                    smoothing_weight: s.smoothing_weight,
+                    expected_spread: s.expected_spread,
+                    max_divergence: s.max_divergence,
+                    core_spread: s.core_spread,
+                    max_output_spread: s.max_output_spread,
+                    spread_scale_factor: s.spread_scale_factor,
                 },
             },
         )
@@ -3663,7 +3690,9 @@ mod tests {
         }
     }
 
-    /// A valid tiering config spec body (flat + inventory-skew, price bps).
+    /// A valid tiering config spec body (flat + inventory-skew + scaled-smoothed,
+    /// price bps). The Scaled-Smoothed-Spread entry exercises the six new params
+    /// through the full store round-trip and wire echo.
     fn agg_tiering_spec() -> TieringConfigDesc {
         TieringConfigDesc {
             unit: TieringSpreadUnit::PriceBps as i32,
@@ -3673,12 +3702,24 @@ mod tests {
                     half_spread: 25.0,
                     kappa: 0.0,
                     s_max: 0.0,
+                    ..Default::default()
                 },
                 TieringStrategyDesc {
                     kind: TieringStrategyKind::InventorySkew as i32,
                     half_spread: 25.0,
                     kappa: 1.5,
                     s_max: 100.0,
+                    ..Default::default()
+                },
+                TieringStrategyDesc {
+                    kind: TieringStrategyKind::ScaledSmoothedSpread as i32,
+                    smoothing_weight: 0.3,
+                    expected_spread: 0.00008,
+                    max_divergence: 0.00004,
+                    core_spread: 0.0002,
+                    max_output_spread: 0.0008,
+                    spread_scale_factor: 1.2,
+                    ..Default::default()
                 },
             ],
             guardrails: Some(TieringGuardrailsDesc {
@@ -3724,7 +3765,7 @@ mod tests {
         let def = reloaded.aggregated_book(&created.id).expect("book present");
         let stored = def.tiering.as_ref().expect("tiering persisted");
         assert_eq!(stored.unit, celnet_tiering::SpreadUnit::PriceBps);
-        assert_eq!(stored.strategies.len(), 2);
+        assert_eq!(stored.strategies.len(), 3);
         assert_eq!(
             stored.strategies[0],
             celnet_tiering::StrategySpec::FlatMarkup { half_spread: 25.0 }
@@ -3735,6 +3776,17 @@ mod tests {
                 half_spread: 25.0,
                 kappa: 1.5,
                 s_max: 100.0,
+            }
+        );
+        assert_eq!(
+            stored.strategies[2],
+            celnet_tiering::StrategySpec::ScaledSmoothedSpread {
+                smoothing_weight: 0.3,
+                expected_spread: 0.00008,
+                max_divergence: 0.00004,
+                core_spread: 0.0002,
+                max_output_spread: 0.0008,
+                spread_scale_factor: 1.2,
             }
         );
         assert_eq!(stored.stale_policy, celnet_tiering::StalePolicy::WidenToMax);

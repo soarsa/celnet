@@ -45,22 +45,69 @@ export const TIERING_STALE_POLICY_LABEL: Record<TieringStalePolicy, string> = {
   WIDEN_TO_MAX: "Widen to max half-spread",
 };
 
-/** The strategy kinds shipped in phase 2a (the "add strategy" menu). */
+/** The strategy kinds the editor offers in the "add strategy" menu. */
 export const TIERING_STRATEGY_KINDS: readonly TieringStrategyKind[] = [
   "FLAT_MARKUP",
   "INVENTORY_SKEW",
+  "SCALED_SMOOTHED_SPREAD",
 ];
 
 /** Human labels for each strategy kind. */
 export const TIERING_STRATEGY_KIND_LABEL: Record<TieringStrategyKind, string> = {
   FLAT_MARKUP: "Flat markup",
   INVENTORY_SKEW: "Inventory skew",
+  SCALED_SMOOTHED_SPREAD: "Scaled Smoothed Spread",
 };
 
 /** A one-line description of what each strategy does (rendered under its row). */
 export const TIERING_STRATEGY_KIND_HINT: Record<TieringStrategyKind, string> = {
   FLAT_MARKUP: "Constant symmetric half-spread H around mid — no skew.",
   INVENTORY_SKEW: "Base half-spread H plus clamp(κ·inventory, ±sMax) skew.",
+  SCALED_SMOOTHED_SPREAD:
+    "Damps spread volatility: smooths the observed spread (EWMA weight w), then sets an absolute output spread O = min(m, c·(1 + f·D/e)) around mid. Use INSTEAD OF Flat markup.",
+};
+
+/**
+ * The base documentation location the per-strategy "?" links point at — the
+ * research corpus section authored alongside this feature. Each strategy's
+ * {@link TieringStrategyMeta.docHref} deep-links to its own "how to use" heading.
+ */
+const TIERING_DOCS_BASE =
+  "https://github.com/soarsa/celnet/blob/main/docs/FI-TIERING-RESEARCH.md";
+
+/** User-facing "how to use it" metadata surfaced per strategy in the editor. */
+export interface TieringStrategyMeta {
+  /** The strategy's display title. */
+  title: string;
+  /** A one-sentence statement of what it is for. */
+  purpose: string;
+  /** A deep link to the strategy's "how to use" documentation section. */
+  docHref: string;
+}
+
+/**
+ * Per-strategy documentation registry: the title, a one-line purpose, and a link
+ * to the "how to use" section of `docs/FI-TIERING-RESEARCH.md`. The editor renders
+ * a help affordance per strategy from this table so a user can learn each one.
+ */
+export const TIERING_STRATEGY_META: Record<TieringStrategyKind, TieringStrategyMeta> = {
+  FLAT_MARKUP: {
+    title: "Flat markup",
+    purpose: "A constant symmetric half-spread around mid — the simplest tier, no skew.",
+    docHref: `${TIERING_DOCS_BASE}#flat-markup-how-to-use`,
+  },
+  INVENTORY_SKEW: {
+    title: "Inventory skew",
+    purpose:
+      "A base half-spread plus a skew linear in signed inventory (clamped) to lean the book toward shedding risk.",
+    docHref: `${TIERING_DOCS_BASE}#inventory-skew-how-to-use`,
+  },
+  SCALED_SMOOTHED_SPREAD: {
+    title: "Scaled Smoothed Spread",
+    purpose:
+      "Damps spread volatility by smoothing the observed spread and scaling an absolute output spread from its divergence to an expected level.",
+    docHref: `${TIERING_DOCS_BASE}#scaled-smoothed-spread-scale_smooth`,
+  },
 };
 
 // --- defaults ----------------------------------------------------------------
@@ -77,11 +124,47 @@ export const DEFAULT_TIERING_GUARDRAILS: TieringGuardrails = {
   spreadFloor: 0.01,
 };
 
-/** A fresh strategy of `kind` with sensible starting magnitudes (in the config unit). */
+/**
+ * A fresh strategy of `kind` with sensible starting magnitudes. FLAT_MARKUP /
+ * INVENTORY_SKEW magnitudes are in the config unit; SCALED_SMOOTHED_SPREAD spread
+ * params are ABSOLUTE price offsets — the worked-example ratios (e:d:c:m = 0.4:0.2:1:4,
+ * f = 1.2) scaled into price points that sit comfortably inside the default
+ * guardrails (core 0.2 above the 0.01 floor, max-output 0.8 below the 1.0 h_max·2).
+ * Every field is always present (the wire emits them all); a `kind` ignores the
+ * fields it does not use.
+ */
 export function defaultTieringStrategy(kind: TieringStrategyKind): TieringStrategy {
-  return kind === "INVENTORY_SKEW"
-    ? { kind, halfSpread: 25, kappa: 0.5, sMax: 0.5 }
-    : { kind, halfSpread: 25, kappa: 0, sMax: 0 };
+  // Ignored fields default to 0 so FLAT_MARKUP / INVENTORY_SKEW encode byte-identically
+  // to the server's `TieringStrategyDesc::default()` (no round-trip drift on the fields
+  // a kind does not use). SCALED_SMOOTHED_SPREAD overrides its own params below.
+  const base: TieringStrategy = {
+    kind,
+    halfSpread: 25,
+    kappa: 0,
+    sMax: 0,
+    smoothingWeight: 0,
+    expectedSpread: 0,
+    maxDivergence: 0,
+    coreSpread: 0,
+    maxOutputSpread: 0,
+    spreadScaleFactor: 0,
+  };
+  if (kind === "INVENTORY_SKEW") {
+    return { ...base, kappa: 0.5, sMax: 0.5 };
+  }
+  if (kind === "SCALED_SMOOTHED_SPREAD") {
+    return {
+      ...base,
+      halfSpread: 0,
+      smoothingWeight: 0.5,
+      expectedSpread: 0.08,
+      maxDivergence: 0.04,
+      coreSpread: 0.2,
+      maxOutputSpread: 0.8,
+      spreadScaleFactor: 1.2,
+    };
+  }
+  return base;
 }
 
 /**
@@ -105,6 +188,12 @@ export interface TieringStrategyErrors {
   halfSpread?: string;
   kappa?: string;
   sMax?: string;
+  smoothingWeight?: string;
+  expectedSpread?: string;
+  maxDivergence?: string;
+  coreSpread?: string;
+  maxOutputSpread?: string;
+  spreadScaleFactor?: string;
 }
 
 /** The structured error set for a whole tiering config (all-empty ⇒ valid). */
@@ -143,12 +232,37 @@ export function validateTiering(config: TieringConfig): TieringErrors {
 
   config.strategies.forEach((s, i) => {
     const se: TieringStrategyErrors = {};
-    if (!isFinite(s.halfSpread) || s.halfSpread < 0) {
+    // Half-spread is the FLAT_MARKUP / INVENTORY_SKEW knob; SCALED_SMOOTHED_SPREAD
+    // sets the spread from its own params and ignores half-spread.
+    if (s.kind !== "SCALED_SMOOTHED_SPREAD" && (!isFinite(s.halfSpread) || s.halfSpread < 0)) {
       se.halfSpread = "Half-spread must be a finite value ≥ 0.";
     }
     if (s.kind === "INVENTORY_SKEW") {
       if (!isFinite(s.kappa)) se.kappa = "κ must be a finite number.";
       if (!isFinite(s.sMax) || s.sMax < 0) se.sMax = "Strategy sMax must be a finite value ≥ 0.";
+    }
+    if (s.kind === "SCALED_SMOOTHED_SPREAD") {
+      // Mirrors the server's celnet-tiering config invariants for this strategy.
+      if (!isFinite(s.smoothingWeight) || s.smoothingWeight <= 0 || s.smoothingWeight > 1) {
+        se.smoothingWeight = "Smoothing weight w must be in (0, 1].";
+      }
+      if (!isFinite(s.expectedSpread) || s.expectedSpread <= 0) {
+        se.expectedSpread = "Expected spread e must be a finite value > 0.";
+      }
+      if (!isFinite(s.maxDivergence) || s.maxDivergence < 0) {
+        se.maxDivergence = "Max divergence d must be a finite value ≥ 0.";
+      }
+      if (!isFinite(s.coreSpread) || s.coreSpread < 0) {
+        se.coreSpread = "Core spread c must be a finite value ≥ 0.";
+      }
+      if (!isFinite(s.maxOutputSpread) || s.maxOutputSpread < 0) {
+        se.maxOutputSpread = "Max output spread m must be a finite value ≥ 0.";
+      } else if (isFinite(s.coreSpread) && s.maxOutputSpread < s.coreSpread) {
+        se.maxOutputSpread = "Max output spread m must be ≥ core spread c.";
+      }
+      if (!isFinite(s.spreadScaleFactor) || s.spreadScaleFactor < 0) {
+        se.spreadScaleFactor = "Spread scale factor f must be a finite value ≥ 0.";
+      }
     }
     if (Object.keys(se).length > 0) errors.strategies[i] = se;
   });

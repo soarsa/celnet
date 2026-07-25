@@ -133,6 +133,31 @@
   background: var(--accent-soft);
 }
 
+.docLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: var(--hairline);
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  line-height: 1;
+  text-decoration: none;
+  cursor: help;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.docLink:hover,
+.docLink:focus-visible {
+  color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 60%, transparent);
+  background: var(--accent-soft);
+  outline: none;
+}
+
 .strategyHint {
   margin: 0;
   color: var(--text-tertiary);

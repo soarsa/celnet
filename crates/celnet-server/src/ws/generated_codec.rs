@@ -5728,6 +5728,12 @@ impl WireBuilder for TieringStrategyDesc {
             "half_spread" => self.half_spread = f64_or_zero(value),
             "kappa" => self.kappa = f64_or_zero(value),
             "s_max" => self.s_max = f64_or_zero(value),
+            "smoothing_weight" => self.smoothing_weight = f64_or_zero(value),
+            "expected_spread" => self.expected_spread = f64_or_zero(value),
+            "max_divergence" => self.max_divergence = f64_or_zero(value),
+            "core_spread" => self.core_spread = f64_or_zero(value),
+            "max_output_spread" => self.max_output_spread = f64_or_zero(value),
+            "spread_scale_factor" => self.spread_scale_factor = f64_or_zero(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -6767,6 +6773,12 @@ impl WireAdapter for TieringStrategyDesc {
             "half_spread" => Some(WireVal::F64(self.half_spread)),
             "kappa" => Some(WireVal::F64(self.kappa)),
             "s_max" => Some(WireVal::F64(self.s_max)),
+            "smoothing_weight" => Some(WireVal::F64(self.smoothing_weight)),
+            "expected_spread" => Some(WireVal::F64(self.expected_spread)),
+            "max_divergence" => Some(WireVal::F64(self.max_divergence)),
+            "core_spread" => Some(WireVal::F64(self.core_spread)),
+            "max_output_spread" => Some(WireVal::F64(self.max_output_spread)),
+            "spread_scale_factor" => Some(WireVal::F64(self.spread_scale_factor)),
             _ => None,
         }
     }

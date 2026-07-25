@@ -3480,23 +3480,33 @@ function stalePolicyFromWire(n: number): TieringStalePolicy {
   return n === 1 ? "WIDEN_TO_MAX" : "SUPPRESS";
 }
 
-/** The wire `TieringStrategyKind` int (FLAT_MARKUP=0, INVENTORY_SKEW=1). */
+/** The wire `TieringStrategyKind` int (FLAT_MARKUP=0, INVENTORY_SKEW=1, SCALED_SMOOTHED_SPREAD=2). */
 function strategyKindToWire(k: TieringStrategyKind): number {
-  return k === "INVENTORY_SKEW" ? 1 : 0;
+  if (k === "INVENTORY_SKEW") return 1;
+  if (k === "SCALED_SMOOTHED_SPREAD") return 2;
+  return 0;
 }
 
-/** A GUI strategy kind from the wire int (1 ⇒ INVENTORY_SKEW; else FLAT_MARKUP). */
+/** A GUI strategy kind from the wire int (2 ⇒ SCALED_SMOOTHED_SPREAD; 1 ⇒ INVENTORY_SKEW; else FLAT_MARKUP). */
 function strategyKindFromWire(n: number): TieringStrategyKind {
-  return n === 1 ? "INVENTORY_SKEW" : "FLAT_MARKUP";
+  if (n === 2) return "SCALED_SMOOTHED_SPREAD";
+  if (n === 1) return "INVENTORY_SKEW";
+  return "FLAT_MARKUP";
 }
 
-/** Encode one tiering strategy to its wire object (every field always emitted). */
+/** Encode one tiering strategy to its wire object (every field always emitted, snake_case). */
 function tieringStrategyToWire(s: TieringStrategy): WireObject {
   return {
     kind: strategyKindToWire(s.kind),
     half_spread: s.halfSpread,
     kappa: s.kappa,
     s_max: s.sMax,
+    smoothing_weight: s.smoothingWeight,
+    expected_spread: s.expectedSpread,
+    max_divergence: s.maxDivergence,
+    core_spread: s.coreSpread,
+    max_output_spread: s.maxOutputSpread,
+    spread_scale_factor: s.spreadScaleFactor,
   };
 }
 
@@ -3507,6 +3517,12 @@ function tieringStrategyFromWire(o: WireObject): TieringStrategy {
     halfSpread: num(o, "half_spread"),
     kappa: num(o, "kappa"),
     sMax: num(o, "s_max"),
+    smoothingWeight: num(o, "smoothing_weight"),
+    expectedSpread: num(o, "expected_spread"),
+    maxDivergence: num(o, "max_divergence"),
+    coreSpread: num(o, "core_spread"),
+    maxOutputSpread: num(o, "max_output_spread"),
+    spreadScaleFactor: num(o, "spread_scale_factor"),
   };
 }
 

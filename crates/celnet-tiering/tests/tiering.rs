@@ -5,8 +5,8 @@
 //! by re-running the engine as its own oracle.
 
 use celnet_tiering::{
-    FlatMarkup, Guardrails, InventorySkew, QuoteCtx, SpreadUnit, StalePolicy, StrategySpec,
-    SuppressReason, TieringConfig, TieringError, TieringStrategy, quote,
+    FlatMarkup, Guardrails, InventorySkew, QuoteCtx, ScaledSmoothedSpread, SpreadUnit, StalePolicy,
+    StrategySpec, SuppressReason, TieringConfig, TieringError, TieringStrategy, quote, smooth,
 };
 
 /// f64 arithmetic tolerance — far below any price tick; effectively exact for
@@ -242,6 +242,130 @@ fn config_serde_round_trip_and_quote() {
     assert!((tw.offer - 99.75).abs() < EPS, "offer = {}", tw.offer);
 }
 
+// ── Scaled Smoothed Spread: the PDF's worked output-spread oracle ────────────
+// c=.0002, e=.00008, d=.00004, m=.0008, f=1.2 — every value hand-derived from
+// the formula Oₙ = min(m, c·(1 + f·Dₙ/e)), NOT from re-running the engine.
+#[test]
+fn scaled_smoothed_output_spread_worked_oracle() {
+    let s = ScaledSmoothedSpread::new(0.00008, 0.00004, 0.0002, 0.0008, 1.2);
+
+    // Dₙ ≤ d (dead-band) ⇒ Pₙ = 0 ⇒ Oₙ = c = .0002.
+    // Sₙ = e ⇒ Dₙ = 0 ≤ d.
+    assert!((s.output_spread(Some(0.00008)) - 0.0002).abs() < EPS);
+
+    // Dₙ just above d: Sₙ = e + (d + tiny). Dₙ ≈ d = .00004 ⇒ Pₙ = 1.2·.00004/.00008
+    // = 0.6 ⇒ Oₙ = .0002·1.6 = .00032. Use Sₙ = e + d + ε.
+    let just_over: f64 = 0.00008 + 0.00004 + 1e-12;
+    let d_over = (just_over - 0.00008).abs(); // ≈ .00004
+    let p_over = 1.2 * d_over / 0.00008;
+    let o_over = 0.0002 * (1.0 + p_over);
+    assert!((s.output_spread(Some(just_over)) - o_over).abs() < EPS);
+    assert!((o_over - 0.00032).abs() < 1e-9, "≈ .00032, got {o_over}");
+
+    // Dₙ = e = .00008 (Sₙ = 2e): Pₙ = 1.2 ⇒ Oₙ = .0002·2.2 = .00044.
+    assert!((s.output_spread(Some(0.00016)) - 0.00044).abs() < EPS);
+
+    // Dₙ = .001 (Sₙ = e + .001): Pₙ = 1.2·.001/.00008 = 15 ⇒ c·16 = .0032, capped
+    // at m = .0008. (The PDF prints Pₙ=30; that is its arithmetic slip — the
+    // formula gives 15, and the cap makes the output .0008 either way.)
+    assert!((s.output_spread(Some(0.00008 + 0.001)) - 0.0008).abs() < EPS);
+}
+
+// ── Scaled Smoothed Spread: half-spread + two-way through the pipeline ───────
+#[test]
+fn scaled_smoothed_two_way_symmetric_no_skew() {
+    let s = ScaledSmoothedSpread::new(0.00008, 0.00004, 0.0002, 0.0008, 1.2);
+    // Guards wide enough not to bind on these tiny spreads (floor below c).
+    let guards = Guardrails::new(0.0, 1.0, 1.0, 1e-6);
+    let mid = 1.10000;
+    // Sₙ = 2e ⇒ Oₙ = .00044 ⇒ half = .00022, bid/offer = mid ∓ .00022, no skew.
+    let ctx = QuoteCtx::new(mid).with_smoothed_spread(0.00016);
+    let tw = quote(&[&s], &ctx, &guards, StalePolicy::Suppress).unwrap();
+    assert!((tw.bid - (mid - 0.00022)).abs() < EPS, "bid {}", tw.bid);
+    assert!(
+        (tw.offer - (mid + 0.00022)).abs() < EPS,
+        "offer {}",
+        tw.offer
+    );
+    // Symmetric about mid (no skew): midpoint == mid.
+    assert!(((tw.bid + tw.offer) / 2.0 - mid).abs() < EPS);
+}
+
+// ── Scaled Smoothed Spread: observed-unavailable ⇒ Max Output Spread m ───────
+#[test]
+fn scaled_smoothed_observed_unavailable_quotes_at_max_output() {
+    let s = ScaledSmoothedSpread::new(0.00008, 0.00004, 0.0002, 0.0008, 1.2);
+    // No smoothed_spread on the context ⇒ indicative fallback Oₙ = m = .0008.
+    assert!((s.output_spread(None) - 0.0008).abs() < EPS);
+    let guards = Guardrails::new(0.0, 1.0, 1.0, 1e-6);
+    let ctx = QuoteCtx::new(1.10000); // smoothed_spread == None
+    let tw = quote(&[&s], &ctx, &guards, StalePolicy::Suppress).unwrap();
+    // half = m/2 = .0004.
+    assert!(
+        (tw.offer - tw.bid - 0.0008).abs() < EPS,
+        "spread {}",
+        tw.offer - tw.bid
+    );
+}
+
+// ── EWMA smoothing recurrence: seed, w=1 disables, geometric decay ───────────
+#[test]
+fn smoothing_recurrence_and_disable() {
+    // Seed: S₀ = R₀ regardless of w.
+    assert!((smooth(None, 0.0003, 0.25) - 0.0003).abs() < EPS);
+    // w = 1 ⇒ smoothing off: Sₙ = Rₙ.
+    assert!((smooth(Some(0.0009), 0.0003, 1.0) - 0.0003).abs() < EPS);
+    // One step: Sₙ = w·R + (1−w)·S₋₁ = 0.25·0.0003 + 0.75·0.0009 = 0.00075.
+    assert!((smooth(Some(0.0009), 0.0003, 0.25) - 0.00075).abs() < EPS);
+
+    // Geometric decay at rate (1−w): after a step to a constant raw r from a level
+    // p, (Sₙ − r) = (1−w)ⁿ (p − r). Check the first three iterates.
+    let (w, r) = (0.25, 0.0003);
+    let mut s = 0.0009_f64;
+    let start_gap = s - r;
+    for n in 1..=3 {
+        s = smooth(Some(s), r, w);
+        let expected_gap = (1.0 - w).powi(n) * start_gap;
+        assert!((s - r - expected_gap).abs() < EPS, "n={n}");
+    }
+}
+
+// ── Config: SCALE_SMOOTH serde round-trip + smoothing_weight accessor ────────
+#[test]
+fn scaled_smoothed_config_round_trip_and_weight() {
+    let config = TieringConfig {
+        unit: SpreadUnit::PricePoints,
+        strategies: vec![StrategySpec::ScaledSmoothedSpread {
+            smoothing_weight: 0.3,
+            expected_spread: 0.00008,
+            max_divergence: 0.00004,
+            core_spread: 0.0002,
+            max_output_spread: 0.0008,
+            spread_scale_factor: 1.2,
+        }],
+        guardrails: Guardrails::new(0.0, 1.0, 1.0, 1e-6),
+        stale_policy: StalePolicy::Suppress,
+    };
+    let json = serde_json::to_string(&config).unwrap();
+    let back: TieringConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(config, back);
+    assert_eq!(back.smoothing_weight(), Some(0.3));
+
+    // Feed a smoothed Sₙ = 2e; end-to-end Oₙ = .00044 around mid 1.10.
+    let ctx = QuoteCtx::new(1.10).with_smoothed_spread(0.00016);
+    let tw = back.quote(&ctx).unwrap();
+    assert!((tw.offer - tw.bid - 0.00044).abs() < EPS);
+
+    // A config with no SCALE_SMOOTH strategy reports no smoothing weight.
+    let flat_only = TieringConfig {
+        unit: SpreadUnit::PriceBps,
+        strategies: vec![StrategySpec::FlatMarkup { half_spread: 25.0 }],
+        guardrails: Guardrails::new(0.0, 10.0, 5.0, 0.01),
+        stale_policy: StalePolicy::Suppress,
+    };
+    assert_eq!(flat_only.smoothing_weight(), None);
+}
+
 // ── Property test: the anti-cross invariant holds for ANY config ────────────
 mod props {
     use super::*;
@@ -299,6 +423,41 @@ mod props {
             // Skew (mid − midpoint) respects the guardrail |s| ≤ s_max.
             let skew = mid - (tw.bid + tw.offer) / 2.0;
             prop_assert!(skew.abs() <= g_s_max + 1.0e-9, "|skew| {} > s_max {g_s_max}", skew.abs());
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2048))]
+        // Scaled Smoothed Spread never crosses the book and stays symmetric about
+        // mid (no skew), for any smoothed level and any valid params. The output
+        // spread is bounded by [c (floored), m] before guardrails; guards then only
+        // widen (floor) or cap, never invert.
+        #[test]
+        fn scaled_smoothed_never_crosses_and_is_symmetric(
+            mid in 0.5f64..2000.0,
+            smoothed in 0.0f64..0.01,
+            expected in 1.0e-6f64..0.005,   // e > 0
+            max_div in 0.0f64..0.005,       // d ≥ 0
+            core in 0.0f64..0.005,          // c ≥ 0
+            extra_out in 0.0f64..0.01,      // m = c + extra ≥ c
+            scale in 0.0f64..5.0,           // f ≥ 0
+            h_span in 1.0f64..20.0,
+            spread_floor in 1.0e-4f64..0.5,
+        ) {
+            let m = core + extra_out;
+            let s = ScaledSmoothedSpread::new(expected, max_div, core, m, scale);
+            let guards = Guardrails::new(0.0, h_span, 5.0, spread_floor);
+            let ctx = QuoteCtx::new(mid).with_smoothed_spread(smoothed);
+            let tw = quote(&[&s], &ctx, &guards, StalePolicy::Suppress)
+                .expect("PricePoints unit always converts; valid guards must quote");
+
+            prop_assert!(tw.bid < tw.offer, "bid {} >= offer {}", tw.bid, tw.offer);
+            prop_assert!(tw.offer - tw.bid >= spread_floor - 1.0e-9);
+            // No skew: strictly symmetric about mid.
+            prop_assert!(((tw.bid + tw.offer) / 2.0 - mid).abs() <= 1.0e-9);
+            // The pure output spread never exceeds m (before the floor may widen it).
+            let o = s.output_spread(Some(smoothed));
+            prop_assert!(o <= m + 1.0e-12, "O {o} > m {m}");
         }
     }
 }

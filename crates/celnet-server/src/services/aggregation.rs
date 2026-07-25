@@ -43,7 +43,7 @@ use celnet_aggregation::{ConsolidatedBook, ConsolidationConfig, Instrument, Venu
 use celnet_bond::{Bond, accrued_interest, bond_risk};
 use celnet_proto::{AggregatedBookSnapshot, AggregatedInstrument, LpContribution, LpQuote};
 use celnet_rates::{AccrualBasis, PaymentFrequency};
-use celnet_tiering::{QuoteCtx, SpreadUnit, TieringConfig};
+use celnet_tiering::{QuoteCtx, SpreadUnit, TieringConfig, smooth};
 use celnet_types::{Ccy, CommodityRef, Symbol, Tenor, Underlying};
 
 use crate::clock::Clock;
@@ -216,6 +216,12 @@ struct BookState {
     published: Arc<PublishedBook>,
     /// `dirty_version` value `published` was consolidated at.
     published_version: u64,
+    /// Per-instrument fading-memory smoothed spread `Sₙ₋₁` for a
+    /// [`ScaledSmoothedSpread`](celnet_tiering::ScaledSmoothedSpread) config — the
+    /// ONLY mutable tiering state (the strategies themselves are pure). Empty (and
+    /// never touched) for a book with no Scaled-Smoothed-Spread strategy, so such a
+    /// book is byte-identical to before. Keyed by `instrument_id`.
+    smoothed_spread: HashMap<String, f64>,
 }
 
 /// One running aggregated-book engine.
@@ -243,6 +249,7 @@ impl BookEngine {
                 dirty_version: 0,
                 published,
                 published_version: 0,
+                smoothed_spread: HashMap::new(),
             }),
         }
     }
@@ -376,7 +383,14 @@ impl AggregationHub {
             let raw = consolidate_book(&engine.id, &cfg, &state.sink, now);
             let published = match &cfg.tiering {
                 Some(tiering) => {
-                    let tiered = apply_tiering(&raw, tiering, &cfg, self.inventory.as_deref(), now);
+                    let tiered = apply_tiering(
+                        &raw,
+                        tiering,
+                        &cfg,
+                        self.inventory.as_deref(),
+                        now,
+                        &mut state.smoothed_spread,
+                    );
                     PublishedBook {
                         version: state.dirty_version,
                         snapshot: tiered,
@@ -544,8 +558,14 @@ fn apply_tiering(
     cfg: &BookCfg,
     inventory: Option<&dyn InventorySource>,
     now: i64,
+    smoothed_state: &mut HashMap<String, f64>,
 ) -> AggregatedBookSnapshot {
     let settlement = settlement_date(now);
+    // Present only for a Scaled-Smoothed-Spread config: the Smoothing Weight `w` that
+    // drives the stateful EWMA on each line's observed spread. `None` ⇒ no smoothing
+    // (the `smoothed_state` map is never read or written — a book without the strategy
+    // stays byte-identical to before).
+    let smoothing_weight = tiering.smoothing_weight();
     let mut instruments = Vec::with_capacity(raw.instruments.len());
     for line in &raw.instruments {
         let mid = 0.5 * (line.best_bid + line.best_offer);
@@ -559,10 +579,36 @@ fn apply_tiering(
         {
             ctx = ctx.with_dv01(dv01);
         }
+
+        // Scaled-Smoothed-Spread: the observed level IS this line's own consolidated
+        // raw spread. When it is well-formed, advance the fading-memory EWMA and feed
+        // `Sₙ` to the strategy; when it is unavailable (a locked/crossed/non-finite
+        // composite has no meaningful spread), leave `smoothed_spread` unset so the
+        // strategy quotes at its Max Output Spread and mark the line INDICATIVE —
+        // without poisoning the smoothed state with a bad observation.
+        let mut indicative = false;
+        if let Some(w) = smoothing_weight {
+            let raw_spread = line.best_offer - line.best_bid;
+            if raw_spread.is_finite() && raw_spread > 0.0 {
+                let prev = smoothed_state.get(&line.instrument_id).copied();
+                let sn = smooth(prev, raw_spread, w);
+                smoothed_state.insert(line.instrument_id.clone(), sn);
+                ctx = ctx.with_raw_spread(raw_spread).with_smoothed_spread(sn);
+            } else {
+                indicative = true;
+            }
+        }
+
         if let Ok(two_way) = tiering.quote(&ctx) {
             let mut tiered = line.clone();
             tiered.best_bid = two_way.bid;
             tiered.best_offer = two_way.offer;
+            // An indicative Scaled-Smoothed fallback carries zero confidence in the
+            // composite: the line is published (at Max Output width) but explicitly
+            // untrusted, surfaced through the existing `confidence ∈ [0,1]` channel.
+            if indicative {
+                tiered.confidence = 0.0;
+            }
             instruments.push(tiered);
         }
         // Else: Suppressed ⇒ no outbound quote for this line (drop it).
@@ -994,6 +1040,114 @@ mod tests {
         let inst = &hub.snapshot("b").expect("book").snapshot.instruments[0];
         assert!((inst.best_bid - 99.30).abs() < 1e-9);
         assert!((inst.best_offer - 99.80).abs() < 1e-9);
+    }
+
+    /// A Scaled-Smoothed-Spread config with the Smoothing Weight `w = 1` (smoothing
+    /// off ⇒ `Sₙ = Rₙ`) prices the worked oracle: raw spread `R = 2e = .00016` on
+    /// mid `1.10` gives `Dₙ = e ⇒ Pₙ = 1.2 ⇒ Oₙ = c·2.2 = .00044`, so
+    /// `bid/offer = mid ∓ .00022` — symmetric, no skew.
+    #[test]
+    fn scaled_smoothed_prices_worked_oracle_smoothing_off() {
+        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
+        d.tiering = Some(tiering(
+            SpreadUnit::PricePoints,
+            vec![StrategySpec::ScaledSmoothedSpread {
+                smoothing_weight: 1.0,
+                expected_spread: 0.00008,
+                max_divergence: 0.00004,
+                core_spread: 0.0002,
+                max_output_spread: 0.0008,
+                spread_scale_factor: 1.2,
+            }],
+        ));
+        let hub = hub_with(d);
+        // Raw spread = 1.10008 − 1.09992 = .00016 = 2e; mid = 1.10.
+        hub.ingest(&lp_quote("LP-1", "X", 1.09992, 1.10008, NOW));
+        let inst = &hub.snapshot("b").expect("book").snapshot.instruments[0];
+        assert!(
+            (inst.best_bid - 1.09978).abs() < 1e-9,
+            "bid={}",
+            inst.best_bid
+        );
+        assert!(
+            (inst.best_offer - 1.10022).abs() < 1e-9,
+            "offer={}",
+            inst.best_offer
+        );
+        // Symmetric about mid (no skew).
+        assert!((0.5 * (inst.best_bid + inst.best_offer) - 1.10).abs() < 1e-9);
+    }
+
+    /// The fading-memory EWMA is maintained per (book, instrument) ACROSS publishes:
+    /// with `w = 0.5`, `e = c = .0002`, `d = 0`, `f = 1`, a first raw spread `.0002`
+    /// seeds `S₀ = .0002` (⇒ `O = c`), then a wider raw spread `.0006` smooths to
+    /// `S₁ = .5·.0006 + .5·.0002 = .0004` (⇒ `D = .0002, P = 1, O = .0004`), a spread
+    /// strictly between the unsmoothed `.0006`-driven output and the core — proof the
+    /// state persisted and damped the jump.
+    #[test]
+    fn scaled_smoothed_ewma_persists_across_publishes() {
+        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
+        d.tiering = Some(tiering(
+            SpreadUnit::PricePoints,
+            vec![StrategySpec::ScaledSmoothedSpread {
+                smoothing_weight: 0.5,
+                expected_spread: 0.0002,
+                max_divergence: 0.0,
+                core_spread: 0.0002,
+                max_output_spread: 0.01,
+                spread_scale_factor: 1.0,
+            }],
+        ));
+        let hub = hub_with(d);
+
+        // Publish 1: R₀ = .0002, S₀ = .0002, O = c = .0002 ⇒ half = .0001.
+        hub.ingest(&lp_quote("LP-1", "X", 0.9999, 1.0001, NOW));
+        let i0 = &hub.snapshot("b").expect("book").snapshot.instruments[0];
+        assert!((i0.best_offer - i0.best_bid - 0.0002).abs() < 1e-9);
+
+        // Publish 2: R₁ = .0006, S₁ = .0004 (smoothed), O = c·2 = .0004 ⇒ half = .0002.
+        // Without the persisted state the unsmoothed R₁ would give O = c·3 = .0006.
+        hub.ingest(&lp_quote("LP-1", "X", 0.9997, 1.0003, NOW));
+        let i1 = &hub.snapshot("b").expect("book").snapshot.instruments[0];
+        assert!(
+            (i1.best_offer - i1.best_bid - 0.0004).abs() < 1e-9,
+            "smoothed spread={}",
+            i1.best_offer - i1.best_bid
+        );
+        assert!((0.5 * (i1.best_bid + i1.best_offer) - 1.0).abs() < 1e-9);
+    }
+
+    /// A non-positive (locked/crossed) composite spread makes the observed level
+    /// unavailable: the Scaled-Smoothed line is published at the Max Output Spread `m`
+    /// and marked INDICATIVE via zero confidence, rather than being dropped.
+    #[test]
+    fn scaled_smoothed_observed_unavailable_is_indicative_at_max_output() {
+        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
+        d.tiering = Some(tiering(
+            SpreadUnit::PricePoints,
+            vec![StrategySpec::ScaledSmoothedSpread {
+                smoothing_weight: 0.5,
+                expected_spread: 0.0002,
+                max_divergence: 0.00004,
+                core_spread: 0.0002,
+                max_output_spread: 0.0008,
+                spread_scale_factor: 1.2,
+            }],
+        ));
+        let hub = hub_with(d);
+        // A locked market: best_bid == best_offer ⇒ raw spread 0 ⇒ observed unavailable.
+        hub.ingest(&lp_quote("LP-1", "X", 1.0, 1.0, NOW));
+        let snap = hub.snapshot("b").expect("book");
+        let inst = &snap.snapshot.instruments[0];
+        // Published at Max Output width m = .0008 (half = .0004), centred on mid 1.0.
+        assert!(
+            (inst.best_offer - inst.best_bid - 0.0008).abs() < 1e-9,
+            "spread={}",
+            inst.best_offer - inst.best_bid
+        );
+        assert!((0.5 * (inst.best_bid + inst.best_offer) - 1.0).abs() < 1e-9);
+        // Indicative: zero confidence in the composite.
+        assert_eq!(inst.confidence.to_bits(), 0.0_f64.to_bits());
     }
 
     /// A **yield-bps** flat markup on a registered bond publishes an offset of

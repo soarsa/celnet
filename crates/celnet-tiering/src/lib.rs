@@ -50,5 +50,5 @@ mod unit;
 pub use config::{StrategySpec, TieringConfig};
 pub use context::{Mid, QuoteCtx, SpreadSkew, TwoWay};
 pub use pipeline::{Guardrails, StalePolicy, SuppressReason, Suppressed, quote};
-pub use strategy::{FlatMarkup, InventorySkew, TieringStrategy};
+pub use strategy::{FlatMarkup, InventorySkew, ScaledSmoothedSpread, TieringStrategy, smooth};
 pub use unit::{SpreadUnit, TieringError};

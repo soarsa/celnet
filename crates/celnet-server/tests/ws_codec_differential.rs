@@ -4191,7 +4191,12 @@ fn agg_tiering_body() -> Value {
         "unit": 0,
         "strategies": [
             { "kind": 0, "half_spread": 25.0, "kappa": 0.0, "s_max": 0.0 },
-            { "kind": 1, "half_spread": 25.0, "kappa": 1.5, "s_max": 100.0 }
+            { "kind": 1, "half_spread": 25.0, "kappa": 1.5, "s_max": 100.0 },
+            {
+                "kind": 2, "smoothing_weight": 0.3, "expected_spread": 0.00008,
+                "max_divergence": 0.00004, "core_spread": 0.0002,
+                "max_output_spread": 0.0008, "spread_scale_factor": 1.2
+            }
         ],
         "guardrails": { "h_min": 0.0, "h_max": 5.0, "s_max": 2.0, "spread_floor": 0.01 },
         "stale_policy": 1
@@ -4283,12 +4288,24 @@ fn agg_book_desc() -> AggregatedBookDesc {
                     half_spread: 25.0,
                     kappa: 0.0,
                     s_max: 0.0,
+                    ..Default::default()
                 },
                 TieringStrategyDesc {
                     kind: TieringStrategyKind::InventorySkew as i32,
                     half_spread: 25.0,
                     kappa: 1.5,
                     s_max: 100.0,
+                    ..Default::default()
+                },
+                TieringStrategyDesc {
+                    kind: TieringStrategyKind::ScaledSmoothedSpread as i32,
+                    smoothing_weight: 0.3,
+                    expected_spread: 0.00008,
+                    max_divergence: 0.00004,
+                    core_spread: 0.0002,
+                    max_output_spread: 0.0008,
+                    spread_scale_factor: 1.2,
+                    ..Default::default()
                 },
             ],
             guardrails: Some(TieringGuardrailsDesc {

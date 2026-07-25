@@ -69,6 +69,17 @@ pub struct QuoteCtx {
     /// Bond modified duration — fallback source for DV01 when `dv01` is absent
     /// (`DV01 = mod_duration · mid / 10000`).
     pub mod_duration: Option<f64>,
+    /// The fading-memory **smoothed** observed spread `Sₙ` (absolute price offset),
+    /// already advanced by the stateful [`crate::smooth`] updater in the layer that
+    /// owns the per-(book, instrument) EWMA state. Read by
+    /// [`crate::ScaledSmoothedSpread`]. `None` ⇒ the observed level is unavailable
+    /// (the strategy then quotes at its Max Output Spread — the indicative fallback).
+    pub smoothed_spread: Option<f64>,
+    /// The current **raw** observed spread `Rₙ` (absolute price offset) the smoothing
+    /// consumed — the composite's own consolidated `best_offer − best_bid` in the
+    /// streaming integration. Carried for provenance/telemetry; the strategy prices
+    /// off [`Self::smoothed_spread`], not this. `None` ⇒ observed level unavailable.
+    pub raw_spread: Option<f64>,
     /// Upstream freshness signal: `true` when the composite is stale or the LP
     /// quorum was lost. Triggers the [`crate::StalePolicy`] in the pipeline.
     pub is_stale: bool,
@@ -87,6 +98,8 @@ impl QuoteCtx {
             vol_ref: 1.0,
             dv01: None,
             mod_duration: None,
+            smoothed_spread: None,
+            raw_spread: None,
             is_stale: false,
         }
     }
@@ -124,6 +137,22 @@ impl QuoteCtx {
     #[must_use]
     pub fn with_mod_duration(mut self, mod_duration: f64) -> Self {
         self.mod_duration = Some(mod_duration);
+        self
+    }
+
+    /// Supply the smoothed observed spread `Sₙ` (absolute price offset) read by
+    /// [`crate::ScaledSmoothedSpread`].
+    #[must_use]
+    pub fn with_smoothed_spread(mut self, smoothed_spread: f64) -> Self {
+        self.smoothed_spread = Some(smoothed_spread);
+        self
+    }
+
+    /// Supply the raw observed spread `Rₙ` (absolute price offset) the smoothing
+    /// consumed, for provenance/telemetry.
+    #[must_use]
+    pub fn with_raw_spread(mut self, raw_spread: f64) -> Self {
+        self.raw_spread = Some(raw_spread);
         self
     }
 

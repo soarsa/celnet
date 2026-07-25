@@ -2689,23 +2689,37 @@ export type TieringStalePolicy = "SUPPRESS" | "WIDEN_TO_MAX";
  * two streaming-relevant strategies; the remaining four (vol scale, size ladder,
  * toxicity, per-client tier) slot in additively as new union members later.
  */
-export type TieringStrategyKind = "FLAT_MARKUP" | "INVENTORY_SKEW";
+export type TieringStrategyKind = "FLAT_MARKUP" | "INVENTORY_SKEW" | "SCALED_SMOOTHED_SPREAD";
 
 /**
  * One enabled tiering strategy and its parameters (mirrors `celnet.wire
- * .TieringStrategyDesc`). Magnitudes are in the parent {@link TieringConfig.unit}.
- * Fields a `kind` does not use are ignored (a `FLAT_MARKUP` strategy ignores
- * `kappa`/`sMax`).
+ * .TieringStrategyDesc`). Magnitudes are in the parent {@link TieringConfig.unit}
+ * for FLAT_MARKUP / INVENTORY_SKEW; the SCALED_SMOOTHED_SPREAD spread params
+ * (`expectedSpread`/`maxDivergence`/`coreSpread`/`maxOutputSpread`) are ABSOLUTE
+ * price offsets. Fields a `kind` does not use are ignored (a `FLAT_MARKUP` strategy
+ * ignores every field but `halfSpread`).
  */
 export interface TieringStrategy {
   /** Which strategy this entry configures. */
   kind: TieringStrategyKind;
-  /** The (base) half-spread magnitude `H` (both strategy kinds). */
+  /** The (base) half-spread magnitude `H` (FLAT_MARKUP / INVENTORY_SKEW). */
   halfSpread: number;
   /** Inventory-skew gain `kappa` (magnitude per unit inventory); INVENTORY_SKEW only. */
   kappa: number;
   /** Inventory-skew strategy-local cap `sMax` (magnitude); INVENTORY_SKEW only. */
   sMax: number;
+  /** Scaled-Smoothed Smoothing Weight `w ∈ (0, 1]` (1 ⇒ off); SCALED_SMOOTHED_SPREAD only. */
+  smoothingWeight: number;
+  /** Scaled-Smoothed Expected Spread `e > 0` (absolute); SCALED_SMOOTHED_SPREAD only. */
+  expectedSpread: number;
+  /** Scaled-Smoothed Max Divergence `d ≥ 0` dead-band (absolute); SCALED_SMOOTHED_SPREAD only. */
+  maxDivergence: number;
+  /** Scaled-Smoothed Core spread `c ≥ 0` (absolute); SCALED_SMOOTHED_SPREAD only. */
+  coreSpread: number;
+  /** Scaled-Smoothed Max Output Spread `m ≥ c` (absolute); SCALED_SMOOTHED_SPREAD only. */
+  maxOutputSpread: number;
+  /** Scaled-Smoothed Spread Scale Factor `f ≥ 0`; SCALED_SMOOTHED_SPREAD only. */
+  spreadScaleFactor: number;
 }
 
 /**

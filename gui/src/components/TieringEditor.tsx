@@ -30,6 +30,7 @@ import {
   TIERING_STRATEGY_KIND_HINT,
   TIERING_STRATEGY_KIND_LABEL,
   TIERING_STRATEGY_KINDS,
+  TIERING_STRATEGY_META,
   type TieringErrors,
 } from "../lib/tiering";
 import styles from "./TieringEditor.module.css";
@@ -136,6 +137,8 @@ export function TieringEditor({
               {value.strategies.map((s, i) => {
                 const se = errors.strategies[i] ?? {};
                 const isSkew = s.kind === "INVENTORY_SKEW";
+                const isScaled = s.kind === "SCALED_SMOOTHED_SPREAD";
+                const meta = TIERING_STRATEGY_META[s.kind];
                 return (
                   <div key={i} className={styles.strategyCard}>
                     <div className={styles.strategyHead}>
@@ -143,6 +146,16 @@ export function TieringEditor({
                         <span className={styles.kindBadge}>
                           {TIERING_STRATEGY_KIND_LABEL[s.kind]}
                         </span>
+                        <a
+                          className={styles.docLink}
+                          href={meta.docHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={`${meta.purpose} — opens the “how to use” documentation`}
+                          aria-label={`How to use the ${meta.title} strategy (documentation)`}
+                        >
+                          ?
+                        </a>
                       </span>
                       <button
                         type="button"
@@ -155,19 +168,23 @@ export function TieringEditor({
                     </div>
                     <p className={styles.strategyHint}>{TIERING_STRATEGY_KIND_HINT[s.kind]}</p>
                     <div className={styles.grid}>
-                      <label className={styles.param} htmlFor={`${idPrefix}-s${i}-half`}>
-                        <span className={styles.paramLabel}>Half-spread H</span>
-                        <input
-                          id={`${idPrefix}-s${i}-half`}
-                          className={`${styles.input} ${styles.numInput} ${se.halfSpread ? styles.inputError : ""}`}
-                          type="number"
-                          step="any"
-                          value={s.halfSpread}
-                          aria-invalid={se.halfSpread ? true : undefined}
-                          onChange={(e) => patchStrategy(i, { halfSpread: Number(e.target.value) })}
-                        />
-                        {se.halfSpread && <span className={styles.error}>{se.halfSpread}</span>}
-                      </label>
+                      {!isScaled && (
+                        <label className={styles.param} htmlFor={`${idPrefix}-s${i}-half`}>
+                          <span className={styles.paramLabel}>Half-spread H</span>
+                          <input
+                            id={`${idPrefix}-s${i}-half`}
+                            className={`${styles.input} ${styles.numInput} ${se.halfSpread ? styles.inputError : ""}`}
+                            type="number"
+                            step="any"
+                            value={s.halfSpread}
+                            aria-invalid={se.halfSpread ? true : undefined}
+                            onChange={(e) =>
+                              patchStrategy(i, { halfSpread: Number(e.target.value) })
+                            }
+                          />
+                          {se.halfSpread && <span className={styles.error}>{se.halfSpread}</span>}
+                        </label>
+                      )}
                       {isSkew && (
                         <>
                           <label className={styles.param} htmlFor={`${idPrefix}-s${i}-kappa`}>
@@ -195,6 +212,110 @@ export function TieringEditor({
                               onChange={(e) => patchStrategy(i, { sMax: Number(e.target.value) })}
                             />
                             {se.sMax && <span className={styles.error}>{se.sMax}</span>}
+                          </label>
+                        </>
+                      )}
+                      {isScaled && (
+                        <>
+                          <label className={styles.param} htmlFor={`${idPrefix}-s${i}-w`}>
+                            <span className={styles.paramLabel}>Smoothing weight w (0–1]</span>
+                            <input
+                              id={`${idPrefix}-s${i}-w`}
+                              className={`${styles.input} ${styles.numInput} ${se.smoothingWeight ? styles.inputError : ""}`}
+                              type="number"
+                              step="any"
+                              value={s.smoothingWeight}
+                              aria-invalid={se.smoothingWeight ? true : undefined}
+                              onChange={(e) =>
+                                patchStrategy(i, { smoothingWeight: Number(e.target.value) })
+                              }
+                            />
+                            {se.smoothingWeight && (
+                              <span className={styles.error}>{se.smoothingWeight}</span>
+                            )}
+                          </label>
+                          <label className={styles.param} htmlFor={`${idPrefix}-s${i}-e`}>
+                            <span className={styles.paramLabel}>Expected spread e</span>
+                            <input
+                              id={`${idPrefix}-s${i}-e`}
+                              className={`${styles.input} ${styles.numInput} ${se.expectedSpread ? styles.inputError : ""}`}
+                              type="number"
+                              step="any"
+                              value={s.expectedSpread}
+                              aria-invalid={se.expectedSpread ? true : undefined}
+                              onChange={(e) =>
+                                patchStrategy(i, { expectedSpread: Number(e.target.value) })
+                              }
+                            />
+                            {se.expectedSpread && (
+                              <span className={styles.error}>{se.expectedSpread}</span>
+                            )}
+                          </label>
+                          <label className={styles.param} htmlFor={`${idPrefix}-s${i}-d`}>
+                            <span className={styles.paramLabel}>Max divergence d</span>
+                            <input
+                              id={`${idPrefix}-s${i}-d`}
+                              className={`${styles.input} ${styles.numInput} ${se.maxDivergence ? styles.inputError : ""}`}
+                              type="number"
+                              step="any"
+                              value={s.maxDivergence}
+                              aria-invalid={se.maxDivergence ? true : undefined}
+                              onChange={(e) =>
+                                patchStrategy(i, { maxDivergence: Number(e.target.value) })
+                              }
+                            />
+                            {se.maxDivergence && (
+                              <span className={styles.error}>{se.maxDivergence}</span>
+                            )}
+                          </label>
+                          <label className={styles.param} htmlFor={`${idPrefix}-s${i}-c`}>
+                            <span className={styles.paramLabel}>Core spread c</span>
+                            <input
+                              id={`${idPrefix}-s${i}-c`}
+                              className={`${styles.input} ${styles.numInput} ${se.coreSpread ? styles.inputError : ""}`}
+                              type="number"
+                              step="any"
+                              value={s.coreSpread}
+                              aria-invalid={se.coreSpread ? true : undefined}
+                              onChange={(e) =>
+                                patchStrategy(i, { coreSpread: Number(e.target.value) })
+                              }
+                            />
+                            {se.coreSpread && <span className={styles.error}>{se.coreSpread}</span>}
+                          </label>
+                          <label className={styles.param} htmlFor={`${idPrefix}-s${i}-m`}>
+                            <span className={styles.paramLabel}>Max output spread m</span>
+                            <input
+                              id={`${idPrefix}-s${i}-m`}
+                              className={`${styles.input} ${styles.numInput} ${se.maxOutputSpread ? styles.inputError : ""}`}
+                              type="number"
+                              step="any"
+                              value={s.maxOutputSpread}
+                              aria-invalid={se.maxOutputSpread ? true : undefined}
+                              onChange={(e) =>
+                                patchStrategy(i, { maxOutputSpread: Number(e.target.value) })
+                              }
+                            />
+                            {se.maxOutputSpread && (
+                              <span className={styles.error}>{se.maxOutputSpread}</span>
+                            )}
+                          </label>
+                          <label className={styles.param} htmlFor={`${idPrefix}-s${i}-f`}>
+                            <span className={styles.paramLabel}>Spread scale factor f</span>
+                            <input
+                              id={`${idPrefix}-s${i}-f`}
+                              className={`${styles.input} ${styles.numInput} ${se.spreadScaleFactor ? styles.inputError : ""}`}
+                              type="number"
+                              step="any"
+                              value={s.spreadScaleFactor}
+                              aria-invalid={se.spreadScaleFactor ? true : undefined}
+                              onChange={(e) =>
+                                patchStrategy(i, { spreadScaleFactor: Number(e.target.value) })
+                              }
+                            />
+                            {se.spreadScaleFactor && (
+                              <span className={styles.error}>{se.spreadScaleFactor}</span>
+                            )}
                           </label>
                         </>
                       )}

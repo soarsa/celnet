@@ -127,6 +127,11 @@ Composition: `#6` sets base `H`/caps per counterparty; `#3–#5` adjust `h`; `#2
 guardrails (§4) clamp. Each strategy is a pure function `(composite, ctx) → (h, s)` summed by
 the pipeline — so "flat + inventory + vol" is just enabling three strategies on a book.
 
+Alongside the shortlist, **Scaled Smoothed Spread (SCALE_SMOOTH)** ships as a spread-volatility
+damping *spread source* (an EWMA on the observed spread → an absolute output spread) — an
+alternative to Flat markup rather than an additive layer. Full methodology, params, worked
+oracle, and operator guidance: [§9 → Scaled Smoothed Spread](#scaled-smoothed-spread-scale_smooth).
+
 ## 6. celnet integration design (FI-first, asset-agnostic seam)
 
 - **New crate `celnet-tiering`** (asset-agnostic, no server dep): a `TieringStrategy` trait
@@ -175,3 +180,107 @@ the pipeline — so "flat + inventory + vol" is just enabling three strategies o
 - Feldhütter — bond bid-ask spread, vol proxy for inventory risk: feldhutter.com/BidAskSpread.pdf
 - MarketAxess — EGB bid-ask vs maturity; CME — DV01/PVBP; SIE — Treasury 32nds quoting (bond bps convention)
 - Refuted: VPIN predicts volatility (0‑3, EFMA 2019); inventory is the single dominant bond-spread driver (1‑2, Feldhütter)
+- Scaled Smoothed Spread methodology — source spec `CTMAINDOC-Scaled Smoothed Spread Tiering` (internal); the EWMA/first-order-IIR smoother is standard signal processing.
+
+## 9. Operator guide — how to use each strategy
+
+Each strategy is a pure `(composite, ctx) → (h, s)` contribution the pipeline sums,
+then clamps by the guardrails (§4). The per-strategy help links in the GUI Tiering
+editor deep-link to the three subsections below.
+
+### Flat markup (how to use)
+
+The always-on baseline: a constant symmetric half-spread `H` around mid, no skew
+(`h = H`, `s = 0`). Set `H` in the config's spread unit — e.g. `PRICE_BPS = 25`
+widens a mid of `99.55` to `99.30 / 99.80` (`25 bps = 0.25` price). Use it when you
+want a fixed, predictable margin and do not need spread to react to inventory or to
+the observed market spread. **Do not** combine it with Scaled Smoothed Spread (that
+strategy *sets* the spread absolutely — the two would double-count). Inventory skew
+*may* be added alongside Flat markup to lean the two-way.
+
+### Inventory skew (how to use)
+
+A base half-spread `H` plus a skew linear in the signed position, clamped:
+`s = clamp(κ·q, ±s_max)`, `h = H`. A **long** book (`q > 0`, `κ > 0`) skews the whole
+two-way **down** — cheaper offer, lower bid — to shed risk; a **short** book skews up.
+The spread `2h` is unchanged by skew, so the book never crosses. Tune `κ` (skew per
+unit inventory) small first and raise it until inventory mean-reverts without
+self-adverse fills; `s_max` caps the lean. Requires a live position feed (the FI
+inventory book); with no position the skew is zero and the output equals Flat markup
+alone. Layer it **on top of** Flat markup or Scaled Smoothed Spread to add directional
+lean to either spread source.
+
+### Scaled Smoothed Spread (SCALE_SMOOTH)
+
+A spread **source** (not an additive markup) that **damps spread volatility** while
+tiering. Per instrument, from the composite top-of-book mid `M` and an observed raw
+spread `R` (for the streaming integration the observed level **is** that instrument's
+own consolidated raw spread `best_offer − best_bid`):
+
+1. **Smooth** (fading-memory EWMA, stateful): `S₀ = R₀`; `Sₙ = w·Rₙ + (1−w)·Sₙ₋₁`.
+   `w` = Smoothing Weight, `0 < w ≤ 1` (`w = 1` ⇒ smoothing off; a step in `R` decays
+   geometrically at rate `(1−w)`).
+2. **Divergence**: `Dₙ = |Sₙ − e|` (`e` = Expected Spread).
+3. **Percent apply**: `Pₙ = 0` if `Dₙ ≤ d`; else `Pₙ = f·Dₙ/e` (`d` = Max Divergence
+   dead-band, `f` = Spread Scale Factor).
+4. **Output spread**: `Oₙ = min(m, c·(1 + Pₙ))` (`c` = Core spread, `m` = Max Output
+   Spread cap).
+5. **Two-way** (symmetric, no skew): `bid = M − Oₙ/2`, `offer = M + Oₙ/2`.
+
+#### Parameters
+
+| Symbol | Wire / config field | Meaning | Constraint |
+|--------|---------------------|---------|-----------|
+| `w` | `smoothing_weight` | EWMA weight on the newest raw spread | `0 < w ≤ 1` |
+| `e` | `expected_spread` | Target the divergence is measured from (absolute price spread) | `> 0` |
+| `d` | `max_divergence` | Dead-band half-width; inside it no widening | `≥ 0` |
+| `c` | `core_spread` | Base output spread at zero widening | `≥ 0` |
+| `m` | `max_output_spread` | Hard cap on `O`, and the indicative-fallback width | `≥ c` |
+| `f` | `spread_scale_factor` | Widening gain on the relative divergence `D/e` | `≥ 0` |
+
+`e, d, c, m` are **absolute price offsets** (price points) — the strategy works
+directly in the mid's price space and is asset-agnostic, independent of the config's
+shared spread `unit` (which governs the other strategies). `w, f` are dimensionless.
+
+#### Worked examples (oracle)
+
+With `c = .0002`, `e = .00008`, `d = .00004`, `m = .0008`, `f = 1.2`:
+
+| `Dₙ` | `Pₙ` | `Oₙ = min(m, c·(1+Pₙ))` |
+|------|------|--------------------------|
+| `Dₙ ≤ d` | `0` | `c = .0002` |
+| `d + ε` (`≈ .00004`) | `≈ 0.6` | `.00032` |
+| `e = .00008` | `1.2` | `.00044` |
+| `.001` | `f·Dₙ/e = 1.2·.001/.00008 = 15` | `min(.0008, .0002·16) = .0008` (capped) |
+
+> Note: the source PDF prints `Pₙ = 30` for the last row — that is an arithmetic slip.
+> The formula gives `Pₙ = 15`; the output is `.0008` (the cap) either way. The
+> implementation and its oracle tests follow the **formula**.
+
+#### Composition & statefulness
+
+- **It is a spread source.** Use SCALE_SMOOTH **or** Flat markup, never both (they
+  would double-count the half-spread). **Inventory skew may still layer skew** on top
+  — its `s` shifts the two SCALE_SMOOTH-set sides together without changing `Oₙ`.
+- **The strategy is pure.** The only mutable state — the smoothed spread `Sₙ₋₁` — lives
+  in the aggregation layer, kept per `(book, instrument)`. On each publish the layer
+  advances it with the pure `celnet_tiering::smooth` updater and feeds the resulting
+  `Sₙ` into the strategy via `QuoteCtx::smoothed_spread`; the strategy maps `Sₙ → Oₙ`.
+- **Observed level unavailable** (a locked/crossed/non-finite composite has no
+  meaningful `R`): the line is published at the **Max Output Spread `m`** and marked
+  **indicative** (zero confidence in the composite spread, surfaced through the existing
+  `confidence ∈ [0,1]` channel), rather than being dropped — and the smoothed state is
+  **not** poisoned by the bad observation.
+- **Guardrails still apply.** `Oₙ` flows through the same pipeline + guardrails (§4) as
+  every strategy. For SCALE_SMOOTH to express its full range, set the guardrails so they
+  do not clamp it: `spread_floor ≤ c` (else the floor widens small outputs) and
+  `h_max ≥ m/2` (else the cap binds before `m`).
+
+#### Deferred: the multi-observed-level size ladder
+
+The source spec also describes an **Observed Quantity** ladder — a distinct observed
+level (and hence output spread) per size tier. That is intentionally **deferred**: it
+pairs with the future Size-ladder strategy (§5 #4) and the RFQ size path. The current
+integration implements the core spread-smoothing methodology on the streaming composite
+(one observed level = the composite raw spread); the size ladder is a follow-on that
+reuses the same `smooth` + output-spread map per size band.
