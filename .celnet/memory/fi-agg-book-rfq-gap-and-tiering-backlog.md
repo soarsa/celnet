@@ -1,36 +1,39 @@
 ---
 name: fi-agg-book-rfq-gap-and-tiering-backlog
-description: "VERIFIED gap — admin agg-book streams off its real member LPs but inbound RFQ prices against a synthetic-demo panel (CELNET_DEMO_LPS), NOT the book. Fresh-session backlog — wire RFQ→book + build celnet-tiering + FI-tab tiering UI."
+description: "Tiering vertical DONE + live UAT (fde21ae) — engine (Flat/InventorySkew/SCALE_SMOOTH) + per-book config + composite apply + FI-tab config screens + per-strategy doc links. ONLY remaining — Phase 2b — wire inbound RFQ to price against the admin book, not the synthetic-demo panel."
 metadata: 
   node_type: memory
   type: project
   originSessionId: cf0956fd-d116-49a0-8307-d104e532a50c
 ---
 
-Verified 2026-07-24 (UAT on `bc7e9a6`). The FI aggregated-book chain is 3/4 wired; the 4th
-link is the real gap the operator flagged ("define book → stream → subscribe LPs → handle
-inbound requests to price"):
+## DONE + live on UAT `fde21ae` (2026-07-25) — the FI outbound tiering vertical
+Design/math: `docs/FI-TIERING-RESEARCH.md`. Built as: engine → server integration → GUI, all gated.
+- **`celnet-tiering`** crate (`297781c`): pure `TieringStrategy` + `FlatMarkup`, `InventorySkew`,
+  `ScaledSmoothedSpread` (SCALE_SMOOTH — EWMA-smoothed spread from the PDF); `quote()` pipeline;
+  guardrails (anti-cross via `offer−bid=2h` skew-invariance); `SpreadUnit` + DV01 conversion.
+- **Server** (`67e4bee` + `fde21ae`): `TieringConfig` persisted on `AggregatedBookDef` (admin CRUD +
+  validate); applied on the composite publish path (`services/aggregation.rs::apply_tiering`) — mid
+  from raw composite, inventory via `InventorySource` seam, DV01 from `celnet_bond` for YieldBps,
+  SCALE_SMOOTH EWMA state kept per-book/instrument in `BookState.smoothed_spread` (strategy stays
+  pure). No-config path byte-identical. Additive proto/WS (`TieringStrategyKind` + descs), byte-
+  identical hand+generated codecs.
+- **GUI** (`5dd9cbe` + `fde21ae`): per-book `TieringEditor` under Fixed Income (admin-only Manage
+  mode on the Agg Book workspace); all 3 strategies + guardrails + validation; per-strategy "?" doc
+  links → `docs/FI-TIERING-RESEARCH.md` §9. Also fixed a pre-existing prod bug (step/min mismatch
+  silently blocked ALL agg-book submits).
 
-- **Admin-only definition** ✅ — `create/update/delete_aggregated_book` gated to admins
-  (test `aggregated_book_admin_gate_denies_non_admin`, `services/auth.rs:3679`).
-- **Streams a composite** ✅ — `AggregationHub` + `AggregatedBookSubscribe` on the stream edge
-  (`services/stream.rs`); the GUI Agg Book view reads it.
-- **Ingests its member LPs** ✅ — `services/aggregation.rs::ingest` routes each `LpQuote` into
-  every enabled book listing that LP in `member_connection_ids`.
-- **Inbound RFQ against the book** ❌ **GAP** — `services/quote.rs` (`QuoteService`, the
-  RFQ/multi-dealer path) has ZERO refs to the aggregated book. Its panel is
-  `LpPanelConfig { synthetic_lps: u32 }` sourced from env `CELNET_DEMO_LPS` — synthetic demo
-  dealers, NOT the book's real member LPs/composite. So streaming and RFQ pricing use two
-  disconnected aggregation concepts.
+## ONLY REMAINING — Phase 2b (fresh session)
+Wire inbound **RFQ/`QuoteService`** (`crates/celnet-server/src/services/quote.rs`) to price against the
+admin-defined book's `member_connection_ids`/composite, NOT the synthetic-demo panel
+(`LpPanelConfig{synthetic_lps}` from env `CELNET_DEMO_LPS`) — the VERIFIED gap. Admin book definition +
+streaming + member-LP ingest already ✅; the tiering engine now also tiers the composite it prices off.
 
-**Fresh-session backlog (same subsystem — do together; this one is deferred, ~$174 spent):**
-1. Wire RFQ/`QuoteService` to price against the admin-defined book's `member_connection_ids`/
-   composite instead of the demo panel.
-2. Build the new `celnet-tiering` crate (Flat markup + Inventory-skew FIRST, then vol/size/
-   toxicity/client-tier) on the composite seam — full design in `docs/FI-TIERING-RESEARCH.md`.
-3. FI-tab **Tiering** admin UI (currently absent — only the research doc exists, no code/UI).
-
-Both (1) and (2) share the aggregation composite seam (`services/aggregation.rs` publish path).
-See [[fi-aggregated-book-shipped]] and [[fi-bond-terms-and-govvie-feed-shipped]]. Session also
-shipped: agg-book bond-terms, lp-sim full govvie universe, New-Instrument portal modal,
-new-version-refresh modal (all live on `bc7e9a6`).
+## UAT box gotcha (deploy)
+The UAT box `/dev/sda1` is 9.7G, ~7G permanently OS (celnet user has NO sudo → can't reclaim it), so it
+sits near-full and the deploy's `npm ci` / binary-copy hits ENOSPC at 99%. Remedy: `cd deploy && ansible
+uat -m shell -a '<reclaim>'` — delete old release dirs EXCEPT `readlink -f /opt/celnet/current`, plus
+`/opt/celnet/build/gui/node_modules` (npm ci rebuilds) + `~/.npm` + `~/.cache` — then re-run `release`
+(Rust `target/` is preserved for incremental; the post-publish cache-reclaim only runs on SUCCESS, which
+is why failed deploys pile up). The box really needs a bigger disk/swap. See
+[[deploy-ssh-drop-on-silent-build]], [[fi-bond-terms-and-govvie-feed-shipped]], [[fi-aggregated-book-shipped]].
