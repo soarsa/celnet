@@ -934,6 +934,7 @@ dependencies = [
  "celnet-router",
  "celnet-surface",
  "celnet-testkit",
+ "celnet-tiering",
  "celnet-types",
  "celnet-vanilla",
  "celnet-xva",
@@ -972,6 +973,15 @@ dependencies = [
  "celnet-types",
  "celnet-vanilla",
  "proptest",
+]
+
+[[package]]
+name = "celnet-tiering"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

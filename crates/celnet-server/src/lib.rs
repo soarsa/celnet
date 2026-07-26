@@ -426,7 +426,12 @@ impl Edge {
             )
             // The RFQ caller gate (item B §2) validates `session_token` against the
             // shared registry and reads the live access mode off the shared store.
-            .with_session_access(Arc::clone(&sessions), Arc::clone(&store)),
+            .with_session_access(Arc::clone(&sessions), Arc::clone(&store))
+            // Phase 2b: the SAME aggregated-book engine hub the LP ingest / stream / auth
+            // edges share, so an inbound RFQ on an instrument an admin-defined book covers
+            // prices against that book's already-tiered composite (and ranks its member-LP
+            // lines) instead of the synthetic-demo panel.
+            .with_aggregation_hub(Arc::clone(&aggregation_hub)),
         );
         let stream = StreamServiceServer::new(
             StreamEdge::with_store_and_fleet(

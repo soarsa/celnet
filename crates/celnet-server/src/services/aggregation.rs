@@ -205,6 +205,40 @@ impl PublishedBook {
     }
 }
 
+/// A book composite resolved for an inbound RFQ (Phase 2b): the book it came from, that
+/// book's **outbound** (already-tiered per its own config) composite two-way for the
+/// requested instrument, and the book's contributing member-LP lines. The RFQ path prices
+/// the single-dealer quote off [`Self::best_bid`]/[`Self::best_offer`] and ranks
+/// [`Self::members`] for the multi-dealer panel — reusing the book's already-applied
+/// tiering rather than re-implementing it. Returned by
+/// [`AggregationHub::resolve_rfq_composite`].
+pub struct RfqComposite {
+    /// The id of the book the composite was resolved from (audit / attribution).
+    pub book_id: String,
+    /// The tiered composite best bid — the book's outbound price a client SELLs into.
+    pub best_bid: f64,
+    /// The tiered composite best offer — the book's outbound price a client BUYs at.
+    pub best_offer: f64,
+    /// The book's contributing member-LP lines (each LP's own raw two-way + staleness),
+    /// for the multi-dealer ranked panel. A stale line is excluded from the panel by the
+    /// caller.
+    pub members: Vec<RfqMemberLine>,
+}
+
+/// One contributing member-LP line of a resolved [`RfqComposite`]: the LP's venue name,
+/// its own raw two-way, and whether it is currently stale (aged out / gated — not setting
+/// the composite). The RFQ multi-dealer panel ranks only the fresh member lines.
+pub struct RfqMemberLine {
+    /// The contributing LP's venue name (its `lp_id` on the ranked panel).
+    pub lp_name: String,
+    /// The LP's own bid.
+    pub bid: f64,
+    /// The LP's own offer.
+    pub offer: f64,
+    /// Whether this contribution is stale (aged out / gated); excluded from the panel.
+    pub stale: bool,
+}
+
 /// The live state of one book: the latest-quote sink, a dirty version bumped on
 /// every ingest, and the memoised last-published composite.
 struct BookState {
@@ -417,6 +451,76 @@ impl AggregationHub {
             .read()
             .expect("aggregation books lock poisoned")
             .contains_key(book_id)
+    }
+
+    /// Resolve the tiered composite line for `instrument_id` from the first enabled book
+    /// (deterministic id order) whose scope admits it **and** that currently publishes a
+    /// well-formed composite line for it (quorum met, fresh members, a finite non-crossed
+    /// two-way). The returned [`RfqComposite`] carries the book's **outbound**
+    /// (already-tiered) two-way and its contributing member lines, so the RFQ path prices
+    /// against the book without re-implementing tiering (Phase 2b).
+    ///
+    /// `None` when no book covers the instrument, no covering book has a live composite
+    /// line for it (e.g. no fresh member LPs / below quorum), or the composite is
+    /// degenerate (non-finite / crossed) — the RFQ path then falls back to the synthetic
+    /// demo panel, so nothing regresses when no book is configured.
+    #[must_use]
+    pub fn resolve_rfq_composite(&self, instrument_id: &str) -> Option<RfqComposite> {
+        // Candidate books whose scope admits the id, in deterministic id order (a stable
+        // resolution when more than one book admits the same instrument). Collected under
+        // a short read lock that is released before consolidating — `snapshot` re-locks,
+        // so holding the read guard across it could deadlock.
+        let candidates: Vec<String> = {
+            let books = self.books.read().expect("aggregation books lock poisoned");
+            let mut ids: Vec<String> = books
+                .iter()
+                .filter(|(_, engine)| {
+                    let cfg = engine.cfg.lock().expect("book cfg lock poisoned");
+                    scope_admits(&cfg.scope, instrument_id)
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            ids.sort();
+            ids
+        };
+        for book_id in candidates {
+            let Some(published) = self.snapshot(&book_id) else {
+                continue;
+            };
+            let Some(line) = published
+                .snapshot
+                .instruments
+                .iter()
+                .find(|i| i.instrument_id == instrument_id)
+            else {
+                continue;
+            };
+            // Guard a degenerate composite (non-finite / crossed): skip to the next book
+            // (ultimately the synthetic fallback) rather than emit a bad RFQ price.
+            if !(line.best_bid.is_finite()
+                && line.best_offer.is_finite()
+                && line.best_bid <= line.best_offer)
+            {
+                continue;
+            }
+            let members = line
+                .contributions
+                .iter()
+                .map(|c| RfqMemberLine {
+                    lp_name: c.lp_name.clone(),
+                    bid: c.bid,
+                    offer: c.offer,
+                    stale: c.stale,
+                })
+                .collect();
+            return Some(RfqComposite {
+                book_id,
+                best_bid: line.best_bid,
+                best_offer: line.best_offer,
+                members,
+            });
+        }
+        None
     }
 }
 

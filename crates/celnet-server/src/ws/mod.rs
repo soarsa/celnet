@@ -193,7 +193,11 @@ impl WsServices {
             // The WS RFQ caller gate (item B §2) shares the SAME session registry +
             // access store the gRPC quote edge uses, so the WS mirror enforces one
             // coherent policy (the caller rides in the unary body — no router change).
-            .with_session_access(Arc::clone(&sessions), Arc::clone(&store)),
+            .with_session_access(Arc::clone(&sessions), Arc::clone(&store))
+            // Phase 2b: the SAME aggregated-book hub, so a WS RFQ prices against a
+            // covering admin-defined book identically to the gRPC edge (one contract,
+            // one pricing source).
+            .with_aggregation_hub(Arc::clone(&aggregation_hub)),
         );
         let stream = Arc::new(
             StreamEdge::with_store(

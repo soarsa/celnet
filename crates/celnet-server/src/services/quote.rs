@@ -213,12 +213,13 @@ fn synthetic_lp_two_way(k: u32, mid: f64, half_spread: f64) -> (f64, f64) {
     (mid + skew, half_spread * widen)
 }
 
-/// The attribution stamped on a synthetic dealer's panel line: the synthetic LP's
-/// own auto-pricer seat quoted it, and the client's requesting seat (when supplied
-/// on the originating request) holds a booking of it — mirroring how the maker
-/// line is attributed by [`super::attribution::resolve`]. A booked dealer line's
-/// execution therefore carries the LP identity, never an anonymous fill.
-fn synthetic_lp_attribution(lp_id: &str, held_by: Option<BookId>) -> AttributionRecord {
+/// The attribution stamped on a non-native dealer panel line — a synthetic demo dealer
+/// OR a real aggregated-book member LP (Phase 2b): the LP's own auto-pricer seat quoted
+/// it, and the client's requesting seat (when supplied on the originating request) holds
+/// a booking of it — mirroring how the maker line is attributed by
+/// [`super::attribution::resolve`]. A booked dealer line's execution therefore carries the
+/// LP identity, never an anonymous fill.
+fn lp_line_attribution(lp_id: &str, held_by: Option<BookId>) -> AttributionRecord {
     AttributionRecord {
         quoted_by: Some(BookId {
             book: lp_id.to_owned(),
@@ -374,6 +375,16 @@ pub struct QuoteEdge {
     /// under (gRPC + WS, every service). Named `access_store` to keep the RFQ
     /// [`QuoteStore`] field (`store`) distinct.
     access_store: Arc<PositionStore>,
+    /// The optional edge-wide aggregated-book engine hub (D3 / Phase 2b). When an inbound
+    /// RFQ's instrument falls in an admin-defined book's scope and that book has a live
+    /// composite, the quote is priced against the book's ALREADY-TIERED composite (and its
+    /// member-LP lines rank the multi-dealer panel) instead of the `CELNET_DEMO_LPS`
+    /// synthetic panel. `None` (the constructors' default) ⇒ every RFQ prices through the
+    /// options engine + synthetic panel exactly as before — byte-identical when no book
+    /// covers the instrument. Installed by the boot path via
+    /// [`QuoteEdge::with_aggregation_hub`]; the SAME hub the ingest / stream / auth edges
+    /// share.
+    aggregation_hub: Option<Arc<crate::services::aggregation::AggregationHub>>,
 }
 
 impl QuoteEdge {
@@ -435,6 +446,7 @@ impl QuoteEdge {
             panel,
             sessions,
             access_store: Arc::new(PositionStore::new()),
+            aggregation_hub: None,
         }
     }
 
@@ -455,6 +467,36 @@ impl QuoteEdge {
         self.sessions = sessions;
         self.access_store = access_store;
         self
+    }
+
+    /// Install the edge-wide aggregated-book engine hub so an inbound RFQ on an instrument
+    /// an admin-defined book covers prices against that book's ALREADY-TIERED composite
+    /// (and ranks its member-LP lines on the multi-dealer panel) instead of the
+    /// synthetic-demo panel (Phase 2b). Absent ⇒ the byte-identical synthetic-panel
+    /// behaviour when no book is configured. Builder-style, mirroring
+    /// [`StreamEdge::with_aggregation_hub`](crate::services::stream::StreamEdge) — the boot
+    /// path installs the SAME hub the LP ingest and stream edges share.
+    #[must_use]
+    pub fn with_aggregation_hub(
+        mut self,
+        hub: Arc<crate::services::aggregation::AggregationHub>,
+    ) -> Self {
+        self.aggregation_hub = Some(hub);
+        self
+    }
+
+    /// Resolve the aggregated-book composite an inbound RFQ's instrument prices against
+    /// (Phase 2b): the first admin-defined book whose scope admits the instrument's key
+    /// and that has a live, well-formed composite line. `None` when no hub is installed,
+    /// the instrument yields no book key, or no book covers it — the RFQ then prices
+    /// through the options engine + synthetic panel exactly as before.
+    fn book_composite(
+        &self,
+        instrument: &celnet_proto::Instrument,
+    ) -> Option<crate::services::aggregation::RfqComposite> {
+        let hub = self.aggregation_hub.as_ref()?;
+        let key = book_instrument_key(instrument)?;
+        hub.resolve_rfq_composite(&key)
     }
 
     /// Mint the next **unguessable** `quote_id`: a strictly-fresh monotonic counter
@@ -772,6 +814,53 @@ fn pre_trade_leaf(
     cross_asset_pre_trade_leaf(instrument, market, priced).map(PreTradeLeaf::CrossAsset)
 }
 
+/// The aggregated-book instrument key an RFQ instrument resolves to — the SAME opaque id
+/// scheme LP feeds push and book scopes list: a commodity or equity underlying's symbol
+/// ticker (an ISIN/CUSIP-style code — the id an aggregated book keys a composite line on),
+/// or an FX pair's market form `BASEQUOTE`. `None` when the underlying carries no such key
+/// (or an empty ticker).
+///
+/// An instrument that yields no key never resolves to a book and prices through the
+/// options engine as before; and even for a key that IS produced, the RFQ path only
+/// diverges when an admin has actually configured a book whose scope admits it AND that
+/// book has a live composite — so FX stays byte-identical unless an admin explicitly
+/// stands up a book over the pair (Phase 2b).
+fn book_instrument_key(instrument: &celnet_proto::Instrument) -> Option<String> {
+    let underlying = instrument.underlying.as_ref()?;
+    if let Some(pair) = underlying.as_fx() {
+        return Some(format!("{}{}", pair.base, pair.quote));
+    }
+    if let Some(commodity) = underlying.as_commodity() {
+        return commodity
+            .symbol
+            .as_ref()
+            .map(|s| s.ticker.clone())
+            .filter(|t| !t.is_empty());
+    }
+    if let Some(equity) = underlying.as_equity() {
+        return equity
+            .symbol
+            .as_ref()
+            .map(|s| s.ticker.clone())
+            .filter(|t| !t.is_empty());
+    }
+    None
+}
+
+/// The priced ingredients of a `RequestQuote`, produced either from the options engine
+/// (the default path) or from an admin-defined aggregated book's already-tiered composite
+/// (Phase 2b). Lets [`QuoteService::request_quote`] build the stored [`Quote`] from ONE
+/// place regardless of the pricing source; the book path carries no option greeks /
+/// vol-surface / canonical option leaf, so those fields are `None`.
+struct QuotePricing {
+    two_way: TwoWayPrice,
+    greeks: Option<celnet_proto::Greeks>,
+    resolved_strike: f64,
+    echo_version: Option<u64>,
+    price_std_error: Option<f64>,
+    pre_trade: Option<PreTradeLeaf>,
+}
+
 #[tonic::async_trait]
 impl QuoteService for QuoteEdge {
     async fn request_quote(
@@ -878,75 +967,119 @@ impl QuoteService for QuoteEdge {
         let wire_conv = req
             .conventions
             .ok_or_else(|| Status::invalid_argument("missing `conventions`"))?;
-        let conv = ConventionSet::decode(&wire_conv).map_err(|e| price_error_to_status(&e))?;
 
-        let market = self.live_market().await?;
-        // Resolve the optional pinned `surface_version`: an honoured pin prices the
-        // quote against the marked surface and is echoed on the `Quote`; an unknown
-        // pinned version is refused (the pin cannot be honoured).
-        let PinnedVol {
-            market: effective_market,
-            echo_version,
-        } = resolve_pinned_vol(
-            &self.surface_book,
-            req.surface_version,
-            &instrument,
-            &market,
-        )?;
-        let priced = match price_instrument(&instrument, &effective_market, &conv) {
-            Ok(priced) => priced,
-            Err(e) => {
-                tracing::warn!(
-                    class = celnet_observability::LogClass::Security.label(),
-                    requester = %requester_disp,
-                    idempotency_key = %req.idempotency_key,
-                    reason = %e,
-                    "quote rejected"
-                );
-                return Err(price_error_to_status(&e));
+        // Phase 2b — aggregated-book RFQ: if the instrument falls in an admin-defined
+        // book's scope and that book has a live composite, price the single-dealer quote
+        // against the book's ALREADY-TIERED composite best-bid/offer (the tiering is the
+        // book's — reused, never re-implemented here). A book composite is a consolidated
+        // market price, not an option premium, so it carries no greeks / vol-surface /
+        // canonical option leaf: greeks, std-error, surface echo and the pre-trade leaf
+        // are `None` (an explicit no-gate outcome, never a fabricated zero). Otherwise —
+        // no book covers it — fall through to the options-engine path, byte-identical to
+        // before, so nothing regresses when no book is configured.
+        let pricing = if let Some(comp) = self.book_composite(&instrument) {
+            tracing::info!(
+                class = celnet_observability::LogClass::Security.label(),
+                requester = %requester_disp,
+                idempotency_key = %req.idempotency_key,
+                book = %comp.book_id,
+                bid = comp.best_bid,
+                offer = comp.best_offer,
+                "quote sourced from aggregated book"
+            );
+            QuotePricing {
+                two_way: TwoWayPrice {
+                    bid: comp.best_bid,
+                    offer: comp.best_offer,
+                },
+                greeks: None,
+                resolved_strike: 0.0,
+                echo_version: None,
+                price_std_error: None,
+                pre_trade: None,
+            }
+        } else {
+            let conv = ConventionSet::decode(&wire_conv).map_err(|e| price_error_to_status(&e))?;
+
+            let market = self.live_market().await?;
+            // Resolve the optional pinned `surface_version`: an honoured pin prices the
+            // quote against the marked surface and is echoed on the `Quote`; an unknown
+            // pinned version is refused (the pin cannot be honoured).
+            let PinnedVol {
+                market: effective_market,
+                echo_version,
+            } = resolve_pinned_vol(
+                &self.surface_book,
+                req.surface_version,
+                &instrument,
+                &market,
+            )?;
+            let priced = match price_instrument(&instrument, &effective_market, &conv) {
+                Ok(priced) => priced,
+                Err(e) => {
+                    tracing::warn!(
+                        class = celnet_observability::LogClass::Security.label(),
+                        requester = %requester_disp,
+                        idempotency_key = %req.idempotency_key,
+                        reason = %e,
+                        "quote rejected"
+                    );
+                    return Err(price_error_to_status(&e));
+                }
+            };
+
+            let two_way = self.spread.two_way(priced.greeks.price, &priced.greeks);
+
+            // ADR-0016 A1 (generalized under ADR-0021): capture the CLASS-CORRECT
+            // pre-trade risk leaf this quote would book (the BUY-side exposure), so a
+            // later `AcceptQuote` can run the pre-trade limit gate against the shared
+            // position book without re-pricing. FX vanilla → the canonical-vanilla leaf
+            // (unchanged); cross-asset (equity/commodity/linear-crypto) → its
+            // cost-of-carry leaf — each routed through the SAME unified aggregate. An
+            // instrument with no derivable canonical leaf carries `None` (an explicit
+            // no-gate outcome, never a fake zero).
+            let pre_trade = pre_trade_leaf(
+                &instrument,
+                &effective_market,
+                &conv,
+                &priced,
+                echo_version.unwrap_or(0),
+            );
+
+            QuotePricing {
+                two_way,
+                // MC standard error for an MC-priced product (clamped cliquet); `None`
+                // for closed-form products. Surfaced on the Quote so the WS/SDK quote path
+                // discloses the same uncertainty the gRPC PriceResponse does.
+                price_std_error: priced.std_error,
+                greeks: Some(priced.greeks.into()),
+                resolved_strike: priced.resolved_strike,
+                echo_version,
+                pre_trade,
             }
         };
-
-        let two_way = self.spread.two_way(priced.greeks.price, &priced.greeks);
 
         let now = self.clock.now_nanos();
         let quote_id = self.mint_quote_id();
         let quote = Quote {
             quote_id,
             idempotency_key: req.idempotency_key.clone(),
-            price: Some(two_way),
-            greeks: Some(priced.greeks.into()),
+            price: Some(pricing.two_way),
+            greeks: pricing.greeks,
             conventions: Some(wire_conv),
-            resolved_strike: priced.resolved_strike,
+            resolved_strike: pricing.resolved_strike,
             epoch_nanos: now,
             valid_until_nanos: now + QUOTE_VALIDITY_NANOS,
             correlation_id: req.correlation_id,
-            surface_version: echo_version,
+            surface_version: pricing.echo_version,
             // Stamp the who's-trading chain: the maker auto-pricer is the
             // `quoted_by` (the engine priced and showed this line); the client's
             // requesting seat, when supplied, becomes the `held_by`. So the flow is
             // attributable request→quote→booking and never anonymous.
             attribution: Some(super::attribution::resolve(req.attribution.as_ref())),
-            // MC standard error for an MC-priced product (clamped cliquet); `None`
-            // for closed-form products. Surfaced on the Quote so the WS/SDK quote
-            // path discloses the same uncertainty the gRPC PriceResponse does.
-            price_std_error: priced.std_error,
+            price_std_error: pricing.price_std_error,
         };
-
-        // ADR-0016 A1 (generalized under ADR-0021): capture the CLASS-CORRECT pre-trade
-        // risk leaf this quote would book (the BUY-side exposure), so a later
-        // `AcceptQuote` can run the pre-trade limit gate against the shared position book
-        // without re-pricing. FX vanilla → the canonical-vanilla leaf (unchanged);
-        // cross-asset (equity/commodity/linear-crypto) → its cost-of-carry leaf — each
-        // routed through the SAME unified aggregate. An instrument with no derivable
-        // canonical leaf carries `None` (an explicit no-gate outcome, never a fake zero).
-        let pre_trade = pre_trade_leaf(
-            &instrument,
-            &effective_market,
-            &conv,
-            &priced,
-            echo_version.unwrap_or(0),
-        );
+        let pre_trade = pricing.pre_trade;
 
         // Store under both keys (id always; idempotency key when present).
         {
@@ -1034,6 +1167,15 @@ impl QuoteService for QuoteEdge {
             RequiredAuthority::ReadAny,
             correlation_id,
         )?;
+        // Phase 2b: if the RFQ's instrument is covered by an admin-defined aggregated
+        // book, the panel is the book's real contributing member LPs (ranked beside the
+        // native line) instead of the synthetic demo dealers. Resolved from `req` before
+        // it is consumed by the inner `request_quote` — which itself prices the native
+        // line off the SAME book's already-tiered composite (single source of truth).
+        let book = req
+            .instrument
+            .as_ref()
+            .and_then(|instrument| self.book_composite(instrument));
         // Reuse the full single-dealer pricing/idempotency/pinning path verbatim, so
         // the native dealer line is byte-identical to the `RequestQuote` it mirrors
         // and the quote is stored (keyed by `quote_id`) for accept/reject.
@@ -1062,23 +1204,47 @@ impl QuoteService for QuoteEdge {
                 epoch,
                 valid_for,
             ))];
-        // The synthetic demo/test dealers join only on a serving (in-process)
-        // edge: each is a deterministic in-process quoter over the SAME edge mid
-        // with its fixed per-dealer spread/skew offsets, stamped with the quote's
-        // epoch and last-look window. In a distributed topology the accept routes
-        // back to the issuing backend (which owns the booking store), so a
-        // forwarding edge keeps the panel native-only — the backend's own line —
-        // exactly as before.
+        // The extra dealer lines join only on a serving (in-process) edge (in a
+        // distributed topology the accept routes back to the issuing backend, which owns
+        // the booking store, so a forwarding edge keeps the panel native-only). When an
+        // aggregated book covers the instrument (Phase 2b) the panel is the book's REAL
+        // contributing member LPs — one deterministic in-process source per FRESH member
+        // line (each LP's own raw two-way) — ranked beside the native tiered line. A
+        // stale / crossed / non-finite member is excluded (it does not set a live price).
+        // Otherwise the synthetic demo/test dealers join, each a deterministic quoter over
+        // the SAME edge mid with its fixed per-dealer spread/skew offsets — exactly as
+        // before, so a no-book edge is byte-identical.
         if !matches!(serve_mode(self.fleet.as_ref()), Serve::Forward(_)) {
-            for k in 1..=self.panel.synthetic_lps {
-                let (synth_mid, synth_half) = synthetic_lp_two_way(k, mid, half_spread);
-                sources.push(Box::new(celnet_rfq::InternalPricerSource::new(
-                    synthetic_lp_id(k),
-                    synth_mid,
-                    synth_half,
-                    epoch,
-                    valid_for,
-                )));
+            if let Some(comp) = &book {
+                for member in &comp.members {
+                    if member.stale
+                        || !(member.bid.is_finite()
+                            && member.offer.is_finite()
+                            && member.bid <= member.offer)
+                    {
+                        continue;
+                    }
+                    let member_mid = 0.5 * (member.bid + member.offer);
+                    let member_half = 0.5 * (member.offer - member.bid);
+                    sources.push(Box::new(celnet_rfq::InternalPricerSource::new(
+                        member.lp_name.clone(),
+                        member_mid,
+                        member_half,
+                        epoch,
+                        valid_for,
+                    )));
+                }
+            } else {
+                for k in 1..=self.panel.synthetic_lps {
+                    let (synth_mid, synth_half) = synthetic_lp_two_way(k, mid, half_spread);
+                    sources.push(Box::new(celnet_rfq::InternalPricerSource::new(
+                        synthetic_lp_id(k),
+                        synth_mid,
+                        synth_half,
+                        epoch,
+                        valid_for,
+                    )));
+                }
             }
         }
         let engine = celnet_rfq::MultiDealerEngine::new(sources);
@@ -1097,12 +1263,11 @@ impl QuoteService for QuoteEdge {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        // Project the ranked panel rows onto wire `DealerQuote`s. Every row quotes
-        // the SAME resolved line (the maker-priced strike); the native row carries
-        // the edge-priced greeks / MC std-error (the pricing belongs to the maker;
-        // the engine owns only the aggregation), while a synthetic dealer row
-        // carries only its quoted price and its own auto-pricer attribution (an LP
-        // discloses a price, not its greeks).
+        // Project the ranked panel rows onto wire `DealerQuote`s. The native row carries
+        // the edge-priced greeks / MC std-error (the pricing belongs to the maker; the
+        // engine owns only the aggregation), while a non-native dealer row — a synthetic
+        // demo dealer or a real aggregated-book member LP — carries only its quoted price
+        // and its own auto-pricer attribution (an LP discloses a price, not its greeks).
         let held_by = quote.attribution.as_ref().and_then(|a| a.held_by.clone());
         let dealers: Vec<DealerQuote> = ranked
             .rows
@@ -1118,7 +1283,7 @@ impl QuoteService for QuoteEdge {
                     attribution: if is_native {
                         quote.attribution.clone()
                     } else {
-                        Some(synthetic_lp_attribution(&row.lp_id, held_by.clone()))
+                        Some(lp_line_attribution(&row.lp_id, held_by.clone()))
                     },
                     price_std_error: if is_native {
                         quote.price_std_error
@@ -1569,8 +1734,12 @@ mod tests {
     //! [`PositionStore`] whose runtime access mode the gate reads.
     use super::*;
     use crate::config::identity::Role;
+    use crate::config::identity::{AggregatedBookDef, AggregationParams, IdentityStore, Scope};
+    use crate::services::aggregation::AggregationHub;
     use crate::services::sessions::AuthenticatedUser;
     use celnet_entitlements::AccessMode;
+    use celnet_proto::LpQuote;
+    use celnet_tiering::{Guardrails, SpreadUnit, StalePolicy, StrategySpec, TieringConfig};
 
     /// A real EURUSD-fixture core so an admitted RFQ prices a genuine quote.
     fn test_link() -> Arc<CoreLink> {
@@ -2122,5 +2291,302 @@ mod tests {
             .expect("a no-limit cross-asset accept books")
             .into_inner();
         assert_eq!(exec2.quote_id, quote2.quote_id);
+    }
+
+    // --- Phase 2b: RFQ priced against the admin-defined aggregated book ---------
+
+    /// A BRENT-style commodity vanilla-call over an EXPLICIT ticker — the ticker is the
+    /// aggregated-book instrument key ([`book_instrument_key`] maps a commodity underlying's
+    /// symbol ticker onto the opaque `instrument_id` a book scopes on), so an RFQ for this
+    /// instrument resolves to a book listing that id.
+    fn commodity_named(ticker: &str, strike: f64) -> celnet_proto::Instrument {
+        celnet_proto::Instrument {
+            underlying: Some(celnet_proto::Underlying::commodity(
+                celnet_proto::CommodityRef::new(celnet_proto::Symbol::new(ticker, ""), "USD"),
+            )),
+            tenor: Some(celnet_proto::Tenor {
+                unit: celnet_proto::tenor::Unit::Years as i32,
+                count: 1,
+                broken_date: None,
+            }),
+            expiry_years: 1.0,
+            quantity: Some(celnet_proto::Quantity {
+                notional: 1_000_000.0,
+                base_ccy: true,
+            }),
+            side: celnet_proto::Side::TwoWay as i32,
+            solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(celnet_proto::instrument::Product::Vanilla(
+                celnet_proto::Vanilla {
+                    option_type: celnet_proto::OptionType::Call as i32,
+                    strike: Some(celnet_proto::StrikeOrDelta {
+                        spec: Some(celnet_proto::strike_or_delta::Spec::Strike(strike)),
+                    }),
+                },
+            )),
+            ..Default::default()
+        }
+    }
+
+    /// A hub running ONE enabled book over `instrument_id` with a Flat ±`half_bps`
+    /// **price-bps** outbound tiering config, seeded with each `(lp, bid, offer)` member
+    /// quote. The hub clock is manual and every ingest is stamped at that instant, so the
+    /// composite is fresh regardless of the (separate) edge clock. Mirrors
+    /// `aggregation::tests` construction.
+    fn flat_book_hub(
+        instrument_id: &str,
+        half_bps: f64,
+        members: &[(&str, f64, f64)],
+    ) -> Arc<AggregationHub> {
+        const HUB_NOW: i64 = 1_700_000_000_000_000_000;
+        let hub = AggregationHub::new(Clock::manual(HUB_NOW));
+        let mut store = IdentityStore::default();
+        store.aggregated_books.push(AggregatedBookDef {
+            id: "agg-book".to_string(),
+            name: "agg-book".to_string(),
+            member_connection_ids: members.iter().map(|(lp, _, _)| (*lp).to_string()).collect(),
+            instrument_scope: Scope::Explicit(vec![instrument_id.to_string()]),
+            params: AggregationParams {
+                staleness_tau_ms: 30_000,
+                max_quote_age_ms: 86_400_000,
+                divergence_gating: false,
+                min_contributors: 1,
+                depth_levels: 1,
+            },
+            enabled: true,
+            tiering: Some(TieringConfig {
+                unit: SpreadUnit::PriceBps,
+                strategies: vec![StrategySpec::FlatMarkup {
+                    half_spread: half_bps,
+                }],
+                guardrails: Guardrails::new(0.0, 1_000.0, 1_000.0, 1e-9),
+                stale_policy: StalePolicy::Suppress,
+            }),
+        });
+        hub.reconcile(&store);
+        for (lp, bid, offer) in members {
+            assert!(
+                hub.ingest(&LpQuote {
+                    lp_name: (*lp).to_string(),
+                    instrument_id: instrument_id.to_string(),
+                    bid: *bid,
+                    offer: *offer,
+                    bid_size: 1_000_000.0,
+                    offer_size: 2_000_000.0,
+                    ts_nanos: HUB_NOW,
+                }),
+                "member {lp} ingested into the book"
+            );
+        }
+        hub
+    }
+
+    /// A ready in-process quote edge under `mode` WITH an aggregated-book hub installed.
+    fn edge_with_hub(mode: AccessMode, hub: Arc<AggregationHub>) -> QuoteEdge {
+        let gate = Arc::new(ReadinessGate::new());
+        gate.mark_ready();
+        let clock = Clock::system();
+        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
+        let access_store = Arc::new(PositionStore::new());
+        access_store.set_access_mode(mode);
+        QuoteEdge::new(
+            test_link(),
+            gate,
+            SpreadModel::default(),
+            clock,
+            Arc::new(SurfaceBook::new()),
+        )
+        .with_session_access(sessions, access_store)
+        .with_aggregation_hub(hub)
+    }
+
+    /// (1) An RFQ for an instrument IN a book's scope prices against that book's
+    /// ALREADY-TIERED composite — the two-way is the tiered 99.30/99.80 for a 99.55
+    /// composite mid (Flat ±25 price-bps; the SAME arithmetic `celnet-tiering`'s own
+    /// `flat_price_bps` oracle asserts, hand-check 99.55 ∓ 0.25) — and it DIFFERS from the
+    /// synthetic-demo panel (the options-engine premium a no-hub edge produces).
+    #[tokio::test]
+    async fn rfq_prices_against_the_books_tiered_composite() {
+        let hub = flat_book_hub("BND-5Y", 25.0, &[("LP-1", 99.50, 99.60)]);
+        let edge = edge_with_hub(AccessMode::Permissive, hub);
+        let instrument = commodity_named("BND-5Y", 1.12);
+
+        let quote = edge
+            .request_quote(Request::new(quote_request_for(
+                "book-1",
+                instrument.clone(),
+                None,
+                None,
+            )))
+            .await
+            .expect("book-covered RFQ prices")
+            .into_inner();
+        let price = quote.price.expect("two-way");
+        assert!((price.bid - 99.30).abs() < 1e-9, "bid={}", price.bid);
+        assert!((price.offer - 99.80).abs() < 1e-9, "offer={}", price.offer);
+        // A composite market price, not an option premium: no greeks / std-error / surface.
+        assert!(
+            quote.greeks.is_none(),
+            "a book quote carries no option greeks"
+        );
+        assert!(quote.surface_version.is_none());
+
+        // It differs from the synthetic-demo panel: a no-hub edge prices the SAME commodity
+        // as an option premium — nowhere near the 99.80 composite offer.
+        let no_hub = edge_under(AccessMode::Permissive).0;
+        let engine_quote = no_hub
+            .request_quote(Request::new(quote_request_for(
+                "eng-1", instrument, None, None,
+            )))
+            .await
+            .expect("options-engine RFQ prices")
+            .into_inner();
+        let engine_price = engine_quote.price.expect("two-way");
+        assert!(
+            (engine_price.offer - 99.80).abs() > 1.0,
+            "the engine premium ({}) must differ from the book composite offer (99.80)",
+            engine_price.offer
+        );
+        assert!(
+            engine_quote.greeks.is_some(),
+            "the options-engine path still carries greeks"
+        );
+    }
+
+    /// (2) On the book-sourced path, ranking / pinning / booking + idempotent AcceptQuote
+    /// still hold: the panel is the book's REAL member LPs (never the synthetic dealers),
+    /// the tightest member wins both touches, an accept books exactly that member's line,
+    /// and a retry returns the SAME execution (no double-book).
+    #[tokio::test]
+    async fn multi_dealer_ranks_and_books_book_member_lines() {
+        // LP-2 (99.52/99.58) is tighter than LP-1 (99.50/99.60) ⇒ wins bid AND offer.
+        let hub = flat_book_hub(
+            "BND-5Y",
+            25.0,
+            &[("LP-1", 99.50, 99.60), ("LP-2", 99.52, 99.58)],
+        );
+        let edge = edge_with_hub(AccessMode::Permissive, hub);
+        let instrument = commodity_named("BND-5Y", 1.12);
+
+        let panel = edge
+            .request_multi_dealer_quote(Request::new(quote_request_for(
+                "md-book", instrument, None, None,
+            )))
+            .await
+            .expect("book multi-dealer RFQ")
+            .into_inner();
+
+        // The panel is the book's real member LPs (+ the native tiered line) — never the
+        // synthetic SYNTH-LP-* dealers.
+        let lp_ids: Vec<&str> = panel.dealers.iter().map(|d| d.lp_id.as_str()).collect();
+        assert!(
+            lp_ids.contains(&"LP-1") && lp_ids.contains(&"LP-2"),
+            "member LPs on the panel: {lp_ids:?}"
+        );
+        assert!(
+            !lp_ids.iter().any(|id| id.starts_with("SYNTH-LP-")),
+            "no synthetic dealers on a book panel: {lp_ids:?}"
+        );
+        assert_eq!(panel.best_bid_lp_id, "LP-2", "LP-2 is the best bid");
+        assert_eq!(panel.best_offer_lp_id, "LP-2", "LP-2 is the best offer");
+
+        // Book the winning member's OFFER (Buy lifts LP-2's 99.58).
+        let exec = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: panel.quote_id,
+                idempotency_key: "md-book".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: "LP-2".to_owned(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect("books the LP-2 line")
+            .into_inner();
+        assert!(
+            (exec.traded_premium - 99.58).abs() < 1e-9,
+            "premium={}",
+            exec.traded_premium
+        );
+        // The fill is attributed to LP-2 (never an anonymous fill).
+        let quoted_by = exec
+            .attribution
+            .as_ref()
+            .and_then(|a| a.quoted_by.as_ref())
+            .expect("booked line attribution");
+        assert_eq!(quoted_by.book, "LP-2");
+
+        // Idempotent AcceptQuote: same key/side/line ⇒ the SAME execution, never a
+        // double-book.
+        let retry = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: panel.quote_id,
+                idempotency_key: "md-book".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: "LP-2".to_owned(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect("retry returns the same booking")
+            .into_inner();
+        assert_eq!(retry.execution_id, exec.execution_id);
+        assert!((retry.traded_premium - 99.58).abs() < 1e-9);
+
+        // An empty-lp_id accept on the SAME quote_id is a different dealer line (the native
+        // tiered firm line) than the already-booked LP-2 line ⇒ refused (anti-double-book).
+        let conflict = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: panel.quote_id,
+                idempotency_key: "md-book".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect_err("a different dealer line on a booked quote is refused");
+        assert_eq!(conflict.code(), tonic::Code::FailedPrecondition);
+    }
+
+    /// (3) Regression guard: an instrument with NO covering book falls back to the existing
+    /// options-engine path byte-identically — the hub's mere presence never changes the
+    /// price of an uncovered instrument. An FX EURUSD RFQ resolves no book (the only book
+    /// scopes "BND-5Y"), so the with-hub and no-hub quotes are bit-for-bit equal.
+    #[tokio::test]
+    async fn no_covering_book_falls_back_byte_identically() {
+        let hub = flat_book_hub("BND-5Y", 25.0, &[("LP-1", 99.50, 99.60)]);
+        let with_hub = edge_with_hub(AccessMode::Permissive, hub);
+        let no_hub = edge_under(AccessMode::Permissive).0;
+
+        let q_hub = with_hub
+            .request_quote(Request::new(quote_request("fb-hub", None, None)))
+            .await
+            .expect("fx prices with the hub present")
+            .into_inner();
+        let q_bare = no_hub
+            .request_quote(Request::new(quote_request("fb-bare", None, None)))
+            .await
+            .expect("fx prices without a hub")
+            .into_inner();
+
+        let ph = q_hub.price.expect("two-way");
+        let pb = q_bare.price.expect("two-way");
+        assert_eq!(ph.bid.to_bits(), pb.bid.to_bits(), "bid byte-identical");
+        assert_eq!(
+            ph.offer.to_bits(),
+            pb.offer.to_bits(),
+            "offer byte-identical"
+        );
+        assert_eq!(
+            q_hub.resolved_strike.to_bits(),
+            q_bare.resolved_strike.to_bits(),
+            "resolved strike byte-identical"
+        );
+        assert!(
+            q_hub.greeks.is_some(),
+            "the uncovered instrument still prices through the options engine (greeks present)"
+        );
     }
 }
