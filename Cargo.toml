@@ -110,6 +110,15 @@ unreachable_pub = "warn"
 [workspace.lints.clippy]
 all = "warn"
 
+# Dev profile: cap debuginfo to line-tables-only. Panic backtraces + source
+# locations stay intact, but the heavy per-variable/type DWARF is dropped —
+# roughly HALVES target/debug (deps + the many integration-test binaries) with
+# zero runtime cost. Trade-off: interactive-debugger variable inspection is
+# reduced; the desk debugs via structured tracing/logging, so this is the right
+# dev default. (`[profile.mutants]` inherits dev but overrides debug=false.)
+[profile.dev]
+debug = "line-tables-only"
+
 # Release profile tuned for the latency-sensitive product; reproducible (codegen-units=1).
 [profile.release]
 opt-level = 3
