@@ -199,9 +199,26 @@ PricingProvenance {
 4. **CRUD**: admin `Create/Update/DeletePricingGroup` (mirror the aggregated-book admin CRUD) +, for
    the tiering blocks, a **trader-accessible `UpdatePricingGroupTiering`** gated on
    `quote_respond·fixed_income` (mirror the shipped `UpdateBookTiering` exactly).
-5. **GUI**: a **Pricing Groups** management surface under Fixed Income (membership + per-mode
-   `TieringEditor` for ESP and RFQ), reusing the FI Tiering workspace patterns; and surface the
-   `PricingProvenance` on the deal blotter / an executions-analytics view.
+5. **GUI — the Pricing Groups builder (Administration).** A dedicated **Administration → Pricing
+   Groups** surface with a **drag-and-drop, pipeline-style** editor:
+   - **Left rail** — the list of pricing groups (create / **clone** / delete), each showing its
+     assigned FIX connections / users / desks and enabled state.
+   - **Feature palette** — draggable feature chips (MID SHIFT · TIERING · AXE · POSITION · PANIC/SKEW):
+     the library the trader drags from.
+   - **Pipeline canvas** (the centrepiece) — a left-to-right flow of feature **cards**:
+     `RAW ▸ [ the trader's dragged features, reorderable ] ▸ OUTBOUND`. Drag from the palette to
+     insert; drag a card to reorder; click a card to expand its **inline config** (each feature's
+     params — TIERING reuses the shipped `TieringEditor`). Every group can hold the **same features
+     with different configs** → unique per client.
+   - **ESP / RFQ toggle** on the canvas — one pipeline shared, or switch to edit the separate RFQ
+     pipeline (`share_pipeline`).
+   - **Membership** — assign FIX connections / users / desks to the group (many-to-one).
+   - **Live price preview** — a sample RAW two-way fed through the pipeline, rendering the two-way
+     **after each feature card** (the provenance waterfall as a live, visual "cool pipeline" view), so
+     the trader sees exactly what each feature does to the price before saving.
+   Built with the app's design system + a drag-and-drop canvas; reuses `TieringEditor` +
+   `celnet-tiering` types. Separately, surface `PricingProvenance` on the deal blotter / an
+   executions-analytics view.
 
 ## 9. Suggested build order
 
