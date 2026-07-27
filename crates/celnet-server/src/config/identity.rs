@@ -1667,7 +1667,12 @@ impl IdentityStore {
             }
         }
         validate_feature_pipeline(&def.name, "ESP", &def.esp_pipeline)?;
-        validate_feature_pipeline(&def.name, "RFQ", &def.rfq_pipeline)?;
+        // The RFQ pipeline is IGNORED when `share_pipeline` is set (`rfq_effective_pipeline`
+        // returns the ESP pipeline), so only validate it when it is actually used — otherwise
+        // a group that shares its pipeline is wrongly rejected for an unused/default RFQ block.
+        if !def.share_pipeline {
+            validate_feature_pipeline(&def.name, "RFQ", &def.rfq_pipeline)?;
+        }
         Ok(())
     }
 }
@@ -2224,6 +2229,37 @@ mod tests {
         store2.pricing_groups.push(g);
         assert!(
             store2
+                .validate_pricing_groups()
+                .unwrap_err()
+                .contains("guardrails are inconsistent")
+        );
+    }
+
+    #[test]
+    fn shared_pipeline_ignores_the_unused_rfq_pipeline_guardrails() {
+        // Regression (GOLD_TIERING): with share_pipeline set the RFQ pipeline is unused
+        // (rfq_effective returns ESP), so a default/inconsistent RFQ block must NOT reject
+        // the group — previously it did ("RFQ pipeline guardrails are inconsistent").
+        let mut store = IdentityStore::default();
+        let mut g = group("gs", "GOLD-TIERING", &[], &[], &[], true);
+        g.esp_pipeline = celnet_tiering::FeaturePipeline::new(
+            Vec::new(),
+            celnet_tiering::Guardrails::new(0.0, 1.0, 0.5, 0.01), // valid ESP guardrails
+        );
+        g.rfq_pipeline = celnet_tiering::FeaturePipeline::new(
+            Vec::new(),
+            celnet_tiering::Guardrails::new(0.0, 0.0, 0.0, 0.0), // inconsistent, but IGNORED
+        );
+        g.share_pipeline = true;
+        store.pricing_groups.push(g);
+        store
+            .validate_pricing_groups()
+            .expect("a shared pipeline must not validate the unused RFQ block");
+
+        // With sharing OFF the same RFQ block IS used, and IS rejected.
+        store.pricing_groups[0].share_pipeline = false;
+        assert!(
+            store
                 .validate_pricing_groups()
                 .unwrap_err()
                 .contains("guardrails are inconsistent")
