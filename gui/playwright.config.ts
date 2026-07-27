@@ -48,6 +48,8 @@ const FIDELITY_SPECS = [
   /mockupFidelity\.e2e\.ts/,
   // Admin section-tabs interaction test — offline (mock transport), no cargo edge.
   /adminSectionTabs\.e2e\.ts/,
+  // Pricing-groups pipeline builder — offline (mock transport), no cargo edge.
+  /pricingGroups\.e2e\.ts/,
 ];
 
 /**

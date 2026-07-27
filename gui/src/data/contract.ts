@@ -2895,6 +2895,117 @@ export interface AggregatedBookStreamUpdate {
 }
 
 // ---------------------------------------------------------------------------
+// FI Pricing Groups (docs/FI-PRICING-GROUPS-DESIGN.md) — a trader-composable,
+// ordered pipeline of pricing FEATURES bound to a named group of clients (FIX
+// connections / GUI-API users / desks). The running two-way flows RAW → the
+// trader's ordered features → OUTBOUND (an ESP stream or an RFS/RFQ quote). Each
+// pricing mode (ESP / RFQ) carries its own pipeline; `sharePipeline` makes RFQ
+// mirror ESP. Mirrors `celnet.wire` `PricingGroupDesc`/`FeaturePipelineDesc`/
+// `FeatureSpecDesc` field-for-field; the GUI hand-decodes the WS JSON so the wire
+// codec (`wsCodec.ts`) matches the server's snake_case names + NUMERIC enums
+// (kind / unit / axe_side / mode) exactly. Reuses the shipped {@link TieringConfig}
+// verbatim for the TIERING feature and {@link TieringGuardrails} for the pipeline
+// guardrails. Server backend landed at server commit 07fc99f.
+
+/**
+ * Which pricing feature a {@link FeatureSpec} configures (mirrors the wire
+ * `PricingFeatureKind`: MID_SHIFT=0, TIERING=1, AXE=2, POSITION=3, PANIC_SKEW=4).
+ * Each is a self-contained transform on the running two-way; the trader drags them
+ * from the palette into a group's pipeline and the LIST ORDER is the pipeline.
+ */
+export type FeatureKind = "MID_SHIFT" | "TIERING" | "AXE" | "POSITION" | "PANIC_SKEW";
+
+/**
+ * Which outbound pricing mode a pipeline drives (mirrors the wire `EspOrRfq`:
+ * ESP=0, RFQ=1). ESP is the executable streaming price; RFQ is the request-for-
+ * quote / order price. A group configures each mode independently unless
+ * {@link PricingGroup.sharePipeline} makes RFQ mirror ESP.
+ */
+export type PricingMode = "ESP" | "RFQ";
+
+/**
+ * Which side the AXE feature leans toward (mirrors the wire `AxeSide`: BUY=0,
+ * SELL=1) — the direction the desk wants to trade, so the two-way is skewed to
+ * attract that flow.
+ */
+export type AxeSide = "BUY" | "SELL";
+
+/**
+ * One pricing feature and every parameter any kind could use (mirrors `celnet.wire
+ * .FeatureSpecDesc`). Every field EXCEPT `reference` is always present on the wire;
+ * a feature ignores the fields its `kind` does not use. `reference` is OPTIONAL: it
+ * is emitted only when set (a MID_SHIFT reference-price override) and decodes to
+ * `null` when absent. The TIERING feature reuses {@link TieringConfig} verbatim.
+ */
+export interface FeatureSpec {
+  /** Which feature this entry configures. */
+  kind: FeatureKind;
+  /** The unit the MID_SHIFT / AXE magnitudes are expressed in (reuses the tiering unit vocabulary). */
+  unit: TieringSpreadUnit;
+  /** MID_SHIFT: the signed shift applied to mid (in `unit`). */
+  shift: number;
+  /** MID_SHIFT: an absolute reference-price override for mid; `null` ⇒ none (absent on the wire). */
+  reference: number | null;
+  /** TIERING: the reused margin/markup config; `null` ⇒ the feature applies no tiering. */
+  tiering: TieringConfig | null;
+  /** AXE: which side to lean toward. */
+  axeSide: AxeSide;
+  /** AXE: how far to skew mid toward `axeSide` (in `unit`). */
+  magnitude: number;
+  /** POSITION: inventory-skew gain κ (skew per unit net inventory). */
+  kappa: number;
+  /** POSITION: the inventory-skew clamp sMax (max absolute skew). */
+  sMax: number;
+  /** PANIC_SKEW: the signed emergency skew applied to mid when `triggered`. */
+  skew: number;
+  /** PANIC_SKEW: whether the overlay skew is currently active. */
+  triggered: boolean;
+}
+
+/**
+ * An ordered feature pipeline for one pricing mode (mirrors `celnet.wire
+ * .FeaturePipelineDesc`): the features in run order plus the price-space
+ * {@link TieringGuardrails} clamping the composed result (`null` ⇒ none).
+ */
+export interface FeaturePipeline {
+  /** The features to run, in order (RAW is the implicit start; OUTBOUND the end). */
+  features: FeatureSpec[];
+  /** The guardrail bounds clamping the pipeline's output; `null` ⇒ none. */
+  guardrails: TieringGuardrails | null;
+}
+
+/**
+ * A persisted pricing group (mirrors `celnet.wire.PricingGroupDesc`). Membership is
+ * many-to-one (many FIX connections / users / desks resolve to ONE group). Each
+ * mode carries its own pipeline; `esp_pipeline` / `rfq_pipeline` may be `null`
+ * (that mode falls back to the book-default tiering). On CREATE, `id` is a client-
+ * suggested slug (the server mints one from `name` when empty); on UPDATE it is the
+ * immutable identity. The same interface is the create/update `spec` payload.
+ */
+export interface PricingGroup {
+  /** Stable slug (the store/API key); a client-suggested slug on create. */
+  id: string;
+  /** The trader's group code name ("GROUP-A"), unique case-insensitive. */
+  name: string;
+  /** A free-text description of the group. */
+  description: string;
+  /** Member inbound FIX sessions, by `FixConnection.id`. */
+  memberConnectionIds: string[];
+  /** Member GUI/API principals, by `UserDesc.id`. */
+  memberUserIds: string[];
+  /** Member desks (a desk-level default tier), by `DeskDesc.id`. */
+  memberDesks: string[];
+  /** The ESP / streaming feature pipeline; `null` ⇒ book-default fallback. */
+  espPipeline: FeaturePipeline | null;
+  /** The RFS/RFQ feature pipeline; `null` ⇒ book-default fallback (ignored when `sharePipeline`). */
+  rfqPipeline: FeaturePipeline | null;
+  /** When true, RFQ uses the ESP pipeline (the two modes share one pipeline). */
+  sharePipeline: boolean;
+  /** Whether the group is active (a disabled group prices nobody). */
+  enabled: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // XVA — counterparty valuation adjustments (`PricingService.PriceXva`).
 //
 // A netting set of FX vanillas priced for its all-in credit / funding valuation

@@ -55,6 +55,7 @@ export type WorkspaceId =
   | "connections"
   | "admin"
   | "permissions"
+  | "pricinggroups"
   | "refdata";
 
 /** A logical grouping of related commands (sections the cheatsheet + palette use). */
@@ -130,6 +131,7 @@ export const RAIL: readonly {
   { id: "connections", glyph: "⇄", label: "Connections", assets: [] },
   { id: "admin", glyph: "⚇", label: "Admin", assets: [] },
   { id: "permissions", glyph: "⚷", label: "Permissions", assets: [] },
+  { id: "pricinggroups", glyph: "⚙", label: "Pricing Groups", assets: [] },
   { id: "refdata", glyph: "❏", label: "Reference Data", assets: [] },
 ] as const;
 
@@ -185,6 +187,7 @@ export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<Workspace
   "connections",
   "admin",
   "permissions",
+  "pricinggroups",
   "refdata",
 ]);
 

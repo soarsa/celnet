@@ -90,6 +90,12 @@ import type {
   TieringSpreadUnit,
   TieringStalePolicy,
   TieringStrategy,
+  AxeSide,
+  FeatureKind,
+  FeaturePipeline,
+  FeatureSpec,
+  PricingGroup,
+  PricingMode,
   TieringStrategyKind,
   AggregatedInstrument,
   AggregatedBookComposite,
@@ -3641,6 +3647,208 @@ export function aggregatedBookResponseFromWire(o: WireObject): AggregatedBookDes
  */
 export function bookTieringUpdatedResponseFromWire(o: WireObject): AggregatedBookDesc {
   return aggregatedBookResponseFromWire(o);
+}
+
+// --- FI Pricing Groups codec (server commit 07fc99f) -------------------------
+//
+// Byte-compatible with the server codec's `feature_spec_desc_to_json` /
+// `feature_pipeline_desc_to_json` / `pricing_group_desc_to_json`
+// (`crates/celnet-server/src/ws/codec.rs`): the exact snake_case field names and
+// the NUMERIC enum ints proto3 assigns. Enum mappings (proto3 zero-default first):
+//   FeatureKind  MID_SHIFT=0, TIERING=1, AXE=2, POSITION=3, PANIC_SKEW=4
+//   AxeSide      BUY=0, SELL=1
+//   EspOrRfq     ESP=0, RFQ=1
+//   unit         reuses the tiering SpreadUnit vocabulary (PRICE_BPS=0…PERCENT=3)
+// `feature_spec` always emits `kind, unit, shift`, then `reference` ONLY when set
+// (Some ⇒ number, None ⇒ the key is ABSENT), then `tiering` ALWAYS (null or the
+// nested tiering object), then `axe_side, magnitude, kappa, s_max, skew, triggered`.
+// The TIERING feature reuses {@link tieringConfigToWire}/{@link tieringConfigFromWire}
+// verbatim; the pipeline guardrails reuse {@link tieringGuardrailsToWire}/
+// {@link tieringGuardrailsFromWire}. Request framing `session_token`/`correlation_id`
+// are injected by the `WsConnection`, exactly as every other unary edge.
+
+const FEATURE_KIND_WIRE: Record<FeatureKind, number> = {
+  MID_SHIFT: 0,
+  TIERING: 1,
+  AXE: 2,
+  POSITION: 3,
+  PANIC_SKEW: 4,
+};
+
+/** The wire `FeatureKind` int for a GUI feature kind. */
+function featureKindToWire(k: FeatureKind): number {
+  return FEATURE_KIND_WIRE[k];
+}
+
+/** A GUI feature kind from the wire int (unknown ⇒ the proto3 zero, MID_SHIFT). */
+function featureKindFromWire(n: number): FeatureKind {
+  return n === 1 ? "TIERING" : n === 2 ? "AXE" : n === 3 ? "POSITION" : n === 4 ? "PANIC_SKEW" : "MID_SHIFT";
+}
+
+/** The wire `AxeSide` int (BUY=0, SELL=1). */
+function axeSideToWire(s: AxeSide): number {
+  return s === "SELL" ? 1 : 0;
+}
+
+/** A GUI axe side from the wire int (1 ⇒ SELL; else the proto3 zero, BUY). */
+function axeSideFromWire(n: number): AxeSide {
+  return n === 1 ? "SELL" : "BUY";
+}
+
+/** The wire `EspOrRfq` int for a GUI pricing mode (ESP=0, RFQ=1). */
+export function pricingModeToWire(m: PricingMode): number {
+  return m === "RFQ" ? 1 : 0;
+}
+
+/**
+ * Encode one feature spec to its wire object. `reference` is emitted ONLY when
+ * non-null (matching the server's `Option<f64>` presence tracking); `tiering` is
+ * ALWAYS present (null or the nested tiering object). Every other field is always
+ * emitted (snake_case), so a fully-populated spec round-trips byte-stably.
+ */
+export function featureSpecToWire(f: FeatureSpec): WireObject {
+  const body: WireObject = {
+    kind: featureKindToWire(f.kind),
+    unit: spreadUnitToWire(f.unit),
+    shift: f.shift,
+  };
+  if (f.reference !== null) body["reference"] = f.reference;
+  body["tiering"] = f.tiering ? tieringConfigToWire(f.tiering) : null;
+  body["axe_side"] = axeSideToWire(f.axeSide);
+  body["magnitude"] = f.magnitude;
+  body["kappa"] = f.kappa;
+  body["s_max"] = f.sMax;
+  body["skew"] = f.skew;
+  body["triggered"] = f.triggered;
+  return body;
+}
+
+/**
+ * Decode one feature spec from a nested `features[]` wire object. Absent `reference`
+ * ⇒ null; absent / non-object `tiering` ⇒ null; absent numeric fields ⇒ 0; absent
+ * `triggered` ⇒ false.
+ */
+export function featureSpecFromWire(o: WireObject): FeatureSpec {
+  const rawReference = o["reference"];
+  const rawTiering = o["tiering"];
+  return {
+    kind: featureKindFromWire(enumNum(o, "kind")),
+    unit: spreadUnitFromWire(enumNum(o, "unit")),
+    shift: num(o, "shift"),
+    reference: typeof rawReference === "number" ? rawReference : null,
+    tiering:
+      rawTiering && typeof rawTiering === "object"
+        ? tieringConfigFromWire(rawTiering as WireObject)
+        : null,
+    axeSide: axeSideFromWire(enumNum(o, "axe_side")),
+    magnitude: num(o, "magnitude"),
+    kappa: num(o, "kappa"),
+    sMax: num(o, "s_max"),
+    skew: num(o, "skew"),
+    triggered: o["triggered"] === true,
+  };
+}
+
+/** Encode a feature pipeline (`{ features, guardrails: null|obj }`). */
+export function featurePipelineToWire(p: FeaturePipeline): WireObject {
+  return {
+    features: p.features.map(featureSpecToWire),
+    guardrails: p.guardrails ? tieringGuardrailsToWire(p.guardrails) : null,
+  };
+}
+
+/** Decode a feature pipeline from a nested `esp_pipeline` / `rfq_pipeline` object. */
+export function featurePipelineFromWire(o: WireObject): FeaturePipeline {
+  const rawGuardrails = o["guardrails"];
+  return {
+    features: array(o, "features").map(featureSpecFromWire),
+    guardrails:
+      rawGuardrails && typeof rawGuardrails === "object"
+        ? tieringGuardrailsFromWire(rawGuardrails as WireObject)
+        : null,
+  };
+}
+
+/** Encode a pricing group spec/desc (`esp_pipeline`/`rfq_pipeline` ⇒ null when absent). */
+export function pricingGroupSpecToWire(g: PricingGroup): WireObject {
+  return {
+    id: g.id,
+    name: g.name,
+    description: g.description,
+    member_connection_ids: [...g.memberConnectionIds],
+    member_user_ids: [...g.memberUserIds],
+    member_desks: [...g.memberDesks],
+    esp_pipeline: g.espPipeline ? featurePipelineToWire(g.espPipeline) : null,
+    rfq_pipeline: g.rfqPipeline ? featurePipelineToWire(g.rfqPipeline) : null,
+    share_pipeline: g.sharePipeline,
+    enabled: g.enabled,
+  };
+}
+
+/** Decode a `PricingGroupDesc` from its wire form (pipelines may be null). */
+export function pricingGroupDescFromWire(o: WireObject): PricingGroup {
+  const rawEsp = o["esp_pipeline"];
+  const rawRfq = o["rfq_pipeline"];
+  return {
+    id: str(o, "id"),
+    name: str(o, "name"),
+    description: str(o, "description"),
+    memberConnectionIds: strArrayOf(o, "member_connection_ids"),
+    memberUserIds: strArrayOf(o, "member_user_ids"),
+    memberDesks: strArrayOf(o, "member_desks"),
+    espPipeline:
+      rawEsp && typeof rawEsp === "object" ? featurePipelineFromWire(rawEsp as WireObject) : null,
+    rfqPipeline:
+      rawRfq && typeof rawRfq === "object" ? featurePipelineFromWire(rawRfq as WireObject) : null,
+    sharePipeline: o["share_pipeline"] === true,
+    enabled: o["enabled"] === true,
+  };
+}
+
+export function listPricingGroupsRequestToWire(): WireObject {
+  return {};
+}
+
+/** Decode the `pricing_groups` roster reply (`{ groups: [...] }`). */
+export function pricingGroupsResponseFromWire(o: WireObject): PricingGroup[] {
+  return array(o, "groups").map(pricingGroupDescFromWire);
+}
+
+export function createPricingGroupRequestToWire(spec: PricingGroup): WireObject {
+  return { spec: pricingGroupSpecToWire(spec) };
+}
+
+export function updatePricingGroupRequestToWire(id: string, spec: PricingGroup): WireObject {
+  return { id, spec: pricingGroupSpecToWire(spec) };
+}
+
+export function deletePricingGroupRequestToWire(id: string): WireObject {
+  return { id };
+}
+
+/**
+ * Encode an `update_pricing_group_pipeline` body: replace ONLY one mode's pipeline
+ * (`mode` is the numeric `EspOrRfq`; `pipeline === null` ⇒ that mode falls back to
+ * the book default) plus the `share_pipeline` flag. Mirrors the server's
+ * `update_pricing_group_pipeline_request_from_json`.
+ */
+export function updatePricingGroupPipelineRequestToWire(
+  groupId: string,
+  mode: number,
+  pipeline: FeaturePipeline | null,
+  sharePipeline: boolean,
+): WireObject {
+  return {
+    group_id: groupId,
+    mode,
+    pipeline: pipeline ? featurePipelineToWire(pipeline) : null,
+    share_pipeline: sharePipeline,
+  };
+}
+
+/** A single-group response (`{ group: {...} }`) from create / update / pipeline-update. */
+export function pricingGroupResponseFromWire(o: WireObject): PricingGroup {
+  return pricingGroupDescFromWire(child(o, "group"));
 }
 
 // --- live composite: subscribe + snapshot/update -----------------------------

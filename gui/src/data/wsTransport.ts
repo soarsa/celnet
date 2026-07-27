@@ -42,6 +42,9 @@ import type {
   AggregatedBookDesc,
   AggregatedBookSpec,
   TieringConfig,
+  FeaturePipeline,
+  PricingGroup,
+  PricingMode,
   InstrumentDef,
   InstrumentInput,
   BuildCurveRequest,
@@ -218,6 +221,14 @@ import {
   aggregatedBookResponseFromWire,
   updateBookTieringRequestToWire,
   bookTieringUpdatedResponseFromWire,
+  listPricingGroupsRequestToWire,
+  pricingGroupsResponseFromWire,
+  createPricingGroupRequestToWire,
+  updatePricingGroupRequestToWire,
+  deletePricingGroupRequestToWire,
+  updatePricingGroupPipelineRequestToWire,
+  pricingGroupResponseFromWire,
+  pricingModeToWire,
   aggregatedBookSubscribeToWire,
   aggregatedBookSnapshotFromWire,
   aggregatedBookUpdateFromWire,
@@ -1865,6 +1876,63 @@ export class WsTransport implements CelnetTransport {
       "book_tiering_updated",
     );
     return bookTieringUpdatedResponseFromWire(reply);
+  }
+
+  // --- FI Pricing Groups (server commit 07fc99f) -----------------------------
+
+  async listPricingGroups(): Promise<PricingGroup[]> {
+    const reply = await this.conn.request(
+      "list_pricing_groups",
+      listPricingGroupsRequestToWire(),
+      "pricing_groups",
+    );
+    return pricingGroupsResponseFromWire(reply);
+  }
+
+  async createPricingGroup(spec: PricingGroup): Promise<PricingGroup> {
+    const reply = await this.conn.request(
+      "create_pricing_group",
+      createPricingGroupRequestToWire(spec),
+      "pricing_group_created",
+    );
+    return pricingGroupResponseFromWire(reply);
+  }
+
+  async updatePricingGroup(id: string, spec: PricingGroup): Promise<PricingGroup> {
+    const reply = await this.conn.request(
+      "update_pricing_group",
+      updatePricingGroupRequestToWire(id, spec),
+      "pricing_group_updated",
+    );
+    return pricingGroupResponseFromWire(reply);
+  }
+
+  async deletePricingGroup(id: string): Promise<boolean> {
+    const reply = await this.conn.request(
+      "delete_pricing_group",
+      deletePricingGroupRequestToWire(id),
+      "pricing_group_deleted",
+    );
+    return reply["removed"] === true;
+  }
+
+  async updatePricingGroupPipeline(
+    groupId: string,
+    mode: PricingMode,
+    pipeline: FeaturePipeline | null,
+    sharePipeline: boolean,
+  ): Promise<PricingGroup> {
+    const reply = await this.conn.request(
+      "update_pricing_group_pipeline",
+      updatePricingGroupPipelineRequestToWire(
+        groupId,
+        pricingModeToWire(mode),
+        pipeline,
+        sharePipeline,
+      ),
+      "pricing_group_pipeline_updated",
+    );
+    return pricingGroupResponseFromWire(reply);
   }
 
   // --- instrument reference-data registry (instrument admin) -----------------

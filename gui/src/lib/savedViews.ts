@@ -48,6 +48,7 @@ export type WorkspaceId =
   | "connections"
   | "admin"
   | "permissions"
+  | "pricinggroups"
   | "refdata";
 
 const WORKSPACES: readonly WorkspaceId[] = [
@@ -65,6 +66,7 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "connections",
   "admin",
   "permissions",
+  "pricinggroups",
   "refdata",
 ] as const;
 

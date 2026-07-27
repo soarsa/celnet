@@ -32,6 +32,7 @@ import { BookWorkspace } from "../workspaces/BookWorkspace";
 import { ConnectionsWorkspace } from "../workspaces/ConnectionsWorkspace";
 import { AdminWorkspace } from "../workspaces/AdminWorkspace";
 import { PermissionsWorkspace } from "../workspaces/PermissionsWorkspace";
+import { PricingGroupsWorkspace } from "../workspaces/PricingGroupsWorkspace";
 import { ExcelWorkspace } from "../workspaces/ExcelWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
@@ -111,6 +112,10 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,
   permissions: PermissionsWorkspace,
+  // Pricing Groups: the admin drag-and-drop pipeline builder — many FIX
+  // connections / users / desks resolve to ONE group, each carrying an ESP and an
+  // RFQ feature pipeline (RAW → ordered features → OUTBOUND). Admin-gated.
+  pricinggroups: PricingGroupsWorkspace,
   refdata: ReferenceDataWorkspace,
 };
 

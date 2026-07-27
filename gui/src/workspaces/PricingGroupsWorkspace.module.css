@@ -1,0 +1,854 @@
+/* PricingGroupsWorkspace — the admin drag-and-drop pricing-pipeline builder.
+   A three-region layout: the group roster (left), and on the right the group
+   form + the ESP/RFQ pipeline builder (palette · vertical RAW→OUTBOUND canvas ·
+   live preview waterfall) + membership. Uses the app design tokens so both light
+   and dark themes are honoured automatically. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  height: 100%;
+  min-height: 0;
+}
+
+/* --- header --------------------------------------------------------------- */
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.headMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  font-family: var(--font-brand, var(--font-ui));
+  font-size: var(--type-headline);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+
+.note {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  max-width: 78ch;
+}
+
+/* --- banners -------------------------------------------------------------- */
+
+.banner {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-danger-soft, color-mix(in oklab, var(--accent-danger, crimson) 12%, transparent));
+  color: var(--text-danger, var(--accent-danger, crimson));
+  border: 1px solid color-mix(in oklab, var(--accent-danger, crimson) 40%, transparent);
+  font-size: var(--type-caption);
+}
+
+.permBanner {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+}
+
+.permGlyph {
+  margin-right: 4px;
+}
+
+.permHint {
+  color: var(--text-tertiary);
+}
+
+.empty {
+  padding: var(--space-5);
+  border: var(--hairline);
+  border-radius: var(--r-lg, 12px);
+  background: var(--bg-inset);
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  text-align: center;
+}
+
+/* --- body: roster + editor ------------------------------------------------ */
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: var(--space-4);
+  min-height: 0;
+  flex: 1;
+}
+
+@media (max-width: 960px) {
+  .body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.roster {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rosterHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.rosterTitle {
+  margin: 0;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.groupList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.groupBtn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-3);
+  border-radius: var(--r-md, 8px);
+  border: var(--hairline);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease;
+}
+
+.groupBtn:hover {
+  border-color: var(--accent, var(--text-secondary));
+  background: var(--bg-surface-hover, var(--bg-inset));
+}
+
+.groupBtn:focus-visible {
+  outline: 2px solid var(--accent, var(--focus-ring, dodgerblue));
+  outline-offset: 2px;
+}
+
+.groupBtnActive {
+  border-color: var(--accent, var(--text-primary));
+  background: var(--bg-accent-soft, var(--bg-inset));
+  box-shadow: inset 3px 0 0 0 var(--accent, var(--text-primary));
+}
+
+.groupRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.groupName {
+  font-weight: var(--weight-header);
+  font-size: var(--type-body);
+}
+
+.groupOff {
+  font-size: var(--type-micro, 0.7rem);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  border: var(--hairline);
+  border-radius: var(--r-full, 999px);
+  padding: 0 6px;
+}
+
+.groupMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--type-micro, 0.72rem);
+  color: var(--text-tertiary);
+}
+
+.metaPill {
+  border: var(--hairline);
+  border-radius: var(--r-full, 999px);
+  padding: 0 7px;
+}
+
+/* --- editor pane ---------------------------------------------------------- */
+
+.editorPane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: var(--space-4);
+  overflow-y: auto;
+}
+
+.editorId {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro, 0.72rem);
+  color: var(--text-tertiary);
+}
+
+.okBadge {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--accent-positive, seagreen);
+  background: color-mix(in oklab, var(--accent-positive, seagreen) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--accent-positive, seagreen) 40%, transparent);
+  border-radius: var(--r-full, 999px);
+  padding: 2px 10px;
+}
+
+/* --- forms + fields ------------------------------------------------------- */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sectionHead {
+  margin: 0;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldWide {
+  grid-column: 1 / -1;
+}
+
+.fieldLabel {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  font-weight: var(--weight-header);
+}
+
+.input,
+.select,
+.textarea {
+  padding: 6px 8px;
+  border-radius: var(--r-sm, 6px);
+  border: var(--hairline);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--type-body);
+  font-family: inherit;
+}
+
+.numInput {
+  font-family: var(--font-mono);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 2.4rem;
+}
+
+.input:focus-visible,
+.select:focus-visible,
+.textarea:focus-visible {
+  outline: 2px solid var(--accent, var(--focus-ring, dodgerblue));
+  outline-offset: 1px;
+}
+
+.inputError {
+  border-color: var(--accent-danger, crimson);
+}
+
+.error {
+  font-size: var(--type-micro, 0.72rem);
+  color: var(--text-danger, var(--accent-danger, crimson));
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+/* --- ESP/RFQ mode tabs + share switch ------------------------------------- */
+
+.modeBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.modeTabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-inset);
+  border: var(--hairline);
+}
+
+.modeTab {
+  padding: 4px 14px;
+  border: none;
+  border-radius: var(--r-sm, 6px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  cursor: pointer;
+  transition: background var(--dur-fast, 120ms) ease, color var(--dur-fast, 120ms) ease;
+}
+
+.modeTab:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.modeTab:focus-visible {
+  outline: 2px solid var(--accent, var(--focus-ring, dodgerblue));
+  outline-offset: 1px;
+}
+
+.modeTabActive {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-1, 0 1px 2px rgb(0 0 0 / 0.12));
+}
+
+.modeTab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.shareRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+.modeNote {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+/* --- feature palette ------------------------------------------------------ */
+
+.palette {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-inset);
+}
+
+.paletteChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--r-full, 999px);
+  border: 1px dashed color-mix(in oklab, var(--accent, dodgerblue) 55%, var(--border, gray));
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  cursor: grab;
+  transition: transform var(--dur-fast, 120ms) ease, border-color var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease;
+}
+
+.chip:hover {
+  border-color: var(--accent, dodgerblue);
+  background: var(--bg-accent-soft, var(--bg-surface-hover, var(--bg-surface)));
+  transform: translateY(-1px);
+}
+
+.chip:active {
+  cursor: grabbing;
+}
+
+.chipGlyph {
+  font-size: 0.9em;
+  opacity: 0.7;
+}
+
+.chipAdd {
+  border: none;
+  background: color-mix(in oklab, var(--accent, dodgerblue) 16%, transparent);
+  color: var(--accent, dodgerblue);
+  border-radius: var(--r-full, 999px);
+  width: 20px;
+  height: 20px;
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chipAdd:focus-visible {
+  outline: 2px solid var(--accent, var(--focus-ring, dodgerblue));
+  outline-offset: 1px;
+}
+
+/* --- pipeline canvas (vertical RAW → OUTBOUND flow) ----------------------- */
+
+.canvas {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: var(--space-3);
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-surface);
+}
+
+.terminal {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  border-radius: var(--r-full, 999px);
+  font-size: var(--type-micro, 0.72rem);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--bg-inset);
+  border: var(--hairline);
+  color: var(--text-secondary);
+}
+
+.terminalOut {
+  color: var(--accent, dodgerblue);
+  border-color: color-mix(in oklab, var(--accent, dodgerblue) 45%, transparent);
+  background: var(--bg-accent-soft, var(--bg-inset));
+}
+
+.spine {
+  width: 2px;
+  height: 12px;
+  align-self: center;
+  background: color-mix(in oklab, var(--accent, dodgerblue) 40%, transparent);
+}
+
+.dropZone {
+  align-self: stretch;
+  height: 10px;
+  margin: 2px 0;
+  border-radius: var(--r-full, 999px);
+  transition: background var(--dur-fast, 120ms) ease;
+}
+
+.dropZoneActive {
+  background: color-mix(in oklab, var(--accent, dodgerblue) 45%, transparent);
+  height: 14px;
+}
+
+.canvasEmpty {
+  align-self: center;
+  padding: var(--space-3);
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* --- one feature card ----------------------------------------------------- */
+
+.card {
+  align-self: stretch;
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-raised, var(--bg-surface));
+  overflow: hidden;
+  transition: border-color var(--dur-fast, 120ms) ease, box-shadow var(--dur-fast, 120ms) ease,
+    opacity var(--dur-fast, 120ms) ease;
+}
+
+.cardOver {
+  border-color: var(--accent, dodgerblue);
+  box-shadow: 0 0 0 1px var(--accent, dodgerblue);
+}
+
+.cardDragging {
+  opacity: 0.5;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  cursor: grab;
+}
+
+.cardHead:active {
+  cursor: grabbing;
+}
+
+.cardKindBtn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--r-sm, 6px);
+}
+
+.cardKindBtn:hover {
+  background: var(--bg-inset);
+}
+
+.cardKindBtn:focus-visible {
+  outline: 2px solid var(--accent, var(--focus-ring, dodgerblue));
+  outline-offset: 1px;
+}
+
+.cardKind {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cardCaret {
+  color: var(--text-tertiary);
+  font-size: 0.8em;
+}
+
+.cardOrder {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro, 0.7rem);
+  color: var(--text-tertiary);
+}
+
+.cardBadge {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+  padding: 1px 9px;
+  border-radius: var(--r-full, 999px);
+  background: color-mix(in oklab, var(--accent, dodgerblue) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--accent, dodgerblue) 34%, transparent);
+}
+
+.cardControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.iconBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm, 6px);
+  border: var(--hairline);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  line-height: 1;
+  transition: background var(--dur-fast, 120ms) ease, color var(--dur-fast, 120ms) ease;
+}
+
+.iconBtn:hover:not(:disabled) {
+  background: var(--bg-inset);
+  color: var(--text-primary);
+}
+
+.iconBtn:focus-visible {
+  outline: 2px solid var(--accent, var(--focus-ring, dodgerblue));
+  outline-offset: 1px;
+}
+
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.iconBtnDanger:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent-danger, crimson) 14%, transparent);
+  color: var(--accent-danger, crimson);
+  border-color: color-mix(in oklab, var(--accent-danger, crimson) 40%, transparent);
+}
+
+.cardHint {
+  margin: 0 var(--space-3) var(--space-2);
+  font-size: var(--type-micro, 0.72rem);
+  color: var(--text-tertiary);
+}
+
+.cardBody {
+  padding: 0 var(--space-3) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border-top: var(--hairline);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-2);
+}
+
+.param {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.paramLabel {
+  font-size: var(--type-micro, 0.72rem);
+  color: var(--text-tertiary);
+}
+
+/* --- live preview waterfall ----------------------------------------------- */
+
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-inset);
+}
+
+.previewHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.previewTitle {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+}
+
+.previewNote {
+  font-size: var(--type-micro, 0.7rem);
+  color: var(--text-tertiary);
+}
+
+.previewTable {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.previewRow {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: 3px 6px;
+  border-radius: var(--r-sm, 6px);
+  font-size: var(--type-caption);
+}
+
+.previewRowRaw {
+  color: var(--text-tertiary);
+}
+
+.previewRowOut {
+  background: var(--bg-accent-soft, var(--bg-surface));
+  font-weight: var(--weight-header);
+}
+
+.previewLabel {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.previewNum {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.previewSpread {
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  text-align: right;
+}
+
+.previewColHead {
+  font-size: var(--type-micro, 0.68rem);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+/* --- membership ----------------------------------------------------------- */
+
+.memberGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+}
+
+.memberGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-2);
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-surface);
+}
+
+.memberGroupHead {
+  font-size: var(--type-micro, 0.72rem);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+.memberList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.memberItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: var(--r-sm, 6px);
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.memberItem:hover {
+  background: var(--bg-inset);
+}
+
+.memberEmpty {
+  font-size: var(--type-micro, 0.72rem);
+  color: var(--text-tertiary);
+  padding: 2px 4px;
+}
+
+/* --- actions -------------------------------------------------------------- */
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-top: var(--space-3);
+  border-top: var(--hairline);
+}
+
+.dirtyHint {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.rosterActions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* --- sign-in gate --------------------------------------------------------- */
+
+.gate {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: center;
+  max-width: 44ch;
+}
+
+.gateTitle {
+  margin: 0;
+  font-size: var(--type-headline);
+  color: var(--text-primary);
+}
+
+.gateHint {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}

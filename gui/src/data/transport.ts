@@ -97,6 +97,9 @@ import type {
   Smile,
   SmileModel,
   Snapshot,
+  FeaturePipeline,
+  PricingGroup,
+  PricingMode,
   StreamReject,
   Tenor,
   TieringConfig,
@@ -642,6 +645,39 @@ export interface CelnetTransport {
     bookId: string,
     tiering: TieringConfig | null,
   ): Promise<AggregatedBookDesc>;
+
+  // --- FI Pricing Groups (server commit 07fc99f) -----------------------------
+  //
+  // Admin-defined pricing groups: many FIX connections / users / desks resolve to
+  // ONE group, each carrying an ESP and an RFQ feature pipeline (RAW → ordered
+  // features → OUTBOUND). Listing is any-authenticated; create/update/delete are
+  // admin-only (server-enforced). `updatePricingGroupPipeline` retunes ONLY one
+  // mode's pipeline block and is trader-accessible (gated server-side on
+  // `quote_respond·fixed_income`), leaving the group's structure admin-only.
+
+  /** ListPricingGroups — the full pricing-group roster (any authenticated user). */
+  listPricingGroups(): Promise<PricingGroup[]>;
+
+  /** CreatePricingGroup (admin) — define a new group; blank `id` ⇒ server mints from name. */
+  createPricingGroup(spec: PricingGroup): Promise<PricingGroup>;
+
+  /** UpdatePricingGroup (admin) — replace a group's definition (the `id` is immutable). */
+  updatePricingGroup(id: string, spec: PricingGroup): Promise<PricingGroup>;
+
+  /** DeletePricingGroup (admin) — remove a group; resolves to whether one was removed. */
+  deletePricingGroup(id: string): Promise<boolean>;
+
+  /**
+   * UpdatePricingGroupPipeline — retune ONLY one mode's pipeline (structure stays
+   * admin-only). `pipeline === null` ⇒ that mode falls back to the book default;
+   * `sharePipeline` makes RFQ mirror ESP. Resolves to the retuned group.
+   */
+  updatePricingGroupPipeline(
+    groupId: string,
+    mode: PricingMode,
+    pipeline: FeaturePipeline | null,
+    sharePipeline: boolean,
+  ): Promise<PricingGroup>;
 
   // --- instrument reference-data registry ------------------------------------
 

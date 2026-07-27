@@ -315,6 +315,7 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         "connections",
         "admin",
         "permissions",
+        "pricinggroups",
         "refdata",
       ]);
     });

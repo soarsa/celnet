@@ -39,6 +39,9 @@ import type {
   AggregatedBookComposite,
   AggregatedInstrument,
   TieringConfig,
+  FeaturePipeline,
+  PricingGroup,
+  PricingMode,
   LpContribution,
   InstrumentDef,
   InstrumentInput,
@@ -1229,6 +1232,69 @@ export class MockTransport implements CelnetTransport {
       },
       enabled: true,
       tiering: null,
+    },
+  ];
+  /**
+   * The offline FI Pricing-Groups registry (a GENUINE in-memory store, not a stub):
+   * admin CRUD mutates it and `updatePricingGroupPipeline` replaces only a group's
+   * ESP/RFQ pipeline block — exactly like the server. Seeded with two groups: a
+   * fully-configured "TIER1-EU" (an ESP pipeline of MID SHIFT + AXE, shared to RFQ)
+   * and a bare "GROUP-B" (no pipelines) so the builder is exercisable end-to-end.
+   */
+  private readonly mockPricingGroups: PricingGroup[] = [
+    {
+      id: "tier1-eu",
+      name: "TIER1-EU",
+      description: "Tier-1 EU counterparties — tight streaming with a buy axe.",
+      memberConnectionIds: ["LP-SIM-01"],
+      memberUserIds: [],
+      memberDesks: [],
+      espPipeline: {
+        features: [
+          {
+            kind: "MID_SHIFT",
+            unit: "PRICE_POINTS",
+            shift: 0.02,
+            reference: null,
+            tiering: null,
+            axeSide: "BUY",
+            magnitude: 0,
+            kappa: 0,
+            sMax: 0,
+            skew: 0,
+            triggered: false,
+          },
+          {
+            kind: "AXE",
+            unit: "PRICE_POINTS",
+            shift: 0,
+            reference: null,
+            tiering: null,
+            axeSide: "BUY",
+            magnitude: 0.03,
+            kappa: 0,
+            sMax: 0,
+            skew: 0,
+            triggered: false,
+          },
+        ],
+        guardrails: { hMin: 0, hMax: 1, sMax: 0.5, spreadFloor: 0.01 },
+      },
+      rfqPipeline: null,
+      sharePipeline: true,
+      enabled: true,
+    },
+    {
+      id: "group-b",
+      name: "GROUP-B",
+      description: "Second-tier group — book-default pricing until a pipeline is built.",
+      memberConnectionIds: [],
+      memberUserIds: [],
+      memberDesks: [],
+      espPipeline: null,
+      rfqPipeline: null,
+      sharePipeline: false,
+      enabled: true,
     },
   ];
   /**
@@ -2614,6 +2680,80 @@ export class MockTransport implements CelnetTransport {
     return cloneAggBook(updated);
   }
 
+  // --- FI Pricing Groups (server commit 07fc99f) -----------------------------
+  //
+  // A GENUINE in-memory registry (not a stub): admin CRUD mutates the store and
+  // create mints an id from `name` (or honours a client-suggested slug), exactly
+  // like the server; `updatePricingGroupPipeline` replaces ONLY the group's chosen
+  // ESP/RFQ pipeline block + `sharePipeline`, leaving structure untouched. Every
+  // read/write deep-clones so the store never aliases a caller's object.
+
+  async listPricingGroups(): Promise<PricingGroup[]> {
+    return this.mockPricingGroups.map((g) => clonePricingGroup(g));
+  }
+
+  async createPricingGroup(spec: PricingGroup): Promise<PricingGroup> {
+    const name = spec.name.trim();
+    if (name.length === 0) throw new Error("pricing-group name is required");
+    const id = spec.id.trim().length > 0 ? mockSlugify(spec.id) : mockSlugify(name);
+    if (this.mockPricingGroups.some((g) => g.id === id)) {
+      throw new Error(`a pricing group with id \`${id}\` already exists`);
+    }
+    if (this.mockPricingGroups.some((g) => g.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error(`a pricing group named \`${name}\` already exists`);
+    }
+    const group = clonePricingGroup({ ...spec, id, name });
+    this.mockPricingGroups.push(group);
+    return clonePricingGroup(group);
+  }
+
+  async updatePricingGroup(id: string, spec: PricingGroup): Promise<PricingGroup> {
+    const existing = this.mockPricingGroups.find((g) => g.id === id);
+    if (!existing) throw new Error(`no pricing group with id \`${id}\``);
+    const name = spec.name.trim();
+    if (name.length === 0) throw new Error("pricing-group name is required");
+    if (
+      this.mockPricingGroups.some(
+        (g) => g.id !== id && g.name.toLowerCase() === name.toLowerCase(),
+      )
+    ) {
+      throw new Error(`a pricing group named \`${name}\` already exists`);
+    }
+    // The `id` is the immutable identity; the spec's own `id` field is ignored.
+    const updated = clonePricingGroup({ ...spec, id, name });
+    const idx = this.mockPricingGroups.indexOf(existing);
+    this.mockPricingGroups.splice(idx, 1, updated);
+    return clonePricingGroup(updated);
+  }
+
+  async deletePricingGroup(id: string): Promise<boolean> {
+    const idx = this.mockPricingGroups.findIndex((g) => g.id === id);
+    if (idx < 0) return false;
+    this.mockPricingGroups.splice(idx, 1);
+    return true;
+  }
+
+  async updatePricingGroupPipeline(
+    groupId: string,
+    mode: PricingMode,
+    pipeline: FeaturePipeline | null,
+    sharePipeline: boolean,
+  ): Promise<PricingGroup> {
+    const existing = this.mockPricingGroups.find((g) => g.id === groupId);
+    if (!existing) throw new Error(`no pricing group with id \`${groupId}\``);
+    const updated: PricingGroup = {
+      ...clonePricingGroup(existing),
+      espPipeline:
+        mode === "ESP" ? clonePipeline(pipeline) : clonePipeline(existing.espPipeline),
+      rfqPipeline:
+        mode === "RFQ" ? clonePipeline(pipeline) : clonePipeline(existing.rfqPipeline),
+      sharePipeline,
+    };
+    const idx = this.mockPricingGroups.indexOf(existing);
+    this.mockPricingGroups.splice(idx, 1, updated);
+    return clonePricingGroup(updated);
+  }
+
   // --- instrument reference-data registry (offline) --------------------------
 
   /** Mint a stable instrument id from a name (mirrors the server's slugify). */
@@ -3447,6 +3587,30 @@ function cloneAggBook(b: AggregatedBookDesc): AggregatedBookDesc {
     instrumentIds: [...b.instrumentIds],
     params: { ...b.params },
     tiering: cloneTiering(b.tiering),
+  };
+}
+
+/** Deep-clone a feature pipeline (or pass through absent) so stores never alias it. */
+function clonePipeline(p: FeaturePipeline | null | undefined): FeaturePipeline | null {
+  if (p === null || p === undefined) return null;
+  return {
+    features: p.features.map((f) => ({
+      ...f,
+      tiering: cloneTiering(f.tiering),
+    })),
+    guardrails: p.guardrails ? { ...p.guardrails } : null,
+  };
+}
+
+/** Deep-clone a pricing group so the store and callers never share nested state. */
+function clonePricingGroup(g: PricingGroup): PricingGroup {
+  return {
+    ...g,
+    memberConnectionIds: [...g.memberConnectionIds],
+    memberUserIds: [...g.memberUserIds],
+    memberDesks: [...g.memberDesks],
+    espPipeline: clonePipeline(g.espPipeline),
+    rfqPipeline: clonePipeline(g.rfqPipeline),
   };
 }
 
