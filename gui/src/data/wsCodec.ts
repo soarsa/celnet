@@ -3608,9 +3608,39 @@ export function deleteAggregatedBookRequestToWire(id: string): WireObject {
   return { id };
 }
 
+/**
+ * Encode an `AuthService.UpdateBookTiering` request body (the trader-accessible
+ * retune-tiering RPC, server commit 8404bc9). Byte-compatible with the server's
+ * `update_book_tiering_request_from_json` (`crates/celnet-server/src/ws/codec.rs`):
+ * the `book_id` plus the presence-tracked nested `tiering` (an absent/`null`
+ * `tiering` ⇒ disable the book's outbound tiering) — REUSING {@link tieringConfigToWire}
+ * verbatim so it is the SAME shape the aggregated-book spec already encodes. The
+ * framing `session_token` + `correlation_id` are injected by the `WsConnection`,
+ * exactly as every other unary edge, so the body carries only these two fields.
+ */
+export function updateBookTieringRequestToWire(
+  bookId: string,
+  tiering: TieringConfig | null,
+): WireObject {
+  return {
+    book_id: bookId,
+    tiering: tiering ? tieringConfigToWire(tiering) : null,
+  };
+}
+
 /** A single-book response (`{ book: {...} }`) from create / update. */
 export function aggregatedBookResponseFromWire(o: WireObject): AggregatedBookDesc {
   return aggregatedBookDescFromWire(child(o, "book"));
+}
+
+/**
+ * Decode a `book_tiering_updated` reply frame into the returned book. Byte-
+ * compatible with the server's `update_book_tiering_response_to_json` (`{ book,
+ * correlation_id }`) — the SAME `{ book: {...} }` envelope the aggregated-book
+ * create/update replies carry, so it delegates to {@link aggregatedBookResponseFromWire}.
+ */
+export function bookTieringUpdatedResponseFromWire(o: WireObject): AggregatedBookDesc {
+  return aggregatedBookResponseFromWire(o);
 }
 
 // --- live composite: subscribe + snapshot/update -----------------------------

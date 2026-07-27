@@ -298,10 +298,11 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
       ]);
     });
 
-    it("Fixed Income = Streaming (primary FI surface, top) + the shared rows + quoting, in RAIL order", () => {
+    it("Fixed Income = Streaming (primary FI surface, top) + Tiering + the shared rows + quoting, in RAIL order", () => {
       expect(railForDomain("fixed_income").map((r) => r.id)).toEqual([
         "fistreaming",
         "aggbook",
+        "tiering",
         "surface",
         "risk",
         "book",

@@ -1143,6 +1143,14 @@ export class MockTransport implements CelnetTransport {
    * is held here ONLY for the offline mock — the real server stores Argon2id
    * hashes and never round-trips a password. No desks are seeded (parity with
    * the server seed); an admin creates them in the workspace.
+   *
+   * Additionally seeded with a NON-ADMIN `TRADER` (`fi.trader@celnet.com` /
+   * `password`) so the `?mock` GUI can exercise the trader-accessible surfaces
+   * (e.g. FI → Tiering) as an ordinary trader, NOT an admin. Its effective bundle
+   * is the default trader set (every action except `administer` on both asset
+   * classes), so it HOLDS `quote_respond·fixed_income` but is NOT admin. (The email
+   * is deliberately distinct from `trader@celnet.com`, which the offline auth tests
+   * mint their own throwaway trader under.)
    */
   private readonly mockUsers: {
     user: UserDesc;
@@ -1159,6 +1167,20 @@ export class MockTransport implements CelnetTransport {
         role: "ADMIN",
         deskIds: [],
         allDesks: false,
+        disabled: false,
+      },
+      password: "password",
+      grants: [],
+      denies: [],
+    },
+    {
+      user: {
+        id: "fi-trader",
+        email: "fi.trader@celnet.com",
+        displayName: "FI Trader",
+        role: "TRADER",
+        deskIds: [],
+        allDesks: true,
         disabled: false,
       },
       password: "password",
@@ -2566,6 +2588,30 @@ export class MockTransport implements CelnetTransport {
     if (idx < 0) return false;
     this.mockAggregatedBooks.splice(idx, 1);
     return true;
+  }
+
+  // --- trader-accessible per-book tiering retune (server commit 8404bc9) -------
+  //
+  // A GENUINE mutation of the offline store (not a stub): it replaces ONLY the
+  // selected book's `tiering` (structure untouched) and returns the retuned book,
+  // exactly as the server's `UpdateBookTiering` does. `tiering === null` disables
+  // the book's outbound tiering. The live server gates this on the
+  // `quote_respond·fixed_income` capability (trader-accessible, NOT admin); the
+  // offline source has no server-side capability enforcement, so the GUI gates the
+  // Apply affordance client-side on the same capability.
+  async updateBookTiering(
+    bookId: string,
+    tiering: TieringConfig | null,
+  ): Promise<AggregatedBookDesc> {
+    const existing = this.mockAggregatedBooks.find((b) => b.id === bookId);
+    if (!existing) throw new Error(`no aggregated book with id \`${bookId}\``);
+    const updated: AggregatedBookDesc = {
+      ...cloneAggBook(existing),
+      tiering: cloneTiering(tiering),
+    };
+    const idx = this.mockAggregatedBooks.indexOf(existing);
+    this.mockAggregatedBooks.splice(idx, 1, updated);
+    return cloneAggBook(updated);
   }
 
   // --- instrument reference-data registry (offline) --------------------------

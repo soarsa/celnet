@@ -25,6 +25,7 @@ import { ReferenceDataWorkspace } from "../workspaces/ReferenceDataWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { FiStreamingWorkspace } from "../workspaces/FiStreamingWorkspace";
 import { AggregatedBookWorkspace } from "../workspaces/AggregatedBookWorkspace";
+import { TieringWorkspace } from "../workspaces/TieringWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { XvaWorkspace } from "../workspaces/XvaWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
@@ -90,6 +91,10 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // Agg Book: the FI aggregated-book live composite view (consolidated best
   // bid/offer across a book's inbound liquidity members). Fixed-Income-only.
   aggbook: AggregatedBookWorkspace,
+  // Tiering: a trader-facing surface to discover + retune a book's OUTBOUND
+  // tiering (widen/skew before publish). Gated on `quote_respond·fixed_income`
+  // (ordinary traders hold it — NOT admin-gated). Fixed-Income-only.
+  tiering: TieringWorkspace,
   // Market Data: FX vol surface + FI rates curve as two lenses of ONE workspace
   // (#2). Opens the FX surface lens by default; the FI curve is the rates lens.
   surface: MarketDataWorkspace,

@@ -49,6 +49,7 @@ export type WorkspaceId =
   | "quoting"
   | "fistreaming"
   | "aggbook"
+  | "tiering"
   | "xva"
   | "excel"
   | "connections"
@@ -118,6 +119,7 @@ export const RAIL: readonly {
   // FI aggregated-book live composite view (ADR-0022): consolidated best bid/offer
   // across a book's inbound liquidity members — a single-asset FI read surface.
   { id: "aggbook", glyph: "◫", label: "Agg Book", assets: ["fixed_income"] },
+  { id: "tiering", glyph: "⚖", label: "Tiering", assets: ["fixed_income"] },
   { id: "surface", glyph: "◷", label: "Market Data", assets: CAPABILITY_ASSETS },
   { id: "risk", glyph: "⊞", label: "Risk", assets: CAPABILITY_ASSETS },
   { id: "book", glyph: "▤", label: "Book", assets: CAPABILITY_ASSETS },

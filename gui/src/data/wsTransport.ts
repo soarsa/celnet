@@ -41,6 +41,7 @@ import type {
   BookInput,
   AggregatedBookDesc,
   AggregatedBookSpec,
+  TieringConfig,
   InstrumentDef,
   InstrumentInput,
   BuildCurveRequest,
@@ -215,6 +216,8 @@ import {
   updateAggregatedBookRequestToWire,
   deleteAggregatedBookRequestToWire,
   aggregatedBookResponseFromWire,
+  updateBookTieringRequestToWire,
+  bookTieringUpdatedResponseFromWire,
   aggregatedBookSubscribeToWire,
   aggregatedBookSnapshotFromWire,
   aggregatedBookUpdateFromWire,
@@ -1850,6 +1853,18 @@ export class WsTransport implements CelnetTransport {
       "aggregated_book_deleted",
     );
     return reply["removed"] === true;
+  }
+
+  async updateBookTiering(
+    bookId: string,
+    tiering: TieringConfig | null,
+  ): Promise<AggregatedBookDesc> {
+    const reply = await this.conn.request(
+      "update_book_tiering",
+      updateBookTieringRequestToWire(bookId, tiering),
+      "book_tiering_updated",
+    );
+    return bookTieringUpdatedResponseFromWire(reply);
   }
 
   // --- instrument reference-data registry (instrument admin) -----------------

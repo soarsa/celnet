@@ -84,6 +84,7 @@ export type WorkspaceId =
   | "quoting"
   | "fistreaming"
   | "aggbook"
+  | "tiering"
   | "xva"
   | "excel"
   | "connections"

@@ -1,0 +1,354 @@
+/* TieringWorkspace — the trader-facing FI Tiering surface. A two-column layout:
+   the book roster with each book's tiering-state indicator (left) and the tiering
+   editor / read-only summary (right). Uses the app design tokens so both themes are
+   honoured automatically. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  height: 100%;
+  min-height: 0;
+}
+
+/* --- header --------------------------------------------------------------- */
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.headMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  font-family: var(--font-brand, var(--font-ui));
+  font-size: var(--type-headline);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+
+.note {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  max-width: 72ch;
+}
+
+/* --- banners -------------------------------------------------------------- */
+
+.banner {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-danger-soft, color-mix(in oklab, var(--accent-danger, crimson) 12%, transparent));
+  color: var(--text-danger, var(--accent-danger, crimson));
+  border: 1px solid color-mix(in oklab, var(--accent-danger, crimson) 40%, transparent);
+  font-size: var(--type-caption);
+}
+
+.permBanner {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+}
+
+.permGlyph {
+  margin-right: 4px;
+}
+
+.permHint {
+  color: var(--text-tertiary);
+}
+
+/* --- empty state ---------------------------------------------------------- */
+
+.empty {
+  padding: var(--space-5);
+  border: var(--hairline);
+  border-radius: var(--r-lg, 12px);
+  background: var(--bg-inset);
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  text-align: center;
+}
+
+/* --- body: roster + editor ------------------------------------------------ */
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: var(--space-4);
+  min-height: 0;
+  flex: 1;
+}
+
+@media (max-width: 900px) {
+  .body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.roster {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rosterHead {
+  margin: 0;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.bookList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.bookBtn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-3);
+  border-radius: var(--r-md, 8px);
+  border: var(--hairline);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease,
+    transform var(--dur-fast, 120ms) ease;
+}
+
+.bookBtn:hover {
+  border-color: var(--accent, var(--text-secondary));
+  background: var(--bg-surface-hover, var(--bg-inset));
+}
+
+.bookBtn:focus-visible {
+  outline: 2px solid var(--accent, var(--focus-ring, dodgerblue));
+  outline-offset: 2px;
+}
+
+.bookBtnActive {
+  border-color: var(--accent, var(--text-primary));
+  background: var(--bg-accent-soft, var(--bg-inset));
+  box-shadow: inset 3px 0 0 0 var(--accent, var(--text-primary));
+}
+
+.bookRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.bookName {
+  font-weight: var(--weight-header);
+  font-size: var(--type-body);
+}
+
+.bookOff {
+  font-size: var(--type-micro, 0.7rem);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  border: var(--hairline);
+  border-radius: var(--r-full, 999px);
+  padding: 0 6px;
+}
+
+.bookMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.tierBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--type-micro, 0.7rem);
+  font-weight: var(--weight-header);
+  padding: 1px 7px;
+  border-radius: var(--r-full, 999px);
+  border: var(--hairline);
+}
+
+.tierDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.tierOn {
+  color: var(--accent-positive, seagreen);
+  background: color-mix(in oklab, var(--accent-positive, seagreen) 14%, transparent);
+  border-color: color-mix(in oklab, var(--accent-positive, seagreen) 40%, transparent);
+}
+
+.tierOff {
+  color: var(--text-tertiary);
+  background: var(--bg-inset);
+}
+
+.tierLabel {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* --- editor pane ---------------------------------------------------------- */
+
+/* The right column hosts the shared <Panel> (opaque `--bg-raised` material) — the
+   SAME context the admin Manage editor renders in, so the TieringEditor's
+   semi-transparent `.kindBadge` composites over an opaque surface and clears WCAG
+   AA contrast. The pane itself is just a min-height-0 flex track for the Panel. */
+.editorPane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editorHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.editorHeadMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.editorTitle {
+  font-size: var(--type-subhead, var(--type-body));
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+
+.editorId {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro, 0.72rem);
+  color: var(--text-tertiary);
+}
+
+.okBadge {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--accent-positive, seagreen);
+  background: color-mix(in oklab, var(--accent-positive, seagreen) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--accent-positive, seagreen) 40%, transparent);
+  border-radius: var(--r-full, 999px);
+  padding: 2px 10px;
+}
+
+/* --- actions -------------------------------------------------------------- */
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-top: var(--space-2);
+  border-top: var(--hairline);
+}
+
+.dirtyHint {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+/* --- read-only summary (no capability) ------------------------------------ */
+
+.readonly {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-inset);
+}
+
+.roRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.roLabel {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.roValue {
+  font-size: var(--type-body);
+  color: var(--text-primary);
+  font-weight: var(--weight-header);
+}
+
+.roNote {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+/* --- sign-in gate --------------------------------------------------------- */
+
+.gate {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: center;
+  max-width: 44ch;
+}
+
+.gateTitle {
+  margin: 0;
+  font-size: var(--type-headline);
+  color: var(--text-primary);
+}
+
+.gateHint {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
