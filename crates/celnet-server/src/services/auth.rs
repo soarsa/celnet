@@ -52,9 +52,10 @@ use celnet_proto::{
     SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
     SetUserCapabilitiesResponse, TieringConfigDesc, TieringGuardrailsDesc, TieringSpreadUnit,
     TieringStalePolicy, TieringStrategyDesc, TieringStrategyKind, UpdateAggregatedBookRequest,
-    UpdateAggregatedBookResponse, UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest,
-    UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest,
-    UpdateInstrumentResponse, UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
+    UpdateAggregatedBookResponse, UpdateBookRequest, UpdateBookResponse, UpdateBookTieringRequest,
+    UpdateBookTieringResponse, UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest,
+    UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest,
+    UpdateUserResponse, UserDesc, UserRole,
 };
 use celnet_rates::{CalibrationInstrument, bootstrap_curve};
 use tonic::{Request, Response, Status};
@@ -227,6 +228,30 @@ impl AuthEdge {
             Err(Status::permission_denied(
                 "administrative privilege required",
             ))
+        }
+    }
+
+    /// Resolve a bearer token and require it to hold `cap` under the deny-by-default,
+    /// deny-wins capability algebra ([`AuthenticatedUser::capabilities`]). Unlike
+    /// [`require_admin`](Self::require_admin), an ordinary trader who holds the specific
+    /// action×asset passes — the bar is a granted capability, not the admin role — while
+    /// a trader explicitly **denied** it (separation of duties) is refused. An unknown /
+    /// expired token is `unauthenticated`; a valid token lacking the capability is
+    /// `permission_denied`.
+    fn require_capability(
+        &self,
+        token: &str,
+        cap: Capability,
+    ) -> Result<AuthenticatedUser, Status> {
+        let who = self.authenticate(token)?;
+        if who.capabilities().allows(cap) {
+            Ok(who)
+        } else {
+            Err(Status::permission_denied(format!(
+                "capability {}·{} required",
+                cap.action.label(),
+                cap.asset.label()
+            )))
         }
     }
 
@@ -1354,6 +1379,49 @@ impl AuthService for AuthEdge {
         }
         Ok(Response::new(DeleteAggregatedBookResponse {
             removed,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_book_tiering(
+        &self,
+        request: Request<UpdateBookTieringRequest>,
+    ) -> Result<Response<UpdateBookTieringResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Trader-configurable outbound spread: gated on the fixed-income quote-respond
+        // capability (publishing a tradeable FI quote), NOT the admin role. Any
+        // authenticated trader who holds it — the default trader bundle does — may retune
+        // the spread; an admin (grant-all) also passes. The book's STRUCTURE stays
+        // admin-owned: this RPC touches ONLY the tiering block (see
+        // `update_aggregated_book_tiering`), never members / scope / params.
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::QuoteRespond, AssetClass::FixedIncome),
+        )?;
+
+        // `None` ⇒ disable tiering (revert to the raw composite). A malformed config is
+        // rejected below by the store's `validate_tiering_config`, not silently dropped.
+        let tiering = tiering_from_wire(req.tiering);
+
+        let mut guard = self.lock();
+        if guard.aggregated_book(&req.book_id).is_none() {
+            return Err(Status::not_found(format!(
+                "no aggregated book with id `{}`",
+                req.book_id
+            )));
+        }
+        let mut next = guard.clone();
+        let def = next
+            .update_aggregated_book_tiering(&req.book_id, tiering)
+            .map_err(aggregated_book_status)?;
+        self.persist_and_commit(&mut guard, next)?;
+        // Re-reconcile the running engines so the book's live composite picks up the new
+        // tiering config (the same hub the admin CRUD path re-applies through).
+        self.reconcile_aggregation(&guard);
+        Ok(Response::new(UpdateBookTieringResponse {
+            book: Some(aggregated_book_to_wire(&def)),
             correlation_id: req.correlation_id,
         }))
     }
@@ -3982,6 +4050,351 @@ mod tests {
         assert_eq!(def.name, "Persisted Composite");
         assert_eq!(def.member_connection_ids, vec!["lp-a"]);
         assert_eq!(def.instrument_scope, Scope::AllMembersQuote);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // --- trader-configurable book tiering (UpdateBookTiering) -------------------
+
+    use crate::services::aggregation::AggregationHub;
+    use celnet_proto::LpQuote;
+
+    /// An edge wired to a live [`AggregationHub`] (sharing one clock) so a book's
+    /// composite can be observed re-tiering after an `UpdateBookTiering`.
+    fn edge_with_hub(tag: &str) -> (AuthEdge, Arc<AggregationHub>, PathBuf, Clock) {
+        let dir = std::env::temp_dir().join("celnet-auth-edge");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("identity-{}-{}.json", std::process::id(), tag));
+        let _ = std::fs::remove_file(&path);
+        let mut store = IdentityStore::default();
+        store.ensure_seed_admin().unwrap();
+        store.save(&path).unwrap();
+        let identity = Arc::new(Mutex::new(store));
+        let clock = Clock::system();
+        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
+        let gate = Arc::new(ReadinessGate::new());
+        gate.mark_ready();
+        let hub = AggregationHub::new(clock.clone());
+        let edge = AuthEdge::new(identity, path.clone(), sessions, gate, clock.clone())
+            .with_aggregation_hub(Arc::clone(&hub));
+        (edge, hub, path, clock)
+    }
+
+    /// A single flat ±25 price-bps tiering config with open guardrails that never clamp
+    /// (the guardrail arithmetic is unit-tested in `celnet-tiering` itself).
+    fn flat_tiering() -> TieringConfigDesc {
+        TieringConfigDesc {
+            unit: TieringSpreadUnit::PriceBps as i32,
+            strategies: vec![TieringStrategyDesc {
+                kind: TieringStrategyKind::FlatMarkup as i32,
+                half_spread: 25.0,
+                ..Default::default()
+            }],
+            guardrails: Some(TieringGuardrailsDesc {
+                h_min: 0.0,
+                h_max: 1_000.0,
+                s_max: 1_000.0,
+                spread_floor: 1e-9,
+            }),
+            stale_policy: TieringStalePolicy::Suppress as i32,
+        }
+    }
+
+    fn lp_quote(lp: &str, id: &str, bid: f64, offer: f64, ts: i64) -> LpQuote {
+        LpQuote {
+            lp_name: lp.into(),
+            instrument_id: id.into(),
+            bid,
+            offer,
+            bid_size: 1_000_000.0,
+            offer_size: 1_000_000.0,
+            ts_nanos: ts,
+        }
+    }
+
+    /// A NON-admin trader (holding the default fixed-income quote-respond capability)
+    /// may retune a book's tiering, the store persists it, and the running composite
+    /// re-tiers — while the book's STRUCTURE (members / scope) is untouched.
+    #[tokio::test]
+    async fn trader_can_update_book_tiering_and_composite_re_tiers() {
+        let (edge, hub, path, clock) = edge_with_hub("tier-trader");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        // Admin owns the STRUCTURE: define an enabled book with member `lp-a`, no tiering.
+        let created = edge
+            .create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: admin.clone(),
+                spec: Some(agg_spec("Composite", vec!["lp-a".into()])),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .book
+            .unwrap();
+        let book_id = created.id.clone();
+
+        // Raw composite (no tiering): the untiered envelope 99.50 / 99.60.
+        let now = clock.now_nanos();
+        assert!(hub.ingest(&lp_quote("lp-a", "X", 99.50, 99.60, now)));
+        let raw = hub.snapshot(&book_id).expect("book running");
+        let line = &raw.snapshot.instruments[0];
+        assert!((line.best_bid - 99.50).abs() < 1e-9);
+        assert!((line.best_offer - 99.60).abs() < 1e-9);
+
+        // A NON-admin trader retunes ONLY the tiering (flat ±25 price bps).
+        let (_id, trader) = make_trader(&edge, &admin, "tier@celnet.com").await;
+        let resp = edge
+            .update_book_tiering(Request::new(UpdateBookTieringRequest {
+                session_token: trader,
+                book_id: book_id.clone(),
+                tiering: Some(flat_tiering()),
+                correlation_id: Some(11),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(resp.correlation_id, Some(11));
+        let desc = resp.book.expect("book echoed");
+        // The tiering block changed; the STRUCTURE is byte-identical to the admin's book.
+        assert_eq!(desc.tiering, Some(flat_tiering()));
+        assert_eq!(desc.member_connection_ids, created.member_connection_ids);
+        assert_eq!(desc.scope_mode, created.scope_mode);
+        assert_eq!(desc.instrument_ids, created.instrument_ids);
+        assert_eq!(desc.params, created.params);
+
+        // Persisted: a fresh load carries the trader's tiering on the same book.
+        let reloaded = IdentityStore::load(&path).unwrap();
+        let stored = reloaded.aggregated_book(&book_id).expect("book present");
+        let tier = stored.tiering.as_ref().expect("tiering persisted");
+        assert_eq!(tier.unit, celnet_tiering::SpreadUnit::PriceBps);
+        assert_eq!(stored.member_connection_ids, vec!["lp-a"]);
+
+        // The live composite re-tiers: a fresh push (the live RFS stream) now publishes
+        // the flat ±25 price-bps two-way around mid 99.55 ⇒ 99.30 / 99.80.
+        assert!(hub.ingest(&lp_quote("lp-a", "X", 99.50, 99.60, clock.now_nanos())));
+        let tiered = hub.snapshot(&book_id).expect("book running");
+        let line = &tiered.snapshot.instruments[0];
+        assert!(
+            (line.best_bid - 99.30).abs() < 1e-9,
+            "bid={}",
+            line.best_bid
+        );
+        assert!(
+            (line.best_offer - 99.80).abs() < 1e-9,
+            "offer={}",
+            line.best_offer
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A trader may retune tiering but STAYS walled out of the book's structure: book
+    /// create / whole-book update / delete are all still admin-only.
+    #[tokio::test]
+    async fn trader_cannot_mutate_book_structure() {
+        let (edge, path, _s) = edge("tier-structure");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let created = edge
+            .create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: admin.clone(),
+                spec: Some(agg_spec("Composite", vec!["lp-a".into()])),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .book
+            .unwrap();
+        let (_id, trader) = make_trader(&edge, &admin, "struct@celnet.com").await;
+
+        // Create is admin-only.
+        let create = edge
+            .create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: trader.clone(),
+                spec: Some(agg_spec("Trader Book", vec![])),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(create.code(), tonic::Code::PermissionDenied);
+
+        // Whole-book update (members / scope / params) is admin-only.
+        let update = edge
+            .update_aggregated_book(Request::new(UpdateAggregatedBookRequest {
+                session_token: trader.clone(),
+                id: created.id.clone(),
+                spec: Some(agg_spec("Composite", vec!["lp-hijack".into()])),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(update.code(), tonic::Code::PermissionDenied);
+
+        // Delete is admin-only.
+        let delete = edge
+            .delete_aggregated_book(Request::new(DeleteAggregatedBookRequest {
+                session_token: trader.clone(),
+                id: created.id.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(delete.code(), tonic::Code::PermissionDenied);
+
+        // The book's structure is exactly as the admin left it (nothing the trader tried
+        // to touch landed).
+        let reloaded = IdentityStore::load(&path).unwrap();
+        let def = reloaded.aggregated_book(&created.id).expect("book present");
+        assert_eq!(def.member_connection_ids, vec!["lp-a"]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A trader **denied** the fixed-income quote-respond capability (separation of
+    /// duties) cannot retune tiering — the gate is a held capability, not mere login.
+    #[tokio::test]
+    async fn update_book_tiering_denied_without_capability() {
+        let (edge, path, _s) = edge("tier-cap");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let created = edge
+            .create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: admin.clone(),
+                spec: Some(agg_spec("Composite", vec!["lp-a".into()])),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .book
+            .unwrap();
+        let (trader_id, _tok) = make_trader(&edge, &admin, "denied@celnet.com").await;
+        // Deny QuoteRespond·FixedIncome on this trader (deny-wins over the role bundle).
+        edge.set_user_capabilities(Request::new(SetUserCapabilitiesRequest {
+            session_token: admin.clone(),
+            id: trader_id,
+            grants: Vec::new(),
+            denies: vec![cap("quote_respond", "fixed_income")],
+            correlation_id: None,
+        }))
+        .await
+        .unwrap();
+        // Re-login to mint a session snapshotting the denial.
+        let denied_tok = login(&edge, "denied@celnet.com", "trader-pw-123")
+            .await
+            .unwrap()
+            .session_token;
+        let denied = edge
+            .update_book_tiering(Request::new(UpdateBookTieringRequest {
+                session_token: denied_tok,
+                book_id: created.id.clone(),
+                tiering: Some(flat_tiering()),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An unauthenticated caller is rejected; and a valid non-admin session CAN list the
+    /// aggregated books (the read is not admin-gated).
+    #[tokio::test]
+    async fn update_book_tiering_unauthenticated_rejected_and_trader_can_list() {
+        let (edge, path, _s) = edge("tier-anon");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let created = edge
+            .create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: admin.clone(),
+                spec: Some(agg_spec("Composite", vec!["lp-a".into()])),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .book
+            .unwrap();
+
+        // An unauthenticated token is rejected before any mutation.
+        let anon = edge
+            .update_book_tiering(Request::new(UpdateBookTieringRequest {
+                session_token: "not-a-token".into(),
+                book_id: created.id.clone(),
+                tiering: Some(flat_tiering()),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(anon.code(), tonic::Code::Unauthenticated);
+
+        // A non-admin trader CAN read the roster (a book is global, decision C).
+        let (_id, trader) = make_trader(&edge, &admin, "reader@celnet.com").await;
+        let listed = edge
+            .list_aggregated_books(Request::new(ListAggregatedBooksRequest {
+                session_token: trader,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(listed.books.len(), 1);
+        assert_eq!(listed.books[0].id, created.id);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A retune carrying an inconsistent tiering config is rejected (`invalid_argument`),
+    /// and the book keeps its prior (absent) tiering — a bad config never lands.
+    #[tokio::test]
+    async fn update_book_tiering_rejects_invalid_config() {
+        let (edge, path, _s) = edge("tier-bad");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let created = edge
+            .create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: admin.clone(),
+                spec: Some(agg_spec("Composite", vec!["lp-a".into()])),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .book
+            .unwrap();
+        let (_id, trader) = make_trader(&edge, &admin, "bad@celnet.com").await;
+
+        // Inconsistent guardrails (h_max < spread_floor/2) fail the engine invariant.
+        let mut bad = flat_tiering();
+        bad.guardrails = Some(TieringGuardrailsDesc {
+            h_min: 0.0,
+            h_max: 0.0,
+            s_max: 1.0,
+            spread_floor: 1.0,
+        });
+        let err = edge
+            .update_book_tiering(Request::new(UpdateBookTieringRequest {
+                session_token: trader,
+                book_id: created.id.clone(),
+                tiering: Some(bad),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        // The rejected config never landed: the book still has no tiering.
+        let reloaded = IdentityStore::load(&path).unwrap();
+        let def = reloaded.aggregated_book(&created.id).expect("book present");
+        assert!(def.tiering.is_none());
         let _ = std::fs::remove_file(&path);
     }
 }

@@ -124,6 +124,10 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "CreateAggregatedBookResponse",
     "UpdateAggregatedBookResponse",
     "DeleteAggregatedBookResponse",
+    // The trader-facing tiering-retune reply mirrors the whole-book update reply: its
+    // `json!({ .. })` hand encoder emits `correlation_id` (and the absent `book`) as JSON
+    // `null`, so the generated encoder must too.
+    "UpdateBookTieringResponse",
     "ListInstrumentsResponse",
     "GetInstrumentResponse",
     "CreateInstrumentResponse",

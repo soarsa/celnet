@@ -37,7 +37,7 @@ use celnet_proto::{
     ListAggregatedBooksResponse, LpContribution, MarketContext, MetalPair, RateSensitivities,
     Strategy, StrategyKind, StrikeOrDelta, SubscriptionId, Tenor, TieringConfigDesc,
     TieringGuardrailsDesc, TieringSpreadUnit, TieringStalePolicy, TieringStrategyDesc,
-    TieringStrategyKind, Underlying, UpdateAggregatedBookResponse,
+    TieringStrategyKind, Underlying, UpdateAggregatedBookResponse, UpdateBookTieringResponse,
 };
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
@@ -4261,6 +4261,52 @@ fn delete_aggregated_book_request_decode_byte_identical() {
         "DeleteAggregatedBookRequest",
         generated::decode_delete_aggregated_book_request(o),
         hand::hand_delete_aggregated_book_request_from_json(o),
+    );
+}
+
+#[test]
+fn update_book_tiering_request_decode_byte_identical() {
+    // Full: the trader-facing tiering retune carries the nested `tiering` message.
+    let body = json!({
+        "session_token": "tok", "book_id": "g10",
+        "tiering": agg_tiering_body(), "correlation_id": 9
+    });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateBookTieringRequest(full)",
+        generated::decode_update_book_tiering_request(o),
+        hand::hand_update_book_tiering_request_from_json(o),
+    );
+    // Minimal: an absent `tiering` (⇒ None on both sides — disable the book's tiering).
+    let minimal = json!({ "session_token": "tok", "book_id": "g10" });
+    let mo = minimal.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateBookTieringRequest(disable)",
+        generated::decode_update_book_tiering_request(mo),
+        hand::hand_update_book_tiering_request_from_json(mo),
+    );
+}
+
+#[test]
+fn update_book_tiering_response_encode_byte_identical() {
+    let updated = UpdateBookTieringResponse {
+        book: Some(agg_book_desc()),
+        correlation_id: Some(9),
+    };
+    assert_bytes_eq(
+        "UpdateBookTieringResponse",
+        &generated::encode_update_book_tiering_response(&updated),
+        &hand::hand_update_book_tiering_response_to_json(&updated),
+    );
+    // Absent book + correlation_id ⇒ both `null`.
+    let empty = UpdateBookTieringResponse::default();
+    let g = generated::encode_update_book_tiering_response(&empty);
+    assert_eq!(g.get("book"), Some(&Value::Null));
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "UpdateBookTieringResponse(empty)",
+        &g,
+        &hand::hand_update_book_tiering_response_to_json(&empty),
     );
 }
 

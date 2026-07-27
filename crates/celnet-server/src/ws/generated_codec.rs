@@ -110,9 +110,9 @@ use celnet_proto::{
     SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
     StirFutureDef, TieringConfigDesc, TieringGuardrailsDesc, TieringStrategyDesc,
     UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookRequest,
-    UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest,
-    UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest,
-    UpdateUserResponse, UserDesc, VanillaIrsDef,
+    UpdateBookResponse, UpdateBookTieringRequest, UpdateBookTieringResponse, UpdateDeskRequest,
+    UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest,
+    UpdateInstrumentResponse, UpdateUserRequest, UpdateUserResponse, UserDesc, VanillaIrsDef,
     instrument_def_desc::Definition as InstrumentDefinition,
 };
 // Aggregated-book composite publish frames (D3): the descriptor-driven ENCODE side
@@ -5806,6 +5806,20 @@ impl WireBuilder for DeleteAggregatedBookRequest {
     }
 }
 
+impl WireBuilder for UpdateBookTieringRequest {
+    const MESSAGE: &'static str = "UpdateBookTieringRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "book_id" => self.book_id = req_string(value, "book_id")?,
+            "tiering" => self.tiering = opt_msg::<TieringConfigDesc>(value, "tiering")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for ListInstrumentsRequest {
     const MESSAGE: &'static str = "ListInstrumentsRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -6134,6 +6148,17 @@ pub fn decode_delete_aggregated_book_request(
     o: &Map<String, Value>,
 ) -> DResult<DeleteAggregatedBookRequest> {
     decode(DeleteAggregatedBookRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateBookTieringRequest`] envelope — the optional `tiering` nests the
+/// [`TieringConfigDesc`] body (its strategy array, guardrails and enums).
+///
+/// # Errors
+/// A missing `session_token`/`book_id`, or a malformed `tiering`, as a [`CodecError`].
+pub fn decode_update_book_tiering_request(
+    o: &Map<String, Value>,
+) -> DResult<UpdateBookTieringRequest> {
+    decode(UpdateBookTieringRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListInstrumentsRequest`] envelope — fully generic.
@@ -6838,6 +6863,16 @@ impl WireAdapter for DeleteAggregatedBookResponse {
     }
 }
 
+impl WireAdapter for UpdateBookTieringResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book" => self.book.as_ref().map(|b| WireVal::Msg(b)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for ListInstrumentsResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -7055,6 +7090,12 @@ pub fn encode_update_aggregated_book_response(r: &UpdateAggregatedBookResponse) 
 #[must_use]
 pub fn encode_delete_aggregated_book_response(r: &DeleteAggregatedBookResponse) -> Value {
     encode("DeleteAggregatedBookResponse", r)
+}
+
+/// Encode an [`UpdateBookTieringResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_book_tiering_response(r: &UpdateBookTieringResponse) -> Value {
+    encode("UpdateBookTieringResponse", r)
 }
 
 /// Encode a [`ListInstrumentsResponse`] to its WS JSON — descriptor-driven.

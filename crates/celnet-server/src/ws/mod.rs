@@ -1293,6 +1293,14 @@ async fn handle_unary(
                 generated_codec::encode_delete_aggregated_book_response
             )
         }
+        "update_book_tiering" => {
+            let req = decode!(generated_codec::decode_update_book_tiering_request(o));
+            call!(
+                services.auth.update_book_tiering(Request::new(req)),
+                "book_tiering_updated",
+                generated_codec::encode_update_book_tiering_response
+            )
+        }
         "list_instruments" => {
             let req = decode!(generated_codec::decode_list_instruments_request(o));
             call!(

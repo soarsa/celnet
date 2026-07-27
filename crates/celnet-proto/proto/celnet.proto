@@ -4305,6 +4305,33 @@ message DeleteAggregatedBookResponse {
   optional uint64 correlation_id = 2;
 }
 
+// Retune ONLY an aggregated book's outbound-tiering block (the trader-configurable
+// SPREAD), leaving the book's STRUCTURE — members, instrument scope, consolidation
+// params, enabled flag — untouched. Unlike the whole-book create/update/delete
+// (admin only), this is callable by any authenticated caller holding the
+// fixed-income quote-respond capability: the trader owns the outbound spread; the
+// admin still owns what the book IS.
+message UpdateBookTieringRequest {
+  // The caller's bearer token (must resolve to a valid session holding the
+  // fixed-income quote-respond capability; NOT admin-gated).
+  string session_token = 1;
+  // The id of the book whose tiering to replace (immutable identity — the book's
+  // structure is not touched).
+  string book_id = 2;
+  // The new outbound-tiering configuration. Absent ⇒ tiering disabled (the book
+  // reverts to publishing the raw composite unchanged).
+  TieringConfigDesc tiering = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+// The book after its tiering was retuned (structure unchanged).
+message UpdateBookTieringResponse {
+  // The updated book (only its tiering block changed).
+  AggregatedBookDesc book = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
 // ===========================================================================
 // LP liquidity ingest — the machine-to-machine feed by which an inbound
 // liquidity connection (the `lp-sim` binary today, any FIX/API LP adapter
@@ -5007,6 +5034,10 @@ service AuthService {
   rpc UpdateAggregatedBook(UpdateAggregatedBookRequest) returns (UpdateAggregatedBookResponse);
   // Delete an aggregated book (admin only).
   rpc DeleteAggregatedBook(DeleteAggregatedBookRequest) returns (DeleteAggregatedBookResponse);
+  // Retune ONLY a book's outbound-tiering block — the trader-configurable spread.
+  // Callable by any authenticated caller holding the fixed-income quote-respond
+  // capability (NOT admin-gated); the book's structure stays admin-owned.
+  rpc UpdateBookTiering(UpdateBookTieringRequest) returns (UpdateBookTieringResponse);
   // List the instrument reference-data definitions (any authenticated caller —
   // curve-building and pricing resolve against this, so it is NOT admin-only).
   rpc ListInstruments(ListInstrumentsRequest) returns (ListInstrumentsResponse);

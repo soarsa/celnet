@@ -1112,6 +1112,38 @@ impl IdentityStore {
         Ok(def)
     }
 
+    /// Replace **only** an aggregated book's outbound-[`tiering`](AggregatedBookDef::tiering)
+    /// block (the trader-configurable spread), leaving its **structure** — id, name,
+    /// members, instrument scope, consolidation params, enabled flag — byte-identical.
+    /// Validates the resulting definition's invariants (via
+    /// [`check_aggregated_book`](Self::check_aggregated_book), which runs
+    /// [`validate_tiering_config`] on a `Some` config), replaces the slot, and returns the
+    /// updated definition. This is the store side of the trader-facing tiering RPC: the
+    /// admin owns what the book *is* (structure), the trader owns the outbound spread.
+    ///
+    /// # Errors
+    /// No book with `id`, or a tiering config failing its invariants (inconsistent
+    /// guardrails, empty strategy list, non-finite / negative magnitude).
+    pub fn update_aggregated_book_tiering(
+        &mut self,
+        id: &str,
+        tiering: Option<celnet_tiering::TieringConfig>,
+    ) -> Result<AggregatedBookDef, String> {
+        let Some(existing) = self.aggregated_book(id).cloned() else {
+            return Err(format!("no aggregated book with id {id:?}"));
+        };
+        // Structure preserved verbatim; only the tiering block is swapped.
+        let def = AggregatedBookDef {
+            tiering,
+            ..existing
+        };
+        self.check_aggregated_book(&def)?;
+        if let Some(slot) = self.aggregated_books.iter_mut().find(|b| b.id == id) {
+            *slot = def.clone();
+        }
+        Ok(def)
+    }
+
     /// Delete an aggregated book by id, reporting whether one was removed (a missing id
     /// is a no-op that reports `false`, mirroring the entity/book delete RPCs). An
     /// aggregated book is global and owns no downstream rows, so — unlike an entity —
