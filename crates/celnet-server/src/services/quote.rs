@@ -499,6 +499,29 @@ impl QuoteEdge {
         hub.resolve_rfq_composite(&key)
     }
 
+    /// Resolve the aggregated-book composite for a **specific caller**, applying the
+    /// caller's pricing group when it resolves to one (`docs/FI-PRICING-GROUPS-DESIGN.md`
+    /// §5). A grouped caller prices off the book's **raw** composite through its group's
+    /// effective RFS/RFQ pipeline (`share_pipeline ? esp : rfq`); an ungrouped caller
+    /// falls back to [`Self::book_composite`] — the book-default-tiered composite,
+    /// byte-identical to before pricing groups. Resolution is by user id, then desk
+    /// fallback (FIX-connection callers are the deferred rates-RFS seam).
+    fn book_composite_for_caller(
+        &self,
+        instrument: &celnet_proto::Instrument,
+        caller: &ResolvedCaller,
+    ) -> Option<crate::services::aggregation::RfqComposite> {
+        let hub = self.aggregation_hub.as_ref()?;
+        let key = book_instrument_key(instrument)?;
+        if let Some(user) = caller.user() {
+            let resolver = hub.pricing_groups();
+            if let Some(group) = resolver.resolve_for_user(&user.user_id, &user.desk_ids) {
+                return hub.resolve_rfq_composite_priced(&key, group.rfq_effective_pipeline());
+            }
+        }
+        hub.resolve_rfq_composite(&key)
+    }
+
     /// Mint the next **unguessable** `quote_id`: a strictly-fresh monotonic counter
     /// folded through the public-domain `splitmix64` bijection keyed by the
     /// per-process secret. `splitmix64` is a bijection over `u64`, so distinct
@@ -968,16 +991,19 @@ impl QuoteService for QuoteEdge {
             .conventions
             .ok_or_else(|| Status::invalid_argument("missing `conventions`"))?;
 
-        // Phase 2b — aggregated-book RFQ: if the instrument falls in an admin-defined
-        // book's scope and that book has a live composite, price the single-dealer quote
-        // against the book's ALREADY-TIERED composite best-bid/offer (the tiering is the
-        // book's — reused, never re-implemented here). A book composite is a consolidated
+        // Aggregated-book RFQ: if the instrument falls in an admin-defined book's scope
+        // and that book has a live composite, price the single-dealer quote against the
+        // book composite's best-bid/offer. For a caller in a **pricing group**, that is
+        // the group's RFS/RFQ feature pipeline run over the book's RAW composite (its own
+        // outbound price off the same raw liquidity); otherwise it is the book's
+        // already-tiered composite (the book's tiering — reused, never re-implemented
+        // here). A book composite is a consolidated
         // market price, not an option premium, so it carries no greeks / vol-surface /
         // canonical option leaf: greeks, std-error, surface echo and the pre-trade leaf
         // are `None` (an explicit no-gate outcome, never a fabricated zero). Otherwise —
         // no book covers it — fall through to the options-engine path, byte-identical to
         // before, so nothing regresses when no book is configured.
-        let pricing = if let Some(comp) = self.book_composite(&instrument) {
+        let pricing = if let Some(comp) = self.book_composite_for_caller(&instrument, &caller) {
             tracing::info!(
                 class = celnet_observability::LogClass::Security.label(),
                 requester = %requester_disp,

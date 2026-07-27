@@ -1181,6 +1181,15 @@ struct AggBookSubscription {
     last_version: u64,
     /// The last sequence number emitted (baseline snapshot is 1).
     sequence: u64,
+    /// This subscriber's resolved **ESP pricing pipeline**, cached at subscribe time
+    /// (`docs/FI-PRICING-GROUPS-DESIGN.md` §5). `Some` ⇒ the subscriber belongs to a
+    /// pricing group and every baseline/update on this line is priced by running this
+    /// pipeline over the book's **raw** composite (so it receives its own outbound
+    /// two-way off the same raw liquidity). `None` ⇒ no group: the book-default snapshot
+    /// is streamed verbatim (byte-identical to before pricing groups). Resolved once per
+    /// subscribe; an admin edit to the group takes effect on the client's next
+    /// (re)subscribe (a Phase-2b live-reprice seam).
+    esp_pipeline: Option<Arc<celnet_tiering::FeaturePipeline>>,
 }
 
 impl Session {
@@ -1587,13 +1596,26 @@ impl Session {
                 .await;
             return true;
         };
-        let snap = agg_book_snapshot_msg(
-            id,
-            1,
-            published.snapshot.clone(),
-            s.correlation_id,
-            self.clock.now_nanos(),
-        );
+        // Resolve THIS subscriber → pricing group (user id, then desk fallback). A
+        // grouped subscriber is streamed its group's ESP pipeline run over the book's
+        // **raw** composite; an ungrouped one keeps the book-default snapshot verbatim.
+        // The pipeline is resolved ONCE here and cached on the subscription, so the tick
+        // loop reprices without re-resolving (design §5 — resolve once per subscribe).
+        let esp_pipeline: Option<Arc<celnet_tiering::FeaturePipeline>> =
+            self.caller.user().and_then(|u| {
+                hub.pricing_groups()
+                    .resolve_for_user(&u.user_id, &u.desk_ids)
+                    .map(|g| Arc::new(g.esp_effective_pipeline().clone()))
+            });
+        // Baseline payload: the per-subscriber priced composite when grouped, else the
+        // book-default snapshot (byte-identical to before pricing groups).
+        let baseline = match &esp_pipeline {
+            Some(pipeline) => hub
+                .snapshot_priced(&s.book_id, pipeline)
+                .unwrap_or_else(|| published.snapshot.clone()),
+            None => published.snapshot.clone(),
+        };
+        let snap = agg_book_snapshot_msg(id, 1, baseline, s.correlation_id, self.clock.now_nanos());
         // Blocking send for the baseline so it is never dropped.
         if out_tx.send(Ok(snap)).await.is_err() {
             return false;
@@ -1605,6 +1627,7 @@ impl Session {
                 book_id: s.book_id,
                 last_version: published.version,
                 sequence: 1,
+                esp_pipeline,
             },
         );
         true
@@ -2157,8 +2180,18 @@ impl Session {
             if published.version <= sub.last_version {
                 continue;
             }
+            // Reprice the update for a grouped subscriber (its cached ESP pipeline over
+            // the raw composite), keeping the version gate on the raw book version so the
+            // per-client stream tracks the same ticks. An ungrouped subscriber streams the
+            // book-default snapshot verbatim (byte-identical to before pricing groups).
+            let payload = match &sub.esp_pipeline {
+                Some(pipeline) => hub
+                    .snapshot_priced(&sub.book_id, pipeline)
+                    .unwrap_or_else(|| published.snapshot.clone()),
+                None => published.snapshot.clone(),
+            };
             let seq = sub.sequence + 1;
-            let update = agg_book_update_msg(sub.id, seq, published.snapshot.clone(), now);
+            let update = agg_book_update_msg(sub.id, seq, payload, now);
             match out_tx.try_send(Ok(update)) {
                 Ok(()) => {
                     sub.sequence = seq;

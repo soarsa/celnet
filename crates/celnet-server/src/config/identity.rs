@@ -505,6 +505,187 @@ impl AggregatedBookEdit {
     }
 }
 
+/// One persisted **pricing group**: a named, trader-defined grouping that binds a
+/// set of connected clients (inbound FIX sessions, GUI/API principals, or a desk as
+/// a default tier) to their own outbound **feature pipelines**, so different clients
+/// receive different outbound prices off the **same** raw composite
+/// (`docs/FI-PRICING-GROUPS-DESIGN.md`; Phase 2a).
+///
+/// Membership is **many-to-one**: a group serves many members, and each member
+/// resolves to **exactly one enabled group** (validated — see
+/// [`check_pricing_group`](IdentityStore::check_pricing_group) /
+/// [`validate_pricing_groups`](IdentityStore::validate_pricing_groups)), so pricing
+/// is deterministic. A [`member_desks`](Self::member_desks) entry is a **fallback**
+/// tier consulted only when a caller's own connection/user id matches no group.
+///
+/// The group carries a **separate `FeaturePipeline` per outbound mode** — ESP
+/// (streaming) and RFS/RFQ — plus [`share_pipeline`](Self::share_pipeline): when set,
+/// the RFQ mode reuses the ESP pipeline (one pipeline for both), so a trader who wants
+/// identical ESP/RFQ pricing configures it once.
+///
+/// `Eq` is intentionally **not** derived: the embedded [`FeaturePipeline`]s carry
+/// `f64` feature/guardrail magnitudes, so the definition is only `PartialEq` (as
+/// [`AggregatedBookDef`] and [`IdentityStore`] already are, for the same reason).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PricingGroupDef {
+    /// Stable identifier (the store/API key). Never reused; minted from the name via
+    /// [`mint_pricing_group_id`].
+    pub id: String,
+    /// Human-friendly group label — the trader's code name (e.g. `GROUP-A`,
+    /// `TIER1-EU`) — unique across the store (case-insensitive), validated at load and
+    /// at every admin write.
+    pub name: String,
+    /// Free-text operator description of what the group is for.
+    #[serde(default)]
+    pub description: String,
+    /// Inbound FIX sessions in this group, by **connection id**
+    /// ([`super::fix_connections::FixConnectionDef::id`]). Order-preserving and unique
+    /// **within this group**. Like [`AggregatedBookDef::member_connection_ids`], these
+    /// reference the **separate** fix/connection registry (not part of
+    /// [`IdentityStore`]), so their existence is a service-layer concern and is
+    /// deliberately **not** resolved here.
+    #[serde(default)]
+    pub member_connection_ids: Vec<String>,
+    /// GUI/API principals in this group, by [`UserDef::id`]. Order-preserving and
+    /// unique within this group; each must resolve to an existing user (validated).
+    #[serde(default)]
+    pub member_user_ids: Vec<String>,
+    /// Desk-level **default** membership, by [`DeskDef::id`] — the fallback tier a
+    /// caller resolves to when neither its connection nor its user id names a group.
+    /// Order-preserving and unique within this group; each must resolve to an existing
+    /// desk (validated).
+    #[serde(default)]
+    pub member_desks: Vec<String>,
+    /// The outbound **ESP / streaming** feature pipeline: the ordered features applied
+    /// per subscriber to the raw composite before the aggregated-book stream is
+    /// published to a member of this group.
+    pub esp_pipeline: celnet_tiering::FeaturePipeline,
+    /// The outbound **RFS/RFQ** feature pipeline: the ordered features applied to the
+    /// raw composite before a quote is packaged for a member of this group. Ignored
+    /// when [`share_pipeline`](Self::share_pipeline) is set (the ESP pipeline is reused).
+    pub rfq_pipeline: celnet_tiering::FeaturePipeline,
+    /// When `true`, the RFS/RFQ mode reuses [`esp_pipeline`](Self::esp_pipeline) — one
+    /// pipeline drives both outbound modes; when `false`, each mode uses its own.
+    #[serde(default)]
+    pub share_pipeline: bool,
+    /// Whether the group is active. A disabled group is persisted and editable but
+    /// never participates in resolution — its members fall through as if it did not
+    /// exist (so a disabled group's members can be re-homed without a determinism
+    /// conflict).
+    pub enabled: bool,
+}
+
+impl PricingGroupDef {
+    /// The effective **ESP / streaming** pipeline for this group (always
+    /// [`esp_pipeline`](Self::esp_pipeline)).
+    #[must_use]
+    pub fn esp_effective_pipeline(&self) -> &celnet_tiering::FeaturePipeline {
+        &self.esp_pipeline
+    }
+
+    /// The effective **RFS/RFQ** pipeline: [`esp_pipeline`](Self::esp_pipeline) when
+    /// [`share_pipeline`](Self::share_pipeline) is set, else
+    /// [`rfq_pipeline`](Self::rfq_pipeline).
+    #[must_use]
+    pub fn rfq_effective_pipeline(&self) -> &celnet_tiering::FeaturePipeline {
+        if self.share_pipeline {
+            &self.esp_pipeline
+        } else {
+            &self.rfq_pipeline
+        }
+    }
+}
+
+/// A precomputed **caller → pricing group** resolver, built once from the
+/// [`IdentityStore::pricing_groups`] registry and cached on the hub/edge (mirroring
+/// the aggregation identities cache). It maps each **enabled** group's members —
+/// connection ids, user ids, and desks — to the group, so a hot-path lookup is a
+/// single hash probe.
+///
+/// Determinism: [`IdentityStore::validate_pricing_groups`] rejects any member that
+/// appears in two enabled groups, so each key resolves to exactly one group. The
+/// build is nonetheless first-wins per key (deterministic in registry order) as a
+/// belt-and-braces guard. Disabled groups are excluded entirely.
+#[derive(Debug, Clone, Default)]
+pub struct PricingGroupResolver {
+    groups: Vec<PricingGroupDef>,
+    by_connection: BTreeMap<String, usize>,
+    by_user: BTreeMap<String, usize>,
+    by_desk: BTreeMap<String, usize>,
+}
+
+impl PricingGroupResolver {
+    /// Build the resolver from the registry, indexing only **enabled** groups.
+    #[must_use]
+    pub fn build(groups: &[PricingGroupDef]) -> Self {
+        let mut kept: Vec<PricingGroupDef> = Vec::new();
+        let mut by_connection = BTreeMap::new();
+        let mut by_user = BTreeMap::new();
+        let mut by_desk = BTreeMap::new();
+        for g in groups.iter().filter(|g| g.enabled) {
+            let idx = kept.len();
+            for c in &g.member_connection_ids {
+                by_connection.entry(c.clone()).or_insert(idx);
+            }
+            for u in &g.member_user_ids {
+                by_user.entry(u.clone()).or_insert(idx);
+            }
+            for d in &g.member_desks {
+                by_desk.entry(d.clone()).or_insert(idx);
+            }
+            kept.push(g.clone());
+        }
+        Self {
+            groups: kept,
+            by_connection,
+            by_user,
+            by_desk,
+        }
+    }
+
+    /// Whether the resolver indexes no enabled group (the hot path can then skip
+    /// resolution entirely).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty()
+    }
+
+    /// Resolve a **FIX connection** to its pricing group: its own `connection id`
+    /// first, then — when given — its `desk` as the fallback tier, then none.
+    #[must_use]
+    pub fn resolve_for_connection(
+        &self,
+        connection_id: &str,
+        desk: Option<&str>,
+    ) -> Option<&PricingGroupDef> {
+        if let Some(&i) = self.by_connection.get(connection_id) {
+            return self.groups.get(i);
+        }
+        if let Some(d) = desk
+            && let Some(&i) = self.by_desk.get(d)
+        {
+            return self.groups.get(i);
+        }
+        None
+    }
+
+    /// Resolve an authenticated **user** to its pricing group: its own `user id`
+    /// first, then — in order — each of its `desk_ids` as the fallback tier (the first
+    /// desk that names a group wins, deterministically), then none.
+    #[must_use]
+    pub fn resolve_for_user(&self, user_id: &str, desk_ids: &[String]) -> Option<&PricingGroupDef> {
+        if let Some(&i) = self.by_user.get(user_id) {
+            return self.groups.get(i);
+        }
+        for d in desk_ids {
+            if let Some(&i) = self.by_desk.get(d) {
+                return self.groups.get(i);
+            }
+        }
+        None
+    }
+}
+
 /// The persisted document: the users and desks of the edge.
 ///
 /// `Eq` is intentionally **not** derived: the instrument reference-data registry
@@ -557,6 +738,14 @@ pub struct IdentityStore {
     /// carries no `aggregated_books`) loads unchanged.
     #[serde(default)]
     pub aggregated_books: Vec<AggregatedBookDef>,
+    /// The trader-defined **pricing groups**: named groupings that bind connected
+    /// clients (FIX sessions / users / desks) to their own outbound feature pipelines,
+    /// so different clients receive different outbound prices off the same raw composite
+    /// (`docs/FI-PRICING-GROUPS-DESIGN.md`; Phase 2a). An additive serde-default field
+    /// (no `schema_version`), so an existing `identity.json` (which carries no
+    /// `pricing_groups`) loads unchanged.
+    #[serde(default)]
+    pub pricing_groups: Vec<PricingGroupDef>,
 }
 
 impl IdentityStore {
@@ -602,6 +791,13 @@ impl IdentityStore {
                 // ever stood up from a sound definition.
                 store
                     .validate_aggregated_books()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                // A corrupt pricing-group set (duplicate/empty name, a member in two
+                // enabled groups, an unknown user/desk member, or an invalid pipeline) is
+                // rejected at load too, so a client is only ever priced from a sound,
+                // deterministic group.
+                store
+                    .validate_pricing_groups()
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
                 Ok(store)
             }
@@ -1157,6 +1353,152 @@ impl IdentityStore {
         self.aggregated_books.retain(|b| b.id != id);
         Ok(self.aggregated_books.len() != before)
     }
+
+    /// Borrow a pricing group by id.
+    #[must_use]
+    pub fn pricing_group(&self, id: &str) -> Option<&PricingGroupDef> {
+        self.pricing_groups.iter().find(|g| g.id == id)
+    }
+
+    /// Build the cached **caller → pricing-group** resolver from the registry — the
+    /// deterministic map the ESP / RFQ pricing paths resolve a subscriber/caller
+    /// against (cached on the hub, rebuilt on every reconcile). Only **enabled** groups
+    /// are indexed; determinism is guaranteed by
+    /// [`validate_pricing_groups`](Self::validate_pricing_groups).
+    #[must_use]
+    pub fn pricing_group_resolver(&self) -> PricingGroupResolver {
+        PricingGroupResolver::build(&self.pricing_groups)
+    }
+
+    /// Validate the pricing-group set: names are non-empty and unique
+    /// case-insensitively, every group satisfies its own invariants
+    /// ([`check_pricing_group`](Self::check_pricing_group)), and — the determinism
+    /// guarantee — **no member (connection id, user id, or desk) belongs to two enabled
+    /// groups**, so caller → group resolution has exactly one answer. Called at
+    /// [`load`](Self::load) and by every admin write.
+    ///
+    /// Member **connection ids** are not resolved against a registry here (they live in
+    /// the separate fix/connection registry — a service-layer concern, exactly as for
+    /// [`AggregatedBookDef::member_connection_ids`]); user ids and desks, which live in
+    /// this document, **are** resolved by [`check_pricing_group`](Self::check_pricing_group).
+    ///
+    /// # Errors
+    /// The first empty/duplicate name, a group failing its invariants, or a member in
+    /// two enabled groups.
+    fn validate_pricing_groups(&self) -> Result<(), String> {
+        let mut names = std::collections::HashSet::new();
+        // A member may belong to at most ONE enabled group ⇒ deterministic resolution.
+        // Track which enabled group owns each connection / user / desk key.
+        let mut conn_owner: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
+        let mut user_owner: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
+        let mut desk_owner: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
+        for g in &self.pricing_groups {
+            if g.name.trim().is_empty() {
+                return Err(format!("pricing group {:?} has an empty name", g.id));
+            }
+            if !names.insert(g.name.to_ascii_lowercase()) {
+                return Err(format!("duplicate pricing group name {:?}", g.name));
+            }
+            self.check_pricing_group(g)?;
+            // Determinism is a property of the ENABLED groups only — a disabled group
+            // never resolves, so its members are free to live elsewhere.
+            if !g.enabled {
+                continue;
+            }
+            // Within-group duplicates are already rejected by `check_pricing_group`, so
+            // any collision here is a genuine cross-group conflict.
+            for c in &g.member_connection_ids {
+                if let Some(prev) = conn_owner.insert(c.as_str(), g.id.as_str()) {
+                    return Err(format!(
+                        "connection {c:?} is a member of two enabled pricing groups ({prev:?} and {:?})",
+                        g.id
+                    ));
+                }
+            }
+            for u in &g.member_user_ids {
+                if let Some(prev) = user_owner.insert(u.as_str(), g.id.as_str()) {
+                    return Err(format!(
+                        "user {u:?} is a member of two enabled pricing groups ({prev:?} and {:?})",
+                        g.id
+                    ));
+                }
+            }
+            for d in &g.member_desks {
+                if let Some(prev) = desk_owner.insert(d.as_str(), g.id.as_str()) {
+                    return Err(format!(
+                        "desk {d:?} is a member of two enabled pricing groups ({prev:?} and {:?})",
+                        g.id
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate a single pricing group's **document-resolvable** invariants (used by
+    /// both load-time validation and every admin write):
+    ///
+    /// * no duplicate member within any one dimension (connection / user / desk);
+    /// * every user member resolves to an existing [`UserDef`] and every desk member to
+    ///   an existing [`DeskDef`];
+    /// * both feature pipelines (ESP and RFQ) are valid
+    ///   ([`validate_feature_pipeline`] — consistent guardrails + a valid embedded
+    ///   [`TieringConfig`](celnet_tiering::TieringConfig) per TIERING feature).
+    ///
+    /// Name uniqueness and the cross-group at-most-one-enabled-group rule are **not**
+    /// checked here (they need the surrounding set — the caller layers them on). Member
+    /// connection ids are **not** resolved (they live in the separate connection
+    /// registry — a service-layer concern, exactly as for aggregated books).
+    ///
+    /// # Errors
+    /// The first duplicate member, unknown user/desk member, or invalid pipeline.
+    fn check_pricing_group(&self, def: &PricingGroupDef) -> Result<(), String> {
+        let mut seen_conn = std::collections::HashSet::new();
+        for c in &def.member_connection_ids {
+            if !seen_conn.insert(c) {
+                return Err(format!(
+                    "pricing group {:?} lists connection member {:?} more than once",
+                    def.name, c
+                ));
+            }
+        }
+        let mut seen_user = std::collections::HashSet::new();
+        for u in &def.member_user_ids {
+            if !seen_user.insert(u) {
+                return Err(format!(
+                    "pricing group {:?} lists user member {:?} more than once",
+                    def.name, u
+                ));
+            }
+            if self.user(u).is_none() {
+                return Err(format!(
+                    "pricing group {:?} lists unknown user member {:?}",
+                    def.name, u
+                ));
+            }
+        }
+        let mut seen_desk = std::collections::HashSet::new();
+        for d in &def.member_desks {
+            if !seen_desk.insert(d) {
+                return Err(format!(
+                    "pricing group {:?} lists desk member {:?} more than once",
+                    def.name, d
+                ));
+            }
+            if self.desk(d).is_none() {
+                return Err(format!(
+                    "pricing group {:?} lists unknown desk member {:?}",
+                    def.name, d
+                ));
+            }
+        }
+        validate_feature_pipeline(&def.name, "ESP", &def.esp_pipeline)?;
+        validate_feature_pipeline(&def.name, "RFQ", &def.rfq_pipeline)?;
+        Ok(())
+    }
 }
 
 /// Argon2id-hash a plaintext password into a self-describing PHC string (salt and
@@ -1228,8 +1570,18 @@ pub fn mint_desk_id(name: &str, existing: &[DeskDef]) -> String {
 /// The first inconsistent guardrail, empty strategy list, or non-finite / negative
 /// magnitude, as a human-readable message.
 fn validate_tiering_config(book: &str, cfg: &celnet_tiering::TieringConfig) -> Result<(), String> {
+    tiering_config_reason(cfg).map_err(|m| format!("aggregated book {book:?} tiering {m}"))
+}
+
+/// The bare (entity-unprefixed) reason a [`celnet_tiering::TieringConfig`] is invalid,
+/// or `Ok` — the single rule set behind both the aggregated-book tiering validator
+/// ([`validate_tiering_config`]) and the pricing-group pipeline validator
+/// ([`validate_feature_pipeline`], for each embedded TIERING feature). Each caller
+/// prefixes the returned reason with its own entity context, so both messages are
+/// produced from one implementation with no drift (and the aggregated-book message is
+/// byte-identical to before the extraction).
+fn tiering_config_reason(cfg: &celnet_tiering::TieringConfig) -> Result<(), String> {
     use celnet_tiering::StrategySpec;
-    let ctx = |m: String| format!("aggregated book {book:?} tiering {m}");
     let finite = |v: f64, what: &str| -> Result<(), String> {
         if v.is_finite() {
             Ok(())
@@ -1246,25 +1598,23 @@ fn validate_tiering_config(book: &str, cfg: &celnet_tiering::TieringConfig) -> R
     };
     cfg.guardrails
         .validate()
-        .map_err(|e| ctx(format!("guardrails are inconsistent ({:?})", e.reason)))?;
+        .map_err(|e| format!("guardrails are inconsistent ({:?})", e.reason))?;
     if cfg.strategies.is_empty() {
-        return Err(ctx(
-            "enables no strategy (omit the tiering block to disable tiering)".to_string(),
-        ));
+        return Err("enables no strategy (omit the tiering block to disable tiering)".to_string());
     }
     for s in &cfg.strategies {
         match *s {
             StrategySpec::FlatMarkup { half_spread } => {
-                finite_nonneg(half_spread, "flat-markup half_spread").map_err(ctx)?;
+                finite_nonneg(half_spread, "flat-markup half_spread")?;
             }
             StrategySpec::InventorySkew {
                 half_spread,
                 kappa,
                 s_max,
             } => {
-                finite_nonneg(half_spread, "inventory-skew half_spread").map_err(ctx)?;
-                finite(kappa, "inventory-skew kappa").map_err(ctx)?;
-                finite_nonneg(s_max, "inventory-skew s_max").map_err(ctx)?;
+                finite_nonneg(half_spread, "inventory-skew half_spread")?;
+                finite(kappa, "inventory-skew kappa")?;
+                finite_nonneg(s_max, "inventory-skew s_max")?;
             }
             StrategySpec::ScaledSmoothedSpread {
                 smoothing_weight,
@@ -1279,32 +1629,107 @@ fn validate_tiering_config(book: &str, cfg: &celnet_tiering::TieringConfig) -> R
                     && smoothing_weight > 0.0
                     && smoothing_weight <= 1.0)
                 {
-                    return Err(ctx(
-                        "scaled-smoothed smoothing_weight must be in (0, 1]".to_string()
-                    ));
+                    return Err("scaled-smoothed smoothing_weight must be in (0, 1]".to_string());
                 }
                 // Expected Spread e > 0 (it is the divergence denominator).
                 if !(expected_spread.is_finite() && expected_spread > 0.0) {
-                    return Err(ctx(
-                        "scaled-smoothed expected_spread must be finite and > 0".to_string(),
-                    ));
+                    return Err(
+                        "scaled-smoothed expected_spread must be finite and > 0".to_string()
+                    );
                 }
-                finite_nonneg(max_divergence, "scaled-smoothed max_divergence").map_err(ctx)?;
-                finite_nonneg(core_spread, "scaled-smoothed core_spread").map_err(ctx)?;
-                finite_nonneg(max_output_spread, "scaled-smoothed max_output_spread")
-                    .map_err(ctx)?;
-                finite_nonneg(spread_scale_factor, "scaled-smoothed spread_scale_factor")
-                    .map_err(ctx)?;
+                finite_nonneg(max_divergence, "scaled-smoothed max_divergence")?;
+                finite_nonneg(core_spread, "scaled-smoothed core_spread")?;
+                finite_nonneg(max_output_spread, "scaled-smoothed max_output_spread")?;
+                finite_nonneg(spread_scale_factor, "scaled-smoothed spread_scale_factor")?;
                 // Max Output Spread m must be able to contain the Core spread c.
                 if max_output_spread < core_spread {
-                    return Err(ctx(
-                        "scaled-smoothed max_output_spread must be >= core_spread".to_string(),
-                    ));
+                    return Err(
+                        "scaled-smoothed max_output_spread must be >= core_spread".to_string()
+                    );
                 }
             }
         }
     }
     Ok(())
+}
+
+/// Validate a pricing-group outbound [`FeaturePipeline`](celnet_tiering::FeaturePipeline)
+/// (`mode` = `"ESP"` or `"RFQ"`) at load and at every admin write: the closing
+/// guardrails must be internally consistent, every embedded **TIERING** feature's
+/// [`TieringConfig`](celnet_tiering::TieringConfig) must pass the shared tiering rule
+/// set ([`tiering_config_reason`]), and every other feature's magnitudes must be finite
+/// (a NaN offset would silently corrupt every outbound price the pipeline produces).
+/// Reusing the tiering validation verbatim keeps a group's TIERING feature held to
+/// exactly the same standard as a book's tiering block.
+///
+/// # Errors
+/// The first inconsistent guardrail, invalid embedded tiering config, or non-finite
+/// feature magnitude, as a human-readable message.
+fn validate_feature_pipeline(
+    group: &str,
+    mode: &str,
+    pipeline: &celnet_tiering::FeaturePipeline,
+) -> Result<(), String> {
+    use celnet_tiering::PricingFeature;
+    let ctx = |m: String| format!("pricing group {group:?} {mode} pipeline {m}");
+    let finite = |v: f64, what: &str| -> Result<(), String> {
+        if v.is_finite() {
+            Ok(())
+        } else {
+            Err(format!("{what} must be finite"))
+        }
+    };
+    let finite_nonneg = |v: f64, what: &str| -> Result<(), String> {
+        if v.is_finite() && v >= 0.0 {
+            Ok(())
+        } else {
+            Err(format!("{what} must be finite and non-negative"))
+        }
+    };
+    pipeline
+        .guardrails
+        .validate()
+        .map_err(|e| ctx(format!("guardrails are inconsistent ({:?})", e.reason)))?;
+    for feature in &pipeline.features {
+        match feature {
+            PricingFeature::MidShift {
+                shift, reference, ..
+            } => {
+                finite(*shift, "mid-shift shift").map_err(ctx)?;
+                if let Some(r) = reference {
+                    finite(*r, "mid-shift reference").map_err(ctx)?;
+                }
+            }
+            PricingFeature::Tiering { config } => {
+                tiering_config_reason(config).map_err(|m| ctx(format!("tiering {m}")))?;
+            }
+            PricingFeature::Axe { magnitude, .. } => {
+                finite_nonneg(*magnitude, "axe magnitude").map_err(ctx)?;
+            }
+            PricingFeature::Position { kappa, s_max, .. } => {
+                finite(*kappa, "position kappa").map_err(ctx)?;
+                finite_nonneg(*s_max, "position s_max").map_err(ctx)?;
+            }
+            PricingFeature::PanicSkew { skew, .. } => {
+                finite(*skew, "panic-skew skew").map_err(ctx)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Mint a stable, unique, URL-safe id for a new pricing group from its name,
+/// disambiguating against the existing set with a numeric suffix (mirrors
+/// [`mint_aggregated_book_id`]).
+#[must_use]
+pub fn mint_pricing_group_id(name: &str, existing: &[PricingGroupDef]) -> String {
+    let base = slugify(name);
+    let base = if base.is_empty() {
+        "pricing-group".to_string()
+    } else {
+        base
+    };
+    unique_id(&base, |cand| existing.iter().any(|g| g.id == cand))
 }
 
 /// Mint a stable, unique, URL-safe id for a new aggregated book from its name,
@@ -1476,6 +1901,192 @@ mod tests {
         let bytes = serde_json::to_vec(&store).unwrap();
         let back: IdentityStore = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(store, back);
+    }
+
+    // --- pricing groups (Phase 2a) -----------------------------------------
+
+    /// A valid, empty (no-feature) ESP/RFQ pipeline with consistent guardrails — the
+    /// resolver/validation tests exercise membership and determinism, not the feature
+    /// arithmetic (that is oracle-tested at the hub in `services::aggregation`).
+    fn ok_pipeline() -> celnet_tiering::FeaturePipeline {
+        celnet_tiering::FeaturePipeline::new(
+            Vec::new(),
+            celnet_tiering::Guardrails::new(0.0, 1.0, 1.0, 1e-6),
+        )
+    }
+
+    fn group(
+        id: &str,
+        name: &str,
+        conns: &[&str],
+        users: &[&str],
+        desks: &[&str],
+        enabled: bool,
+    ) -> PricingGroupDef {
+        PricingGroupDef {
+            id: id.into(),
+            name: name.into(),
+            description: String::new(),
+            member_connection_ids: conns.iter().map(|s| (*s).to_string()).collect(),
+            member_user_ids: users.iter().map(|s| (*s).to_string()).collect(),
+            member_desks: desks.iter().map(|s| (*s).to_string()).collect(),
+            esp_pipeline: ok_pipeline(),
+            rfq_pipeline: ok_pipeline(),
+            share_pipeline: false,
+            enabled,
+        }
+    }
+
+    fn trader(id: &str, desks: &[&str]) -> UserDef {
+        UserDef {
+            id: id.into(),
+            email: format!("{id}@celnet.com"),
+            display_name: id.into(),
+            role: Role::Trader,
+            desk_ids: desks.iter().map(|s| (*s).to_string()).collect(),
+            all_desks: false,
+            password_hash: "x".into(),
+            disabled: false,
+            capability_grants: Vec::new(),
+            capability_denies: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn resolver_resolves_connection_user_and_desk_fallback() {
+        let mut store = IdentityStore::default();
+        store.desks.push(DeskDef {
+            id: "emea".into(),
+            name: "EMEA".into(),
+            books: Vec::new(),
+        });
+        store.users.push(trader("alice", &["emea"]));
+        // One enabled group binds connection `conn-1`, user `alice`, and desk `emea`.
+        store.pricing_groups.push(group(
+            "ga",
+            "GROUP-A",
+            &["conn-1"],
+            &["alice"],
+            &["emea"],
+            true,
+        ));
+        // A disabled group must never resolve (its members fall through).
+        store
+            .pricing_groups
+            .push(group("gb", "GROUP-B", &["conn-2"], &[], &[], false));
+        store.validate_pricing_groups().expect("valid");
+
+        let r = store.pricing_group_resolver();
+        // Direct connection-id hit.
+        assert_eq!(
+            r.resolve_for_connection("conn-1", None)
+                .map(|g| g.id.as_str()),
+            Some("ga")
+        );
+        // Direct user-id hit.
+        assert_eq!(
+            r.resolve_for_user("alice", &[]).map(|g| g.id.as_str()),
+            Some("ga")
+        );
+        // Connection desk fallback: an unknown connection whose desk is `emea`.
+        assert_eq!(
+            r.resolve_for_connection("conn-x", Some("emea"))
+                .map(|g| g.id.as_str()),
+            Some("ga")
+        );
+        // User desk fallback: an unknown user whose desk membership includes `emea`.
+        assert_eq!(
+            r.resolve_for_user("bob", &["emea".to_string()])
+                .map(|g| g.id.as_str()),
+            Some("ga")
+        );
+        // No connection, no matching desk ⇒ no group.
+        assert!(r.resolve_for_connection("conn-x", Some("apac")).is_none());
+        assert!(r.resolve_for_user("bob", &[]).is_none());
+        // A disabled group's member does not resolve.
+        assert!(r.resolve_for_connection("conn-2", None).is_none());
+    }
+
+    #[test]
+    fn validation_rejects_member_in_two_enabled_groups() {
+        let mut store = IdentityStore::default();
+        store
+            .pricing_groups
+            .push(group("ga", "GROUP-A", &["conn-1"], &[], &[], true));
+        store
+            .pricing_groups
+            .push(group("gb", "GROUP-B", &["conn-1"], &[], &[], true));
+        let err = store.validate_pricing_groups().unwrap_err();
+        assert!(
+            err.contains("two enabled pricing groups"),
+            "unexpected error: {err}"
+        );
+        // Disabling one group removes the determinism conflict.
+        store.pricing_groups[1].enabled = false;
+        store
+            .validate_pricing_groups()
+            .expect("no longer conflicting");
+    }
+
+    #[test]
+    fn validation_rejects_unknown_member_and_bad_pipeline() {
+        // An unknown user member is rejected (users live in this document).
+        let mut store = IdentityStore::default();
+        store
+            .pricing_groups
+            .push(group("ga", "GROUP-A", &[], &["ghost"], &[], true));
+        assert!(
+            store
+                .validate_pricing_groups()
+                .unwrap_err()
+                .contains("unknown user member")
+        );
+
+        // An internally inconsistent pipeline guardrail (h_min > h_max) is rejected via
+        // the reused tiering guardrail validation.
+        let mut store2 = IdentityStore::default();
+        let mut g = group("gb", "GROUP-B", &[], &[], &[], true);
+        g.esp_pipeline = celnet_tiering::FeaturePipeline::new(
+            Vec::new(),
+            celnet_tiering::Guardrails::new(1.0, 0.0, 1.0, 1e-6),
+        );
+        store2.pricing_groups.push(g);
+        assert!(
+            store2
+                .validate_pricing_groups()
+                .unwrap_err()
+                .contains("guardrails are inconsistent")
+        );
+    }
+
+    #[test]
+    fn pricing_group_json_round_trips() {
+        let mut store = IdentityStore::default();
+        store.desks.push(DeskDef {
+            id: "emea".into(),
+            name: "EMEA".into(),
+            books: Vec::new(),
+        });
+        store.users.push(trader("alice", &["emea"]));
+        store.pricing_groups.push(group(
+            "ga",
+            "GROUP-A",
+            &["conn-1"],
+            &["alice"],
+            &["emea"],
+            true,
+        ));
+        store.validate_pricing_groups().expect("valid");
+        let bytes = serde_json::to_vec(&store).unwrap();
+        let back: IdentityStore = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(store, back);
+        // The resolver rebuilds identically from the reloaded store.
+        assert_eq!(
+            back.pricing_group_resolver()
+                .resolve_for_user("alice", &[])
+                .map(|g| g.id.as_str()),
+            Some("ga")
+        );
     }
 
     #[test]

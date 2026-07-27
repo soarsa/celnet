@@ -43,11 +43,15 @@ use celnet_aggregation::{ConsolidatedBook, ConsolidationConfig, Instrument, Venu
 use celnet_bond::{Bond, accrued_interest, bond_risk};
 use celnet_proto::{AggregatedBookSnapshot, AggregatedInstrument, LpContribution, LpQuote};
 use celnet_rates::{AccrualBasis, PaymentFrequency};
-use celnet_tiering::{QuoteCtx, SpreadUnit, TieringConfig, smooth};
+use celnet_tiering::{
+    FeaturePipeline, PricingCtx, QuoteCtx, SpreadUnit, TieringConfig, TwoWay, smooth,
+};
 use celnet_types::{Ccy, CommodityRef, Symbol, Tenor, Underlying};
 
 use crate::clock::Clock;
-use crate::config::identity::{AggregatedBookDef, AggregationParams, IdentityStore, Scope};
+use crate::config::identity::{
+    AggregatedBookDef, AggregationParams, IdentityStore, PricingGroupResolver, Scope,
+};
 use crate::config::reference_data::{
     InstrumentFamily, accrual_basis_from_label, payment_frequency_from_label,
 };
@@ -297,6 +301,14 @@ pub struct AggregationHub {
     /// The optional live inventory source the outbound-tiering skew reads (see
     /// [`InventorySource`]). `None` ⇒ every book nets to zero inventory (no skew).
     inventory: Option<Arc<dyn InventorySource>>,
+    /// The **caller → pricing-group** resolver, rebuilt on every [`Self::reconcile`]
+    /// from the persisted `pricing_groups` registry and shared read-only across the
+    /// per-subscriber ESP path ([`Self::snapshot_priced`]) and the per-caller RFQ path
+    /// ([`Self::resolve_rfq_composite_priced`]). An empty resolver (no enabled groups,
+    /// the default) means both paths behave exactly as before — the no-group path stays
+    /// byte-identical. Behind an `RwLock<Arc<…>>` for the same hot-swap-whole discipline
+    /// as each book's `cfg`.
+    pricing: RwLock<Arc<PricingGroupResolver>>,
 }
 
 impl std::fmt::Debug for AggregationHub {
@@ -318,6 +330,7 @@ impl AggregationHub {
             books: RwLock::new(HashMap::new()),
             clock,
             inventory: None,
+            pricing: RwLock::new(Arc::new(PricingGroupResolver::default())),
         })
     }
 
@@ -331,6 +344,7 @@ impl AggregationHub {
             books: RwLock::new(HashMap::new()),
             clock,
             inventory: Some(inventory),
+            pricing: RwLock::new(Arc::new(PricingGroupResolver::default())),
         })
     }
 
@@ -340,6 +354,11 @@ impl AggregationHub {
     /// disabled or deleted. Idempotent — safe to call at boot and after every admin
     /// create/update/delete.
     pub fn reconcile(&self, store: &IdentityStore) {
+        // Rebuild the caller → pricing-group resolver from the persisted registry
+        // (hot-swap whole, exactly like each book's cfg). Cheap, and shared read-only
+        // by the ESP / RFQ pricing paths until the next reconcile.
+        *self.pricing.write().expect("pricing groups lock poisoned") =
+            Arc::new(PricingGroupResolver::build(&store.pricing_groups));
         let identities = Arc::new(build_identities(store));
         let bond_terms = Arc::new(build_bond_terms(store));
         let enabled: Vec<&AggregatedBookDef> = store
@@ -521,6 +540,207 @@ impl AggregationHub {
             });
         }
         None
+    }
+
+    /// The current **caller → pricing-group** resolver (an `Arc` clone — cheap, and a
+    /// stable read-only snapshot until the next [`Self::reconcile`]). The ESP / RFQ
+    /// hooks resolve their subscriber/caller against this before pricing.
+    #[must_use]
+    pub fn pricing_groups(&self) -> Arc<PricingGroupResolver> {
+        Arc::clone(&self.pricing.read().expect("pricing groups lock poisoned"))
+    }
+
+    /// The per-subscriber **ESP** composite for `book_id`, priced through `pipeline`
+    /// (a pricing group's ESP pipeline) applied to the book's **raw** (untiered)
+    /// composite — so a grouped subscriber receives its own outbound two-way off the
+    /// same raw liquidity, independent of the book-default tiering
+    /// (`docs/FI-PRICING-GROUPS-DESIGN.md` §5). `None` when no enabled book with that id
+    /// exists (mirroring [`Self::snapshot`]).
+    ///
+    /// The no-group ESP path does **not** call this — it keeps handing out
+    /// [`PublishedBook::snapshot`] verbatim, so an ungrouped subscriber stays
+    /// byte-identical.
+    #[must_use]
+    pub fn snapshot_priced(
+        &self,
+        book_id: &str,
+        pipeline: &FeaturePipeline,
+    ) -> Option<AggregatedBookSnapshot> {
+        let published = self.snapshot(book_id)?;
+        let cfg = {
+            let books = self.books.read().expect("aggregation books lock poisoned");
+            let engine = books.get(book_id)?;
+            Arc::clone(&*engine.cfg.lock().expect("book cfg lock poisoned"))
+        };
+        Some(apply_pipeline(
+            published.raw_snapshot(),
+            pipeline,
+            &cfg,
+            self.inventory.as_deref(),
+            self.clock.now_nanos(),
+        ))
+    }
+
+    /// Resolve the **RFQ** composite line for `instrument_id`, priced through `pipeline`
+    /// (a pricing group's effective RFQ pipeline) applied to the book's **raw**
+    /// (untiered) two-way — so a grouped caller's quote is built from the raw liquidity
+    /// through its own pipeline, not the book-default tiering
+    /// (`docs/FI-PRICING-GROUPS-DESIGN.md` §5). Book selection, freshness/quorum, the
+    /// degenerate-composite guard, and the member-line panel are **identical** to
+    /// [`Self::resolve_rfq_composite`]; only the priced best bid/offer differ.
+    ///
+    /// The no-group RFQ path does **not** call this — it keeps using
+    /// [`Self::resolve_rfq_composite`] (the book-default-tiered line), so an ungrouped
+    /// caller stays byte-identical.
+    #[must_use]
+    pub fn resolve_rfq_composite_priced(
+        &self,
+        instrument_id: &str,
+        pipeline: &FeaturePipeline,
+    ) -> Option<RfqComposite> {
+        let now = self.clock.now_nanos();
+        let settlement = settlement_date(now);
+        let candidates: Vec<String> = {
+            let books = self.books.read().expect("aggregation books lock poisoned");
+            let mut ids: Vec<String> = books
+                .iter()
+                .filter(|(_, engine)| {
+                    let cfg = engine.cfg.lock().expect("book cfg lock poisoned");
+                    scope_admits(&cfg.scope, instrument_id)
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            ids.sort();
+            ids
+        };
+        for book_id in candidates {
+            let Some(published) = self.snapshot(&book_id) else {
+                continue;
+            };
+            let cfg = {
+                let books = self.books.read().expect("aggregation books lock poisoned");
+                let Some(engine) = books.get(&book_id) else {
+                    continue;
+                };
+                Arc::clone(&*engine.cfg.lock().expect("book cfg lock poisoned"))
+            };
+            // Price off the RAW (untiered) line — the pipeline is the caller's own
+            // outbound construction, replacing (not stacking on) the book-default tier.
+            let Some(line) = published
+                .raw_snapshot()
+                .instruments
+                .iter()
+                .find(|i| i.instrument_id == instrument_id)
+            else {
+                continue;
+            };
+            if !(line.best_bid.is_finite()
+                && line.best_offer.is_finite()
+                && line.best_bid <= line.best_offer)
+            {
+                continue;
+            }
+            let ctx = pricing_ctx_for_line(line, &cfg, self.inventory.as_deref(), settlement);
+            let priced = pipeline.run(
+                TwoWay {
+                    bid: line.best_bid,
+                    offer: line.best_offer,
+                },
+                &ctx,
+            );
+            // The pipeline's guardrails keep the outbound two-way finite and
+            // non-crossed; skip a (degenerate) non-finite result rather than emit it.
+            if !(priced.outbound.bid.is_finite() && priced.outbound.offer.is_finite()) {
+                continue;
+            }
+            let members = line
+                .contributions
+                .iter()
+                .map(|c| RfqMemberLine {
+                    lp_name: c.lp_name.clone(),
+                    bid: c.bid,
+                    offer: c.offer,
+                    stale: c.stale,
+                })
+                .collect();
+            return Some(RfqComposite {
+                book_id,
+                best_bid: priced.outbound.bid,
+                best_offer: priced.outbound.offer,
+                members,
+            });
+        }
+        None
+    }
+}
+
+/// Build the per-line [`PricingCtx`] a pricing-group feature pipeline reads, mirroring
+/// [`apply_tiering`]'s [`QuoteCtx`] construction: the composite `mid`, the book-wide net
+/// inventory for the line's instrument, and — when the instrument has bond terms and a
+/// settlement resolves — its DV01 (so a [`SpreadUnit::YieldBps`] feature converts a
+/// yield move to a price offset). The raw observed spread is carried for provenance.
+///
+/// Unlike [`apply_tiering`], DV01 is attached whenever it resolves (not gated on a
+/// single config unit) because a pipeline may mix units across features; and the
+/// per-instrument fading-memory **smoothed** spread is intentionally not threaded here
+/// (a per-client EWMA is a later phase), so a `ScaledSmoothedSpread` feature prices at
+/// its documented indicative fallback under this path.
+fn pricing_ctx_for_line(
+    line: &AggregatedInstrument,
+    cfg: &BookCfg,
+    inventory: Option<&dyn InventorySource>,
+    settlement: Option<time::Date>,
+) -> PricingCtx {
+    let mid = 0.5 * (line.best_bid + line.best_offer);
+    let net = inventory.map_or(0.0, |src| src.net_inventory(&line.instrument_id));
+    let mut ctx = QuoteCtx::new(mid).with_inventory(net);
+    if let (Some(s), Some(terms)) = (settlement, cfg.bond_terms.get(&line.instrument_id))
+        && let Some(dv01) = bond_dv01(terms, s, mid)
+    {
+        ctx = ctx.with_dv01(dv01);
+    }
+    let raw_spread = line.best_offer - line.best_bid;
+    if raw_spread.is_finite() && raw_spread > 0.0 {
+        ctx = ctx.with_raw_spread(raw_spread);
+    }
+    PricingCtx::new(ctx)
+}
+
+/// Re-price a book's **raw** composite through a pricing-group [`FeaturePipeline`], one
+/// instrument line at a time. Mirrors [`apply_tiering`] but runs the ordered,
+/// trader-composed features (RAW → … → outbound) instead of a single [`TieringConfig`],
+/// returning each line's guarded outbound two-way (`docs/FI-PRICING-GROUPS-DESIGN.md`
+/// §6). A line whose raw two-way is non-finite is dropped (as the tiering path drops a
+/// non-finite mid).
+fn apply_pipeline(
+    raw: &AggregatedBookSnapshot,
+    pipeline: &FeaturePipeline,
+    cfg: &BookCfg,
+    inventory: Option<&dyn InventorySource>,
+    now: i64,
+) -> AggregatedBookSnapshot {
+    let settlement = settlement_date(now);
+    let mut instruments = Vec::with_capacity(raw.instruments.len());
+    for line in &raw.instruments {
+        if !(line.best_bid.is_finite() && line.best_offer.is_finite()) {
+            continue;
+        }
+        let ctx = pricing_ctx_for_line(line, cfg, inventory, settlement);
+        let priced = pipeline.run(
+            TwoWay {
+                bid: line.best_bid,
+                offer: line.best_offer,
+            },
+            &ctx,
+        );
+        let mut out = line.clone();
+        out.best_bid = priced.outbound.bid;
+        out.best_offer = priced.outbound.offer;
+        instruments.push(out);
+    }
+    AggregatedBookSnapshot {
+        book_id: raw.book_id.clone(),
+        instruments,
     }
 }
 
@@ -1018,7 +1238,7 @@ mod tests {
 
     // --- outbound tiering (Phase 2a) ---------------------------------------
 
-    use celnet_tiering::{Guardrails, StalePolicy, StrategySpec};
+    use celnet_tiering::{FeaturePipeline, Guardrails, PricingFeature, StalePolicy, StrategySpec};
 
     /// Permissive guardrails that never clamp the small offsets these tests use, so a
     /// test asserts the raw strategy arithmetic (the guardrail clamps are unit-tested in
@@ -1084,6 +1304,143 @@ mod tests {
         let raw = &snap.raw.as_ref().expect("raw retained").instruments[0];
         assert_eq!(raw.best_bid.to_bits(), 99.50_f64.to_bits());
         assert_eq!(raw.best_offer.to_bits(), 99.60_f64.to_bits());
+    }
+
+    // --- pricing groups: per-client pipelines off the same raw composite ----
+
+    /// A single-TIERING (Flat ±`bps` price-bps) pipeline with open guardrails — the
+    /// per-client outbound construction a pricing group applies to the RAW composite.
+    fn flat_pipeline(bps: f64) -> FeaturePipeline {
+        FeaturePipeline::new(
+            vec![PricingFeature::Tiering {
+                config: tiering(
+                    SpreadUnit::PriceBps,
+                    vec![StrategySpec::FlatMarkup { half_spread: bps }],
+                ),
+            }],
+            open_guardrails(),
+        )
+    }
+
+    /// The oracle: two clients in DIFFERENT pricing groups receive DIFFERENT two-ways off
+    /// the SAME raw composite (mid 99.55). Group A (Flat ±25 price bps) → 99.30/99.80;
+    /// Group B (Flat ±50) → 99.05/100.05; the ungrouped default path publishes the raw
+    /// composite verbatim (99.50/99.60).
+    #[test]
+    fn pricing_groups_price_two_clients_differently_off_same_raw_composite() {
+        let hub = hub_with(def("b", &["LP-1"], params(false, 1, 60_000)));
+        hub.ingest(&lp_quote("LP-1", "X", 99.50, 99.60, NOW)); // raw mid 99.55
+        let group_a = flat_pipeline(25.0);
+        let group_b = flat_pipeline(50.0);
+        let a = hub.snapshot_priced("b", &group_a).expect("book");
+        let b = hub.snapshot_priced("b", &group_b).expect("book");
+        let ai = &a.instruments[0];
+        let bi = &b.instruments[0];
+        assert!((ai.best_bid - 99.30).abs() < 1e-9, "A bid={}", ai.best_bid);
+        assert!(
+            (ai.best_offer - 99.80).abs() < 1e-9,
+            "A offer={}",
+            ai.best_offer
+        );
+        assert!((bi.best_bid - 99.05).abs() < 1e-9, "B bid={}", bi.best_bid);
+        assert!(
+            (bi.best_offer - 100.05).abs() < 1e-9,
+            "B offer={}",
+            bi.best_offer
+        );
+        // The SAME raw composite fed both — the outbound two-ways differ per group.
+        assert_ne!(ai.best_bid.to_bits(), bi.best_bid.to_bits());
+        // No-group default path is byte-identical: the raw composite published verbatim.
+        let default = hub.snapshot("b").expect("book");
+        let di = &default.snapshot.instruments[0];
+        assert_eq!(di.best_bid.to_bits(), 99.50_f64.to_bits());
+        assert_eq!(di.best_offer.to_bits(), 99.60_f64.to_bits());
+    }
+
+    /// Regression: with a BOOK-DEFAULT tiering config, the no-group ESP path streams the
+    /// book-default-tiered snapshot unchanged, while a grouped subscriber prices off the
+    /// RAW composite (groups replace, not stack on, the book tier).
+    #[test]
+    fn no_group_esp_publishes_book_default_while_group_prices_off_raw() {
+        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
+        d.tiering = Some(tiering(
+            SpreadUnit::PriceBps,
+            vec![StrategySpec::FlatMarkup { half_spread: 10.0 }],
+        ));
+        let hub = hub_with(d);
+        hub.ingest(&lp_quote("LP-1", "X", 99.50, 99.60, NOW));
+        // No-group path: book-default Flat ±10 around mid 99.55 → 99.45/99.65.
+        let snap = hub.snapshot("b").expect("book");
+        let inst = &snap.snapshot.instruments[0];
+        assert!(
+            (inst.best_bid - 99.45).abs() < 1e-9,
+            "bid={}",
+            inst.best_bid
+        );
+        assert!(
+            (inst.best_offer - 99.65).abs() < 1e-9,
+            "offer={}",
+            inst.best_offer
+        );
+        // Grouped subscriber prices off the RAW mid 99.55 (NOT the 99.45/99.65 book line):
+        // Flat ±25 → 99.30/99.80.
+        let priced = hub
+            .snapshot_priced("b", &flat_pipeline(25.0))
+            .expect("book");
+        let pi = &priced.instruments[0];
+        assert!((pi.best_bid - 99.30).abs() < 1e-9, "bid={}", pi.best_bid);
+        assert!(
+            (pi.best_offer - 99.80).abs() < 1e-9,
+            "offer={}",
+            pi.best_offer
+        );
+    }
+
+    /// An RFQ caller in a pricing group prices via its RFQ pipeline off the RAW composite,
+    /// while the no-group RFQ path keeps the book-default-tiered composite. Member LP lines
+    /// are the raw contributions in both (pricing groups do not alter the panel).
+    #[test]
+    fn rfq_group_prices_off_raw_via_rfq_pipeline() {
+        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
+        d.tiering = Some(tiering(
+            SpreadUnit::PriceBps,
+            vec![StrategySpec::FlatMarkup { half_spread: 10.0 }],
+        ));
+        let hub = hub_with(d);
+        hub.ingest(&lp_quote("LP-1", "X", 99.50, 99.60, NOW));
+        // No-group RFQ: book-default-tiered line 99.45/99.65.
+        let base = hub.resolve_rfq_composite("X").expect("composite");
+        assert!(
+            (base.best_bid - 99.45).abs() < 1e-9,
+            "bid={}",
+            base.best_bid
+        );
+        assert!(
+            (base.best_offer - 99.65).abs() < 1e-9,
+            "offer={}",
+            base.best_offer
+        );
+        // Grouped RFQ: Flat ±50 off the RAW mid 99.55 → 99.05/100.05.
+        let priced = hub
+            .resolve_rfq_composite_priced("X", &flat_pipeline(50.0))
+            .expect("composite");
+        assert!(
+            (priced.best_bid - 99.05).abs() < 1e-9,
+            "bid={}",
+            priced.best_bid
+        );
+        assert!(
+            (priced.best_offer - 100.05).abs() < 1e-9,
+            "offer={}",
+            priced.best_offer
+        );
+        assert_eq!(priced.book_id, "b");
+        // Member LP lines are the raw contributions in both — unchanged by the group.
+        assert_eq!(priced.members.len(), base.members.len());
+        assert_eq!(
+            priced.members[0].bid.to_bits(),
+            base.members[0].bid.to_bits()
+        );
     }
 
     /// A nonzero **long** book position skews both sides DOWN by κ·q (in price bps), the
