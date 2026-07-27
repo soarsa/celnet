@@ -577,6 +577,10 @@ impl RfqDeskEdge {
             trader: quote.trader.clone(),
             position_id: Some(booked.position_id),
             correlation_id: current.correlation_id.clone(),
+            // The rates dealer-quoting desk path is not priced through a pricing-group
+            // feature pipeline, so a desk deal carries no per-feature provenance
+            // (design §7 — absent, never a fabricated waterfall).
+            pricing_provenance: None,
         };
         self.deals.insert(deal.clone());
 
@@ -849,6 +853,10 @@ impl RfqDeskService for RfqDeskEdge {
             trader: quote.trader.clone(),
             position_id: Some(booked.position_id),
             correlation_id: current.correlation_id.clone(),
+            // The rates dealer-quoting desk path is not priced through a pricing-group
+            // feature pipeline, so a desk deal carries no per-feature provenance
+            // (design §7 — absent, never a fabricated waterfall).
+            pricing_provenance: None,
         };
         self.deals.insert(deal.clone());
 

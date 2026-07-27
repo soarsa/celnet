@@ -1405,8 +1405,30 @@ fn list_fix_messages_response_encode_byte_identical() {
 
 use celnet_proto::{
     AttributionRecord, BookId, Conventions as Conv, DealerQuote, Execution, MultiDealerQuote,
-    Owner, Quote, RejectAck, Side as QSide, TwoWayPrice, owner,
+    Owner, PricingProvenance, Quote, RejectAck, Side as QSide, TwoWayPrice, owner,
 };
+
+/// A representative per-feature pricing provenance (design §7): a grouped RFQ line
+/// with a MID SHIFT + TIERING waterfall, so the nested encode is exercised across a
+/// non-empty `features` list and the enum `mode`.
+fn a_provenance() -> PricingProvenance {
+    PricingProvenance {
+        pricing_group_id: "grp-emea".to_owned(),
+        mode: EspOrRfq::Rfq as i32,
+        raw_bid: 99.50,
+        raw_mid: 99.55,
+        raw_offer: 99.60,
+        constructed_bid: 99.60,
+        constructed_offer: 99.70,
+        tiered_bid: 99.40,
+        tiered_offer: 99.90,
+        outbound_bid: 99.40,
+        outbound_offer: 99.90,
+        applied_margin: 0.20,
+        applied_skew: 0.0,
+        features: vec![FeatureKind::MidShift as i32, FeatureKind::Tiering as i32],
+    }
+}
 
 /// A representative Conventions block.
 fn quote_conv() -> Conv {
@@ -1559,6 +1581,7 @@ fn quote_encode_byte_identical() {
         surface_version: Some(5),
         attribution: Some(attribution_full()),
         price_std_error: Some(0.000_25),
+        pricing_provenance: Some(a_provenance()),
     };
     assert_bytes_eq(
         "Quote(full)",
@@ -1579,6 +1602,7 @@ fn quote_encode_byte_identical() {
         surface_version: None,
         attribution: None,
         price_std_error: None,
+        pricing_provenance: None,
     };
     let g = generated::encode_quote(&empty);
     for key in [
@@ -1589,6 +1613,7 @@ fn quote_encode_byte_identical() {
         "surface_version",
         "attribution",
         "price_std_error",
+        "pricing_provenance",
     ] {
         assert_eq!(g.get(key), Some(&Value::Null), "`{key}` must be null");
     }
@@ -1620,6 +1645,7 @@ fn quote_attribution_partial_omits_absent_fields() {
             lp_count: None,
         }),
         price_std_error: None,
+        pricing_provenance: None,
     };
     let g = generated::encode_quote(&q);
     let attr = g.get("attribution").expect("attribution present");
@@ -1704,6 +1730,7 @@ fn execution_and_reject_ack_encode_byte_identical() {
         }),
         epoch_nanos: 1_720_000_000_000_000_000,
         attribution: Some(attribution_full()),
+        pricing_provenance: Some(a_provenance()),
     };
     let g = generated::encode_execution(&exec);
     assert!(
@@ -1720,9 +1747,11 @@ fn execution_and_reject_ack_encode_byte_identical() {
         instrument: None,
         epoch_nanos: 0,
         attribution: None,
+        pricing_provenance: None,
     };
     let g0 = generated::encode_execution(&exec0);
     assert_eq!(g0.get("attribution"), Some(&Value::Null));
+    assert_eq!(g0.get("pricing_provenance"), Some(&Value::Null));
     assert!(g0.get("instrument").is_none());
     assert_bytes_eq(
         "Execution(empty)",
@@ -2688,6 +2717,25 @@ fn a_deal() -> Deal {
         trader: "tdr".to_owned(),
         position_id: Some(4_242),
         correlation_id: Some("corr-1".to_owned()),
+        // A populated provenance so the Deal → ListDealsResponse differential proves the
+        // nested §7 waterfall encodes byte-identically (the desk path itself is not
+        // group-priced; that absent case is covered by the store unit test).
+        pricing_provenance: Some(PricingProvenance {
+            pricing_group_id: "grp-emea".to_owned(),
+            mode: EspOrRfq::Rfq as i32,
+            raw_bid: 99.50,
+            raw_mid: 99.55,
+            raw_offer: 99.60,
+            constructed_bid: 99.50,
+            constructed_offer: 99.60,
+            tiered_bid: 99.30,
+            tiered_offer: 99.80,
+            outbound_bid: 99.30,
+            outbound_offer: 99.80,
+            applied_margin: 0.20,
+            applied_skew: 0.0,
+            features: vec![FeatureKind::Tiering as i32],
+        }),
     }
 }
 

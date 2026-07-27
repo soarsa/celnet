@@ -824,6 +824,23 @@ mod tests {
             surface_version: Some(42),
             attribution: Some(sample_attribution()),
             price_std_error: Some(1.7e-4),
+            // The per-feature pricing provenance (design §7) round-trips on the wire.
+            pricing_provenance: Some(PricingProvenance {
+                pricing_group_id: "grp-emea".to_owned(),
+                mode: EspOrRfq::Rfq as i32,
+                raw_bid: 99.55,
+                raw_mid: 99.55,
+                raw_offer: 99.55,
+                constructed_bid: 99.55,
+                constructed_offer: 99.55,
+                tiered_bid: 99.30,
+                tiered_offer: 99.80,
+                outbound_bid: 99.30,
+                outbound_offer: 99.80,
+                applied_margin: 0.25,
+                applied_skew: 0.0,
+                features: vec![FeatureKind::Tiering as i32],
+            }),
         };
         round_trip(&quote);
 
@@ -854,6 +871,8 @@ mod tests {
             instrument: Some(vanilla_instrument()),
             epoch_nanos: 1_717_000_001_000_000_000,
             attribution: Some(sample_attribution()),
+            // Copied verbatim from the accepted quote (design §7); round-trips too.
+            pricing_provenance: quote.pricing_provenance.clone(),
         };
         round_trip(&execution);
     }

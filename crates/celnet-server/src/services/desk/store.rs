@@ -255,6 +255,7 @@ mod tests {
             trader: "t".to_owned(),
             position_id: Some(1),
             correlation_id: None,
+            pricing_provenance: None,
         };
         store.insert(a.clone());
         a.deal_id = "deal-b".to_owned();

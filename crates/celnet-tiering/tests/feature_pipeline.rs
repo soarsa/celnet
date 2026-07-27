@@ -561,3 +561,122 @@ mod props {
         }
     }
 }
+
+// ── PROVENANCE WATERFALL ACCESSORS (design §7) ───────────────────────────────
+// `PricedResult::constructed` / `tiered` / `feature_kinds` are what the server
+// stamps as execution pricing provenance. Every value is hand-computed from the
+// feature definitions, never read back from the engine.
+
+#[test]
+fn provenance_tiering_only_constructed_is_raw_tiered_is_after_margin() {
+    // Design worked example: a group Flat ±0.25 price-points on a 99.55 raw mid.
+    // No MID SHIFT stage ⇒ constructed = RAW (the prior stage); tiered = after Flat.
+    let raw = TwoWay {
+        bid: 99.55,
+        offer: 99.55, // zero raw spread, so applied_margin = the full 0.25 half-spread
+    };
+    let pipeline = FeaturePipeline::new(
+        vec![FeatureSpec::Tiering {
+            config: flat_tiering(0.25, SpreadUnit::PricePoints),
+        }],
+        wide_guards(),
+    );
+    let r = pipeline.run(raw, &ctx(99.55));
+
+    assert_eq!(r.constructed(), raw, "no MID SHIFT ⇒ constructed = RAW");
+    let tiered = r.tiered();
+    assert!(
+        (tiered.bid - 99.30).abs() < EPS,
+        "tiered.bid = {}",
+        tiered.bid
+    );
+    assert!(
+        (tiered.offer - 99.80).abs() < EPS,
+        "tiered.offer = {}",
+        tiered.offer
+    );
+    assert_eq!(r.feature_kinds(), vec![FeatureKind::Tiering]);
+    assert!(
+        (r.applied_margin - 0.25).abs() < EPS,
+        "applied_margin = {}",
+        r.applied_margin
+    );
+    // Waterfall reconstructs: raw → constructed → tiered, with the margin explaining
+    // the half-spread growth from constructed to tiered.
+    let constructed_half = 0.5 * (r.constructed().offer - r.constructed().bid);
+    let tiered_half = 0.5 * (tiered.offer - tiered.bid);
+    assert!((tiered_half - constructed_half - r.applied_margin).abs() < EPS);
+}
+
+#[test]
+fn provenance_mid_shift_then_tiering_stages_are_each_captured() {
+    // RAW 99.50/99.60 (mid 99.55, half 0.05) ▸ MID SHIFT +0.10 ▸ Flat ±0.25.
+    let raw = TwoWay {
+        bid: 99.50,
+        offer: 99.60,
+    };
+    let pipeline = FeaturePipeline::new(
+        vec![
+            FeatureSpec::MidShift {
+                shift: 0.10,
+                unit: SpreadUnit::PricePoints,
+                reference: None,
+            },
+            FeatureSpec::Tiering {
+                config: flat_tiering(0.25, SpreadUnit::PricePoints),
+            },
+        ],
+        wide_guards(),
+    );
+    let r = pipeline.run(raw, &ctx(99.55));
+
+    // Constructed: mid 99.55 + 0.10 = 99.65, half 0.05 preserved ⇒ 99.60/99.70.
+    let c = r.constructed();
+    assert!((c.bid - 99.60).abs() < EPS, "constructed.bid = {}", c.bid);
+    assert!(
+        (c.offer - 99.70).abs() < EPS,
+        "constructed.offer = {}",
+        c.offer
+    );
+    // Tiered: Flat ±0.25 around constructed mid 99.65 ⇒ 99.40/99.90.
+    let t = r.tiered();
+    assert!((t.bid - 99.40).abs() < EPS, "tiered.bid = {}", t.bid);
+    assert!((t.offer - 99.90).abs() < EPS, "tiered.offer = {}", t.offer);
+    assert_eq!(
+        r.feature_kinds(),
+        vec![FeatureKind::MidShift, FeatureKind::Tiering]
+    );
+    // MID SHIFT is desk construction (no margin); the Flat adds 0.20 half-spread
+    // (0.25 − the constructed 0.05).
+    assert!(
+        (r.applied_margin - 0.20).abs() < EPS,
+        "margin = {}",
+        r.applied_margin
+    );
+}
+
+#[test]
+fn provenance_no_mid_shift_no_tiering_falls_back_to_prior_stage() {
+    // A skew-only pipeline: constructed = RAW, tiered = constructed (both prior).
+    let raw = TwoWay {
+        bid: 99.50,
+        offer: 99.60,
+    };
+    let pipeline = FeaturePipeline::new(
+        vec![FeatureSpec::Axe {
+            side: AxeSide::Buy,
+            magnitude: 0.20,
+            unit: SpreadUnit::PricePoints,
+        }],
+        wide_guards(),
+    );
+    let r = pipeline.run(raw, &ctx(99.55));
+    assert_eq!(r.constructed(), raw, "no MID SHIFT ⇒ constructed = RAW");
+    assert_eq!(
+        r.tiered(),
+        r.constructed(),
+        "no TIERING ⇒ tiered = constructed"
+    );
+    assert_eq!(r.feature_kinds(), vec![FeatureKind::Axe]);
+    assert!((r.applied_margin).abs() < EPS, "skew adds no margin");
+}

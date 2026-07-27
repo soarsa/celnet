@@ -516,7 +516,11 @@ impl QuoteEdge {
         if let Some(user) = caller.user() {
             let resolver = hub.pricing_groups();
             if let Some(group) = resolver.resolve_for_user(&user.user_id, &user.desk_ids) {
-                return hub.resolve_rfq_composite_priced(&key, group.rfq_effective_pipeline());
+                return hub.resolve_rfq_composite_priced(
+                    &key,
+                    &group.id,
+                    group.rfq_effective_pipeline(),
+                );
             }
         }
         hub.resolve_rfq_composite(&key)
@@ -882,6 +886,10 @@ struct QuotePricing {
     echo_version: Option<u64>,
     price_std_error: Option<f64>,
     pre_trade: Option<PreTradeLeaf>,
+    /// The per-feature pricing provenance (design §7), `Some` only on the grouped
+    /// aggregated-book path (the pipeline that priced the two-way); `None` for the
+    /// options-engine path and the ungrouped book-default composite.
+    pricing_provenance: Option<celnet_proto::PricingProvenance>,
 }
 
 #[tonic::async_trait]
@@ -1023,6 +1031,9 @@ impl QuoteService for QuoteEdge {
                 echo_version: None,
                 price_std_error: None,
                 pre_trade: None,
+                // Carry the per-feature provenance from the grouped pipeline onto the
+                // quote (design §7); `None` for an ungrouped book-default composite.
+                pricing_provenance: comp.provenance,
             }
         } else {
             let conv = ConventionSet::decode(&wire_conv).map_err(|e| price_error_to_status(&e))?;
@@ -1082,6 +1093,9 @@ impl QuoteService for QuoteEdge {
                 resolved_strike: priced.resolved_strike,
                 echo_version,
                 pre_trade,
+                // The options-engine path is not group-priced, so it carries no
+                // per-feature provenance (design §7).
+                pricing_provenance: None,
             }
         };
 
@@ -1104,6 +1118,10 @@ impl QuoteService for QuoteEdge {
             // attributable request→quote→booking and never anonymous.
             attribution: Some(super::attribution::resolve(req.attribution.as_ref())),
             price_std_error: pricing.price_std_error,
+            // The per-feature pricing provenance (design §7): present only when a
+            // pricing group's pipeline priced this line, so a later accept can copy
+            // the exact waterfall onto the booked execution.
+            pricing_provenance: pricing.pricing_provenance,
         };
         let pre_trade = pricing.pre_trade;
 
@@ -1663,6 +1681,10 @@ impl QuoteService for QuoteEdge {
                 Some(row) => row.attribution.clone(),
                 None => rec.quote.attribution.clone(),
             },
+            // Booking replays the quoted price, so the pricing provenance is fixed at
+            // quote time: copy the accepted quote's waterfall onto the execution verbatim
+            // (design §7). `None` for an ungrouped quote (byte-identical to before).
+            pricing_provenance: rec.quote.pricing_provenance.clone(),
         };
 
         // Book it back into the record (with the traded line) so a retry is
@@ -2207,6 +2229,124 @@ mod tests {
             .expect("a no-limit accept books")
             .into_inner();
         assert_eq!(exec.quote_id, quote.quote_id);
+    }
+
+    // --- design §7: execution pricing provenance ------------------------------
+
+    /// No-group regression (design §7): a quote priced WITHOUT a pricing group (the
+    /// options-engine path — no book/hub installed) carries NO provenance, and
+    /// accepting it books an execution that also carries none — byte-identical to the
+    /// pre-provenance contract.
+    #[tokio::test]
+    async fn ungrouped_quote_and_execution_carry_no_provenance() {
+        let (edge, _sessions, _store) = edge_under(AccessMode::Permissive);
+        let quote = edge
+            .request_quote(Request::new(quote_request("no-grp", None, None)))
+            .await
+            .expect("the quote prices")
+            .into_inner();
+        assert!(
+            quote.pricing_provenance.is_none(),
+            "an ungrouped quote carries no provenance"
+        );
+        let exec = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "no-grp".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect("a no-limit accept books")
+            .into_inner();
+        assert!(
+            exec.pricing_provenance.is_none(),
+            "an ungrouped execution carries no provenance"
+        );
+    }
+
+    /// Accepting a GROUPED quote copies its provenance verbatim onto the execution
+    /// (design §7): booking replays the quoted price, so the §7 waterfall captured at
+    /// quote time is exactly what the booked execution carries (bit-identical). The
+    /// derivation of that waterfall from a pipeline is oracle-tested in
+    /// `services::aggregation` (`provenance_from_priced`); here we prove the
+    /// quote→execution copy through the real `AcceptQuote` booking path.
+    #[tokio::test]
+    async fn accepting_a_grouped_quote_copies_provenance_onto_execution() {
+        let (edge, _sessions, _store) = edge_under(AccessMode::Permissive);
+        // The waterfall a Flat ±0.25 group produced off a 99.55 raw mid (design's
+        // worked example): tiered = outbound = 99.30/99.80, margin 0.25, features
+        // [TIERING].
+        let prov = celnet_proto::PricingProvenance {
+            pricing_group_id: "grp-emea".to_owned(),
+            mode: celnet_proto::EspOrRfq::Rfq as i32,
+            raw_bid: 99.55,
+            raw_mid: 99.55,
+            raw_offer: 99.55,
+            constructed_bid: 99.55,
+            constructed_offer: 99.55,
+            tiered_bid: 99.30,
+            tiered_offer: 99.80,
+            outbound_bid: 99.30,
+            outbound_offer: 99.80,
+            applied_margin: 0.25,
+            applied_skew: 0.0,
+            features: vec![celnet_proto::FeatureKind::Tiering as i32],
+        };
+        let now = edge.clock.now_nanos();
+        let quote = Quote {
+            quote_id: 777,
+            idempotency_key: "grp-key".to_owned(),
+            price: Some(TwoWayPrice {
+                bid: 99.30,
+                offer: 99.80,
+            }),
+            greeks: None,
+            conventions: None,
+            resolved_strike: 0.0,
+            epoch_nanos: now,
+            valid_until_nanos: now + QUOTE_VALIDITY_NANOS,
+            correlation_id: None,
+            surface_version: None,
+            attribution: None,
+            price_std_error: None,
+            pricing_provenance: Some(prov.clone()),
+        };
+        {
+            let mut store = edge.store.lock().await;
+            store.by_id.insert(
+                777,
+                QuoteRecord {
+                    quote: quote.clone(),
+                    instrument: celnet_proto::Instrument::default(),
+                    execution: None,
+                    rejected: false,
+                    dealers: Vec::new(),
+                    booked_lp_id: String::new(),
+                    requester: RequesterBinding::Anonymous,
+                    pre_trade: None,
+                },
+            );
+            store.by_key.insert("grp-key".to_owned(), 777);
+        }
+        let exec = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: 777,
+                idempotency_key: "grp-key".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect("accept books")
+            .into_inner();
+        // The execution carries the SAME provenance the quote did — bit-identical.
+        assert_eq!(exec.pricing_provenance.as_ref(), Some(&prov));
+        // BUY lifts the offer: the booked premium is the quoted outbound offer.
+        assert!((exec.traded_premium - 99.80).abs() < 1e-12);
     }
 
     // --- ADR-0021 cross-asset pre-trade leaf (the divergence-closer) ----------

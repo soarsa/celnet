@@ -41,10 +41,14 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use celnet_aggregation::{ConsolidatedBook, ConsolidationConfig, Instrument, VenueId, VenueQuote};
 use celnet_bond::{Bond, accrued_interest, bond_risk};
-use celnet_proto::{AggregatedBookSnapshot, AggregatedInstrument, LpContribution, LpQuote};
+use celnet_proto::{
+    AggregatedBookSnapshot, AggregatedInstrument, EspOrRfq, LpContribution, LpQuote,
+    PricingProvenance,
+};
 use celnet_rates::{AccrualBasis, PaymentFrequency};
 use celnet_tiering::{
-    FeaturePipeline, PricingCtx, QuoteCtx, SpreadUnit, TieringConfig, TwoWay, smooth,
+    FeatureKind, FeaturePipeline, PricedResult, PricingCtx, QuoteCtx, SpreadUnit, TieringConfig,
+    TwoWay, smooth,
 };
 use celnet_types::{Ccy, CommodityRef, Symbol, Tenor, Underlying};
 
@@ -227,6 +231,12 @@ pub struct RfqComposite {
     /// for the multi-dealer ranked panel. A stale line is excluded from the panel by the
     /// caller.
     pub members: Vec<RfqMemberLine>,
+    /// The per-feature pricing provenance (design §7), `Some` ONLY when the composite
+    /// was priced through a pricing group's feature pipeline
+    /// ([`AggregationHub::resolve_rfq_composite_priced`]) — the RAW → constructed →
+    /// tiered → outbound waterfall the caller stamps onto the `Quote`. `None` for the
+    /// ungrouped book-default composite ([`AggregationHub::resolve_rfq_composite`]).
+    pub provenance: Option<PricingProvenance>,
 }
 
 /// One contributing member-LP line of a resolved [`RfqComposite`]: the LP's venue name,
@@ -537,6 +547,9 @@ impl AggregationHub {
                 best_bid: line.best_bid,
                 best_offer: line.best_offer,
                 members,
+                // The book-default composite is not priced through a group pipeline, so
+                // it carries no per-feature provenance (design §7).
+                provenance: None,
             });
         }
         None
@@ -596,6 +609,7 @@ impl AggregationHub {
     pub fn resolve_rfq_composite_priced(
         &self,
         instrument_id: &str,
+        pricing_group_id: &str,
         pipeline: &FeaturePipeline,
     ) -> Option<RfqComposite> {
         let now = self.clock.now_nanos();
@@ -668,9 +682,65 @@ impl AggregationHub {
                 best_bid: priced.outbound.bid,
                 best_offer: priced.outbound.offer,
                 members,
+                // Stamp the per-feature provenance from the SAME already-run pipeline —
+                // computed once here, never re-derived (design §7).
+                provenance: Some(provenance_from_priced(
+                    &priced,
+                    pricing_group_id,
+                    EspOrRfq::Rfq,
+                )),
             });
         }
         None
+    }
+}
+
+/// Map a [`celnet_tiering::FeatureKind`] to its wire [`celnet_proto::FeatureKind`]
+/// (the two enums are the same ordered palette; an explicit match keeps them pinned
+/// together rather than relying on discriminant coincidence).
+fn feature_kind_to_wire(kind: FeatureKind) -> celnet_proto::FeatureKind {
+    match kind {
+        FeatureKind::MidShift => celnet_proto::FeatureKind::MidShift,
+        FeatureKind::Tiering => celnet_proto::FeatureKind::Tiering,
+        FeatureKind::Axe => celnet_proto::FeatureKind::Axe,
+        FeatureKind::Position => celnet_proto::FeatureKind::Position,
+        FeatureKind::PanicSkew => celnet_proto::FeatureKind::PanicSkew,
+    }
+}
+
+/// Derive the wire [`PricingProvenance`] (design §7) from an already-run
+/// [`PricedResult`] — the RAW → constructed → tiered → outbound waterfall plus the
+/// attributed margin/skew and the ordered feature kinds. Computed once from the
+/// pipeline output; never re-prices.
+#[must_use]
+pub(crate) fn provenance_from_priced(
+    priced: &PricedResult,
+    pricing_group_id: &str,
+    mode: EspOrRfq,
+) -> PricingProvenance {
+    let raw = priced.raw;
+    let constructed = priced.constructed();
+    let tiered = priced.tiered();
+    let outbound = priced.outbound;
+    PricingProvenance {
+        pricing_group_id: pricing_group_id.to_owned(),
+        mode: mode as i32,
+        raw_bid: raw.bid,
+        raw_mid: 0.5 * (raw.bid + raw.offer),
+        raw_offer: raw.offer,
+        constructed_bid: constructed.bid,
+        constructed_offer: constructed.offer,
+        tiered_bid: tiered.bid,
+        tiered_offer: tiered.offer,
+        outbound_bid: outbound.bid,
+        outbound_offer: outbound.offer,
+        applied_margin: priced.applied_margin,
+        applied_skew: priced.applied_skew,
+        features: priced
+            .feature_kinds()
+            .into_iter()
+            .map(|k| feature_kind_to_wire(k) as i32)
+            .collect(),
     }
 }
 
@@ -1422,7 +1492,7 @@ mod tests {
         );
         // Grouped RFQ: Flat ±50 off the RAW mid 99.55 → 99.05/100.05.
         let priced = hub
-            .resolve_rfq_composite_priced("X", &flat_pipeline(50.0))
+            .resolve_rfq_composite_priced("X", "grp-test", &flat_pipeline(50.0))
             .expect("composite");
         assert!(
             (priced.best_bid - 99.05).abs() < 1e-9,
@@ -1441,6 +1511,39 @@ mod tests {
             priced.members[0].bid.to_bits(),
             base.members[0].bid.to_bits()
         );
+        // The grouped composite carries per-feature provenance (design §7): the group
+        // id + RFQ mode, the RAW mid 99.55, and the Flat-tiered outbound = the
+        // reconstructed waterfall. The ungrouped base composite carries none.
+        assert!(
+            base.provenance.is_none(),
+            "book-default carries no provenance"
+        );
+        let prov = priced.provenance.as_ref().expect("grouped ⇒ provenance");
+        assert_eq!(prov.pricing_group_id, "grp-test");
+        assert_eq!(prov.mode, celnet_proto::EspOrRfq::Rfq as i32);
+        assert!(
+            (prov.raw_mid - 99.55).abs() < 1e-9,
+            "raw_mid={}",
+            prov.raw_mid
+        );
+        // No MID SHIFT ⇒ constructed = RAW; TIERING ⇒ tiered = outbound = 99.05/100.05.
+        assert!((prov.constructed_bid - prov.raw_bid).abs() < 1e-12);
+        assert!(
+            (prov.tiered_bid - 99.05).abs() < 1e-9,
+            "tiered_bid={}",
+            prov.tiered_bid
+        );
+        assert!((prov.tiered_offer - 100.05).abs() < 1e-9);
+        assert!((prov.outbound_bid - priced.best_bid).abs() < 1e-12);
+        assert!((prov.outbound_offer - priced.best_offer).abs() < 1e-12);
+        assert_eq!(
+            prov.features,
+            vec![celnet_proto::FeatureKind::Tiering as i32]
+        );
+        // applied_margin = tiered half-spread − constructed(=raw) half-spread.
+        let raw_half = 0.5 * (prov.raw_offer - prov.raw_bid);
+        let tiered_half = 0.5 * (prov.tiered_offer - prov.tiered_bid);
+        assert!((prov.applied_margin - (tiered_half - raw_half)).abs() < 1e-9);
     }
 
     /// A nonzero **long** book position skews both sides DOWN by κ·q (in price bps), the

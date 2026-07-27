@@ -109,13 +109,13 @@ use celnet_proto::{
     ListEntitiesResponse, ListInstrumentsRequest, ListInstrumentsResponse,
     ListPricingGroupsRequest, ListPricingGroupsResponse, ListUsersRequest, ListUsersResponse,
     LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, OisDef, PricingGroupDesc,
-    PricingGroupSpec, ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
-    SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
-    StirFutureDef, TieringConfigDesc, TieringGuardrailsDesc, TieringStrategyDesc,
-    UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookRequest,
-    UpdateBookResponse, UpdateBookTieringRequest, UpdateBookTieringResponse, UpdateDeskRequest,
-    UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest,
-    UpdateInstrumentResponse, UpdatePricingGroupPipelineRequest,
+    PricingGroupSpec, PricingProvenance, ResetPasswordRequest, ResetPasswordResponse,
+    SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
+    SetUserCapabilitiesResponse, StirFutureDef, TieringConfigDesc, TieringGuardrailsDesc,
+    TieringStrategyDesc, UpdateAggregatedBookRequest, UpdateAggregatedBookResponse,
+    UpdateBookRequest, UpdateBookResponse, UpdateBookTieringRequest, UpdateBookTieringResponse,
+    UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse,
+    UpdateInstrumentRequest, UpdateInstrumentResponse, UpdatePricingGroupPipelineRequest,
     UpdatePricingGroupPipelineResponse, UpdatePricingGroupRequest, UpdatePricingGroupResponse,
     UpdateUserRequest, UpdateUserResponse, UserDesc, VanillaIrsDef,
     instrument_def_desc::Definition as InstrumentDefinition,
@@ -161,6 +161,10 @@ enum WireVal<'a> {
     RepeatedF64(&'a [f64]),
     /// A `repeated string` scalar field (e.g. an instrument family's `calendars`).
     RepeatedStr(&'a [String]),
+    /// A `repeated` enum field, carried by canonical enum number (e.g. the
+    /// `PricingProvenance.features` waterfall) — encoded as an array of ints, matching
+    /// the hand codec's enum-as-int convention.
+    RepeatedEnum(&'a [i32]),
 }
 
 /// The reflection bridge: a per-message accessor yielding a field's raw value by
@@ -228,6 +232,7 @@ fn encode_value(field: &WireField, value: WireVal<'_>) -> Value {
         ),
         WireVal::RepeatedF64(items) => Value::Array(items.iter().map(|x| json!(x)).collect()),
         WireVal::RepeatedStr(items) => Value::Array(items.iter().map(|s| json!(s)).collect()),
+        WireVal::RepeatedEnum(items) => Value::Array(items.iter().map(|x| json!(x)).collect()),
     }
 }
 
@@ -3277,6 +3282,32 @@ impl WireAdapter for Quote {
                 .as_ref()
                 .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
             "price_std_error" => self.price_std_error.map(WireVal::F64),
+            "pricing_provenance" => self
+                .pricing_provenance
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for PricingProvenance {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "pricing_group_id" => Some(WireVal::Str(&self.pricing_group_id)),
+            "mode" => Some(WireVal::Enum(self.mode)),
+            "raw_bid" => Some(WireVal::F64(self.raw_bid)),
+            "raw_mid" => Some(WireVal::F64(self.raw_mid)),
+            "raw_offer" => Some(WireVal::F64(self.raw_offer)),
+            "constructed_bid" => Some(WireVal::F64(self.constructed_bid)),
+            "constructed_offer" => Some(WireVal::F64(self.constructed_offer)),
+            "tiered_bid" => Some(WireVal::F64(self.tiered_bid)),
+            "tiered_offer" => Some(WireVal::F64(self.tiered_offer)),
+            "outbound_bid" => Some(WireVal::F64(self.outbound_bid)),
+            "outbound_offer" => Some(WireVal::F64(self.outbound_offer)),
+            "applied_margin" => Some(WireVal::F64(self.applied_margin)),
+            "applied_skew" => Some(WireVal::F64(self.applied_skew)),
+            "features" => Some(WireVal::RepeatedEnum(&self.features)),
             _ => None,
         }
     }
@@ -3342,6 +3373,10 @@ impl WireAdapter for Execution {
                 .attribution
                 .as_ref()
                 .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            "pricing_provenance" => self
+                .pricing_provenance
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
             _ => None,
         }
     }
@@ -4996,6 +5031,10 @@ impl WireAdapter for Deal {
             "trader" => Some(WireVal::Str(&self.trader)),
             "position_id" => self.position_id.map(WireVal::U64),
             "correlation_id" => self.correlation_id.as_deref().map(WireVal::Str),
+            "pricing_provenance" => self
+                .pricing_provenance
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
             _ => None,
         }
     }

@@ -48,6 +48,42 @@ pub struct PricedResult {
     pub applied_skew: f64,
 }
 
+impl PricedResult {
+    /// The two-way **after the desk-construction (`MidShift`) stage** — the
+    /// constructed desk price the tiering margin is then built around. When the
+    /// pipeline has no `MidShift` stage this is the [`Self::raw`] input (the prior
+    /// stage), so the provenance waterfall is always well-formed (design §7). The
+    /// last `MidShift` wins when several are composed.
+    #[must_use]
+    pub fn constructed(&self) -> TwoWay {
+        self.after
+            .iter()
+            .rev()
+            .find(|(kind, _)| *kind == FeatureKind::MidShift)
+            .map_or(self.raw, |(_, tw)| *tw)
+    }
+
+    /// The two-way **after the `Tiering` (margin) stage**. When the pipeline has no
+    /// `Tiering` stage this falls back to [`Self::constructed`] (the prior stage),
+    /// so the waterfall is always well-formed (design §7). The last `Tiering` wins
+    /// when several are composed.
+    #[must_use]
+    pub fn tiered(&self) -> TwoWay {
+        self.after
+            .iter()
+            .rev()
+            .find(|(kind, _)| *kind == FeatureKind::Tiering)
+            .map_or_else(|| self.constructed(), |(_, tw)| *tw)
+    }
+
+    /// The ordered [`FeatureKind`]s that ran (RAW → these → outbound), for the
+    /// provenance record's `features` list.
+    #[must_use]
+    pub fn feature_kinds(&self) -> Vec<FeatureKind> {
+        self.after.iter().map(|(kind, _)| *kind).collect()
+    }
+}
+
 /// An ordered, serde-serializable pricing pipeline: the features a trader composed
 /// plus the guardrails that bound the outbound width. This is the persisted / wire
 /// / GUI shape a pricing group carries per mode (ESP and RFS/RFQ).

@@ -1610,6 +1610,12 @@ message Quote {
   // closed-form products. Surfaced so every client (gRPC, WS, SDK) discloses the
   // MC uncertainty of the quote and never presents an MC price as exact.
   optional double price_std_error = 12;
+  // The per-feature pricing provenance (design §7), set ONLY when the line was
+  // priced through a pricing group's feature pipeline (presence-tracked): the RAW →
+  // constructed → tiered → outbound waterfall + attributed margin/skew, so a booked
+  // execution has a complete view of the raw price, the tiering applied, and what
+  // was executed against. Absent for an ungrouped quote (byte-identical to before).
+  optional PricingProvenance pricing_provenance = 13;
 }
 
 // One liquidity provider's line in a multi-dealer (RFQ-to-many) response: the
@@ -1740,6 +1746,10 @@ message Execution {
   // and who holds the position, so the booking feeds the who's-trading risk
   // roll-up. Absent ⇒ unattributed.
   optional AttributionRecord attribution = 7;
+  // The pricing provenance copied verbatim from the accepted `Quote` (booking
+  // replays the quoted price, so provenance is fixed at quote time; design §7).
+  // Absent when the quote carried none (an ungrouped booking). Presence-tracked.
+  optional PricingProvenance pricing_provenance = 8;
 }
 
 // ===========================================================================
@@ -4434,6 +4444,48 @@ message FeaturePipelineDesc {
   TieringGuardrailsDesc guardrails = 2;
 }
 
+// Execution pricing provenance (design §7): the per-feature price waterfall a
+// grouped quote/execution/deal was constructed through, so downstream analytics can
+// attribute the outbound price to each stage (realized markout = executed price vs
+// `raw_mid`, decomposable per feature / group / mode). It is computed ONCE from the
+// already-run feature pipeline (never re-derived) and copied verbatim from the
+// `Quote` onto the booked `Execution`/`Deal` (booking replays the quoted price). A
+// quote priced without a pricing group carries no provenance (the field is absent).
+message PricingProvenance {
+  // The pricing group that priced the line ("" when none — the book-default tier).
+  string pricing_group_id = 1;
+  // Which pipeline (ESP streaming vs RFS/RFQ) constructed the price.
+  EspOrRfq mode = 2;
+  // RAW stage — the consolidated LP composite two-way before any feature.
+  double raw_bid = 3;
+  // RAW stage mid (`0.5 * (raw_bid + raw_offer)`) — the markout reference price.
+  double raw_mid = 4;
+  // RAW stage offer.
+  double raw_offer = 5;
+  // After the MID SHIFT (desk construction) stage; equals RAW when the pipeline has
+  // no MID SHIFT stage (the prior stage), so the waterfall is always well-formed.
+  double constructed_bid = 6;
+  // Constructed offer (after MID SHIFT; equals RAW when there is no MID SHIFT stage).
+  double constructed_offer = 7;
+  // After the TIERING (margin) stage; equals the constructed two-way when the
+  // pipeline has no TIERING stage (the prior stage).
+  double tiered_bid = 8;
+  // Tiered offer (after TIERING; equals constructed when there is no TIERING stage).
+  double tiered_offer = 9;
+  // After the closing guardrail — what was sent to the client / FIX.
+  double outbound_bid = 10;
+  // Outbound offer (after the closing guardrail — what was sent to the client / FIX).
+  double outbound_offer = 11;
+  // The margin the TIERING stage(s) added: the summed change in half-spread
+  // (price units).
+  double applied_margin = 12;
+  // The net skew the AXE / POSITION / PANIC-SKEW stages added: the summed signed
+  // change in centre (price units).
+  double applied_skew = 13;
+  // The ordered feature kinds that ran (RAW → these → OUTBOUND).
+  repeated FeatureKind features = 14;
+}
+
 // A persisted pricing group (mirrors the store `config::identity::PricingGroupDef`
 // field for field).
 message PricingGroupDesc {
@@ -6302,6 +6354,11 @@ message Deal {
   optional uint64 position_id = 13;
   // Opaque caller correlation id carried from the request. Presence-tracked.
   optional string correlation_id = 14;
+  // The per-feature pricing provenance for the booked level (design §7), set only
+  // when the deal was priced through a pricing group's feature pipeline. The rates
+  // dealer-quoting desk path is not group-priced today, so this is absent there;
+  // it exists so a group-priced booking carries its waterfall. Presence-tracked.
+  optional PricingProvenance pricing_provenance = 15;
 }
 // A scope filter for the received-deals blotter.
 message DealScope {

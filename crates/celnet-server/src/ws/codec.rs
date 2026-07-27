@@ -1157,6 +1157,30 @@ pub(super) fn quote_reject_from_json(o: &Map<String, Value>) -> Result<QuoteReje
     })
 }
 
+/// Encode the per-feature [`PricingProvenance`](celnet_proto::PricingProvenance)
+/// waterfall (design §7) field-for-field with the wire message (snake_case keys;
+/// `mode` and `features` as their canonical enum numbers, matching the hand codec's
+/// enum-as-int convention). Absent from an ungrouped quote/execution/deal (the caller
+/// maps `None` → JSON `null`).
+fn pricing_provenance_to_json(p: &celnet_proto::PricingProvenance) -> Value {
+    json!({
+        "pricing_group_id": p.pricing_group_id,
+        "mode": p.mode,
+        "raw_bid": p.raw_bid,
+        "raw_mid": p.raw_mid,
+        "raw_offer": p.raw_offer,
+        "constructed_bid": p.constructed_bid,
+        "constructed_offer": p.constructed_offer,
+        "tiered_bid": p.tiered_bid,
+        "tiered_offer": p.tiered_offer,
+        "outbound_bid": p.outbound_bid,
+        "outbound_offer": p.outbound_offer,
+        "applied_margin": p.applied_margin,
+        "applied_skew": p.applied_skew,
+        "features": Value::Array(p.features.iter().map(|k| json!(k)).collect()),
+    })
+}
+
 pub(super) fn quote_to_json(q: &Quote) -> Value {
     json!({
         "quote_id": q.quote_id,
@@ -1173,6 +1197,9 @@ pub(super) fn quote_to_json(q: &Quote) -> Value {
         // Presence-tracked MC standard error (set only for MC-priced products);
         // the WS quote path must carry it so GUI/Excel disclose MC uncertainty.
         "price_std_error": q.price_std_error,
+        // Presence-tracked per-feature pricing provenance (design §7); `null` for an
+        // ungrouped quote (byte-identical to before).
+        "pricing_provenance": q.pricing_provenance.as_ref().map(pricing_provenance_to_json),
     })
 }
 
@@ -1217,6 +1244,9 @@ pub(super) fn execution_to_json(e: &Execution) -> Value {
         "traded_premium": e.traded_premium,
         "epoch_nanos": e.epoch_nanos,
         "attribution": e.attribution.as_ref().map(attribution_to_json),
+        // The pricing provenance copied from the accepted quote (design §7); `null`
+        // for an ungrouped booking.
+        "pricing_provenance": e.pricing_provenance.as_ref().map(pricing_provenance_to_json),
     })
 }
 
@@ -2664,6 +2694,9 @@ fn deal_to_json(d: &Deal) -> Value {
         "trader": d.trader,
         "position_id": d.position_id,
         "correlation_id": d.correlation_id,
+        // Presence-tracked per-feature pricing provenance (design §7); `null` on the
+        // rates dealer-quoting desk path (not group-priced today).
+        "pricing_provenance": d.pricing_provenance.as_ref().map(pricing_provenance_to_json),
     })
 }
 
