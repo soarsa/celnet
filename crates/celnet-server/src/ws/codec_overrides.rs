@@ -128,6 +128,15 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     // `json!({ .. })` hand encoder emits `correlation_id` (and the absent `book`) as JSON
     // `null`, so the generated encoder must too.
     "UpdateBookTieringResponse",
+    // The AuthService pricing-group reply envelopes (FI client-tiering): each
+    // `json!({ .. })` hand encoder emits the `Option<u64>` `correlation_id` as JSON `null`
+    // when absent; the `group` singular-message payload already renders `null`-when-absent
+    // via the generic singular-message rule and needs no entry.
+    "ListPricingGroupsResponse",
+    "CreatePricingGroupResponse",
+    "UpdatePricingGroupResponse",
+    "DeletePricingGroupResponse",
+    "UpdatePricingGroupPipelineResponse",
     "ListInstrumentsResponse",
     "GetInstrumentResponse",
     "CreateInstrumentResponse",

@@ -596,6 +596,45 @@ impl PricingGroupDef {
     }
 }
 
+/// The editable fields of a pricing group (the create/update payload the store's
+/// [`IdentityStore::create_pricing_group`] /
+/// [`update_pricing_group`](IdentityStore::update_pricing_group) take). The
+/// definition's `id` is minted (create) or carried from the request (update), so it is
+/// not part of the edit — mirrors [`AggregatedBookEdit`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct PricingGroupEdit {
+    /// The trader's code name (unique across the store, case-insensitive).
+    pub name: String,
+    /// Free-text operator description.
+    pub description: String,
+    /// Inbound FIX sessions in this group, by connection id.
+    pub member_connection_ids: Vec<String>,
+    /// GUI/API principals in this group, by user id.
+    pub member_user_ids: Vec<String>,
+    /// Desk-level default membership, by desk id.
+    pub member_desks: Vec<String>,
+    /// The outbound ESP / streaming feature pipeline.
+    pub esp_pipeline: celnet_tiering::FeaturePipeline,
+    /// The outbound RFS/RFQ feature pipeline (ignored when `share_pipeline` is set).
+    pub rfq_pipeline: celnet_tiering::FeaturePipeline,
+    /// When `true`, the RFS/RFQ mode reuses `esp_pipeline`.
+    pub share_pipeline: bool,
+    /// Whether the group is active.
+    pub enabled: bool,
+}
+
+/// Which outbound pricing mode a pricing-group pipeline retune targets — the ESP
+/// (streaming) pipeline or the RFS/RFQ pipeline. The store side of the proto `EspOrRfq`
+/// selector on
+/// [`update_pricing_group_pipeline`](IdentityStore::update_pricing_group_pipeline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PricingMode {
+    /// The ESP / streaming pipeline.
+    Esp,
+    /// The RFS / RFQ pipeline.
+    Rfq,
+}
+
 /// A precomputed **caller → pricing group** resolver, built once from the
 /// [`IdentityStore::pricing_groups`] registry and cached on the hub/edge (mirroring
 /// the aggregation identities cache). It maps each **enabled** group's members —
@@ -1358,6 +1397,138 @@ impl IdentityStore {
     #[must_use]
     pub fn pricing_group(&self, id: &str) -> Option<&PricingGroupDef> {
         self.pricing_groups.iter().find(|g| g.id == id)
+    }
+
+    /// Create a pricing group from operator input: trims the name, mints a stable id,
+    /// appends it, and re-validates the **whole** set
+    /// ([`validate_pricing_groups`](Self::validate_pricing_groups)) — so name
+    /// uniqueness, per-group invariants, and the cross-group determinism rule (no member
+    /// in two enabled groups) are enforced identically whether a group arrives at load
+    /// or over the wire. On any failure the tentative group is rolled back and `self` is
+    /// left unchanged.
+    ///
+    /// Member connection ids are **not** resolved here (they live in the separate
+    /// connection registry — a service-layer concern, exactly as for aggregated books).
+    ///
+    /// # Errors
+    /// An empty/duplicate name, an unknown user/desk member, a duplicate member, an
+    /// invalid feature pipeline, or a member already in another enabled group.
+    pub fn create_pricing_group(
+        &mut self,
+        edit: PricingGroupEdit,
+    ) -> Result<PricingGroupDef, String> {
+        let name = edit.name.trim().to_string();
+        if name.is_empty() {
+            return Err("pricing group name is required".to_string());
+        }
+        let def = PricingGroupDef {
+            id: mint_pricing_group_id(&name, &self.pricing_groups),
+            name,
+            description: edit.description,
+            member_connection_ids: edit.member_connection_ids,
+            member_user_ids: edit.member_user_ids,
+            member_desks: edit.member_desks,
+            esp_pipeline: edit.esp_pipeline,
+            rfq_pipeline: edit.rfq_pipeline,
+            share_pipeline: edit.share_pipeline,
+            enabled: edit.enabled,
+        };
+        self.pricing_groups.push(def.clone());
+        if let Err(e) = self.validate_pricing_groups() {
+            self.pricing_groups.pop();
+            return Err(e);
+        }
+        Ok(def)
+    }
+
+    /// Replace an existing pricing group in place (id preserved): rebuilds the
+    /// definition from `edit`, swaps the slot, and re-validates the **whole** set. On
+    /// failure the prior definition is restored and `self` is left unchanged.
+    ///
+    /// # Errors
+    /// No group with `id`; an empty/duplicate name; an unknown user/desk member; a
+    /// duplicate member; an invalid pipeline; or a member already in another enabled
+    /// group.
+    pub fn update_pricing_group(
+        &mut self,
+        id: &str,
+        edit: PricingGroupEdit,
+    ) -> Result<PricingGroupDef, String> {
+        let Some(pos) = self.pricing_groups.iter().position(|g| g.id == id) else {
+            return Err(format!("no pricing group with id {id:?}"));
+        };
+        let name = edit.name.trim().to_string();
+        if name.is_empty() {
+            return Err("pricing group name is required".to_string());
+        }
+        let def = PricingGroupDef {
+            id: id.to_string(),
+            name,
+            description: edit.description,
+            member_connection_ids: edit.member_connection_ids,
+            member_user_ids: edit.member_user_ids,
+            member_desks: edit.member_desks,
+            esp_pipeline: edit.esp_pipeline,
+            rfq_pipeline: edit.rfq_pipeline,
+            share_pipeline: edit.share_pipeline,
+            enabled: edit.enabled,
+        };
+        let prev = std::mem::replace(&mut self.pricing_groups[pos], def.clone());
+        if let Err(e) = self.validate_pricing_groups() {
+            self.pricing_groups[pos] = prev;
+            return Err(e);
+        }
+        Ok(def)
+    }
+
+    /// Retune **only** one outbound pipeline of a pricing group (the ESP or the RFS/RFQ
+    /// [`FeaturePipeline`](celnet_tiering::FeaturePipeline)) plus its
+    /// [`share_pipeline`](PricingGroupDef::share_pipeline) flag, leaving the group's
+    /// **structure** — id, name, description, all three membership lists, enabled flag,
+    /// and the OTHER mode's pipeline — byte-identical. Re-validates the whole set (a bad
+    /// pipeline fails the group's invariants); on failure the prior definition is
+    /// restored. This is the store side of the trader-facing pipeline RPC: the admin
+    /// owns what the group *is* and who is in it; the trader owns the outbound pricing.
+    ///
+    /// # Errors
+    /// No group with `id`, or the retuned pipeline failing its invariants (inconsistent
+    /// guardrails, invalid embedded tiering config, non-finite feature magnitude).
+    pub fn update_pricing_group_pipeline(
+        &mut self,
+        id: &str,
+        mode: PricingMode,
+        pipeline: celnet_tiering::FeaturePipeline,
+        share_pipeline: bool,
+    ) -> Result<PricingGroupDef, String> {
+        let Some(pos) = self.pricing_groups.iter().position(|g| g.id == id) else {
+            return Err(format!("no pricing group with id {id:?}"));
+        };
+        let mut def = self.pricing_groups[pos].clone();
+        match mode {
+            PricingMode::Esp => def.esp_pipeline = pipeline,
+            PricingMode::Rfq => def.rfq_pipeline = pipeline,
+        }
+        def.share_pipeline = share_pipeline;
+        let prev = std::mem::replace(&mut self.pricing_groups[pos], def.clone());
+        if let Err(e) = self.validate_pricing_groups() {
+            self.pricing_groups[pos] = prev;
+            return Err(e);
+        }
+        Ok(def)
+    }
+
+    /// Delete a pricing group by id, reporting whether one was removed (a missing id is a
+    /// no-op that reports `false`, mirroring [`delete_aggregated_book`](Self::delete_aggregated_book)).
+    /// Removing a group can never create a determinism conflict, so no re-validation is
+    /// needed.
+    ///
+    /// # Errors
+    /// Reserved for signature consistency with the other CRUD helpers; deletion has no
+    /// document-resolvable failure mode, so this is always `Ok`.
+    pub fn delete_pricing_group(&mut self, id: &str) -> Result<bool, String> {
+        let before = self.pricing_groups.len();
+        self.pricing_groups.retain(|g| g.id != id);
+        Ok(self.pricing_groups.len() != before)
     }
 
     /// Build the cached **caller → pricing-group** resolver from the registry — the

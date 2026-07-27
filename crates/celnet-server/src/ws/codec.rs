@@ -46,20 +46,25 @@ use celnet_proto::{
     AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, BookDesc, CapabilityDesc,
     CreateAggregatedBookRequest, CreateAggregatedBookResponse, CreateBookRequest,
     CreateBookResponse, CreateDeskRequest, CreateDeskResponse, CreateEntityRequest,
-    CreateEntityResponse, CreateUserRequest, CreateUserResponse, DeleteAggregatedBookRequest,
-    DeleteAggregatedBookResponse, DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest,
-    DeleteDeskResponse, DeleteEntityRequest, DeleteEntityResponse, DeleteUserRequest,
-    DeleteUserResponse, DeskDesc, EntityDesc, GetRoleCapabilitiesRequest,
-    GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest, GetUserCapabilitiesResponse,
-    ListAggregatedBooksRequest, ListAggregatedBooksResponse, ListBooksRequest, ListBooksResponse,
-    ListDesksRequest, ListDesksResponse, ListEntitiesRequest, ListEntitiesResponse,
-    ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest,
-    LogoutResponse, ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
-    SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
-    TieringConfigDesc, TieringGuardrailsDesc, TieringStrategyDesc, UpdateAggregatedBookRequest,
+    CreateEntityResponse, CreatePricingGroupRequest, CreatePricingGroupResponse, CreateUserRequest,
+    CreateUserResponse, DeleteAggregatedBookRequest, DeleteAggregatedBookResponse,
+    DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest, DeleteDeskResponse,
+    DeleteEntityRequest, DeleteEntityResponse, DeletePricingGroupRequest,
+    DeletePricingGroupResponse, DeleteUserRequest, DeleteUserResponse, DeskDesc, EntityDesc,
+    FeaturePipelineDesc, FeatureSpecDesc, GetRoleCapabilitiesRequest, GetRoleCapabilitiesResponse,
+    GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, ListAggregatedBooksRequest,
+    ListAggregatedBooksResponse, ListBooksRequest, ListBooksResponse, ListDesksRequest,
+    ListDesksResponse, ListEntitiesRequest, ListEntitiesResponse, ListPricingGroupsRequest,
+    ListPricingGroupsResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
+    LogoutRequest, LogoutResponse, PricingGroupDesc, PricingGroupSpec, ResetPasswordRequest,
+    ResetPasswordResponse, SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse,
+    SetUserCapabilitiesRequest, SetUserCapabilitiesResponse, TieringConfigDesc,
+    TieringGuardrailsDesc, TieringStrategyDesc, UpdateAggregatedBookRequest,
     UpdateAggregatedBookResponse, UpdateBookRequest, UpdateBookResponse, UpdateBookTieringRequest,
     UpdateBookTieringResponse, UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest,
-    UpdateEntityResponse, UpdateUserRequest, UpdateUserResponse, UserDesc,
+    UpdateEntityResponse, UpdatePricingGroupPipelineRequest, UpdatePricingGroupPipelineResponse,
+    UpdatePricingGroupRequest, UpdatePricingGroupResponse, UpdateUserRequest, UpdateUserResponse,
+    UserDesc,
 };
 // AuthService — instrument reference-data registry (WS mirror of the instrument RPCs).
 use celnet_proto::{
@@ -3759,6 +3764,198 @@ pub(super) fn update_book_tiering_response_to_json(r: &UpdateBookTieringResponse
     })
 }
 
+// --- pricing groups (AuthService FI client-tiering RPCs) --------------------
+
+/// One pricing feature → JSON. The `reference` proto3-`optional` scalar is OMITTED when
+/// absent (matching the generated encoder's default for an absent optional field); every
+/// other field is always emitted, `tiering` rendered `null`-when-absent (the singular-
+/// message convention). Fields a `kind` does not use render as their proto3 zero.
+fn feature_spec_desc_to_json(s: &FeatureSpecDesc) -> Value {
+    let mut m = Map::new();
+    m.insert("kind".to_string(), json!(s.kind));
+    m.insert("unit".to_string(), json!(s.unit));
+    m.insert("shift".to_string(), json!(s.shift));
+    if let Some(r) = s.reference {
+        m.insert("reference".to_string(), json!(r));
+    }
+    m.insert(
+        "tiering".to_string(),
+        json!(s.tiering.as_ref().map(tiering_config_desc_to_json)),
+    );
+    m.insert("axe_side".to_string(), json!(s.axe_side));
+    m.insert("magnitude".to_string(), json!(s.magnitude));
+    m.insert("kappa".to_string(), json!(s.kappa));
+    m.insert("s_max".to_string(), json!(s.s_max));
+    m.insert("skew".to_string(), json!(s.skew));
+    m.insert("triggered".to_string(), json!(s.triggered));
+    Value::Object(m)
+}
+
+/// One pricing feature ← JSON (a nested object in the `features` array).
+fn feature_spec_desc_from_json(v: &Value) -> Result<FeatureSpecDesc> {
+    let o = obj(v, "feature")?;
+    Ok(FeatureSpecDesc {
+        kind: enum_or_zero(o, "kind"),
+        unit: enum_or_zero(o, "unit"),
+        shift: f64_or_zero(o, "shift"),
+        reference: opt_f64(o, "reference"),
+        tiering: opt_nested(o, "tiering", tiering_config_desc_from_json)?,
+        axe_side: enum_or_zero(o, "axe_side"),
+        magnitude: f64_or_zero(o, "magnitude"),
+        kappa: f64_or_zero(o, "kappa"),
+        s_max: f64_or_zero(o, "s_max"),
+        skew: f64_or_zero(o, "skew"),
+        triggered: bool_or_false(o, "triggered"),
+    })
+}
+
+/// A pricing pipeline → JSON. An absent `guardrails` renders as `null` (the singular-
+/// message convention shared with the descriptor-driven encoder).
+fn feature_pipeline_desc_to_json(p: &FeaturePipelineDesc) -> Value {
+    json!({
+        "features": Value::Array(p.features.iter().map(feature_spec_desc_to_json).collect()),
+        "guardrails": p.guardrails.as_ref().map(tiering_guardrails_desc_to_json),
+    })
+}
+
+/// A pricing pipeline ← JSON (a nested `esp_pipeline`/`rfq_pipeline`/`pipeline` object).
+fn feature_pipeline_desc_from_json(v: &Value) -> Result<FeaturePipelineDesc> {
+    let o = obj(v, "pipeline")?;
+    let features = o.get("features").and_then(Value::as_array).map_or_else(
+        || Ok(Vec::new()),
+        |arr| {
+            arr.iter()
+                .map(feature_spec_desc_from_json)
+                .collect::<Result<Vec<_>>>()
+        },
+    )?;
+    Ok(FeaturePipelineDesc {
+        features,
+        guardrails: opt_nested(o, "guardrails", tiering_guardrails_desc_from_json)?,
+    })
+}
+
+/// A pricing group → JSON. An absent `esp_pipeline` / `rfq_pipeline` renders as `null`
+/// (the singular-message convention shared with the descriptor-driven encoder).
+fn pricing_group_desc_to_json(d: &PricingGroupDesc) -> Value {
+    json!({
+        "id": d.id,
+        "name": d.name,
+        "description": d.description,
+        "member_connection_ids": d.member_connection_ids,
+        "member_user_ids": d.member_user_ids,
+        "member_desks": d.member_desks,
+        "esp_pipeline": d.esp_pipeline.as_ref().map(feature_pipeline_desc_to_json),
+        "rfq_pipeline": d.rfq_pipeline.as_ref().map(feature_pipeline_desc_to_json),
+        "share_pipeline": d.share_pipeline,
+        "enabled": d.enabled,
+    })
+}
+
+/// The editable pricing-group fields (a nested `spec` object on create/update).
+fn pricing_group_spec_from_json(v: &Value) -> Result<PricingGroupSpec> {
+    let o = obj(v, "spec")?;
+    Ok(PricingGroupSpec {
+        id: string_or_empty(o, "id"),
+        name: string_field(o, "name")?,
+        description: string_or_empty(o, "description"),
+        member_connection_ids: string_array(o, "member_connection_ids"),
+        member_user_ids: string_array(o, "member_user_ids"),
+        member_desks: string_array(o, "member_desks"),
+        esp_pipeline: opt_nested(o, "esp_pipeline", feature_pipeline_desc_from_json)?,
+        rfq_pipeline: opt_nested(o, "rfq_pipeline", feature_pipeline_desc_from_json)?,
+        share_pipeline: bool_or_false(o, "share_pipeline"),
+        enabled: bool_or_false(o, "enabled"),
+    })
+}
+
+pub(super) fn list_pricing_groups_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListPricingGroupsRequest> {
+    Ok(ListPricingGroupsRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_pricing_groups_response_to_json(r: &ListPricingGroupsResponse) -> Value {
+    json!({
+        "groups": Value::Array(r.groups.iter().map(pricing_group_desc_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn create_pricing_group_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<CreatePricingGroupRequest> {
+    Ok(CreatePricingGroupRequest {
+        session_token: string_field(o, "session_token")?,
+        spec: Some(nested(o, "spec", pricing_group_spec_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn create_pricing_group_response_to_json(r: &CreatePricingGroupResponse) -> Value {
+    json!({
+        "group": r.group.as_ref().map(pricing_group_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_pricing_group_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdatePricingGroupRequest> {
+    Ok(UpdatePricingGroupRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        spec: Some(nested(o, "spec", pricing_group_spec_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_pricing_group_response_to_json(r: &UpdatePricingGroupResponse) -> Value {
+    json!({
+        "group": r.group.as_ref().map(pricing_group_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn delete_pricing_group_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<DeletePricingGroupRequest> {
+    Ok(DeletePricingGroupRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn delete_pricing_group_response_to_json(r: &DeletePricingGroupResponse) -> Value {
+    json!({ "removed": r.removed, "correlation_id": r.correlation_id })
+}
+
+pub(super) fn update_pricing_group_pipeline_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdatePricingGroupPipelineRequest> {
+    Ok(UpdatePricingGroupPipelineRequest {
+        session_token: string_field(o, "session_token")?,
+        group_id: string_field(o, "group_id")?,
+        mode: enum_or_zero(o, "mode"),
+        pipeline: opt_nested(o, "pipeline", feature_pipeline_desc_from_json)?,
+        share_pipeline: bool_or_false(o, "share_pipeline"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_pricing_group_pipeline_response_to_json(
+    r: &UpdatePricingGroupPipelineResponse,
+) -> Value {
+    json!({
+        "group": r.group.as_ref().map(pricing_group_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
 // --- instrument reference data (AuthService instrument RPCs) ----------------
 //
 // The WS mirror of the instrument registry. The `InstrumentDefDesc.definition`
@@ -4194,6 +4391,12 @@ pub mod diff_support {
         DeleteAggregatedBookResponse, ListAggregatedBooksRequest, ListAggregatedBooksResponse,
         UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookTieringRequest,
         UpdateBookTieringResponse,
+    };
+    use celnet_proto::{
+        CreatePricingGroupRequest, CreatePricingGroupResponse, DeletePricingGroupRequest,
+        DeletePricingGroupResponse, ListPricingGroupsRequest, ListPricingGroupsResponse,
+        UpdatePricingGroupPipelineRequest, UpdatePricingGroupPipelineResponse,
+        UpdatePricingGroupRequest, UpdatePricingGroupResponse,
     };
     use serde_json::{Map, Value};
 
@@ -5335,6 +5538,88 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_update_book_tiering_response_to_json(r: &UpdateBookTieringResponse) -> Value {
         super::update_book_tiering_response_to_json(r)
+    }
+
+    /// Hand-codec `ListPricingGroupsRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_pricing_groups_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListPricingGroupsRequest, CodecError> {
+        super::list_pricing_groups_request_from_json(o)
+    }
+
+    /// Hand-codec `ListPricingGroupsResponse` encoder.
+    #[must_use]
+    pub fn hand_list_pricing_groups_response_to_json(r: &ListPricingGroupsResponse) -> Value {
+        super::list_pricing_groups_response_to_json(r)
+    }
+
+    /// Hand-codec `CreatePricingGroupRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_create_pricing_group_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<CreatePricingGroupRequest, CodecError> {
+        super::create_pricing_group_request_from_json(o)
+    }
+
+    /// Hand-codec `CreatePricingGroupResponse` encoder.
+    #[must_use]
+    pub fn hand_create_pricing_group_response_to_json(r: &CreatePricingGroupResponse) -> Value {
+        super::create_pricing_group_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdatePricingGroupRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_pricing_group_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdatePricingGroupRequest, CodecError> {
+        super::update_pricing_group_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdatePricingGroupResponse` encoder.
+    #[must_use]
+    pub fn hand_update_pricing_group_response_to_json(r: &UpdatePricingGroupResponse) -> Value {
+        super::update_pricing_group_response_to_json(r)
+    }
+
+    /// Hand-codec `DeletePricingGroupRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_delete_pricing_group_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<DeletePricingGroupRequest, CodecError> {
+        super::delete_pricing_group_request_from_json(o)
+    }
+
+    /// Hand-codec `DeletePricingGroupResponse` encoder.
+    #[must_use]
+    pub fn hand_delete_pricing_group_response_to_json(r: &DeletePricingGroupResponse) -> Value {
+        super::delete_pricing_group_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdatePricingGroupPipelineRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_pricing_group_pipeline_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdatePricingGroupPipelineRequest, CodecError> {
+        super::update_pricing_group_pipeline_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdatePricingGroupPipelineResponse` encoder.
+    #[must_use]
+    pub fn hand_update_pricing_group_pipeline_response_to_json(
+        r: &UpdatePricingGroupPipelineResponse,
+    ) -> Value {
+        super::update_pricing_group_pipeline_response_to_json(r)
     }
 
     /// Hand-codec `ListInstrumentsRequest` decoder.

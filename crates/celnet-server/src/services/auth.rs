@@ -34,28 +34,33 @@ use std::sync::{Arc, Mutex, OnceLock};
 use celnet_entitlements::{Action, AssetClass, Capability};
 use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
-    AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, AggregationScopeMode, BookDesc,
-    BrokenDate, BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
+    AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, AggregationScopeMode, AxeSide,
+    BookDesc, BrokenDate, BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
     CreateAggregatedBookRequest, CreateAggregatedBookResponse, CreateBookRequest,
     CreateBookResponse, CreateDeskRequest, CreateDeskResponse, CreateEntityRequest,
-    CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse, CreateUserRequest,
-    CreateUserResponse, DeleteAggregatedBookRequest, DeleteAggregatedBookResponse,
-    DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest, DeleteDeskResponse,
-    DeleteEntityRequest, DeleteEntityResponse, DeleteInstrumentRequest, DeleteInstrumentResponse,
-    DeleteUserRequest, DeleteUserResponse, DeskDesc, EntityDesc, GetInstrumentRequest,
-    GetInstrumentResponse, GetRoleCapabilitiesRequest, GetRoleCapabilitiesResponse,
-    GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, ListAggregatedBooksRequest,
-    ListAggregatedBooksResponse, ListBooksRequest, ListBooksResponse, ListDesksRequest,
-    ListDesksResponse, ListEntitiesRequest, ListEntitiesResponse, ListInstrumentsRequest,
-    ListInstrumentsResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
-    LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
-    SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
-    SetUserCapabilitiesResponse, TieringConfigDesc, TieringGuardrailsDesc, TieringSpreadUnit,
-    TieringStalePolicy, TieringStrategyDesc, TieringStrategyKind, UpdateAggregatedBookRequest,
-    UpdateAggregatedBookResponse, UpdateBookRequest, UpdateBookResponse, UpdateBookTieringRequest,
-    UpdateBookTieringResponse, UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest,
-    UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse, UpdateUserRequest,
-    UpdateUserResponse, UserDesc, UserRole,
+    CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse,
+    CreatePricingGroupRequest, CreatePricingGroupResponse, CreateUserRequest, CreateUserResponse,
+    DeleteAggregatedBookRequest, DeleteAggregatedBookResponse, DeleteBookRequest,
+    DeleteBookResponse, DeleteDeskRequest, DeleteDeskResponse, DeleteEntityRequest,
+    DeleteEntityResponse, DeleteInstrumentRequest, DeleteInstrumentResponse,
+    DeletePricingGroupRequest, DeletePricingGroupResponse, DeleteUserRequest, DeleteUserResponse,
+    DeskDesc, EntityDesc, EspOrRfq, FeatureKind, FeaturePipelineDesc, FeatureSpecDesc,
+    GetInstrumentRequest, GetInstrumentResponse, GetRoleCapabilitiesRequest,
+    GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest, GetUserCapabilitiesResponse,
+    ListAggregatedBooksRequest, ListAggregatedBooksResponse, ListBooksRequest, ListBooksResponse,
+    ListDesksRequest, ListDesksResponse, ListEntitiesRequest, ListEntitiesResponse,
+    ListInstrumentsRequest, ListInstrumentsResponse, ListPricingGroupsRequest,
+    ListPricingGroupsResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
+    LogoutRequest, LogoutResponse, PricingGroupDesc, PricingGroupSpec, ResetPasswordRequest,
+    ResetPasswordResponse, SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse,
+    SetUserCapabilitiesRequest, SetUserCapabilitiesResponse, TieringConfigDesc,
+    TieringGuardrailsDesc, TieringSpreadUnit, TieringStalePolicy, TieringStrategyDesc,
+    TieringStrategyKind, UpdateAggregatedBookRequest, UpdateAggregatedBookResponse,
+    UpdateBookRequest, UpdateBookResponse, UpdateBookTieringRequest, UpdateBookTieringResponse,
+    UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse,
+    UpdateInstrumentRequest, UpdateInstrumentResponse, UpdatePricingGroupPipelineRequest,
+    UpdatePricingGroupPipelineResponse, UpdatePricingGroupRequest, UpdatePricingGroupResponse,
+    UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
 };
 use celnet_rates::{CalibrationInstrument, bootstrap_curve};
 use tonic::{Request, Response, Status};
@@ -66,8 +71,8 @@ use crate::config::curve_calibration::{
 };
 use crate::config::identity::{
     AggregatedBookDef, AggregatedBookEdit, AggregationParams, BookDef, DeskDef, EntityDef,
-    IdentityStore, PermissionGrant, Role, Scope, UserDef, hash_password, mint_desk_id,
-    mint_user_id, verify_password,
+    IdentityStore, PermissionGrant, PricingGroupDef, PricingGroupEdit, PricingMode, Role, Scope,
+    UserDef, hash_password, mint_desk_id, mint_user_id, verify_password,
 };
 use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
@@ -1426,6 +1431,162 @@ impl AuthService for AuthEdge {
         }))
     }
 
+    // --- pricing groups (FI client-tiering) ------------------------------------
+
+    async fn list_pricing_groups(
+        &self,
+        request: Request<ListPricingGroupsRequest>,
+    ) -> Result<Response<ListPricingGroupsResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Read-only roster: any authenticated caller may load the groups (the GUI needs
+        // them to render the pricing-group admin surface); assignment is admin-owned but
+        // the roster itself is NOT admin-gated.
+        self.authenticate(&req.session_token)?;
+        let groups = self
+            .lock()
+            .pricing_groups
+            .iter()
+            .map(pricing_group_to_wire)
+            .collect();
+        Ok(Response::new(ListPricingGroupsResponse {
+            groups,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn create_pricing_group(
+        &self,
+        request: Request<CreatePricingGroupRequest>,
+    ) -> Result<Response<CreatePricingGroupResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Group STRUCTURE (id/name/members/enabled + pipelines) is admin-owned.
+        self.require_admin(&req.session_token)?;
+
+        let spec = req
+            .spec
+            .ok_or_else(|| Status::invalid_argument("pricing group spec is required"))?;
+        let edit = pricing_group_spec_parts(spec);
+
+        // The store validates the group's document-resolvable invariants (unique name,
+        // known user/desk members, valid pipelines) AND the cross-group determinism rule
+        // inside `create_pricing_group`, so disk and the wire reject a bad group
+        // identically. Build on a clone and commit only after the atomic persist.
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        let def = next
+            .create_pricing_group(edit)
+            .map_err(pricing_group_status)?;
+        self.persist_and_commit(&mut guard, next)?;
+        // Rebuild the caller→group resolver so the ESP/RFQ pricing paths re-resolve.
+        self.reconcile_aggregation(&guard);
+        Ok(Response::new(CreatePricingGroupResponse {
+            group: Some(pricing_group_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_pricing_group(
+        &self,
+        request: Request<UpdatePricingGroupRequest>,
+    ) -> Result<Response<UpdatePricingGroupResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let spec = req
+            .spec
+            .ok_or_else(|| Status::invalid_argument("pricing group spec is required"))?;
+        let edit = pricing_group_spec_parts(spec);
+
+        let mut guard = self.lock();
+        if guard.pricing_group(&req.id).is_none() {
+            return Err(Status::not_found(format!(
+                "no pricing group with id `{}`",
+                req.id
+            )));
+        }
+        let mut next = guard.clone();
+        let def = next
+            .update_pricing_group(&req.id, edit)
+            .map_err(pricing_group_status)?;
+        self.persist_and_commit(&mut guard, next)?;
+        self.reconcile_aggregation(&guard);
+        Ok(Response::new(UpdatePricingGroupResponse {
+            group: Some(pricing_group_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn delete_pricing_group(
+        &self,
+        request: Request<DeletePricingGroupRequest>,
+    ) -> Result<Response<DeletePricingGroupResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        let removed = next
+            .delete_pricing_group(&req.id)
+            .map_err(pricing_group_status)?;
+        if removed {
+            self.persist_and_commit(&mut guard, next)?;
+            self.reconcile_aggregation(&guard);
+        }
+        Ok(Response::new(DeletePricingGroupResponse {
+            removed,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_pricing_group_pipeline(
+        &self,
+        request: Request<UpdatePricingGroupPipelineRequest>,
+    ) -> Result<Response<UpdatePricingGroupPipelineResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Trader-configurable outbound pricing: gated on the fixed-income quote-respond
+        // capability (exactly like `update_book_tiering`), NOT the admin role. The group's
+        // STRUCTURE and MEMBERSHIP stay admin-owned: this RPC touches ONLY the selected
+        // mode's pipeline + the share flag (see `update_pricing_group_pipeline`).
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::QuoteRespond, AssetClass::FixedIncome),
+        )?;
+
+        let mode = pricing_mode_from_wire(req.mode);
+        // An absent / malformed pipeline is rejected below by the store's
+        // `validate_feature_pipeline` (loud failure at the write), never silently dropped.
+        let pipeline = feature_pipeline_from_wire(req.pipeline);
+
+        let mut guard = self.lock();
+        if guard.pricing_group(&req.group_id).is_none() {
+            return Err(Status::not_found(format!(
+                "no pricing group with id `{}`",
+                req.group_id
+            )));
+        }
+        let mut next = guard.clone();
+        let def = next
+            .update_pricing_group_pipeline(&req.group_id, mode, pipeline, req.share_pipeline)
+            .map_err(pricing_group_status)?;
+        self.persist_and_commit(&mut guard, next)?;
+        // Re-reconcile so the running ESP/RFQ pricing paths pick up the retuned pipeline.
+        self.reconcile_aggregation(&guard);
+        Ok(Response::new(UpdatePricingGroupPipelineResponse {
+            group: Some(pricing_group_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
     // --- instrument reference data ---------------------------------------------
 
     async fn list_instruments(
@@ -1998,6 +2159,224 @@ fn aggregated_book_status(msg: String) -> Status {
     if msg.contains("already exists") {
         Status::already_exists(msg)
     } else if msg.starts_with("no aggregated book with id") {
+        Status::not_found(msg)
+    } else {
+        Status::invalid_argument(msg)
+    }
+}
+
+// --- pricing-group wire conversions ----------------------------------------------
+
+/// The wire enum value for a domain [`celnet_tiering::SpreadUnit`] (shared by the
+/// pricing-feature converters). Mirrors the mapping inside [`tiering_to_wire`].
+fn spread_unit_to_wire(u: celnet_tiering::SpreadUnit) -> i32 {
+    use celnet_tiering::SpreadUnit;
+    (match u {
+        SpreadUnit::PriceBps => TieringSpreadUnit::PriceBps,
+        SpreadUnit::YieldBps => TieringSpreadUnit::YieldBps,
+        SpreadUnit::PricePoints => TieringSpreadUnit::PricePoints,
+        SpreadUnit::Percent => TieringSpreadUnit::Percent,
+    }) as i32
+}
+
+/// Resolve a wire [`TieringSpreadUnit`] value to a domain [`celnet_tiering::SpreadUnit`]
+/// (an unknown value defaults to the proto3 zero variant, `PriceBps`).
+fn spread_unit_from_wire(u: i32) -> celnet_tiering::SpreadUnit {
+    use celnet_tiering::SpreadUnit;
+    match TieringSpreadUnit::try_from(u).unwrap_or_default() {
+        TieringSpreadUnit::PriceBps => SpreadUnit::PriceBps,
+        TieringSpreadUnit::YieldBps => SpreadUnit::YieldBps,
+        TieringSpreadUnit::PricePoints => SpreadUnit::PricePoints,
+        TieringSpreadUnit::Percent => SpreadUnit::Percent,
+    }
+}
+
+/// The wire enum value for a domain [`celnet_tiering::AxeSide`].
+fn axe_side_to_wire(s: celnet_tiering::AxeSide) -> i32 {
+    (match s {
+        celnet_tiering::AxeSide::Buy => AxeSide::Buy,
+        celnet_tiering::AxeSide::Sell => AxeSide::Sell,
+    }) as i32
+}
+
+/// Resolve a wire [`AxeSide`] value to a domain [`celnet_tiering::AxeSide`] (an unknown
+/// value defaults to the proto3 zero variant, `Buy`).
+fn axe_side_from_wire(s: i32) -> celnet_tiering::AxeSide {
+    match AxeSide::try_from(s).unwrap_or_default() {
+        AxeSide::Buy => celnet_tiering::AxeSide::Buy,
+        AxeSide::Sell => celnet_tiering::AxeSide::Sell,
+    }
+}
+
+/// Resolve a wire [`EspOrRfq`] selector to a domain [`PricingMode`] (an unknown value
+/// defaults to the proto3 zero variant, ESP).
+fn pricing_mode_from_wire(m: i32) -> PricingMode {
+    match EspOrRfq::try_from(m).unwrap_or_default() {
+        EspOrRfq::Esp => PricingMode::Esp,
+        EspOrRfq::Rfq => PricingMode::Rfq,
+    }
+}
+
+/// Map a stored [`celnet_tiering::PricingFeature`] onto its flat, `kind`-discriminated
+/// wire [`FeatureSpecDesc`]. Fields a variant does not carry are left at proto3 zero and
+/// ignored on decode (identical convention to [`tiering_to_wire`]'s strategies).
+fn feature_spec_to_wire(f: &celnet_tiering::PricingFeature) -> FeatureSpecDesc {
+    use celnet_tiering::PricingFeature;
+    match f {
+        PricingFeature::MidShift {
+            shift,
+            unit,
+            reference,
+        } => FeatureSpecDesc {
+            kind: FeatureKind::MidShift as i32,
+            unit: spread_unit_to_wire(*unit),
+            shift: *shift,
+            reference: *reference,
+            ..Default::default()
+        },
+        PricingFeature::Tiering { config } => FeatureSpecDesc {
+            kind: FeatureKind::Tiering as i32,
+            tiering: Some(tiering_to_wire(config)),
+            ..Default::default()
+        },
+        PricingFeature::Axe {
+            side,
+            magnitude,
+            unit,
+        } => FeatureSpecDesc {
+            kind: FeatureKind::Axe as i32,
+            unit: spread_unit_to_wire(*unit),
+            axe_side: axe_side_to_wire(*side),
+            magnitude: *magnitude,
+            ..Default::default()
+        },
+        PricingFeature::Position { kappa, s_max, unit } => FeatureSpecDesc {
+            kind: FeatureKind::Position as i32,
+            unit: spread_unit_to_wire(*unit),
+            kappa: *kappa,
+            s_max: *s_max,
+            ..Default::default()
+        },
+        PricingFeature::PanicSkew {
+            skew,
+            unit,
+            triggered,
+        } => FeatureSpecDesc {
+            kind: FeatureKind::PanicSkew as i32,
+            unit: spread_unit_to_wire(*unit),
+            skew: *skew,
+            triggered: *triggered,
+            ..Default::default()
+        },
+    }
+}
+
+/// Reconstruct a stored [`celnet_tiering::PricingFeature`] from its wire form. A
+/// TIERING feature whose `tiering` message is absent decodes to an empty config, which
+/// the store's `validate_feature_pipeline` then rejects (a bad feature fails loudly at
+/// the admin write rather than silently no-op'ing at runtime).
+fn feature_spec_from_wire(s: FeatureSpecDesc) -> celnet_tiering::PricingFeature {
+    use celnet_tiering::PricingFeature;
+    let unit = spread_unit_from_wire(s.unit);
+    match FeatureKind::try_from(s.kind).unwrap_or_default() {
+        FeatureKind::MidShift => PricingFeature::MidShift {
+            shift: s.shift,
+            unit,
+            reference: s.reference,
+        },
+        FeatureKind::Tiering => PricingFeature::Tiering {
+            // `tiering_from_wire(Some(_))` is always `Some`; an absent message yields the
+            // empty (all-zero) config the pipeline validation then rejects.
+            config: tiering_from_wire(Some(s.tiering.unwrap_or_default()))
+                .expect("tiering_from_wire(Some(_)) always yields Some"),
+        },
+        FeatureKind::Axe => PricingFeature::Axe {
+            side: axe_side_from_wire(s.axe_side),
+            magnitude: s.magnitude,
+            unit,
+        },
+        FeatureKind::Position => PricingFeature::Position {
+            kappa: s.kappa,
+            s_max: s.s_max,
+            unit,
+        },
+        FeatureKind::PanicSkew => PricingFeature::PanicSkew {
+            skew: s.skew,
+            unit,
+            triggered: s.triggered,
+        },
+    }
+}
+
+/// Map a stored [`celnet_tiering::FeaturePipeline`] onto its wire [`FeaturePipelineDesc`]
+/// (the ordered features + the closing guardrails, reusing [`TieringGuardrailsDesc`]).
+fn feature_pipeline_to_wire(p: &celnet_tiering::FeaturePipeline) -> FeaturePipelineDesc {
+    FeaturePipelineDesc {
+        features: p.features.iter().map(feature_spec_to_wire).collect(),
+        guardrails: Some(TieringGuardrailsDesc {
+            h_min: p.guardrails.h_min,
+            h_max: p.guardrails.h_max,
+            s_max: p.guardrails.s_max,
+            spread_floor: p.guardrails.spread_floor,
+        }),
+    }
+}
+
+/// Reconstruct a stored [`celnet_tiering::FeaturePipeline`] from its wire form. An absent
+/// pipeline (or absent `guardrails`) defaults to all-zero guardrails, which the store's
+/// `validate_feature_pipeline` then rejects.
+fn feature_pipeline_from_wire(p: Option<FeaturePipelineDesc>) -> celnet_tiering::FeaturePipeline {
+    use celnet_tiering::{FeaturePipeline, Guardrails};
+    let d = p.unwrap_or_default();
+    let features = d.features.into_iter().map(feature_spec_from_wire).collect();
+    let g = d.guardrails.unwrap_or_default();
+    FeaturePipeline::new(
+        features,
+        Guardrails::new(g.h_min, g.h_max, g.s_max, g.spread_floor),
+    )
+}
+
+/// Map a stored [`PricingGroupDef`] onto its wire [`PricingGroupDesc`] (field for field).
+fn pricing_group_to_wire(def: &PricingGroupDef) -> PricingGroupDesc {
+    PricingGroupDesc {
+        id: def.id.clone(),
+        name: def.name.clone(),
+        description: def.description.clone(),
+        member_connection_ids: def.member_connection_ids.clone(),
+        member_user_ids: def.member_user_ids.clone(),
+        member_desks: def.member_desks.clone(),
+        esp_pipeline: Some(feature_pipeline_to_wire(&def.esp_pipeline)),
+        rfq_pipeline: Some(feature_pipeline_to_wire(&def.rfq_pipeline)),
+        share_pipeline: def.share_pipeline,
+        enabled: def.enabled,
+    }
+}
+
+/// Map a [`PricingGroupSpec`] onto the [`PricingGroupEdit`] the store's
+/// `create_pricing_group` / `update_pricing_group` take. The spec's own `id` is
+/// intentionally dropped — create mints a fresh id and update keeps the request `id`.
+fn pricing_group_spec_parts(spec: PricingGroupSpec) -> PricingGroupEdit {
+    PricingGroupEdit {
+        name: spec.name,
+        description: spec.description,
+        member_connection_ids: spec.member_connection_ids,
+        member_user_ids: spec.member_user_ids,
+        member_desks: spec.member_desks,
+        esp_pipeline: feature_pipeline_from_wire(spec.esp_pipeline),
+        rfq_pipeline: feature_pipeline_from_wire(spec.rfq_pipeline),
+        share_pipeline: spec.share_pipeline,
+        enabled: spec.enabled,
+    }
+}
+
+/// Map the store's pricing-group validation error string onto a gRPC [`Status`]: a name
+/// collision is `already_exists`, a missing id on update is `not_found`, and every other
+/// document-resolvable failure (duplicate/unknown member, invalid pipeline, cross-group
+/// determinism conflict) is `invalid_argument`. The store's message is surfaced verbatim.
+fn pricing_group_status(msg: String) -> Status {
+    if msg.contains("duplicate pricing group name") {
+        Status::already_exists(msg)
+    } else if msg.starts_with("no pricing group with id") {
         Status::not_found(msg)
     } else {
         Status::invalid_argument(msg)
@@ -4395,6 +4774,414 @@ mod tests {
         let reloaded = IdentityStore::load(&path).unwrap();
         let def = reloaded.aggregated_book(&created.id).expect("book present");
         assert!(def.tiering.is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // --- FI pricing groups (Phase 2b — CRUD + trader pipeline retune) -----------
+
+    /// A valid closing-guardrails body (consistent bounds; `h_max >= spread_floor/2`).
+    fn pg_guardrails() -> TieringGuardrailsDesc {
+        TieringGuardrailsDesc {
+            h_min: 0.0,
+            h_max: 5.0,
+            s_max: 2.0,
+            spread_floor: 0.01,
+        }
+    }
+
+    /// A minimal-but-valid feature pipeline (no features + valid guardrails).
+    fn pg_minimal_pipeline() -> FeaturePipelineDesc {
+        FeaturePipelineDesc {
+            features: Vec::new(),
+            guardrails: Some(pg_guardrails()),
+        }
+    }
+
+    /// A full pipeline exercising ALL five feature kinds (the round-trip surface).
+    fn pg_full_pipeline() -> FeaturePipelineDesc {
+        FeaturePipelineDesc {
+            features: vec![
+                FeatureSpecDesc {
+                    kind: FeatureKind::MidShift as i32,
+                    unit: TieringSpreadUnit::PriceBps as i32,
+                    shift: 1.0,
+                    reference: Some(100.0),
+                    ..Default::default()
+                },
+                FeatureSpecDesc {
+                    kind: FeatureKind::Tiering as i32,
+                    tiering: Some(agg_tiering_spec()),
+                    ..Default::default()
+                },
+                FeatureSpecDesc {
+                    kind: FeatureKind::Axe as i32,
+                    unit: TieringSpreadUnit::PriceBps as i32,
+                    axe_side: AxeSide::Sell as i32,
+                    magnitude: 2.0,
+                    ..Default::default()
+                },
+                FeatureSpecDesc {
+                    kind: FeatureKind::Position as i32,
+                    unit: TieringSpreadUnit::PriceBps as i32,
+                    kappa: 1.5,
+                    s_max: 100.0,
+                    ..Default::default()
+                },
+                FeatureSpecDesc {
+                    kind: FeatureKind::PanicSkew as i32,
+                    unit: TieringSpreadUnit::PriceBps as i32,
+                    skew: 3.0,
+                    triggered: true,
+                    ..Default::default()
+                },
+            ],
+            guardrails: Some(pg_guardrails()),
+        }
+    }
+
+    /// A pricing-group spec with both pipelines valid (minimal by default).
+    fn pg_spec(name: &str) -> PricingGroupSpec {
+        PricingGroupSpec {
+            id: String::new(),
+            name: name.into(),
+            description: "desk tier".into(),
+            member_connection_ids: Vec::new(),
+            member_user_ids: Vec::new(),
+            member_desks: Vec::new(),
+            esp_pipeline: Some(pg_minimal_pipeline()),
+            rfq_pipeline: Some(pg_minimal_pipeline()),
+            share_pipeline: false,
+            enabled: true,
+        }
+    }
+
+    /// (1) Admin creates / updates / deletes a pricing group; a non-admin trader is
+    /// `PermissionDenied` on every STRUCTURE mutation, and each admin write survives a
+    /// reload from disk.
+    #[tokio::test]
+    async fn pricing_group_admin_crud_and_non_admin_denied() {
+        let (edge, path, _s) = edge("pg-crud");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let (_id, trader) = make_trader(&edge, &admin, "pgcrud@celnet.com").await;
+
+        // Admin creates.
+        let created = edge
+            .create_pricing_group(Request::new(CreatePricingGroupRequest {
+                session_token: admin.clone(),
+                spec: Some(pg_spec("GROUP-A")),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .group
+            .unwrap();
+        assert_eq!(created.name, "GROUP-A");
+        assert!(!created.id.is_empty());
+
+        // A non-admin is denied create / update / delete (structure is admin-owned).
+        let c = edge
+            .create_pricing_group(Request::new(CreatePricingGroupRequest {
+                session_token: trader.clone(),
+                spec: Some(pg_spec("GROUP-B")),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(c.code(), tonic::Code::PermissionDenied);
+        let mut renamed = pg_spec("GROUP-A2");
+        renamed.description = "hijack".into();
+        let u = edge
+            .update_pricing_group(Request::new(UpdatePricingGroupRequest {
+                session_token: trader.clone(),
+                id: created.id.clone(),
+                spec: Some(renamed.clone()),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(u.code(), tonic::Code::PermissionDenied);
+        let d = edge
+            .delete_pricing_group(Request::new(DeletePricingGroupRequest {
+                session_token: trader.clone(),
+                id: created.id.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(d.code(), tonic::Code::PermissionDenied);
+
+        // Admin updates (rename) — lands and survives reload.
+        let updated = edge
+            .update_pricing_group(Request::new(UpdatePricingGroupRequest {
+                session_token: admin.clone(),
+                id: created.id.clone(),
+                spec: Some(renamed),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .group
+            .unwrap();
+        assert_eq!(updated.name, "GROUP-A2");
+        let reloaded = IdentityStore::load(&path).unwrap();
+        assert_eq!(
+            reloaded.pricing_group(&created.id).unwrap().name,
+            "GROUP-A2"
+        );
+
+        // Admin deletes — gone from disk.
+        let removed = edge
+            .delete_pricing_group(Request::new(DeletePricingGroupRequest {
+                session_token: admin.clone(),
+                id: created.id.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .removed;
+        assert!(removed);
+        let reloaded = IdentityStore::load(&path).unwrap();
+        assert!(reloaded.pricing_group(&created.id).is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// (2) A non-admin trader HOLDING `quote_respond·fixed_income` CAN retune a group's
+    /// pipeline (the retune re-prices — the persisted ESP pipeline changes and the
+    /// resolver rebuilds); a trader DENIED it is refused; an unauthenticated caller is
+    /// rejected.
+    #[tokio::test]
+    async fn pricing_group_pipeline_retune_trader_gated() {
+        let (edge, path, _s) = edge("pg-pipeline");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let created = edge
+            .create_pricing_group(Request::new(CreatePricingGroupRequest {
+                session_token: admin.clone(),
+                spec: Some(pg_spec("TIER1-EU")),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .group
+            .unwrap();
+
+        // A plain trader (default bundle holds quote_respond·fixed_income) CAN retune.
+        let (_id, trader) = make_trader(&edge, &admin, "pgtune@celnet.com").await;
+        let retuned = edge
+            .update_pricing_group_pipeline(Request::new(UpdatePricingGroupPipelineRequest {
+                session_token: trader.clone(),
+                group_id: created.id.clone(),
+                mode: EspOrRfq::Esp as i32,
+                pipeline: Some(pg_full_pipeline()),
+                share_pipeline: true,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .group
+            .unwrap();
+        // The ESP pipeline now carries the full five-feature ladder; share flag flipped.
+        assert_eq!(retuned.esp_pipeline.unwrap().features.len(), 5);
+        assert!(retuned.share_pipeline);
+        // The retune re-priced: the persisted group + rebuilt resolver reflect it.
+        let reloaded = IdentityStore::load(&path).unwrap();
+        let def = reloaded.pricing_group(&created.id).unwrap();
+        assert_eq!(def.esp_pipeline.features.len(), 5);
+        assert!(def.share_pipeline);
+        // The RFQ (unselected) pipeline block was NOT touched — still the minimal one.
+        assert!(def.rfq_pipeline.features.is_empty());
+
+        // A trader DENIED the capability (separation of duties) is refused.
+        let (denied_id, _tok) = make_trader(&edge, &admin, "pgdeny@celnet.com").await;
+        edge.set_user_capabilities(Request::new(SetUserCapabilitiesRequest {
+            session_token: admin.clone(),
+            id: denied_id,
+            grants: Vec::new(),
+            denies: vec![cap("quote_respond", "fixed_income")],
+            correlation_id: None,
+        }))
+        .await
+        .unwrap();
+        let denied_tok = login(&edge, "pgdeny@celnet.com", "trader-pw-123")
+            .await
+            .unwrap()
+            .session_token;
+        let denied = edge
+            .update_pricing_group_pipeline(Request::new(UpdatePricingGroupPipelineRequest {
+                session_token: denied_tok,
+                group_id: created.id.clone(),
+                mode: EspOrRfq::Rfq as i32,
+                pipeline: Some(pg_full_pipeline()),
+                share_pipeline: false,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+
+        // An unauthenticated token is rejected before any mutation.
+        let anon = edge
+            .update_pricing_group_pipeline(Request::new(UpdatePricingGroupPipelineRequest {
+                session_token: "not-a-token".into(),
+                group_id: created.id.clone(),
+                mode: EspOrRfq::Esp as i32,
+                pipeline: Some(pg_full_pipeline()),
+                share_pipeline: false,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(anon.code(), tonic::Code::Unauthenticated);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// (3) `ListPricingGroups` returns the roster for an authenticated non-admin; an
+    /// unauthenticated token is rejected.
+    #[tokio::test]
+    async fn list_pricing_groups_readable_by_trader() {
+        let (edge, path, _s) = edge("pg-list");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let created = edge
+            .create_pricing_group(Request::new(CreatePricingGroupRequest {
+                session_token: admin.clone(),
+                spec: Some(pg_spec("GROUP-R")),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .group
+            .unwrap();
+
+        let (_id, trader) = make_trader(&edge, &admin, "pglist@celnet.com").await;
+        let listed = edge
+            .list_pricing_groups(Request::new(ListPricingGroupsRequest {
+                session_token: trader,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(listed.groups.len(), 1);
+        assert_eq!(listed.groups[0].id, created.id);
+
+        let anon = edge
+            .list_pricing_groups(Request::new(ListPricingGroupsRequest {
+                session_token: "not-a-token".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(anon.code(), tonic::Code::Unauthenticated);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// (4) A group carrying a full (all-five-feature) pipeline round-trips
+    /// create → wire → disk reload → decode with the pipeline preserved exactly.
+    #[tokio::test]
+    async fn pricing_group_full_pipeline_round_trips_through_disk() {
+        let (edge, path, _s) = edge("pg-roundtrip");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let mut spec = pg_spec("GROUP-FULL");
+        spec.esp_pipeline = Some(pg_full_pipeline());
+        spec.rfq_pipeline = Some(pg_full_pipeline());
+
+        let created = edge
+            .create_pricing_group(Request::new(CreatePricingGroupRequest {
+                session_token: admin.clone(),
+                spec: Some(spec),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .group
+            .unwrap();
+
+        // The wire echo carries the full five-feature ESP pipeline verbatim.
+        let esp = created.esp_pipeline.as_ref().unwrap();
+        assert_eq!(esp.features.len(), 5);
+        assert_eq!(esp.features[0].kind, FeatureKind::MidShift as i32);
+        assert_eq!(esp.features[0].reference, Some(100.0));
+        assert_eq!(esp.features[1].kind, FeatureKind::Tiering as i32);
+        assert!(esp.features[1].tiering.is_some());
+        assert_eq!(esp.features[4].kind, FeatureKind::PanicSkew as i32);
+        assert!(esp.features[4].triggered);
+
+        // Reload from disk and re-encode: byte-identical to the create echo.
+        let reloaded = IdentityStore::load(&path).unwrap();
+        let def = reloaded.pricing_group(&created.id).unwrap();
+        let re_encoded = pricing_group_to_wire(def);
+        assert_eq!(re_encoded, created);
+        assert_eq!(def.esp_pipeline.features.len(), 5);
+        assert_eq!(def.rfq_pipeline.features.len(), 5);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// (5) Validation rejects a bad pipeline (inconsistent guardrails) and a duplicate
+    /// member; neither lands on disk.
+    #[tokio::test]
+    async fn pricing_group_create_validation() {
+        let (edge, path, _s) = edge("pg-validate");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let (trader_id, _tok) = make_trader(&edge, &admin, "pgval@celnet.com").await;
+
+        // Inconsistent guardrails (h_max < spread_floor/2) → invalid_argument.
+        let mut bad_pipe = pg_spec("BAD-PIPE");
+        bad_pipe.esp_pipeline = Some(FeaturePipelineDesc {
+            features: Vec::new(),
+            guardrails: Some(TieringGuardrailsDesc {
+                h_min: 0.0,
+                h_max: 0.0,
+                s_max: 1.0,
+                spread_floor: 1.0,
+            }),
+        });
+        let e1 = edge
+            .create_pricing_group(Request::new(CreatePricingGroupRequest {
+                session_token: admin.clone(),
+                spec: Some(bad_pipe),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(e1.code(), tonic::Code::InvalidArgument);
+
+        // A duplicate user member → invalid_argument.
+        let mut dup_member = pg_spec("DUP-MEMBER");
+        dup_member.member_user_ids = vec![trader_id.clone(), trader_id];
+        let e2 = edge
+            .create_pricing_group(Request::new(CreatePricingGroupRequest {
+                session_token: admin.clone(),
+                spec: Some(dup_member),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(e2.code(), tonic::Code::InvalidArgument);
+
+        // Neither bad group landed.
+        let reloaded = IdentityStore::load(&path).unwrap();
+        assert!(reloaded.pricing_groups.is_empty());
         let _ = std::fs::remove_file(&path);
     }
 }

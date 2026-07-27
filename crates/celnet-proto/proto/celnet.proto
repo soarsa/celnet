@@ -4333,6 +4333,260 @@ message UpdateBookTieringResponse {
 }
 
 // ===========================================================================
+// Pricing groups — trader-defined client-tiering (`docs/FI-PRICING-GROUPS-DESIGN.md`).
+// A pricing group binds a set of connected clients (inbound FIX sessions, GUI/API
+// principals, or a desk as a default tier) to their own outbound FEATURE PIPELINES,
+// so different clients receive different outbound prices off the SAME raw composite.
+// Each group carries a separate pipeline per outbound mode (ESP streaming / RFS-RFQ).
+// The messages below mirror the store `config::identity::PricingGroupDef` field for
+// field, reusing `TieringConfigDesc` (a TIERING feature's margin), `TieringSpreadUnit`
+// (every feature magnitude's unit) and `TieringGuardrailsDesc` (a pipeline's closing
+// guardrails). The feature spec is a FLAT kind-discriminated message (mirroring
+// `TieringStrategyDesc`), NOT a proto oneof, so it maps onto the existing
+// `WireBuilder`/`WireAdapter` codec machinery; fields a `kind` does not use are left
+// at proto3 zero and ignored on decode.
+// ===========================================================================
+
+// Which pricing feature a `FeatureSpecDesc` carries (mirrors the
+// `celnet_tiering::PricingFeature` variants). The order IS the pricing: a trader
+// composes an ordered list of features (RAW → these → outbound). New feature modules
+// slot in additively as new enum values behind the same seam.
+enum FeatureKind {
+  // Recentre the running two-way (spread-invariant): bias the mid by `shift` off
+  // `reference` (proto3 zero default). Uses `shift` / `unit` / `reference`.
+  FEATURE_KIND_MID_SHIFT = 0;
+  // Apply margin/markup by rebuilding the two-way with an embedded `tiering`
+  // config (Flat / Scaled-Smoothed-Spread / Inventory-skew). Uses `tiering`.
+  FEATURE_KIND_TIERING = 1;
+  // Skew the two-way toward the desk's axe (spread-invariant). Uses `axe_side` /
+  // `magnitude` / `unit`.
+  FEATURE_KIND_AXE = 2;
+  // Inventory skew off the context's signed position `q`: `clamp(kappa*q, +-s_max)`
+  // shift down (spread-invariant). Uses `kappa` / `s_max` / `unit`.
+  FEATURE_KIND_POSITION = 3;
+  // An emergency overlay skew applied only when `triggered` (spread-invariant).
+  // Uses `skew` / `unit` / `triggered`.
+  FEATURE_KIND_PANIC_SKEW = 4;
+}
+
+// Which side a desk is axed on for a `FEATURE_KIND_AXE` feature (mirrors
+// `celnet_tiering::AxeSide`).
+enum AxeSide {
+  // The desk wants to BUY — lean the two-way up (a keener bid; proto3 zero default).
+  AXE_SIDE_BUY = 0;
+  // The desk wants to SELL — lean the two-way down (a keener offer).
+  AXE_SIDE_SELL = 1;
+}
+
+// Which outbound pricing mode a `UpdatePricingGroupPipelineRequest` retunes: the ESP
+// (streaming) pipeline or the RFS/RFQ pipeline.
+enum EspOrRfq {
+  // The ESP / streaming pipeline (proto3 zero default).
+  ESP_OR_RFQ_ESP = 0;
+  // The RFS / RFQ (request-for-quote) pipeline.
+  ESP_OR_RFQ_RFQ = 1;
+}
+
+// One pluggable pricing-feature transform + its params (mirrors a
+// `celnet_tiering::PricingFeature` variant). Magnitudes a `kind` does not carry are
+// ignored (e.g. a `FEATURE_KIND_AXE` feature ignores `kappa` / `skew`). The single
+// `unit` applies to whichever magnitude the `kind` uses (`shift` / `magnitude` /
+// `kappa`+`s_max` / `skew`); a `FEATURE_KIND_TIERING` feature carries its own unit
+// inside `tiering` and ignores this `unit`.
+message FeatureSpecDesc {
+  // Which feature this entry configures.
+  FeatureKind kind = 1;
+  // The unit the magnitude this feature uses is expressed in (reuses the tiering
+  // spread unit; ignored by `FEATURE_KIND_TIERING`).
+  TieringSpreadUnit unit = 2;
+  // `FEATURE_KIND_MID_SHIFT`: signed mid-bias magnitude, in `unit` (may be 0).
+  double shift = 3;
+  // `FEATURE_KIND_MID_SHIFT`: explicit reference-price override for the centre
+  // (absent ⇒ fall back to the context reference, then the running centre).
+  optional double reference = 4;
+  // `FEATURE_KIND_TIERING`: the margin configuration applied as this feature (the
+  // same message a book's tiering block carries).
+  TieringConfigDesc tiering = 5;
+  // `FEATURE_KIND_AXE`: which way the desk is axed.
+  AxeSide axe_side = 6;
+  // `FEATURE_KIND_AXE`: the lean magnitude (non-negative), in `unit`.
+  double magnitude = 7;
+  // `FEATURE_KIND_POSITION`: inventory-skew gain `kappa` (magnitude per unit
+  // inventory), in `unit`.
+  double kappa = 8;
+  // `FEATURE_KIND_POSITION`: inventory-skew cap `s_max` (magnitude >= 0), in `unit`.
+  double s_max = 9;
+  // `FEATURE_KIND_PANIC_SKEW`: signed skew magnitude, in `unit` (positive ⇒ down).
+  double skew = 10;
+  // `FEATURE_KIND_PANIC_SKEW`: whether the overlay is armed; false ⇒ no-op.
+  bool triggered = 11;
+}
+
+// An ordered outbound pricing pipeline (mirrors `celnet_tiering::FeaturePipeline`):
+// the features a trader composed plus the price-space guardrails applied last. RAW is
+// the implicit start (the consolidated LP composite), not a feature.
+message FeaturePipelineDesc {
+  // The ordered features (RAW → these → outbound), applied in list order.
+  repeated FeatureSpecDesc features = 1;
+  // The price-space guardrails applied last (anti-cross / min-spread floor). An absent
+  // guardrails message decodes to all-zero bounds, which validation then rejects (a
+  // bad pipeline fails loudly at the admin write, never silently at runtime).
+  TieringGuardrailsDesc guardrails = 2;
+}
+
+// A persisted pricing group (mirrors the store `config::identity::PricingGroupDef`
+// field for field).
+message PricingGroupDesc {
+  // Stable identifier (the store/API key), minted from `name` on create.
+  string id = 1;
+  // The trader's code name (unique across the store, case-insensitive).
+  string name = 2;
+  // Free-text operator description of what the group is for.
+  string description = 3;
+  // Inbound FIX sessions in this group, by connection id.
+  repeated string member_connection_ids = 4;
+  // GUI/API principals in this group, by user id.
+  repeated string member_user_ids = 5;
+  // Desk-level default membership, by desk id (the fallback tier).
+  repeated string member_desks = 6;
+  // The outbound ESP / streaming feature pipeline.
+  FeaturePipelineDesc esp_pipeline = 7;
+  // The outbound RFS/RFQ feature pipeline (ignored when `share_pipeline` is set).
+  FeaturePipelineDesc rfq_pipeline = 8;
+  // When true, the RFS/RFQ mode reuses `esp_pipeline` (one pipeline for both modes).
+  bool share_pipeline = 9;
+  // Whether the group is active (a disabled group never participates in resolution).
+  bool enabled = 10;
+}
+
+// The editable fields of a pricing group (the create/update payload). The
+// server-minted `id` on `PricingGroupDesc` is not part of the spec except as a
+// client-suggested slug on create (mirrors `AggregatedBookSpec.id`).
+message PricingGroupSpec {
+  // On create: a client-suggested id (a slug of `name` is used when empty). On
+  // update: ignored in favour of the request's `id`.
+  string id = 1;
+  // The trader's code name (unique across the store, case-insensitive).
+  string name = 2;
+  // Free-text operator description.
+  string description = 3;
+  // Inbound FIX sessions in this group, by connection id (unique within the group).
+  repeated string member_connection_ids = 4;
+  // GUI/API principals in this group, by user id (each must resolve to a user).
+  repeated string member_user_ids = 5;
+  // Desk-level default membership, by desk id (each must resolve to a desk).
+  repeated string member_desks = 6;
+  // The outbound ESP / streaming feature pipeline.
+  FeaturePipelineDesc esp_pipeline = 7;
+  // The outbound RFS/RFQ feature pipeline (ignored when `share_pipeline` is set).
+  FeaturePipelineDesc rfq_pipeline = 8;
+  // When true, the RFS/RFQ mode reuses `esp_pipeline`.
+  bool share_pipeline = 9;
+  // Whether the group is active.
+  bool enabled = 10;
+}
+
+// List the pricing groups (any authenticated caller — a client's assigned pricing is
+// admin-owned but the roster is readable for the GUI, so this is NOT admin-only).
+message ListPricingGroupsRequest {
+  // The caller's bearer token (must resolve to a valid session; not admin-gated).
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The full pricing-group roster.
+message ListPricingGroupsResponse {
+  // Every pricing group, in creation order.
+  repeated PricingGroupDesc groups = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Define a new pricing group (admin only — manages the group STRUCTURE).
+message CreatePricingGroupRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The editable fields of the group to define.
+  PricingGroupSpec spec = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The created pricing group.
+message CreatePricingGroupResponse {
+  // The created group with its server-minted id.
+  PricingGroupDesc group = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Replace an existing pricing group's definition (admin only). The `id` is immutable
+// identity; the spec's own `id` field is ignored.
+message UpdatePricingGroupRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the group to replace (immutable identity).
+  string id = 2;
+  // The new definition.
+  PricingGroupSpec spec = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+// The updated pricing group.
+message UpdatePricingGroupResponse {
+  // The group after the update.
+  PricingGroupDesc group = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Delete a pricing group (admin only).
+message DeletePricingGroupRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the group to delete.
+  string id = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// Delete acknowledgement.
+message DeletePricingGroupResponse {
+  // Whether a group was removed.
+  bool removed = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Retune ONLY a pricing group's outbound pipeline for one mode (the ESP or the RFS/RFQ
+// feature pipeline) + the `share_pipeline` flag, leaving the group's STRUCTURE —
+// id, name, members, enabled flag, and the OTHER mode's pipeline — untouched. Unlike
+// the whole-group create/update/delete (admin only), this is callable by any
+// authenticated caller holding the fixed-income quote-respond capability: the trader
+// owns the outbound pricing; the admin still owns what the group IS and who is in it.
+message UpdatePricingGroupPipelineRequest {
+  // The caller's bearer token (must resolve to a valid session holding the
+  // fixed-income quote-respond capability; NOT admin-gated).
+  string session_token = 1;
+  // The id of the group whose pipeline to retune (immutable identity — the group's
+  // structure and membership are not touched).
+  string group_id = 2;
+  // Which mode's pipeline the `pipeline` payload replaces (ESP or RFS/RFQ).
+  EspOrRfq mode = 3;
+  // The new feature pipeline for the selected `mode`.
+  FeaturePipelineDesc pipeline = 4;
+  // The group's `share_pipeline` flag after the retune (true ⇒ RFS/RFQ reuses ESP).
+  bool share_pipeline = 5;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 6;
+}
+// The group after its pipeline was retuned (structure and membership unchanged).
+message UpdatePricingGroupPipelineResponse {
+  // The updated group (only the selected mode's pipeline + share flag changed).
+  PricingGroupDesc group = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// ===========================================================================
 // LP liquidity ingest — the machine-to-machine feed by which an inbound
 // liquidity connection (the `lp-sim` binary today, any FIX/API LP adapter
 // tomorrow) pushes its per-instrument two-way top-of-book INTO the server, where
@@ -5038,6 +5292,19 @@ service AuthService {
   // Callable by any authenticated caller holding the fixed-income quote-respond
   // capability (NOT admin-gated); the book's structure stays admin-owned.
   rpc UpdateBookTiering(UpdateBookTieringRequest) returns (UpdateBookTieringResponse);
+  // List the pricing groups (any authenticated caller — the roster is readable for
+  // the GUI, so this is NOT admin-only).
+  rpc ListPricingGroups(ListPricingGroupsRequest) returns (ListPricingGroupsResponse);
+  // Define a new pricing group (admin only — the group STRUCTURE + members).
+  rpc CreatePricingGroup(CreatePricingGroupRequest) returns (CreatePricingGroupResponse);
+  // Replace an existing pricing group's definition (admin only).
+  rpc UpdatePricingGroup(UpdatePricingGroupRequest) returns (UpdatePricingGroupResponse);
+  // Delete a pricing group (admin only).
+  rpc DeletePricingGroup(DeletePricingGroupRequest) returns (DeletePricingGroupResponse);
+  // Retune ONLY a pricing group's outbound pipeline for one mode + the share flag.
+  // Callable by any authenticated caller holding the fixed-income quote-respond
+  // capability (NOT admin-gated); the group's structure/membership stay admin-owned.
+  rpc UpdatePricingGroupPipeline(UpdatePricingGroupPipelineRequest) returns (UpdatePricingGroupPipelineResponse);
   // List the instrument reference-data definitions (any authenticated caller —
   // curve-building and pricing resolve against this, so it is NOT admin-only).
   rpc ListInstruments(ListInstrumentsRequest) returns (ListInstrumentsResponse);

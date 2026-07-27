@@ -1301,6 +1301,48 @@ async fn handle_unary(
                 generated_codec::encode_update_book_tiering_response
             )
         }
+        "list_pricing_groups" => {
+            let req = decode!(generated_codec::decode_list_pricing_groups_request(o));
+            call!(
+                services.auth.list_pricing_groups(Request::new(req)),
+                "pricing_groups",
+                generated_codec::encode_list_pricing_groups_response
+            )
+        }
+        "create_pricing_group" => {
+            let req = decode!(generated_codec::decode_create_pricing_group_request(o));
+            call!(
+                services.auth.create_pricing_group(Request::new(req)),
+                "pricing_group_created",
+                generated_codec::encode_create_pricing_group_response
+            )
+        }
+        "update_pricing_group" => {
+            let req = decode!(generated_codec::decode_update_pricing_group_request(o));
+            call!(
+                services.auth.update_pricing_group(Request::new(req)),
+                "pricing_group_updated",
+                generated_codec::encode_update_pricing_group_response
+            )
+        }
+        "delete_pricing_group" => {
+            let req = decode!(generated_codec::decode_delete_pricing_group_request(o));
+            call!(
+                services.auth.delete_pricing_group(Request::new(req)),
+                "pricing_group_deleted",
+                generated_codec::encode_delete_pricing_group_response
+            )
+        }
+        "update_pricing_group_pipeline" => {
+            let req = decode!(generated_codec::decode_update_pricing_group_pipeline_request(o));
+            call!(
+                services
+                    .auth
+                    .update_pricing_group_pipeline(Request::new(req)),
+                "pricing_group_pipeline_updated",
+                generated_codec::encode_update_pricing_group_pipeline_response
+            )
+        }
         "list_instruments" => {
             let req = decode!(generated_codec::decode_list_instruments_request(o));
             call!(

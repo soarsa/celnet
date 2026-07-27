@@ -33,11 +33,14 @@
 use celnet_proto::{
     AggregatedBookDesc, AggregatedBookSnapshot, AggregatedBookStreamSnapshot,
     AggregatedBookStreamUpdate, AggregatedInstrument, AggregationParamsDesc, AggregationScopeMode,
-    BrokenDate, CcyPair, CreateAggregatedBookResponse, DeleteAggregatedBookResponse, Greeks, Leg,
-    ListAggregatedBooksResponse, LpContribution, MarketContext, MetalPair, RateSensitivities,
-    Strategy, StrategyKind, StrikeOrDelta, SubscriptionId, Tenor, TieringConfigDesc,
-    TieringGuardrailsDesc, TieringSpreadUnit, TieringStalePolicy, TieringStrategyDesc,
-    TieringStrategyKind, Underlying, UpdateAggregatedBookResponse, UpdateBookTieringResponse,
+    AxeSide, BrokenDate, CcyPair, CreateAggregatedBookResponse, CreatePricingGroupResponse,
+    DeleteAggregatedBookResponse, DeletePricingGroupResponse, EspOrRfq, FeatureKind,
+    FeaturePipelineDesc, FeatureSpecDesc, Greeks, Leg, ListAggregatedBooksResponse,
+    ListPricingGroupsResponse, LpContribution, MarketContext, MetalPair, PricingGroupDesc,
+    RateSensitivities, Strategy, StrategyKind, StrikeOrDelta, SubscriptionId, Tenor,
+    TieringConfigDesc, TieringGuardrailsDesc, TieringSpreadUnit, TieringStalePolicy,
+    TieringStrategyDesc, TieringStrategyKind, Underlying, UpdateAggregatedBookResponse,
+    UpdateBookTieringResponse, UpdatePricingGroupPipelineResponse, UpdatePricingGroupResponse,
 };
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
@@ -4550,4 +4553,318 @@ fn aggregated_book_stream_update_encode_byte_identical() {
         &generated::encode_aggregated_book_stream_update(&update),
         &hand::hand_aggregated_book_stream_update_to_json(&update),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Pricing groups (Phase 2b — FI client-tiering CRUD + trader pipeline retune)
+// ---------------------------------------------------------------------------
+
+/// A full feature-pipeline JSON body exercising all five feature kinds — a MID_SHIFT
+/// WITH a present `reference` (proto3 optional present), a MID_SHIFT WITHOUT it (absent
+/// ⇒ omitted on re-encode), a TIERING carrying the nested `tiering` message, plus AXE /
+/// POSITION / PANIC_SKEW — so the decode differential covers the optional-scalar and
+/// nested-message paths.
+fn pg_pipeline_body() -> Value {
+    json!({
+        "features": [
+            { "kind": 0, "unit": 0, "shift": 1.5, "reference": 100.25 },
+            { "kind": 0, "unit": 2, "shift": -0.5 },
+            { "kind": 1, "tiering": agg_tiering_body() },
+            { "kind": 2, "unit": 0, "axe_side": 1, "magnitude": 2.0 },
+            { "kind": 3, "unit": 0, "kappa": 1.5, "s_max": 100.0 },
+            { "kind": 4, "unit": 0, "skew": 3.0, "triggered": true }
+        ],
+        "guardrails": { "h_min": 0.0, "h_max": 5.0, "s_max": 2.0, "spread_floor": 0.01 }
+    })
+}
+
+/// The editable pricing-group spec body (both pipelines populated + all membership).
+fn pg_spec_body() -> Value {
+    json!({
+        "id": "",
+        "name": "GROUP-A",
+        "description": "desk tier",
+        "member_connection_ids": ["lp-a", "lp-b"],
+        "member_user_ids": ["u1"],
+        "member_desks": ["fi-desk"],
+        "esp_pipeline": pg_pipeline_body(),
+        "rfq_pipeline": pg_pipeline_body(),
+        "share_pipeline": true,
+        "enabled": true
+    })
+}
+
+/// A fully-populated pricing-group descriptor (both pipelines, all five feature kinds,
+/// a present + an absent `reference`) for the encode differential.
+fn pg_group_desc() -> PricingGroupDesc {
+    let pipeline = FeaturePipelineDesc {
+        features: vec![
+            FeatureSpecDesc {
+                kind: FeatureKind::MidShift as i32,
+                unit: TieringSpreadUnit::PriceBps as i32,
+                shift: 1.5,
+                reference: Some(100.25),
+                ..Default::default()
+            },
+            FeatureSpecDesc {
+                kind: FeatureKind::MidShift as i32,
+                unit: TieringSpreadUnit::PricePoints as i32,
+                shift: -0.5,
+                reference: None,
+                ..Default::default()
+            },
+            FeatureSpecDesc {
+                kind: FeatureKind::Tiering as i32,
+                tiering: Some(TieringConfigDesc {
+                    unit: TieringSpreadUnit::PriceBps as i32,
+                    strategies: vec![TieringStrategyDesc {
+                        kind: TieringStrategyKind::FlatMarkup as i32,
+                        half_spread: 25.0,
+                        ..Default::default()
+                    }],
+                    guardrails: Some(TieringGuardrailsDesc {
+                        h_min: 0.0,
+                        h_max: 5.0,
+                        s_max: 2.0,
+                        spread_floor: 0.01,
+                    }),
+                    stale_policy: TieringStalePolicy::WidenToMax as i32,
+                }),
+                ..Default::default()
+            },
+            FeatureSpecDesc {
+                kind: FeatureKind::Axe as i32,
+                unit: TieringSpreadUnit::PriceBps as i32,
+                axe_side: AxeSide::Sell as i32,
+                magnitude: 2.0,
+                ..Default::default()
+            },
+            FeatureSpecDesc {
+                kind: FeatureKind::Position as i32,
+                unit: TieringSpreadUnit::PriceBps as i32,
+                kappa: 1.5,
+                s_max: 100.0,
+                ..Default::default()
+            },
+            FeatureSpecDesc {
+                kind: FeatureKind::PanicSkew as i32,
+                unit: TieringSpreadUnit::PriceBps as i32,
+                skew: 3.0,
+                triggered: true,
+                ..Default::default()
+            },
+        ],
+        guardrails: Some(TieringGuardrailsDesc {
+            h_min: 0.0,
+            h_max: 5.0,
+            s_max: 2.0,
+            spread_floor: 0.01,
+        }),
+    };
+    PricingGroupDesc {
+        id: "group-a".to_owned(),
+        name: "GROUP-A".to_owned(),
+        description: "desk tier".to_owned(),
+        member_connection_ids: vec!["lp-a".to_owned(), "lp-b".to_owned()],
+        member_user_ids: vec!["u1".to_owned()],
+        member_desks: vec!["fi-desk".to_owned()],
+        esp_pipeline: Some(pipeline.clone()),
+        rfq_pipeline: Some(pipeline),
+        share_pipeline: true,
+        enabled: true,
+    }
+}
+
+#[test]
+fn list_pricing_groups_request_decode_byte_identical() {
+    for (label, body) in [
+        (
+            "full",
+            json!({ "session_token": "tok", "correlation_id": 5 }),
+        ),
+        ("minimal", json!({ "session_token": "tok" })),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("ListPricingGroupsRequest({label})"),
+            generated::decode_list_pricing_groups_request(o),
+            hand::hand_list_pricing_groups_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn create_pricing_group_request_decode_byte_identical() {
+    let body = json!({ "session_token": "tok", "spec": pg_spec_body(), "correlation_id": 7 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "CreatePricingGroupRequest",
+        generated::decode_create_pricing_group_request(o),
+        hand::hand_create_pricing_group_request_from_json(o),
+    );
+    // Minimal spec: no pipelines (⇒ None on both sides), no members.
+    let minimal = json!({ "session_token": "t", "spec": { "name": "Mini" } });
+    let mo = minimal.as_object().expect("object");
+    assert_decode_eq(
+        "CreatePricingGroupRequest(minimal spec)",
+        generated::decode_create_pricing_group_request(mo),
+        hand::hand_create_pricing_group_request_from_json(mo),
+    );
+}
+
+#[test]
+fn update_pricing_group_request_decode_byte_identical() {
+    let body = json!({
+        "session_token": "tok", "id": "group-a", "spec": pg_spec_body(), "correlation_id": 8
+    });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "UpdatePricingGroupRequest",
+        generated::decode_update_pricing_group_request(o),
+        hand::hand_update_pricing_group_request_from_json(o),
+    );
+}
+
+#[test]
+fn delete_pricing_group_request_decode_byte_identical() {
+    let body = json!({ "session_token": "tok", "id": "group-a", "correlation_id": 3 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "DeletePricingGroupRequest",
+        generated::decode_delete_pricing_group_request(o),
+        hand::hand_delete_pricing_group_request_from_json(o),
+    );
+}
+
+#[test]
+fn update_pricing_group_pipeline_request_decode_byte_identical() {
+    // Full: the trader-facing pipeline retune carries the nested `pipeline` message.
+    let body = json!({
+        "session_token": "tok", "group_id": "group-a", "mode": 1,
+        "pipeline": pg_pipeline_body(), "share_pipeline": true, "correlation_id": 9
+    });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "UpdatePricingGroupPipelineRequest(full)",
+        generated::decode_update_pricing_group_pipeline_request(o),
+        hand::hand_update_pricing_group_pipeline_request_from_json(o),
+    );
+    // Minimal: an absent `pipeline` (⇒ None on both sides).
+    let minimal = json!({ "session_token": "tok", "group_id": "group-a" });
+    let mo = minimal.as_object().expect("object");
+    assert_decode_eq(
+        "UpdatePricingGroupPipelineRequest(minimal)",
+        generated::decode_update_pricing_group_pipeline_request(mo),
+        hand::hand_update_pricing_group_pipeline_request_from_json(mo),
+    );
+}
+
+#[test]
+fn list_pricing_groups_response_encode_byte_identical() {
+    let full = ListPricingGroupsResponse {
+        groups: vec![pg_group_desc(), PricingGroupDesc::default()],
+        correlation_id: Some(5),
+    };
+    assert_bytes_eq(
+        "ListPricingGroupsResponse(full)",
+        &generated::encode_list_pricing_groups_response(&full),
+        &hand::hand_list_pricing_groups_response_to_json(&full),
+    );
+    let empty = ListPricingGroupsResponse::default();
+    assert_bytes_eq(
+        "ListPricingGroupsResponse(empty)",
+        &generated::encode_list_pricing_groups_response(&empty),
+        &hand::hand_list_pricing_groups_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn create_pricing_group_response_encode_byte_identical() {
+    let created = CreatePricingGroupResponse {
+        group: Some(pg_group_desc()),
+        correlation_id: Some(7),
+    };
+    assert_bytes_eq(
+        "CreatePricingGroupResponse",
+        &generated::encode_create_pricing_group_response(&created),
+        &hand::hand_create_pricing_group_response_to_json(&created),
+    );
+    // Absent group + correlation_id ⇒ both `null`.
+    let absent = CreatePricingGroupResponse::default();
+    let g = generated::encode_create_pricing_group_response(&absent);
+    assert_eq!(g.get("group"), Some(&Value::Null));
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "CreatePricingGroupResponse(absent)",
+        &g,
+        &hand::hand_create_pricing_group_response_to_json(&absent),
+    );
+}
+
+#[test]
+fn update_pricing_group_response_encode_byte_identical() {
+    let updated = UpdatePricingGroupResponse {
+        group: Some(pg_group_desc()),
+        correlation_id: Some(8),
+    };
+    assert_bytes_eq(
+        "UpdatePricingGroupResponse",
+        &generated::encode_update_pricing_group_response(&updated),
+        &hand::hand_update_pricing_group_response_to_json(&updated),
+    );
+}
+
+#[test]
+fn delete_pricing_group_response_encode_byte_identical() {
+    for (label, resp) in [
+        (
+            "removed",
+            DeletePricingGroupResponse {
+                removed: true,
+                correlation_id: Some(3),
+            },
+        ),
+        (
+            "absent",
+            DeletePricingGroupResponse {
+                removed: false,
+                correlation_id: None,
+            },
+        ),
+    ] {
+        assert_bytes_eq(
+            &format!("DeletePricingGroupResponse({label})"),
+            &generated::encode_delete_pricing_group_response(&resp),
+            &hand::hand_delete_pricing_group_response_to_json(&resp),
+        );
+    }
+}
+
+#[test]
+fn update_pricing_group_pipeline_response_encode_byte_identical() {
+    let updated = UpdatePricingGroupPipelineResponse {
+        group: Some(pg_group_desc()),
+        correlation_id: Some(9),
+    };
+    assert_bytes_eq(
+        "UpdatePricingGroupPipelineResponse",
+        &generated::encode_update_pricing_group_pipeline_response(&updated),
+        &hand::hand_update_pricing_group_pipeline_response_to_json(&updated),
+    );
+    let empty = UpdatePricingGroupPipelineResponse::default();
+    let g = generated::encode_update_pricing_group_pipeline_response(&empty);
+    assert_eq!(g.get("group"), Some(&Value::Null));
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "UpdatePricingGroupPipelineResponse(empty)",
+        &g,
+        &hand::hand_update_pricing_group_pipeline_response_to_json(&empty),
+    );
+}
+
+/// The EspOrRfq mode selector wire values are stable (used by the pipeline RPC decode).
+#[test]
+fn esp_or_rfq_mode_values_are_stable() {
+    assert_eq!(EspOrRfq::Esp as i32, 0);
+    assert_eq!(EspOrRfq::Rfq as i32, 1);
 }

@@ -95,24 +95,29 @@ use celnet_proto::{
     BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
     CreateAggregatedBookRequest, CreateAggregatedBookResponse, CreateBookRequest,
     CreateBookResponse, CreateDeskRequest, CreateDeskResponse, CreateEntityRequest,
-    CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse, CreateUserRequest,
-    CreateUserResponse, DatePillar, DeleteAggregatedBookRequest, DeleteAggregatedBookResponse,
-    DeleteBookRequest, DeleteBookResponse, DeleteDeskRequest, DeleteDeskResponse,
-    DeleteEntityRequest, DeleteEntityResponse, DeleteInstrumentRequest, DeleteInstrumentResponse,
-    DeleteUserRequest, DeleteUserResponse, DepositDef, DeskDesc, EntityDesc, ExternalId, FraDef,
+    CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse,
+    CreatePricingGroupRequest, CreatePricingGroupResponse, CreateUserRequest, CreateUserResponse,
+    DatePillar, DeleteAggregatedBookRequest, DeleteAggregatedBookResponse, DeleteBookRequest,
+    DeleteBookResponse, DeleteDeskRequest, DeleteDeskResponse, DeleteEntityRequest,
+    DeleteEntityResponse, DeleteInstrumentRequest, DeleteInstrumentResponse,
+    DeletePricingGroupRequest, DeletePricingGroupResponse, DeleteUserRequest, DeleteUserResponse,
+    DepositDef, DeskDesc, EntityDesc, ExternalId, FeaturePipelineDesc, FeatureSpecDesc, FraDef,
     GetInstrumentRequest, GetInstrumentResponse, GetRoleCapabilitiesRequest,
     GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest, GetUserCapabilitiesResponse,
     InstrumentDefDesc, InstrumentQuote, ListAggregatedBooksRequest, ListAggregatedBooksResponse,
     ListBooksRequest, ListBooksResponse, ListDesksRequest, ListDesksResponse, ListEntitiesRequest,
-    ListEntitiesResponse, ListInstrumentsRequest, ListInstrumentsResponse, ListUsersRequest,
-    ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, OisDef,
-    ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
+    ListEntitiesResponse, ListInstrumentsRequest, ListInstrumentsResponse,
+    ListPricingGroupsRequest, ListPricingGroupsResponse, ListUsersRequest, ListUsersResponse,
+    LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, OisDef, PricingGroupDesc,
+    PricingGroupSpec, ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
     SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
     StirFutureDef, TieringConfigDesc, TieringGuardrailsDesc, TieringStrategyDesc,
     UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookRequest,
     UpdateBookResponse, UpdateBookTieringRequest, UpdateBookTieringResponse, UpdateDeskRequest,
     UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest,
-    UpdateInstrumentResponse, UpdateUserRequest, UpdateUserResponse, UserDesc, VanillaIrsDef,
+    UpdateInstrumentResponse, UpdatePricingGroupPipelineRequest,
+    UpdatePricingGroupPipelineResponse, UpdatePricingGroupRequest, UpdatePricingGroupResponse,
+    UpdateUserRequest, UpdateUserResponse, UserDesc, VanillaIrsDef,
     instrument_def_desc::Definition as InstrumentDefinition,
 };
 // Aggregated-book composite publish frames (D3): the descriptor-driven ENCODE side
@@ -5820,6 +5825,133 @@ impl WireBuilder for UpdateBookTieringRequest {
     }
 }
 
+impl WireBuilder for FeatureSpecDesc {
+    const MESSAGE: &'static str = "FeatureSpecDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "kind" => self.kind = enum_or_zero(value),
+            "unit" => self.unit = enum_or_zero(value),
+            "shift" => self.shift = f64_or_zero(value),
+            "reference" => self.reference = opt_f64(value),
+            "tiering" => self.tiering = opt_msg::<TieringConfigDesc>(value, "tiering")?,
+            "axe_side" => self.axe_side = enum_or_zero(value),
+            "magnitude" => self.magnitude = f64_or_zero(value),
+            "kappa" => self.kappa = f64_or_zero(value),
+            "s_max" => self.s_max = f64_or_zero(value),
+            "skew" => self.skew = f64_or_zero(value),
+            "triggered" => self.triggered = bool_or_false(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for FeaturePipelineDesc {
+    const MESSAGE: &'static str = "FeaturePipelineDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "features" => self.features = opt_repeated::<FeatureSpecDesc>(value, "feature")?,
+            "guardrails" => {
+                self.guardrails = opt_msg::<TieringGuardrailsDesc>(value, "guardrails")?;
+            }
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for PricingGroupSpec {
+    const MESSAGE: &'static str = "PricingGroupSpec";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "id" => self.id = string_or_empty(value),
+            "name" => self.name = req_string(value, "name")?,
+            "description" => self.description = string_or_empty(value),
+            "member_connection_ids" => self.member_connection_ids = string_vec(value),
+            "member_user_ids" => self.member_user_ids = string_vec(value),
+            "member_desks" => self.member_desks = string_vec(value),
+            "esp_pipeline" => {
+                self.esp_pipeline = opt_msg::<FeaturePipelineDesc>(value, "esp_pipeline")?;
+            }
+            "rfq_pipeline" => {
+                self.rfq_pipeline = opt_msg::<FeaturePipelineDesc>(value, "rfq_pipeline")?;
+            }
+            "share_pipeline" => self.share_pipeline = bool_or_false(value),
+            "enabled" => self.enabled = bool_or_false(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListPricingGroupsRequest {
+    const MESSAGE: &'static str = "ListPricingGroupsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CreatePricingGroupRequest {
+    const MESSAGE: &'static str = "CreatePricingGroupRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "spec" => self.spec = Some(req_msg::<PricingGroupSpec>(value, "spec")?),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdatePricingGroupRequest {
+    const MESSAGE: &'static str = "UpdatePricingGroupRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "spec" => self.spec = Some(req_msg::<PricingGroupSpec>(value, "spec")?),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeletePricingGroupRequest {
+    const MESSAGE: &'static str = "DeletePricingGroupRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdatePricingGroupPipelineRequest {
+    const MESSAGE: &'static str = "UpdatePricingGroupPipelineRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "group_id" => self.group_id = req_string(value, "group_id")?,
+            "mode" => self.mode = enum_or_zero(value),
+            "pipeline" => self.pipeline = opt_msg::<FeaturePipelineDesc>(value, "pipeline")?,
+            "share_pipeline" => self.share_pipeline = bool_or_false(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for ListInstrumentsRequest {
     const MESSAGE: &'static str = "ListInstrumentsRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -6159,6 +6291,60 @@ pub fn decode_update_book_tiering_request(
     o: &Map<String, Value>,
 ) -> DResult<UpdateBookTieringRequest> {
     decode(UpdateBookTieringRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListPricingGroupsRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_pricing_groups_request(
+    o: &Map<String, Value>,
+) -> DResult<ListPricingGroupsRequest> {
+    decode(ListPricingGroupsRequest::MESSAGE, o)
+}
+
+/// Decode a [`CreatePricingGroupRequest`] envelope — the required `spec` nests the
+/// [`PricingGroupSpec`] body (its repeated membership lists and the two nested
+/// [`FeaturePipelineDesc`] pipelines, each carrying the [`FeatureSpecDesc`] array).
+///
+/// # Errors
+/// A missing `session_token`, a missing/malformed `spec`, as a [`CodecError`].
+pub fn decode_create_pricing_group_request(
+    o: &Map<String, Value>,
+) -> DResult<CreatePricingGroupRequest> {
+    decode(CreatePricingGroupRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdatePricingGroupRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`id`, a missing/malformed `spec`, as a [`CodecError`].
+pub fn decode_update_pricing_group_request(
+    o: &Map<String, Value>,
+) -> DResult<UpdatePricingGroupRequest> {
+    decode(UpdatePricingGroupRequest::MESSAGE, o)
+}
+
+/// Decode a [`DeletePricingGroupRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`id`, as a [`CodecError`].
+pub fn decode_delete_pricing_group_request(
+    o: &Map<String, Value>,
+) -> DResult<DeletePricingGroupRequest> {
+    decode(DeletePricingGroupRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdatePricingGroupPipelineRequest`] envelope — the optional `pipeline`
+/// nests the [`FeaturePipelineDesc`] body (its feature array + guardrails), and `mode`
+/// selects which mode's pipeline it replaces.
+///
+/// # Errors
+/// A missing `session_token`/`group_id`, or a malformed `pipeline`, as a [`CodecError`].
+pub fn decode_update_pricing_group_pipeline_request(
+    o: &Map<String, Value>,
+) -> DResult<UpdatePricingGroupPipelineRequest> {
+    decode(UpdatePricingGroupPipelineRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListInstrumentsRequest`] envelope — fully generic.
@@ -6873,6 +7059,111 @@ impl WireAdapter for UpdateBookTieringResponse {
     }
 }
 
+impl WireAdapter for FeatureSpecDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "kind" => Some(WireVal::Enum(self.kind)),
+            "unit" => Some(WireVal::Enum(self.unit)),
+            "shift" => Some(WireVal::F64(self.shift)),
+            // proto3 `optional` scalar: absent ⇒ omitted (the hand codec omits it too).
+            "reference" => self.reference.map(WireVal::F64),
+            "tiering" => self.tiering.as_ref().map(|t| WireVal::Msg(t)),
+            "axe_side" => Some(WireVal::Enum(self.axe_side)),
+            "magnitude" => Some(WireVal::F64(self.magnitude)),
+            "kappa" => Some(WireVal::F64(self.kappa)),
+            "s_max" => Some(WireVal::F64(self.s_max)),
+            "skew" => Some(WireVal::F64(self.skew)),
+            "triggered" => Some(WireVal::Bool(self.triggered)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for FeaturePipelineDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "features" => Some(WireVal::RepeatedMsg(
+                self.features
+                    .iter()
+                    .map(|f| f as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "guardrails" => self.guardrails.as_ref().map(|g| WireVal::Msg(g)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for PricingGroupDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "id" => Some(WireVal::Str(&self.id)),
+            "name" => Some(WireVal::Str(&self.name)),
+            "description" => Some(WireVal::Str(&self.description)),
+            "member_connection_ids" => Some(WireVal::RepeatedStr(&self.member_connection_ids)),
+            "member_user_ids" => Some(WireVal::RepeatedStr(&self.member_user_ids)),
+            "member_desks" => Some(WireVal::RepeatedStr(&self.member_desks)),
+            "esp_pipeline" => self.esp_pipeline.as_ref().map(|p| WireVal::Msg(p)),
+            "rfq_pipeline" => self.rfq_pipeline.as_ref().map(|p| WireVal::Msg(p)),
+            "share_pipeline" => Some(WireVal::Bool(self.share_pipeline)),
+            "enabled" => Some(WireVal::Bool(self.enabled)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListPricingGroupsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "groups" => Some(WireVal::RepeatedMsg(
+                self.groups.iter().map(|g| g as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CreatePricingGroupResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "group" => self.group.as_ref().map(|g| WireVal::Msg(g)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdatePricingGroupResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "group" => self.group.as_ref().map(|g| WireVal::Msg(g)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeletePricingGroupResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "removed" => Some(WireVal::Bool(self.removed)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdatePricingGroupPipelineResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "group" => self.group.as_ref().map(|g| WireVal::Msg(g)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for ListInstrumentsResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -7096,6 +7387,38 @@ pub fn encode_delete_aggregated_book_response(r: &DeleteAggregatedBookResponse) 
 #[must_use]
 pub fn encode_update_book_tiering_response(r: &UpdateBookTieringResponse) -> Value {
     encode("UpdateBookTieringResponse", r)
+}
+
+/// Encode a [`ListPricingGroupsResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_pricing_groups_response(r: &ListPricingGroupsResponse) -> Value {
+    encode("ListPricingGroupsResponse", r)
+}
+
+/// Encode a [`CreatePricingGroupResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_create_pricing_group_response(r: &CreatePricingGroupResponse) -> Value {
+    encode("CreatePricingGroupResponse", r)
+}
+
+/// Encode an [`UpdatePricingGroupResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_pricing_group_response(r: &UpdatePricingGroupResponse) -> Value {
+    encode("UpdatePricingGroupResponse", r)
+}
+
+/// Encode a [`DeletePricingGroupResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_delete_pricing_group_response(r: &DeletePricingGroupResponse) -> Value {
+    encode("DeletePricingGroupResponse", r)
+}
+
+/// Encode an [`UpdatePricingGroupPipelineResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_pricing_group_pipeline_response(
+    r: &UpdatePricingGroupPipelineResponse,
+) -> Value {
+    encode("UpdatePricingGroupPipelineResponse", r)
 }
 
 /// Encode a [`ListInstrumentsResponse`] to its WS JSON — descriptor-driven.
