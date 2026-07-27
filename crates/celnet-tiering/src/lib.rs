@@ -43,12 +43,16 @@
 
 mod config;
 mod context;
+mod feature;
+mod feature_pipeline;
 mod pipeline;
 mod strategy;
 mod unit;
 
 pub use config::{StrategySpec, TieringConfig};
 pub use context::{Mid, QuoteCtx, SpreadSkew, TwoWay};
+pub use feature::{AxeSide, FeatureKind, PricingCtx, PricingFeature};
+pub use feature_pipeline::{FeaturePipeline, FeatureSpec, PricedResult};
 pub use pipeline::{Guardrails, StalePolicy, SuppressReason, Suppressed, quote};
 pub use strategy::{FlatMarkup, InventorySkew, ScaledSmoothedSpread, TieringStrategy, smooth};
 pub use unit::{SpreadUnit, TieringError};

@@ -61,6 +61,32 @@ impl Guardrails {
             Err(Suppressed::new(SuppressReason::InvalidConfig))
         }
     }
+
+    /// Enforce the price-space invariants on an **already-formed** two-way,
+    /// preserving its centre. Clamps the half-spread to `[h_min, h_max]` then
+    /// floors it to `spread_floor/2`, so `offer − bid = 2h ≥ spread_floor > 0`
+    /// and hence `bid < offer` — the anti-cross safety net, in the exact clamp
+    /// order [`quote`]'s [`finalize`] uses.
+    ///
+    /// The free [`quote`] path builds the two-way from a mid and its `(h, s)`
+    /// contributions and guards them there; this method guards an **arbitrary
+    /// running two-way** produced by a composed chain of pricing features (see
+    /// [`crate::FeaturePipeline`]), where the skew is already baked into the
+    /// centre and only the width needs bounding. Panic-safe against an
+    /// inconsistent `h_min > h_max` (orders the clamp bounds); assumes a finite
+    /// input two-way (the upstream composite is validated before pricing).
+    #[must_use]
+    pub fn enforce(&self, tw: TwoWay) -> TwoWay {
+        let center = 0.5 * (tw.bid + tw.offer);
+        let half = 0.5 * (tw.offer - tw.bid);
+        let lo = self.h_min.min(self.h_max);
+        let hi = self.h_min.max(self.h_max);
+        let half = half.clamp(lo, hi).max(self.spread_floor / 2.0);
+        TwoWay {
+            bid: center - half,
+            offer: center + half,
+        }
+    }
 }
 
 /// What to do when the upstream composite is stale / the LP quorum is lost.
