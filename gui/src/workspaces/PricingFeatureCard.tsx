@@ -17,6 +17,8 @@
 
 import type { AxeSide, FeatureSpec, TieringConfig } from "../data/contract";
 import { TieringEditor } from "../components/TieringEditor";
+import { HelpButton } from "../components/HelpButton";
+import { FEATURE_HELP_ID } from "../lib/help";
 import {
   AXE_SIDE_LABEL,
   AXE_SIDES,
@@ -114,6 +116,7 @@ export function PricingFeatureCard({
           </span>
         </button>
         <span className={styles.cardControls}>
+          <HelpButton helpId={FEATURE_HELP_ID[feature.kind]} subject={label} />
           <button
             type="button"
             className={styles.iconBtn}

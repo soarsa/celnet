@@ -1,0 +1,178 @@
+/* TourOverlay — the coach-mark layer. The layer itself passes pointer events
+ * through so the app stays interactive during a tour; only the tooltip captures. */
+
+.layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  pointer-events: none;
+}
+
+/* The spotlight: a transparent box over the target with a huge box-shadow that
+ * dims everything OUTSIDE it, plus an accent ring. pointer-events stay off so the
+ * highlighted control remains clickable. */
+.spot {
+  position: fixed;
+  border-radius: var(--r-sm);
+  box-shadow:
+    0 0 0 9999px oklch(0 0 0 / 0.55),
+    0 0 0 2px var(--accent),
+    0 0 0 6px var(--accent-soft);
+  transition: top 160ms var(--ease-out), left 160ms var(--ease-out),
+    width 160ms var(--ease-out), height 160ms var(--ease-out);
+  pointer-events: none;
+}
+
+.tip {
+  position: fixed;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  pointer-events: auto;
+  background: var(--bg-overlay-solid);
+  border: var(--hairline);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-hud);
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.tip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tipHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.tourName {
+  font-family: var(--font-display);
+  font-size: var(--type-caption);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.counter {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+.tipTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--type-headline);
+  line-height: var(--type-headline-lh);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+
+.tipBody {
+  margin: 0;
+  font-size: var(--type-body);
+  line-height: var(--type-body-lh);
+  color: var(--text-secondary);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--type-callout);
+  line-height: var(--type-callout-lh);
+  color: var(--warn);
+  padding: var(--space-2) var(--space-3);
+  background: oklch(0.82 0.16 75 / 0.12);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--r-sm);
+}
+
+.tipFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.nav {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.skip {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--space-2);
+}
+
+.skip:hover {
+  color: var(--text-secondary);
+}
+
+.back {
+  font-size: var(--type-body);
+  color: var(--text-secondary);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+}
+
+.back:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.nextBtn {
+  font-family: var(--font-display);
+  font-size: var(--type-body);
+  font-weight: var(--weight-emphasis);
+  color: oklch(0.16 0.012 264);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-5);
+  cursor: pointer;
+}
+
+.nextBtn:hover {
+  filter: brightness(1.08);
+}
+
+.skip:focus-visible,
+.back:focus-visible,
+.nextBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spot {
+    transition: none;
+  }
+  .nextBtn:hover {
+    filter: none;
+  }
+}

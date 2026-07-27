@@ -23,6 +23,8 @@ import type {
 import {
   defaultTieringConfig,
   defaultTieringStrategy,
+  outboundTwoWayPreview,
+  TIERING_PREVIEW_RAW,
   TIERING_SPREAD_UNIT_LABEL,
   TIERING_SPREAD_UNITS,
   TIERING_STALE_POLICIES,
@@ -33,7 +35,14 @@ import {
   TIERING_STRATEGY_META,
   type TieringErrors,
 } from "../lib/tiering";
+import { STRATEGY_HELP_ID } from "../lib/help";
+import { HelpButton } from "./HelpButton";
 import styles from "./TieringEditor.module.css";
+
+/** Format a preview price: 2–5 dp, trimming trailing zeros beyond 2. */
+function fmtPrice(n: number): string {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 });
+}
 
 interface TieringEditorProps {
   /** The current config, or `null` when tiering is disabled. */
@@ -110,6 +119,9 @@ export function TieringEditor({
         </p>
       ) : (
         <div className={styles.body}>
+          {/* Live worked-example preview: the sample LP composite through this config. */}
+          <TieringPreview config={value} />
+
           {/* Spread unit. */}
           <div className={styles.field}>
             <label className={styles.fieldLabel} htmlFor={`${idPrefix}-unit`}>
@@ -119,6 +131,7 @@ export function TieringEditor({
               id={`${idPrefix}-unit`}
               className={styles.select}
               value={value.unit}
+              data-tour-id="tiering-unit"
               onChange={(e) => setUnit(e.target.value as TieringSpreadUnit)}
             >
               {TIERING_SPREAD_UNITS.map((u) => (
@@ -140,22 +153,20 @@ export function TieringEditor({
                 const isScaled = s.kind === "SCALED_SMOOTHED_SPREAD";
                 const meta = TIERING_STRATEGY_META[s.kind];
                 return (
-                  <div key={i} className={styles.strategyCard}>
+                  <div
+                    key={i}
+                    className={styles.strategyCard}
+                    data-tour-id={i === 0 ? "tiering-strategy" : undefined}
+                  >
                     <div className={styles.strategyHead}>
                       <span className={styles.strategyKind}>
                         <span className={styles.kindBadge}>
                           {TIERING_STRATEGY_KIND_LABEL[s.kind]}
                         </span>
-                        <a
-                          className={styles.docLink}
-                          href={meta.docHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={`${meta.purpose} — opens the “how to use” documentation`}
-                          aria-label={`How to use the ${meta.title} strategy (documentation)`}
-                        >
-                          ?
-                        </a>
+                        <HelpButton
+                          helpId={STRATEGY_HELP_ID[s.kind]}
+                          subject={`the ${meta.title} strategy`}
+                        />
                       </span>
                       <button
                         type="button"
@@ -177,6 +188,7 @@ export function TieringEditor({
                             type="number"
                             step="any"
                             value={s.halfSpread}
+                            data-tour-id={i === 0 ? "tiering-bps" : undefined}
                             aria-invalid={se.halfSpread ? true : undefined}
                             onChange={(e) =>
                               patchStrategy(i, { halfSpread: Number(e.target.value) })
@@ -339,7 +351,7 @@ export function TieringEditor({
           </div>
 
           {/* Guardrails. */}
-          <div className={styles.field}>
+          <div className={styles.field} data-tour-id="tiering-guardrails">
             <span className={styles.fieldLabel}>Guardrails (price points)</span>
             <div className={styles.grid}>
               <label className={styles.param} htmlFor={`${idPrefix}-hmin`}>
@@ -426,5 +438,33 @@ export function TieringEditor({
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * TieringPreview — the live, in-editor worked example: the sample LP composite
+ * {@link TIERING_PREVIEW_RAW} (99.50 / 99.60) fed through the current config to the
+ * outbound two-way (Flat ±25 bp ⇒ 99.30 / 99.80). Indicative only — the server
+ * computes the authoritative price — and the tour's "live preview" anchor.
+ */
+function TieringPreview({ config }: { config: TieringConfig }): React.ReactElement {
+  const out = outboundTwoWayPreview(config);
+  const usesYield = config.unit === "YIELD_BPS";
+  return (
+    <div className={styles.preview} data-tour-id="tiering-preview" aria-label="sample outbound two-way">
+      <span className={styles.previewLabel}>Sample</span>
+      <span className={styles.previewRaw}>
+        LP {fmtPrice(TIERING_PREVIEW_RAW.bid)} / {fmtPrice(TIERING_PREVIEW_RAW.offer)}
+      </span>
+      <span className={styles.previewArrow} aria-hidden="true">
+        →
+      </span>
+      <span className={styles.previewOut}>
+        you stream {fmtPrice(out.bid)} / {fmtPrice(out.offer)}
+      </span>
+      {usesYield && (
+        <span className={styles.previewNote}>indicative (server scales yield bps by DV01)</span>
+      )}
+    </div>
   );
 }

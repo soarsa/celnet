@@ -540,7 +540,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
           <div className={styles.rosterHead}>
             <h3 className={styles.rosterTitle}>Groups</h3>
             {isAdmin && (
-              <Button variant="ghost" onClick={startCreate}>
+              <Button variant="ghost" onClick={startCreate} data-tour-id="pg-new">
                 + New
               </Button>
             )}
@@ -713,7 +713,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
               {activePipeline !== null && (
                 <>
                   {/* Feature palette. */}
-                  <div className={styles.section}>
+                  <div className={styles.section} data-tour-id="pg-palette">
                     <h4 className={styles.sectionHead}>Feature palette</h4>
                     <div className={styles.palette}>
                       <div className={styles.paletteChips} role="list" aria-label="feature palette">

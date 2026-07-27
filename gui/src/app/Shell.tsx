@@ -17,6 +17,8 @@ import { createRoot } from "react-dom/client";
 import { useApp } from "./AppContext";
 import { CommandPalette } from "../components/CommandPalette";
 import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
+import { HelpCenter } from "../components/HelpCenter";
+import { TourProvider } from "./TourProvider";
 import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
 import { MarketDataWorkspace } from "../workspaces/MarketDataWorkspace";
@@ -124,6 +126,8 @@ export function Shell(): React.ReactElement {
   const { appearance, toggleAppearance, toggleContrast } = useAppearance();
   // The keyboard-shortcut cheatsheet overlay (bound to `?`). Shell-local UI.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // The searchable Help & tutorials center (opened from the header "?" affordance).
+  const [helpCenterOpen, setHelpCenterOpen] = useState(false);
 
   // Navigation gating (single source: lib/commands.ts) is THREE-state
   // (DEC-license-gating-and-scope), now over the ONE class-parametric rail
@@ -276,6 +280,7 @@ export function Shell(): React.ReactElement {
   // inner instance shadows the outer for this subtree (idiomatic provider nesting).
   return (
     <SettingsProvider>
+    <TourProvider>
     <div className={styles.shell}>
       <aside className={styles.rail} aria-label="workspaces">
         <div className={styles.brand} title="Celnet — a Celer Technologies product">
@@ -391,7 +396,7 @@ export function Shell(): React.ReactElement {
             );
           })}
         </div>
-        <TitleBar />
+        <TitleBar onOpenHelp={() => setHelpCenterOpen(true)} />
         {/*
          * P0-11: every workspace stays MOUNTED; we toggle visibility rather than
          * conditionally rendering. The canvas iterates the FULL single rail (every
@@ -425,12 +430,14 @@ export function Shell(): React.ReactElement {
       <ScopeSwitcher />
       <SignInDialog />
       <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <HelpCenter open={helpCenterOpen} onClose={() => setHelpCenterOpen(false)} />
     </div>
+    </TourProvider>
     </SettingsProvider>
   );
 }
 
-function TitleBar(): React.ReactElement {
+function TitleBar({ onOpenHelp }: { onOpenHelp: () => void }): React.ReactElement {
   const app = useApp();
   // The counterparty simulator is a top-bar TOOL (not a domain tab), gated on
   // `simulate·fixed_income`: a lacking user sees it DISABLED with the denial
@@ -469,6 +476,18 @@ function TitleBar(): React.ReactElement {
           ⚗
         </span>
         <span>Simulator</span>
+      </button>
+      <button
+        type="button"
+        className={styles.simBtn}
+        onClick={onOpenHelp}
+        title="Help & tutorials — search features and launch guided walkthroughs"
+        aria-label="open help and tutorials"
+      >
+        <span className={styles.simGlyph} aria-hidden>
+          ?
+        </span>
+        <span>Help</span>
       </button>
       <SettingsPanel />
       <NotificationCenter />

@@ -50,6 +50,8 @@ const FIDELITY_SPECS = [
   /adminSectionTabs\.e2e\.ts/,
   // Pricing-groups pipeline builder — offline (mock transport), no cargo edge.
   /pricingGroups\.e2e\.ts/,
+  // Help & guided-tutorials system — offline (mock transport), no cargo edge.
+  /help\.e2e\.ts/,
 ];
 
 /**

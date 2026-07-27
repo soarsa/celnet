@@ -133,31 +133,6 @@
   background: var(--accent-soft);
 }
 
-.docLink {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: var(--hairline);
-  color: var(--text-tertiary);
-  font-size: var(--type-caption);
-  font-weight: var(--weight-header);
-  line-height: 1;
-  text-decoration: none;
-  cursor: help;
-  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
-}
-
-.docLink:hover,
-.docLink:focus-visible {
-  color: var(--accent);
-  border-color: color-mix(in oklch, var(--accent) 60%, transparent);
-  background: var(--accent-soft);
-  outline: none;
-}
-
 .strategyHint {
   margin: 0;
   color: var(--text-tertiary);
@@ -225,4 +200,48 @@
   margin: 0;
   color: var(--danger, oklch(62% 0.2 25));
   font-size: var(--type-caption);
+}
+
+/* Live worked-example preview strip (the sample LP composite → outbound two-way). */
+.preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--bg-inset);
+}
+
+.previewLabel {
+  font-family: var(--font-display);
+  font-size: var(--type-micro);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.previewRaw {
+  font-family: var(--font-mono);
+  font-size: var(--type-callout);
+  color: var(--text-secondary);
+}
+
+.previewArrow {
+  color: var(--accent);
+  font-weight: var(--weight-header);
+}
+
+.previewOut {
+  font-family: var(--font-mono);
+  font-size: var(--type-body);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+.previewNote {
+  width: 100%;
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
 }

@@ -1,0 +1,286 @@
+/* HelpPanel — a portal modal rendering one help topic. Follows the app's dialog
+ * material (scrim + floating panel), the design tokens, and both appearances. */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background: oklch(0 0 0 / 0.5);
+  backdrop-filter: blur(var(--blur-float));
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 100%);
+  max-height: min(84vh, 900px);
+  background: var(--bg-overlay-solid);
+  border: var(--hairline);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-hud);
+  overflow: hidden;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+  border-bottom: var(--hairline);
+}
+
+.headMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.badge {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: var(--type-caption);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  background: var(--accent-soft);
+  padding: 2px var(--space-3);
+  border-radius: var(--r-full);
+  margin-bottom: var(--space-3);
+}
+
+.badge[data-category="feature"] {
+  background: var(--brand-soft);
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: var(--type-title);
+  line-height: var(--type-title-lh);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.purpose {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-body);
+  line-height: var(--type-body-lh);
+  color: var(--text-secondary);
+}
+
+.close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--text-primary);
+  background: var(--bg-inset);
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sectionTitle {
+  font-family: var(--font-display);
+  font-size: var(--type-caption);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+.riskTitle {
+  color: var(--warn);
+}
+
+.prose {
+  margin: 0;
+  font-size: var(--type-body);
+  line-height: var(--type-body-lh);
+  color: var(--text-primary);
+}
+
+.scenario {
+  margin: 0;
+  font-size: var(--type-callout);
+  line-height: var(--type-callout-lh);
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Worked example — a compact two-column table of labelled figures. */
+.example {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  border: var(--hairline);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.exampleRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) 1.3fr;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--hairline);
+}
+
+.exampleRow:last-child {
+  border-bottom: none;
+}
+
+.exampleRow:nth-child(odd) {
+  background: var(--bg-inset);
+}
+
+.exampleLabel {
+  margin: 0;
+  font-size: var(--type-callout);
+  color: var(--text-secondary);
+}
+
+.exampleValue {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-callout);
+  color: var(--text-primary);
+}
+
+.takeaway {
+  margin: 0;
+  font-size: var(--type-callout);
+  line-height: var(--type-callout-lh);
+  color: var(--bid);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--bid);
+}
+
+.steps {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.step {
+  font-size: var(--type-body);
+  line-height: var(--type-body-lh);
+  color: var(--text-primary);
+}
+
+.twoCol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-6);
+}
+
+@media (max-width: 560px) {
+  .twoCol {
+    grid-template-columns: 1fr;
+  }
+  .exampleRow {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  border-top: var(--hairline);
+  background: var(--bg-raised);
+}
+
+.footHint {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.kbd {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  padding: 1px 5px;
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+}
+
+.tourBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--type-body);
+  font-weight: var(--weight-emphasis);
+  color: oklch(0.16 0.012 264);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--r-sm);
+  padding: var(--space-3) var(--space-5);
+  cursor: pointer;
+}
+
+.tourBtn:hover {
+  filter: brightness(1.08);
+}
+
+.tourBtn:focus-visible,
+.doneBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.doneBtn {
+  font-size: var(--type-body);
+  color: var(--text-secondary);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  padding: var(--space-3) var(--space-5);
+  cursor: pointer;
+}
+
+.doneBtn:hover {
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tourBtn:hover {
+    filter: none;
+  }
+}

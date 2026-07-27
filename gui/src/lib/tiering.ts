@@ -293,3 +293,106 @@ export function hasTieringErrors(errors: TieringErrors): boolean {
     Object.keys(errors.guardrails).length > 0
   );
 }
+
+// --- indicative outbound preview (the worked example, in-editor) --------------
+
+/** A two-way bid/offer pair the preview surfaces. */
+export interface PreviewTwoWay {
+  bid: number;
+  offer: number;
+}
+
+/**
+ * The canonical worked-example raw composite: LP bid 99.50 / offer 99.60 (mid
+ * 99.55, market spread 0.10). Flat ±25 price-bps tiering turns it into 99.30 /
+ * 99.80 — the reference example in `docs/FI-TIERING-RESEARCH.md` §1/§9.
+ */
+export const TIERING_PREVIEW_RAW: PreviewTwoWay = { bid: 99.5, offer: 99.6 };
+
+/** The sample signed inventory the INVENTORY_SKEW lean is computed against. */
+const PREVIEW_INVENTORY = 1;
+
+/**
+ * Convert a spread magnitude expressed in `unit` to absolute PRICE POINTS around
+ * `mid`. PRICE_BPS: 1 bp = 0.01 points (25 → 0.25). PRICE_POINTS: as-is. PERCENT:
+ * `mid · v/100`. YIELD_BPS is DV01-dependent on the server; the in-editor preview
+ * treats it like price bps as an INDICATIVE view (the outbound label flags this).
+ */
+export function spreadUnitToPoints(value: number, unit: TieringSpreadUnit, mid: number): number {
+  switch (unit) {
+    case "PRICE_BPS":
+    case "YIELD_BPS":
+      return value / 100;
+    case "PRICE_POINTS":
+      return value;
+    case "PERCENT":
+      return (mid * value) / 100;
+    default:
+      return value;
+  }
+}
+
+function clampNum(x: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, x));
+}
+
+/**
+ * Compute the INDICATIVE outbound two-way a tiering config produces from a raw
+ * composite (defaults to {@link TIERING_PREVIEW_RAW}). This mirrors the server's
+ * pipeline enough to make the editor legible — it is NOT the authoritative price:
+ *
+ *  - SCALED_SMOOTHED_SPREAD present ⇒ it is the spread SOURCE: the output spread
+ *    `O = min(m, c·(1 + P))` from the divergence of the observed raw spread
+ *    (single-shot, S = R with no history); the two-way is symmetric `M ± O/2`.
+ *  - otherwise ⇒ half-spread `h = Σ FLAT/INVENTORY halfSpread` (unit-converted).
+ *  - INVENTORY_SKEW adds a lean `s = Σ clamp(κ·q, ±sMax)` (unit-converted), shifting
+ *    the whole two-way: `bid = M − h − s, offer = M + h − s`.
+ *  - guardrails clamp `h ∈ [hMin, hMax]`, enforce `spread_floor`, and cap `|s| ≤ sMax`.
+ *
+ * A disabled config (`null`) returns the raw composite unchanged.
+ */
+export function outboundTwoWayPreview(
+  config: TieringConfig | null,
+  raw: PreviewTwoWay = TIERING_PREVIEW_RAW,
+): PreviewTwoWay {
+  const mid = (raw.bid + raw.offer) / 2;
+  const rawSpread = raw.offer - raw.bid;
+  if (config === null) return { ...raw };
+
+  const scaled = config.strategies.find((s) => s.kind === "SCALED_SMOOTHED_SPREAD");
+  let half: number;
+  if (scaled) {
+    // Divergence of the observed raw spread from the expected level (S = R, one-shot).
+    const d = Math.abs(rawSpread - scaled.expectedSpread);
+    const p =
+      d <= scaled.maxDivergence || scaled.expectedSpread === 0
+        ? 0
+        : (scaled.spreadScaleFactor * d) / scaled.expectedSpread;
+    const output = Math.min(scaled.maxOutputSpread, scaled.coreSpread * (1 + p));
+    half = output / 2;
+  } else {
+    half = config.strategies.reduce(
+      (sum, s) =>
+        s.kind === "FLAT_MARKUP" || s.kind === "INVENTORY_SKEW"
+          ? sum + spreadUnitToPoints(s.halfSpread, config.unit, mid)
+          : sum,
+      0,
+    );
+  }
+
+  let skew = config.strategies.reduce((sum, s) => {
+    if (s.kind !== "INVENTORY_SKEW") return sum;
+    const kappaPts = spreadUnitToPoints(s.kappa * PREVIEW_INVENTORY, config.unit, mid);
+    const sMaxPts = spreadUnitToPoints(s.sMax, config.unit, mid);
+    return sum + clampNum(kappaPts, -sMaxPts, sMaxPts);
+  }, 0);
+
+  const g = config.guardrails;
+  if (g !== null) {
+    half = clampNum(half, g.hMin, g.hMax);
+    if (2 * half < g.spreadFloor) half = g.spreadFloor / 2;
+    skew = clampNum(skew, -g.sMax, g.sMax);
+  }
+
+  return { bid: mid - half - skew, offer: mid + half - skew };
+}

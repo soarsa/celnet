@@ -1,0 +1,29 @@
+/* HelpButton — a small round "?" trigger, tuned to sit inline with a strategy
+ * badge or a feature-card heading. Accessible focus ring; both appearances. */
+
+.help {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font-family: var(--font-display);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  line-height: 1;
+  color: var(--text-primary);
+  background: var(--accent-soft);
+  border: var(--hairline);
+  border-radius: var(--r-full);
+  cursor: pointer;
+}
+
+.help:hover {
+  color: oklch(0.16 0.012 264);
+  background: var(--accent);
+}
+
+.help:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
