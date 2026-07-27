@@ -89,17 +89,11 @@
 /* --- body: roster + editor ------------------------------------------------ */
 
 .body {
-  display: grid;
-  grid-template-columns: minmax(220px, 300px) 1fr;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-4);
   min-height: 0;
   flex: 1;
-}
-
-@media (max-width: 960px) {
-  .body {
-    grid-template-columns: 1fr;
-  }
 }
 
 .roster {
@@ -107,6 +101,8 @@
   flex-direction: column;
   gap: var(--space-2);
   min-height: 0;
+  width: 100%;
+  max-width: 860px;
   overflow-y: auto;
 }
 
@@ -206,14 +202,6 @@
 }
 
 /* --- editor pane ---------------------------------------------------------- */
-
-.editorPane {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  gap: var(--space-4);
-  overflow-y: auto;
-}
 
 .editorId {
   font-family: var(--font-mono);
@@ -851,4 +839,119 @@
   margin: 0;
   font-size: var(--type-caption);
   color: var(--text-tertiary);
+}
+
+/* --- editor modal (portal) ------------------------------------------------ */
+/* Scrim z-index sits BELOW the guided-tour layer (1100) so the tour spotlight +
+   tooltip render above the modal and can highlight the palette / canvas inside it. */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 6vh var(--space-5) var(--space-5);
+  background: oklch(0 0 0 / 0.5);
+  -webkit-backdrop-filter: blur(var(--blur-float, 6px));
+  backdrop-filter: blur(var(--blur-float, 6px));
+  animation: pg-scrim-in 120ms var(--ease-out, ease);
+}
+
+@keyframes pg-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.modal {
+  width: min(960px, 96vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg, 12px);
+  background: var(--bg-overlay-solid, var(--bg-surface));
+  border: var(--hairline);
+  box-shadow: var(--shadow-float, var(--shadow-hud, 0 20px 50px rgb(0 0 0 / 0.35)));
+  overflow: hidden;
+  animation: pg-modal-in 140ms var(--ease-out, ease);
+}
+
+@keyframes pg-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.99);
+  }
+}
+
+.modalHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--hairline);
+}
+
+.modalTitleWrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.modalGlyph {
+  font-size: 1.1em;
+  color: var(--text-secondary);
+}
+
+.modalTitle {
+  margin: 0;
+  font-family: var(--font-brand, var(--font-ui));
+  font-size: var(--type-headline);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modalClose {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: var(--hairline);
+  border-radius: var(--r-sm, 6px);
+  background: var(--bg-raised, var(--bg-surface));
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.modalClose:hover {
+  color: var(--text-primary);
+  background: var(--bg-inset);
+}
+
+.modalClose:focus-visible {
+  outline: 2px solid var(--accent, var(--focus-ring, dodgerblue));
+  outline-offset: 2px;
+}
+
+.modalBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .modal {
+    animation: none;
+  }
 }

@@ -18,11 +18,12 @@
  * capability the server enforces.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useApp } from "../app/AppContext";
+import { useTour } from "../app/TourProvider";
 import { Button } from "../components/Button";
-import { Panel } from "../components/Panel";
 import type {
   DeskDesc,
   FeatureKind,
@@ -59,6 +60,10 @@ import styles from "./PricingGroupsWorkspace.module.css";
 const PRICING_MODES: readonly PricingMode[] = ["ESP", "RFQ"];
 const PRICING_MODE_LABEL: Record<PricingMode, string> = { ESP: "ESP (streaming)", RFQ: "RFQ / RFS" };
 const EMPTY_PIPELINE_ERRORS: PipelineErrors = { features: {}, guardrails: {} };
+
+/** Interactive elements eligible for the editor modal's focus trap. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** A fresh blank group draft for the Create flow (id blank ⇒ server mints from name). */
 function blankGroup(): PricingGroup {
@@ -116,6 +121,7 @@ const fmt = (n: number): string => n.toFixed(4);
 
 export function PricingGroupsWorkspace(): React.ReactElement {
   const app = useApp();
+  const { activeTourId } = useTour();
   const { auth } = app;
   const signedIn = auth.user !== undefined && auth.user !== null;
   const isAdmin = auth.isAdmin;
@@ -135,6 +141,14 @@ export function PricingGroupsWorkspace(): React.ReactElement {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [dragCardIndex, setDragCardIndex] = useState<number | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+
+  // The editor is a dismissible portal modal over the group list (opened by "New"
+  // or by selecting a group; closed by X / Esc / backdrop / Cancel / a successful save).
+  const [editorOpen, setEditorOpen] = useState(false);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
+  const titleId = useId();
 
   const [connections, setConnections] = useState<FixConnection[]>([]);
   const [users, setUsers] = useState<UserDesc[]>([]);
@@ -223,6 +237,8 @@ export function PricingGroupsWorkspace(): React.ReactElement {
     setCreating(false);
     seededRef.current = null; // force a reseed even if id matches a stale ref
     setSelectedId(id);
+    setSaveState({ kind: "idle" });
+    setEditorOpen(true);
   }, []);
 
   const startCreate = useCallback((): void => {
@@ -232,6 +248,79 @@ export function PricingGroupsWorkspace(): React.ReactElement {
     setMode("ESP");
     setExpandedFeature(null);
     setSaveState({ kind: "idle" });
+    setEditorOpen(true);
+  }, []);
+
+  // Close the editor modal, discarding any unsaved edits (a create is dropped; an
+  // edit reseeds from the stored group) — the app's "simple close" dialog behaviour.
+  const closeEditor = useCallback((): void => {
+    setEditorOpen(false);
+    setExpandedFeature(null);
+    setSaveState({ kind: "idle" });
+    if (creating) {
+      setCreating(false);
+      setSelectedId(null);
+      setDraft(null);
+      seededRef.current = null;
+    } else {
+      setDraft(selectedGroup ? cloneGroup(selectedGroup) : null);
+    }
+  }, [creating, selectedGroup]);
+
+  // Move focus into the modal on open (first editable field, else the close button)
+  // and return it to the opener on close. Mirrors the app's dialog pattern.
+  useEffect(() => {
+    if (!editorOpen) return;
+    openerRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const raf = requestAnimationFrame(() => {
+      const modal = modalRef.current;
+      const target =
+        modal?.querySelector<HTMLElement>(
+          "input:not([disabled]), select:not([disabled]), textarea:not([disabled])",
+        ) ??
+        closeBtnRef.current ??
+        null;
+      target?.focus();
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      openerRef.current?.focus();
+    };
+  }, [editorOpen]);
+
+  // Esc closes the modal — but a running guided tour owns Esc (Skip) while it
+  // spotlights the in-modal targets, so yield to it.
+  useEffect(() => {
+    if (!editorOpen) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape" && activeTourId === null) {
+        e.preventDefault();
+        closeEditor();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editorOpen, activeTourId, closeEditor]);
+
+  // Keep Tab focus cycling within the open modal (a lightweight focus trap).
+  const onModalKeyDown = useCallback((e: React.KeyboardEvent): void => {
+    if (e.key !== "Tab") return;
+    const modal = modalRef.current;
+    if (!modal) return;
+    const focusables = Array.from(modal.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+      (el) => el.offsetParent !== null || el === document.activeElement,
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0] as HTMLElement;
+    const last = focusables[focusables.length - 1] as HTMLElement;
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   }, []);
 
   const startClone = useCallback((): void => {
@@ -254,6 +343,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
       seededRef.current = null;
       setSelectedId(list.length > 0 ? (list[0] as PricingGroup).id : null);
       setSaveState({ kind: "idle" });
+      setEditorOpen(false);
     } catch (e: unknown) {
       setSaveState({ kind: "error", message: e instanceof Error ? e.message : "failed to delete group" });
     }
@@ -454,6 +544,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
         setDraft(cloneGroup(updated));
         setSaveState({ kind: "ok", name: updated.name });
       }
+      setEditorOpen(false); // close the modal on a successful create / save
     } catch (e: unknown) {
       setSaveState({ kind: "error", message: e instanceof Error ? e.message : "failed to save group" });
     }
@@ -540,8 +631,8 @@ export function PricingGroupsWorkspace(): React.ReactElement {
           <div className={styles.rosterHead}>
             <h3 className={styles.rosterTitle}>Groups</h3>
             {isAdmin && (
-              <Button variant="ghost" onClick={startCreate} data-tour-id="pg-new">
-                + New
+              <Button variant="primary" onClick={startCreate} data-tour-id="pg-new">
+                + New pricing group
               </Button>
             )}
           </div>
@@ -579,27 +670,57 @@ export function PricingGroupsWorkspace(): React.ReactElement {
           </ul>
         </section>
 
-        {/* RIGHT — the group + pipeline editor. */}
-        <section className={styles.editorPane} aria-label="pricing group editor">
-          {draft === null ? (
-            <Panel title="Pricing group" glyph="⚙">
-              <div className={styles.empty}>Select a group, or create a new one.</div>
-            </Panel>
-          ) : (
-            <Panel
-              title={creating ? "New pricing group" : draft.name || draft.id}
-              glyph="⚙"
-              actions={
-                saveState.kind === "ok" ? (
-                  <span className={styles.okBadge} role="status" aria-live="polite">
-                    ✓ Saved
-                  </span>
-                ) : !creating ? (
-                  <span className={styles.editorId}>{draft.id}</span>
-                ) : undefined
-              }
+      </div>
+
+      {/* The group + pipeline editor — a dismissible portal modal over the list. */}
+      {editorOpen &&
+        draft !== null &&
+        createPortal(
+          <div
+            className={styles.scrim}
+            role="presentation"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) closeEditor();
+            }}
+          >
+            <div
+              ref={modalRef}
+              className={styles.modal}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={titleId}
+              data-testid="pricing-group-editor"
+              onKeyDown={onModalKeyDown}
             >
-              <div className={styles.section}>
+              <div className={styles.modalHead}>
+                <div className={styles.modalTitleWrap}>
+                  <span className={styles.modalGlyph} aria-hidden="true">
+                    ⚙
+                  </span>
+                  <h2 id={titleId} className={styles.modalTitle}>
+                    {creating ? "New pricing group" : draft.name || draft.id}
+                  </h2>
+                  {saveState.kind === "ok" ? (
+                    <span className={styles.okBadge} role="status" aria-live="polite">
+                      ✓ Saved
+                    </span>
+                  ) : !creating ? (
+                    <span className={styles.editorId}>{draft.id}</span>
+                  ) : null}
+                </div>
+                <button
+                  ref={closeBtnRef}
+                  type="button"
+                  className={styles.modalClose}
+                  onClick={closeEditor}
+                  aria-label="Close pricing group editor"
+                >
+                  <span aria-hidden="true">✕</span>
+                </button>
+              </div>
+
+              <div className={styles.modalBody}>
+                <div className={styles.section}>
                 {/* Structural fields. */}
                 <div className={styles.formGrid}>
                   <label className={styles.field} htmlFor="pg-name">
@@ -714,7 +835,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                 <>
                   {/* Feature palette. */}
                   <div className={styles.section} data-tour-id="pg-palette">
-                    <h4 className={styles.sectionHead}>Feature palette</h4>
+                    <h3 className={styles.sectionHead}>Feature palette</h3>
                     <div className={styles.palette}>
                       <div className={styles.paletteChips} role="list" aria-label="feature palette">
                         {FEATURE_KINDS.map((k) => (
@@ -752,7 +873,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
 
                   {/* Pipeline canvas. */}
                   <div className={styles.section}>
-                    <h4 className={styles.sectionHead}>Pipeline</h4>
+                    <h3 className={styles.sectionHead}>Pipeline</h3>
                     <div
                       className={styles.canvas}
                       aria-label="pricing pipeline canvas"
@@ -918,7 +1039,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
 
               {/* Membership. */}
               <div className={styles.section}>
-                <h4 className={styles.sectionHead}>Membership</h4>
+                <h3 className={styles.sectionHead}>Membership</h3>
                 <div className={styles.memberGrid}>
                   <MemberList
                     heading="FIX connections"
@@ -971,6 +1092,9 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                 <Button variant="ghost" onClick={resetDraft} disabled={!dirty || saving}>
                   Reset
                 </Button>
+                <Button variant="ghost" onClick={closeEditor} disabled={saving}>
+                  {creating ? "Cancel" : "Close"}
+                </Button>
                 {isAdmin && !creating && selectedGroup && (
                   <>
                     <Button variant="ghost" onClick={startClone} disabled={saving}>
@@ -985,10 +1109,11 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                   {dirty ? "Unsaved changes" : "In sync"}
                 </span>
               </div>
-            </Panel>
-          )}
-        </section>
-      </div>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
