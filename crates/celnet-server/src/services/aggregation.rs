@@ -46,10 +46,7 @@ use celnet_proto::{
     PricingProvenance,
 };
 use celnet_rates::{AccrualBasis, PaymentFrequency};
-use celnet_tiering::{
-    FeatureKind, FeaturePipeline, PricedResult, PricingCtx, QuoteCtx, SpreadUnit, TieringConfig,
-    TwoWay, smooth,
-};
+use celnet_tiering::{FeatureKind, FeaturePipeline, PricedResult, PricingCtx, QuoteCtx, TwoWay};
 use celnet_types::{Ccy, CommodityRef, Symbol, Tenor, Underlying};
 
 use crate::clock::Clock;
@@ -75,8 +72,8 @@ const DIVERGENCE_TOLERANCE_FRACTION: f64 = 5.0e-3;
 /// at full confidence and the staleness/divergence gating does the discrimination).
 const INGEST_QUALITY: f64 = 1.0;
 
-/// A live source of signed net inventory per instrument, read by the outbound-tiering
-/// [`InventorySkew`](celnet_tiering::InventorySkew) strategy to skew a book's composite
+/// A live source of signed net inventory per instrument, read by a pricing group's
+/// inventory-sensitive features (Inventory-skew / Position) to skew a client's outbound
 /// two-way toward shedding risk (a **long** book skews **down**).
 ///
 /// This is the seam between the aggregation publish path and the firm's FI position
@@ -94,8 +91,8 @@ pub trait InventorySource: Send + Sync + std::fmt::Debug {
 /// The live inventory book the streaming-skew strategy reads. Positions are set/adjusted
 /// by the FI booking path as deals lift the composite (the RFQ/auto-quote booking wiring
 /// is the Phase 2b follow-up); until then a book with no recorded position nets to `0.0`,
-/// so an [`InventorySkew`](celnet_tiering::InventorySkew) strategy contributes zero skew
-/// and the outbound two-way is byte-identical to the flat markup alone.
+/// so an inventory-skew feature contributes zero skew and the outbound two-way is
+/// byte-identical to the flat markup alone.
 #[derive(Debug, Default)]
 pub struct InstrumentInventory {
     net: RwLock<HashMap<String, f64>>,
@@ -140,12 +137,12 @@ impl InventorySource for InstrumentInventory {
 }
 
 /// The static bond-pricing terms needed to derive an instrument's **DV01** for a
-/// [`SpreadUnit::YieldBps`] tiering config — the reference-data [`BondDef`] mapped onto
+/// yield-bps pricing-group feature — the reference-data [`BondDef`] mapped onto
 /// the `celnet-bond` leaf's contract inputs. Captured at reconcile (the terms are
 /// static); DV01 itself is solved per quote from the live composite mid (see
 /// [`bond_dv01`]). Only bonds whose coupon-frequency and day-count labels resolve to an
 /// engine convention get an entry — a bond quoting `act_act` (no engine basis yet) has
-/// no terms, so a yield-bps config for it suppresses rather than publishes a bad price.
+/// no terms, so a yield-bps feature for it suppresses rather than publishes a bad price.
 ///
 /// [`BondDef`]: crate::config::reference_data::BondDef
 #[derive(Clone, Copy, Debug)]
@@ -179,12 +176,8 @@ struct BookCfg {
     params: AggregationParams,
     /// The instrument reference-data identities, shared across books.
     identities: Arc<HashMap<String, InstrumentIdentity>>,
-    /// The optional outbound-tiering configuration applied to this book's composite
-    /// **before** publish (`docs/FI-TIERING-RESEARCH.md`). `None` ⇒ the raw composite is
-    /// published unchanged (zero behaviour change).
-    tiering: Option<TieringConfig>,
     /// The static bond-pricing terms per instrument, for deriving DV01 on a
-    /// [`SpreadUnit::YieldBps`] config. Shared across books (built from the registry).
+    /// yield-bps pricing-group feature. Shared across books (built from the registry).
     bond_terms: Arc<HashMap<String, BondPricingTerms>>,
 }
 
@@ -192,40 +185,24 @@ struct BookCfg {
 pub struct PublishedBook {
     /// The dirty-version this snapshot consolidates (monotone per book).
     pub version: u64,
-    /// The **outbound** composite subscribers receive: the raw consolidated composite
-    /// with each in-scope line transformed through the book's tiering config (or the
-    /// raw composite verbatim when the book has no tiering config).
+    /// The raw consolidated composite subscribers receive. A book publishes its raw
+    /// consolidated composite unchanged; per-client outbound pricing is applied by the
+    /// pricing-group pipelines off this raw composite, never stored on the book.
     pub snapshot: AggregatedBookSnapshot,
-    /// The **raw** (untiered) consolidated composite, retained internally when tiering
-    /// was applied so mid/risk views and the Phase 2b RFQ path can read the untiered
-    /// two-way. `None` when no tiering config is set — [`Self::snapshot`] is then itself
-    /// the raw composite (no duplication, zero overhead for a book with no tiering).
-    pub raw: Option<AggregatedBookSnapshot>,
-}
-
-impl PublishedBook {
-    /// The raw (untiered) composite: the retained [`Self::raw`] when tiering was applied,
-    /// otherwise [`Self::snapshot`] (which is itself raw). The single accessor internal
-    /// consumers use to read the untiered mid regardless of tiering.
-    #[must_use]
-    pub fn raw_snapshot(&self) -> &AggregatedBookSnapshot {
-        self.raw.as_ref().unwrap_or(&self.snapshot)
-    }
 }
 
 /// A book composite resolved for an inbound RFQ (Phase 2b): the book it came from, that
-/// book's **outbound** (already-tiered per its own config) composite two-way for the
-/// requested instrument, and the book's contributing member-LP lines. The RFQ path prices
-/// the single-dealer quote off [`Self::best_bid`]/[`Self::best_offer`] and ranks
-/// [`Self::members`] for the multi-dealer panel — reusing the book's already-applied
-/// tiering rather than re-implementing it. Returned by
-/// [`AggregationHub::resolve_rfq_composite`].
+/// book's raw consolidated composite two-way for the requested instrument (or the
+/// pricing-group-priced two-way on the grouped path), and the book's contributing
+/// member-LP lines. The RFQ path prices the single-dealer quote off
+/// [`Self::best_bid`]/[`Self::best_offer`] and ranks [`Self::members`] for the
+/// multi-dealer panel. Returned by [`AggregationHub::resolve_rfq_composite`].
 pub struct RfqComposite {
     /// The id of the book the composite was resolved from (audit / attribution).
     pub book_id: String,
-    /// The tiered composite best bid — the book's outbound price a client SELLs into.
+    /// The composite best bid — the outbound price a client SELLs into.
     pub best_bid: f64,
-    /// The tiered composite best offer — the book's outbound price a client BUYs at.
+    /// The composite best offer — the outbound price a client BUYs at.
     pub best_offer: f64,
     /// The book's contributing member-LP lines (each LP's own raw two-way + staleness),
     /// for the multi-dealer ranked panel. A stale line is excluded from the panel by the
@@ -264,12 +241,6 @@ struct BookState {
     published: Arc<PublishedBook>,
     /// `dirty_version` value `published` was consolidated at.
     published_version: u64,
-    /// Per-instrument fading-memory smoothed spread `Sₙ₋₁` for a
-    /// [`ScaledSmoothedSpread`](celnet_tiering::ScaledSmoothedSpread) config — the
-    /// ONLY mutable tiering state (the strategies themselves are pure). Empty (and
-    /// never touched) for a book with no Scaled-Smoothed-Spread strategy, so such a
-    /// book is byte-identical to before. Keyed by `instrument_id`.
-    smoothed_spread: HashMap<String, f64>,
 }
 
 /// One running aggregated-book engine.
@@ -287,7 +258,6 @@ impl BookEngine {
                 book_id: id.clone(),
                 instruments: Vec::new(),
             },
-            raw: None,
         });
         Self {
             id,
@@ -297,7 +267,6 @@ impl BookEngine {
                 dirty_version: 0,
                 published,
                 published_version: 0,
-                smoothed_spread: HashMap::new(),
             }),
         }
     }
@@ -440,31 +409,13 @@ impl AggregationHub {
         let now = self.clock.now_nanos();
         let mut state = engine.state.lock().expect("book state lock poisoned");
         if state.published_version < state.dirty_version {
-            // Consolidate the RAW composite exactly as before (quorum/confidence
-            // unchanged), then — only when the book carries a tiering config — transform
-            // each in-scope line's outbound two-way, retaining the raw internally.
+            // Consolidate and publish the RAW composite (quorum/confidence unchanged).
+            // Per-client outbound pricing is applied downstream by the pricing-group
+            // pipelines off this raw composite, never stored on the book.
             let raw = consolidate_book(&engine.id, &cfg, &state.sink, now);
-            let published = match &cfg.tiering {
-                Some(tiering) => {
-                    let tiered = apply_tiering(
-                        &raw,
-                        tiering,
-                        &cfg,
-                        self.inventory.as_deref(),
-                        now,
-                        &mut state.smoothed_spread,
-                    );
-                    PublishedBook {
-                        version: state.dirty_version,
-                        snapshot: tiered,
-                        raw: Some(raw),
-                    }
-                }
-                None => PublishedBook {
-                    version: state.dirty_version,
-                    snapshot: raw,
-                    raw: None,
-                },
+            let published = PublishedBook {
+                version: state.dirty_version,
+                snapshot: raw,
             };
             let version = state.dirty_version;
             state.published = Arc::new(published);
@@ -482,12 +433,12 @@ impl AggregationHub {
             .contains_key(book_id)
     }
 
-    /// Resolve the tiered composite line for `instrument_id` from the first enabled book
+    /// Resolve the composite line for `instrument_id` from the first enabled book
     /// (deterministic id order) whose scope admits it **and** that currently publishes a
     /// well-formed composite line for it (quorum met, fresh members, a finite non-crossed
-    /// two-way). The returned [`RfqComposite`] carries the book's **outbound**
-    /// (already-tiered) two-way and its contributing member lines, so the RFQ path prices
-    /// against the book without re-implementing tiering (Phase 2b).
+    /// two-way). The returned [`RfqComposite`] carries the book's raw consolidated
+    /// two-way and its contributing member lines, so the RFQ path prices against the
+    /// book's composite directly (Phase 2b).
     ///
     /// `None` when no book covers the instrument, no covering book has a live composite
     /// line for it (e.g. no fresh member LPs / below quorum), or the composite is
@@ -564,11 +515,10 @@ impl AggregationHub {
     }
 
     /// The per-subscriber **ESP** composite for `book_id`, priced through `pipeline`
-    /// (a pricing group's ESP pipeline) applied to the book's **raw** (untiered)
+    /// (a pricing group's ESP pipeline) applied to the book's raw consolidated
     /// composite — so a grouped subscriber receives its own outbound two-way off the
-    /// same raw liquidity, independent of the book-default tiering
-    /// (`docs/FI-PRICING-GROUPS-DESIGN.md` §5). `None` when no enabled book with that id
-    /// exists (mirroring [`Self::snapshot`]).
+    /// same raw liquidity (`docs/FI-PRICING-GROUPS-DESIGN.md` §5). `None` when no enabled
+    /// book with that id exists (mirroring [`Self::snapshot`]).
     ///
     /// The no-group ESP path does **not** call this — it keeps handing out
     /// [`PublishedBook::snapshot`] verbatim, so an ungrouped subscriber stays
@@ -586,7 +536,7 @@ impl AggregationHub {
             Arc::clone(&*engine.cfg.lock().expect("book cfg lock poisoned"))
         };
         Some(apply_pipeline(
-            published.raw_snapshot(),
+            &published.snapshot,
             pipeline,
             &cfg,
             self.inventory.as_deref(),
@@ -595,16 +545,16 @@ impl AggregationHub {
     }
 
     /// Resolve the **RFQ** composite line for `instrument_id`, priced through `pipeline`
-    /// (a pricing group's effective RFQ pipeline) applied to the book's **raw**
-    /// (untiered) two-way — so a grouped caller's quote is built from the raw liquidity
-    /// through its own pipeline, not the book-default tiering
-    /// (`docs/FI-PRICING-GROUPS-DESIGN.md` §5). Book selection, freshness/quorum, the
-    /// degenerate-composite guard, and the member-line panel are **identical** to
-    /// [`Self::resolve_rfq_composite`]; only the priced best bid/offer differ.
+    /// (a pricing group's effective RFQ pipeline) applied to the book's raw consolidated
+    /// two-way — so a grouped caller's quote is built from the raw liquidity through its
+    /// own pipeline (`docs/FI-PRICING-GROUPS-DESIGN.md` §5). Book selection,
+    /// freshness/quorum, the degenerate-composite guard, and the member-line panel are
+    /// **identical** to [`Self::resolve_rfq_composite`]; only the priced best bid/offer
+    /// differ.
     ///
     /// The no-group RFQ path does **not** call this — it keeps using
-    /// [`Self::resolve_rfq_composite`] (the book-default-tiered line), so an ungrouped
-    /// caller stays byte-identical.
+    /// [`Self::resolve_rfq_composite`] (the raw composite line), so an ungrouped caller
+    /// stays byte-identical.
     #[must_use]
     pub fn resolve_rfq_composite_priced(
         &self,
@@ -638,10 +588,10 @@ impl AggregationHub {
                 };
                 Arc::clone(&*engine.cfg.lock().expect("book cfg lock poisoned"))
             };
-            // Price off the RAW (untiered) line — the pipeline is the caller's own
-            // outbound construction, replacing (not stacking on) the book-default tier.
+            // Price off the raw composite line — the pipeline is the caller's own
+            // outbound construction.
             let Some(line) = published
-                .raw_snapshot()
+                .snapshot
                 .instruments
                 .iter()
                 .find(|i| i.instrument_id == instrument_id)
@@ -855,7 +805,6 @@ fn book_cfg(
         scope: def.instrument_scope.clone(),
         params: def.params.clone(),
         identities,
-        tiering: def.tiering.clone(),
         bond_terms,
     }
 }
@@ -932,85 +881,6 @@ fn bond_dv01(terms: &BondPricingTerms, settlement: time::Date, mid_clean: f64) -
     let dirty = mid_clean + accrued;
     let risk = bond_risk(&bond, dirty).ok()?;
     risk.dv01.is_finite().then_some(risk.dv01)
-}
-
-/// Transform a raw consolidated composite into the outbound (tiered) composite: for each
-/// in-scope line build a [`QuoteCtx`] from real inputs — the composite mid, the live net
-/// inventory, and (for a [`SpreadUnit::YieldBps`] config) the bond's DV01 at that mid —
-/// run it through [`TieringConfig::quote`], and publish the tiered two-way. A line the
-/// engine [`Suppressed`](celnet_tiering::Suppressed) (stale, or a yield-bps config with
-/// no resolvable duration) is dropped — no quote for that line, never a bad price.
-///
-/// Streaming has no request size, so only the streaming-relevant strategies act (flat +
-/// inventory skew); size/vol are left at the [`QuoteCtx`] neutral defaults (size 0,
-/// `vol == vol_ref`), reserving the size-dependent strategies for the RFQ path (Phase 2b).
-/// Consolidation/quorum/confidence are untouched — this is a pure post-consolidation
-/// transform on the outbound two-way only.
-fn apply_tiering(
-    raw: &AggregatedBookSnapshot,
-    tiering: &TieringConfig,
-    cfg: &BookCfg,
-    inventory: Option<&dyn InventorySource>,
-    now: i64,
-    smoothed_state: &mut HashMap<String, f64>,
-) -> AggregatedBookSnapshot {
-    let settlement = settlement_date(now);
-    // Present only for a Scaled-Smoothed-Spread config: the Smoothing Weight `w` that
-    // drives the stateful EWMA on each line's observed spread. `None` ⇒ no smoothing
-    // (the `smoothed_state` map is never read or written — a book without the strategy
-    // stays byte-identical to before).
-    let smoothing_weight = tiering.smoothing_weight();
-    let mut instruments = Vec::with_capacity(raw.instruments.len());
-    for line in &raw.instruments {
-        let mid = 0.5 * (line.best_bid + line.best_offer);
-        let net = inventory.map_or(0.0, |src| src.net_inventory(&line.instrument_id));
-        let mut ctx = QuoteCtx::new(mid).with_inventory(net);
-        // DV01 is needed only for a yield-bps config; attach it when derivable, else
-        // leave it off so the engine's own pre-validation suppresses the line.
-        if tiering.unit == SpreadUnit::YieldBps
-            && let (Some(s), Some(terms)) = (settlement, cfg.bond_terms.get(&line.instrument_id))
-            && let Some(dv01) = bond_dv01(terms, s, mid)
-        {
-            ctx = ctx.with_dv01(dv01);
-        }
-
-        // Scaled-Smoothed-Spread: the observed level IS this line's own consolidated
-        // raw spread. When it is well-formed, advance the fading-memory EWMA and feed
-        // `Sₙ` to the strategy; when it is unavailable (a locked/crossed/non-finite
-        // composite has no meaningful spread), leave `smoothed_spread` unset so the
-        // strategy quotes at its Max Output Spread and mark the line INDICATIVE —
-        // without poisoning the smoothed state with a bad observation.
-        let mut indicative = false;
-        if let Some(w) = smoothing_weight {
-            let raw_spread = line.best_offer - line.best_bid;
-            if raw_spread.is_finite() && raw_spread > 0.0 {
-                let prev = smoothed_state.get(&line.instrument_id).copied();
-                let sn = smooth(prev, raw_spread, w);
-                smoothed_state.insert(line.instrument_id.clone(), sn);
-                ctx = ctx.with_raw_spread(raw_spread).with_smoothed_spread(sn);
-            } else {
-                indicative = true;
-            }
-        }
-
-        if let Ok(two_way) = tiering.quote(&ctx) {
-            let mut tiered = line.clone();
-            tiered.best_bid = two_way.bid;
-            tiered.best_offer = two_way.offer;
-            // An indicative Scaled-Smoothed fallback carries zero confidence in the
-            // composite: the line is published (at Max Output width) but explicitly
-            // untrusted, surfaced through the existing `confidence ∈ [0,1]` channel.
-            if indicative {
-                tiered.confidence = 0.0;
-            }
-            instruments.push(tiered);
-        }
-        // Else: Suppressed ⇒ no outbound quote for this line (drop it).
-    }
-    AggregatedBookSnapshot {
-        book_id: raw.book_id.clone(),
-        instruments,
-    }
 }
 
 /// Whether a book's instrument scope admits `instrument_id`.
@@ -1193,7 +1063,6 @@ mod tests {
             instrument_scope: Scope::AllMembersQuote,
             params,
             enabled: true,
-            tiering: None,
         }
     }
 
@@ -1306,9 +1175,12 @@ mod tests {
         assert!(v3 > v2);
     }
 
-    // --- outbound tiering (Phase 2a) ---------------------------------------
+    // --- pricing groups: per-client pipelines off the same raw composite ----
 
-    use celnet_tiering::{FeaturePipeline, Guardrails, PricingFeature, StalePolicy, StrategySpec};
+    use celnet_tiering::{
+        FeaturePipeline, Guardrails, PricingFeature, SpreadUnit, StalePolicy, StrategySpec,
+        TieringConfig,
+    };
 
     /// Permissive guardrails that never clamp the small offsets these tests use, so a
     /// test asserts the raw strategy arithmetic (the guardrail clamps are unit-tested in
@@ -1317,6 +1189,7 @@ mod tests {
         Guardrails::new(0.0, 1_000.0, 1_000.0, 1e-9)
     }
 
+    /// A single [`TieringConfig`] the pricing-group tests embed in a `PricingFeature::Tiering`.
     fn tiering(unit: SpreadUnit, strategies: Vec<StrategySpec>) -> TieringConfig {
         TieringConfig {
             unit,
@@ -1325,58 +1198,6 @@ mod tests {
             stale_policy: StalePolicy::Suppress,
         }
     }
-
-    /// A book with NO tiering config publishes the raw composite unchanged and retains
-    /// no separate raw copy — the regression guard that existing books are untouched.
-    #[test]
-    fn no_tiering_config_publishes_raw_composite_unchanged() {
-        let hub = hub_with(def("b", &["LP-1", "LP-2"], params(false, 1, 60_000)));
-        hub.ingest(&lp_quote("LP-1", "X", 99.50, 99.60, NOW));
-        hub.ingest(&lp_quote("LP-2", "X", 99.55, 99.65, NOW));
-        let snap = hub.snapshot("b").expect("book");
-        assert!(snap.raw.is_none(), "no tiering ⇒ no separate raw retained");
-        let inst = &snap.snapshot.instruments[0];
-        // The untiered composite envelope: best bid = max(99.50, 99.55), best offer =
-        // min(99.60, 99.65) — byte-identical to the pre-tiering publish path.
-        assert_eq!(inst.best_bid.to_bits(), 99.55_f64.to_bits());
-        assert_eq!(inst.best_offer.to_bits(), 99.60_f64.to_bits());
-        // The internal raw accessor falls through to the (raw) snapshot.
-        assert_eq!(
-            snap.raw_snapshot().instruments[0].best_bid.to_bits(),
-            99.55_f64.to_bits()
-        );
-    }
-
-    /// Flat ±25 **price bps** on a composite whose raw mid is 99.55 publishes 99.30/99.80,
-    /// and retains the raw composite internally.
-    #[test]
-    fn flat_price_bps_widens_symmetrically_around_mid() {
-        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
-        d.tiering = Some(tiering(
-            SpreadUnit::PriceBps,
-            vec![StrategySpec::FlatMarkup { half_spread: 25.0 }],
-        ));
-        let hub = hub_with(d);
-        hub.ingest(&lp_quote("LP-1", "X", 99.50, 99.60, NOW));
-        let snap = hub.snapshot("b").expect("book");
-        let inst = &snap.snapshot.instruments[0];
-        assert!(
-            (inst.best_bid - 99.30).abs() < 1e-9,
-            "bid={}",
-            inst.best_bid
-        );
-        assert!(
-            (inst.best_offer - 99.80).abs() < 1e-9,
-            "offer={}",
-            inst.best_offer
-        );
-        // Raw composite retained untouched (mid views / Phase 2b RFQ read this).
-        let raw = &snap.raw.as_ref().expect("raw retained").instruments[0];
-        assert_eq!(raw.best_bid.to_bits(), 99.50_f64.to_bits());
-        assert_eq!(raw.best_offer.to_bits(), 99.60_f64.to_bits());
-    }
-
-    // --- pricing groups: per-client pipelines off the same raw composite ----
 
     /// A single-TIERING (Flat ±`bps` price-bps) pipeline with open guardrails — the
     /// per-client outbound construction a pricing group applies to the RAW composite.
@@ -1427,28 +1248,24 @@ mod tests {
         assert_eq!(di.best_offer.to_bits(), 99.60_f64.to_bits());
     }
 
-    /// Regression: with a BOOK-DEFAULT tiering config, the no-group ESP path streams the
-    /// book-default-tiered snapshot unchanged, while a grouped subscriber prices off the
-    /// RAW composite (groups replace, not stack on, the book tier).
+    /// The no-group ESP path streams the RAW consolidated composite unchanged (tiering is
+    /// group-only — a book carries no outbound tier), while a grouped subscriber prices off
+    /// that same RAW composite through its pipeline.
     #[test]
-    fn no_group_esp_publishes_book_default_while_group_prices_off_raw() {
-        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
-        d.tiering = Some(tiering(
-            SpreadUnit::PriceBps,
-            vec![StrategySpec::FlatMarkup { half_spread: 10.0 }],
-        ));
+    fn no_group_esp_publishes_raw_while_group_prices_off_raw() {
+        let d = def("b", &["LP-1"], params(false, 1, 60_000));
         let hub = hub_with(d);
         hub.ingest(&lp_quote("LP-1", "X", 99.50, 99.60, NOW));
-        // No-group path: book-default Flat ±10 around mid 99.55 → 99.45/99.65.
+        // No-group path: the RAW composite line 99.50/99.60 (no book tier).
         let snap = hub.snapshot("b").expect("book");
         let inst = &snap.snapshot.instruments[0];
         assert!(
-            (inst.best_bid - 99.45).abs() < 1e-9,
+            (inst.best_bid - 99.50).abs() < 1e-9,
             "bid={}",
             inst.best_bid
         );
         assert!(
-            (inst.best_offer - 99.65).abs() < 1e-9,
+            (inst.best_offer - 99.60).abs() < 1e-9,
             "offer={}",
             inst.best_offer
         );
@@ -1467,26 +1284,22 @@ mod tests {
     }
 
     /// An RFQ caller in a pricing group prices via its RFQ pipeline off the RAW composite,
-    /// while the no-group RFQ path keeps the book-default-tiered composite. Member LP lines
-    /// are the raw contributions in both (pricing groups do not alter the panel).
+    /// while the no-group RFQ path returns the RAW composite (tiering is group-only). Member
+    /// LP lines are the raw contributions in both (pricing groups do not alter the panel).
     #[test]
     fn rfq_group_prices_off_raw_via_rfq_pipeline() {
-        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
-        d.tiering = Some(tiering(
-            SpreadUnit::PriceBps,
-            vec![StrategySpec::FlatMarkup { half_spread: 10.0 }],
-        ));
+        let d = def("b", &["LP-1"], params(false, 1, 60_000));
         let hub = hub_with(d);
         hub.ingest(&lp_quote("LP-1", "X", 99.50, 99.60, NOW));
-        // No-group RFQ: book-default-tiered line 99.45/99.65.
+        // No-group RFQ: the RAW composite line 99.50/99.60 (no book tier).
         let base = hub.resolve_rfq_composite("X").expect("composite");
         assert!(
-            (base.best_bid - 99.45).abs() < 1e-9,
+            (base.best_bid - 99.50).abs() < 1e-9,
             "bid={}",
             base.best_bid
         );
         assert!(
-            (base.best_offer - 99.65).abs() < 1e-9,
+            (base.best_offer - 99.60).abs() < 1e-9,
             "offer={}",
             base.best_offer
         );
@@ -1544,276 +1357,5 @@ mod tests {
         let raw_half = 0.5 * (prov.raw_offer - prov.raw_bid);
         let tiered_half = 0.5 * (prov.tiered_offer - prov.tiered_bid);
         assert!((prov.applied_margin - (tiered_half - raw_half)).abs() < 1e-9);
-    }
-
-    /// A nonzero **long** book position skews both sides DOWN by κ·q (in price bps), the
-    /// spread `2h` is unchanged, and the book never crosses.
-    #[test]
-    fn inventory_skew_shifts_both_sides_and_never_crosses() {
-        let inventory = Arc::new(InstrumentInventory::new());
-        inventory.set("X", 10.0); // long 10 units
-        let hub = AggregationHub::with_inventory(Clock::manual(NOW), inventory);
-        let mut store = IdentityStore::default();
-        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
-        d.tiering = Some(tiering(
-            SpreadUnit::PriceBps,
-            vec![StrategySpec::InventorySkew {
-                half_spread: 25.0,
-                kappa: 1.0,
-                s_max: 1_000.0,
-            }],
-        ));
-        store.aggregated_books.push(d);
-        hub.reconcile(&store);
-        hub.ingest(&lp_quote("LP-1", "X", 99.50, 99.60, NOW));
-        let snap = hub.snapshot("b").expect("book");
-        let inst = &snap.snapshot.instruments[0];
-        // mid=99.55, h=0.25 (25 price bps), s = κ·q = 10 price bps units = 0.10 offset.
-        // bid = 99.55 − 0.25 − 0.10 = 99.20; offer = 99.55 + 0.25 − 0.10 = 99.70.
-        assert!(
-            (inst.best_bid - 99.20).abs() < 1e-9,
-            "bid={}",
-            inst.best_bid
-        );
-        assert!(
-            (inst.best_offer - 99.70).abs() < 1e-9,
-            "offer={}",
-            inst.best_offer
-        );
-        // Both sides shifted DOWN (long ⇒ shed risk); spread invariant; never crossed.
-        assert!(inst.best_bid < inst.best_offer);
-        assert!((inst.best_offer - inst.best_bid - 0.50).abs() < 1e-9);
-    }
-
-    /// A zero position with an inventory-skew strategy contributes zero skew, so the
-    /// outbound two-way equals the flat markup alone (the "0 if none" property).
-    #[test]
-    fn inventory_skew_with_no_position_is_flat() {
-        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
-        d.tiering = Some(tiering(
-            SpreadUnit::PriceBps,
-            vec![StrategySpec::InventorySkew {
-                half_spread: 25.0,
-                kappa: 1.0,
-                s_max: 1_000.0,
-            }],
-        ));
-        // hub_with wires NO inventory source ⇒ every instrument nets to zero.
-        let hub = hub_with(d);
-        hub.ingest(&lp_quote("LP-1", "X", 99.50, 99.60, NOW));
-        let inst = &hub.snapshot("b").expect("book").snapshot.instruments[0];
-        assert!((inst.best_bid - 99.30).abs() < 1e-9);
-        assert!((inst.best_offer - 99.80).abs() < 1e-9);
-    }
-
-    /// A Scaled-Smoothed-Spread config with the Smoothing Weight `w = 1` (smoothing
-    /// off ⇒ `Sₙ = Rₙ`) prices the worked oracle: raw spread `R = 2e = .00016` on
-    /// mid `1.10` gives `Dₙ = e ⇒ Pₙ = 1.2 ⇒ Oₙ = c·2.2 = .00044`, so
-    /// `bid/offer = mid ∓ .00022` — symmetric, no skew.
-    #[test]
-    fn scaled_smoothed_prices_worked_oracle_smoothing_off() {
-        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
-        d.tiering = Some(tiering(
-            SpreadUnit::PricePoints,
-            vec![StrategySpec::ScaledSmoothedSpread {
-                smoothing_weight: 1.0,
-                expected_spread: 0.00008,
-                max_divergence: 0.00004,
-                core_spread: 0.0002,
-                max_output_spread: 0.0008,
-                spread_scale_factor: 1.2,
-            }],
-        ));
-        let hub = hub_with(d);
-        // Raw spread = 1.10008 − 1.09992 = .00016 = 2e; mid = 1.10.
-        hub.ingest(&lp_quote("LP-1", "X", 1.09992, 1.10008, NOW));
-        let inst = &hub.snapshot("b").expect("book").snapshot.instruments[0];
-        assert!(
-            (inst.best_bid - 1.09978).abs() < 1e-9,
-            "bid={}",
-            inst.best_bid
-        );
-        assert!(
-            (inst.best_offer - 1.10022).abs() < 1e-9,
-            "offer={}",
-            inst.best_offer
-        );
-        // Symmetric about mid (no skew).
-        assert!((0.5 * (inst.best_bid + inst.best_offer) - 1.10).abs() < 1e-9);
-    }
-
-    /// The fading-memory EWMA is maintained per (book, instrument) ACROSS publishes:
-    /// with `w = 0.5`, `e = c = .0002`, `d = 0`, `f = 1`, a first raw spread `.0002`
-    /// seeds `S₀ = .0002` (⇒ `O = c`), then a wider raw spread `.0006` smooths to
-    /// `S₁ = .5·.0006 + .5·.0002 = .0004` (⇒ `D = .0002, P = 1, O = .0004`), a spread
-    /// strictly between the unsmoothed `.0006`-driven output and the core — proof the
-    /// state persisted and damped the jump.
-    #[test]
-    fn scaled_smoothed_ewma_persists_across_publishes() {
-        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
-        d.tiering = Some(tiering(
-            SpreadUnit::PricePoints,
-            vec![StrategySpec::ScaledSmoothedSpread {
-                smoothing_weight: 0.5,
-                expected_spread: 0.0002,
-                max_divergence: 0.0,
-                core_spread: 0.0002,
-                max_output_spread: 0.01,
-                spread_scale_factor: 1.0,
-            }],
-        ));
-        let hub = hub_with(d);
-
-        // Publish 1: R₀ = .0002, S₀ = .0002, O = c = .0002 ⇒ half = .0001.
-        hub.ingest(&lp_quote("LP-1", "X", 0.9999, 1.0001, NOW));
-        let i0 = &hub.snapshot("b").expect("book").snapshot.instruments[0];
-        assert!((i0.best_offer - i0.best_bid - 0.0002).abs() < 1e-9);
-
-        // Publish 2: R₁ = .0006, S₁ = .0004 (smoothed), O = c·2 = .0004 ⇒ half = .0002.
-        // Without the persisted state the unsmoothed R₁ would give O = c·3 = .0006.
-        hub.ingest(&lp_quote("LP-1", "X", 0.9997, 1.0003, NOW));
-        let i1 = &hub.snapshot("b").expect("book").snapshot.instruments[0];
-        assert!(
-            (i1.best_offer - i1.best_bid - 0.0004).abs() < 1e-9,
-            "smoothed spread={}",
-            i1.best_offer - i1.best_bid
-        );
-        assert!((0.5 * (i1.best_bid + i1.best_offer) - 1.0).abs() < 1e-9);
-    }
-
-    /// A non-positive (locked/crossed) composite spread makes the observed level
-    /// unavailable: the Scaled-Smoothed line is published at the Max Output Spread `m`
-    /// and marked INDICATIVE via zero confidence, rather than being dropped.
-    #[test]
-    fn scaled_smoothed_observed_unavailable_is_indicative_at_max_output() {
-        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
-        d.tiering = Some(tiering(
-            SpreadUnit::PricePoints,
-            vec![StrategySpec::ScaledSmoothedSpread {
-                smoothing_weight: 0.5,
-                expected_spread: 0.0002,
-                max_divergence: 0.00004,
-                core_spread: 0.0002,
-                max_output_spread: 0.0008,
-                spread_scale_factor: 1.2,
-            }],
-        ));
-        let hub = hub_with(d);
-        // A locked market: best_bid == best_offer ⇒ raw spread 0 ⇒ observed unavailable.
-        hub.ingest(&lp_quote("LP-1", "X", 1.0, 1.0, NOW));
-        let snap = hub.snapshot("b").expect("book");
-        let inst = &snap.snapshot.instruments[0];
-        // Published at Max Output width m = .0008 (half = .0004), centred on mid 1.0.
-        assert!(
-            (inst.best_offer - inst.best_bid - 0.0008).abs() < 1e-9,
-            "spread={}",
-            inst.best_offer - inst.best_bid
-        );
-        assert!((0.5 * (inst.best_bid + inst.best_offer) - 1.0).abs() < 1e-9);
-        // Indicative: zero confidence in the composite.
-        assert_eq!(inst.confidence.to_bits(), 0.0_f64.to_bits());
-    }
-
-    /// A **yield-bps** flat markup on a registered bond publishes an offset of
-    /// `DV01 · yield_bps`, DV01 hand-derived from the same `celnet-bond` leaf at the
-    /// composite mid — the wiring identity that tiering feeds the engine the real DV01.
-    #[test]
-    fn yield_bps_on_a_bond_offsets_by_dv01_times_bps() {
-        let settlement = time::Date::from_calendar_date(2026, time::Month::June, 25).expect("date");
-        let maturity = time::Date::from_calendar_date(2031, time::Month::June, 25).expect("date");
-        let now_ns = settlement.midnight().assume_utc().unix_timestamp_nanos() as i64;
-
-        let mut store = IdentityStore::default();
-        store.instruments.push(bond_def_5y());
-        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
-        d.instrument_scope = Scope::Explicit(vec!["BND-5Y".to_string()]);
-        d.tiering = Some(tiering(
-            SpreadUnit::YieldBps,
-            vec![StrategySpec::FlatMarkup { half_spread: 10.0 }],
-        ));
-        store.aggregated_books.push(d);
-        let hub = AggregationHub::new(Clock::manual(now_ns));
-        hub.reconcile(&store);
-        hub.ingest(&lp_quote("LP-1", "BND-5Y", 99.50, 99.60, now_ns));
-
-        let snap = hub.snapshot("b").expect("book");
-        let inst = &snap.snapshot.instruments[0];
-        // Independent DV01 from the SAME bond leaf at the composite mid (dirty = clean +
-        // accrued), then offset = DV01 · 10bp.
-        let mid = 0.5 * (99.50 + 99.60);
-        let bond = Bond::new(
-            settlement,
-            maturity,
-            0.04,
-            PaymentFrequency::SemiAnnual,
-            AccrualBasis::Act365Fixed,
-            100.0,
-        )
-        .expect("bond");
-        let dirty = mid + accrued_interest(&bond).expect("accrued");
-        let dv01 = bond_risk(&bond, dirty).expect("risk").dv01;
-        let offset = dv01 * 10.0;
-        assert!(dv01 > 0.0, "dv01 must be positive");
-        assert!(
-            (inst.best_bid - (mid - offset)).abs() < 1e-9,
-            "bid={} expected={}",
-            inst.best_bid,
-            mid - offset
-        );
-        assert!(
-            (inst.best_offer - (mid + offset)).abs() < 1e-9,
-            "offer={} expected={}",
-            inst.best_offer,
-            mid + offset
-        );
-    }
-
-    /// A yield-bps config on an instrument with NO resolvable duration (not a registered
-    /// bond) suppresses the line rather than publishing a bad price.
-    #[test]
-    fn yield_bps_without_duration_suppresses_the_line() {
-        let mut d = def("b", &["LP-1"], params(false, 1, 60_000));
-        d.tiering = Some(tiering(
-            SpreadUnit::YieldBps,
-            vec![StrategySpec::FlatMarkup { half_spread: 10.0 }],
-        ));
-        let hub = hub_with(d); // no bond registered ⇒ no DV01 for "X"
-        hub.ingest(&lp_quote("LP-1", "X", 99.50, 99.60, NOW));
-        let snap = hub.snapshot("b").expect("book");
-        assert!(
-            snap.snapshot.instruments.is_empty(),
-            "no duration ⇒ suppressed (no quote for the line)"
-        );
-        // The raw composite is still retained internally.
-        assert_eq!(snap.raw_snapshot().instruments.len(), 1);
-    }
-
-    /// A minimal registered 5y semi-annual 4% bond (`BND-5Y`) for the yield-bps test.
-    fn bond_def_5y() -> crate::config::reference_data::InstrumentDef {
-        use crate::config::reference_data::{BondDef, CivilDate, InstrumentDef};
-        InstrumentDef {
-            instrument_id: "BND-5Y".to_string(),
-            name: "Test 5Y 4%".to_string(),
-            description: String::new(),
-            currency: "USD".to_string(),
-            external_ids: vec![],
-            definition: InstrumentFamily::Bond(BondDef {
-                issuer: "TEST".to_string(),
-                coupon_rate: 0.04,
-                coupon_type: "fixed".to_string(),
-                coupon_frequency: "semi_annual".to_string(),
-                day_count: "act_365_fixed".to_string(),
-                issue_date: None,
-                dated_date: None,
-                first_coupon_date: None,
-                maturity_date: CivilDate {
-                    year: 2031,
-                    month: 6,
-                    day: 25,
-                },
-                redemption: 100.0,
-                calendars: vec![],
-            }),
-        }
     }
 }

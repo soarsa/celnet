@@ -1,21 +1,27 @@
 /**
- * TieringWorkspace — the trader-facing FI Tiering surface (server commit 8404bc9).
+ * TieringWorkspace — the trader-facing FI Tiering surface, SESSION-PIVOTED.
  *
- * Drives the workspace with `useApp` mocked so we inject a fixed book roster + a
- * capability and observe the retune mutation. Covers:
+ * Book-level tiering is gone: outbound pricing is composed per client as a
+ * {@link PricingGroup} feature pipeline, and this surface pivots on the INBOUND
+ * FIX SESSIONS, answering per session which pricing group prices it and what
+ * tiering that group's pipeline produces (read-only). We drive the workspace with
+ * `useApp` mocked so we inject a fixed session + pricing-group roster and observe
+ * the admin reassign mutation. Covers:
  *  (a) the sign-in gate for an anonymous session;
- *  (b) rail registration — `tiering` is a Fixed-Income row, NOT admin-only, so a
- *      non-admin trader can reach it;
- *  (c) the trader flow — select a book, ENABLE tiering (Flat 25 price-bps), Apply →
- *      `transport.updateBookTiering(id, config)` fires and the book round-trips;
- *  (d) the permission state — a signed-in FI user WITHOUT `quote_respond·fixed_income`
- *      sees a clear permission note + read-only summary, never the editor.
+ *  (b) rail registration — `tiering` is a Fixed-Income row, NOT admin-only;
+ *  (c) the session roster resolves each session's pricing group (exact session
+ *      bind → desk default → none);
+ *  (d) the detail pane shows the resolved group + a tiering summary read from the
+ *      group's pipeline;
+ *  (e) the admin reassign <select> moves the session between groups'
+ *      `memberConnectionIds` via `transport.updatePricingGroup`;
+ *  (f) a non-admin sees the assign control disabled (read-only).
  */
 
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AggregatedBookDesc } from "../src/data/contract";
+import type { FixConnection, PricingGroup, TieringConfig } from "../src/data/contract";
 import {
   ADMIN_ONLY_WORKSPACES,
   RAIL,
@@ -27,48 +33,127 @@ vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 
 import { TieringWorkspace } from "../src/workspaces/TieringWorkspace";
 
-function book(overrides: Partial<AggregatedBookDesc> = {}): AggregatedBookDesc {
+// --- fixtures ---------------------------------------------------------------
+
+/** A FLAT_MARKUP tiering config @ 25 price-bps (the worked-example baseline). */
+function flat25(): TieringConfig {
   return {
-    id: "us-treasuries",
-    name: "US Treasuries",
-    memberConnectionIds: ["LP-SIM-01", "LP-SIM-02"],
-    scopeMode: "ALL_MEMBERS_QUOTE",
-    instrumentIds: [],
-    params: {
-      stalenessTauMs: 2000,
-      maxQuoteAgeMs: 5000,
-      divergenceGating: true,
-      minContributors: 2,
-      depthLevels: 1,
-    },
+    unit: "PRICE_BPS",
+    strategies: [
+      {
+        kind: "FLAT_MARKUP",
+        halfSpread: 25,
+        kappa: 0,
+        sMax: 0,
+        smoothingWeight: 0,
+        expectedSpread: 0,
+        maxDivergence: 0,
+        coreSpread: 0,
+        maxOutputSpread: 0,
+        spreadScaleFactor: 0,
+      },
+    ],
+    guardrails: { hMin: 0, hMax: 1, sMax: 0.5, spreadFloor: 0.01 },
+    stalePolicy: "SUPPRESS",
+  };
+}
+
+function session(overrides: Partial<FixConnection> = {}): FixConnection {
+  return {
+    id: "sess",
+    name: "Session",
+    kind: "FIXED_INCOME_QUOTE",
+    bindAddr: "127.0.0.1:9099",
+    senderCompId: "CELNET",
+    targetCompId: "CPTY",
     enabled: true,
-    tiering: null,
+    running: true,
+    boundAddr: "127.0.0.1:9099",
+    desk: "",
     ...overrides,
   };
 }
 
+/** Three sessions: bound-by-session, matched-by-desk, and unmatched. */
+const SESSIONS: FixConnection[] = [
+  session({ id: "sess-alpha", name: "Alpha FIX", targetCompId: "ALPHA", desk: "rates", running: true }),
+  session({ id: "sess-bravo", name: "Bravo FIX", targetCompId: "BRAVO", desk: "credit", running: false }),
+  session({ id: "sess-gamma", name: "Gamma FIX", targetCompId: "GAMMA", desk: "", enabled: false, running: false }),
+];
+
+function group(overrides: Partial<PricingGroup> = {}): PricingGroup {
+  return {
+    id: "grp",
+    name: "GROUP",
+    description: "",
+    memberConnectionIds: [],
+    memberUserIds: [],
+    memberDesks: [],
+    espPipeline: null,
+    rfqPipeline: null,
+    sharePipeline: false,
+    enabled: true,
+    ...overrides,
+  };
+}
+
+/**
+ * Two enabled groups: TIER1 is bound to `sess-alpha` explicitly and carries a
+ * shared TIERING pipeline (Flat 25); DESK-CREDIT is a desk-level default for the
+ * `credit` desk (so it prices `sess-bravo`). `sess-gamma` matches neither.
+ */
+const GROUPS: PricingGroup[] = [
+  group({
+    id: "tier1",
+    name: "TIER1",
+    memberConnectionIds: ["sess-alpha"],
+    sharePipeline: true,
+    espPipeline: {
+      features: [
+        {
+          kind: "TIERING",
+          unit: "PRICE_BPS",
+          shift: 0,
+          reference: null,
+          tiering: flat25(),
+          axeSide: "BUY",
+          magnitude: 0,
+          kappa: 0,
+          sMax: 0,
+          skew: 0,
+          triggered: false,
+        },
+      ],
+      guardrails: { hMin: 0, hMax: 1, sMax: 0.5, spreadFloor: 0.01 },
+    },
+  }),
+  group({ id: "desk-credit", name: "DESK-CREDIT", memberDesks: ["credit"] }),
+];
+
 function makeApp(opts: {
   user: { id: string; email: string } | null;
-  canRetune: boolean;
-  books: AggregatedBookDesc[];
-  updateBookTiering?: ReturnType<typeof vi.fn>;
+  isAdmin: boolean;
+  canQuote: boolean;
+  sessions?: FixConnection[];
+  groups?: PricingGroup[];
+  updatePricingGroup?: ReturnType<typeof vi.fn>;
 }) {
+  const groups = opts.groups ?? GROUPS;
   return {
     transport: {
-      listAggregatedBooks: vi.fn(async () => opts.books),
-      updateBookTiering:
-        opts.updateBookTiering ??
-        vi.fn(async (id: string, tiering: unknown) => ({
-          ...book({ id }),
-          tiering,
-        })),
+      listFixConnections: vi.fn(async () => opts.sessions ?? SESSIONS),
+      listPricingGroups: vi.fn(async () => groups),
+      updatePricingGroup:
+        opts.updatePricingGroup ??
+        vi.fn(async (_id: string, spec: PricingGroup) => spec),
     },
     auth: {
       user: opts.user,
-      isAdmin: false,
-      can: () => opts.canRetune,
+      isAdmin: opts.isAdmin,
+      can: () => opts.canQuote,
     },
     setSignInOpen: vi.fn(),
+    setWorkspace: vi.fn(),
   };
 }
 
@@ -89,72 +174,108 @@ describe("TieringWorkspace — rail registration", () => {
 
 describe("TieringWorkspace — sign-in gate", () => {
   it("shows a sign-in card for an anonymous session", () => {
-    state.app = makeApp({ user: null, canRetune: true, books: [book()] });
+    state.app = makeApp({ user: null, isAdmin: false, canQuote: true });
     render(<TieringWorkspace />);
     expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
 });
 
-describe("TieringWorkspace — trader retune flow", () => {
-  it("enables Flat tiering and applies it to the selected book", async () => {
-    const updateBookTiering = vi.fn(async (id: string, tiering: unknown) => ({
-      ...book({ id }),
-      tiering,
-    }));
+describe("TieringWorkspace — session → group resolution", () => {
+  it("badges each session with its resolved group (session bind, desk default, none)", async () => {
     state.app = makeApp({
       user: { id: "trader", email: "trader@celnet.com" },
-      canRetune: true,
-      books: [book()],
-      updateBookTiering,
+      isAdmin: true,
+      canQuote: true,
     });
     render(<TieringWorkspace />);
 
-    // The book loads (async) — its roster button is present.
-    const bookBtn = await screen.findByRole("button", { name: /US Treasuries/ });
-    expect(bookBtn).toBeInTheDocument();
+    // The roster lists every session (async load).
+    await screen.findByRole("button", { name: /Alpha FIX/ });
+    const roster = screen.getByRole("region", { name: "select a FIX session" });
+    expect(within(roster).getByRole("button", { name: /Bravo FIX/ })).toBeInTheDocument();
+    expect(within(roster).getByRole("button", { name: /Gamma FIX/ })).toBeInTheDocument();
 
-    // Apply is disabled while nothing has changed (draft == stored null tiering).
-    const applyBtn = screen.getByRole("button", { name: /Apply tiering/ });
-    expect(applyBtn).toBeDisabled();
-
-    // Enable outbound tiering (the editor seeds a default Flat-markup config).
-    fireEvent.click(screen.getByLabelText("enable outbound tiering"));
-
-    // Now dirty + valid ⇒ Apply is enabled; clicking it calls the RPC.
-    expect(applyBtn).toBeEnabled();
-    fireEvent.click(applyBtn);
-
-    expect(updateBookTiering).toHaveBeenCalledTimes(1);
-    const [id, config] = updateBookTiering.mock.calls[0]!;
-    expect(id).toBe("us-treasuries");
-    expect(config).not.toBeNull();
-    expect((config as { strategies: { kind: string }[] }).strategies[0]!.kind).toBe(
-      "FLAT_MARKUP",
-    );
-
-    // The applied state round-trips into the UI.
-    expect(await screen.findByText("✓ Applied")).toBeInTheDocument();
+    // Alpha binds TIER1 by session; Bravo resolves DESK-CREDIT as the credit desk
+    // default; Gamma matches neither ⇒ "No group".
+    expect(within(roster).getByText("TIER1")).toBeInTheDocument();
+    expect(within(roster).getByText("DESK-CREDIT")).toBeInTheDocument();
+    expect(within(roster).getByText("No group")).toBeInTheDocument();
   });
 });
 
-describe("TieringWorkspace — permission state", () => {
-  it("shows a permission note + read-only summary without the capability", async () => {
+describe("TieringWorkspace — resolved pricing detail", () => {
+  it("shows the resolved group + a tiering summary from its pipeline", async () => {
     state.app = makeApp({
-      user: { id: "viewer", email: "viewer@celnet.com" },
-      canRetune: false,
-      books: [book()],
+      user: { id: "trader", email: "trader@celnet.com" },
+      isAdmin: true,
+      canQuote: true,
     });
     render(<TieringWorkspace />);
 
+    // The first ENABLED session (Alpha) is selected by default ⇒ its detail shows.
+    await screen.findByRole("button", { name: /Alpha FIX/ });
+    const detail = screen.getByRole("region", { name: "session pricing" });
+
+    // The applied group + how it matched.
+    const applied = within(detail).getByLabelText("applied pricing group");
+    expect(within(applied).getByText("TIER1")).toBeInTheDocument();
+    expect(within(applied).getByText(/Matched as bound to this session/)).toBeInTheDocument();
+
+    // The shared pipeline's TIERING feature summarises read-only (Flat 25).
+    const summary = within(detail).getByLabelText("pipeline tiering summary");
+    expect(within(summary).getByText("ESP & RFQ (shared)")).toBeInTheDocument();
+    expect(within(summary).getByText("TIERING")).toBeInTheDocument();
+    expect(within(summary).getByText("Flat markup")).toBeInTheDocument();
+    expect(within(summary).getByText(/H\s*25/)).toBeInTheDocument();
+  });
+});
+
+describe("TieringWorkspace — admin reassign", () => {
+  it("moves the session into the target group's memberConnectionIds", async () => {
+    const updatePricingGroup = vi.fn(async (_id: string, spec: PricingGroup) => spec);
+    state.app = makeApp({
+      user: { id: "admin", email: "admin@celnet.com" },
+      isAdmin: true,
+      canQuote: true,
+      updatePricingGroup,
+    });
+    render(<TieringWorkspace />);
+
+    // Select the currently-unmatched Gamma session.
+    fireEvent.click(await screen.findByRole("button", { name: /Gamma FIX/ }));
+
+    // The admin-only assign control starts at "No group" (unbound) and is enabled.
+    const select = screen.getByLabelText("Assign to group") as HTMLSelectElement;
+    expect(select).toBeEnabled();
+    expect(select.value).toBe("");
+
+    // Reassign Gamma into TIER1 ⇒ updatePricingGroup adds it to TIER1's members.
+    fireEvent.change(select, { target: { value: "tier1" } });
+
+    await waitFor(() => expect(updatePricingGroup).toHaveBeenCalledTimes(1));
+    const [id, spec] = updatePricingGroup.mock.calls[0]!;
+    expect(id).toBe("tier1");
+    expect((spec as PricingGroup).memberConnectionIds).toEqual(
+      expect.arrayContaining(["sess-alpha", "sess-gamma"]),
+    );
+  });
+});
+
+describe("TieringWorkspace — non-admin read-only", () => {
+  it("disables the assign control for a signed-in non-admin", async () => {
+    state.app = makeApp({
+      user: { id: "viewer", email: "viewer@celnet.com" },
+      isAdmin: false,
+      canQuote: true,
+    });
+    render(<TieringWorkspace />);
+
+    await screen.findByRole("button", { name: /Alpha FIX/ });
+
+    // The assign <select> is disabled and the admin-only deep-link is absent.
+    expect(screen.getByLabelText("Assign to group")).toBeDisabled();
     expect(
-      screen.getByText(/don't have permission to retune tiering/i),
-    ).toBeInTheDocument();
-    // Selecting the (default-selected) book shows the read-only summary, NOT the editor.
-    const ro = await screen.findByLabelText("current tiering (read-only)");
-    expect(within(ro).getByText("Disabled")).toBeInTheDocument();
-    expect(
-      screen.queryByLabelText("outbound tiering configuration"),
+      screen.queryByRole("button", { name: /Edit tiering in Pricing Groups/ }),
     ).toBeNull();
-    expect(screen.queryByRole("button", { name: /Apply tiering/ })).toBeNull();
   });
 });

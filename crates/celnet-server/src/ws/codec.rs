@@ -60,9 +60,9 @@ use celnet_proto::{
     ResetPasswordResponse, SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse,
     SetUserCapabilitiesRequest, SetUserCapabilitiesResponse, TieringConfigDesc,
     TieringGuardrailsDesc, TieringStrategyDesc, UpdateAggregatedBookRequest,
-    UpdateAggregatedBookResponse, UpdateBookRequest, UpdateBookResponse, UpdateBookTieringRequest,
-    UpdateBookTieringResponse, UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest,
-    UpdateEntityResponse, UpdatePricingGroupPipelineRequest, UpdatePricingGroupPipelineResponse,
+    UpdateAggregatedBookResponse, UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest,
+    UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse,
+    UpdatePricingGroupPipelineRequest, UpdatePricingGroupPipelineResponse,
     UpdatePricingGroupRequest, UpdatePricingGroupResponse, UpdateUserRequest, UpdateUserResponse,
     UserDesc,
 };
@@ -3695,7 +3695,6 @@ fn aggregated_book_desc_to_json(d: &AggregatedBookDesc) -> Value {
         "instrument_ids": d.instrument_ids,
         "params": d.params.as_ref().map(aggregation_params_desc_to_json),
         "enabled": d.enabled,
-        "tiering": d.tiering.as_ref().map(tiering_config_desc_to_json),
     })
 }
 
@@ -3710,7 +3709,6 @@ fn aggregated_book_spec_from_json(v: &Value) -> Result<AggregatedBookSpec> {
         instrument_ids: string_array(o, "instrument_ids"),
         params: opt_nested(o, "params", aggregation_params_desc_from_json)?,
         enabled: bool_or_false(o, "enabled"),
-        tiering: opt_nested(o, "tiering", tiering_config_desc_from_json)?,
     })
 }
 
@@ -3777,24 +3775,6 @@ pub(super) fn delete_aggregated_book_request_from_json(
 
 pub(super) fn delete_aggregated_book_response_to_json(r: &DeleteAggregatedBookResponse) -> Value {
     json!({ "removed": r.removed, "correlation_id": r.correlation_id })
-}
-
-pub(super) fn update_book_tiering_request_from_json(
-    o: &Map<String, Value>,
-) -> Result<UpdateBookTieringRequest> {
-    Ok(UpdateBookTieringRequest {
-        session_token: string_field(o, "session_token")?,
-        book_id: string_field(o, "book_id")?,
-        tiering: opt_nested(o, "tiering", tiering_config_desc_from_json)?,
-        correlation_id: opt_u64(o, "correlation_id"),
-    })
-}
-
-pub(super) fn update_book_tiering_response_to_json(r: &UpdateBookTieringResponse) -> Value {
-    json!({
-        "book": r.book.as_ref().map(aggregated_book_desc_to_json),
-        "correlation_id": r.correlation_id,
-    })
 }
 
 // --- pricing groups (AuthService FI client-tiering RPCs) --------------------
@@ -4422,8 +4402,7 @@ pub mod diff_support {
     use celnet_proto::{
         CreateAggregatedBookRequest, CreateAggregatedBookResponse, DeleteAggregatedBookRequest,
         DeleteAggregatedBookResponse, ListAggregatedBooksRequest, ListAggregatedBooksResponse,
-        UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookTieringRequest,
-        UpdateBookTieringResponse,
+        UpdateAggregatedBookRequest, UpdateAggregatedBookResponse,
     };
     use celnet_proto::{
         CreatePricingGroupRequest, CreatePricingGroupResponse, DeletePricingGroupRequest,
@@ -5555,22 +5534,6 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_delete_aggregated_book_response_to_json(r: &DeleteAggregatedBookResponse) -> Value {
         super::delete_aggregated_book_response_to_json(r)
-    }
-
-    /// Hand-codec `UpdateBookTieringRequest` decoder.
-    ///
-    /// # Errors
-    /// Propagates the hand codec's [`CodecError`] on a malformed body.
-    pub fn hand_update_book_tiering_request_from_json(
-        o: &Map<String, Value>,
-    ) -> Result<UpdateBookTieringRequest, CodecError> {
-        super::update_book_tiering_request_from_json(o)
-    }
-
-    /// Hand-codec `UpdateBookTieringResponse` encoder.
-    #[must_use]
-    pub fn hand_update_book_tiering_response_to_json(r: &UpdateBookTieringResponse) -> Value {
-        super::update_book_tiering_response_to_json(r)
     }
 
     /// Hand-codec `ListPricingGroupsRequest` decoder.

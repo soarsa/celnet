@@ -1,21 +1,20 @@
 /**
- * FI-TIERING phase 3 — the per-book outbound-tiering config: wire codec round-trip
- * + client-side validation.
+ * FI-TIERING — the outbound-tiering config: wire codec round-trip + client-side
+ * validation. Tiering is composed per-client via a pricing-group TIERING feature
+ * (see test/pricingGroups.test.ts); this suite pins the reusable config codec + the
+ * validators the feature editor shares.
  *
  * The codec assertions pin the BYTE-FOR-FIELD contract with the server codec
  * (`crates/celnet-server/src/ws/codec.rs` tiering_*_{to,from}_json): the exact
  * snake_case field names and the NUMERIC proto3 enum ints. The validation
- * assertions mirror the `celnet-tiering` guardrail invariants. We drive the FULL
- * spec→wire→desc path (through the real request encoder + desc decoder) so a
- * field-name or enum-int drift fails here rather than silently on the wire.
+ * assertions mirror the `celnet-tiering` guardrail invariants, so a field-name or
+ * enum-int drift fails here rather than silently on the wire.
  */
 
 import { describe, expect, it } from "vitest";
 
-import type { AggregatedBookSpec, TieringConfig } from "../src/data/contract";
+import type { TieringConfig } from "../src/data/contract";
 import {
-  aggregatedBookDescFromWire,
-  createAggregatedBookRequestToWire,
   tieringConfigFromWire,
   tieringConfigToWire,
   type WireObject,
@@ -48,25 +47,6 @@ const richConfig: TieringConfig = {
   guardrails: { hMin: 0.05, hMax: 1.25, sMax: 0.5, spreadFloor: 0.02 },
   stalePolicy: "WIDEN_TO_MAX",
 };
-
-function specWith(tiering: TieringConfig | null): AggregatedBookSpec {
-  return {
-    id: "us-treasuries",
-    name: "US Treasuries",
-    memberConnectionIds: ["LP-SIM-01", "LP-SIM-02"],
-    scopeMode: "ALL_MEMBERS_QUOTE",
-    instrumentIds: [],
-    params: {
-      stalenessTauMs: 2000,
-      maxQuoteAgeMs: 5000,
-      divergenceGating: true,
-      minContributors: 2,
-      depthLevels: 1,
-    },
-    enabled: true,
-    tiering,
-  };
-}
 
 describe("tiering wire codec (byte-for-field with the server)", () => {
   it("emits the exact snake_case field names + numeric enum ints", () => {
@@ -133,28 +113,6 @@ describe("tiering wire codec (byte-for-field with the server)", () => {
     const wire = tieringConfigToWire(cfg);
     expect(wire.unit).toBe(0);
     expect((wire.strategies as WireObject[])[0]).toMatchObject({ kind: 0, half_spread: 25 });
-  });
-
-  it("decodes an absent/empty tiering block as disabled (null)", () => {
-    expect(aggregatedBookDescFromWire({ id: "x", name: "X" }).tiering).toBeNull();
-  });
-
-  it("drives the full spec→wire→desc path with tiering enabled", () => {
-    const req = createAggregatedBookRequestToWire(specWith(richConfig));
-    const specWire = req.spec as WireObject;
-    // The request encoder carries the tiering block under the nested spec.
-    expect(specWire.tiering).toBeTruthy();
-    // Simulate the server echo (spec + minted id) and decode as a desc.
-    const desc = aggregatedBookDescFromWire({ ...specWire, id: "us-treasuries" });
-    expect(desc.tiering).toEqual(richConfig);
-  });
-
-  it("drives the full spec→wire→desc path with tiering disabled", () => {
-    const req = createAggregatedBookRequestToWire(specWith(null));
-    const specWire = req.spec as WireObject;
-    expect(specWire.tiering).toBeNull();
-    const desc = aggregatedBookDescFromWire({ ...specWire, id: "us-treasuries" });
-    expect(desc.tiering).toBeNull();
   });
 
   it("renders guardrails as null on the wire when absent", () => {

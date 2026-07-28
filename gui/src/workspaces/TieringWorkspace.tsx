@@ -1,189 +1,305 @@
 /**
- * TieringWorkspace — the trader-facing FI Tiering surface (server commit 8404bc9).
+ * TieringWorkspace — the trader-facing FI Tiering surface, SESSION-PIVOTED.
  *
- * Until now a book's OUTBOUND tiering (widen / skew the consolidated composite
- * before it is published to clients) could only be retuned behind the ADMIN-only
- * "Manage" toggle on the Aggregated Book workspace. This first-class workspace
- * closes that gap: an ordinary TRADER (holding `quote_respond·fixed_income`, NOT
- * admin) can discover every aggregated book, see each book's current tiering
- * state, pick one, retune it with the shared {@link TieringEditor} (all three
- * strategies — Flat markup / Inventory skew / Scaled-smoothed spread — with the
- * per-strategy "?" doc links), and APPLY it through the trader-accessible
- * `AuthService.UpdateBookTiering` RPC. Book STRUCTURE (members / scope /
- * consolidation params) stays admin-only and is NOT editable here — this surface
- * edits ONLY tiering.
+ * Outbound pricing is no longer tuned per aggregated BOOK here. It is composed as
+ * a per-client {@link PricingGroup} pipeline (Administration → Pricing Groups): a
+ * group binds FIX sessions / users / desks (1-to-many; desk default) to an ESP and
+ * an RFQ feature pipeline (RAW → ordered features → OUTBOUND). This surface pivots
+ * on the INBOUND FIX SESSIONS and answers, per session: which pricing group applies
+ * (an exact session bind, a desk default, or none), and what tiering that group's
+ * pipeline(s) produce — summarised READ-ONLY from the pipeline's Tiering feature and
+ * price-space guardrails.
  *
- * Gating: registered in the rail under Fixed Income on `view·fixed_income` (the
- * same asset gate every FI trading workspace uses — reachable by any FI trader,
- * NOT admin-gated). Applying additionally requires `quote_respond·fixed_income`
- * (the exact capability the server enforces): a signed-in FI user who lacks it
- * still sees the books and their current tiering READ-ONLY, with a clear
- * permission note instead of a broken screen. `listAggregatedBooks` is
- * authenticated-only, so a non-admin can already list books + their `tiering`.
+ * Editing tiering itself happens in the Pricing Groups builder (deep-linked from
+ * here). This surface offers ONE structural edit: an ADMIN can reassign a session
+ * between groups (moving `session.id` in/out of each group's `memberConnectionIds`)
+ * via the trader-accessible `AuthService.UpdatePricingGroup` RPC. A non-admin sees
+ * everything read-only.
+ *
+ * Gating: registered in the rail under Fixed Income on `view·fixed_income` (reachable
+ * by any FI trader, NOT admin-gated). The read-only summary is visible to any signed-
+ * in FI user; reassigning a session and the "Edit in Pricing Groups" deep-link require
+ * admin (Pricing Groups is an admin pane). A signed-in user lacking `quote_respond·
+ * fixed_income` still sees the sessions and their applied pricing read-only.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
-import { TieringEditor } from "../components/TieringEditor";
-import type { AggregatedBookDesc, TieringConfig } from "../data/contract";
+import type {
+  FeaturePipeline,
+  FixConnection,
+  PricingGroup,
+  TieringConfig,
+  TieringGuardrails,
+  TieringStrategy,
+} from "../data/contract";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
-import {
-  hasTieringErrors,
-  TIERING_SPREAD_UNIT_LABEL,
-  TIERING_STRATEGY_KIND_LABEL,
-  validateTiering,
-  type TieringErrors,
-} from "../lib/tiering";
+import { FEATURE_KIND_LABEL } from "../lib/pricingGroups";
+import { TIERING_SPREAD_UNIT_LABEL, TIERING_STRATEGY_KIND_LABEL } from "../lib/tiering";
 import styles from "./TieringWorkspace.module.css";
 
-/** An all-clear error set for a disabled (null) tiering config. */
-const NO_TIERING_ERRORS: TieringErrors = { strategies: {}, guardrails: {} };
+/** How a session's applied pricing group was matched (mirrors the server resolver). */
+type GroupMatch = "session" | "desk" | "none";
 
-/** Deep-clone a tiering config for the editor form (or pass through `null`). */
-function cloneTiering(t: TieringConfig | null): TieringConfig | null {
-  if (t === null) return null;
-  return {
-    unit: t.unit,
-    strategies: t.strategies.map((s) => ({ ...s })),
-    guardrails: t.guardrails ? { ...t.guardrails } : null,
-    stalePolicy: t.stalePolicy,
-  };
+/** The resolved pricing group for a session plus HOW it matched. */
+interface Resolved {
+  group: PricingGroup | null;
+  match: GroupMatch;
 }
 
-/** A compact human summary of a book's current tiering state (for the roster). */
-function tieringSummary(t: TieringConfig | null): { on: boolean; label: string } {
-  if (t === null) return { on: false, label: "No tiering" };
-  const kinds = t.strategies.map((s) => TIERING_STRATEGY_KIND_LABEL[s.kind]);
-  const label = kinds.length > 0 ? kinds.join(" · ") : "Enabled";
-  return { on: true, label };
+/**
+ * Resolve the pricing group that prices a session, mirroring the server resolver:
+ * among ENABLED groups, first the group whose `memberConnectionIds` binds this
+ * session; else the group whose `memberDesks` carries the session's routing desk
+ * (a desk-level default); else none (the session streams the raw composite).
+ */
+function resolveGroup(session: FixConnection, enabledGroups: readonly PricingGroup[]): Resolved {
+  const byConn = enabledGroups.find((g) => g.memberConnectionIds.includes(session.id));
+  if (byConn) return { group: byConn, match: "session" };
+  if (session.desk !== "") {
+    const byDesk = enabledGroups.find((g) => g.memberDesks.includes(session.desk));
+    if (byDesk) return { group: byDesk, match: "desk" };
+  }
+  return { group: null, match: "none" };
 }
 
-/** Whether two tiering configs are value-equal (drives the dirty / Apply state). */
-function tieringEqual(a: TieringConfig | null, b: TieringConfig | null): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+/** A short human phrase for how the group matched (for the applied-group note). */
+function matchLabel(r: Resolved, desk: string): string {
+  switch (r.match) {
+    case "session":
+      return "bound to this session";
+    case "desk":
+      return `desk default${desk ? ` (${desk})` : ""}`;
+    case "none":
+      return "no group";
+  }
 }
 
-/** The result of the last Apply attempt (inline success / failure feedback). */
-type ApplyState =
+/** A compact number rendering (drops trailing zeros; never scientific). */
+function num(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return String(Number(n.toPrecision(6)));
+}
+
+/** The Tiering feature (if any) carried by a pipeline, plus its ordered feature kinds. */
+function pipelineTiering(p: FeaturePipeline): TieringConfig | null {
+  const feat = p.features.find((f) => f.kind === "TIERING" && f.tiering !== null);
+  return feat ? feat.tiering : null;
+}
+
+/** A one-line summary of a single tiering strategy's key parameters. */
+function strategyParams(s: TieringStrategy, unitLabel: string): string {
+  switch (s.kind) {
+    case "FLAT_MARKUP":
+      return `H ${num(s.halfSpread)} ${unitLabel}`;
+    case "INVENTORY_SKEW":
+      return `H ${num(s.halfSpread)} ${unitLabel} · κ ${num(s.kappa)} · sMax ${num(s.sMax)}`;
+    case "SCALED_SMOOTHED_SPREAD":
+      return `c ${num(s.coreSpread)} · m ${num(s.maxOutputSpread)} · w ${num(
+        s.smoothingWeight,
+      )} · e ${num(s.expectedSpread)} · f ${num(s.spreadScaleFactor)}`;
+    default:
+      return "";
+  }
+}
+
+/** A one-line summary of the pipeline's price-space guardrails. */
+function guardrailLine(g: TieringGuardrails): string {
+  return `h_min ${num(g.hMin)} · h_max ${num(g.hMax)} · s_max ${num(g.sMax)} · spread_floor ${num(
+    g.spreadFloor,
+  )}`;
+}
+
+/** The result of the last reassign attempt (inline success / failure feedback). */
+type AssignState =
   | { kind: "idle" }
-  | { kind: "applying" }
-  | { kind: "ok"; bookName: string }
+  | { kind: "saving" }
+  | { kind: "ok"; message: string }
   | { kind: "error"; message: string };
+
+/** A read-only render of one pipeline's ordered features + its Tiering summary. */
+function PipelineSummary({ label, pipeline }: { label: string; pipeline: FeaturePipeline | null }): React.ReactElement {
+  if (pipeline === null) {
+    return (
+      <div className={styles.pipeBlock}>
+        <span className={styles.pipeHead}>{label}</span>
+        <span className={styles.noTier}>No custom pipeline — this mode uses the book-default pricing.</span>
+      </div>
+    );
+  }
+  const tiering = pipelineTiering(pipeline);
+  const unitLabel = tiering ? TIERING_SPREAD_UNIT_LABEL[tiering.unit] : "";
+  return (
+    <div className={styles.pipeBlock}>
+      <span className={styles.pipeHead}>{label}</span>
+      <div className={styles.chips}>
+        {pipeline.features.length === 0 ? (
+          <span className={styles.noTier}>No features (pass-through).</span>
+        ) : (
+          pipeline.features.map((f, i) => (
+            <span key={`${f.kind}-${i}`} className={styles.chip}>
+              {FEATURE_KIND_LABEL[f.kind]}
+            </span>
+          ))
+        )}
+      </div>
+      {tiering === null ? (
+        <span className={styles.noTier}>No tiering in this group&apos;s pipeline.</span>
+      ) : (
+        <div className={styles.tierWrap}>
+          <span className={styles.metaLine}>Spread unit: {unitLabel}</span>
+          {tiering.strategies.length === 0 ? (
+            <span className={styles.noTier}>Tiering enabled with no strategies.</span>
+          ) : (
+            tiering.strategies.map((s, i) => (
+              <span key={`${s.kind}-${i}`} className={styles.stratLine}>
+                <span className={styles.stratName}>{TIERING_STRATEGY_KIND_LABEL[s.kind]}</span>{" "}
+                <span className={styles.mono}>{strategyParams(s, unitLabel)}</span>
+              </span>
+            ))
+          )}
+        </div>
+      )}
+      {pipeline.guardrails && (
+        <span className={styles.guardLine}>
+          Guardrails: <span className={styles.mono}>{guardrailLine(pipeline.guardrails)}</span>
+        </span>
+      )}
+    </div>
+  );
+}
 
 export function TieringWorkspace(): React.ReactElement {
   const app = useApp();
   const { auth } = app;
   const signedIn = auth.user !== undefined && auth.user !== null;
-  // The exact capability the server gates `UpdateBookTiering` on. An FI trader
-  // holds it; an admin holds it too (grant-all). A signed-in FI user WITHOUT it
-  // sees the books read-only + a permission note (never a broken screen).
-  const canRetune = auth.can("quote_respond", "fixed_income");
+  const isAdmin = auth.isAdmin;
+  // The FI capability the trading surface is gated on. An admin holds it too
+  // (grant-all). A signed-in user WITHOUT it sees everything read-only (never a
+  // broken screen); reassigning is admin-only regardless.
+  const canQuote = auth.can("quote_respond", "fixed_income");
 
-  const [books, setBooks] = useState<AggregatedBookDesc[]>([]);
+  const [sessions, setSessions] = useState<FixConnection[]>([]);
+  const [groups, setGroups] = useState<PricingGroup[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // The editor's working config — seeded from the selected book's stored tiering,
-  // retuned locally until Apply pushes it to the server.
-  const [draft, setDraft] = useState<TieringConfig | null>(null);
-  const [applyState, setApplyState] = useState<ApplyState>({ kind: "idle" });
+  const [assignState, setAssignState] = useState<AssignState>({ kind: "idle" });
 
-  // Load (and reload after an apply) the roster — any authenticated user may list
-  // it. A deterministic default selection lands on the first ENABLED book.
-  const reloadBooks = useCallback(async (): Promise<void> => {
-    const list = await app.transport.listAggregatedBooks();
-    setBooks(list);
+  // Load (and reload) both rosters. `listFixConnections` / `listPricingGroups` are
+  // authenticated-only, so any signed-in user may read them. Default selection lands
+  // on the first ENABLED (running-or-armed) session, else the first session.
+  const reloadGroups = useCallback(async (): Promise<PricingGroup[]> => {
+    const list = await app.transport.listPricingGroups();
+    setGroups(list);
+    return list;
+  }, [app.transport]);
+
+  const reloadAll = useCallback(async (): Promise<void> => {
+    const [sess, grps] = await Promise.all([
+      app.transport.listFixConnections(),
+      app.transport.listPricingGroups(),
+    ]);
+    setSessions(sess);
+    setGroups(grps);
     setLoadError(null);
     setSelectedId((prev) => {
-      if (prev && list.some((b) => b.id === prev)) return prev;
-      const firstEnabled = list.find((b) => b.enabled) ?? list[0];
-      return firstEnabled ? firstEnabled.id : null;
+      if (prev && sess.some((s) => s.id === prev)) return prev;
+      const first = sess.find((s) => s.enabled) ?? sess[0];
+      return first ? first.id : null;
     });
   }, [app.transport]);
 
   useEffect(() => {
     if (!signedIn) {
-      setBooks([]);
+      setSessions([]);
+      setGroups([]);
       setSelectedId(null);
       return;
     }
     let cancelled = false;
-    void reloadBooks().catch((e: unknown) => {
+    void reloadAll().catch((e: unknown) => {
       if (cancelled) return;
-      setLoadError(e instanceof Error ? e.message : "failed to load aggregated books");
+      setLoadError(e instanceof Error ? e.message : "failed to load FIX sessions and pricing groups");
     });
     return () => {
       cancelled = true;
     };
-  }, [reloadBooks, signedIn]);
+  }, [reloadAll, signedIn]);
 
-  const selectedBook = useMemo(
-    () => books.find((b) => b.id === selectedId) ?? null,
-    [books, selectedId],
+  const enabledGroups = useMemo(() => groups.filter((g) => g.enabled), [groups]);
+
+  const selectedSession = useMemo(
+    () => sessions.find((s) => s.id === selectedId) ?? null,
+    [sessions, selectedId],
   );
 
-  // Reseed the editor draft (+ clear apply feedback) ONLY when the SELECTED BOOK
-  // changes — keyed on the id via a ref, NOT on the book object's identity. A
-  // successful Apply replaces the book object in `books` (same id); guarding on the
-  // id means that re-render does NOT wipe the just-applied draft / success badge
-  // (apply reseeds the draft itself). `books` is a dep so the seed reads the freshly
-  // loaded roster on first arrival, but the ref guard makes it a no-op unless the id
-  // actually changed.
-  const seededIdRef = useRef<string | null>(null);
+  // Clear stale reassign feedback whenever the selected session changes.
   useEffect(() => {
-    if (selectedId === seededIdRef.current) return;
-    seededIdRef.current = selectedId;
-    const b = books.find((x) => x.id === selectedId) ?? null;
-    setDraft(cloneTiering(b ? b.tiering : null));
-    setApplyState({ kind: "idle" });
-  }, [selectedId, books]);
+    setAssignState({ kind: "idle" });
+  }, [selectedId]);
 
-  const errors = useMemo(
-    () => (draft === null ? NO_TIERING_ERRORS : validateTiering(draft)),
-    [draft],
+  const resolved = useMemo<Resolved | null>(
+    () => (selectedSession ? resolveGroup(selectedSession, enabledGroups) : null),
+    [selectedSession, enabledGroups],
   );
-  const valid = draft === null || !hasTieringErrors(errors);
-  const dirty = selectedBook !== null && !tieringEqual(draft, selectedBook.tiering);
-  const applying = applyState.kind === "applying";
-  const canApply = canRetune && selectedBook !== null && valid && dirty && !applying;
 
-  const onChangeDraft = useCallback((next: TieringConfig | null): void => {
-    setDraft(next);
-    // A fresh edit clears any stale apply feedback.
-    setApplyState((s) => (s.kind === "idle" || s.kind === "applying" ? s : { kind: "idle" }));
-  }, []);
+  // The group the session is EXPLICITLY bound to (its `memberConnectionIds`), which
+  // drives the assign <select>'s value — a desk-default match leaves it unbound ("").
+  const boundGroupId = resolved && resolved.match === "session" && resolved.group ? resolved.group.id : "";
 
-  const resetDraft = useCallback((): void => {
-    setDraft(cloneTiering(selectedBook ? selectedBook.tiering : null));
-    setApplyState({ kind: "idle" });
-  }, [selectedBook]);
-
-  const apply = useCallback(async (): Promise<void> => {
-    if (selectedBook === null || !canRetune || !valid) return;
-    setApplyState({ kind: "applying" });
-    try {
-      const updated = await app.transport.updateBookTiering(selectedBook.id, draft);
-      setBooks((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
-      setDraft(cloneTiering(updated.tiering));
-      setApplyState({ kind: "ok", bookName: updated.name });
-    } catch (e: unknown) {
-      setApplyState({
-        kind: "error",
-        message: e instanceof Error ? e.message : "failed to apply tiering",
-      });
-    }
-  }, [app.transport, canRetune, draft, selectedBook, valid]);
+  const reassign = useCallback(
+    async (nextGroupId: string): Promise<void> => {
+      if (!selectedSession || !isAdmin) return;
+      const sid = selectedSession.id;
+      // Build the COMPLETE updated specs immutably: strip this session from every
+      // group that currently lists it (except the target), and add it to the chosen
+      // group. Other members / pipelines / fields are preserved verbatim.
+      const updates: PricingGroup[] = [];
+      for (const g of groups) {
+        if (g.id !== nextGroupId && g.memberConnectionIds.includes(sid)) {
+          updates.push({ ...g, memberConnectionIds: g.memberConnectionIds.filter((x) => x !== sid) });
+        }
+      }
+      const target = nextGroupId === "" ? undefined : groups.find((g) => g.id === nextGroupId);
+      if (target && !target.memberConnectionIds.includes(sid)) {
+        updates.push({ ...target, memberConnectionIds: [...target.memberConnectionIds, sid] });
+      }
+      if (updates.length === 0) {
+        setAssignState({ kind: "idle" });
+        return;
+      }
+      setAssignState({ kind: "saving" });
+      try {
+        for (const u of updates) {
+          await app.transport.updatePricingGroup(u.id, u);
+        }
+        await reloadGroups();
+        setAssignState({
+          kind: "ok",
+          message: target ? `Assigned to ${target.name}.` : "Session binding cleared.",
+        });
+      } catch (e: unknown) {
+        setAssignState({
+          kind: "error",
+          message: e instanceof Error ? e.message : "failed to reassign the session",
+        });
+      }
+    },
+    [app.transport, groups, isAdmin, reloadGroups, selectedSession],
+  );
 
   // --- the sign-in gate ----------------------------------------------------
   if (!signedIn) {
     return (
       <div className={styles.wrap}>
         <div className={styles.gate}>
-          <h2 className={styles.gateTitle}>Book tiering</h2>
+          <h2 className={styles.gateTitle}>Session tiering</h2>
           <p className={styles.gateHint}>
-            Sign in to discover and retune an aggregated book&apos;s outbound tiering.
+            Sign in to see which pricing group prices each FIX session and how its tiering is
+            composed.
           </p>
           <Button variant="primary" onClick={() => app.setSignInOpen(true)}>
             Sign in
@@ -193,73 +309,80 @@ export function TieringWorkspace(): React.ReactElement {
     );
   }
 
-  const selectedSummary = selectedBook ? tieringSummary(selectedBook.tiering) : null;
-
   return (
     <div className={styles.wrap}>
       <div className={styles.head}>
         <div className={styles.headMain}>
           <span className={styles.title}>Tiering</span>
           <span className={styles.note}>
-            Widen and/or skew a book&apos;s consolidated composite before it is published to
-            clients. Pick a book, retune its outbound tiering, and apply — book structure
-            (members, scope, consolidation) stays with the desk administrator.
+            Inbound FIX sessions on the left, the pricing group applied to each (an exact session
+            bind, a desk default, or none), and its tiering summarised from the group&apos;s pipeline.
+            Reassign a session or deep-link into Pricing Groups to edit the pricing itself.
           </span>
         </div>
       </div>
 
-      {!canRetune && (
+      {!canQuote && (
         <p className={styles.permBanner} role="note">
           <span className={styles.permGlyph} aria-hidden="true">
             🔒︎
           </span>
-          You don&apos;t have permission to retune tiering. This requires the{" "}
-          <strong>Quote · Fixed Income</strong> capability
-          {" "}
+          You don&apos;t have the{" "}
+          <strong>Quote · Fixed Income</strong> capability{" "}
           <span className={styles.permHint}>
-            ({capabilityDenialTitle("quote_respond", "fixed_income")}).
+            ({capabilityDenialTitle("quote_respond", "fixed_income")})
           </span>{" "}
-          Books and their current tiering are shown below read-only.
+          — sessions and their applied pricing are shown below read-only.
         </p>
       )}
 
       {loadError && <p className={styles.banner}>{loadError}</p>}
 
-      {books.length === 0 ? (
+      {sessions.length === 0 ? (
         <div className={styles.empty}>
-          No aggregated books are defined. An administrator can define one in{" "}
-          <strong>Administration → Aggregation</strong> or under{" "}
-          <strong>Fixed Income → Agg Book → Manage</strong>.
+          No FIX sessions are defined — an administrator can add one under{" "}
+          <strong>Administration → Connections</strong>.
         </div>
       ) : (
         <div className={styles.body}>
-          {/* LEFT — the book roster with each book's tiering-state indicator. */}
-          <section className={styles.roster} aria-label="select an aggregated book">
-            <h3 className={styles.rosterHead}>Books</h3>
+          {/* LEFT — the session roster, each row badged with its resolved group. */}
+          <section className={styles.roster} aria-label="select a FIX session">
+            <h3 className={styles.rosterHead}>Sessions</h3>
             <ul className={styles.bookList}>
-              {books.map((b) => {
-                const sum = tieringSummary(b.tiering);
-                const active = selectedId === b.id;
+              {sessions.map((s) => {
+                const r = resolveGroup(s, enabledGroups);
+                const active = selectedId === s.id;
                 return (
-                  <li key={b.id}>
+                  <li key={s.id}>
                     <button
                       type="button"
                       className={`${styles.bookBtn} ${active ? styles.bookBtnActive : ""}`}
                       aria-pressed={active}
-                      onClick={() => setSelectedId(b.id)}
+                      onClick={() => setSelectedId(s.id)}
                     >
                       <span className={styles.bookRow}>
-                        <span className={styles.bookName}>{b.name}</span>
-                        {!b.enabled && <span className={styles.bookOff}>off</span>}
+                        <span className={styles.bookName}>{s.name}</span>
+                        {!s.enabled && <span className={styles.bookOff}>off</span>}
+                      </span>
+                      <span className={styles.sessionSub}>
+                        <span>
+                          {s.senderCompId} → {s.targetCompId}
+                        </span>
+                        {s.desk !== "" && <span className={styles.deskTag}>{s.desk}</span>}
                       </span>
                       <span className={styles.bookMeta}>
                         <span
-                          className={`${styles.tierBadge} ${sum.on ? styles.tierOn : styles.tierOff}`}
+                          className={`${styles.tierBadge} ${s.running ? styles.tierOn : styles.tierOff}`}
                         >
                           <span className={styles.tierDot} aria-hidden="true" />
-                          {sum.on ? "Tiering on" : "Tiering off"}
+                          {s.running ? "Live" : "Idle"}
                         </span>
-                        <span className={styles.tierLabel}>{sum.label}</span>
+                        <span
+                          className={`${styles.groupChip} ${r.group ? "" : styles.groupChipNone}`}
+                          title={r.group ? matchLabel(r, s.desk) : "No pricing group applies"}
+                        >
+                          {r.group ? r.group.name : "No group"}
+                        </span>
                       </span>
                     </button>
                   </li>
@@ -268,107 +391,126 @@ export function TieringWorkspace(): React.ReactElement {
             </ul>
           </section>
 
-          {/* RIGHT — the tiering editor (or a read-only summary without the cap),
-              hosted in the shared Panel material (opaque `--bg-raised` surface) so
-              the editor renders in the SAME context as the admin Manage editor. */}
-          <section className={styles.editorPane} aria-label="book tiering">
-            {selectedBook === null ? (
-              <Panel title="Book tiering" glyph="⚖">
-                <div className={styles.empty}>Select a book to view or retune its tiering.</div>
+          {/* RIGHT — the selected session's applied pricing + read-only tiering. */}
+          <section className={styles.editorPane} aria-label="session pricing">
+            {selectedSession === null || resolved === null ? (
+              <Panel title="Session pricing" glyph="⚙">
+                <div className={styles.empty}>Select a session to view its applied pricing group.</div>
               </Panel>
             ) : (
               <Panel
-                title={selectedBook.name}
-                glyph="⚖"
+                title={selectedSession.name}
+                glyph="⚙"
                 actions={
-                  applyState.kind === "ok" ? (
+                  assignState.kind === "ok" ? (
                     <span className={styles.okBadge} role="status" aria-live="polite">
-                      ✓ Applied
+                      ✓ Saved
                     </span>
                   ) : (
-                    <span className={styles.editorId}>{selectedBook.id}</span>
+                    <span className={styles.editorId}>{selectedSession.id}</span>
                   )
                 }
               >
-                {canRetune ? (
-                  <>
-                    <TieringEditor
-                      value={draft}
-                      onChange={onChangeDraft}
-                      errors={errors}
-                      idPrefix={`tiering-${selectedBook.id}`}
-                    />
-
-                    {applyState.kind === "error" && (
-                      <p className={styles.banner} role="alert">
-                        {applyState.message}
-                      </p>
-                    )}
-
-                    <div className={styles.actions}>
-                      <Button
-                        variant="primary"
-                        onClick={() => void apply()}
-                        disabled={!canApply}
-                        title={
-                          !valid
-                            ? "Fix the highlighted tiering errors first"
-                            : !dirty
-                              ? "No changes to apply"
-                              : "Apply this tiering to the book"
-                        }
-                      >
-                        {applying ? "Applying…" : "Apply tiering"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={resetDraft}
-                        disabled={!dirty || applying}
-                      >
-                        Reset
-                      </Button>
-                      <span className={styles.dirtyHint} aria-live="polite">
-                        {dirty ? "Unsaved changes" : "In sync with the book"}
+                <div className={styles.detailStack}>
+                  {/* Session identity. */}
+                  <div className={styles.readonly} aria-label="session identity">
+                    <div className={styles.roRow}>
+                      <span className={styles.roLabel}>Comp IDs</span>
+                      <span className={`${styles.roValue} ${styles.mono}`}>
+                        {selectedSession.senderCompId} → {selectedSession.targetCompId}
                       </span>
                     </div>
-                  </>
-                ) : (
-                  <div
-                    className={styles.readonly}
-                    aria-label="current tiering (read-only)"
-                  >
+                    <div className={styles.roRow}>
+                      <span className={styles.roLabel}>Desk</span>
+                      <span className={styles.roValue}>
+                        {selectedSession.desk !== "" ? selectedSession.desk : "— unrouted"}
+                      </span>
+                    </div>
                     <div className={styles.roRow}>
                       <span className={styles.roLabel}>State</span>
                       <span className={styles.roValue}>
-                        {selectedSummary?.on ? "Enabled" : "Disabled"}
+                        {selectedSession.running ? "Live" : "Idle"}
+                        {!selectedSession.enabled && " · disabled"}
                       </span>
                     </div>
-                    {selectedBook.tiering && (
-                      <>
-                        <div className={styles.roRow}>
-                          <span className={styles.roLabel}>Spread unit</span>
-                          <span className={styles.roValue}>
-                            {TIERING_SPREAD_UNIT_LABEL[selectedBook.tiering.unit]}
-                          </span>
-                        </div>
-                        <div className={styles.roRow}>
-                          <span className={styles.roLabel}>Strategies</span>
-                          <span className={styles.roValue}>
-                            {selectedBook.tiering.strategies.length > 0
-                              ? selectedBook.tiering.strategies
-                                  .map((s) => TIERING_STRATEGY_KIND_LABEL[s.kind])
-                                  .join(" · ")
-                              : "—"}
-                          </span>
-                        </div>
-                      </>
-                    )}
-                    <p className={styles.roNote}>
-                      Read-only — you can view the book&apos;s tiering but not change it.
-                    </p>
                   </div>
-                )}
+
+                  {/* Applied pricing group. */}
+                  <div className={styles.readonly} aria-label="applied pricing group">
+                    <div className={styles.roRow}>
+                      <span className={styles.roLabel}>Applied pricing group</span>
+                      <span className={styles.roValue}>
+                        {resolved.group ? resolved.group.name : "None"}
+                      </span>
+                    </div>
+                    <span className={styles.matchNote}>
+                      {resolved.group
+                        ? `Matched as ${matchLabel(resolved, selectedSession.desk)}${
+                            resolved.group.enabled ? "" : " · group disabled"
+                          }.`
+                        : "No group — this session streams the raw composite (no per-session tiering)."}
+                    </span>
+                  </div>
+
+                  {/* Read-only tiering summary from the group's pipeline(s). */}
+                  {resolved.group && (
+                    <div className={styles.pipeGrid} aria-label="pipeline tiering summary">
+                      {resolved.group.sharePipeline ? (
+                        <PipelineSummary label="ESP & RFQ (shared)" pipeline={resolved.group.espPipeline} />
+                      ) : (
+                        <>
+                          <PipelineSummary label="ESP (streaming)" pipeline={resolved.group.espPipeline} />
+                          <PipelineSummary label="RFQ / RFS" pipeline={resolved.group.rfqPipeline} />
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Reassign control (admin) + deep-link to the editor. */}
+                  <div className={styles.assign}>
+                    <div className={styles.assignRow}>
+                      <label className={styles.assignLabel} htmlFor="tier-assign">
+                        Assign to group
+                      </label>
+                      <select
+                        id="tier-assign"
+                        className={styles.select}
+                        value={boundGroupId}
+                        disabled={!isAdmin || assignState.kind === "saving"}
+                        title={isAdmin ? undefined : "Admin required to reassign — view only"}
+                        onChange={(e) => void reassign(e.target.value)}
+                      >
+                        <option value="">No group (clear session binding)</option>
+                        {enabledGroups.map((g) => (
+                          <option key={g.id} value={g.id}>
+                            {g.name}
+                          </option>
+                        ))}
+                      </select>
+                      {isAdmin ? (
+                        <Button
+                          variant="ghost"
+                          onClick={() => app.setWorkspace("pricinggroups")}
+                          title="Open the Pricing Groups builder to edit this pipeline"
+                        >
+                          Edit tiering in Pricing Groups →
+                        </Button>
+                      ) : (
+                        <span className={styles.dirtyHint}>Admin required to reassign — view only</span>
+                      )}
+                    </div>
+                    {assignState.kind === "error" && (
+                      <p className={styles.banner} role="alert">
+                        {assignState.message}
+                      </p>
+                    )}
+                    {assignState.kind === "ok" && (
+                      <span className={styles.dirtyHint} aria-live="polite">
+                        {assignState.message}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </Panel>
             )}
           </section>

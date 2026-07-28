@@ -1787,7 +1787,6 @@ mod tests {
     use crate::services::sessions::AuthenticatedUser;
     use celnet_entitlements::AccessMode;
     use celnet_proto::LpQuote;
-    use celnet_tiering::{Guardrails, SpreadUnit, StalePolicy, StrategySpec, TieringConfig};
 
     /// A real EURUSD-fixture core so an admitted RFQ prices a genuine quote.
     fn test_link() -> Arc<CoreLink> {
@@ -2500,11 +2499,7 @@ mod tests {
     /// quote. The hub clock is manual and every ingest is stamped at that instant, so the
     /// composite is fresh regardless of the (separate) edge clock. Mirrors
     /// `aggregation::tests` construction.
-    fn flat_book_hub(
-        instrument_id: &str,
-        half_bps: f64,
-        members: &[(&str, f64, f64)],
-    ) -> Arc<AggregationHub> {
+    fn flat_book_hub(instrument_id: &str, members: &[(&str, f64, f64)]) -> Arc<AggregationHub> {
         const HUB_NOW: i64 = 1_700_000_000_000_000_000;
         let hub = AggregationHub::new(Clock::manual(HUB_NOW));
         let mut store = IdentityStore::default();
@@ -2521,14 +2516,6 @@ mod tests {
                 depth_levels: 1,
             },
             enabled: true,
-            tiering: Some(TieringConfig {
-                unit: SpreadUnit::PriceBps,
-                strategies: vec![StrategySpec::FlatMarkup {
-                    half_spread: half_bps,
-                }],
-                guardrails: Guardrails::new(0.0, 1_000.0, 1_000.0, 1e-9),
-                stale_policy: StalePolicy::Suppress,
-            }),
         });
         hub.reconcile(&store);
         for (lp, bid, offer) in members {
@@ -2567,14 +2554,13 @@ mod tests {
         .with_aggregation_hub(hub)
     }
 
-    /// (1) An RFQ for an instrument IN a book's scope prices against that book's
-    /// ALREADY-TIERED composite — the two-way is the tiered 99.30/99.80 for a 99.55
-    /// composite mid (Flat ±25 price-bps; the SAME arithmetic `celnet-tiering`'s own
-    /// `flat_price_bps` oracle asserts, hand-check 99.55 ∓ 0.25) — and it DIFFERS from the
-    /// synthetic-demo panel (the options-engine premium a no-hub edge produces).
+    /// (1) An RFQ for an instrument IN a book's scope prices against that book's RAW
+    /// consolidated composite — the two-way is the raw 99.50/99.60 line (tiering is
+    /// group-only; a book carries no outbound tier) — and it DIFFERS from the synthetic-demo
+    /// panel (the options-engine premium a no-hub edge produces).
     #[tokio::test]
-    async fn rfq_prices_against_the_books_tiered_composite() {
-        let hub = flat_book_hub("BND-5Y", 25.0, &[("LP-1", 99.50, 99.60)]);
+    async fn rfq_prices_against_the_books_composite() {
+        let hub = flat_book_hub("BND-5Y", &[("LP-1", 99.50, 99.60)]);
         let edge = edge_with_hub(AccessMode::Permissive, hub);
         let instrument = commodity_named("BND-5Y", 1.12);
 
@@ -2589,8 +2575,8 @@ mod tests {
             .expect("book-covered RFQ prices")
             .into_inner();
         let price = quote.price.expect("two-way");
-        assert!((price.bid - 99.30).abs() < 1e-9, "bid={}", price.bid);
-        assert!((price.offer - 99.80).abs() < 1e-9, "offer={}", price.offer);
+        assert!((price.bid - 99.50).abs() < 1e-9, "bid={}", price.bid);
+        assert!((price.offer - 99.60).abs() < 1e-9, "offer={}", price.offer);
         // A composite market price, not an option premium: no greeks / std-error / surface.
         assert!(
             quote.greeks.is_none(),
@@ -2599,7 +2585,7 @@ mod tests {
         assert!(quote.surface_version.is_none());
 
         // It differs from the synthetic-demo panel: a no-hub edge prices the SAME commodity
-        // as an option premium — nowhere near the 99.80 composite offer.
+        // as an option premium — nowhere near the 99.60 composite offer.
         let no_hub = edge_under(AccessMode::Permissive).0;
         let engine_quote = no_hub
             .request_quote(Request::new(quote_request_for(
@@ -2610,8 +2596,8 @@ mod tests {
             .into_inner();
         let engine_price = engine_quote.price.expect("two-way");
         assert!(
-            (engine_price.offer - 99.80).abs() > 1.0,
-            "the engine premium ({}) must differ from the book composite offer (99.80)",
+            (engine_price.offer - 99.60).abs() > 1.0,
+            "the engine premium ({}) must differ from the book composite offer (99.60)",
             engine_price.offer
         );
         assert!(
@@ -2627,11 +2613,7 @@ mod tests {
     #[tokio::test]
     async fn multi_dealer_ranks_and_books_book_member_lines() {
         // LP-2 (99.52/99.58) is tighter than LP-1 (99.50/99.60) ⇒ wins bid AND offer.
-        let hub = flat_book_hub(
-            "BND-5Y",
-            25.0,
-            &[("LP-1", 99.50, 99.60), ("LP-2", 99.52, 99.58)],
-        );
+        let hub = flat_book_hub("BND-5Y", &[("LP-1", 99.50, 99.60), ("LP-2", 99.52, 99.58)]);
         let edge = edge_with_hub(AccessMode::Permissive, hub);
         let instrument = commodity_named("BND-5Y", 1.12);
 
@@ -2722,7 +2704,7 @@ mod tests {
     /// scopes "BND-5Y"), so the with-hub and no-hub quotes are bit-for-bit equal.
     #[tokio::test]
     async fn no_covering_book_falls_back_byte_identically() {
-        let hub = flat_book_hub("BND-5Y", 25.0, &[("LP-1", 99.50, 99.60)]);
+        let hub = flat_book_hub("BND-5Y", &[("LP-1", 99.50, 99.60)]);
         let with_hub = edge_with_hub(AccessMode::Permissive, hub);
         let no_hub = edge_under(AccessMode::Permissive).0;
 

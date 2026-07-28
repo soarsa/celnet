@@ -40,7 +40,7 @@ use celnet_proto::{
     RateSensitivities, Strategy, StrategyKind, StrikeOrDelta, SubscriptionId, Tenor,
     TieringConfigDesc, TieringGuardrailsDesc, TieringSpreadUnit, TieringStalePolicy,
     TieringStrategyDesc, TieringStrategyKind, Underlying, UpdateAggregatedBookResponse,
-    UpdateBookTieringResponse, UpdatePricingGroupPipelineResponse, UpdatePricingGroupResponse,
+    UpdatePricingGroupPipelineResponse, UpdatePricingGroupResponse,
 };
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
@@ -4315,52 +4315,6 @@ fn delete_aggregated_book_request_decode_byte_identical() {
     );
 }
 
-#[test]
-fn update_book_tiering_request_decode_byte_identical() {
-    // Full: the trader-facing tiering retune carries the nested `tiering` message.
-    let body = json!({
-        "session_token": "tok", "book_id": "g10",
-        "tiering": agg_tiering_body(), "correlation_id": 9
-    });
-    let o = body.as_object().expect("object");
-    assert_decode_eq(
-        "UpdateBookTieringRequest(full)",
-        generated::decode_update_book_tiering_request(o),
-        hand::hand_update_book_tiering_request_from_json(o),
-    );
-    // Minimal: an absent `tiering` (⇒ None on both sides — disable the book's tiering).
-    let minimal = json!({ "session_token": "tok", "book_id": "g10" });
-    let mo = minimal.as_object().expect("object");
-    assert_decode_eq(
-        "UpdateBookTieringRequest(disable)",
-        generated::decode_update_book_tiering_request(mo),
-        hand::hand_update_book_tiering_request_from_json(mo),
-    );
-}
-
-#[test]
-fn update_book_tiering_response_encode_byte_identical() {
-    let updated = UpdateBookTieringResponse {
-        book: Some(agg_book_desc()),
-        correlation_id: Some(9),
-    };
-    assert_bytes_eq(
-        "UpdateBookTieringResponse",
-        &generated::encode_update_book_tiering_response(&updated),
-        &hand::hand_update_book_tiering_response_to_json(&updated),
-    );
-    // Absent book + correlation_id ⇒ both `null`.
-    let empty = UpdateBookTieringResponse::default();
-    let g = generated::encode_update_book_tiering_response(&empty);
-    assert_eq!(g.get("book"), Some(&Value::Null));
-    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
-    assert_bytes_eq(
-        "UpdateBookTieringResponse(empty)",
-        &g,
-        &hand::hand_update_book_tiering_response_to_json(&empty),
-    );
-}
-
 /// A fully-populated aggregated-book descriptor (explicit scope + nested params).
 fn agg_book_desc() -> AggregatedBookDesc {
     AggregatedBookDesc {
@@ -4377,42 +4331,6 @@ fn agg_book_desc() -> AggregatedBookDesc {
             depth_levels: 3,
         }),
         enabled: true,
-        tiering: Some(TieringConfigDesc {
-            unit: TieringSpreadUnit::PriceBps as i32,
-            strategies: vec![
-                TieringStrategyDesc {
-                    kind: TieringStrategyKind::FlatMarkup as i32,
-                    half_spread: 25.0,
-                    kappa: 0.0,
-                    s_max: 0.0,
-                    ..Default::default()
-                },
-                TieringStrategyDesc {
-                    kind: TieringStrategyKind::InventorySkew as i32,
-                    half_spread: 25.0,
-                    kappa: 1.5,
-                    s_max: 100.0,
-                    ..Default::default()
-                },
-                TieringStrategyDesc {
-                    kind: TieringStrategyKind::ScaledSmoothedSpread as i32,
-                    smoothing_weight: 0.3,
-                    expected_spread: 0.00008,
-                    max_divergence: 0.00004,
-                    core_spread: 0.0002,
-                    max_output_spread: 0.0008,
-                    spread_scale_factor: 1.2,
-                    ..Default::default()
-                },
-            ],
-            guardrails: Some(TieringGuardrailsDesc {
-                h_min: 0.0,
-                h_max: 5.0,
-                s_max: 2.0,
-                spread_floor: 0.01,
-            }),
-            stale_policy: TieringStalePolicy::WidenToMax as i32,
-        }),
     }
 }
 

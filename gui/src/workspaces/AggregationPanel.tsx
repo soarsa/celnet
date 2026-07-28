@@ -20,31 +20,14 @@ import { useMemo, useState } from "react";
 
 import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
-import { TieringEditor } from "../components/TieringEditor";
 import type {
   AggregatedBookDesc,
   AggregatedBookSpec,
   AggregationParams,
   AggregationScopeMode,
   FixConnection,
-  TieringConfig,
 } from "../data/contract";
-import { hasTieringErrors, validateTiering, type TieringErrors } from "../lib/tiering";
 import styles from "./AggregationPanel.module.css";
-
-/** An all-clear error set for a disabled (null) tiering config. */
-const NO_TIERING_ERRORS: TieringErrors = { strategies: {}, guardrails: {} };
-
-/** Deep-clone a tiering config for the editor form (or pass through `null`). */
-function cloneTiering(t: TieringConfig | null): TieringConfig | null {
-  if (t === null) return null;
-  return {
-    unit: t.unit,
-    strategies: t.strategies.map((s) => ({ ...s })),
-    guardrails: t.guardrails ? { ...t.guardrails } : null,
-    stalePolicy: t.stalePolicy,
-  };
-}
 
 /** The LP-SIM fleet members the bundled sim streams (ADR-0022 D3 / celnet-lp-sim). */
 const LP_SIM_MEMBERS: readonly string[] = [
@@ -72,8 +55,6 @@ interface AggForm {
   instrumentIds: string[];
   params: AggregationParams;
   enabled: boolean;
-  /** The outbound-tiering config, or `null` when tiering is disabled. */
-  tiering: TieringConfig | null;
 }
 
 const EMPTY_FORM: AggForm = {
@@ -84,7 +65,6 @@ const EMPTY_FORM: AggForm = {
   instrumentIds: [],
   params: DEFAULT_PARAMS,
   enabled: true,
-  tiering: null,
 };
 
 interface AggregationPanelProps {
@@ -107,7 +87,6 @@ function formFromBook(book: AggregatedBookDesc): AggForm {
     instrumentIds: [...book.instrumentIds],
     params: { ...book.params },
     enabled: book.enabled,
-    tiering: cloneTiering(book.tiering),
   };
 }
 
@@ -133,15 +112,7 @@ export function AggregationPanel({
     form.params.maxQuoteAgeMs > 0 &&
     form.params.minContributors >= 1 &&
     form.params.depthLevels >= 1;
-  // Tiering is optional (null ⇒ disabled); when enabled it must pass the same
-  // guardrail invariants the server enforces (mirrored client-side).
-  const tieringErrors = useMemo(
-    () => (form.tiering === null ? NO_TIERING_ERRORS : validateTiering(form.tiering)),
-    [form.tiering],
-  );
-  const tieringOk = form.tiering === null || !hasTieringErrors(tieringErrors);
-  const canSubmit =
-    name.length > 0 && form.members.length > 0 && scopeOk && paramsOk && tieringOk;
+  const canSubmit = name.length > 0 && form.members.length > 0 && scopeOk && paramsOk;
 
   // The FIX-connection candidates NOT already selected (offered as toggles).
   const connectionCandidates = useMemo(
@@ -200,7 +171,6 @@ export function AggregationPanel({
       instrumentIds: form.scopeMode === "EXPLICIT" ? form.instrumentIds : [],
       params: form.params,
       enabled: form.enabled,
-      tiering: form.tiering,
     };
     void run(async () => {
       if (form.editingId === null) {
@@ -540,13 +510,6 @@ export function AggregationPanel({
               </span>
             </label>
           </div>
-
-          {/* Outbound tiering — widen/skew the composite before publish (optional). */}
-          <TieringEditor
-            value={form.tiering}
-            onChange={(tiering) => setForm((f) => ({ ...f, tiering }))}
-            errors={tieringErrors}
-          />
 
           <label className={styles.toggleRow}>
             <input

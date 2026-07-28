@@ -1231,7 +1231,6 @@ export class MockTransport implements CelnetTransport {
         depthLevels: 1,
       },
       enabled: true,
-      tiering: null,
     },
   ];
   /**
@@ -2656,30 +2655,6 @@ export class MockTransport implements CelnetTransport {
     return true;
   }
 
-  // --- trader-accessible per-book tiering retune (server commit 8404bc9) -------
-  //
-  // A GENUINE mutation of the offline store (not a stub): it replaces ONLY the
-  // selected book's `tiering` (structure untouched) and returns the retuned book,
-  // exactly as the server's `UpdateBookTiering` does. `tiering === null` disables
-  // the book's outbound tiering. The live server gates this on the
-  // `quote_respond·fixed_income` capability (trader-accessible, NOT admin); the
-  // offline source has no server-side capability enforcement, so the GUI gates the
-  // Apply affordance client-side on the same capability.
-  async updateBookTiering(
-    bookId: string,
-    tiering: TieringConfig | null,
-  ): Promise<AggregatedBookDesc> {
-    const existing = this.mockAggregatedBooks.find((b) => b.id === bookId);
-    if (!existing) throw new Error(`no aggregated book with id \`${bookId}\``);
-    const updated: AggregatedBookDesc = {
-      ...cloneAggBook(existing),
-      tiering: cloneTiering(tiering),
-    };
-    const idx = this.mockAggregatedBooks.indexOf(existing);
-    this.mockAggregatedBooks.splice(idx, 1, updated);
-    return cloneAggBook(updated);
-  }
-
   // --- FI Pricing Groups (server commit 07fc99f) -----------------------------
   //
   // A GENUINE in-memory registry (not a stub): admin CRUD mutates the store and
@@ -3586,7 +3561,6 @@ function cloneAggBook(b: AggregatedBookDesc): AggregatedBookDesc {
     memberConnectionIds: [...b.memberConnectionIds],
     instrumentIds: [...b.instrumentIds],
     params: { ...b.params },
-    tiering: cloneTiering(b.tiering),
   };
 }
 
@@ -3628,7 +3602,6 @@ function aggBookFromSpec(
     instrumentIds: [...spec.instrumentIds],
     params: { ...spec.params },
     enabled: spec.enabled,
-    tiering: cloneTiering(spec.tiering),
   };
 }
 

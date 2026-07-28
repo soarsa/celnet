@@ -102,7 +102,6 @@ import type {
   PricingMode,
   StreamReject,
   Tenor,
-  TieringConfig,
   TwoWayPrice,
   Update,
   UpdateUserInput,
@@ -628,23 +627,6 @@ export interface CelnetTransport {
 
   /** AuthService.DeleteAggregatedBook (admin) — remove a book; resolves to whether one was removed. */
   deleteAggregatedBook(id: string): Promise<boolean>;
-
-  /**
-   * AuthService.UpdateBookTiering — retune ONLY a book's outbound tiering (server
-   * commit 8404bc9). Unlike the admin-only book CRUD above, this is TRADER-
-   * accessible: it is gated server-side on the `quote_respond·fixed_income`
-   * capability (which ordinary traders hold — NOT admin), so a non-admin trader
-   * can widen/skew a book's published composite without touching its structure
-   * (members / scope / consolidation params stay admin-only). `tiering === null`
-   * DISABLES the book's tiering (raw composite published). Resolves to the freshly
-   * retuned {@link AggregatedBookDesc}. Satisfied identically by both transports —
-   * the offline source mutates its in-memory book; the live transport issues the
-   * `update_book_tiering` RPC to celnet-server.
-   */
-  updateBookTiering(
-    bookId: string,
-    tiering: TieringConfig | null,
-  ): Promise<AggregatedBookDesc>;
 
   // --- FI Pricing Groups (server commit 07fc99f) -----------------------------
   //

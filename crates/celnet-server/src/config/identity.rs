@@ -416,9 +416,9 @@ impl Default for AggregationParams {
 /// FIX-specific type: a member is any inbound liquidity connection (FIX RFS today, any
 /// other API adapter tomorrow) behind the `celnet-aggregation::VenueFeed` seam.
 ///
-/// `Eq` is intentionally **not** derived: the optional [`tiering`](Self::tiering)
-/// block carries `f64` spread/guardrail magnitudes, so the definition is only
-/// `PartialEq` (as [`IdentityStore`] itself already is, for the same reason).
+/// Derives `PartialEq` (not `Eq`) to stay uniform with [`IdentityStore`], whose
+/// pricing-group pipelines carry `f64` feature magnitudes — an aggregated book is
+/// compared structurally, never used as a hash/ordering key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AggregatedBookDef {
     /// Stable identifier (the store/API key). Never reused; minted from the name via
@@ -445,15 +445,6 @@ pub struct AggregatedBookDef {
     /// Whether the book is active. A disabled book is persisted and editable but stands
     /// up no engine and publishes no composite — the operator's on/off switch.
     pub enabled: bool,
-    /// The optional outbound-**tiering** configuration (`celnet-tiering`): the enabled
-    /// strategies + params + guardrails + unit + stale policy applied to this book's
-    /// composite *before* publish (`docs/FI-TIERING-RESEARCH.md`; Phase 2a). `None`
-    /// (the additive serde-default) ⇒ tiering disabled: the raw composite is published
-    /// unchanged — zero behaviour change for an existing book, which carries no
-    /// `tiering` key and loads exactly as before. Validated at load and every admin
-    /// write (see [`check_aggregated_book`](IdentityStore::check_aggregated_book)).
-    #[serde(default)]
-    pub tiering: Option<celnet_tiering::TieringConfig>,
 }
 
 /// The **editable** fields of an aggregated book (everything but the server-minted
@@ -472,13 +463,11 @@ pub struct AggregatedBookEdit {
     pub params: AggregationParams,
     /// Whether the book is active.
     pub enabled: bool,
-    /// The optional outbound-tiering configuration (`None` ⇒ tiering disabled).
-    pub tiering: Option<celnet_tiering::TieringConfig>,
 }
 
 impl AggregatedBookEdit {
-    /// A minimal edit with tiering disabled — the common form; layer a config on with
-    /// [`Self::with_tiering`].
+    /// A minimal edit — the single payload the store's aggregated-book create/update
+    /// CRUD take.
     #[must_use]
     pub fn new(
         name: impl Into<String>,
@@ -493,15 +482,7 @@ impl AggregatedBookEdit {
             instrument_scope,
             params,
             enabled,
-            tiering: None,
         }
-    }
-
-    /// Set the outbound-tiering configuration.
-    #[must_use]
-    pub fn with_tiering(mut self, tiering: Option<celnet_tiering::TieringConfig>) -> Self {
-        self.tiering = tiering;
-        self
     }
 }
 
@@ -992,9 +973,6 @@ impl IdentityStore {
                 }
             }
         }
-        if let Some(tiering) = &def.tiering {
-            validate_tiering_config(&def.name, tiering)?;
-        }
         Ok(())
     }
 
@@ -1297,7 +1275,6 @@ impl IdentityStore {
             instrument_scope: edit.instrument_scope,
             params: edit.params,
             enabled: edit.enabled,
-            tiering: edit.tiering,
         };
         self.check_aggregated_book(&def)?;
         self.aggregated_books.push(def.clone());
@@ -1338,39 +1315,6 @@ impl IdentityStore {
             instrument_scope: edit.instrument_scope,
             params: edit.params,
             enabled: edit.enabled,
-            tiering: edit.tiering,
-        };
-        self.check_aggregated_book(&def)?;
-        if let Some(slot) = self.aggregated_books.iter_mut().find(|b| b.id == id) {
-            *slot = def.clone();
-        }
-        Ok(def)
-    }
-
-    /// Replace **only** an aggregated book's outbound-[`tiering`](AggregatedBookDef::tiering)
-    /// block (the trader-configurable spread), leaving its **structure** — id, name,
-    /// members, instrument scope, consolidation params, enabled flag — byte-identical.
-    /// Validates the resulting definition's invariants (via
-    /// [`check_aggregated_book`](Self::check_aggregated_book), which runs
-    /// [`validate_tiering_config`] on a `Some` config), replaces the slot, and returns the
-    /// updated definition. This is the store side of the trader-facing tiering RPC: the
-    /// admin owns what the book *is* (structure), the trader owns the outbound spread.
-    ///
-    /// # Errors
-    /// No book with `id`, or a tiering config failing its invariants (inconsistent
-    /// guardrails, empty strategy list, non-finite / negative magnitude).
-    pub fn update_aggregated_book_tiering(
-        &mut self,
-        id: &str,
-        tiering: Option<celnet_tiering::TieringConfig>,
-    ) -> Result<AggregatedBookDef, String> {
-        let Some(existing) = self.aggregated_book(id).cloned() else {
-            return Err(format!("no aggregated book with id {id:?}"));
-        };
-        // Structure preserved verbatim; only the tiering block is swapped.
-        let def = AggregatedBookDef {
-            tiering,
-            ..existing
         };
         self.check_aggregated_book(&def)?;
         if let Some(slot) = self.aggregated_books.iter_mut().find(|b| b.id == id) {
@@ -1729,33 +1673,10 @@ pub fn mint_desk_id(name: &str, existing: &[DeskDef]) -> String {
     unique_id(&base, |cand| existing.iter().any(|d| d.id == cand))
 }
 
-/// Validate a book's outbound-[`tiering`](AggregatedBookDef::tiering) configuration
-/// at load and at every admin write (mirroring the `reference_data.rs::validate_*`
-/// discipline — reject non-finite magnitudes, negative-where-magnitude, and
-/// internally inconsistent guardrail bounds), so an unsound config is rejected
-/// loudly here rather than silently suppressing every quote at runtime.
-///
-/// * The guardrail bounds must pass the engine's own invariant (`0 ≤ h_min ≤ h_max`,
-///   `s_max ≥ 0`, `spread_floor > 0`, `h_max ≥ spread_floor/2`).
-/// * At least one strategy must be enabled (an empty strategy list is a mistake —
-///   omit the whole `tiering` block to disable tiering instead).
-/// * Every strategy magnitude is finite, and the half-spread / skew-cap / gain
-///   magnitudes are non-negative.
-///
-/// # Errors
-/// The first inconsistent guardrail, empty strategy list, or non-finite / negative
-/// magnitude, as a human-readable message.
-fn validate_tiering_config(book: &str, cfg: &celnet_tiering::TieringConfig) -> Result<(), String> {
-    tiering_config_reason(cfg).map_err(|m| format!("aggregated book {book:?} tiering {m}"))
-}
-
 /// The bare (entity-unprefixed) reason a [`celnet_tiering::TieringConfig`] is invalid,
-/// or `Ok` — the single rule set behind both the aggregated-book tiering validator
-/// ([`validate_tiering_config`]) and the pricing-group pipeline validator
-/// ([`validate_feature_pipeline`], for each embedded TIERING feature). Each caller
-/// prefixes the returned reason with its own entity context, so both messages are
-/// produced from one implementation with no drift (and the aggregated-book message is
-/// byte-identical to before the extraction).
+/// or `Ok` — the rule set behind the pricing-group pipeline validator
+/// ([`validate_feature_pipeline`], for each embedded TIERING feature). The caller
+/// prefixes the returned reason with its own entity context.
 fn tiering_config_reason(cfg: &celnet_tiering::TieringConfig) -> Result<(), String> {
     use celnet_tiering::StrategySpec;
     let finite = |v: f64, what: &str| -> Result<(), String> {
@@ -1835,8 +1756,6 @@ fn tiering_config_reason(cfg: &celnet_tiering::TieringConfig) -> Result<(), Stri
 /// [`TieringConfig`](celnet_tiering::TieringConfig) must pass the shared tiering rule
 /// set ([`tiering_config_reason`]), and every other feature's magnitudes must be finite
 /// (a NaN offset would silently corrupt every outbound price the pipeline produces).
-/// Reusing the tiering validation verbatim keeps a group's TIERING feature held to
-/// exactly the same standard as a book's tiering block.
 ///
 /// # Errors
 /// The first inconsistent guardrail, invalid embedded tiering config, or non-finite
@@ -2834,7 +2753,6 @@ mod tests {
             instrument_scope: Scope::AllMembersQuote,
             params: AggregationParams::default(),
             enabled: true,
-            tiering: None,
         }];
         assert_eq!(mint_aggregated_book_id("Alpha", &existing), "alpha-2");
     }

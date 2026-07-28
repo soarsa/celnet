@@ -2659,13 +2659,13 @@ export interface AggregationParams {
 }
 
 // ---------------------------------------------------------------------------
-// Outbound price tiering (FI-TIERING phase 3) — the per-book config the server's
-// `celnet-tiering` engine applies to the raw composite BEFORE publish: it widens
-// around mid (half-spread) and/or skews (inventory), clamped by guardrails.
-// Mirrors `celnet.wire.TieringConfigDesc` field-for-field; an ABSENT config
-// (`tiering: null`) ⇒ tiering disabled (the raw composite is published unchanged).
-// The GUI hand-decodes the WS JSON, so the wire codec (`wsCodec.ts`) matches the
-// server's snake_case names + NUMERIC enums exactly (see `docs/FI-TIERING-RESEARCH.md`).
+// Outbound price tiering (FI-TIERING) — the margin/markup config the server's
+// `celnet-tiering` engine applies: it widens around mid (half-spread) and/or skews
+// (inventory), clamped by guardrails. Mirrors `celnet.wire.TieringConfigDesc`
+// field-for-field. Tiering is composed per-client via a {@link FeatureSpec.tiering}
+// TIERING feature in a pricing-group pipeline (it is NOT carried on the aggregated
+// book). The GUI hand-decodes the WS JSON, so the wire codec (`wsCodec.ts`) matches
+// the server's snake_case names + NUMERIC enums exactly (see `docs/FI-TIERING-RESEARCH.md`).
 
 /**
  * The unit an outbound-tiering spread magnitude is expressed in (mirrors the wire
@@ -2771,8 +2771,6 @@ export interface AggregatedBookDesc {
   params: AggregationParams;
   /** Whether the book is active (a disabled book stands up no engine, publishes nothing). */
   enabled: boolean;
-  /** The outbound-tiering config applied before publish; `null` ⇒ tiering disabled. */
-  tiering: TieringConfig | null;
 }
 
 /**
@@ -2796,8 +2794,6 @@ export interface AggregatedBookSpec {
   params: AggregationParams;
   /** Whether the book is active. */
   enabled: boolean;
-  /** The outbound-tiering config applied before publish; `null` ⇒ tiering disabled. */
-  tiering: TieringConfig | null;
 }
 
 /**

@@ -329,6 +329,183 @@
   color: var(--text-tertiary);
 }
 
+/* --- session roster extras ------------------------------------------------ */
+
+/* The mono comp-id pair + desk line under a session's name in the roster. */
+.sessionSub {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: var(--type-micro, 0.72rem);
+  color: var(--text-tertiary);
+}
+
+.deskTag {
+  font-family: var(--font-ui);
+  font-size: var(--type-micro, 0.7rem);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  border: var(--hairline);
+  border-radius: var(--r-full, 999px);
+  padding: 0 6px;
+}
+
+/* The resolved-group badge on a session roster row (neutral / "no group"). */
+.groupChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--type-micro, 0.7rem);
+  font-weight: var(--weight-header);
+  padding: 1px 8px;
+  border-radius: var(--r-full, 999px);
+  border: 1px solid color-mix(in oklab, var(--accent, dodgerblue) 40%, transparent);
+  background: color-mix(in oklab, var(--accent, dodgerblue) 12%, transparent);
+  color: var(--accent, dodgerblue);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.groupChipNone {
+  border-color: var(--border, currentColor);
+  background: var(--bg-inset);
+  color: var(--text-tertiary);
+}
+
+/* --- detail pane: applied group + pipeline tiering summary ---------------- */
+
+.detailStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.matchNote {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.pipeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+.pipeBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-inset);
+}
+
+.pipeHead {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  font-size: var(--type-micro, 0.7rem);
+  font-weight: var(--weight-header);
+  padding: 1px 8px;
+  border-radius: var(--r-full, 999px);
+  border: var(--hairline);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+}
+
+.tierWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stratLine {
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+}
+
+.stratName {
+  font-weight: var(--weight-header);
+}
+
+.guardLine,
+.metaLine {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.noTier {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+/* --- assign control ------------------------------------------------------- */
+
+.assign {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: var(--hairline);
+}
+
+.assignRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.assignLabel {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+}
+
+.select {
+  font: inherit;
+  font-size: var(--type-body);
+  padding: 6px 10px;
+  border-radius: var(--r-md, 8px);
+  border: var(--hairline);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  min-width: 200px;
+}
+
+.select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--accent, var(--focus-ring, dodgerblue));
+  outline-offset: 2px;
+}
+
 /* --- sign-in gate --------------------------------------------------------- */
 
 .gate {

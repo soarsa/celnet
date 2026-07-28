@@ -47,7 +47,6 @@ const SPEC: AggregatedBookSpec = {
     depthLevels: 1,
   },
   enabled: true,
-  tiering: null,
 };
 
 describe("aggregated-book CRUD codec", () => {
@@ -69,7 +68,6 @@ describe("aggregated-book CRUD codec", () => {
           depth_levels: 1,
         },
         enabled: true,
-        tiering: null,
       },
     });
   });
