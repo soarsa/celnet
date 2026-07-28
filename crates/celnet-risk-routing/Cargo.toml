@@ -1,0 +1,19 @@
+[package]
+name = "celnet-risk-routing"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet risk routing — the pure, server-free decision-graph engine that routes an accepted fill's risk to a target risk book from typed IF <field> <op> <value> THEN <book> rules (field/op/value type matrix, acyclic-graph walk, well-formedness validation)."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true

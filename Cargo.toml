@@ -40,6 +40,7 @@ celnet-risk-cube = { path = "crates/celnet-risk-cube" }
 celnet-entitlements = { path = "crates/celnet-entitlements" }
 celnet-limits = { path = "crates/celnet-limits" }
 celnet-risk-fleet = { path = "crates/celnet-risk-fleet" }
+celnet-risk-routing = { path = "crates/celnet-risk-routing" }
 celnet-fanout = { path = "crates/celnet-fanout" }
 celnet-golden = { path = "crates/celnet-golden" }
 celnet-qmc = { path = "crates/celnet-qmc" }

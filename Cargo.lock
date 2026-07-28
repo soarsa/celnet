@@ -888,6 +888,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-risk-routing"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "celnet-router"
 version = "0.0.0"
 dependencies = [
