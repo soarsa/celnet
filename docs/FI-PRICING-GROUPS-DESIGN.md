@@ -1,9 +1,16 @@
 # FI Pricing Groups — Design Proposal
 
-> Status: **design proposal for review** (2026-07-27). No code yet. Extends the client-tiering
-> dimension of `FI-TIERING-RESEARCH.md` §5 (strategy #6, per-client tier) into a concrete model,
-> and builds on the shipped `celnet-tiering` engine + per-book tiering + `UpdateBookTiering` RPC.
-> Grounded in a cited architecture map (file:line references below are current as of this doc).
+> **SHIPPED + SUPERSEDES per-book tiering (2026-07-28).** Pricing groups are live, and tiering is
+> now **group-only**: the per-book tiering path this doc references as its baseline
+> (`AggregatedBookDef.tiering`, `apply_tiering`, the `UpdateBookTiering` RPC, and the book-pivoted
+> Tiering page) has been **removed**. A book always publishes the RAW consolidated composite;
+> outbound tiering is applied ONLY per session via a group's `FeaturePipeline` (the `Tiering`
+> feature). The FI **Tiering** page is now session-pivoted (a roster of FIX sessions → the pricing
+> group applied to each). Historical file:line references and the "falls back to book-level tiering"
+> notes below are retained for design lineage but no longer describe the code.
+>
+> Original status: design proposal for review (2026-07-27). Extends the client-tiering dimension of
+> `FI-TIERING-RESEARCH.md` §5 (strategy #6, per-client tier) into a concrete model.
 
 ## 1. Concept
 
