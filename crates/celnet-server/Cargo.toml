@@ -74,6 +74,10 @@ celnet-risk-cube.workspace = true
 # already in the server tree, so no cycle.
 celnet-rates-risk.workspace = true
 celnet-limits.workspace = true
+# Risk routing (FI risk-book routing, docs/FI-RISK-ROUTING-REQUIREMENTS.md §8): the
+# pure decision-graph engine whose RiskRoutingGraph + validator the identity store
+# persists and shape-validates alongside the risk-book registry (Phase 2, config layer).
+celnet-risk-routing.workspace = true
 celnet-entitlements.workspace = true
 celnet-risk-fleet.workspace = true
 celnet-router.workspace = true

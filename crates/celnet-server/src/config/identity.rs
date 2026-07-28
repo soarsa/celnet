@@ -24,13 +24,14 @@
 //! (or to every desk via `all_desks`); desk membership is what scopes RFQ/monitor
 //! visibility (built on top of this store).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use celnet_entitlements::{Action, AssetClass, Capability};
+use celnet_risk_routing::{RiskRoutingGraph, RoutingNode};
 use serde::{Deserialize, Serialize};
 
 use super::reference_data::{
@@ -706,6 +707,114 @@ impl PricingGroupResolver {
     }
 }
 
+/// Per-**risk-book** pre-trade limits: the persisted, shape-validated caps a book
+/// carries (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1). Each cap is an optional,
+/// non-negative magnitude in the book's booking currency (net/gross notional) or in
+/// PV-per-basis-point (`max_dv01`); `None` means "no cap on this axis".
+///
+/// This is deliberately a **small, self-describing persisted config shape**, distinct
+/// from `celnet_limits::LimitSpec` — that type is a Greeks/rates-aggregate pre-trade
+/// *check engine* (delta/vega/DV01 metrics with amber/red utilization bands, not serde,
+/// no plain net/gross-notional axis) and does not fit a hand-editable per-book config
+/// record. Full limit **enforcement** is a later phase; here the values are only
+/// persisted and shape-validated (finite and `>= 0`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct RiskLimits {
+    /// Cap on the book's **net** (signed-then-absolute) base-currency notional. `None`
+    /// ⇒ uncapped. Must be finite and `>= 0` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_net_notional: Option<f64>,
+    /// Cap on the book's **gross** (sum-of-absolute) base-currency notional. `None` ⇒
+    /// uncapped. Must be finite and `>= 0` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_gross_notional: Option<f64>,
+    /// Cap on the book's net **DV01** magnitude (PV change per +1bp parallel curve bump).
+    /// `None` ⇒ uncapped. Must be finite and `>= 0` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_dv01: Option<f64>,
+}
+
+impl RiskLimits {
+    /// Shape-validate: every present cap is finite and non-negative.
+    ///
+    /// # Errors
+    /// The first cap that is negative or non-finite (NaN / ∞).
+    fn validate(&self) -> Result<(), String> {
+        let check = |v: Option<f64>, what: &str| -> Result<(), String> {
+            match v {
+                Some(x) if !(x.is_finite() && x >= 0.0) => {
+                    Err(format!("{what} must be finite and non-negative"))
+                }
+                _ => Ok(()),
+            }
+        };
+        check(self.max_net_notional, "max_net_notional")?;
+        check(self.max_gross_notional, "max_gross_notional")?;
+        check(self.max_dv01, "max_dv01")?;
+        Ok(())
+    }
+}
+
+/// One persisted **risk book**: a trader-defined portfolio an accepted fill's risk can
+/// land in (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1). Books form a **tree** via
+/// [`parent_id`](Self::parent_id) — a top-level book (`parent_id == None`) tags an owning
+/// [`desk_id`](Self::desk_id); a sub-book refines a parent for finer attribution and
+/// later roll-up. The firm-wide [`RiskRoutingGraph`] routes a fill to a book by id.
+///
+/// `Eq` is intentionally **not** derived: [`limits`](Self::limits) carries `f64` caps, so
+/// the definition is only `PartialEq` (as [`PricingGroupDef`] and [`IdentityStore`] are,
+/// for the same reason).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RiskBookDef {
+    /// Stable identifier (the store/API key). Never reused; minted from the name via
+    /// [`mint_risk_book_id`].
+    pub id: String,
+    /// Human-friendly book label — unique across the store (case-insensitive), validated
+    /// at load and at every admin write.
+    pub name: String,
+    /// The parent book by [`RiskBookDef::id`], or `None` for a top-level book. Must
+    /// resolve to an existing book and must not form a cycle (a book cannot be its own
+    /// ancestor) — validated. An additive serde-default field (no `schema_version`).
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// The owning desk by [`DeskDef::id`]. Top-level books tag a desk; `None` ⇒ unowned.
+    /// Must resolve to an existing desk when present — validated.
+    #[serde(default)]
+    pub desk_id: Option<String>,
+    /// Free-text operator description of what the book is for.
+    #[serde(default)]
+    pub description: String,
+    /// Optional per-book pre-trade limits (persisted + shape-validated here; enforcement
+    /// is a later phase). `None` ⇒ the book carries no caps yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<RiskLimits>,
+    /// Whether the book is active. Only **enabled** books are valid routing targets
+    /// ([`check_risk_routing_graph`](IdentityStore::check_risk_routing_graph)); a disabled
+    /// book is persisted and editable but never routed to.
+    pub enabled: bool,
+}
+
+/// The editable fields of a risk book (the create/update payload the store's
+/// [`IdentityStore::create_risk_book`] /
+/// [`update_risk_book`](IdentityStore::update_risk_book) take). The definition's `id` is
+/// minted (create) or carried from the request (update), so it is not part of the edit —
+/// mirrors [`PricingGroupEdit`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct RiskBookEdit {
+    /// The book label (unique across the store, case-insensitive).
+    pub name: String,
+    /// The parent book by id, or `None` for a top-level book.
+    pub parent_id: Option<String>,
+    /// The owning desk by id, or `None`.
+    pub desk_id: Option<String>,
+    /// Free-text operator description.
+    pub description: String,
+    /// Optional per-book pre-trade limits.
+    pub limits: Option<RiskLimits>,
+    /// Whether the book is active.
+    pub enabled: bool,
+}
+
 /// The persisted document: the users and desks of the edge.
 ///
 /// `Eq` is intentionally **not** derived: the instrument reference-data registry
@@ -766,6 +875,20 @@ pub struct IdentityStore {
     /// `pricing_groups`) loads unchanged.
     #[serde(default)]
     pub pricing_groups: Vec<PricingGroupDef>,
+    /// The trader-defined **risk books**: the tree of portfolios an accepted fill's risk
+    /// can land in (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1). Books nest via
+    /// [`RiskBookDef::parent_id`]; the routing graph below targets them by id. An additive
+    /// serde-default field (no `schema_version`), so an existing `identity.json` (which
+    /// carries no `risk_books`) loads unchanged.
+    #[serde(default)]
+    pub risk_books: Vec<RiskBookDef>,
+    /// The firm-wide **risk-routing decision graph** that maps an accepted fill to a
+    /// landing [`RiskBookDef`] (§8.2). `None` until an operator first defines one; when
+    /// present, every `Book` leaf must target an existing **enabled** risk book (validated
+    /// at load and at every write). An additive serde-default field, so an existing
+    /// `identity.json` (which carries no `risk_routing_graph`) loads unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_routing_graph: Option<RiskRoutingGraph>,
 }
 
 impl IdentityStore {
@@ -818,6 +941,13 @@ impl IdentityStore {
                 // deterministic group.
                 store
                     .validate_pricing_groups()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                // A corrupt risk-book tree (duplicate/empty name, an unknown/cyclic parent,
+                // an unknown owning desk, a negative limit) or a routing graph targeting an
+                // unknown/disabled book is rejected at load too, so a fill is only ever
+                // routed against a sound, acyclic book tree.
+                store
+                    .validate_risk_books()
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
                 Ok(store)
             }
@@ -1619,6 +1749,293 @@ impl IdentityStore {
         }
         Ok(())
     }
+
+    // --- risk books + routing graph (FI risk routing, Phase 2) ----------------
+
+    /// Borrow a risk book by id.
+    #[must_use]
+    pub fn risk_book(&self, id: &str) -> Option<&RiskBookDef> {
+        self.risk_books.iter().find(|b| b.id == id)
+    }
+
+    /// The firm-wide risk-routing decision graph, if one has been defined.
+    #[must_use]
+    pub fn risk_routing_graph(&self) -> Option<&RiskRoutingGraph> {
+        self.risk_routing_graph.as_ref()
+    }
+
+    /// Create a risk book from operator input: trims the name, mints a stable id, appends
+    /// it, and re-validates the **whole** risk config
+    /// ([`validate_risk_books`](Self::validate_risk_books)) — so name uniqueness, the
+    /// parent tree (existing + acyclic), the owning desk, and the limit shape are enforced
+    /// identically whether a book arrives at load or over the wire. On any failure the
+    /// tentative book is rolled back and `self` is left unchanged.
+    ///
+    /// # Errors
+    /// An empty/duplicate name, an unknown/cyclic parent, an unknown desk, or a negative
+    /// limit value.
+    pub fn create_risk_book(&mut self, edit: RiskBookEdit) -> Result<RiskBookDef, String> {
+        let name = edit.name.trim().to_string();
+        if name.is_empty() {
+            return Err("risk book name is required".to_string());
+        }
+        let def = RiskBookDef {
+            id: mint_risk_book_id(&name, &self.risk_books),
+            name,
+            parent_id: edit.parent_id,
+            desk_id: edit.desk_id,
+            description: edit.description,
+            limits: edit.limits,
+            enabled: edit.enabled,
+        };
+        self.risk_books.push(def.clone());
+        if let Err(e) = self.validate_risk_books() {
+            self.risk_books.pop();
+            return Err(e);
+        }
+        Ok(def)
+    }
+
+    /// Replace an existing risk book in place (id preserved): rebuilds the definition from
+    /// `edit`, swaps the slot, and re-validates the **whole** risk config (so a rename, a
+    /// re-parent that would cycle, or disabling a book the routing graph still targets is
+    /// rejected). On failure the prior definition is restored and `self` is left unchanged.
+    ///
+    /// # Errors
+    /// No book with `id`; an empty/duplicate name; an unknown/cyclic parent; an unknown
+    /// desk; a negative limit; or a change that would leave the routing graph targeting an
+    /// unknown/disabled book.
+    pub fn update_risk_book(
+        &mut self,
+        id: &str,
+        edit: RiskBookEdit,
+    ) -> Result<RiskBookDef, String> {
+        let Some(pos) = self.risk_books.iter().position(|b| b.id == id) else {
+            return Err(format!("no risk book with id {id:?}"));
+        };
+        let name = edit.name.trim().to_string();
+        if name.is_empty() {
+            return Err("risk book name is required".to_string());
+        }
+        let def = RiskBookDef {
+            id: id.to_string(),
+            name,
+            parent_id: edit.parent_id,
+            desk_id: edit.desk_id,
+            description: edit.description,
+            limits: edit.limits,
+            enabled: edit.enabled,
+        };
+        let prev = std::mem::replace(&mut self.risk_books[pos], def.clone());
+        if let Err(e) = self.validate_risk_books() {
+            self.risk_books[pos] = prev;
+            return Err(e);
+        }
+        Ok(def)
+    }
+
+    /// Delete a risk book by id, reporting whether one was removed (a missing id is a
+    /// no-op that reports `false`). **No orphaning:** a book that is the parent of another
+    /// book, or that an existing routing-graph `Book` leaf targets, is refused so the tree
+    /// and graph stay referentially sound.
+    ///
+    /// # Errors
+    /// The book is a parent of another book, or a routing-graph leaf targets it.
+    pub fn delete_risk_book(&mut self, id: &str) -> Result<bool, String> {
+        if self.risk_book(id).is_none() {
+            return Ok(false);
+        }
+        if let Some(child) = self
+            .risk_books
+            .iter()
+            .find(|b| b.parent_id.as_deref() == Some(id))
+        {
+            return Err(format!(
+                "risk book {id:?} cannot be deleted: it is the parent of {:?}",
+                child.id
+            ));
+        }
+        if let Some(graph) = &self.risk_routing_graph
+            && graph
+                .nodes
+                .values()
+                .any(|n| matches!(n, RoutingNode::Book { risk_book_id } if risk_book_id == id))
+        {
+            return Err(format!(
+                "risk book {id:?} cannot be deleted: it is a target of the risk-routing graph"
+            ));
+        }
+        let before = self.risk_books.len();
+        self.risk_books.retain(|b| b.id != id);
+        Ok(self.risk_books.len() != before)
+    }
+
+    /// Install (or replace) the firm-wide risk-routing graph after validating it against
+    /// the current risk-book registry ([`check_risk_routing_graph`](Self::check_risk_routing_graph)).
+    /// On any defect the store is left unchanged.
+    ///
+    /// # Errors
+    /// The graph is malformed (dangling entry/edge, a cycle, a type-inconsistent
+    /// condition) or targets a risk book that does not exist or is disabled.
+    pub fn set_risk_routing_graph(&mut self, graph: RiskRoutingGraph) -> Result<(), String> {
+        self.check_risk_routing_graph(&graph)?;
+        self.risk_routing_graph = Some(graph);
+        Ok(())
+    }
+
+    /// The risk books strictly **above** `id` in the parent tree, immediate parent first
+    /// then upward. Pure and cycle-safe (bounded by the registry, even on an as-yet
+    /// unvalidated store). An unknown or top-level `id` yields an empty vec.
+    #[must_use]
+    pub fn risk_book_ancestors(&self, id: &str) -> Vec<&RiskBookDef> {
+        let mut out = Vec::new();
+        let mut seen = BTreeSet::new();
+        seen.insert(id.to_string());
+        let mut cur = self.risk_book(id).and_then(|b| b.parent_id.clone());
+        while let Some(pid) = cur {
+            if !seen.insert(pid.clone()) {
+                break; // cycle guard — a validated store is acyclic
+            }
+            match self.risk_book(&pid) {
+                Some(b) => {
+                    out.push(b);
+                    cur = b.parent_id.clone();
+                }
+                None => break,
+            }
+        }
+        out
+    }
+
+    /// The risk books strictly **below** `id` in the parent tree — every book whose
+    /// ancestor chain contains `id`, in registry order. Pure and cycle-safe.
+    #[must_use]
+    pub fn risk_book_descendants(&self, id: &str) -> Vec<&RiskBookDef> {
+        self.risk_books
+            .iter()
+            .filter(|b| b.id != id && self.risk_book_ancestors(&b.id).iter().any(|a| a.id == id))
+            .collect()
+    }
+
+    /// Validate the whole risk config — the book registry **and** (when set) the routing
+    /// graph — so a persisted store round-trips consistent. Called at [`load`](Self::load)
+    /// and by every risk-book / graph write.
+    ///
+    /// Registry: every book passes [`check_risk_book`](Self::check_risk_book) (non-empty +
+    /// unique name/id, existing + acyclic parent, existing owning desk, non-negative
+    /// limits). Graph: [`check_risk_routing_graph`](Self::check_risk_routing_graph).
+    ///
+    /// # Errors
+    /// The first book failing its invariants, or an invalid routing graph.
+    fn validate_risk_books(&self) -> Result<(), String> {
+        for b in &self.risk_books {
+            self.check_risk_book(b)?;
+        }
+        if let Some(graph) = &self.risk_routing_graph {
+            self.check_risk_routing_graph(graph)?;
+        }
+        Ok(())
+    }
+
+    /// Validate a single risk book's document-resolvable invariants (used by the whole-set
+    /// pass and, transitively, every admin write). The book is assumed already present in
+    /// `self.risk_books` (create/update push/replace before validating), so duplicate
+    /// detection counts occurrences in the set.
+    ///
+    /// Rejects: an empty name; a duplicate id; a case-insensitively duplicate name; a
+    /// `parent_id` that is the book itself, references a non-existent book, or forms a
+    /// cycle (the book is its own ancestor); a `desk_id` referencing an unknown
+    /// [`DeskDef`]; or a [`RiskLimits`] with a negative/non-finite cap.
+    ///
+    /// # Errors
+    /// The first invariant the book violates.
+    fn check_risk_book(&self, def: &RiskBookDef) -> Result<(), String> {
+        if def.name.trim().is_empty() {
+            return Err(format!("risk book {:?} has an empty name", def.id));
+        }
+        if self.risk_books.iter().filter(|b| b.id == def.id).count() > 1 {
+            return Err(format!("duplicate risk book id {:?}", def.id));
+        }
+        if self
+            .risk_books
+            .iter()
+            .filter(|b| b.name.eq_ignore_ascii_case(&def.name))
+            .count()
+            > 1
+        {
+            return Err(format!("duplicate risk book name {:?}", def.name));
+        }
+        if let Some(parent) = &def.parent_id {
+            if parent == &def.id {
+                return Err(format!("risk book {:?} cannot be its own parent", def.id));
+            }
+            if self.risk_book(parent).is_none() {
+                return Err(format!(
+                    "risk book {:?} references unknown parent {parent:?}",
+                    def.id
+                ));
+            }
+            // Walk the ancestor chain from the parent up; returning to `def.id` (or any
+            // repeat) is a cycle. Bounded by the registry size.
+            let mut seen = BTreeSet::new();
+            seen.insert(def.id.clone());
+            let mut cur = Some(parent.clone());
+            while let Some(pid) = cur {
+                if !seen.insert(pid.clone()) {
+                    return Err(format!(
+                        "risk book {:?} has a cyclic parent chain (through {pid:?})",
+                        def.id
+                    ));
+                }
+                cur = self.risk_book(&pid).and_then(|b| b.parent_id.clone());
+            }
+        }
+        if let Some(desk) = &def.desk_id
+            && self.desk(desk).is_none()
+        {
+            return Err(format!(
+                "risk book {:?} references unknown desk {desk:?}",
+                def.id
+            ));
+        }
+        if let Some(limits) = &def.limits {
+            limits
+                .validate()
+                .map_err(|e| format!("risk book {:?} {e}", def.id))?;
+        }
+        Ok(())
+    }
+
+    /// Validate a routing graph against the current registry: build the set of **enabled**
+    /// risk-book ids and delegate to the pure engine's
+    /// [`RiskRoutingGraph::validate`](celnet_risk_routing::RiskRoutingGraph::validate),
+    /// mapping its collected [`RouteError`](celnet_risk_routing::RouteError)s into one
+    /// human-readable message.
+    ///
+    /// **Routing-target policy:** a `Book` leaf may target **any existing enabled book**,
+    /// parent or leaf — a parent aggregates its children's risk, so routing a fill to a
+    /// parent (a coarser bucket) is legitimate; only *disabled* / non-existent ids are
+    /// rejected. The engine's `validate` additionally guarantees every path terminates at
+    /// a `Book`, so no separate default/reachability check is needed.
+    ///
+    /// # Errors
+    /// A malformed graph, or a leaf targeting an unknown/disabled book.
+    fn check_risk_routing_graph(&self, graph: &RiskRoutingGraph) -> Result<(), String> {
+        let known: BTreeSet<String> = self
+            .risk_books
+            .iter()
+            .filter(|b| b.enabled)
+            .map(|b| b.id.clone())
+            .collect();
+        graph.validate(&known).map_err(|errs| {
+            let joined = errs
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("risk routing graph is invalid: {joined}")
+        })
+    }
 }
 
 /// Argon2id-hash a plaintext password into a self-describing PHC string (salt and
@@ -1825,6 +2242,20 @@ pub fn mint_pricing_group_id(name: &str, existing: &[PricingGroupDef]) -> String
         base
     };
     unique_id(&base, |cand| existing.iter().any(|g| g.id == cand))
+}
+
+/// Mint a stable, unique, URL-safe id for a new risk book from its name,
+/// disambiguating against the existing set with a numeric suffix (mirrors
+/// [`mint_pricing_group_id`]).
+#[must_use]
+pub fn mint_risk_book_id(name: &str, existing: &[RiskBookDef]) -> String {
+    let base = slugify(name);
+    let base = if base.is_empty() {
+        "risk-book".to_string()
+    } else {
+        base
+    };
+    unique_id(&base, |cand| existing.iter().any(|b| b.id == cand))
 }
 
 /// Mint a stable, unique, URL-safe id for a new aggregated book from its name,
@@ -2213,6 +2644,289 @@ mod tests {
                 .map(|g| g.id.as_str()),
             Some("ga")
         );
+    }
+
+    // --- risk books + routing graph (FI risk routing, Phase 2) -------------
+
+    fn rb_edit(name: &str, parent: Option<&str>, desk: Option<&str>) -> RiskBookEdit {
+        RiskBookEdit {
+            name: name.into(),
+            parent_id: parent.map(str::to_string),
+            desk_id: desk.map(str::to_string),
+            description: String::new(),
+            limits: None,
+            enabled: true,
+        }
+    }
+
+    /// A minimal valid decision graph both of whose `Book` leaves target one book id.
+    fn cond_graph(target_book_id: &str) -> RiskRoutingGraph {
+        use celnet_risk_routing::{RouteField, RouteOp, RouteValue};
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0u32,
+            RoutingNode::Condition {
+                field: RouteField::Ccy,
+                op: RouteOp::Eq,
+                value: RouteValue::Text("EUR".into()),
+                on_true: 1,
+                on_false: 2,
+            },
+        );
+        nodes.insert(
+            1u32,
+            RoutingNode::Book {
+                risk_book_id: target_book_id.into(),
+            },
+        );
+        nodes.insert(
+            2u32,
+            RoutingNode::Book {
+                risk_book_id: target_book_id.into(),
+            },
+        );
+        RiskRoutingGraph { entry: 0, nodes }
+    }
+
+    #[test]
+    fn risk_book_crud_round_trip() {
+        let mut store = IdentityStore::default();
+        store.desks.push(DeskDef {
+            id: "emea".into(),
+            name: "EMEA".into(),
+            books: Vec::new(),
+        });
+        let created = store
+            .create_risk_book(rb_edit("Global Macro", None, Some("emea")))
+            .expect("created");
+        assert_eq!(created.id, "global-macro");
+        assert!(store.risk_book("global-macro").is_some());
+
+        // Persist + reload (serde round-trip) leaves the store equal and the book present.
+        let bytes = serde_json::to_vec(&store).unwrap();
+        let back: IdentityStore = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(store, back);
+        assert!(back.risk_book("global-macro").is_some());
+
+        // Update preserves the id and applies the new name.
+        let upd = store
+            .update_risk_book("global-macro", rb_edit("Global Rates", None, Some("emea")))
+            .expect("updated");
+        assert_eq!(upd.id, "global-macro");
+        assert_eq!(
+            store.risk_book("global-macro").unwrap().name,
+            "Global Rates"
+        );
+    }
+
+    #[test]
+    fn risk_book_name_and_id_collision_rejected() {
+        let mut store = IdentityStore::default();
+        store
+            .create_risk_book(rb_edit("Alpha", None, None))
+            .unwrap();
+        // Same name (case-insensitive) is rejected; the tentative book is rolled back.
+        let err = store
+            .create_risk_book(rb_edit("alpha", None, None))
+            .unwrap_err();
+        assert!(err.contains("duplicate risk book name"), "got: {err}");
+        assert_eq!(store.risk_books.len(), 1);
+
+        // A duplicate id (injected directly) is caught by whole-set validation.
+        store.risk_books.push(RiskBookDef {
+            id: "alpha".into(),
+            name: "Other".into(),
+            parent_id: None,
+            desk_id: None,
+            description: String::new(),
+            limits: None,
+            enabled: true,
+        });
+        assert!(
+            store
+                .validate_risk_books()
+                .unwrap_err()
+                .contains("duplicate risk book id")
+        );
+    }
+
+    #[test]
+    fn risk_book_cyclic_parent_rejected() {
+        let mut store = IdentityStore::default();
+        store.create_risk_book(rb_edit("A", None, None)).unwrap(); // id "a"
+        store
+            .create_risk_book(rb_edit("B", Some("a"), None))
+            .unwrap(); // id "b", parent a
+        // Re-parent A onto B ⇒ a→b→a cycle.
+        let err = store
+            .update_risk_book("a", rb_edit("A", Some("b"), None))
+            .unwrap_err();
+        assert!(err.contains("cyclic parent chain"), "got: {err}");
+        // A self-parent is rejected with a dedicated message.
+        let err2 = store
+            .update_risk_book("a", rb_edit("A", Some("a"), None))
+            .unwrap_err();
+        assert!(err2.contains("its own parent"), "got: {err2}");
+    }
+
+    #[test]
+    fn risk_book_unknown_parent_and_desk_rejected() {
+        let mut store = IdentityStore::default();
+        assert!(
+            store
+                .create_risk_book(rb_edit("A", Some("ghost"), None))
+                .unwrap_err()
+                .contains("unknown parent")
+        );
+        assert!(
+            store
+                .create_risk_book(rb_edit("A", None, Some("no-desk")))
+                .unwrap_err()
+                .contains("unknown desk")
+        );
+        assert!(store.risk_books.is_empty(), "rejected books roll back");
+    }
+
+    #[test]
+    fn risk_book_negative_and_nonfinite_limit_rejected() {
+        let mut store = IdentityStore::default();
+        let mut edit = rb_edit("A", None, None);
+        edit.limits = Some(RiskLimits {
+            max_net_notional: Some(-1.0),
+            ..Default::default()
+        });
+        assert!(
+            store
+                .create_risk_book(edit)
+                .unwrap_err()
+                .contains("max_net_notional must be finite and non-negative")
+        );
+        let mut edit2 = rb_edit("A", None, None);
+        edit2.limits = Some(RiskLimits {
+            max_dv01: Some(f64::NAN),
+            ..Default::default()
+        });
+        assert!(
+            store
+                .create_risk_book(edit2)
+                .unwrap_err()
+                .contains("max_dv01")
+        );
+
+        // A fully-populated, valid limit set is accepted.
+        let mut edit3 = rb_edit("A", None, None);
+        edit3.limits = Some(RiskLimits {
+            max_net_notional: Some(1e9),
+            max_gross_notional: Some(2e9),
+            max_dv01: Some(5e5),
+        });
+        assert!(store.create_risk_book(edit3).is_ok());
+    }
+
+    #[test]
+    fn risk_routing_graph_accepts_known_and_rejects_unknown_book() {
+        let mut store = IdentityStore::default();
+        let a = store
+            .create_risk_book(rb_edit("Alpha", None, None))
+            .unwrap();
+        // A graph targeting the enabled book is accepted and stored.
+        store
+            .set_risk_routing_graph(cond_graph(&a.id))
+            .expect("valid graph");
+        assert!(store.risk_routing_graph().is_some());
+
+        // A graph targeting an unknown book surfaces RouteError::UnknownBook.
+        let err = store
+            .set_risk_routing_graph(cond_graph("ghost"))
+            .unwrap_err();
+        assert!(
+            err.contains("unknown risk book") && err.contains("ghost"),
+            "got: {err}"
+        );
+
+        // Disabling the only routed-to book makes the stored graph invalid at the whole-
+        // config re-validation an update runs ⇒ the update is refused and rolled back.
+        let err2 = store
+            .update_risk_book(
+                &a.id,
+                RiskBookEdit {
+                    enabled: false,
+                    ..rb_edit("Alpha", None, None)
+                },
+            )
+            .unwrap_err();
+        assert!(
+            err2.contains("risk routing graph is invalid"),
+            "got: {err2}"
+        );
+        assert!(
+            store.risk_book(&a.id).unwrap().enabled,
+            "update rolled back"
+        );
+    }
+
+    #[test]
+    fn risk_book_delete_guard_refuses_orphaning() {
+        let mut store = IdentityStore::default();
+        let parent = store
+            .create_risk_book(rb_edit("Parent", None, None))
+            .unwrap();
+        store
+            .create_risk_book(rb_edit("Child", Some(&parent.id), None))
+            .unwrap();
+        // A parent-of-children cannot be deleted (no orphaning).
+        assert!(
+            store
+                .delete_risk_book(&parent.id)
+                .unwrap_err()
+                .contains("parent of")
+        );
+
+        // A graph-referenced book cannot be deleted.
+        let leaf = store.create_risk_book(rb_edit("Leaf", None, None)).unwrap();
+        store.set_risk_routing_graph(cond_graph(&leaf.id)).unwrap();
+        assert!(
+            store
+                .delete_risk_book(&leaf.id)
+                .unwrap_err()
+                .contains("routing graph")
+        );
+
+        // A free leaf (no children, not routed to) deletes cleanly; a missing id no-ops.
+        assert!(store.delete_risk_book("child").unwrap());
+        assert!(!store.delete_risk_book("nope").unwrap());
+    }
+
+    #[test]
+    fn risk_book_ancestors_and_descendants_three_levels() {
+        let mut store = IdentityStore::default();
+        let a = store.create_risk_book(rb_edit("A", None, None)).unwrap();
+        let b = store
+            .create_risk_book(rb_edit("B", Some(&a.id), None))
+            .unwrap();
+        let c = store
+            .create_risk_book(rb_edit("C", Some(&b.id), None))
+            .unwrap();
+
+        // Ancestors of C: immediate parent B first, then A.
+        let anc: Vec<&str> = store
+            .risk_book_ancestors(&c.id)
+            .iter()
+            .map(|x| x.id.as_str())
+            .collect();
+        assert_eq!(anc, vec!["b", "a"]);
+        // A top-level book has no ancestors.
+        assert!(store.risk_book_ancestors(&a.id).is_empty());
+
+        // Descendants of A: B and C, in registry order.
+        let desc: Vec<&str> = store
+            .risk_book_descendants(&a.id)
+            .iter()
+            .map(|x| x.id.as_str())
+            .collect();
+        assert_eq!(desc, vec!["b", "c"]);
+        // A leaf has no descendants.
+        assert!(store.risk_book_descendants(&c.id).is_empty());
     }
 
     #[test]
