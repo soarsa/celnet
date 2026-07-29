@@ -73,9 +73,10 @@ use celnet_proto::{
     AggregatedBookSubscribe, ClientStreamMessage, Conventions, CurveSet, Execute, Executed,
     Heartbeat, Instrument, MarketContext, MarketObservable, MarketSeriesPoint,
     MarketSeriesSnapshot, MarketSeriesSubscribe, RatesInstrument, RatesPriceRequest,
-    RatesPricingResult, RatesStreamSnapshot, RatesStreamUpdate, RatesSubscribe,
-    ServerStreamMessage, Side, Snapshot, StreamEnd, StreamReject, SubscriptionId, TradableToken,
-    TwoWayPrice, Update, client_stream_message, server_stream_message, stream_end, stream_reject,
+    RatesPricingResult, RatesStreamSnapshot, RatesStreamUpdate, RatesSubscribe, RiskBookRiskDesc,
+    RiskBookRiskSnapshot, RiskBookRiskSubscribe, RiskBookRiskUpdate, ServerStreamMessage, Side,
+    Snapshot, StreamEnd, StreamReject, SubscriptionId, TradableToken, TwoWayPrice, Update,
+    client_stream_message, server_stream_message, stream_end, stream_reject,
 };
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
@@ -87,12 +88,14 @@ use crate::pricer::{ConventionSet, Priced, price_instrument};
 use crate::rates_pricing::{RatesPriceError, price_rates, stream_two_way};
 use crate::readiness::ReadinessGate;
 use crate::services::aggregation::AggregationHub;
+use crate::services::auth::risk_book_risk_to_wire;
 use crate::services::clicktrade::{
     BookOutcome, TokenLedger, TokenMinter, TwoWayLine, mint_two_way,
 };
 use crate::services::forward::route_pair;
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::services::pricefanout::{PriceFanout, PriceTick, RatesTick};
+use crate::services::risk::book_risk::aggregate_enabled_risk_books;
 use crate::services::risk::federate::Fleet;
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
@@ -726,6 +729,52 @@ fn agg_book_update_msg(
     }
 }
 
+/// Build a [`RiskBookRiskSnapshot`] (the baseline per-book risk roster of a subscribed
+/// risk stream) at `seq`, reflecting store risk `version`.
+fn risk_book_risk_snapshot_msg(
+    id: SubscriptionId,
+    seq: u64,
+    books: Vec<RiskBookRiskDesc>,
+    version: u64,
+    correlation_id: Option<u64>,
+    now: i64,
+) -> ServerStreamMessage {
+    ServerStreamMessage {
+        message: Some(server_stream_message::Message::RiskBookRiskSnapshot(
+            RiskBookRiskSnapshot {
+                subscription: Some(id),
+                sequence: seq,
+                books,
+                version,
+                correlation_id,
+                epoch_nanos: now,
+            },
+        )),
+    }
+}
+
+/// Build a [`RiskBookRiskUpdate`] (a re-aggregated per-book risk roster delta) at `seq`,
+/// reflecting store risk `version`.
+fn risk_book_risk_update_msg(
+    id: SubscriptionId,
+    seq: u64,
+    books: Vec<RiskBookRiskDesc>,
+    version: u64,
+    now: i64,
+) -> ServerStreamMessage {
+    ServerStreamMessage {
+        message: Some(server_stream_message::Message::RiskBookRiskUpdate(
+            RiskBookRiskUpdate {
+                subscription: Some(id),
+                sequence: seq,
+                books,
+                version,
+                epoch_nanos: now,
+            },
+        )),
+    }
+}
+
 /// Build the wire [`celnet_proto::Greeks`] for a streamed Snapshot/Update,
 /// carry-tagging the rate-sensitivity arm by the instrument's asset class: an FX /
 /// metal line keeps the two-rho `Fx` arm **byte-identical** to today, a cross-asset
@@ -823,6 +872,7 @@ impl StreamEdge {
             series: HashMap::new(),
             rates_subs: HashMap::new(),
             agg_subs: HashMap::new(),
+            risk_subs: HashMap::new(),
             link: Arc::clone(&self.link),
             spread: self.spread,
             clock: self.clock.clone(),
@@ -1018,6 +1068,12 @@ pub(crate) async fn run_session<S>(
                 if !session.agg_subs.is_empty() && !session.drive_agg_tick(&out_tx) {
                     break; // channel closed: client gone.
                 }
+                // Per-book risk roster: poll the shared position store's risk version and
+                // re-publish the enabled-book risk roster when a routed fill / admin book
+                // edit advanced it (aggregation runs off the pinned hot core).
+                if !session.risk_subs.is_empty() && !session.drive_risk_tick(&out_tx) {
+                    break; // channel closed: client gone.
+                }
             }
         }
     }
@@ -1138,6 +1194,12 @@ pub(crate) struct Session {
     /// polls the shared [`AggregationHub`] for its book's memoised composite and
     /// emits an update whenever the book's version advances.
     agg_subs: HashMap<u64, AggBookSubscription>,
+    /// The live **per-book risk** streams multiplexed on this session, keyed by their
+    /// `SubscriptionId` (the SAME id space as every other line). Each polls the shared
+    /// [`PositionStore`](crate::services::risk::store::PositionStore)'s monotonic risk
+    /// version and re-publishes the whole enabled-book risk roster whenever it advances
+    /// (a routed fill or an admin book edit).
+    risk_subs: HashMap<u64, RiskBookRiskSubscription>,
     link: Arc<CoreLink>,
     spread: SpreadModel,
     clock: Clock,
@@ -1190,6 +1252,17 @@ struct AggBookSubscription {
     /// subscribe; an admin edit to the group takes effect on the client's next
     /// (re)subscribe (a Phase-2b live-reprice seam).
     esp_pipeline: Option<Arc<celnet_tiering::FeaturePipeline>>,
+}
+
+/// One live per-book risk stream on a session (the push analogue of `ListRiskBookRisk`).
+struct RiskBookRiskSubscription {
+    /// The client-assigned subscription id.
+    id: SubscriptionId,
+    /// The store risk version last delivered to the client (the baseline snapshot's
+    /// version); a re-publish fires only when the store's version advances past it.
+    last_version: u64,
+    /// The last sequence number emitted (baseline snapshot is 1).
+    sequence: u64,
 }
 
 impl Session {
@@ -1264,6 +1337,13 @@ impl Session {
             client_stream_message::Message::AggregatedBookSubscribe(_) => Some(
                 RequiredAuthority::Capability(Action::Stream, AssetClass::FixedIncome),
             ),
+            // The per-book risk stream is an admin risk-management view over the firm's
+            // routed book — gated on the SAME `QuoteRespond·FixedIncome` capability the
+            // polled `ListRiskBookRisk` RPC requires, so a caller entitled to the polled
+            // roster is entitled to its push form and no other.
+            client_stream_message::Message::RiskBookRiskSubscribe(_) => Some(
+                RequiredAuthority::Capability(Action::QuoteRespond, AssetClass::FixedIncome),
+            ),
             _ => None,
         };
         if let Some(required) = required
@@ -1307,6 +1387,9 @@ impl Session {
             client_stream_message::Message::AggregatedBookSubscribe(s) => {
                 self.handle_aggregated_book_subscribe(s, out_tx).await
             }
+            client_stream_message::Message::RiskBookRiskSubscribe(s) => {
+                self.handle_risk_book_risk_subscribe(s, out_tx).await
+            }
             client_stream_message::Message::AggregatedBookUnsubscribe(u) => {
                 if let Some(id) = u.subscription
                     && self.agg_subs.remove(&id.value).is_some()
@@ -1324,12 +1407,13 @@ impl Session {
             client_stream_message::Message::Modify(m) => self.handle_modify(m, out_tx).await,
             client_stream_message::Message::Unsubscribe(u) => {
                 // The subscription id space is shared across FX price, market-series,
-                // fixed-income, and aggregated-book lines: a single id keys at most
-                // one of them, so tear down whichever this id names.
+                // fixed-income, aggregated-book, and per-book-risk lines: a single id keys
+                // at most one of them, so tear down whichever this id names.
                 if let Some(id) = u.subscription
                     && (self.subs.remove(&id.value).is_some()
                         || self.rates_subs.remove(&id.value).is_some()
-                        || self.agg_subs.remove(&id.value).is_some())
+                        || self.agg_subs.remove(&id.value).is_some()
+                        || self.risk_subs.remove(&id.value).is_some())
                 {
                     let end = ServerStreamMessage {
                         message: Some(server_stream_message::Message::StreamEnd(StreamEnd {
@@ -1628,6 +1712,61 @@ impl Session {
                 last_version: published.version,
                 sequence: 1,
                 esp_pipeline,
+            },
+        );
+        true
+    }
+
+    /// Open a live **per-book risk** stream: aggregate every enabled risk book over the
+    /// shared [`PositionStore`](crate::services::risk::store::PositionStore) (the SAME
+    /// phase-5 helper the polled `ListRiskBookRisk` RPC uses), send it as the baseline
+    /// [`RiskBookRiskSnapshot`], then register the subscription so [`Session::drive_risk_tick`]
+    /// re-publishes the roster whenever the store's risk version advances (a routed fill or
+    /// an admin book edit). A session with no risk store wired (an isolated stream test)
+    /// refuses the line `unavailable` (no roster to serve), never a fabricated one.
+    async fn handle_risk_book_risk_subscribe(
+        &mut self,
+        s: RiskBookRiskSubscribe,
+        out_tx: &mpsc::Sender<Result<ServerStreamMessage, Status>>,
+    ) -> bool {
+        let Some(id) = s.subscription else {
+            return true;
+        };
+        let Some(store) = self.store.as_ref() else {
+            let _ = out_tx
+                .send(Err(Status::unavailable(
+                    "per-book risk stream not available on this edge",
+                )))
+                .await;
+            return true;
+        };
+        // Snapshot the risk version FIRST, then aggregate: a fill that lands between the two
+        // only advances the version further, so the next tick re-publishes — never a missed
+        // change (reading the version after would risk stamping a roster as a newer version
+        // than it reflects).
+        let version = store.risk_version();
+        let books: Vec<RiskBookRiskDesc> = aggregate_enabled_risk_books(store)
+            .iter()
+            .map(risk_book_risk_to_wire)
+            .collect();
+        let snap = risk_book_risk_snapshot_msg(
+            id,
+            1,
+            books,
+            version,
+            s.correlation_id,
+            self.clock.now_nanos(),
+        );
+        // Blocking send for the baseline so it is never dropped.
+        if out_tx.send(Ok(snap)).await.is_err() {
+            return false;
+        }
+        self.risk_subs.insert(
+            id.value,
+            RiskBookRiskSubscription {
+                id,
+                last_version: version,
+                sequence: 1,
             },
         );
         true
@@ -2196,6 +2335,50 @@ impl Session {
                 Ok(()) => {
                     sub.sequence = seq;
                     sub.last_version = published.version;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => return false,
+                Err(mpsc::error::TrySendError::Full(_)) => {}
+            }
+        }
+        true
+    }
+
+    /// Drive every per-book risk subscription: poll the shared position store's monotonic
+    /// risk version and, when it has advanced past any subscriber's last delivery,
+    /// re-aggregate the enabled-book risk roster ONCE (it is global — the same roster for
+    /// every subscriber, unlike the per-book/per-group aggregated-book line) and emit a
+    /// [`RiskBookRiskUpdate`] to each subscriber that is behind. Non-blocking (`try_send`)
+    /// so a slow client never stalls the tick loop; a dropped roster is re-sent on the next
+    /// advance (the roster is whole-state, so the newest supersedes any it skipped). Returns
+    /// `false` only on a fatal channel close.
+    fn drive_risk_tick(
+        &mut self,
+        out_tx: &mpsc::Sender<Result<ServerStreamMessage, Status>>,
+    ) -> bool {
+        let Some(store) = self.store.clone() else {
+            return true;
+        };
+        let version = store.risk_version();
+        // Nothing to do unless SOME subscriber is behind the current version — so the
+        // O(#facts) aggregation runs only when the risk actually moved, never per idle tick.
+        if !self.risk_subs.values().any(|s| version > s.last_version) {
+            return true;
+        }
+        let now = self.clock.now_nanos();
+        let books: Vec<RiskBookRiskDesc> = aggregate_enabled_risk_books(&store)
+            .iter()
+            .map(risk_book_risk_to_wire)
+            .collect();
+        for sub in self.risk_subs.values_mut() {
+            if version <= sub.last_version {
+                continue;
+            }
+            let seq = sub.sequence + 1;
+            let update = risk_book_risk_update_msg(sub.id, seq, books.clone(), version, now);
+            match out_tx.try_send(Ok(update)) {
+                Ok(()) => {
+                    sub.sequence = seq;
+                    sub.last_version = version;
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => return false,
                 Err(mpsc::error::TrySendError::Full(_)) => {}
@@ -2806,6 +2989,7 @@ mod tests {
             series: HashMap::new(),
             rates_subs: HashMap::new(),
             agg_subs: HashMap::new(),
+            risk_subs: HashMap::new(),
             link,
             spread: SpreadModel::default(),
             clock: clock.clone(),
@@ -2874,6 +3058,7 @@ mod tests {
             series: HashMap::new(),
             rates_subs: HashMap::new(),
             agg_subs: HashMap::new(),
+            risk_subs: HashMap::new(),
             link,
             spread: SpreadModel::default(),
             clock,
@@ -3682,6 +3867,152 @@ mod tests {
                 .attribution_of(fact.position_id.0)
                 .expect("attribution recorded");
             assert_eq!(attr.held_by.as_ref().unwrap().book, "EM-VOL-1");
+        })
+        .await
+        .expect("no hang");
+    }
+
+    /// **The live per-book risk stream**: a `RiskBookRiskSubscribe` receives a baseline
+    /// `RiskBookRiskSnapshot` of the current per-book risk (every enabled book, roster in
+    /// registry order); a routed click-to-trade fill advances the store's risk version, and
+    /// the next `drive_risk_tick` pushes a fresh `RiskBookRiskUpdate` reflecting the new
+    /// risk. This is the push analogue of the polled `ListRiskBookRisk` RPC — same rows,
+    /// live.
+    #[tokio::test]
+    async fn risk_book_risk_subscribe_snapshots_then_pushes_on_a_routed_fill() {
+        use crate::config::identity::RiskBookDef;
+        use crate::services::risk::store::{BookedPosition, PositionStore};
+        use celnet_types::{DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
+
+        // A one-book routing graph: every fill routes to "desk-a".
+        fn single_book_graph() -> celnet_risk_routing::RiskRoutingGraph {
+            use celnet_risk_routing::RoutingNode;
+            use std::collections::BTreeMap;
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                0u32,
+                RoutingNode::Book {
+                    risk_book_id: "desk-a".to_owned(),
+                },
+            );
+            celnet_risk_routing::RiskRoutingGraph { entry: 0, nodes }
+        }
+        fn attribution() -> celnet_proto::AttributionRecord {
+            use celnet_proto::{BookId, Owner, owner};
+            celnet_proto::AttributionRecord {
+                quoted_by: None,
+                held_by: Some(BookId {
+                    book: "desk-a".to_owned(),
+                    owner: Some(Owner {
+                        seat: Some(owner::Seat::Trader("jdoe".to_owned())),
+                    }),
+                }),
+                won: Some(true),
+                lp_count: Some(1),
+            }
+        }
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let clock = Clock::manual(1_000_000_000);
+            let store = Arc::new(PositionStore::new());
+            // One enabled risk book + a graph routing fills into it.
+            store.set_risk_book_tree(vec![RiskBookDef {
+                id: "desk-a".to_owned(),
+                name: "Desk A".to_owned(),
+                parent_id: None,
+                desk_id: None,
+                description: String::new(),
+                limits: None,
+                enabled: true,
+            }]);
+            store.set_routing(Some(single_book_graph()));
+
+            let mut session = make_session(clock.clone());
+            session.store = Some(Arc::clone(&store));
+
+            let (tx, mut rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(64);
+
+            // Subscribe → a baseline snapshot listing the enabled book at zero risk.
+            assert!(
+                session
+                    .handle_risk_book_risk_subscribe(
+                        RiskBookRiskSubscribe {
+                            subscription: Some(SubscriptionId { value: 7 }),
+                            correlation_id: Some(11),
+                        },
+                        &tx,
+                    )
+                    .await
+            );
+            let Some(server_stream_message::Message::RiskBookRiskSnapshot(snap)) = rx
+                .try_recv()
+                .expect("a baseline frame")
+                .expect("ok")
+                .message
+            else {
+                panic!("the risk subscribe answers with a RiskBookRiskSnapshot");
+            };
+            assert_eq!(snap.sequence, 1);
+            assert_eq!(snap.correlation_id, Some(11));
+            assert_eq!(snap.books.len(), 1, "the one enabled book is rostered");
+            assert_eq!(snap.books[0].book_id, "desk-a");
+            assert_eq!(snap.books[0].name, "Desk A");
+            assert_eq!(
+                snap.books[0].position_count, 0,
+                "no fills yet ⇒ zero positions"
+            );
+            assert_eq!(snap.books[0].net_notional.to_bits(), 0.0f64.to_bits());
+            let base_version = snap.version;
+
+            // An empty risk tick pushes nothing (the version has not advanced).
+            assert!(session.drive_risk_tick(&tx));
+            assert!(rx.try_recv().is_err(), "no update without a risk change");
+
+            // Book a routed fill → the store's risk version advances.
+            store
+                .book_from_attribution(
+                    BookedPosition {
+                        position_id: 1,
+                        pair: celnet_types::CcyPair::new(
+                            celnet_types::Ccy::EUR,
+                            celnet_types::Ccy::USD,
+                        ),
+                        option: OptionType::Call,
+                        notional_base: 1_000_000.0,
+                        inputs: VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02),
+                        quoted_delta: DeltaConvention::SpotUnadjusted,
+                        premium_style: PremiumStyle::DomesticPips,
+                        surface_version: 1,
+                    },
+                    &attribution(),
+                )
+                .expect("book the routed fill");
+            assert!(
+                store.risk_version() > base_version,
+                "a routed fill advances the store risk version"
+            );
+
+            // The next tick pushes a fresh roster reflecting the new position.
+            assert!(session.drive_risk_tick(&tx));
+            let Some(server_stream_message::Message::RiskBookRiskUpdate(up)) =
+                rx.try_recv().expect("a pushed update").expect("ok").message
+            else {
+                panic!("the risk change pushes a RiskBookRiskUpdate");
+            };
+            assert_eq!(up.sequence, 2, "the update advances past the snapshot");
+            assert!(
+                up.version > base_version,
+                "the update carries the newer version"
+            );
+            assert_eq!(up.books.len(), 1);
+            assert_eq!(
+                up.books[0].position_count, 1,
+                "the routed fill is now in the book"
+            );
+            assert!(
+                (up.books[0].net_notional - 1_000_000.0).abs() < 1e-6,
+                "the roster reflects the 1mm long fill",
+            );
         })
         .await
         .expect("no hang");

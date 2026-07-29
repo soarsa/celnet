@@ -627,6 +627,10 @@ impl Edge {
                 .map(crate::services::risk::store::RiskBookLimitDef::from)
                 .collect(),
         );
+        // Prime the store's full risk-book tree beside the limit view, so the live per-book
+        // risk stream aggregates over the persisted book set from first boot. Every admin
+        // risk-book write re-primes it (see `AuthEdge::reconcile_risk_routing`).
+        store.set_risk_book_tree(identity_store.risk_books.clone());
 
         // ADR-0015 §2.1: activate the configurable consistency tier — Raft **wired
         // everywhere but forced nowhere**. A `RaftNode` is booted ONLY when a

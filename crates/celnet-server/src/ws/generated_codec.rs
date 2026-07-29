@@ -130,10 +130,11 @@ use celnet_proto::{
     CreateRiskBookRequest, CreateRiskBookResponse, DeleteRiskBookRequest, DeleteRiskBookResponse,
     GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse, LimitUtilizationDesc,
     ListRiskBookRiskRequest, ListRiskBookRiskResponse, ListRiskBooksRequest, ListRiskBooksResponse,
-    RiskBookDesc, RiskBookRiskDesc, RiskBookSpec, RiskLimitsDesc, RiskRoutingGraphDesc,
-    RouteConditionDesc, RouteRange, RouteValueDesc, RoutingNodeDesc, StringList,
-    UpdateRiskBookRequest, UpdateRiskBookResponse, UpdateRiskRoutingGraphRequest,
-    UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
+    RiskBookDesc, RiskBookRiskDesc, RiskBookRiskSnapshot, RiskBookRiskUpdate, RiskBookSpec,
+    RiskLimitsDesc, RiskRoutingGraphDesc, RouteConditionDesc, RouteRange, RouteValueDesc,
+    RoutingNodeDesc, StringList, UpdateRiskBookRequest, UpdateRiskBookResponse,
+    UpdateRiskRoutingGraphRequest, UpdateRiskRoutingGraphResponse, route_value_desc,
+    routing_node_desc,
 };
 use serde_json::{Map, Value, json};
 
@@ -8097,4 +8098,51 @@ pub fn encode_aggregated_book_stream_snapshot(s: &AggregatedBookStreamSnapshot) 
 #[must_use]
 pub fn encode_aggregated_book_stream_update(u: &AggregatedBookStreamUpdate) -> Value {
     encode("AggregatedBookStreamUpdate", u)
+}
+
+// --- live per-book risk stream frames ---------------------------------------
+
+impl WireAdapter for RiskBookRiskSnapshot {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "subscription" => self.subscription.as_ref().map(|s| WireVal::Msg(s)),
+            "sequence" => Some(WireVal::U64(self.sequence)),
+            "books" => Some(WireVal::RepeatedMsg(
+                self.books.iter().map(|b| b as &dyn WireAdapter).collect(),
+            )),
+            "version" => Some(WireVal::U64(self.version)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RiskBookRiskUpdate {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "subscription" => self.subscription.as_ref().map(|s| WireVal::Msg(s)),
+            "sequence" => Some(WireVal::U64(self.sequence)),
+            "books" => Some(WireVal::RepeatedMsg(
+                self.books.iter().map(|b| b as &dyn WireAdapter).collect(),
+            )),
+            "version" => Some(WireVal::U64(self.version)),
+            "epoch_nanos" => Some(WireVal::I64(self.epoch_nanos)),
+            _ => None,
+        }
+    }
+}
+
+/// Encode a [`RiskBookRiskSnapshot`] (the baseline per-book risk roster frame) to its WS
+/// JSON — descriptor-driven.
+#[must_use]
+pub fn encode_risk_book_risk_snapshot(s: &RiskBookRiskSnapshot) -> Value {
+    encode("RiskBookRiskSnapshot", s)
+}
+
+/// Encode a [`RiskBookRiskUpdate`] (a per-book risk roster delta frame) to its WS JSON —
+/// descriptor-driven.
+#[must_use]
+pub fn encode_risk_book_risk_update(u: &RiskBookRiskUpdate) -> Value {
+    encode("RiskBookRiskUpdate", u)
 }

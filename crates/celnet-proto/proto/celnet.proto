@@ -2127,6 +2127,9 @@ message ClientStreamMessage {
     AggregatedBookSubscribe aggregated_book_subscribe = 11;
     // Close an aggregated-book composite line.
     AggregatedBookUnsubscribe aggregated_book_unsubscribe = 12;
+    // Open the live per-book risk stream on the SAME session (the push analogue of
+    // the polled `ListRiskBookRisk` RPC). Torn down by the generic `Unsubscribe`.
+    RiskBookRiskSubscribe risk_book_risk_subscribe = 13;
   }
 }
 
@@ -2174,6 +2177,10 @@ message ServerStreamMessage {
     AggregatedBookStreamSnapshot aggregated_book_stream_snapshot = 11;
     // A sequenced delta advancing a subscribed aggregated book's composite.
     AggregatedBookStreamUpdate aggregated_book_stream_update = 12;
+    // The baseline per-book risk roster for a subscribed risk stream.
+    RiskBookRiskSnapshot risk_book_risk_snapshot = 13;
+    // A sequenced delta re-publishing the per-book risk roster as it changes.
+    RiskBookRiskUpdate risk_book_risk_update = 14;
   }
 }
 
@@ -5160,6 +5167,66 @@ message AggregatedBookStreamUpdate {
   AggregatedBookSnapshot book = 3;
   // Update time, nanoseconds since the Unix epoch (UTC).
   int64 epoch_nanos = 4;
+}
+
+// ===========================================================================
+// per-book risk stream — a live push of the firm's per-book risk roster,
+// multiplexed onto the same `StreamSession`. The push analogue of the polled
+// `ListRiskBookRisk` RPC: a client opens a `RiskBookRiskSubscribe` and receives a
+// baseline `RiskBookRiskSnapshot` (every enabled risk book, rolled up its subtree),
+// then a fresh `RiskBookRiskSnapshot`/`RiskBookRiskUpdate` whenever a routed fill
+// changes the live risk (the server-side position store's monotonic risk version
+// advances). The roster payload rows are the SAME `RiskBookRiskDesc` the RPC returns,
+// so a dashboard renders the polled and streamed forms identically. Additive to the
+// one current contract (ADR-0007): no `schema_version`.
+
+// Open the per-book risk stream within the multiplexed session, keyed by a
+// client-assigned `SubscriptionId` (the SAME id space as the FX price / market-series
+// / rates / aggregated-book lines). There is exactly ONE firm risk roster (every
+// enabled book), so — unlike an aggregated-book line — no book id is carried; the
+// subscription id keys the pushed snapshots. Torn down by the generic `Unsubscribe`.
+message RiskBookRiskSubscribe {
+  // The client-assigned subscription id this risk line is keyed on.
+  SubscriptionId subscription = 1;
+  // Optional caller correlation id, echoed on the baseline snapshot.
+  optional uint64 correlation_id = 2;
+}
+
+// The baseline per-book risk roster at a sequence point — the full set of enabled
+// books' aggregated risk a consumer applies whole before consuming deltas.
+message RiskBookRiskSnapshot {
+  // The subscription this snapshot answers.
+  SubscriptionId subscription = 1;
+  // The monotonic per-subscription sequence number of this snapshot (1).
+  uint64 sequence = 2;
+  // One row per enabled risk book, in registry order (the SAME `RiskBookRiskDesc`
+  // rows `ListRiskBookRisk` returns).
+  repeated RiskBookRiskDesc books = 3;
+  // The server-side position store's risk version this roster reflects (monotonic;
+  // advances on every routed fill and every admin risk-book edit). A client dedupes
+  // / orders on it.
+  uint64 version = 4;
+  // Echo of the opening `RiskBookRiskSubscribe.correlation_id`, if one was supplied
+  // (presence-tracked). Absent ⇒ none.
+  optional uint64 correlation_id = 5;
+  // Snapshot time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 6;
+}
+
+// A sequenced delta re-publishing the full per-book risk roster at the next sequence
+// (the roster is a whole-state snapshot, so the newest supersedes any it skipped). A
+// gap in `sequence` signals loss and prompts a `Resync`.
+message RiskBookRiskUpdate {
+  // The subscription this update advances.
+  SubscriptionId subscription = 1;
+  // The monotonic per-subscription sequence number (snapshot seq + n).
+  uint64 sequence = 2;
+  // The re-aggregated roster at this sequence.
+  repeated RiskBookRiskDesc books = 3;
+  // The risk version this roster reflects (see `RiskBookRiskSnapshot.version`).
+  uint64 version = 4;
+  // Update time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 5;
 }
 
 // ===========================================================================

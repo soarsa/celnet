@@ -231,6 +231,10 @@ impl AuthEdge {
                     .map(crate::services::risk::store::RiskBookLimitDef::from)
                     .collect(),
             );
+            // Keep the store's full risk-book tree current beside the limit view, so the
+            // live per-book risk stream re-publishes its roster on a book create/update/
+            // delete/enable (`set_risk_book_tree` advances the store's risk version).
+            position_store.set_risk_book_tree(store.risk_books.clone());
         }
     }
 
@@ -2884,7 +2888,7 @@ fn rag_band_to_wire(band: DomainRagBand) -> i32 {
 }
 
 /// Map a domain [`LimitUtilization`] onto its wire [`LimitUtilizationDesc`] field-for-field.
-fn limit_util_to_wire(u: &LimitUtilization) -> LimitUtilizationDesc {
+pub(crate) fn limit_util_to_wire(u: &LimitUtilization) -> LimitUtilizationDesc {
     LimitUtilizationDesc {
         metric: u.metric.to_owned(),
         used: u.used,
@@ -2897,7 +2901,7 @@ fn limit_util_to_wire(u: &LimitUtilization) -> LimitUtilizationDesc {
 /// Map an aggregated [`RiskBookRisk`] onto its wire [`RiskBookRiskDesc`]. The `dv01`/`pnl`
 /// options ride straight through — absent means not-yet-evaluated (rates DV01 / a mark
 /// pass are later seams, §5.3/§5.4), never a fabricated zero.
-fn risk_book_risk_to_wire(r: &RiskBookRisk) -> RiskBookRiskDesc {
+pub(crate) fn risk_book_risk_to_wire(r: &RiskBookRisk) -> RiskBookRiskDesc {
     RiskBookRiskDesc {
         book_id: r.book_id.clone(),
         name: r.name.clone(),

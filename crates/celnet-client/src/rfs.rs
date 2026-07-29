@@ -1086,6 +1086,11 @@ async fn handle_frame(
         // SDK lane, alongside the D4 GUI view).
         server_stream_message::Message::AggregatedBookStreamSnapshot(_)
         | server_stream_message::Message::AggregatedBookStreamUpdate(_) => SessionFlow::Continue,
+        // Live per-book risk stream frames: this SDK does not yet open a per-book risk
+        // subscription, so it never solicits these frames; skip any that arrive rather than
+        // mis-route them (the risk-roster consumer is a separate SDK/GUI lane).
+        server_stream_message::Message::RiskBookRiskSnapshot(_)
+        | server_stream_message::Message::RiskBookRiskUpdate(_) => SessionFlow::Continue,
     }
 }
 

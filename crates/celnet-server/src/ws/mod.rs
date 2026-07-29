@@ -688,6 +688,9 @@ fn decode_stream_control(
         "aggregated_book_unsubscribe" => client_stream_message::Message::AggregatedBookUnsubscribe(
             codec::aggregated_book_unsubscribe_from_json(o)?,
         ),
+        "risk_book_risk_subscribe" => client_stream_message::Message::RiskBookRiskSubscribe(
+            codec::risk_book_risk_subscribe_from_json(o)?,
+        ),
         "modify" => client_stream_message::Message::Modify(codec::modify_from_json(o)?),
         "unsubscribe" => {
             client_stream_message::Message::Unsubscribe(codec::unsubscribe_from_json(o)?)
@@ -1534,6 +1537,10 @@ mod tests {
             // `{"type":"aggregated_book_unsubscribe"}`.
             "aggregated_book_subscribe",
             "aggregated_book_unsubscribe",
+            // The live per-book risk stream on the SAME multiplexed session: a WS client
+            // sends `{"type":"risk_book_risk_subscribe"}` (torn down by the generic
+            // `unsubscribe`).
+            "risk_book_risk_subscribe",
         ];
         frozen.sort_unstable();
         assert_eq!(

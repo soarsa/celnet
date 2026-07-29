@@ -45,8 +45,9 @@ use celnet_proto::{
 use celnet_proto::{
     CreateRiskBookResponse, DeleteRiskBookResponse, GetRiskRoutingGraphResponse,
     LimitUtilizationDesc, ListRiskBookRiskResponse, ListRiskBooksResponse, RagBand, RiskBookDesc,
-    RiskBookRiskDesc, RiskLimitsDesc, RiskRoutingGraphDesc, RouteConditionDesc, RouteFieldEnum,
-    RouteOpEnum, RouteRange, RouteValueDesc, RoutingNodeDesc, StringList, UpdateRiskBookResponse,
+    RiskBookRiskDesc, RiskBookRiskSnapshot, RiskBookRiskUpdate, RiskLimitsDesc,
+    RiskRoutingGraphDesc, RouteConditionDesc, RouteFieldEnum, RouteOpEnum, RouteRange,
+    RouteValueDesc, RoutingNodeDesc, StringList, UpdateRiskBookResponse,
     UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
 };
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
@@ -4525,6 +4526,57 @@ fn aggregated_book_stream_update_encode_byte_identical() {
         "AggregatedBookStreamUpdate(full)",
         &generated::encode_aggregated_book_stream_update(&update),
         &hand::hand_aggregated_book_stream_update_to_json(&update),
+    );
+}
+
+#[test]
+fn risk_book_risk_snapshot_encode_byte_identical() {
+    // Full: subscription + a populated roster (a null-absent-dv01/pnl row beside an
+    // all-default row) + correlation echo present.
+    let full = RiskBookRiskSnapshot {
+        subscription: Some(SubscriptionId { value: 7 }),
+        sequence: 1,
+        books: vec![risk_book_risk_desc_populated(), RiskBookRiskDesc::default()],
+        version: 42,
+        correlation_id: Some(11),
+        epoch_nanos: 1_700_000_000_000_000_000,
+    };
+    assert_bytes_eq(
+        "RiskBookRiskSnapshot(full)",
+        &generated::encode_risk_book_risk_snapshot(&full),
+        &hand::hand_risk_book_risk_snapshot_to_json(&full),
+    );
+    // Minimal: empty roster, absent correlation_id ⇒ `null` (present-with-null).
+    let minimal = RiskBookRiskSnapshot {
+        subscription: Some(SubscriptionId { value: 1 }),
+        sequence: 1,
+        books: vec![],
+        version: 0,
+        correlation_id: None,
+        epoch_nanos: 0,
+    };
+    let g = generated::encode_risk_book_risk_snapshot(&minimal);
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "RiskBookRiskSnapshot(minimal)",
+        &g,
+        &hand::hand_risk_book_risk_snapshot_to_json(&minimal),
+    );
+}
+
+#[test]
+fn risk_book_risk_update_encode_byte_identical() {
+    let update = RiskBookRiskUpdate {
+        subscription: Some(SubscriptionId { value: 7 }),
+        sequence: 2,
+        books: vec![risk_book_risk_desc_populated()],
+        version: 43,
+        epoch_nanos: 1_700_000_000_000_000_001,
+    };
+    assert_bytes_eq(
+        "RiskBookRiskUpdate(full)",
+        &generated::encode_risk_book_risk_update(&update),
+        &hand::hand_risk_book_risk_update_to_json(&update),
     );
 }
 

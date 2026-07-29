@@ -1855,6 +1855,13 @@ pub(super) fn server_stream_message_to_json(
             "aggregated_book_stream_update",
             aggregated_book_stream_update_to_json(u),
         ),
+        Message::RiskBookRiskSnapshot(s) => (
+            "risk_book_risk_snapshot",
+            risk_book_risk_snapshot_to_json(s),
+        ),
+        Message::RiskBookRiskUpdate(u) => {
+            ("risk_book_risk_update", risk_book_risk_update_to_json(u))
+        }
     };
     Some(tagged(tag, body))
 }
@@ -1913,6 +1920,42 @@ fn aggregated_book_stream_update_to_json(u: &celnet_proto::AggregatedBookStreamU
         "sequence": u.sequence,
         "book": u.book.as_ref().map(aggregated_book_snapshot_body_to_json),
         "epoch_nanos": u.epoch_nanos,
+    })
+}
+
+/// Encode the baseline per-book risk roster stream frame. The `books` rows are the SAME
+/// `RiskBookRiskDesc` the polled `ListRiskBookRisk` reply carries (each with its optional
+/// `dv01`/`pnl` rendered `null`-when-absent); `correlation_id` renders `null`-when-absent.
+fn risk_book_risk_snapshot_to_json(s: &celnet_proto::RiskBookRiskSnapshot) -> Value {
+    json!({
+        "subscription": s.subscription.as_ref().map(subscription_id_to_json),
+        "sequence": s.sequence,
+        "books": Value::Array(s.books.iter().map(risk_book_risk_desc_to_json).collect()),
+        "version": s.version,
+        "correlation_id": s.correlation_id,
+        "epoch_nanos": s.epoch_nanos,
+    })
+}
+
+/// Encode a sequenced per-book risk roster delta frame.
+fn risk_book_risk_update_to_json(u: &celnet_proto::RiskBookRiskUpdate) -> Value {
+    json!({
+        "subscription": u.subscription.as_ref().map(subscription_id_to_json),
+        "sequence": u.sequence,
+        "books": Value::Array(u.books.iter().map(risk_book_risk_desc_to_json).collect()),
+        "version": u.version,
+        "epoch_nanos": u.epoch_nanos,
+    })
+}
+
+/// Decode a `RiskBookRiskSubscribe` (open the per-book risk stream) from the WS JSON
+/// mirror — the risk counterpart of [`aggregated_book_subscribe_from_json`].
+pub(super) fn risk_book_risk_subscribe_from_json(
+    o: &Map<String, Value>,
+) -> Result<celnet_proto::RiskBookRiskSubscribe> {
+    Ok(celnet_proto::RiskBookRiskSubscribe {
+        subscription: Some(nested(o, "subscription", subscription_id_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
     })
 }
 
@@ -4739,7 +4782,10 @@ const _: fn() = || {
 /// verification seam.
 #[doc(hidden)]
 pub mod diff_support {
-    use celnet_proto::{AggregatedBookStreamSnapshot, AggregatedBookStreamUpdate};
+    use celnet_proto::{
+        AggregatedBookStreamSnapshot, AggregatedBookStreamUpdate, RiskBookRiskSnapshot,
+        RiskBookRiskUpdate,
+    };
     use celnet_proto::{
         ArbReport, CcyPair, CommodityRef, Conventions, CreateFixConnectionRequest,
         CreateFixConnectionResponse, CryptoPair, DeleteFixConnectionRequest,
@@ -5139,6 +5185,18 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_aggregated_book_stream_update_to_json(u: &AggregatedBookStreamUpdate) -> Value {
         super::aggregated_book_stream_update_to_json(u)
+    }
+
+    /// Hand-codec reference for the `RiskBookRiskSnapshot` encode (live per-book risk stream).
+    #[must_use]
+    pub fn hand_risk_book_risk_snapshot_to_json(s: &RiskBookRiskSnapshot) -> Value {
+        super::risk_book_risk_snapshot_to_json(s)
+    }
+
+    /// Hand-codec reference for the `RiskBookRiskUpdate` encode (live per-book risk stream).
+    #[must_use]
+    pub fn hand_risk_book_risk_update_to_json(u: &RiskBookRiskUpdate) -> Value {
+        super::risk_book_risk_update_to_json(u)
     }
 
     /// Hand-codec reference for the `CreateFixConnectionResponse` encode.

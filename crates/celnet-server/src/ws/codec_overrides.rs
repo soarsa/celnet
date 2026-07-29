@@ -168,6 +168,12 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     // `null`-when-absent via the generic singular-message rule and need no entry.
     // (`AggregatedBookStreamUpdate` carries no optional field, so it is not listed.)
     "AggregatedBookStreamSnapshot",
+    // The live per-book risk stream BASELINE frame: its `json!({ .. })` hand encoder emits
+    // the `Option<u64>` `correlation_id` as JSON `null` when absent; the `subscription`
+    // singular-message payload already renders `null`-when-absent via the generic rule, and
+    // each nested `RiskBookRiskDesc` row applies its own null-absent policy (listed above).
+    // (`RiskBookRiskUpdate` carries no optional field, so it is not listed.)
+    "RiskBookRiskSnapshot",
 ];
 
 /// How the generated encoder should treat one descriptor field's JSON key.

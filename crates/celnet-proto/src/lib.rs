@@ -1565,6 +1565,7 @@ mod wire_contract_tests {
             "rates_subscribe",
             "aggregated_book_subscribe",
             "aggregated_book_unsubscribe",
+            "risk_book_risk_subscribe",
         ];
         want.sort_unstable();
         assert_eq!(

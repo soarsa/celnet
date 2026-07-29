@@ -246,6 +246,33 @@ pub fn aggregate_risk_book(
     aggregate_facts(book, &facts)
 }
 
+/// Aggregate **every enabled risk book** over the live position store, each rolled up its
+/// subtree — the push-stream analogue of `AuthEdge::list_risk_book_risk`. It reuses the
+/// exact phase-5 [`aggregate_risk_book`] helper the polled RPC uses, over the store's own
+/// reconciled [`risk-book tree`](PositionStore::risk_book_tree) (primed at boot and on every
+/// admin write beside the routing graph), so the streamed roster is identical to the polled
+/// one — no separate identity handle is threaded onto the streaming session.
+///
+/// The subtree walk needs an [`IdentityStore`] view of the book tree; the store carries the
+/// full [`RiskBookDef`] set, so a **transient** identity is built from it (only `risk_books`
+/// populated — the walk reads nothing else). Books are returned in registry order and only
+/// **enabled** books are rolled up (their disabled descendants still contribute, exactly as
+/// the RPC's `aggregate_risk_book` includes all descendants) — matching the RPC's
+/// `.filter(|b| b.enabled)` roster.
+#[must_use]
+pub fn aggregate_enabled_risk_books(store: &PositionStore) -> Vec<RiskBookRisk> {
+    let identity = IdentityStore {
+        risk_books: store.risk_book_tree(),
+        ..IdentityStore::default()
+    };
+    identity
+        .risk_books
+        .iter()
+        .filter(|b| b.enabled)
+        .map(|b| aggregate_risk_book(store, &identity, b))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

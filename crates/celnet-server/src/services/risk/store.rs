@@ -43,7 +43,7 @@
 //! sensitivities, not a vanilla proxy (guardrail #2).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::services::consensus::{ConsensusHandle, fx_book_key};
@@ -198,6 +198,14 @@ pub struct PositionStore {
     /// byte-identical. Set once at boot and read on the async booking tier only — never
     /// the pinned pricing thread (§4.3).
     consensus: OnceLock<Arc<ConsensusHandle>>,
+    /// A monotonic **risk version** bumped on every change that can alter a risk book's
+    /// aggregated risk: a successful routed [`Self::book`] (a position change) and an
+    /// admin edit of the risk-book tree ([`Self::set_risk_book_tree`]). It is the signal
+    /// the live per-book risk stream ([`crate::services::stream`]) polls to decide "risk
+    /// changed, re-publish" — the risk analogue of the aggregation hub's per-book
+    /// composite version. A relaxed atomic (read lock-free off the streaming tick loop,
+    /// never the pinned pricing core); starts at `0`.
+    risk_version: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -240,6 +248,14 @@ struct StoreInner {
     /// no caps on the fill's book path — ⇒ the per-book gate is skipped, byte-identical to
     /// the pre-enforcement booking path.
     risk_book_limits: HashMap<String, RiskBookLimitDef>,
+    /// The full risk-book tree (id, name, parent, enabled, limits …) in registry order —
+    /// the authoritative set of books the live per-book risk stream aggregates over. Kept
+    /// current beside [`Self::risk_book_limits`] by [`Self::set_risk_book_tree`] from BOTH
+    /// reconcile sites (boot prime + the per-write auth reconcile hook), so the streamed
+    /// roster tracks admin edits. Held ordered (not a map) so the streamed roster is in the
+    /// same registry order the polled `ListRiskBookRisk` RPC returns. Empty ⇒ no books; the
+    /// stream publishes an empty roster (never a fabricated one).
+    risk_book_tree: Vec<RiskBookDef>,
 }
 
 impl Default for PositionStore {
@@ -257,6 +273,7 @@ impl PositionStore {
             inner: RwLock::new(StoreInner::default()),
             permissive_access: AtomicBool::new(false),
             consensus: OnceLock::new(),
+            risk_version: AtomicU64::new(0),
         }
     }
 
@@ -331,6 +348,9 @@ impl PositionStore {
                 // A staged federation-union view never books new fills, so it enforces no
                 // per-book caps (default-empty — never inherited).
                 risk_book_limits: HashMap::new(),
+                // A staged federation-union view never streams per-book risk, so it carries
+                // no risk-book tree (default-empty — never inherited).
+                risk_book_tree: Vec::new(),
             }),
             // Carried for coherence; a staged store only ever backs the
             // post-boundary `*_impl` internals, which no longer re-authorize.
@@ -338,6 +358,9 @@ impl PositionStore {
             // A staged federation-union view is transient and never the must-order
             // writer, so it never replicates (ADR-0015 §4.3 single-writer discipline).
             consensus: OnceLock::new(),
+            // Transient staging view: it books no fills and streams no risk, so its risk
+            // version is inert (starts at 0, never polled by a stream).
+            risk_version: AtomicU64::new(0),
         }
     }
 
@@ -424,6 +447,47 @@ impl PositionStore {
     pub fn set_risk_books(&self, books: Vec<RiskBookLimitDef>) {
         let mut g = self.inner.write().expect("position store lock poisoned");
         g.risk_book_limits = books.into_iter().map(|b| (b.id.clone(), b)).collect();
+    }
+
+    /// Push the current **risk-book tree** (the full [`RiskBookDef`] set, in registry
+    /// order) into the store — the authoritative set of books the live per-book risk
+    /// stream aggregates over. Called at the SAME two reconcile sites [`Self::set_risk_books`]
+    /// is (the boot-time prime in `celnet-server/src/lib.rs` and the per-write
+    /// `AuthEdge::reconcile_risk_routing` hook), so an admin create/update/delete/enable of a
+    /// book re-publishes the streamed roster. Advances the monotonic risk version so a live
+    /// subscriber re-aggregates on its next tick — a book-tree edit is a risk-presentation
+    /// change even with no new fill.
+    ///
+    /// Thread-safe: takes the store write lock briefly (control-plane cadence, never the
+    /// pinned pricing core).
+    pub fn set_risk_book_tree(&self, books: Vec<RiskBookDef>) {
+        let mut g = self.inner.write().expect("position store lock poisoned");
+        g.risk_book_tree = books;
+        drop(g);
+        self.risk_version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The current risk-book tree (the full [`RiskBookDef`] set, in registry order) — the
+    /// book set the live per-book risk stream rolls up over the live facts. Cloned out under
+    /// the read lock so the aggregation runs lock-free.
+    #[must_use]
+    pub fn risk_book_tree(&self) -> Vec<RiskBookDef> {
+        self.inner
+            .read()
+            .expect("position store lock poisoned")
+            .risk_book_tree
+            .clone()
+    }
+
+    /// The current **risk version**: a monotonic counter advanced on every change that can
+    /// alter a risk book's aggregated risk — a successful routed [`Self::book`] and an admin
+    /// edit of the risk-book tree ([`Self::set_risk_book_tree`]). The live per-book risk
+    /// stream polls this (a lock-free relaxed load) to decide when to re-aggregate and
+    /// re-publish, exactly as the FX/rates lines poll their fan-out and the aggregated-book
+    /// line polls the hub's composite version.
+    #[must_use]
+    pub fn risk_version(&self) -> u64 {
+        self.risk_version.load(Ordering::Relaxed)
     }
 
     /// Whether a risk-routing graph is currently installed (routing is active).
@@ -815,6 +879,13 @@ impl PositionStore {
                 g.attribution.remove(&handle);
             }
         }
+        drop(g);
+        // A routed fill changed the live book, so a risk book's aggregated risk may have
+        // moved: advance the monotonic risk version the live per-book risk stream polls
+        // (the risk analogue of the aggregation hub's per-book composite version bump).
+        // A relaxed bump after the mutation is visible; a subscriber re-aggregates on the
+        // next tick when it observes the newer version.
+        self.risk_version.fetch_add(1, Ordering::Relaxed);
         Ok(decision)
     }
 
