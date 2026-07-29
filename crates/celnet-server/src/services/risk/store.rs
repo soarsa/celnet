@@ -63,6 +63,8 @@ use celnet_limits::{
 };
 use celnet_risk_routing::{RiskRouter, RiskRoutingGraph, RoutingContext};
 
+use crate::config::identity::{RiskBookDef, RiskLimits};
+
 use super::aggregate::{cube_from_facts, default_grid};
 
 /// A deterministic string→`u32` interner: distinct strings get distinct,
@@ -144,6 +146,33 @@ pub struct BookedExotic {
     pub surface_version: u64,
 }
 
+/// A compact, server-side projection of a [`RiskBookDef`](crate::config::identity::RiskBookDef)
+/// carrying only what the booking sink's per-book limit gate needs: the book id, its parent
+/// (for ancestor roll-up), and its optional hard [`RiskLimits`]. Pushed into the store by
+/// the reconcile hooks ([`PositionStore::set_risk_books`]) whenever a risk book or the graph
+/// is created / edited / deleted, so the store's limit view stays current without pulling the
+/// full config type onto the booking path.
+#[derive(Debug, Clone)]
+pub struct RiskBookLimitDef {
+    /// The risk book id (matches the `risk_book_id` the routing graph resolves to).
+    pub id: String,
+    /// The parent book id for subtree roll-up, or `None` for a top-level book.
+    pub parent_id: Option<String>,
+    /// The book's optional hard notional caps. `None` ⇒ the book carries no caps.
+    pub limits: Option<RiskLimits>,
+}
+
+impl From<&RiskBookDef> for RiskBookLimitDef {
+    fn from(def: &RiskBookDef) -> Self {
+        Self {
+            id: def.id.clone(),
+            parent_id: def.parent_id.clone(),
+            // `RiskLimits` is `Copy`, so the caps are copied, not shared.
+            limits: def.limits,
+        }
+    }
+}
+
 /// The shared live position book + org hierarchy + attribution interner + limit
 /// tree the risk service aggregates over. Cheap to share behind an [`Arc`]; every
 /// mutation takes the write lock briefly (the cube runs off the hot path, so the
@@ -205,6 +234,12 @@ struct StoreInner {
     /// absent handle ⇒ unrouted (`None`). The attribution/hierarchy keying is untouched,
     /// so an unrouted store is byte-identical to today.
     risk_book: HashMap<u32, String>,
+    /// The current **risk-book limit view** (§8.3 enforcement): each routed book's parent
+    /// (for subtree roll-up) + optional hard [`RiskLimits`], keyed by book id. Kept current
+    /// by [`PositionStore::set_risk_books`] from the reconcile hooks. Empty — or a view with
+    /// no caps on the fill's book path — ⇒ the per-book gate is skipped, byte-identical to
+    /// the pre-enforcement booking path.
+    risk_book_limits: HashMap<String, RiskBookLimitDef>,
 }
 
 impl Default for PositionStore {
@@ -293,6 +328,9 @@ impl PositionStore {
                 // risk-book stamps (both default-empty — never inherited).
                 routing: None,
                 risk_book: HashMap::new(),
+                // A staged federation-union view never books new fills, so it enforces no
+                // per-book caps (default-empty — never inherited).
+                risk_book_limits: HashMap::new(),
             }),
             // Carried for coherence; a staged store only ever backs the
             // post-boundary `*_impl` internals, which no longer re-authorize.
@@ -370,6 +408,22 @@ impl PositionStore {
     pub fn set_routing(&self, graph: Option<RiskRoutingGraph>) {
         let mut g = self.inner.write().expect("position store lock poisoned");
         g.routing = graph.map(Arc::new);
+    }
+
+    /// Push the current **risk-book limit view** into the store — each book's parent (for
+    /// subtree roll-up) and optional hard [`RiskLimits`] notional caps. Kept current beside
+    /// [`Self::set_routing`] by BOTH reconcile sites (the boot-time prime in
+    /// `celnet-server/src/lib.rs` and the per-write `AuthEdge::reconcile_risk_routing` hook),
+    /// so a book create / update / delete or a graph edit refreshes the caps the per-book
+    /// booking gate ([`Self::book`]) enforces. An empty view (no books, or none carrying
+    /// limits) ⇒ the per-book gate is skipped and booking is byte-identical to the
+    /// pre-enforcement path.
+    ///
+    /// Thread-safe: takes the store write lock briefly (control-plane cadence, never the
+    /// pinned pricing core).
+    pub fn set_risk_books(&self, books: Vec<RiskBookLimitDef>) {
+        let mut g = self.inner.write().expect("position store lock poisoned");
+        g.risk_book_limits = books.into_iter().map(|b| (b.id.clone(), b)).collect();
     }
 
     /// Whether a risk-routing graph is currently installed (routing is active).
@@ -634,7 +688,8 @@ impl PositionStore {
     ///
     /// # Errors
     /// `invalid_argument` if `booked.position_id` does not fit a `u32` cube handle or
-    /// the position is not priceable; `failed_precondition` on a hard-limit breach.
+    /// the position is not priceable; `failed_precondition` on a hard FactKey-limit breach
+    /// OR a routed **risk-book** hard notional-cap breach (the resolved book or an ancestor).
     pub fn book(
         &self,
         booked: BookedPosition,
@@ -646,15 +701,21 @@ impl PositionStore {
         let (position, leaf, fact) = canonical_vanilla_fact(&booked, key.clone())?;
         let handle = fact.position_id.0;
 
-        // Pre-trade gate over a READ snapshot, BEFORE acquiring the write lock, so a hard
-        // breach can never book AND the O(#facts) cube projection never runs while the
+        // Pre-trade gates over a single READ snapshot, BEFORE acquiring the write lock, so a
+        // hard breach can never book AND the O(#facts) projections never run while the
         // exclusive write lock is held (guardrails #6/#11 — a fill never serialises every
-        // other booking behind its own limit projection). Skipped when no limit is
-        // configured (the empty-tree default keeps the sink byte-identical to the pre-gate
-        // booking path and builds no cube on a fill when the desk has set no caps).
-        let decision = {
+        // other booking behind its own projection). Two gates run here, both on the SAME
+        // snapshot and both leaving the store unmutated on a reject:
+        //   1. the FactKey Greeks/notional pre-trade gate (`celnet_limits`), unchanged; then
+        //   2. risk routing is resolved (`RiskRouter::route`) and, if the resolved book or an
+        //      ancestor carries a hard `RiskLimits` notional cap, the per-book limit gate.
+        // Both must pass to book; either rejects with a typed `failed_precondition` before any
+        // mutation. A deployment with no FactKey limits AND no risk-book limits builds no
+        // projection and is byte-identical to the pre-gate booking path.
+        let (decision, resolved_book): (PreTradeDecision, Option<String>) = {
             let g = self.inner.read().expect("position store lock poisoned");
-            if g.limits.is_empty() {
+            // (1) The existing FactKey pre-trade gate — unchanged.
+            let decision = if g.limits.is_empty() {
                 PreTradeDecision::Accept
             } else {
                 let result = project_pre_trade(
@@ -670,7 +731,33 @@ impl PositionStore {
                     return Err(limit_breached_status(&result));
                 }
                 result.decision
+            };
+            // (2a) Resolve risk routing on the SAME snapshot, BEFORE the mutation. A routing
+            // error on an already-validated graph falls back to UNROUTED (a routing failure
+            // never rejects the fill), byte-identical to the pre-routing path.
+            let resolved = g.routing.as_ref().and_then(|graph| {
+                let ctx = routing_context_from(&booked, attribution.as_ref());
+                match RiskRouter::route(graph, &ctx) {
+                    Ok(book) => Some(book.to_owned()),
+                    Err(err) => {
+                        tracing::warn!(
+                            position_id = booked.position_id,
+                            %err,
+                            "risk routing failed; booking unrouted",
+                        );
+                        None
+                    }
+                }
+            });
+            // (2b) The per-book HARD-limit gate: if the fill's resolved book (or any ancestor)
+            // would EXCEED a hard notional cap, reject BEFORE any mutation — store unchanged.
+            if let Some(book_id) = resolved.as_deref()
+                && let Some(breach) =
+                    project_risk_book_breach(&g, book_id, booked.notional_base, handle)
+            {
+                return Err(breach);
             }
+            (decision, resolved)
         };
         // ADR-0015 §2.1: a book configured `Strong` routes its authoritative write
         // through the Raft quorum log BEFORE the local apply — linearizable,
@@ -707,30 +794,18 @@ impl PositionStore {
             g.facts.push(fact);
         }
         g.wire_ids.insert(handle, booked.position_id);
-        // Risk routing (§4): a configured firm-wide graph routes this fill into a risk
-        // book; stamp the resolved book id beside the attribution keying (§8.3). No graph
-        // — or a routing error on an already-validated graph — leaves the position
-        // UNROUTED (`risk_book` unset), byte-identical to the pre-routing booking path.
-        // A routing failure never rejects the fill (the position is already booked above).
-        if let Some(graph) = g.routing.clone() {
-            let ctx = routing_context_from(&booked, attribution.as_ref());
-            match RiskRouter::route(&graph, &ctx) {
-                Ok(book) => {
-                    let book = book.to_owned();
-                    g.risk_book.insert(handle, book);
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        position_id = booked.position_id,
-                        %err,
-                        "risk routing failed; booking unrouted",
-                    );
-                    g.risk_book.remove(&handle);
-                }
+        // Risk routing (§4): stamp the risk book resolved on the read snapshot above (before
+        // the per-book limit gate), beside the attribution keying (§8.3). `None` — no graph,
+        // or a routing error on an already-validated graph — leaves the position UNROUTED
+        // (and a re-book of a formerly-routed id while routing is now off drops the stamp),
+        // byte-identical to the pre-routing booking path.
+        match &resolved_book {
+            Some(book) => {
+                g.risk_book.insert(handle, book.clone());
             }
-        } else {
-            // Re-book of a formerly-routed id while routing is now off ⇒ drop the stamp.
-            g.risk_book.remove(&handle);
+            None => {
+                g.risk_book.remove(&handle);
+            }
         }
         match attribution {
             Some(a) => {
@@ -1107,6 +1182,134 @@ pub(crate) fn limit_breach_message(res: &PreTradeResult) -> String {
     }
 }
 
+/// Project this fill's post-book risk-book aggregate over the resolved book **and each
+/// ancestor**, returning a typed `failed_precondition` breach if any HARD notional cap
+/// (`max_net_notional` on `|net|`, `max_gross_notional` on gross) would be EXCEEDED — the
+/// per-book enforcement (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §8.3). Runs on the SAME
+/// read snapshot the routing used, BEFORE any mutation, so a breach rejects with the store
+/// left unmutated (the load-bearing risk-control invariant, mirroring the FactKey gate).
+///
+/// **Roll-up.** A scope's aggregate is its whole subtree: this fill (always within the
+/// scope, since every checked scope is the resolved book or one of its ancestors) plus every
+/// current position whose stamped risk book is the scope itself or a descendant of it. The
+/// prior fact under `exclude_handle` (a re-book of the same id) is excluded so a re-book
+/// projects `others + this fill` and never double-counts (mirrors [`project_pre_trade`]).
+///
+/// `max_dv01` is skipped: DV01 is not available for FX vanilla (the known rates seam, §5.3),
+/// so a DV01 cap has no numerator to gate on here.
+///
+/// Returns `None` — gate skipped, byte-identical to the pre-enforcement path — when no book
+/// on the fill's ancestor path carries a `RiskLimits`.
+fn project_risk_book_breach(
+    inner: &StoreInner,
+    resolved_book: &str,
+    fill_notional: f64,
+    exclude_handle: u32,
+) -> Option<tonic::Status> {
+    let limits_map = &inner.risk_book_limits;
+    // The scopes to enforce: the resolved book + its ancestors, keeping only those that
+    // actually carry a `RiskLimits`. No caps on the whole path ⇒ nothing to gate.
+    let chain = risk_book_chain(limits_map, resolved_book);
+    let scoped: Vec<(&str, &RiskLimits)> = chain
+        .iter()
+        .filter_map(|id| {
+            limits_map
+                .get(*id)
+                .and_then(|d| d.limits.as_ref())
+                .map(|l| (*id, l))
+        })
+        .collect();
+    if scoped.is_empty() {
+        return None;
+    }
+    // The current per-book OWN (un-rolled) net/gross from the stamped facts, excluding this
+    // fill's own prior fact (re-book supersede — never double-counted against itself).
+    let mut own: HashMap<&str, (f64, f64)> = HashMap::new();
+    for f in &inner.facts {
+        if f.position_id.0 == exclude_handle {
+            continue;
+        }
+        if let Some(book) = inner.risk_book.get(&f.position_id.0) {
+            let n = f.measure.position.notional_base;
+            let e = own.entry(book.as_str()).or_insert((0.0, 0.0));
+            e.0 += n;
+            e.1 += n.abs();
+        }
+    }
+    for (scope, lim) in scoped {
+        // Subtree roll-up: this fill + every current book whose ancestor-or-self chain
+        // passes through `scope` (i.e. the book is in the subtree rooted at `scope`).
+        let mut net = fill_notional;
+        let mut gross = fill_notional.abs();
+        for (book, (bnet, bgross)) in &own {
+            if risk_book_chain_contains(limits_map, book, scope) {
+                net += bnet;
+                gross += bgross;
+            }
+        }
+        if let Some(cap) = lim.max_net_notional
+            && net.abs() > cap
+        {
+            return Some(risk_book_limit_breached(
+                scope,
+                "net_notional",
+                net.abs(),
+                cap,
+            ));
+        }
+        if let Some(cap) = lim.max_gross_notional
+            && gross > cap
+        {
+            return Some(risk_book_limit_breached(
+                scope,
+                "gross_notional",
+                gross,
+                cap,
+            ));
+        }
+        // `max_dv01` intentionally skipped — no DV01 numerator for FX vanilla.
+    }
+    None
+}
+
+/// The resolved book and its ancestors (self first, then upward the parent chain),
+/// cycle-guarded against a not-yet-validated registry.
+fn risk_book_chain<'a>(
+    limits_map: &'a HashMap<String, RiskBookLimitDef>,
+    book: &'a str,
+) -> Vec<&'a str> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut cur: Option<&str> = Some(book);
+    while let Some(id) = cur {
+        if out.contains(&id) {
+            break; // cycle guard — a validated store is acyclic
+        }
+        out.push(id);
+        cur = limits_map.get(id).and_then(|d| d.parent_id.as_deref());
+    }
+    out
+}
+
+/// Whether `scope` lies on `book`'s ancestor-or-self chain — equivalently, whether `book`
+/// is in the subtree rooted at `scope`.
+fn risk_book_chain_contains(
+    limits_map: &HashMap<String, RiskBookLimitDef>,
+    book: &str,
+    scope: &str,
+) -> bool {
+    risk_book_chain(limits_map, book).contains(&scope)
+}
+
+/// A typed `failed_precondition` for a routed-risk-book hard notional-cap breach — book id +
+/// metric + used/limit (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §8.3). Distinct from the
+/// FactKey [`limit_breached_status`] so a client can tell a per-book cap breach apart.
+#[must_use]
+fn risk_book_limit_breached(book_id: &str, metric: &str, used: f64, cap: f64) -> tonic::Status {
+    tonic::Status::failed_precondition(format!(
+        "risk book limit breached: {book_id}/{metric} used {used:.4} exceeds cap {cap}"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1447,5 +1650,223 @@ mod tests {
                 .decision,
             PreTradeDecision::Accept
         );
+    }
+
+    // ---- §8.3 per-book RiskLimits enforcement at the routed booking sink ----
+
+    use celnet_risk_routing::RiskRoutingGraph;
+
+    /// A risk-book limit-view row with net/gross caps (DV01 always absent — the FX seam).
+    fn limit_def(
+        id: &str,
+        parent: Option<&str>,
+        net: Option<f64>,
+        gross: Option<f64>,
+    ) -> RiskBookLimitDef {
+        RiskBookLimitDef {
+            id: id.to_owned(),
+            parent_id: parent.map(str::to_owned),
+            limits: Some(RiskLimits {
+                max_net_notional: net,
+                max_gross_notional: gross,
+                max_dv01: None,
+            }),
+        }
+    }
+
+    /// A firm graph splitting on notional into two SIBLING child books (both under a common
+    /// parent in the limit view): `> 50m → CHILD-A`, else `→ CHILD-B`.
+    fn child_split_graph() -> RiskRoutingGraph {
+        use celnet_risk_routing::{RouteField, RouteOp, RouteValue, RoutingNode};
+        use std::collections::BTreeMap;
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0u32,
+            RoutingNode::Condition {
+                field: RouteField::Notional,
+                op: RouteOp::Gt,
+                value: RouteValue::Num(50_000_000.0),
+                on_true: 1,
+                on_false: 2,
+            },
+        );
+        nodes.insert(
+            1u32,
+            RoutingNode::Book {
+                risk_book_id: "CHILD-A".to_owned(),
+            },
+        );
+        nodes.insert(
+            2u32,
+            RoutingNode::Book {
+                risk_book_id: "CHILD-B".to_owned(),
+            },
+        );
+        RiskRoutingGraph { entry: 0, nodes }
+    }
+
+    /// A routed fill whose book's HARD gross cap would be exceeded is REJECTED before any
+    /// mutation: the first fill books, the second (which would blow the cap) is refused with
+    /// a typed `failed_precondition` and the store is left unmutated (no stamp for it).
+    #[test]
+    fn routed_fill_rejected_when_book_gross_cap_exceeded() {
+        let store = PositionStore::new();
+        store.set_routing(Some(notional_graph()));
+        store.set_risk_books(vec![
+            limit_def("BOOK-A", None, None, Some(100_000_000.0)),
+            RiskBookLimitDef {
+                id: "DEFAULT".to_owned(),
+                parent_id: None,
+                limits: None,
+            },
+        ]);
+
+        // First 60m routes to BOOK-A and books (gross 60m <= 100m).
+        store
+            .book_from_attribution(booked(1, 60_000_000.0), &attribution("EM-VOL-1", "jdoe"))
+            .expect("first fill books");
+        assert_eq!(store.risk_book_of(1).as_deref(), Some("BOOK-A"));
+        assert_eq!(store.len(), 1);
+
+        // Second 60m would take BOOK-A gross to 120m > 100m ⇒ REJECT, store unmutated.
+        let err = store
+            .book_from_attribution(booked(2, 60_000_000.0), &attribution("EM-VOL-1", "jdoe"))
+            .expect_err("the gross cap is blown");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("risk book limit breached")
+                && err.message().contains("gross_notional"),
+            "typed per-book breach, got {:?}",
+            err.message()
+        );
+        assert_eq!(store.len(), 1, "a rejected fill must not mutate the store");
+        assert_eq!(store.risk_book_of(2), None, "rejected fill leaves no stamp");
+        assert_eq!(store.positions_in_risk_book("BOOK-A").len(), 1);
+    }
+
+    /// A PARENT cap breached by the SUM of two sibling child-book fills rejects the second at
+    /// the parent scope, even though each child is individually under (no child carries a
+    /// cap) — the ancestor subtree roll-up.
+    #[test]
+    fn routed_fill_rejected_at_ancestor_scope_rollup() {
+        let store = PositionStore::new();
+        store.set_routing(Some(child_split_graph()));
+        store.set_risk_books(vec![
+            limit_def("PARENT", None, None, Some(90_000_000.0)),
+            RiskBookLimitDef {
+                id: "CHILD-A".to_owned(),
+                parent_id: Some("PARENT".to_owned()),
+                limits: None,
+            },
+            RiskBookLimitDef {
+                id: "CHILD-B".to_owned(),
+                parent_id: Some("PARENT".to_owned()),
+                limits: None,
+            },
+        ]);
+
+        // 60m (>50m) → CHILD-A: parent subtree 60m <= 90m ⇒ books.
+        store
+            .book_from_attribution(booked(1, 60_000_000.0), &attribution("D", "t"))
+            .expect("child-a fill books");
+        assert_eq!(store.risk_book_of(1).as_deref(), Some("CHILD-A"));
+
+        // 40m (<=50m) → CHILD-B: parent subtree 60m + 40m = 100m > 90m ⇒ REJECT at PARENT.
+        let err = store
+            .book_from_attribution(booked(2, 40_000_000.0), &attribution("D", "t"))
+            .expect_err("the parent roll-up cap is blown");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("PARENT/gross_notional"),
+            "rejected at the parent scope, got {:?}",
+            err.message()
+        );
+        assert_eq!(store.len(), 1, "a rejected fill must not mutate the store");
+        assert_eq!(store.risk_book_of(2), None);
+    }
+
+    /// Net and gross caps gate independently: a long+short pair within the net cap but over
+    /// the gross cap rejects on GROSS; two same-sign fills over the net cap but under a
+    /// generous gross cap reject on NET.
+    #[test]
+    fn net_and_gross_caps_gate_independently() {
+        // GROSS: +100m then -80m ⇒ net 20m (ok), gross 180m > 150m ⇒ reject on gross.
+        let store = PositionStore::new();
+        store.set_routing(Some(notional_graph()));
+        store.set_risk_books(vec![limit_def(
+            "BOOK-A",
+            None,
+            Some(150_000_000.0),
+            Some(150_000_000.0),
+        )]);
+        store
+            .book_from_attribution(booked(1, 100_000_000.0), &attribution("D", "t"))
+            .expect("long books");
+        let err = store
+            .book_from_attribution(booked(2, -80_000_000.0), &attribution("D", "t"))
+            .expect_err("gross cap blown");
+        assert!(
+            err.message().contains("gross_notional"),
+            "rejected on gross, got {:?}",
+            err.message()
+        );
+        assert_eq!(store.len(), 1);
+
+        // NET: +100m then +80m ⇒ net 180m > 150m (gross 180m under the 1bn gross cap) ⇒
+        // reject on net.
+        let store2 = PositionStore::new();
+        store2.set_routing(Some(notional_graph()));
+        store2.set_risk_books(vec![limit_def(
+            "BOOK-A",
+            None,
+            Some(150_000_000.0),
+            Some(1_000_000_000.0),
+        )]);
+        store2
+            .book_from_attribution(booked(1, 100_000_000.0), &attribution("D", "t"))
+            .expect("first long books");
+        let err2 = store2
+            .book_from_attribution(booked(2, 80_000_000.0), &attribution("D", "t"))
+            .expect_err("net cap blown");
+        assert!(
+            err2.message().contains("net_notional"),
+            "rejected on net, got {:?}",
+            err2.message()
+        );
+        assert_eq!(store2.len(), 1);
+    }
+
+    /// Backward-compat: routing on but NO book limits (empty view, or a view whose resolved
+    /// book carries `None` caps) ⇒ every fill books, byte-identical to the pre-enforcement
+    /// path.
+    #[test]
+    fn routing_without_book_limits_books_unchanged() {
+        // No limit view at all: the per-book gate is skipped.
+        let store = PositionStore::new();
+        store.set_routing(Some(notional_graph()));
+        store
+            .book_from_attribution(booked(1, 60_000_000.0), &attribution("D", "t"))
+            .expect("books");
+        store
+            .book_from_attribution(booked(2, 60_000_000.0), &attribution("D", "t"))
+            .expect("books");
+        assert_eq!(store.len(), 2);
+        assert_eq!(store.positions_in_risk_book("BOOK-A").len(), 2);
+
+        // A limit view present but the resolved book carries `None` caps ⇒ still skipped.
+        let store2 = PositionStore::new();
+        store2.set_routing(Some(notional_graph()));
+        store2.set_risk_books(vec![RiskBookLimitDef {
+            id: "BOOK-A".to_owned(),
+            parent_id: None,
+            limits: None,
+        }]);
+        store2
+            .book_from_attribution(booked(1, 90_000_000.0), &attribution("D", "t"))
+            .expect("books");
+        store2
+            .book_from_attribution(booked(2, 90_000_000.0), &attribution("D", "t"))
+            .expect("books");
+        assert_eq!(store2.len(), 2);
     }
 }

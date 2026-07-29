@@ -615,6 +615,18 @@ impl Edge {
         // into the `AuthEdge`; every admin risk-book/graph write re-primes it (see
         // `AuthEdge::with_position_store` / `reconcile_risk_routing`).
         store.set_routing(identity_store.risk_routing_graph().cloned());
+        // Prime the store's per-book limit view beside the graph (§8.3 enforcement), so a
+        // routed fill that would breach its risk book's (or an ancestor's) hard notional cap
+        // is refused from first boot. Every admin risk-book write re-primes it (see
+        // `AuthEdge::reconcile_risk_routing`). No books / no caps ⇒ the gate is skipped and
+        // booking is byte-identical to before.
+        store.set_risk_books(
+            identity_store
+                .risk_books
+                .iter()
+                .map(crate::services::risk::store::RiskBookLimitDef::from)
+                .collect(),
+        );
 
         // ADR-0015 §2.1: activate the configurable consistency tier — Raft **wired
         // everywhere but forced nowhere**. A `RaftNode` is booted ONLY when a

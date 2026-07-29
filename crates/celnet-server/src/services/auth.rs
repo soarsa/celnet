@@ -222,6 +222,15 @@ impl AuthEdge {
     fn reconcile_risk_routing(&self, store: &IdentityStore) {
         if let Some(position_store) = &self.position_store {
             position_store.set_routing(store.risk_routing_graph().cloned());
+            // Keep the store's per-book limit view current beside the graph, so a book
+            // create/update/delete refreshes the caps the per-book booking gate enforces.
+            position_store.set_risk_books(
+                store
+                    .risk_books
+                    .iter()
+                    .map(crate::services::risk::store::RiskBookLimitDef::from)
+                    .collect(),
+            );
         }
     }
 
