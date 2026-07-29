@@ -28,6 +28,8 @@ import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { FiStreamingWorkspace } from "../workspaces/FiStreamingWorkspace";
 import { AggregatedBookWorkspace } from "../workspaces/AggregatedBookWorkspace";
 import { TieringWorkspace } from "../workspaces/TieringWorkspace";
+import { RiskBooksWorkspace } from "../workspaces/RiskBooksWorkspace";
+import { RiskDashboardWorkspace } from "../workspaces/RiskDashboardWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { XvaWorkspace } from "../workspaces/XvaWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
@@ -98,6 +100,12 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // tiering (widen/skew before publish). Gated on `quote_respond·fixed_income`
   // (ordinary traders hold it — NOT admin-gated). Fixed-Income-only.
   tiering: TieringWorkspace,
+  // Risk Books: the hierarchical risk-book tree editor (desk → book → sub-book) —
+  // fills route risk into a leaf book. Admin edit; read-only otherwise. FI-only.
+  riskbooks: RiskBooksWorkspace,
+  // Risk Dashboard: per-book rolled-up risk (net/gross, greeks, RAG limit
+  // utilization) with a heat overview across all books. Read-only. FI-only.
+  riskdashboard: RiskDashboardWorkspace,
   // Market Data: FX vol surface + FI rates curve as two lenses of ONE workspace
   // (#2). Opens the FX surface lens by default; the FI curve is the rates lens.
   surface: MarketDataWorkspace,

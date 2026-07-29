@@ -50,6 +50,8 @@ export type WorkspaceId =
   | "fistreaming"
   | "aggbook"
   | "tiering"
+  | "riskbooks"
+  | "riskdashboard"
   | "xva"
   | "excel"
   | "connections"
@@ -121,6 +123,12 @@ export const RAIL: readonly {
   // across a book's inbound liquidity members — a single-asset FI read surface.
   { id: "aggbook", glyph: "◫", label: "Agg Book", assets: ["fixed_income"] },
   { id: "tiering", glyph: "⚖", label: "Tiering", assets: ["fixed_income"] },
+  // FI Risk routing (docs/FI-RISK-ROUTING-REQUIREMENTS.md): the hierarchical risk-
+  // BOOK tree editor and the per-book risk DASHBOARD. Single-asset FI rows; every
+  // underlying RPC is admin-gated (edit affordances gate on `isAdmin` INSIDE the
+  // pane, like Pricing Groups — the pass-6b flow-canvas routing editor joins later).
+  { id: "riskbooks", glyph: "❦", label: "Risk Books", assets: ["fixed_income"] },
+  { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", assets: ["fixed_income"] },
   { id: "surface", glyph: "◷", label: "Market Data", assets: CAPABILITY_ASSETS },
   { id: "risk", glyph: "⊞", label: "Risk", assets: CAPABILITY_ASSETS },
   { id: "book", glyph: "▤", label: "Book", assets: CAPABILITY_ASSETS },

@@ -43,6 +43,8 @@ export type WorkspaceId =
   | "fistreaming"
   | "aggbook"
   | "tiering"
+  | "riskbooks"
+  | "riskdashboard"
   | "xva"
   | "excel"
   | "connections"
@@ -61,6 +63,8 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "fistreaming",
   "aggbook",
   "tiering",
+  "riskbooks",
+  "riskdashboard",
   "xva",
   "excel",
   "connections",

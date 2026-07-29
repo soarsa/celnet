@@ -85,6 +85,8 @@ export type WorkspaceId =
   | "fistreaming"
   | "aggbook"
   | "tiering"
+  | "riskbooks"
+  | "riskdashboard"
   | "xva"
   | "excel"
   | "connections"

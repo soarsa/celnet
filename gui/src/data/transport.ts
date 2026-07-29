@@ -100,6 +100,9 @@ import type {
   FeaturePipeline,
   PricingGroup,
   PricingMode,
+  RiskBook,
+  RiskBookRisk,
+  RiskRoutingGraph,
   StreamReject,
   Tenor,
   TwoWayPrice,
@@ -660,6 +663,35 @@ export interface CelnetTransport {
     pipeline: FeaturePipeline | null,
     sharePipeline: boolean,
   ): Promise<PricingGroup>;
+
+  // --- FI Risk routing & risk books (docs/FI-RISK-ROUTING-REQUIREMENTS.md) -----
+  //
+  // Admin-defined RISK BOOKS (a portfolio tree) + a firm-wide routing decision
+  // GRAPH that books each fill's risk into a leaf book. Every RPC is admin-gated
+  // server-side (a finer `risk_manage·fixed_income` capability is a later
+  // refinement). `getRiskRoutingGraph`/`updateRiskRoutingGraph` back pass 6b's
+  // flow-canvas editor; `listRiskBookRisk` backs the per-book risk dashboard.
+
+  /** AuthService.ListRiskBooks (admin) — the full risk-book roster, in creation order. */
+  listRiskBooks(): Promise<RiskBook[]>;
+
+  /** AuthService.CreateRiskBook (admin) — define a book; blank `id` ⇒ server mints from name. */
+  createRiskBook(spec: RiskBook): Promise<RiskBook>;
+
+  /** AuthService.UpdateRiskBook (admin) — replace a book's definition (the `id` is immutable). */
+  updateRiskBook(id: string, spec: RiskBook): Promise<RiskBook>;
+
+  /** AuthService.DeleteRiskBook (admin) — remove a book; resolves to whether one was removed. */
+  deleteRiskBook(id: string): Promise<boolean>;
+
+  /** AuthService.GetRiskRoutingGraph (admin) — the firm-wide graph, or `null` until first defined. */
+  getRiskRoutingGraph(): Promise<RiskRoutingGraph | null>;
+
+  /** AuthService.UpdateRiskRoutingGraph (admin) — replace the firm-wide graph; resolves to the committed graph. */
+  updateRiskRoutingGraph(graph: RiskRoutingGraph): Promise<RiskRoutingGraph>;
+
+  /** AuthService.ListRiskBookRisk (admin) — per-book rolled-up risk (net/gross, greeks, limit utilization). */
+  listRiskBookRisk(): Promise<RiskBookRisk[]>;
 
   // --- instrument reference-data registry ------------------------------------
 

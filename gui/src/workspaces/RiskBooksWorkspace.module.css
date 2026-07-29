@@ -1,0 +1,255 @@
+/* RiskBooksWorkspace — the hierarchical risk-book tree editor. A two-pane layout:
+   an indented tree on the left, an inline editor on the right. Uses the app design
+   tokens so both themes are honoured automatically. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  height: 100%;
+  min-height: 0;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.headMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  font-family: var(--font-brand, var(--font-ui));
+  font-size: var(--type-headline);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+
+.note {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  max-width: 72ch;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: var(--space-5);
+  min-height: 0;
+  flex: 1;
+}
+
+/* --- tree ----------------------------------------------------------------- */
+
+.tree {
+  border: var(--hairline);
+  border-radius: var(--r-lg, 12px);
+  background: var(--bg-surface);
+  overflow: auto;
+  min-height: 0;
+  padding: var(--space-2);
+}
+
+.treeList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.treeRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-md, 8px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--type-body);
+  cursor: pointer;
+  transition: background var(--dur-fast, 120ms) ease, color var(--dur-fast, 120ms) ease;
+}
+
+.treeRow:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.treeRowActive {
+  background: var(--bg-accent-soft);
+  border-color: var(--accent-soft, var(--accent));
+  color: var(--text-primary);
+}
+
+.treeName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disabledTag,
+.limitTag {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px var(--space-2);
+  border-radius: var(--r-full, 999px);
+}
+
+.disabledTag {
+  color: var(--text-danger, var(--danger));
+  background: var(--bg-danger-soft);
+}
+
+.limitTag {
+  color: var(--text-tertiary);
+  background: var(--bg-inset);
+}
+
+/* --- editor --------------------------------------------------------------- */
+
+.editor {
+  border: var(--hairline);
+  border-radius: var(--r-lg, 12px);
+  background: var(--bg-surface);
+  overflow: auto;
+  min-height: 0;
+  padding: var(--space-5);
+}
+
+.editorTitle {
+  font-size: var(--type-subhead);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+  margin-bottom: var(--space-4);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 640px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+}
+
+.row {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.label {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-secondary);
+}
+
+.subLabel {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+.input {
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font-size: var(--type-body);
+  font-family: inherit;
+}
+
+.input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.input:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.checkField {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+.limits {
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.meta {
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  padding: var(--space-3);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-inset);
+  margin: 0;
+}
+
+.meta dt {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.meta dd {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: var(--type-body);
+  padding: var(--space-4);
+}
+
+.ok {
+  color: var(--accent-positive);
+  font-size: var(--type-caption);
+}
+
+.error {
+  color: var(--text-danger, var(--danger));
+  font-size: var(--type-caption);
+}

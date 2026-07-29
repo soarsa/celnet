@@ -96,6 +96,17 @@ import type {
   FeatureSpec,
   PricingGroup,
   PricingMode,
+  RiskBook,
+  RiskLimits,
+  RiskBookRisk,
+  RiskLimitUtilization,
+  RagBand,
+  RouteField,
+  RouteOp,
+  RouteValue,
+  RouteCondition,
+  RoutingNode,
+  RiskRoutingGraph,
   TieringStrategyKind,
   AggregatedInstrument,
   AggregatedBookComposite,
@@ -3813,6 +3824,325 @@ export function updatePricingGroupPipelineRequestToWire(
 /** A single-group response (`{ group: {...} }`) from create / update / pipeline-update. */
 export function pricingGroupResponseFromWire(o: WireObject): PricingGroup {
   return pricingGroupDescFromWire(child(o, "group"));
+}
+
+// --- FI Risk routing & risk books (server phases 4-5) ------------------------
+//
+// Byte-compatible with the server WS codec (`crates/celnet-server/src/ws/codec.rs`
+// risk-routing block + the descriptor-driven `generated_codec.rs` it mirrors): the
+// exact snake_case field names, the NUMERIC enum i32 tags (`field` / `op` / `band`),
+// and the variant-keyed oneofs (`RouteValueDesc.v` → `{num}|{text}|{list}|{range}`;
+// `RoutingNodeDesc.node` → `{condition}|{book_risk_book_id}`, both alongside the
+// node's `id`). Presence-tracked scalars/messages are OMITTED when absent: a book's
+// `parent_id` / `desk_id` / `limits` and each `RiskLimits` cap render only when set
+// (never a null / zero placeholder — a real cap of 0 differs from "no cap"). A
+// book's optional `dv01` / `pnl` risk metrics arrive as JSON `null` when not yet
+// evaluable and decode to `null` (never a fabricated 0). Enum ordinals verified vs
+// the proto `RouteFieldEnum` (0..10), `RouteOpEnum` (0..8), `RagBand` (0..2).
+
+const ROUTE_FIELD_WIRE: Record<RouteField, number> = {
+  instrument_id: 0,
+  ccy: 1,
+  product: 2,
+  side: 3,
+  notional: 4,
+  tenor: 5,
+  strike: 6,
+  counterparty: 7,
+  user: 8,
+  desk: 9,
+  price: 10,
+};
+
+/** The wire `RouteFieldEnum` i32 tag for a GUI route field. */
+export function routeFieldToWire(f: RouteField): number {
+  return ROUTE_FIELD_WIRE[f];
+}
+
+const ROUTE_FIELD_FROM: readonly RouteField[] = [
+  "instrument_id",
+  "ccy",
+  "product",
+  "side",
+  "notional",
+  "tenor",
+  "strike",
+  "counterparty",
+  "user",
+  "desk",
+  "price",
+];
+
+/** A GUI route field from the wire i32 tag (out of range ⇒ the proto3 zero). */
+export function routeFieldFromWire(n: number): RouteField {
+  return ROUTE_FIELD_FROM[n] ?? "instrument_id";
+}
+
+const ROUTE_OP_WIRE: Record<RouteOp, number> = {
+  eq: 0,
+  ne: 1,
+  gt: 2,
+  ge: 3,
+  lt: 4,
+  le: 5,
+  contains: 6,
+  in: 7,
+  between: 8,
+};
+
+/** The wire `RouteOpEnum` i32 tag for a GUI route op. */
+export function routeOpToWire(op: RouteOp): number {
+  return ROUTE_OP_WIRE[op];
+}
+
+const ROUTE_OP_FROM: readonly RouteOp[] = [
+  "eq",
+  "ne",
+  "gt",
+  "ge",
+  "lt",
+  "le",
+  "contains",
+  "in",
+  "between",
+];
+
+/** A GUI route op from the wire i32 tag (out of range ⇒ the proto3 zero, `eq`). */
+export function routeOpFromWire(n: number): RouteOp {
+  return ROUTE_OP_FROM[n] ?? "eq";
+}
+
+const RAG_BAND_FROM: readonly RagBand[] = ["green", "amber", "red"];
+
+/** A GUI RAG band from the wire i32 tag (green=0 / amber=1 / red=2). */
+export function ragBandFromWire(n: number): RagBand {
+  return RAG_BAND_FROM[n] ?? "green";
+}
+
+/** An optional presence-tracked wire number (`null` / absent ⇒ `null`). */
+function optNumberOrNull(o: WireObject, key: string): number | null {
+  const v = o[key];
+  return typeof v === "number" ? v : null;
+}
+
+/** Encode per-book limits: each cap emitted ONLY when set (absent ⇒ uncapped). */
+export function riskLimitsToWire(l: RiskLimits): WireObject {
+  const m: WireObject = {};
+  if (l.maxNetNotional !== null) m["max_net_notional"] = l.maxNetNotional;
+  if (l.maxGrossNotional !== null) m["max_gross_notional"] = l.maxGrossNotional;
+  if (l.maxDv01 !== null) m["max_dv01"] = l.maxDv01;
+  return m;
+}
+
+/** Decode per-book limits from a nested `limits` object (absent cap ⇒ `null`). */
+export function riskLimitsFromWire(o: WireObject): RiskLimits {
+  return {
+    maxNetNotional: optNumberOrNull(o, "max_net_notional"),
+    maxGrossNotional: optNumberOrNull(o, "max_gross_notional"),
+    maxDv01: optNumberOrNull(o, "max_dv01"),
+  };
+}
+
+/** Encode a risk book spec/desc: `parent_id`/`desk_id`/`limits` omitted when absent. */
+export function riskBookSpecToWire(b: RiskBook): WireObject {
+  const m: WireObject = { id: b.id, name: b.name };
+  if (b.parentId !== null) m["parent_id"] = b.parentId;
+  if (b.deskId !== null) m["desk_id"] = b.deskId;
+  m["description"] = b.description;
+  if (b.limits !== null) m["limits"] = riskLimitsToWire(b.limits);
+  m["enabled"] = b.enabled;
+  return m;
+}
+
+/** Decode a `RiskBookDesc` (absent `parent_id`/`desk_id`/`limits` ⇒ `null`). */
+export function riskBookDescFromWire(o: WireObject): RiskBook {
+  const rawParent = o["parent_id"];
+  const rawDesk = o["desk_id"];
+  const rawLimits = o["limits"];
+  return {
+    id: str(o, "id"),
+    name: str(o, "name"),
+    parentId: typeof rawParent === "string" ? rawParent : null,
+    deskId: typeof rawDesk === "string" ? rawDesk : null,
+    description: str(o, "description"),
+    limits:
+      rawLimits && typeof rawLimits === "object"
+        ? riskLimitsFromWire(rawLimits as WireObject)
+        : null,
+    enabled: o["enabled"] === true,
+  };
+}
+
+/** Encode a routing condition value to its variant-keyed wire body. */
+export function routeValueToWire(v: RouteValue): WireObject {
+  switch (v.kind) {
+    case "num":
+      return { num: v.num };
+    case "text":
+      return { text: v.text };
+    case "list":
+      return { list: { values: [...v.values] } };
+    case "range":
+      return { range: { lo: v.lo, hi: v.hi } };
+  }
+}
+
+/** Decode a routing condition value from its variant-keyed wire body. */
+export function routeValueFromWire(o: WireObject): RouteValue {
+  if (typeof o["num"] === "number") return { kind: "num", num: o["num"] as number };
+  if (typeof o["text"] === "string") return { kind: "text", text: o["text"] as string };
+  if (o["list"] !== undefined) {
+    const l = child(o, "list");
+    return { kind: "list", values: strArrayOf(l, "values") };
+  }
+  if (o["range"] !== undefined) {
+    const r = child(o, "range");
+    return { kind: "range", lo: num(r, "lo"), hi: num(r, "hi") };
+  }
+  // An empty / malformed value (no live arm) — defensively a zero numeric literal.
+  return { kind: "num", num: 0 };
+}
+
+/** Encode a routing condition (enums ride as i32 tags; `value` null when unset). */
+export function routeConditionToWire(c: RouteCondition): WireObject {
+  return {
+    field: routeFieldToWire(c.field),
+    op: routeOpToWire(c.op),
+    value: c.value !== null ? routeValueToWire(c.value) : null,
+    on_true: c.onTrue,
+    on_false: c.onFalse,
+  };
+}
+
+/** Decode a routing condition (absent / null `value` ⇒ `null`). */
+export function routeConditionFromWire(o: WireObject): RouteCondition {
+  const rawValue = o["value"];
+  return {
+    field: routeFieldFromWire(enumNum(o, "field")),
+    op: routeOpFromWire(enumNum(o, "op")),
+    value:
+      rawValue && typeof rawValue === "object"
+        ? routeValueFromWire(rawValue as WireObject)
+        : null,
+    onTrue: num(o, "on_true"),
+    onFalse: num(o, "on_false"),
+  };
+}
+
+/** Encode a routing node: its `id` plus exactly the live `node` oneof arm. */
+export function routingNodeToWire(n: RoutingNode): WireObject {
+  const m: WireObject = { id: n.id };
+  if (n.kind === "condition") {
+    m["condition"] = routeConditionToWire(n.condition);
+  } else {
+    m["book_risk_book_id"] = n.bookId;
+  }
+  return m;
+}
+
+/** Decode a routing node (a `condition` sub-object ⇒ internal; else a book leaf). */
+export function routingNodeFromWire(o: WireObject): RoutingNode {
+  const id = num(o, "id");
+  const rawCondition = o["condition"];
+  if (rawCondition && typeof rawCondition === "object") {
+    return { kind: "condition", id, condition: routeConditionFromWire(rawCondition as WireObject) };
+  }
+  return { kind: "book", id, bookId: str(o, "book_risk_book_id") };
+}
+
+/** Encode the routing graph (`entry` + the id-carrying node array). */
+export function riskRoutingGraphToWire(g: RiskRoutingGraph): WireObject {
+  return { entry: g.entry, nodes: g.nodes.map(routingNodeToWire) };
+}
+
+/** Decode a `RiskRoutingGraphDesc` (`entry` + node list). */
+export function riskRoutingGraphFromWire(o: WireObject): RiskRoutingGraph {
+  return { entry: num(o, "entry"), nodes: array(o, "nodes").map(routingNodeFromWire) };
+}
+
+/** Decode one risk-book limit-utilization row (band rides as its i32 tag). */
+export function riskLimitUtilizationFromWire(o: WireObject): RiskLimitUtilization {
+  return {
+    metric: str(o, "metric"),
+    used: num(o, "used"),
+    limit: num(o, "limit"),
+    fraction: num(o, "fraction"),
+    band: ragBandFromWire(enumNum(o, "band")),
+  };
+}
+
+/** Decode one book's aggregated risk (`dv01`/`pnl` null ⇒ not-yet-evaluated). */
+export function riskBookRiskDescFromWire(o: WireObject): RiskBookRisk {
+  return {
+    bookId: str(o, "book_id"),
+    name: str(o, "name"),
+    netNotional: num(o, "net_notional"),
+    grossNotional: num(o, "gross_notional"),
+    positionCount: num(o, "position_count"),
+    delta: num(o, "delta"),
+    gamma: num(o, "gamma"),
+    vega: num(o, "vega"),
+    theta: num(o, "theta"),
+    dv01: optNumberOrNull(o, "dv01"),
+    pnl: optNumberOrNull(o, "pnl"),
+    limits: array(o, "limits").map(riskLimitUtilizationFromWire),
+  };
+}
+
+// --- request framing + response decoders (the 7 risk-routing RPCs) -----------
+
+export function listRiskBooksRequestToWire(): WireObject {
+  return {};
+}
+
+/** Decode the `risk_books` roster reply (`{ books: [...] }`). */
+export function riskBooksResponseFromWire(o: WireObject): RiskBook[] {
+  return array(o, "books").map(riskBookDescFromWire);
+}
+
+export function createRiskBookRequestToWire(spec: RiskBook): WireObject {
+  return { spec: riskBookSpecToWire(spec) };
+}
+
+export function updateRiskBookRequestToWire(id: string, spec: RiskBook): WireObject {
+  return { id, spec: riskBookSpecToWire(spec) };
+}
+
+export function deleteRiskBookRequestToWire(id: string): WireObject {
+  return { id };
+}
+
+/** A single-book response (`{ book: {...} }`) from create / update. */
+export function riskBookResponseFromWire(o: WireObject): RiskBook {
+  return riskBookDescFromWire(child(o, "book"));
+}
+
+export function getRiskRoutingGraphRequestToWire(): WireObject {
+  return {};
+}
+
+/** Decode `{ graph: {...} | null }` — the graph is absent until first defined. */
+export function riskRoutingGraphResponseFromWire(o: WireObject): RiskRoutingGraph | null {
+  const raw = o["graph"];
+  return raw && typeof raw === "object" ? riskRoutingGraphFromWire(raw as WireObject) : null;
+}
+
+/** Decode `{ graph: {...} }` from an update reply (always present, never null). */
+export function updateRiskRoutingGraphResponseFromWire(o: WireObject): RiskRoutingGraph {
+  return riskRoutingGraphFromWire(child(o, "graph"));
+}
+
+export function updateRiskRoutingGraphRequestToWire(graph: RiskRoutingGraph): WireObject {
+  return { graph: riskRoutingGraphToWire(graph) };
+}
+
+export function listRiskBookRiskRequestToWire(): WireObject {
+  return {};
+}
+
+/** Decode the `risk_book_risk` roster reply (`{ books: [...] }`). */
+export function riskBookRiskResponseFromWire(o: WireObject): RiskBookRisk[] {
+  return array(o, "books").map(riskBookRiskDescFromWire);
 }
 
 // --- live composite: subscribe + snapshot/update -----------------------------

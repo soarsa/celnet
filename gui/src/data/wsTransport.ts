@@ -44,6 +44,9 @@ import type {
   FeaturePipeline,
   PricingGroup,
   PricingMode,
+  RiskBook,
+  RiskBookRisk,
+  RiskRoutingGraph,
   InstrumentDef,
   InstrumentInput,
   BuildCurveRequest,
@@ -226,6 +229,18 @@ import {
   updatePricingGroupPipelineRequestToWire,
   pricingGroupResponseFromWire,
   pricingModeToWire,
+  listRiskBooksRequestToWire,
+  riskBooksResponseFromWire,
+  createRiskBookRequestToWire,
+  updateRiskBookRequestToWire,
+  deleteRiskBookRequestToWire,
+  riskBookResponseFromWire,
+  getRiskRoutingGraphRequestToWire,
+  riskRoutingGraphResponseFromWire,
+  updateRiskRoutingGraphRequestToWire,
+  updateRiskRoutingGraphResponseFromWire,
+  listRiskBookRiskRequestToWire,
+  riskBookRiskResponseFromWire,
   aggregatedBookSubscribeToWire,
   aggregatedBookSnapshotFromWire,
   aggregatedBookUpdateFromWire,
@@ -1918,6 +1933,71 @@ export class WsTransport implements CelnetTransport {
       "pricing_group_pipeline_updated",
     );
     return pricingGroupResponseFromWire(reply);
+  }
+
+  // --- FI Risk routing & risk books (server phases 4-5) ----------------------
+
+  async listRiskBooks(): Promise<RiskBook[]> {
+    const reply = await this.conn.request(
+      "list_risk_books",
+      listRiskBooksRequestToWire(),
+      "risk_books",
+    );
+    return riskBooksResponseFromWire(reply);
+  }
+
+  async createRiskBook(spec: RiskBook): Promise<RiskBook> {
+    const reply = await this.conn.request(
+      "create_risk_book",
+      createRiskBookRequestToWire(spec),
+      "risk_book_created",
+    );
+    return riskBookResponseFromWire(reply);
+  }
+
+  async updateRiskBook(id: string, spec: RiskBook): Promise<RiskBook> {
+    const reply = await this.conn.request(
+      "update_risk_book",
+      updateRiskBookRequestToWire(id, spec),
+      "risk_book_updated",
+    );
+    return riskBookResponseFromWire(reply);
+  }
+
+  async deleteRiskBook(id: string): Promise<boolean> {
+    const reply = await this.conn.request(
+      "delete_risk_book",
+      deleteRiskBookRequestToWire(id),
+      "risk_book_deleted",
+    );
+    return reply["removed"] === true;
+  }
+
+  async getRiskRoutingGraph(): Promise<RiskRoutingGraph | null> {
+    const reply = await this.conn.request(
+      "get_risk_routing_graph",
+      getRiskRoutingGraphRequestToWire(),
+      "risk_routing_graph",
+    );
+    return riskRoutingGraphResponseFromWire(reply);
+  }
+
+  async updateRiskRoutingGraph(graph: RiskRoutingGraph): Promise<RiskRoutingGraph> {
+    const reply = await this.conn.request(
+      "update_risk_routing_graph",
+      updateRiskRoutingGraphRequestToWire(graph),
+      "risk_routing_graph_updated",
+    );
+    return updateRiskRoutingGraphResponseFromWire(reply);
+  }
+
+  async listRiskBookRisk(): Promise<RiskBookRisk[]> {
+    const reply = await this.conn.request(
+      "list_risk_book_risk",
+      listRiskBookRiskRequestToWire(),
+      "risk_book_risk",
+    );
+    return riskBookRiskResponseFromWire(reply);
   }
 
   // --- instrument reference-data registry (instrument admin) -----------------

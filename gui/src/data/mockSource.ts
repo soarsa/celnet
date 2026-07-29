@@ -42,6 +42,11 @@ import type {
   FeaturePipeline,
   PricingGroup,
   PricingMode,
+  RiskBook,
+  RiskBookRisk,
+  RiskRoutingGraph,
+  RagBand,
+  RiskLimitUtilization,
   LpContribution,
   InstrumentDef,
   InstrumentInput,
@@ -1296,6 +1301,51 @@ export class MockTransport implements CelnetTransport {
       enabled: true,
     },
   ];
+
+  /**
+   * The offline FI Risk-Books registry (a GENUINE in-memory store, not a stub):
+   * admin CRUD mutates it exactly like the server. Seeded with a small TREE — a
+   * top-level desk book "FX EMEA" with a "Vanilla" sub-book, plus a top-level
+   * "FX APAC" — so the tree editor + the dashboard roll-up are exercisable
+   * end-to-end. Limits are set on the top-level books so the utilization strip has
+   * real caps to band.
+   */
+  private readonly mockRiskBooks: RiskBook[] = [
+    {
+      id: "fx-emea",
+      name: "FX EMEA",
+      parentId: null,
+      deskId: "emea",
+      description: "EMEA franchise risk — parent of the desk's sub-books.",
+      limits: { maxNetNotional: 1_000_000_000, maxGrossNotional: 2_000_000_000, maxDv01: null },
+      enabled: true,
+    },
+    {
+      id: "fx-emea-vanilla",
+      name: "FX EMEA Vanilla",
+      parentId: "fx-emea",
+      deskId: null,
+      description: "EMEA vanilla options sub-book.",
+      limits: { maxNetNotional: 400_000_000, maxGrossNotional: null, maxDv01: null },
+      enabled: true,
+    },
+    {
+      id: "fx-apac",
+      name: "FX APAC",
+      parentId: null,
+      deskId: "apac",
+      description: "APAC franchise risk.",
+      limits: { maxNetNotional: 500_000_000, maxGrossNotional: 900_000_000, maxDv01: null },
+      enabled: true,
+    },
+  ];
+
+  /**
+   * The offline firm-wide routing graph. Seeded `null` (no graph defined yet) —
+   * exactly the server's initial state; the pass-6b flow editor defines one via
+   * {@link updateRiskRoutingGraph}.
+   */
+  private mockRiskGraph: RiskRoutingGraph | null = null;
   /**
    * The offline instrument reference-data registry (a GENUINE in-memory store,
    * not a stub): seeded with one OIS and one bond definition so the Reference
@@ -2729,6 +2779,105 @@ export class MockTransport implements CelnetTransport {
     return clonePricingGroup(updated);
   }
 
+  // --- FI Risk routing & risk books (server phases 4-5) ----------------------
+  //
+  // A GENUINE in-memory registry (not a stub): admin CRUD mutates the store and
+  // create mints an id from `name` (or honours a client-suggested slug), exactly
+  // like the server. `listRiskBookRisk` SYNTHESISES a deterministic per-book risk
+  // roll-up from the seeded books (the offline mirror has no live position store):
+  // each enabled book gets stable net/gross/greeks derived from its id hash and a
+  // limit-utilization strip banded against its own caps, with `dv01`/`pnl` left
+  // `null` (parity with the server's not-yet-evaluated rates DV01 / mark PnL).
+
+  async listRiskBooks(): Promise<RiskBook[]> {
+    return this.mockRiskBooks.map(cloneRiskBook);
+  }
+
+  async createRiskBook(spec: RiskBook): Promise<RiskBook> {
+    const name = spec.name.trim();
+    if (name.length === 0) throw new Error("risk-book name is required");
+    const id = spec.id.trim().length > 0 ? mockSlugify(spec.id) : mockSlugify(name);
+    if (this.mockRiskBooks.some((b) => b.id === id)) {
+      throw new Error(`a risk book with id \`${id}\` already exists`);
+    }
+    if (this.mockRiskBooks.some((b) => b.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error(`a risk book named \`${name}\` already exists`);
+    }
+    if (spec.parentId !== null && !this.mockRiskBooks.some((b) => b.id === spec.parentId)) {
+      throw new Error(`no parent risk book with id \`${spec.parentId}\``);
+    }
+    const book = cloneRiskBook({ ...spec, id, name });
+    this.mockRiskBooks.push(book);
+    return cloneRiskBook(book);
+  }
+
+  async updateRiskBook(id: string, spec: RiskBook): Promise<RiskBook> {
+    const existing = this.mockRiskBooks.find((b) => b.id === id);
+    if (!existing) throw new Error(`no risk book with id \`${id}\``);
+    const name = spec.name.trim();
+    if (name.length === 0) throw new Error("risk-book name is required");
+    if (
+      this.mockRiskBooks.some(
+        (b) => b.id !== id && b.name.toLowerCase() === name.toLowerCase(),
+      )
+    ) {
+      throw new Error(`a risk book named \`${name}\` already exists`);
+    }
+    if (spec.parentId === id) throw new Error("a risk book cannot be its own parent");
+    if (spec.parentId !== null && !this.mockRiskBooks.some((b) => b.id === spec.parentId)) {
+      throw new Error(`no parent risk book with id \`${spec.parentId}\``);
+    }
+    // Acyclicity: the new parent must not be a descendant of this book (would form a cycle).
+    if (spec.parentId !== null && this.riskBookDescendants(id).has(spec.parentId)) {
+      throw new Error("re-parenting would create a cycle in the risk-book tree");
+    }
+    // The `id` is the immutable identity; the spec's own `id` field is ignored.
+    const updated = cloneRiskBook({ ...spec, id, name });
+    const idx = this.mockRiskBooks.indexOf(existing);
+    this.mockRiskBooks.splice(idx, 1, updated);
+    return cloneRiskBook(updated);
+  }
+
+  async deleteRiskBook(id: string): Promise<boolean> {
+    const idx = this.mockRiskBooks.findIndex((b) => b.id === id);
+    if (idx < 0) return false;
+    if (this.mockRiskBooks.some((b) => b.parentId === id)) {
+      throw new Error("cannot delete a risk book that still has child books");
+    }
+    this.mockRiskBooks.splice(idx, 1);
+    return true;
+  }
+
+  async getRiskRoutingGraph(): Promise<RiskRoutingGraph | null> {
+    return this.mockRiskGraph === null ? null : cloneRiskGraph(this.mockRiskGraph);
+  }
+
+  async updateRiskRoutingGraph(graph: RiskRoutingGraph): Promise<RiskRoutingGraph> {
+    this.mockRiskGraph = cloneRiskGraph(graph);
+    return cloneRiskGraph(this.mockRiskGraph);
+  }
+
+  async listRiskBookRisk(): Promise<RiskBookRisk[]> {
+    return this.mockRiskBooks
+      .filter((b) => b.enabled)
+      .map((b) => synthRiskBookRisk(b));
+  }
+
+  /** The set of book ids strictly below `id` in the seeded tree (for the acyclic guard). */
+  private riskBookDescendants(id: string): Set<string> {
+    const out = new Set<string>();
+    const walk = (parent: string): void => {
+      for (const b of this.mockRiskBooks) {
+        if (b.parentId === parent && !out.has(b.id)) {
+          out.add(b.id);
+          walk(b.id);
+        }
+      }
+    };
+    walk(id);
+    return out;
+  }
+
   // --- instrument reference-data registry (offline) --------------------------
 
   /** Mint a stable instrument id from a name (mirrors the server's slugify). */
@@ -3585,6 +3734,72 @@ function clonePricingGroup(g: PricingGroup): PricingGroup {
     memberDesks: [...g.memberDesks],
     espPipeline: clonePipeline(g.espPipeline),
     rfqPipeline: clonePipeline(g.rfqPipeline),
+  };
+}
+
+/** Deep-clone a risk book (limits are a nested object). */
+function cloneRiskBook(b: RiskBook): RiskBook {
+  return { ...b, limits: b.limits === null ? null : { ...b.limits } };
+}
+
+/** Deep-clone a routing graph (nodes carry nested condition/value oneofs). */
+function cloneRiskGraph(g: RiskRoutingGraph): RiskRoutingGraph {
+  return { entry: g.entry, nodes: g.nodes.map((n) => structuredClone(n)) };
+}
+
+/** A small stable hash of a string → [0, 1), for deterministic synthetic risk. */
+function mockHash01(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 100000) / 100000;
+}
+
+/** The RAG band for a utilization fraction (green < 0.8 ≤ amber < 1.0 ≤ red). */
+function mockRagBand(fraction: number): RagBand {
+  if (fraction >= 1) return "red";
+  if (fraction >= 0.8) return "amber";
+  return "green";
+}
+
+/** One limit-utilization row for a present cap (parity with the server's band rule). */
+function mockUtilization(metric: string, used: number, limit: number): RiskLimitUtilization {
+  const fraction = limit === 0 ? (used === 0 ? 0 : Number.POSITIVE_INFINITY) : used / limit;
+  return { metric, used, limit, fraction, band: mockRagBand(fraction) };
+}
+
+/**
+ * Synthesise a deterministic per-book risk roll-up from a seeded book. Net/gross
+ * notional + greeks are stable functions of the book id; `dv01`/`pnl` stay `null`
+ * (the offline mirror of the server's not-yet-evaluated rates DV01 / mark PnL). The
+ * limit-utilization strip is emitted only for the caps present on the book.
+ */
+function synthRiskBookRisk(b: RiskBook): RiskBookRisk {
+  const h = mockHash01(b.id);
+  const gross = Math.round(300_000_000 + h * 700_000_000);
+  const net = Math.round((h - 0.5) * 2 * gross * 0.6);
+  const limits: RiskLimitUtilization[] = [];
+  if (b.limits?.maxNetNotional != null) {
+    limits.push(mockUtilization("net_notional", Math.abs(net), b.limits.maxNetNotional));
+  }
+  if (b.limits?.maxGrossNotional != null) {
+    limits.push(mockUtilization("gross_notional", gross, b.limits.maxGrossNotional));
+  }
+  return {
+    bookId: b.id,
+    name: b.name,
+    netNotional: net,
+    grossNotional: gross,
+    positionCount: 3 + Math.round(h * 40),
+    delta: (h - 0.5) * 2 * 5_000_000,
+    gamma: h * 120_000,
+    vega: (h - 0.3) * 800_000,
+    theta: -h * 45_000,
+    dv01: null,
+    pnl: null,
+    limits,
   };
 }
 

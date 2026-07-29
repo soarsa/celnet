@@ -303,6 +303,8 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         "fistreaming",
         "aggbook",
         "tiering",
+        "riskbooks",
+        "riskdashboard",
         "surface",
         "risk",
         "book",

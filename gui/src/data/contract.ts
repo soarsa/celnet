@@ -3002,6 +3002,200 @@ export interface PricingGroup {
 }
 
 // ---------------------------------------------------------------------------
+// FI Risk routing & risk books (docs/FI-RISK-ROUTING-REQUIREMENTS.md §6-8). When
+// an order / RFQ fills, the resulting RISK is routed into a trader-defined RISK
+// BOOK (a portfolio node) so limits / greeks / PnL are managed per book. Books
+// form a TREE (a parent aggregates its own routed positions plus every
+// descendant's); a firm-wide DECISION GRAPH routes each fill to a leaf book. This
+// block mirrors the pricing-group CRUD shape field-for-field with the server store
+// types (`config::identity::{RiskBookDef, RiskLimits}` +
+// `celnet_risk_routing::{RiskRoutingGraph, RoutingNode, RouteField, RouteOp,
+// RouteValue}`). The GUI hand-decodes the WS JSON so {@link wsCodec} matches the
+// server's snake_case names, its NUMERIC enum tags (`field` / `op` / `band`), and
+// its variant-keyed oneofs (a node is a condition OR a book leaf; a condition's
+// right-hand value is num / text / string-list / numeric-range). Every RPC is
+// ADMIN-gated (a finer `risk_manage·fixed_income` capability is a later
+// refinement); edit affordances gate on `auth.isAdmin`.
+
+/**
+ * Per-book pre-trade limits (mirrors `celnet.wire.RiskLimitsDesc` /
+ * `config::identity::RiskLimits`). Each cap is OPTIONAL: `null` ⇒ uncapped (the
+ * key is OMITTED on the wire, never sent as a zero — a real cap of 0 differs from
+ * "no cap"). Every present cap is finite and non-negative (server-validated).
+ */
+export interface RiskLimits {
+  /** Cap on the book's net (signed-then-absolute) base-currency notional; `null` ⇒ uncapped. */
+  maxNetNotional: number | null;
+  /** Cap on the book's gross (sum-of-absolute) base-currency notional; `null` ⇒ uncapped. */
+  maxGrossNotional: number | null;
+  /** Cap on the book's net DV01 magnitude (PV per +1bp); `null` ⇒ uncapped. */
+  maxDv01: number | null;
+}
+
+/**
+ * A persisted risk book (mirrors `celnet.wire.RiskBookDesc` /
+ * `config::identity::RiskBookDef`). Books form a TREE via {@link parentId} (a
+ * top-level book has `parentId === null`); a book may tag an owning {@link deskId}.
+ * On CREATE, `id` is a client-suggested slug (the server mints one from `name`
+ * when empty); on UPDATE it is the immutable identity. The same interface is the
+ * create/update `spec` payload (the spec's own `id` is ignored on update).
+ */
+export interface RiskBook {
+  /** Stable slug (the store/API key); a client-suggested slug on create. */
+  id: string;
+  /** Human-friendly book label (unique across the store, case-insensitive). */
+  name: string;
+  /** The parent book by id, or `null` for a top-level book (a tree edge). */
+  parentId: string | null;
+  /** The owning desk by id, or `null` (unowned). Must resolve to a desk when set. */
+  deskId: string | null;
+  /** Free-text operator description of what the book is for. */
+  description: string;
+  /** Optional per-book pre-trade limits; `null` ⇒ the book carries no caps yet. */
+  limits: RiskLimits | null;
+  /** Whether the book is active. Only enabled books are valid routing targets. */
+  enabled: boolean;
+}
+
+/**
+ * Which trade field a routing condition matches (mirrors the wire `RouteFieldEnum`
+ * / `celnet_risk_routing::RouteField`, same ordinal order 0..10). The codec maps
+ * this string union to/from the wire i32 tag.
+ */
+export type RouteField =
+  | "instrument_id"
+  | "ccy"
+  | "product"
+  | "side"
+  | "notional"
+  | "tenor"
+  | "strike"
+  | "counterparty"
+  | "user"
+  | "desk"
+  | "price";
+
+/**
+ * A comparison operator in a routing condition (mirrors the wire `RouteOpEnum` /
+ * `celnet_risk_routing::RouteOp`, same ordinal order 0..8). Which ops are valid for
+ * a field is pinned by the field's kind (server-validated on write).
+ */
+export type RouteOp = "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" | "in" | "between";
+
+/**
+ * The literal on the right-hand side of a routing condition (mirrors the wire
+ * `RouteValueDesc` oneof / `celnet_risk_routing::RouteValue`). Exactly one variant
+ * is live; which is legal is operator-constrained (server-validated). Carried
+ * variant-keyed on the wire: `{num}` | `{text}` | `{list:{values}}` |
+ * `{range:{lo,hi}}`.
+ */
+export type RouteValue =
+  | { kind: "num"; num: number }
+  | { kind: "text"; text: string }
+  | { kind: "list"; values: string[] }
+  | { kind: "range"; lo: number; hi: number };
+
+/**
+ * A decision node body: evaluate `field op value` on the fill; on `true` follow
+ * {@link onTrue}, else {@link onFalse} (mirrors `RouteConditionDesc`). `value` is
+ * `null` for a malformed / not-yet-set condition (server rejects on write).
+ */
+export interface RouteCondition {
+  /** The trade field to test. */
+  field: RouteField;
+  /** The comparison operator. */
+  op: RouteOp;
+  /** The literal compared against; `null` ⇒ unset. */
+  value: RouteValue | null;
+  /** Successor node id when the condition holds. */
+  onTrue: number;
+  /** Successor node id when the condition does not hold. */
+  onFalse: number;
+}
+
+/**
+ * One node in a {@link RiskRoutingGraph}, keyed by its {@link id} (mirrors the wire
+ * `RoutingNodeDesc` oneof / `celnet_risk_routing::RoutingNode`). Either an internal
+ * `condition` test or a terminal `book` leaf carrying its target risk-book id.
+ */
+export type RoutingNode =
+  | { kind: "condition"; id: number; condition: RouteCondition }
+  | { kind: "book"; id: number; bookId: string };
+
+/**
+ * The firm-wide routing decision graph (mirrors `celnet.wire.RiskRoutingGraphDesc`
+ * / `celnet_risk_routing::RiskRoutingGraph`): the walk begins at {@link entry} and
+ * follows condition successors until a book leaf. Well-formedness (acyclic, every
+ * path terminates at a known enabled book, type-consistent conditions) is validated
+ * server-side on write. Consumed by pass 6b (the flow-canvas routing editor).
+ */
+export interface RiskRoutingGraph {
+  /** The node id at which every fill's walk begins. */
+  entry: number;
+  /** All nodes (id-carrying); the store rebuilds the id→node map from them. */
+  nodes: RoutingNode[];
+}
+
+/**
+ * The traffic-light band for a limit utilization (mirrors the wire `RagBand`,
+ * ordinals green=0 / amber=1 / red=2): GREEN when used/limit < 0.8, AMBER in
+ * [0.8, 1.0), RED at or above 1.0 (a breach).
+ */
+export type RagBand = "green" | "amber" | "red";
+
+/**
+ * One book's utilization of a single limit cap (mirrors `celnet.wire
+ * .LimitUtilizationDesc`): the used magnitude against the configured cap, the
+ * ratio, and its RAG band. Only caps present on the book AND computable at this
+ * seam are emitted (net/gross notional today).
+ */
+export interface RiskLimitUtilization {
+  /** The metric this cap governs (`net_notional` / `gross_notional`). */
+  metric: string;
+  /** The book's used magnitude for this metric (net uses |signed sum|). */
+  used: number;
+  /** The configured cap from the book's {@link RiskLimits}. */
+  limit: number;
+  /** used / limit as a fraction (`+Infinity` when the cap is 0 and something is used). */
+  fraction: number;
+  /** The traffic-light band derived from {@link fraction}. */
+  band: RagBand;
+}
+
+/**
+ * One risk book's aggregated risk, rolled up its subtree (mirrors `celnet.wire
+ * .RiskBookRiskDesc`). The additive metrics sum the book's own routed positions
+ * plus every descendant's. {@link dv01} / {@link pnl} arrive as `null` when NOT yet
+ * evaluable at this seam (rates DV01 / mark PnL) — render as "—", never as 0.
+ */
+export interface RiskBookRisk {
+  /** The risk book this row is for (`RiskBook.id`). */
+  bookId: string;
+  /** The book's human-friendly name (`RiskBook.name`). */
+  name: string;
+  /** Net (signed sum) base-currency notional across the subtree. */
+  netNotional: number;
+  /** Gross (sum of absolute) base-currency notional across the subtree. */
+  grossNotional: number;
+  /** The number of positions rolled into this book (own + descendants'). */
+  positionCount: number;
+  /** Canonical, premium-excluded delta × notional, summed. */
+  delta: number;
+  /** Canonical gamma × notional, summed. */
+  gamma: number;
+  /** Canonical vega (per 1.0 vol) × notional, summed. */
+  vega: number;
+  /** Canonical theta (per year) × notional, summed. */
+  theta: number;
+  /** Net DV01 (PV per +1bp), or `null` when not yet evaluated (rates-book seam). */
+  dv01: number | null;
+  /** Live mark-to-market PnL, or `null` when not yet evaluated (no mark pass here). */
+  pnl: number | null;
+  /** Per-cap limit utilization for the caps present on the book AND computable now. */
+  limits: RiskLimitUtilization[];
+}
+
+// ---------------------------------------------------------------------------
 // XVA — counterparty valuation adjustments (`PricingService.PriceXva`).
 //
 // A netting set of FX vanillas priced for its all-in credit / funding valuation

@@ -1,0 +1,264 @@
+/* RiskDashboardWorkspace — the per-book risk dashboard: a heat-overview table over
+   all books plus a selected-book breakdown with a RAG limit-utilization strip. Uses
+   the app design tokens so both themes are honoured automatically. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.headMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  font-family: var(--font-brand, var(--font-ui));
+  font-size: var(--type-headline);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+
+.note {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  max-width: 72ch;
+}
+
+/* --- overview table ------------------------------------------------------- */
+
+.overview {
+  border: var(--hairline);
+  border-radius: var(--r-lg, 12px);
+  background: var(--bg-surface);
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-caption);
+}
+
+.table thead th {
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-tertiary);
+  font-weight: var(--weight-emphasis);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: var(--hairline);
+  white-space: nowrap;
+}
+
+.numCol {
+  text-align: right;
+}
+
+.table tbody td {
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-primary);
+  border-bottom: var(--hairline);
+  white-space: nowrap;
+}
+
+.table tbody tr {
+  cursor: pointer;
+  transition: background var(--dur-fast, 120ms) ease;
+}
+
+.table tbody tr:hover {
+  background: var(--bg-surface-hover);
+}
+
+.rowActive {
+  background: var(--bg-accent-soft);
+}
+
+.num {
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+.muted {
+  color: var(--text-tertiary);
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: var(--space-2);
+  vertical-align: middle;
+}
+
+.pill {
+  display: inline-block;
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px var(--space-2);
+  border-radius: var(--r-full, 999px);
+  color: var(--bg-surface);
+}
+
+/* --- RAG band colours (shared by dots, pills, bars) ----------------------- */
+
+.band_green {
+  background: var(--accent-positive);
+}
+
+.band_amber {
+  background: var(--warn);
+}
+
+.band_red {
+  background: var(--danger);
+}
+
+/* --- selected-book detail ------------------------------------------------- */
+
+.detail {
+  border: var(--hairline);
+  border-radius: var(--r-lg, 12px);
+  background: var(--bg-surface);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.detailHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.detailTitle {
+  font-size: var(--type-subhead);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+.deskTag {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  background: var(--bg-inset);
+  padding: 1px var(--space-2);
+  border-radius: var(--r-full, 999px);
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-3);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-inset);
+}
+
+.statLabel {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.statValue {
+  font-size: var(--type-subhead);
+  color: var(--text-primary);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* --- limit utilization strip --------------------------------------------- */
+
+.utils {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.utilsTitle {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-secondary);
+}
+
+.util {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.utilHead {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--type-caption);
+}
+
+.utilMetric {
+  color: var(--text-secondary);
+  text-transform: capitalize;
+}
+
+.utilRatio {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.utilPct {
+  color: var(--text-tertiary);
+}
+
+.bar {
+  height: 8px;
+  border-radius: var(--r-full, 999px);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: var(--r-full, 999px);
+  transition: width var(--dur-fast, 120ms) ease;
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: var(--type-body);
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.error {
+  color: var(--text-danger, var(--danger));
+  font-size: var(--type-caption);
+}
