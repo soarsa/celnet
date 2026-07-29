@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import type { RiskBook, RiskRoutingGraph, RoutingNode } from "../src/data/contract";
+import type { DeskDesc, RiskBook, RiskRoutingGraph, RoutingNode } from "../src/data/contract";
 
 const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
@@ -16,8 +16,8 @@ vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 import { RiskRoutingWorkspace } from "../src/workspaces/riskrouting/RiskRoutingWorkspace";
 import { encodeDrag } from "../src/workspaces/riskrouting/FieldPalette";
 
-function book(id: string, name: string): RiskBook {
-  return { id, name, parentId: null, deskId: null, description: "", limits: null, enabled: true };
+function book(id: string, name: string, deskId: string | null = null): RiskBook {
+  return { id, name, parentId: null, deskId, description: "", limits: null, enabled: true };
 }
 
 /** A minimal VALID graph: ccy == EUR → BOOK-A else DEFAULT. */
@@ -43,6 +43,7 @@ function validGraph(): RiskRoutingGraph {
 function makeApp(opts: {
   graph: RiskRoutingGraph | null;
   books: RiskBook[];
+  desks?: DeskDesc[];
   isAdmin?: boolean;
   canEdit?: boolean;
   onUpdate?: (g: RiskRoutingGraph) => void;
@@ -56,7 +57,7 @@ function makeApp(opts: {
       getRiskRoutingGraph: vi.fn(async () => opts.graph),
       updateRiskRoutingGraph: update,
       listRiskBooks: vi.fn(async () => opts.books),
-      listDesks: vi.fn(async () => []),
+      listDesks: vi.fn(async () => opts.desks ?? []),
       listFixConnections: vi.fn(async () => []),
     },
     auth: {
@@ -207,5 +208,72 @@ describe("RiskRoutingWorkspace", () => {
 
     await screen.findByTestId("validation-status");
     expect(screen.getByTestId("save-graph")).toBeTruthy();
+  });
+
+  it("picks a book leaf's destination DESK-SCOPED (desk select then that desk's books)", async () => {
+    state.app = makeApp({
+      graph: validGraph(),
+      books: [book("BOOK-A", "GOVIES", "rates"), book("DEFAULT", "Def")],
+      desks: [{ id: "rates", name: "RATES" }],
+    });
+    render(<RiskRoutingWorkspace />);
+
+    // Select the BOOK-A leaf (node 1) — its editor shows the desk + book selects.
+    fireEvent.click(await screen.findByTestId("node-1"));
+    const deskSelect = (await screen.findByTestId("book-desk-select")) as HTMLSelectElement;
+    // The owning desk is pre-selected and the RATES option is present.
+    expect(deskSelect.value).toBe("rates");
+    expect(screen.getByRole("option", { name: "RATES" })).toBeInTheDocument();
+    // The book select is scoped to that desk's books and holds BOOK-A (GOVIES).
+    const bookSelect = screen.getByTestId("book-target-select") as HTMLSelectElement;
+    expect(bookSelect.value).toBe("BOOK-A");
+    expect(screen.getByRole("option", { name: /GOVIES/ })).toBeInTheDocument();
+  });
+
+  it("drag-connect wires a branch: press a port, drag, release on a target node", async () => {
+    let saved: RiskRoutingGraph | null = null;
+    state.app = makeApp({
+      graph: validGraph(), // node0.onTrue = 1 initially
+      books: [book("BOOK-A", "A"), book("DEFAULT", "Def")],
+      onUpdate: (g) => {
+        saved = g;
+      },
+    });
+    render(<RiskRoutingWorkspace />);
+
+    const yesPort = await screen.findByTestId("port-0-onTrue");
+    const surface = screen.getByTestId("routing-canvas");
+    const target = screen.getByTestId("node-2");
+
+    // Press the yes port, drag across the canvas, release over node 2.
+    fireEvent.pointerDown(yesPort, { clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(surface, { clientX: 200, clientY: 120 });
+    fireEvent.pointerUp(target, { clientX: 210, clientY: 130 });
+
+    // The edge is rewired: node0's yes branch now points at node 2.
+    const saveBtn = screen.getByTestId("save-graph");
+    expect(saveBtn).toBeEnabled();
+    fireEvent.click(saveBtn);
+    await screen.findByText(/routing graph saved/i);
+    const node0 = saved!.nodes.find((n) => n.id === 0);
+    expect(node0?.kind === "condition" && node0.condition.onTrue).toBe(2);
+  });
+
+  it("lists every rule in evaluation order in the Rules panel", async () => {
+    state.app = makeApp({
+      graph: validGraph(),
+      books: [book("BOOK-A", "A", "rates"), book("DEFAULT", "Def")],
+      desks: [{ id: "rates", name: "RATES" }],
+    });
+    render(<RiskRoutingWorkspace />);
+
+    await screen.findByTestId("rules-panel");
+    // Two root-to-leaf rules, in on_true-before-on_false order.
+    const rule0 = screen.getByTestId("rule-0");
+    const rule1 = screen.getByTestId("rule-1");
+    expect(screen.queryByTestId("rule-2")).toBeNull();
+    // Rule 1 lands BOOK-A shown desk-scoped ("RATES / A"); Rule 2 lands DEFAULT.
+    expect(rule0).toHaveTextContent("RATES / A");
+    expect(rule1).toHaveTextContent("Def");
   });
 });

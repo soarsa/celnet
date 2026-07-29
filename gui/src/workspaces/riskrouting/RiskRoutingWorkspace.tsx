@@ -32,8 +32,10 @@ import {
   setValue,
 } from "./graphOps";
 import { computeLayout, type NodePos } from "./layout";
+import { makeBookLabel } from "./nodeLabel";
 import { NodeEditor } from "./NodeEditor";
 import { RoutingCanvas, type Connecting } from "./RoutingCanvas";
+import { RulesPanel } from "./RulesPanel";
 import { TracePanel } from "./TracePanel";
 import styles from "./RiskRoutingWorkspace.module.css";
 
@@ -65,6 +67,7 @@ export function RiskRoutingWorkspace(): React.ReactElement {
   const [overrides, setOverrides] = useState<Map<number, NodePos>>(new Map());
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [connecting, setConnecting] = useState<Connecting | null>(null);
+  const [ruleHighlight, setRuleHighlight] = useState<number[] | null>(null);
   const [zoom, setZoom] = useState(1);
   const [fill, setFill] = useState<SampleFill>(blankFill());
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
@@ -91,15 +94,23 @@ export function RiskRoutingWorkspace(): React.ReactElement {
     };
   }, [app.transport, signedIn]);
 
-  // Rosters for the enum value dropdowns (desks + FIX counterparties) — loaded for an
-  // editor (FI-capability holder); a read-only viewer needs no pickers.
+  // Desks are loaded for EVERYONE — the desk-scoped book labels ("DESK / BOOK") on
+  // the canvas, node editor, and rules list read them even in the read-only view.
   useEffect(() => {
-    if (!canEdit) return;
     let cancelled = false;
     void app.transport
       .listDesks()
       .then((d) => !cancelled && setDesks(d))
       .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [app.transport]);
+
+  // FIX counterparties fill the `counterparty` value dropdown — only an editor picks.
+  useEffect(() => {
+    if (!canEdit) return;
+    let cancelled = false;
     void app.transport
       .listFixConnections()
       .then((c) => !cancelled && setConnections(c))
@@ -114,11 +125,19 @@ export function RiskRoutingWorkspace(): React.ReactElement {
     () => new Set(books.filter((b) => b.enabled).map((b) => b.id)),
     [books],
   );
-  const bookName = useCallback(
-    (id: string): string => books.find((b) => b.id === id)?.name ?? id,
-    [books],
-  );
+  // Desk-scoped book label ("DESK / BOOK") — shown on canvas cards, the node editor,
+  // and the rules list so it is obvious a leaf routes risk into a desk's portfolio.
+  const bookLabel = useMemo(() => makeBookLabel(books, desks), [books, desks]);
   const trace = useMemo(() => (graph.nodes.length > 0 ? traceGraph(graph, fill) : null), [graph, fill]);
+  // A picked rule highlights its path on the canvas via the shared trace mechanism,
+  // taking precedence over the live sample-fill trace until the fill changes.
+  const effectiveTrace = useMemo(
+    () =>
+      ruleHighlight !== null
+        ? { path: ruleHighlight, landedBook: null, outcome: "book" as const }
+        : trace,
+    [ruleHighlight, trace],
+  );
   const issues = useMemo(() => validateGraph(graph, knownBookIds), [graph, knownBookIds]);
   const invalidNodes = useMemo(() => {
     const s = new Set<number>();
@@ -179,6 +198,29 @@ export function RiskRoutingWorkspace(): React.ReactElement {
     },
     [connecting, graph, applyGraph],
   );
+
+  // Drag-to-connect: wire a branch straight to the drop target (the primary path).
+  const onConnect = useCallback(
+    (fromId: number, branch: "onTrue" | "onFalse", target: number): void => {
+      applyGraph(setBranch(graph, fromId, branch, target));
+      setConnecting(null);
+    },
+    [graph, applyGraph],
+  );
+
+  // Toggle a rule's path highlight on the canvas.
+  const pickRule = useCallback((nodes: number[]): void => {
+    setRuleHighlight((cur) =>
+      cur !== null && cur.length === nodes.length && cur.every((v, i) => v === nodes[i])
+        ? null
+        : nodes,
+    );
+  }, []);
+
+  const onChangeFill = useCallback((next: SampleFill): void => {
+    setFill(next);
+    setRuleHighlight(null);
+  }, []);
 
   const onDelete = useCallback(
     (nodeId: number): void => {
@@ -298,7 +340,16 @@ export function RiskRoutingWorkspace(): React.ReactElement {
       </div>
 
       <div className={styles.body}>
-        <FieldPalette readOnly={readOnly} />
+        <div className={styles.leftCol}>
+          <FieldPalette readOnly={readOnly} />
+          <RulesPanel
+            graph={graph}
+            knownBookIds={knownBookIds}
+            bookLabel={bookLabel}
+            activePath={ruleHighlight}
+            onPick={pickRule}
+          />
+        </div>
 
         <div className={styles.canvasCol}>
           {graph.nodes.length === 0 ? (
@@ -329,19 +380,20 @@ export function RiskRoutingWorkspace(): React.ReactElement {
             <RoutingCanvas
               graph={graph}
               positions={positions}
-              trace={trace}
+              trace={effectiveTrace}
               selectedId={selectedId}
               connecting={connecting}
               zoom={zoom}
               readOnly={readOnly}
               invalidNodes={invalidNodes}
-              bookName={bookName}
+              bookName={bookLabel}
               onSelect={setSelectedId}
               onMoveNode={onMoveNode}
               onDropPayload={onDropPayload}
               onDropFieldOnNode={onDropFieldOnNode}
               onPortClick={onPortClick}
               onConnectTo={onConnectTo}
+              onConnect={onConnect}
             />
           )}
         </div>
@@ -370,7 +422,7 @@ export function RiskRoutingWorkspace(): React.ReactElement {
             </section>
           )}
 
-          <TracePanel fill={fill} trace={trace} books={books} onChange={setFill} />
+          <TracePanel fill={fill} trace={trace} books={books} onChange={onChangeFill} />
         </div>
       </div>
     </div>

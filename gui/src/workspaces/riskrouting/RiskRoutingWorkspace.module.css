@@ -867,3 +867,164 @@
     grid-template-columns: 200px minmax(0, 1fr) 300px;
   }
 }
+
+/* --- drag-from-port live wire -------------------------------------------- */
+
+.wireDrag {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-dasharray: 6 4;
+  opacity: 0.9;
+  filter: drop-shadow(0 0 4px color-mix(in oklch, var(--accent) 55%, transparent));
+}
+
+/* --- left column: palette + rules ---------------------------------------- */
+
+.leftCol {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  min-width: 0;
+}
+.leftCol .palette {
+  flex: 1 1 auto;
+}
+
+.rules {
+  flex: 0 0 auto;
+  max-height: 44%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--hairline);
+  border-radius: var(--r-lg, 12px);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+.rulesHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.rulesTitle {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+.rulesCount {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+.rulesEmpty {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+.rulesList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  overflow: auto;
+  min-height: 0;
+  counter-reset: rule;
+}
+.ruleRow {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 4px var(--space-2);
+  padding: var(--space-2);
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color var(--dur-fast, 120ms) ease, box-shadow var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease;
+}
+.ruleRow:hover {
+  border-color: var(--accent-soft, var(--accent));
+}
+.ruleRow:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.ruleActive {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--accent);
+  background: color-mix(in oklch, var(--accent) 10%, var(--bg-inset));
+}
+.ruleInvalid {
+  border-color: var(--danger);
+}
+.ruleNum {
+  grid-column: 1;
+  font-size: var(--type-micro);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.ruleWhen {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  font-size: var(--type-caption);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+.ruleCond {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.ruleAnd {
+  color: var(--text-tertiary);
+  font-style: italic;
+  font-family: inherit;
+}
+.ruleCondNeg {
+  color: var(--offer);
+}
+.ruleAlways {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+.ruleThen {
+  grid-column: 2;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--type-caption);
+}
+.ruleArrow {
+  color: var(--text-tertiary);
+}
+.ruleBook {
+  font-weight: var(--weight-emphasis);
+  color: var(--brand);
+}
+.ruleNoBook {
+  color: var(--danger);
+  font-style: italic;
+}
+.ruleIssue {
+  grid-column: 1 / -1;
+  font-size: var(--type-micro);
+  color: var(--text-danger, var(--danger));
+}

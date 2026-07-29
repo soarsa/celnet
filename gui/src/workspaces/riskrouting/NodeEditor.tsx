@@ -7,7 +7,7 @@
  * value dropdowns are sourced live: side (Buy/Sell), product, ccy, desk (desks),
  * counterparty (FIX connections). Read-only for non-admins.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import type {
   DeskDesc,
@@ -26,8 +26,11 @@ import {
   opLabel,
 } from "../../lib/routeFields";
 import type { ValidationIssue } from "../../lib/routeTrace";
-import { nodeSummary } from "./nodeLabel";
+import { makeBookLabel, nodeSummary } from "./nodeLabel";
 import styles from "./RiskRoutingWorkspace.module.css";
+
+/** Sentinel desk value in the book picker for books with no owning desk. */
+const UNASSIGNED_DESK = "__unassigned__";
 
 interface NodeEditorProps {
   node: RoutingNode;
@@ -54,10 +57,7 @@ interface Opt {
 export function NodeEditor(props: NodeEditorProps): React.ReactElement {
   const { node, graph, books, desks, connections, issues, readOnly, isEntry } = props;
 
-  const bookName = useMemo(() => {
-    const map = new Map(books.map((b) => [b.id, b.name]));
-    return (id: string): string => map.get(id) ?? id;
-  }, [books]);
+  const bookName = useMemo(() => makeBookLabel(books, desks), [books, desks]);
 
   return (
     <section className={styles.editor} aria-label={`Editor for node ${node.id}`}>
@@ -103,7 +103,14 @@ export function NodeEditor(props: NodeEditorProps): React.ReactElement {
       )}
 
       {node.kind === "book" ? (
-        <BookEditor node={node} books={books} readOnly={readOnly} onSet={props.onSetBookTarget} />
+        <BookEditor
+          key={node.id}
+          node={node}
+          books={books}
+          desks={desks}
+          readOnly={readOnly}
+          onSet={props.onSetBookTarget}
+        />
       ) : (
         <ConditionEditor
           node={node}
@@ -126,57 +133,112 @@ export function NodeEditor(props: NodeEditorProps): React.ReactElement {
 function BookEditor({
   node,
   books,
+  desks,
   readOnly,
   onSet,
 }: {
   node: Extract<RoutingNode, { kind: "book" }>;
   books: readonly RiskBook[];
+  desks: readonly DeskDesc[];
   readOnly: boolean;
   onSet: (nodeId: number, bookId: string) => void;
 }): React.ReactElement {
-  // Present books hierarchically: sort roots-first, indent by depth.
-  const rows = useMemo(() => flattenBooks(books), [books]);
+  // The destination is DESK-SCOPED: first pick the owning desk, then a book from
+  // that desk's portfolio. Books with no owning desk sit under "Unassigned". The
+  // stored value stays the bare `bookId` (the wire is unchanged) — this is purely
+  // how the destination is PICKED, making it obvious you route risk into a desk's
+  // portfolio.
+  const deskOfCurrent = useMemo(() => {
+    const b = books.find((x) => x.id === node.bookId);
+    if (!b) return "";
+    return b.deskId !== null && b.deskId.length > 0 ? b.deskId : UNASSIGNED_DESK;
+  }, [books, node.bookId]);
+
+  // The desk currently filtering the book list; seeded from the stored book's owner
+  // (empty when nothing is chosen yet). Remounted per node via the parent's `key`.
+  const [deskFilter, setDeskFilter] = useState<string>(deskOfCurrent);
+
+  // Which desks actually own books + whether any unowned book exists.
+  const { deskRows, hasUnassigned } = useMemo(() => {
+    const owning = new Set<string>();
+    let unassigned = false;
+    for (const b of books) {
+      if (b.deskId !== null && b.deskId.length > 0) owning.add(b.deskId);
+      else unassigned = true;
+    }
+    const rows = desks.filter((d) => owning.has(d.id));
+    // A desk that owns books but is missing from the roster still needs an entry.
+    for (const id of owning) {
+      if (!rows.some((d) => d.id === id)) rows.push({ id, name: id });
+    }
+    return { deskRows: rows, hasUnassigned: unassigned };
+  }, [books, desks]);
+
+  const booksForDesk = useMemo(() => booksForDeskId(books, deskFilter), [books, deskFilter]);
+
+  const onDeskChange = (next: string): void => {
+    setDeskFilter(next);
+    // Drop a now-out-of-desk book so the stored value never contradicts the picker.
+    const stillValid = booksForDeskId(books, next).some((b) => b.id === node.bookId);
+    if (!stillValid) onSet(node.id, "");
+  };
+
   return (
-    <label className={styles.editorField}>
-      <span className={styles.fieldLabel}>Route risk to book</span>
-      <select
-        className={styles.select}
-        value={node.bookId}
-        disabled={readOnly}
-        onChange={(e) => onSet(node.id, e.target.value)}
-        data-testid="book-target-select"
-      >
-        <option value="">(select a book)</option>
-        {rows.map(({ book, depth }) => (
-          <option key={book.id} value={book.id} disabled={!book.enabled}>
-            {`${"  ".repeat(depth)}${book.name}${book.enabled ? "" : " (disabled)"}`}
+    <>
+      <label className={styles.editorField}>
+        <span className={styles.fieldLabel}>Owning desk</span>
+        <select
+          className={styles.select}
+          value={deskFilter}
+          disabled={readOnly}
+          onChange={(e) => onDeskChange(e.target.value)}
+          data-testid="book-desk-select"
+        >
+          <option value="">(select a desk)</option>
+          {deskRows.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+          {hasUnassigned && <option value={UNASSIGNED_DESK}>Unassigned</option>}
+        </select>
+      </label>
+
+      <label className={styles.editorField}>
+        <span className={styles.fieldLabel}>Route risk to book</span>
+        <select
+          className={styles.select}
+          value={node.bookId}
+          disabled={readOnly || deskFilter === ""}
+          onChange={(e) => onSet(node.id, e.target.value)}
+          data-testid="book-target-select"
+        >
+          <option value="">
+            {deskFilter === "" ? "(pick a desk first)" : "(select a book)"}
           </option>
-        ))}
-      </select>
-      <span className={styles.fieldHint}>
-        Only enabled books are valid destinations. A fill landing here books its risk into this
-        portfolio.
-      </span>
-    </label>
+          {booksForDesk.map((book) => (
+            <option key={book.id} value={book.id} disabled={!book.enabled}>
+              {`${book.name}${book.enabled ? "" : " (disabled)"}`}
+            </option>
+          ))}
+        </select>
+        <span className={styles.fieldHint}>
+          A fill landing here books its risk into this desk's portfolio. Only enabled books are
+          valid destinations.
+        </span>
+      </label>
+    </>
   );
 }
 
-function flattenBooks(books: readonly RiskBook[]): { book: RiskBook; depth: number }[] {
-  const childrenOf = new Map<string | null, RiskBook[]>();
-  for (const b of books) {
-    const bucket = childrenOf.get(b.parentId);
-    if (bucket) bucket.push(b);
-    else childrenOf.set(b.parentId, [b]);
-  }
-  const ids = new Set(books.map((b) => b.id));
-  const roots = books.filter((b) => b.parentId === null || !ids.has(b.parentId));
-  const out: { book: RiskBook; depth: number }[] = [];
-  const visit = (b: RiskBook, depth: number): void => {
-    out.push({ book: b, depth });
-    for (const c of childrenOf.get(b.id) ?? []) visit(c, depth + 1);
-  };
-  for (const r of roots) visit(r, 0);
-  return out;
+/** The books a desk-filter value selects (shared by the picker + its reset guard). */
+function booksForDeskId(books: readonly RiskBook[], deskFilter: string): RiskBook[] {
+  if (deskFilter === "") return [];
+  return books.filter((b) =>
+    deskFilter === UNASSIGNED_DESK
+      ? b.deskId === null || b.deskId.length === 0
+      : b.deskId === deskFilter,
+  );
 }
 
 // --- Condition editor ------------------------------------------------------
@@ -203,10 +265,7 @@ function ConditionEditor({
   onSetBranch: (nodeId: number, branch: "onTrue" | "onFalse", target: number) => void;
 }): React.ReactElement {
   const spec = fieldSpec(node.condition.field);
-  const bookName = useMemo(() => {
-    const map = new Map(books.map((b) => [b.id, b.name]));
-    return (id: string): string => map.get(id) ?? id;
-  }, [books]);
+  const bookName = useMemo(() => makeBookLabel(books, desks), [books, desks]);
 
   const enumOptions = useMemo((): Opt[] => {
     switch (spec.enumSource) {

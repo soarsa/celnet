@@ -335,3 +335,131 @@ export function validateGraph(
 
   return issues;
 }
+
+// --- rule enumeration ------------------------------------------------------
+
+/**
+ * One condition met while walking a root-to-leaf rule, with the branch SENSE that
+ * was taken: `onTrue` ⇒ the condition held; `onFalse` ⇒ it did NOT (the human rule
+ * reads that leg negated).
+ */
+export interface PathCondition {
+  field: RouteField;
+  op: RouteOp;
+  value: RouteValue | null;
+  branch: "onTrue" | "onFalse";
+}
+
+/**
+ * One enumerated root-to-leaf rule of a {@link RiskRoutingGraph}: the ANDed
+ * conditions along the walk and the book it lands in. `valid` is false when the
+ * path cannot terminate at a known enabled book (dangling edge, cycle, or an
+ * unknown / unset destination), with `issue` naming the reason.
+ */
+export interface EnumeratedPath {
+  /** The node ids visited on this path, in order (for the canvas highlight). */
+  nodes: number[];
+  /** The conditions ANDed along the path, in evaluation order. */
+  conditions: PathCondition[];
+  /** The landing book id, or `null` when the path does not reach a book leaf. */
+  bookId: string | null;
+  /** Whether this rule terminates at a known enabled book. */
+  valid: boolean;
+  /** When `valid` is false, a trader-readable reason. */
+  issue?: string;
+}
+
+/** A hard cap on enumerated rules so a wide (still-being-edited) graph never blows up. */
+const MAX_ENUMERATED_PATHS = 256;
+
+/**
+ * Enumerate EVERY root-to-leaf path of `graph` as a human-readable rule, in the
+ * exact order they are EVALUATED — a DFS from {@link RiskRoutingGraph.entry}
+ * following `on_true` before `on_false`, so rule #1 is the first the router tests.
+ * The walk is cycle-safe (a per-path visited set caps depth at the node count) and
+ * globally bounded by {@link MAX_ENUMERATED_PATHS}. When `knownBookIds` is supplied,
+ * a leaf whose book is unset or not in the set is flagged invalid; a branch to a
+ * missing node or back into the path is flagged invalid too.
+ */
+export function enumeratePaths(
+  graph: RiskRoutingGraph,
+  knownBookIds?: ReadonlySet<string>,
+): EnumeratedPath[] {
+  const byId = new Map<number, RoutingNode>(graph.nodes.map((n) => [n.id, n]));
+  const out: EnumeratedPath[] = [];
+  if (graph.nodes.length === 0) return out;
+
+  if (!byId.has(graph.entry)) {
+    out.push({
+      nodes: [],
+      conditions: [],
+      bookId: null,
+      valid: false,
+      issue: `Entry node #${graph.entry} does not exist.`,
+    });
+    return out;
+  }
+
+  const walk = (
+    current: number,
+    visited: ReadonlySet<number>,
+    conditions: PathCondition[],
+    nodes: number[],
+  ): void => {
+    if (out.length >= MAX_ENUMERATED_PATHS) return;
+    const node = byId.get(current);
+    if (!node) {
+      out.push({
+        nodes,
+        conditions,
+        bookId: null,
+        valid: false,
+        issue: `A branch points to node #${current}, which does not exist.`,
+      });
+      return;
+    }
+    if (visited.has(current)) {
+      out.push({
+        nodes: [...nodes, current],
+        conditions,
+        bookId: null,
+        valid: false,
+        issue: "This path loops back on itself and never reaches a book.",
+      });
+      return;
+    }
+    const nextNodes = [...nodes, current];
+    if (node.kind === "book") {
+      const bookId = node.bookId.length === 0 ? null : node.bookId;
+      const unknown =
+        knownBookIds !== undefined && (bookId === null || !knownBookIds.has(bookId));
+      const leaf: EnumeratedPath = { nodes: nextNodes, conditions, bookId, valid: !unknown };
+      if (unknown) {
+        leaf.issue =
+          bookId === null
+            ? "No destination book is selected."
+            : `Routes to unknown / disabled book “${bookId}”.`;
+      }
+      out.push(leaf);
+      return;
+    }
+    const nextVisited = new Set(visited);
+    nextVisited.add(current);
+    const c = node.condition;
+    walk(
+      c.onTrue,
+      nextVisited,
+      [...conditions, { field: c.field, op: c.op, value: c.value, branch: "onTrue" }],
+      nextNodes,
+    );
+    walk(
+      c.onFalse,
+      nextVisited,
+      [...conditions, { field: c.field, op: c.op, value: c.value, branch: "onFalse" }],
+      nextNodes,
+    );
+  };
+
+  walk(graph.entry, new Set(), [], []);
+  return out;
+}

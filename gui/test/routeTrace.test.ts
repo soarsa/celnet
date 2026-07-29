@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import type { RiskRoutingGraph, RoutingNode } from "../src/data/contract";
 import {
   blankFill,
+  enumeratePaths,
   evalOp,
   traceGraph,
   validateGraph,
@@ -318,5 +319,95 @@ describe("validateGraph — mirrors RiskRoutingGraph::validate", () => {
       ],
     };
     expect(validateGraph(g, KNOWN_BOOKS).some((i) => i.code === "value_unset")).toBe(true);
+  });
+});
+
+describe("enumeratePaths — every rule in evaluation order", () => {
+  /** ccy == EUR → BOOK-A, else → DEFAULT. Two paths, true-branch first. */
+  function twoRuleGraph(): RiskRoutingGraph {
+    return {
+      entry: 0,
+      nodes: [
+        {
+          kind: "condition",
+          id: 0,
+          condition: { field: "ccy", op: "eq", value: { kind: "text", text: "EUR" }, onTrue: 1, onFalse: 2 },
+        },
+        { kind: "book", id: 1, bookId: "BOOK-A" },
+        { kind: "book", id: 2, bookId: "DEFAULT" },
+      ],
+    };
+  }
+
+  it("enumerates root-to-leaf paths in on_true-before-on_false order", () => {
+    const paths = enumeratePaths(twoRuleGraph(), KNOWN_BOOKS);
+    expect(paths.map((p) => p.bookId)).toEqual(["BOOK-A", "DEFAULT"]);
+    expect(paths.every((p) => p.valid)).toBe(true);
+    // Rule 1 = the EUR match (on_true); Rule 2 = its negation (on_false).
+    expect(paths[0]?.conditions).toEqual([
+      { field: "ccy", op: "eq", value: { kind: "text", text: "EUR" }, branch: "onTrue" },
+    ]);
+    expect(paths[1]?.conditions[0]?.branch).toBe("onFalse");
+    expect(paths[0]?.nodes).toEqual([0, 1]);
+  });
+
+  it("enumerates the canonical four-rule truth table with each leaf reachable", () => {
+    const paths = enumeratePaths(truthTableGraph(), KNOWN_BOOKS);
+    // First rule is the EUR & big-notional path landing BOOK-A.
+    expect(paths[0]?.bookId).toBe("BOOK-A");
+    expect(paths.every((p) => p.valid)).toBe(true);
+    // Every canonical book is reached by at least one rule.
+    const landings = new Set(paths.map((p) => p.bookId));
+    for (const b of ["BOOK-A", "BOOK-B", "BOOK-C", "DEFAULT"]) expect(landings.has(b)).toBe(true);
+  });
+
+  it("flags a path that dangles off a missing node as invalid", () => {
+    const g: RiskRoutingGraph = {
+      entry: 0,
+      nodes: [
+        {
+          kind: "condition",
+          id: 0,
+          condition: { field: "ccy", op: "eq", value: { kind: "text", text: "EUR" }, onTrue: 77, onFalse: 1 },
+        },
+        { kind: "book", id: 1, bookId: "DEFAULT" },
+      ],
+    };
+    const paths = enumeratePaths(g, KNOWN_BOOKS);
+    // The on_true leg dangles (invalid, no book); the on_false leg reaches DEFAULT.
+    const bad = paths.find((p) => !p.valid);
+    expect(bad?.bookId).toBeNull();
+    expect(bad?.issue).toMatch(/#77/);
+    expect(paths.some((p) => p.valid && p.bookId === "DEFAULT")).toBe(true);
+  });
+
+  it("flags a leaf targeting an unknown / disabled book as invalid", () => {
+    const g: RiskRoutingGraph = { entry: 0, nodes: [{ kind: "book", id: 0, bookId: "NOPE" }] };
+    const paths = enumeratePaths(g, KNOWN_BOOKS);
+    expect(paths).toHaveLength(1);
+    expect(paths[0]?.valid).toBe(false);
+    expect(paths[0]?.issue).toMatch(/unknown/i);
+  });
+
+  it("flags a cyclic path as invalid without hanging", () => {
+    const cyclic: RiskRoutingGraph = {
+      entry: 0,
+      nodes: [
+        {
+          kind: "condition",
+          id: 0,
+          condition: { field: "ccy", op: "eq", value: { kind: "text", text: "EUR" }, onTrue: 1, onFalse: 1 },
+        },
+        {
+          kind: "condition",
+          id: 1,
+          condition: { field: "ccy", op: "eq", value: { kind: "text", text: "USD" }, onTrue: 0, onFalse: 0 },
+        },
+      ],
+    };
+    const paths = enumeratePaths(cyclic, KNOWN_BOOKS);
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths.every((p) => !p.valid)).toBe(true);
+    expect(paths.some((p) => /loops/i.test(p.issue ?? ""))).toBe(true);
   });
 });

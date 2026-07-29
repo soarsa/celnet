@@ -11,7 +11,7 @@
  *  • Click a card's `yes`/`no` port → enter connect mode; click a target card →
  *    wire that branch to it. The traversed trace path lights up node-by-node.
  */
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import type { RiskRoutingGraph, RoutingNode } from "../../data/contract";
 import type { TraceResult } from "../../lib/routeTrace";
@@ -43,6 +43,14 @@ interface RoutingCanvasProps {
   onDropFieldOnNode: (nodeId: number, payload: DragPayload) => void;
   onPortClick: (nodeId: number, branch: "onTrue" | "onFalse") => void;
   onConnectTo: (nodeId: number) => void;
+  /** Drag-to-connect: wire `nodeId`'s `branch` directly to `target` (the primary path). */
+  onConnect: (nodeId: number, branch: "onTrue" | "onFalse", target: number) => void;
+}
+
+/** A live drag-from-port wire following the cursor (surface coordinates). */
+interface WireDrag {
+  from: NodePos;
+  to: NodePos;
 }
 
 const YES_DY = CARD_H * 0.36;
@@ -52,6 +60,13 @@ export function RoutingCanvas(props: RoutingCanvasProps): React.ReactElement {
   const { graph, positions, trace, selectedId, connecting, zoom, readOnly } = props;
   const surfaceRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{ id: number; dx: number; dy: number } | null>(null);
+  // Drag-from-port wiring: `wireRef` holds the live drag (source + branch + whether
+  // it has moved — a no-move press falls through to click-to-connect); `wire` is the
+  // rendered live path following the cursor.
+  const wireRef = useRef<{ nodeId: number; branch: "onTrue" | "onFalse"; moved: boolean } | null>(
+    null,
+  );
+  const [wire, setWire] = useState<WireDrag | null>(null);
 
   const extent = useMemo(() => layoutExtent(positions), [positions]);
 
@@ -121,6 +136,56 @@ export function RoutingCanvas(props: RoutingCanvasProps): React.ReactElement {
     }
   }, []);
 
+  // --- drag-from-port wiring ----------------------------------------------
+  const onPortPointerDown = useCallback(
+    (nodeId: number, branch: "onTrue" | "onFalse") =>
+      (e: React.PointerEvent): void => {
+        if (readOnly) return;
+        // Don't let the card's body-drag start from a port press.
+        e.stopPropagation();
+        const src = positions.get(nodeId);
+        if (!src) return;
+        const from = anchorRight(src, branch === "onTrue" ? YES_DY : NO_DY);
+        wireRef.current = { nodeId, branch, moved: false };
+        setWire({ from, to: from });
+      },
+    [readOnly, positions],
+  );
+
+  const onSurfacePointerMove = useCallback(
+    (e: React.PointerEvent): void => {
+      if (!wireRef.current) return;
+      wireRef.current.moved = true;
+      const to = toSurface(e.clientX, e.clientY);
+      setWire((prev) => (prev ? { from: prev.from, to } : prev));
+    },
+    [toSurface],
+  );
+
+  // Release over empty canvas cancels the pending wire.
+  const cancelWire = useCallback((): void => {
+    if (wireRef.current) {
+      wireRef.current = null;
+      setWire(null);
+    }
+  }, []);
+
+  // Release over a node card drops the wire onto it — but only when the press
+  // actually dragged (a no-move press clears the wire and falls through to the
+  // click-to-connect fallback). Returns whether the drop wired an edge.
+  const dropWireOnNode = useCallback(
+    (targetId: number): boolean => {
+      const w = wireRef.current;
+      if (!w) return false;
+      const consumed = w.moved;
+      wireRef.current = null;
+      setWire(null);
+      if (consumed) props.onConnect(w.nodeId, w.branch, targetId);
+      return consumed;
+    },
+    [props],
+  );
+
   return (
     <div className={styles.canvasScroll}>
       <div
@@ -135,6 +200,8 @@ export function RoutingCanvas(props: RoutingCanvasProps): React.ReactElement {
           if (!readOnly) e.preventDefault();
         }}
         onDrop={onCanvasDrop}
+        onPointerMove={onSurfacePointerMove}
+        onPointerUp={cancelWire}
         data-testid="routing-canvas"
       >
         <svg className={styles.edges} width={Math.max(extent.width, 600)} height={Math.max(extent.height, 400)} aria-hidden>
@@ -147,6 +214,14 @@ export function RoutingCanvas(props: RoutingCanvasProps): React.ReactElement {
                 onPath={pathEdges}
               />
             ) : null,
+          )}
+          {wire && (
+            <path
+              d={bezier(wire.from, wire.to)}
+              className={`${styles.edge} ${styles.wireDrag}`}
+              fill="none"
+              pointerEvents="none"
+            />
           )}
         </svg>
 
@@ -171,6 +246,8 @@ export function RoutingCanvas(props: RoutingCanvasProps): React.ReactElement {
               onPointerUp={onCardPointerUp}
               onSelect={() => (connecting ? props.onConnectTo(n.id) : props.onSelect(n.id))}
               onPort={(branch) => props.onPortClick(n.id, branch)}
+              onPortPointerDown={(branch) => onPortPointerDown(n.id, branch)}
+              onWireDrop={() => dropWireOnNode(n.id)}
               onDropField={(payload) => props.onDropFieldOnNode(n.id, payload)}
             />
           );
@@ -265,11 +342,19 @@ interface NodeCardProps {
   onPointerUp: (e: React.PointerEvent) => void;
   onSelect: () => void;
   onPort: (branch: "onTrue" | "onFalse") => void;
+  onPortPointerDown: (branch: "onTrue" | "onFalse") => (e: React.PointerEvent) => void;
+  onWireDrop: () => boolean;
   onDropField: (payload: DragPayload) => void;
 }
 
 function NodeCard(props: NodeCardProps): React.ReactElement {
   const { node, pos, connecting } = props;
+
+  const handlePointerUp = (e: React.PointerEvent): void => {
+    // A pending wire dropped on this card wins over card-drag release.
+    if (props.onWireDrop()) e.stopPropagation();
+    props.onPointerUp(e);
+  };
   const isBook = node.kind === "book";
   const cls = [
     styles.node,
@@ -289,7 +374,7 @@ function NodeCard(props: NodeCardProps): React.ReactElement {
       style={{ left: pos.x, top: pos.y, width: CARD_W, height: CARD_H }}
       onPointerDown={props.onPointerDown}
       onPointerMove={props.onPointerMove}
-      onPointerUp={props.onPointerUp}
+      onPointerUp={handlePointerUp}
       onClick={props.onSelect}
       onDragOver={(e) => {
         if (!props.readOnly) e.preventDefault();
@@ -328,24 +413,28 @@ function NodeCard(props: NodeCardProps): React.ReactElement {
               <button
                 type="button"
                 className={`${styles.port} ${styles.portYes} ${connecting?.branch === "onTrue" && connecting.nodeId === node.id ? styles.portActive : ""}`}
+                onPointerDown={props.onPortPointerDown("onTrue")}
                 onClick={(e) => {
                   e.stopPropagation();
                   props.onPort("onTrue");
                 }}
-                title="Wire the yes branch"
+                title="Drag to wire the yes branch (or click)"
                 aria-label="Connect yes branch"
+                data-testid={`port-${node.id}-onTrue`}
               >
                 yes
               </button>
               <button
                 type="button"
                 className={`${styles.port} ${styles.portNo} ${connecting?.branch === "onFalse" && connecting.nodeId === node.id ? styles.portActive : ""}`}
+                onPointerDown={props.onPortPointerDown("onFalse")}
                 onClick={(e) => {
                   e.stopPropagation();
                   props.onPort("onFalse");
                 }}
-                title="Wire the no branch"
+                title="Drag to wire the no branch (or click)"
                 aria-label="Connect no branch"
+                data-testid={`port-${node.id}-onFalse`}
               >
                 no
               </button>

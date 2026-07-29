@@ -2,8 +2,30 @@
  * Presentational helpers shared by the canvas cards, the branch selects, and the
  * trace panel — a compact human summary of a node and of a route value.
  */
-import type { RouteValue, RoutingNode } from "../../data/contract";
+import type { DeskDesc, RiskBook, RouteValue, RoutingNode } from "../../data/contract";
 import { fieldSpec, opGlyph } from "../../lib/routeFields";
+
+/**
+ * Build a desk-scoped book label resolver: a book owned by a desk renders as
+ * `DESK / BOOK` (e.g. `RATES / GOVIES`) so it is obvious the leaf routes risk into
+ * a desk's portfolio; an unowned book renders as its bare name; an unknown id
+ * falls back to the id itself.
+ */
+export function makeBookLabel(
+  books: readonly RiskBook[],
+  desks: readonly DeskDesc[],
+): (id: string) => string {
+  const bookById = new Map(books.map((b) => [b.id, b]));
+  const deskName = new Map(desks.map((d) => [d.id, d.name]));
+  return (id: string): string => {
+    const b = bookById.get(id);
+    if (!b) return id;
+    if (b.deskId !== null && b.deskId.length > 0) {
+      return `${deskName.get(b.deskId) ?? b.deskId} / ${b.name}`;
+    }
+    return b.name;
+  };
+}
 
 /** A compact number format for card / value display (60m, 1.5k, 10). */
 export function compactNum(n: number): string {
