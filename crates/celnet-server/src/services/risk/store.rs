@@ -61,7 +61,7 @@ use celnet_limits::{
     IncrementalTrade, LimitScope, LimitTree, NonAdditiveExposure, PreTradeDecision, PreTradeResult,
     ScopePath, pre_trade_check,
 };
-use celnet_risk_routing::{RiskRoutingGraph, RiskRouter, RoutingContext};
+use celnet_risk_routing::{RiskRouter, RiskRoutingGraph, RoutingContext};
 
 use super::aggregate::{cube_from_facts, default_grid};
 
@@ -707,6 +707,31 @@ impl PositionStore {
             g.facts.push(fact);
         }
         g.wire_ids.insert(handle, booked.position_id);
+        // Risk routing (§4): a configured firm-wide graph routes this fill into a risk
+        // book; stamp the resolved book id beside the attribution keying (§8.3). No graph
+        // — or a routing error on an already-validated graph — leaves the position
+        // UNROUTED (`risk_book` unset), byte-identical to the pre-routing booking path.
+        // A routing failure never rejects the fill (the position is already booked above).
+        if let Some(graph) = g.routing.clone() {
+            let ctx = routing_context_from(&booked, attribution.as_ref());
+            match RiskRouter::route(&graph, &ctx) {
+                Ok(book) => {
+                    let book = book.to_owned();
+                    g.risk_book.insert(handle, book);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        position_id = booked.position_id,
+                        %err,
+                        "risk routing failed; booking unrouted",
+                    );
+                    g.risk_book.remove(&handle);
+                }
+            }
+        } else {
+            // Re-book of a formerly-routed id while routing is now off ⇒ drop the stamp.
+            g.risk_book.remove(&handle);
+        }
         match attribution {
             Some(a) => {
                 g.attribution.insert(handle, a);
@@ -886,6 +911,48 @@ fn seat_name(book: &BookId) -> String {
         Some(owner::Seat::Trader(t)) => t.clone(),
         Some(owner::Seat::AutoPricer(p)) => p.clone(),
         None => "unknown-seat".to_owned(),
+    }
+}
+
+/// Map a booked FX-vanilla fill + its attribution onto the routing engine's
+/// [`RoutingContext`] (§4) — the input the firm-wide decision graph matches against.
+///
+/// The economic fields (ccy/pair, product, side, notional, strike, tenor) come off the
+/// [`BookedPosition`]; `user` off the attribution holder seat. `counterparty` and `desk`
+/// are NOT carried on the live click-to-trade attribution record (a fill names only its
+/// holder seat's book + trader), so they default to empty until the FI booking path
+/// threads them — never faked. `price` is left `0.0`: the marked premium is a derived
+/// quantity not needed to route on trade economics. Total (never panics).
+fn routing_context_from(
+    booked: &BookedPosition,
+    attribution: Option<&AttributionRecord>,
+) -> RoutingContext {
+    let product = match booked.option {
+        OptionType::Call => "call",
+        OptionType::Put => "put",
+    }
+    .to_owned();
+    let user = attribution
+        .and_then(|a| a.held_by.as_ref().or(a.quoted_by.as_ref()))
+        .map(seat_name)
+        .unwrap_or_default();
+    RoutingContext {
+        instrument_id: booked.pair.to_string(),
+        ccy: booked.pair.to_string(),
+        product,
+        side: if booked.notional_base >= 0.0 {
+            "Buy"
+        } else {
+            "Sell"
+        }
+        .to_owned(),
+        notional: booked.notional_base.abs(),
+        tenor: booked.inputs.t,
+        strike: booked.inputs.strike,
+        counterparty: String::new(),
+        user,
+        desk: String::new(),
+        price: 0.0,
     }
 }
 
@@ -1079,6 +1146,83 @@ mod tests {
             won: Some(true),
             lp_count: Some(3),
         }
+    }
+
+    /// A firm-wide graph: notional > 50m → BOOK-A, else DEFAULT (§4).
+    fn notional_graph() -> RiskRoutingGraph {
+        use celnet_risk_routing::{RouteField, RouteOp, RouteValue, RoutingNode};
+        use std::collections::BTreeMap;
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0u32,
+            RoutingNode::Condition {
+                field: RouteField::Notional,
+                op: RouteOp::Gt,
+                value: RouteValue::Num(50_000_000.0),
+                on_true: 1,
+                on_false: 2,
+            },
+        );
+        nodes.insert(
+            1u32,
+            RoutingNode::Book {
+                risk_book_id: "BOOK-A".to_owned(),
+            },
+        );
+        nodes.insert(
+            2u32,
+            RoutingNode::Book {
+                risk_book_id: "DEFAULT".to_owned(),
+            },
+        );
+        RiskRoutingGraph { entry: 0, nodes }
+    }
+
+    /// With a graph installed, a fill routes into the resolved risk book; the by-risk-book
+    /// query returns it there — the core of the feature.
+    #[test]
+    fn a_routed_fill_lands_in_the_resolved_risk_book() {
+        let store = PositionStore::new();
+        store.set_routing(Some(notional_graph()));
+        store
+            .book_from_attribution(booked(1, 60_000_000.0), &attribution("EM-VOL-1", "jdoe"))
+            .expect("books");
+        store
+            .book_from_attribution(booked(2, 10_000_000.0), &attribution("EM-VOL-1", "jdoe"))
+            .expect("books");
+        assert_eq!(store.risk_book_of(1).as_deref(), Some("BOOK-A"));
+        assert_eq!(store.risk_book_of(2).as_deref(), Some("DEFAULT"));
+        assert_eq!(store.positions_in_risk_book("BOOK-A").len(), 1);
+        assert_eq!(store.positions_in_risk_book("DEFAULT").len(), 1);
+    }
+
+    /// No graph installed ⇒ every fill books UNROUTED (`risk_book_of` is None) — the
+    /// backward-compatibility guarantee: routing off is byte-identical to the old path.
+    #[test]
+    fn no_graph_books_unrouted() {
+        let store = PositionStore::new();
+        assert!(!store.has_routing());
+        store
+            .book_from_attribution(booked(1, 60_000_000.0), &attribution("EM-VOL-1", "jdoe"))
+            .expect("books");
+        assert_eq!(store.risk_book_of(1), None);
+        assert!(store.positions_in_risk_book("BOOK-A").is_empty());
+    }
+
+    /// `routing_context_from` maps the fill economics: side from notional sign, |notional|,
+    /// product, strike/tenor from the inputs.
+    #[test]
+    fn routing_context_maps_fill_economics() {
+        let long = routing_context_from(&booked(1, 5_000_000.0), None);
+        assert_eq!(long.side, "Buy");
+        assert_eq!(long.notional, 5_000_000.0);
+        assert_eq!(long.product, "call");
+        assert_eq!(long.strike, 1.12);
+        assert_eq!(long.tenor, 1.0);
+        assert_eq!(long.ccy, eurusd().to_string());
+        let short = routing_context_from(&booked(2, -3_000_000.0), None);
+        assert_eq!(short.side, "Sell");
+        assert_eq!(short.notional, 3_000_000.0);
     }
 
     /// The interner is deterministic and never returns 0; distinct strings get
