@@ -18,6 +18,7 @@ import type { RiskRoutingGraph, RoutingNode } from "../src/data/contract";
 import {
   blankFill,
   enumeratePaths,
+  enumerateRules,
   evalOp,
   traceGraph,
   validateGraph,
@@ -374,11 +375,12 @@ describe("enumeratePaths — every rule in evaluation order", () => {
       ],
     };
     const paths = enumeratePaths(g, KNOWN_BOOKS);
-    // The on_true leg dangles (invalid, no book); the on_false leg reaches DEFAULT.
-    const bad = paths.find((p) => !p.valid);
-    expect(bad?.bookId).toBeNull();
-    expect(bad?.issue).toMatch(/#77/);
+    // The on_true leg dangles (#77 missing) ⇒ it never reaches a book, so it is NOT a
+    // rule; only the on_false leg (→ DEFAULT) is a route. The dangle is a graph defect
+    // surfaced by validateGraph, not a fabricated rule.
+    expect(paths.every((p) => p.bookId !== null)).toBe(true);
     expect(paths.some((p) => p.valid && p.bookId === "DEFAULT")).toBe(true);
+    expect(validateGraph(g, KNOWN_BOOKS).length).toBeGreaterThan(0);
   });
 
   it("flags a leaf targeting an unknown / disabled book as invalid", () => {
@@ -405,9 +407,9 @@ describe("enumeratePaths — every rule in evaluation order", () => {
         },
       ],
     };
-    const paths = enumeratePaths(cyclic, KNOWN_BOOKS);
-    expect(paths.length).toBeGreaterThan(0);
-    expect(paths.every((p) => !p.valid)).toBe(true);
-    expect(paths.some((p) => /loops/i.test(p.issue ?? ""))).toBe(true);
+    // A pure cycle never terminates at a book ⇒ zero rules (not fabricated invalid
+    // ones); validateGraph reports the cycle defect.
+    expect(enumeratePaths(cyclic, KNOWN_BOOKS)).toHaveLength(0);
+    expect(validateGraph(cyclic, KNOWN_BOOKS).length).toBeGreaterThan(0);
   });
 });

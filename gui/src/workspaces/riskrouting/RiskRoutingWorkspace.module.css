@@ -988,6 +988,20 @@
   font-family: var(--font-mono);
   color: var(--text-secondary);
 }
+.ruleGuard {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+.ruleOr {
+  color: var(--accent, var(--text-tertiary));
+  font-style: italic;
+  font-weight: var(--weight-emphasis);
+  font-family: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .ruleCond {
   display: inline-flex;
   align-items: baseline;

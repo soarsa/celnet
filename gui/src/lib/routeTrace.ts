@@ -369,17 +369,22 @@ export interface EnumeratedPath {
   issue?: string;
 }
 
-/** A hard cap on enumerated rules so a wide (still-being-edited) graph never blows up. */
+/** A hard cap on enumerated paths so a wide (still-being-edited) graph never blows up. */
 const MAX_ENUMERATED_PATHS = 256;
 
 /**
- * Enumerate EVERY root-to-leaf path of `graph` as a human-readable rule, in the
- * exact order they are EVALUATED — a DFS from {@link RiskRoutingGraph.entry}
- * following `on_true` before `on_false`, so rule #1 is the first the router tests.
+ * Enumerate every root-to-leaf path of `graph` that TERMINATES AT A BOOK LEAF, in
+ * the exact order they are EVALUATED — a DFS from {@link RiskRoutingGraph.entry}
+ * following `on_true` before `on_false`, so the first path is the first the router
+ * tests. A branch that dangles off a missing node or loops back on itself never
+ * reaches a book and is therefore NOT a path — it is a graph DEFECT surfaced by
+ * {@link validateGraph}, not something rendered as a rule. A book leaf is still
+ * returned when its destination book is unset or unknown/disabled (flagged
+ * `valid:false` with an `issue`) — it IS a route, just one to a bad destination.
+ *
  * The walk is cycle-safe (a per-path visited set caps depth at the node count) and
- * globally bounded by {@link MAX_ENUMERATED_PATHS}. When `knownBookIds` is supplied,
- * a leaf whose book is unset or not in the set is flagged invalid; a branch to a
- * missing node or back into the path is flagged invalid too.
+ * globally bounded by {@link MAX_ENUMERATED_PATHS}. Prefer {@link enumerateRules},
+ * which groups these paths by destination book into one rule per book.
  */
 export function enumeratePaths(
   graph: RiskRoutingGraph,
@@ -387,18 +392,7 @@ export function enumeratePaths(
 ): EnumeratedPath[] {
   const byId = new Map<number, RoutingNode>(graph.nodes.map((n) => [n.id, n]));
   const out: EnumeratedPath[] = [];
-  if (graph.nodes.length === 0) return out;
-
-  if (!byId.has(graph.entry)) {
-    out.push({
-      nodes: [],
-      conditions: [],
-      bookId: null,
-      valid: false,
-      issue: `Entry node #${graph.entry} does not exist.`,
-    });
-    return out;
-  }
+  if (graph.nodes.length === 0 || !byId.has(graph.entry)) return out;
 
   const walk = (
     current: number,
@@ -408,26 +402,9 @@ export function enumeratePaths(
   ): void => {
     if (out.length >= MAX_ENUMERATED_PATHS) return;
     const node = byId.get(current);
-    if (!node) {
-      out.push({
-        nodes,
-        conditions,
-        bookId: null,
-        valid: false,
-        issue: `A branch points to node #${current}, which does not exist.`,
-      });
-      return;
-    }
-    if (visited.has(current)) {
-      out.push({
-        nodes: [...nodes, current],
-        conditions,
-        bookId: null,
-        valid: false,
-        issue: "This path loops back on itself and never reaches a book.",
-      });
-      return;
-    }
+    // A dangling edge (missing node) or a loop never terminates at a book, so it is
+    // not a rule — validateGraph reports it as a defect instead.
+    if (!node || visited.has(current)) return;
     const nextNodes = [...nodes, current];
     if (node.kind === "book") {
       const bookId = node.bookId.length === 0 ? null : node.bookId;
@@ -462,4 +439,67 @@ export function enumeratePaths(
 
   walk(graph.entry, new Set(), [], []);
   return out;
+}
+
+/**
+ * One trader-facing routing RULE: a single destination BOOK and every guard that
+ * reaches it. The book-terminating {@link enumeratePaths} are grouped by their
+ * destination `bookId`, so a book reached by several branches is ONE rule with
+ * several alternative `guards` (read as `guard_a` OR `guard_b`), not several rules.
+ * Rules keep evaluation order — the book the router reaches first is rule #1.
+ */
+export interface EnumeratedRule {
+  /** The destination book id (the group key), or `null` when the leaf has no book set. */
+  bookId: string | null;
+  /**
+   * The alternative guard condition-lists — one per distinct path reaching this
+   * book. A single-element array is one route; multiple elements are OR-alternatives.
+   * An empty inner array is an unconditional route (the entry is itself this book).
+   */
+  guards: PathCondition[][];
+  /** The node-id paths (parallel to {@link guards}) for the canvas highlight. */
+  paths: number[][];
+  /** Whether the destination book is known + enabled (false ⇒ unknown/disabled/unset). */
+  valid: boolean;
+  /** When `valid` is false, a trader-readable reason. */
+  issue?: string;
+}
+
+/**
+ * Group the book-terminating paths of `graph` into one {@link EnumeratedRule} per
+ * distinct destination book, preserving evaluation order (the book reached first is
+ * rule #1). Paths that loop or dangle are excluded upstream by {@link enumeratePaths}
+ * — an all-looping / bookless graph therefore yields `[]` (no rules), while
+ * {@link validateGraph} still surfaces the cycle/dangle as a defect. When
+ * `knownBookIds` is supplied, a rule whose destination is unset or unknown/disabled
+ * carries `valid:false` + an `issue`.
+ */
+export function enumerateRules(
+  graph: RiskRoutingGraph,
+  knownBookIds?: ReadonlySet<string>,
+): EnumeratedRule[] {
+  const paths = enumeratePaths(graph, knownBookIds);
+  const UNSET_KEY = " __unset__";
+  const keyOf = (bookId: string | null): string => bookId ?? UNSET_KEY;
+  const byKey = new Map<string, EnumeratedRule>();
+  const order: string[] = [];
+
+  for (const p of paths) {
+    const key = keyOf(p.bookId);
+    let rule = byKey.get(key);
+    if (rule === undefined) {
+      rule = { bookId: p.bookId, guards: [], paths: [], valid: true };
+      byKey.set(key, rule);
+      order.push(key);
+    }
+    rule.guards.push(p.conditions);
+    rule.paths.push(p.nodes);
+    // A rule is only as valid as its worst path to the destination.
+    if (!p.valid) {
+      rule.valid = false;
+      if (rule.issue === undefined && p.issue !== undefined) rule.issue = p.issue;
+    }
+  }
+
+  return order.map((key) => byKey.get(key) as EnumeratedRule);
 }

@@ -1,18 +1,22 @@
 /**
- * The "Rules" panel — the trader's "show me every rule" view. It enumerates EVERY
- * root-to-leaf path of the current graph ({@link enumeratePaths}) as a
- * human-readable rule, numbered in the exact order the router EVALUATES them (DFS
- * from the entry, `on_true` before `on_false`). Each row shows the ANDed conditions
- * along the path (a `no`-branch leg reads negated) and the landing `DESK / BOOK`.
- * A path that cannot terminate at a known enabled book (dangling / cycle / unknown
- * book) is flagged invalid with its reason. Clicking a rule highlights its path on
- * the canvas via the shared trace-highlight mechanism.
+ * The "Rules" panel — the trader's "show me every rule" view. A rule is ONE ROUTE
+ * TO A DESTINATION BOOK, not one row per branch permutation: the book-terminating
+ * paths of the current graph ({@link enumerateRules}) are grouped by destination
+ * book, so a book reached by several branches is a single rule with alternative
+ * guards (`guard_a` OR `guard_b`). Rules are numbered in the order the router
+ * REACHES each book (the book hit first is Rule 1). Each guard shows the ANDed
+ * conditions to reach the book (a `no`-branch leg reads negated); the pure
+ * fall-through leg (all no-branches) reads `otherwise`. A rule whose destination is
+ * unset or unknown/disabled is flagged invalid with its reason. Paths that loop or
+ * dangle are NOT rules — they never reach a book and are surfaced as graph defects
+ * by the validator, not here; a graph with no complete route shows "No complete
+ * rules yet". Clicking a rule highlights (the first of) its paths on the canvas.
  */
 import { useMemo } from "react";
 
 import type { RiskRoutingGraph } from "../../data/contract";
 import { fieldSpec, opGlyph } from "../../lib/routeFields";
-import { type PathCondition, enumeratePaths } from "../../lib/routeTrace";
+import { type PathCondition, enumerateRules } from "../../lib/routeTrace";
 import { valueLabel } from "./nodeLabel";
 import styles from "./RiskRoutingWorkspace.module.css";
 
@@ -38,6 +42,33 @@ function samePath(a: number[] | null, b: number[]): boolean {
   return a !== null && a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
+/**
+ * A route reached by taking ONLY no-branches is the pure fall-through — the trader
+ * reads it as "otherwise", not as a stack of negations. An empty guard (the entry is
+ * itself the book) reads "always".
+ */
+function isFallThrough(guard: PathCondition[]): boolean {
+  return guard.length > 0 && guard.every((c) => c.branch === "onFalse");
+}
+
+/** One guard (a single route to the book) rendered as its ANDed legs. */
+function GuardText({ guard }: { guard: PathCondition[] }): React.ReactElement {
+  if (guard.length === 0) return <span className={styles.ruleAlways}>always</span>;
+  if (isFallThrough(guard)) return <span className={styles.ruleAlways}>otherwise</span>;
+  return (
+    <>
+      {guard.map((c, j) => (
+        <span key={j} className={styles.ruleCond}>
+          {j > 0 && <span className={styles.ruleAnd}>and</span>}
+          <span className={c.branch === "onFalse" ? styles.ruleCondNeg : undefined}>
+            {conditionText(c)}
+          </span>
+        </span>
+      ))}
+    </>
+  );
+}
+
 export function RulesPanel({
   graph,
   knownBookIds,
@@ -45,55 +76,49 @@ export function RulesPanel({
   activePath,
   onPick,
 }: RulesPanelProps): React.ReactElement {
-  const paths = useMemo(() => enumeratePaths(graph, knownBookIds), [graph, knownBookIds]);
+  const rules = useMemo(() => enumerateRules(graph, knownBookIds), [graph, knownBookIds]);
 
   return (
     <section className={styles.rules} aria-label="Routing rules" data-testid="rules-panel">
       <div className={styles.rulesHead}>
         <h2 className={styles.rulesTitle}>Rules</h2>
         <span className={styles.rulesCount}>
-          {paths.length} rule{paths.length === 1 ? "" : "s"}
+          {rules.length} rule{rules.length === 1 ? "" : "s"}
         </span>
       </div>
 
-      {paths.length === 0 ? (
-        <p className={styles.rulesEmpty}>No rules yet — add a condition and a book leaf.</p>
+      {rules.length === 0 ? (
+        <p className={styles.rulesEmpty}>
+          No complete rules yet — every route loops or dangles. Wire a Book leaf as a destination.
+        </p>
       ) : (
         <ol className={styles.rulesList}>
-          {paths.map((p, i) => {
-            const active = samePath(activePath, p.nodes);
-            const landing = p.bookId !== null ? bookLabel(p.bookId) : null;
+          {rules.map((r, i) => {
+            const active = r.paths.some((p) => samePath(activePath, p));
+            const landing = r.bookId !== null ? bookLabel(r.bookId) : null;
             return (
               <li key={i}>
                 <button
                   type="button"
                   className={[
                     styles.ruleRow,
-                    p.valid ? "" : styles.ruleInvalid,
+                    r.valid ? "" : styles.ruleInvalid,
                     active ? styles.ruleActive : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
-                  onClick={() => onPick(p.nodes)}
+                  onClick={() => onPick(r.paths[0] ?? [])}
                   data-testid={`rule-${i}`}
                   aria-current={active ? "true" : undefined}
                 >
                   <span className={styles.ruleNum}>Rule {i + 1}</span>
                   <span className={styles.ruleWhen}>
-                    {p.conditions.length === 0 ? (
-                      <span className={styles.ruleAlways}>always</span>
-                    ) : (
-                      p.conditions.map((c, j) => (
-                        <span key={j} className={styles.ruleCond}>
-                          {j > 0 && <span className={styles.ruleAnd}>and</span>}
-                          <span
-                            className={c.branch === "onFalse" ? styles.ruleCondNeg : undefined}
-                          >
-                            {conditionText(c)}
-                          </span>
-                        </span>
-                      ))
-                    )}
+                    {r.guards.map((guard, gi) => (
+                      <span key={gi} className={styles.ruleGuard}>
+                        {gi > 0 && <span className={styles.ruleOr}>or</span>}
+                        <GuardText guard={guard} />
+                      </span>
+                    ))}
                   </span>
                   <span className={styles.ruleThen}>
                     <span className={styles.ruleArrow} aria-hidden>
@@ -105,9 +130,9 @@ export function RulesPanel({
                       <span className={styles.ruleNoBook}>no book</span>
                     )}
                   </span>
-                  {!p.valid && p.issue !== undefined && (
+                  {!r.valid && r.issue !== undefined && (
                     <span className={styles.ruleIssue} role="alert">
-                      ⚠ {p.issue}
+                      ⚠ {r.issue}
                     </span>
                   )}
                 </button>
