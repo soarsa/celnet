@@ -61,6 +61,7 @@ use celnet_limits::{
     IncrementalTrade, LimitScope, LimitTree, NonAdditiveExposure, PreTradeDecision, PreTradeResult,
     ScopePath, pre_trade_check,
 };
+use celnet_risk_routing::{RiskRoutingGraph, RiskRouter, RoutingContext};
 
 use super::aggregate::{cube_from_facts, default_grid};
 
@@ -190,6 +191,20 @@ struct StoreInner {
     wire_ids: HashMap<u32, u64>,
     /// The limit tree configured at hierarchy scopes (caps + RAG bands).
     limits: LimitTree,
+    /// The current firm-wide **risk-routing graph** (`docs/FI-RISK-ROUTING-REQUIREMENTS.md`
+    /// §4), if configured. `None` ⇒ no routing: a fill books exactly as before with
+    /// **no** risk-book stamp — byte-identical to the pre-routing path. Held behind an
+    /// [`Arc`] so a fill clones only a pointer (never the graph) on the off-hot-path
+    /// booking tier; swapped wholesale by [`PositionStore::set_routing`] when an admin
+    /// defines/edits/clears the graph.
+    routing: Option<Arc<RiskRoutingGraph>>,
+    /// The resolved `risk_book_id` stamped on each booked position at book time, keyed
+    /// by the cube `u32` position handle — the new **risk-book bucketing dimension**
+    /// beside the attribution keying (§8.3). A handle is present here only when its fill
+    /// was routed (a graph was configured and [`RiskRouter::route`] resolved a book); an
+    /// absent handle ⇒ unrouted (`None`). The attribution/hierarchy keying is untouched,
+    /// so an unrouted store is byte-identical to today.
+    risk_book: HashMap<u32, String>,
 }
 
 impl Default for PositionStore {
@@ -273,6 +288,11 @@ impl PositionStore {
                 attribution: HashMap::new(),
                 wire_ids: HashMap::new(),
                 limits: g.limits.clone(),
+                // A staged federation-union view re-derives risk over a gathered union;
+                // it never books new fills, so it carries no routing config and no
+                // risk-book stamps (both default-empty — never inherited).
+                routing: None,
+                risk_book: HashMap::new(),
             }),
             // Carried for coherence; a staged store only ever backs the
             // post-boundary `*_impl` internals, which no longer re-authorize.
@@ -329,6 +349,66 @@ impl PositionStore {
     pub fn set_limit(&self, scope: celnet_limits::LimitScope, spec: celnet_limits::LimitSpec) {
         let mut g = self.inner.write().expect("position store lock poisoned");
         g.limits.set(scope, spec);
+    }
+
+    /// Install (or clear) the live firm-wide **risk-routing graph** (§4). Called at boot
+    /// from the persisted [`IdentityStore::risk_routing_graph`](crate::config::identity::IdentityStore::risk_routing_graph)
+    /// and re-pushed after every admin edit via the auth reconcile hook
+    /// (`AuthEdge::reconcile_risk_routing`), so defining/editing/clearing the graph takes
+    /// effect on subsequent fills immediately.
+    ///
+    /// `Some(graph)` ⇒ each subsequent fill through [`Self::book_from_attribution`] is
+    /// routed to a risk book and stamped; `None` ⇒ routing is off and fills book exactly
+    /// as before (no risk-book stamp) — the backward-compatible default. The graph is
+    /// expected to already be [`validated`](RiskRoutingGraph::validate) against the
+    /// current risk-book registry by the config layer; the router itself never panics on
+    /// an unvalidated graph (it falls back to unrouted — see [`Self::book_from_attribution`]).
+    ///
+    /// Thread-safe: takes the store write lock briefly (control-plane cadence, never the
+    /// pinned pricing core) and swaps an [`Arc`], so a concurrent booking sees either the
+    /// old or the new graph atomically, never a torn one.
+    pub fn set_routing(&self, graph: Option<RiskRoutingGraph>) {
+        let mut g = self.inner.write().expect("position store lock poisoned");
+        g.routing = graph.map(Arc::new);
+    }
+
+    /// Whether a risk-routing graph is currently installed (routing is active).
+    #[must_use]
+    pub fn has_routing(&self) -> bool {
+        self.inner
+            .read()
+            .expect("position store lock poisoned")
+            .routing
+            .is_some()
+    }
+
+    /// The resolved `risk_book_id` a booked position was routed into at book time, or
+    /// `None` if the position was booked unrouted (no graph configured, or a routing
+    /// error fell it back to the unrouted path). Looked up by the wire (business) `u64`
+    /// position id.
+    #[must_use]
+    pub fn risk_book_of(&self, position_id: u64) -> Option<String> {
+        let handle = u32::try_from(position_id).ok()?;
+        let g = self.inner.read().expect("position store lock poisoned");
+        g.risk_book.get(&handle).cloned()
+    }
+
+    /// All live position facts currently bucketed into `risk_book_id` (the new by-risk-book
+    /// query path §8.3). Returns the full [`RiskFact`]s so a later aggregation phase can
+    /// roll greeks/notional up the book tree; the existing attribution keying is untouched,
+    /// so a position appears in **both** its attribution roll-up and its risk book.
+    #[must_use]
+    pub fn positions_in_risk_book(&self, risk_book_id: &str) -> Vec<RiskFact> {
+        let g = self.inner.read().expect("position store lock poisoned");
+        g.facts
+            .iter()
+            .filter(|f| {
+                g.risk_book
+                    .get(&f.position_id.0)
+                    .is_some_and(|b| b == risk_book_id)
+            })
+            .cloned()
+            .collect()
     }
 
     /// Record a booked position into the live book under an explicit
