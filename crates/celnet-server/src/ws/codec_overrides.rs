@@ -133,6 +133,16 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "UpdatePricingGroupResponse",
     "DeletePricingGroupResponse",
     "UpdatePricingGroupPipelineResponse",
+    // The AuthService risk-routing reply envelopes (FI risk routing, phase 4): each
+    // `json!({ .. })` hand encoder emits the `Option<u64>` `correlation_id` as JSON `null`
+    // when absent; the `book` / `graph` singular-message payloads already render
+    // `null`-when-absent via the generic singular-message rule and need no entry.
+    "ListRiskBooksResponse",
+    "CreateRiskBookResponse",
+    "UpdateRiskBookResponse",
+    "DeleteRiskBookResponse",
+    "GetRiskRoutingGraphResponse",
+    "UpdateRiskRoutingGraphResponse",
     "ListInstrumentsResponse",
     "GetInstrumentResponse",
     "CreateInstrumentResponse",
@@ -259,6 +269,12 @@ pub(crate) fn oneof_required(message: &str, group: &str) -> bool {
         // A combined-tail-risk FI leg must name its instrument arm (only `ois_swap`
         // today); a leg carrying no arm cannot build a `celnet_rates_risk::FiPosition`.
         | ("TailRiskFiPosition", "position")
+        // A routing condition value must carry exactly one arm (num / text / list /
+        // range) — the hand `route_value_desc_from_json` errors on an empty value.
+        | ("RouteValueDesc", "v")
+        // A routing node must be either a condition or a book leaf — the hand
+        // `routing_node_desc_from_json` errors on a node carrying neither arm.
+        | ("RoutingNodeDesc", "node")
     )
 }
 

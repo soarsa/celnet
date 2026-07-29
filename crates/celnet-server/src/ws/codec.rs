@@ -66,6 +66,15 @@ use celnet_proto::{
     UpdatePricingGroupRequest, UpdatePricingGroupResponse, UpdateUserRequest, UpdateUserResponse,
     UserDesc,
 };
+// AuthService — risk routing & risk books (WS mirror of the risk-routing RPCs, phase 4).
+use celnet_proto::{
+    CreateRiskBookRequest, CreateRiskBookResponse, DeleteRiskBookRequest, DeleteRiskBookResponse,
+    GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse, ListRiskBooksRequest,
+    ListRiskBooksResponse, RiskBookDesc, RiskBookSpec, RiskLimitsDesc, RiskRoutingGraphDesc,
+    RouteConditionDesc, RouteRange, RouteValueDesc, RoutingNodeDesc, StringList,
+    UpdateRiskBookRequest, UpdateRiskBookResponse, UpdateRiskRoutingGraphRequest,
+    UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
+};
 // AuthService — instrument reference-data registry (WS mirror of the instrument RPCs).
 use celnet_proto::{
     CreateInstrumentRequest, CreateInstrumentResponse, DeleteInstrumentRequest,
@@ -3969,6 +3978,335 @@ pub(super) fn update_pricing_group_pipeline_response_to_json(
     })
 }
 
+// --- risk routing & risk books (AuthService risk-routing RPCs) ---------------
+//
+// The WS mirror of the risk-routing config surface. Every field is snake_case on
+// the wire (the GUI codec maps camelCase ⇄ snake_case in lockstep). The
+// `RoutingNodeDesc.node` and `RouteValueDesc.v` oneofs are carried as a single
+// variant-keyed sub-object (`{ "condition": { … } }` / `{ "num": … }`); the keys
+// are the proto oneof variant tokens. Absent proto3-`optional` scalars are OMITTED
+// (a nested-message default); an absent singular message renders as JSON `null`.
+
+/// A `u32` field defaulting to the proto3 zero value (mirrors the generated
+/// `u32_or_zero` — a non-numeric / absent value clamps to 0).
+fn u32_or_zero(o: &Map<String, Value>, key: &str) -> u32 {
+    o.get(key)
+        .and_then(Value::as_u64)
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(0)
+}
+
+/// Per-book pre-trade limits → JSON. Each cap is a proto3-`optional double` OMITTED
+/// when absent (the nested-message default the generated encoder applies).
+fn risk_limits_desc_to_json(l: &RiskLimitsDesc) -> Value {
+    let mut m = Map::new();
+    if let Some(x) = l.max_net_notional {
+        m.insert("max_net_notional".to_string(), json!(x));
+    }
+    if let Some(x) = l.max_gross_notional {
+        m.insert("max_gross_notional".to_string(), json!(x));
+    }
+    if let Some(x) = l.max_dv01 {
+        m.insert("max_dv01".to_string(), json!(x));
+    }
+    Value::Object(m)
+}
+
+/// Per-book pre-trade limits ← JSON (a nested `limits` object).
+fn risk_limits_desc_from_json(v: &Value) -> Result<RiskLimitsDesc> {
+    let o = obj(v, "limits")?;
+    Ok(RiskLimitsDesc {
+        max_net_notional: opt_f64(o, "max_net_notional"),
+        max_gross_notional: opt_f64(o, "max_gross_notional"),
+        max_dv01: opt_f64(o, "max_dv01"),
+    })
+}
+
+/// A risk book → JSON. Every presence-tracked field — `parent_id` / `desk_id` (proto3
+/// `optional string`) and the `limits` (proto3 `optional` message) — is OMITTED when
+/// absent, matching the descriptor-driven encoder's default for a message not on the
+/// null-absent list (`RiskBookDesc` is a nested sub-message, not a reply envelope).
+fn risk_book_desc_to_json(d: &RiskBookDesc) -> Value {
+    let mut m = Map::new();
+    m.insert("id".to_string(), json!(d.id));
+    m.insert("name".to_string(), json!(d.name));
+    if let Some(p) = &d.parent_id {
+        m.insert("parent_id".to_string(), json!(p));
+    }
+    if let Some(dk) = &d.desk_id {
+        m.insert("desk_id".to_string(), json!(dk));
+    }
+    m.insert("description".to_string(), json!(d.description));
+    if let Some(l) = &d.limits {
+        m.insert("limits".to_string(), risk_limits_desc_to_json(l));
+    }
+    m.insert("enabled".to_string(), json!(d.enabled));
+    Value::Object(m)
+}
+
+/// The editable risk-book fields (a nested `spec` object on create/update). An empty
+/// optional string decodes to `None` (no parent / unowned desk), mirroring the
+/// generated `opt_string`.
+fn risk_book_spec_from_json(v: &Value) -> Result<RiskBookSpec> {
+    let o = obj(v, "spec")?;
+    Ok(RiskBookSpec {
+        id: string_or_empty(o, "id"),
+        name: string_field(o, "name")?,
+        parent_id: opt_string(o, "parent_id"),
+        desk_id: opt_string(o, "desk_id"),
+        description: string_or_empty(o, "description"),
+        limits: opt_nested(o, "limits", risk_limits_desc_from_json)?,
+        enabled: bool_or_false(o, "enabled"),
+    })
+}
+
+/// A `ROUTE_OP_IN` membership set → JSON.
+fn string_list_to_json(l: &StringList) -> Value {
+    json!({ "values": l.values })
+}
+
+/// A `ROUTE_OP_IN` membership set ← JSON (the `list` arm body).
+fn string_list_from_json(v: &Value) -> Result<StringList> {
+    let o = obj(v, "list")?;
+    Ok(StringList {
+        values: string_array(o, "values"),
+    })
+}
+
+/// A `ROUTE_OP_BETWEEN` inclusive range → JSON.
+fn route_range_to_json(r: &RouteRange) -> Value {
+    json!({ "lo": r.lo, "hi": r.hi })
+}
+
+/// A `ROUTE_OP_BETWEEN` inclusive range ← JSON (the `range` arm body).
+fn route_range_from_json(v: &Value) -> Result<RouteRange> {
+    let o = obj(v, "range")?;
+    Ok(RouteRange {
+        lo: f64_or_zero(o, "lo"),
+        hi: f64_or_zero(o, "hi"),
+    })
+}
+
+/// A routing condition value → JSON: exactly the live oneof arm's variant-keyed body.
+fn route_value_desc_to_json(d: &RouteValueDesc) -> Value {
+    match &d.v {
+        Some(route_value_desc::V::Num(x)) => json!({ "num": x }),
+        Some(route_value_desc::V::Text(s)) => json!({ "text": s }),
+        Some(route_value_desc::V::List(l)) => json!({ "list": string_list_to_json(l) }),
+        Some(route_value_desc::V::Range(r)) => json!({ "range": route_range_to_json(r) }),
+        // An empty value (no arm) — the generated encoder emits no key either.
+        None => Value::Object(Map::new()),
+    }
+}
+
+/// A routing condition value ← JSON. Exactly one arm (`num` / `text` / `list` /
+/// `range`) must be present (the `RouteValueDesc.v` oneof is required).
+fn route_value_desc_from_json(v: &Value) -> Result<RouteValueDesc> {
+    let o = obj(v, "value")?;
+    let arm = if o.contains_key("num") {
+        route_value_desc::V::Num(f64_field(o, "num")?)
+    } else if o.contains_key("text") {
+        route_value_desc::V::Text(string_field(o, "text")?)
+    } else if o.contains_key("list") {
+        route_value_desc::V::List(string_list_from_json(o.get("list").unwrap())?)
+    } else if o.contains_key("range") {
+        route_value_desc::V::Range(route_range_from_json(o.get("range").unwrap())?)
+    } else {
+        return Err(err(
+            "route condition `value` oneof: expected a `num`, `text`, `list`, or `range` arm",
+        ));
+    };
+    Ok(RouteValueDesc { v: Some(arm) })
+}
+
+/// A routing condition → JSON. Enums ride as their canonical i32 tag; an absent
+/// `value` message renders as JSON `null`.
+fn route_condition_desc_to_json(c: &RouteConditionDesc) -> Value {
+    json!({
+        "field": c.field,
+        "op": c.op,
+        "value": c.value.as_ref().map(route_value_desc_to_json),
+        "on_true": c.on_true,
+        "on_false": c.on_false,
+    })
+}
+
+/// A routing condition ← JSON (the `condition` arm body).
+fn route_condition_desc_from_json(v: &Value) -> Result<RouteConditionDesc> {
+    let o = obj(v, "condition")?;
+    Ok(RouteConditionDesc {
+        field: enum_or_zero(o, "field"),
+        op: enum_or_zero(o, "op"),
+        value: opt_nested(o, "value", route_value_desc_from_json)?,
+        on_true: u32_or_zero(o, "on_true"),
+        on_false: u32_or_zero(o, "on_false"),
+    })
+}
+
+/// A routing node → JSON: its `id` plus exactly the live `node` oneof arm.
+fn routing_node_desc_to_json(d: &RoutingNodeDesc) -> Value {
+    let mut m = Map::new();
+    m.insert("id".to_string(), json!(d.id));
+    match &d.node {
+        Some(routing_node_desc::Node::Condition(c)) => {
+            m.insert("condition".to_string(), route_condition_desc_to_json(c));
+        }
+        Some(routing_node_desc::Node::BookRiskBookId(s)) => {
+            m.insert("book_risk_book_id".to_string(), json!(s));
+        }
+        // A node with no body — the generated encoder emits only `id` too.
+        None => {}
+    }
+    Value::Object(m)
+}
+
+/// A routing node ← JSON. Exactly one `node` arm (`condition` / `book_risk_book_id`)
+/// must be present (the `RoutingNodeDesc.node` oneof is required).
+fn routing_node_desc_from_json(v: &Value) -> Result<RoutingNodeDesc> {
+    let o = obj(v, "node")?;
+    let id = u32_or_zero(o, "id");
+    let node = if o.contains_key("condition") {
+        routing_node_desc::Node::Condition(route_condition_desc_from_json(
+            o.get("condition").unwrap(),
+        )?)
+    } else if o.contains_key("book_risk_book_id") {
+        routing_node_desc::Node::BookRiskBookId(string_field(o, "book_risk_book_id")?)
+    } else {
+        return Err(err(
+            "routing node `node` oneof: expected a `condition` or `book_risk_book_id` arm",
+        ));
+    };
+    Ok(RoutingNodeDesc {
+        id,
+        node: Some(node),
+    })
+}
+
+/// A routing graph → JSON (`entry` + the id-carrying node array).
+fn risk_routing_graph_desc_to_json(d: &RiskRoutingGraphDesc) -> Value {
+    json!({
+        "entry": d.entry,
+        "nodes": Value::Array(d.nodes.iter().map(routing_node_desc_to_json).collect()),
+    })
+}
+
+/// A routing graph ← JSON (a nested `graph` object).
+fn risk_routing_graph_desc_from_json(v: &Value) -> Result<RiskRoutingGraphDesc> {
+    let o = obj(v, "graph")?;
+    let nodes = o.get("nodes").and_then(Value::as_array).map_or_else(
+        || Ok(Vec::new()),
+        |arr| {
+            arr.iter()
+                .map(routing_node_desc_from_json)
+                .collect::<Result<Vec<_>>>()
+        },
+    )?;
+    Ok(RiskRoutingGraphDesc {
+        entry: u32_or_zero(o, "entry"),
+        nodes,
+    })
+}
+
+pub(super) fn list_risk_books_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListRiskBooksRequest> {
+    Ok(ListRiskBooksRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_risk_books_response_to_json(r: &ListRiskBooksResponse) -> Value {
+    json!({
+        "books": Value::Array(r.books.iter().map(risk_book_desc_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn create_risk_book_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<CreateRiskBookRequest> {
+    Ok(CreateRiskBookRequest {
+        session_token: string_field(o, "session_token")?,
+        spec: Some(nested(o, "spec", risk_book_spec_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn create_risk_book_response_to_json(r: &CreateRiskBookResponse) -> Value {
+    json!({
+        "book": r.book.as_ref().map(risk_book_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_risk_book_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdateRiskBookRequest> {
+    Ok(UpdateRiskBookRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        spec: Some(nested(o, "spec", risk_book_spec_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_risk_book_response_to_json(r: &UpdateRiskBookResponse) -> Value {
+    json!({
+        "book": r.book.as_ref().map(risk_book_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn delete_risk_book_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<DeleteRiskBookRequest> {
+    Ok(DeleteRiskBookRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn delete_risk_book_response_to_json(r: &DeleteRiskBookResponse) -> Value {
+    json!({ "removed": r.removed, "correlation_id": r.correlation_id })
+}
+
+pub(super) fn get_risk_routing_graph_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<GetRiskRoutingGraphRequest> {
+    Ok(GetRiskRoutingGraphRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn get_risk_routing_graph_response_to_json(r: &GetRiskRoutingGraphResponse) -> Value {
+    json!({
+        "graph": r.graph.as_ref().map(risk_routing_graph_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_risk_routing_graph_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdateRiskRoutingGraphRequest> {
+    Ok(UpdateRiskRoutingGraphRequest {
+        session_token: string_field(o, "session_token")?,
+        graph: Some(nested(o, "graph", risk_routing_graph_desc_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_risk_routing_graph_response_to_json(
+    r: &UpdateRiskRoutingGraphResponse,
+) -> Value {
+    json!({
+        "graph": r.graph.as_ref().map(risk_routing_graph_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
 // --- instrument reference data (AuthService instrument RPCs) ----------------
 //
 // The WS mirror of the instrument registry. The `InstrumentDefDesc.definition`
@@ -4409,6 +4747,12 @@ pub mod diff_support {
         DeletePricingGroupResponse, ListPricingGroupsRequest, ListPricingGroupsResponse,
         UpdatePricingGroupPipelineRequest, UpdatePricingGroupPipelineResponse,
         UpdatePricingGroupRequest, UpdatePricingGroupResponse,
+    };
+    use celnet_proto::{
+        CreateRiskBookRequest, CreateRiskBookResponse, DeleteRiskBookRequest,
+        DeleteRiskBookResponse, GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse,
+        ListRiskBooksRequest, ListRiskBooksResponse, UpdateRiskBookRequest, UpdateRiskBookResponse,
+        UpdateRiskRoutingGraphRequest, UpdateRiskRoutingGraphResponse,
     };
     use serde_json::{Map, Value};
 
@@ -5616,6 +5960,104 @@ pub mod diff_support {
         r: &UpdatePricingGroupPipelineResponse,
     ) -> Value {
         super::update_pricing_group_pipeline_response_to_json(r)
+    }
+
+    /// Hand-codec `ListRiskBooksRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_risk_books_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListRiskBooksRequest, CodecError> {
+        super::list_risk_books_request_from_json(o)
+    }
+
+    /// Hand-codec `ListRiskBooksResponse` encoder.
+    #[must_use]
+    pub fn hand_list_risk_books_response_to_json(r: &ListRiskBooksResponse) -> Value {
+        super::list_risk_books_response_to_json(r)
+    }
+
+    /// Hand-codec `CreateRiskBookRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_create_risk_book_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<CreateRiskBookRequest, CodecError> {
+        super::create_risk_book_request_from_json(o)
+    }
+
+    /// Hand-codec `CreateRiskBookResponse` encoder.
+    #[must_use]
+    pub fn hand_create_risk_book_response_to_json(r: &CreateRiskBookResponse) -> Value {
+        super::create_risk_book_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdateRiskBookRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_risk_book_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateRiskBookRequest, CodecError> {
+        super::update_risk_book_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateRiskBookResponse` encoder.
+    #[must_use]
+    pub fn hand_update_risk_book_response_to_json(r: &UpdateRiskBookResponse) -> Value {
+        super::update_risk_book_response_to_json(r)
+    }
+
+    /// Hand-codec `DeleteRiskBookRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_delete_risk_book_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<DeleteRiskBookRequest, CodecError> {
+        super::delete_risk_book_request_from_json(o)
+    }
+
+    /// Hand-codec `DeleteRiskBookResponse` encoder.
+    #[must_use]
+    pub fn hand_delete_risk_book_response_to_json(r: &DeleteRiskBookResponse) -> Value {
+        super::delete_risk_book_response_to_json(r)
+    }
+
+    /// Hand-codec `GetRiskRoutingGraphRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_get_risk_routing_graph_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<GetRiskRoutingGraphRequest, CodecError> {
+        super::get_risk_routing_graph_request_from_json(o)
+    }
+
+    /// Hand-codec `GetRiskRoutingGraphResponse` encoder.
+    #[must_use]
+    pub fn hand_get_risk_routing_graph_response_to_json(r: &GetRiskRoutingGraphResponse) -> Value {
+        super::get_risk_routing_graph_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdateRiskRoutingGraphRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_risk_routing_graph_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateRiskRoutingGraphRequest, CodecError> {
+        super::update_risk_routing_graph_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateRiskRoutingGraphResponse` encoder.
+    #[must_use]
+    pub fn hand_update_risk_routing_graph_response_to_json(
+        r: &UpdateRiskRoutingGraphResponse,
+    ) -> Value {
+        super::update_risk_routing_graph_response_to_json(r)
     }
 
     /// Hand-codec `ListInstrumentsRequest` decoder.

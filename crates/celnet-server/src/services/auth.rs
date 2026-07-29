@@ -62,6 +62,14 @@ use celnet_proto::{
     UpdatePricingGroupRequest, UpdatePricingGroupResponse, UpdateUserRequest, UpdateUserResponse,
     UserDesc, UserRole,
 };
+use celnet_proto::{
+    CreateRiskBookRequest, CreateRiskBookResponse, DeleteRiskBookRequest, DeleteRiskBookResponse,
+    GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse, ListRiskBooksRequest,
+    ListRiskBooksResponse, RiskBookDesc, RiskBookSpec, RiskLimitsDesc, RiskRoutingGraphDesc,
+    RouteConditionDesc, RouteFieldEnum, RouteOpEnum, RouteRange, RouteValueDesc, RoutingNodeDesc,
+    StringList, UpdateRiskBookRequest, UpdateRiskBookResponse, UpdateRiskRoutingGraphRequest,
+    UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
+};
 use celnet_rates::{CalibrationInstrument, bootstrap_curve};
 use tonic::{Request, Response, Status};
 
@@ -71,13 +79,16 @@ use crate::config::curve_calibration::{
 };
 use crate::config::identity::{
     AggregatedBookDef, AggregatedBookEdit, AggregationParams, BookDef, DeskDef, EntityDef,
-    IdentityStore, PermissionGrant, PricingGroupDef, PricingGroupEdit, PricingMode, Role, Scope,
-    UserDef, hash_password, mint_desk_id, mint_user_id, verify_password,
+    IdentityStore, PermissionGrant, PricingGroupDef, PricingGroupEdit, PricingMode, RiskBookDef,
+    RiskBookEdit, RiskLimits, Role, Scope, UserDef, hash_password, mint_desk_id, mint_user_id,
+    verify_password,
 };
 use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
 use crate::services::instrument_wire::{instrument_from_wire, instrument_to_wire};
+use crate::services::risk::store::PositionStore;
 use crate::services::sessions::{AuthenticatedUser, SessionRegistry};
+use celnet_risk_routing::{NodeId, RiskRoutingGraph, RouteField, RouteOp, RouteValue, RoutingNode};
 
 /// The minimum acceptable password length for a created or reset password. A
 /// privileged trading-edge account warrants more than the bare NIST floor; the
@@ -161,6 +172,11 @@ pub struct AuthEdge {
     /// book create/update/delete so an engine stands up / tears down immediately
     /// (D3). `None` in an isolated auth test (book CRUD then persists only).
     aggregation_hub: Option<Arc<crate::services::aggregation::AggregationHub>>,
+    /// The shared live position store whose risk router this edge re-primes after every
+    /// risk-book/graph write (phase 4 reconcile, `docs/FI-RISK-ROUTING-REQUIREMENTS.md`
+    /// §7). `None` in an isolated auth test (risk CRUD then persists only, exactly as
+    /// `aggregation_hub` is `None` there).
+    position_store: Option<Arc<PositionStore>>,
 }
 
 impl AuthEdge {
@@ -182,6 +198,26 @@ impl AuthEdge {
             gate,
             throttle: LoginThrottle::new(clock),
             aggregation_hub: None,
+            position_store: None,
+        }
+    }
+
+    /// Inject the shared position store so a risk-book/graph write re-primes its router
+    /// (the boot path shares the SAME store the stream / RFQ / risk edges book into).
+    #[must_use]
+    pub fn with_position_store(mut self, store: Arc<PositionStore>) -> Self {
+        self.position_store = Some(store);
+        self
+    }
+
+    /// Push the committed routing graph into the shared position store's router (a no-op
+    /// when no store is wired). Called after every risk-book/graph write so defining /
+    /// editing / clearing the firm-wide graph — or disabling a target book — takes effect
+    /// on subsequent fills immediately. The SAME operation is run once at boot from the
+    /// persisted store (`celnet-server/src/lib.rs`, beside the aggregation reconcile).
+    fn reconcile_risk_routing(&self, store: &IdentityStore) {
+        if let Some(position_store) = &self.position_store {
+            position_store.set_routing(store.risk_routing_graph().cloned());
         }
     }
 
@@ -1544,6 +1580,165 @@ impl AuthService for AuthEdge {
         }))
     }
 
+    // --- risk routing & risk books ---------------------------------------------
+    //
+    // All six RPCs gate on `require_admin`: risk-routing config is an admin
+    // risk-management function. A finer `risk_manage·fixed_income` capability (mirroring
+    // the pricing-group `UpdatePricingGroupPipeline` trader gate) is a later refinement.
+    // Every mutation follows the pricing-group pattern — require_ready → require_admin →
+    // lock → clone → apply the phase-2 `IdentityStore` CRUD → `persist_and_commit` — and
+    // then, additionally, pushes the live graph into the shared position store's router
+    // (`reconcile_risk_routing`) so a defined/edited/cleared graph (or a disabled target
+    // book) takes effect on subsequent fills immediately.
+
+    async fn list_risk_books(
+        &self,
+        request: Request<ListRiskBooksRequest>,
+    ) -> Result<Response<ListRiskBooksResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+        let books = self
+            .lock()
+            .risk_books
+            .iter()
+            .map(risk_book_to_wire)
+            .collect();
+        Ok(Response::new(ListRiskBooksResponse {
+            books,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn create_risk_book(
+        &self,
+        request: Request<CreateRiskBookRequest>,
+    ) -> Result<Response<CreateRiskBookResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let spec = req
+            .spec
+            .ok_or_else(|| Status::invalid_argument("risk book spec is required"))?;
+        let edit = risk_book_spec_parts(spec);
+
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        let def = next.create_risk_book(edit).map_err(risk_book_status)?;
+        self.persist_and_commit(&mut guard, next)?;
+        // A new book cannot yet be a routing target, but keep the router primed off the
+        // committed store for a single, uniform post-write reconcile path.
+        self.reconcile_risk_routing(&guard);
+        Ok(Response::new(CreateRiskBookResponse {
+            book: Some(risk_book_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_risk_book(
+        &self,
+        request: Request<UpdateRiskBookRequest>,
+    ) -> Result<Response<UpdateRiskBookResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let spec = req
+            .spec
+            .ok_or_else(|| Status::invalid_argument("risk book spec is required"))?;
+        let edit = risk_book_spec_parts(spec);
+
+        let mut guard = self.lock();
+        if guard.risk_book(&req.id).is_none() {
+            return Err(Status::not_found(format!(
+                "no risk book with id `{}`",
+                req.id
+            )));
+        }
+        let mut next = guard.clone();
+        let def = next
+            .update_risk_book(&req.id, edit)
+            .map_err(risk_book_status)?;
+        self.persist_and_commit(&mut guard, next)?;
+        // Disabling a book (or otherwise editing it) can change graph validity; re-prime
+        // the router off the committed store.
+        self.reconcile_risk_routing(&guard);
+        Ok(Response::new(UpdateRiskBookResponse {
+            book: Some(risk_book_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn delete_risk_book(
+        &self,
+        request: Request<DeleteRiskBookRequest>,
+    ) -> Result<Response<DeleteRiskBookResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        let removed = next.delete_risk_book(&req.id).map_err(risk_book_status)?;
+        if removed {
+            self.persist_and_commit(&mut guard, next)?;
+            self.reconcile_risk_routing(&guard);
+        }
+        Ok(Response::new(DeleteRiskBookResponse {
+            removed,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn get_risk_routing_graph(
+        &self,
+        request: Request<GetRiskRoutingGraphRequest>,
+    ) -> Result<Response<GetRiskRoutingGraphResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+        let graph = self.lock().risk_routing_graph().map(routing_graph_to_wire);
+        Ok(Response::new(GetRiskRoutingGraphResponse {
+            graph,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_risk_routing_graph(
+        &self,
+        request: Request<UpdateRiskRoutingGraphRequest>,
+    ) -> Result<Response<UpdateRiskRoutingGraphResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let wire = req
+            .graph
+            .ok_or_else(|| Status::invalid_argument("risk routing graph is required"))?;
+        let graph = routing_graph_from_wire(wire)?;
+
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        // The store re-validates the graph against the live risk-book registry (acyclic,
+        // every path terminates at a known ENABLED book, type-consistent conditions), so a
+        // malformed graph fails loudly at the write and never reaches the router.
+        next.set_risk_routing_graph(graph.clone())
+            .map_err(risk_routing_status)?;
+        self.persist_and_commit(&mut guard, next)?;
+        self.reconcile_risk_routing(&guard);
+        Ok(Response::new(UpdateRiskRoutingGraphResponse {
+            graph: Some(routing_graph_to_wire(&graph)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
     // --- instrument reference data ---------------------------------------------
 
     async fn list_instruments(
@@ -2336,6 +2531,277 @@ fn pricing_group_status(msg: String) -> Status {
     } else {
         Status::invalid_argument(msg)
     }
+}
+
+// --- risk routing & risk books: wire converters + error mapping --------------
+
+/// Map a stored [`RiskLimits`] onto its wire [`RiskLimitsDesc`] (each cap is a
+/// presence-tracked `optional double`).
+fn risk_limits_to_wire(l: &RiskLimits) -> RiskLimitsDesc {
+    RiskLimitsDesc {
+        max_net_notional: l.max_net_notional,
+        max_gross_notional: l.max_gross_notional,
+        max_dv01: l.max_dv01,
+    }
+}
+
+/// Map a wire [`RiskLimitsDesc`] back onto the stored [`RiskLimits`].
+fn risk_limits_from_wire(d: RiskLimitsDesc) -> RiskLimits {
+    RiskLimits {
+        max_net_notional: d.max_net_notional,
+        max_gross_notional: d.max_gross_notional,
+        max_dv01: d.max_dv01,
+    }
+}
+
+/// Map a stored [`RiskBookDef`] onto its wire [`RiskBookDesc`] field-for-field.
+fn risk_book_to_wire(def: &RiskBookDef) -> RiskBookDesc {
+    RiskBookDesc {
+        id: def.id.clone(),
+        name: def.name.clone(),
+        parent_id: def.parent_id.clone(),
+        desk_id: def.desk_id.clone(),
+        description: def.description.clone(),
+        limits: def.limits.as_ref().map(risk_limits_to_wire),
+        enabled: def.enabled,
+    }
+}
+
+/// Map a [`RiskBookSpec`] onto the [`RiskBookEdit`] the store's `create_risk_book` /
+/// `update_risk_book` take. The spec's own `id` is intentionally dropped — create mints a
+/// fresh id and update keeps the request `id` (mirrors [`pricing_group_spec_parts`]). An
+/// empty optional string decodes to `None` (no parent / unowned desk).
+fn risk_book_spec_parts(spec: RiskBookSpec) -> RiskBookEdit {
+    RiskBookEdit {
+        name: spec.name,
+        parent_id: spec.parent_id.filter(|s| !s.is_empty()),
+        desk_id: spec.desk_id.filter(|s| !s.is_empty()),
+        description: spec.description,
+        limits: spec.limits.map(risk_limits_from_wire),
+        enabled: spec.enabled,
+    }
+}
+
+/// The wire enum value for a domain [`RouteField`] (exhaustive — no lossy default).
+fn route_field_to_wire(field: RouteField) -> i32 {
+    let e = match field {
+        RouteField::InstrumentId => RouteFieldEnum::RouteFieldInstrumentId,
+        RouteField::Ccy => RouteFieldEnum::RouteFieldCcy,
+        RouteField::Product => RouteFieldEnum::RouteFieldProduct,
+        RouteField::Side => RouteFieldEnum::RouteFieldSide,
+        RouteField::Notional => RouteFieldEnum::RouteFieldNotional,
+        RouteField::Tenor => RouteFieldEnum::RouteFieldTenor,
+        RouteField::Strike => RouteFieldEnum::RouteFieldStrike,
+        RouteField::Counterparty => RouteFieldEnum::RouteFieldCounterparty,
+        RouteField::User => RouteFieldEnum::RouteFieldUser,
+        RouteField::Desk => RouteFieldEnum::RouteFieldDesk,
+        RouteField::Price => RouteFieldEnum::RouteFieldPrice,
+    };
+    e as i32
+}
+
+/// Resolve a wire enum value onto a domain [`RouteField`].
+///
+/// # Errors
+/// `invalid_argument` for an unrecognised enum value.
+fn route_field_from_wire(v: i32) -> Result<RouteField, Status> {
+    match RouteFieldEnum::try_from(v) {
+        Ok(RouteFieldEnum::RouteFieldInstrumentId) => Ok(RouteField::InstrumentId),
+        Ok(RouteFieldEnum::RouteFieldCcy) => Ok(RouteField::Ccy),
+        Ok(RouteFieldEnum::RouteFieldProduct) => Ok(RouteField::Product),
+        Ok(RouteFieldEnum::RouteFieldSide) => Ok(RouteField::Side),
+        Ok(RouteFieldEnum::RouteFieldNotional) => Ok(RouteField::Notional),
+        Ok(RouteFieldEnum::RouteFieldTenor) => Ok(RouteField::Tenor),
+        Ok(RouteFieldEnum::RouteFieldStrike) => Ok(RouteField::Strike),
+        Ok(RouteFieldEnum::RouteFieldCounterparty) => Ok(RouteField::Counterparty),
+        Ok(RouteFieldEnum::RouteFieldUser) => Ok(RouteField::User),
+        Ok(RouteFieldEnum::RouteFieldDesk) => Ok(RouteField::Desk),
+        Ok(RouteFieldEnum::RouteFieldPrice) => Ok(RouteField::Price),
+        Err(_) => Err(Status::invalid_argument(format!(
+            "unrecognised route field enum value {v}"
+        ))),
+    }
+}
+
+/// The wire enum value for a domain [`RouteOp`] (exhaustive — no lossy default).
+fn route_op_to_wire(op: RouteOp) -> i32 {
+    let e = match op {
+        RouteOp::Eq => RouteOpEnum::RouteOpEq,
+        RouteOp::Ne => RouteOpEnum::RouteOpNe,
+        RouteOp::Gt => RouteOpEnum::RouteOpGt,
+        RouteOp::Ge => RouteOpEnum::RouteOpGe,
+        RouteOp::Lt => RouteOpEnum::RouteOpLt,
+        RouteOp::Le => RouteOpEnum::RouteOpLe,
+        RouteOp::Contains => RouteOpEnum::RouteOpContains,
+        RouteOp::In => RouteOpEnum::RouteOpIn,
+        RouteOp::Between => RouteOpEnum::RouteOpBetween,
+    };
+    e as i32
+}
+
+/// Resolve a wire enum value onto a domain [`RouteOp`].
+///
+/// # Errors
+/// `invalid_argument` for an unrecognised enum value.
+fn route_op_from_wire(v: i32) -> Result<RouteOp, Status> {
+    match RouteOpEnum::try_from(v) {
+        Ok(RouteOpEnum::RouteOpEq) => Ok(RouteOp::Eq),
+        Ok(RouteOpEnum::RouteOpNe) => Ok(RouteOp::Ne),
+        Ok(RouteOpEnum::RouteOpGt) => Ok(RouteOp::Gt),
+        Ok(RouteOpEnum::RouteOpGe) => Ok(RouteOp::Ge),
+        Ok(RouteOpEnum::RouteOpLt) => Ok(RouteOp::Lt),
+        Ok(RouteOpEnum::RouteOpLe) => Ok(RouteOp::Le),
+        Ok(RouteOpEnum::RouteOpContains) => Ok(RouteOp::Contains),
+        Ok(RouteOpEnum::RouteOpIn) => Ok(RouteOp::In),
+        Ok(RouteOpEnum::RouteOpBetween) => Ok(RouteOp::Between),
+        Err(_) => Err(Status::invalid_argument(format!(
+            "unrecognised route op enum value {v}"
+        ))),
+    }
+}
+
+/// Map a stored [`RouteValue`] onto its wire [`RouteValueDesc`] oneof.
+fn route_value_to_wire(value: &RouteValue) -> RouteValueDesc {
+    let v = match value {
+        RouteValue::Num(x) => route_value_desc::V::Num(*x),
+        RouteValue::Text(s) => route_value_desc::V::Text(s.clone()),
+        RouteValue::List(items) => route_value_desc::V::List(StringList {
+            values: items.clone(),
+        }),
+        RouteValue::Range { lo, hi } => route_value_desc::V::Range(RouteRange { lo: *lo, hi: *hi }),
+    };
+    RouteValueDesc { v: Some(v) }
+}
+
+/// Map a wire [`RouteValueDesc`] back onto a stored [`RouteValue`].
+///
+/// # Errors
+/// `invalid_argument` when the oneof carries no live arm.
+fn route_value_from_wire(d: RouteValueDesc) -> Result<RouteValue, Status> {
+    match d.v {
+        Some(route_value_desc::V::Num(x)) => Ok(RouteValue::Num(x)),
+        Some(route_value_desc::V::Text(s)) => Ok(RouteValue::Text(s)),
+        Some(route_value_desc::V::List(l)) => Ok(RouteValue::List(l.values)),
+        Some(route_value_desc::V::Range(r)) => Ok(RouteValue::Range { lo: r.lo, hi: r.hi }),
+        None => Err(Status::invalid_argument(
+            "route condition value carries no arm (num / text / list / range)",
+        )),
+    }
+}
+
+/// Map a stored [`RoutingNode`] (+ its id) onto its wire [`RoutingNodeDesc`].
+fn routing_node_to_wire(id: NodeId, node: &RoutingNode) -> RoutingNodeDesc {
+    let node = match node {
+        RoutingNode::Condition {
+            field,
+            op,
+            value,
+            on_true,
+            on_false,
+        } => routing_node_desc::Node::Condition(RouteConditionDesc {
+            field: route_field_to_wire(*field),
+            op: route_op_to_wire(*op),
+            value: Some(route_value_to_wire(value)),
+            on_true: *on_true,
+            on_false: *on_false,
+        }),
+        RoutingNode::Book { risk_book_id } => {
+            routing_node_desc::Node::BookRiskBookId(risk_book_id.clone())
+        }
+    };
+    RoutingNodeDesc {
+        id,
+        node: Some(node),
+    }
+}
+
+/// Map a wire [`RoutingNodeDesc`] back onto `(id, RoutingNode)`.
+///
+/// # Errors
+/// `invalid_argument` when the `node` oneof carries no arm, a condition's `value`
+/// message is absent, or an enum value is unrecognised.
+fn routing_node_from_wire(d: RoutingNodeDesc) -> Result<(NodeId, RoutingNode), Status> {
+    let node = match d.node {
+        Some(routing_node_desc::Node::Condition(c)) => {
+            let value = c
+                .value
+                .ok_or_else(|| Status::invalid_argument("route condition value is required"))?;
+            RoutingNode::Condition {
+                field: route_field_from_wire(c.field)?,
+                op: route_op_from_wire(c.op)?,
+                value: route_value_from_wire(value)?,
+                on_true: c.on_true,
+                on_false: c.on_false,
+            }
+        }
+        Some(routing_node_desc::Node::BookRiskBookId(risk_book_id)) => {
+            RoutingNode::Book { risk_book_id }
+        }
+        None => {
+            return Err(Status::invalid_argument(format!(
+                "routing node {} carries no body (condition / book)",
+                d.id
+            )));
+        }
+    };
+    Ok((d.id, node))
+}
+
+/// Map a stored [`RiskRoutingGraph`] onto its wire [`RiskRoutingGraphDesc`]. The store
+/// keys nodes by a `BTreeMap`, so the emitted node list is deterministically id-ordered.
+fn routing_graph_to_wire(graph: &RiskRoutingGraph) -> RiskRoutingGraphDesc {
+    RiskRoutingGraphDesc {
+        entry: graph.entry,
+        nodes: graph
+            .nodes
+            .iter()
+            .map(|(id, node)| routing_node_to_wire(*id, node))
+            .collect(),
+    }
+}
+
+/// Map a wire [`RiskRoutingGraphDesc`] back onto a stored [`RiskRoutingGraph`], rebuilding
+/// the id→node map. Structural well-formedness (acyclic, known books, type-consistent) is
+/// left to the store's `set_risk_routing_graph` validation on write.
+///
+/// # Errors
+/// `invalid_argument` when two nodes share an id, or any node fails to decode.
+fn routing_graph_from_wire(d: RiskRoutingGraphDesc) -> Result<RiskRoutingGraph, Status> {
+    let mut nodes = std::collections::BTreeMap::new();
+    for wire_node in d.nodes {
+        let (id, node) = routing_node_from_wire(wire_node)?;
+        if nodes.insert(id, node).is_some() {
+            return Err(Status::invalid_argument(format!(
+                "duplicate routing node id {id}"
+            )));
+        }
+    }
+    Ok(RiskRoutingGraph {
+        entry: d.entry,
+        nodes,
+    })
+}
+
+/// Map the store's risk-book validation error string onto a gRPC [`Status`]: a name
+/// collision is `already_exists`, a missing id on update is `not_found`, and every other
+/// document-resolvable failure (unknown/cyclic parent, unknown desk, negative limit, an
+/// orphaning delete, a graph-targeted delete/disable) is `invalid_argument`. The store's
+/// message is surfaced verbatim.
+fn risk_book_status(msg: String) -> Status {
+    if msg.contains("duplicate risk book name") {
+        Status::already_exists(msg)
+    } else if msg.starts_with("no risk book with id") {
+        Status::not_found(msg)
+    } else {
+        Status::invalid_argument(msg)
+    }
+}
+
+/// Map the store's routing-graph well-formedness error onto a gRPC [`Status`]. Every graph
+/// defect (missing entry, dangling edge, cycle, unknown/disabled target book, type
+/// mismatch) is a client-correctable `invalid_argument`; the store's message is verbatim.
+fn risk_routing_status(msg: String) -> Status {
+    Status::invalid_argument(msg)
 }
 
 /// A stable, human-facing label for a [`Role`] — used as the `role` field in the

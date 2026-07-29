@@ -42,6 +42,12 @@ use celnet_proto::{
     TieringStrategyDesc, TieringStrategyKind, Underlying, UpdateAggregatedBookResponse,
     UpdatePricingGroupPipelineResponse, UpdatePricingGroupResponse,
 };
+use celnet_proto::{
+    CreateRiskBookResponse, DeleteRiskBookResponse, GetRiskRoutingGraphResponse,
+    ListRiskBooksResponse, RiskBookDesc, RiskLimitsDesc, RiskRoutingGraphDesc, RouteConditionDesc,
+    RouteFieldEnum, RouteOpEnum, RouteRange, RouteValueDesc, RoutingNodeDesc, StringList,
+    UpdateRiskBookResponse, UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
+};
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
 use celnet_server::ws::generated_codec as generated;
@@ -4833,4 +4839,369 @@ fn update_pricing_group_pipeline_response_encode_byte_identical() {
 fn esp_or_rfq_mode_values_are_stable() {
     assert_eq!(EspOrRfq::Esp as i32, 0);
     assert_eq!(EspOrRfq::Rfq as i32, 1);
+}
+
+// ===========================================================================
+// Risk routing & risk books (phase 4): byte-identity of the generated codec vs
+// the hand codec over the risk-routing CRUD surface. The routing graph is the
+// hard case — a repeated node list where each node is a `RoutingNodeDesc.node`
+// oneof (condition vs book leaf) and a condition's `RouteValueDesc.v` is itself a
+// oneof (num / text / list / range). These cases exercise all four value arms and
+// both node arms, plus risk books with present/absent optional limits + parent/desk.
+// ===========================================================================
+
+/// A rich routing-graph JSON body exercising every `RouteValueDesc` arm (`text`,
+/// `range`, `list`, `num`) and both `RoutingNodeDesc` arms (condition + book leaf).
+fn risk_graph_body() -> Value {
+    json!({
+        "entry": 0,
+        "nodes": [
+            { "id": 0, "condition": {
+                "field": RouteFieldEnum::RouteFieldCcy as i32,
+                "op": RouteOpEnum::RouteOpEq as i32,
+                "value": { "text": "EUR" },
+                "on_true": 1, "on_false": 2 } },
+            { "id": 1, "condition": {
+                "field": RouteFieldEnum::RouteFieldNotional as i32,
+                "op": RouteOpEnum::RouteOpBetween as i32,
+                "value": { "range": { "lo": 1_000_000.0, "hi": 5_000_000.0 } },
+                "on_true": 3, "on_false": 4 } },
+            { "id": 2, "condition": {
+                "field": RouteFieldEnum::RouteFieldCounterparty as i32,
+                "op": RouteOpEnum::RouteOpIn as i32,
+                "value": { "list": { "values": ["HF-1", "HF-2"] } },
+                "on_true": 3, "on_false": 4 } },
+            { "id": 3, "condition": {
+                "field": RouteFieldEnum::RouteFieldStrike as i32,
+                "op": RouteOpEnum::RouteOpGt as i32,
+                "value": { "num": 1.25 },
+                "on_true": 5, "on_false": 6 } },
+            { "id": 4, "book_risk_book_id": "DEFAULT" },
+            { "id": 5, "book_risk_book_id": "BOOK-A" },
+            { "id": 6, "book_risk_book_id": "BOOK-B" },
+        ],
+    })
+}
+
+/// A fully-populated risk-book spec JSON body (present parent/desk/limits).
+fn risk_book_spec_body() -> Value {
+    json!({
+        "id": "",
+        "name": "Global Macro",
+        "parent_id": "emea",
+        "desk_id": "fi-desk",
+        "description": "macro book",
+        "limits": { "max_net_notional": 1_000_000_000.0, "max_dv01": 50_000.0 },
+        "enabled": true,
+    })
+}
+
+#[test]
+fn list_risk_books_request_decode_byte_identical() {
+    for (label, body) in [
+        (
+            "full",
+            json!({ "session_token": "tok", "correlation_id": 5 }),
+        ),
+        ("minimal", json!({ "session_token": "tok" })),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("ListRiskBooksRequest({label})"),
+            generated::decode_list_risk_books_request(o),
+            hand::hand_list_risk_books_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn create_risk_book_request_decode_byte_identical() {
+    let body =
+        json!({ "session_token": "tok", "spec": risk_book_spec_body(), "correlation_id": 7 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "CreateRiskBookRequest",
+        generated::decode_create_risk_book_request(o),
+        hand::hand_create_risk_book_request_from_json(o),
+    );
+    // Minimal spec: no parent/desk/limits (⇒ None on both sides).
+    let minimal = json!({ "session_token": "t", "spec": { "name": "Mini" } });
+    let mo = minimal.as_object().expect("object");
+    assert_decode_eq(
+        "CreateRiskBookRequest(minimal spec)",
+        generated::decode_create_risk_book_request(mo),
+        hand::hand_create_risk_book_request_from_json(mo),
+    );
+}
+
+#[test]
+fn update_risk_book_request_decode_byte_identical() {
+    let body = json!({
+        "session_token": "tok", "id": "gm", "spec": risk_book_spec_body(), "correlation_id": 8
+    });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateRiskBookRequest",
+        generated::decode_update_risk_book_request(o),
+        hand::hand_update_risk_book_request_from_json(o),
+    );
+}
+
+#[test]
+fn delete_risk_book_request_decode_byte_identical() {
+    let body = json!({ "session_token": "tok", "id": "gm", "correlation_id": 3 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "DeleteRiskBookRequest",
+        generated::decode_delete_risk_book_request(o),
+        hand::hand_delete_risk_book_request_from_json(o),
+    );
+}
+
+#[test]
+fn get_risk_routing_graph_request_decode_byte_identical() {
+    let body = json!({ "session_token": "tok", "correlation_id": 2 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "GetRiskRoutingGraphRequest",
+        generated::decode_get_risk_routing_graph_request(o),
+        hand::hand_get_risk_routing_graph_request_from_json(o),
+    );
+}
+
+#[test]
+fn update_risk_routing_graph_request_decode_byte_identical() {
+    // The nested-oneof workhorse: a graph exercising every value arm + both node arms.
+    let body = json!({ "session_token": "tok", "graph": risk_graph_body(), "correlation_id": 9 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateRiskRoutingGraphRequest(full graph)",
+        generated::decode_update_risk_routing_graph_request(o),
+        hand::hand_update_risk_routing_graph_request_from_json(o),
+    );
+    // Minimal graph: entry only, no nodes (⇒ empty node vec on both sides).
+    let minimal = json!({ "session_token": "t", "graph": { "entry": 0 } });
+    let mo = minimal.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateRiskRoutingGraphRequest(minimal graph)",
+        generated::decode_update_risk_routing_graph_request(mo),
+        hand::hand_update_risk_routing_graph_request_from_json(mo),
+    );
+}
+
+/// A routing-graph descriptor mirroring [`risk_graph_body`] — every value arm + both
+/// node arms — for the encode differential.
+fn risk_graph_desc() -> RiskRoutingGraphDesc {
+    let cond = |field: RouteFieldEnum, op: RouteOpEnum, value: RouteValueDesc, t: u32, f: u32| {
+        RouteConditionDesc {
+            field: field as i32,
+            op: op as i32,
+            value: Some(value),
+            on_true: t,
+            on_false: f,
+        }
+    };
+    let node = |id: u32, n: routing_node_desc::Node| RoutingNodeDesc { id, node: Some(n) };
+    let book = |id: u32, b: &str| node(id, routing_node_desc::Node::BookRiskBookId(b.to_owned()));
+    RiskRoutingGraphDesc {
+        entry: 0,
+        nodes: vec![
+            node(
+                0,
+                routing_node_desc::Node::Condition(cond(
+                    RouteFieldEnum::RouteFieldCcy,
+                    RouteOpEnum::RouteOpEq,
+                    RouteValueDesc {
+                        v: Some(route_value_desc::V::Text("EUR".to_owned())),
+                    },
+                    1,
+                    2,
+                )),
+            ),
+            node(
+                1,
+                routing_node_desc::Node::Condition(cond(
+                    RouteFieldEnum::RouteFieldNotional,
+                    RouteOpEnum::RouteOpBetween,
+                    RouteValueDesc {
+                        v: Some(route_value_desc::V::Range(RouteRange {
+                            lo: 1_000_000.0,
+                            hi: 5_000_000.0,
+                        })),
+                    },
+                    3,
+                    4,
+                )),
+            ),
+            node(
+                2,
+                routing_node_desc::Node::Condition(cond(
+                    RouteFieldEnum::RouteFieldCounterparty,
+                    RouteOpEnum::RouteOpIn,
+                    RouteValueDesc {
+                        v: Some(route_value_desc::V::List(StringList {
+                            values: vec!["HF-1".to_owned(), "HF-2".to_owned()],
+                        })),
+                    },
+                    3,
+                    4,
+                )),
+            ),
+            node(
+                3,
+                routing_node_desc::Node::Condition(cond(
+                    RouteFieldEnum::RouteFieldStrike,
+                    RouteOpEnum::RouteOpGt,
+                    RouteValueDesc {
+                        v: Some(route_value_desc::V::Num(1.25)),
+                    },
+                    5,
+                    6,
+                )),
+            ),
+            book(4, "DEFAULT"),
+            book(5, "BOOK-A"),
+            book(6, "BOOK-B"),
+        ],
+    }
+}
+
+/// A fully-populated risk-book descriptor (present parent/desk/limits).
+fn risk_book_desc_full() -> RiskBookDesc {
+    RiskBookDesc {
+        id: "gm".to_owned(),
+        name: "Global Macro".to_owned(),
+        parent_id: Some("emea".to_owned()),
+        desk_id: Some("fi-desk".to_owned()),
+        description: "macro book".to_owned(),
+        limits: Some(RiskLimitsDesc {
+            max_net_notional: Some(1_000_000_000.0),
+            max_gross_notional: None,
+            max_dv01: Some(50_000.0),
+        }),
+        enabled: true,
+    }
+}
+
+/// A minimal risk-book descriptor (absent parent/desk/limits — the omit/null edges).
+fn risk_book_desc_minimal() -> RiskBookDesc {
+    RiskBookDesc {
+        id: "def".to_owned(),
+        name: "Default".to_owned(),
+        parent_id: None,
+        desk_id: None,
+        description: String::new(),
+        limits: None,
+        enabled: false,
+    }
+}
+
+#[test]
+fn list_risk_books_response_encode_byte_identical() {
+    let full = ListRiskBooksResponse {
+        books: vec![
+            risk_book_desc_full(),
+            risk_book_desc_minimal(),
+            RiskBookDesc::default(),
+        ],
+        correlation_id: Some(4),
+    };
+    assert_bytes_eq(
+        "ListRiskBooksResponse(full)",
+        &generated::encode_list_risk_books_response(&full),
+        &hand::hand_list_risk_books_response_to_json(&full),
+    );
+    let empty = ListRiskBooksResponse::default();
+    assert_bytes_eq(
+        "ListRiskBooksResponse(empty)",
+        &generated::encode_list_risk_books_response(&empty),
+        &hand::hand_list_risk_books_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn create_risk_book_response_encode_byte_identical() {
+    let created = CreateRiskBookResponse {
+        book: Some(risk_book_desc_full()),
+        correlation_id: Some(7),
+    };
+    assert_bytes_eq(
+        "CreateRiskBookResponse",
+        &generated::encode_create_risk_book_response(&created),
+        &hand::hand_create_risk_book_response_to_json(&created),
+    );
+    // Absent book + absent correlation_id (the null-when-absent edges).
+    let absent = CreateRiskBookResponse::default();
+    assert_bytes_eq(
+        "CreateRiskBookResponse(absent)",
+        &generated::encode_create_risk_book_response(&absent),
+        &hand::hand_create_risk_book_response_to_json(&absent),
+    );
+}
+
+#[test]
+fn update_risk_book_response_encode_byte_identical() {
+    let updated = UpdateRiskBookResponse {
+        book: Some(risk_book_desc_minimal()),
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "UpdateRiskBookResponse",
+        &generated::encode_update_risk_book_response(&updated),
+        &hand::hand_update_risk_book_response_to_json(&updated),
+    );
+}
+
+#[test]
+fn delete_risk_book_response_encode_byte_identical() {
+    for (label, removed, corr) in [("removed", true, Some(3u64)), ("absent", false, None)] {
+        let resp = DeleteRiskBookResponse {
+            removed,
+            correlation_id: corr,
+        };
+        assert_bytes_eq(
+            &format!("DeleteRiskBookResponse({label})"),
+            &generated::encode_delete_risk_book_response(&resp),
+            &hand::hand_delete_risk_book_response_to_json(&resp),
+        );
+    }
+}
+
+#[test]
+fn get_risk_routing_graph_response_encode_byte_identical() {
+    let present = GetRiskRoutingGraphResponse {
+        graph: Some(risk_graph_desc()),
+        correlation_id: Some(2),
+    };
+    assert_bytes_eq(
+        "GetRiskRoutingGraphResponse(present)",
+        &generated::encode_get_risk_routing_graph_response(&present),
+        &hand::hand_get_risk_routing_graph_response_to_json(&present),
+    );
+    // Absent graph ⇒ JSON null; absent correlation_id ⇒ null.
+    let absent = GetRiskRoutingGraphResponse::default();
+    assert_bytes_eq(
+        "GetRiskRoutingGraphResponse(absent)",
+        &generated::encode_get_risk_routing_graph_response(&absent),
+        &hand::hand_get_risk_routing_graph_response_to_json(&absent),
+    );
+}
+
+#[test]
+fn update_risk_routing_graph_response_encode_byte_identical() {
+    let updated = UpdateRiskRoutingGraphResponse {
+        graph: Some(risk_graph_desc()),
+        correlation_id: Some(9),
+    };
+    assert_bytes_eq(
+        "UpdateRiskRoutingGraphResponse",
+        &generated::encode_update_risk_routing_graph_response(&updated),
+        &hand::hand_update_risk_routing_graph_response_to_json(&updated),
+    );
+    let empty = UpdateRiskRoutingGraphResponse::default();
+    assert_bytes_eq(
+        "UpdateRiskRoutingGraphResponse(empty)",
+        &generated::encode_update_risk_routing_graph_response(&empty),
+        &hand::hand_update_risk_routing_graph_response_to_json(&empty),
+    );
 }

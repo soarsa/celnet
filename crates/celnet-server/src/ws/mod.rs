@@ -1335,6 +1335,54 @@ async fn handle_unary(
                 generated_codec::encode_update_pricing_group_pipeline_response
             )
         }
+        "list_risk_books" => {
+            let req = decode!(generated_codec::decode_list_risk_books_request(o));
+            call!(
+                services.auth.list_risk_books(Request::new(req)),
+                "risk_books",
+                generated_codec::encode_list_risk_books_response
+            )
+        }
+        "create_risk_book" => {
+            let req = decode!(generated_codec::decode_create_risk_book_request(o));
+            call!(
+                services.auth.create_risk_book(Request::new(req)),
+                "risk_book_created",
+                generated_codec::encode_create_risk_book_response
+            )
+        }
+        "update_risk_book" => {
+            let req = decode!(generated_codec::decode_update_risk_book_request(o));
+            call!(
+                services.auth.update_risk_book(Request::new(req)),
+                "risk_book_updated",
+                generated_codec::encode_update_risk_book_response
+            )
+        }
+        "delete_risk_book" => {
+            let req = decode!(generated_codec::decode_delete_risk_book_request(o));
+            call!(
+                services.auth.delete_risk_book(Request::new(req)),
+                "risk_book_deleted",
+                generated_codec::encode_delete_risk_book_response
+            )
+        }
+        "get_risk_routing_graph" => {
+            let req = decode!(generated_codec::decode_get_risk_routing_graph_request(o));
+            call!(
+                services.auth.get_risk_routing_graph(Request::new(req)),
+                "risk_routing_graph",
+                generated_codec::encode_get_risk_routing_graph_response
+            )
+        }
+        "update_risk_routing_graph" => {
+            let req = decode!(generated_codec::decode_update_risk_routing_graph_request(o));
+            call!(
+                services.auth.update_risk_routing_graph(Request::new(req)),
+                "risk_routing_graph_updated",
+                generated_codec::encode_update_risk_routing_graph_response
+            )
+        }
         "list_instruments" => {
             let req = decode!(generated_codec::decode_list_instruments_request(o));
             call!(

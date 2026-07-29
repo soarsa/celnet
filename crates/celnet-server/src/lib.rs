@@ -607,6 +607,15 @@ impl Edge {
         // admin book CRUD re-reconciles (see `AuthEdge::with_aggregation_hub`).
         aggregation_hub.reconcile(&identity_store);
 
+        // Prime the shared position store's risk router from the persisted firm-wide
+        // routing graph (phase 4 boot reconcile, `docs/FI-RISK-ROUTING-REQUIREMENTS.md`
+        // §7): every subsequent fill through `book_from_attribution` is routed to its
+        // risk book from first boot. `None` (no graph persisted yet) leaves routing off —
+        // fills book byte-identically to before. Runs before `identity_store` is moved
+        // into the `AuthEdge`; every admin risk-book/graph write re-primes it (see
+        // `AuthEdge::with_position_store` / `reconcile_risk_routing`).
+        store.set_routing(identity_store.risk_routing_graph().cloned());
+
         // ADR-0015 §2.1: activate the configurable consistency tier — Raft **wired
         // everywhere but forced nowhere**. A `RaftNode` is booted ONLY when a
         // `Strong`-tier book / desk / tenant is configured (else zero overhead: a
@@ -649,7 +658,11 @@ impl Edge {
             // Re-reconcile the aggregated-book engines after every admin book CRUD
             // (create/update/delete) so a new/edited/disabled book stands up or tears
             // down its engine immediately (D3).
-            .with_aggregation_hub(Arc::clone(&aggregation_hub)),
+            .with_aggregation_hub(Arc::clone(&aggregation_hub))
+            // Re-prime the shared position store's risk router after every admin
+            // risk-book/graph write (phase 4 reconcile) so routing takes effect on
+            // subsequent fills immediately.
+            .with_position_store(Arc::clone(&store)),
         );
         let auth = AuthServiceServer::from_arc(Arc::clone(&auth_edge));
 

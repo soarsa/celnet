@@ -4604,6 +4604,305 @@ message UpdatePricingGroupPipelineResponse {
 }
 
 // ===========================================================================
+// Risk routing & risk books (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §7, §8.4).
+// When an order/RFQ is accepted and filled, the resulting RISK is routed into a
+// trader-defined **risk book** (portfolio) so limits/greeks/PnL are managed per
+// book. A single firm-wide **decision graph** routes each fill to a book by id.
+// This block mirrors the pricing-group CRUD shape: a hierarchical `RiskBookDesc`
+// registry (admin STRUCTURE) plus a `RiskRoutingGraphDesc` decision graph (an
+// admin risk-management function). Every message mirrors the store types
+// (`config::identity::{RiskBookDef, RiskLimits}` and `celnet_risk_routing::{
+// RiskRoutingGraph, RoutingNode, RouteField, RouteOp, RouteValue}`) field-for-field.
+// A graph node is a proto `oneof` (a condition test OR a terminal book leaf); a
+// condition's right-hand value is itself a `oneof` (num / text / string list /
+// numeric range) — the two nested oneofs are the only structural novelty over the
+// flat pricing-group messages.
+// ===========================================================================
+
+// Which trade field a routing condition matches (mirrors
+// `celnet_risk_routing::RouteField`, same ordinal order). Names are prefixed
+// (proto enum values share the file scope) — the pricing-group `FeatureKind`
+// convention.
+enum RouteFieldEnum {
+  // Instrument identifier / symbol (a String field).
+  ROUTE_FIELD_INSTRUMENT_ID = 0;
+  // Currency or pair (an Enum field).
+  ROUTE_FIELD_CCY = 1;
+  // Product family — vanilla / swap / bond / … (an Enum field).
+  ROUTE_FIELD_PRODUCT = 2;
+  // Trade side — Buy / Sell (an Enum field).
+  ROUTE_FIELD_SIDE = 3;
+  // Absolute base notional of the fill (a Numeric field).
+  ROUTE_FIELD_NOTIONAL = 4;
+  // Tenor / expiry in years (a Numeric field).
+  ROUTE_FIELD_TENOR = 5;
+  // Strike / resolved level (a Numeric field).
+  ROUTE_FIELD_STRIKE = 6;
+  // Counterparty / originating FIX session (an Enum field).
+  ROUTE_FIELD_COUNTERPARTY = 7;
+  // Booking user (an Enum field).
+  ROUTE_FIELD_USER = 8;
+  // Owning desk (an Enum field).
+  ROUTE_FIELD_DESK = 9;
+  // Fill price / premium (a Numeric field).
+  ROUTE_FIELD_PRICE = 10;
+}
+
+// A comparison operator in a routing condition (mirrors
+// `celnet_risk_routing::RouteOp`, same ordinal order). Which ops are valid for a
+// field is pinned by the field's kind (server-validated), so a malformed rule
+// (`side > 5`) is rejected on write.
+enum RouteOpEnum {
+  // Equal (proto3 zero default).
+  ROUTE_OP_EQ = 0;
+  // Not equal.
+  ROUTE_OP_NE = 1;
+  // Strictly greater than (numeric only).
+  ROUTE_OP_GT = 2;
+  // Greater than or equal (numeric only).
+  ROUTE_OP_GE = 3;
+  // Strictly less than (numeric only).
+  ROUTE_OP_LT = 4;
+  // Less than or equal (numeric only).
+  ROUTE_OP_LE = 5;
+  // Substring containment (string only).
+  ROUTE_OP_CONTAINS = 6;
+  // Membership in a `StringList` value.
+  ROUTE_OP_IN = 7;
+  // Inclusive range `lo <= x <= hi` (numeric only), against a `RouteRange` value.
+  ROUTE_OP_BETWEEN = 8;
+}
+
+// A set of string literals, for a `ROUTE_OP_IN` condition value.
+message StringList {
+  // The membership set (order-preserving; matched by equality).
+  repeated string values = 1;
+}
+
+// An inclusive numeric range `[lo, hi]`, for a `ROUTE_OP_BETWEEN` condition value.
+message RouteRange {
+  // Lower bound (inclusive).
+  double lo = 1;
+  // Upper bound (inclusive).
+  double hi = 2;
+}
+
+// A literal on the right-hand side of a routing condition (mirrors
+// `celnet_risk_routing::RouteValue`). Exactly one arm is live; which arm is legal
+// is constrained by the operator (server-validated on write).
+message RouteValueDesc {
+  // The literal value: exactly one arm is set (which arm is legal is operator-constrained).
+  oneof v {
+    // A numeric literal (equality / ordering ops).
+    double num = 1;
+    // A text / enum literal (equality, `CONTAINS`).
+    string text = 2;
+    // A membership set (`ROUTE_OP_IN`).
+    StringList list = 3;
+    // An inclusive numeric range (`ROUTE_OP_BETWEEN`).
+    RouteRange range = 4;
+  }
+}
+
+// A decision node: evaluate `field op value` on the fill; on `true` follow
+// `on_true`, else `on_false` (mirrors `RoutingNode::Condition`).
+message RouteConditionDesc {
+  // The field to test.
+  RouteFieldEnum field = 1;
+  // The comparison operator.
+  RouteOpEnum op = 2;
+  // The literal compared against.
+  RouteValueDesc value = 3;
+  // Successor node id when the condition holds.
+  uint32 on_true = 4;
+  // Successor node id when the condition does not hold.
+  uint32 on_false = 5;
+}
+
+// One node in a `RiskRoutingGraphDesc`, keyed by its `id` (mirrors
+// `RoutingNode`). The `node` oneof is either an internal condition test or a
+// terminal `Book` leaf carrying just its target risk-book id.
+message RoutingNodeDesc {
+  // The node id, unique within the graph (the store keys the node map by it).
+  uint32 id = 1;
+  // The node body: exactly one arm is set — an internal condition or a terminal book leaf.
+  oneof node {
+    // An internal decision node.
+    RouteConditionDesc condition = 2;
+    // A terminal leaf: the fill's risk routes to this risk book (the `Book` arm's
+    // `risk_book_id`).
+    string book_risk_book_id = 3;
+  }
+}
+
+// The firm-wide routing decision graph (mirrors `celnet_risk_routing::RiskRoutingGraph`:
+// a `BTreeMap<NodeId, RoutingNode>` flattened to a `RoutingNodeDesc` list carrying
+// each node's id, entered at `entry`). Well-formedness (acyclic, every path
+// terminates at a known enabled book, type-consistent conditions) is validated
+// server-side on write.
+message RiskRoutingGraphDesc {
+  // The node at which every fill's walk begins.
+  uint32 entry = 1;
+  // All nodes (id-carrying); the store rebuilds the id→node map from them.
+  repeated RoutingNodeDesc nodes = 2;
+}
+
+// Per-book pre-trade limits (mirrors `config::identity::RiskLimits`). Every present
+// cap is finite and non-negative (validated); an absent cap is uncapped.
+message RiskLimitsDesc {
+  // Cap on the book's net (signed-then-absolute) base-currency notional.
+  optional double max_net_notional = 1;
+  // Cap on the book's gross (sum-of-absolute) base-currency notional.
+  optional double max_gross_notional = 2;
+  // Cap on the book's net DV01 magnitude (PV change per +1bp parallel bump).
+  optional double max_dv01 = 3;
+}
+
+// A persisted risk book (mirrors `config::identity::RiskBookDef` field-for-field).
+// Books form a tree via `parent_id`; a top-level book tags an owning `desk_id`.
+message RiskBookDesc {
+  // Stable identifier (the store/API key), minted from `name` on create.
+  string id = 1;
+  // Human-friendly book label (unique across the store, case-insensitive).
+  string name = 2;
+  // The parent book by id, or absent for a top-level book (a tree edge).
+  optional string parent_id = 3;
+  // The owning desk by id, or absent (unowned). Must resolve to a desk when present.
+  optional string desk_id = 4;
+  // Free-text operator description of what the book is for.
+  string description = 5;
+  // Optional per-book pre-trade limits (absent ⇒ the book carries no caps yet).
+  optional RiskLimitsDesc limits = 6;
+  // Whether the book is active. Only enabled books are valid routing targets.
+  bool enabled = 7;
+}
+
+// The editable fields of a risk book (the create/update payload). The server-minted
+// `id` on `RiskBookDesc` is not part of the spec except as a client-suggested slug
+// on create (mirrors `AggregatedBookSpec.id` / `PricingGroupSpec.id`).
+message RiskBookSpec {
+  // On create: a client-suggested id (a slug of `name` is used when empty). On
+  // update: ignored in favour of the request's `id`.
+  string id = 1;
+  // Human-friendly book label (unique across the store, case-insensitive).
+  string name = 2;
+  // The parent book by id, or absent for a top-level book.
+  optional string parent_id = 3;
+  // The owning desk by id, or absent.
+  optional string desk_id = 4;
+  // Free-text operator description.
+  string description = 5;
+  // Optional per-book pre-trade limits.
+  optional RiskLimitsDesc limits = 6;
+  // Whether the book is active.
+  bool enabled = 7;
+}
+
+// List the risk books (admin only — risk-routing config is an admin risk-management
+// function; a finer `risk_manage·fixed_income` capability is a later refinement).
+message ListRiskBooksRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The full risk-book roster.
+message ListRiskBooksResponse {
+  // Every risk book, in creation order.
+  repeated RiskBookDesc books = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Define a new risk book (admin only).
+message CreateRiskBookRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The editable fields of the book to define.
+  RiskBookSpec spec = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The created risk book.
+message CreateRiskBookResponse {
+  // The created book with its server-minted id.
+  RiskBookDesc book = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Replace an existing risk book's definition (admin only). The `id` is immutable
+// identity; the spec's own `id` field is ignored.
+message UpdateRiskBookRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the book to replace (immutable identity).
+  string id = 2;
+  // The new definition.
+  RiskBookSpec spec = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+// The updated risk book.
+message UpdateRiskBookResponse {
+  // The book after the update.
+  RiskBookDesc book = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Delete a risk book (admin only). Refused when the routing graph still targets it.
+message DeleteRiskBookRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the book to delete.
+  string id = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// Delete acknowledgement.
+message DeleteRiskBookResponse {
+  // Whether a book was removed.
+  bool removed = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Read the firm-wide routing graph (admin only). The graph is absent until an
+// operator first defines one.
+message GetRiskRoutingGraphRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The current routing graph, or absent when none is defined yet.
+message GetRiskRoutingGraphResponse {
+  // The firm-wide routing graph (absent ⇒ no graph defined).
+  optional RiskRoutingGraphDesc graph = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Replace the firm-wide routing graph (admin only). The graph is validated against
+// the current risk-book registry before it is committed.
+message UpdateRiskRoutingGraphRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The new routing graph.
+  RiskRoutingGraphDesc graph = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The routing graph after the update.
+message UpdateRiskRoutingGraphResponse {
+  // The committed routing graph.
+  RiskRoutingGraphDesc graph = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// ===========================================================================
 // LP liquidity ingest — the machine-to-machine feed by which an inbound
 // liquidity connection (the `lp-sim` binary today, any FIX/API LP adapter
 // tomorrow) pushes its per-instrument two-way top-of-book INTO the server, where
@@ -5318,6 +5617,16 @@ service AuthService {
   // Callable by any authenticated caller holding the fixed-income quote-respond
   // capability (NOT admin-gated); the group's structure/membership stay admin-owned.
   rpc UpdatePricingGroupPipeline(UpdatePricingGroupPipelineRequest) returns (UpdatePricingGroupPipelineResponse);
+  // Risk routing & risk books (admin only — a risk-management function). List /
+  // create / update / delete the hierarchical risk-book registry, and read / replace
+  // the firm-wide routing graph. Every write pushes the live graph into the position
+  // store's router (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §7).
+  rpc ListRiskBooks(ListRiskBooksRequest) returns (ListRiskBooksResponse);
+  rpc CreateRiskBook(CreateRiskBookRequest) returns (CreateRiskBookResponse);
+  rpc UpdateRiskBook(UpdateRiskBookRequest) returns (UpdateRiskBookResponse);
+  rpc DeleteRiskBook(DeleteRiskBookRequest) returns (DeleteRiskBookResponse);
+  rpc GetRiskRoutingGraph(GetRiskRoutingGraphRequest) returns (GetRiskRoutingGraphResponse);
+  rpc UpdateRiskRoutingGraph(UpdateRiskRoutingGraphRequest) returns (UpdateRiskRoutingGraphResponse);
   // List the instrument reference-data definitions (any authenticated caller —
   // curve-building and pricing resolve against this, so it is NOT admin-only).
   rpc ListInstruments(ListInstrumentsRequest) returns (ListInstrumentsResponse);

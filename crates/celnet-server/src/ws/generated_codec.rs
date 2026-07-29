@@ -126,6 +126,14 @@ use celnet_proto::{
     AggregatedBookSnapshot, AggregatedBookStreamSnapshot, AggregatedBookStreamUpdate,
     AggregatedInstrument, LpContribution, SubscriptionId,
 };
+use celnet_proto::{
+    CreateRiskBookRequest, CreateRiskBookResponse, DeleteRiskBookRequest, DeleteRiskBookResponse,
+    GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse, ListRiskBooksRequest,
+    ListRiskBooksResponse, RiskBookDesc, RiskBookSpec, RiskLimitsDesc, RiskRoutingGraphDesc,
+    RouteConditionDesc, RouteRange, RouteValueDesc, RoutingNodeDesc, StringList,
+    UpdateRiskBookRequest, UpdateRiskBookResponse, UpdateRiskRoutingGraphRequest,
+    UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
+};
 use serde_json::{Map, Value, json};
 
 use super::codec::CodecError;
@@ -5975,6 +5983,205 @@ impl WireBuilder for UpdatePricingGroupPipelineRequest {
     }
 }
 
+// --- risk routing & risk books: DECODE (WireBuilder) -------------------------
+
+impl WireBuilder for RiskLimitsDesc {
+    const MESSAGE: &'static str = "RiskLimitsDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "max_net_notional" => self.max_net_notional = opt_f64(value),
+            "max_gross_notional" => self.max_gross_notional = opt_f64(value),
+            "max_dv01" => self.max_dv01 = opt_f64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RiskBookSpec {
+    const MESSAGE: &'static str = "RiskBookSpec";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "id" => self.id = string_or_empty(value),
+            "name" => self.name = req_string(value, "name")?,
+            "parent_id" => self.parent_id = opt_string(value, "parent_id")?,
+            "desk_id" => self.desk_id = opt_string(value, "desk_id")?,
+            "description" => self.description = string_or_empty(value),
+            "limits" => self.limits = opt_msg::<RiskLimitsDesc>(value, "limits")?,
+            "enabled" => self.enabled = bool_or_false(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for StringList {
+    const MESSAGE: &'static str = "StringList";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "values" => self.values = string_vec(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RouteRange {
+    const MESSAGE: &'static str = "RouteRange";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "lo" => self.lo = f64_or_zero(value),
+            "hi" => self.hi = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RouteValueDesc {
+    const MESSAGE: &'static str = "RouteValueDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        use route_value_desc::V;
+        // `decode` calls `set` only for the single live oneof arm it selected.
+        match field.proto_name {
+            "num" => self.v = Some(V::Num(req_f64(value, "num")?)),
+            "text" => self.v = Some(V::Text(req_string(value, "text")?)),
+            "list" => self.v = Some(V::List(req_msg::<StringList>(value, "list")?)),
+            "range" => self.v = Some(V::Range(req_msg::<RouteRange>(value, "range")?)),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RouteConditionDesc {
+    const MESSAGE: &'static str = "RouteConditionDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "field" => self.field = enum_or_zero(value),
+            "op" => self.op = enum_or_zero(value),
+            "value" => self.value = opt_msg::<RouteValueDesc>(value, "value")?,
+            "on_true" => self.on_true = u32_or_zero(value),
+            "on_false" => self.on_false = u32_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RoutingNodeDesc {
+    const MESSAGE: &'static str = "RoutingNodeDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        use routing_node_desc::Node;
+        match field.proto_name {
+            "id" => self.id = u32_or_zero(value),
+            "condition" => {
+                self.node = Some(Node::Condition(req_msg::<RouteConditionDesc>(
+                    value,
+                    "condition",
+                )?));
+            }
+            "book_risk_book_id" => {
+                self.node = Some(Node::BookRiskBookId(req_string(
+                    value,
+                    "book_risk_book_id",
+                )?));
+            }
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RiskRoutingGraphDesc {
+    const MESSAGE: &'static str = "RiskRoutingGraphDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "entry" => self.entry = u32_or_zero(value),
+            "nodes" => self.nodes = opt_repeated::<RoutingNodeDesc>(value, "node")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListRiskBooksRequest {
+    const MESSAGE: &'static str = "ListRiskBooksRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CreateRiskBookRequest {
+    const MESSAGE: &'static str = "CreateRiskBookRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "spec" => self.spec = Some(req_msg::<RiskBookSpec>(value, "spec")?),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateRiskBookRequest {
+    const MESSAGE: &'static str = "UpdateRiskBookRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "spec" => self.spec = Some(req_msg::<RiskBookSpec>(value, "spec")?),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeleteRiskBookRequest {
+    const MESSAGE: &'static str = "DeleteRiskBookRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "id" => self.id = req_string(value, "id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for GetRiskRoutingGraphRequest {
+    const MESSAGE: &'static str = "GetRiskRoutingGraphRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateRiskRoutingGraphRequest {
+    const MESSAGE: &'static str = "UpdateRiskRoutingGraphRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "graph" => self.graph = Some(req_msg::<RiskRoutingGraphDesc>(value, "graph")?),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for ListInstrumentsRequest {
     const MESSAGE: &'static str = "ListInstrumentsRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -6357,6 +6564,61 @@ pub fn decode_update_pricing_group_pipeline_request(
     o: &Map<String, Value>,
 ) -> DResult<UpdatePricingGroupPipelineRequest> {
     decode(UpdatePricingGroupPipelineRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListRiskBooksRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_risk_books_request(o: &Map<String, Value>) -> DResult<ListRiskBooksRequest> {
+    decode(ListRiskBooksRequest::MESSAGE, o)
+}
+
+/// Decode a [`CreateRiskBookRequest`] envelope — the required `spec` nests the
+/// [`RiskBookSpec`] body (its optional parent/desk ids + the nested [`RiskLimitsDesc`]).
+///
+/// # Errors
+/// A missing `session_token`, a missing/malformed `spec`, as a [`CodecError`].
+pub fn decode_create_risk_book_request(o: &Map<String, Value>) -> DResult<CreateRiskBookRequest> {
+    decode(CreateRiskBookRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateRiskBookRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`id`, a missing/malformed `spec`, as a [`CodecError`].
+pub fn decode_update_risk_book_request(o: &Map<String, Value>) -> DResult<UpdateRiskBookRequest> {
+    decode(UpdateRiskBookRequest::MESSAGE, o)
+}
+
+/// Decode a [`DeleteRiskBookRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`id`, as a [`CodecError`].
+pub fn decode_delete_risk_book_request(o: &Map<String, Value>) -> DResult<DeleteRiskBookRequest> {
+    decode(DeleteRiskBookRequest::MESSAGE, o)
+}
+
+/// Decode a [`GetRiskRoutingGraphRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_get_risk_routing_graph_request(
+    o: &Map<String, Value>,
+) -> DResult<GetRiskRoutingGraphRequest> {
+    decode(GetRiskRoutingGraphRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateRiskRoutingGraphRequest`] envelope — the required `graph` nests the
+/// [`RiskRoutingGraphDesc`] body (its `RoutingNodeDesc` array, each carrying the
+/// condition/book `node` oneof and the nested `RouteValueDesc` value oneof).
+///
+/// # Errors
+/// A missing `session_token`, a missing/malformed `graph`, as a [`CodecError`].
+pub fn decode_update_risk_routing_graph_request(
+    o: &Map<String, Value>,
+) -> DResult<UpdateRiskRoutingGraphRequest> {
+    decode(UpdateRiskRoutingGraphRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListInstrumentsRequest`] envelope — fully generic.
@@ -7165,6 +7427,173 @@ impl WireAdapter for UpdatePricingGroupPipelineResponse {
     }
 }
 
+// --- risk routing & risk books: ENCODE (WireAdapter) -------------------------
+
+impl WireAdapter for RiskLimitsDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            // proto3 `optional` scalars: absent ⇒ omitted (the hand codec omits them too).
+            "max_net_notional" => self.max_net_notional.map(WireVal::F64),
+            "max_gross_notional" => self.max_gross_notional.map(WireVal::F64),
+            "max_dv01" => self.max_dv01.map(WireVal::F64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RiskBookDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "id" => Some(WireVal::Str(&self.id)),
+            "name" => Some(WireVal::Str(&self.name)),
+            // proto3 `optional string`: absent ⇒ omitted (the hand codec omits them too).
+            "parent_id" => self.parent_id.as_deref().map(WireVal::Str),
+            "desk_id" => self.desk_id.as_deref().map(WireVal::Str),
+            "description" => Some(WireVal::Str(&self.description)),
+            // Absent singular message ⇒ JSON null (the generic singular-message rule; the
+            // hand codec's `.map(..)` yields null too).
+            "limits" => self.limits.as_ref().map(|l| WireVal::Msg(l)),
+            "enabled" => Some(WireVal::Bool(self.enabled)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for StringList {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "values" => Some(WireVal::RepeatedStr(&self.values)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RouteRange {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "lo" => Some(WireVal::F64(self.lo)),
+            "hi" => Some(WireVal::F64(self.hi)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RouteValueDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        use route_value_desc::V;
+        match (proto_name, &self.v) {
+            ("num", Some(V::Num(x))) => Some(WireVal::F64(*x)),
+            ("text", Some(V::Text(s))) => Some(WireVal::Str(s)),
+            ("list", Some(V::List(l))) => Some(WireVal::Msg(l as &dyn WireAdapter)),
+            ("range", Some(V::Range(r))) => Some(WireVal::Msg(r as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RouteConditionDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "field" => Some(WireVal::Enum(self.field)),
+            "op" => Some(WireVal::Enum(self.op)),
+            // Absent singular message ⇒ JSON null (the hand codec's `.map(..)` yields null).
+            "value" => self
+                .value
+                .as_ref()
+                .map(|v| WireVal::Msg(v as &dyn WireAdapter)),
+            "on_true" => Some(WireVal::U64(u64::from(self.on_true))),
+            "on_false" => Some(WireVal::U64(u64::from(self.on_false))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RoutingNodeDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        use routing_node_desc::Node;
+        match (proto_name, &self.node) {
+            ("id", _) => Some(WireVal::U64(u64::from(self.id))),
+            ("condition", Some(Node::Condition(c))) => Some(WireVal::Msg(c as &dyn WireAdapter)),
+            ("book_risk_book_id", Some(Node::BookRiskBookId(s))) => Some(WireVal::Str(s)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RiskRoutingGraphDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "entry" => Some(WireVal::U64(u64::from(self.entry))),
+            "nodes" => Some(WireVal::RepeatedMsg(
+                self.nodes.iter().map(|n| n as &dyn WireAdapter).collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListRiskBooksResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "books" => Some(WireVal::RepeatedMsg(
+                self.books.iter().map(|b| b as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CreateRiskBookResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book" => self.book.as_ref().map(|b| WireVal::Msg(b)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateRiskBookResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book" => self.book.as_ref().map(|b| WireVal::Msg(b)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeleteRiskBookResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "removed" => Some(WireVal::Bool(self.removed)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for GetRiskRoutingGraphResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "graph" => self.graph.as_ref().map(|g| WireVal::Msg(g)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateRiskRoutingGraphResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "graph" => self.graph.as_ref().map(|g| WireVal::Msg(g)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for ListInstrumentsResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -7414,6 +7843,42 @@ pub fn encode_update_pricing_group_pipeline_response(
     r: &UpdatePricingGroupPipelineResponse,
 ) -> Value {
     encode("UpdatePricingGroupPipelineResponse", r)
+}
+
+/// Encode a [`ListRiskBooksResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_risk_books_response(r: &ListRiskBooksResponse) -> Value {
+    encode("ListRiskBooksResponse", r)
+}
+
+/// Encode a [`CreateRiskBookResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_create_risk_book_response(r: &CreateRiskBookResponse) -> Value {
+    encode("CreateRiskBookResponse", r)
+}
+
+/// Encode an [`UpdateRiskBookResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_risk_book_response(r: &UpdateRiskBookResponse) -> Value {
+    encode("UpdateRiskBookResponse", r)
+}
+
+/// Encode a [`DeleteRiskBookResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_delete_risk_book_response(r: &DeleteRiskBookResponse) -> Value {
+    encode("DeleteRiskBookResponse", r)
+}
+
+/// Encode a [`GetRiskRoutingGraphResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_get_risk_routing_graph_response(r: &GetRiskRoutingGraphResponse) -> Value {
+    encode("GetRiskRoutingGraphResponse", r)
+}
+
+/// Encode an [`UpdateRiskRoutingGraphResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_risk_routing_graph_response(r: &UpdateRiskRoutingGraphResponse) -> Value {
+    encode("UpdateRiskRoutingGraphResponse", r)
 }
 
 /// Encode a [`ListInstrumentsResponse`] to its WS JSON — descriptor-driven.
