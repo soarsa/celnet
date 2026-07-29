@@ -14,6 +14,7 @@ const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 
 import { RiskRoutingWorkspace } from "../src/workspaces/riskrouting/RiskRoutingWorkspace";
+import { encodeDrag } from "../src/workspaces/riskrouting/FieldPalette";
 
 function book(id: string, name: string): RiskBook {
   return { id, name, parentId: null, deskId: null, description: "", limits: null, enabled: true };
@@ -82,6 +83,21 @@ describe("RiskRoutingWorkspace", () => {
     // Field palette chips are always present (draggable sources).
     expect(screen.getByTestId("palette-field-ccy")).toBeInTheDocument();
     expect(screen.getByTestId("palette-book-chip")).toBeInTheDocument();
+  });
+
+  it("creates the FIRST node by dropping a field onto the empty canvas", async () => {
+    state.app = makeApp({ graph: null, books: [book("DEFAULT", "Default")] });
+    render(<RiskRoutingWorkspace />);
+
+    const empty = await screen.findByTestId("routing-canvas-empty");
+    const data = encodeDrag({ kind: "field", field: "ccy" });
+    const dataTransfer = { getData: (_t: string) => data, dropEffect: "copy" };
+    fireEvent.dragOver(empty, { dataTransfer });
+    fireEvent.drop(empty, { dataTransfer });
+
+    // The empty prompt is replaced by the canvas with the newly-created node.
+    expect(screen.queryByTestId("routing-canvas-empty")).toBeNull();
+    expect(await screen.findByTestId("node-0")).toBeInTheDocument();
   });
 
   it("loads a valid graph as clean (Save disabled) and reports it valid", async () => {

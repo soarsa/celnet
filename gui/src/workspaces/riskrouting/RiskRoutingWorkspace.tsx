@@ -19,7 +19,7 @@ import type {
   RouteValue,
 } from "../../data/contract";
 import { blankFill, traceGraph, validateGraph, type SampleFill } from "../../lib/routeTrace";
-import { FieldPalette, type DragPayload } from "./FieldPalette";
+import { FieldPalette, decodeDrag, type DragPayload } from "./FieldPalette";
 import {
   addBook,
   addCondition,
@@ -302,7 +302,22 @@ export function RiskRoutingWorkspace(): React.ReactElement {
 
         <div className={styles.canvasCol}>
           {graph.nodes.length === 0 ? (
-            <div className={styles.canvasEmpty}>
+            // The empty state is ALSO a drop target — otherwise the very first node
+            // could never be created (there is no RoutingCanvas surface to drop onto
+            // until at least one node exists).
+            <div
+              className={styles.canvasEmpty}
+              data-testid="routing-canvas-empty"
+              onDragOver={(e) => {
+                if (!readOnly) e.preventDefault();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (readOnly) return;
+                const payload = decodeDrag(e.dataTransfer.getData("text/plain"));
+                if (payload) onDropPayload(payload, { x: 120, y: 100 });
+              }}
+            >
               <p>The routing graph is empty.</p>
               <p className={styles.canvasEmptyHint}>
                 {readOnly
