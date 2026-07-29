@@ -40,6 +40,8 @@ import type {
   AggregatedBookSpec,
   AggregatedBookStreamSnapshot,
   AggregatedBookStreamUpdate,
+  RiskBookRiskStreamSnapshot,
+  RiskBookRiskStreamUpdate,
   InstrumentDef,
   InstrumentInput,
   BuildCurveRequest,
@@ -141,7 +143,9 @@ export type StreamEvent =
   | { kind: "ratesSnapshot"; snapshot: RatesStreamSnapshot }
   | { kind: "ratesUpdate"; update: RatesStreamUpdate }
   | { kind: "aggregatedBookSnapshot"; snapshot: AggregatedBookStreamSnapshot }
-  | { kind: "aggregatedBookUpdate"; update: AggregatedBookStreamUpdate };
+  | { kind: "aggregatedBookUpdate"; update: AggregatedBookStreamUpdate }
+  | { kind: "riskBookRiskSnapshot"; snapshot: RiskBookRiskStreamSnapshot }
+  | { kind: "riskBookRiskUpdate"; update: RiskBookRiskStreamUpdate };
 
 /** Parameters for opening a market-series subscription on the stream session. */
 export interface MarketSeriesParams {
@@ -197,6 +201,17 @@ export interface StreamSession {
   subscribeAggregatedBook(bookId: string, throttleNanos?: bigint): bigint;
   /** Tear down an aggregated-book composite line (the SAME id space as the FX lines). */
   unsubscribeAggregatedBook(subscriptionId: bigint): void;
+  /**
+   * Open the live risk-book-risk push line on the SAME multiplexed session — the
+   * per-book rolled-up risk ({@link RiskBookRisk}) rows the risk dashboard renders,
+   * delivered as a baseline `riskBookRiskSnapshot` (sequence 1) then
+   * `riskBookRiskUpdate` frames on every risk change (routed fill / admin book
+   * edit), each gated by a monotonic `version`. Returns its client subscription id.
+   * This is a READ line (a risk-management view); there is no click-to-trade token.
+   */
+  subscribeRiskBookRisk(): bigint;
+  /** Tear down the live risk push line (the SAME id space / generic unsubscribe). */
+  unsubscribeRiskBookRisk(subscriptionId: bigint): void;
   /** Subscribe to server→client events; returns an unsubscribe disposer. */
   onEvent(listener: (event: StreamEvent) => void): () => void;
   /** Close the whole session. */
@@ -692,6 +707,17 @@ export interface CelnetTransport {
 
   /** AuthService.ListRiskBookRisk (admin) — per-book rolled-up risk (net/gross, greeks, limit utilization). */
   listRiskBookRisk(): Promise<RiskBookRisk[]>;
+
+  /**
+   * Subscribe to the LIVE risk-book-risk push over the multiplexed RFS session:
+   * `onSnapshot` fires with the full book set + its monotonic `version` on the
+   * baseline and on every subsequent risk change. Returns an unsubscribe fn that
+   * tears the line down. Optional so a consumer can gracefully fall back to the
+   * one-shot {@link listRiskBookRisk} poll on a transport that lacks the push.
+   */
+  subscribeRiskBookRisk?(
+    onSnapshot: (books: RiskBookRisk[], version: number) => void,
+  ): () => void;
 
   // --- instrument reference-data registry ------------------------------------
 

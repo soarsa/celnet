@@ -502,6 +502,8 @@ class MockStreamSession implements StreamSession {
   private readonly ratesSubs = new Map<bigint, LiveRatesSubscription>();
   /** Live aggregated-book composite lines (same id space as the other streams). */
   private readonly aggBooks = new Map<bigint, LiveAggBook>();
+  /** Live risk-book-risk push lines (same id space; baseline-only offline). */
+  private readonly riskSubs = new Set<bigint>();
   private readonly listeners = new Set<(e: StreamEvent) => void>();
   private nextSubId = 1n;
   private nextToken = 1n;
@@ -517,15 +519,22 @@ class MockStreamSession implements StreamSession {
    * then falls back to the LP-SIM fleet over the full Treasury universe).
    */
   private readonly resolveAggBook: (id: string) => AggregatedBookDesc | undefined;
+  /**
+   * Snapshot the current enabled-book risk set (the transport's synthesized roll-up),
+   * so the offline risk push baselines from the SAME rows `listRiskBookRisk` returns.
+   */
+  private readonly snapshotRisk: () => RiskBookRisk[];
 
   constructor(
     seed: bigint,
     tickMs: number,
     resolveAggBook: (id: string) => AggregatedBookDesc | undefined = () => undefined,
+    snapshotRisk: () => RiskBookRisk[] = () => [],
   ) {
     this.seed = seed;
     this.tickMs = tickMs;
     this.resolveAggBook = resolveAggBook;
+    this.snapshotRisk = snapshotRisk;
   }
 
   private emit(event: StreamEvent): void {
@@ -772,6 +781,31 @@ class MockStreamSession implements StreamSession {
 
   unsubscribeAggregatedBook(subscriptionId: bigint): void {
     this.aggBooks.delete(subscriptionId);
+    this.stopIfIdle();
+  }
+
+  subscribeRiskBookRisk(): bigint {
+    const id = this.nextSubId;
+    this.nextSubId += 1n;
+    this.riskSubs.add(id);
+    // Immediate baseline snapshot (sequence 1, version 1) from the seeded synthetic
+    // risk — exactly the rows `listRiskBookRisk` returns. The offline mirror has no
+    // live position store, so there are no subsequent updates (the baseline stands).
+    this.emit({
+      kind: "riskBookRiskSnapshot",
+      snapshot: {
+        subscriptionId: id,
+        sequence: 1n,
+        books: this.snapshotRisk(),
+        version: 1,
+        epochNanos: nowNanos(),
+      },
+    });
+    return id;
+  }
+
+  unsubscribeRiskBookRisk(subscriptionId: bigint): void {
+    this.riskSubs.delete(subscriptionId);
     this.stopIfIdle();
   }
 
@@ -1805,10 +1839,40 @@ export class MockTransport implements CelnetTransport {
 
   openStreamSession(): StreamSession {
     // Pass a live resolver so an offline composite reflects the admin-created
-    // book's actual members + instrument scope (the store the CRUD methods mutate).
-    return new MockStreamSession(this.seed, this.tickMs, (id) =>
-      this.mockAggregatedBooks.find((b) => b.id === id),
+    // book's actual members + instrument scope (the store the CRUD methods mutate),
+    // and a risk snapshotter so the live risk push baselines from the SAME
+    // synthesized rows `listRiskBookRisk` returns.
+    return new MockStreamSession(
+      this.seed,
+      this.tickMs,
+      (id) => this.mockAggregatedBooks.find((b) => b.id === id),
+      () => this.mockRiskBooks.filter((b) => b.enabled).map((b) => synthRiskBookRisk(b)),
     );
+  }
+
+  subscribeRiskBookRisk(
+    onSnapshot: (books: RiskBookRisk[], version: number) => void,
+  ): () => void {
+    // Mirror the WS transport: open a session, route the baseline snapshot (offline
+    // has no live updates) to the callback, tear down on unsubscribe.
+    const session = this.openStreamSession();
+    let subId: bigint | null = null;
+    const dispose = session.onEvent((event) => {
+      if (event.kind === "riskBookRiskSnapshot") {
+        if (subId !== null && event.snapshot.subscriptionId !== subId) return;
+        onSnapshot(event.snapshot.books, event.snapshot.version);
+      } else if (event.kind === "riskBookRiskUpdate") {
+        if (subId !== null && event.update.subscriptionId !== subId) return;
+        onSnapshot(event.update.books, event.update.version);
+      }
+    });
+    subId = session.subscribeRiskBookRisk();
+    return () => {
+      dispose();
+      if (subId !== null) session.unsubscribeRiskBookRisk(subId);
+      session.close();
+      subId = null;
+    };
   }
 
   async getSmile(

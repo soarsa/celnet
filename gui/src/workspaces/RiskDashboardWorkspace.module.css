@@ -31,6 +31,49 @@
   font-size: var(--type-headline);
   font-weight: var(--weight-header);
   color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Subtle "live" badge shown while the risk rows arrive over the push stream. */
+.liveTag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px var(--space-2);
+  border-radius: var(--r-sm, 6px);
+  background: var(--bg-accent-soft);
+  color: var(--text-accent, var(--text-secondary));
+  font-family: var(--font-ui);
+  font-size: var(--type-micro);
+  font-weight: var(--weight-emphasis);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.liveDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--rag-green, #16a34a);
+  animation: livePulse 1.8s ease-in-out infinite;
+}
+
+@keyframes livePulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liveDot {
+    animation: none;
+  }
 }
 
 .note {

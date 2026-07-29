@@ -3195,6 +3195,44 @@ export interface RiskBookRisk {
   limits: RiskLimitUtilization[];
 }
 
+/**
+ * The baseline live risk push over the multiplexed RFS session (`celnet.wire
+ * .RiskBookRiskSnapshot`): the SAME rows {@link RiskBookRisk} the poll returns,
+ * carried on a subscription instead of a request. `version` is monotonic — a
+ * consumer applies a frame only when its `version` exceeds the last applied.
+ */
+export interface RiskBookRiskStreamSnapshot {
+  /** The client-assigned subscription id this snapshot answers. */
+  subscriptionId: bigint;
+  /** The monotonic per-subscription sequence number of this snapshot (1). */
+  sequence: bigint;
+  /** Every enabled book's rolled-up risk at this snapshot. */
+  books: RiskBookRisk[];
+  /** The monotonic risk-state version (advances on every routed fill / book edit). */
+  version: number;
+  /** Echo of the opening subscribe correlation id, when one was supplied. */
+  correlationId?: bigint;
+  /** Snapshot time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+}
+
+/**
+ * A sequenced live risk update (`celnet.wire.RiskBookRiskUpdate`): the full
+ * re-rolled book set at the next `version` (a routed fill or an admin book edit).
+ */
+export interface RiskBookRiskStreamUpdate {
+  /** The subscription this update advances. */
+  subscriptionId: bigint;
+  /** The monotonic per-subscription sequence number (snapshot seq + n). */
+  sequence: bigint;
+  /** Every enabled book's re-rolled risk at this version. */
+  books: RiskBookRisk[];
+  /** The monotonic risk-state version (strictly greater than the prior frame's). */
+  version: number;
+  /** Update time, nanoseconds since the Unix epoch (UTC). */
+  epochNanos: bigint;
+}
+
 // ---------------------------------------------------------------------------
 // XVA — counterparty valuation adjustments (`PricingService.PriceXva`).
 //

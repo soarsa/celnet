@@ -3,6 +3,7 @@
  * `useApp` mocked (no server): the heat overview lists every book, selecting one
  * shows its greeks + RAG limit strip, and a `null` dv01/pnl renders as "—" (never 0).
  */
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
@@ -43,6 +44,36 @@ function makeApp(opts: { risk: RiskBookRisk[]; books: RiskBook[] }) {
     },
     auth: { user: { id: "u", email: "admin@celnet.com" }, isAdmin: true, can: () => true },
     setSignInOpen: vi.fn(),
+  };
+}
+
+/**
+ * A streaming app whose transport implements `subscribeRiskBookRisk` by capturing
+ * the callback, so a test can push snapshot / update frames on demand. The one-shot
+ * `listRiskBookRisk` throws — proving the workspace renders purely from the stream.
+ */
+function makeStreamingApp(books: RiskBook[]) {
+  let onSnapshot: ((rows: RiskBookRisk[], version: number) => void) | null = null;
+  const teardown = vi.fn();
+  return {
+    push: (rows: RiskBookRisk[], version: number) => {
+      if (onSnapshot) onSnapshot(rows, version);
+    },
+    teardown,
+    app: {
+      transport: {
+        listRiskBooks: vi.fn(async () => books),
+        listRiskBookRisk: vi.fn(async () => {
+          throw new Error("poll must not be used when the stream is available");
+        }),
+        subscribeRiskBookRisk: (cb: (rows: RiskBookRisk[], version: number) => void) => {
+          onSnapshot = cb;
+          return teardown;
+        },
+      },
+      auth: { user: { id: "u", email: "admin@celnet.com" }, isAdmin: true, can: () => true },
+      setSignInOpen: vi.fn(),
+    },
   };
 }
 
@@ -90,6 +121,60 @@ describe("RiskDashboardWorkspace", () => {
     const overview = await screen.findByRole("table");
     fireEvent.click(within(overview).getByText("FX APAC"));
     expect(await screen.findByRole("region", { name: /risk detail for FX APAC/i })).toBeInTheDocument();
+  });
+
+  it("renders the table from a pushed live snapshot and updates on a second push", async () => {
+    const s = makeStreamingApp([bookOf("fx-emea", "FX EMEA"), bookOf("fx-apac", "FX APAC")]);
+    state.app = s.app;
+    render(<RiskDashboardWorkspace />);
+
+    // Baseline push (version 1): the overview renders purely from the streamed frame.
+    await act(async () => {
+      s.push([riskRow(), riskRow({ bookId: "fx-apac", name: "FX APAC" })], 1);
+    });
+    const overview = await screen.findByRole("table");
+    expect(within(overview).getByText("FX EMEA")).toBeInTheDocument();
+    expect(within(overview).getByText("FX APAC")).toBeInTheDocument();
+    // A subtle "live" indicator is shown while streaming.
+    expect(screen.getByRole("status", { name: /live risk stream/i })).toBeInTheDocument();
+
+    // A second push (version 2) replaces the set — a routed fill dropped FX APAC.
+    await act(async () => {
+      s.push([riskRow({ bookId: "fx-only", name: "FX ONLY" })], 2);
+    });
+    const updated = await screen.findByRole("table");
+    expect(within(updated).getByText("FX ONLY")).toBeInTheDocument();
+    expect(within(updated).queryByText("FX APAC")).not.toBeInTheDocument();
+  });
+
+  it("ignores a pushed frame whose version regressed (stale delivery)", async () => {
+    const s = makeStreamingApp([bookOf("fx-emea", "FX EMEA")]);
+    state.app = s.app;
+    render(<RiskDashboardWorkspace />);
+
+    await act(async () => {
+      s.push([riskRow({ bookId: "fx-new", name: "FX NEW" })], 5);
+    });
+    // An older-version frame must NOT overwrite the newer applied state.
+    await act(async () => {
+      s.push([riskRow({ bookId: "fx-stale", name: "FX STALE" })], 3);
+    });
+    const overview = await screen.findByRole("table");
+    expect(within(overview).getByText("FX NEW")).toBeInTheDocument();
+    expect(within(overview).queryByText("FX STALE")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the one-shot poll when the transport lacks the push", async () => {
+    // The plain makeApp transport has no `subscribeRiskBookRisk` ⇒ the poll path runs.
+    state.app = makeApp({
+      risk: [riskRow()],
+      books: [bookOf("fx-emea", "FX EMEA")],
+    });
+    render(<RiskDashboardWorkspace />);
+    const overview = await screen.findByRole("table");
+    expect(within(overview).getByText("FX EMEA")).toBeInTheDocument();
+    // No live badge on the fallback poll path.
+    expect(screen.queryByRole("status", { name: /live risk stream/i })).not.toBeInTheDocument();
   });
 
   it("shows the limit-utilization strip with a RAG meter for the selected book", async () => {

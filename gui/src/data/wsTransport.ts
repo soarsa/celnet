@@ -241,6 +241,9 @@ import {
   updateRiskRoutingGraphResponseFromWire,
   listRiskBookRiskRequestToWire,
   riskBookRiskResponseFromWire,
+  riskBookRiskSubscribeToWire,
+  riskBookRiskStreamSnapshotFromWire,
+  riskBookRiskStreamUpdateFromWire,
   aggregatedBookSubscribeToWire,
   aggregatedBookSnapshotFromWire,
   aggregatedBookUpdateFromWire,
@@ -738,6 +741,20 @@ interface WsAggSub {
 }
 
 /**
+ * A live risk-book-risk push line — the per-book rolled-up risk set, delivered as
+ * a baseline snapshot then version-gated updates. It carries no per-line key (the
+ * server pushes the whole firm's enabled books); its last good sequence detects
+ * gaps (a snapshot re-baselines whole) and `lastVersion` drops stale frames.
+ */
+interface WsRiskSub {
+  readonly id: bigint;
+  /** The last in-sequence number successfully applied (0 until first snapshot). */
+  lastSequence: bigint;
+  /** True once the baseline snapshot has been seen. */
+  baselined: boolean;
+}
+
+/**
  * The live multiplexed RFS session over the WS connection. Implements the same
  * `StreamSession` seam the mock does, so workspaces and the streaming store are
  * transport-agnostic. It assigns each subscription a client `SubscriptionId`
@@ -768,6 +785,11 @@ class WsStreamSession implements StreamSession {
    * composite snapshot/update frames route by id.
    */
   private readonly aggBookSubs = new Map<bigint, WsAggSub>();
+  /**
+   * Live risk-book-risk push lines, keyed by the SAME `SubscriptionId` space. Held
+   * so a reconnect re-opens each line and the risk snapshot/update frames route by id.
+   */
+  private readonly riskSubs = new Map<bigint, WsRiskSub>();
   private readonly listeners = new Set<(e: StreamEvent) => void>();
   private nextSubId = 1n;
   private closed = false;
@@ -935,6 +957,31 @@ class WsStreamSession implements StreamSession {
     });
   }
 
+  subscribeRiskBookRisk(): bigint {
+    const id = this.nextSubId++;
+    this.riskSubs.set(id, { id, lastSequence: 0n, baselined: false });
+    this.sendRiskBookRiskSubscribe(id);
+    return id;
+  }
+
+  private sendRiskBookRiskSubscribe(id: bigint): void {
+    this.conn.send({
+      type: "risk_book_risk_subscribe",
+      ...riskBookRiskSubscribeToWire({ subscriptionId: id }),
+    });
+  }
+
+  unsubscribeRiskBookRisk(subscriptionId: bigint): void {
+    if (!this.riskSubs.delete(subscriptionId)) return;
+    // The risk push line tears down through the generic `unsubscribe` verb (like
+    // the rates line): the server removes it from the risk subscription map
+    // (crates/celnet-server/src/ws/mod.rs), so one verb suffices.
+    this.conn.send({
+      type: "unsubscribe",
+      subscription: { value: Number(subscriptionId) },
+    });
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -956,10 +1003,14 @@ class WsStreamSession implements StreamSession {
         subscription: { value: Number(id) },
       });
     }
+    for (const id of this.riskSubs.keys()) {
+      this.conn.send({ type: "unsubscribe", subscription: { value: Number(id) } });
+    }
     this.subs.clear();
     this.series.clear();
     this.ratesSubs.clear();
     this.aggBookSubs.clear();
+    this.riskSubs.clear();
     this.listeners.clear();
     this.conn.bindSession(null);
   }
@@ -1002,6 +1053,13 @@ class WsStreamSession implements StreamSession {
     for (const sub of this.aggBookSubs.values()) {
       sub.baselined = false;
       this.sendAggregatedBookSubscribe(sub.id, sub.bookId, sub.throttleNanos);
+    }
+    // Re-open every live risk push line — the server re-baselines each with a fresh
+    // `risk_book_risk_snapshot` (the line is conflatable and re-rolls the whole book
+    // set from live positions, so no client-side sequence resync).
+    for (const sub of this.riskSubs.values()) {
+      sub.baselined = false;
+      this.sendRiskBookRiskSubscribe(sub.id);
     }
   }
 
@@ -1136,6 +1194,27 @@ class WsStreamSession implements StreamSession {
         if (!sub || !sub.baselined) break;
         if (update.sequence > sub.lastSequence) sub.lastSequence = update.sequence;
         this.emit({ kind: "aggregatedBookUpdate", update });
+        break;
+      }
+      case "risk_book_risk_snapshot": {
+        const snapshot = riskBookRiskStreamSnapshotFromWire(frame);
+        const sub = this.riskSubs.get(snapshot.subscriptionId);
+        if (!sub) break;
+        // The baseline is authoritative: accept its sequence whole.
+        sub.lastSequence = snapshot.sequence;
+        sub.baselined = true;
+        this.emit({ kind: "riskBookRiskSnapshot", snapshot });
+        break;
+      }
+      case "risk_book_risk_update": {
+        const update = riskBookRiskStreamUpdateFromWire(frame);
+        const sub = this.riskSubs.get(update.subscriptionId);
+        // A risk push line is conflatable and re-rolls the whole book set each
+        // change, so a gap needs no client resync — apply the latest (the consumer
+        // additionally drops any frame whose `version` regressed).
+        if (!sub || !sub.baselined) break;
+        if (update.sequence > sub.lastSequence) sub.lastSequence = update.sequence;
+        this.emit({ kind: "riskBookRiskUpdate", update });
         break;
       }
       default:
@@ -1998,6 +2077,32 @@ export class WsTransport implements CelnetTransport {
       "risk_book_risk",
     );
     return riskBookRiskResponseFromWire(reply);
+  }
+
+  subscribeRiskBookRisk(
+    onSnapshot: (books: RiskBookRisk[], version: number) => void,
+  ): () => void {
+    // Open a dedicated multiplexed session for the live risk line (mirrors the
+    // aggregated-book store): subscribe, route the baseline snapshot + version-gated
+    // updates to the callback, and tear the whole line down on unsubscribe.
+    const session = this.openStreamSession();
+    let subId: bigint | null = null;
+    const dispose = session.onEvent((event) => {
+      if (event.kind === "riskBookRiskSnapshot") {
+        if (subId !== null && event.snapshot.subscriptionId !== subId) return;
+        onSnapshot(event.snapshot.books, event.snapshot.version);
+      } else if (event.kind === "riskBookRiskUpdate") {
+        if (subId !== null && event.update.subscriptionId !== subId) return;
+        onSnapshot(event.update.books, event.update.version);
+      }
+    });
+    subId = session.subscribeRiskBookRisk();
+    return () => {
+      dispose();
+      if (subId !== null) session.unsubscribeRiskBookRisk(subId);
+      session.close();
+      subId = null;
+    };
   }
 
   // --- instrument reference-data registry (instrument admin) -----------------

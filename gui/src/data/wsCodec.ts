@@ -99,6 +99,8 @@ import type {
   RiskBook,
   RiskLimits,
   RiskBookRisk,
+  RiskBookRiskStreamSnapshot,
+  RiskBookRiskStreamUpdate,
   RiskLimitUtilization,
   RagBand,
   RouteField,
@@ -4143,6 +4145,64 @@ export function listRiskBookRiskRequestToWire(): WireObject {
 /** Decode the `risk_book_risk` roster reply (`{ books: [...] }`). */
 export function riskBookRiskResponseFromWire(o: WireObject): RiskBookRisk[] {
   return array(o, "books").map(riskBookRiskDescFromWire);
+}
+
+// --- live risk push: subscribe + snapshot/update -----------------------------
+//
+// The live risk line is opened on the SAME multiplexed RFS session as the FX /
+// rates / composite lines with a `risk_book_risk_subscribe` control frame keyed
+// by the shared `SubscriptionId` space, and torn down with the generic
+// `unsubscribe` verb. The server replies with a baseline `risk_book_risk_snapshot`
+// (sequence 1) then `risk_book_risk_update` frames on every risk change (routed
+// fill / admin book edit) — each carrying the FULL `RiskBookRiskDesc[]` a consumer
+// applies whole (conflatable), gated by a monotonic `version`. Byte-compatible
+// with the server's `risk_book_risk_subscribe_from_json` /
+// `risk_book_risk_{snapshot,update}_to_json`.
+
+/**
+ * Encode a `risk_book_risk_subscribe` control-frame body (the `type` is added by
+ * the caller / connection). `correlation_id` is presence-tracked (omitted ⇒ none).
+ */
+export function riskBookRiskSubscribeToWire(args: {
+  subscriptionId: bigint;
+  correlationId?: bigint;
+}): WireObject {
+  const body: WireObject = {
+    subscription: { value: Number(args.subscriptionId) },
+  };
+  if (args.correlationId !== undefined) {
+    body["correlation_id"] = Number(args.correlationId);
+  }
+  return body;
+}
+
+/** Decode a `risk_book_risk_snapshot` frame into `{ books, version }` (+ framing). */
+export function riskBookRiskStreamSnapshotFromWire(
+  o: WireObject,
+): RiskBookRiskStreamSnapshot {
+  const snap: RiskBookRiskStreamSnapshot = {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    books: array(o, "books").map(riskBookRiskDescFromWire),
+    version: num(o, "version"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) snap.correlationId = corr;
+  return snap;
+}
+
+/** Decode a `risk_book_risk_update` frame into `{ books, version }` (+ framing). */
+export function riskBookRiskStreamUpdateFromWire(
+  o: WireObject,
+): RiskBookRiskStreamUpdate {
+  return {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    books: array(o, "books").map(riskBookRiskDescFromWire),
+    version: num(o, "version"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
 }
 
 // --- live composite: subscribe + snapshot/update -----------------------------

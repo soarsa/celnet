@@ -77,34 +77,74 @@ export function RiskDashboardWorkspace(): React.ReactElement {
   const [books, setBooks] = useState<RiskBook[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [live, setLive] = useState(false);
 
-  const reload = useCallback(async (): Promise<void> => {
-    const [r, b] = await Promise.all([
-      app.transport.listRiskBookRisk(),
-      app.transport.listRiskBooks(),
-    ]);
-    setRisk(r);
-    setBooks(b);
+  // Apply a fresh risk-book set (from a pushed frame or the fallback poll): keep the
+  // current selection if it still exists, else fall to the first book.
+  const applyRisk = useCallback((rows: RiskBookRisk[]): void => {
+    setRisk(rows);
     setLoadError(null);
-    setSelectedId((prev) => (prev && r.some((x) => x.bookId === prev) ? prev : (r[0]?.bookId ?? null)));
-  }, [app.transport]);
+    setSelectedId((prev) =>
+      prev && rows.some((x) => x.bookId === prev) ? prev : (rows[0]?.bookId ?? null),
+    );
+  }, []);
 
   useEffect(() => {
     if (!signedIn) {
       setRisk([]);
       setBooks([]);
       setSelectedId(null);
+      setLive(false);
       return;
     }
     let cancelled = false;
-    void reload().catch((e: unknown) => {
-      if (cancelled) return;
-      setLoadError(e instanceof Error ? e.message : "failed to load risk");
-    });
+
+    // The book roster (names / desk / tree order) is one-shot; only the risk rows
+    // stream. Load it alongside the subscription.
+    void app.transport
+      .listRiskBooks()
+      .then((b) => {
+        if (!cancelled) setBooks(b);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : "failed to load books");
+      });
+
+    // Prefer the LIVE push: subscribe to `RiskBookRisk` frames over the multiplexed
+    // RFS session, applying only a frame whose `version` is not older than the last.
+    const subscribe = app.transport.subscribeRiskBookRisk;
+    if (typeof subscribe === "function") {
+      try {
+        let lastVersion = -1;
+        const teardown = subscribe.call(app.transport, (rows, version) => {
+          if (cancelled || version < lastVersion) return;
+          lastVersion = version;
+          applyRisk(rows);
+        });
+        setLive(true);
+        return () => {
+          cancelled = true;
+          teardown();
+        };
+      } catch {
+        // Fall through to the one-shot poll on a transport that errors on subscribe.
+      }
+    }
+
+    // Graceful fallback: a transport without the push (or one that threw) polls once.
+    setLive(false);
+    void app.transport
+      .listRiskBookRisk()
+      .then((r) => {
+        if (!cancelled) applyRisk(r);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : "failed to load risk");
+      });
     return () => {
       cancelled = true;
     };
-  }, [reload, signedIn]);
+  }, [app.transport, signedIn, applyRisk]);
 
   const deskOf = useCallback(
     (bookId: string): string | null => books.find((b) => b.id === bookId)?.deskId ?? null,
@@ -128,7 +168,15 @@ export function RiskDashboardWorkspace(): React.ReactElement {
     <div className={styles.wrap}>
       <header className={styles.head}>
         <div className={styles.headMain}>
-          <h1 className={styles.title}>Risk Dashboard</h1>
+          <h1 className={styles.title}>
+            Risk Dashboard
+            {live && (
+              <span className={styles.liveTag} role="status" aria-label="Live risk stream">
+                <span className={styles.liveDot} aria-hidden />
+                live
+              </span>
+            )}
+          </h1>
           <p className={styles.note}>
             Per-book rolled-up risk — each book aggregates its own routed positions plus every
             descendant's. DV01 and PnL show “—” until the rates-book and mark passes are wired.
