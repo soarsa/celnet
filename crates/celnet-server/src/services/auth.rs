@@ -1611,7 +1611,13 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        // Reading the risk-book roster + defining routing is an FI risk-management task —
+        // gated on the FI trader capability (a risk manager holds it), NOT admin-only.
+        // Book STRUCTURE (create/update/delete) stays admin.
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::QuoteRespond, AssetClass::FixedIncome),
+        )?;
         let books = self
             .lock()
             .risk_books
@@ -1715,7 +1721,10 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::QuoteRespond, AssetClass::FixedIncome),
+        )?;
         let graph = self.lock().risk_routing_graph().map(routing_graph_to_wire);
         Ok(Response::new(GetRiskRoutingGraphResponse {
             graph,
@@ -1730,7 +1739,10 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::QuoteRespond, AssetClass::FixedIncome),
+        )?;
 
         let wire = req
             .graph
@@ -1763,7 +1775,10 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::QuoteRespond, AssetClass::FixedIncome),
+        )?;
 
         // Aggregate every ENABLED risk book, rolled up its subtree. When no position store
         // is wired (only some non-serving constructions), the books still list with their

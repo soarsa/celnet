@@ -51,7 +51,10 @@ export function RiskRoutingWorkspace(): React.ReactElement {
   const app = useApp();
   const { auth } = app;
   const signedIn = auth.user !== undefined && auth.user !== null;
-  const readOnly = !auth.isAdmin;
+  // Routing rules are FI risk management — a risk manager holding the FI trader
+  // capability may edit (not admin-only); book STRUCTURE stays admin (Risk Books pane).
+  const canEdit = auth.can("quote_respond", "fixed_income");
+  const readOnly = !canEdit;
 
   const [graph, setGraph] = useState<RiskRoutingGraph>(EMPTY_GRAPH);
   const [baseline, setBaseline] = useState<string>(JSON.stringify(EMPTY_GRAPH));
@@ -88,9 +91,10 @@ export function RiskRoutingWorkspace(): React.ReactElement {
     };
   }, [app.transport, signedIn]);
 
-  // Admin-only rosters for the enum value dropdowns (desks + FIX counterparties).
+  // Rosters for the enum value dropdowns (desks + FIX counterparties) — loaded for an
+  // editor (FI-capability holder); a read-only viewer needs no pickers.
   useEffect(() => {
-    if (!auth.isAdmin) return;
+    if (!canEdit) return;
     let cancelled = false;
     void app.transport
       .listDesks()
@@ -103,7 +107,7 @@ export function RiskRoutingWorkspace(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [app.transport, auth.isAdmin]);
+  }, [app.transport, canEdit]);
 
   // --- derived --------------------------------------------------------------
   const knownBookIds = useMemo(

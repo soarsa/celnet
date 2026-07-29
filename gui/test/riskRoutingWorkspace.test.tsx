@@ -43,6 +43,7 @@ function makeApp(opts: {
   graph: RiskRoutingGraph | null;
   books: RiskBook[];
   isAdmin?: boolean;
+  canEdit?: boolean;
   onUpdate?: (g: RiskRoutingGraph) => void;
 }) {
   const update = vi.fn(async (g: RiskRoutingGraph) => {
@@ -60,7 +61,7 @@ function makeApp(opts: {
     auth: {
       user: { id: "u", email: "admin@celnet.com" },
       isAdmin: opts.isAdmin ?? true,
-      can: () => true,
+      can: () => opts.canEdit ?? true,
     },
     setSignInOpen: vi.fn(),
   };
@@ -166,15 +167,29 @@ describe("RiskRoutingWorkspace", () => {
     expect(await screen.findByTestId("trace-landing")).toHaveTextContent("Def");
   });
 
-  it("is read-only for a non-admin (no Save button)", async () => {
+  it("is read-only without the FI risk capability (no Save button)", async () => {
     state.app = makeApp({
       graph: validGraph(),
       books: [book("BOOK-A", "A"), book("DEFAULT", "Def")],
       isAdmin: false,
+      canEdit: false,
     });
     render(<RiskRoutingWorkspace />);
 
     await screen.findByTestId("validation-status");
     expect(screen.queryByTestId("save-graph")).toBeNull();
+  });
+
+  it("a non-admin risk manager WITH the FI capability can edit (Save present)", async () => {
+    state.app = makeApp({
+      graph: validGraph(),
+      books: [book("BOOK-A", "A"), book("DEFAULT", "Def")],
+      isAdmin: false,
+      canEdit: true,
+    });
+    render(<RiskRoutingWorkspace />);
+
+    await screen.findByTestId("validation-status");
+    expect(screen.getByTestId("save-graph")).toBeTruthy();
   });
 });
