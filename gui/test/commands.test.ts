@@ -305,6 +305,7 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         "tiering",
         "riskbooks",
         "riskdashboard",
+        "riskrouting",
         "surface",
         "risk",
         "book",

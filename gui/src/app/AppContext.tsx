@@ -87,6 +87,7 @@ export type WorkspaceId =
   | "tiering"
   | "riskbooks"
   | "riskdashboard"
+  | "riskrouting"
   | "xva"
   | "excel"
   | "connections"

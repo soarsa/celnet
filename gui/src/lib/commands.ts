@@ -52,6 +52,7 @@ export type WorkspaceId =
   | "tiering"
   | "riskbooks"
   | "riskdashboard"
+  | "riskrouting"
   | "xva"
   | "excel"
   | "connections"
@@ -129,6 +130,9 @@ export const RAIL: readonly {
   // pane, like Pricing Groups — the pass-6b flow-canvas routing editor joins later).
   { id: "riskbooks", glyph: "❦", label: "Risk Books", assets: ["fixed_income"] },
   { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", assets: ["fixed_income"] },
+  // Risk Routing: the drag-and-drop decision-tree canvas that routes each fill's
+  // risk into a desk book. Admin edit; read-only otherwise. Single-asset FI row.
+  { id: "riskrouting", glyph: "⑃", label: "Risk Routing", assets: ["fixed_income"] },
   { id: "surface", glyph: "◷", label: "Market Data", assets: CAPABILITY_ASSETS },
   { id: "risk", glyph: "⊞", label: "Risk", assets: CAPABILITY_ASSETS },
   { id: "book", glyph: "▤", label: "Book", assets: CAPABILITY_ASSETS },

@@ -30,6 +30,7 @@ import { AggregatedBookWorkspace } from "../workspaces/AggregatedBookWorkspace";
 import { TieringWorkspace } from "../workspaces/TieringWorkspace";
 import { RiskBooksWorkspace } from "../workspaces/RiskBooksWorkspace";
 import { RiskDashboardWorkspace } from "../workspaces/RiskDashboardWorkspace";
+import { RiskRoutingWorkspace } from "../workspaces/riskrouting/RiskRoutingWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { XvaWorkspace } from "../workspaces/XvaWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
@@ -106,6 +107,10 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // Risk Dashboard: per-book rolled-up risk (net/gross, greeks, RAG limit
   // utilization) with a heat overview across all books. Read-only. FI-only.
   riskdashboard: RiskDashboardWorkspace,
+  // Risk Routing: the drag-and-drop decision-tree canvas — traders compose the
+  // firm-wide rules that route each fill's risk into a desk book (typed condition
+  // nodes → book leaves), with a live "trace a sample fill". Admin edit. FI-only.
+  riskrouting: RiskRoutingWorkspace,
   // Market Data: FX vol surface + FI rates curve as two lenses of ONE workspace
   // (#2). Opens the FX surface lens by default; the FI curve is the rates lens.
   surface: MarketDataWorkspace,
