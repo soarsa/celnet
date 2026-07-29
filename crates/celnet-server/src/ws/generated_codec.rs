@@ -128,8 +128,9 @@ use celnet_proto::{
 };
 use celnet_proto::{
     CreateRiskBookRequest, CreateRiskBookResponse, DeleteRiskBookRequest, DeleteRiskBookResponse,
-    GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse, ListRiskBooksRequest,
-    ListRiskBooksResponse, RiskBookDesc, RiskBookSpec, RiskLimitsDesc, RiskRoutingGraphDesc,
+    GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse, LimitUtilizationDesc,
+    ListRiskBookRiskRequest, ListRiskBookRiskResponse, ListRiskBooksRequest, ListRiskBooksResponse,
+    RiskBookDesc, RiskBookRiskDesc, RiskBookSpec, RiskLimitsDesc, RiskRoutingGraphDesc,
     RouteConditionDesc, RouteRange, RouteValueDesc, RoutingNodeDesc, StringList,
     UpdateRiskBookRequest, UpdateRiskBookResponse, UpdateRiskRoutingGraphRequest,
     UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
@@ -6117,6 +6118,18 @@ impl WireBuilder for ListRiskBooksRequest {
     }
 }
 
+impl WireBuilder for ListRiskBookRiskRequest {
+    const MESSAGE: &'static str = "ListRiskBookRiskRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for CreateRiskBookRequest {
     const MESSAGE: &'static str = "CreateRiskBookRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -6619,6 +6632,17 @@ pub fn decode_update_risk_routing_graph_request(
     o: &Map<String, Value>,
 ) -> DResult<UpdateRiskRoutingGraphRequest> {
     decode(UpdateRiskRoutingGraphRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListRiskBookRiskRequest`] envelope — fully generic (session token + an
+/// optional correlation id).
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_risk_book_risk_request(
+    o: &Map<String, Value>,
+) -> DResult<ListRiskBookRiskRequest> {
+    decode(ListRiskBookRiskRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListInstrumentsRequest`] envelope — fully generic.
@@ -7544,6 +7568,55 @@ impl WireAdapter for ListRiskBooksResponse {
     }
 }
 
+impl WireAdapter for LimitUtilizationDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "metric" => Some(WireVal::Str(&self.metric)),
+            "used" => Some(WireVal::F64(self.used)),
+            "limit" => Some(WireVal::F64(self.limit)),
+            "fraction" => Some(WireVal::F64(self.fraction)),
+            "band" => Some(WireVal::Enum(self.band)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RiskBookRiskDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book_id" => Some(WireVal::Str(&self.book_id)),
+            "name" => Some(WireVal::Str(&self.name)),
+            "net_notional" => Some(WireVal::F64(self.net_notional)),
+            "gross_notional" => Some(WireVal::F64(self.gross_notional)),
+            "position_count" => Some(WireVal::U64(u64::from(self.position_count))),
+            "delta" => Some(WireVal::F64(self.delta)),
+            "gamma" => Some(WireVal::F64(self.gamma)),
+            "vega" => Some(WireVal::F64(self.vega)),
+            "theta" => Some(WireVal::F64(self.theta)),
+            // proto3 `optional double`: absent ⇒ JSON null (RiskBookRiskDesc is on the
+            // null-absent list) — a not-yet-evaluated metric, never a fabricated zero.
+            "dv01" => self.dv01.map(WireVal::F64),
+            "pnl" => self.pnl.map(WireVal::F64),
+            "limits" => Some(WireVal::RepeatedMsg(
+                self.limits.iter().map(|l| l as &dyn WireAdapter).collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListRiskBookRiskResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "books" => Some(WireVal::RepeatedMsg(
+                self.books.iter().map(|b| b as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for CreateRiskBookResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -7879,6 +7952,14 @@ pub fn encode_get_risk_routing_graph_response(r: &GetRiskRoutingGraphResponse) -
 #[must_use]
 pub fn encode_update_risk_routing_graph_response(r: &UpdateRiskRoutingGraphResponse) -> Value {
     encode("UpdateRiskRoutingGraphResponse", r)
+}
+
+/// Encode a [`ListRiskBookRiskResponse`] to its WS JSON — descriptor-driven. The nested
+/// `RiskBookRiskDesc` rows carry `dv01`/`pnl` as present-with-`null` when absent (their
+/// null-absent policy, matching the hand codec).
+#[must_use]
+pub fn encode_list_risk_book_risk_response(r: &ListRiskBookRiskResponse) -> Value {
+    encode("ListRiskBookRiskResponse", r)
 }
 
 /// Encode a [`ListInstrumentsResponse`] to its WS JSON — descriptor-driven.

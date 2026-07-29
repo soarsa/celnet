@@ -25,6 +25,7 @@
 #![allow(clippy::result_large_err)]
 
 pub mod aggregate;
+pub mod book_risk;
 pub mod combined_tail;
 pub mod convert;
 pub mod exotic_pricer;

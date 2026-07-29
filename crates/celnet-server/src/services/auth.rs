@@ -64,8 +64,9 @@ use celnet_proto::{
 };
 use celnet_proto::{
     CreateRiskBookRequest, CreateRiskBookResponse, DeleteRiskBookRequest, DeleteRiskBookResponse,
-    GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse, ListRiskBooksRequest,
-    ListRiskBooksResponse, RiskBookDesc, RiskBookSpec, RiskLimitsDesc, RiskRoutingGraphDesc,
+    GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse, LimitUtilizationDesc,
+    ListRiskBookRiskRequest, ListRiskBookRiskResponse, ListRiskBooksRequest, ListRiskBooksResponse,
+    RagBand, RiskBookDesc, RiskBookRiskDesc, RiskBookSpec, RiskLimitsDesc, RiskRoutingGraphDesc,
     RouteConditionDesc, RouteFieldEnum, RouteOpEnum, RouteRange, RouteValueDesc, RoutingNodeDesc,
     StringList, UpdateRiskBookRequest, UpdateRiskBookResponse, UpdateRiskRoutingGraphRequest,
     UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
@@ -86,6 +87,9 @@ use crate::config::identity::{
 use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
 use crate::services::instrument_wire::{instrument_from_wire, instrument_to_wire};
+use crate::services::risk::book_risk::{
+    LimitUtilization, RagBand as DomainRagBand, RiskBookRisk, aggregate_risk_book,
+};
 use crate::services::risk::store::PositionStore;
 use crate::services::sessions::{AuthenticatedUser, SessionRegistry};
 use celnet_risk_routing::{NodeId, RiskRoutingGraph, RouteField, RouteOp, RouteValue, RoutingNode};
@@ -1739,6 +1743,47 @@ impl AuthService for AuthEdge {
         }))
     }
 
+    // Read-only per-book risk aggregation, rolled up the book tree (phase 5 — §5, §8.5).
+    // Admin-gated like the phase-4 CRUD RPCs (a finer `risk_manage·fixed_income` capability
+    // is a later refinement). Reads only: the identity registry for the book tree and the
+    // shared position store for the routed facts; no mutation and no persist.
+    async fn list_risk_book_risk(
+        &self,
+        request: Request<ListRiskBookRiskRequest>,
+    ) -> Result<Response<ListRiskBookRiskResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        // Aggregate every ENABLED risk book, rolled up its subtree. When no position store
+        // is wired (only some non-serving constructions), the books still list with their
+        // zero-position roll-up (`aggregate_risk_book` over an empty store) — never omitted
+        // and never a fabricated non-zero.
+        let guard = self.lock();
+        let books = match &self.position_store {
+            Some(store) => guard
+                .risk_books
+                .iter()
+                .filter(|b| b.enabled)
+                .map(|b| risk_book_risk_to_wire(&aggregate_risk_book(store, &guard, b)))
+                .collect(),
+            None => {
+                let empty = PositionStore::new();
+                guard
+                    .risk_books
+                    .iter()
+                    .filter(|b| b.enabled)
+                    .map(|b| risk_book_risk_to_wire(&aggregate_risk_book(&empty, &guard, b)))
+                    .collect()
+            }
+        };
+        Ok(Response::new(ListRiskBookRiskResponse {
+            books,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
     // --- instrument reference data ---------------------------------------------
 
     async fn list_instruments(
@@ -2802,6 +2847,47 @@ fn risk_book_status(msg: String) -> Status {
 /// mismatch) is a client-correctable `invalid_argument`; the store's message is verbatim.
 fn risk_routing_status(msg: String) -> Status {
     Status::invalid_argument(msg)
+}
+
+/// The wire enum value for a domain [`DomainRagBand`].
+fn rag_band_to_wire(band: DomainRagBand) -> i32 {
+    let e = match band {
+        DomainRagBand::Green => RagBand::Green,
+        DomainRagBand::Amber => RagBand::Amber,
+        DomainRagBand::Red => RagBand::Red,
+    };
+    e as i32
+}
+
+/// Map a domain [`LimitUtilization`] onto its wire [`LimitUtilizationDesc`] field-for-field.
+fn limit_util_to_wire(u: &LimitUtilization) -> LimitUtilizationDesc {
+    LimitUtilizationDesc {
+        metric: u.metric.to_owned(),
+        used: u.used,
+        limit: u.limit,
+        fraction: u.fraction,
+        band: rag_band_to_wire(u.band),
+    }
+}
+
+/// Map an aggregated [`RiskBookRisk`] onto its wire [`RiskBookRiskDesc`]. The `dv01`/`pnl`
+/// options ride straight through — absent means not-yet-evaluated (rates DV01 / a mark
+/// pass are later seams, §5.3/§5.4), never a fabricated zero.
+fn risk_book_risk_to_wire(r: &RiskBookRisk) -> RiskBookRiskDesc {
+    RiskBookRiskDesc {
+        book_id: r.book_id.clone(),
+        name: r.name.clone(),
+        net_notional: r.net_notional,
+        gross_notional: r.gross_notional,
+        position_count: r.position_count,
+        delta: r.delta,
+        gamma: r.gamma,
+        vega: r.vega,
+        theta: r.theta,
+        dv01: r.dv01,
+        pnl: r.pnl,
+        limits: r.limits.iter().map(limit_util_to_wire).collect(),
+    }
 }
 
 /// A stable, human-facing label for a [`Role`] — used as the `role` field in the

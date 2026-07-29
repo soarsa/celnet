@@ -69,8 +69,9 @@ use celnet_proto::{
 // AuthService — risk routing & risk books (WS mirror of the risk-routing RPCs, phase 4).
 use celnet_proto::{
     CreateRiskBookRequest, CreateRiskBookResponse, DeleteRiskBookRequest, DeleteRiskBookResponse,
-    GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse, ListRiskBooksRequest,
-    ListRiskBooksResponse, RiskBookDesc, RiskBookSpec, RiskLimitsDesc, RiskRoutingGraphDesc,
+    GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse, LimitUtilizationDesc,
+    ListRiskBookRiskRequest, ListRiskBookRiskResponse, ListRiskBooksRequest, ListRiskBooksResponse,
+    RiskBookDesc, RiskBookRiskDesc, RiskBookSpec, RiskLimitsDesc, RiskRoutingGraphDesc,
     RouteConditionDesc, RouteRange, RouteValueDesc, RoutingNodeDesc, StringList,
     UpdateRiskBookRequest, UpdateRiskBookResponse, UpdateRiskRoutingGraphRequest,
     UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
@@ -4044,6 +4045,39 @@ fn risk_book_desc_to_json(d: &RiskBookDesc) -> Value {
     Value::Object(m)
 }
 
+/// One limit-utilization row → JSON (phase 5). All fields are required scalars; the
+/// `band` is emitted as its raw enum discriminant (i32), byte-identical to the
+/// descriptor-driven encoder.
+fn limit_utilization_desc_to_json(u: &LimitUtilizationDesc) -> Value {
+    json!({
+        "metric": u.metric,
+        "used": u.used,
+        "limit": u.limit,
+        "fraction": u.fraction,
+        "band": u.band,
+    })
+}
+
+/// One book's aggregated risk → JSON (phase 5). `RiskBookRiskDesc` is on the
+/// null-absent list, so its optional `dv01`/`pnl` (not-yet-evaluated rates DV01 / mark
+/// PnL, §5.3/§5.4) serialize as JSON `null` when absent — never a fabricated zero.
+fn risk_book_risk_desc_to_json(d: &RiskBookRiskDesc) -> Value {
+    json!({
+        "book_id": d.book_id,
+        "name": d.name,
+        "net_notional": d.net_notional,
+        "gross_notional": d.gross_notional,
+        "position_count": d.position_count,
+        "delta": d.delta,
+        "gamma": d.gamma,
+        "vega": d.vega,
+        "theta": d.theta,
+        "dv01": d.dv01,
+        "pnl": d.pnl,
+        "limits": Value::Array(d.limits.iter().map(limit_utilization_desc_to_json).collect()),
+    })
+}
+
 /// The editable risk-book fields (a nested `spec` object on create/update). An empty
 /// optional string decodes to `None` (no parent / unowned desk), mirroring the
 /// generated `opt_string`.
@@ -4219,6 +4253,22 @@ pub(super) fn list_risk_books_request_from_json(
 pub(super) fn list_risk_books_response_to_json(r: &ListRiskBooksResponse) -> Value {
     json!({
         "books": Value::Array(r.books.iter().map(risk_book_desc_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn list_risk_book_risk_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListRiskBookRiskRequest> {
+    Ok(ListRiskBookRiskRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_risk_book_risk_response_to_json(r: &ListRiskBookRiskResponse) -> Value {
+    json!({
+        "books": Value::Array(r.books.iter().map(risk_book_risk_desc_to_json).collect()),
         "correlation_id": r.correlation_id,
     })
 }
@@ -4751,7 +4801,8 @@ pub mod diff_support {
     use celnet_proto::{
         CreateRiskBookRequest, CreateRiskBookResponse, DeleteRiskBookRequest,
         DeleteRiskBookResponse, GetRiskRoutingGraphRequest, GetRiskRoutingGraphResponse,
-        ListRiskBooksRequest, ListRiskBooksResponse, UpdateRiskBookRequest, UpdateRiskBookResponse,
+        ListRiskBookRiskRequest, ListRiskBookRiskResponse, ListRiskBooksRequest,
+        ListRiskBooksResponse, UpdateRiskBookRequest, UpdateRiskBookResponse,
         UpdateRiskRoutingGraphRequest, UpdateRiskRoutingGraphResponse,
     };
     use serde_json::{Map, Value};
@@ -5976,6 +6027,22 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_list_risk_books_response_to_json(r: &ListRiskBooksResponse) -> Value {
         super::list_risk_books_response_to_json(r)
+    }
+
+    /// Hand-codec `ListRiskBookRiskRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_risk_book_risk_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListRiskBookRiskRequest, CodecError> {
+        super::list_risk_book_risk_request_from_json(o)
+    }
+
+    /// Hand-codec `ListRiskBookRiskResponse` encoder.
+    #[must_use]
+    pub fn hand_list_risk_book_risk_response_to_json(r: &ListRiskBookRiskResponse) -> Value {
+        super::list_risk_book_risk_response_to_json(r)
     }
 
     /// Hand-codec `CreateRiskBookRequest` decoder.

@@ -44,9 +44,10 @@ use celnet_proto::{
 };
 use celnet_proto::{
     CreateRiskBookResponse, DeleteRiskBookResponse, GetRiskRoutingGraphResponse,
-    ListRiskBooksResponse, RiskBookDesc, RiskLimitsDesc, RiskRoutingGraphDesc, RouteConditionDesc,
-    RouteFieldEnum, RouteOpEnum, RouteRange, RouteValueDesc, RoutingNodeDesc, StringList,
-    UpdateRiskBookResponse, UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
+    LimitUtilizationDesc, ListRiskBookRiskResponse, ListRiskBooksResponse, RagBand, RiskBookDesc,
+    RiskBookRiskDesc, RiskLimitsDesc, RiskRoutingGraphDesc, RouteConditionDesc, RouteFieldEnum,
+    RouteOpEnum, RouteRange, RouteValueDesc, RoutingNodeDesc, StringList, UpdateRiskBookResponse,
+    UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
 };
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
@@ -5203,5 +5204,81 @@ fn update_risk_routing_graph_response_encode_byte_identical() {
         "UpdateRiskRoutingGraphResponse(empty)",
         &generated::encode_update_risk_routing_graph_response(&empty),
         &hand::hand_update_risk_routing_graph_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn list_risk_book_risk_request_decode_byte_identical() {
+    for (label, body) in [
+        (
+            "full",
+            json!({ "session_token": "tok", "correlation_id": 5 }),
+        ),
+        ("minimal", json!({ "session_token": "tok" })),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("ListRiskBookRiskRequest({label})"),
+            generated::decode_list_risk_book_risk_request(o),
+            hand::hand_list_risk_book_risk_request_from_json(o),
+        );
+    }
+}
+
+/// A per-book risk row with a populated limits list AND absent dv01/pnl — the null-absent
+/// edges (a not-yet-evaluated rates DV01 / mark PnL) beside a two-cap utilization set that
+/// spans all three RAG bands.
+fn risk_book_risk_desc_populated() -> RiskBookRiskDesc {
+    RiskBookRiskDesc {
+        book_id: "gm".to_owned(),
+        name: "Global Macro".to_owned(),
+        net_notional: 60_000_000.0,
+        gross_notional: 140_000_000.0,
+        position_count: 3,
+        delta: 30_000_000.0,
+        gamma: 12.5,
+        vega: 210_000.0,
+        theta: -4_200.0,
+        // Genuinely-unavailable metrics ride as ABSENT (null on the wire), never zeroed.
+        dv01: None,
+        pnl: None,
+        limits: vec![
+            LimitUtilizationDesc {
+                metric: "net_notional".to_owned(),
+                used: 60_000_000.0,
+                limit: 100_000_000.0,
+                fraction: 0.6,
+                band: RagBand::Green as i32,
+            },
+            LimitUtilizationDesc {
+                metric: "gross_notional".to_owned(),
+                used: 140_000_000.0,
+                limit: 150_000_000.0,
+                fraction: 140.0 / 150.0,
+                band: RagBand::Amber as i32,
+            },
+        ],
+    }
+}
+
+#[test]
+fn list_risk_book_risk_response_encode_byte_identical() {
+    // A row with populated limits + absent dv01/pnl, an all-default row (empty limits,
+    // absent optionals), and an absent correlation_id.
+    let full = ListRiskBookRiskResponse {
+        books: vec![risk_book_risk_desc_populated(), RiskBookRiskDesc::default()],
+        correlation_id: Some(11),
+    };
+    assert_bytes_eq(
+        "ListRiskBookRiskResponse(full)",
+        &generated::encode_list_risk_book_risk_response(&full),
+        &hand::hand_list_risk_book_risk_response_to_json(&full),
+    );
+    // Empty roster + absent correlation_id (the null-when-absent envelope edge).
+    let empty = ListRiskBookRiskResponse::default();
+    assert_bytes_eq(
+        "ListRiskBookRiskResponse(empty)",
+        &generated::encode_list_risk_book_risk_response(&empty),
+        &hand::hand_list_risk_book_risk_response_to_json(&empty),
     );
 }

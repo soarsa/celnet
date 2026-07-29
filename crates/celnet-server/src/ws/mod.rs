@@ -1383,6 +1383,14 @@ async fn handle_unary(
                 generated_codec::encode_update_risk_routing_graph_response
             )
         }
+        "list_risk_book_risk" => {
+            let req = decode!(generated_codec::decode_list_risk_book_risk_request(o));
+            call!(
+                services.auth.list_risk_book_risk(Request::new(req)),
+                "risk_book_risk",
+                generated_codec::encode_list_risk_book_risk_response
+            )
+        }
         "list_instruments" => {
             let req = decode!(generated_codec::decode_list_instruments_request(o));
             call!(

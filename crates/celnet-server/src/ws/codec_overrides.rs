@@ -143,6 +143,15 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "DeleteRiskBookResponse",
     "GetRiskRoutingGraphResponse",
     "UpdateRiskRoutingGraphResponse",
+    // The phase-5 per-book risk aggregation reply (`ListRiskBookRisk`): the reply
+    // envelope's `json!({ .. })` hand encoder emits the `Option<u64>` `correlation_id`
+    // as JSON `null` when absent, and each nested `RiskBookRiskDesc` row emits its
+    // optional `dv01`/`pnl` (not-yet-evaluated rates DV01 / mark PnL — §5.3/§5.4) as
+    // JSON `null` when absent, never a fabricated zero. Both message names are listed so
+    // the generic encoder applies the null-absent policy at the envelope AND the nested
+    // row. `LimitUtilizationDesc` carries no optional field, so it is not listed.
+    "ListRiskBookRiskResponse",
+    "RiskBookRiskDesc",
     "ListInstrumentsResponse",
     "GetInstrumentResponse",
     "CreateInstrumentResponse",
