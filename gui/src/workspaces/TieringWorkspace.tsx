@@ -38,7 +38,8 @@ import type {
 } from "../data/contract";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import { FEATURE_KIND_LABEL } from "../lib/pricingGroups";
-import { TIERING_SPREAD_UNIT_LABEL, TIERING_STRATEGY_KIND_LABEL } from "../lib/tiering";
+import { TIERING_PREVIEW_RAW, TIERING_SPREAD_UNIT_LABEL, TIERING_STRATEGY_KIND_LABEL } from "../lib/tiering";
+import { clientTwoWayFromTiering, hasPositionDependentSkew } from "../lib/tieringPreview";
 import styles from "./TieringWorkspace.module.css";
 
 /** How a session's applied pricing group was matched (mirrors the server resolver). */
@@ -82,6 +83,12 @@ function matchLabel(r: Resolved, desk: string): string {
 function num(n: number): string {
   if (!Number.isFinite(n)) return "—";
   return String(Number(n.toPrecision(6)));
+}
+
+/** A price rendering for the worked client-price readout (fixed 2 dp, e.g. 99.30). */
+function px(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return n.toFixed(2);
 }
 
 /** The Tiering feature (if any) carried by a pipeline, plus its ordered feature kinds. */
@@ -132,6 +139,15 @@ function PipelineSummary({ label, pipeline }: { label: string; pipeline: Feature
   }
   const tiering = pipelineTiering(pipeline);
   const unitLabel = tiering ? TIERING_SPREAD_UNIT_LABEL[tiering.unit] : "";
+  // The worked client-price example: feed the reference sample raw two-way through
+  // this pipeline's TIERING config, clamped by the guardrails the summary above shows
+  // (the pipeline's, falling back to the config's own). A pipeline with no TIERING
+  // feature streams the raw composite unmarked. INVENTORY_SKEW's position-linear lean
+  // is shown as a note, not a fabricated number (see tieringPreview).
+  const previewTiering =
+    tiering !== null ? { ...tiering, guardrails: pipeline.guardrails ?? tiering.guardrails } : null;
+  const client = clientTwoWayFromTiering(previewTiering, TIERING_PREVIEW_RAW.bid, TIERING_PREVIEW_RAW.offer);
+  const positionDependent = hasPositionDependentSkew(tiering);
   return (
     <div className={styles.pipeBlock}>
       <span className={styles.pipeHead}>{label}</span>
@@ -168,6 +184,25 @@ function PipelineSummary({ label, pipeline }: { label: string; pipeline: Feature
           Guardrails: <span className={styles.mono}>{guardrailLine(pipeline.guardrails)}</span>
         </span>
       )}
+      <div className={styles.clientPrice} aria-label={`${label} client price preview`}>
+        <span className={styles.clientTag}>SAMPLE</span>
+        <span className={styles.mono}>
+          LP {px(TIERING_PREVIEW_RAW.bid)} / {px(TIERING_PREVIEW_RAW.offer)}
+        </span>
+        <span className={styles.clientArrow} aria-hidden="true">
+          →
+        </span>
+        {tiering === null ? (
+          <span className={styles.clientRaw}>raw composite — no client markup</span>
+        ) : (
+          <span className={`${styles.mono} ${styles.clientOut}`}>
+            client {px(client.bid)} / {px(client.offer)}
+          </span>
+        )}
+        {positionDependent && (
+          <span className={styles.clientNote}>+ inventory skew (position-dependent)</span>
+        )}
+      </div>
     </div>
   );
 }

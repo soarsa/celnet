@@ -227,6 +227,11 @@ describe("TieringWorkspace — resolved pricing detail", () => {
     expect(within(summary).getByText("TIERING")).toBeInTheDocument();
     expect(within(summary).getByText("Flat markup")).toBeInTheDocument();
     expect(within(summary).getByText(/H\s*25/)).toBeInTheDocument();
+
+    // The worked client-price readout: the reference sample raw two-way widened by
+    // Flat 25 price-bps ⇒ client 99.30 / 99.80.
+    expect(within(summary).getByText(/LP\s*99\.50\s*\/\s*99\.60/)).toBeInTheDocument();
+    expect(within(summary).getByText(/client\s*99\.30\s*\/\s*99\.80/)).toBeInTheDocument();
   });
 });
 

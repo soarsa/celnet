@@ -462,6 +462,49 @@
   font-style: italic;
 }
 
+/* --- worked client-price readout (SAMPLE LP … → client …) ----------------- */
+
+.clientPrice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in oklab, var(--accent-positive, seagreen) 30%, transparent);
+  border-radius: var(--r-md, 8px);
+  background: color-mix(in oklab, var(--accent-positive, seagreen) 8%, transparent);
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+}
+
+.clientTag {
+  font-size: var(--type-micro, 0.7rem);
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.clientArrow {
+  color: var(--text-tertiary);
+}
+
+.clientOut {
+  font-weight: var(--weight-header);
+  color: var(--accent-positive, seagreen);
+}
+
+.clientRaw {
+  font-style: italic;
+  color: var(--text-tertiary);
+}
+
+.clientNote {
+  font-size: var(--type-micro, 0.7rem);
+  color: var(--text-tertiary);
+}
+
 /* --- assign control ------------------------------------------------------- */
 
 .assign {
