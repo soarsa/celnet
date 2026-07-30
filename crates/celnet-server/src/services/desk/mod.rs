@@ -181,9 +181,7 @@ fn desk_request_to_flow(
 
     // Only requests we actually quoted contribute (a bare PENDING/EXPIRED/declined
     // request is not flow we priced). `Accepted` always carries a prior quote.
-    if req.quote.is_none() {
-        return None;
-    }
+    req.quote.as_ref()?;
     if !in_window(req.received_at_nanos, from, to) {
         return None;
     }
@@ -1226,6 +1224,93 @@ mod tests {
 
     fn edge() -> RfqDeskEdge {
         edge_with_rates(Arc::new(RatesPositionStore::new()))
+    }
+
+    /// One desk-inbox request in a given lifecycle state, always carrying a shown
+    /// quote (so it counts as flow we priced) — the raw material of the FI
+    /// client-flow source.
+    fn desk_request(client: &str, state: DeskRequestState) -> DeskRequest {
+        DeskRequest {
+            request_id: format!("desk-req-{client}-{}", state as i32),
+            kind: DeskRequestKind::Rfq as i32,
+            counterparty: client.to_owned(),
+            desk: "rates".to_owned(),
+            instrument: Some(ois_instrument(Side::Buy)),
+            curve_set: None,
+            side: Side::Buy as i32,
+            notional: 10_000_000.0,
+            received_at_nanos: 1_000,
+            expires_at_nanos: 2_000,
+            state: state as i32,
+            quote: Some(DeskQuote {
+                price: 0.0405,
+                notional: 10_000_000.0,
+                valid_for_ms: 500,
+                trader: "t".to_owned(),
+            }),
+            correlation_id: None,
+        }
+    }
+
+    /// The FI source maps desk requests into FlowRecords whose fold reproduces the
+    /// fisher-vs-converter split: a client that only ever quotes (never lifts)
+    /// scores a maximal `fishing_score`; a client that converts every quote scores
+    /// zero. Validated against the crate's own oracle-tested rollup (guardrail 5).
+    #[test]
+    fn fi_source_folds_fisher_high_and_converter_low() {
+        use celnet_analytics::group_by_client;
+
+        // GOOD converts every quote (3 quoted → 3 accepted); FISH never lifts
+        // (5 quoted, 0 accepted).
+        let mut requests: Vec<DeskRequest> = (0..3)
+            .map(|i| {
+                let mut r = desk_request("GOOD", DeskRequestState::Accepted);
+                r.request_id = format!("good-{i}");
+                r
+            })
+            .collect();
+        for i in 0..5 {
+            let mut r = desk_request("FISH", DeskRequestState::Quoted);
+            r.request_id = format!("fish-{i}");
+            requests.push(r);
+        }
+
+        let records: Vec<_> = requests
+            .iter()
+            .filter_map(|r| desk_request_to_flow(r, None, None))
+            .collect();
+        let by_client = group_by_client(&records);
+
+        // Converter: full hit-rate, zero fishing, all traded notional captured.
+        let good = &by_client["GOOD"];
+        assert_eq!(good.quote_count, 3);
+        assert_eq!(good.traded_count, 3);
+        assert_eq!(good.hit_rate, Some(1.0));
+        assert_eq!(good.fishing_score, 0.0);
+        assert_eq!(good.traded_notional, 30_000_000.0);
+        // The FI desk path is untiered ⇒ no provenance margin (honest zero/None).
+        assert_eq!(good.gross_pnl, 0.0);
+        assert_eq!(good.dpm_gross, Some(0.0));
+
+        // Fisher: zero hit-rate, maximal fishing score, no trades.
+        let fish = &by_client["FISH"];
+        assert_eq!(fish.quote_count, 5);
+        assert_eq!(fish.traded_count, 0);
+        assert_eq!(fish.hit_rate, Some(0.0));
+        assert_eq!(fish.fishing_score, 1.0);
+        assert_eq!(fish.dpm_net, None);
+
+        // Window filter excludes out-of-range receipts (received_at_nanos = 1_000).
+        let windowed: Vec<_> = requests
+            .iter()
+            .filter_map(|r| desk_request_to_flow(r, Some(5_000), None))
+            .collect();
+        assert!(windowed.is_empty());
+
+        // A request we never quoted contributes nothing (not priced flow).
+        let mut unquoted = desk_request("X", DeskRequestState::Pending);
+        unquoted.quote = None;
+        assert!(desk_request_to_flow(&unquoted, None, None).is_none());
     }
 
     /// An edge over a caller-supplied rates store — so a test can install a firm-wide

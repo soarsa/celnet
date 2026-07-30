@@ -49,6 +49,9 @@ use celnet_proto::{
     UpdatePricingGroupPipelineResponse, UpdatePricingGroupResponse,
 };
 use celnet_proto::{
+    ClientFlowMetricsDesc, FlowGroupBy, ListClientFlowMetricsRequest, ListClientFlowMetricsResponse,
+};
+use celnet_proto::{
     CreateRiskBookResponse, DeleteRiskBookResponse, GetRiskRoutingGraphResponse,
     LimitUtilizationDesc, ListRiskBookRiskResponse, ListRiskBooksResponse, RagBand, RiskBookDesc,
     RiskBookRiskDesc, RiskBookRiskSnapshot, RiskBookRiskUpdate, RiskLimitsDesc,
@@ -1301,6 +1304,128 @@ fn list_fix_connections_response_encode_byte_identical() {
         &g,
         &hand::hand_list_fix_connections_response_to_json(&empty),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Client-flow analytics (Analytics phase 2): ListClientFlowMetrics reply +
+// request. Exercises repeated nested rows AND the `optional double` null-absent
+// presence contract (a fisher row with every ratio absent ⇒ JSON null).
+// ---------------------------------------------------------------------------
+
+/// A fully-converting client row: every $/mm / spread / ratio metric present.
+fn client_flow_converter() -> ClientFlowMetricsDesc {
+    ClientFlowMetricsDesc {
+        label: "ACME".to_owned(),
+        quote_count: 4,
+        traded_count: 4,
+        traded_notional: 40_000_000.0,
+        gross_pnl: 4000.0,
+        total_markout: 400.0,
+        total_hedge_cost: 100.0,
+        net_pnl: 3500.0,
+        dpm_gross: Some(100.0),
+        dpm_net: Some(87.5),
+        captured_vs_offered: Some(0.5),
+        mean_cover_distance: Some(2.0),
+        breakeven_spread: Some(10.0),
+        quote_to_trade_ratio: Some(1.0),
+        hit_rate: Some(1.0),
+        fishing_score: 0.0,
+    }
+}
+
+/// A pure-fisher row: no trades ⇒ every trade-denominated ratio ABSENT (`None`),
+/// which must reach the wire as JSON `null`, not `0`.
+fn client_flow_fisher() -> ClientFlowMetricsDesc {
+    ClientFlowMetricsDesc {
+        label: "FISH".to_owned(),
+        quote_count: 8,
+        traded_count: 0,
+        traded_notional: 0.0,
+        gross_pnl: 0.0,
+        total_markout: 0.0,
+        total_hedge_cost: 0.0,
+        net_pnl: 0.0,
+        dpm_gross: None,
+        dpm_net: None,
+        captured_vs_offered: None,
+        mean_cover_distance: None,
+        breakeven_spread: None,
+        quote_to_trade_ratio: None,
+        hit_rate: Some(0.0),
+        fishing_score: 1.0,
+    }
+}
+
+#[test]
+fn client_flow_metrics_response_encode_byte_identical() {
+    let full = ListClientFlowMetricsResponse {
+        metrics: vec![client_flow_converter(), client_flow_fisher()],
+        group_by: FlowGroupBy::Asset as i32,
+        correlation_id: Some(9),
+    };
+    let g = generated::encode_list_client_flow_metrics_response(&full);
+    // The fisher row's absent ratios are JSON null (present-with-null), NOT omitted
+    // and NOT a fabricated zero — the divide-by-zero guard on the wire.
+    let fisher = &g.get("metrics").and_then(Value::as_array).expect("metrics")[1];
+    assert_eq!(fisher.get("dpm_gross"), Some(&Value::Null));
+    assert_eq!(fisher.get("dpm_net"), Some(&Value::Null));
+    assert_eq!(fisher.get("captured_vs_offered"), Some(&Value::Null));
+    assert_eq!(fisher.get("breakeven_spread"), Some(&Value::Null));
+    assert_eq!(fisher.get("quote_to_trade_ratio"), Some(&Value::Null));
+    // A present ratio stays a number.
+    assert_eq!(fisher.get("hit_rate").and_then(Value::as_f64), Some(0.0));
+    assert_bytes_eq(
+        "ListClientFlowMetricsResponse(full)",
+        &g,
+        &hand::hand_list_client_flow_metrics_response_to_json(&full),
+    );
+
+    // Empty roster + absent correlation_id ⇒ `[]` + `null`; group_by default 0.
+    let empty = ListClientFlowMetricsResponse {
+        metrics: vec![],
+        group_by: FlowGroupBy::Client as i32,
+        correlation_id: None,
+    };
+    let ge = generated::encode_list_client_flow_metrics_response(&empty);
+    assert_eq!(ge.get("correlation_id"), Some(&Value::Null));
+    assert_eq!(ge.get("metrics"), Some(&Value::Array(vec![])));
+    assert_bytes_eq(
+        "ListClientFlowMetricsResponse(empty)",
+        &ge,
+        &hand::hand_list_client_flow_metrics_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn list_client_flow_metrics_request_decode_byte_identical() {
+    let cases = [
+        (
+            "full",
+            json!({
+                "session_token": "tok-abc",
+                "group_by": 3,
+                "from_nanos": 100,
+                "to_nanos": 200,
+                "correlation_id": 9
+            }),
+        ),
+        // Minimal: group_by defaults to 0 (CLIENT); time bounds + correlation absent.
+        ("minimal", json!({ "session_token": "tok" })),
+        // Per-instrument grouping, open lower bound only.
+        (
+            "instrument-open-lower",
+            json!({ "session_token": "tok", "group_by": 2, "to_nanos": 500 }),
+        ),
+    ];
+    for (label, body) in cases {
+        let o = body.as_object().expect("object");
+        assert_decode_eq::<ListClientFlowMetricsRequest, _>(
+            &format!("ListClientFlowMetricsRequest({label})"),
+            generated::decode_list_client_flow_metrics_request(o),
+            hand::hand_list_client_flow_metrics_request_from_json(o),
+        );
+    }
 }
 
 #[test]

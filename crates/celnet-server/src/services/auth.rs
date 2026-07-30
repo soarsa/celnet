@@ -37,8 +37,7 @@ use celnet_proto::{
     AcceptRiskTransferRequest, AcceptRiskTransferResponse, CancelRiskTransferRequest,
     CancelRiskTransferResponse, InitiateRiskTransferRequest, InitiateRiskTransferResponse,
     ListClientFlowMetricsRequest, ListClientFlowMetricsResponse, ListRiskTransfersRequest,
-    ListRiskTransfersResponse, RejectRiskTransferRequest,
-    RejectRiskTransferResponse,
+    ListRiskTransfersResponse, RejectRiskTransferRequest, RejectRiskTransferResponse,
 };
 use celnet_proto::{
     AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, AggregationScopeMode, AxeSide,
@@ -2070,11 +2069,13 @@ impl AuthService for AuthEdge {
         // still applies via the capability algebra.
         let who = self.authenticate(&req.session_token)?;
         let caps = who.capabilities();
-        let allowed = caps.allows(Capability::new(Action::ViewAnalytics, AssetClass::FxOptions))
-            || caps.allows(Capability::new(
-                Action::ViewAnalytics,
-                AssetClass::FixedIncome,
-            ));
+        let allowed = caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FxOptions,
+        )) || caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FixedIncome,
+        ));
         if !allowed {
             return Err(Status::permission_denied(
                 "capability view_analytics·{fx_options|fixed_income} required",
@@ -4120,18 +4121,18 @@ mod tests {
     #[tokio::test]
     async fn login_returns_caller_effective_capabilities() {
         let (edge, path, _s) = edge("login-caps");
-        // The seed admin resolves to grant-all: every action × asset (14 × 2 = 28).
+        // The seed admin resolves to grant-all: every action × asset (15 × 2 = 30).
         let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
         assert_eq!(
             admin.capabilities.len(),
             Action::ALL.len() * AssetClass::ALL.len()
         );
 
-        // A fresh trader holds the role bundle: all actions but the FIVE narrow,
+        // A fresh trader holds the role bundle: all actions but the SIX narrow,
         // explicitly-granted authorities held back from the default —
         // `administer`, `risk_transfer`, `risk_manage`, `manage_pricing`,
-        // `manage_liquidity` — on both assets (9 × 2 = 18).
-        const HELD_BACK: usize = 5;
+        // `manage_liquidity`, `view_analytics` — on both assets (9 × 2 = 18).
+        const HELD_BACK: usize = 6;
         let (trader_id, _t) = make_trader(&edge, &admin.session_token, "lc@celnet.com").await;
         let trader = login(&edge, "lc@celnet.com", "trader-pw-123")
             .await

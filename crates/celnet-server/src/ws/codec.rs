@@ -5068,7 +5068,9 @@ fn client_flow_metrics_desc_to_json(d: &ClientFlowMetricsDesc) -> Value {
 /// The client-flow analytics roster → JSON (`ListClientFlowMetrics` reply). The
 /// scalar `group_by` enum serializes as its i32 tag; `correlation_id` is
 /// `null`-when-absent.
-pub(super) fn list_client_flow_metrics_response_to_json(r: &ListClientFlowMetricsResponse) -> Value {
+pub(super) fn list_client_flow_metrics_response_to_json(
+    r: &ListClientFlowMetricsResponse,
+) -> Value {
     json!({
         "metrics": Value::Array(r.metrics.iter().map(client_flow_metrics_desc_to_json).collect()),
         "group_by": r.group_by,

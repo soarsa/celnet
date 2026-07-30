@@ -730,10 +730,10 @@ impl Edge {
             // the FXO quote edge + the FI desk edge, each folding its OWN already-captured
             // history into FlowRecords on-query, off the hot path.
             .with_client_flow_source(
-                Arc::clone(&quote_edge) as Arc<dyn services::analytics::ClientFlowSource>,
+                Arc::clone(&quote_edge) as Arc<dyn services::analytics::ClientFlowSource>
             )
             .with_client_flow_source(
-                Arc::clone(&rfq_desk_edge) as Arc<dyn services::analytics::ClientFlowSource>,
+                Arc::clone(&rfq_desk_edge) as Arc<dyn services::analytics::ClientFlowSource>
             ),
         );
         let auth = AuthServiceServer::from_arc(Arc::clone(&auth_edge));
