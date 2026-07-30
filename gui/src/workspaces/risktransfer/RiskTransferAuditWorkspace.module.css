@@ -1,0 +1,289 @@
+/* RiskTransferAuditWorkspace — a filterable, expandable blotter of transfer provenance.
+   App design tokens; theme-aware; the wide table scrolls inside its own region. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  font-family: var(--font-brand, var(--font-ui));
+  font-size: var(--type-headline);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+
+.note {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  max-width: 82ch;
+}
+
+.error {
+  color: var(--danger);
+  font-size: var(--type-caption);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: var(--r-md, 8px);
+  padding: var(--space-3) var(--space-4);
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: var(--type-body);
+  padding: var(--space-6);
+  text-align: center;
+}
+
+/* --- filters -------------------------------------------------------------- */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+
+.filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.filterLabel {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-emphasis);
+}
+
+.select {
+  font-family: var(--font-ui);
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  padding: 0 var(--space-3);
+  height: var(--control-h, 2.25rem);
+  min-width: 9rem;
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+/* --- table ---------------------------------------------------------------- */
+
+.tableWrap {
+  border: var(--hairline);
+  border-radius: var(--r-lg, 12px);
+  background: var(--bg-raised);
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-caption);
+}
+
+.table thead th {
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-tertiary);
+  font-weight: var(--weight-emphasis);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: var(--hairline);
+  white-space: nowrap;
+}
+
+.numCol {
+  text-align: right;
+}
+
+.table tbody td {
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-primary);
+  border-bottom: var(--hairline);
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.table tbody tr:not(.detailRow) {
+  cursor: pointer;
+  transition: background var(--dur-fast, 120ms) var(--ease-out, ease);
+}
+
+.table tbody tr:not(.detailRow):hover {
+  background: var(--bg-base);
+}
+
+.rowActive {
+  background: var(--accent-soft);
+}
+
+.num {
+  text-align: right;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.route {
+  color: var(--text-secondary);
+}
+
+.who {
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.approver {
+  font-size: var(--type-micro);
+  color: var(--bid, var(--brand));
+}
+
+.when {
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+}
+
+/* --- kind dot + state tag ------------------------------------------------- */
+
+.kindDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: var(--space-2);
+}
+
+.kind_RE_ATTRIBUTE {
+  background: var(--accent);
+}
+
+.kind_DESK_TO_DESK {
+  background: var(--warn);
+}
+
+.kind_TRADER_TO_TRADER {
+  background: var(--brand);
+}
+
+.stateTag {
+  padding: 1px var(--space-2);
+  border-radius: var(--r-sm, 6px);
+  font-size: var(--type-micro);
+  font-weight: var(--weight-emphasis);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.state_BOOKED {
+  background: color-mix(in srgb, var(--bid, var(--brand)) 20%, transparent);
+  color: var(--bid, var(--brand));
+}
+
+.state_PENDING {
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+  color: var(--warn);
+}
+
+.state_REJECTED,
+.state_CANCELLED {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.state_ACCEPTED,
+.state_DRAFT {
+  background: var(--bg-base);
+  color: var(--text-secondary);
+}
+
+/* --- expanded detail ------------------------------------------------------ */
+
+.detailRow td {
+  background: var(--bg-inset, var(--bg-base));
+  white-space: normal;
+}
+
+.detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-5);
+  padding: var(--space-2) 0;
+}
+
+.detailCol {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detailTitle {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+.muted {
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+}
+
+.posList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+.provList {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.prov {
+  display: grid;
+  grid-template-columns: 12rem 1fr;
+  gap: var(--space-3);
+  font-size: var(--type-caption);
+}
+
+.prov dt {
+  color: var(--text-tertiary);
+}
+
+.prov dd {
+  margin: 0;
+  color: var(--text-primary);
+}

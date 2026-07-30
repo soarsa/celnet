@@ -1425,7 +1425,12 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        // Aggregated-book config is inbound-liquidity / venue ops — gated on
+        // `manage_liquidity·fixed_income`, NOT super-admin (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §4).
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::ManageLiquidity, AssetClass::FixedIncome),
+        )?;
 
         let spec = req
             .spec
@@ -1456,7 +1461,10 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::ManageLiquidity, AssetClass::FixedIncome),
+        )?;
 
         let spec = req
             .spec
@@ -1489,7 +1497,10 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::ManageLiquidity, AssetClass::FixedIncome),
+        )?;
 
         let mut guard = self.lock();
         let mut next = guard.clone();
@@ -1538,8 +1549,16 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        // Group STRUCTURE (id/name/members/enabled + pipelines) is admin-owned.
-        self.require_admin(&req.session_token)?;
+        // Group STRUCTURE and MEMBERSHIP (id/name/members/enabled + pipelines) — and
+        // therefore session-pivoted tiering ASSIGNMENT, which is a member_connection_ids
+        // edit — is gated on `manage_pricing·fixed_income` (the FI client-pricing-desk
+        // authority), NOT super-admin (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4). The
+        // per-mode pipeline RETUNE stays a quoting-trader knob on `quote_respond·FI`
+        // (see `update_pricing_group_pipeline`).
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::ManagePricing, AssetClass::FixedIncome),
+        )?;
 
         let spec = req
             .spec
@@ -1571,7 +1590,10 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::ManagePricing, AssetClass::FixedIncome),
+        )?;
 
         let spec = req
             .spec
@@ -1604,7 +1626,10 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::ManagePricing, AssetClass::FixedIncome),
+        )?;
 
         let mut guard = self.lock();
         let mut next = guard.clone();
@@ -1664,12 +1689,16 @@ impl AuthService for AuthEdge {
 
     // --- risk routing & risk books ---------------------------------------------
     //
-    // All six RPCs gate on `require_admin`: risk-routing config is an admin
-    // risk-management function. A finer `risk_manage·fixed_income` capability (mirroring
-    // the pricing-group `UpdatePricingGroupPipeline` trader gate) is a later refinement.
-    // Every mutation follows the pricing-group pattern — require_ready → require_admin →
-    // lock → clone → apply the phase-2 `IdentityStore` CRUD → `persist_and_commit` — and
-    // then, additionally, pushes the live graph into the shared position store's router
+    // All six RPCs gate on the dedicated `risk_manage·fixed_income` capability: the
+    // risk-portfolio tree (`RiskBookDef` CRUD), the risk-routing decision graph
+    // (get/update) and the firm-wide routed-risk roll-up are a single FI risk-control
+    // authority, granted to a desk/risk lead **without** full administration and held
+    // back from the default trader bundle (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
+    // This replaces the earlier coarse gates — `require_admin` on the CRUD and the
+    // overloaded `quote_respond·fixed_income` on the reads/routing. Every mutation
+    // follows the pricing-group pattern — require_ready → require_capability → lock →
+    // clone → apply the phase-2 `IdentityStore` CRUD → `persist_and_commit` — and then,
+    // additionally, pushes the live graph into the shared position store's router
     // (`reconcile_risk_routing`) so a defined/edited/cleared graph (or a disabled target
     // book) takes effect on subsequent fills immediately.
 
@@ -1681,11 +1710,11 @@ impl AuthService for AuthEdge {
         self.require_ready()?;
         let req = request.into_inner();
         // Reading the risk-book roster + defining routing is an FI risk-management task —
-        // gated on the FI trader capability (a risk manager holds it), NOT admin-only.
-        // Book STRUCTURE (create/update/delete) stays admin.
+        // gated on the dedicated `risk_manage·fixed_income` capability (a risk lead holds
+        // it), NOT admin-only and NOT the overloaded quoting capability.
         self.require_capability(
             &req.session_token,
-            Capability::new(Action::QuoteRespond, AssetClass::FixedIncome),
+            Capability::new(Action::RiskManage, AssetClass::FixedIncome),
         )?;
         let books = self
             .lock()
@@ -1706,7 +1735,10 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::RiskManage, AssetClass::FixedIncome),
+        )?;
 
         let spec = req
             .spec
@@ -1733,7 +1765,10 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::RiskManage, AssetClass::FixedIncome),
+        )?;
 
         let spec = req
             .spec
@@ -1768,7 +1803,10 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::RiskManage, AssetClass::FixedIncome),
+        )?;
 
         let mut guard = self.lock();
         let mut next = guard.clone();
@@ -1792,7 +1830,7 @@ impl AuthService for AuthEdge {
         let req = request.into_inner();
         self.require_capability(
             &req.session_token,
-            Capability::new(Action::QuoteRespond, AssetClass::FixedIncome),
+            Capability::new(Action::RiskManage, AssetClass::FixedIncome),
         )?;
         let graph = self.lock().risk_routing_graph().map(routing_graph_to_wire);
         Ok(Response::new(GetRiskRoutingGraphResponse {
@@ -1810,7 +1848,7 @@ impl AuthService for AuthEdge {
         let req = request.into_inner();
         self.require_capability(
             &req.session_token,
-            Capability::new(Action::QuoteRespond, AssetClass::FixedIncome),
+            Capability::new(Action::RiskManage, AssetClass::FixedIncome),
         )?;
 
         let wire = req
@@ -1834,9 +1872,10 @@ impl AuthService for AuthEdge {
     }
 
     // Read-only per-book risk aggregation, rolled up the book tree (phase 5 — §5, §8.5).
-    // Admin-gated like the phase-4 CRUD RPCs (a finer `risk_manage·fixed_income` capability
-    // is a later refinement). Reads only: the identity registry for the book tree and the
-    // shared position store for the routed facts; no mutation and no persist.
+    // Gated on `risk_manage·fixed_income` like the routing/CRUD RPCs: seeing the firm-wide
+    // routed-risk roll-up is a risk-control authority, not something every FI quoter holds
+    // (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §4). Reads only: the identity registry for the
+    // book tree and the shared position store for the routed facts; no mutation, no persist.
     async fn list_risk_book_risk(
         &self,
         request: Request<ListRiskBookRiskRequest>,
@@ -1846,7 +1885,7 @@ impl AuthService for AuthEdge {
         let req = request.into_inner();
         self.require_capability(
             &req.session_token,
-            Capability::new(Action::QuoteRespond, AssetClass::FixedIncome),
+            Capability::new(Action::RiskManage, AssetClass::FixedIncome),
         )?;
 
         // Aggregate every ENABLED risk book, rolled up its subtree. When no position store
@@ -4011,22 +4050,25 @@ mod tests {
     #[tokio::test]
     async fn login_returns_caller_effective_capabilities() {
         let (edge, path, _s) = edge("login-caps");
-        // The seed admin resolves to grant-all: every action × asset (10 × 2 = 20).
+        // The seed admin resolves to grant-all: every action × asset (14 × 2 = 28).
         let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
         assert_eq!(
             admin.capabilities.len(),
             Action::ALL.len() * AssetClass::ALL.len()
         );
 
-        // A fresh trader holds the role bundle: all actions but the two narrow,
-        // explicitly-granted authorities `administer` and `risk_transfer` (9 × 2).
+        // A fresh trader holds the role bundle: all actions but the FIVE narrow,
+        // explicitly-granted authorities held back from the default —
+        // `administer`, `risk_transfer`, `risk_manage`, `manage_pricing`,
+        // `manage_liquidity` — on both assets (9 × 2 = 18).
+        const HELD_BACK: usize = 5;
         let (trader_id, _t) = make_trader(&edge, &admin.session_token, "lc@celnet.com").await;
         let trader = login(&edge, "lc@celnet.com", "trader-pw-123")
             .await
             .unwrap();
         assert_eq!(
             trader.capabilities.len(),
-            (Action::ALL.len() - 2) * AssetClass::ALL.len()
+            (Action::ALL.len() - HELD_BACK) * AssetClass::ALL.len()
         );
         assert!(has_cap(&trader.capabilities, "execute", "fixed_income"));
         assert!(!has_cap(&trader.capabilities, "administer", "fx_options"));
@@ -4034,6 +4076,14 @@ mod tests {
             !has_cap(&trader.capabilities, "risk_transfer", "fixed_income"),
             "cross-desk transfer is a narrow authority, not in the default bundle"
         );
+        for held in ["risk_manage", "manage_pricing", "manage_liquidity"] {
+            for asset in ["fx_options", "fixed_income"] {
+                assert!(
+                    !has_cap(&trader.capabilities, held, asset),
+                    "{held}·{asset} is admin-granted, not in the default trader bundle"
+                );
+            }
+        }
 
         // After an admin denies one capability, the trader's NEXT login (their prior
         // session was revoked by the change) re-derives the narrowed set.
@@ -5237,6 +5287,123 @@ mod tests {
         assert!(removed);
         let reloaded = IdentityStore::load(&path).unwrap();
         assert!(reloaded.pricing_group(&created.id).is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A non-admin granted ONLY `risk_manage·fixed_income` can reach the risk-control
+    /// RPCs (routing graph, risk-book roster) but is `PermissionDenied` on the
+    /// pricing-group and aggregated-book surfaces — and the mirror holds for a trader
+    /// granted ONLY `manage_pricing·fixed_income`. Proves the three management
+    /// authorities are independent, deny-by-default seats (not one coarse admin gate).
+    #[tokio::test]
+    async fn granular_manage_capabilities_are_separated() {
+        let (edge, path, _s) = edge("granular-manage");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+
+        // A trader granted ONLY risk_manage·FI (re-login: the grant revoked the session).
+        let (rm_id, _t0) = make_trader(&edge, &admin, "riskmgr@celnet.com").await;
+        edge.set_user_capabilities(Request::new(SetUserCapabilitiesRequest {
+            session_token: admin.clone(),
+            id: rm_id,
+            grants: vec![cap("risk_manage", "fixed_income")],
+            denies: vec![],
+            correlation_id: None,
+        }))
+        .await
+        .unwrap();
+        let rm = login(&edge, "riskmgr@celnet.com", "trader-pw-123")
+            .await
+            .unwrap()
+            .session_token;
+
+        // risk_manage·FI CAN read the routing graph and the risk-book roster …
+        edge.get_risk_routing_graph(Request::new(GetRiskRoutingGraphRequest {
+            session_token: rm.clone(),
+            correlation_id: None,
+        }))
+        .await
+        .expect("risk_manage·FI may read the risk-routing graph");
+        edge.list_risk_books(Request::new(ListRiskBooksRequest {
+            session_token: rm.clone(),
+            correlation_id: None,
+        }))
+        .await
+        .expect("risk_manage·FI may list risk books");
+        // … but is refused the pricing-group and aggregated-book surfaces.
+        assert_eq!(
+            edge.create_pricing_group(Request::new(CreatePricingGroupRequest {
+                session_token: rm.clone(),
+                spec: Some(pg_spec("RM-TRIES-PG")),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err()
+            .code(),
+            tonic::Code::PermissionDenied,
+            "risk_manage must not authorize pricing-group CRUD"
+        );
+        assert_eq!(
+            edge.create_aggregated_book(Request::new(CreateAggregatedBookRequest {
+                session_token: rm.clone(),
+                spec: Some(agg_spec("RM-TRIES-AGG", vec![])),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err()
+            .code(),
+            tonic::Code::PermissionDenied,
+            "risk_manage must not authorize aggregated-book config"
+        );
+
+        // The mirror: a trader granted ONLY manage_pricing·FI CAN create a pricing group
+        // but is refused the risk-control RPCs.
+        let (mp_id, _t1) = make_trader(&edge, &admin, "pricingdesk@celnet.com").await;
+        edge.set_user_capabilities(Request::new(SetUserCapabilitiesRequest {
+            session_token: admin.clone(),
+            id: mp_id,
+            grants: vec![cap("manage_pricing", "fixed_income")],
+            denies: vec![],
+            correlation_id: None,
+        }))
+        .await
+        .unwrap();
+        let mp = login(&edge, "pricingdesk@celnet.com", "trader-pw-123")
+            .await
+            .unwrap()
+            .session_token;
+
+        edge.create_pricing_group(Request::new(CreatePricingGroupRequest {
+            session_token: mp.clone(),
+            spec: Some(pg_spec("MP-OWNS-PG")),
+            correlation_id: None,
+        }))
+        .await
+        .expect("manage_pricing·FI may create a pricing group");
+        assert_eq!(
+            edge.list_risk_books(Request::new(ListRiskBooksRequest {
+                session_token: mp.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err()
+            .code(),
+            tonic::Code::PermissionDenied,
+            "manage_pricing must not authorize the risk-book roster"
+        );
+        assert_eq!(
+            edge.get_risk_routing_graph(Request::new(GetRiskRoutingGraphRequest {
+                session_token: mp,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err()
+            .code(),
+            tonic::Code::PermissionDenied,
+            "manage_pricing must not authorize the risk-routing graph"
+        );
         let _ = std::fs::remove_file(&path);
     }
 

@@ -1,0 +1,319 @@
+/* RiskTransferInboxWorkspace — a stack of pending-transfer cards with accept/reject
+   affordances + the four-eyes note. App design tokens; theme-aware; compositor-safe. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  font-family: var(--font-brand, var(--font-ui));
+  font-size: var(--type-headline);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+
+.note {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  max-width: 78ch;
+}
+
+.fourEyes {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: var(--r-md, 8px);
+  padding: var(--space-3) var(--space-4);
+  max-width: 88ch;
+}
+
+.error {
+  color: var(--danger);
+  font-size: var(--type-caption);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: var(--r-md, 8px);
+  padding: var(--space-3) var(--space-4);
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: var(--type-body);
+  padding: var(--space-6);
+  text-align: center;
+  max-width: 72ch;
+  margin: 0 auto;
+}
+
+/* --- pending cards -------------------------------------------------------- */
+
+.list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 30rem), 1fr));
+  gap: var(--space-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: var(--hairline);
+  border-radius: var(--r-lg, 12px);
+  background: var(--bg-raised);
+  padding: var(--space-4);
+  animation: itemIn var(--dur-normal, 240ms) var(--ease-out, ease);
+}
+
+@keyframes itemIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .item {
+    animation: none;
+  }
+}
+
+.itemHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.kindBadge {
+  padding: 2px var(--space-3);
+  border-radius: var(--r-full, 999px);
+  font-size: var(--type-micro);
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.kind_RE_ATTRIBUTE {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.kind_DESK_TO_DESK {
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+  color: var(--warn);
+}
+
+.kind_TRADER_TO_TRADER {
+  background: color-mix(in srgb, var(--brand) 20%, transparent);
+  color: var(--brand);
+}
+
+.itemId {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+.itemTime {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+.route {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--type-callout);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+.routeArrow {
+  color: var(--accent);
+}
+
+.routeTrader {
+  font-size: var(--type-caption);
+  font-weight: var(--weight-regular);
+  color: var(--text-secondary);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.fact dt {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.fact dd {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.reason {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  background: var(--bg-base);
+  border-radius: var(--r-md, 8px);
+  padding: var(--space-2) var(--space-3);
+}
+
+.reasonLabel {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin-right: var(--space-2);
+}
+
+/* --- actions -------------------------------------------------------------- */
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.acceptBtn,
+.rejectBtn,
+.dangerBtn,
+.ghostBtn {
+  font-family: var(--font-ui);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  border-radius: var(--r-md, 8px);
+  padding: 0 var(--space-4);
+  height: var(--control-h, 2.25rem);
+  cursor: pointer;
+  transition: opacity var(--dur-fast, 120ms) var(--ease-out, ease),
+    transform var(--dur-fast, 120ms) var(--ease-out, ease);
+  border: 1px solid transparent;
+}
+
+.acceptBtn {
+  color: var(--bg-base);
+  background: var(--accent);
+}
+
+.acceptBtn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.rejectBtn,
+.ghostBtn {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--hairline-color, color-mix(in srgb, var(--text-primary) 20%, transparent));
+}
+
+.rejectBtn:hover:not(:disabled),
+.ghostBtn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-base);
+}
+
+.dangerBtn {
+  color: #fff;
+  background: var(--danger);
+}
+
+.dangerBtn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.acceptBtn:focus-visible,
+.rejectBtn:focus-visible,
+.dangerBtn:focus-visible,
+.ghostBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.acceptBtn:disabled,
+.rejectBtn:disabled,
+.dangerBtn:disabled,
+.ghostBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- inline reject -------------------------------------------------------- */
+
+.rejectBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: var(--hairline);
+  padding-top: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.fieldLabel {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-emphasis);
+}
+
+.input {
+  font-family: var(--font-ui);
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: var(--hairline);
+  border-radius: var(--r-md, 8px);
+  padding: 0 var(--space-3);
+  height: var(--control-h, 2.25rem);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}

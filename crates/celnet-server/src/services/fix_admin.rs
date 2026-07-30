@@ -174,20 +174,26 @@ impl FixAdminService for FixAdminEdge {
             req.session_token.as_deref(),
             req.principal.clone(),
         )?;
+        let spec = req
+            .spec
+            .ok_or_else(|| Status::invalid_argument("create: missing connection spec"))?;
+        // Base gate: managing an inbound-liquidity venue is `manage_liquidity` on the
+        // asset the venue serves (was the coarse admin role); an admin holds grant-all
+        // and passes on either asset (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
         authorize_caller(
             self.store.access_mode(),
             &caller,
             "FixAdminService/CreateConnection",
-            RequiredAuthority::Admin,
+            RequiredAuthority::Capability(
+                Action::ManageLiquidity,
+                wire_connection_manage_asset(spec.kind),
+            ),
             req.correlation_id,
         )?;
-        let spec = req
-            .spec
-            .ok_or_else(|| Status::invalid_argument("create: missing connection spec"))?;
         let def = def_from_spec(&spec, None)?;
-        // Dialect-specific capability gate, in ADDITION to the administration gate
+        // Dialect-specific capability gate, in ADDITION to the liquidity-management gate
         // above: standing up a fixed-income venue requires the matching FI action
-        // capability, so an admin denied that capability cannot create it.
+        // capability, so a caller denied that capability cannot create it.
         if let Some((action, asset)) = required_dialect_capability(def.kind) {
             authorize_caller(
                 self.store.access_mode(),
@@ -216,19 +222,24 @@ impl FixAdminService for FixAdminEdge {
             req.session_token.as_deref(),
             req.principal.clone(),
         )?;
+        let spec = req
+            .spec
+            .ok_or_else(|| Status::invalid_argument("update: missing connection spec"))?;
+        // Base gate: venue-ops `manage_liquidity` on the (target) connection's asset,
+        // replacing the coarse admin role (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
         authorize_caller(
             self.store.access_mode(),
             &caller,
             "FixAdminService/UpdateConnection",
-            RequiredAuthority::Admin,
+            RequiredAuthority::Capability(
+                Action::ManageLiquidity,
+                wire_connection_manage_asset(spec.kind),
+            ),
             req.correlation_id,
         )?;
         if req.id.trim().is_empty() {
             return Err(Status::invalid_argument("update: missing connection id"));
         }
-        let spec = req
-            .spec
-            .ok_or_else(|| Status::invalid_argument("update: missing connection spec"))?;
         // The request `id` is authoritative; the spec's own id is ignored on update.
         let def = def_from_spec(&spec, Some(req.id.clone()))?;
         let status = self
@@ -254,11 +265,23 @@ impl FixAdminService for FixAdminEdge {
             req.session_token.as_deref(),
             req.principal.clone(),
         )?;
+        // Base gate: venue-ops `manage_liquidity` on the connection's asset (resolved from
+        // the live set; an unknown id defaults to FI, where an admin still passes and the
+        // delete below returns not_found) — replaces the coarse admin role
+        // (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
+        let asset = self
+            .registry
+            .list()
+            .await
+            .into_iter()
+            .find(|s| s.def.id == req.id)
+            .map(|s| connection_manage_asset(s.def.kind))
+            .unwrap_or(AssetClass::FixedIncome);
         authorize_caller(
             self.store.access_mode(),
             &caller,
             "FixAdminService/DeleteConnection",
-            RequiredAuthority::Admin,
+            RequiredAuthority::Capability(Action::ManageLiquidity, asset),
             req.correlation_id,
         )?;
         if req.id.trim().is_empty() {
@@ -285,11 +308,28 @@ impl FixAdminService for FixAdminEdge {
             req.session_token.as_deref(),
             req.principal.clone(),
         )?;
+        // The connection's kind is read once from the live set (an unknown id falls
+        // through to the registry's typed `not_found` below) and drives BOTH the base
+        // venue-ops gate and the dialect gate.
+        let kind = self
+            .registry
+            .list()
+            .await
+            .into_iter()
+            .find(|s| s.def.id == req.id)
+            .map(|s| s.def.kind);
+        // Base gate: venue-ops `manage_liquidity` on the connection's asset (unknown id
+        // defaults to FI; an admin passes regardless), replacing the coarse admin role
+        // (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
         authorize_caller(
             self.store.access_mode(),
             &caller,
             "FixAdminService/SetEnabled",
-            RequiredAuthority::Admin,
+            RequiredAuthority::Capability(
+                Action::ManageLiquidity,
+                kind.map(connection_manage_asset)
+                    .unwrap_or(AssetClass::FixedIncome),
+            ),
             req.correlation_id,
         )?;
         if req.id.trim().is_empty() {
@@ -297,19 +337,9 @@ impl FixAdminService for FixAdminEdge {
                 "set_enabled: missing connection id",
             ));
         }
-        // Dialect-specific capability gate, in ADDITION to the administration gate:
-        // (re)binding a fixed-income venue requires the matching FI action
-        // capability. The connection's kind is read from the live set; an unknown id
-        // falls through to the registry's typed `not_found`.
-        if let Some(kind) = self
-            .registry
-            .list()
-            .await
-            .into_iter()
-            .find(|s| s.def.id == req.id)
-            .map(|s| s.def.kind)
-            && let Some((action, asset)) = required_dialect_capability(kind)
-        {
+        // Dialect-specific capability gate, in ADDITION to the venue-ops gate:
+        // (re)binding a fixed-income venue requires the matching FI action capability.
+        if let Some((action, asset)) = kind.and_then(required_dialect_capability) {
             authorize_caller(
                 self.store.access_mode(),
                 &caller,
@@ -493,6 +523,33 @@ fn required_dialect_capability(kind: AcceptorKind) -> Option<(Action, AssetClass
         AcceptorKind::Options => None,
         AcceptorKind::FixedIncomeQuote => Some((Action::QuoteRespond, AssetClass::FixedIncome)),
         AcceptorKind::FixedIncomeStream => Some((Action::Stream, AssetClass::FixedIncome)),
+    }
+}
+
+/// The asset class a connection of `kind` serves — the scope its **liquidity /
+/// venue-ops** administration ([`Action::ManageLiquidity`]) is exercised under. An
+/// FX-options venue is administered under [`AssetClass::FxOptions`]; both fixed-income
+/// dialects under [`AssetClass::FixedIncome`]. This makes an FX-liquidity and an
+/// FI-liquidity seat separately grantable (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1)
+/// while an admin (grant-all) administers every venue regardless.
+fn connection_manage_asset(kind: AcceptorKind) -> AssetClass {
+    match kind {
+        AcceptorKind::Options => AssetClass::FxOptions,
+        AcceptorKind::FixedIncomeQuote | AcceptorKind::FixedIncomeStream => AssetClass::FixedIncome,
+    }
+}
+
+/// [`connection_manage_asset`] resolved from the **wire** acceptor-kind value (the
+/// create/update spec carries a raw `i32`), so the venue-ops authorization decision is
+/// made before the spec is fully validated. An unrecognised kind defaults to
+/// [`AssetClass::FxOptions`]; a genuinely malformed spec is then rejected loudly by
+/// `def_from_spec`, and an admin (grant-all) passes the gate on either asset regardless.
+fn wire_connection_manage_asset(wire_kind: i32) -> AssetClass {
+    match FixAcceptorKind::try_from(wire_kind) {
+        Ok(FixAcceptorKind::FixedIncomeQuote | FixAcceptorKind::FixedIncomeStream) => {
+            AssetClass::FixedIncome
+        }
+        _ => AssetClass::FxOptions,
     }
 }
 
@@ -690,6 +747,18 @@ mod tests {
     /// Mint a session token for a user with the given role and explicit capability
     /// denies (the role bundle is the base; denies win).
     fn token_for(sessions: &SessionRegistry, role: Role, cap_denies: Vec<Capability>) -> String {
+        token_with(sessions, role, Vec::new(), cap_denies)
+    }
+
+    /// Mint a session token with explicit per-user grants and denies over the trader
+    /// role bundle — used to model a narrowly-granted non-admin seat (e.g. a venue-ops
+    /// trader holding `manage_liquidity` without the admin role).
+    fn token_with(
+        sessions: &SessionRegistry,
+        role: Role,
+        cap_grants: Vec<Capability>,
+        cap_denies: Vec<Capability>,
+    ) -> String {
         sessions
             .issue(AuthenticatedUser {
                 user_id: "u-1".into(),
@@ -699,7 +768,7 @@ mod tests {
                 desk_ids: vec!["g10".into()],
                 all_desks: false,
                 role_caps: default_trader_bundle(),
-                cap_grants: Vec::new(),
+                cap_grants,
                 cap_denies,
             })
             .unwrap()
@@ -790,10 +859,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn non_admin_is_denied_by_the_administration_gate() {
+    async fn plain_trader_is_denied_by_the_liquidity_gate() {
         let (edge, sessions) = edge_under_enforce();
-        // A trader (non-admin) is refused by the existing Administer gate, before the
-        // dialect capability gate is ever consulted.
+        // A plain trader (no `manage_liquidity` — it is held back from the default
+        // bundle) is refused by the venue-ops gate, before the dialect gate is consulted.
         let token = token_for(&sessions, Role::Trader, Vec::new());
         let err = edge
             .create_connection(Request::new(create_req(
@@ -801,9 +870,66 @@ mod tests {
                 FixAcceptorKind::FixedIncomeQuote,
             )))
             .await
-            .expect_err("a non-admin cannot administer connections at all");
+            .expect_err("a trader without manage_liquidity cannot administer connections");
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
-        assert!(err.message().contains("administrator"));
+        assert!(
+            err.message().contains("manage_liquidity"),
+            "names the missing venue-ops capability: {}",
+            err.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn non_admin_with_manage_liquidity_creates_fi_venue() {
+        let (edge, sessions) = edge_under_enforce();
+        // A NON-admin trader explicitly granted `manage_liquidity·FixedIncome` (plus the
+        // FI-quote dialect capability the trader bundle already holds) stands up an
+        // FI-quote venue WITHOUT the admin role — the whole point of the new capability.
+        let token = token_with(
+            &sessions,
+            Role::Trader,
+            vec![Capability::new(
+                Action::ManageLiquidity,
+                AssetClass::FixedIncome,
+            )],
+            Vec::new(),
+        );
+        let resp = edge
+            .create_connection(Request::new(create_req(
+                &token,
+                FixAcceptorKind::FixedIncomeQuote,
+            )))
+            .await
+            .expect("a trader with manage_liquidity·FI + the FI-quote capability may create it");
+        assert_eq!(
+            resp.into_inner().connection.unwrap().kind,
+            FixAcceptorKind::FixedIncomeQuote as i32
+        );
+    }
+
+    #[tokio::test]
+    async fn manage_liquidity_is_asset_scoped_for_connections() {
+        let (edge, sessions) = edge_under_enforce();
+        // `manage_liquidity·FxOptions` does NOT authorize managing an FI venue: the base
+        // gate demands the venue's own asset (here FixedIncome).
+        let token = token_with(
+            &sessions,
+            Role::Trader,
+            vec![Capability::new(
+                Action::ManageLiquidity,
+                AssetClass::FxOptions,
+            )],
+            Vec::new(),
+        );
+        let err = edge
+            .create_connection(Request::new(create_req(
+                &token,
+                FixAcceptorKind::FixedIncomeQuote,
+            )))
+            .await
+            .expect_err("FX liquidity management must not authorize an FI venue");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        assert!(err.message().contains("manage_liquidity·fixed_income"));
     }
 
     #[tokio::test]
