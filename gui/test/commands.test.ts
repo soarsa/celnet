@@ -298,7 +298,7 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
       ]);
     });
 
-    it("Fixed Income = Streaming (primary FI surface, top) + Tiering + the shared rows + quoting, in RAIL order", () => {
+    it("Fixed Income = Streaming (primary FI surface, top) + Tiering + the shared rows + quoting + Pricing Groups (moved off Admin), in RAIL order", () => {
       expect(railForDomain("fixed_income").map((r) => r.id)).toEqual([
         "fistreaming",
         "aggbook",
@@ -313,15 +313,18 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         "risk",
         "book",
         "quoting",
+        // Pricing Groups is a ManagePricing·FI client-pricing surface, moved off the
+        // Administration tab onto Fixed Income (viewCap-gated); it sits at its RAIL
+        // position (after the admin/ops block) so it trails the FI rows.
+        "pricinggroups",
       ]);
     });
 
-    it("Administration = exactly the admin/ops rows", () => {
+    it("Administration = exactly the admin/ops rows (Pricing Groups moved to Fixed Income)", () => {
       expect(railForDomain("admin").map((r) => r.id)).toEqual([
         "connections",
         "admin",
         "permissions",
-        "pricinggroups",
         "refdata",
       ]);
     });
@@ -421,6 +424,56 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
       for (const r of RAIL) {
         const expected = !ADMIN_ONLY_WORKSPACES.has(r.id);
         expect(workspaceAccessible(r.id, signedOut)).toBe(expected);
+      }
+    });
+
+    // Per-feature rail visibility (docs/PERMISSIONS-GRANULAR-REVIEW.md §4): a row with
+    // a viewCap is visible ONLY to a holder of that fine-grained capability.
+    const RISK_ROWS = ["riskbooks", "riskdashboard", "riskrouting"] as const;
+    const PRICING_ROWS = ["tiering", "pricinggroups"] as const;
+
+    it("a risk_manage·FI seat SEES the risk management rows and NOT the pricing rows", () => {
+      const riskMgr = navAuth({
+        isAdmin: false,
+        allow: new Set(["view·fixed_income", "risk_manage·fixed_income"]),
+      });
+      for (const id of RISK_ROWS) expect(workspaceAccessible(id, riskMgr)).toBe(true);
+      for (const id of PRICING_ROWS) expect(workspaceAccessible(id, riskMgr)).toBe(false);
+    });
+
+    it("a manage_pricing·FI seat SEES the pricing rows and NOT the risk management rows", () => {
+      const priceMgr = navAuth({
+        isAdmin: false,
+        allow: new Set(["view·fixed_income", "manage_pricing·fixed_income"]),
+      });
+      for (const id of PRICING_ROWS) expect(workspaceAccessible(id, priceMgr)).toBe(true);
+      for (const id of RISK_ROWS) expect(workspaceAccessible(id, priceMgr)).toBe(false);
+    });
+
+    it("a plain FI trader (view only) sees NONE of the management surfaces", () => {
+      const trader = navAuth({
+        isAdmin: false,
+        allow: new Set(["view·fx_options", "view·fixed_income"]),
+      });
+      for (const id of [...RISK_ROWS, ...PRICING_ROWS]) {
+        expect(workspaceAccessible(id, trader)).toBe(false);
+      }
+      // …but still reaches the ordinary trading surfaces (Agg Book stays view·FI).
+      expect(workspaceAccessible("aggbook", trader)).toBe(true);
+      expect(workspaceAccessible("book", trader)).toBe(true);
+    });
+
+    it("an admin holding grant_all sees every viewCap-gated management surface", () => {
+      const admin = navAuth({
+        isAdmin: true,
+        allow: new Set([
+          "risk_manage·fixed_income",
+          "manage_pricing·fixed_income",
+          "manage_liquidity·fixed_income",
+        ]),
+      });
+      for (const id of [...RISK_ROWS, ...PRICING_ROWS]) {
+        expect(workspaceAccessible(id, admin)).toBe(true);
       }
     });
   });

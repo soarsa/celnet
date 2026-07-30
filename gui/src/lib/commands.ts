@@ -104,6 +104,10 @@ export interface CommandMeta {
  *     (fixed-income dealer quoting — no FX twin). `xva`/`excel` stay FX-scoped (no
  *     FI reconciliation was built for them, so their entitlement is unchanged).
  *   • ADMIN/ops rows list NONE — gated by `isAdmin`, with no license concept.
+ *   • MANAGEMENT rows carry a fine-grained `viewCap` (Risk Portfolios/Routing/
+ *     Dashboard → `risk_manage·FI`; Tiering/Pricing Groups → `manage_pricing·FI`):
+ *     visible ONLY to a holder of that capability (docs/PERMISSIONS-GRANULAR-REVIEW.md
+ *     §4). They still declare their served asset for domain-tab placement.
  * The rail is driven by scope/underlier + license, NOT by an FX/FI domain tab.
  */
 export const RAIL: readonly {
@@ -120,6 +124,18 @@ export const RAIL: readonly {
   subtitle?: string;
   /** The asset class(es) this workspace serves (see {@link workspaceAssets}). */
   assets: readonly CapabilityAsset[];
+  /**
+   * The FINE-GRAINED capability that makes this rail entry VISIBLE at all
+   * (docs/PERMISSIONS-GRANULAR-REVIEW.md §4). When present, {@link workspaceAccessible}
+   * gates the whole surface on `auth.can(viewCap.action, viewCap.asset)` — a user
+   * without it never sees the entry (not merely a disabled control). Used for the FI
+   * management surfaces (Risk Portfolios/Routing/Dashboard → `risk_manage·FI`;
+   * Tiering/Pricing Groups → `manage_pricing·FI`) so only the granted risk/pricing
+   * managers see them. Absent ⇒ the default gate (admin-only ⇒ isAdmin; else view on
+   * any served asset). Admin holds `grant_all`, so admins see every viewCap surface;
+   * `can` is permissive signed-out, so pre-login discovery is unchanged.
+   */
+  viewCap?: { action: CapabilityAction; asset: CapabilityAsset };
 }[] = [
   // Trading capabilities — class chosen by scope/underlier + lens INSIDE the pane.
   // Ticket (Price) is FX-only: FI is booked/streamed through the Streaming hub +
@@ -134,18 +150,24 @@ export const RAIL: readonly {
   // FI aggregated-book live composite view (ADR-0022): consolidated best bid/offer
   // across a book's inbound liquidity members — a single-asset FI read surface.
   { id: "aggbook", glyph: "◫", label: "Agg Book", subtitle: "LP-aggregated prices", assets: ["fixed_income"] },
-  { id: "tiering", glyph: "⚖", label: "Tiering", subtitle: "Per-session pricing", assets: ["fixed_income"] },
+  // Tiering: the roster of FIX sessions → the pricing group applied to each. A
+  // ManagePricing·FI surface (assign a group = a group-membership edit) — gated at
+  // the rail on `manage_pricing·FI` so only the FI pricing desk sees it.
+  { id: "tiering", glyph: "⚖", label: "Tiering", subtitle: "Per-session pricing", assets: ["fixed_income"], viewCap: { action: "manage_pricing", asset: "fixed_income" } },
   // FI Risk routing (docs/FI-RISK-ROUTING-REQUIREMENTS.md): the hierarchical risk-
   // portfolio tree editor and the per-portfolio risk DASHBOARD. Single-asset FI
-  // rows; every underlying RPC is admin-gated (edit affordances gate on `isAdmin`
-  // INSIDE the pane, like Pricing Groups). USER-FACING name "Risk Portfolios"; the
-  // wire type stays `RiskBookDef`/`riskbooks` (rename is UI-only — see
-  // docs/FI-BOOK-CONCEPTS.md).
-  { id: "riskbooks", glyph: "❦", label: "Risk Portfolios", subtitle: "Risk buckets + limits", assets: ["fixed_income"] },
-  { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", subtitle: "Routed-risk roll-up", assets: ["fixed_income"] },
+  // rows gated at the rail on the granular `risk_manage·FI` capability
+  // (docs/PERMISSIONS-GRANULAR-REVIEW.md §4) — a firm risk-control function distinct
+  // from super-admin, so a risk lead sees + edits these WITHOUT full Administer, and
+  // an ordinary FI trader no longer sees them at all. USER-FACING name "Risk
+  // Portfolios"; the wire type stays `RiskBookDef`/`riskbooks` (rename is UI-only —
+  // see docs/FI-BOOK-CONCEPTS.md).
+  { id: "riskbooks", glyph: "❦", label: "Risk Portfolios", subtitle: "Risk buckets + limits", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
+  { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", subtitle: "Routed-risk roll-up", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
   // Risk Routing: the ordered rules table that routes each fill's risk into a desk's
-  // risk portfolio. Admin edit; read-only otherwise. Single-asset FI row.
-  { id: "riskrouting", glyph: "⑃", label: "Risk Routing", subtitle: "Fill → portfolio rules", assets: ["fixed_income"] },
+  // risk portfolio. Rail-gated + edited on `risk_manage·FI` (was the overloaded
+  // `quote_respond·FI` stand-in). Single-asset FI row.
+  { id: "riskrouting", glyph: "⑃", label: "Risk Routing", subtitle: "Fill → portfolio rules", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
   // FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md): the MANUAL move of
   // EXISTING risk between risk portfolios — the complement to routing (which
   // auto-assigns NEW fills). Three single-asset FI surfaces, initiate/accept gated
@@ -165,11 +187,18 @@ export const RAIL: readonly {
   { id: "quoting", glyph: "⇌", label: "Quoting", subtitle: "RFQ / IOI desk inbox", assets: ["fixed_income"] },
   { id: "xva", glyph: "⊗", label: "XVA", assets: ["fx_options"] },
   { id: "excel", glyph: "▦", label: "Excel", assets: ["fx_options"] },
-  // Administration / ops — admin-gated, no license concept.
+  // Administration / ops — admin-gated, no license concept. (Connections is venue
+  // ops: its rail stays admin-gated, but its in-pane edits gate on `manage_liquidity`
+  // server-side — see AggregatedBookWorkspace for the reachable manage_liquidity
+  // affordance an FI-liquidity seat uses.)
   { id: "connections", glyph: "⇄", label: "Connections", assets: [] },
   { id: "admin", glyph: "⚇", label: "Admin", assets: [] },
   { id: "permissions", glyph: "⚷", label: "Permissions", assets: [] },
-  { id: "pricinggroups", glyph: "⚙", label: "Pricing Groups", assets: [] },
+  // Pricing Groups is a Fixed-Income CLIENT-PRICING surface, not identity admin: it
+  // moved OFF the Administration tab onto the FI tab (assets: fixed_income) and gates
+  // rail visibility + structure edits on `manage_pricing·FI`, so the FI pricing desk
+  // sees and edits it WITHOUT full Administer (docs/PERMISSIONS-GRANULAR-REVIEW.md §4).
+  { id: "pricinggroups", glyph: "⚙", label: "Pricing Groups", subtitle: "Per-client feature pipelines", assets: ["fixed_income"], viewCap: { action: "manage_pricing", asset: "fixed_income" } },
   { id: "refdata", glyph: "❏", label: "Reference Data", assets: [] },
 ] as const;
 
@@ -225,7 +254,6 @@ export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<Workspace
   "connections",
   "admin",
   "permissions",
-  "pricinggroups",
   "refdata",
 ]);
 
@@ -259,6 +287,13 @@ export const WORKSPACE_CAPABILITY: Partial<Record<WorkspaceId, CapabilityAction>
  * and the AppContext redirect so no path can strand a user on a hidden workspace.
  */
 export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
+  // Per-feature visibility wins (docs/PERMISSIONS-GRANULAR-REVIEW.md §4.1): a row
+  // with a `viewCap` is visible ONLY to a holder of that fine-grained capability
+  // (admin holds `grant_all`; `can` is permissive signed-out). This is what hides
+  // the FI management surfaces (Risk Portfolios/Routing/Dashboard, Tiering, Pricing
+  // Groups) from an ordinary trader while surfacing them to the granted manager.
+  const viewCap = RAIL.find((r) => r.id === id)?.viewCap;
+  if (viewCap) return auth.can(viewCap.action, viewCap.asset);
   if (ADMIN_ONLY_WORKSPACES.has(id)) return auth.isAdmin;
   const action = WORKSPACE_CAPABILITY[id] ?? "view";
   return workspaceAssets(id).some((asset) => auth.can(action, asset));

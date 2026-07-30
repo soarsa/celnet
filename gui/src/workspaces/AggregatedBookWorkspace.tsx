@@ -5,12 +5,14 @@
  * bond identity (name + ISIN + CUSIP), the consolidated best bid/offer + firm
  * sizes, a confidence badge, and an expandable per-LP breakdown (each member's
  * own two-way + a stale indicator when it was excluded from the composite).
- * Registered FI-only in the rail, so it appears only under the Fixed Income
- * domain. For an ADMIN it additionally offers a "Manage" mode (a View/Manage
- * toggle) that hosts the aggregated-book definition editor — members, instrument
- * scope, consolidation tuning, and the per-book OUTBOUND TIERING config (widen /
- * skew before publish) — so the book + tiering admin is reachable under Fixed
- * Income, not only under Administration → Aggregation. Non-admins never see it.
+ * Registered FI-only in the rail (rail-visible on `view·fixed_income` — a trader
+ * read), so it appears under the Fixed Income domain. A holder of the granular
+ * `manage_liquidity·fixed_income` capability additionally gets a "Manage" mode (a
+ * View/Manage toggle) that hosts the aggregated-book definition editor — members,
+ * instrument scope, consolidation tuning, and the per-book OUTBOUND TIERING config
+ * (widen / skew before publish) — so venue/liquidity ops manage the book + tiering
+ * under Fixed Income WITHOUT full Administer. A user without the cap never sees the
+ * Manage toggle (docs/PERMISSIONS-GRANULAR-REVIEW.md §4).
  *
  * The composite is a READ line (any authenticated user) — there is NO click-to-
  * trade token on it, so no execute action is offered (honest: executable two-way
@@ -223,10 +225,12 @@ export function AggregatedBookWorkspace(): React.ReactElement {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  // Admin-only "Manage" mode: an admin edits the book roster + per-book tiering
-  // right here under Fixed Income (the aggregated-book admin lives here AND under
-  // Administration → Aggregation). Non-admins never see the toggle.
-  const isAdmin = auth.isAdmin;
+  // "Manage" mode edits the book roster + per-book tiering right here under Fixed
+  // Income. The View composite is a trader read (any FI viewer), but the Manage panel
+  // gates on the granular `manage_liquidity·fixed_income` capability (venue/liquidity
+  // ops, distinct from super-admin — docs/PERMISSIONS-GRANULAR-REVIEW.md §4); admin
+  // holds it via grant-all. A user without it never sees the Manage toggle.
+  const canManageLiquidity = auth.can("manage_liquidity", "fixed_income");
   const [mode, setMode] = useState<"view" | "manage">("view");
   const [connections, setConnections] = useState<FixConnection[]>([]);
   const [manageError, setManageError] = useState<string | null>(null);
@@ -267,7 +271,7 @@ export function AggregatedBookWorkspace(): React.ReactElement {
   // — an admin-only list, so it is fetched ONLY for admins (a non-admin never issues
   // the admin-gated RPC). Failure degrades silently to the free-text member entry.
   useEffect(() => {
-    if (!isAdmin) {
+    if (!canManageLiquidity) {
       setConnections([]);
       return;
     }
@@ -283,7 +287,7 @@ export function AggregatedBookWorkspace(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [app.transport, isAdmin]);
+  }, [app.transport, canManageLiquidity]);
 
   // Manage-mode mutation runner: surfaces a failure inline (the panel refetches the
   // roster on success via `reloadBooks`, keeping the View selector in sync).
@@ -386,7 +390,7 @@ export function AggregatedBookWorkspace(): React.ReactElement {
           </span>
         </div>
         <div className={styles.headAside}>
-          {isAdmin && (
+          {canManageLiquidity && (
             <div className={styles.modeToggle} role="group" aria-label="aggregated book mode">
               <button
                 type="button"
@@ -418,7 +422,7 @@ export function AggregatedBookWorkspace(): React.ReactElement {
         </div>
       </div>
 
-      {isAdmin && mode === "manage" && (
+      {canManageLiquidity && mode === "manage" && (
         <section className={styles.managePanel} aria-label="manage aggregated books">
           {manageError && <p className={styles.banner}>{manageError}</p>}
           <AggregationPanel
@@ -439,7 +443,7 @@ export function AggregatedBookWorkspace(): React.ReactElement {
           {books.length === 0 ? (
             <div className={styles.empty}>
               No aggregated books are defined.{" "}
-              {isAdmin ? (
+              {canManageLiquidity ? (
                 <>
                   Switch to <strong>Manage</strong> above to define one — or use{" "}
                   <strong>Administration → Aggregation</strong>.

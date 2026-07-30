@@ -58,9 +58,11 @@ export function RiskRoutingWorkspace(): React.ReactElement {
   const app = useApp();
   const { auth } = app;
   const signedIn = auth.user !== undefined && auth.user !== null;
-  // Routing rules are FI risk management — a risk manager holding the FI trader
-  // capability may edit (not admin-only); book STRUCTURE stays admin (Risk Books pane).
-  const canEdit = auth.can("quote_respond", "fixed_income");
+  // Routing rules are FI risk management — gated on the granular `risk_manage·FI`
+  // capability (docs/PERMISSIONS-GRANULAR-REVIEW.md §4), replacing the overloaded
+  // `quote_respond·FI` stand-in. The risk-portfolio STRUCTURE (Risk Portfolios pane)
+  // is the same capability; the whole surface is rail-hidden without it.
+  const canEdit = auth.can("risk_manage", "fixed_income");
   const readOnly = !canEdit;
 
   const [rules, setRules] = useState<RiskRule[]>([]);

@@ -11,11 +11,15 @@
  * rosters. A client-side {@link previewPipeline} waterfall shows the indicative
  * two-way AFTER each feature as the pipeline is built.
  *
- * Gating: registered under Administration and admin-gated by the rail. An admin
- * creates / updates the whole group (structure + both pipelines); a non-admin who
- * still reaches the pane but holds `quote_respond·fixed_income` may retune ONLY the
- * pipeline block (structure read-only) via `UpdatePricingGroupPipeline` — the exact
- * capability the server enforces.
+ * Gating: a Fixed-Income CLIENT-PRICING surface (moved OFF Administration onto the FI
+ * tab). Rail visibility AND all edits gate on the granular `manage_pricing·fixed_income`
+ * capability (docs/PERMISSIONS-GRANULAR-REVIEW.md §4 — the FI pricing-desk authority,
+ * distinct from super-admin): a pricing manager creates / updates the whole group
+ * (structure + both pipelines) WITHOUT full Administer, and a user lacking the cap never
+ * reaches the pane. (The prior split — an `Administer` structure gate plus a
+ * `quote_respond` pipeline-only retune path — is retired; the pane's single gate is
+ * `manage_pricing`. The server still exposes `UpdatePricingGroupPipeline` on
+ * `quote_respond` for non-GUI clients, but the GUI edits via the full update.)
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -124,12 +128,11 @@ export function PricingGroupsWorkspace(): React.ReactElement {
   const { activeTourId } = useTour();
   const { auth } = app;
   const signedIn = auth.user !== undefined && auth.user !== null;
-  const isAdmin = auth.isAdmin;
-  // The exact capability the server gates the pipeline-only RPC on; an admin holds
-  // it too (grant-all). Drives whether a non-admin who reaches the pane may retune.
-  const canRetune = auth.can("quote_respond", "fixed_income");
-  const readOnlyStructure = !isAdmin;
-  const readOnlyPipeline = !(isAdmin || canRetune);
+  // The single gate: the FI pricing-desk capability the server enforces on every
+  // pricing-group mutation (admin holds it via grant-all). Rail visibility uses the
+  // same cap, so anyone reaching the pane may edit; `can` is permissive signed-out.
+  const canManagePricing = auth.can("manage_pricing", "fixed_income");
+  const readOnly = !canManagePricing;
 
   const [groups, setGroups] = useState<PricingGroup[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -187,9 +190,11 @@ export function PricingGroupsWorkspace(): React.ReactElement {
     };
   }, [reloadGroups, signedIn]);
 
-  // Membership candidate rosters — admin-gated RPCs, so fetched only for admins.
+  // Membership candidate rosters — fetched for a pricing manager (admin holds the cap
+  // via grant-all). Denials on any individual roster RPC are swallowed by allSettled,
+  // so a manager without the desk/connection admin cap just gets an empty picker.
   useEffect(() => {
-    if (!isAdmin) {
+    if (!canManagePricing) {
       setConnections([]);
       setUsers([]);
       setDesks([]);
@@ -210,7 +215,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [app.transport, isAdmin]);
+  }, [app.transport, canManagePricing]);
 
   const selectedGroup = useMemo(
     () => groups.find((g) => g.id === selectedId) ?? null,
@@ -454,7 +459,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
     setDragCardIndex(index);
   };
   const onZoneDragOver = (targetIndex: number) => (e: React.DragEvent): void => {
-    if (readOnlyPipeline) return;
+    if (readOnly) return;
     e.preventDefault();
     setDragOverIndex(targetIndex);
   };
@@ -465,7 +470,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
   // Precise child zones (`dropzone-N`, cards) stop propagation so a drop that lands
   // on them does NOT also reach the canvas-level append handler below.
   const onZoneDrop = (targetIndex: number) => (e: React.DragEvent): void => {
-    if (readOnlyPipeline) return;
+    if (readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     const payload = e.dataTransfer.getData("text/plain");
@@ -512,10 +517,10 @@ export function PricingGroupsWorkspace(): React.ReactElement {
   }, [draft, creating, selectedGroup]);
 
   const saving = saveState.kind === "saving";
-  const canSave = signedIn && draft !== null && valid && dirty && !saving && (isAdmin || (canRetune && !creating));
+  const canSave = signedIn && draft !== null && valid && dirty && !saving && canManagePricing;
 
   const save = useCallback(async (): Promise<void> => {
-    if (draft === null || !valid) return;
+    if (draft === null || !valid || !canManagePricing) return;
     setSaveState({ kind: "saving" });
     try {
       if (creating) {
@@ -527,19 +532,10 @@ export function PricingGroupsWorkspace(): React.ReactElement {
         setDraft(cloneGroup(created));
         seededRef.current = created.id;
         setSaveState({ kind: "ok", name: created.name });
-      } else if (isAdmin && selectedGroup) {
-        const updated = await app.transport.updatePricingGroup(selectedGroup.id, draft);
-        setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
-        setDraft(cloneGroup(updated));
-        setSaveState({ kind: "ok", name: updated.name });
       } else if (selectedGroup) {
-        // Non-admin, pipeline-only: retune the effective mode's pipeline block.
-        const updated = await app.transport.updatePricingGroupPipeline(
-          selectedGroup.id,
-          effectiveMode,
-          activePipeline,
-          draft.sharePipeline,
-        );
+        // A Manage-Pricing edit is a FULL update (structure + both pipelines) via the
+        // manage_pricing-gated RPC — the retired pipeline-only path is gone (§4).
+        const updated = await app.transport.updatePricingGroup(selectedGroup.id, draft);
         setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
         setDraft(cloneGroup(updated));
         setSaveState({ kind: "ok", name: updated.name });
@@ -550,11 +546,9 @@ export function PricingGroupsWorkspace(): React.ReactElement {
     }
   }, [
     app.transport,
-    activePipeline,
+    canManagePricing,
     creating,
     draft,
-    effectiveMode,
-    isAdmin,
     reloadGroups,
     selectedGroup,
     valid,
@@ -608,18 +602,12 @@ export function PricingGroupsWorkspace(): React.ReactElement {
         </div>
       </div>
 
-      {readOnlyStructure && (
+      {readOnly && (
         <p className={styles.permBanner} role="note">
           <span className={styles.permGlyph} aria-hidden="true">
             🔒︎
           </span>
-          You can retune pipelines but not change group structure. Structural edits require the{" "}
-          <strong>Administer</strong> capability
-          {canRetune ? (
-            <span className={styles.permHint}> — pipeline retune uses {capabilityDenialTitle("quote_respond", "fixed_income")}.</span>
-          ) : (
-            <span className={styles.permHint}> ({capabilityDenialTitle("quote_respond", "fixed_income")}).</span>
-          )}
+          Read-only — {capabilityDenialTitle("manage_pricing", "fixed_income")}
         </p>
       )}
 
@@ -630,7 +618,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
         <section className={styles.roster} aria-label="pricing groups">
           <div className={styles.rosterHead}>
             <h3 className={styles.rosterTitle}>Groups</h3>
-            {isAdmin && (
+            {canManagePricing && (
               <Button variant="primary" onClick={startCreate} data-tour-id="pg-new">
                 + New pricing group
               </Button>
@@ -729,7 +717,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                       id="pg-name"
                       className={`${styles.input} ${nameErrors.name ? styles.inputError : ""}`}
                       value={draft.name}
-                      disabled={readOnlyStructure}
+                      disabled={readOnly}
                       aria-invalid={nameErrors.name ? true : undefined}
                       onChange={(e) => patchDraft({ name: e.target.value })}
                     />
@@ -742,7 +730,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                       className={`${styles.input} ${styles.numInput}`}
                       value={draft.id}
                       placeholder={creating ? "minted from name if blank" : ""}
-                      disabled={readOnlyStructure || !creating}
+                      disabled={readOnly || !creating}
                       onChange={(e) => patchDraft({ id: e.target.value })}
                     />
                   </label>
@@ -752,7 +740,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                       id="pg-desc"
                       className={styles.textarea}
                       value={draft.description}
-                      disabled={readOnlyStructure}
+                      disabled={readOnly}
                       onChange={(e) => patchDraft({ description: e.target.value })}
                     />
                   </label>
@@ -761,7 +749,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                       id="pg-enabled"
                       type="checkbox"
                       checked={draft.enabled}
-                      disabled={readOnlyStructure}
+                      disabled={readOnly}
                       onChange={(e) => patchDraft({ enabled: e.target.checked })}
                     />
                     <span>Enabled — a disabled group prices nobody</span>
@@ -799,7 +787,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                       id="pg-share"
                       type="checkbox"
                       checked={draft.sharePipeline}
-                      disabled={readOnlyPipeline}
+                      disabled={readOnly}
                       onChange={(e) => {
                         patchDraft({ sharePipeline: e.target.checked });
                         if (e.target.checked) setMode("ESP");
@@ -821,7 +809,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                     id="pg-custom"
                     type="checkbox"
                     checked={activePipeline !== null}
-                    disabled={readOnlyPipeline}
+                    disabled={readOnly}
                     onChange={(e) => toggleCustomPipeline(e.target.checked)}
                   />
                   <span>
@@ -843,7 +831,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                             key={k}
                             role="listitem"
                             className={styles.chip}
-                            draggable={!readOnlyPipeline}
+                            draggable={!readOnly}
                             onDragStart={onPaletteDragStart(k)}
                             onDragEnd={clearDrag}
                             title={FEATURE_KIND_HINT[k]}
@@ -856,7 +844,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                             <button
                               type="button"
                               className={styles.chipAdd}
-                              disabled={readOnlyPipeline}
+                              disabled={readOnly}
                               aria-label={`Add ${FEATURE_KIND_LABEL[k]} to the end of the pipeline`}
                               onClick={() => {
                                 insertFeature(defaultFeatureSpec(k), features.length);
@@ -901,7 +889,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                             index={i}
                             count={features.length}
                             expanded={expandedFeature === i}
-                            readOnly={readOnlyPipeline}
+                            readOnly={readOnly}
                             errors={activeErrors.features[i]}
                             idPrefix={`pg-f${i}`}
                             dragging={dragCardIndex === i}
@@ -939,7 +927,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                             type="number"
                             step="any"
                             value={activePipeline.guardrails.hMin}
-                            disabled={readOnlyPipeline}
+                            disabled={readOnly}
                             onChange={(e) => patchGuardrails({ hMin: Number(e.target.value) })}
                           />
                           {activeErrors.guardrails.hMin && (
@@ -954,7 +942,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                             type="number"
                             step="any"
                             value={activePipeline.guardrails.hMax}
-                            disabled={readOnlyPipeline}
+                            disabled={readOnly}
                             onChange={(e) => patchGuardrails({ hMax: Number(e.target.value) })}
                           />
                           {activeErrors.guardrails.hMax && (
@@ -969,7 +957,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                             type="number"
                             step="any"
                             value={activePipeline.guardrails.sMax}
-                            disabled={readOnlyPipeline}
+                            disabled={readOnly}
                             onChange={(e) => patchGuardrails({ sMax: Number(e.target.value) })}
                           />
                           {activeErrors.guardrails.sMax && (
@@ -984,7 +972,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                             type="number"
                             step="any"
                             value={activePipeline.guardrails.spreadFloor}
-                            disabled={readOnlyPipeline}
+                            disabled={readOnly}
                             onChange={(e) => patchGuardrails({ spreadFloor: Number(e.target.value) })}
                           />
                           {activeErrors.guardrails.spreadFloor && (
@@ -1045,21 +1033,21 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                     heading="FIX connections"
                     items={connections.map((c) => ({ id: c.id, label: c.name }))}
                     selected={draft.memberConnectionIds}
-                    readOnly={readOnlyStructure}
+                    readOnly={readOnly}
                     onToggle={(id) => toggleMember("conn", id)}
                   />
                   <MemberList
                     heading="Users"
                     items={users.map((u) => ({ id: u.id, label: u.displayName || u.email }))}
                     selected={draft.memberUserIds}
-                    readOnly={readOnlyStructure}
+                    readOnly={readOnly}
                     onToggle={(id) => toggleMember("user", id)}
                   />
                   <MemberList
                     heading="Desks"
                     items={desks.map((d) => ({ id: d.id, label: d.name }))}
                     selected={draft.memberDesks}
-                    readOnly={readOnlyStructure}
+                    readOnly={readOnly}
                     onToggle={(id) => toggleMember("desk", id)}
                   />
                 </div>
@@ -1095,7 +1083,7 @@ export function PricingGroupsWorkspace(): React.ReactElement {
                 <Button variant="ghost" onClick={closeEditor} disabled={saving}>
                   {creating ? "Cancel" : "Close"}
                 </Button>
-                {isAdmin && !creating && selectedGroup && (
+                {canManagePricing && !creating && selectedGroup && (
                   <>
                     <Button variant="ghost" onClick={startClone} disabled={saving}>
                       Clone

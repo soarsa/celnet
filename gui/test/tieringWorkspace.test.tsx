@@ -133,7 +133,7 @@ const GROUPS: PricingGroup[] = [
 function makeApp(opts: {
   user: { id: string; email: string } | null;
   isAdmin: boolean;
-  canQuote: boolean;
+  canManagePricing: boolean;
   sessions?: FixConnection[];
   groups?: PricingGroup[];
   updatePricingGroup?: ReturnType<typeof vi.fn>;
@@ -150,7 +150,7 @@ function makeApp(opts: {
     auth: {
       user: opts.user,
       isAdmin: opts.isAdmin,
-      can: () => opts.canQuote,
+      can: () => opts.canManagePricing,
     },
     setSignInOpen: vi.fn(),
     setWorkspace: vi.fn(),
@@ -174,7 +174,7 @@ describe("TieringWorkspace — rail registration", () => {
 
 describe("TieringWorkspace — sign-in gate", () => {
   it("shows a sign-in card for an anonymous session", () => {
-    state.app = makeApp({ user: null, isAdmin: false, canQuote: true });
+    state.app = makeApp({ user: null, isAdmin: false, canManagePricing: true });
     render(<TieringWorkspace />);
     expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
@@ -185,7 +185,7 @@ describe("TieringWorkspace — session → group resolution", () => {
     state.app = makeApp({
       user: { id: "trader", email: "trader@celnet.com" },
       isAdmin: true,
-      canQuote: true,
+      canManagePricing: true,
     });
     render(<TieringWorkspace />);
 
@@ -208,7 +208,7 @@ describe("TieringWorkspace — resolved pricing detail", () => {
     state.app = makeApp({
       user: { id: "trader", email: "trader@celnet.com" },
       isAdmin: true,
-      canQuote: true,
+      canManagePricing: true,
     });
     render(<TieringWorkspace />);
 
@@ -241,7 +241,7 @@ describe("TieringWorkspace — admin reassign", () => {
     state.app = makeApp({
       user: { id: "admin", email: "admin@celnet.com" },
       isAdmin: true,
-      canQuote: true,
+      canManagePricing: true,
       updatePricingGroup,
     });
     render(<TieringWorkspace />);
@@ -266,18 +266,18 @@ describe("TieringWorkspace — admin reassign", () => {
   });
 });
 
-describe("TieringWorkspace — non-admin read-only", () => {
-  it("disables the assign control for a signed-in non-admin", async () => {
+describe("TieringWorkspace — read-only without Manage-Pricing", () => {
+  it("disables the assign control for a signed-in user lacking manage_pricing·FI", async () => {
     state.app = makeApp({
       user: { id: "viewer", email: "viewer@celnet.com" },
       isAdmin: false,
-      canQuote: true,
+      canManagePricing: false,
     });
     render(<TieringWorkspace />);
 
     await screen.findByRole("button", { name: /Alpha FIX/ });
 
-    // The assign <select> is disabled and the admin-only deep-link is absent.
+    // The assign <select> is disabled and the Manage-only deep-link is absent.
     expect(screen.getByLabelText("Assign to group")).toBeDisabled();
     expect(
       screen.queryByRole("button", { name: /Edit tiering in Pricing Groups/ }),

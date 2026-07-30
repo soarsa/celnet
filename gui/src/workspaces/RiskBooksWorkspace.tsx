@@ -9,10 +9,13 @@
  * {@link RiskLimits}, tag an owning desk, and re-parent (a client-side acyclic
  * guard forbids parenting a portfolio under itself or a descendant).
  *
- * Gating: every risk-routing RPC is admin-gated server-side. Edit affordances gate
- * on `auth.isAdmin` (mirrors {@link PricingGroupsWorkspace}); a non-admin who
- * reaches the pane sees the tree read-only. The firm-wide routing GRAPH that maps
- * fills to leaf books is edited on the pass-6b flow-canvas surface, not here.
+ * Gating: the risk-portfolio RPCs gate on the granular `risk_manage·fixed_income`
+ * capability server-side (docs/PERMISSIONS-GRANULAR-REVIEW.md §4 — a firm risk-control
+ * authority distinct from super-admin, so a desk/risk lead manages portfolios WITHOUT
+ * full Administer). Edit affordances mirror it: `readOnly = !can("risk_manage",
+ * "fixed_income")`. The whole surface is rail-hidden from anyone lacking the cap, so a
+ * non-admin without it never reaches the pane. The firm-wide routing GRAPH that maps
+ * fills to leaf books is edited on the flow-canvas surface, not here.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -117,7 +120,11 @@ export function RiskBooksWorkspace(): React.ReactElement {
   const { auth } = app;
   const signedIn = auth.user !== undefined && auth.user !== null;
   const isAdmin = auth.isAdmin;
-  const readOnly = !isAdmin;
+  // Risk-portfolio editing is gated on the granular risk_manage·FI capability (not
+  // super-admin) — see the header note. The owning-desk picker below still needs the
+  // Administer-gated desk roster, so it stays isAdmin-fetched (optional metadata).
+  const canManageRisk = auth.can("risk_manage", "fixed_income");
+  const readOnly = !canManageRisk;
 
   const [books, setBooks] = useState<RiskBook[]>([]);
   const [desks, setDesks] = useState<DeskDesc[]>([]);
@@ -293,9 +300,12 @@ export function RiskBooksWorkspace(): React.ReactElement {
         <div className={styles.headMain}>
           <h1 className={styles.title}>Risk Portfolios</h1>
           <p className={styles.note}>
-            Trader-defined risk portfolios (desk → portfolio → sub-portfolio) that routing rules drop
-            each fill&apos;s risk into, each with its own limits. {readOnly ? "Read-only" : "Admin"}{" "}
-            view — greeks, notional and PnL roll up the tree.
+            Firm risk portfolios (desk → portfolio → sub-portfolio) that routing rules drop each
+            fill&apos;s risk into, each with its own limits.{" "}
+            {readOnly
+              ? "Read-only — the Manage-Risk capability is required to edit."
+              : "You hold Manage-Risk — editing enabled."}{" "}
+            Greeks, notional and PnL roll up the tree.
           </p>
           <p className={styles.note}>
             How your risk is <strong>bucketed</strong> for management — this is not the ledger

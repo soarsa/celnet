@@ -11,16 +11,16 @@
  * price-space guardrails.
  *
  * Editing tiering itself happens in the Pricing Groups builder (deep-linked from
- * here). This surface offers ONE structural edit: an ADMIN can reassign a session
- * between groups (moving `session.id` in/out of each group's `memberConnectionIds`)
- * via the trader-accessible `AuthService.UpdatePricingGroup` RPC. A non-admin sees
- * everything read-only.
+ * here). This surface offers ONE structural edit: a PRICING MANAGER can reassign a
+ * session between groups (moving `session.id` in/out of each group's
+ * `memberConnectionIds`) via the `AuthService.UpdatePricingGroup` RPC — a group
+ * membership edit, which the server gates on `manage_pricing·fixed_income`.
  *
- * Gating: registered in the rail under Fixed Income on `view·fixed_income` (reachable
- * by any FI trader, NOT admin-gated). The read-only summary is visible to any signed-
- * in FI user; reassigning a session and the "Edit in Pricing Groups" deep-link require
- * admin (Pricing Groups is an admin pane). A signed-in user lacking `quote_respond·
- * fixed_income` still sees the sessions and their applied pricing read-only.
+ * Gating: a Fixed-Income client-pricing surface, rail-visible on the granular
+ * `manage_pricing·fixed_income` capability (docs/PERMISSIONS-GRANULAR-REVIEW.md §4 —
+ * the FI pricing-desk authority, distinct from super-admin). Reassigning a session and
+ * the "Edit in Pricing Groups" deep-link both use the same cap; a manager holding it
+ * edits WITHOUT full Administer, and a user lacking it never reaches the pane.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -211,11 +211,11 @@ export function TieringWorkspace(): React.ReactElement {
   const app = useApp();
   const { auth } = app;
   const signedIn = auth.user !== undefined && auth.user !== null;
-  const isAdmin = auth.isAdmin;
-  // The FI capability the trading surface is gated on. An admin holds it too
-  // (grant-all). A signed-in user WITHOUT it sees everything read-only (never a
-  // broken screen); reassigning is admin-only regardless.
-  const canQuote = auth.can("quote_respond", "fixed_income");
+  // The FI pricing-desk capability the server gates session reassignment on (a group
+  // membership edit). Admin holds it via grant-all; rail visibility uses the same cap,
+  // so anyone reaching the pane may reassign. `can` is permissive signed-out.
+  const canManagePricing = auth.can("manage_pricing", "fixed_income");
+  const readOnly = !canManagePricing;
 
   const [sessions, setSessions] = useState<FixConnection[]>([]);
   const [groups, setGroups] = useState<PricingGroup[]>([]);
@@ -287,7 +287,7 @@ export function TieringWorkspace(): React.ReactElement {
 
   const reassign = useCallback(
     async (nextGroupId: string): Promise<void> => {
-      if (!selectedSession || !isAdmin) return;
+      if (!selectedSession || !canManagePricing) return;
       const sid = selectedSession.id;
       // Build the COMPLETE updated specs immutably: strip this session from every
       // group that currently lists it (except the target), and add it to the chosen
@@ -323,7 +323,7 @@ export function TieringWorkspace(): React.ReactElement {
         });
       }
     },
-    [app.transport, groups, isAdmin, reloadGroups, selectedSession],
+    [app.transport, groups, canManagePricing, reloadGroups, selectedSession],
   );
 
   // --- the sign-in gate ----------------------------------------------------
@@ -357,15 +357,15 @@ export function TieringWorkspace(): React.ReactElement {
         </div>
       </div>
 
-      {!canQuote && (
+      {readOnly && (
         <p className={styles.permBanner} role="note">
           <span className={styles.permGlyph} aria-hidden="true">
             🔒︎
           </span>
           You don&apos;t have the{" "}
-          <strong>Quote · Fixed Income</strong> capability{" "}
+          <strong>Manage Pricing · Fixed Income</strong> capability{" "}
           <span className={styles.permHint}>
-            ({capabilityDenialTitle("quote_respond", "fixed_income")})
+            ({capabilityDenialTitle("manage_pricing", "fixed_income")})
           </span>{" "}
           — sessions and their applied pricing are shown below read-only.
         </p>
@@ -511,8 +511,8 @@ export function TieringWorkspace(): React.ReactElement {
                         id="tier-assign"
                         className={styles.select}
                         value={boundGroupId}
-                        disabled={!isAdmin || assignState.kind === "saving"}
-                        title={isAdmin ? undefined : "Admin required to reassign — view only"}
+                        disabled={!canManagePricing || assignState.kind === "saving"}
+                        title={canManagePricing ? undefined : "Manage-Pricing capability required to reassign — view only"}
                         onChange={(e) => void reassign(e.target.value)}
                       >
                         <option value="">No group (clear session binding)</option>
@@ -522,7 +522,7 @@ export function TieringWorkspace(): React.ReactElement {
                           </option>
                         ))}
                       </select>
-                      {isAdmin ? (
+                      {canManagePricing ? (
                         <Button
                           variant="ghost"
                           onClick={() => app.setWorkspace("pricinggroups")}
@@ -531,7 +531,7 @@ export function TieringWorkspace(): React.ReactElement {
                           Edit tiering in Pricing Groups →
                         </Button>
                       ) : (
-                        <span className={styles.dirtyHint}>Admin required to reassign — view only</span>
+                        <span className={styles.dirtyHint}>Manage-Pricing capability required to reassign — view only</span>
                       )}
                     </div>
                     {assignState.kind === "error" && (
