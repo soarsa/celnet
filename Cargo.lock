@@ -897,6 +897,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-risk-transfer"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "celnet-router"
 version = "0.0.0"
 dependencies = [

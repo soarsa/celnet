@@ -1,0 +1,18 @@
+[package]
+name = "celnet-risk-transfer"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet risk transfer — the pure, asset-agnostic domain of moving EXISTING risk between books/desks/traders (the manual complement to automatic risk routing): the transfer object + lifecycle states, invariant validation, and the deterministic offsetting-leg / realized-P&L / moved-risk computation. No server, wire, or market-data dependency."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
