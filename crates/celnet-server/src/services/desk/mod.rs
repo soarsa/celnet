@@ -646,6 +646,10 @@ impl RfqDeskEdge {
             // feature pipeline, so a desk deal carries no per-feature provenance
             // (design §7 — absent, never a fabricated waterfall).
             pricing_provenance: None,
+            // The Risk Portfolio the fill's risk routed into, read from the booked
+            // position's stamp: `None` when the firm installed no routing graph (or a
+            // routing fall-back left it unrouted) — surfaced, never fabricated.
+            risk_book_id: self.rates.risk_book_of(booked.position_id),
         };
         self.deals.insert(deal.clone());
 
@@ -945,6 +949,10 @@ impl RfqDeskService for RfqDeskEdge {
             // feature pipeline, so a desk deal carries no per-feature provenance
             // (design §7 — absent, never a fabricated waterfall).
             pricing_provenance: None,
+            // The Risk Portfolio the fill's risk routed into, read from the booked
+            // position's stamp: `None` when the firm installed no routing graph (or a
+            // routing fall-back left it unrouted) — surfaced, never fabricated.
+            risk_book_id: self.rates.risk_book_of(booked.position_id),
         };
         self.deals.insert(deal.clone());
 
@@ -1132,6 +1140,13 @@ mod tests {
     }
 
     fn edge() -> RfqDeskEdge {
+        edge_with_rates(Arc::new(RatesPositionStore::new()))
+    }
+
+    /// An edge over a caller-supplied rates store — so a test can install a firm-wide
+    /// risk-routing graph on the store before booking and assert the routed
+    /// `Deal.risk_book_id` the desk path stamps.
+    fn edge_with_rates(rates: Arc<RatesPositionStore>) -> RfqDeskEdge {
         let gate = Arc::new(ReadinessGate::new());
         gate.mark_ready();
         RfqDeskEdge::new(
@@ -1140,7 +1155,7 @@ mod tests {
             gate,
             Arc::new(DeskRequestStore::new()),
             Arc::new(DealStore::new()),
-            Arc::new(RatesPositionStore::new()),
+            rates,
             Arc::new(NotificationBroker::new()),
             Clock::manual(1_000),
         )
@@ -1777,6 +1792,99 @@ mod tests {
         assert_eq!(second.kind, NotificationKind::Fill as i32);
         assert!(!second.alert_worthy, "a fill is quiet, not alert-worthy");
         assert_eq!(second.request_id.as_deref(), Some(id.as_str()));
+    }
+
+    /// Drive a QUOTED desk request to a FIX-lift booking and return the booked [`Deal`].
+    /// Shared by the routed / unrouted `risk_book_id` assertions below.
+    async fn lift_a_deal(edge: &RfqDeskEdge) -> Deal {
+        let token = trader_token(edge);
+        let id = edge
+            .submit_desk_request(Request::new(submit_req(DeskRequestKind::Rfq, Side::Buy)))
+            .await
+            .expect("submit")
+            .into_inner()
+            .request
+            .expect("request")
+            .request_id;
+        edge.respond_desk_request(Request::new(RespondDeskRequestRequest {
+            session_token: Some(token),
+            request_id: id.clone(),
+            principal: Some(celnet_proto::EntitlementPrincipal {
+                grant_all: true,
+                grants: vec![],
+                denies: vec![],
+            }),
+            correlation_id: None,
+            response: Some(RespondArm::Quote(DeskQuote {
+                price: 0.0411,
+                notional: 25_000_000.0,
+                valid_for_ms: 30_000,
+                trader: "alice".to_owned(),
+            })),
+        }))
+        .await
+        .expect("respond");
+        edge.book_fix_lift(&id).expect("fix lift books a deal")
+    }
+
+    /// A firm-wide graph routing on the booking-time counterparty attribution the desk
+    /// supplies: `counterparty == "cp-bank"` → BOOK-FI, else DEFAULT.
+    fn counterparty_graph() -> celnet_risk_routing::RiskRoutingGraph {
+        use celnet_risk_routing::{RouteField, RouteOp, RouteValue, RoutingNode};
+        use std::collections::BTreeMap;
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0u32,
+            RoutingNode::Condition {
+                field: RouteField::Counterparty,
+                op: RouteOp::Eq,
+                value: RouteValue::Text("cp-bank".to_owned()),
+                on_true: 1,
+                on_false: 2,
+            },
+        );
+        nodes.insert(
+            1u32,
+            RoutingNode::Book {
+                risk_book_id: "BOOK-FI".to_owned(),
+            },
+        );
+        nodes.insert(
+            2u32,
+            RoutingNode::Book {
+                risk_book_id: "DEFAULT".to_owned(),
+            },
+        );
+        celnet_risk_routing::RiskRoutingGraph { entry: 0, nodes }
+    }
+
+    /// With a firm-wide risk-routing graph installed, a FIX-lift booking stamps the
+    /// resolved Risk Portfolio onto the [`Deal`] (read from the booked position's
+    /// `risk_book_of` stamp) — the counterparty attribution the desk supplies routes
+    /// `cp-bank` into BOOK-FI.
+    #[tokio::test]
+    async fn book_fix_lift_deal_carries_routed_risk_book_id() {
+        let rates = Arc::new(RatesPositionStore::new());
+        rates.set_routing(Some(counterparty_graph()));
+        let edge = edge_with_rates(rates);
+        let deal = lift_a_deal(&edge).await;
+        assert_eq!(deal.risk_book_id.as_deref(), Some("BOOK-FI"));
+        // And it matches the store's own stamp for the booked position.
+        assert_eq!(
+            deal.risk_book_id,
+            edge.rates
+                .risk_book_of(deal.position_id.expect("booked position id"))
+        );
+    }
+
+    /// With NO routing graph installed, a FIX-lift booking leaves `risk_book_id` absent —
+    /// an unrouted fill is never assigned a fabricated portfolio.
+    #[tokio::test]
+    async fn book_fix_lift_deal_is_unrouted_without_graph() {
+        let edge = edge();
+        assert!(!edge.rates.has_routing());
+        let deal = lift_a_deal(&edge).await;
+        assert_eq!(deal.risk_book_id, None);
     }
 
     /// The shared `subscribe_notifications` path (gRPC + WS) authorizes the caller and

@@ -256,6 +256,7 @@ mod tests {
             position_id: Some(1),
             correlation_id: None,
             pricing_provenance: None,
+            risk_book_id: None,
         };
         store.insert(a.clone());
         a.deal_id = "deal-b".to_owned();

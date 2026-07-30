@@ -2750,6 +2750,10 @@ fn a_deal() -> Deal {
             applied_skew: 0.0,
             features: vec![FeatureKind::Tiering as i32],
         }),
+        // A routed Risk Portfolio so the Deal → ListDealsResponse differential proves the
+        // presence-tracked `risk_book_id` string encodes byte-identically when set; the
+        // absent case is covered by `deal_null` below (and the store unit test).
+        risk_book_id: Some("BOOK-EMEA".to_owned()),
     }
 }
 
@@ -3096,10 +3100,12 @@ fn desk_reply_encode_is_byte_identical() {
         &generated::encode_list_desk_requests_response(&list_req),
         &hand::hand_list_desk_requests_response_to_json(&list_req),
     );
-    // ListDealsResponse: a deal with a null position_id/correlation_id too.
+    // ListDealsResponse: a deal with a null position_id/correlation_id/risk_book_id too
+    // (an unrouted fill leaves `risk_book_id` absent → present-with-null on the wire).
     let deal_null = Deal {
         position_id: None,
         correlation_id: None,
+        risk_book_id: None,
         ..a_deal()
     };
     let list_deals = ListDealsResponse {
@@ -3108,6 +3114,12 @@ fn desk_reply_encode_is_byte_identical() {
     let gd = generated::encode_list_deals_response(&list_deals);
     assert_eq!(gd["deals"][1].get("position_id"), Some(&Value::Null));
     assert_eq!(gd["deals"][1].get("correlation_id"), Some(&Value::Null));
+    assert_eq!(gd["deals"][1].get("risk_book_id"), Some(&Value::Null));
+    // The routed deal carries the resolved Risk Portfolio id verbatim.
+    assert_eq!(
+        gd["deals"][0].get("risk_book_id"),
+        Some(&Value::String("BOOK-EMEA".to_owned()))
+    );
     assert_bytes_eq(
         "ListDealsResponse",
         &gd,

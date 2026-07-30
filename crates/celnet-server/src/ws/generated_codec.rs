@@ -5068,6 +5068,7 @@ impl WireAdapter for Deal {
                 .pricing_provenance
                 .as_ref()
                 .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            "risk_book_id" => self.risk_book_id.as_deref().map(WireVal::Str),
             _ => None,
         }
     }

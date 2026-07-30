@@ -2770,6 +2770,9 @@ fn deal_to_json(d: &Deal) -> Value {
         // Presence-tracked per-feature pricing provenance (design §7); `null` on the
         // rates dealer-quoting desk path (not group-priced today).
         "pricing_provenance": d.pricing_provenance.as_ref().map(pricing_provenance_to_json),
+        // The routed Risk Portfolio id, or `null` when the fill routed to no portfolio
+        // (no graph / routing fall-back) — presence-tracked, never fabricated.
+        "risk_book_id": d.risk_book_id,
     })
 }
 

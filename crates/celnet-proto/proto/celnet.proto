@@ -7118,6 +7118,11 @@ message Deal {
   // dealer-quoting desk path is not group-priced today, so this is absent there;
   // it exists so a group-priced booking carries its waterfall. Presence-tracked.
   optional PricingProvenance pricing_provenance = 15;
+  // The Risk Portfolio (risk book) id the fill's risk routed into when a firm-wide
+  // risk-routing graph is installed, resolved from the booked rates position's stamp
+  // (`RatesPositionStore::risk_book_of`). Absent when the fill routed to no portfolio
+  // (no graph configured, or a routing fall-back) — never fabricated. Presence-tracked.
+  optional string risk_book_id = 16;
 }
 // A scope filter for the received-deals blotter.
 message DealScope {
