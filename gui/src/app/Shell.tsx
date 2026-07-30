@@ -64,6 +64,7 @@ import {
   RAIL,
   railChord,
   railForDomain,
+  railSections,
   railState,
   resolveChord,
   workspaceDomains,
@@ -236,6 +237,51 @@ export function Shell(): React.ReactElement {
   // mounts a workspace it cannot use. (Default all-licensed ⇒ usable == shown.)
   const mountRail = RAIL.filter((r) => stateOfWs(r) === "present");
 
+  // One rail entry. A license-gated (entitled-but-unlicensed) row is PRESENT-BUT-
+  // LOCKED (greyed + lock + upsell title, aria-disabled, no nav handler — the class
+  // is discoverable but not enterable; default all-licensed ⇒ this never renders);
+  // otherwise a normal navigable button carrying the active-item highlight. Extracted
+  // so the grouped-section renderer maps rows without duplicating the two branches.
+  const renderRailButton = (r: (typeof RAIL)[number]): React.ReactElement => {
+    // Original RAIL index keeps the ⌘N hint aligned with resolveChord (which maps
+    // digits against the full, admin-filtered RAIL globally, independent of the
+    // grouped visual order).
+    const kbd = railChord(RAIL.indexOf(r)).join("");
+    if (stateOfWs(r) === "gated-upsell") {
+      return (
+        <button
+          key={r.id}
+          type="button"
+          className={`${styles.railBtn} ${styles.railLocked}`}
+          aria-disabled="true"
+          title={LICENSE_UPSELL_TITLE}
+          aria-label={`${r.label} — ${LICENSE_UPSELL_TITLE}`}
+        >
+          <span className={styles.railGlyph} aria-hidden>
+            {r.glyph}
+          </span>
+          <span className={styles.railLabel}>{r.label}</span>
+          <span className={styles.lockBadge} aria-hidden>
+            {"🔒︎"}
+          </span>
+        </button>
+      );
+    }
+    return (
+      <button
+        key={r.id}
+        className={`${styles.railBtn} ${app.workspace === r.id ? styles.railActive : ""}`}
+        onClick={() => app.setWorkspace(r.id)}
+        title={r.subtitle ? `${r.label} — ${r.subtitle} (${kbd})` : `${r.label} (${kbd})`}
+        aria-label={r.subtitle ? `${r.label} — ${r.subtitle}` : undefined}
+        aria-current={app.workspace === r.id}
+      >
+        <span className={styles.railGlyph}>{r.glyph}</span>
+        <span className={styles.railLabel}>{r.label}</span>
+      </button>
+    );
+  };
+
   // The runnable commands, bound to live app actions — the SINGLE source the
   // palette renders and the Shell dispatches from.
   const commands = buildCommands({
@@ -309,48 +355,30 @@ export function Shell(): React.ReactElement {
         <div className={styles.brand} title="Celnet — a Celer Technologies product">
           <CelerMark size={30} className={styles.mark} title="Celnet — a Celer Technologies product" />
         </div>
-        <nav className={styles.nav}>
-          {navRail.map((r) => {
-            // Original RAIL index keeps the ⌘N hint aligned with resolveChord
-            // (which maps digits against the full, admin-filtered RAIL globally).
-            const kbd = railChord(RAIL.indexOf(r)).join("");
-            // A license-gated (entitled-but-unlicensed) entry is PRESENT-BUT-LOCKED:
-            // greyed, a lock badge, and a "license this class" upsell title. It is
-            // `aria-disabled` and carries NO click/navigation handler — the class is
-            // discoverable but not enterable until it is licensed (the server never
-            // mints an unlicensed session). Default all-licensed ⇒ this never renders.
-            if (stateOfWs(r) === "gated-upsell") {
-              return (
-                <button
-                  key={r.id}
-                  type="button"
-                  className={`${styles.railBtn} ${styles.railLocked}`}
-                  aria-disabled="true"
-                  title={LICENSE_UPSELL_TITLE}
-                  aria-label={`${r.label} — ${LICENSE_UPSELL_TITLE}`}
-                >
-                  <span className={styles.railGlyph} aria-hidden>
-                    {r.glyph}
-                  </span>
-                  <span className={styles.railLabel}>{r.label}</span>
-                  <span className={styles.lockBadge} aria-hidden>
-                    {"🔒︎"}
-                  </span>
-                </button>
-              );
-            }
+        {/*
+         * Grouped, scrolling rail: the active domain's visible rows (navRail — hidden
+         * rows already dropped) bucketed into labelled sections (railSections). Each
+         * section is a `role="group"` labelled by its sticky micro-header, so the
+         * current group stays labelled while its rows scroll. A section whose rows are
+         * ALL capability-hidden yields no bucket ⇒ no stray header. The nav is the
+         * scroll container (brand + railFoot stay pinned); DOM/focus order follows the
+         * visual section order.
+         */}
+        <nav className={styles.nav} aria-label="workspace sections">
+          {railSections(navRail).map((group) => {
+            const headerId = `rail-section-${group.section.id}`;
             return (
-              <button
-                key={r.id}
-                className={`${styles.railBtn} ${app.workspace === r.id ? styles.railActive : ""}`}
-                onClick={() => app.setWorkspace(r.id)}
-                title={r.subtitle ? `${r.label} — ${r.subtitle} (${kbd})` : `${r.label} (${kbd})`}
-                aria-label={r.subtitle ? `${r.label} — ${r.subtitle}` : undefined}
-                aria-current={app.workspace === r.id}
+              <div
+                key={group.section.id}
+                role="group"
+                aria-labelledby={headerId}
+                className={styles.railGroup}
               >
-                <span className={styles.railGlyph}>{r.glyph}</span>
-                <span className={styles.railLabel}>{r.label}</span>
-              </button>
+                <h2 id={headerId} className={styles.railSectionHeader}>
+                  {group.section.label}
+                </h2>
+                {group.rows.map((r) => renderRailButton(r))}
+              </div>
             );
           })}
         </nav>

@@ -23,8 +23,10 @@ import {
   DOMAINS,
   firstAccessibleWorkspace,
   RAIL,
+  RAIL_SECTIONS,
   railChord,
   railForDomain,
+  railSections,
   resolveChord,
   workspaceAccessible,
   workspaceAssets,
@@ -365,6 +367,137 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
       const fiOnly = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
       expect(firstAccessibleWorkspace(fiOnly)).toBe(firstAccessibleWorkspace(fiOnly, "fixed_income"));
     });
+  });
+});
+
+describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
+  /** A NavAuth admitting exactly the given `action·asset` keys. */
+  function navAuth(opts: { isAdmin: boolean; allow?: ReadonlySet<string> }): NavAuth {
+    return {
+      isAdmin: opts.isAdmin,
+      can: (action, asset) => opts.allow?.has(`${action}·${asset}`) ?? false,
+    };
+  }
+  const signedOut: NavAuth = { isAdmin: false, can: () => true };
+  /** The rail rows visible to `auth` under `domain` (default all-licensed ⇒ present iff accessible). */
+  const visible = (domain: Parameters<typeof railForDomain>[0], auth: NavAuth) =>
+    railForDomain(domain).filter((r) => workspaceAccessible(r.id, auth));
+
+  it("RAIL_SECTIONS is the seven labelled sections, in render order", () => {
+    expect(RAIL_SECTIONS.map((s) => s.id)).toEqual([
+      "trading",
+      "markets",
+      "pricing",
+      "risk",
+      "transfers",
+      "tools",
+      "admin",
+    ]);
+    expect(RAIL_SECTIONS.map((s) => s.label)).toEqual([
+      "Trading",
+      "Markets & Liquidity",
+      "Pricing",
+      "Risk",
+      "Transfers",
+      "Tools",
+      "Administration",
+    ]);
+    for (const s of RAIL_SECTIONS) expect(s.label.length).toBeGreaterThan(0);
+  });
+
+  it("every RAIL row declares a section drawn from RAIL_SECTIONS", () => {
+    const known = new Set(RAIL_SECTIONS.map((s) => s.id));
+    for (const r of RAIL) expect(known.has(r.section)).toBe(true);
+  });
+
+  it("railSections renders groups in RAIL_SECTIONS order, dropping empty ones", () => {
+    const groups = railSections(RAIL);
+    // Every section here is populated (the whole RAIL), so all seven show, in order.
+    expect(groups.map((g) => g.section.id)).toEqual(RAIL_SECTIONS.map((s) => s.id));
+    // The empty input yields no groups at all (no stray headers).
+    expect(railSections([])).toEqual([]);
+  });
+
+  it("preserves the input (RAIL) order WITHIN each section — grouping only re-buckets", () => {
+    for (const g of railSections(RAIL)) {
+      const railOrder = RAIL.filter((r) => r.section === g.section.id).map((r) => r.id);
+      expect(g.rows.map((r) => r.id)).toEqual(railOrder);
+    }
+  });
+
+  it("the Fixed-Income rail groups into the four labelled sections, in order", () => {
+    const groups = railSections(visible("fixed_income", signedOut));
+    // NOTE: signed-out `can` is permissive, so the viewCap-gated Pricing/Risk-mgmt
+    // rows ARE visible here — the FI rail shows all four sections.
+    expect(groups.map((g) => g.section.label)).toEqual([
+      "Markets & Liquidity",
+      "Pricing",
+      "Risk",
+      "Transfers",
+    ]);
+    const byLabel = (label: string) =>
+      groups.find((g) => g.section.label === label)!.rows.map((r) => r.id);
+    // Grouping REORDERS the RAIL-interleaved rows up under their section header.
+    expect(byLabel("Markets & Liquidity")).toEqual(["fistreaming", "aggbook", "surface", "quoting"]);
+    expect(byLabel("Pricing")).toEqual(["tiering", "pricinggroups"]);
+    expect(byLabel("Risk")).toEqual([
+      "riskbooks",
+      "riskdashboard",
+      "riskrouting",
+      "risk",
+      "book",
+    ]);
+    expect(byLabel("Transfers")).toEqual(["risktransfer", "transferinbox", "transferaudit"]);
+  });
+
+  it("the FX rail groups into Trading / Markets / Risk / Tools, in order", () => {
+    const groups = railSections(visible("fx_options", signedOut));
+    expect(groups.map((g) => g.section.label)).toEqual([
+      "Trading",
+      "Markets & Liquidity",
+      "Risk",
+      "Tools",
+    ]);
+    const byLabel = (label: string) =>
+      groups.find((g) => g.section.label === label)!.rows.map((r) => r.id);
+    expect(byLabel("Trading")).toEqual(["ticket", "stream"]);
+    expect(byLabel("Markets & Liquidity")).toEqual(["surface"]);
+    expect(byLabel("Risk")).toEqual(["risk", "book"]);
+    expect(byLabel("Tools")).toEqual(["xva", "excel"]);
+  });
+
+  it("a section whose rows are ALL capability-hidden renders NO header (no empty group)", () => {
+    // A plain FI trader (view only, no manage_pricing / risk_manage): the whole
+    // Pricing section (tiering + pricinggroups) is hidden ⇒ that group must vanish,
+    // NOT render an empty "Pricing" header. Risk survives (risk + book stay visible).
+    const trader = navAuth({
+      isAdmin: false,
+      allow: new Set(["view·fx_options", "view·fixed_income"]),
+    });
+    const groups = railSections(visible("fixed_income", trader));
+    const labels = groups.map((g) => g.section.label);
+    expect(labels).not.toContain("Pricing");
+    // Every rendered group is non-empty (the empty-section invariant).
+    for (const g of groups) expect(g.rows.length).toBeGreaterThan(0);
+    // Risk section is still present, now only the non-management scenario + ledger rows.
+    expect(groups.find((g) => g.section.label === "Risk")!.rows.map((r) => r.id)).toEqual([
+      "risk",
+      "book",
+    ]);
+    // Markets survives too (Agg Book / Market Data are plain view·FI).
+    expect(labels).toContain("Markets & Liquidity");
+  });
+
+  it("the Administration rail is a single grouped section", () => {
+    const admin = navAuth({ isAdmin: true });
+    const groups = railSections(visible("admin", admin));
+    expect(groups.map((g) => g.section.label)).toEqual(["Administration"]);
+    expect(groups[0]!.rows.map((r) => r.id)).toEqual([
+      "connections",
+      "admin",
+      "permissions",
+      "refdata",
+    ]);
   });
 });
 

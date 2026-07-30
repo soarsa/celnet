@@ -67,6 +67,42 @@ export type WorkspaceId =
 /** A logical grouping of related commands (sections the cheatsheet + palette use). */
 export type CommandGroup = "Global" | "Workspace" | "Scope" | "Action";
 
+/**
+ * A labelled RAIL SECTION — the grouping dimension of the left rail. Each {@link RAIL}
+ * row declares exactly one, and the rail renders sections in {@link RAIL_SECTIONS}
+ * order with a low-emphasis micro-header per NON-EMPTY group (capability-hidden rows
+ * are dropped before grouping, so a section whose every row is hidden renders no
+ * stray header). The set is intentionally generic (not per-tab): the same seven
+ * sections classify the FX, Fixed-Income, and Administration rails, and a future
+ * top-level tab (e.g. Analytics) slots its rows under these — or adds one entry to
+ * {@link RAIL_SECTIONS} — without re-busying the flat list.
+ */
+export type RailSection =
+  | "trading"
+  | "markets"
+  | "pricing"
+  | "risk"
+  | "transfers"
+  | "tools"
+  | "admin";
+
+/**
+ * The rail sections in RENDER order, each with its display header. Section order is
+ * independent of {@link RAIL} row order: grouping by section REORDERS a domain's rows
+ * into these buckets (e.g. the Fixed-Income rail's Market Data + Quoting rows, which
+ * trail the risk/transfer block in RAIL order, render up under "Markets & Liquidity").
+ * Labels are chosen to read sensibly under any tab a section's rows appear on.
+ */
+export const RAIL_SECTIONS: readonly { id: RailSection; label: string }[] = [
+  { id: "trading", label: "Trading" },
+  { id: "markets", label: "Markets & Liquidity" },
+  { id: "pricing", label: "Pricing" },
+  { id: "risk", label: "Risk" },
+  { id: "transfers", label: "Transfers" },
+  { id: "tools", label: "Tools" },
+  { id: "admin", label: "Administration" },
+] as const;
+
 /** How a command's chord is matched against a keydown (the Shell's grammar). */
 export type ChordKind =
   | { kind: "meta"; key: string } // ⌘/Ctrl + key (case-insensitive single char)
@@ -115,6 +151,16 @@ export const RAIL: readonly {
   glyph: string;
   label: string;
   /**
+   * The labelled RAIL SECTION this row belongs to ({@link RailSection}). The rail
+   * renders as grouped sections (a low-emphasis micro-header per non-empty group)
+   * so a long flat list stays scannable — the section is the ONLY grouping input,
+   * so adding a row (or a whole future top-level tab like Analytics) needs only a
+   * `section` here and it slots under the right header for free. One section per
+   * row (global, not per-domain): a cross-asset row (Market Data / Risk / Book)
+   * carries a single section whose label reads sensibly under EITHER trading tab.
+   */
+  section: RailSection;
+  /**
    * A one-line rail subtitle saying what THIS surface IS — the at-a-glance
    * disambiguation for rows a trader otherwise confuses (the "Risk" vs "Book" vs
    * "Risk Portfolios" vs "Risk Dashboard" vs "Agg Book" family; see
@@ -141,19 +187,19 @@ export const RAIL: readonly {
   // Ticket (Price) is FX-only: FI is booked/streamed through the Streaming hub +
   // Quoting rows, so the Ticket row derives to the FX Options tab ONLY (it no
   // longer appears under Fixed Income — FI pricing lives on the Streaming surface).
-  { id: "ticket", glyph: "⌁", label: "Ticket", assets: ["fx_options"] },
-  { id: "stream", glyph: "≋", label: "Stream", assets: ["fx_options"] },
+  { id: "ticket", glyph: "⌁", label: "Ticket", section: "trading", assets: ["fx_options"] },
+  { id: "stream", glyph: "≋", label: "Stream", section: "trading", assets: ["fx_options"] },
   // FI live streaming (bond + swap prices) with the instrument selector + RFS
   // request sidebar — a single-asset FI row (never FX), and the PRIMARY Fixed
   // Income surface, so it leads the FI rail (top of railForDomain("fixed_income")).
-  { id: "fistreaming", glyph: "⇉", label: "Streaming", subtitle: "Live bond & swap prices", assets: ["fixed_income"] },
+  { id: "fistreaming", glyph: "⇉", label: "Streaming", subtitle: "Live bond & swap prices", section: "markets", assets: ["fixed_income"] },
   // FI aggregated-book live composite view (ADR-0022): consolidated best bid/offer
   // across a book's inbound liquidity members — a single-asset FI read surface.
-  { id: "aggbook", glyph: "◫", label: "Agg Book", subtitle: "LP-aggregated prices", assets: ["fixed_income"] },
+  { id: "aggbook", glyph: "◫", label: "Agg Book", subtitle: "LP-aggregated prices", section: "markets", assets: ["fixed_income"] },
   // Tiering: the roster of FIX sessions → the pricing group applied to each. A
   // ManagePricing·FI surface (assign a group = a group-membership edit) — gated at
   // the rail on `manage_pricing·FI` so only the FI pricing desk sees it.
-  { id: "tiering", glyph: "⚖", label: "Tiering", subtitle: "Per-session pricing", assets: ["fixed_income"], viewCap: { action: "manage_pricing", asset: "fixed_income" } },
+  { id: "tiering", glyph: "⚖", label: "Tiering", subtitle: "Per-session pricing", section: "pricing", assets: ["fixed_income"], viewCap: { action: "manage_pricing", asset: "fixed_income" } },
   // FI Risk routing (docs/FI-RISK-ROUTING-REQUIREMENTS.md): the hierarchical risk-
   // portfolio tree editor and the per-portfolio risk DASHBOARD. Single-asset FI
   // rows gated at the rail on the granular `risk_manage·FI` capability
@@ -162,44 +208,44 @@ export const RAIL: readonly {
   // an ordinary FI trader no longer sees them at all. USER-FACING name "Risk
   // Portfolios"; the wire type stays `RiskBookDef`/`riskbooks` (rename is UI-only —
   // see docs/FI-BOOK-CONCEPTS.md).
-  { id: "riskbooks", glyph: "❦", label: "Risk Portfolios", subtitle: "Risk buckets + limits", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
-  { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", subtitle: "Routed-risk roll-up", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
+  { id: "riskbooks", glyph: "❦", label: "Risk Portfolios", subtitle: "Risk buckets + limits", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
+  { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", subtitle: "Routed-risk roll-up", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
   // Risk Routing: the ordered rules table that routes each fill's risk into a desk's
   // risk portfolio. Rail-gated + edited on `risk_manage·FI` (was the overloaded
   // `quote_respond·FI` stand-in). Single-asset FI row.
-  { id: "riskrouting", glyph: "⑃", label: "Risk Routing", subtitle: "Fill → portfolio rules", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
+  { id: "riskrouting", glyph: "⑃", label: "Risk Routing", subtitle: "Fill → portfolio rules", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
   // FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md): the MANUAL move of
   // EXISTING risk between risk portfolios — the complement to routing (which
   // auto-assigns NEW fills). Three single-asset FI surfaces, initiate/accept gated
   // on the narrow `risk_transfer` capability (see {@link WORKSPACE_CAPABILITY}); the
   // audit trail stays `view` for any FI trader. Their subtitles disambiguate the
   // trio the way FI-BOOK-CONCEPTS disambiguates the "Book" family.
-  { id: "risktransfer", glyph: "⇆", label: "Risk Transfer", subtitle: "Move existing risk between portfolios", assets: ["fixed_income"] },
-  { id: "transferinbox", glyph: "⇱", label: "Transfer Inbox", subtitle: "Approve incoming transfers", assets: ["fixed_income"] },
-  { id: "transferaudit", glyph: "❑", label: "Transfer Audit", subtitle: "Who moved what · when · at what price", assets: ["fixed_income"] },
-  { id: "surface", glyph: "◷", label: "Market Data", subtitle: "Curves & vol surface", assets: CAPABILITY_ASSETS },
+  { id: "risktransfer", glyph: "⇆", label: "Risk Transfer", subtitle: "Move existing risk between portfolios", section: "transfers", assets: ["fixed_income"] },
+  { id: "transferinbox", glyph: "⇱", label: "Transfer Inbox", subtitle: "Approve incoming transfers", section: "transfers", assets: ["fixed_income"] },
+  { id: "transferaudit", glyph: "❑", label: "Transfer Audit", subtitle: "Who moved what · when · at what price", section: "transfers", assets: ["fixed_income"] },
+  { id: "surface", glyph: "◷", label: "Market Data", subtitle: "Curves & vol surface", section: "markets", assets: CAPABILITY_ASSETS },
   // The class-parametric SCENARIO risk grid (spot×vol P&L / rates netted risk) — an
   // analytics view, NOT the routed-risk roll-up (Risk Dashboard) nor the ledger.
-  { id: "risk", glyph: "⊞", label: "Risk", subtitle: "Scenario P&L / greeks", assets: CAPABILITY_ASSETS },
+  { id: "risk", glyph: "⊞", label: "Risk", subtitle: "Scenario P&L / greeks", section: "risk", assets: CAPABILITY_ASSETS },
   // The position LEDGER — booked positions, booking, and deals (what you hold), NOT
   // the LP price composite (Agg Book) nor a risk-management bucket (Risk Portfolios).
-  { id: "book", glyph: "▤", label: "Book", subtitle: "Positions · deals · P&L", assets: CAPABILITY_ASSETS },
-  { id: "quoting", glyph: "⇌", label: "Quoting", subtitle: "RFQ / IOI desk inbox", assets: ["fixed_income"] },
-  { id: "xva", glyph: "⊗", label: "XVA", assets: ["fx_options"] },
-  { id: "excel", glyph: "▦", label: "Excel", assets: ["fx_options"] },
+  { id: "book", glyph: "▤", label: "Book", subtitle: "Positions · deals · P&L", section: "risk", assets: CAPABILITY_ASSETS },
+  { id: "quoting", glyph: "⇌", label: "Quoting", subtitle: "RFQ / IOI desk inbox", section: "markets", assets: ["fixed_income"] },
+  { id: "xva", glyph: "⊗", label: "XVA", section: "tools", assets: ["fx_options"] },
+  { id: "excel", glyph: "▦", label: "Excel", section: "tools", assets: ["fx_options"] },
   // Administration / ops — admin-gated, no license concept. (Connections is venue
   // ops: its rail stays admin-gated, but its in-pane edits gate on `manage_liquidity`
   // server-side — see AggregatedBookWorkspace for the reachable manage_liquidity
   // affordance an FI-liquidity seat uses.)
-  { id: "connections", glyph: "⇄", label: "Connections", assets: [] },
-  { id: "admin", glyph: "⚇", label: "Admin", assets: [] },
-  { id: "permissions", glyph: "⚷", label: "Permissions", assets: [] },
+  { id: "connections", glyph: "⇄", label: "Connections", section: "admin", assets: [] },
+  { id: "admin", glyph: "⚇", label: "Admin", section: "admin", assets: [] },
+  { id: "permissions", glyph: "⚷", label: "Permissions", section: "admin", assets: [] },
   // Pricing Groups is a Fixed-Income CLIENT-PRICING surface, not identity admin: it
   // moved OFF the Administration tab onto the FI tab (assets: fixed_income) and gates
   // rail visibility + structure edits on `manage_pricing·FI`, so the FI pricing desk
   // sees and edits it WITHOUT full Administer (docs/PERMISSIONS-GRANULAR-REVIEW.md §4).
-  { id: "pricinggroups", glyph: "⚙", label: "Pricing Groups", subtitle: "Per-client feature pipelines", assets: ["fixed_income"], viewCap: { action: "manage_pricing", asset: "fixed_income" } },
-  { id: "refdata", glyph: "❏", label: "Reference Data", assets: [] },
+  { id: "pricinggroups", glyph: "⚙", label: "Pricing Groups", subtitle: "Per-client feature pipelines", section: "pricing", assets: ["fixed_income"], viewCap: { action: "manage_pricing", asset: "fixed_income" } },
+  { id: "refdata", glyph: "❏", label: "Reference Data", section: "admin", assets: [] },
 ] as const;
 
 /**
@@ -373,6 +419,33 @@ export function domainAccessible(domain: Domain, auth: NavAuth): boolean {
  */
 export function railForDomain(domain: Domain): readonly (typeof RAIL)[number][] {
   return RAIL.filter((r) => workspaceDomains(r.id).includes(domain));
+}
+
+/** One rendered rail section: its header definition + the rows that fall under it. */
+export interface RailSectionGroup {
+  section: (typeof RAIL_SECTIONS)[number];
+  rows: readonly (typeof RAIL)[number][];
+}
+
+/**
+ * Group ALREADY-VISIBLE rail rows into their labelled sections, in
+ * {@link RAIL_SECTIONS} render order, DROPPING any section with no visible rows.
+ *
+ * The input is the domain's rows AFTER the capability/license visibility filter
+ * (the Shell passes `navRail` — hidden rows already removed), so a section whose
+ * every row is capability-hidden yields an empty bucket and is omitted: NO stray
+ * empty-section header ever renders. Within a section the input order is preserved
+ * (i.e. RAIL order), so grouping only re-buckets rows, it does not reorder within a
+ * bucket. Pure — the Shell renders straight from this and the tests assert it in
+ * isolation.
+ */
+export function railSections(
+  visibleRows: readonly (typeof RAIL)[number][],
+): RailSectionGroup[] {
+  return RAIL_SECTIONS.map((section) => ({
+    section,
+    rows: visibleRows.filter((r) => r.section === section.id),
+  })).filter((group) => group.rows.length > 0);
 }
 
 // ---------------------------------------------------------------------------

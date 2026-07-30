@@ -5,15 +5,24 @@
   overflow: hidden;
 }
 
-/* --- left rail --- */
+/* --- left rail ---
+ * A pinned brand at the top, a SCROLLING grouped `.nav` in the middle, and a pinned
+ * `.railFoot` at the bottom. The rail itself never scrolls (overflow hidden + a
+ * definite height from the shell grid row); only `.nav` overflows, so brand + foot
+ * stay put and the section micro-headers stay sticky within the scroll. */
 .rail {
+  /* One opaque rail surface, reused by the sticky section headers so scrolling rows
+   * pass cleanly BEHIND them (no bleed-through). */
+  --rail-bg: oklch(from var(--bg-base) calc(l - 0.02) c h);
   display: flex;
   flex-direction: column;
   align-items: center;
   padding: var(--space-4) 0;
   gap: var(--space-2);
-  background: oklch(from var(--bg-base) calc(l - 0.02) c h);
+  background: var(--rail-bg);
   border-right: var(--hairline);
+  overflow: hidden;
+  min-height: 0;
 }
 
 .brand {
@@ -22,6 +31,7 @@
   width: 34px;
   height: 34px;
   margin-bottom: var(--space-4);
+  flex: 0 0 auto;
 }
 /* The Celer pinwheel mark renders in brand coral (set on the SVG via its own
  * module) with a soft brand glow — no longer a gradient diamond glyph. */
@@ -30,15 +40,75 @@
   filter: drop-shadow(0 2px 8px oklch(from var(--brand) l c h / 0.45));
 }
 
+/* The scroll region: fills the space between the pinned brand and foot, and scrolls
+ * vertically only when the grouped rows overflow a short viewport. `min-height: 0`
+ * lets a flex child actually shrink so overflow (not the whole rail) takes over. */
 .nav {
   display: flex;
   flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Unobtrusive thin scrollbar (Firefox + WebKit), transparent track. */
+  scrollbar-width: thin;
+  scrollbar-color: oklch(from var(--text-tertiary) l c h / 0.45) transparent;
+}
+.nav::-webkit-scrollbar {
+  width: 6px;
+}
+.nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.nav::-webkit-scrollbar-thumb {
+  background: oklch(from var(--text-tertiary) l c h / 0.4);
+  border-radius: 3px;
+}
+.nav::-webkit-scrollbar-thumb:hover {
+  background: oklch(from var(--text-tertiary) l c h / 0.65);
+}
+
+/* One labelled section: its sticky header + the rows under it, centred like the rail. */
+.railGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: var(--space-2);
   width: 100%;
-  align-items: center;
+}
+
+/* The section micro-label: uppercase, low-emphasis, and STICKY at the top of the
+ * scroll so the current group stays labelled as its rows scroll under it. Uses the
+ * dedicated label colour (`--text-secondary`, ≥5.91:1 — passes small-text contrast),
+ * not the fainter tertiary, so the header never fails a11y. The opaque `--rail-bg`
+ * band + a small z-index keep scrolling rows behind it. */
+.railSectionHeader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  width: 100%;
+  margin: 0;
+  padding: var(--space-2) 2px 4px;
+  background: var(--rail-bg);
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  text-align: center;
+  text-wrap: balance;
 }
 
 .railFoot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
   margin-top: auto;
 }
 
