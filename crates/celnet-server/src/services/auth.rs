@@ -181,6 +181,10 @@ pub struct AuthEdge {
     /// §7). `None` in an isolated auth test (risk CRUD then persists only, exactly as
     /// `aggregation_hub` is `None` there).
     position_store: Option<Arc<PositionStore>>,
+    /// The shared **linear-rates** position store whose risk router this edge re-primes
+    /// beside the FX store on every risk-book/graph write, so a routed rates fill buckets
+    /// into its risk book (and `ListRiskBookRisk` sums it). `None` in an isolated auth test.
+    rates_store: Option<Arc<crate::services::rates_book::RatesPositionStore>>,
 }
 
 impl AuthEdge {
@@ -203,6 +207,7 @@ impl AuthEdge {
             throttle: LoginThrottle::new(clock),
             aggregation_hub: None,
             position_store: None,
+            rates_store: None,
         }
     }
 
@@ -211,6 +216,19 @@ impl AuthEdge {
     #[must_use]
     pub fn with_position_store(mut self, store: Arc<PositionStore>) -> Self {
         self.position_store = Some(store);
+        self
+    }
+
+    /// Inject the shared **linear-rates** position store so a risk-book/graph write also
+    /// re-primes its router (the boot path shares the SAME rates store the RiskService rates
+    /// Book/List and the RFQ desk book into), and so `ListRiskBookRisk` sums the rates
+    /// positions routed into each book.
+    #[must_use]
+    pub fn with_rates_store(
+        mut self,
+        store: Arc<crate::services::rates_book::RatesPositionStore>,
+    ) -> Self {
+        self.rates_store = Some(store);
         self
     }
 
@@ -235,6 +253,20 @@ impl AuthEdge {
             // live per-book risk stream re-publishes its roster on a book create/update/
             // delete/enable (`set_risk_book_tree` advances the store's risk version).
             position_store.set_risk_book_tree(store.risk_books.clone());
+        }
+        // Re-prime the shared LINEAR-RATES store's router + per-book limit view beside the FX
+        // store, so a routed rates fill buckets into (and is capped by) the same books. The
+        // rates store carries no risk-book *tree* (the streamed roster is driven off the FX
+        // store's tree; the rates store only needs the routing graph + caps).
+        if let Some(rates_store) = &self.rates_store {
+            rates_store.set_routing(store.risk_routing_graph().cloned());
+            rates_store.set_risk_books(
+                store
+                    .risk_books
+                    .iter()
+                    .map(crate::services::risk::store::RiskBookLimitDef::from)
+                    .collect(),
+            );
         }
     }
 
@@ -1789,12 +1821,13 @@ impl AuthService for AuthEdge {
         // zero-position roll-up (`aggregate_risk_book` over an empty store) — never omitted
         // and never a fabricated non-zero.
         let guard = self.lock();
+        let rates = self.rates_store.as_deref();
         let books = match &self.position_store {
             Some(store) => guard
                 .risk_books
                 .iter()
                 .filter(|b| b.enabled)
-                .map(|b| risk_book_risk_to_wire(&aggregate_risk_book(store, &guard, b)))
+                .map(|b| risk_book_risk_to_wire(&aggregate_risk_book(store, rates, &guard, b)))
                 .collect(),
             None => {
                 let empty = PositionStore::new();
@@ -1802,7 +1835,7 @@ impl AuthService for AuthEdge {
                     .risk_books
                     .iter()
                     .filter(|b| b.enabled)
-                    .map(|b| risk_book_risk_to_wire(&aggregate_risk_book(&empty, &guard, b)))
+                    .map(|b| risk_book_risk_to_wire(&aggregate_risk_book(&empty, rates, &guard, b)))
                     .collect()
             }
         };

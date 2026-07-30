@@ -196,6 +196,13 @@ pub struct StreamEdge {
     /// subscriptions are then refused rather than faked); the boot path injects it
     /// via [`StreamEdge::with_aggregation_hub`].
     aggregation_hub: Option<Arc<AggregationHub>>,
+    /// The shared **linear-rates** position book (the SAME store the RiskService rates
+    /// Book/List and the RFQ desk book into). Read-only here: the per-book risk stream sums
+    /// the rates positions routed into each book beside the FX ones, and folds the rates
+    /// store's risk version into its poll signal so a rates fill advances the stream. `None`
+    /// for an isolated stream test (the roster is then FX-only); the boot path injects it via
+    /// [`StreamEdge::with_rates_store`].
+    rates: Option<Arc<crate::services::rates_book::RatesPositionStore>>,
 }
 
 /// A fresh, empty [`SessionRegistry`] the [`StreamEdge`] constructors default to —
@@ -230,6 +237,7 @@ impl StreamEdge {
             fanout: PriceFanout::start(),
             sessions: default_sessions(),
             aggregation_hub: None,
+            rates: None,
         }
     }
 
@@ -257,6 +265,7 @@ impl StreamEdge {
             fanout: PriceFanout::start(),
             sessions: default_sessions(),
             aggregation_hub: None,
+            rates: None,
         }
     }
 
@@ -286,6 +295,7 @@ impl StreamEdge {
             fanout: PriceFanout::start(),
             sessions: default_sessions(),
             aggregation_hub: None,
+            rates: None,
         }
     }
 
@@ -306,6 +316,19 @@ impl StreamEdge {
     #[must_use]
     pub fn with_aggregation_hub(mut self, hub: Arc<AggregationHub>) -> Self {
         self.aggregation_hub = Some(hub);
+        self
+    }
+
+    /// Inject the shared **linear-rates** position book so the per-book risk stream sums the
+    /// rates positions routed into each book (beside the FX ones) and advances on a rates
+    /// fill. The boot path shares the SAME store the RiskService rates Book/List and the RFQ
+    /// desk book into; an isolated stream test omits it (the roster is then FX-only).
+    #[must_use]
+    pub fn with_rates_store(
+        mut self,
+        store: Arc<crate::services::rates_book::RatesPositionStore>,
+    ) -> Self {
+        self.rates = Some(store);
         self
     }
 
@@ -880,6 +903,7 @@ impl StreamEdge {
             minter: TokenMinter::new(),
             next_execution_id: Arc::clone(&self.next_execution_id),
             store: self.store.clone(),
+            rates: self.rates.clone(),
             fanout: Arc::clone(&self.fanout),
             // A fresh session is anonymous until a `StreamAuth` frame resolves the
             // caller; it validates tokens against the SAME edge-wide registry every
@@ -1176,6 +1200,22 @@ fn record_booked_position(
 }
 
 /// The single-owner per-session state and the operations over it.
+/// The combined per-book risk **poll signal**: the FX store's monotonic risk version summed
+/// with the linear-rates store's (each is independently monotonic, so the sum advances
+/// whenever EITHER moves — a change on either store re-publishes the roster). `wrapping_add`
+/// keeps it total; a realistic fill count never wraps a `u64`, and a wrap only costs one
+/// spurious/missed tick after ~1.8e19 fills. A store-less rates side contributes `0`
+/// (FX-only, byte-identical to the pre-rates signal).
+#[must_use]
+fn combined_risk_version(
+    store: &crate::services::risk::store::PositionStore,
+    rates: Option<&crate::services::rates_book::RatesPositionStore>,
+) -> u64 {
+    store
+        .risk_version()
+        .wrapping_add(rates.map(|r| r.risk_version()).unwrap_or(0))
+}
+
 pub(crate) struct Session {
     subs: HashMap<u64, Subscription>,
     /// The live market-series (TrendMode) subscriptions multiplexed on this
@@ -1209,6 +1249,10 @@ pub(crate) struct Session {
     /// The shared live position book a click-to-trade fill records into (`None` ⇒
     /// no risk store wired; booking is a no-op).
     store: Option<Arc<crate::services::risk::store::PositionStore>>,
+    /// The shared **linear-rates** position book (shared from the [`StreamEdge`]); `None` for
+    /// an isolated stream test. The per-book risk stream sums the rates positions routed into
+    /// each book beside the FX ones and folds this store's risk version into its poll signal.
+    rates: Option<Arc<crate::services::rates_book::RatesPositionStore>>,
     /// The shared per-pair price-tick fan-out (see [`StreamEdge::fanout`]). On
     /// subscribe the session draws a [`PriceTick`] consumer for the subscription's
     /// pair; `drive_tick` drains it to emit per-subscription updates.
@@ -1744,8 +1788,9 @@ impl Session {
         // only advances the version further, so the next tick re-publishes — never a missed
         // change (reading the version after would risk stamping a roster as a newer version
         // than it reflects).
-        let version = store.risk_version();
-        let books: Vec<RiskBookRiskDesc> = aggregate_enabled_risk_books(store)
+        let rates = self.rates.as_deref();
+        let version = combined_risk_version(store, rates);
+        let books: Vec<RiskBookRiskDesc> = aggregate_enabled_risk_books(store, rates)
             .iter()
             .map(risk_book_risk_to_wire)
             .collect();
@@ -2358,14 +2403,15 @@ impl Session {
         let Some(store) = self.store.clone() else {
             return true;
         };
-        let version = store.risk_version();
+        let rates = self.rates.clone();
+        let version = combined_risk_version(&store, rates.as_deref());
         // Nothing to do unless SOME subscriber is behind the current version — so the
         // O(#facts) aggregation runs only when the risk actually moved, never per idle tick.
         if !self.risk_subs.values().any(|s| version > s.last_version) {
             return true;
         }
         let now = self.clock.now_nanos();
-        let books: Vec<RiskBookRiskDesc> = aggregate_enabled_risk_books(&store)
+        let books: Vec<RiskBookRiskDesc> = aggregate_enabled_risk_books(&store, rates.as_deref())
             .iter()
             .map(risk_book_risk_to_wire)
             .collect();
@@ -2997,6 +3043,7 @@ mod tests {
             minter: TokenMinter::new(),
             next_execution_id: Arc::new(AtomicU64::new(1)),
             store: None,
+            rates: None,
             fanout,
             caller: ResolvedCaller::anonymous(),
             sessions: default_sessions(),
@@ -3066,6 +3113,7 @@ mod tests {
             minter: TokenMinter::new(),
             next_execution_id: Arc::new(AtomicU64::new(1)),
             store: None,
+            rates: None,
             fanout: PriceFanout::start(),
             caller: ResolvedCaller::anonymous(),
             sessions,

@@ -433,6 +433,12 @@ impl Edge {
             // lines) instead of the synthetic-demo panel.
             .with_aggregation_hub(Arc::clone(&aggregation_hub)),
         );
+        // The shared LINEAR-RATES position book (created here so the stream + auth edges can
+        // share it): ONE book read/written by the RiskService rates Book/List RPCs and the
+        // RfqDeskService (whose AcceptDeskQuote books accepted deals into it), and read by the
+        // stream edge for the per-book risk roster. Its risk router is primed below beside the
+        // FX store's, so a routed rates fill buckets into its risk book from first boot.
+        let rates_store = Arc::new(services::rates_book::RatesPositionStore::new());
         let stream = StreamServiceServer::new(
             StreamEdge::with_store_and_fleet(
                 Arc::clone(&link),
@@ -444,7 +450,10 @@ impl Edge {
                 fleet.clone(),
             )
             .with_sessions(Arc::clone(&sessions))
-            .with_aggregation_hub(Arc::clone(&aggregation_hub)),
+            .with_aggregation_hub(Arc::clone(&aggregation_hub))
+            // The per-book risk stream sums the rates positions routed into each book beside
+            // the FX ones and advances on a rates fill.
+            .with_rates_store(Arc::clone(&rates_store)),
         );
         let surface = SurfaceServiceServer::new(SurfaceEdge::with_fleet(
             Arc::clone(&link),
@@ -459,11 +468,10 @@ impl Edge {
         // `docs/RISK-HIERARCHY.md` §3.4). In-process ⇒ the direct single-node path. The
         // SAME connected edge backs both the gRPC server and the WS mirror, shared
         // behind an `Arc`. It shares the edge-wide `sessions` registry built above.
-        // The shared dealer-quoting stores + notification broker: ONE rates position
-        // book is read/written by both the RiskService rates Book/List RPCs and the
-        // RfqDeskService (whose AcceptDeskQuote books accepted deals into it), so the
-        // Book workspace and the desk blotter stay coherent.
-        let rates_store = Arc::new(services::rates_book::RatesPositionStore::new());
+        // The shared dealer-quoting stores + notification broker: the `rates_store` (created
+        // above, shared with the stream edge) is read/written by both the RiskService rates
+        // Book/List RPCs and the RfqDeskService, so the Book workspace and the desk blotter
+        // stay coherent.
         let desk_requests = Arc::new(services::desk::store::DeskRequestStore::new());
         let deals_store = Arc::new(services::desk::store::DealStore::new());
         let notify_broker = Arc::new(services::desk::notify::NotificationBroker::new());
@@ -631,6 +639,19 @@ impl Edge {
         // risk stream aggregates over the persisted book set from first boot. Every admin
         // risk-book write re-primes it (see `AuthEdge::reconcile_risk_routing`).
         store.set_risk_book_tree(identity_store.risk_books.clone());
+        // Prime the shared LINEAR-RATES store's router + per-book limit view beside the FX
+        // store, so a routed rates fill (RiskService::BookRatesPosition or the RFQ desk's
+        // AcceptDeskQuote) buckets into — and is capped by — the same risk books from first
+        // boot. `None`/no caps ⇒ unrouted, byte-identical. Every admin risk-book/graph write
+        // re-primes it (see `AuthEdge::reconcile_risk_routing`).
+        rates_store.set_routing(identity_store.risk_routing_graph().cloned());
+        rates_store.set_risk_books(
+            identity_store
+                .risk_books
+                .iter()
+                .map(crate::services::risk::store::RiskBookLimitDef::from)
+                .collect(),
+        );
 
         // ADR-0015 §2.1: activate the configurable consistency tier — Raft **wired
         // everywhere but forced nowhere**. A `RaftNode` is booted ONLY when a
@@ -678,7 +699,10 @@ impl Edge {
             // Re-prime the shared position store's risk router after every admin
             // risk-book/graph write (phase 4 reconcile) so routing takes effect on
             // subsequent fills immediately.
-            .with_position_store(Arc::clone(&store)),
+            .with_position_store(Arc::clone(&store))
+            // Re-prime the shared LINEAR-RATES store's router beside the FX store, and sum its
+            // routed positions into the `ListRiskBookRisk` roll-up.
+            .with_rates_store(Arc::clone(&rates_store)),
         );
         let auth = AuthServiceServer::from_arc(Arc::clone(&auth_edge));
 

@@ -32,18 +32,30 @@
 //!   is computable at this seam (net / gross notional), `used / limit` as a fraction
 //!   plus a green/amber/red band.
 //!
-//! Two metric families are **genuinely not evaluable** at this seam and are carried
-//! as ABSENT ([`Option::None`]) rather than a fabricated zero:
+//! - **net / gross notional, position count** ALSO include the **linear-rates**
+//!   positions routed into the book (the [`RatesPositionStore`] seam): a rates fill
+//!   contributes its trade-direction notional and increments the count exactly as an FX
+//!   leg does. Rates notional is summed nominally into the same net/gross figure as the
+//!   FX base-leg notional — single-numeraire in practice, consistent with the vega caveat.
+//! - **DV01** — present iff the book's subtree holds a rates position: the summed signed
+//!   **linear PV01 proxy** (`rates_linear_exposure`, `notional · tenor · 1bp`), a
+//!   conservative undiscounted DV01. A FX-only book carries no rates DV01, so its `dv01`
+//!   stays ABSENT (never a fabricated zero) — backward-compatible. The exact curve-
+//!   bootstrapped key-rate DV01 ladder is the dedicated rates-risk seam (§5.3).
 //!
-//! - **DV01 / curve buckets** — FX-vanilla positions have no rates DV01; that is the
-//!   rates-book seam (`services/rates_book.rs` + the `celnet-bond` risk leaf, §5.3).
-//!   The `max_dv01` cap is therefore also skipped (no utilization without a DV01).
+//! One metric family is **genuinely not evaluable** at this seam and is carried as
+//! ABSENT ([`Option::None`]) rather than a fabricated zero:
+//!
 //! - **live mark-to-market PnL** — needs a mark pass that does not exist at this
 //!   booking-seam view (§5.4).
 
+use celnet_proto::RatesPosition;
 use celnet_risk_cube::RiskFact;
 
 use crate::config::identity::{IdentityStore, RiskBookDef, RiskLimits};
+use crate::services::rates_book::{
+    RatesPositionStore, rates_linear_exposure, rates_signed_notional,
+};
 
 use super::store::PositionStore;
 
@@ -140,8 +152,8 @@ pub struct RiskBookRisk {
     pub vega: f64,
     /// Canonical theta (`∂V/∂t` per year) × notional, summed.
     pub theta: f64,
-    /// Net DV01 (PV per +1bp) — ABSENT: FX-vanilla positions carry no rates DV01
-    /// (the rates-book seam, §5.3).
+    /// Net DV01 (signed linear PV01 proxy) — present iff the subtree holds a rates
+    /// position (summed `rates_linear_exposure`); ABSENT for a FX-only book (§5.3).
     pub dv01: Option<f64>,
     /// Live mark-to-market PnL — ABSENT: no mark pass exists at this seam (§5.4).
     pub pnl: Option<f64>,
@@ -158,7 +170,11 @@ pub struct RiskBookRisk {
 /// Greeks are summed in canonical-leaf units (see the module docs). DV01 and PnL are
 /// not evaluable at this seam and are left `None`.
 #[must_use]
-fn aggregate_facts(book: &RiskBookDef, facts: &[RiskFact]) -> RiskBookRisk {
+fn aggregate_facts(
+    book: &RiskBookDef,
+    facts: &[RiskFact],
+    rates: &[RatesPosition],
+) -> RiskBookRisk {
     let mut net_notional = 0.0;
     let mut gross_notional = 0.0;
     let mut delta = 0.0;
@@ -175,9 +191,30 @@ fn aggregate_facts(book: &RiskBookDef, facts: &[RiskFact]) -> RiskBookRisk {
         vega += g.vega;
         theta += g.theta;
     }
+    // Linear-rates positions routed into this book contribute their trade-direction notional
+    // (net/gross) and a signed **DV01** (the existing undiscounted linear PV01 proxy,
+    // `rates_linear_exposure`). Rates carry no option Greeks, so delta/gamma/vega/theta stay
+    // FX-vanilla. Rates notional is summed nominally into the same net/gross figure as the FX
+    // base-leg notional — single-numeraire in practice for the FI books this view serves,
+    // consistent with the module's mixed-premium-ccy vega caveat.
+    let mut dv01_sum = 0.0;
+    for p in rates {
+        let signed = rates_signed_notional(p);
+        net_notional += signed;
+        gross_notional += signed.abs();
+        dv01_sum += rates_linear_exposure(p);
+    }
+    // DV01 is present iff this book (or its subtree) actually holds a rates position — a
+    // FX-only book still reports DV01 ABSENT (never a fabricated zero), backward-compatible.
+    let dv01 = if rates.is_empty() {
+        None
+    } else {
+        Some(dv01_sum)
+    };
+
     // `usize -> u32`: a live risk book is far under 4 billion routed lines; saturate
     // rather than wrap on the theoretical overflow (never a silent truncation).
-    let position_count = u32::try_from(facts.len()).unwrap_or(u32::MAX);
+    let position_count = u32::try_from(facts.len().saturating_add(rates.len())).unwrap_or(u32::MAX);
 
     let limits = book
         .limits
@@ -195,8 +232,9 @@ fn aggregate_facts(book: &RiskBookDef, facts: &[RiskFact]) -> RiskBookRisk {
         gamma,
         vega,
         theta,
-        // Not evaluable at this seam — carried absent, never a fabricated zero.
-        dv01: None,
+        // Present when the subtree holds rates positions (their summed linear PV01 proxy),
+        // else ABSENT for a FX-only book — never a fabricated zero.
+        dv01,
         pnl: None,
         limits,
     }
@@ -236,14 +274,21 @@ fn limit_utilizations(
 #[must_use]
 pub fn aggregate_risk_book(
     store: &PositionStore,
+    rates: Option<&RatesPositionStore>,
     identity: &IdentityStore,
     book: &RiskBookDef,
 ) -> RiskBookRisk {
     let mut facts = store.positions_in_risk_book(&book.id);
+    let mut rates_positions: Vec<RatesPosition> = rates
+        .map(|r| r.positions_in_risk_book(&book.id))
+        .unwrap_or_default();
     for descendant in identity.risk_book_descendants(&book.id) {
         facts.extend(store.positions_in_risk_book(&descendant.id));
+        if let Some(r) = rates {
+            rates_positions.extend(r.positions_in_risk_book(&descendant.id));
+        }
     }
-    aggregate_facts(book, &facts)
+    aggregate_facts(book, &facts, &rates_positions)
 }
 
 /// Aggregate **every enabled risk book** over the live position store, each rolled up its
@@ -260,7 +305,10 @@ pub fn aggregate_risk_book(
 /// the RPC's `aggregate_risk_book` includes all descendants) — matching the RPC's
 /// `.filter(|b| b.enabled)` roster.
 #[must_use]
-pub fn aggregate_enabled_risk_books(store: &PositionStore) -> Vec<RiskBookRisk> {
+pub fn aggregate_enabled_risk_books(
+    store: &PositionStore,
+    rates: Option<&RatesPositionStore>,
+) -> Vec<RiskBookRisk> {
     let identity = IdentityStore {
         risk_books: store.risk_book_tree(),
         ..IdentityStore::default()
@@ -269,7 +317,7 @@ pub fn aggregate_enabled_risk_books(store: &PositionStore) -> Vec<RiskBookRisk> 
         .risk_books
         .iter()
         .filter(|b| b.enabled)
-        .map(|b| aggregate_risk_book(store, &identity, b))
+        .map(|b| aggregate_risk_book(store, rates, &identity, b))
         .collect()
 }
 
@@ -361,7 +409,7 @@ mod tests {
         let book = book_with_limits("b", None);
         // +100 long and -40 short: net 60, gross 140.
         let facts = [hand_fact(1, 100.0), hand_fact(2, -40.0)];
-        let agg = aggregate_facts(&book, &facts);
+        let agg = aggregate_facts(&book, &facts, &[]);
         assert_eq!(agg.position_count, 2);
         assert!((agg.net_notional - 60.0).abs() < 1e-9);
         assert!((agg.gross_notional - 140.0).abs() < 1e-9);
@@ -388,26 +436,26 @@ mod tests {
         let book = book_with_limits("b", Some(limits));
 
         // net = gross = 79 ⇒ 0.79 < 0.8 ⇒ GREEN.
-        let green = aggregate_facts(&book, &[hand_fact(1, 79.0)]);
+        let green = aggregate_facts(&book, &[hand_fact(1, 79.0)], &[]);
         assert_eq!(green.limits.len(), 2, "net + gross; dv01 skipped (no DV01)");
         assert!(green.limits.iter().all(|u| u.band == RagBand::Green));
 
         // net = gross = 80 ⇒ exactly 0.8 ⇒ AMBER (the lower boundary is inclusive).
-        let amber = aggregate_facts(&book, &[hand_fact(1, 80.0)]);
+        let amber = aggregate_facts(&book, &[hand_fact(1, 80.0)], &[]);
         for u in &amber.limits {
             assert!((u.fraction - 0.8).abs() < 1e-12);
             assert_eq!(u.band, RagBand::Amber);
         }
 
         // net = gross = 100 ⇒ exactly 1.0 ⇒ RED (the cap is a breach at equality).
-        let red = aggregate_facts(&book, &[hand_fact(1, 100.0)]);
+        let red = aggregate_facts(&book, &[hand_fact(1, 100.0)], &[]);
         for u in &red.limits {
             assert!((u.fraction - 1.0).abs() < 1e-12);
             assert_eq!(u.band, RagBand::Red);
         }
 
         // A short book still consumes NET capacity via the absolute of the signed sum.
-        let short = aggregate_facts(&book, &[hand_fact(1, -100.0)]);
+        let short = aggregate_facts(&book, &[hand_fact(1, -100.0)], &[]);
         let net = short
             .limits
             .iter()
@@ -514,18 +562,89 @@ mod tests {
 
         // The child alone rolls up ONLY its own fill.
         let child_def = identity.risk_book("child").expect("child def");
-        let child_agg = aggregate_risk_book(&store, &identity, child_def);
+        let child_agg = aggregate_risk_book(&store, None, &identity, child_def);
         assert_eq!(child_agg.position_count, 1);
         assert!((child_agg.net_notional - 10.0).abs() < 1e-9);
 
         // The parent rolls up BOTH: count 2, notional 70, delta = sum of both leaves.
-        let parent_agg = aggregate_risk_book(&store, &identity, &parent);
+        let parent_agg = aggregate_risk_book(&store, None, &identity, &parent);
         assert_eq!(parent_agg.position_count, 2);
         assert!((parent_agg.net_notional - 70.0).abs() < 1e-9);
         assert!((parent_agg.gross_notional - 70.0).abs() < 1e-9);
         assert!((parent_agg.delta - expect_delta).abs() < 1e-9);
         assert_eq!(parent_agg.dv01, None);
         assert_eq!(parent_agg.pnl, None);
+    }
+
+    /// A book aggregates BOTH its FX positions and the linear-rates positions routed into
+    /// it: net/gross notional + count sum both stores, and the rates DV01 (linear PV01 proxy)
+    /// is surfaced — while a FX-only aggregation keeps DV01 absent (backward-compatible).
+    #[test]
+    fn aggregate_includes_routed_rates_positions() {
+        use crate::services::rates_book::RatesPositionStore;
+        use celnet_proto::{OisInstrument, RatesInstrument, RatesPosition, Side, rates_instrument};
+        use celnet_risk_routing::{RiskRoutingGraph, RoutingNode};
+        use std::collections::BTreeMap;
+
+        // A single-book graph: every fill → risk book "b" (routing is book-resolved, not
+        // attribution-resolved, so the same graph serves the FX and the rates fill).
+        let single = || {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                0u32,
+                RoutingNode::Book {
+                    risk_book_id: "b".to_owned(),
+                },
+            );
+            RiskRoutingGraph { entry: 0, nodes }
+        };
+
+        // FX store: one +100 fill routed into "b".
+        let fx = PositionStore::new();
+        fx.set_routing(Some(single()));
+        fx.book_from_attribution(booked(1, 100.0), &attribution("HELD"))
+            .expect("fx book");
+
+        // Rates store: one 10mm 5y pay-fixed OIS routed into "b".
+        let rates = RatesPositionStore::new();
+        rates.set_routing(Some(single()));
+        let ois = RatesPosition {
+            position_id: 0,
+            entity: 1,
+            book: 10,
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+                    tenor_years: 5,
+                    fixed_rate: 0.04,
+                    notional: 10_000_000.0,
+                    side: Side::Buy as i32,
+                })),
+            }),
+        };
+        let booked_rates = rates.book(ois).expect("rates book");
+        assert_eq!(
+            rates.risk_book_of(booked_rates.position_id).as_deref(),
+            Some("b"),
+            "the rates fill routes into the resolved risk book",
+        );
+
+        let book = book_with_limits("b", None);
+        let identity = IdentityStore::default();
+        let agg = aggregate_risk_book(&fx, Some(&rates), &identity, &book);
+
+        // Count = 1 FX + 1 rates.
+        assert_eq!(agg.position_count, 2);
+        // Net/gross notional = FX 100 + rates trade-direction notional (+10mm pay-fixed).
+        assert!((agg.net_notional - (100.0 + 10_000_000.0)).abs() < 1e-3);
+        assert!((agg.gross_notional - (100.0 + 10_000_000.0)).abs() < 1e-3);
+        // DV01 now present: the rates linear PV01 proxy 10mm · 5 · 1bp = 5000.
+        let dv01 = agg.dv01.expect("rates positions surface a DV01");
+        assert!((dv01 - 5000.0).abs() < 1e-6);
+
+        // FX-only aggregation (no rates store) keeps DV01 ABSENT — backward-compatible.
+        let fx_only = aggregate_risk_book(&fx, None, &identity, &book);
+        assert_eq!(fx_only.dv01, None);
+        assert_eq!(fx_only.position_count, 1);
     }
 
     fn attribution(book: &str) -> celnet_proto::AttributionRecord {

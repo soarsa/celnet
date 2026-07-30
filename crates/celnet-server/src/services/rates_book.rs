@@ -26,6 +26,7 @@
 // house convention (see `services::quote` / `services::desk`), not boxed per call.
 #![allow(clippy::result_large_err)]
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -39,8 +40,10 @@ use celnet_proto::{
     EntitlementPrincipal, EntitlementRule, RatesPosition, RiskDimension, Side, rates_instrument,
 };
 use celnet_risk_cube::{BookId, EntityId, NetGreeks, NodeAggregate, VegaPillar};
+use celnet_risk_routing::{RiskRouter, RiskRoutingGraph, RoutingContext};
 
-use crate::services::risk::store::limit_breached_status;
+use crate::config::identity::RiskLimits;
+use crate::services::risk::store::{RiskBookLimitDef, limit_breached_status};
 
 /// One basis point in absolute rate terms — the scale of the linear-rates limit
 /// exposure (see [`rates_linear_exposure`]).
@@ -68,6 +71,33 @@ pub struct RatesPositionStore {
     /// quorum log **before** the local apply; a `Local` cell (the default) never touches
     /// it, so the fast path stays byte-identical. Off the pinned pricing thread (§4.3).
     consensus: OnceLock<Arc<ConsensusHandle>>,
+    /// The current firm-wide **risk-routing graph** (`docs/FI-RISK-ROUTING-REQUIREMENTS.md`
+    /// §4) — the SAME graph the FX [`PositionStore`](super::risk::store::PositionStore) holds,
+    /// pushed by the SAME reconcile sites (boot prime + `AuthEdge::reconcile_risk_routing`).
+    /// `None` ⇒ no routing: a rates fill books exactly as before with **no** risk-book stamp,
+    /// byte-identical to the pre-routing path. Behind an [`Arc`] so a fill clones only a
+    /// pointer off the off-hot-path booking tier.
+    routing: RwLock<Option<Arc<RiskRoutingGraph>>>,
+    /// The resolved `risk_book_id` stamped on each routed rates fill, keyed by the rates
+    /// position id — the rates analogue of the FX store's `risk_book` bucketing dimension
+    /// (§8.3). A position id is present only when its fill was routed (a graph was
+    /// configured and [`RiskRouter::route`] resolved a book); absent ⇒ unrouted. The
+    /// existing `(entity, book)` keying is untouched, so an unrouted store is
+    /// byte-identical to today.
+    risk_book: RwLock<HashMap<u64, String>>,
+    /// The current **risk-book limit view** (§8.3 enforcement): each routed book's parent
+    /// (for subtree roll-up) + optional hard [`RiskLimits`], keyed by book id. Kept current
+    /// by [`RatesPositionStore::set_risk_books`] from the SAME reconcile sites the FX store
+    /// uses. Empty — or a view with no caps on the fill's book path — ⇒ the per-book gate is
+    /// skipped, byte-identical to the pre-enforcement booking path.
+    risk_book_limits: RwLock<HashMap<String, RiskBookLimitDef>>,
+    /// A monotonic **risk version** bumped on every successful [`RatesPositionStore::book`]
+    /// (a position change) — the rates analogue of the FX store's `risk_version`. The live
+    /// per-book risk stream ([`crate::services::stream`]) folds this into its poll signal
+    /// (summed with the FX version) so a rates fill advances the stream exactly as an FX
+    /// fill does. A relaxed atomic (read lock-free off the streaming tick loop, never the
+    /// pinned pricing core); starts at `0`.
+    risk_version: AtomicU64,
 }
 
 impl Default for RatesPositionStore {
@@ -85,6 +115,10 @@ impl RatesPositionStore {
             next_id: AtomicU64::new(1),
             limits: RwLock::new(LimitTree::new()),
             consensus: OnceLock::new(),
+            routing: RwLock::new(None),
+            risk_book: RwLock::new(HashMap::new()),
+            risk_book_limits: RwLock::new(HashMap::new()),
+            risk_version: AtomicU64::new(0),
         }
     }
 
@@ -132,6 +166,92 @@ impl RatesPositionStore {
             .clone()
     }
 
+    /// Install (or clear) the live firm-wide **risk-routing graph** (§4) — the rates
+    /// analogue of [`PositionStore::set_routing`](super::risk::store::PositionStore::set_routing).
+    /// Pushed at boot from the persisted graph and re-pushed after every admin edit via the
+    /// SAME `AuthEdge::reconcile_risk_routing` hook, so defining/editing/clearing the graph
+    /// takes effect on subsequent rates fills immediately. `Some(graph)` ⇒ each subsequent
+    /// fill through [`Self::book`] is routed to a risk book and stamped; `None` ⇒ routing is
+    /// off and fills book exactly as before (no stamp) — the backward-compatible default.
+    ///
+    /// Thread-safe: takes the routing write lock briefly (control-plane cadence, never the
+    /// pinned pricing core) and swaps an [`Arc`], so a concurrent booking sees either the old
+    /// or the new graph atomically, never a torn one.
+    pub fn set_routing(&self, graph: Option<RiskRoutingGraph>) {
+        let mut g = self.routing.write().expect("rates routing lock poisoned");
+        *g = graph.map(Arc::new);
+    }
+
+    /// Push the current **risk-book limit view** into the store — each book's parent (for
+    /// subtree roll-up) and optional hard [`RiskLimits`] notional caps. Kept current beside
+    /// [`Self::set_routing`] by the SAME two reconcile sites the FX store uses (the boot-time
+    /// prime and the per-write `AuthEdge::reconcile_risk_routing` hook), so a routed rates
+    /// fill that would breach its risk book's (or an ancestor's) hard notional cap is refused.
+    /// An empty view (no books, or none carrying limits) ⇒ the per-book gate is skipped and
+    /// booking is byte-identical to the pre-enforcement path.
+    pub fn set_risk_books(&self, books: Vec<RiskBookLimitDef>) {
+        let mut g = self
+            .risk_book_limits
+            .write()
+            .expect("rates risk-book limit lock poisoned");
+        *g = books.into_iter().map(|b| (b.id.clone(), b)).collect();
+    }
+
+    /// Whether a risk-routing graph is currently installed (routing is active).
+    #[must_use]
+    pub fn has_routing(&self) -> bool {
+        self.routing
+            .read()
+            .expect("rates routing lock poisoned")
+            .is_some()
+    }
+
+    /// The current **risk version**: a monotonic counter advanced on every successful
+    /// [`Self::book`]. The live per-book risk stream folds this into its poll signal so a
+    /// rates fill re-publishes the roster exactly as an FX fill does.
+    #[must_use]
+    pub fn risk_version(&self) -> u64 {
+        self.risk_version.load(Ordering::Relaxed)
+    }
+
+    /// The resolved `risk_book_id` a booked rates position was routed into, or `None` if it
+    /// booked unrouted (no graph configured, or a routing error fell it back). Looked up by
+    /// the rates position id.
+    #[must_use]
+    pub fn risk_book_of(&self, position_id: u64) -> Option<String> {
+        self.risk_book
+            .read()
+            .expect("rates risk-book lock poisoned")
+            .get(&position_id)
+            .cloned()
+    }
+
+    /// All live rates positions currently bucketed into `risk_book_id` (the by-risk-book
+    /// query path §8.3, rates analogue of
+    /// [`PositionStore::positions_in_risk_book`](super::risk::store::PositionStore::positions_in_risk_book)).
+    /// Returns the full [`RatesPosition`]s so the per-book risk aggregation can sum their
+    /// notional/PV01; the existing `(entity, book)` keying is untouched, so a position appears
+    /// in both its entity/book roll-up and its risk book.
+    #[must_use]
+    pub fn positions_in_risk_book(&self, risk_book_id: &str) -> Vec<RatesPosition> {
+        let stamps = self
+            .risk_book
+            .read()
+            .expect("rates risk-book lock poisoned");
+        let g = self
+            .inner
+            .read()
+            .expect("rates position store lock poisoned");
+        g.iter()
+            .filter(|p| {
+                stamps
+                    .get(&p.position_id)
+                    .is_some_and(|b| b == risk_book_id)
+            })
+            .cloned()
+            .collect()
+    }
+
     /// **The pre-trade limit gate + booking sink** for linear-rates positions
     /// (ADR-0016 A1): the single convergence point both rates booking front-ends
     /// funnel through — `RiskService::BookRatesPosition`
@@ -148,8 +268,14 @@ impl RatesPositionStore {
     /// supersede semantics — so a re-book never double-counts (and the pre-trade
     /// projection excludes the superseded fact).
     ///
+    /// When a firm-wide **risk-routing graph** is installed ([`Self::set_routing`]) the fill
+    /// is additionally routed to a risk book and stamped (§4); no graph ⇒ unrouted, byte-
+    /// identical to the pre-routing path. A routed fill also charges the routed book's (and
+    /// its ancestors') optional hard notional caps.
+    ///
     /// # Errors
-    /// `failed_precondition` when a **hard** limit would be breached.
+    /// `failed_precondition` when a **hard** `(book → entity → firm)` limit OR a routed
+    /// **risk-book** hard notional cap (the resolved book or an ancestor) would be breached.
     pub fn book(&self, mut position: RatesPosition) -> Result<RatesPosition, tonic::Status> {
         // Pre-trade limit gate (ADR-0016 A1) over a READ snapshot, BEFORE the write lock,
         // so a hard breach can never book and the projection never runs while the exclusive
@@ -171,6 +297,36 @@ impl RatesPositionStore {
                     return Err(limit_breached_status(&result));
                 }
             }
+        }
+
+        // Risk routing (§4): resolve the firm-wide graph on a READ snapshot, BEFORE any
+        // mutation — mirroring the FX sink. A routing error on an already-validated graph
+        // falls back to UNROUTED (a routing failure never rejects the fill), byte-identical
+        // to the pre-routing path; `None` (no graph) is likewise unrouted.
+        let resolved_book: Option<String> = {
+            let routing = self.routing.read().expect("rates routing lock poisoned");
+            routing.as_ref().and_then(|graph| {
+                let ctx = routing_context_from_rates(&position);
+                match RiskRouter::route(graph, &ctx) {
+                    Ok(book) => Some(book.to_owned()),
+                    Err(err) => {
+                        tracing::warn!(
+                            position_id = position.position_id,
+                            %err,
+                            "rates risk routing failed; booking unrouted",
+                        );
+                        None
+                    }
+                }
+            })
+        };
+        // The per-book HARD-limit gate (§8.3): if the fill's resolved book (or any ancestor)
+        // would EXCEED a hard notional cap, reject BEFORE any mutation — store unchanged. No
+        // caps on the path ⇒ `None`, byte-identical to the pre-enforcement path.
+        if let Some(book_id) = resolved_book.as_deref()
+            && let Some(breach) = self.project_rates_risk_book_breach(book_id, &position)
+        {
+            return Err(breach);
         }
 
         // ADR-0015 §2.1: a rates cell whose numeric book id is configured `Strong`
@@ -221,7 +377,128 @@ impl RatesPositionStore {
         } else {
             g.push(position);
         }
+        drop(g);
+
+        // Risk routing (§4): stamp the risk book resolved above (before the per-book gate),
+        // beside the existing `(entity, book)` keying. `None` — no graph, or a routing error
+        // — leaves the position UNROUTED (and a re-book of a formerly-routed id while routing
+        // is now off drops the stamp), byte-identical to the pre-routing booking path.
+        {
+            let mut stamps = self
+                .risk_book
+                .write()
+                .expect("rates risk-book lock poisoned");
+            match &resolved_book {
+                Some(book) => {
+                    stamps.insert(position.position_id, book.clone());
+                }
+                None => {
+                    stamps.remove(&position.position_id);
+                }
+            }
+        }
+        // A successful rates fill changed the live book, so a risk book's aggregated risk may
+        // have moved: advance the monotonic risk version the live per-book risk stream folds
+        // into its poll signal (mirrors the FX sink's unconditional post-mutation bump).
+        self.risk_version.fetch_add(1, Ordering::Relaxed);
         Ok(position)
+    }
+
+    /// Project this fill's post-book risk-book aggregate over the resolved book **and each
+    /// ancestor**, returning a typed `failed_precondition` breach if any HARD notional cap
+    /// (`max_net_notional` on `|net|`, `max_gross_notional` on gross) would be EXCEEDED — the
+    /// rates analogue of the FX
+    /// [`project_risk_book_breach`](super::risk::store::PositionStore) per-book gate (§8.3).
+    /// Runs on a read snapshot BEFORE any mutation, so a breach rejects with the store left
+    /// unmutated. Notional is the trade-direction **signed** rates notional (bond: redemption)
+    /// summed nominally — the single-numeraire per-book cap the FI books this seam serves use.
+    ///
+    /// The prior fact under this fill's id (a re-book) is excluded so a re-book projects
+    /// `others + this fill` and never double-counts. `max_dv01` is skipped here (the per-book
+    /// DV01 cap is the dedicated rates-risk seam); no caps on the path ⇒ `None`, gate skipped.
+    fn project_rates_risk_book_breach(
+        &self,
+        resolved_book: &str,
+        fill: &RatesPosition,
+    ) -> Option<tonic::Status> {
+        let limits_map = self
+            .risk_book_limits
+            .read()
+            .expect("rates risk-book limit lock poisoned");
+        // The scopes to enforce: the resolved book + its ancestors, keeping only those that
+        // actually carry a `RiskLimits`. No caps on the whole path ⇒ nothing to gate.
+        let chain = rates_risk_book_chain(&limits_map, resolved_book);
+        let scoped: Vec<(&str, &RiskLimits)> = chain
+            .iter()
+            .filter_map(|id| {
+                limits_map
+                    .get(*id)
+                    .and_then(|d| d.limits.as_ref())
+                    .map(|l| (*id, l))
+            })
+            .collect();
+        if scoped.is_empty() {
+            return None;
+        }
+        let fill_notional = rates_signed_notional(fill);
+        let exclude = fill.position_id;
+        // The current per-book OWN (un-rolled) net/gross from the stamped rates positions,
+        // excluding this fill's own prior fact (re-book supersede — never double-counted).
+        let stamps = self
+            .risk_book
+            .read()
+            .expect("rates risk-book lock poisoned");
+        let g = self
+            .inner
+            .read()
+            .expect("rates position store lock poisoned");
+        let mut own: HashMap<&str, (f64, f64)> = HashMap::new();
+        for p in g.iter() {
+            if exclude != 0 && p.position_id == exclude {
+                continue;
+            }
+            if let Some(book) = stamps.get(&p.position_id) {
+                let n = rates_signed_notional(p);
+                let e = own.entry(book.as_str()).or_insert((0.0, 0.0));
+                e.0 += n;
+                e.1 += n.abs();
+            }
+        }
+        for (scope, lim) in scoped {
+            // Subtree roll-up: this fill + every current book whose ancestor-or-self chain
+            // passes through `scope` (i.e. the book is in the subtree rooted at `scope`).
+            let mut net = fill_notional;
+            let mut gross = fill_notional.abs();
+            for (book, (bnet, bgross)) in &own {
+                if rates_risk_book_chain(&limits_map, book).contains(&scope) {
+                    net += bnet;
+                    gross += bgross;
+                }
+            }
+            if let Some(cap) = lim.max_net_notional
+                && net.abs() > cap
+            {
+                return Some(rates_risk_book_limit_breached(
+                    scope,
+                    "net_notional",
+                    net.abs(),
+                    cap,
+                ));
+            }
+            if let Some(cap) = lim.max_gross_notional
+                && gross > cap
+            {
+                return Some(rates_risk_book_limit_breached(
+                    scope,
+                    "gross_notional",
+                    gross,
+                    cap,
+                ));
+            }
+            // `max_dv01` intentionally skipped — the per-book DV01 cap is the dedicated
+            // rates-risk seam, not this notional-cap gate.
+        }
+        None
     }
 
     /// A deterministic snapshot of the whole book, ascending by `position_id`.
@@ -264,7 +541,7 @@ impl RatesPositionStore {
 /// are the ADR-0016 **A3** breadth wave (P2); this A1 gate consults the linear delta at
 /// the `book → entity → firm` scopes, which is the reachability A3 depends on.
 #[must_use]
-fn rates_linear_exposure(position: &RatesPosition) -> f64 {
+pub(crate) fn rates_linear_exposure(position: &RatesPosition) -> f64 {
     let Some(instr) = position
         .instrument
         .as_ref()
@@ -316,6 +593,160 @@ fn rates_linear_exposure(position: &RatesPosition) -> f64 {
             }
         }
     }
+}
+
+/// The trade-direction **signed** notional of a rates position — magnitude signed by
+/// `side` (SIDE_BUY = pay-fixed / long bond ⇒ `+`; SIDE_SELL = receive-fixed / short bond
+/// ⇒ `−`), so an equal-and-opposite payer/receiver pair nets at a book. The magnitude is
+/// the instrument's `notional` (bond: its `redemption` face — a bond carries no `notional`
+/// field). This is the trade-direction convention used for the per-book **net/gross
+/// notional** roll-up; note it is a *different* sign convention from
+/// [`rates_linear_exposure`] (which signs by IR *duration* direction, so a long bond is
+/// `−`) — the two are distinct, honestly-different measures (notional vs. PV01).
+#[must_use]
+pub(crate) fn rates_signed_notional(position: &RatesPosition) -> f64 {
+    let Some(instr) = position
+        .instrument
+        .as_ref()
+        .and_then(|i| i.instrument.as_ref())
+    else {
+        return 0.0;
+    };
+    let (magnitude, side) = match instr {
+        rates_instrument::Instrument::Ois(ois) => (ois.notional.abs(), ois.side),
+        rates_instrument::Instrument::Irs(irs) => (irs.notional.abs(), irs.side),
+        rates_instrument::Instrument::Fra(fra) => (fra.notional.abs(), fra.side),
+        rates_instrument::Instrument::Bond(bond) => (bond.redemption.abs(), bond.side),
+    };
+    match Side::try_from(side) {
+        Ok(Side::Sell) => -magnitude,
+        _ => magnitude,
+    }
+}
+
+/// Map a booked rates fill onto the routing engine's [`RoutingContext`] (§4) — the input the
+/// firm-wide decision graph matches an FI execution against. Total (never panics); a position
+/// with no instrument arm yields an all-default context (routes to the graph's fallthrough).
+///
+/// Field provenance (a rates position carries far fewer routable fields than an FX fill — the
+/// absent ones are left honestly empty/zero, never fabricated):
+///
+/// * `product` — the instrument family: `"ois"` / `"irs"` / `"fra"` / `"bond"` (the oneof
+///   arm name), so a rule like `product == "bond"` matches FI executions by kind.
+/// * `notional` — `|notional|` (bond: `|redemption|`), side-agnostic (mirrors the FX
+///   `|notional_base|`).
+/// * `tenor` — years to maturity: OIS/IRS `tenor_years`; FRA `end_months / 12`; a **bond is
+///   `0.0`** (its tenor needs the settlement/reference date, which the position does not
+///   carry — honestly zero, never a fabricated span).
+/// * `side` — `"Buy"` (SIDE_BUY = pay-fixed / long) / `"Sell"` (SIDE_SELL = receive / short);
+///   any other/unspecified ⇒ `""`.
+/// * `strike` — the fixed-rate *level*: OIS/IRS/FRA `fixed_rate`, bond `coupon_rate` (the
+///   closest analogue to a resolved level, so a rule can route by rate).
+/// * `instrument_id` — the product family (a rates cell carries no security-master id).
+/// * `desk` — the netting `book` id as text: a rates cell is **not** desk-attributed, so its
+///   netting book (its coarsest org unit) stands in on the desk axis, letting a rule route by
+///   rates book. `counterparty` / `user` are left `""` (a rates cell carries neither), and the
+///   `entity` axis has no routing field today (a future `RouteField::Entity` is its clean home
+///   — it is honestly unmapped, not folded onto a mismatched field).
+/// * `ccy` — `""`: a rates position stores no currency of its own (its notional is in the
+///   *curve* currency, supplied at price time), so the routable currency is genuinely absent.
+/// * `price` — `0.0`: the marked PV is a derived quantity not needed to route on economics.
+#[must_use]
+pub(crate) fn routing_context_from_rates(position: &RatesPosition) -> RoutingContext {
+    let Some(instr) = position
+        .instrument
+        .as_ref()
+        .and_then(|i| i.instrument.as_ref())
+    else {
+        return RoutingContext {
+            desk: position.book.to_string(),
+            ..RoutingContext::default()
+        };
+    };
+    let (product, notional, tenor, level, side) = match instr {
+        rates_instrument::Instrument::Ois(ois) => (
+            "ois",
+            ois.notional.abs(),
+            f64::from(ois.tenor_years),
+            ois.fixed_rate,
+            ois.side,
+        ),
+        rates_instrument::Instrument::Irs(irs) => (
+            "irs",
+            irs.notional.abs(),
+            f64::from(irs.tenor_years),
+            irs.fixed_rate,
+            irs.side,
+        ),
+        rates_instrument::Instrument::Fra(fra) => (
+            "fra",
+            fra.notional.abs(),
+            f64::from(fra.end_months) / 12.0,
+            fra.fixed_rate,
+            fra.side,
+        ),
+        // A bond's tenor needs the settlement/reference date (absent on the position), so it
+        // is honestly `0.0`; its `redemption` face is the notional and `coupon_rate` the level.
+        rates_instrument::Instrument::Bond(bond) => (
+            "bond",
+            bond.redemption.abs(),
+            0.0,
+            bond.coupon_rate,
+            bond.side,
+        ),
+    };
+    let side = match Side::try_from(side) {
+        Ok(Side::Buy) => "Buy",
+        Ok(Side::Sell) => "Sell",
+        _ => "",
+    }
+    .to_owned();
+    RoutingContext {
+        instrument_id: product.to_owned(),
+        ccy: String::new(),
+        product: product.to_owned(),
+        side,
+        notional,
+        tenor,
+        strike: level,
+        counterparty: String::new(),
+        user: String::new(),
+        desk: position.book.to_string(),
+        price: 0.0,
+    }
+}
+
+/// The resolved book and its ancestors (self first, then upward the parent chain),
+/// cycle-guarded against a not-yet-validated registry — the rates analogue of the FX
+/// store's `risk_book_chain`.
+fn rates_risk_book_chain<'a>(
+    limits_map: &'a HashMap<String, RiskBookLimitDef>,
+    book: &'a str,
+) -> Vec<&'a str> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut cur: Option<&str> = Some(book);
+    while let Some(id) = cur {
+        if out.contains(&id) {
+            break; // cycle guard — a validated store is acyclic
+        }
+        out.push(id);
+        cur = limits_map.get(id).and_then(|d| d.parent_id.as_deref());
+    }
+    out
+}
+
+/// A typed `failed_precondition` for a routed-risk-book hard notional-cap breach on the rates
+/// path — book id + metric + used/limit (§8.3), matching the FX per-book breach wording.
+#[must_use]
+fn rates_risk_book_limit_breached(
+    book_id: &str,
+    metric: &str,
+    used: f64,
+    cap: f64,
+) -> tonic::Status {
+    tonic::Status::failed_precondition(format!(
+        "risk book limit breached: {book_id}/{metric} used {used:.4} exceeds cap {cap}"
+    ))
 }
 
 /// Whether an org `scope` covers a linear-rates cell — the rates analogue of the FX
@@ -591,5 +1022,159 @@ mod tests {
             denies: vec![],
         };
         assert!(!admits_rates_cell(Some(&grant_desk), 1, 10));
+    }
+
+    // ---- §4 risk routing on the linear-rates booking sink ----
+
+    use celnet_proto::BondInstrument;
+    use celnet_risk_routing::{RiskRoutingGraph, RouteField, RouteOp, RouteValue, RoutingNode};
+
+    /// A firm-wide graph: `product == "bond"` → BOOK-A, else DEFAULT.
+    fn product_graph() -> RiskRoutingGraph {
+        use std::collections::BTreeMap;
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0u32,
+            RoutingNode::Condition {
+                field: RouteField::Product,
+                op: RouteOp::Eq,
+                value: RouteValue::Text("bond".to_owned()),
+                on_true: 1,
+                on_false: 2,
+            },
+        );
+        nodes.insert(
+            1u32,
+            RoutingNode::Book {
+                risk_book_id: "BOOK-A".to_owned(),
+            },
+        );
+        nodes.insert(
+            2u32,
+            RoutingNode::Book {
+                risk_book_id: "DEFAULT".to_owned(),
+            },
+        );
+        RiskRoutingGraph { entry: 0, nodes }
+    }
+
+    fn bond_position(id: u64, redemption: f64, side: Side) -> RatesPosition {
+        RatesPosition {
+            position_id: id,
+            entity: 1,
+            book: 7,
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Bond(BondInstrument {
+                    coupon_rate: 0.05,
+                    coupon_frequency: 0,
+                    day_count: 0,
+                    maturity_date: None,
+                    redemption,
+                    side: side as i32,
+                })),
+            }),
+        }
+    }
+
+    /// With a graph installed, a rates fill routes into the resolved risk book; the
+    /// by-risk-book query returns it there — the core of the feature (the bond → BOOK-A,
+    /// the OIS → DEFAULT via the graph's fallthrough).
+    #[test]
+    fn routed_rates_fill_lands_in_the_resolved_book() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(product_graph()));
+        let bond = store
+            .book(bond_position(0, 100.0, Side::Buy))
+            .expect("bond books");
+        let ois = store.book(position(0, 1, 10)).expect("ois books");
+        assert_eq!(
+            store.risk_book_of(bond.position_id).as_deref(),
+            Some("BOOK-A")
+        );
+        assert_eq!(
+            store.risk_book_of(ois.position_id).as_deref(),
+            Some("DEFAULT")
+        );
+        assert_eq!(store.positions_in_risk_book("BOOK-A").len(), 1);
+        assert_eq!(store.positions_in_risk_book("DEFAULT").len(), 1);
+        assert!(store.has_routing());
+        // A rates fill advances the risk version (the stream re-publishes).
+        assert!(store.risk_version() >= 2);
+    }
+
+    /// No graph installed ⇒ every rates fill books UNROUTED (`risk_book_of` is None) — the
+    /// backward-compatibility guarantee: routing off is byte-identical to the old path.
+    #[test]
+    fn no_graph_books_rates_unrouted() {
+        let store = RatesPositionStore::new();
+        assert!(!store.has_routing());
+        let booked = store.book(position(0, 1, 10)).expect("books");
+        assert_eq!(store.risk_book_of(booked.position_id), None);
+        assert!(store.positions_in_risk_book("BOOK-A").is_empty());
+        assert!(store.positions_in_risk_book("DEFAULT").is_empty());
+    }
+
+    /// `routing_context_from_rates` maps the fill economics for an OIS and a bond:
+    /// product/notional/tenor/side/strike(level)/desk(book), with ccy honestly empty.
+    #[test]
+    fn routing_context_from_rates_maps_ois_and_bond() {
+        // OIS: 5y 10mm pay-fixed (SIDE_BUY), fixed 4%, netting book 10.
+        let ois = routing_context_from_rates(&position(1, 1, 10));
+        assert_eq!(ois.product, "ois");
+        assert_eq!(ois.instrument_id, "ois");
+        assert_eq!(ois.notional, 10_000_000.0);
+        assert_eq!(ois.tenor, 5.0);
+        assert_eq!(ois.side, "Buy");
+        assert_eq!(ois.strike, 0.04);
+        assert_eq!(ois.desk, "10");
+        assert_eq!(ois.ccy, "");
+        assert_eq!(ois.counterparty, "");
+        assert_eq!(ois.user, "");
+
+        // Bond: short (SIDE_SELL) 100 face, 5% coupon, book 7; tenor honestly 0 (no ref date).
+        let bond = routing_context_from_rates(&bond_position(2, 100.0, Side::Sell));
+        assert_eq!(bond.product, "bond");
+        assert_eq!(bond.notional, 100.0);
+        assert_eq!(bond.tenor, 0.0);
+        assert_eq!(bond.side, "Sell");
+        assert_eq!(bond.strike, 0.05);
+        assert_eq!(bond.desk, "7");
+    }
+
+    /// A routed rates fill that would blow the resolved book's HARD net-notional cap is
+    /// refused (store unmutated); a within-cap fill books — the §8.3 per-book gate.
+    #[test]
+    fn routed_rates_fill_gated_by_risk_book_cap() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(product_graph()));
+        // Cap BOOK-A (where bonds route) at 50 net notional.
+        store.set_risk_books(vec![RiskBookLimitDef {
+            id: "BOOK-A".to_owned(),
+            parent_id: None,
+            limits: Some(RiskLimits {
+                max_net_notional: Some(50.0),
+                max_gross_notional: None,
+                max_dv01: None,
+            }),
+        }]);
+        // A 100-face bond routes to BOOK-A and breaches the 50 cap → rejected, book unchanged.
+        let err = store
+            .book(bond_position(0, 100.0, Side::Buy))
+            .expect_err("over-cap bond must be rejected");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(err.message().contains("risk book limit breached"));
+        assert_eq!(
+            store.len(),
+            0,
+            "a rejected rates fill must not mutate the book"
+        );
+        // A 40-face bond is within cap → books.
+        let ok = store
+            .book(bond_position(0, 40.0, Side::Buy))
+            .expect("within cap");
+        assert_eq!(
+            store.risk_book_of(ok.position_id).as_deref(),
+            Some("BOOK-A")
+        );
     }
 }
