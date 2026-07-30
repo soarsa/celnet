@@ -45,6 +45,12 @@ import type {
   RiskBook,
   RiskBookRisk,
   RiskRoutingGraph,
+  RiskTransfer,
+  RiskTransferProvenance,
+  TransferLeg,
+  MovedRisk,
+  InitiateRiskTransferInput,
+  ListRiskTransfersFilter,
   RagBand,
   RiskLimitUtilization,
   LpContribution,
@@ -1707,6 +1713,27 @@ export class MockTransport implements CelnetTransport {
   private dealSeq = 1n;
   private notificationSeq = 1n;
   private ratesPositionSeq = 1n;
+  /**
+   * The risk-transfer store: transfer_id → RiskTransfer. Backs the ticket (initiate),
+   * the inbox (Pending set), and the audit trail (ListRiskTransfers). A re-attribution
+   * lands `BOOKED` immediately; a desk/trader transfer lands `PENDING` until accepted.
+   * Only `BOOKED` transfers move risk in {@link computeRiskBookRisk}.
+   */
+  private readonly riskTransfers = new Map<string, RiskTransfer>();
+  private riskTransferSeq = 1n;
+  /** Live transfer-inbox subscribers (the four-eyes counterparty side). */
+  private readonly riskTransferInboxSubs = new Set<{
+    onInbox: (pending: RiskTransfer[]) => void;
+  }>();
+  /**
+   * Live risk-roll-up re-push callbacks — invoked (with a bumped version) whenever a
+   * transfer moves risk, so an open Risk Dashboard reflects the move immediately
+   * (the offline mirror of the server's `risk_version` bump + on-tick re-aggregation).
+   */
+  private readonly riskRepushers = new Set<(version: number) => void>();
+  private riskVersion = 1;
+  /** The signed-in principal (set at {@link login}); attributes transfer initiator/approver. */
+  private currentUserEmail = "";
   /** One-shot guard: the sample exception-contract alerts are scheduled once. */
   private sampleAlertsScheduled = false;
   /** Pending sample-alert timers, cleared when the last subscriber disposes. */
@@ -1956,7 +1983,13 @@ export class MockTransport implements CelnetTransport {
       }
     });
     subId = session.subscribeRiskBookRisk();
+    // Live re-push on any risk-moving transfer: the offline mirror of the server's
+    // `risk_version` bump + on-tick re-aggregation, so an open Risk Dashboard reflects
+    // a booked transfer immediately (the session baselines once; this delivers updates).
+    const repush = (version: number): void => onSnapshot(this.computeRiskBookRisk(), version);
+    this.riskRepushers.add(repush);
     return () => {
+      this.riskRepushers.delete(repush);
       dispose();
       if (subId !== null) session.unsubscribeRiskBookRisk(subId);
       session.close();
@@ -2446,12 +2479,17 @@ export class MockTransport implements CelnetTransport {
       found.grants,
       found.denies,
     );
+    // Remember the signed-in principal so risk-transfer records can attribute the
+    // initiator / approver (the live server resolves this from the bearer token;
+    // the offline mock has no token→identity map, so it captures it at login).
+    this.currentUserEmail = found.user.email;
     return { token, user: { ...found.user }, expiresNanos, capabilities };
   }
 
   async logout(): Promise<boolean> {
     const token = this.sessionToken;
     const ended = token !== null && this.mockTokens.delete(token);
+    this.currentUserEmail = "";
     return ended;
   }
 
@@ -3076,24 +3114,342 @@ export class MockTransport implements CelnetTransport {
    */
   private computeRiskBookRisk(): RiskBookRisk[] {
     const routed = this.routedRiskContributions();
+    const transferred = this.transferRiskContributions();
     return this.mockRiskBooks
       .filter((b) => b.enabled)
       .map((b) => {
         const base = synthRiskBookRisk(b);
+        let row = base;
         const add = routed.get(b.id);
-        if (add === undefined) return base;
-        return {
-          ...base,
-          netNotional: base.netNotional + add.net,
-          grossNotional: base.grossNotional + add.gross,
-          positionCount: base.positionCount + add.count,
-          dv01: (base.dv01 ?? 0) + add.dv01,
-        };
+        if (add !== undefined) {
+          row = {
+            ...row,
+            netNotional: row.netNotional + add.net,
+            grossNotional: row.grossNotional + add.gross,
+            positionCount: row.positionCount + add.count,
+            dv01: (row.dv01 ?? 0) + add.dv01,
+          };
+        }
+        // Booked risk-transfers move risk OUT of the source book and INTO the target
+        // (the manual complement to routing): −moved on the source, +moved on the
+        // target, greeks + notional + DV01 + position count all following the slice.
+        const tx = transferred.get(b.id);
+        if (tx !== undefined) {
+          row = {
+            ...row,
+            netNotional: row.netNotional + tx.net,
+            grossNotional: row.grossNotional + tx.gross,
+            positionCount: Math.max(0, row.positionCount + tx.count),
+            delta: row.delta + tx.delta,
+            gamma: row.gamma + tx.gamma,
+            vega: row.vega + tx.vega,
+            theta: row.theta + tx.theta,
+            dv01: (row.dv01 ?? 0) + tx.dv01,
+          };
+        }
+        return row;
       });
   }
 
   async listRiskBookRisk(): Promise<RiskBookRisk[]> {
     return this.computeRiskBookRisk();
+  }
+
+  // --- FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md) ------------------
+  //
+  // The manual move of EXISTING risk. Genuine in-memory stores + real risk math
+  // (not a stub): a BOOKED transfer moves a signed slice of the source book's risk
+  // vector into the target, folded into `computeRiskBookRisk` above. A re-attribution
+  // (same desk) books immediately; a desk-to-desk / trader-to-trader transfer lands
+  // Pending in the inbox and books on accept. NOTE: the offline mock is a SINGLE-user
+  // sandbox, so it does NOT enforce approver ≠ initiator (the live server does — the
+  // inbox UI surfaces that rule); this lets one demo user drive both sides end-to-end.
+
+  /** The signed net-notional slice a transfer moves out of its source book (+long/−short). */
+  private sliceSourceRisk(
+    sourceBookId: string,
+    quantityFull: boolean,
+    partialNotional: number | null,
+  ): MovedRisk {
+    const row = this.computeRiskBookRisk().find((r) => r.bookId === sourceBookId);
+    if (row === undefined) {
+      return { notionalBase: 0, risk: { dv01: 0, delta: 0, gamma: 0, vega: 0, theta: 0 } };
+    }
+    const bookNet = row.netNotional;
+    // Full moves the whole current net; partial moves the requested magnitude in the
+    // book's net direction (bounded to the book's net magnitude by the caller/UI).
+    const dir = bookNet < 0 ? -1 : 1;
+    const movedNotional = quantityFull
+      ? bookNet
+      : dir * Math.min(Math.abs(partialNotional ?? 0), Math.abs(bookNet));
+    const frac = bookNet !== 0 ? movedNotional / bookNet : 0;
+    return {
+      notionalBase: movedNotional,
+      risk: {
+        dv01: (row.dv01 ?? 0) * frac,
+        delta: row.delta * frac,
+        gamma: row.gamma * frac,
+        vega: row.vega * frac,
+        theta: row.theta * frac,
+      },
+    };
+  }
+
+  /** Per-book aggregate of every BOOKED transfer: −moved on source, +moved on target. */
+  private transferRiskContributions(): Map<
+    string,
+    { net: number; gross: number; count: number; dv01: number; delta: number; gamma: number; vega: number; theta: number }
+  > {
+    const out = new Map<
+      string,
+      { net: number; gross: number; count: number; dv01: number; delta: number; gamma: number; vega: number; theta: number }
+    >();
+    const enabled = new Set(this.mockRiskBooks.filter((b) => b.enabled).map((b) => b.id));
+    const zero = (): {
+      net: number; gross: number; count: number; dv01: number; delta: number; gamma: number; vega: number; theta: number;
+    } => ({ net: 0, gross: 0, count: 0, dv01: 0, delta: 0, gamma: 0, vega: 0, theta: 0 });
+    for (const t of this.riskTransfers.values()) {
+      if (t.state !== "BOOKED" || t.provenance === null) continue;
+      const m = t.provenance.riskMoved;
+      const n = Math.max(1, t.source.positionIds.length);
+      const src = t.source.riskBookId;
+      const tgt = t.target.riskBookId;
+      if (enabled.has(src)) {
+        const acc = out.get(src) ?? zero();
+        acc.net -= m.notionalBase;
+        acc.gross -= Math.abs(m.notionalBase);
+        acc.count -= n;
+        acc.dv01 -= m.risk.dv01;
+        acc.delta -= m.risk.delta;
+        acc.gamma -= m.risk.gamma;
+        acc.vega -= m.risk.vega;
+        acc.theta -= m.risk.theta;
+        out.set(src, acc);
+      }
+      if (enabled.has(tgt)) {
+        const acc = out.get(tgt) ?? zero();
+        acc.net += m.notionalBase;
+        acc.gross += Math.abs(m.notionalBase);
+        acc.count += n;
+        acc.dv01 += m.risk.dv01;
+        acc.delta += m.risk.delta;
+        acc.gamma += m.risk.gamma;
+        acc.vega += m.risk.vega;
+        acc.theta += m.risk.theta;
+        out.set(tgt, acc);
+      }
+    }
+    return out;
+  }
+
+  /** Bump the risk version + re-push the fresh roll-up to every live risk subscriber. */
+  private bumpRiskAndNotify(): void {
+    this.riskVersion += 1;
+    for (const r of this.riskRepushers) r(this.riskVersion);
+  }
+
+  /** Push the current Pending set to every live inbox subscriber (mirrors emitNotification). */
+  private emitTransferInbox(): void {
+    const pending = [...this.riskTransfers.values()]
+      .filter((t) => t.state === "PENDING")
+      .sort((a, b) => Number(b.initiatedAt - a.initiatedAt));
+    for (const sub of this.riskTransferInboxSubs) sub.onInbox(pending.map(cloneTransfer));
+  }
+
+  /** Resolve the numeric transfer price from the basis (MID/MARK = par mark; AGREED = override). */
+  private resolveTransferPrice(
+    basis: InitiateRiskTransferInput["priceBasis"],
+    agreedPrice: number | null,
+  ): number {
+    if (basis === "AGREED") return agreedPrice ?? MOCK_TRANSFER_MARK;
+    return MOCK_TRANSFER_MARK;
+  }
+
+  /** Stamp the immutable provenance at book time (re-attribution: no approver). */
+  private stampProvenance(
+    t: RiskTransfer,
+    moved: MovedRisk,
+    transferPrice: number,
+    approver: string | null,
+    decidedAt: bigint,
+  ): RiskTransferProvenance {
+    // P&L crystallised in the source vs the par mark: zero at MID/MARK (transfer at
+    // the mark), non-zero only for an AGREED off-mark cross (control-visible).
+    const realizedPnlSource =
+      (transferPrice - MOCK_TRANSFER_MARK) * (moved.notionalBase / 100);
+    return {
+      transferId: t.id,
+      kind: t.kind,
+      initiatedBy: t.initiatedBy,
+      initiatedAt: t.initiatedAt,
+      approver,
+      decidedAt,
+      sourceBookId: t.source.riskBookId,
+      targetBookId: t.target.riskBookId,
+      positionIds: [...t.source.positionIds],
+      quantityFull: t.quantityFull,
+      partialNotional: t.quantityFull ? null : t.partialNotional,
+      transferPrice,
+      priceBasis: t.priceBasis,
+      reason: t.reason,
+      realizedPnlSource,
+      riskMoved: moved,
+    };
+  }
+
+  async initiateRiskTransfer(input: InitiateRiskTransferInput): Promise<RiskTransfer> {
+    // Validate (mirrors the server's `check_transfer`): source/target enabled + real,
+    // partial bounds, agreed-reason, kind ↔ desk consistency.
+    const enabled = new Set(this.mockRiskBooks.filter((b) => b.enabled).map((b) => b.id));
+    if (!enabled.has(input.source.riskBookId)) {
+      throw new Error("source risk portfolio is not an enabled book");
+    }
+    if (!enabled.has(input.target.riskBookId)) {
+      throw new Error("target risk portfolio is not an enabled book");
+    }
+    if (input.source.riskBookId === input.target.riskBookId) {
+      throw new Error("source and target must differ");
+    }
+    if (!input.quantityFull && !(input.partialNotional !== null && input.partialNotional > 0)) {
+      throw new Error("a partial transfer needs a positive notional");
+    }
+    if (input.priceBasis === "AGREED" && input.reason.trim().length === 0) {
+      throw new Error("an agreed transfer price requires a reason");
+    }
+    if (input.kind === "RE_ATTRIBUTE" && input.source.deskId !== input.target.deskId) {
+      throw new Error("a re-attribution stays within one desk");
+    }
+    const id = `xfer-${this.riskTransferSeq.toString()}`;
+    this.riskTransferSeq += 1n;
+    const now = nowNanos();
+    const initiatedBy = this.currentUserEmail || "trader@celnet.com";
+    const transferPrice = this.resolveTransferPrice(input.priceBasis, input.agreedPrice);
+    const base: RiskTransfer = {
+      id,
+      kind: input.kind,
+      source: cloneLeg(input.source),
+      target: cloneLeg(input.target),
+      quantityFull: input.quantityFull,
+      partialNotional: input.quantityFull ? null : input.partialNotional,
+      priceBasis: input.priceBasis,
+      agreedPrice: input.priceBasis === "AGREED" ? input.agreedPrice : null,
+      reason: input.reason,
+      initiatedBy,
+      initiatedAt: now,
+      state: "PENDING",
+      approver: null,
+      decidedAt: null,
+      transferPrice: null,
+      provenance: null,
+    };
+    if (input.kind === "RE_ATTRIBUTE") {
+      // Same-desk, single-control: book immediately (no counterparty acceptance).
+      const moved = this.sliceSourceRisk(input.source.riskBookId, input.quantityFull, input.partialNotional);
+      const booked: RiskTransfer = {
+        ...base,
+        state: "BOOKED",
+        approver: null,
+        decidedAt: now,
+        transferPrice,
+        provenance: this.stampProvenance(base, moved, transferPrice, null, now),
+      };
+      this.riskTransfers.set(id, booked);
+      this.bumpRiskAndNotify();
+      return cloneTransfer(booked);
+    }
+    // Desk-to-desk / trader-to-trader: land Pending for the counterparty's inbox.
+    this.riskTransfers.set(id, base);
+    this.emitTransferInbox();
+    return cloneTransfer(base);
+  }
+
+  async acceptRiskTransfer(transferId: string): Promise<RiskTransfer> {
+    const t = this.riskTransfers.get(transferId);
+    if (t === undefined) throw new Error("no such transfer");
+    if (t.state !== "PENDING") throw new Error("only a pending transfer can be accepted");
+    // NOTE: the live server enforces approver ≠ initiator (four-eyes); the offline
+    // single-user sandbox allows the demo principal to accept its own transfer.
+    const now = nowNanos();
+    const approver = this.currentUserEmail || "risk@celnet.com";
+    const transferPrice = this.resolveTransferPrice(t.priceBasis, t.agreedPrice);
+    const moved = this.sliceSourceRisk(t.source.riskBookId, t.quantityFull, t.partialNotional);
+    const booked: RiskTransfer = {
+      ...t,
+      state: "BOOKED",
+      approver,
+      decidedAt: now,
+      transferPrice,
+      provenance: this.stampProvenance(t, moved, transferPrice, approver, now),
+    };
+    this.riskTransfers.set(transferId, booked);
+    this.bumpRiskAndNotify();
+    this.emitTransferInbox();
+    return cloneTransfer(booked);
+  }
+
+  async rejectRiskTransfer(transferId: string, reason: string): Promise<RiskTransfer> {
+    const t = this.riskTransfers.get(transferId);
+    if (t === undefined) throw new Error("no such transfer");
+    if (t.state !== "PENDING") throw new Error("only a pending transfer can be rejected");
+    const rejected: RiskTransfer = {
+      ...t,
+      state: "REJECTED",
+      approver: this.currentUserEmail || "risk@celnet.com",
+      decidedAt: nowNanos(),
+      // The reject reason is shown to the initiator; keep the original rationale too.
+      reason: reason.trim().length > 0 ? reason : t.reason,
+    };
+    this.riskTransfers.set(transferId, rejected);
+    this.emitTransferInbox();
+    return cloneTransfer(rejected);
+  }
+
+  async cancelRiskTransfer(transferId: string): Promise<RiskTransfer> {
+    const t = this.riskTransfers.get(transferId);
+    if (t === undefined) throw new Error("no such transfer");
+    if (t.state !== "PENDING") throw new Error("only a pending transfer can be cancelled");
+    const cancelled: RiskTransfer = { ...t, state: "CANCELLED", decidedAt: nowNanos() };
+    this.riskTransfers.set(transferId, cancelled);
+    this.emitTransferInbox();
+    return cloneTransfer(cancelled);
+  }
+
+  async listRiskTransfers(filter: ListRiskTransfersFilter): Promise<RiskTransfer[]> {
+    const states = new Set(filter.states);
+    return [...this.riskTransfers.values()]
+      .filter((t) => {
+        if (filter.desk !== null && t.source.deskId !== filter.desk && t.target.deskId !== filter.desk) {
+          return false;
+        }
+        if (filter.trader !== null && t.source.trader !== filter.trader && t.target.trader !== filter.trader) {
+          return false;
+        }
+        if (
+          filter.riskBookId !== null &&
+          t.source.riskBookId !== filter.riskBookId &&
+          t.target.riskBookId !== filter.riskBookId
+        ) {
+          return false;
+        }
+        if (states.size > 0 && !states.has(t.state)) return false;
+        return true;
+      })
+      .sort((a, b) => Number(b.initiatedAt - a.initiatedAt))
+      .map(cloneTransfer);
+  }
+
+  streamRiskTransferInbox(onInbox: (pending: RiskTransfer[]) => void): () => void {
+    const sub = { onInbox };
+    this.riskTransferInboxSubs.add(sub);
+    // Fire the current Pending set immediately (the baseline the inbox renders).
+    const pending = [...this.riskTransfers.values()]
+      .filter((t) => t.state === "PENDING")
+      .sort((a, b) => Number(b.initiatedAt - a.initiatedAt))
+      .map(cloneTransfer);
+    onInbox(pending);
+    return () => {
+      this.riskTransferInboxSubs.delete(sub);
+    };
   }
 
   /** The set of book ids strictly below `id` in the seeded tree (for the acyclic guard). */
@@ -3861,9 +4217,14 @@ export class MockTransport implements CelnetTransport {
 /** The minimum password length on create/reset (mirrors the server's `MIN_PASSWORD_LEN`). */
 const MOCK_MIN_PASSWORD_LEN = 12;
 
-/** The action set a `TRADER` holds by default on each asset class — every action
- * except `administer` (mirrors the server's `TRADER_ACTIONS`). `ADMIN` is grant-all. */
-const MOCK_TRADER_DENIED_ACTION: CapabilityAction = "administer";
+/** The actions NOT in the default `TRADER` bundle — the two narrow, explicitly-
+ * granted authorities `administer` and `risk_transfer` (mirrors the server's
+ * `default_trader_bundle`, `config/identity.rs`, which excludes
+ * `Action::Administer | Action::RiskTransfer`). `ADMIN` is grant-all. */
+const MOCK_TRADER_EXCLUDED_ACTIONS: ReadonlySet<CapabilityAction> = new Set<CapabilityAction>([
+  "administer",
+  "risk_transfer",
+]);
 
 /** The full action-by-asset surface (the ADMIN grant-all bundle). */
 function mockGrantAll(): Capability[] {
@@ -3882,7 +4243,7 @@ function mockGrantAll(): Capability[] {
 function mockDefaultTraderBundle(): Capability[] {
   const caps: Capability[] = [];
   for (const action of CAPABILITY_ACTIONS) {
-    if (action === MOCK_TRADER_DENIED_ACTION) continue;
+    if (MOCK_TRADER_EXCLUDED_ACTIONS.has(action)) continue;
     for (const asset of CAPABILITY_ASSETS) caps.push({ action, asset });
   }
   return caps;
@@ -4014,6 +4375,43 @@ function mockUtilization(metric: string, used: number, limit: number): RiskLimit
  * (the offline mirror of the server's not-yet-evaluated rates DV01 / mark PnL). The
  * limit-utilization strip is emitted only for the caps present on the book.
  */
+/**
+ * The par mark the offline transfer prices against — MID / MARK-to-market resolve
+ * here (a transfer at the mark crystallises no P&L); an AGREED override away from it
+ * crystallises `(price − mark) · notional` in the source (control-visible).
+ */
+const MOCK_TRANSFER_MARK = 100;
+
+/** Deep-copy a transfer leg (defensive — stores never hand out live references). */
+function cloneLeg(leg: TransferLeg): TransferLeg {
+  return {
+    riskBookId: leg.riskBookId,
+    deskId: leg.deskId,
+    trader: leg.trader,
+    positionIds: [...leg.positionIds],
+  };
+}
+
+/** Deep-copy a transfer record (the stores clone on read, mirroring the desk blotter). */
+function cloneTransfer(t: RiskTransfer): RiskTransfer {
+  return {
+    ...t,
+    source: cloneLeg(t.source),
+    target: cloneLeg(t.target),
+    provenance:
+      t.provenance === null
+        ? null
+        : {
+            ...t.provenance,
+            positionIds: [...t.provenance.positionIds],
+            riskMoved: {
+              notionalBase: t.provenance.riskMoved.notionalBase,
+              risk: { ...t.provenance.riskMoved.risk },
+            },
+          },
+  };
+}
+
 function synthRiskBookRisk(b: RiskBook): RiskBookRisk {
   const h = mockHash01(b.id);
   const gross = Math.round(300_000_000 + h * 700_000_000);

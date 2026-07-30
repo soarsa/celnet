@@ -47,6 +47,9 @@ import type {
   RiskBook,
   RiskBookRisk,
   RiskRoutingGraph,
+  RiskTransfer,
+  InitiateRiskTransferInput,
+  ListRiskTransfersFilter,
   InstrumentDef,
   InstrumentInput,
   BuildCurveRequest,
@@ -241,6 +244,13 @@ import {
   updateRiskRoutingGraphResponseFromWire,
   listRiskBookRiskRequestToWire,
   riskBookRiskResponseFromWire,
+  initiateRiskTransferRequestToWire,
+  acceptRiskTransferRequestToWire,
+  rejectRiskTransferRequestToWire,
+  cancelRiskTransferRequestToWire,
+  listRiskTransfersRequestToWire,
+  riskTransferResponseFromWire,
+  listRiskTransfersResponseFromWire,
   riskBookRiskSubscribeToWire,
   riskBookRiskStreamSnapshotFromWire,
   riskBookRiskStreamUpdateFromWire,
@@ -315,6 +325,12 @@ const KEEPALIVE_INTERVAL_MS = 20_000;
  * machine).
  */
 const PRICING_REQUEST_TIMEOUT_MS = 90_000;
+/**
+ * Poll cadence for the risk-transfer inbox over the live WS transport — the server
+ * streams the inbox over gRPC only, so the WS client realises it as a short poll of
+ * the Pending set (the offline mock pushes synchronously instead).
+ */
+const RISK_TRANSFER_INBOX_POLL_MS = 4_000;
 
 /** An error surfaced when a request/response call cannot complete. */
 export class WsTransportError extends Error {
@@ -2102,6 +2118,91 @@ export class WsTransport implements CelnetTransport {
       if (subId !== null) session.unsubscribeRiskBookRisk(subId);
       session.close();
       subId = null;
+    };
+  }
+
+  // --- FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md) -----------------
+
+  async initiateRiskTransfer(input: InitiateRiskTransferInput): Promise<RiskTransfer> {
+    const reply = await this.conn.request(
+      "initiate_risk_transfer",
+      initiateRiskTransferRequestToWire(input),
+      "risk_transfer_initiated",
+    );
+    return riskTransferResponseFromWire(reply);
+  }
+
+  async acceptRiskTransfer(transferId: string): Promise<RiskTransfer> {
+    const reply = await this.conn.request(
+      "accept_risk_transfer",
+      acceptRiskTransferRequestToWire(transferId),
+      "risk_transfer_accepted",
+    );
+    return riskTransferResponseFromWire(reply);
+  }
+
+  async rejectRiskTransfer(transferId: string, reason: string): Promise<RiskTransfer> {
+    const reply = await this.conn.request(
+      "reject_risk_transfer",
+      rejectRiskTransferRequestToWire(transferId, reason),
+      "risk_transfer_rejected",
+    );
+    return riskTransferResponseFromWire(reply);
+  }
+
+  async cancelRiskTransfer(transferId: string): Promise<RiskTransfer> {
+    const reply = await this.conn.request(
+      "cancel_risk_transfer",
+      cancelRiskTransferRequestToWire(transferId),
+      "risk_transfer_cancelled",
+    );
+    return riskTransferResponseFromWire(reply);
+  }
+
+  async listRiskTransfers(filter: ListRiskTransfersFilter): Promise<RiskTransfer[]> {
+    const reply = await this.conn.request(
+      "list_risk_transfers",
+      listRiskTransfersRequestToWire(filter),
+      "risk_transfers",
+    );
+    return listRiskTransfersResponseFromWire(reply);
+  }
+
+  /**
+   * The server exposes `StreamRiskTransferInbox` over gRPC only — the WS mirror has
+   * the five unary transfer RPCs but no inbox subscribe verb yet — so the live WS
+   * transport realises the inbox as a short-interval poll of the Pending set
+   * (`ListRiskTransfers([PENDING])`). Honest, functional, and identical from the
+   * caller's side (a callback-on-change with a disposer); the offline mock pushes
+   * synchronously on every transfer mutation. Fires once immediately, then every
+   * {@link RISK_TRANSFER_INBOX_POLL_MS}; a fetch that overlaps a slow prior one is
+   * skipped; a fetch after disposal is dropped.
+   */
+  streamRiskTransferInbox(onInbox: (pending: RiskTransfer[]) => void): () => void {
+    let disposed = false;
+    let inFlight = false;
+    const poll = async (): Promise<void> => {
+      if (disposed || inFlight) return;
+      inFlight = true;
+      try {
+        const pending = await this.listRiskTransfers({
+          desk: null,
+          trader: null,
+          riskBookId: null,
+          states: ["PENDING"],
+        });
+        if (!disposed) onInbox(pending);
+      } catch {
+        // A transient poll failure is non-fatal — the next tick retries.
+      } finally {
+        inFlight = false;
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), RISK_TRANSFER_INBOX_POLL_MS);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
     };
   }
 

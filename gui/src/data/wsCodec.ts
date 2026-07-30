@@ -109,6 +109,13 @@ import type {
   RouteCondition,
   RoutingNode,
   RiskRoutingGraph,
+  RiskTransfer,
+  RiskTransferProvenance,
+  TransferLeg,
+  RiskVector,
+  MovedRisk,
+  InitiateRiskTransferInput,
+  ListRiskTransfersFilter,
   TieringStrategyKind,
   AggregatedInstrument,
   AggregatedBookComposite,
@@ -4641,4 +4648,207 @@ export function deleteInstrumentRequestToWire(id: string): WireObject {
 /** A delete response (`{ removed: boolean }`). */
 export function deleteInstrumentResponseFromWire(o: WireObject): boolean {
   return o["removed"] === true;
+}
+
+// ===========================================================================
+// Risk transfer — the manual move of existing risk (RISK-TRANSFER §10). Mirrors
+// the AuthService transfer RPCs + the NotificationService inbox stream. Enums ride
+// as NUMERIC i32 tags (`json!(t.kind)` on the server is a prost i32 — see
+// crates/celnet-server/src/ws/codec.rs `risk_transfer_to_json`), decoded via the
+// enums.ts offset codecs. The quantity/price sum-types are FLAT on the wire
+// (`quantity_full` + optional `partial_notional`; `price_basis` + optional
+// `agreed_price`). `position_ids` are uint64 → the GUI's `bigint`.
+// ===========================================================================
+
+/** A uint64 wire array recovered as a `bigint[]` (elements may parse as number or quoted string). */
+function u64ArrayOf(o: WireObject, key: string): bigint[] {
+  const v = o[key];
+  if (!Array.isArray(v)) return [];
+  return v.map((el) => {
+    if (typeof el === "bigint") return el;
+    if (typeof el === "number") return BigInt(Math.trunc(el));
+    if (typeof el === "string") return BigInt(el);
+    return 0n;
+  });
+}
+
+/** A nullable wire string (absent / non-string ⇒ `null`). */
+function optStrOrNull(o: WireObject, key: string): string | null {
+  const v = o[key];
+  return typeof v === "string" ? v : null;
+}
+
+/** A nullable 64-bit wire integer recovered as a `bigint` (absent ⇒ `null`). */
+function optBigIntOrNull(o: WireObject, key: string): bigint | null {
+  return optBigInt(o, key) ?? null;
+}
+
+/** Encode a transfer leg (position_ids populated on the source, empty on the target). */
+export function transferLegToWire(leg: TransferLeg): WireObject {
+  return {
+    risk_book_id: leg.riskBookId,
+    desk_id: leg.deskId,
+    trader: leg.trader,
+    position_ids: leg.positionIds,
+  };
+}
+
+/** Decode a `TransferLeg` (`null`/absent leg handled by the caller). */
+export function transferLegFromWire(o: WireObject): TransferLeg {
+  return {
+    riskBookId: str(o, "risk_book_id"),
+    deskId: str(o, "desk_id"),
+    trader: str(o, "trader"),
+    positionIds: u64ArrayOf(o, "position_ids"),
+  };
+}
+
+/** Decode a `RiskVectorDesc` (dense — every field a number, 0 when irrelevant). */
+export function riskVectorFromWire(o: WireObject): RiskVector {
+  return {
+    dv01: num(o, "dv01"),
+    delta: num(o, "delta"),
+    gamma: num(o, "gamma"),
+    vega: num(o, "vega"),
+    theta: num(o, "theta"),
+  };
+}
+
+/** Decode a `MovedRiskDesc` (`risk` may be absent ⇒ a zero vector). */
+export function movedRiskFromWire(o: WireObject): MovedRisk {
+  const rawRisk = o["risk"];
+  return {
+    notionalBase: num(o, "notional_base"),
+    risk:
+      rawRisk && typeof rawRisk === "object"
+        ? riskVectorFromWire(rawRisk as WireObject)
+        : { dv01: 0, delta: 0, gamma: 0, vega: 0, theta: 0 },
+  };
+}
+
+/** Decode a `RiskTransferProvenance` (optionals absent ⇒ `null`). */
+export function riskTransferProvenanceFromWire(o: WireObject): RiskTransferProvenance {
+  const rawMoved = o["risk_moved"];
+  return {
+    transferId: str(o, "transfer_id"),
+    kind: e.transferKind.fromWire(enumNum(o, "kind")),
+    initiatedBy: str(o, "initiated_by"),
+    initiatedAt: numToBigInt(o, "initiated_at"),
+    approver: optStrOrNull(o, "approver"),
+    decidedAt: optBigIntOrNull(o, "decided_at"),
+    sourceBookId: str(o, "source_book_id"),
+    targetBookId: str(o, "target_book_id"),
+    positionIds: u64ArrayOf(o, "position_ids"),
+    quantityFull: o["quantity_full"] === true,
+    partialNotional: optNumberOrNull(o, "partial_notional"),
+    transferPrice: num(o, "transfer_price"),
+    priceBasis: e.priceBasis.fromWire(enumNum(o, "price_basis")),
+    reason: str(o, "reason"),
+    realizedPnlSource: num(o, "realized_pnl_source"),
+    riskMoved:
+      rawMoved && typeof rawMoved === "object"
+        ? movedRiskFromWire(rawMoved as WireObject)
+        : { notionalBase: 0, risk: { dv01: 0, delta: 0, gamma: 0, vega: 0, theta: 0 } },
+  };
+}
+
+/** Decode a `RiskTransfer` record (source/target legs + flat quantity/price + optionals). */
+export function riskTransferFromWire(o: WireObject): RiskTransfer {
+  const rawSource = o["source"];
+  const rawTarget = o["target"];
+  const rawProv = o["provenance"];
+  const blankLeg: TransferLeg = { riskBookId: "", deskId: "", trader: "", positionIds: [] };
+  return {
+    id: str(o, "id"),
+    kind: e.transferKind.fromWire(enumNum(o, "kind")),
+    source:
+      rawSource && typeof rawSource === "object"
+        ? transferLegFromWire(rawSource as WireObject)
+        : blankLeg,
+    target:
+      rawTarget && typeof rawTarget === "object"
+        ? transferLegFromWire(rawTarget as WireObject)
+        : blankLeg,
+    quantityFull: o["quantity_full"] === true,
+    partialNotional: optNumberOrNull(o, "partial_notional"),
+    priceBasis: e.transferPriceBasis.fromWire(enumNum(o, "price_basis")),
+    agreedPrice: optNumberOrNull(o, "agreed_price"),
+    reason: str(o, "reason"),
+    initiatedBy: str(o, "initiated_by"),
+    initiatedAt: numToBigInt(o, "initiated_at"),
+    state: e.transferState.fromWire(enumNum(o, "state")),
+    approver: optStrOrNull(o, "approver"),
+    decidedAt: optBigIntOrNull(o, "decided_at"),
+    transferPrice: optNumberOrNull(o, "transfer_price"),
+    provenance:
+      rawProv && typeof rawProv === "object"
+        ? riskTransferProvenanceFromWire(rawProv as WireObject)
+        : null,
+  };
+}
+
+// --- request framing + response decoders (the 5 transfer RPCs + inbox) --------
+
+/** Frame `initiate_risk_transfer` (enums as i32 tags; optionals omitted when null). */
+export function initiateRiskTransferRequestToWire(input: InitiateRiskTransferInput): WireObject {
+  const m: WireObject = {
+    kind: e.transferKind.toWire(input.kind),
+    source: transferLegToWire(input.source),
+    target: transferLegToWire(input.target),
+    quantity_full: input.quantityFull,
+    price_basis: e.transferPriceBasis.toWire(input.priceBasis),
+    reason: input.reason,
+  };
+  if (!input.quantityFull && input.partialNotional !== null) {
+    m["partial_notional"] = input.partialNotional;
+  }
+  if (input.priceBasis === "AGREED" && input.agreedPrice !== null) {
+    m["agreed_price"] = input.agreedPrice;
+  }
+  return m;
+}
+
+export function acceptRiskTransferRequestToWire(transferId: string): WireObject {
+  return { transfer_id: transferId };
+}
+
+export function rejectRiskTransferRequestToWire(transferId: string, reason: string): WireObject {
+  return { transfer_id: transferId, reason };
+}
+
+export function cancelRiskTransferRequestToWire(transferId: string): WireObject {
+  return { transfer_id: transferId };
+}
+
+/** Frame `list_risk_transfers` (each absent filter is unrestricted). */
+export function listRiskTransfersRequestToWire(filter: ListRiskTransfersFilter): WireObject {
+  const m: WireObject = {};
+  if (filter.desk !== null) m["desk"] = filter.desk;
+  if (filter.trader !== null) m["trader"] = filter.trader;
+  if (filter.riskBookId !== null) m["risk_book_id"] = filter.riskBookId;
+  if (filter.states.length > 0) {
+    m["states"] = filter.states.map((s) => e.transferState.toWire(s));
+  }
+  return m;
+}
+
+/** Decode a single-transfer response (`{ transfer: {...} }`) — initiate/accept/reject/cancel. */
+export function riskTransferResponseFromWire(o: WireObject): RiskTransfer {
+  return riskTransferFromWire(child(o, "transfer"));
+}
+
+/** Decode the `{ transfers: [...] }` list reply (newest first). */
+export function listRiskTransfersResponseFromWire(o: WireObject): RiskTransfer[] {
+  return array(o, "transfers").map(riskTransferFromWire);
+}
+
+/** Decode a `RiskTransferInbox` push frame (`{ pending: [...], at_nanos }`). */
+export function riskTransferInboxFromWire(o: WireObject): {
+  pending: RiskTransfer[];
+  atNanos: bigint;
+} {
+  return {
+    pending: array(o, "pending").map(riskTransferFromWire),
+    atNanos: numToBigInt(o, "at_nanos"),
+  };
 }

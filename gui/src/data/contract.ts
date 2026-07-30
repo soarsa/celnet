@@ -2234,6 +2234,7 @@ export type CapabilityAction =
   | "stream"
   | "execute"
   | "book"
+  | "risk_transfer"
   | "simulate"
   | "administer";
 
@@ -2259,6 +2260,7 @@ export const CAPABILITY_ACTIONS: readonly CapabilityAction[] = [
   "stream",
   "execute",
   "book",
+  "risk_transfer",
   "simulate",
   "administer",
 ];
@@ -3231,6 +3233,235 @@ export interface RiskBookRiskStreamUpdate {
   version: number;
   /** Update time, nanoseconds since the Unix epoch (UTC). */
   epochNanos: bigint;
+}
+
+// ---------------------------------------------------------------------------
+// Risk transfer — the MANUAL move of EXISTING risk (docs/RISK-TRANSFER-
+// REQUIREMENTS.md). The exact complement to risk ROUTING (routing auto-assigns
+// NEW fills; transfer moves already-open risk). A trader selects position(s) and
+// moves the risk (all or part) to (a) a different risk PORTFOLIO on the SAME desk
+// (a light re-attribution — economics unchanged), (b) ANOTHER desk's portfolio
+// (an economic internal cross at a transfer price — needs the target desk's
+// acceptance), or (c) another TRADER (a hand-off the recipient must accept). This
+// block mirrors `celnet.wire.{RiskTransfer,TransferLeg,RiskTransferProvenance,…}`
+// / `celnet_risk_transfer::*` field-for-field. The sum-types are carried FLAT
+// (oneof-free, per the wire): quantity = `quantityFull` + optional
+// `partialNotional`; price = `priceBasis` + optional `agreedPrice`. The GUI
+// hand-decodes the WS JSON so {@link wsCodec} matches the server's snake_case
+// names and its NUMERIC i32 enum tags (`kind`/`state`/`price_basis`). Initiate /
+// accept gate on the NARROW `risk_transfer` capability × the asset class (NOT the
+// default trader bundle — an explicit grant, like `administer`); view is open to
+// any FI trader. Server enforces approver ≠ initiator (four-eyes) on accept.
+
+/**
+ * The kind of move, fixing the economics + the approval model (mirrors
+ * `celnet.wire.TransferKind` / `celnet_risk_transfer::TransferKind`). The GUI
+ * union names only the meaningful members; the codec offsets the first to proto
+ * tag 1 (proto reserves 0 for `TRANSFER_KIND_UNSPECIFIED`).
+ * - `RE_ATTRIBUTE` — portfolio → portfolio within the SAME desk; economics
+ *   unchanged (a re-stamp of the routing dimension); single-control, books
+ *   immediately (no Pending).
+ * - `DESK_TO_DESK` — portfolio/desk → ANOTHER desk's portfolio; an economic
+ *   internal cross at a transfer price; requires the target desk's acceptance.
+ * - `TRADER_TO_TRADER` — trader → trader hand-off; requires recipient acceptance.
+ */
+export type TransferKind = "RE_ATTRIBUTE" | "DESK_TO_DESK" | "TRADER_TO_TRADER";
+
+/**
+ * The transfer lifecycle state (mirrors `celnet.wire.TransferState` /
+ * `celnet_risk_transfer::TransferState`). Named members start at proto tag 1
+ * (`TRANSFER_STATE_UNSPECIFIED` = 0 is not named). `DRAFT` (being composed) is
+ * client-only in practice; the server returns `PENDING` (awaiting acceptance) or
+ * `BOOKED` (a re-attribution, applied immediately) from initiate.
+ */
+export type TransferState =
+  | "DRAFT"
+  | "PENDING"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "BOOKED"
+  | "CANCELLED";
+
+/**
+ * Which basis a REQUESTED transfer price resolves to (mirrors
+ * `celnet.wire.TransferPriceBasis` / the request-side
+ * `celnet_risk_transfer::TransferPrice` discriminant). `AGREED`'s numeric override
+ * rides alongside as {@link RiskTransfer.agreedPrice}. `MID`/`MARK_TO_MARKET` are
+ * auto-filled read-only from the live composite; `AGREED` requires a reason.
+ */
+export type TransferPriceBasis = "MID" | "MARK_TO_MARKET" | "AGREED";
+
+/**
+ * The basis recorded on a BOOKED transfer's immutable provenance (mirrors
+ * `celnet.wire.PriceBasis` / `celnet_risk_transfer::PriceBasis`; the same value
+ * set as {@link TransferPriceBasis}, carried on the audit record rather than the
+ * request — named distinctly to mirror the domain).
+ */
+export type PriceBasis = "MID" | "MARK_TO_MARKET" | "AGREED";
+
+/**
+ * A pass-through risk vector carried / moved by a transfer (mirrors
+ * `celnet.wire.RiskVectorDesc` / `celnet_risk_transfer::RiskVector`). FX-vanilla
+ * desks populate the greeks; linear-rates / bond desks populate {@link dv01}.
+ * Irrelevant fields are 0 (never `null` — this is a dense numeric vector).
+ */
+export interface RiskVector {
+  /** Sensitivity to a 1bp parallel rate move (linear-rates / bond risk). */
+  dv01: number;
+  /** Sensitivity to spot (FX-vanilla delta). */
+  delta: number;
+  /** Sensitivity of delta to spot (FX-vanilla gamma). */
+  gamma: number;
+  /** Sensitivity to volatility (FX-vanilla vega). */
+  vega: number;
+  /** Sensitivity to the passage of time (FX-vanilla theta). */
+  theta: number;
+}
+
+/**
+ * The aggregate risk a transfer moves (mirrors `celnet.wire.MovedRiskDesc` /
+ * `celnet_risk_transfer::MovedRisk`).
+ */
+export interface MovedRisk {
+  /** Signed base-currency notional moved (+ long risk to target, − short). */
+  notionalBase: number;
+  /** The summed, fraction-scaled pass-through risk vector of the moved slices. */
+  risk: RiskVector;
+}
+
+/**
+ * One end of a transfer (mirrors `celnet.wire.TransferLeg` /
+ * `celnet_risk_transfer::TransferLeg`). The SOURCE carries the selected
+ * {@link positionIds}; the TARGET leaves them empty (its `riskBookId` is where the
+ * risk arrives). `trader` may be empty on a desk-level target.
+ */
+export interface TransferLeg {
+  /** The risk portfolio (internally a risk-book id). */
+  riskBookId: string;
+  /** The desk that owns the book. */
+  deskId: string;
+  /** The trader on this end (may be empty on a desk-level target). */
+  trader: string;
+  /** The positions selected (populated on the source; empty on the target). */
+  positionIds: bigint[];
+}
+
+/**
+ * The immutable audit record stamped on a BOOKED transfer (mirrors
+ * `celnet.wire.RiskTransferProvenance` / `celnet_risk_transfer::
+ * RiskTransferProvenance`, the `PricingProvenance` waterfall discipline).
+ * Structured, additive, carried on the record — so the blotter/dashboard can show
+ * exactly what moved, at what price, by whom, approved by whom.
+ */
+export interface RiskTransferProvenance {
+  /** The transfer's stable slug. */
+  transferId: string;
+  /** The kind of move. */
+  kind: TransferKind;
+  /** The authenticated initiator. */
+  initiatedBy: string;
+  /** Trusted-source initiation timestamp (epoch nanos, UTC). */
+  initiatedAt: bigint;
+  /** The accepting/approving user (four-eyes); `null` for single-control re-attribution. */
+  approver: string | null;
+  /** When the decision was made (epoch nanos, UTC); `null` until decided. */
+  decidedAt: bigint | null;
+  /** The source book the risk left. */
+  sourceBookId: string;
+  /** The target book the risk arrived in. */
+  targetBookId: string;
+  /** The positions moved. */
+  positionIds: bigint[];
+  /** Whether the whole selection moved (Full); else a Partial notional moved. */
+  quantityFull: boolean;
+  /** The Partial notional magnitude moved; `null` ⇒ Full. */
+  partialNotional: number | null;
+  /** The numeric transfer price the legs booked at. */
+  transferPrice: number;
+  /** Which basis that price came from. */
+  priceBasis: PriceBasis;
+  /** The rationale (required for an agreed price). */
+  reason: string;
+  /** P&L crystallised in the source at the transfer price versus each slice's mark. */
+  realizedPnlSource: number;
+  /** The aggregate risk moved from source to target. */
+  riskMoved: MovedRisk;
+}
+
+/**
+ * A risk-transfer request/record (mirrors `celnet.wire.RiskTransfer` /
+ * `celnet_risk_transfer::RiskTransfer`). The quantity + price sum-types are
+ * carried FLAT: {@link quantityFull} + optional {@link partialNotional};
+ * {@link priceBasis} + optional {@link agreedPrice}. `provenance` is stamped on
+ * `BOOKED`; `approver`/`decidedAt`/`transferPrice` fill in on the accept/book.
+ */
+export interface RiskTransfer {
+  /** Stable slug (audit key). */
+  id: string;
+  /** The kind of move (fixes economics + approval). */
+  kind: TransferKind;
+  /** The source end — the book/desk/trader the risk leaves, with the positions. */
+  source: TransferLeg;
+  /** The target end — the book/desk/trader the risk arrives in. */
+  target: TransferLeg;
+  /** Whether the whole selection moves (Full); else {@link partialNotional} moves. */
+  quantityFull: boolean;
+  /** The Partial notional magnitude to move; `null` ⇒ Full. */
+  partialNotional: number | null;
+  /** The requested transfer-price basis. */
+  priceBasis: TransferPriceBasis;
+  /** The agreed override level (present ONLY when {@link priceBasis} is `AGREED`); else `null`. */
+  agreedPrice: number | null;
+  /** Free-text rationale (required when {@link priceBasis} is `AGREED`). */
+  reason: string;
+  /** The authenticated user who initiated the transfer. */
+  initiatedBy: string;
+  /** Trusted-source initiation timestamp (epoch nanos, UTC). */
+  initiatedAt: bigint;
+  /** The current lifecycle state. */
+  state: TransferState;
+  /** The accepting/approving user (four-eyes); `null` until decided. */
+  approver: string | null;
+  /** When the accept/reject decision was made (epoch nanos); `null` until decided. */
+  decidedAt: bigint | null;
+  /** The resolved numeric transfer price (present once known, on `BOOKED`); else `null`. */
+  transferPrice: number | null;
+  /** The immutable audit record, stamped on `BOOKED`; `null` until then. */
+  provenance: RiskTransferProvenance | null;
+}
+
+/**
+ * The parameters to initiate a transfer (the ticket → `InitiateRiskTransfer`).
+ * `kind` is INFERRED by the ticket from the target selection (same desk ⇒
+ * `RE_ATTRIBUTE`; another desk ⇒ `DESK_TO_DESK`; a trader ⇒ `TRADER_TO_TRADER`).
+ */
+export interface InitiateRiskTransferInput {
+  kind: TransferKind;
+  source: TransferLeg;
+  target: TransferLeg;
+  quantityFull: boolean;
+  /** The Partial notional to move; `null` ⇒ Full (ignored when `quantityFull`). */
+  partialNotional: number | null;
+  priceBasis: TransferPriceBasis;
+  /** Required (non-null) when `priceBasis` is `AGREED`; else `null`. */
+  agreedPrice: number | null;
+  /** Required (non-empty) when `priceBasis` is `AGREED`. */
+  reason: string;
+}
+
+/**
+ * Filters for the audit-trail query (`ListRiskTransfers`). Any absent (`null` /
+ * empty) filter is unrestricted; the server prunes to what the caller may see.
+ */
+export interface ListRiskTransfersFilter {
+  /** Restrict to this desk (`null` ⇒ all entitled desks). */
+  desk: string | null;
+  /** Restrict to this trader (`null` ⇒ all). */
+  trader: string | null;
+  /** Restrict to transfers touching this risk book as source or target (`null` ⇒ all). */
+  riskBookId: string | null;
+  /** Restrict to these states (empty ⇒ all states). */
+  states: TransferState[];
 }
 
 // ---------------------------------------------------------------------------

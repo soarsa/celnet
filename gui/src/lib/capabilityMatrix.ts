@@ -38,6 +38,7 @@ export const ACTION_LABELS: Record<CapabilityAction, string> = {
   stream: "Stream",
   execute: "Execute (deal)",
   book: "Book",
+  risk_transfer: "Risk transfer",
   simulate: "Simulate",
   administer: "Administer",
 };
@@ -50,12 +51,14 @@ export const ASSET_LABELS: Record<CapabilityAsset, string> = {
 
 /**
  * Whether the user's ROLE bundle alone (before any per-user overlay) admits this
- * action — the documented role→bundle mapping the server enforces:
- * `ADMIN` ⇒ grant-all; `TRADER` ⇒ every action except `administer`, both assets.
+ * action — the documented role→bundle mapping the server enforces (`config/
+ * identity.rs::default_trader_bundle`): `ADMIN` ⇒ grant-all; `TRADER` ⇒ every
+ * action except the two narrow explicitly-granted authorities `administer` and
+ * `risk_transfer`, on both asset classes.
  */
 export function roleAllows(role: UserRole, action: CapabilityAction): boolean {
   if (role === "ADMIN") return true;
-  return action !== "administer";
+  return action !== "administer" && action !== "risk_transfer";
 }
 
 /** The resolved state of one matrix cell under the current overlay choice. */
@@ -187,6 +190,7 @@ const ACTION_PHRASE: Record<CapabilityAction, (asset: string) => string> = {
   stream: (a) => `streaming live ${a} prices`,
   execute: (a) => `executing ${a} trades`,
   book: (a) => `booking ${a} positions`,
+  risk_transfer: (a) => `transferring ${a} risk between books`,
   simulate: (a) => `using the ${a} counterparty simulator`,
   administer: () => `administering Celnet`,
 };

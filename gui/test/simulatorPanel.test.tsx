@@ -36,9 +36,13 @@ afterEach(() => {
 describe("simulate capability vocabulary", () => {
   it("includes `simulate` in the canonical action list (kernel parity)", () => {
     expect(CAPABILITY_ACTIONS).toContain("simulate");
-    // Canonical order: between `book` and `administer`, mirroring `Action::ALL`.
-    expect(CAPABILITY_ACTIONS.indexOf("simulate")).toBe(
+    // Canonical order: …book, risk_transfer, simulate, administer (mirroring
+    // `Action::ALL`, which inserts `RiskTransfer` between `Book` and `Simulate`).
+    expect(CAPABILITY_ACTIONS.indexOf("risk_transfer")).toBe(
       CAPABILITY_ACTIONS.indexOf("book") + 1,
+    );
+    expect(CAPABILITY_ACTIONS.indexOf("simulate")).toBe(
+      CAPABILITY_ACTIONS.indexOf("risk_transfer") + 1,
     );
     expect(CAPABILITY_ACTIONS.indexOf("administer")).toBe(
       CAPABILITY_ACTIONS.indexOf("simulate") + 1,

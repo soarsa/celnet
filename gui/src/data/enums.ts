@@ -56,6 +56,10 @@ import type {
   TarfRedemption,
   TenorUnit,
   TouchKind,
+  TransferKind,
+  TransferPriceBasis,
+  TransferState,
+  PriceBasis,
 } from "./contract";
 
 /** A bidirectional string↔number enum projection plus a zero-value fallback. */
@@ -425,5 +429,44 @@ export const manualInterventionReason = offsetEnumCodec<ManualInterventionReason
     "UNKNOWN_SECURITY",
     "PRICING_FAILURE",
   ],
+  1,
+);
+
+/**
+ * `TransferKind` ↔ proto `TransferKind` (TRANSFER_KIND_UNSPECIFIED=0,
+ * RE_ATTRIBUTE=1, DESK_TO_DESK=2, TRADER_TO_TRADER=3). The GUI union names only
+ * the meaningful members, so the codec offsets the first named member to tag 1.
+ */
+export const transferKind = offsetEnumCodec<TransferKind>(
+  ["RE_ATTRIBUTE", "DESK_TO_DESK", "TRADER_TO_TRADER"],
+  1,
+);
+
+/**
+ * `TransferState` ↔ proto `TransferState` (UNSPECIFIED=0, DRAFT=1, PENDING=2,
+ * ACCEPTED=3, REJECTED=4, BOOKED=5, CANCELLED=6).
+ */
+export const transferState = offsetEnumCodec<TransferState>(
+  ["DRAFT", "PENDING", "ACCEPTED", "REJECTED", "BOOKED", "CANCELLED"],
+  1,
+);
+
+/**
+ * `TransferPriceBasis` ↔ proto `TransferPriceBasis` (UNSPECIFIED=0, MID=1,
+ * MARK_TO_MARKET=2, AGREED=3). The requested basis on the ticket / record.
+ */
+export const transferPriceBasis = offsetEnumCodec<TransferPriceBasis>(
+  ["MID", "MARK_TO_MARKET", "AGREED"],
+  1,
+);
+
+/**
+ * `PriceBasis` ↔ proto `PriceBasis` (UNSPECIFIED=0, MID=1, MARK_TO_MARKET=2,
+ * AGREED=3). The basis recorded on a booked transfer's immutable provenance —
+ * the SAME value set as {@link transferPriceBasis}, kept a distinct codec to
+ * mirror the domain (the record carries no override value on `AGREED`).
+ */
+export const priceBasis = offsetEnumCodec<PriceBasis>(
+  ["MID", "MARK_TO_MARKET", "AGREED"],
   1,
 );

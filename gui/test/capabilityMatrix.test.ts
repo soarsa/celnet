@@ -29,9 +29,11 @@ describe("roleAllows — the role bundle baseline", () => {
     }
   });
 
-  it("trader holds every action except administer", () => {
+  it("trader holds every action except administer & risk_transfer", () => {
     for (const action of CAPABILITY_ACTIONS) {
-      expect(roleAllows("TRADER", action)).toBe(action !== "administer");
+      expect(roleAllows("TRADER", action)).toBe(
+        action !== "administer" && action !== "risk_transfer",
+      );
     }
   });
 });
@@ -142,15 +144,15 @@ describe("roleBaselineSummary — the honest per-asset role-baseline chip counts
     ]);
   });
 
-  it("trader holds every action except administer on both assets (9/10 · 9/10)", () => {
+  it("trader holds every action except administer & risk_transfer on both assets (9/11 · 9/11)", () => {
     const summary = roleBaselineSummary("TRADER");
     const total = CAPABILITY_ACTIONS.length;
     expect(summary).toEqual([
-      { asset: "fx_options", allowed: total - 1, total },
-      { asset: "fixed_income", allowed: total - 1, total },
+      { asset: "fx_options", allowed: total - 2, total },
+      { asset: "fixed_income", allowed: total - 2, total },
     ]);
-    // Sanity: exactly `administer` is the one dropped action, per asset.
-    expect(total).toBe(10);
+    // Sanity: exactly `administer` + `risk_transfer` are the two dropped actions, per asset.
+    expect(total).toBe(11);
   });
 
   it("emits one entry per asset in canonical order", () => {

@@ -105,6 +105,9 @@ import type {
   RiskBook,
   RiskBookRisk,
   RiskRoutingGraph,
+  RiskTransfer,
+  InitiateRiskTransferInput,
+  ListRiskTransfersFilter,
   StreamReject,
   Tenor,
   TwoWayPrice,
@@ -718,6 +721,52 @@ export interface CelnetTransport {
   subscribeRiskBookRisk?(
     onSnapshot: (books: RiskBookRisk[], version: number) => void,
   ): () => void;
+
+  // --- FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md) ------------------
+  //
+  // The MANUAL move of EXISTING risk — the complement to routing. Initiate/accept
+  // gate server-side on the NARROW `risk_transfer` capability × the position's
+  // asset class (NOT the default trader bundle); view is open to any FI trader.
+  // A re-attribution (same desk) books immediately (Booked); a desk-to-desk /
+  // trader-to-trader transfer lands Pending in the counterparty's inbox and needs
+  // an accept from a DIFFERENT authenticated principal (four-eyes, server-enforced).
+
+  /**
+   * AuthService.InitiateRiskTransfer — submit the ticket. Re-attribution returns a
+   * `BOOKED` transfer (applied immediately); desk/trader transfers return `PENDING`
+   * for the counterparty's inbox. The server resolves the default mid/mark price
+   * unless an `AGREED` override + reason is supplied.
+   */
+  initiateRiskTransfer(input: InitiateRiskTransferInput): Promise<RiskTransfer>;
+
+  /**
+   * AuthService.AcceptRiskTransfer — the target side confirms a `PENDING` transfer;
+   * books the two offsetting legs and stamps provenance. The server enforces
+   * approver ≠ initiator (four-eyes). Resolves to the `BOOKED` record.
+   */
+  acceptRiskTransfer(transferId: string): Promise<RiskTransfer>;
+
+  /** AuthService.RejectRiskTransfer — the target side declines, with a reason. */
+  rejectRiskTransfer(transferId: string, reason: string): Promise<RiskTransfer>;
+
+  /** AuthService.CancelRiskTransfer — the initiator withdraws a `PENDING` transfer. */
+  cancelRiskTransfer(transferId: string): Promise<RiskTransfer>;
+
+  /**
+   * AuthService.ListRiskTransfers — the audit-trail / blotter query, filtered by
+   * desk / trader / book / state (any absent filter unrestricted). Newest first.
+   */
+  listRiskTransfers(filter: ListRiskTransfersFilter): Promise<RiskTransfer[]>;
+
+  /**
+   * NotificationService.StreamRiskTransferInbox — the live push of the transfers
+   * currently `PENDING` the subscriber's accept/reject (the four-eyes counterparty
+   * side). `onInbox` fires with the current pending set on every transfer state
+   * change; the returned disposer unsubscribes. The offline mock pushes on every
+   * transfer mutation; the live WS transport polls `listRiskTransfers([PENDING])`
+   * (the server exposes the inbox stream over gRPC, not the WS mirror yet).
+   */
+  streamRiskTransferInbox(onInbox: (pending: RiskTransfer[]) => void): () => void;
 
   // --- instrument reference-data registry ------------------------------------
 
