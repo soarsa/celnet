@@ -1,0 +1,119 @@
+/* SecurityDetailsPopover — the per-tile "Details" trigger + its portalled terms
+   panel. Motion stays on transform/opacity (compositor-friendly). Both themes are
+   honoured via the app design tokens. */
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 1.75rem; /* >= 24px target size (WCAG 2.2 target-size) */
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--r-full, 999px);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.trigger:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.triggerGlyph {
+  font-size: var(--type-body);
+  line-height: 1;
+  color: var(--text-tertiary);
+}
+
+.trigger:hover .triggerGlyph {
+  color: var(--accent);
+}
+
+/* --- portalled panel ------------------------------------------------------ */
+
+.pop {
+  z-index: var(--z-popover, 1000);
+  width: min(22rem, calc(100vw - 1rem));
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-lg, 12px);
+  border: var(--hairline);
+  background: var(--bg-raised);
+  box-shadow: 0 16px 40px -18px color-mix(in oklch, black 70%, transparent);
+  animation: secdetails-in 120ms ease;
+}
+
+@keyframes secdetails-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop {
+    animation: none;
+  }
+}
+
+.popHead {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-2);
+  border-bottom: var(--hairline);
+}
+
+.popTitle {
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+.popKicker {
+  font-size: var(--type-micro);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.rows {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+}
+
+.row {
+  display: contents;
+}
+
+.rowLabel {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.rowValue {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}

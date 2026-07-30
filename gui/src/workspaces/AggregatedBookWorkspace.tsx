@@ -33,10 +33,17 @@ import type {
   FixConnection,
 } from "../data/contract";
 import { useAggregatedBook } from "../hooks/useAggregatedBook";
+import { useSettings } from "../hooks/useSettings";
 import { AggregationPanel } from "./AggregationPanel";
 import { useReferenceData } from "../hooks/useReferenceData";
-import { bondTermRows, indexBondDefs, resolveBondDef } from "../lib/bondTerms";
+import { indexBondDefs, resolveBondDef } from "../lib/bondTerms";
+import {
+  filterInstrumentsBySelection,
+  securityOptions,
+} from "../lib/aggBookSelection";
 import { fmtClock, fmtCompact } from "../lib/format";
+import { SecurityDetailsPopover } from "./aggbook/SecurityDetailsPopover";
+import { SecuritySelectionControl } from "./aggbook/SecuritySelectionControl";
 import styles from "./AggregatedBookWorkspace.module.css";
 
 /** A clean price per 100 face to 3 decimals; a dash for an absent (0) composite. */
@@ -85,7 +92,6 @@ function InstrumentTile({
   const freshCount = instrument.contributions.filter((c) => !c.stale).length;
   const band = confBand(conf);
   const twoSided = instrument.bestBid > 0 && instrument.bestOffer > 0;
-  const terms = bond ? bondTermRows(bond) : [];
 
   return (
     <article
@@ -97,10 +103,6 @@ function InstrumentTile({
           <span className={styles.identName} title={instrument.displayName || instrument.instrumentId}>
             {instrument.displayName || instrument.instrumentId}
           </span>
-          <span className={styles.identCodes}>
-            {instrument.isin && <span className={styles.code}>ISIN {instrument.isin}</span>}
-            {instrument.cusip && <span className={styles.code}>CUSIP {instrument.cusip}</span>}
-          </span>
         </div>
         <span
           className={`${styles.confBadge} ${styles[`conf_${band}`]}`}
@@ -110,17 +112,6 @@ function InstrumentTile({
           <span className="num">{fmtConfidence(conf)}</span>
         </span>
       </header>
-
-      {terms.length > 0 && (
-        <dl className={styles.terms} aria-label="security terms">
-          {terms.map((row) => (
-            <div key={row.key} className={styles.termPair}>
-              <dt className={styles.termLabel}>{row.label}</dt>
-              <dd className={`${styles.termValue} ${row.numeric ? "num" : ""}`}>{row.value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
 
       <div className={styles.tileQuote} role="group" aria-label="consolidated two-way">
         <div className={`${styles.side} ${styles.sideBid}`}>
@@ -155,18 +146,21 @@ function InstrumentTile({
           <span className={`num ${styles.contribTotal}`}>{memberCount}</span>
           <span className={styles.contribWord}>&nbsp;LPs</span>
         </span>
-        <button
-          type="button"
-          className={styles.expandBtn}
-          onClick={onToggle}
-          aria-expanded={expanded}
-          disabled={memberCount === 0}
-        >
-          {expanded ? "Hide LPs" : "Per-LP"}
-          <span className={`${styles.expandCaret} ${expanded ? styles.expandCaretOpen : ""}`} aria-hidden="true">
-            ▸
-          </span>
-        </button>
+        <div className={styles.footActions}>
+          <SecurityDetailsPopover instrument={instrument} bond={bond} />
+          <button
+            type="button"
+            className={styles.expandBtn}
+            onClick={onToggle}
+            aria-expanded={expanded}
+            disabled={memberCount === 0}
+          >
+            {expanded ? "Hide LPs" : "Per-LP"}
+            <span className={`${styles.expandCaret} ${expanded ? styles.expandCaretOpen : ""}`} aria-hidden="true">
+              ▸
+            </span>
+          </button>
+        </div>
       </footer>
 
       {expanded && (
@@ -343,6 +337,32 @@ export function AggregatedBookWorkspace(): React.ReactElement {
     [refData.instruments],
   );
 
+  // The per-user "view only what I want" security selection — a client-side
+  // preference persisted through the shared settings store (localStorage). It is
+  // sourced from the FULL FI reference-data universe (every bond definition), not
+  // merely what is currently streaming. An EMPTY selection shows all (never an
+  // accidentally-blank book). The picker options + the display filter are pure
+  // (lib/aggBookSelection), so they are directly testable.
+  const { settings, update } = useSettings();
+  const selection = settings.aggBookInstrumentSelection;
+  const secOptions = useMemo(
+    () => securityOptions(refData.instruments),
+    [refData.instruments],
+  );
+  const setSelection = useCallback(
+    (ids: string[]): void => update({ aggBookInstrumentSelection: ids }),
+    [update],
+  );
+  const shownInstruments = useMemo(
+    () =>
+      filterInstrumentsBySelection(
+        composite.instruments,
+        refData.instruments,
+        selection,
+      ),
+    [composite.instruments, refData.instruments, selection],
+  );
+
   const toggleRow = useCallback((instrumentId: string): void => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -409,6 +429,13 @@ export function AggregatedBookWorkspace(): React.ReactElement {
                 Manage
               </button>
             </div>
+          )}
+          {mode === "view" && selectedBook && (
+            <SecuritySelectionControl
+              options={secOptions}
+              selected={selection}
+              onChange={setSelection}
+            />
           )}
           {mode === "view" && composite.baselined && selectedBook && (
             <div className={styles.status} aria-live="polite">
@@ -491,9 +518,16 @@ export function AggregatedBookWorkspace(): React.ReactElement {
                   No instrument currently meets the book&apos;s quorum. Composites appear as its
                   members stream fresh quotes.
                 </div>
+              ) : shownInstruments.length === 0 ? (
+                <div className={styles.empty}>
+                  None of your selected securities are currently quoting in this book.{" "}
+                  <button type="button" className={styles.linkBtn} onClick={() => setSelection([])}>
+                    Show all
+                  </button>
+                </div>
               ) : (
                 <div className={styles.tileGrid} aria-label="aggregated composite tiles">
-                  {composite.instruments.map((inst) => (
+                  {shownInstruments.map((inst) => (
                     <InstrumentTile
                       key={inst.instrumentId}
                       instrument={inst}

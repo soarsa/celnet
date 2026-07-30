@@ -40,7 +40,7 @@
 import { expect, test } from "@playwright/test";
 
 import { gotoMockView, installFrozenClock } from "./fidelityHelpers";
-import { expectNoSeriousA11y } from "./helpers";
+import { expectNoSeriousA11y, signIn } from "./helpers";
 
 /** Select a top-level product-domain tab (FX Options / Fixed Income / Administration). */
 async function selectDomain(page: import("@playwright/test").Page, name: string): Promise<void> {
@@ -108,20 +108,62 @@ test("admin defines an aggregated book with LP-SIM members; it appears + populat
   await expect(bookBtn).toBeVisible();
   await bookBtn.click();
 
-  // 4) The composite grid populates. The mock emits the baseline snapshot on
-  //    subscribe; flush the rAF commit + a couple of ticks so a row is rendered.
+  // 4) The compacted composite grid populates — one price TILE per security. The
+  //    mock emits the baseline snapshot on subscribe; flush the rAF commit + a few
+  //    ticks so tiles render.
   await page.clock.runFor(600);
-  const grid = page.getByRole("table", { name: "aggregated composite lines" });
-  await expect(grid).toBeVisible();
-  // At least one instrument row beyond the header row (identity + best two-way).
-  const rows = grid.getByRole("row");
-  await expect.poll(async () => await rows.count()).toBeGreaterThan(1);
+  const tiles = page.getByLabel("aggregated composite tiles");
+  await expect(tiles).toBeVisible();
+  const firstTile = tiles.getByRole("article").first();
+  await expect(firstTile).toBeVisible();
 
-  // 5) Expand the first instrument row → the per-LP breakdown lists the members.
-  const firstDataRow = rows.nth(1);
-  await firstDataRow.click();
-  await expect(page.getByText("LP-SIM-01", { exact: false }).first()).toBeVisible();
+  // The tile FACE is compact: the security name stays, but the static terms + the
+  // ISIN/CUSIP line have MOVED off it (now behind the Details affordance).
+  await expect(firstTile.getByText(/^ISIN /)).toHaveCount(0);
+  await expect(firstTile.getByText("Issuer")).toHaveCount(0);
+  await expect(firstTile.getByText("Day count")).toHaveCount(0);
+  const detailsBtn = firstTile.getByRole("button", { name: /^Security details for/ });
+  await expect(detailsBtn).toBeVisible();
 
-  // 6) A11y pass over the populated price view (no serious/critical violations).
-  await expectNoSeriousA11y(page, "aggregated-book price view");
+  // 5) The Details popover opens a labelled dialog carrying the full static terms;
+  //    Escape closes it.
+  await detailsBtn.click();
+  const detailsDialog = page.getByRole("dialog");
+  await expect(detailsDialog).toBeVisible();
+  await expect(detailsDialog.getByText("Issuer")).toBeVisible();
+  await expect(detailsDialog.getByText("Maturity")).toBeVisible();
+  await expect(detailsDialog.getByText("Day count")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  // 6) The per-LP breakdown still opens from the compact footer.
+  await firstTile.getByRole("button", { name: "Per-LP" }).click();
+  await expect(firstTile.getByText("LP-SIM-01", { exact: false }).first()).toBeVisible();
+
+  // 7) A11y pass over the compact price view WITH the Details popover open (no
+  //    serious/critical violations — focus order, contrast, target size, aria).
+  await detailsBtn.click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expectNoSeriousA11y(page, "aggregated-book compact view + details popover");
+  await page.keyboard.press("Escape");
+
+  // 8) The per-user security-selection preference filters the grid + PERSISTS
+  //    across a full reload (a localStorage-backed client preference).
+  const tileCountBefore = await tiles.getByRole("article").count();
+  await page.getByRole("button", { name: /Securities/ }).click();
+  const picker = page.getByRole("dialog", { name: /choose which securities/i });
+  await expect(picker).toBeVisible();
+  await picker.getByRole("checkbox").first().check();
+  await page.keyboard.press("Escape");
+  // The grid now shows a strict subset (the ticked security only).
+  await expect
+    .poll(async () => await tiles.getByRole("article").count())
+    .toBeLessThan(tileCountBefore);
+  await expect(page.getByRole("button", { name: /Securities/ })).toContainText("selected");
+
+  await page.reload();
+  await signIn(page);
+  await page.clock.runFor(200);
+  // The choice survived the reload.
+  await expect(page.getByRole("button", { name: /Securities/ })).toContainText("selected");
 });
