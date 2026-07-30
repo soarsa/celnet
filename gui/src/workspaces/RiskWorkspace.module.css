@@ -8,6 +8,15 @@
   height: 100%;
   min-height: 0;
 }
+/* One-line concept subtitle disambiguating this SCENARIO risk view from the routed-
+ * risk Dashboard, the Risk Portfolios tree, and the position ledger Book
+ * (docs/FI-BOOK-CONCEPTS.md). Mirrors BookWorkspace's `.shellSub`. */
+.shellSub {
+  margin: 0 0 var(--space-4);
+  font-size: var(--type-caption);
+  line-height: var(--type-callout-lh);
+  color: var(--text-tertiary);
+}
 .lensBar {
   display: flex;
   gap: 2px;

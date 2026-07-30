@@ -133,6 +133,20 @@ export function RiskWorkspace({
 
   return (
     <div className={styles.classShell}>
+      <p className={styles.shellSub}>
+        {lens === "rates" ? (
+          <>
+            Netted <strong>scenario risk</strong> for your rates book — what-if P&amp;L and greeks
+            under shocks. Not the routed-risk <em>Risk Dashboard</em>, the <em>Risk Portfolios</em>{" "}
+            tree, nor the position-ledger <em>Book</em>.
+          </>
+        ) : (
+          <>
+            Spot×vol <strong>scenario</strong> P&amp;L + greeks for the selected structure — an
+            analytics what-if grid, not the ledger <em>Book</em> of positions.
+          </>
+        )}
+      </p>
       <div className={styles.lensBody}>
         {lens === "fx" ? <FxScenarioLens /> : <RatesRiskPanel />}
       </div>

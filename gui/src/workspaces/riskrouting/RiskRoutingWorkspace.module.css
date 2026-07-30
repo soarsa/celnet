@@ -176,6 +176,19 @@
   font-size: var(--type-caption);
 }
 
+/* Actionable amber banner: rules exist but there are no enabled risk portfolios to
+ * route into — the exact trap behind an empty Risk Dashboard. */
+.portfolioHint {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  background: color-mix(in oklch, var(--warn) 14%, transparent);
+  border: var(--hairline) solid color-mix(in oklch, var(--warn) 40%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  line-height: var(--type-callout-lh);
+}
+
 @keyframes fadePulse {
   0%,
   100% {

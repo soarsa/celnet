@@ -159,6 +159,7 @@ import {
 } from "./seed";
 import { calibrateSmile, markSurface } from "./surface";
 import { tenorYearsOf } from "../lib/trend";
+import { blankFill, traceGraph } from "../lib/routeTrace";
 import type {
   CelnetTransport,
   MarketSeriesParams,
@@ -1372,14 +1373,54 @@ export class MockTransport implements CelnetTransport {
       limits: { maxNetNotional: 500_000_000, maxGrossNotional: 900_000_000, maxDv01: null },
       enabled: true,
     },
+    // Fixed-income risk portfolios so ROUTED rates fills have a real, enabled
+    // destination offline (the OIS desk books here). The seeded routing graph below
+    // sends bond fills to Marex FI and everything else (incl. OIS) to EMEA Rates —
+    // so a booked OIS deal visibly rolls up into EMEA Rates on the Risk Dashboard.
+    {
+      id: "fi-rates-emea",
+      name: "EMEA Rates",
+      parentId: null,
+      deskId: "emea",
+      description: "EMEA fixed-income rates risk — routed OIS / swap fills land here.",
+      limits: { maxNetNotional: 750_000_000, maxGrossNotional: 1_500_000_000, maxDv01: 250_000 },
+      enabled: true,
+    },
+    {
+      id: "fi-marex",
+      name: "Marex FI London",
+      parentId: null,
+      deskId: "marex",
+      description: "Marex fixed-income London book — routed bond fills land here.",
+      limits: { maxNetNotional: 400_000_000, maxGrossNotional: 800_000_000, maxDv01: 150_000 },
+      enabled: true,
+    },
   ];
 
   /**
-   * The offline firm-wide routing graph. Seeded `null` (no graph defined yet) —
-   * exactly the server's initial state; the pass-6b flow editor defines one via
-   * {@link updateRiskRoutingGraph}.
+   * The offline firm-wide routing graph. Seeded with a demonstrable default that
+   * mirrors the two-rule scenario (bond → Marex FI, else → EMEA Rates), so a booked
+   * OIS deal routes into an enabled portfolio and shows on the Risk Dashboard with
+   * no setup. The flow editor overwrites this via {@link updateRiskRoutingGraph}.
    */
-  private mockRiskGraph: RiskRoutingGraph | null = null;
+  private mockRiskGraph: RiskRoutingGraph | null = {
+    entry: 0,
+    nodes: [
+      {
+        kind: "condition",
+        id: 0,
+        condition: {
+          field: "product",
+          op: "eq",
+          value: { kind: "text", text: "bond" },
+          onTrue: 1,
+          onFalse: 2,
+        },
+      },
+      { kind: "book", id: 1, bookId: "fi-marex" },
+      { kind: "book", id: 2, bookId: "fi-rates-emea" },
+    ],
+  };
   /**
    * The offline instrument reference-data registry (a GENUINE in-memory store,
    * not a stub): seeded with one OIS and one bond definition so the Reference
@@ -1846,7 +1887,7 @@ export class MockTransport implements CelnetTransport {
       this.seed,
       this.tickMs,
       (id) => this.mockAggregatedBooks.find((b) => b.id === id),
-      () => this.mockRiskBooks.filter((b) => b.enabled).map((b) => synthRiskBookRisk(b)),
+      () => this.computeRiskBookRisk(),
     );
   }
 
@@ -2921,10 +2962,77 @@ export class MockTransport implements CelnetTransport {
     return cloneRiskGraph(this.mockRiskGraph);
   }
 
-  async listRiskBookRisk(): Promise<RiskBookRisk[]> {
+  /**
+   * Route every booked deal through the current firm-wide routing graph and sum its
+   * risk contribution into the enabled portfolio it lands in — the offline mirror of
+   * the server's `PositionStore` per-book bucketing (`book_risk::aggregate_facts`).
+   * With no graph defined nothing routes, so the synthesized baseline is unchanged.
+   * This is what makes risk ROUTING demonstrable offline: book a deal and the
+   * destination portfolio's net/gross/positions/DV01 move, exactly as they would
+   * against the live server once its booking path invokes the router.
+   */
+  private routedRiskContributions(): Map<
+    string,
+    { net: number; gross: number; count: number; dv01: number }
+  > {
+    const out = new Map<string, { net: number; gross: number; count: number; dv01: number }>();
+    const graph = this.mockRiskGraph;
+    if (graph === null) return out;
+    const enabled = new Set(this.mockRiskBooks.filter((b) => b.enabled).map((b) => b.id));
+    for (const d of this.deals.values()) {
+      const fill = blankFill();
+      // Every desk-booked deal is structurally an OIS; expose the routing fields the
+      // graph tests (product / ccy / notional / tenor / side / counterparty / desk).
+      fill.product = "OIS";
+      fill.ccy = d.curveSet.currency;
+      fill.notional = d.notional;
+      fill.tenor = d.instrument.tenorYears;
+      fill.side = d.side;
+      fill.counterparty = d.counterparty;
+      fill.desk = d.desk;
+      const landed = traceGraph(graph, fill).landedBook;
+      // Only enabled portfolios roll up (matches the server's `.filter(|b| b.enabled)`).
+      if (landed === null || !enabled.has(landed)) continue;
+      // Pay-fixed (BUY) is +notional, receive-fixed (SELL) −notional; DV01 is the
+      // server's linear PV01 proxy (notional · tenor · 1bp), signed the same way.
+      const dir = d.side === "SELL" ? -1 : 1;
+      const acc = out.get(landed) ?? { net: 0, gross: 0, count: 0, dv01: 0 };
+      acc.net += dir * d.notional;
+      acc.gross += Math.abs(d.notional);
+      acc.count += 1;
+      acc.dv01 += dir * d.notional * d.instrument.tenorYears * 1e-4;
+      out.set(landed, acc);
+    }
+    return out;
+  }
+
+  /**
+   * The enabled portfolios' rolled-up risk: the synthesized baseline PLUS the risk
+   * ROUTED in from booked deals ({@link routedRiskContributions}). Shared by the
+   * polled `listRiskBookRisk` and the streamed snapshot so both agree. A routed rates
+   * fill surfaces a DV01 on an otherwise DV01-absent (FX-only) book, just like the
+   * server's per-book aggregation.
+   */
+  private computeRiskBookRisk(): RiskBookRisk[] {
+    const routed = this.routedRiskContributions();
     return this.mockRiskBooks
       .filter((b) => b.enabled)
-      .map((b) => synthRiskBookRisk(b));
+      .map((b) => {
+        const base = synthRiskBookRisk(b);
+        const add = routed.get(b.id);
+        if (add === undefined) return base;
+        return {
+          ...base,
+          netNotional: base.netNotional + add.net,
+          grossNotional: base.grossNotional + add.gross,
+          positionCount: base.positionCount + add.count,
+          dv01: (base.dv01 ?? 0) + add.dv01,
+        };
+      });
+  }
+
+  async listRiskBookRisk(): Promise<RiskBookRisk[]> {
+    return this.computeRiskBookRisk();
   }
 
   /** The set of book ids strictly below `id` in the seeded tree (for the acyclic guard). */

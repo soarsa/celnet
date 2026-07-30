@@ -96,19 +96,44 @@ describe("RiskDashboardWorkspace", () => {
     expect(within(overview).getByText("FX APAC")).toBeInTheDocument();
   });
 
-  it("shows the selected book's greeks and renders null dv01/pnl as an em dash", async () => {
+  it("shows the FI risk vector (DV01 / notional, NO option greeks) and renders null dv01/pnl as an em dash", async () => {
     state.app = makeApp({
       risk: [riskRow({ dv01: null, pnl: null })],
       books: [bookOf("fx-emea", "FX EMEA", "emea")],
     });
     render(<RiskDashboardWorkspace />);
 
-    // The first book auto-selects; its detail panel renders the greek tiles.
+    // The first book auto-selects; its detail panel renders the FI-relevant tiles.
     const detail = await screen.findByRole("region", { name: /risk detail for FX EMEA/i });
-    expect(within(detail).getByText("Δ Delta")).toBeInTheDocument();
-    expect(within(detail).getByText("Vega")).toBeInTheDocument();
+    expect(within(detail).getByText("Net notional")).toBeInTheDocument();
+    expect(within(detail).getByText("DV01")).toBeInTheDocument();
+    expect(within(detail).getByText("PnL")).toBeInTheDocument();
+    // The FX-option greeks are meaningless for rates/bonds and MUST NOT render here.
+    expect(within(detail).queryByText("Δ Delta")).not.toBeInTheDocument();
+    expect(within(detail).queryByText("Vega")).not.toBeInTheDocument();
+    expect(within(detail).queryByText("Γ Gamma")).not.toBeInTheDocument();
+    expect(within(detail).queryByText("Θ Theta")).not.toBeInTheDocument();
     // dv01 + pnl are not-yet-evaluated ⇒ rendered as "—", never a fabricated 0.
     expect(within(detail).getAllByText("—").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("rolls up a firm-wide global exposure across all portfolios", async () => {
+    state.app = makeApp({
+      risk: [
+        riskRow({ bookId: "a", name: "Book A", netNotional: 100, grossNotional: 200, positionCount: 3 }),
+        riskRow({ bookId: "b", name: "Book B", netNotional: -40, grossNotional: 60, positionCount: 2 }),
+      ],
+      books: [bookOf("a", "Book A"), bookOf("b", "Book B")],
+    });
+    render(<RiskDashboardWorkspace />);
+
+    const global = await screen.findByRole("region", {
+      name: /global exposure across all risk portfolios/i,
+    });
+    expect(within(global).getByText("Global exposure")).toBeInTheDocument();
+    // Positions fold: 3 + 2 = 5.
+    expect(within(global).getByText("Positions")).toBeInTheDocument();
+    expect(within(global).getByText("5")).toBeInTheDocument();
   });
 
   it("selects a different book when its overview row is clicked", async () => {

@@ -31,6 +31,26 @@ function sideLabel(side: Side): string {
   return "Two-way";
 }
 
+/**
+ * The product family a booked deal carries. Every desk-booked deal is structurally
+ * an `OisInstrument` (the rates P0 arm), so the family is OIS — surfaced honestly as
+ * a real column rather than invented. When the contract grows other rates families
+ * (IRS / FRA / Bond) this reads them off the instrument discriminant.
+ */
+function productLabel(_d: Deal): string {
+  return "OIS";
+}
+
+/** The tenor a rates deal carries, as a compact `Ny` label (e.g. `10y`). */
+function tenorLabel(d: Deal): string {
+  return `${d.instrument.tenorYears}y`;
+}
+
+/** The booked position id the fill landed in the ledger Book, or `—` when none. */
+function positionLabel(d: Deal): string {
+  return d.positionId !== undefined ? `#${d.positionId.toString()}` : "—";
+}
+
 /** All of a deal's user-visible textual fields, concatenated for substring search. */
 function dealSearchText(d: Deal): string {
   return [
@@ -38,12 +58,14 @@ function dealSearchText(d: Deal): string {
     d.counterparty,
     d.desk,
     d.kind,
-    `${d.instrument.tenorYears}y OIS`,
+    productLabel(d),
+    tenorLabel(d),
     d.curveSet.currency,
     fmtCompact(d.notional),
     fmtRate(d.price),
     sideLabel(d.side),
     d.trader,
+    positionLabel(d),
     d.dealId,
   ].join(" ");
 }
@@ -124,19 +146,22 @@ export function DealsBlotterWorkspace(): React.ReactElement {
             {filtered.length === 0 ? (
               <p className={styles.empty}>No deals match “{query}”.</p>
             ) : (
-              <div className={styles.tableWrap}>
+              <div className={styles.tableWrap} tabIndex={0} role="region" aria-label="Deals table">
                 <table className={styles.table}>
                   <thead>
                     <tr>
                       <th>Time</th>
                       <th>Counterparty</th>
                       <th>Desk</th>
-                      <th>Instrument</th>
+                      <th>Type</th>
+                      <th>Product</th>
+                      <th className={styles.num}>Tenor</th>
                       <th>Ccy</th>
                       <th className={styles.num}>Notional</th>
-                      <th className={styles.num}>Price</th>
+                      <th className={styles.num}>Rate</th>
                       <th>Side</th>
                       <th>Trader</th>
+                      <th>Position</th>
                       <th>Deal</th>
                     </tr>
                   </thead>
@@ -163,13 +188,17 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                       <span className={`${styles.kind} ${d.kind === "IOI" ? styles.kindIoi : styles.kindRfq}`}>
                         {d.kind}
                       </span>
-                      {d.instrument.tenorYears}y OIS
                     </td>
+                    <td>
+                      <span className={styles.product}>{productLabel(d)}</span>
+                    </td>
+                    <td className={`${styles.num} ${styles.mono}`}>{tenorLabel(d)}</td>
                     <td className={styles.mono}>{d.curveSet.currency}</td>
                     <td className={`${styles.num} ${styles.mono}`}>{fmtCompact(d.notional)}</td>
                     <td className={`${styles.num} ${styles.mono} ${styles.price}`}>{fmtRate(d.price)}</td>
                     <td>{sideLabel(d.side)}</td>
                     <td>{d.trader}</td>
+                    <td className={styles.mono}>{positionLabel(d)}</td>
                     <td className={styles.dealId}>{d.dealId}</td>
                       </tr>
                     ))}

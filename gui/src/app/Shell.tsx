@@ -334,7 +334,8 @@ export function Shell(): React.ReactElement {
                 key={r.id}
                 className={`${styles.railBtn} ${app.workspace === r.id ? styles.railActive : ""}`}
                 onClick={() => app.setWorkspace(r.id)}
-                title={`${r.label} (${kbd})`}
+                title={r.subtitle ? `${r.label} — ${r.subtitle} (${kbd})` : `${r.label} (${kbd})`}
+                aria-label={r.subtitle ? `${r.label} — ${r.subtitle}` : undefined}
                 aria-current={app.workspace === r.id}
               >
                 <span className={styles.railGlyph}>{r.glyph}</span>
@@ -463,11 +464,19 @@ function TitleBar({ onOpenHelp }: { onOpenHelp: () => void }): React.ReactElemen
   return (
     <header className={styles.titleBar}>
       <CelnetWordmark className={styles.wordmark} />
-      <span className={styles.divider} aria-hidden>
-        ·
-      </span>
-      {/* The ONE scope control: "what slice of the firm", terminal = underlier. */}
-      <ScopeControl />
+      {/* The ONE scope control: "what slice of the firm", terminal = underlier. It is an
+          FX book-scope + grouping breadcrumb (Firm ▸ vol book / GROUP), so it is HIDDEN
+          under the Fixed Income tab — FI is scoped by desk / risk portfolio, not an FX
+          vol book, and the FX book-scope + grouping selector is a meaningless carryover
+          there. The FX (and admin) tabs keep it unchanged. */}
+      {app.activeDomain !== "fixed_income" && (
+        <>
+          <span className={styles.divider} aria-hidden>
+            ·
+          </span>
+          <ScopeControl />
+        </>
+      )}
       <SavedViewsMenu />
       <button
         className={styles.search}

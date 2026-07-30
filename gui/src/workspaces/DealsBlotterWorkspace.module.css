@@ -126,6 +126,17 @@
   color: var(--warn);
 }
 
+.product {
+  display: inline-block;
+  font: var(--type-micro) / 1 var(--font-mono);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+}
+
 .dealId {
   font-family: var(--font-mono);
   color: var(--text-tertiary);

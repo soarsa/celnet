@@ -170,6 +170,12 @@
 .band_amber {
   background: var(--warn);
 }
+/* The amber band is a bright fill — a light pill label on it fails AA (≈1.6:1). Pin a
+ * near-black label on the amber PILL specifically (dots/bars carry no text) so the
+ * RAG chip stays legible (≈10:1). */
+.pill.band_amber {
+  color: #17120a;
+}
 
 .band_red {
   background: var(--danger);
@@ -185,6 +191,33 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+/* Firm-wide global-exposure roll-up card, sitting above the per-portfolio overview. */
+.global {
+  border: var(--hairline);
+  border-radius: var(--r-lg, 12px);
+  background: var(--bg-surface);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.globalHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.globalTitle {
+  font-size: var(--type-subhead);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+.globalSub {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .detailHead {

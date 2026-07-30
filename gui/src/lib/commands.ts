@@ -107,6 +107,14 @@ export const RAIL: readonly {
   id: WorkspaceId;
   glyph: string;
   label: string;
+  /**
+   * A one-line rail subtitle saying what THIS surface IS — the at-a-glance
+   * disambiguation for rows a trader otherwise confuses (the "Risk" vs "Book" vs
+   * "Risk Portfolios" vs "Risk Dashboard" vs "Agg Book" family; see
+   * docs/FI-BOOK-CONCEPTS.md). Rendered under the label in the rail and folded into
+   * the hover tooltip. Optional — rows that are already self-explanatory omit it.
+   */
+  subtitle?: string;
   /** The asset class(es) this workspace serves (see {@link workspaceAssets}). */
   assets: readonly CapabilityAsset[];
 }[] = [
@@ -119,26 +127,30 @@ export const RAIL: readonly {
   // FI live streaming (bond + swap prices) with the instrument selector + RFS
   // request sidebar — a single-asset FI row (never FX), and the PRIMARY Fixed
   // Income surface, so it leads the FI rail (top of railForDomain("fixed_income")).
-  { id: "fistreaming", glyph: "⇉", label: "Streaming", assets: ["fixed_income"] },
+  { id: "fistreaming", glyph: "⇉", label: "Streaming", subtitle: "Live bond & swap prices", assets: ["fixed_income"] },
   // FI aggregated-book live composite view (ADR-0022): consolidated best bid/offer
   // across a book's inbound liquidity members — a single-asset FI read surface.
-  { id: "aggbook", glyph: "◫", label: "Agg Book", assets: ["fixed_income"] },
-  { id: "tiering", glyph: "⚖", label: "Tiering", assets: ["fixed_income"] },
+  { id: "aggbook", glyph: "◫", label: "Agg Book", subtitle: "LP-aggregated prices", assets: ["fixed_income"] },
+  { id: "tiering", glyph: "⚖", label: "Tiering", subtitle: "Per-session pricing", assets: ["fixed_income"] },
   // FI Risk routing (docs/FI-RISK-ROUTING-REQUIREMENTS.md): the hierarchical risk-
   // portfolio tree editor and the per-portfolio risk DASHBOARD. Single-asset FI
   // rows; every underlying RPC is admin-gated (edit affordances gate on `isAdmin`
   // INSIDE the pane, like Pricing Groups). USER-FACING name "Risk Portfolios"; the
   // wire type stays `RiskBookDef`/`riskbooks` (rename is UI-only — see
   // docs/FI-BOOK-CONCEPTS.md).
-  { id: "riskbooks", glyph: "❦", label: "Risk Portfolios", assets: ["fixed_income"] },
-  { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", assets: ["fixed_income"] },
+  { id: "riskbooks", glyph: "❦", label: "Risk Portfolios", subtitle: "Risk buckets + limits", assets: ["fixed_income"] },
+  { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", subtitle: "Routed-risk roll-up", assets: ["fixed_income"] },
   // Risk Routing: the ordered rules table that routes each fill's risk into a desk's
   // risk portfolio. Admin edit; read-only otherwise. Single-asset FI row.
-  { id: "riskrouting", glyph: "⑃", label: "Risk Routing", assets: ["fixed_income"] },
-  { id: "surface", glyph: "◷", label: "Market Data", assets: CAPABILITY_ASSETS },
-  { id: "risk", glyph: "⊞", label: "Risk", assets: CAPABILITY_ASSETS },
-  { id: "book", glyph: "▤", label: "Book", assets: CAPABILITY_ASSETS },
-  { id: "quoting", glyph: "⇌", label: "Quoting", assets: ["fixed_income"] },
+  { id: "riskrouting", glyph: "⑃", label: "Risk Routing", subtitle: "Fill → portfolio rules", assets: ["fixed_income"] },
+  { id: "surface", glyph: "◷", label: "Market Data", subtitle: "Curves & vol surface", assets: CAPABILITY_ASSETS },
+  // The class-parametric SCENARIO risk grid (spot×vol P&L / rates netted risk) — an
+  // analytics view, NOT the routed-risk roll-up (Risk Dashboard) nor the ledger.
+  { id: "risk", glyph: "⊞", label: "Risk", subtitle: "Scenario P&L / greeks", assets: CAPABILITY_ASSETS },
+  // The position LEDGER — booked positions, booking, and deals (what you hold), NOT
+  // the LP price composite (Agg Book) nor a risk-management bucket (Risk Portfolios).
+  { id: "book", glyph: "▤", label: "Book", subtitle: "Positions · deals · P&L", assets: CAPABILITY_ASSETS },
+  { id: "quoting", glyph: "⇌", label: "Quoting", subtitle: "RFQ / IOI desk inbox", assets: ["fixed_income"] },
   { id: "xva", glyph: "⊗", label: "XVA", assets: ["fx_options"] },
   { id: "excel", glyph: "▦", label: "Excel", assets: ["fx_options"] },
   // Administration / ops — admin-gated, no license concept.

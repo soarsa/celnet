@@ -324,6 +324,15 @@ export function RiskRoutingWorkspace(): React.ReactElement {
         </p>
       )}
 
+      {knownBookIds.size === 0 && (
+        <p className={styles.portfolioHint} role="note" data-testid="no-portfolios-hint">
+          ⚠ No enabled risk portfolios exist yet, so rules have nowhere to route. A rule only{" "}
+          <em>picks</em> a destination — it does not create the portfolio. Create one in{" "}
+          <strong>Risk Portfolios</strong> and enable it first; only then do routed fills appear in
+          the <strong>Risk Dashboard</strong>.
+        </p>
+      )}
+
       <div className={styles.statusRow}>
         {blockSave ? (
           <span className={styles.statusBad} data-testid="validation-status">

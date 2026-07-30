@@ -22,11 +22,57 @@ import styles from "./RiskDashboardWorkspace.module.css";
 const notional = (n: number): string =>
   new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(n);
 
-const greek = (n: number): string =>
-  new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 3 }).format(n);
-
 /** Render an optional metric: `null` ⇒ the honest "—" (not yet evaluated), never 0. */
 const optMetric = (n: number | null): string => (n === null ? "—" : notional(n));
+
+/** RAG bands from a utilization fraction (mirrors the server `RagBand::from_fraction`). */
+function bandOfFraction(fraction: number): RagBand {
+  if (fraction >= 1) return "red";
+  if (fraction >= 0.8) return "amber";
+  return "green";
+}
+
+/**
+ * The firm-wide roll-up across EVERY enabled risk portfolio — a pure client-side fold
+ * over the rows already streamed, so the desk reads total exposure without summing by
+ * eye. FI-relevant measures only (net / gross notional, positions, DV01, PnL) plus a
+ * per-cap aggregate limit utilization (sum used / sum limit across portfolios). DV01
+ * and PnL stay ABSENT (never a fabricated 0) until at least one portfolio reports one.
+ */
+function globalExposureOf(rows: readonly RiskBookRisk[]): {
+  net: number;
+  gross: number;
+  positions: number;
+  dv01: number | null;
+  pnl: number | null;
+  limits: RiskLimitUtilization[];
+} {
+  let net = 0;
+  let gross = 0;
+  let positions = 0;
+  let dv01: number | null = null;
+  let pnl: number | null = null;
+  const used = new Map<string, number>();
+  const cap = new Map<string, number>();
+  for (const r of rows) {
+    net += r.netNotional;
+    gross += r.grossNotional;
+    positions += r.positionCount;
+    if (r.dv01 !== null) dv01 = (dv01 ?? 0) + r.dv01;
+    if (r.pnl !== null) pnl = (pnl ?? 0) + r.pnl;
+    for (const l of r.limits) {
+      used.set(l.metric, (used.get(l.metric) ?? 0) + l.used);
+      cap.set(l.metric, (cap.get(l.metric) ?? 0) + l.limit);
+    }
+  }
+  const limits: RiskLimitUtilization[] = [...cap.keys()].map((metric) => {
+    const u = used.get(metric) ?? 0;
+    const limit = cap.get(metric) ?? 0;
+    const fraction = limit > 0 ? u / limit : u > 0 ? Number.POSITIVE_INFINITY : 0;
+    return { metric, used: u, limit, fraction, band: bandOfFraction(fraction) };
+  });
+  return { net, gross, positions, dv01, pnl, limits };
+}
 
 /** The worst (highest-fraction) utilization band across a book's caps, or green. */
 function worstBand(limits: readonly RiskLimitUtilization[]): RagBand {
@@ -158,6 +204,10 @@ export function RiskDashboardWorkspace(): React.ReactElement {
     [risk, selectedId],
   );
 
+  // Firm-wide exposure across ALL enabled portfolios — a pure fold over the streamed
+  // rows, so the desk reads total exposure without summing rows by eye.
+  const global = useMemo(() => globalExposureOf(risk), [risk]);
+
   if (!signedIn) {
     return (
       <div className={styles.wrap}>
@@ -194,8 +244,36 @@ export function RiskDashboardWorkspace(): React.ReactElement {
         </p>
       )}
 
+      {/* --- firm-wide global exposure across ALL portfolios --- */}
+      {risk.length > 0 && (
+        <section className={styles.global} aria-label="Global exposure across all risk portfolios">
+          <div className={styles.globalHead}>
+            <h2 className={styles.globalTitle}>Global exposure</h2>
+            <span className={styles.globalSub}>
+              all {risk.length} portfolio{risk.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <div className={styles.stats}>
+            <Stat label="Net notional" value={notional(global.net)} mono />
+            <Stat label="Gross notional" value={notional(global.gross)} mono />
+            <Stat label="Positions" value={String(global.positions)} mono />
+            <Stat label="DV01" value={optMetric(global.dv01)} mono muted={global.dv01 === null} />
+            <Stat label="PnL" value={optMetric(global.pnl)} mono muted={global.pnl === null} />
+          </div>
+          {global.limits.length > 0 && (
+            <div className={styles.utils}>
+              {global.limits.map((u) => (
+                <UtilizationBar key={u.metric} util={u} />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       {/* --- heat overview across all books --- */}
-      <section className={styles.overview} aria-label="Risk heat overview">
+      {/* tabIndex makes the horizontally-scrollable region keyboard-reachable (axe
+          scrollable-region-focusable) so a keyboard user can scroll the wide table. */}
+      <section className={styles.overview} aria-label="Risk heat overview" tabIndex={0}>
         <table className={styles.table}>
           <thead>
             <tr>
@@ -210,9 +288,6 @@ export function RiskDashboardWorkspace(): React.ReactElement {
                 Positions
               </th>
               <th scope="col" className={styles.numCol}>
-                Δ
-              </th>
-              <th scope="col" className={styles.numCol}>
                 DV01
               </th>
               <th scope="col">Limits</th>
@@ -221,8 +296,11 @@ export function RiskDashboardWorkspace(): React.ReactElement {
           <tbody>
             {risk.length === 0 && (
               <tr>
-                <td colSpan={7} className={styles.empty}>
-                  No enabled risk portfolios to report.
+                <td colSpan={6} className={styles.empty}>
+                  No enabled risk portfolios to report. Routing <em>rules</em> only pick a
+                  destination — they do not create the portfolio. Create one in{" "}
+                  <strong>Risk Portfolios</strong> and mark it <strong>enabled</strong>; routed
+                  fills then roll up here.
                 </td>
               </tr>
             )}
@@ -242,7 +320,6 @@ export function RiskDashboardWorkspace(): React.ReactElement {
                   <td className={styles.num}>{notional(r.netNotional)}</td>
                   <td className={styles.num}>{notional(r.grossNotional)}</td>
                   <td className={styles.num}>{r.positionCount}</td>
-                  <td className={styles.num}>{greek(r.delta)}</td>
                   <td className={styles.num}>{optMetric(r.dv01)}</td>
                   <td>
                     {r.limits.length === 0 ? (
@@ -270,14 +347,13 @@ export function RiskDashboardWorkspace(): React.ReactElement {
             )}
           </div>
 
+          {/* FI portfolios carry rates risk, not FX-option greeks — so this view shows the
+              DV01 family + notional/positions/PnL, never Δ/Γ/Vega/Θ (meaningless for
+              rates/bonds). The Risk Dashboard is a fixed-income-only surface. */}
           <div className={styles.stats}>
             <Stat label="Net notional" value={notional(selected.netNotional)} mono />
             <Stat label="Gross notional" value={notional(selected.grossNotional)} mono />
             <Stat label="Positions" value={String(selected.positionCount)} mono />
-            <Stat label="Δ Delta" value={greek(selected.delta)} mono />
-            <Stat label="Γ Gamma" value={greek(selected.gamma)} mono />
-            <Stat label="Vega" value={greek(selected.vega)} mono />
-            <Stat label="Θ Theta" value={greek(selected.theta)} mono />
             <Stat label="DV01" value={optMetric(selected.dv01)} mono muted={selected.dv01 === null} />
             <Stat label="PnL" value={optMetric(selected.pnl)} mono muted={selected.pnl === null} />
           </div>
