@@ -48,6 +48,33 @@ describe("settingsSchema v2", () => {
     expect(loadSettings()).toEqual(s);
   });
 
+  describe("aggBookInstrumentSelection (Aggregated Book view preference)", () => {
+    it("defaults to an empty selection (⇒ show all)", () => {
+      expect(DEFAULT_SETTINGS.aggBookInstrumentSelection).toEqual([]);
+      expect(loadSettings().aggBookInstrumentSelection).toEqual([]);
+    });
+
+    it("survives a save → load (persistence across a reload)", () => {
+      saveSettings({ ...DEFAULT_SETTINGS, aggBookInstrumentSelection: ["91282CJL6", "UKT1H26"] });
+      expect(loadSettings().aggBookInstrumentSelection).toEqual(["91282CJL6", "UKT1H26"]);
+    });
+
+    it("defensively cleans a corrupt stored value (non-array / junk entries)", () => {
+      window.localStorage.setItem(
+        SETTINGS_STORAGE_KEY,
+        JSON.stringify({ aggBookInstrumentSelection: ["a", 7, "", null, "a", "b"] }),
+      );
+      // Keeps only non-empty strings, de-duplicated.
+      expect(loadSettings().aggBookInstrumentSelection).toEqual(["a", "b"]);
+
+      window.localStorage.setItem(
+        SETTINGS_STORAGE_KEY,
+        JSON.stringify({ aggBookInstrumentSelection: "not-an-array" }),
+      );
+      expect(loadSettings().aggBookInstrumentSelection).toEqual([]);
+    });
+  });
+
   describe("v1 → v2 migration", () => {
     it("carries v1 scalars forward, seeds masterVolume from v1 volume, defaults perEvent", () => {
       window.localStorage.setItem(

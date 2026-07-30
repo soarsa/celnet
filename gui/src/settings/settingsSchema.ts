@@ -128,6 +128,14 @@ export interface AppSettings {
   streakWindowMs: number;
   /** Toast-animation motion policy (`auto` ⇒ honour `prefers-reduced-motion`). */
   reducedMotion: ReducedMotionPref;
+  /**
+   * The Aggregated Book "view only what I want" selection: the canonical
+   * reference-data `instrumentId`s the trader has chosen to see in the live
+   * composite grid. EMPTY ⇒ show ALL streaming securities (the safe default — a
+   * cleared selection is never an accidentally-blank book). Sourced from the FI
+   * reference-data universe, not just what is currently streaming.
+   */
+  aggBookInstrumentSelection: string[];
 }
 
 /** The out-of-the-box per-event defaults (urgent ⇒ desktop+toast; routine ⇒ toast). */
@@ -167,6 +175,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   perEvent: defaultPerEvent(),
   streakWindowMs: 1500,
   reducedMotion: "auto",
+  aggBookInstrumentSelection: [],
 };
 
 /** The current versioned localStorage key. */
@@ -203,6 +212,20 @@ function soundChoice(v: unknown, fallback: SoundChoice): SoundChoice {
 /** Narrow a value to a valid {@link ReducedMotionPref}, else the default. */
 function motion(v: unknown, fallback: ReducedMotionPref): ReducedMotionPref {
   return v === "auto" || v === "on" || v === "off" ? v : fallback;
+}
+
+/**
+ * Read an array-of-strings field defensively: keeps only string entries and
+ * de-duplicates, so a malformed / partially-corrupt blob degrades to a clean
+ * (possibly empty) list rather than propagating junk into the selection filter.
+ */
+function strArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  for (const item of v) {
+    if (typeof item === "string" && item.length > 0) seen.add(item);
+  }
+  return [...seen];
 }
 
 /** Merge one stored per-event entry over its default (defaults fill any gap). */
@@ -255,6 +278,7 @@ function mergeBlob(blob: Record<string, unknown>, legacy: boolean): AppSettings 
     perEvent: mergePerEvent(blob.perEvent),
     streakWindowMs: Math.max(0, num(blob.streakWindowMs, DEFAULT_SETTINGS.streakWindowMs)),
     reducedMotion: motion(blob.reducedMotion, DEFAULT_SETTINGS.reducedMotion),
+    aggBookInstrumentSelection: strArray(blob.aggBookInstrumentSelection),
   };
 }
 

@@ -1,0 +1,220 @@
+/* SecuritySelectionControl — the header "Securities…" trigger + its portalled
+   picker panel. Design tokens for both themes; motion on transform/opacity only. */
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2rem;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--r-md);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.trigger:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.triggerGlyph {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.count {
+  padding: 1px var(--space-2);
+  border-radius: var(--r-full, 999px);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
+  font-size: var(--type-micro);
+}
+
+/* --- portalled panel ------------------------------------------------------ */
+
+.panel {
+  z-index: var(--z-popover, 1000);
+  display: flex;
+  flex-direction: column;
+  width: min(24rem, calc(100vw - 1rem));
+  max-height: min(28rem, calc(100vh - 2rem));
+  border-radius: var(--r-lg, 12px);
+  border: var(--hairline);
+  background: var(--bg-raised);
+  box-shadow: 0 18px 44px -20px color-mix(in oklch, black 72%, transparent);
+  animation: secsel-in 120ms ease;
+  overflow: hidden;
+}
+
+@keyframes secsel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    animation: none;
+  }
+}
+
+.panelHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--hairline);
+}
+
+.searchWrap {
+  display: block;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.search {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font-size: var(--type-caption);
+}
+
+.search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.bulk {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.bulkBtn {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--type-micro);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.bulkBtn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.bulkBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+.group {
+  border: none;
+  margin: 0 0 var(--space-2);
+  padding: 0;
+}
+
+.groupLegend {
+  padding: var(--space-1) var(--space-1) var(--space-1);
+  font-size: var(--type-micro);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.option:hover {
+  background: var(--bg-inset);
+}
+
+.check {
+  margin-top: 2px;
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+  flex: none;
+  cursor: pointer;
+}
+
+.optText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.optLabel {
+  color: var(--text-primary);
+  font-size: var(--type-caption);
+}
+
+.optSub {
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.noMatch {
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+}
+
+.footNote {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--hairline);
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+  background: var(--bg-inset);
+}
