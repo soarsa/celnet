@@ -41,7 +41,27 @@ export const ACTION_LABELS: Record<CapabilityAction, string> = {
   risk_transfer: "Risk transfer",
   simulate: "Simulate",
   administer: "Administer",
+  risk_manage: "Manage risk",
+  manage_pricing: "Manage pricing",
+  manage_liquidity: "Manage liquidity",
 };
+
+/**
+ * The actions the default `TRADER` role bundle HOLDS BACK — every action NOT in
+ * this set is conferred by the role on both asset classes; the ones listed here
+ * require an explicit per-user (or edited-role) grant. Mirrors the server's
+ * `config/identity.rs::default_trader_bundle`, which withholds `Administer`,
+ * `RiskTransfer`, and the three management authorities `RiskManage` /
+ * `ManagePricing` / `ManageLiquidity` (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §5).
+ */
+export const TRADER_HELD_BACK_ACTIONS: ReadonlySet<CapabilityAction> =
+  new Set<CapabilityAction>([
+    "administer",
+    "risk_transfer",
+    "risk_manage",
+    "manage_pricing",
+    "manage_liquidity",
+  ]);
 
 /** Human-friendly asset-class labels for the matrix columns. */
 export const ASSET_LABELS: Record<CapabilityAsset, string> = {
@@ -53,12 +73,14 @@ export const ASSET_LABELS: Record<CapabilityAsset, string> = {
  * Whether the user's ROLE bundle alone (before any per-user overlay) admits this
  * action — the documented role→bundle mapping the server enforces (`config/
  * identity.rs::default_trader_bundle`): `ADMIN` ⇒ grant-all; `TRADER` ⇒ every
- * action except the two narrow explicitly-granted authorities `administer` and
- * `risk_transfer`, on both asset classes.
+ * action except the narrow explicitly-granted authorities in
+ * {@link TRADER_HELD_BACK_ACTIONS} (`administer`, `risk_transfer`, and the three
+ * management caps `risk_manage` / `manage_pricing` / `manage_liquidity`), on both
+ * asset classes.
  */
 export function roleAllows(role: UserRole, action: CapabilityAction): boolean {
   if (role === "ADMIN") return true;
-  return action !== "administer" && action !== "risk_transfer";
+  return !TRADER_HELD_BACK_ACTIONS.has(action);
 }
 
 /** The resolved state of one matrix cell under the current overlay choice. */
@@ -193,6 +215,9 @@ const ACTION_PHRASE: Record<CapabilityAction, (asset: string) => string> = {
   risk_transfer: (a) => `transferring ${a} risk between books`,
   simulate: (a) => `using the ${a} counterparty simulator`,
   administer: () => `administering Celnet`,
+  risk_manage: (a) => `managing ${a} risk portfolios, routing and the risk dashboard`,
+  manage_pricing: (a) => `managing ${a} pricing groups and session tiering`,
+  manage_liquidity: (a) => `managing ${a} liquidity connections and aggregated books`,
 };
 
 /**
@@ -370,6 +395,35 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     readActions: ["view"],
     writeActions: ["simulate"],
   },
+  // FI management authorities (docs/PERMISSIONS-GRANULAR-REVIEW.md §4.3): one
+  // trader-friendly Write toggle per granular management cap, so an admin can grant
+  // it from the component grid (the raw CapabilityMatrix already lists every action
+  // row automatically). Read = `view·FI` (shared with the other FI reads); Write =
+  // exactly the one management action the cap authorizes.
+  {
+    id: "riskmanage",
+    label: "Manage Risk",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: ["risk_manage"],
+  },
+  {
+    id: "managepricing",
+    label: "Manage Pricing",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: ["manage_pricing"],
+  },
+  {
+    id: "manageliquidity",
+    label: "Manage Liquidity",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: ["manage_liquidity"],
+  },
   // Administration — a single cross-asset toggle governing `administer` on BOTH
   // assets together. Read == Write (the same capability).
   {
@@ -503,10 +557,11 @@ export interface RoleAssetSummary {
  * The honest ROLE-BASELINE capability summary for a user row: for each asset
  * class, how many of the {@link CAPABILITY_ACTIONS} the role holds with NO
  * per-user overlay (`resolveEffective(role, ∅)`). This is the baseline the role
- * confers (admin ⇒ 10/10 both; trader ⇒ 9/10 both — every action except
- * `administer`); the full, overlay-adjusted effective set stays reachable through
- * the per-user Permissions editor. Deliberately overlay-free so a compact roster
- * chip never misrepresents a per-user grant/deny as a role property.
+ * confers (admin ⇒ 14/14 both; trader ⇒ 9/14 both — every action except the five
+ * held-back authorities in {@link TRADER_HELD_BACK_ACTIONS}); the full,
+ * overlay-adjusted effective set stays reachable through the per-user Permissions
+ * editor. Deliberately overlay-free so a compact roster chip never misrepresents a
+ * per-user grant/deny as a role property.
  */
 export function roleBaselineSummary(role: UserRole): RoleAssetSummary[] {
   const effective = resolveEffective(role, new Map());

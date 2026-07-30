@@ -2236,7 +2236,10 @@ export type CapabilityAction =
   | "book"
   | "risk_transfer"
   | "simulate"
-  | "administer";
+  | "administer"
+  | "risk_manage"
+  | "manage_pricing"
+  | "manage_liquidity";
 
 /** The asset class a capability applies to (`celnet.wire.CapabilityDesc.asset`). */
 export type CapabilityAsset = "fx_options" | "fixed_income";
@@ -2263,6 +2266,9 @@ export const CAPABILITY_ACTIONS: readonly CapabilityAction[] = [
   "risk_transfer",
   "simulate",
   "administer",
+  "risk_manage",
+  "manage_pricing",
+  "manage_liquidity",
 ];
 
 /** Both asset classes in canonical order — the column axis of the matrix. */

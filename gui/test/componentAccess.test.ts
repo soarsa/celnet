@@ -85,6 +85,23 @@ describe("COMPONENT_ACCESS — the component → capability spec", () => {
     expect(keysOf(componentWriteCaps(admin))).toEqual(expected);
   });
 
+  it("maps each FI management component to view (Read) + its one management cap (Write)", () => {
+    // The three granular management authorities each get a friendly Write toggle
+    // (docs/PERMISSIONS-GRANULAR-REVIEW.md §4.3); Read is the shared view·FI.
+    const cases: Array<[string, Capability["action"]]> = [
+      ["riskmanage", "risk_manage"],
+      ["managepricing", "manage_pricing"],
+      ["manageliquidity", "manage_liquidity"],
+    ];
+    for (const [id, action] of cases) {
+      const c = byId(id);
+      expect(c.section).toBe("fixed_income");
+      expect(keysOf(componentReadCaps(c))).toEqual(new Set([capKey("view", "fixed_income")]));
+      expect(keysOf(componentWriteCaps(c))).toEqual(new Set([capKey(action, "fixed_income")]));
+      expect(isReadOnlyComponent(c)).toBe(false);
+    }
+  });
+
   it("every component belongs to a declared section and every action label is known", () => {
     const sections = new Set(COMPONENT_SECTIONS.map((s) => s.id));
     for (const c of COMPONENT_ACCESS) {

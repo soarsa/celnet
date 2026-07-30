@@ -4217,13 +4217,18 @@ export class MockTransport implements CelnetTransport {
 /** The minimum password length on create/reset (mirrors the server's `MIN_PASSWORD_LEN`). */
 const MOCK_MIN_PASSWORD_LEN = 12;
 
-/** The actions NOT in the default `TRADER` bundle — the two narrow, explicitly-
- * granted authorities `administer` and `risk_transfer` (mirrors the server's
- * `default_trader_bundle`, `config/identity.rs`, which excludes
- * `Action::Administer | Action::RiskTransfer`). `ADMIN` is grant-all. */
+/** The actions NOT in the default `TRADER` bundle — the narrow, explicitly-granted
+ * authorities `administer` / `risk_transfer` and the three management caps
+ * `risk_manage` / `manage_pricing` / `manage_liquidity` (mirrors the server's
+ * `default_trader_bundle`, `config/identity.rs`, which holds back
+ * `Action::{Administer, RiskTransfer, RiskManage, ManagePricing, ManageLiquidity}`).
+ * `ADMIN` is grant-all (holds every action, including these). */
 const MOCK_TRADER_EXCLUDED_ACTIONS: ReadonlySet<CapabilityAction> = new Set<CapabilityAction>([
   "administer",
   "risk_transfer",
+  "risk_manage",
+  "manage_pricing",
+  "manage_liquidity",
 ]);
 
 /** The full action-by-asset surface (the ADMIN grant-all bundle). */
