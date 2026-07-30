@@ -15,7 +15,34 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useSettings } from "../hooks/useSettings";
 import { fmtCompact } from "../lib/format";
+import {
+  effectiveEventVolume,
+  type NotificationEventType,
+  type PerEventPref,
+} from "../settings/settingsSchema";
+import {
+  SOUND_IDS,
+  SOUND_LABELS,
+  previewSound,
+  type SoundChoice,
+} from "../lib/soundKit";
 import styles from "./SettingsPanel.module.css";
+
+/** The human label + urgency flag for each configurable event row. */
+const EVENT_ROWS: readonly { type: NotificationEventType; label: string }[] = [
+  { type: "RfqReceived", label: "RFQ received" },
+  { type: "IoiReceived", label: "IOI received" },
+  { type: "ManualIntervention", label: "Needs manual pricing" },
+  { type: "QuoteAccepted", label: "Quote accepted (won)" },
+  { type: "QuoteRejected", label: "Quote rejected (lost)" },
+  { type: "RequestLapsed", label: "Withdrawn / expired" },
+  { type: "OrderReceived", label: "Order received" },
+  { type: "Fill", label: "Fill" },
+  { type: "FillBlock", label: "Block fill" },
+];
+
+/** The sound-picker options: every synthesized cue, plus the silent choice. */
+const SOUND_OPTIONS: readonly SoundChoice[] = [...SOUND_IDS, "none"];
 
 /** An accessible on/off switch driven by a boolean + a setter. */
 function Switch({
@@ -43,6 +70,102 @@ function Switch({
         <span className={styles.switchThumb} />
       </span>
     </button>
+  );
+}
+
+/**
+ * One configurable event row: an enable toggle, a sound picker + ▶ preview, the
+ * two channel checkboxes (Toast / Desktop), and a per-event volume trim. Every
+ * control writes an immutable per-event patch through `onChange`.
+ */
+function EventRow({
+  label,
+  pref,
+  masterVolume,
+  onChange,
+}: {
+  label: string;
+  pref: PerEventPref;
+  masterVolume: number;
+  onChange: (patch: Partial<PerEventPref>) => void;
+}): React.ReactElement {
+  const rowId = useId();
+  const setChannel = (which: "toast" | "desktop", next: boolean): void =>
+    onChange({ channels: { ...pref.channels, [which]: next } });
+  return (
+    <div className={styles.eventRow} role="group" aria-label={label}>
+      <span className={styles.eventLabel}>{label}</span>
+      <Switch
+        checked={pref.enabled}
+        onChange={(v) => onChange({ enabled: v })}
+        label={`${label} enabled`}
+      />
+      <span className={styles.eventSound}>
+        <label className={styles.srOnly} htmlFor={`${rowId}-sound`}>
+          {label} sound
+        </label>
+        <select
+          id={`${rowId}-sound`}
+          className={styles.select}
+          value={pref.sound}
+          disabled={!pref.enabled}
+          onChange={(e) => onChange({ sound: e.target.value as SoundChoice })}
+        >
+          {SOUND_OPTIONS.map((s) => (
+            <option key={s} value={s}>
+              {SOUND_LABELS[s]}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className={styles.previewBtn}
+          aria-label={`Preview ${label} sound`}
+          disabled={pref.sound === "none"}
+          onClick={() =>
+            previewSound(pref.sound, effectiveEventVolume(masterVolume, pref.volume))
+          }
+        >
+          <span aria-hidden>▶</span>
+        </button>
+      </span>
+      <span className={styles.eventChannels}>
+        <label className={styles.checkLabel}>
+          <input
+            type="checkbox"
+            checked={pref.channels.toast}
+            disabled={!pref.enabled}
+            onChange={(e) => setChannel("toast", e.target.checked)}
+          />
+          <span>Toast</span>
+        </label>
+        <label className={styles.checkLabel}>
+          <input
+            type="checkbox"
+            checked={pref.channels.desktop}
+            disabled={!pref.enabled}
+            onChange={(e) => setChannel("desktop", e.target.checked)}
+          />
+          <span>Desktop</span>
+        </label>
+      </span>
+      <span className={styles.eventVol}>
+        <label className={styles.srOnly} htmlFor={`${rowId}-vol`}>
+          {label} volume
+        </label>
+        <input
+          id={`${rowId}-vol`}
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={pref.volume}
+          disabled={!pref.enabled}
+          className={styles.slider}
+          onChange={(e) => onChange({ volume: Number(e.target.value) })}
+        />
+      </span>
+    </div>
   );
 }
 
@@ -137,7 +260,33 @@ export function SettingsPanel(): React.ReactElement {
     [update],
   );
 
-  const soundsOff = !settings.soundsEnabled || !settings.alertsEnabled;
+  const soundsOff =
+    !settings.soundsEnabled || !settings.alertsEnabled || settings.masterMute;
+
+  // Immutably patch one event's per-event preference.
+  const updateEvent = useCallback(
+    (type: NotificationEventType, patch: Partial<PerEventPref>) => {
+      const cur = settings.perEvent[type];
+      update({ perEvent: { ...settings.perEvent, [type]: { ...cur, ...patch } } });
+    },
+    [settings.perEvent, update],
+  );
+
+  // The "Enable desktop notifications" gesture path — request the OS grant and
+  // reflect the new permission state. Guarded; never throws.
+  const requestDesktopPermission = useCallback(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    try {
+      const r = window.Notification.requestPermission();
+      if (r && typeof r.then === "function") {
+        r.then((p) => setPermission(p)).catch(() => {});
+      } else {
+        setPermission(notificationPermission());
+      }
+    } catch {
+      /* legacy / blocked — the bell toggle remains the fallback path */
+    }
+  }, []);
 
   return (
     <div className={styles.root}>
@@ -211,8 +360,17 @@ export function SettingsPanel(): React.ReactElement {
               />
             </div>
             <div className={styles.row}>
+              <span className={styles.rowLabel}>Mute all (do not disturb)</span>
+              <Switch
+                checked={settings.masterMute}
+                onChange={(v) => update({ masterMute: v })}
+                label="Mute all sounds"
+                disabled={!settings.soundsEnabled || !settings.alertsEnabled}
+              />
+            </div>
+            <div className={styles.row}>
               <label className={styles.rowLabel} htmlFor={`${titleId}-vol`}>
-                Volume
+                Master volume
               </label>
               <span className={styles.sliderWrap}>
                 <input
@@ -221,12 +379,12 @@ export function SettingsPanel(): React.ReactElement {
                   min={0}
                   max={100}
                   step={1}
-                  value={settings.volume}
+                  value={settings.masterVolume}
                   disabled={soundsOff}
                   className={styles.slider}
-                  onChange={(e) => update({ volume: Number(e.target.value) })}
+                  onChange={(e) => update({ masterVolume: Number(e.target.value) })}
                 />
-                <span className={styles.sliderValue}>{settings.volume}%</span>
+                <span className={styles.sliderValue}>{settings.masterVolume}%</span>
               </span>
             </div>
           </section>
@@ -303,6 +461,48 @@ export function SettingsPanel(): React.ReactElement {
                   }}
                 />
               </span>
+            </div>
+          </section>
+
+          {/* --- Per-event notifications --- */}
+          <section className={styles.section} aria-labelledby={`${titleId}-events`}>
+            <h3 id={`${titleId}-events`} className={styles.sectionTitle}>
+              Notification events
+            </h3>
+            <p className={styles.hint}>
+              Per event: enable, pick a sound (▶ to preview), choose channels, and
+              trim its volume. A toast shows when this tab is on screen; a desktop
+              banner shows only when you have tabbed away.
+            </p>
+            <div className={styles.row}>
+              <span className={styles.rowLabel}>Desktop notifications</span>
+              <button
+                type="button"
+                className={styles.permBtn}
+                onClick={requestDesktopPermission}
+                disabled={permission === "unsupported" || permission === "granted"}
+              >
+                {permission === "granted" ? "Enabled" : "Enable desktop notifications"}
+              </button>
+            </div>
+            <p className={styles.hint}>{permissionHint(permission)}</p>
+            <div className={styles.eventTable}>
+              <div className={styles.eventHead} aria-hidden>
+                <span className={styles.eventLabel}>Event</span>
+                <span>On</span>
+                <span>Sound</span>
+                <span>Channels</span>
+                <span>Vol</span>
+              </div>
+              {EVENT_ROWS.map((row) => (
+                <EventRow
+                  key={row.type}
+                  label={row.label}
+                  pref={settings.perEvent[row.type]}
+                  masterVolume={settings.masterVolume}
+                  onChange={(patch) => updateEvent(row.type, patch)}
+                />
+              ))}
             </div>
           </section>
         </div>

@@ -20,11 +20,18 @@ import { useApp } from "../app/AppContext";
 import { useSettings } from "./useSettings";
 import {
   useDesktopNotifications,
+  tabIsAway,
   type DesktopNotificationsApi,
 } from "./useDesktopNotifications";
 import { notionalMagnitude } from "../lib/notificationText";
+import { playSound, type SoundChoice, type SoundId } from "../lib/soundKit";
 import type { Notification, NotificationKind } from "../data/contract";
-import type { AppSettings } from "../settings/settingsSchema";
+import {
+  eventTypeForKind,
+  effectiveEventVolume,
+  DEFAULT_PER_EVENT,
+  type AppSettings,
+} from "../settings/settingsSchema";
 
 /** Cap the retained notification history (newest-first ring). */
 export const MAX_HISTORY = 50;
@@ -76,33 +83,50 @@ export function shouldSuppress(n: Notification, settings: AppSettings): boolean 
 /**
  * The action plan for an inbound notification — the pure decision the store
  * effect enacts. Extracted so the gate is unit-testable WITHOUT a render or spies:
- * when `suppressed`, every downstream flag is false, so a test can assert "no item,
- * no toast, no sound, no desktop growl" purely from the returned plan.
+ * when `suppressed`, every downstream flag is false / silent, so a test can assert
+ * "no item, no toast, no desktop, no sound" purely from the returned plan.
  */
 export interface NotificationPlan {
   /** Fully suppressed (below min qty, or master alerts off). */
   readonly suppressed: boolean;
   /** Prepend the notification to the history list. */
   readonly addItem: boolean;
-  /** Raise a transient toast. */
+  /** Raise an in-app "growl" toast (focus-aware: only when the tab is on screen). */
   readonly toast: boolean;
-  /** Play the audio cue (also requires the sound preference). */
-  readonly sound: boolean;
-  /** Escalate to a desktop ("growl") notification (also requires the pref). */
-  readonly growl: boolean;
+  /** Escalate to an OS desktop banner (focus-aware: only when the tab is away). */
+  readonly desktop: boolean;
+  /** The cue to play (`"none"` ⇒ silent) — the per-event configured sound. */
+  readonly sound: SoundChoice;
+  /** The effective cue volume (0–100), master × per-event trim. */
+  readonly volume: number;
   /** Bump the unread badge (only when the dropdown is closed). */
   readonly bumpUnread: boolean;
 }
 
 /**
- * Decide what an inbound notification should trigger, given the trader settings
- * and whether the dropdown is currently open. Pure — the store effect merely
- * enacts this.
+ * Decide what an inbound notification should trigger, given the trader settings,
+ * whether the dropdown is open, and whether the tab is currently AWAY (hidden /
+ * unfocused). Pure — the store effect merely enacts this (the streak override is
+ * applied there, since it is stateful).
+ *
+ * The gate is layered:
+ *   1. `shouldSuppress` — master alerts off / below min-qty ⇒ nothing at all.
+ *   2. The server's `alert_worthy` flag (commit 542e547) AND the per-event
+ *      `enabled` toggle form the POPUP FLOOR — a quiet event or a trader-disabled
+ *      event still lands in the centre (addItem) + bumps unread, but raises no
+ *      toast/desktop/sound. The server can never be over-ridden UP: a client
+ *      config can only silence, never force, a popup the server marked quiet.
+ *   3. The FOCUS-AWARE rule (§5.3) picks the channel: an in-app toast when the tab
+ *      is on screen, an OS banner ONLY when it is away — never both. Per-event
+ *      `channels` narrow this further (toast-only / desktop-only / both / off).
+ *   4. The sound is the event's configured cue, at master × per-event volume,
+ *      gated by the sound master + do-not-disturb `masterMute`.
  */
 export function planNotification(
   n: Notification,
   settings: AppSettings,
   isOpen: boolean,
+  isAway: boolean,
 ): NotificationPlan {
   const suppressed = shouldSuppress(n, settings);
   if (suppressed) {
@@ -110,26 +134,56 @@ export function planNotification(
       suppressed: true,
       addItem: false,
       toast: false,
-      sound: false,
-      growl: false,
+      desktop: false,
+      sound: "none",
+      volume: 0,
       bumpUnread: false,
     };
   }
-  // Server exception contract (commit 542e547): the server's `alert_worthy` flag
-  // is the authoritative POPUP gate. An `alertWorthy:false` event still lands in
-  // the centre (addItem) and still bumps the unseen count when closed, but raises
-  // NO popup — no toast, no desktop growl, no sound. The kind no longer gates the
-  // popup: the server now owns that decision via `alert_worthy` (so a manual-
-  // intervention kind 7, neither a *_RECEIVED nor a terminal kind, still pops when
-  // alert-worthy; an auto-priced event with alert_worthy:false stays quiet).
+  const pref = settings.perEvent[eventTypeForKind(n.kind)] ?? DEFAULT_PER_EVENT.RfqReceived;
+  const base = n.alertWorthy && pref.enabled;
+  const toast = base && pref.channels.toast && !isAway;
+  const desktop = base && pref.channels.desktop && isAway && settings.growlEnabled;
+  const soundOn =
+    base && settings.soundsEnabled && !settings.masterMute && pref.sound !== "none";
   return {
     suppressed: false,
     addItem: true,
-    toast: n.alertWorthy,
-    sound: n.alertWorthy && settings.soundsEnabled,
-    growl: n.alertWorthy && settings.growlEnabled,
+    toast,
+    desktop,
+    sound: soundOn ? pref.sound : "none",
+    volume: soundOn ? effectiveEventVolume(settings.masterVolume, pref.volume) : 0,
     bumpUnread: !isOpen,
   };
+}
+
+/** The rolling state for the fill-streak escalation. */
+export interface StreakState {
+  /** Consecutive fill count within the streak window (1 = a fresh streak). */
+  readonly count: number;
+  /** When the last fill landed (ms epoch), for the window comparison. */
+  readonly lastMs: number;
+}
+
+/** A pristine (no-streak) starting state. */
+export const EMPTY_STREAK: StreakState = { count: 0, lastMs: 0 };
+
+/**
+ * Advance the streak on a fill: increment when the previous fill is within
+ * `windowMs`, else restart the count at 1. Pure — the store owns the ref.
+ */
+export function advanceStreak(prev: StreakState, nowMs: number, windowMs: number): StreakState {
+  const within = prev.count > 0 && nowMs - prev.lastMs <= windowMs;
+  return { count: within ? prev.count + 1 : 1, lastMs: nowMs };
+}
+
+/**
+ * Whether a kind counts toward the fill-streak. Today the booked-deal
+ * `QUOTE_ACCEPTED` (a lifted quote) is the "own fill" the desk sees; the deferred
+ * `FILL`/`FILL_BLOCK` kinds (phase 5) will join here when the server emits them.
+ */
+export function isFillKind(kind: NotificationKind): boolean {
+  return kind === "QUOTE_ACCEPTED";
 }
 
 /**
@@ -165,62 +219,17 @@ export function expireByTtl(
   return items.filter((n) => nowNanos - n.atNanos <= ttlNanos);
 }
 
-// --- audio cue (WebAudio, lazy, guarded) ------------------------------------
-
-/** A lazily-created shared AudioContext (a single node graph is cheap to reuse). */
-let sharedAudioCtx: AudioContext | null = null;
-
-/** The AudioContext ctor across browsers (`webkit`-prefixed on old Safari). */
-function audioCtxCtor(): (new () => AudioContext) | null {
-  if (typeof window === "undefined") return null;
-  const w = window as unknown as {
-    AudioContext?: new () => AudioContext;
-    webkitAudioContext?: new () => AudioContext;
-  };
-  return w.AudioContext ?? w.webkitAudioContext ?? null;
-}
-
-/** Obtain (once) the shared AudioContext, or null when unsupported. Never throws. */
-function getAudioCtx(): AudioContext | null {
-  try {
-    if (sharedAudioCtx) return sharedAudioCtx;
-    const Ctor = audioCtxCtor();
-    if (!Ctor) return null;
-    sharedAudioCtx = new Ctor();
-    return sharedAudioCtx;
-  } catch {
-    return null;
-  }
-}
+// --- audio cue --------------------------------------------------------------
 
 /**
- * Play a short, gentle cue. `volume` is 0–100 (scaled into a low gain ceiling so
- * the beep never blares). Terminal events use a slightly lower pitch so accepted/
- * rejected reads different from a new request. Fully guarded — an unsupported or
- * suspended context degrades to a silent no-op and NEVER throws.
+ * Play a short, gentle cue — a thin back-compat shim over the {@link playSound}
+ * sound kit: a terminal event uses the neutral `lapsed` cue, a pending one the
+ * `rfq-work` blip. `volume` is 0–100. Fully guarded — never throws. (Live routing
+ * now goes through `planNotification` → the per-event configured cue; this remains
+ * for callers that only know "pending vs terminal".)
  */
 export function playCue(volume: number, terminal: boolean): void {
-  try {
-    const vol = Math.max(0, Math.min(100, volume)) / 100;
-    if (vol <= 0) return;
-    const ctx = getAudioCtx();
-    if (!ctx) return;
-    if (ctx.state === "suspended") void ctx.resume().catch(() => {});
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.value = terminal ? 523 : 740;
-    const now = ctx.currentTime;
-    const peak = Math.max(0.0002, vol * 0.14);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(peak, now + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.2);
-  } catch {
-    /* audio unsupported / blocked — never throw into the render tree */
-  }
+  playSound(terminal ? "lapsed" : "rfq-work", volume);
 }
 
 // --- the store hook ---------------------------------------------------------
@@ -263,6 +272,9 @@ export function useNotificationStore(): NotificationStore {
   openRef.current = open;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  // The fill-streak counter, kept in a ref so the stable push handler mutates it
+  // without re-subscribing. Reset whenever the stream tears down (sign-out).
+  const streakRef = useRef<StreakState>(EMPTY_STREAK);
 
   const dismissToast = useCallback((key: string) => {
     setToasts((ts) => ts.filter((t) => t.key !== key));
@@ -276,11 +288,14 @@ export function useNotificationStore(): NotificationStore {
       setItems([]);
       setToasts([]);
       setUnread(0);
+      streakRef.current = EMPTY_STREAK;
       return;
     }
     const onNotification = (n: Notification): void => {
       const s = settingsRef.current;
-      const plan = planNotification(n, s, openRef.current);
+      // Focus-aware channel routing hinges on whether the tab is on screen NOW.
+      const away = tabIsAway();
+      const plan = planNotification(n, s, openRef.current, away);
       // Terminal-linkage prune runs regardless of suppression (lifecycle truth),
       // then the incoming is prepended only when it survives the gate.
       setItems((prev) => {
@@ -298,10 +313,24 @@ export function useNotificationStore(): NotificationStore {
         setToasts((ts) => [...ts, toast].slice(-MAX_TOASTS));
         window.setTimeout(() => dismissToast(toast.key), TOAST_TTL_MS);
       }
-      if (plan.sound) playCue(s.volume, isTerminalKind(n.kind));
-      // Desktop growl: gated by the settings master AND the hook's own
-      // tab-hidden + permission + mute checks (so we never double-notify).
-      if (plan.growl) notifyDesktop(n);
+      if (plan.sound !== "none") {
+        let cue: SoundId = plan.sound;
+        let streak = 0;
+        // A rapid run of fills coalesces into the escalating fill-streak ladder
+        // (§4.3) — its height encodes the consecutive-fill count.
+        if (isFillKind(n.kind)) {
+          const next = advanceStreak(streakRef.current, Date.now(), s.streakWindowMs);
+          streakRef.current = next;
+          if (next.count >= 2) {
+            cue = "fill-streak";
+            streak = next.count;
+          }
+        }
+        playSound(cue, plan.volume, streak);
+      }
+      // Desktop banner: the plan already gated it on the focus-aware away rule +
+      // the growl master; the hook adds its own permission/mute checks.
+      if (plan.desktop) notifyDesktop(n);
     };
     const dispose = app.transport.streamNotifications(undefined, onNotification);
     return dispose;

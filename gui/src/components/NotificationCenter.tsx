@@ -38,6 +38,15 @@ function detailLine(n: Notification): string | null {
   return n.detail ? compactNotionals(n.detail) : null;
 }
 
+/**
+ * Whether a kind is URGENT — it demands the trader's attention (manual pricing
+ * needed, or a quote declined). Urgent toasts are announced ASSERTIVELY
+ * (`role="alert"`), routine ones POLITELY (`role="status"`).
+ */
+function isUrgentKind(kind: NotificationKind): boolean {
+  return kind === "MANUAL_INTERVENTION_REQUIRED" || kind === "QUOTE_REJECTED";
+}
+
 /** The badge accent class for a notification kind. */
 function kindClass(kind: NotificationKind): string {
   switch (kind) {
@@ -80,6 +89,9 @@ export function NotificationCenter(): React.ReactElement | null {
 
   const desktopTitle = desktopToggleTitle(desktop);
   const desktopDisabled = !desktop.supported || desktop.permission === "denied";
+  // Escalate the live-region politeness when any visible toast is urgent, so a
+  // screen reader interrupts for a "needs you" / declined-quote event.
+  const hasUrgentToast = toasts.some((t) => isUrgentKind(t.notification.kind));
 
   return (
     <div className={styles.root}>
@@ -172,8 +184,13 @@ export function NotificationCenter(): React.ReactElement | null {
         </div>
       )}
 
-      {/* Transient toasts — announced politely, never stealing focus. */}
-      <div className={styles.toasts} role="status" aria-live="polite">
+      {/* Transient toasts — announced via a live region (assertive when urgent),
+          never stealing focus. */}
+      <div
+        className={styles.toasts}
+        role={hasUrgentToast ? "alert" : "status"}
+        aria-live={hasUrgentToast ? "assertive" : "polite"}
+      >
         {toasts.map((t) => (
           <button
             type="button"

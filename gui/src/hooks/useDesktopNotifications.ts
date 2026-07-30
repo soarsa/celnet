@@ -94,7 +94,7 @@ function writeFlag(key: string, value: boolean): void {
 }
 
 /** Whether the tab is currently hidden or unfocused (the escalation condition). */
-function tabIsAway(): boolean {
+export function tabIsAway(): boolean {
   if (typeof document === "undefined") return false;
   return document.visibilityState === "hidden" || !document.hasFocus();
 }

@@ -1,13 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  advanceStreak,
+  EMPTY_STREAK,
   expireByTtl,
+  isFillKind,
   isTerminalKind,
   planNotification,
   playCue,
   pruneOnTerminal,
   shouldSuppress,
 } from "../src/hooks/useNotificationStore";
-import { DEFAULT_SETTINGS, type AppSettings } from "../src/settings/settingsSchema";
+import { tabIsAway } from "../src/hooks/useDesktopNotifications";
+import {
+  DEFAULT_SETTINGS,
+  DEFAULT_PER_EVENT,
+  type AppSettings,
+} from "../src/settings/settingsSchema";
 import type { Notification, NotificationKind } from "../src/data/contract";
 
 function note(
@@ -66,81 +74,165 @@ describe("shouldSuppress", () => {
 });
 
 describe("planNotification", () => {
-  it("below-min raises NOTHING — no item, toast, sound, or growl", () => {
+  // isOpen=false, isAway=false unless a test overrides — the on-screen default.
+  it("below-min raises NOTHING — no item, toast, desktop, or sound", () => {
     const n = note("RFQ_RECEIVED", { headline: "RFQ 1m" });
-    const plan = planNotification(n, settings({ minQty: 5_000_000 }), false);
+    const plan = planNotification(n, settings({ minQty: 5_000_000 }), false, false);
     expect(plan).toEqual({
       suppressed: true,
       addItem: false,
       toast: false,
-      sound: false,
-      growl: false,
+      desktop: false,
+      sound: "none",
+      volume: 0,
       bumpUnread: false,
     });
   });
 
-  it("a large event raises item + toast + sound + growl + unread", () => {
+  it("an on-screen RFQ raises item + toast + its configured sound, no desktop", () => {
     const n = note("RFQ_RECEIVED", { headline: "RFQ 75mm" });
-    const plan = planNotification(n, settings({ minQty: 5_000_000 }), false);
+    const plan = planNotification(n, settings({ minQty: 5_000_000 }), false, false);
     expect(plan).toEqual({
       suppressed: false,
       addItem: true,
-      toast: true,
-      sound: true,
-      growl: true,
+      toast: true, // tab on screen ⇒ in-app growl toast
+      desktop: false, // RfqReceived default channel is toast-only
+      sound: "rfq-work", // the configured cue for this event
+      volume: DEFAULT_SETTINGS.masterVolume, // master × 100% trim
       bumpUnread: true,
     });
   });
 
-  it("honours the sound / growl preferences", () => {
+  it("picks each event's configured sound", () => {
+    const s = settings();
+    expect(planNotification(note("QUOTE_ACCEPTED", { headline: "won 75mm" }), s, false, false).sound).toBe("won");
+    expect(planNotification(note("QUOTE_REJECTED", { headline: "lost 75mm" }), s, false, false).sound).toBe("lost");
+    expect(planNotification(note("MANUAL_INTERVENTION_REQUIRED", { headline: "help" }), s, false, false).sound).toBe(
+      "needs-you",
+    );
+    expect(planNotification(note("REQUEST_EXPIRED", { headline: "lapsed 75mm" }), s, false, false).sound).toBe("lapsed");
+  });
+
+  it("focus-aware routing: toast when on screen, desktop when away — never both", () => {
+    // ManualIntervention defaults to BOTH channels.
+    const n = note("MANUAL_INTERVENTION_REQUIRED", { headline: "manual", alertWorthy: true });
+    const onScreen = planNotification(n, settings(), false, false);
+    expect(onScreen.toast).toBe(true);
+    expect(onScreen.desktop).toBe(false);
+    const away = planNotification(n, settings(), false, true);
+    expect(away.toast).toBe(false);
+    expect(away.desktop).toBe(true);
+  });
+
+  it("a toast-only event stays silent on the desktop channel even when away", () => {
+    // RfqReceived default is toast-only.
     const n = note("RFQ_RECEIVED", { headline: "RFQ 75mm" });
-    const plan = planNotification(n, settings({ soundsEnabled: false, growlEnabled: false }), false);
-    expect(plan.sound).toBe(false);
-    expect(plan.growl).toBe(false);
+    const away = planNotification(n, settings(), false, true);
+    expect(away.toast).toBe(false); // tab away ⇒ no toast
+    expect(away.desktop).toBe(false); // desktop channel off for this event
+  });
+
+  it("masterMute silences the cue but keeps the toast/item", () => {
+    const n = note("RFQ_RECEIVED", { headline: "RFQ 75mm" });
+    const plan = planNotification(n, settings({ masterMute: true }), false, false);
+    expect(plan.sound).toBe("none");
+    expect(plan.volume).toBe(0);
+    expect(plan.toast).toBe(true);
     expect(plan.addItem).toBe(true);
+  });
+
+  it("soundsEnabled=false silences the cue", () => {
+    const n = note("RFQ_RECEIVED", { headline: "RFQ 75mm" });
+    expect(planNotification(n, settings({ soundsEnabled: false }), false, false).sound).toBe("none");
+  });
+
+  it("the growl master gates the desktop channel", () => {
+    const n = note("MANUAL_INTERVENTION_REQUIRED", { headline: "manual" });
+    const away = planNotification(n, settings({ growlEnabled: false }), false, true);
+    expect(away.desktop).toBe(false);
+  });
+
+  it("a per-event volume trim scales the master volume", () => {
+    const perEvent = {
+      ...DEFAULT_PER_EVENT,
+      RfqReceived: { ...DEFAULT_PER_EVENT.RfqReceived, volume: 50 },
+    };
+    const n = note("RFQ_RECEIVED", { headline: "RFQ 75mm" });
+    const plan = planNotification(n, settings({ perEvent, masterVolume: 80 }), false, false);
+    expect(plan.volume).toBe(40); // 80 × 50%
+  });
+
+  it("a per-event disabled toggle keeps the item but raises no popup/sound", () => {
+    const perEvent = {
+      ...DEFAULT_PER_EVENT,
+      RfqReceived: { ...DEFAULT_PER_EVENT.RfqReceived, enabled: false },
+    };
+    const n = note("RFQ_RECEIVED", { headline: "RFQ 75mm" });
+    const plan = planNotification(n, settings({ perEvent }), false, false);
+    expect(plan.addItem).toBe(true);
+    expect(plan.toast).toBe(false);
+    expect(plan.desktop).toBe(false);
+    expect(plan.sound).toBe("none");
   });
 
   it("does not bump unread when the dropdown is open", () => {
     const n = note("RFQ_RECEIVED", { headline: "RFQ 75mm" });
-    expect(planNotification(n, settings(), true).bumpUnread).toBe(false);
-  });
-
-  it("an alert-worthy event pops a toast (server owns the popup gate)", () => {
-    const n = note("QUOTE_ACCEPTED", { headline: "accepted 75mm", alertWorthy: true });
-    expect(planNotification(n, settings(), false).toast).toBe(true);
+    expect(planNotification(n, settings(), true, false).bumpUnread).toBe(false);
   });
 
   it("a quiet (alertWorthy:false) event lands in the centre but raises NO popup", () => {
     const n = note("QUOTE_ACCEPTED", { headline: "auto-priced 75mm", alertWorthy: false });
-    const plan = planNotification(n, settings(), false);
-    // Still stored + counted, but no toast / sound / growl.
+    const plan = planNotification(n, settings(), false, false);
     expect(plan.suppressed).toBe(false);
     expect(plan.addItem).toBe(true);
     expect(plan.bumpUnread).toBe(true);
     expect(plan.toast).toBe(false);
-    expect(plan.sound).toBe(false);
-    expect(plan.growl).toBe(false);
+    expect(plan.desktop).toBe(false);
+    expect(plan.sound).toBe("none");
+  });
+});
+
+describe("focus-aware tabIsAway", () => {
+  const origHasFocus = document.hasFocus.bind(document);
+  afterEach(() => {
+    document.hasFocus = origHasFocus;
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
   });
 
-  it("a quiet event stays quiet even with sound + growl enabled", () => {
-    const n = note("RFQ_RECEIVED", { headline: "RFQ 75mm", alertWorthy: false });
-    const plan = planNotification(n, settings({ soundsEnabled: true, growlEnabled: true }), false);
-    expect(plan.toast).toBe(false);
-    expect(plan.sound).toBe(false);
-    expect(plan.growl).toBe(false);
+  it("is away when the document is hidden", () => {
+    document.hasFocus = () => true;
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    expect(tabIsAway()).toBe(true);
   });
 
-  it("a MANUAL_INTERVENTION_REQUIRED alert pops a toast + growl (when growl enabled)", () => {
-    const n = note("MANUAL_INTERVENTION_REQUIRED", {
-      headline: "Manual pricing needed",
-      detail: "USD-OIS 15Y",
-      alertWorthy: true,
-    });
-    const plan = planNotification(n, settings({ growlEnabled: true, soundsEnabled: true }), false);
-    expect(plan.toast).toBe(true);
-    expect(plan.growl).toBe(true);
-    expect(plan.sound).toBe(true);
-    expect(plan.addItem).toBe(true);
+  it("is away when the document is unfocused", () => {
+    document.hasFocus = () => false;
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    expect(tabIsAway()).toBe(true);
+  });
+
+  it("is present when visible AND focused", () => {
+    document.hasFocus = () => true;
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    expect(tabIsAway()).toBe(false);
+  });
+});
+
+describe("fill-streak coalescing", () => {
+  it("classifies the booked-deal QUOTE_ACCEPTED as a fill", () => {
+    expect(isFillKind("QUOTE_ACCEPTED")).toBe(true);
+    expect(isFillKind("RFQ_RECEIVED")).toBe(false);
+  });
+
+  it("increments within the window and restarts outside it", () => {
+    const s1 = advanceStreak(EMPTY_STREAK, 1_000, 1_500); // fresh
+    expect(s1.count).toBe(1);
+    const s2 = advanceStreak(s1, 2_000, 1_500); // +1s, within
+    expect(s2.count).toBe(2);
+    const s3 = advanceStreak(s2, 3_000, 1_500); // +1s, within
+    expect(s3.count).toBe(3);
+    const s4 = advanceStreak(s3, 10_000, 1_500); // +7s, outside ⇒ reset
+    expect(s4.count).toBe(1);
   });
 });
 
