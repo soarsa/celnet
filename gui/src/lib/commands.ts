@@ -125,13 +125,15 @@ export const RAIL: readonly {
   { id: "aggbook", glyph: "◫", label: "Agg Book", assets: ["fixed_income"] },
   { id: "tiering", glyph: "⚖", label: "Tiering", assets: ["fixed_income"] },
   // FI Risk routing (docs/FI-RISK-ROUTING-REQUIREMENTS.md): the hierarchical risk-
-  // BOOK tree editor and the per-book risk DASHBOARD. Single-asset FI rows; every
-  // underlying RPC is admin-gated (edit affordances gate on `isAdmin` INSIDE the
-  // pane, like Pricing Groups — the pass-6b flow-canvas routing editor joins later).
-  { id: "riskbooks", glyph: "❦", label: "Risk Books", assets: ["fixed_income"] },
+  // portfolio tree editor and the per-portfolio risk DASHBOARD. Single-asset FI
+  // rows; every underlying RPC is admin-gated (edit affordances gate on `isAdmin`
+  // INSIDE the pane, like Pricing Groups). USER-FACING name "Risk Portfolios"; the
+  // wire type stays `RiskBookDef`/`riskbooks` (rename is UI-only — see
+  // docs/FI-BOOK-CONCEPTS.md).
+  { id: "riskbooks", glyph: "❦", label: "Risk Portfolios", assets: ["fixed_income"] },
   { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", assets: ["fixed_income"] },
-  // Risk Routing: the drag-and-drop decision-tree canvas that routes each fill's
-  // risk into a desk book. Admin edit; read-only otherwise. Single-asset FI row.
+  // Risk Routing: the ordered rules table that routes each fill's risk into a desk's
+  // risk portfolio. Admin edit; read-only otherwise. Single-asset FI row.
   { id: "riskrouting", glyph: "⑃", label: "Risk Routing", assets: ["fixed_income"] },
   { id: "surface", glyph: "◷", label: "Market Data", assets: CAPABILITY_ASSETS },
   { id: "risk", glyph: "⊞", label: "Risk", assets: CAPABILITY_ASSETS },

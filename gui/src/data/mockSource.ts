@@ -2859,16 +2859,16 @@ export class MockTransport implements CelnetTransport {
 
   async createRiskBook(spec: RiskBook): Promise<RiskBook> {
     const name = spec.name.trim();
-    if (name.length === 0) throw new Error("risk-book name is required");
+    if (name.length === 0) throw new Error("a risk portfolio name is required");
     const id = spec.id.trim().length > 0 ? mockSlugify(spec.id) : mockSlugify(name);
     if (this.mockRiskBooks.some((b) => b.id === id)) {
-      throw new Error(`a risk book with id \`${id}\` already exists`);
+      throw new Error(`a risk portfolio with id \`${id}\` already exists`);
     }
     if (this.mockRiskBooks.some((b) => b.name.toLowerCase() === name.toLowerCase())) {
-      throw new Error(`a risk book named \`${name}\` already exists`);
+      throw new Error(`a risk portfolio named \`${name}\` already exists`);
     }
     if (spec.parentId !== null && !this.mockRiskBooks.some((b) => b.id === spec.parentId)) {
-      throw new Error(`no parent risk book with id \`${spec.parentId}\``);
+      throw new Error(`no parent risk portfolio with id \`${spec.parentId}\``);
     }
     const book = cloneRiskBook({ ...spec, id, name });
     this.mockRiskBooks.push(book);
@@ -2877,23 +2877,23 @@ export class MockTransport implements CelnetTransport {
 
   async updateRiskBook(id: string, spec: RiskBook): Promise<RiskBook> {
     const existing = this.mockRiskBooks.find((b) => b.id === id);
-    if (!existing) throw new Error(`no risk book with id \`${id}\``);
+    if (!existing) throw new Error(`no risk portfolio with id \`${id}\``);
     const name = spec.name.trim();
-    if (name.length === 0) throw new Error("risk-book name is required");
+    if (name.length === 0) throw new Error("a risk portfolio name is required");
     if (
       this.mockRiskBooks.some(
         (b) => b.id !== id && b.name.toLowerCase() === name.toLowerCase(),
       )
     ) {
-      throw new Error(`a risk book named \`${name}\` already exists`);
+      throw new Error(`a risk portfolio named \`${name}\` already exists`);
     }
-    if (spec.parentId === id) throw new Error("a risk book cannot be its own parent");
+    if (spec.parentId === id) throw new Error("a risk portfolio cannot be its own parent");
     if (spec.parentId !== null && !this.mockRiskBooks.some((b) => b.id === spec.parentId)) {
-      throw new Error(`no parent risk book with id \`${spec.parentId}\``);
+      throw new Error(`no parent risk portfolio with id \`${spec.parentId}\``);
     }
     // Acyclicity: the new parent must not be a descendant of this book (would form a cycle).
     if (spec.parentId !== null && this.riskBookDescendants(id).has(spec.parentId)) {
-      throw new Error("re-parenting would create a cycle in the risk-book tree");
+      throw new Error("re-parenting would create a cycle in the risk-portfolio tree");
     }
     // The `id` is the immutable identity; the spec's own `id` field is ignored.
     const updated = cloneRiskBook({ ...spec, id, name });
@@ -2906,7 +2906,7 @@ export class MockTransport implements CelnetTransport {
     const idx = this.mockRiskBooks.findIndex((b) => b.id === id);
     if (idx < 0) return false;
     if (this.mockRiskBooks.some((b) => b.parentId === id)) {
-      throw new Error("cannot delete a risk book that still has child books");
+      throw new Error("cannot delete a risk portfolio that still has child portfolios");
     }
     this.mockRiskBooks.splice(idx, 1);
     return true;

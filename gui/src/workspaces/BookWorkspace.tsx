@@ -123,6 +123,11 @@ export function BookWorkspace({
           </button>
         ))}
       </div>
+      <p className={styles.shellSub}>
+        Your booked <strong>positions</strong> + booking + deals (the ledger) — where fills are
+        actually held. Not the &ldquo;Agg Book&rdquo; of LP prices, nor a &ldquo;Risk
+        Portfolio&rdquo; (that&apos;s how the risk is bucketed for management).
+      </p>
       <div className={styles.lensBody}>
         {lens === "positions" ? (
           <RatesBookWorkspace />

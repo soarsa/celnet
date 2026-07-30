@@ -248,7 +248,8 @@ function conditionText(c: RuleCondition): string {
  * desk-scoped display label; an unset destination reads `(no book)`.
  */
 export function describeRule(rule: RiskRule, bookLabel: (id: string) => string): string {
-  const dest = rule.bookId !== null && rule.bookId.length > 0 ? bookLabel(rule.bookId) : "(no book)";
+  const dest =
+    rule.bookId !== null && rule.bookId.length > 0 ? bookLabel(rule.bookId) : "(no portfolio)";
   if (rule.conditions.length === 0) return `Otherwise → ${dest}`;
   const guard = rule.conditions.map(conditionText).join(" AND ");
   return `${guard} → ${dest}`;

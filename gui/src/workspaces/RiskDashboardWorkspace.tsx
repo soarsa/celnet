@@ -1,10 +1,12 @@
 /**
- * RiskDashboardWorkspace — the per-book RISK dashboard (docs/FI-RISK-ROUTING-
- * REQUIREMENTS.md §6.3, §8.6). Reads each enabled risk book's rolled-up risk from
+ * RiskDashboardWorkspace — the per-portfolio RISK dashboard (docs/FI-RISK-ROUTING-
+ * REQUIREMENTS.md §6.3, §8.6). USER-FACING name "Risk Portfolios"; the wire type
+ * stays {@link RiskBook}/`RiskBookDef` (rename is UI-only — see
+ * docs/FI-BOOK-CONCEPTS.md). Reads each enabled risk portfolio's rolled-up risk from
  * `listRiskBookRisk()` (net/gross base-currency notional, position count, the
  * additive greeks Δ/Γ/Vega/Θ, and a per-cap limit-utilization strip with RAG bands)
- * plus the book roster for names / tree order. A heat OVERVIEW ranks every book by
- * its worst limit utilization; selecting a book (or a row) shows its full breakdown.
+ * plus the roster for names / tree order. A heat OVERVIEW ranks every portfolio by
+ * its worst limit utilization; selecting a portfolio (or a row) shows its breakdown.
  *
  * `dv01` / `pnl` arrive as `null` when NOT yet evaluable at this seam (rates DV01 /
  * mark PnL) — rendered as "—", never as a fabricated 0. The RPC is admin-gated
@@ -178,8 +180,10 @@ export function RiskDashboardWorkspace(): React.ReactElement {
             )}
           </h1>
           <p className={styles.note}>
-            Per-book rolled-up risk — each book aggregates its own routed positions plus every
-            descendant's. DV01 and PnL show “—” until the rates-book and mark passes are wired.
+            Per-portfolio rolled-up risk — each risk portfolio aggregates its own routed positions
+            plus every descendant&apos;s. DV01 and PnL show “—” until the rates-book and mark passes
+            are wired. This is how routed risk is bucketed for management — not the ledger
+            &ldquo;Book&rdquo; where fills are booked, nor the &ldquo;Agg Book&rdquo; of LP prices.
           </p>
         </div>
       </header>
@@ -195,7 +199,7 @@ export function RiskDashboardWorkspace(): React.ReactElement {
         <table className={styles.table}>
           <thead>
             <tr>
-              <th scope="col">Book</th>
+              <th scope="col">Portfolio</th>
               <th scope="col" className={styles.numCol}>
                 Net
               </th>
@@ -218,7 +222,7 @@ export function RiskDashboardWorkspace(): React.ReactElement {
             {risk.length === 0 && (
               <tr>
                 <td colSpan={7} className={styles.empty}>
-                  No enabled risk books to report.
+                  No enabled risk portfolios to report.
                 </td>
               </tr>
             )}

@@ -141,7 +141,7 @@ export function RuleEditor({
 
   const handleSave = (): void => {
     if (!isDefault && (bookId === null || bookId.length === 0)) {
-      setError("Pick a destination risk book (or remove all conditions for a catch-all rule).");
+      setError("Pick a destination risk portfolio (or remove all conditions for a catch-all rule).");
       return;
     }
     onSave({ ...draft, conditions, bookId });
@@ -155,7 +155,7 @@ export function RuleEditor({
             <h2 className={styles.ruleEditorTitle}>{isNew ? "Create risk rule" : "Edit risk rule"}</h2>
             <p className={styles.ruleEditorHint}>
               Drag field chips into the conditions area to build{" "}
-              <strong>IF &lt;conditions&gt; THEN route into a risk book</strong>. Remove every
+              <strong>IF &lt;conditions&gt; THEN route into a risk portfolio</strong>. Remove every
               condition to make this the catch-all (default) rule.
             </p>
           </div>
@@ -209,7 +209,7 @@ export function RuleEditor({
             </section>
 
             <section className={styles.destArea} aria-label="Destination">
-              <h3 className={styles.condAreaTitle}>Drop into this risk book</h3>
+              <h3 className={styles.condAreaTitle}>Route into this risk portfolio</h3>
               {isDefault && (
                 <p className={styles.condEmpty}>
                   Catch-all rules may route anywhere every unmatched fill should land.
@@ -235,7 +235,7 @@ export function RuleEditor({
                   </select>
                 </label>
                 <label className={styles.editorField}>
-                  <span className={styles.fieldLabel}>Risk book</span>
+                  <span className={styles.fieldLabel}>Risk portfolio</span>
                   <select
                     className={styles.select}
                     value={bookId ?? ""}
@@ -244,7 +244,7 @@ export function RuleEditor({
                     data-testid="book-target-select"
                   >
                     <option value="">
-                      {deskFilter === "" ? "(pick a desk first)" : "(select a book)"}
+                      {deskFilter === "" ? "(pick a desk first)" : "(select a portfolio)"}
                     </option>
                     {booksForDesk.map((book) => (
                       <option key={book.id} value={book.id} disabled={!book.enabled}>

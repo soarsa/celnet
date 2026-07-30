@@ -51,6 +51,12 @@
   flex: 1 1 auto;
   min-height: 0;
 }
+.shellSub {
+  margin: 0 0 var(--space-4);
+  font-size: var(--type-caption);
+  line-height: var(--type-callout-lh);
+  color: var(--text-tertiary);
+}
 
 .wrap {
   display: flex;

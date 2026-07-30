@@ -380,6 +380,10 @@ export function AggregatedBookWorkspace(): React.ReactElement {
               ? "define the book's members, instrument scope, consolidation tuning, and outbound price tiering"
               : "consolidated best bid/offer across the book's inbound liquidity members · one price tile per security · open a tile for the per-LP breakdown"}
           </span>
+          <span className={styles.note}>
+            Live LP-aggregated <strong>prices</strong> (liquidity) — not your positions, and not a
+            risk portfolio.
+          </span>
         </div>
         <div className={styles.headAside}>
           {isAdmin && (

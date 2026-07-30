@@ -1,11 +1,13 @@
 /**
- * RiskBooksWorkspace — the admin hierarchical RISK-BOOK tree editor
- * (docs/FI-RISK-ROUTING-REQUIREMENTS.md §6.2). Risk books form a TREE (desk →
- * book → sub-book); a filled order/RFQ routes its risk into a leaf book so limits /
- * greeks / PnL are managed per book. This pane lets an admin list / create / rename /
- * nest / enable-disable books, set per-book {@link RiskLimits}, tag an owning desk,
- * and re-parent (a client-side acyclic guard forbids parenting a book under itself
- * or a descendant).
+ * RiskBooksWorkspace — the admin hierarchical RISK-PORTFOLIO tree editor
+ * (docs/FI-RISK-ROUTING-REQUIREMENTS.md §6.2). USER-FACING name "Risk Portfolios";
+ * the wire type stays {@link RiskBook}/`RiskBookDef` (the rename is UI-only — see
+ * docs/FI-BOOK-CONCEPTS.md). Risk portfolios form a TREE (desk → portfolio →
+ * sub-portfolio); a filled order/RFQ routes its risk into a leaf portfolio so
+ * limits / greeks / PnL are managed per portfolio. This pane lets an admin list /
+ * create / rename / nest / enable-disable portfolios, set per-portfolio
+ * {@link RiskLimits}, tag an owning desk, and re-parent (a client-side acyclic
+ * guard forbids parenting a portfolio under itself or a descendant).
  *
  * Gating: every risk-routing RPC is admin-gated server-side. Edit affordances gate
  * on `auth.isAdmin` (mirrors {@link PricingGroupsWorkspace}); a non-admin who
@@ -149,7 +151,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setLoadError(e instanceof Error ? e.message : "failed to load risk books");
+        setLoadError(e instanceof Error ? e.message : "failed to load risk portfolios");
       });
     return () => {
       cancelled = true;
@@ -226,7 +228,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
   const save = useCallback(async (): Promise<void> => {
     if (!draft) return;
     if (draft.name.trim().length === 0) {
-      setSaveState({ kind: "error", message: "a book name is required" });
+      setSaveState({ kind: "error", message: "a portfolio name is required" });
       return;
     }
     setSaveState({ kind: "saving" });
@@ -241,7 +243,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
     } catch (e: unknown) {
       setSaveState({
         kind: "error",
-        message: e instanceof Error ? e.message : "failed to save the risk book",
+        message: e instanceof Error ? e.message : "failed to save the risk portfolio",
       });
     }
   }, [draft, creating, app.transport, reload]);
@@ -257,7 +259,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
     } catch (e: unknown) {
       setSaveState({
         kind: "error",
-        message: e instanceof Error ? e.message : "failed to delete the risk book",
+        message: e instanceof Error ? e.message : "failed to delete the risk portfolio",
       });
     }
   }, [selectedBook, app.transport, reload]);
@@ -280,7 +282,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
   if (!signedIn) {
     return (
       <div className={styles.wrap}>
-        <p className={styles.empty}>Sign in to manage risk books.</p>
+        <p className={styles.empty}>Sign in to manage risk portfolios.</p>
       </div>
     );
   }
@@ -289,16 +291,21 @@ export function RiskBooksWorkspace(): React.ReactElement {
     <div className={styles.wrap}>
       <header className={styles.head}>
         <div className={styles.headMain}>
-          <h1 className={styles.title}>Risk Books</h1>
+          <h1 className={styles.title}>Risk Portfolios</h1>
           <p className={styles.note}>
-            The hierarchical portfolio tree fills route risk into. {readOnly ? "Read-only" : "Admin"}{" "}
-            view — a filled order or RFQ books its risk into a leaf book so limits, greeks and PnL
-            roll up the tree.
+            Trader-defined risk portfolios (desk → portfolio → sub-portfolio) that routing rules drop
+            each fill&apos;s risk into, each with its own limits. {readOnly ? "Read-only" : "Admin"}{" "}
+            view — greeks, notional and PnL roll up the tree.
+          </p>
+          <p className={styles.note}>
+            How your risk is <strong>bucketed</strong> for management — this is not the ledger
+            &ldquo;Book&rdquo; where fills are actually booked, nor the &ldquo;Agg Book&rdquo; of LP
+            prices.
           </p>
         </div>
         {!readOnly && (
           <Button onClick={() => startCreate(null)} data-testid="new-risk-book">
-            + New book
+            + New portfolio
           </Button>
         )}
       </header>
@@ -310,8 +317,8 @@ export function RiskBooksWorkspace(): React.ReactElement {
       )}
 
       <div className={styles.body}>
-        <nav className={styles.tree} aria-label="Risk book tree">
-          {rows.length === 0 && <p className={styles.empty}>No risk books defined yet.</p>}
+        <nav className={styles.tree} aria-label="Risk portfolio tree">
+          {rows.length === 0 && <p className={styles.empty}>No risk portfolios defined yet.</p>}
           <ul className={styles.treeList}>
             {rows.map(({ book, depth }) => (
               <li key={book.id}>
@@ -335,12 +342,12 @@ export function RiskBooksWorkspace(): React.ReactElement {
           </ul>
         </nav>
 
-        <section className={styles.editor} aria-label="Risk book editor">
-          {!draft && <p className={styles.empty}>Select a book to view or edit it.</p>}
+        <section className={styles.editor} aria-label="Risk portfolio editor">
+          {!draft && <p className={styles.empty}>Select a portfolio to view or edit it.</p>}
           {draft && (
             <div className={styles.form}>
               <h2 className={styles.editorTitle}>
-                {creating ? "New risk book" : `Edit “${selectedBook?.name ?? draft.name}”`}
+                {creating ? "New risk portfolio" : `Edit “${selectedBook?.name ?? draft.name}”`}
               </h2>
 
               <label className={styles.field}>
@@ -361,13 +368,13 @@ export function RiskBooksWorkspace(): React.ReactElement {
                   value={draft.description}
                   disabled={readOnly}
                   onChange={(e) => patch({ description: e.target.value })}
-                  placeholder="What this book is for"
+                  placeholder="What this portfolio is for"
                 />
               </label>
 
               <div className={styles.row}>
                 <label className={styles.field}>
-                  <span className={styles.label}>Parent book</span>
+                  <span className={styles.label}>Parent portfolio</span>
                   <select
                     className={styles.input}
                     value={draft.parentId ?? ""}
@@ -408,7 +415,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
                   disabled={readOnly}
                   onChange={(e) => patch({ enabled: e.target.checked })}
                 />
-                <span>Enabled (only enabled books are valid routing targets)</span>
+                <span>Enabled (only enabled portfolios are valid routing targets)</span>
               </label>
 
               <fieldset className={styles.limits} disabled={readOnly}>
@@ -466,7 +473,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
               {!readOnly && (
                 <div className={styles.actions}>
                   <Button onClick={() => void save()} disabled={saveState.kind === "saving"}>
-                    {creating ? "Create book" : "Save changes"}
+                    {creating ? "Create portfolio" : "Save changes"}
                   </Button>
                   {!creating && selectedBook && (
                     <Button

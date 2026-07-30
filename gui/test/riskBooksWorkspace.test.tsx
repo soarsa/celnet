@@ -65,7 +65,7 @@ describe("RiskBooksWorkspace", () => {
     });
     render(<RiskBooksWorkspace />);
 
-    const tree = await screen.findByRole("navigation", { name: /risk book tree/i });
+    const tree = await screen.findByRole("navigation", { name: /risk portfolio tree/i });
     expect(within(tree).getByText("FX EMEA")).toBeInTheDocument();
     expect(within(tree).getByText("FX EMEA Vanilla")).toBeInTheDocument();
     expect(within(tree).getByText("FX APAC")).toBeInTheDocument();
@@ -88,7 +88,7 @@ describe("RiskBooksWorkspace", () => {
     });
     render(<RiskBooksWorkspace />);
 
-    const tree = await screen.findByRole("navigation", { name: /risk book tree/i });
+    const tree = await screen.findByRole("navigation", { name: /risk portfolio tree/i });
     fireEvent.click(within(tree).getByText("FX EMEA"));
     expect(await screen.findByDisplayValue("FX EMEA")).toBeInTheDocument();
   });
@@ -97,7 +97,7 @@ describe("RiskBooksWorkspace", () => {
     state.app = makeApp({ isAdmin: false, books: [book({ name: "FX EMEA" })] });
     render(<RiskBooksWorkspace />);
 
-    await screen.findByRole("navigation", { name: /risk book tree/i });
+    await screen.findByRole("navigation", { name: /risk portfolio tree/i });
     expect(screen.queryByTestId("new-risk-book")).not.toBeInTheDocument();
     expect(await screen.findByDisplayValue("FX EMEA")).toBeDisabled();
   });

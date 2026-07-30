@@ -285,8 +285,9 @@ export function RiskRoutingWorkspace(): React.ReactElement {
         <div className={styles.headMain}>
           <h1 className={styles.title}>Risk Routing</h1>
           <p className={styles.note}>
-            Ordered rules route every fill's risk into a desk's book — the first rule that matches
-            wins. Reorder rows to re-prioritise. {readOnly ? "Read-only view." : "FI risk edit."}
+            Ordered rules route every fill&apos;s risk into a desk&apos;s risk portfolio — the first
+            rule that matches wins. Reorder rows to re-prioritise.{" "}
+            {readOnly ? "Read-only view." : "FI risk edit."}
           </p>
         </div>
         <div className={styles.headActions}>
