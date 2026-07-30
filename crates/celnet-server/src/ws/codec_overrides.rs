@@ -143,6 +143,19 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "DeleteRiskBookResponse",
     "GetRiskRoutingGraphResponse",
     "UpdateRiskRoutingGraphResponse",
+    // The AuthService risk-transfer reply envelopes (RiskTransfer RPCs): each
+    // `json!({ .. })` hand encoder emits the `Option<u64>` `correlation_id` as JSON
+    // `null` when absent; the `transfer` singular-message payload already renders
+    // `null`-when-absent via the generic singular-message rule and needs no entry.
+    // The nested `RiskTransfer` / `RiskTransferProvenance` records are NOT listed:
+    // their presence-tracked scalars (`partial_notional` / `agreed_price` / `approver`
+    // / `decided_at` / `transfer_price`) and `optional provenance` OMIT-when-absent,
+    // exactly like `RiskBookDesc`. (`RiskTransferInbox` carries no optional field.)
+    "InitiateRiskTransferResponse",
+    "AcceptRiskTransferResponse",
+    "RejectRiskTransferResponse",
+    "CancelRiskTransferResponse",
+    "ListRiskTransfersResponse",
     // The phase-5 per-book risk aggregation reply (`ListRiskBookRisk`): the reply
     // envelope's `json!({ .. })` hand encoder emits the `Option<u64>` `correlation_id`
     // as JSON `null` when absent, and each nested `RiskBookRiskDesc` row emits its

@@ -111,6 +111,16 @@ use celnet_proto::{
     AggregateRatesRiskRequest, AggregateRatesRiskResponse, KeyRateDv01, RatesPosition,
     RatesRiskNode, RatesRiskScope,
 };
+// AuthService — risk transfer (WS mirror of the RiskTransfer RPCs): initiate /
+// accept / reject / cancel / list, the four transfer records + their nested audit
+// (leg, moved-risk vector, provenance), and the transfer-inbox push frame.
+use celnet_proto::{
+    AcceptRiskTransferRequest, AcceptRiskTransferResponse, CancelRiskTransferRequest,
+    CancelRiskTransferResponse, InitiateRiskTransferRequest, InitiateRiskTransferResponse,
+    ListRiskTransfersRequest, ListRiskTransfersResponse, MovedRiskDesc, RejectRiskTransferRequest,
+    RejectRiskTransferResponse, RiskTransfer, RiskTransferInbox, RiskTransferProvenance,
+    RiskVectorDesc, TransferLeg,
+};
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
 /// human-readable reason echoed back to the client as a typed `error` frame.
@@ -252,6 +262,16 @@ fn f64_vec(o: &Map<String, Value>, key: &str) -> Vec<f64> {
     o.get(key)
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(Value::as_f64).collect())
+        .unwrap_or_default()
+}
+
+/// A repeated `u64` field defaulting to empty (mirrors `f64_vec` for the
+/// `position_ids` selection lists): absent/non-array ⇒ empty, non-integer elements
+/// silently dropped.
+fn u64_array(o: &Map<String, Value>, key: &str) -> Vec<u64> {
+    o.get(key)
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_u64).collect())
         .unwrap_or_default()
 }
 
@@ -4760,6 +4780,262 @@ pub(super) fn error_frame(message: &str, correlation_id: Option<u64>) -> Value {
     json!({ "type": "error", "message": message, "correlation_id": correlation_id })
 }
 
+// --- risk transfer (AuthService RiskTransfer RPCs) --------------------------
+//
+// The WS mirror of the risk-transfer surface. Enums ride as their canonical i32
+// tag (prost stores proto enums as i32 fields). The nested `source`/`target`
+// legs and `MovedRiskDesc.risk` / `RiskTransferProvenance.risk_moved` are BARE
+// singular messages → rendered JSON `null` when absent (the generic
+// singular-message rule the descriptor encoder applies). The `RiskTransfer`
+// record's own presence-tracked scalars (`partial_notional` / `agreed_price` /
+// `approver` / `decided_at` / `transfer_price`) and its `optional provenance`
+// message are OMITTED when absent (`RiskTransfer` / `RiskTransferProvenance` are
+// nested sub-messages, NOT reply envelopes, so they keep the omit-when-absent
+// default). The five reply envelopes ARE on the null-absent list, so their
+// `optional uint64 correlation_id` renders `null` when absent.
+
+/// A transfer leg → JSON. All fields required scalars; `position_ids` is the
+/// (possibly empty) selection array.
+fn transfer_leg_to_json(l: &TransferLeg) -> Value {
+    json!({
+        "risk_book_id": l.risk_book_id,
+        "desk_id": l.desk_id,
+        "trader": l.trader,
+        "position_ids": l.position_ids,
+    })
+}
+
+/// A transfer leg ← JSON (a nested `source`/`target` object). Proto3 singular
+/// strings default to empty; `position_ids` decodes leniently to an empty vec.
+fn transfer_leg_from_json(v: &Value) -> Result<TransferLeg> {
+    let o = obj(v, "leg")?;
+    Ok(TransferLeg {
+        risk_book_id: string_or_empty(o, "risk_book_id"),
+        desk_id: string_or_empty(o, "desk_id"),
+        trader: string_or_empty(o, "trader"),
+        position_ids: u64_array(o, "position_ids"),
+    })
+}
+
+/// A pass-through risk vector → JSON (all required scalars).
+fn risk_vector_desc_to_json(r: &RiskVectorDesc) -> Value {
+    json!({
+        "dv01": r.dv01,
+        "delta": r.delta,
+        "gamma": r.gamma,
+        "vega": r.vega,
+        "theta": r.theta,
+    })
+}
+
+/// The aggregate risk a transfer moves → JSON. `risk` is a BARE singular message
+/// → JSON `null` when absent.
+fn moved_risk_desc_to_json(m: &MovedRiskDesc) -> Value {
+    json!({
+        "notional_base": m.notional_base,
+        "risk": m.risk.as_ref().map(risk_vector_desc_to_json),
+    })
+}
+
+/// The immutable audit record stamped on a Booked transfer → JSON. Enums ride as
+/// their i32 tag; `approver`/`decided_at`/`partial_notional` are presence-tracked
+/// (OMITTED when absent); `risk_moved` is a BARE singular message (`null` when
+/// absent).
+fn risk_transfer_provenance_to_json(p: &RiskTransferProvenance) -> Value {
+    let mut m = Map::new();
+    m.insert("transfer_id".to_string(), json!(p.transfer_id));
+    m.insert("kind".to_string(), json!(p.kind));
+    m.insert("initiated_by".to_string(), json!(p.initiated_by));
+    m.insert("initiated_at".to_string(), json!(p.initiated_at));
+    if let Some(a) = &p.approver {
+        m.insert("approver".to_string(), json!(a));
+    }
+    if let Some(d) = p.decided_at {
+        m.insert("decided_at".to_string(), json!(d));
+    }
+    m.insert("source_book_id".to_string(), json!(p.source_book_id));
+    m.insert("target_book_id".to_string(), json!(p.target_book_id));
+    m.insert("position_ids".to_string(), json!(p.position_ids));
+    m.insert("quantity_full".to_string(), json!(p.quantity_full));
+    if let Some(pn) = p.partial_notional {
+        m.insert("partial_notional".to_string(), json!(pn));
+    }
+    m.insert("transfer_price".to_string(), json!(p.transfer_price));
+    m.insert("price_basis".to_string(), json!(p.price_basis));
+    m.insert("reason".to_string(), json!(p.reason));
+    m.insert(
+        "realized_pnl_source".to_string(),
+        json!(p.realized_pnl_source),
+    );
+    m.insert(
+        "risk_moved".to_string(),
+        json!(p.risk_moved.as_ref().map(moved_risk_desc_to_json)),
+    );
+    Value::Object(m)
+}
+
+/// A risk-transfer record → JSON. Always-present scalars are inserted directly;
+/// `source`/`target` are BARE singular messages (`null` when absent); the
+/// presence-tracked `partial_notional`/`agreed_price`/`approver`/`decided_at`/
+/// `transfer_price` scalars and the `optional provenance` message are OMITTED when
+/// absent (this is a nested sub-message, not a reply envelope).
+fn risk_transfer_to_json(t: &RiskTransfer) -> Value {
+    let mut m = Map::new();
+    m.insert("id".to_string(), json!(t.id));
+    m.insert("kind".to_string(), json!(t.kind));
+    m.insert(
+        "source".to_string(),
+        json!(t.source.as_ref().map(transfer_leg_to_json)),
+    );
+    m.insert(
+        "target".to_string(),
+        json!(t.target.as_ref().map(transfer_leg_to_json)),
+    );
+    m.insert("quantity_full".to_string(), json!(t.quantity_full));
+    if let Some(pn) = t.partial_notional {
+        m.insert("partial_notional".to_string(), json!(pn));
+    }
+    m.insert("price_basis".to_string(), json!(t.price_basis));
+    if let Some(ap) = t.agreed_price {
+        m.insert("agreed_price".to_string(), json!(ap));
+    }
+    m.insert("reason".to_string(), json!(t.reason));
+    m.insert("initiated_by".to_string(), json!(t.initiated_by));
+    m.insert("initiated_at".to_string(), json!(t.initiated_at));
+    m.insert("state".to_string(), json!(t.state));
+    if let Some(a) = &t.approver {
+        m.insert("approver".to_string(), json!(a));
+    }
+    if let Some(d) = t.decided_at {
+        m.insert("decided_at".to_string(), json!(d));
+    }
+    if let Some(tp) = t.transfer_price {
+        m.insert("transfer_price".to_string(), json!(tp));
+    }
+    if let Some(p) = &t.provenance {
+        m.insert(
+            "provenance".to_string(),
+            risk_transfer_provenance_to_json(p),
+        );
+    }
+    Value::Object(m)
+}
+
+pub(super) fn initiate_risk_transfer_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<InitiateRiskTransferRequest> {
+    Ok(InitiateRiskTransferRequest {
+        session_token: string_field(o, "session_token")?,
+        kind: enum_or_zero(o, "kind"),
+        source: Some(nested(o, "source", transfer_leg_from_json)?),
+        target: Some(nested(o, "target", transfer_leg_from_json)?),
+        quantity_full: bool_or_false(o, "quantity_full"),
+        partial_notional: opt_f64(o, "partial_notional"),
+        price_basis: enum_or_zero(o, "price_basis"),
+        agreed_price: opt_f64(o, "agreed_price"),
+        reason: string_or_empty(o, "reason"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn initiate_risk_transfer_response_to_json(r: &InitiateRiskTransferResponse) -> Value {
+    json!({
+        "transfer": r.transfer.as_ref().map(risk_transfer_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn accept_risk_transfer_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<AcceptRiskTransferRequest> {
+    Ok(AcceptRiskTransferRequest {
+        session_token: string_field(o, "session_token")?,
+        transfer_id: string_field(o, "transfer_id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn accept_risk_transfer_response_to_json(r: &AcceptRiskTransferResponse) -> Value {
+    json!({
+        "transfer": r.transfer.as_ref().map(risk_transfer_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn reject_risk_transfer_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<RejectRiskTransferRequest> {
+    Ok(RejectRiskTransferRequest {
+        session_token: string_field(o, "session_token")?,
+        transfer_id: string_field(o, "transfer_id")?,
+        reason: string_or_empty(o, "reason"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn reject_risk_transfer_response_to_json(r: &RejectRiskTransferResponse) -> Value {
+    json!({
+        "transfer": r.transfer.as_ref().map(risk_transfer_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn cancel_risk_transfer_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<CancelRiskTransferRequest> {
+    Ok(CancelRiskTransferRequest {
+        session_token: string_field(o, "session_token")?,
+        transfer_id: string_field(o, "transfer_id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn cancel_risk_transfer_response_to_json(r: &CancelRiskTransferResponse) -> Value {
+    json!({
+        "transfer": r.transfer.as_ref().map(risk_transfer_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn list_risk_transfers_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListRiskTransfersRequest> {
+    let states = o
+        .get("states")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_i64)
+                .map(|n| n as i32)
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(ListRiskTransfersRequest {
+        session_token: string_field(o, "session_token")?,
+        desk: opt_string(o, "desk"),
+        trader: opt_string(o, "trader"),
+        risk_book_id: opt_string(o, "risk_book_id"),
+        states,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_risk_transfers_response_to_json(r: &ListRiskTransfersResponse) -> Value {
+    json!({
+        "transfers": Value::Array(r.transfers.iter().map(risk_transfer_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+/// The per-desk / per-trader transfer inbox push frame → JSON (encode-only; a
+/// server push, never decoded). No optional field, so nothing is null-when-absent.
+pub(super) fn risk_transfer_inbox_to_json(i: &RiskTransferInbox) -> Value {
+    json!({
+        "pending": Value::Array(i.pending.iter().map(risk_transfer_to_json).collect()),
+        "at_nanos": i.at_nanos,
+    })
+}
+
 /// Silence unused-variant lints on the convenience enum aliases imported only to
 /// document the vocabulary the codec speaks (they are referenced via their proto
 /// `as i32` tags in client payloads, not by name here).
@@ -4850,6 +5126,14 @@ pub mod diff_support {
         ListRiskBookRiskRequest, ListRiskBookRiskResponse, ListRiskBooksRequest,
         ListRiskBooksResponse, UpdateRiskBookRequest, UpdateRiskBookResponse,
         UpdateRiskRoutingGraphRequest, UpdateRiskRoutingGraphResponse,
+    };
+    // Risk-transfer verb family (AuthService RiskTransfer RPCs): the request decoders
+    // + reply/push encoders the generated codec is proven byte-identical to.
+    use celnet_proto::{
+        AcceptRiskTransferRequest, AcceptRiskTransferResponse, CancelRiskTransferRequest,
+        CancelRiskTransferResponse, InitiateRiskTransferRequest, InitiateRiskTransferResponse,
+        ListRiskTransfersRequest, ListRiskTransfersResponse, RejectRiskTransferRequest,
+        RejectRiskTransferResponse, RiskTransferInbox,
     };
     use serde_json::{Map, Value};
 
@@ -6183,6 +6467,92 @@ pub mod diff_support {
         r: &UpdateRiskRoutingGraphResponse,
     ) -> Value {
         super::update_risk_routing_graph_response_to_json(r)
+    }
+
+    /// Hand-codec `InitiateRiskTransferRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_initiate_risk_transfer_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<InitiateRiskTransferRequest, CodecError> {
+        super::initiate_risk_transfer_request_from_json(o)
+    }
+
+    /// Hand-codec `InitiateRiskTransferResponse` encoder.
+    #[must_use]
+    pub fn hand_initiate_risk_transfer_response_to_json(r: &InitiateRiskTransferResponse) -> Value {
+        super::initiate_risk_transfer_response_to_json(r)
+    }
+
+    /// Hand-codec `AcceptRiskTransferRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_accept_risk_transfer_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<AcceptRiskTransferRequest, CodecError> {
+        super::accept_risk_transfer_request_from_json(o)
+    }
+
+    /// Hand-codec `AcceptRiskTransferResponse` encoder.
+    #[must_use]
+    pub fn hand_accept_risk_transfer_response_to_json(r: &AcceptRiskTransferResponse) -> Value {
+        super::accept_risk_transfer_response_to_json(r)
+    }
+
+    /// Hand-codec `RejectRiskTransferRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_reject_risk_transfer_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<RejectRiskTransferRequest, CodecError> {
+        super::reject_risk_transfer_request_from_json(o)
+    }
+
+    /// Hand-codec `RejectRiskTransferResponse` encoder.
+    #[must_use]
+    pub fn hand_reject_risk_transfer_response_to_json(r: &RejectRiskTransferResponse) -> Value {
+        super::reject_risk_transfer_response_to_json(r)
+    }
+
+    /// Hand-codec `CancelRiskTransferRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_cancel_risk_transfer_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<CancelRiskTransferRequest, CodecError> {
+        super::cancel_risk_transfer_request_from_json(o)
+    }
+
+    /// Hand-codec `CancelRiskTransferResponse` encoder.
+    #[must_use]
+    pub fn hand_cancel_risk_transfer_response_to_json(r: &CancelRiskTransferResponse) -> Value {
+        super::cancel_risk_transfer_response_to_json(r)
+    }
+
+    /// Hand-codec `ListRiskTransfersRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_risk_transfers_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListRiskTransfersRequest, CodecError> {
+        super::list_risk_transfers_request_from_json(o)
+    }
+
+    /// Hand-codec `ListRiskTransfersResponse` encoder.
+    #[must_use]
+    pub fn hand_list_risk_transfers_response_to_json(r: &ListRiskTransfersResponse) -> Value {
+        super::list_risk_transfers_response_to_json(r)
+    }
+
+    /// Hand-codec `RiskTransferInbox` push-frame encoder.
+    #[must_use]
+    pub fn hand_risk_transfer_inbox_to_json(i: &RiskTransferInbox) -> Value {
+        super::risk_transfer_inbox_to_json(i)
     }
 
     /// Hand-codec `ListInstrumentsRequest` decoder.

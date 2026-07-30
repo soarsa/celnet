@@ -31,6 +31,12 @@
 //! `Underlying`, `RateSensitivities`).
 
 use celnet_proto::{
+    AcceptRiskTransferResponse, CancelRiskTransferResponse, InitiateRiskTransferResponse,
+    ListRiskTransfersResponse, MovedRiskDesc, PriceBasis, RejectRiskTransferResponse, RiskTransfer,
+    RiskTransferInbox, RiskTransferProvenance, RiskVectorDesc, TransferKind, TransferLeg,
+    TransferPriceBasis, TransferState,
+};
+use celnet_proto::{
     AggregatedBookDesc, AggregatedBookSnapshot, AggregatedBookStreamSnapshot,
     AggregatedBookStreamUpdate, AggregatedInstrument, AggregationParamsDesc, AggregationScopeMode,
     AxeSide, BrokenDate, CcyPair, CreateAggregatedBookResponse, CreatePricingGroupResponse,
@@ -5332,5 +5338,413 @@ fn list_risk_book_risk_response_encode_byte_identical() {
         "ListRiskBookRiskResponse(empty)",
         &generated::encode_list_risk_book_risk_response(&empty),
         &hand::hand_list_risk_book_risk_response_to_json(&empty),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// risk transfer (AuthService RiskTransfer RPCs)
+//
+// The transfer surface exercises every wire quirk this codec must reproduce:
+// enums-as-i32 tags, BARE singular messages (source / target / MovedRiskDesc.risk
+// / RiskTransferProvenance.risk_moved) → JSON `null` when absent, nested
+// presence-tracked scalars / `optional provenance` that OMIT when absent, the
+// reply envelopes' null-when-absent `correlation_id`, and the repeated `uint64`
+// `position_ids` + repeated-enum `states` paths (a known regression class).
+// ---------------------------------------------------------------------------
+
+/// A fully-populated pass-through risk vector.
+fn full_risk_vector() -> RiskVectorDesc {
+    RiskVectorDesc {
+        dv01: 1234.5,
+        delta: 2_000_000.0,
+        gamma: 15.0,
+        vega: 88_000.0,
+        theta: -420.0,
+    }
+}
+
+/// A fully-populated transfer leg (present position_ids selection).
+fn full_leg(book: &str, positions: Vec<u64>) -> TransferLeg {
+    TransferLeg {
+        risk_book_id: book.to_owned(),
+        desk_id: "fi".to_owned(),
+        trader: "alice".to_owned(),
+        position_ids: positions,
+    }
+}
+
+/// A fully-populated audit provenance (every optional present, risk_moved present).
+fn full_provenance() -> RiskTransferProvenance {
+    RiskTransferProvenance {
+        transfer_id: "xfer-1".to_owned(),
+        kind: TransferKind::DeskToDesk as i32,
+        initiated_by: "alice".to_owned(),
+        initiated_at: 1_700_000_000_000_000_000,
+        approver: Some("bob".to_owned()),
+        decided_at: Some(1_700_000_060_000_000_000),
+        source_book_id: "gm".to_owned(),
+        target_book_id: "macro".to_owned(),
+        position_ids: vec![1, 2, 3],
+        quantity_full: false,
+        partial_notional: Some(5_000_000.0),
+        transfer_price: 1.2345,
+        price_basis: PriceBasis::Agreed as i32,
+        reason: "book move".to_owned(),
+        realized_pnl_source: -12_500.0,
+        risk_moved: Some(MovedRiskDesc {
+            notional_base: 5_000_000.0,
+            risk: Some(full_risk_vector()),
+        }),
+    }
+}
+
+/// A fully-populated transfer record: both legs (source carries position_ids), a
+/// Partial quantity (`partial_notional` present), an Agreed price (`agreed_price`
+/// present), decided (`approver`/`decided_at`/`transfer_price` present) and Booked
+/// (`provenance` present) — every omit/null edge on the PRESENT side.
+fn full_risk_transfer() -> RiskTransfer {
+    RiskTransfer {
+        id: "xfer-1".to_owned(),
+        kind: TransferKind::DeskToDesk as i32,
+        source: Some(full_leg("gm", vec![1, 2, 3])),
+        target: Some(full_leg("macro", vec![])),
+        quantity_full: false,
+        partial_notional: Some(5_000_000.0),
+        price_basis: TransferPriceBasis::Agreed as i32,
+        agreed_price: Some(1.2345),
+        reason: "book move".to_owned(),
+        initiated_by: "alice".to_owned(),
+        initiated_at: 1_700_000_000_000_000_000,
+        state: TransferState::Booked as i32,
+        approver: Some("bob".to_owned()),
+        decided_at: Some(1_700_000_060_000_000_000),
+        transfer_price: Some(1.2345),
+        provenance: Some(full_provenance()),
+    }
+}
+
+/// A minimal transfer record: Full quantity, Mid price, undecided, no provenance —
+/// every presence-tracked scalar / `optional provenance` absent (the OMIT edges),
+/// both legs present but sparse (default desk/trader/position_ids).
+fn minimal_risk_transfer() -> RiskTransfer {
+    RiskTransfer {
+        id: "xfer-2".to_owned(),
+        kind: TransferKind::ReAttribute as i32,
+        source: Some(TransferLeg {
+            risk_book_id: "gm".to_owned(),
+            ..TransferLeg::default()
+        }),
+        target: Some(TransferLeg {
+            risk_book_id: "macro".to_owned(),
+            ..TransferLeg::default()
+        }),
+        quantity_full: true,
+        partial_notional: None,
+        price_basis: TransferPriceBasis::Mid as i32,
+        agreed_price: None,
+        reason: String::new(),
+        initiated_by: "alice".to_owned(),
+        initiated_at: 1_700_000_000_000_000_000,
+        state: TransferState::Pending as i32,
+        approver: None,
+        decided_at: None,
+        transfer_price: None,
+        provenance: None,
+    }
+}
+
+/// A transfer whose `target` is absent (→ JSON `null`, the bare-singular edge) and
+/// whose provenance carries `risk_moved` WITH an absent inner `risk` (→ JSON `null`,
+/// the nested bare-singular edge) plus every optional provenance scalar absent (OMIT).
+fn transfer_null_inner_edges() -> RiskTransfer {
+    let prov = RiskTransferProvenance {
+        transfer_id: "xfer-3".to_owned(),
+        kind: TransferKind::TraderToTrader as i32,
+        initiated_by: "carol".to_owned(),
+        initiated_at: 1_700_000_000_000_000_000,
+        approver: None,
+        decided_at: None,
+        source_book_id: "gm".to_owned(),
+        target_book_id: "macro".to_owned(),
+        position_ids: vec![9],
+        quantity_full: true,
+        partial_notional: None,
+        transfer_price: 1.0,
+        price_basis: PriceBasis::Mid as i32,
+        reason: String::new(),
+        realized_pnl_source: 0.0,
+        risk_moved: Some(MovedRiskDesc {
+            notional_base: 1_000_000.0,
+            risk: None,
+        }),
+    };
+    RiskTransfer {
+        id: "xfer-3".to_owned(),
+        kind: TransferKind::TraderToTrader as i32,
+        source: Some(TransferLeg::default()),
+        target: None,
+        quantity_full: true,
+        partial_notional: None,
+        price_basis: TransferPriceBasis::Mid as i32,
+        agreed_price: None,
+        reason: String::new(),
+        initiated_by: "carol".to_owned(),
+        initiated_at: 1_700_000_000_000_000_000,
+        state: TransferState::Booked as i32,
+        approver: None,
+        decided_at: None,
+        transfer_price: Some(1.0),
+        provenance: Some(prov),
+    }
+}
+
+#[test]
+fn initiate_risk_transfer_request_decode_byte_identical() {
+    let full = json!({
+        "session_token": "tok",
+        "kind": 2,
+        "source": { "risk_book_id": "gm", "desk_id": "fi", "trader": "alice", "position_ids": [1, 2, 3] },
+        "target": { "risk_book_id": "macro", "desk_id": "rates", "trader": "bob", "position_ids": [] },
+        "quantity_full": false,
+        "partial_notional": 5_000_000.0,
+        "price_basis": 3,
+        "agreed_price": 1.2345,
+        "reason": "book move",
+        "correlation_id": 7,
+    });
+    // Minimal: no kind/quantity/price basis/reason/optionals — source & target only.
+    let minimal = json!({
+        "session_token": "t",
+        "source": { "risk_book_id": "gm" },
+        "target": { "risk_book_id": "macro" },
+    });
+    for (label, body) in [("full", full), ("minimal", minimal)] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("InitiateRiskTransferRequest({label})"),
+            generated::decode_initiate_risk_transfer_request(o),
+            hand::hand_initiate_risk_transfer_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn accept_risk_transfer_request_decode_byte_identical() {
+    for (label, body) in [
+        (
+            "full",
+            json!({ "session_token": "tok", "transfer_id": "xfer-1", "correlation_id": 5 }),
+        ),
+        (
+            "minimal",
+            json!({ "session_token": "tok", "transfer_id": "xfer-1" }),
+        ),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("AcceptRiskTransferRequest({label})"),
+            generated::decode_accept_risk_transfer_request(o),
+            hand::hand_accept_risk_transfer_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn reject_risk_transfer_request_decode_byte_identical() {
+    for (label, body) in [
+        (
+            "full",
+            json!({ "session_token": "tok", "transfer_id": "xfer-1", "reason": "stale", "correlation_id": 6 }),
+        ),
+        (
+            "minimal",
+            json!({ "session_token": "tok", "transfer_id": "xfer-1" }),
+        ),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("RejectRiskTransferRequest({label})"),
+            generated::decode_reject_risk_transfer_request(o),
+            hand::hand_reject_risk_transfer_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn cancel_risk_transfer_request_decode_byte_identical() {
+    for (label, body) in [
+        (
+            "full",
+            json!({ "session_token": "tok", "transfer_id": "xfer-1", "correlation_id": 4 }),
+        ),
+        (
+            "minimal",
+            json!({ "session_token": "tok", "transfer_id": "xfer-1" }),
+        ),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("CancelRiskTransferRequest({label})"),
+            generated::decode_cancel_risk_transfer_request(o),
+            hand::hand_cancel_risk_transfer_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn list_risk_transfers_request_decode_byte_identical() {
+    // Full: every filter present + a repeated `states` enum array (the regression path).
+    let full = json!({
+        "session_token": "tok",
+        "desk": "fi",
+        "trader": "alice",
+        "risk_book_id": "gm",
+        "states": [2, 5, 6],
+        "correlation_id": 9,
+    });
+    // Minimal: session token only — absent filters ⇒ None, empty states ⇒ empty vec.
+    let minimal = json!({ "session_token": "tok" });
+    for (label, body) in [("full", full), ("minimal", minimal)] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("ListRiskTransfersRequest({label})"),
+            generated::decode_list_risk_transfers_request(o),
+            hand::hand_list_risk_transfers_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn initiate_risk_transfer_response_encode_byte_identical() {
+    // Present: the fully-populated record (nested legs w/ position_ids, provenance w/
+    // moved-risk vector) — proves the whole RiskTransfer encoder byte-identical.
+    let present = InitiateRiskTransferResponse {
+        transfer: Some(full_risk_transfer()),
+        correlation_id: Some(7),
+    };
+    assert_bytes_eq(
+        "InitiateRiskTransferResponse(present)",
+        &generated::encode_initiate_risk_transfer_response(&present),
+        &hand::hand_initiate_risk_transfer_response_to_json(&present),
+    );
+    // Absent transfer ⇒ JSON null; absent correlation_id ⇒ null (envelope null-absent).
+    let absent = InitiateRiskTransferResponse::default();
+    assert_bytes_eq(
+        "InitiateRiskTransferResponse(absent)",
+        &generated::encode_initiate_risk_transfer_response(&absent),
+        &hand::hand_initiate_risk_transfer_response_to_json(&absent),
+    );
+    // Null-inner edges: absent target + provenance.risk_moved.risk absent (→ null).
+    let edges = InitiateRiskTransferResponse {
+        transfer: Some(transfer_null_inner_edges()),
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "InitiateRiskTransferResponse(null-inner-edges)",
+        &generated::encode_initiate_risk_transfer_response(&edges),
+        &hand::hand_initiate_risk_transfer_response_to_json(&edges),
+    );
+}
+
+#[test]
+fn accept_risk_transfer_response_encode_byte_identical() {
+    // Present: the minimal record (every optional/provenance ABSENT — the OMIT edges).
+    let present = AcceptRiskTransferResponse {
+        transfer: Some(minimal_risk_transfer()),
+        correlation_id: Some(5),
+    };
+    assert_bytes_eq(
+        "AcceptRiskTransferResponse(present)",
+        &generated::encode_accept_risk_transfer_response(&present),
+        &hand::hand_accept_risk_transfer_response_to_json(&present),
+    );
+    let absent = AcceptRiskTransferResponse::default();
+    assert_bytes_eq(
+        "AcceptRiskTransferResponse(absent)",
+        &generated::encode_accept_risk_transfer_response(&absent),
+        &hand::hand_accept_risk_transfer_response_to_json(&absent),
+    );
+}
+
+#[test]
+fn reject_risk_transfer_response_encode_byte_identical() {
+    let present = RejectRiskTransferResponse {
+        transfer: Some(minimal_risk_transfer()),
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "RejectRiskTransferResponse(present)",
+        &generated::encode_reject_risk_transfer_response(&present),
+        &hand::hand_reject_risk_transfer_response_to_json(&present),
+    );
+    let absent = RejectRiskTransferResponse::default();
+    assert_bytes_eq(
+        "RejectRiskTransferResponse(absent)",
+        &generated::encode_reject_risk_transfer_response(&absent),
+        &hand::hand_reject_risk_transfer_response_to_json(&absent),
+    );
+}
+
+#[test]
+fn cancel_risk_transfer_response_encode_byte_identical() {
+    let present = CancelRiskTransferResponse {
+        transfer: Some(minimal_risk_transfer()),
+        correlation_id: Some(4),
+    };
+    assert_bytes_eq(
+        "CancelRiskTransferResponse(present)",
+        &generated::encode_cancel_risk_transfer_response(&present),
+        &hand::hand_cancel_risk_transfer_response_to_json(&present),
+    );
+    let absent = CancelRiskTransferResponse::default();
+    assert_bytes_eq(
+        "CancelRiskTransferResponse(absent)",
+        &generated::encode_cancel_risk_transfer_response(&absent),
+        &hand::hand_cancel_risk_transfer_response_to_json(&absent),
+    );
+}
+
+#[test]
+fn list_risk_transfers_response_encode_byte_identical() {
+    // A full record + a minimal record + a default record — mixed omit/null/present.
+    let full = ListRiskTransfersResponse {
+        transfers: vec![
+            full_risk_transfer(),
+            minimal_risk_transfer(),
+            RiskTransfer::default(),
+        ],
+        correlation_id: Some(11),
+    };
+    assert_bytes_eq(
+        "ListRiskTransfersResponse(full)",
+        &generated::encode_list_risk_transfers_response(&full),
+        &hand::hand_list_risk_transfers_response_to_json(&full),
+    );
+    // Empty roster + absent correlation_id (the null-when-absent envelope edge).
+    let empty = ListRiskTransfersResponse::default();
+    assert_bytes_eq(
+        "ListRiskTransfersResponse(empty)",
+        &generated::encode_list_risk_transfers_response(&empty),
+        &hand::hand_list_risk_transfers_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn risk_transfer_inbox_encode_byte_identical() {
+    // The push frame (encode-only): a mixed pending roster + a snapshot time.
+    let inbox = RiskTransferInbox {
+        pending: vec![full_risk_transfer(), minimal_risk_transfer()],
+        at_nanos: 1_700_000_123_000_000_000,
+    };
+    assert_bytes_eq(
+        "RiskTransferInbox(populated)",
+        &generated::encode_risk_transfer_inbox(&inbox),
+        &hand::hand_risk_transfer_inbox_to_json(&inbox),
+    );
+    let empty = RiskTransferInbox::default();
+    assert_bytes_eq(
+        "RiskTransferInbox(empty)",
+        &generated::encode_risk_transfer_inbox(&empty),
+        &hand::hand_risk_transfer_inbox_to_json(&empty),
     );
 }

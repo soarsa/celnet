@@ -136,6 +136,16 @@ use celnet_proto::{
     UpdateRiskRoutingGraphRequest, UpdateRiskRoutingGraphResponse, route_value_desc,
     routing_node_desc,
 };
+// Risk-transfer verb family (AuthService RiskTransfer RPCs): the request decode +
+// reply/push encode side, proven byte-identical to the hand codec by
+// `tests/ws_codec_differential.rs`.
+use celnet_proto::{
+    AcceptRiskTransferRequest, AcceptRiskTransferResponse, CancelRiskTransferRequest,
+    CancelRiskTransferResponse, InitiateRiskTransferRequest, InitiateRiskTransferResponse,
+    ListRiskTransfersRequest, ListRiskTransfersResponse, MovedRiskDesc, RejectRiskTransferRequest,
+    RejectRiskTransferResponse, RiskTransfer, RiskTransferInbox, RiskTransferProvenance,
+    RiskVectorDesc, TransferLeg,
+};
 use serde_json::{Map, Value, json};
 
 use super::codec::CodecError;
@@ -168,6 +178,9 @@ enum WireVal<'a> {
     RepeatedMsg(Vec<&'a dyn WireAdapter>),
     /// A `repeated double` scalar field (e.g. a rates `key_rate_ladder`).
     RepeatedF64(&'a [f64]),
+    /// A `repeated uint64` scalar field (e.g. a transfer leg's `position_ids`
+    /// selection) — encoded as an array of JSON integers.
+    RepeatedU64(&'a [u64]),
     /// A `repeated string` scalar field (e.g. an instrument family's `calendars`).
     RepeatedStr(&'a [String]),
     /// A `repeated` enum field, carried by canonical enum number (e.g. the
@@ -240,6 +253,7 @@ fn encode_value(field: &WireField, value: WireVal<'_>) -> Value {
                 .collect(),
         ),
         WireVal::RepeatedF64(items) => Value::Array(items.iter().map(|x| json!(x)).collect()),
+        WireVal::RepeatedU64(items) => Value::Array(items.iter().map(|x| json!(x)).collect()),
         WireVal::RepeatedStr(items) => Value::Array(items.iter().map(|s| json!(s)).collect()),
         WireVal::RepeatedEnum(items) => Value::Array(items.iter().map(|x| json!(x)).collect()),
     }
@@ -4730,6 +4744,16 @@ fn enum_vec(value: Option<&Value>) -> Vec<i32> {
         .unwrap_or_default()
 }
 
+/// A repeated `uint64` (`Vec<u64>`) defaulting to empty (mirrors the hand `u64_array`
+/// — the transfer-leg `position_ids` shape): absent/non-array ⇒ empty, non-integer
+/// elements silently dropped.
+fn u64_vec(value: Option<&Value>) -> Vec<u64> {
+    value
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_u64).collect())
+        .unwrap_or_default()
+}
+
 // --- desk request WireBuilders (decode) -------------------------------------
 
 impl WireBuilder for DeskQuote {
@@ -6196,6 +6220,98 @@ impl WireBuilder for UpdateRiskRoutingGraphRequest {
     }
 }
 
+// --- risk-transfer WireBuilders (decode) ------------------------------------
+
+impl WireBuilder for TransferLeg {
+    const MESSAGE: &'static str = "TransferLeg";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "risk_book_id" => self.risk_book_id = string_or_empty(value),
+            "desk_id" => self.desk_id = string_or_empty(value),
+            "trader" => self.trader = string_or_empty(value),
+            "position_ids" => self.position_ids = u64_vec(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for InitiateRiskTransferRequest {
+    const MESSAGE: &'static str = "InitiateRiskTransferRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "kind" => self.kind = enum_or_zero(value),
+            "source" => self.source = Some(req_msg::<TransferLeg>(value, "source")?),
+            "target" => self.target = Some(req_msg::<TransferLeg>(value, "target")?),
+            "quantity_full" => self.quantity_full = bool_or_false(value),
+            "partial_notional" => self.partial_notional = opt_f64(value),
+            "price_basis" => self.price_basis = enum_or_zero(value),
+            "agreed_price" => self.agreed_price = opt_f64(value),
+            "reason" => self.reason = string_or_empty(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for AcceptRiskTransferRequest {
+    const MESSAGE: &'static str = "AcceptRiskTransferRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "transfer_id" => self.transfer_id = req_string(value, "transfer_id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for RejectRiskTransferRequest {
+    const MESSAGE: &'static str = "RejectRiskTransferRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "transfer_id" => self.transfer_id = req_string(value, "transfer_id")?,
+            "reason" => self.reason = string_or_empty(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CancelRiskTransferRequest {
+    const MESSAGE: &'static str = "CancelRiskTransferRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "transfer_id" => self.transfer_id = req_string(value, "transfer_id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListRiskTransfersRequest {
+    const MESSAGE: &'static str = "ListRiskTransfersRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "desk" => self.desk = opt_string(value, "desk")?,
+            "trader" => self.trader = opt_string(value, "trader")?,
+            "risk_book_id" => self.risk_book_id = opt_string(value, "risk_book_id")?,
+            "states" => self.states = enum_vec(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for ListInstrumentsRequest {
     const MESSAGE: &'static str = "ListInstrumentsRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -6644,6 +6760,61 @@ pub fn decode_list_risk_book_risk_request(
     o: &Map<String, Value>,
 ) -> DResult<ListRiskBookRiskRequest> {
     decode(ListRiskBookRiskRequest::MESSAGE, o)
+}
+
+// --- risk-transfer decode entry points --------------------------------------
+
+/// Decode an [`InitiateRiskTransferRequest`] envelope — the required `source`/`target`
+/// nest the [`TransferLeg`] bodies (each with its `position_ids` selection); the
+/// presence-tracked `partial_notional`/`agreed_price` decode to `None` when absent.
+///
+/// # Errors
+/// A missing `session_token`, a missing/malformed `source`/`target`, as a [`CodecError`].
+pub fn decode_initiate_risk_transfer_request(
+    o: &Map<String, Value>,
+) -> DResult<InitiateRiskTransferRequest> {
+    decode(InitiateRiskTransferRequest::MESSAGE, o)
+}
+
+/// Decode an [`AcceptRiskTransferRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`transfer_id`, as a [`CodecError`].
+pub fn decode_accept_risk_transfer_request(
+    o: &Map<String, Value>,
+) -> DResult<AcceptRiskTransferRequest> {
+    decode(AcceptRiskTransferRequest::MESSAGE, o)
+}
+
+/// Decode a [`RejectRiskTransferRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`transfer_id`, as a [`CodecError`].
+pub fn decode_reject_risk_transfer_request(
+    o: &Map<String, Value>,
+) -> DResult<RejectRiskTransferRequest> {
+    decode(RejectRiskTransferRequest::MESSAGE, o)
+}
+
+/// Decode a [`CancelRiskTransferRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`/`transfer_id`, as a [`CodecError`].
+pub fn decode_cancel_risk_transfer_request(
+    o: &Map<String, Value>,
+) -> DResult<CancelRiskTransferRequest> {
+    decode(CancelRiskTransferRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListRiskTransfersRequest`] envelope — the optional desk/trader/book
+/// filters + the repeated `states` enum filter (empty ⇒ all states).
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_risk_transfers_request(
+    o: &Map<String, Value>,
+) -> DResult<ListRiskTransfersRequest> {
+    decode(ListRiskTransfersRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListInstrumentsRequest`] envelope — fully generic.
@@ -7668,6 +7839,179 @@ impl WireAdapter for UpdateRiskRoutingGraphResponse {
     }
 }
 
+// --- risk-transfer WireAdapters (encode) ------------------------------------
+
+impl WireAdapter for TransferLeg {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "risk_book_id" => Some(WireVal::Str(&self.risk_book_id)),
+            "desk_id" => Some(WireVal::Str(&self.desk_id)),
+            "trader" => Some(WireVal::Str(&self.trader)),
+            "position_ids" => Some(WireVal::RepeatedU64(&self.position_ids)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RiskVectorDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "dv01" => Some(WireVal::F64(self.dv01)),
+            "delta" => Some(WireVal::F64(self.delta)),
+            "gamma" => Some(WireVal::F64(self.gamma)),
+            "vega" => Some(WireVal::F64(self.vega)),
+            "theta" => Some(WireVal::F64(self.theta)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for MovedRiskDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "notional_base" => Some(WireVal::F64(self.notional_base)),
+            // Absent singular message ⇒ JSON null (the hand codec's `.map(..)` yields null).
+            "risk" => self
+                .risk
+                .as_ref()
+                .map(|r| WireVal::Msg(r as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RiskTransferProvenance {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "transfer_id" => Some(WireVal::Str(&self.transfer_id)),
+            "kind" => Some(WireVal::Enum(self.kind)),
+            "initiated_by" => Some(WireVal::Str(&self.initiated_by)),
+            "initiated_at" => Some(WireVal::I64(self.initiated_at)),
+            // proto3 `optional`: absent ⇒ omitted (RiskTransferProvenance is not on the
+            // null-absent list — a nested sub-message, not a reply envelope).
+            "approver" => self.approver.as_deref().map(WireVal::Str),
+            "decided_at" => self.decided_at.map(WireVal::I64),
+            "source_book_id" => Some(WireVal::Str(&self.source_book_id)),
+            "target_book_id" => Some(WireVal::Str(&self.target_book_id)),
+            "position_ids" => Some(WireVal::RepeatedU64(&self.position_ids)),
+            "quantity_full" => Some(WireVal::Bool(self.quantity_full)),
+            "partial_notional" => self.partial_notional.map(WireVal::F64),
+            "transfer_price" => Some(WireVal::F64(self.transfer_price)),
+            "price_basis" => Some(WireVal::Enum(self.price_basis)),
+            "reason" => Some(WireVal::Str(&self.reason)),
+            "realized_pnl_source" => Some(WireVal::F64(self.realized_pnl_source)),
+            // Absent singular message ⇒ JSON null.
+            "risk_moved" => self
+                .risk_moved
+                .as_ref()
+                .map(|m| WireVal::Msg(m as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RiskTransfer {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "id" => Some(WireVal::Str(&self.id)),
+            "kind" => Some(WireVal::Enum(self.kind)),
+            // Absent singular messages ⇒ JSON null (the hand codec's `.map(..)` yields null).
+            "source" => self
+                .source
+                .as_ref()
+                .map(|l| WireVal::Msg(l as &dyn WireAdapter)),
+            "target" => self
+                .target
+                .as_ref()
+                .map(|l| WireVal::Msg(l as &dyn WireAdapter)),
+            "quantity_full" => Some(WireVal::Bool(self.quantity_full)),
+            // proto3 `optional`: absent ⇒ omitted (RiskTransfer is not on the null-absent list).
+            "partial_notional" => self.partial_notional.map(WireVal::F64),
+            "price_basis" => Some(WireVal::Enum(self.price_basis)),
+            "agreed_price" => self.agreed_price.map(WireVal::F64),
+            "reason" => Some(WireVal::Str(&self.reason)),
+            "initiated_by" => Some(WireVal::Str(&self.initiated_by)),
+            "initiated_at" => Some(WireVal::I64(self.initiated_at)),
+            "state" => Some(WireVal::Enum(self.state)),
+            "approver" => self.approver.as_deref().map(WireVal::Str),
+            "decided_at" => self.decided_at.map(WireVal::I64),
+            "transfer_price" => self.transfer_price.map(WireVal::F64),
+            "provenance" => self
+                .provenance
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for InitiateRiskTransferResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "transfer" => self.transfer.as_ref().map(|t| WireVal::Msg(t)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AcceptRiskTransferResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "transfer" => self.transfer.as_ref().map(|t| WireVal::Msg(t)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RejectRiskTransferResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "transfer" => self.transfer.as_ref().map(|t| WireVal::Msg(t)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CancelRiskTransferResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "transfer" => self.transfer.as_ref().map(|t| WireVal::Msg(t)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListRiskTransfersResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "transfers" => Some(WireVal::RepeatedMsg(
+                self.transfers
+                    .iter()
+                    .map(|t| t as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RiskTransferInbox {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "pending" => Some(WireVal::RepeatedMsg(
+                self.pending.iter().map(|t| t as &dyn WireAdapter).collect(),
+            )),
+            "at_nanos" => Some(WireVal::I64(self.at_nanos)),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for ListInstrumentsResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -7961,6 +8305,47 @@ pub fn encode_update_risk_routing_graph_response(r: &UpdateRiskRoutingGraphRespo
 #[must_use]
 pub fn encode_list_risk_book_risk_response(r: &ListRiskBookRiskResponse) -> Value {
     encode("ListRiskBookRiskResponse", r)
+}
+
+// --- risk-transfer encode entry points --------------------------------------
+
+/// Encode an [`InitiateRiskTransferResponse`] to its WS JSON — descriptor-driven. The
+/// nested `transfer` record's presence-tracked scalars / `provenance` OMIT when absent;
+/// the envelope `correlation_id` rides as `null` when absent (its null-absent policy).
+#[must_use]
+pub fn encode_initiate_risk_transfer_response(r: &InitiateRiskTransferResponse) -> Value {
+    encode("InitiateRiskTransferResponse", r)
+}
+
+/// Encode an [`AcceptRiskTransferResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_accept_risk_transfer_response(r: &AcceptRiskTransferResponse) -> Value {
+    encode("AcceptRiskTransferResponse", r)
+}
+
+/// Encode a [`RejectRiskTransferResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_reject_risk_transfer_response(r: &RejectRiskTransferResponse) -> Value {
+    encode("RejectRiskTransferResponse", r)
+}
+
+/// Encode a [`CancelRiskTransferResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_cancel_risk_transfer_response(r: &CancelRiskTransferResponse) -> Value {
+    encode("CancelRiskTransferResponse", r)
+}
+
+/// Encode a [`ListRiskTransfersResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_risk_transfers_response(r: &ListRiskTransfersResponse) -> Value {
+    encode("ListRiskTransfersResponse", r)
+}
+
+/// Encode a [`RiskTransferInbox`] push frame to its WS JSON — descriptor-driven
+/// (encode-only; a server push, never decoded).
+#[must_use]
+pub fn encode_risk_transfer_inbox(i: &RiskTransferInbox) -> Value {
+    encode("RiskTransferInbox", i)
 }
 
 /// Encode a [`ListInstrumentsResponse`] to its WS JSON — descriptor-driven.
