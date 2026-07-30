@@ -280,8 +280,17 @@ export function playSound(sound: SoundChoice, volume: number, streak = 0): void 
     if (!cue) return;
     const ctx = getSharedAudioContext();
     if (!ctx) return;
-    if (ctx.state === "suspended") void ctx.resume().catch(() => {});
-    cue(ctx, vol, streak);
+    // A browser starts the AudioContext SUSPENDED until a user gesture; resume() is
+    // async, so scheduling the cue before it resolves plays onto a still-suspended
+    // context (silence). Resume first, then fire the cue on the running context.
+    if (ctx.state === "suspended") {
+      void ctx
+        .resume()
+        .then(() => cue(ctx, vol, streak))
+        .catch(() => {});
+    } else {
+      cue(ctx, vol, streak);
+    }
   } catch {
     /* audio unsupported / blocked — never throw into the render tree */
   }

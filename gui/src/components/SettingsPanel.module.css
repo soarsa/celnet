@@ -322,26 +322,53 @@
   margin-top: var(--space-2);
 }
 
-.eventHead,
+/* Two-line grid per event so the Toast/Desktop channels + volume always fit the narrow
+   settings popover (a single 5-column row overflowed and clipped Desktop + Vol off the
+   right edge). Line 1: label · enable · sound(select+preview); line 2: channels · volume. */
 .eventRow {
   display: grid;
-  grid-template-columns: minmax(9ch, 1.4fr) auto minmax(9rem, 1.2fr) auto minmax(56px, 0.7fr);
+  grid-template-columns: minmax(8ch, 1fr) auto minmax(9rem, 1.6fr);
+  grid-template-areas:
+    "label switch sound"
+    "chan  chan   vol";
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-1);
+  border-radius: var(--r-sm);
+}
+
+/* The rows are self-labelled (toggle, sound dropdown, Toast/Desktop text, slider), so the
+   old fixed 5-column header no longer aligns with the 2-line rows. */
+.eventHead {
+  display: none;
+}
+
+.eventLabel {
+  grid-area: label;
+}
+
+.eventRow > :nth-child(2) {
+  grid-area: switch;
+  justify-self: end;
+}
+
+.eventSound {
+  grid-area: sound;
+}
+
+.eventChannels {
+  grid-area: chan;
+  display: inline-flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-.eventHead {
-  padding: 0 var(--space-1) var(--space-1);
-  border-bottom: var(--hairline) solid var(--grid-line);
-  font: var(--type-micro) / 1 var(--font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-secondary);
-}
-
-.eventRow {
-  padding: var(--space-1);
-  border-radius: var(--r-sm);
+.eventVol {
+  grid-area: vol;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .eventRow:hover {
