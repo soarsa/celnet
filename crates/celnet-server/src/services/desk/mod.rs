@@ -58,6 +58,7 @@ use crate::readiness::ReadinessGate;
 use celnet_entitlements::{Action, AssetClass};
 
 use crate::services::access::{DeskScope, RequiredAuthority, authorize_caller, resolve_caller};
+use crate::services::analytics::{ClientFlowSource, in_window};
 use crate::services::rates_book::{RatesPositionStore, RatesRoutingAttribution};
 use crate::services::risk::store::PositionStore;
 use crate::services::sessions::SessionRegistry;
@@ -124,6 +125,90 @@ pub struct RfqDeskEdge {
     transfer_service: std::sync::OnceLock<Arc<crate::services::risk_transfer::RiskTransferService>>,
     /// The edge clock (receipt / execution timestamps), manual in tests.
     clock: Clock,
+}
+
+/// The FI dealer-quoting desk as a **client-flow analytics source** (Analytics
+/// phase 2): it maps its retained desk-inbox [`DeskRequest`]s into asset-tagged
+/// [`FlowRecord`](celnet_analytics::FlowRecord)s the rollup folds. Read-only,
+/// on-query, off the hot path.
+///
+/// Honest scope (guardrail 2): the desk-quoting path is single-dealer and is NOT
+/// priced through the `celnet-tiering` feature pipeline, so a desk quote/deal
+/// carries **no** per-feature provenance and **no** competing panel. `margin`,
+/// `quoted_spread`, and `cover_distance` are therefore legitimately `0`/`None`
+/// here — a real upstream product gap (FI-desk provenance is a later phase), not a
+/// fabricated value. Volume, counts, hit-rate and quote-fishing ARE real from the
+/// inbox lifecycle (quoted vs accepted).
+#[tonic::async_trait]
+impl ClientFlowSource for RfqDeskEdge {
+    async fn flow_records(
+        &self,
+        from: Option<i64>,
+        to: Option<i64>,
+    ) -> Vec<celnet_analytics::FlowRecord> {
+        self.requests
+            .snapshot()
+            .iter()
+            .filter_map(|req| desk_request_to_flow(req, from, to))
+            .collect()
+    }
+}
+
+/// A coarse (arm-level) instrument key for an FI desk request — the linear-rates
+/// product family. Fine-grained per-ISIN/tenor keying is a later refinement; the
+/// primary FI lenses this phase are client / counterparty / asset.
+fn rates_instrument_label(instrument: Option<&RatesInstrument>) -> String {
+    match instrument.and_then(|i| i.instrument.as_ref()) {
+        Some(rates_instrument::Instrument::Ois(_)) => "OIS",
+        Some(rates_instrument::Instrument::Irs(_)) => "IRS",
+        Some(rates_instrument::Instrument::Fra(_)) => "FRA",
+        Some(rates_instrument::Instrument::Bond(_)) => "BOND",
+        None => "rates",
+    }
+    .to_owned()
+}
+
+/// Project one desk-inbox [`DeskRequest`] onto a neutral [`FlowRecord`], or `None`
+/// when we never showed a price (no quote) or its receipt time is outside the
+/// `[from, to)` window. A quoted request counts toward `quote_count`; an accepted
+/// one additionally counts as a trade.
+fn desk_request_to_flow(
+    req: &DeskRequest,
+    from: Option<i64>,
+    to: Option<i64>,
+) -> Option<celnet_analytics::FlowRecord> {
+    use celnet_analytics::{FlowRecord, Side as FlowSide};
+
+    // Only requests we actually quoted contribute (a bare PENDING/EXPIRED/declined
+    // request is not flow we priced). `Accepted` always carries a prior quote.
+    if req.quote.is_none() {
+        return None;
+    }
+    if !in_window(req.received_at_nanos, from, to) {
+        return None;
+    }
+    let was_traded = req.state == DeskRequestState::Accepted as i32;
+    let side = match Side::try_from(req.side) {
+        Ok(Side::Sell) => FlowSide::Sell,
+        _ => FlowSide::Buy,
+    };
+    Some(FlowRecord {
+        client: req.counterparty.clone(),
+        counterparty: req.desk.clone(),
+        instrument: rates_instrument_label(req.instrument.as_ref()),
+        asset: "fi".to_owned(),
+        notional: req.notional.abs(),
+        side,
+        was_quoted: true,
+        was_traded,
+        // The FI desk path is not tiered ⇒ no provenance margin / no shown spread /
+        // no competing panel. Honest zeros/None (not fabricated).
+        margin: 0.0,
+        quoted_spread: 0.0,
+        cover_distance: None,
+        markout: None,
+        hedge_cost: None,
+    })
 }
 
 impl RfqDeskEdge {

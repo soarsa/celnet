@@ -31,8 +31,9 @@
 //! # Purity
 //!
 //! [`metrics_from`] and the [`group_by_client`] / [`group_by_counterparty`] /
-//! [`group_by_instrument`] helpers are pure functions of their input slice — no
-//! clock, no rng, no I/O — hence deterministic and oracle-testable.
+//! [`group_by_instrument`] / [`group_by_asset`] helpers are pure functions of
+//! their input slice — no clock, no rng, no I/O — hence deterministic and
+//! oracle-testable.
 
 mod fishing;
 mod grouping;
@@ -40,6 +41,6 @@ mod metrics;
 mod record;
 
 pub use fishing::{DPM_VALUE_SCALE, fishing_score};
-pub use grouping::{group_by_client, group_by_counterparty, group_by_instrument};
+pub use grouping::{group_by_asset, group_by_client, group_by_counterparty, group_by_instrument};
 pub use metrics::{ClientFlowMetrics, NOTIONAL_PER_MILLION, metrics_from};
 pub use record::{FlowRecord, Side};

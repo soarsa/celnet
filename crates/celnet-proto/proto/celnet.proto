@@ -4997,6 +4997,89 @@ message ListRiskBookRiskResponse {
   optional uint64 correlation_id = 2;
 }
 
+// ── Client-flow analytics (docs/ANALYTICS-REQUIREMENTS.md §11.1a/§11.3) ──────
+//
+// The cross-product per-client flow / P&L-attribution rollup: a read-only fold
+// over what the desk priced and traded, grouped by one dimension. Mirrors the
+// pure `celnet-analytics` `ClientFlowMetrics` struct 1:1 (Rust `Option<f64>` ⇒
+// proto3 `optional double`).
+
+// Which dimension the client-flow rollup groups by. CLIENT is the default (0).
+enum FlowGroupBy {
+  // Per requesting client / caller identity (the primary lens).
+  FLOW_GROUP_BY_CLIENT = 0;
+  // Per counterparty / covering LP / desk faced.
+  FLOW_GROUP_BY_COUNTERPARTY = 1;
+  // Per instrument (symbol / ISIN).
+  FLOW_GROUP_BY_INSTRUMENT = 2;
+  // Per product / asset class (FI vs FXO) — the cross-product slice.
+  FLOW_GROUP_BY_ASSET = 3;
+}
+
+// One rollup row — margin-efficiency ($/mm), spread economics, and quote-fishing
+// for one group key. Ratio fields are `optional`: absent (JSON null) when their
+// denominator is zero (divide-by-zero guard), never NaN/inf.
+message ClientFlowMetricsDesc {
+  // The group key this row belongs to (client id / counterparty / instrument /
+  // asset, per the request's `group_by`).
+  string label = 1;
+  // Number of quote/RFQ responses issued to this key.
+  uint64 quote_count = 2;
+  // Number of fills done with this key.
+  uint64 traded_count = 3;
+  // Sum of traded notional magnitude.
+  double traded_notional = 4;
+  // Gross margin captured on fills (Σ margin over traded records).
+  double gross_pnl = 5;
+  // Total adverse-selection cost (Σ markout, positive = cost to us).
+  double total_markout = 6;
+  // Total hedging/warehousing cost (Σ hedge_cost, positive = cost).
+  double total_hedge_cost = 7;
+  // Net P&L = gross_pnl − total_markout − total_hedge_cost.
+  double net_pnl = 8;
+  // Gross margin per USD 1mm traded. ABSENT when no notional traded.
+  optional double dpm_gross = 9;
+  // Net P&L per USD 1mm traded. ABSENT when no notional traded.
+  optional double dpm_net = 10;
+  // Realised margin ÷ quoted spread over fills. ABSENT when we quoted no spread.
+  optional double captured_vs_offered = 11;
+  // Mean cover distance (we vs second-best panel quote). ABSENT when no cover.
+  optional double mean_cover_distance = 12;
+  // Offered spread ($/mm) at which net $/mm hits zero. ABSENT when undefined.
+  optional double breakeven_spread = 13;
+  // Quotes ÷ trades. ABSENT when no trades (the zero-trade fisher case is caught
+  // by `fishing_score`, which does not divide).
+  optional double quote_to_trade_ratio = 14;
+  // Trades ÷ quotes (the RFQ hit-rate). ABSENT when no quotes.
+  optional double hit_rate = 15;
+  // Bounded [0, 1] quote-fishing score (high quote-to-trade × low net $/mm).
+  double fishing_score = 16;
+}
+
+// Query the client-flow rollup. Gated on `view_analytics` × the caller's assets
+// (a cross-product read — a manager holding it on ANY asset may query).
+message ListClientFlowMetricsRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // The dimension to group by (client / counterparty / instrument / asset).
+  FlowGroupBy group_by = 2;
+  // Inclusive lower time bound (epoch nanos) on the source records. ABSENT ⇒ open.
+  optional int64 from_nanos = 3;
+  // Exclusive upper time bound (epoch nanos) on the source records. ABSENT ⇒ open.
+  optional int64 to_nanos = 4;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 5;
+}
+// The rolled-up client-flow metrics, one row per group key (key-ordered).
+message ListClientFlowMetricsResponse {
+  // One row per group key, ordered by key.
+  repeated ClientFlowMetricsDesc metrics = 1;
+  // Echoed grouping dimension (so the client renders the right axis).
+  FlowGroupBy group_by = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+
 // ===========================================================================
 // LP liquidity ingest — the machine-to-machine feed by which an inbound
 // liquidity connection (the `lp-sim` binary today, any FIX/API LP adapter
@@ -6116,6 +6199,13 @@ service AuthService {
   rpc RejectRiskTransfer(RejectRiskTransferRequest) returns (RejectRiskTransferResponse);
   rpc CancelRiskTransfer(CancelRiskTransferRequest) returns (CancelRiskTransferResponse);
   rpc ListRiskTransfers(ListRiskTransfersRequest) returns (ListRiskTransfersResponse);
+  // Cross-product client-flow analytics — the per-client / per-counterparty /
+  // per-instrument / per-asset flow + P&L-attribution rollup ($/mm, spread
+  // economics, quote-fishing) over what the desk priced and traded
+  // (`docs/ANALYTICS-REQUIREMENTS.md` §11). A management-sensitive read gated on
+  // the dedicated `view_analytics` capability × the caller's assets (spans FI+FXO,
+  // NOT admin-only). Read-only; a pure fold over already-captured quote/deal data.
+  rpc ListClientFlowMetrics(ListClientFlowMetricsRequest) returns (ListClientFlowMetricsResponse);
   // List the instrument reference-data definitions (any authenticated caller —
   // curve-building and pricing resolve against this, so it is NOT admin-only).
   rpc ListInstruments(ListInstrumentsRequest) returns (ListInstrumentsResponse);

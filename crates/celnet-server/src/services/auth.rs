@@ -36,7 +36,8 @@ use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
     AcceptRiskTransferRequest, AcceptRiskTransferResponse, CancelRiskTransferRequest,
     CancelRiskTransferResponse, InitiateRiskTransferRequest, InitiateRiskTransferResponse,
-    ListRiskTransfersRequest, ListRiskTransfersResponse, RejectRiskTransferRequest,
+    ListClientFlowMetricsRequest, ListClientFlowMetricsResponse, ListRiskTransfersRequest,
+    ListRiskTransfersResponse, RejectRiskTransferRequest,
     RejectRiskTransferResponse,
 };
 use celnet_proto::{
@@ -195,6 +196,13 @@ pub struct AuthEdge {
     /// reject / cancel / list). `None` in an isolated auth test (the transfer RPCs then
     /// report `unavailable`, exactly as the other injected collaborators do).
     transfer_service: Option<Arc<crate::services::risk_transfer::RiskTransferService>>,
+    /// The cross-asset **client-flow analytics** sources folded by the
+    /// `ListClientFlowMetrics` RPC — one per contributing edge (the FXO quote edge,
+    /// the FI desk edge). Each maps its OWN already-captured history into neutral
+    /// `FlowRecord`s on-query, off the hot path (Analytics phase 2,
+    /// `docs/ANALYTICS-REQUIREMENTS.md` §11). Empty in an isolated auth test (the
+    /// RPC then returns an empty roster, exactly as the other collaborators no-op).
+    analytics_sources: Vec<Arc<dyn crate::services::analytics::ClientFlowSource>>,
 }
 
 impl AuthEdge {
@@ -219,7 +227,20 @@ impl AuthEdge {
             position_store: None,
             rates_store: None,
             transfer_service: None,
+            analytics_sources: Vec::new(),
         }
+    }
+
+    /// Register a client-flow analytics source (the FXO quote edge, the FI desk edge).
+    /// Each contributes its own already-captured history to the `ListClientFlowMetrics`
+    /// fold. Chainable; order is irrelevant (the fold is a set union then a group-by).
+    #[must_use]
+    pub fn with_client_flow_source(
+        mut self,
+        source: Arc<dyn crate::services::analytics::ClientFlowSource>,
+    ) -> Self {
+        self.analytics_sources.push(source);
+        self
     }
 
     /// Inject the shared risk-transfer service so the transfer RPCs are live (the boot
@@ -2024,6 +2045,55 @@ impl AuthService for AuthEdge {
         let transfers = service.list(&req);
         Ok(Response::new(ListRiskTransfersResponse {
             transfers,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    // --- client-flow analytics -------------------------------------------------
+    //
+    // The cross-product per-client flow / P&L-attribution rollup ($/mm, spread
+    // economics, quote-fishing) folded from every registered source (the FXO quote
+    // edge + the FI desk edge). A management-sensitive READ gated on the dedicated
+    // `view_analytics` capability × the caller's assets — spanning FI+FXO, NOT
+    // admin-only. Pure fold over already-captured data, off the hot path
+    // (`docs/ANALYTICS-REQUIREMENTS.md` §11).
+
+    async fn list_client_flow_metrics(
+        &self,
+        request: Request<ListClientFlowMetricsRequest>,
+    ) -> Result<Response<ListClientFlowMetricsResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Cross-product gate: `view_analytics` on EITHER asset admits the caller (a
+        // manager holding it on any asset may open the Analytics surface). Deny-wins
+        // still applies via the capability algebra.
+        let who = self.authenticate(&req.session_token)?;
+        let caps = who.capabilities();
+        let allowed = caps.allows(Capability::new(Action::ViewAnalytics, AssetClass::FxOptions))
+            || caps.allows(Capability::new(
+                Action::ViewAnalytics,
+                AssetClass::FixedIncome,
+            ));
+        if !allowed {
+            return Err(Status::permission_denied(
+                "capability view_analytics·{fx_options|fixed_income} required",
+            ));
+        }
+
+        let records = crate::services::analytics::collect(
+            &self.analytics_sources,
+            req.from_nanos,
+            req.to_nanos,
+        )
+        .await;
+        let metrics = crate::services::analytics::fold(&records, req.group_by)
+            .values()
+            .map(crate::services::analytics::metrics_to_wire)
+            .collect();
+        Ok(Response::new(ListClientFlowMetricsResponse {
+            metrics,
+            group_by: req.group_by,
             correlation_id: req.correlation_id,
         }))
     }

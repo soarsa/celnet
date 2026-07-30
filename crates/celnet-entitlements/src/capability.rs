@@ -99,12 +99,22 @@ pub enum Action {
     /// on the asset the venue serves, so an FX-liquidity and an FI-liquidity seat are
     /// separately expressible (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1).
     ManageLiquidity,
+    /// View the **cross-product Analytics** surface — the per-client flow / P&L-
+    /// attribution ($/mm, spread economics, quote-fishing) rollups over what the desk
+    /// priced and traded (`docs/ANALYTICS-REQUIREMENTS.md` §11). A management-sensitive
+    /// *read* distinct from the per-trade [`Action::View`] floor: it exposes per-client
+    /// margin, adverse-selection and fishing signals a line trader should not see by
+    /// default. Because Analytics is its own top-level surface spanning **both** asset
+    /// classes, this action is exercised per [`AssetClass`] (a caller holding it on
+    /// *any* asset may open the tab and see that asset's slice). Not in the default
+    /// trader bundle — a narrow, explicitly-granted authority like the `Manage*` seats.
+    ViewAnalytics,
 }
 
 impl Action {
     /// Every action, in discriminant order — the canonical iteration set for
     /// building bundles and exhaustiveness tests.
-    pub const ALL: [Action; 14] = [
+    pub const ALL: [Action; 15] = [
         Action::View,
         Action::Price,
         Action::QuoteRespond,
@@ -119,6 +129,7 @@ impl Action {
         Action::RiskManage,
         Action::ManagePricing,
         Action::ManageLiquidity,
+        Action::ViewAnalytics,
     ];
 
     /// Stable snake_case label for audit/log/wire fields.
@@ -139,6 +150,7 @@ impl Action {
             Action::RiskManage => "risk_manage",
             Action::ManagePricing => "manage_pricing",
             Action::ManageLiquidity => "manage_liquidity",
+            Action::ViewAnalytics => "view_analytics",
         }
     }
 

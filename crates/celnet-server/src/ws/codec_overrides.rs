@@ -165,6 +165,14 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     // row. `LimitUtilizationDesc` carries no optional field, so it is not listed.
     "ListRiskBookRiskResponse",
     "RiskBookRiskDesc",
+    // The client-flow analytics roster (Analytics phase 2): the `ListClientFlowMetricsResponse`
+    // envelope emits its `Option<u64>` `correlation_id` as JSON `null` when absent, and each
+    // nested `ClientFlowMetricsDesc` row emits every optional `$/mm` / spread / ratio metric
+    // (`dpm_gross`, `dpm_net`, `captured_vs_offered`, `mean_cover_distance`, `breakeven_spread`,
+    // `quote_to_trade_ratio`, `hit_rate`) as JSON `null` when its denominator is zero — the
+    // divide-by-zero guard, never a fabricated zero. Both names listed (envelope + nested row).
+    "ListClientFlowMetricsResponse",
+    "ClientFlowMetricsDesc",
     "ListInstrumentsResponse",
     "GetInstrumentResponse",
     "CreateInstrumentResponse",

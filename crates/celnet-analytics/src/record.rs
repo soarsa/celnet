@@ -61,6 +61,14 @@ pub struct FlowRecord {
     pub counterparty: String,
     /// Instrument identifier (symbol / ISIN) — a secondary rollup key.
     pub instrument: String,
+    /// Product / asset-class label this flow belongs to — an **opaque** rollup
+    /// dimension the server tags each record with (e.g. `"fxo"` for FX options,
+    /// `"fi"` for the fixed-income desk). Kept a free-form `String` — like
+    /// [`client`](Self::client) / [`instrument`](Self::instrument) — so this pure
+    /// crate carries **no** product taxonomy of its own; the meaning lives at the
+    /// boundary that populates it. Grouped by [`crate::group_by_asset`] so a
+    /// cross-product surface can slice FI vs FXO.
+    pub asset: String,
     /// Non-negative notional magnitude (face / USD-equivalent) of this record.
     pub notional: f64,
     /// The desk-perspective side of the fill (see [`Side`]).

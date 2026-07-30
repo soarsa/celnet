@@ -146,6 +146,9 @@ use celnet_proto::{
     RejectRiskTransferResponse, RiskTransfer, RiskTransferInbox, RiskTransferProvenance,
     RiskVectorDesc, TransferLeg,
 };
+use celnet_proto::{
+    ClientFlowMetricsDesc, ListClientFlowMetricsRequest, ListClientFlowMetricsResponse,
+};
 use serde_json::{Map, Value, json};
 
 use super::codec::CodecError;
@@ -918,6 +921,11 @@ fn u64_or_zero(value: Option<&Value>) -> u64 {
 /// An optional presence-tracked `u64` (mirrors `opt_u64`).
 fn opt_u64(value: Option<&Value>) -> Option<u64> {
     value.and_then(Value::as_u64)
+}
+
+/// An optional presence-tracked `i64` (mirrors `opt_i64`).
+fn opt_i64(value: Option<&Value>) -> Option<i64> {
+    value.and_then(Value::as_i64)
 }
 
 /// An optional presence-tracked `f64` (mirrors `opt_f64`).
@@ -6313,6 +6321,21 @@ impl WireBuilder for ListRiskTransfersRequest {
     }
 }
 
+impl WireBuilder for ListClientFlowMetricsRequest {
+    const MESSAGE: &'static str = "ListClientFlowMetricsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "group_by" => self.group_by = enum_or_zero(value),
+            "from_nanos" => self.from_nanos = opt_i64(value),
+            "to_nanos" => self.to_nanos = opt_i64(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for ListInstrumentsRequest {
     const MESSAGE: &'static str = "ListInstrumentsRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -6816,6 +6839,16 @@ pub fn decode_list_risk_transfers_request(
     o: &Map<String, Value>,
 ) -> DResult<ListRiskTransfersRequest> {
     decode(ListRiskTransfersRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListClientFlowMetricsRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_client_flow_metrics_request(
+    o: &Map<String, Value>,
+) -> DResult<ListClientFlowMetricsRequest> {
+    decode(ListClientFlowMetricsRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListInstrumentsRequest`] envelope — fully generic.
@@ -7800,6 +7833,46 @@ impl WireAdapter for CreateRiskBookResponse {
     }
 }
 
+impl WireAdapter for ClientFlowMetricsDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "label" => Some(WireVal::Str(&self.label)),
+            "quote_count" => Some(WireVal::U64(self.quote_count)),
+            "traded_count" => Some(WireVal::U64(self.traded_count)),
+            "traded_notional" => Some(WireVal::F64(self.traded_notional)),
+            "gross_pnl" => Some(WireVal::F64(self.gross_pnl)),
+            "total_markout" => Some(WireVal::F64(self.total_markout)),
+            "total_hedge_cost" => Some(WireVal::F64(self.total_hedge_cost)),
+            "net_pnl" => Some(WireVal::F64(self.net_pnl)),
+            // proto3 `optional double`: absent (a zero denominator) ⇒ JSON null
+            // (ClientFlowMetricsDesc is on the null-absent list) — the divide-by-zero
+            // guard, never a fabricated zero.
+            "dpm_gross" => self.dpm_gross.map(WireVal::F64),
+            "dpm_net" => self.dpm_net.map(WireVal::F64),
+            "captured_vs_offered" => self.captured_vs_offered.map(WireVal::F64),
+            "mean_cover_distance" => self.mean_cover_distance.map(WireVal::F64),
+            "breakeven_spread" => self.breakeven_spread.map(WireVal::F64),
+            "quote_to_trade_ratio" => self.quote_to_trade_ratio.map(WireVal::F64),
+            "hit_rate" => self.hit_rate.map(WireVal::F64),
+            "fishing_score" => Some(WireVal::F64(self.fishing_score)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListClientFlowMetricsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "metrics" => Some(WireVal::RepeatedMsg(
+                self.metrics.iter().map(|m| m as &dyn WireAdapter).collect(),
+            )),
+            "group_by" => Some(WireVal::Enum(self.group_by)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for UpdateRiskBookResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -8340,6 +8413,12 @@ pub fn encode_cancel_risk_transfer_response(r: &CancelRiskTransferResponse) -> V
 #[must_use]
 pub fn encode_list_risk_transfers_response(r: &ListRiskTransfersResponse) -> Value {
     encode("ListRiskTransfersResponse", r)
+}
+
+/// Encode a [`ListClientFlowMetricsResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_client_flow_metrics_response(r: &ListClientFlowMetricsResponse) -> Value {
+    encode("ListClientFlowMetricsResponse", r)
 }
 
 /// Encode a [`RiskTransferInbox`] push frame to its WS JSON — descriptor-driven

@@ -121,6 +121,7 @@ use crate::services::access::{
 use crate::services::error_status::{
     link_error_to_status, price_error_to_status, rates_price_error_to_status,
 };
+use crate::services::analytics::{ClientFlowSource, in_window};
 use crate::services::forward::{Serve, route_underlying, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::services::risk::federate::Fleet;
@@ -328,6 +329,140 @@ enum PreTradeLeaf {
 struct QuoteStore {
     by_key: HashMap<String, u64>,
     by_id: HashMap<u64, QuoteRecord>,
+}
+
+impl QuoteStore {
+    /// An owned snapshot of every retained quote record — the material the
+    /// client-flow analytics fold reads on-query (off the hot path). Cloning the
+    /// small records under the brief store lock keeps the fold from holding the
+    /// lock while it allocates the rollup.
+    fn snapshot(&self) -> Vec<QuoteRecord> {
+        self.by_id.values().cloned().collect()
+    }
+}
+
+/// The FX-options quote edge as a **client-flow analytics source** (Analytics
+/// phase 2): it maps its retained [`QuoteRecord`]s into asset-tagged
+/// [`FlowRecord`]s the rollup folds. Read-only, on-query, off the hot path — it
+/// snapshots the RFQ store under its (async) lock and derives every economic
+/// quantity from what is already stored (no new capture, guardrail 11).
+#[tonic::async_trait]
+impl ClientFlowSource for QuoteEdge {
+    async fn flow_records(
+        &self,
+        from: Option<i64>,
+        to: Option<i64>,
+    ) -> Vec<celnet_analytics::FlowRecord> {
+        // Brief lock: clone the small records out, then map/allocate lock-free.
+        let records = self.store.lock().await.snapshot();
+        records
+            .iter()
+            .filter_map(|rec| quote_record_to_flow(rec, from, to))
+            .collect()
+    }
+}
+
+/// Project one retained FXO [`QuoteRecord`] onto a neutral [`FlowRecord`], or
+/// `None` if its event time falls outside the `[from, to)` window.
+///
+/// Honest mapping (guardrail 2): `notional` is the option's stored quantity;
+/// `quoted_spread` the shown two-way × notional; `margin` the traded-side
+/// outbound-vs-`raw_mid` provenance delta × notional (0 when the quote was not
+/// priced through a pricing group, so no provenance was stamped); `markout`,
+/// `hedge_cost`, and `cover_distance` are `None` — no post-trade mark pass and no
+/// signed-cover model exist yet (later phases), never fabricated here.
+fn quote_record_to_flow(
+    rec: &QuoteRecord,
+    from: Option<i64>,
+    to: Option<i64>,
+) -> Option<celnet_analytics::FlowRecord> {
+    use celnet_analytics::{FlowRecord, Side as FlowSide};
+
+    let traded = rec.execution.is_some();
+    // Prefer the execution timestamp when booked, else the quote publication time.
+    let ts = rec
+        .execution
+        .as_ref()
+        .map_or(rec.quote.epoch_nanos, |e| e.epoch_nanos);
+    if !in_window(ts, from, to) {
+        return None;
+    }
+
+    let client = match &rec.requester {
+        RequesterBinding::Authenticated(id) => id.clone(),
+        RequesterBinding::Anonymous => "anonymous".to_owned(),
+    };
+    // The option's stored notional magnitude (direction is carried by side).
+    let notional = rec
+        .instrument
+        .quantity
+        .as_ref()
+        .map_or(0.0, |q| q.notional.abs());
+    // The full two-way spread we showed, as cash on this notional.
+    let (bid, offer) = rec
+        .quote
+        .price
+        .as_ref()
+        .map_or((0.0, 0.0), |p| (p.bid, p.offer));
+    let quoted_spread = (offer - bid).abs() * notional;
+
+    // The desk-perspective traded side (only meaningful on a fill; defaults Buy).
+    let exec_side = rec
+        .execution
+        .as_ref()
+        .and_then(|e| celnet_proto::Side::try_from(e.side).ok());
+    let side = match exec_side {
+        Some(celnet_proto::Side::Sell) => FlowSide::Sell,
+        _ => FlowSide::Buy,
+    };
+
+    // Realised gross margin: the outbound-vs-fair (`raw_mid`) delta on the traded
+    // side, × notional. Only when a fill carries provenance (a pricing-group quote).
+    let margin = if traded {
+        rec.execution
+            .as_ref()
+            .and_then(|e| e.pricing_provenance.as_ref())
+            .map_or(0.0, |p| {
+                let unit = match exec_side {
+                    Some(celnet_proto::Side::Sell) => p.outbound_offer - p.raw_mid,
+                    _ => p.raw_mid - p.outbound_bid,
+                };
+                unit * notional
+            })
+    } else {
+        0.0
+    };
+
+    // Instrument key: the underlying symbol (e.g. "EURUSD"); fall back to the
+    // asset-class tag for the symbol-less cross-asset arms.
+    let (asset_tag, symbol) = underlying_label(rec.instrument.underlying.as_ref());
+    let instrument = if symbol.is_empty() {
+        format!("fxo-{asset_tag}")
+    } else {
+        symbol
+    };
+    // The covering line we booked against (the LP), a secondary rollup key.
+    let counterparty = if traded && !rec.booked_lp_id.is_empty() {
+        rec.booked_lp_id.clone()
+    } else {
+        "native".to_owned()
+    };
+
+    Some(FlowRecord {
+        client,
+        counterparty,
+        instrument,
+        asset: "fxo".to_owned(),
+        notional,
+        side,
+        was_quoted: true,
+        was_traded: traded,
+        margin,
+        quoted_spread,
+        cover_distance: None,
+        markout: None,
+        hedge_cost: None,
+    })
 }
 
 /// The RFQ service over the [`CoreLink`] and the readiness gate.

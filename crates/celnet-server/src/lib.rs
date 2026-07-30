@@ -414,7 +414,9 @@ impl Edge {
         // the SAME edge clock. Process-local — empty on boot, so a restart
         // invalidates every token.
         let sessions = Arc::new(SessionRegistry::new(clock.clone()));
-        let quote = QuoteServiceServer::new(
+        // Built behind an `Arc` (via `from_arc`) so the SAME quote edge that serves RFQs
+        // also backs the client-flow analytics fold as its FXO source (Analytics phase 2).
+        let quote_edge = Arc::new(
             QuoteEdge::with_fleet(
                 Arc::clone(&link),
                 Arc::clone(&gate),
@@ -433,6 +435,7 @@ impl Edge {
             // lines) instead of the synthetic-demo panel.
             .with_aggregation_hub(Arc::clone(&aggregation_hub)),
         );
+        let quote = QuoteServiceServer::from_arc(Arc::clone(&quote_edge));
         // The shared LINEAR-RATES position book (created here so the stream + auth edges can
         // share it): ONE book read/written by the RiskService rates Book/List RPCs and the
         // RfqDeskService (whose AcceptDeskQuote books accepted deals into it), and read by the
@@ -722,7 +725,16 @@ impl Edge {
             .with_rates_store(Arc::clone(&rates_store))
             // Back the transfer RPCs (initiate / accept / reject / cancel / list) with the
             // shared transfer service.
-            .with_transfer_service(Arc::clone(&transfer_service)),
+            .with_transfer_service(Arc::clone(&transfer_service))
+            // Register the cross-asset client-flow analytics sources (Analytics phase 2):
+            // the FXO quote edge + the FI desk edge, each folding its OWN already-captured
+            // history into FlowRecords on-query, off the hot path.
+            .with_client_flow_source(
+                Arc::clone(&quote_edge) as Arc<dyn services::analytics::ClientFlowSource>,
+            )
+            .with_client_flow_source(
+                Arc::clone(&rfq_desk_edge) as Arc<dyn services::analytics::ClientFlowSource>,
+            ),
         );
         let auth = AuthServiceServer::from_arc(Arc::clone(&auth_edge));
 

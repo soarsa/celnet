@@ -22,8 +22,8 @@
 //!                          (0 if quotes = 0; net treated as 0 if no trades)
 
 use celnet_analytics::{
-    ClientFlowMetrics, DPM_VALUE_SCALE, FlowRecord, Side, fishing_score, group_by_client,
-    group_by_counterparty, group_by_instrument, metrics_from,
+    ClientFlowMetrics, DPM_VALUE_SCALE, FlowRecord, Side, fishing_score, group_by_asset,
+    group_by_client, group_by_counterparty, group_by_instrument, metrics_from,
 };
 
 /// A template record: quoted, not (yet) traded, all cash quantities zero. Cases
@@ -34,6 +34,7 @@ fn base(client: &str) -> FlowRecord {
         client: client.to_owned(),
         counterparty: "CPTY".to_owned(),
         instrument: "EURUSD".to_owned(),
+        asset: "fxo".to_owned(),
         notional: 0.0,
         side: Side::Buy,
         was_quoted: true,
@@ -299,6 +300,50 @@ fn case10_fishing_score_formula() {
     assert_eq!(fishing_score(Some(0.1), Some(50.0), 10), 0.0);
     // pure fisher: no trades, low hit ⇒ 1.
     assert_eq!(fishing_score(Some(0.0), None, 20), 1.0);
+}
+
+// ─────────── case 11 — cross-asset grouping (FI vs FXO partition) ───────────
+
+#[test]
+fn case11_group_by_asset() {
+    // Two products under one desk: an FXO fill (5mm@250) and two FI fills
+    // (10mm@0 and 20mm@0 — the FI desk path carries no per-feature margin, so
+    // its $/mm is legitimately 0/None, not fabricated). `group_by_asset` must
+    // partition them exhaustively & disjointly by the opaque `asset` label.
+    let fxo = FlowRecord {
+        asset: "fxo".to_owned(),
+        ..fill("ACME", 5_000_000.0, 250.0, 500.0)
+    };
+    let fi_a = FlowRecord {
+        asset: "fi".to_owned(),
+        instrument: "US10Y".to_owned(),
+        ..fill("HFUND", 10_000_000.0, 0.0, 0.0)
+    };
+    let fi_b = FlowRecord {
+        asset: "fi".to_owned(),
+        instrument: "US30Y".to_owned(),
+        ..fill("HFUND", 20_000_000.0, 0.0, 0.0)
+    };
+    let recs = vec![fxo, fi_a, fi_b];
+
+    let by_asset = group_by_asset(&recs);
+    assert_eq!(by_asset.len(), 2);
+    // FXO: the single 5mm fill @ margin 250 ⇒ dpm_gross 50.
+    assert_eq!(by_asset["fxo"].traded_notional, 5_000_000.0);
+    assert_eq!(by_asset["fxo"].traded_count, 1);
+    assert_eq!(by_asset["fxo"].dpm_gross, Some(50.0));
+    // FI: 30mm across two fills, zero margin ⇒ dpm_gross 0 (present, not None:
+    // notional traded, so the ratio is defined and exactly 0).
+    assert_eq!(by_asset["fi"].traded_notional, 30_000_000.0);
+    assert_eq!(by_asset["fi"].traded_count, 2);
+    assert_eq!(by_asset["fi"].dpm_gross, Some(0.0));
+
+    // Exhaustive & disjoint: Σ per-asset traded notional == whole-slice total.
+    let whole = metrics_from("ALL", &recs);
+    let total: f64 = by_asset.values().map(|m| m.traded_notional).sum();
+    assert_eq!(total, whole.traded_notional);
+    let count: u64 = by_asset.values().map(|m| m.traded_count).sum();
+    assert_eq!(count, whole.traded_count);
 }
 
 // ───────────────────────────── property tests ──────────────────────────────

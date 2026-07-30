@@ -926,6 +926,7 @@ dependencies = [
  "argon2",
  "blake3",
  "celnet-aggregation",
+ "celnet-analytics",
  "celnet-bond",
  "celnet-calendar",
  "celnet-client",

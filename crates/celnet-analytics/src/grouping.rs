@@ -47,3 +47,10 @@ pub fn group_by_counterparty(records: &[FlowRecord]) -> BTreeMap<String, ClientF
 pub fn group_by_instrument(records: &[FlowRecord]) -> BTreeMap<String, ClientFlowMetrics> {
     group_by(records, |r| r.instrument.as_str())
 }
+
+/// Roll up per **asset / product** (`FlowRecord::asset`) — the cross-product
+/// dimension a global Analytics surface slices FI vs FXO by.
+#[must_use]
+pub fn group_by_asset(records: &[FlowRecord]) -> BTreeMap<String, ClientFlowMetrics> {
+    group_by(records, |r| r.asset.as_str())
+}

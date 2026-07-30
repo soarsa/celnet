@@ -121,6 +121,9 @@ use celnet_proto::{
     RejectRiskTransferResponse, RiskTransfer, RiskTransferInbox, RiskTransferProvenance,
     RiskVectorDesc, TransferLeg,
 };
+use celnet_proto::{
+    ClientFlowMetricsDesc, ListClientFlowMetricsRequest, ListClientFlowMetricsResponse,
+};
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
 /// human-readable reason echoed back to the client as a typed `error` frame.
@@ -197,6 +200,14 @@ fn opt_f64(o: &Map<String, Value>, key: &str) -> Option<f64> {
     match o.get(key) {
         None | Some(Value::Null) => None,
         Some(v) => v.as_f64(),
+    }
+}
+
+/// An optional presence-tracked `i64` field (`null`/absent ⇒ `None`).
+fn opt_i64(o: &Map<String, Value>, key: &str) -> Option<i64> {
+    match o.get(key) {
+        None | Some(Value::Null) => None,
+        Some(v) => v.as_i64(),
     }
 }
 
@@ -5030,6 +5041,55 @@ pub(super) fn list_risk_transfers_response_to_json(r: &ListRiskTransfersResponse
     })
 }
 
+/// One client-flow rollup row → JSON. Every `Option<f64>` ratio serializes to
+/// `null` when absent (the `json!` macro's `Option` behaviour) — the byte-identical
+/// `optional double` presence contract the differential harness checks.
+fn client_flow_metrics_desc_to_json(d: &ClientFlowMetricsDesc) -> Value {
+    json!({
+        "label": d.label,
+        "quote_count": d.quote_count,
+        "traded_count": d.traded_count,
+        "traded_notional": d.traded_notional,
+        "gross_pnl": d.gross_pnl,
+        "total_markout": d.total_markout,
+        "total_hedge_cost": d.total_hedge_cost,
+        "net_pnl": d.net_pnl,
+        "dpm_gross": d.dpm_gross,
+        "dpm_net": d.dpm_net,
+        "captured_vs_offered": d.captured_vs_offered,
+        "mean_cover_distance": d.mean_cover_distance,
+        "breakeven_spread": d.breakeven_spread,
+        "quote_to_trade_ratio": d.quote_to_trade_ratio,
+        "hit_rate": d.hit_rate,
+        "fishing_score": d.fishing_score,
+    })
+}
+
+/// The client-flow analytics roster → JSON (`ListClientFlowMetrics` reply). The
+/// scalar `group_by` enum serializes as its i32 tag; `correlation_id` is
+/// `null`-when-absent.
+pub(super) fn list_client_flow_metrics_response_to_json(r: &ListClientFlowMetricsResponse) -> Value {
+    json!({
+        "metrics": Value::Array(r.metrics.iter().map(client_flow_metrics_desc_to_json).collect()),
+        "group_by": r.group_by,
+        "correlation_id": r.correlation_id,
+    })
+}
+
+/// The `ListClientFlowMetrics` request ← JSON. `group_by` defaults to the proto3
+/// zero (CLIENT); the time bounds are presence-tracked `optional int64`.
+pub(super) fn list_client_flow_metrics_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListClientFlowMetricsRequest> {
+    Ok(ListClientFlowMetricsRequest {
+        session_token: string_field(o, "session_token")?,
+        group_by: enum_or_zero(o, "group_by"),
+        from_nanos: opt_i64(o, "from_nanos"),
+        to_nanos: opt_i64(o, "to_nanos"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
 /// The per-desk / per-trader transfer inbox push frame → JSON (encode-only; a
 /// server push, never decoded). No optional field, so nothing is null-when-absent.
 pub(super) fn risk_transfer_inbox_to_json(i: &RiskTransferInbox) -> Value {
@@ -5138,6 +5198,9 @@ pub mod diff_support {
         ListRiskTransfersRequest, ListRiskTransfersResponse, RejectRiskTransferRequest,
         RejectRiskTransferResponse, RiskTransferInbox,
     };
+    // Client-flow analytics (AuthService ListClientFlowMetrics): the request decoder +
+    // reply encoder the generated codec is proven byte-identical to.
+    use celnet_proto::{ListClientFlowMetricsRequest, ListClientFlowMetricsResponse};
     use serde_json::{Map, Value};
 
     use super::CodecError;
@@ -6550,6 +6613,24 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_list_risk_transfers_response_to_json(r: &ListRiskTransfersResponse) -> Value {
         super::list_risk_transfers_response_to_json(r)
+    }
+
+    /// Hand-codec `ListClientFlowMetricsRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_client_flow_metrics_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListClientFlowMetricsRequest, CodecError> {
+        super::list_client_flow_metrics_request_from_json(o)
+    }
+
+    /// Hand-codec `ListClientFlowMetricsResponse` encoder.
+    #[must_use]
+    pub fn hand_list_client_flow_metrics_response_to_json(
+        r: &ListClientFlowMetricsResponse,
+    ) -> Value {
+        super::list_client_flow_metrics_response_to_json(r)
     }
 
     /// Hand-codec `RiskTransferInbox` push-frame encoder.
