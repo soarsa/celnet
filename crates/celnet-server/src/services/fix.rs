@@ -766,8 +766,11 @@ impl FixSession {
         // unconfigured tenor / pricing failure is routed as an ALERT-worthy manual
         // intervention. Every case records to the desk inbox — nothing is dropped.
         let admission = self.classify_ois_rfq(&rfq, intent, frame);
+        // The display counterparty rides the RFQ's PartyID(448) when the initiator names one
+        // (a SIM rotates realistic names per request), else the authenticated CompID.
+        let counterparty = self.display_counterparty(frame);
         // Record the inbox row first (its id rides an auto-quote so a lift books the deal).
-        let request_id = self.record_rates_rfq(&rfq, side, &curve, &admission);
+        let request_id = self.record_rates_rfq(&rfq, &counterparty, side, &curve, &admission);
         // Only an auto-quote shows a `Quote(S)`; routed / manual-intervention RFQs carry no
         // price (the desk prices them).
         if let RatesAdmission::Auto(priced) = &admission {
@@ -893,9 +896,27 @@ impl FixSession {
     /// [`Manual`](RatesAdmission::Manual) ⇒ PENDING with an alert-worthy reason. Returns
     /// the stored request id (so a lift can book an auto-quote), or `None` when the
     /// acceptor is not desk-routed (legacy env seed / tests) or carries no desk.
+    /// The DISPLAY counterparty for an inbound RFQ: the `PartyID(448)` the initiator named
+    /// (the client on whose behalf the RFQ was entered — see
+    /// [`celnet_fix::messages::push_originating_party`]), falling back to the session's
+    /// authenticated `TargetCompID` when the party block is absent/empty. A managed SIM
+    /// varies `PartyID(448)` per RFQ so the blotter shows realistic, varied names over one
+    /// FIX session and counterparty-keyed risk-routing rules become exercisable; the real
+    /// gateway path names no party, so `counterparty` stays the authenticated CompID.
+    fn display_counterparty(&self, frame: &FrameCursor<'_>) -> String {
+        frame
+            .get(celnet_fix::messages::TAG_PARTY_ID)
+            .filter(|id| !id.is_empty())
+            .map_or_else(
+                || String::from_utf8_lossy(&self.ctx.counterparty).into_owned(),
+                |id| String::from_utf8_lossy(id).into_owned(),
+            )
+    }
+
     fn record_rates_rfq(
         &self,
         rfq: &dialect_rates::RatesRfq,
+        counterparty: &str,
         side: Side,
         curve: &CurveSet,
         admission: &RatesAdmission,
@@ -904,7 +925,6 @@ impl FixSession {
         if self.ctx.desk.trim().is_empty() {
             return None;
         }
-        let counterparty = String::from_utf8_lossy(&self.ctx.counterparty).into_owned();
         let (fixed_rate, outcome) = match admission {
             RatesAdmission::Auto(priced) => {
                 let mid = 0.5 * (priced.bid + priced.offer);
@@ -931,7 +951,7 @@ impl FixSession {
         };
         let stored = edge.ingest_fix_rfq(
             &self.ctx.desk,
-            &counterparty,
+            counterparty,
             instrument,
             curve.clone(),
             side,
@@ -982,7 +1002,8 @@ impl FixSession {
         if let RatesAdmission::Auto(priced) = &admission {
             self.emit_two_way_quote(st, req_id, symbol, priced, None, None, out);
         }
-        self.record_bond_rfq(&rfq, &curve, &admission);
+        let counterparty = self.display_counterparty(frame);
+        self.record_bond_rfq(&rfq, &counterparty, &curve, &admission);
     }
 
     /// Record an inbound cash-bond RFQ into the desk inbox under this venue's desk — the
@@ -995,6 +1016,7 @@ impl FixSession {
     fn record_bond_rfq(
         &self,
         rfq: &dialect_rates::BondRfq,
+        counterparty: &str,
         curve: &CurveSet,
         admission: &RatesAdmission,
     ) {
@@ -1004,7 +1026,6 @@ impl FixSession {
         if self.ctx.desk.trim().is_empty() {
             return;
         }
-        let counterparty = String::from_utf8_lossy(&self.ctx.counterparty).into_owned();
         let side = Side::try_from(rfq.instrument.side).unwrap_or(Side::TwoWay);
         let instrument = RatesInstrument {
             instrument: Some(rates_instrument::Instrument::Bond(rfq.instrument)),
@@ -1021,7 +1042,7 @@ impl FixSession {
         };
         edge.ingest_fix_rfq(
             &self.ctx.desk,
-            &counterparty,
+            counterparty,
             instrument,
             curve.clone(),
             side,

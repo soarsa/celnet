@@ -38,6 +38,48 @@ impl Header<'_> {
 }
 
 // ---------------------------------------------------------------------------
+// Counterparty (party) identification — the `NoPartyIDs(453)` block
+// ---------------------------------------------------------------------------
+
+/// FIX `NoPartyIDs(453)` — the repeating-group count for the party block.
+pub const TAG_NO_PARTY_IDS: u32 = 453;
+/// FIX `PartyID(448)` — the identifier of the party named by a `NoPartyIDs(453)`
+/// entry. The venue reads it as the DISPLAY counterparty on whose behalf an RFQ was
+/// entered (see [`push_originating_party`]), falling back to the session
+/// `TargetCompID` when absent.
+pub const TAG_PARTY_ID: u32 = 448;
+/// FIX `PartyIDSource(447)` — how to interpret the [`TAG_PARTY_ID`] value.
+pub const TAG_PARTY_ID_SOURCE: u32 = 447;
+/// FIX `PartyRole(452)` — the role the named party plays in the message.
+pub const TAG_PARTY_ROLE: u32 = 452;
+/// `PartyIDSource(447)='D'` — a proprietary / custom party-code source (a free-form
+/// counterparty label rather than a registered LEI/BIC).
+pub const PARTY_ID_SOURCE_PROPRIETARY: &[u8] = b"D";
+/// `PartyRole(452)=3` — ClientID: the client on whose behalf the RFQ/order is entered.
+pub const PARTY_ROLE_CLIENT_ID: i64 = 3;
+
+/// Emit a minimal single-entry `NoPartyIDs(453)` party block naming the counterparty on
+/// whose behalf an RFQ is entered — `453=1`, `PartyID(448)=<id>`,
+/// `PartyIDSource(447)='D'`, `PartyRole(452)=3` (ClientID).
+///
+/// A **no-op** when `party_id` is `None` or empty, so a builder that passes `None` emits
+/// byte-identical output to one with no party block at all (backward-compatible: every
+/// existing caller is unchanged). The acceptor reads `PartyID(448)` as the display
+/// counterparty for the blotter, falling back to the authenticated session
+/// `TargetCompID` when the block is absent — so the real gateway path (which names no
+/// party) still shows `counterparty == CompID`, while a SIM can vary the label per RFQ
+/// independent of the single transport CompID.
+pub fn push_originating_party(enc: &mut FrameEncoder, party_id: Option<&[u8]>) {
+    let Some(id) = party_id.filter(|id| !id.is_empty()) else {
+        return;
+    };
+    enc.push_int(TAG_NO_PARTY_IDS, 1);
+    enc.push(TAG_PARTY_ID, id);
+    enc.push(TAG_PARTY_ID_SOURCE, PARTY_ID_SOURCE_PROPRIETARY);
+    enc.push_int(TAG_PARTY_ROLE, PARTY_ROLE_CLIENT_ID);
+}
+
+// ---------------------------------------------------------------------------
 // Session admin builders
 // ---------------------------------------------------------------------------
 

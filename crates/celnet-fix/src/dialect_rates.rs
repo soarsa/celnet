@@ -188,6 +188,27 @@ pub fn build_rates_quote_request(
     p: &RatesQuoteRequestParams<'_>,
     enc: &mut FrameEncoder,
 ) -> Vec<u8> {
+    build_rates_quote_request_with_party(hdr, p, None, enc)
+}
+
+/// Build an OIS `QuoteRequest(R)` frame as [`build_rates_quote_request`], additionally
+/// naming the counterparty on whose behalf the RFQ is entered in a `NoPartyIDs(453)`
+/// party block (`party_id` ⇒ `PartyID(448)`; see
+/// [`crate::messages::push_originating_party`]). Passing `party_id = None` emits a
+/// byte-identical frame to [`build_rates_quote_request`] — the plain builder simply
+/// delegates here with `None`.
+///
+/// A managed SIM varies `party_id` per RFQ so the desk blotter shows realistic, varied
+/// counterparty names over one FIX session (one `SenderCompID`) and counterparty-keyed
+/// risk-routing rules become testable; the real gateway leaves it `None`, so the venue
+/// falls back to the authenticated `TargetCompID`.
+#[must_use]
+pub fn build_rates_quote_request_with_party(
+    hdr: &Header<'_>,
+    p: &RatesQuoteRequestParams<'_>,
+    party_id: Option<&[u8]>,
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
     enc.clear();
     hdr.encode(MsgType::QuoteRequest, enc);
     enc.push(131, p.quote_req_id);
@@ -204,6 +225,7 @@ pub fn build_rates_quote_request(
     if let Some(side) = p.side.to_fix() {
         enc.push(54, &[side]);
     }
+    crate::messages::push_originating_party(enc, party_id);
     enc.finish()
 }
 
@@ -613,6 +635,46 @@ mod tests {
         let raw = build_rates_quote_request(&header(), params, &mut enc);
         let frame = FrameCursor::parse(&raw).expect("frame parses");
         decode_rates_rfq(&frame).expect("rfq decodes")
+    }
+
+    /// The party-aware builder with `None` is byte-identical to the plain builder (so every
+    /// existing caller is unaffected), and with `Some(name)` it stamps a `PartyID(448)` the
+    /// venue reads as the display counterparty — the seam a SIM rotates for varied names.
+    #[test]
+    fn party_id_is_optional_and_round_trips_on_the_wire() {
+        let p = RatesQuoteRequestParams {
+            quote_req_id: b"RFQ-1",
+            symbol: b"USD-OIS",
+            tenor_years: 5,
+            notional: 100_000_000.0,
+            side: RatesSide::PayFixed,
+            subscription: SubscriptionRequest::Snapshot,
+        };
+        let mut e1 = FrameEncoder::new();
+        let plain = build_rates_quote_request(&header(), &p, &mut e1);
+        let mut e2 = FrameEncoder::new();
+        let none = build_rates_quote_request_with_party(&header(), &p, None, &mut e2);
+        assert_eq!(
+            plain, none,
+            "None party must be byte-identical to the plain builder"
+        );
+
+        let mut e3 = FrameEncoder::new();
+        let named = build_rates_quote_request_with_party(
+            &header(),
+            &p,
+            Some(b"Millennium Capital"),
+            &mut e3,
+        );
+        let frame = FrameCursor::parse(&named).expect("named frame parses");
+        assert_eq!(
+            frame.get(crate::messages::TAG_PARTY_ID),
+            Some(b"Millennium Capital".as_ref()),
+        );
+        // The RFQ payload still decodes exactly — the party block is additive.
+        let rfq = decode_rates_rfq(&frame).expect("rfq still decodes");
+        assert_eq!(rfq.symbol, b"USD-OIS");
+        assert_eq!(rfq.tenor_years, 5);
     }
 
     #[test]

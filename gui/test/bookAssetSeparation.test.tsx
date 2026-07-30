@@ -46,10 +46,10 @@ async function seededDeskTransport(): Promise<MockTransport> {
   const t = createMockTransport();
   const reqs = (await t.listDeskRequests({})).requests;
   // Select the two seeded PENDING requests by counterparty (list order is not
-  // guaranteed): Meridian's 5y RFQ is quoted (→ shown QUOTED), Northwind's 10y IOI
+  // guaranteed): Citadel's 5y RFQ is quoted (→ shown QUOTED), Jane Street's 10y IOI
   // is quoted-then-accepted (→ a booked deal + a booked 10y rates position).
-  const meridian = reqs.find((r) => r.counterparty === "Meridian Capital" && r.state === "PENDING");
-  const northwind = reqs.find((r) => r.counterparty === "Northwind AM" && r.state === "PENDING");
+  const meridian = reqs.find((r) => r.counterparty === "Citadel" && r.state === "PENDING");
+  const northwind = reqs.find((r) => r.counterparty === "Jane Street" && r.state === "PENDING");
   if (!meridian || !northwind) throw new Error("expected the two seeded PENDING desk requests");
 
   await t.respondDeskRequest({
@@ -111,8 +111,8 @@ describe("Book workspace asset separation — FX Options domain hides every OIS 
       screen.getByText(/No FX-option desk quotes/i),
     ).toBeInTheDocument();
     // The seeded OIS counterparties must NOT appear as rows under FX Options.
-    expect(screen.queryByText("Meridian Capital")).toBeNull();
-    expect(screen.queryByText("Northwind AM")).toBeNull();
+    expect(screen.queryByText("Citadel")).toBeNull();
+    expect(screen.queryByText("Jane Street")).toBeNull();
   });
 
   it("Deals lens shows the honest empty state — no OIS deals leak in", async () => {
@@ -120,7 +120,7 @@ describe("Book workspace asset separation — FX Options domain hides every OIS 
     await openLens("Deals");
 
     expect(screen.getByText(/No FX-option deals/i)).toBeInTheDocument();
-    expect(screen.queryByText("Northwind AM")).toBeNull();
+    expect(screen.queryByText("Jane Street")).toBeNull();
   });
 
   it("Positions lens shows the honest empty state — no OIS positions, 0-position summary", async () => {
@@ -152,8 +152,8 @@ describe("Book workspace asset separation — Fixed Income domain shows the OIS 
     await renderBook(transport, "fixed_income");
     await openLens("Quotes");
 
-    expect(await screen.findByText("Meridian Capital")).toBeInTheDocument();
-    expect(screen.getByText("Northwind AM")).toBeInTheDocument();
+    expect(await screen.findByText("Citadel")).toBeInTheDocument();
+    expect(screen.getByText("Jane Street")).toBeInTheDocument();
     expect(screen.queryByText(/No FX-option desk quotes/i)).toBeNull();
   });
 
@@ -161,7 +161,7 @@ describe("Book workspace asset separation — Fixed Income domain shows the OIS 
     await renderBook(transport, "fixed_income");
     await openLens("Deals");
 
-    expect(await screen.findByText("Northwind AM")).toBeInTheDocument();
+    expect(await screen.findByText("Jane Street")).toBeInTheDocument();
     expect(screen.queryByText(/No FX-option deals/i)).toBeNull();
   });
 
@@ -170,7 +170,7 @@ describe("Book workspace asset separation — Fixed Income domain shows the OIS 
     await openLens("Positions & Booking");
 
     // The seeded rates positions render as rows (2y / 5y, plus the seeded 10y and
-    // the 10y booked by the accepted Northwind deal — hence 10y appears twice).
+    // the 10y booked by the accepted Jane Street deal — hence 10y appears twice).
     expect(await screen.findByText("2y OIS")).toBeInTheDocument();
     expect(screen.getByText("5y OIS")).toBeInTheDocument();
     expect(screen.getAllByText("10y OIS").length).toBeGreaterThanOrEqual(1);

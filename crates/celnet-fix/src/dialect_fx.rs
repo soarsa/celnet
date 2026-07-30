@@ -90,6 +90,22 @@ pub fn build_quote_request(
     p: &QuoteRequestParams<'_>,
     enc: &mut FrameEncoder,
 ) -> Vec<u8> {
+    build_quote_request_with_party(hdr, p, None, enc)
+}
+
+/// Build a single-leg FX-option `QuoteRequest(R)` as [`build_quote_request`],
+/// additionally naming the counterparty on whose behalf the RFQ is entered in a
+/// `NoPartyIDs(453)` party block (`party_id` ⇒ `PartyID(448)`; see
+/// [`crate::messages::push_originating_party`]). `party_id = None` emits a byte-identical
+/// frame to [`build_quote_request`], which delegates here with `None`. A managed SIM
+/// varies `party_id` per RFQ for a varied desk view over one FIX session.
+#[must_use]
+pub fn build_quote_request_with_party(
+    hdr: &Header<'_>,
+    p: &QuoteRequestParams<'_>,
+    party_id: Option<&[u8]>,
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
     let sec_type: &[u8] = match p.settlement {
         Settlement::Deliverable => SEC_TYPE_FXVO,
         Settlement::NonDeliverable => SEC_TYPE_FXNO,
@@ -114,6 +130,7 @@ pub fn build_quote_request(
     enc.push(947, p.strike_ccy);
     enc.push(1194, exercise);
     enc.push(TAG_EXPIRY_YEARS, format!("{}", p.expiry_years).as_bytes());
+    crate::messages::push_originating_party(enc, party_id);
     enc.finish()
 }
 

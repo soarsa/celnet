@@ -170,6 +170,54 @@ import type {
 
 const NS_PER_MS = 1_000_000n;
 
+/**
+ * A pool of realistic simulated counterparty names — a mix of buy-side funds and banks —
+ * the dev-mode mock rotates through so its inbound RFQ/IOI/deal flow shows a variety of
+ * counterparties (instead of one or two repeated names), matching the server-side FIX
+ * simulator's pool (`celnet_fix::sim::SIM_COUNTERPARTIES`). These are demo/fixture labels
+ * only — this is a client-side copy (no cross-boundary import); keep the two lists in step.
+ * Rotation ([`mockCounterpartyFor`]) is a pure function of an index, so a dev session is
+ * reproducible.
+ */
+const MOCK_SIM_COUNTERPARTIES: readonly string[] = [
+  "Millennium Capital",
+  "Jyske Bank",
+  "Citadel",
+  "Jane Street",
+  "Brevan Howard",
+  "Marshall Wace",
+  "Balyasny",
+  "Point72",
+  "Squarepoint",
+  "Capstone",
+  "BlueCrest",
+  "LMR Partners",
+  "Nordea Markets",
+  "Rabobank",
+  "DekaBank",
+  "Danske Bank",
+  "SEB",
+  "Handelsbanken",
+  "Swedbank",
+  "DNB Markets",
+  "Pictet",
+  "Julius Baer",
+  "KBC",
+  "Erste Group",
+  "Raiffeisen",
+  "Optiver",
+  "IMC",
+  "Segantii",
+];
+
+/** The simulated counterparty for index `i` — a deterministic rotation over the pool. */
+function mockCounterpartyFor(i: number): string {
+  const pool = MOCK_SIM_COUNTERPARTIES;
+  const idx = ((i % pool.length) + pool.length) % pool.length;
+  // `idx` is always in range; the fallback only satisfies noUncheckedIndexedAccess.
+  return pool[idx] ?? pool[0] ?? "Counterparty";
+}
+
 /** The desk the exception-contract sample notifications are attributed to. */
 const SAMPLE_DESK = "g10-rates";
 /** Delay before the quiet (alertWorthy:false) auto-priced sample fires (ms). */
@@ -3620,9 +3668,9 @@ export class MockTransport implements CelnetTransport {
       kind: "QUOTE_ACCEPTED",
       atNanos: nowNanos(),
       desk: SAMPLE_DESK,
-      counterparty: "Aster Global",
+      counterparty: mockCounterpartyFor(0),
       requestKind: "RFQ",
-      headline: "Auto-priced RFQ from Aster Global: 2y OIS 25mm",
+      headline: `Auto-priced RFQ from ${mockCounterpartyFor(0)}: 2y OIS 25mm`,
       detail: "auto-quoted · no action needed",
       alertWorthy: false,
     }));
@@ -3632,7 +3680,7 @@ export class MockTransport implements CelnetTransport {
       kind: "MANUAL_INTERVENTION_REQUIRED",
       atNanos: nowNanos(),
       desk: SAMPLE_DESK,
-      counterparty: "Meridian Capital",
+      counterparty: mockCounterpartyFor(1),
       requestKind: "RFQ",
       headline: "Manual pricing needed",
       detail: "USD-OIS 15Y",
@@ -3759,14 +3807,14 @@ export class MockTransport implements CelnetTransport {
     }[] = [
       {
         kind: "RFQ",
-        counterparty: "Meridian Capital",
+        counterparty: mockCounterpartyFor(2),
         tenorYears: 5,
         notionalMm: 75,
         side: "BUY",
       },
       {
         kind: "IOI",
-        counterparty: "Northwind AM",
+        counterparty: mockCounterpartyFor(3),
         tenorYears: 10,
         notionalMm: 40,
         side: "SELL",

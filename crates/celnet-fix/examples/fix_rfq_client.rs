@@ -521,6 +521,22 @@ async fn main() -> std::io::Result<()> {
         let req_id = this_req.into_bytes();
         let sending_time = fix_utc_timestamp().into_bytes();
 
+        // The simulated counterparty on whose behalf this RFQ is entered — a deterministic
+        // rotation over the shared pool (`sim::counterparty_for`), stamped into the RFQ's
+        // `PartyID(448)` so the venue's desk blotter shows a varied, realistic counterparty
+        // per request over this single FIX session (one SenderCompID). A one-shot
+        // (`--repeat 1`) names no party (`None`) — the venue then falls back to the
+        // authenticated CompID, keeping the explicit single-shot behaviour unchanged.
+        let counterparty = sim::counterparty_for(i);
+        let party_id: Option<&[u8]> = (args.repeat != 1).then_some(counterparty.as_bytes());
+        // Operator log prefix: name the rotated counterparty on a stream; empty on a
+        // one-shot (which sends no party), so single-shot output stays byte-identical.
+        let cpty_tag = if party_id.is_some() {
+            format!("{counterparty} · ")
+        } else {
+            String::new()
+        };
+
         let result = match args.asset {
             AssetClass::FixedIncome => {
                 // A one-shot honours --tenor; a stream rotates on-the-run tenors and
@@ -576,7 +592,11 @@ async fn main() -> std::io::Result<()> {
                     let outcome = sess
                         .stream(
                             &sending_time,
-                            |hdr, enc| dialect_rates::build_rates_quote_request(hdr, &params, enc),
+                            |hdr, enc| {
+                                dialect_rates::build_rates_quote_request_with_party(
+                                    hdr, &params, party_id, enc,
+                                )
+                            },
                             hold,
                             lift_after,
                         )
@@ -619,19 +639,21 @@ async fn main() -> std::io::Result<()> {
                     };
                     let r = sess
                         .request(&sending_time, |hdr, enc| {
-                            dialect_rates::build_rates_quote_request(hdr, &params, enc)
+                            dialect_rates::build_rates_quote_request_with_party(
+                                hdr, &params, party_id, enc,
+                            )
                         })
                         .await?;
                     match (r.bid, r.offer) {
                         (Some(bid), Some(offer)) => {
-                            println!("[{i}] {tenor}y OIS — auto-quoted:");
+                            println!("[{i}] {cpty_tag}{tenor}y OIS — auto-quoted:");
                             print_quote(r.quote_id.as_deref(), bid, offer);
                         }
                         // No quote = the venue routed this RFQ to a human desk (expected
                         // for a manual variant): either an unknown security or an
                         // unconfigured tenor.
                         _ => println!(
-                            "[{i}] {symbol_str} {tenor}y OIS — ✓ submitted to the rates desk (manual: {})",
+                            "[{i}] {cpty_tag}{symbol_str} {tenor}y OIS — ✓ submitted to the rates desk (manual: {})",
                             if manual_unknown_security {
                                 "unknown security"
                             } else {
@@ -715,7 +737,7 @@ async fn main() -> std::io::Result<()> {
                 };
                 let r = sess
                     .request(&sending_time, |hdr, enc| {
-                        dialect_fx::build_quote_request(hdr, &params, enc)
+                        dialect_fx::build_quote_request_with_party(hdr, &params, party_id, enc)
                     })
                     .await?;
                 let type_label = match option_type {
@@ -725,7 +747,7 @@ async fn main() -> std::io::Result<()> {
                 match (r.bid, r.offer) {
                     (Some(bid), Some(offer)) => {
                         println!(
-                            "[{i}] FX {pair} {type_label} K={strike} {expiry_years:.4}y — auto-quoted:"
+                            "[{i}] {cpty_tag}FX {pair} {type_label} K={strike} {expiry_years:.4}y — auto-quoted:"
                         );
                         print_quote(r.quote_id.as_deref(), bid, offer);
                     }
@@ -739,7 +761,7 @@ async fn main() -> std::io::Result<()> {
                     // non-deliverable request on a deliverable major.
                     _ => match kind.and_then(sim::FxLegKind::manual_reason) {
                         Some(reason) => println!(
-                            "[{i}] FX {pair} {type_label} — ✓ submitted to the FX desk (manual: {reason})"
+                            "[{i}] {cpty_tag}FX {pair} {type_label} — ✓ submitted to the FX desk (manual: {reason})"
                         ),
                         None => {
                             println!("[{i}] FX {pair} {type_label} — no quote (venue declined)")

@@ -156,6 +156,60 @@ pub fn strike_ccy_of(pair: &str) -> &str {
     if pair.len() == 6 { &pair[3..6] } else { "" }
 }
 
+/// A pool of realistic **simulated** counterparty names — a mix of buy-side funds and
+/// banks — the FIX quote simulator rotates through so an inbound RFQ/RFS stream shows a
+/// variety of counterparties on the desk blotter (instead of one repeated CompID) and
+/// counterparty-keyed risk-routing rules become exercisable.
+///
+/// These are demo/fixture labels the SIM stamps into the RFQ's `PartyID(448)`
+/// ([`crate::messages::push_originating_party`]) — the venue reads them as the display
+/// counterparty. They name **no** product artefact, so `CLAUDE.md` rule 8's
+/// vendor-neutral rule (which governs *our* crate/type/API identifiers) does not apply;
+/// realistic firm names make the simulated desk feel like live trading.
+///
+/// The rotation ([`counterparty_for`]) is a pure function of the stream iteration index —
+/// no RNG, no wall-clock — so a replayed stream is byte-reproducible and gate-testable,
+/// matching the rest of this module.
+pub const SIM_COUNTERPARTIES: &[&str] = &[
+    "Millennium Capital",
+    "Jyske Bank",
+    "Citadel",
+    "Jane Street",
+    "Brevan Howard",
+    "Marshall Wace",
+    "Balyasny",
+    "Point72",
+    "Squarepoint",
+    "Capstone",
+    "BlueCrest",
+    "LMR Partners",
+    "Nordea Markets",
+    "Rabobank",
+    "DekaBank",
+    "Danske Bank",
+    "SEB",
+    "Handelsbanken",
+    "Swedbank",
+    "DNB Markets",
+    "Pictet",
+    "Julius Baer",
+    "KBC",
+    "Erste Group",
+    "Raiffeisen",
+    "Optiver",
+    "IMC",
+    "Segantii",
+];
+
+/// The simulated counterparty for stream iteration `i` — a deterministic rotation over
+/// [`SIM_COUNTERPARTIES`] (pure function of `i`, so the same replay yields the same
+/// sequence of names). The simulator stamps this into each RFQ's `PartyID(448)` so the
+/// desk sees a varied, realistic counterparty per request over a single FIX session.
+#[must_use]
+pub fn counterparty_for(i: u64) -> &'static str {
+    SIM_COUNTERPARTIES[(i as usize) % SIM_COUNTERPARTIES.len()]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +323,29 @@ mod tests {
             decode_option(&frame, Tenor::Months(3)),
             Err(DialectError::SettlementMismatch),
         );
+    }
+
+    /// The counterparty rotation is deterministic (no RNG / no wall-clock), genuinely
+    /// varies over consecutive requests, and visits every name in the pool over a cycle —
+    /// so the desk blotter shows a spread of counterparties, reproducibly.
+    #[test]
+    fn counterparty_rotation_is_deterministic_and_covers_the_pool() {
+        assert!(SIM_COUNTERPARTIES.len() >= 24, "want a rich pool of names");
+        for i in 0..128 {
+            assert_eq!(counterparty_for(i), counterparty_for(i));
+        }
+        assert_ne!(counterparty_for(0), counterparty_for(1));
+        let visited: std::collections::BTreeSet<&str> = (0..SIM_COUNTERPARTIES.len() as u64)
+            .map(counterparty_for)
+            .collect();
+        assert_eq!(
+            visited.len(),
+            SIM_COUNTERPARTIES.len(),
+            "every pool name must be reachable and unique",
+        );
+        // The user's named examples must be present so their routing rules are testable.
+        assert!(SIM_COUNTERPARTIES.contains(&"Millennium Capital"));
+        assert!(SIM_COUNTERPARTIES.contains(&"Jyske Bank"));
     }
 
     #[test]
