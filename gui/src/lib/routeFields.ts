@@ -11,7 +11,7 @@
  * enum-typed fields (side/product/ccy/counterparty/user/desk) produce a text
  * context; the four numeric fields (notional/tenor/strike/price) a number; and
  * `instrument_id` is a free string. Keeping the matrices here (not re-derived per
- * component) is what lets {@link ../workspaces/riskrouting/NodeEditor} render a
+ * component) is what lets {@link ../workspaces/riskrouting/RuleEditor} render a
  * TYPED value editor and the validator reject a graph the server would reject.
  */
 import type { RouteField, RouteOp } from "../data/contract";
