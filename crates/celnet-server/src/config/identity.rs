@@ -92,8 +92,10 @@ impl Role {
 }
 
 /// The default capability **bundle** of the [`Role::Trader`] role (and any future
-/// non-admin role): every action except [`Action::Administer`] on **both** asset
-/// classes. This is the slice-1 hardcoded base that the admin-editable
+/// non-admin role): every action except [`Action::Administer`] and
+/// [`Action::RiskTransfer`] on **both** asset classes — the two narrow, explicitly-
+/// granted authorities (admin, and cross-desk risk transfer) are held back from the
+/// default. This is the slice-1 hardcoded base that the admin-editable
 /// [`IdentityStore::role_bundles`] overlay now persists and can narrow/widen
 /// (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §3.3/§10). A store with no
 /// persisted bundle for the role resolves to exactly this set, so an existing
@@ -102,7 +104,7 @@ impl Role {
 pub fn default_trader_bundle() -> Vec<Capability> {
     let mut caps = Vec::new();
     for action in Action::ALL {
-        if matches!(action, Action::Administer) {
+        if matches!(action, Action::Administer | Action::RiskTransfer) {
             continue;
         }
         for asset in AssetClass::ALL {

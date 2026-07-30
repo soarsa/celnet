@@ -61,6 +61,14 @@ pub enum Action {
     Execute,
     /// Book a resulting position to a desk book.
     Book,
+    /// **Transfer** existing risk between books / desks / traders — the manual move
+    /// of already-open risk (the complement to routing). A cross-desk booking-class
+    /// write **distinct** from [`Action::Book`]: a desk can be granted booking
+    /// (`Book`) without being granted the authority to move risk across the desk
+    /// boundary (`RiskTransfer`). Gates the initiate/accept transfer RPCs
+    /// (`docs/RISK-TRANSFER-REQUIREMENTS.md` §7). Not in the default trader bundle —
+    /// a narrow, explicitly-granted authority (like [`Action::Administer`]).
+    RiskTransfer,
     /// Run the **client-side counterparty sandbox** — generate mock RFQ/IOI/order
     /// items and sample quotes purely in the GUI. This action gates a UI affordance
     /// only; it has **no** server RPC and never injects into the live priced desk
@@ -74,7 +82,7 @@ pub enum Action {
 impl Action {
     /// Every action, in discriminant order — the canonical iteration set for
     /// building bundles and exhaustiveness tests.
-    pub const ALL: [Action; 10] = [
+    pub const ALL: [Action; 11] = [
         Action::View,
         Action::Price,
         Action::QuoteRespond,
@@ -83,6 +91,7 @@ impl Action {
         Action::Stream,
         Action::Execute,
         Action::Book,
+        Action::RiskTransfer,
         Action::Simulate,
         Action::Administer,
     ];
@@ -99,6 +108,7 @@ impl Action {
             Action::Stream => "stream",
             Action::Execute => "execute",
             Action::Book => "book",
+            Action::RiskTransfer => "risk_transfer",
             Action::Simulate => "simulate",
             Action::Administer => "administer",
         }
@@ -293,6 +303,35 @@ mod tests {
             "execute on FX must not grant execute on FI"
         );
         assert!(!set.allows(FX_PRICE), "execute must not grant price");
+    }
+
+    /// Separation of duties: `risk_transfer` is a NARROW authority distinct from
+    /// `book` — granting booking never implies the authority to transfer risk across
+    /// the desk boundary (and vice-versa), on either asset class.
+    #[test]
+    fn risk_transfer_is_distinct_from_book() {
+        let fi_book = Capability::new(Action::Book, AssetClass::FixedIncome);
+        let fi_transfer = Capability::new(Action::RiskTransfer, AssetClass::FixedIncome);
+        let fx_transfer = Capability::new(Action::RiskTransfer, AssetClass::FxOptions);
+
+        let booker = CapabilitySet::empty().grant(fi_book);
+        assert!(booker.allows(fi_book));
+        assert!(
+            !booker.allows(fi_transfer),
+            "book must not imply cross-desk transfer"
+        );
+
+        let transferrer = CapabilitySet::empty().grant(fi_transfer);
+        assert!(transferrer.allows(fi_transfer));
+        assert!(
+            !transferrer.allows(fi_book),
+            "transfer must not imply book"
+        );
+        assert!(
+            !transferrer.allows(fx_transfer),
+            "FI transfer must not grant FX transfer"
+        );
+        assert_eq!(Action::from_label("risk_transfer"), Some(Action::RiskTransfer));
     }
 
     /// Separation of duties: price-but-not-execute is representable.

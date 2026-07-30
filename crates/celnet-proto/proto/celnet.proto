@@ -5230,6 +5230,326 @@ message RiskBookRiskUpdate {
 }
 
 // ===========================================================================
+// risk transfer — the MANUAL move of EXISTING risk between books / desks /
+// traders (the complement to risk routing, which auto-assigns NEW fills).
+// `docs/RISK-TRANSFER-REQUIREMENTS.md`. Every message mirrors the pure
+// `celnet_risk_transfer` domain field-for-field; the two sum-type domain enums
+// (`TransferQuantity` = Full | Partial(f64), `TransferPrice` = Mid |
+// MarkToMarket | Agreed(f64)) are carried FLAT — a discriminant enum plus an
+// optional payload scalar — so the WS codec stays oneof-free (a deliberate
+// simplification over the routing graph's nested oneofs). Additive to the one
+// current contract (guardrail 9): no schema_version.
+// ===========================================================================
+
+// The kind of move, fixing the economics + the approval model (mirrors
+// `celnet_risk_transfer::TransferKind`). Prefixed (proto enum values share the
+// file scope) — the pricing-group / routing convention.
+enum TransferKind {
+  // Default/unset — never a valid transfer kind on the wire.
+  TRANSFER_KIND_UNSPECIFIED = 0;
+  // Portfolio → portfolio within the SAME desk. Economics unchanged; a re-stamp
+  // of the routing dimension. Single-control (same owner both ends).
+  TRANSFER_KIND_RE_ATTRIBUTE = 1;
+  // Portfolio/desk → ANOTHER desk's portfolio. An economic internal cross;
+  // requires target-desk acceptance (four-eyes).
+  TRANSFER_KIND_DESK_TO_DESK = 2;
+  // Trader → trader hand-off (same or different book). Requires recipient
+  // acceptance.
+  TRANSFER_KIND_TRADER_TO_TRADER = 3;
+}
+
+// The transfer lifecycle state (mirrors `celnet_risk_transfer::TransferState`).
+enum TransferState {
+  // Default/unset — never a valid state on the wire.
+  TRANSFER_STATE_UNSPECIFIED = 0;
+  // Being composed; not yet submitted.
+  TRANSFER_STATE_DRAFT = 1;
+  // Submitted, awaiting counterparty acceptance (desk-to-desk / trader-to-trader).
+  TRANSFER_STATE_PENDING = 2;
+  // Accepted by the counterparty; ready to book.
+  TRANSFER_STATE_ACCEPTED = 3;
+  // Declined (rejected or expired).
+  TRANSFER_STATE_REJECTED = 4;
+  // Booked — the legs applied, provenance stamped.
+  TRANSFER_STATE_BOOKED = 5;
+  // Withdrawn by the initiator before acceptance.
+  TRANSFER_STATE_CANCELLED = 6;
+}
+
+// Which basis a requested transfer price resolves to (mirrors the request-side
+// `celnet_risk_transfer::TransferPrice` discriminant). The `AGREED` arm's numeric
+// override rides alongside as an optional scalar on the request/record.
+enum TransferPriceBasis {
+  // Default/unset — never a valid basis on the wire.
+  TRANSFER_PRICE_BASIS_UNSPECIFIED = 0;
+  // The live composite mid.
+  TRANSFER_PRICE_BASIS_MID = 1;
+  // The current independent mark.
+  TRANSFER_PRICE_BASIS_MARK_TO_MARKET = 2;
+  // An operator-agreed override (requires a reason; flagged for control).
+  TRANSFER_PRICE_BASIS_AGREED = 3;
+}
+
+// The basis recorded on a booked transfer's immutable provenance (mirrors
+// `celnet_risk_transfer::PriceBasis`; the same value set as `TransferPriceBasis`,
+// carried on the audit record rather than the request — named distinctly to
+// mirror the domain, where the record's `Agreed` carries no value).
+enum PriceBasis {
+  // Default/unset — never valid on a booked record.
+  PRICE_BASIS_UNSPECIFIED = 0;
+  // The live composite mid.
+  PRICE_BASIS_MID = 1;
+  // The current independent mark.
+  PRICE_BASIS_MARK_TO_MARKET = 2;
+  // An operator-agreed override.
+  PRICE_BASIS_AGREED = 3;
+}
+
+// One end of a transfer (mirrors `celnet_risk_transfer::TransferLeg`).
+message TransferLeg {
+  // The risk portfolio (internally a risk-book id).
+  string risk_book_id = 1;
+  // The desk that owns the book.
+  string desk_id = 2;
+  // The trader on this end (may be empty on a desk-level target).
+  string trader = 3;
+  // The positions selected (populated on the source; empty on the target).
+  repeated uint64 position_ids = 4;
+}
+
+// A pass-through risk vector carried / moved by a transfer (mirrors
+// `celnet_risk_transfer::RiskVector`). FX-vanilla desks populate the greeks;
+// linear-rates / bond desks populate `dv01`. Irrelevant fields are 0.
+message RiskVectorDesc {
+  // Sensitivity to a 1bp parallel rate move (linear-rates / bond risk).
+  double dv01 = 1;
+  // Sensitivity to spot (FX-vanilla delta).
+  double delta = 2;
+  // Sensitivity of delta to spot (FX-vanilla gamma).
+  double gamma = 3;
+  // Sensitivity to volatility (FX-vanilla vega).
+  double vega = 4;
+  // Sensitivity to the passage of time (FX-vanilla theta).
+  double theta = 5;
+}
+
+// The aggregate risk a transfer moves (mirrors `celnet_risk_transfer::MovedRisk`).
+message MovedRiskDesc {
+  // Signed base-currency notional moved (+ long risk to target, − short).
+  double notional_base = 1;
+  // The summed, fraction-scaled pass-through risk vector of the moved slices.
+  RiskVectorDesc risk = 2;
+}
+
+// The immutable audit record stamped on a Booked transfer (mirrors
+// `celnet_risk_transfer::RiskTransferProvenance`, the `PricingProvenance`
+// waterfall discipline). Structured, additive, carried on the record.
+message RiskTransferProvenance {
+  // The transfer's stable slug.
+  string transfer_id = 1;
+  // The kind of move.
+  TransferKind kind = 2;
+  // The authenticated initiator.
+  string initiated_by = 3;
+  // Trusted-source initiation timestamp (epoch nanos, UTC).
+  int64 initiated_at = 4;
+  // The accepting/approving user (four-eyes); absent for single-control re-attribution.
+  optional string approver = 5;
+  // When the decision was made (epoch nanos, UTC). Absent until decided.
+  optional int64 decided_at = 6;
+  // The source book the risk left.
+  string source_book_id = 7;
+  // The target book the risk arrived in.
+  string target_book_id = 8;
+  // The positions moved.
+  repeated uint64 position_ids = 9;
+  // Whether the whole selection moved (Full); else a Partial notional moved.
+  bool quantity_full = 10;
+  // The Partial notional magnitude moved (absent ⇒ Full).
+  optional double partial_notional = 11;
+  // The numeric transfer price the legs booked at.
+  double transfer_price = 12;
+  // Which basis that price came from.
+  PriceBasis price_basis = 13;
+  // The rationale (required for an agreed price).
+  string reason = 14;
+  // P&L crystallised in the source at the transfer price versus each slice's mark.
+  double realized_pnl_source = 15;
+  // The aggregate risk moved from source to target.
+  MovedRiskDesc risk_moved = 16;
+}
+
+// A risk-transfer request/record (mirrors `celnet_risk_transfer::RiskTransfer`).
+// `TransferQuantity`/`TransferPrice` are carried FLAT (a `quantity_full` flag +
+// optional `partial_notional`; a `price_basis` enum + optional `agreed_price`).
+message RiskTransfer {
+  // Stable slug (audit key).
+  string id = 1;
+  // The kind of move (fixes economics + approval).
+  TransferKind kind = 2;
+  // The source end — the book/desk/trader the risk leaves, with the positions.
+  TransferLeg source = 3;
+  // The target end — the book/desk/trader the risk arrives in.
+  TransferLeg target = 4;
+  // Whether the whole selection moves (Full); else `partial_notional` is moved.
+  bool quantity_full = 5;
+  // The Partial notional magnitude to move (absent ⇒ Full).
+  optional double partial_notional = 6;
+  // The requested transfer-price basis.
+  TransferPriceBasis price_basis = 7;
+  // The agreed override level (present ONLY when `price_basis` is AGREED).
+  optional double agreed_price = 8;
+  // Free-text rationale (required when `price_basis` is AGREED).
+  string reason = 9;
+  // The authenticated user who initiated the transfer.
+  string initiated_by = 10;
+  // Trusted-source initiation timestamp (epoch nanos, UTC).
+  int64 initiated_at = 11;
+  // The current lifecycle state.
+  TransferState state = 12;
+  // The accepting/approving user (four-eyes); absent until decided.
+  optional string approver = 13;
+  // When the accept/reject decision was made (epoch nanos); absent until decided.
+  optional int64 decided_at = 14;
+  // The resolved numeric transfer price (present once known, on Booked).
+  optional double transfer_price = 15;
+  // The immutable audit record, stamped on Booked (absent until then).
+  optional RiskTransferProvenance provenance = 16;
+}
+
+// Initiate a transfer (the ticket). Gated on `risk_transfer` × the position's
+// asset class. Re-attribution books immediately (Booked); desk/trader transfers
+// return Pending for the counterparty's inbox.
+message InitiateRiskTransferRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // The kind of move (fixes economics + approval).
+  TransferKind kind = 2;
+  // The source end (its `position_ids` carry the selection).
+  TransferLeg source = 3;
+  // The target end.
+  TransferLeg target = 4;
+  // Whether to move the whole selection (Full); else set `partial_notional`.
+  bool quantity_full = 5;
+  // The Partial notional magnitude to move (ignored when `quantity_full`).
+  optional double partial_notional = 6;
+  // The requested transfer-price basis.
+  TransferPriceBasis price_basis = 7;
+  // The agreed override level (required when `price_basis` is AGREED).
+  optional double agreed_price = 8;
+  // Free-text rationale (required when `price_basis` is AGREED).
+  string reason = 9;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 10;
+}
+// The initiated transfer in its Pending / Booked state.
+message InitiateRiskTransferResponse {
+  // The transfer record.
+  RiskTransfer transfer = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Accept a Pending transfer (target side; four-eyes: approver ≠ initiator,
+// server-enforced). Books the legs and stamps provenance.
+message AcceptRiskTransferRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // The transfer to accept.
+  string transfer_id = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The transfer in its Booked state.
+message AcceptRiskTransferResponse {
+  // The booked transfer record (provenance stamped).
+  RiskTransfer transfer = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Reject a Pending transfer (target side, with a reason).
+message RejectRiskTransferRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // The transfer to reject.
+  string transfer_id = 2;
+  // A short human reason shown to the initiator.
+  string reason = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+// The transfer in its Rejected state.
+message RejectRiskTransferResponse {
+  // The rejected transfer record.
+  RiskTransfer transfer = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Cancel a Pending transfer (initiator only, pre-acceptance).
+message CancelRiskTransferRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // The transfer to cancel.
+  string transfer_id = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The transfer in its Cancelled state.
+message CancelRiskTransferResponse {
+  // The cancelled transfer record.
+  RiskTransfer transfer = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// List transfers for the blotter / audit trail, filtered by book / desk / trader
+// / state (any absent filter is unrestricted). Entitlement-pruned to what the
+// caller may see.
+message ListRiskTransfersRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Restrict to this desk (absent ⇒ all entitled desks).
+  optional string desk = 2;
+  // Restrict to this trader (absent ⇒ all).
+  optional string trader = 3;
+  // Restrict to transfers touching this risk book as source or target (absent ⇒ all).
+  optional string risk_book_id = 4;
+  // Restrict to these states (empty ⇒ all states).
+  repeated TransferState states = 5;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 6;
+}
+// The matching transfers, newest first.
+message ListRiskTransfersResponse {
+  // The matching transfer records, newest first (descending `initiated_at`).
+  repeated RiskTransfer transfers = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// The per-desk / per-trader transfer inbox pushed to a subscribed client — the
+// Pending transfers awaiting the subscriber's accept/reject (the four-eyes
+// counterparty side). Fanned out entitlement-filtered by the transfer broker on
+// every transfer state change (beside the desk notification push).
+message RiskTransferInbox {
+  // The transfers currently Pending the subscriber's action, newest first.
+  repeated RiskTransfer pending = 1;
+  // Snapshot time (epoch nanos, UTC).
+  int64 at_nanos = 2;
+}
+// Open one long-lived transfer-inbox subscription for the caller's desks/identity.
+message StreamRiskTransferInboxRequest {
+  // The bearer session token from `AuthService.Login`.
+  optional string session_token = 1;
+  // The entitlement principal authorising the caller (absent ⇒ grant-all default).
+  optional EntitlementPrincipal principal = 2;
+  // Optional caller correlation id, echoed by the server. Presence-tracked.
+  optional uint64 correlation_id = 3;
+}
+
+// ===========================================================================
 // instrument reference data — the persisted, admin-managed registry of
 // instrument DEFINITIONS (static / reference data) that curve-building and
 // pricing later resolve against
@@ -5522,7 +5842,8 @@ message DeleteInstrumentResponse {
 // authorization decision, which the server still makes from the resolved set.
 message CapabilityDesc {
   // The action label: one of `view`, `price`, `quote_respond`, `rfq_respond`,
-  // `ioi_respond`, `stream`, `execute`, `book`, `administer`.
+  // `ioi_respond`, `stream`, `execute`, `book`, `risk_transfer`, `simulate`,
+  // `administer`.
   string action = 1;
   // The asset-class label: `fx_options` or `fixed_income`.
   string asset = 2;
@@ -5784,6 +6105,17 @@ service AuthService {
   rpc UpdateRiskRoutingGraph(UpdateRiskRoutingGraphRequest) returns (UpdateRiskRoutingGraphResponse);
   // Aggregate risk per risk book, rolled up the book tree (phase 5 — §5, §8.5).
   rpc ListRiskBookRisk(ListRiskBookRiskRequest) returns (ListRiskBookRiskResponse);
+  // Risk transfer — the MANUAL move of EXISTING risk between books / desks /
+  // traders (`docs/RISK-TRANSFER-REQUIREMENTS.md`; the complement to routing).
+  // Initiate/accept/reject/cancel a transfer + query the audit blotter. Gated on
+  // the narrow `risk_transfer` capability × the position's asset class (NOT admin);
+  // a desk-to-desk / trader-to-trader accept enforces approver ≠ initiator
+  // (four-eyes). Beside the risk-book / routing RPCs (mirror precedent).
+  rpc InitiateRiskTransfer(InitiateRiskTransferRequest) returns (InitiateRiskTransferResponse);
+  rpc AcceptRiskTransfer(AcceptRiskTransferRequest) returns (AcceptRiskTransferResponse);
+  rpc RejectRiskTransfer(RejectRiskTransferRequest) returns (RejectRiskTransferResponse);
+  rpc CancelRiskTransfer(CancelRiskTransferRequest) returns (CancelRiskTransferResponse);
+  rpc ListRiskTransfers(ListRiskTransfersRequest) returns (ListRiskTransfersResponse);
   // List the instrument reference-data definitions (any authenticated caller —
   // curve-building and pricing resolve against this, so it is NOT admin-only).
   rpc ListInstruments(ListInstrumentsRequest) returns (ListInstrumentsResponse);
@@ -6919,4 +7251,9 @@ service RfqDeskService {
 // connected client; entitlement-filtered desk fan-out).
 service NotificationService {
   rpc StreamNotifications(StreamNotificationsRequest) returns (stream Notification);
+  // The per-desk / per-trader risk-transfer inbox push: the Pending transfers
+  // awaiting the subscriber's accept/reject, re-published on every transfer state
+  // change (entitlement-filtered desk/trader fan-out, mirroring the notification
+  // broker). `docs/RISK-TRANSFER-REQUIREMENTS.md` §9.2/§10.
+  rpc StreamRiskTransferInbox(StreamRiskTransferInboxRequest) returns (stream RiskTransferInbox);
 }

@@ -949,6 +949,7 @@ dependencies = [
  "celnet-risk-fleet",
  "celnet-risk-normalize",
  "celnet-risk-routing",
+ "celnet-risk-transfer",
  "celnet-router",
  "celnet-surface",
  "celnet-testkit",
