@@ -59,6 +59,7 @@ celnet-bond = { path = "crates/celnet-bond" }
 celnet-refdata = { path = "crates/celnet-refdata" }
 celnet-rates-risk = { path = "crates/celnet-rates-risk" }
 celnet-risk-transfer = { path = "crates/celnet-risk-transfer" }
+celnet-analytics = { path = "crates/celnet-analytics" }
 # External — pinned once, used everywhere (OSS / permissively licensed only)
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
 thiserror = "2"                                # dtolnay/thiserror: MIT/Apache-2.0 derive for library error enums (typed, no-std-friendly Display/Error)

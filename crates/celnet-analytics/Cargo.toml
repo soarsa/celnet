@@ -1,0 +1,15 @@
+[package]
+name = "celnet-analytics"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet analytics — the pure, asset-agnostic client-flow / P&L-attribution rollup: a deterministic fold over neutral quote/RFQ/execution FlowRecords into per-client (and per-counterparty / per-instrument) ClientFlowMetrics — dollar-per-million ($/mm) gross & net, spread economics (captured-vs-offered, cover distance, breakeven spread), and quote-fishing detection (quote-to-trade ratio, hit-rate, bounded fishing_score). No server, wire, or market-data dependency; numerics validated against an independent hand-computed oracle."
+publish = false
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

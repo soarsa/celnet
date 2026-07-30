@@ -389,6 +389,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-analytics"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "celnet-bench"
 version = "0.0.0"
 dependencies = [
