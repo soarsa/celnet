@@ -3966,6 +3966,12 @@ export interface Deal {
   /** The booked `RatesPosition.positionId`, when the deal booked one. */
   positionId?: bigint;
   correlationId?: string;
+  /**
+   * The Risk Portfolio (risk book) id the fill's risk routed into, when a firm-wide
+   * risk-routing graph is installed. Absent when the fill routed to no portfolio (no
+   * graph configured, or a routing fall-back) — never fabricated.
+   */
+  riskBookId?: string;
 }
 
 /**

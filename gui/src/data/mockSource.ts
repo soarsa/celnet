@@ -3019,6 +3019,29 @@ export class MockTransport implements CelnetTransport {
    * destination portfolio's net/gross/positions/DV01 move, exactly as they would
    * against the live server once its booking path invokes the router.
    */
+  /**
+   * The Risk Portfolio a booked deal's risk routes into under the current firm-wide
+   * graph, or `null` when nothing routes it (no graph, or the graph resolves no leaf)
+   * — the offline mirror of the server's `RiskRouter::route` stamp
+   * (`RatesPositionStore::risk_book_of`). Shared by the per-book risk roll-up and the
+   * `riskBookId` stamp a freshly booked deal carries, so both agree on the landing.
+   */
+  private landedBookForDeal(d: Deal): string | null {
+    const graph = this.mockRiskGraph;
+    if (graph === null) return null;
+    const fill = blankFill();
+    // Every desk-booked deal is structurally an OIS; expose the routing fields the
+    // graph tests (product / ccy / notional / tenor / side / counterparty / desk).
+    fill.product = "OIS";
+    fill.ccy = d.curveSet.currency;
+    fill.notional = d.notional;
+    fill.tenor = d.instrument.tenorYears;
+    fill.side = d.side;
+    fill.counterparty = d.counterparty;
+    fill.desk = d.desk;
+    return traceGraph(graph, fill).landedBook;
+  }
+
   private routedRiskContributions(): Map<
     string,
     { net: number; gross: number; count: number; dv01: number }
@@ -3028,17 +3051,7 @@ export class MockTransport implements CelnetTransport {
     if (graph === null) return out;
     const enabled = new Set(this.mockRiskBooks.filter((b) => b.enabled).map((b) => b.id));
     for (const d of this.deals.values()) {
-      const fill = blankFill();
-      // Every desk-booked deal is structurally an OIS; expose the routing fields the
-      // graph tests (product / ccy / notional / tenor / side / counterparty / desk).
-      fill.product = "OIS";
-      fill.ccy = d.curveSet.currency;
-      fill.notional = d.notional;
-      fill.tenor = d.instrument.tenorYears;
-      fill.side = d.side;
-      fill.counterparty = d.counterparty;
-      fill.desk = d.desk;
-      const landed = traceGraph(graph, fill).landedBook;
+      const landed = this.landedBookForDeal(d);
       // Only enabled portfolios roll up (matches the server's `.filter(|b| b.enabled)`).
       if (landed === null || !enabled.has(landed)) continue;
       // Pay-fixed (BUY) is +notional, receive-fixed (SELL) −notional; DV01 is the
@@ -3543,6 +3556,11 @@ export class MockTransport implements CelnetTransport {
       trader: quote.trader,
       positionId,
     };
+    // Stamp the routed Risk Portfolio the fill's risk lands in (the SAME resolution the
+    // per-book roll-up uses), so the deals blotter's Risk Portfolio column is
+    // demonstrable offline; unrouted fills leave `riskBookId` absent.
+    const landedBook = this.landedBookForDeal(deal);
+    if (landedBook !== null) deal.riskBookId = landedBook;
     this.deals.set(dealId, deal);
     const updated: DeskRequest = { ...existing, state: "ACCEPTED" };
     this.deskRequests.set(existing.requestId, updated);

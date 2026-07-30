@@ -51,8 +51,19 @@ function positionLabel(d: Deal): string {
   return d.positionId !== undefined ? `#${d.positionId.toString()}` : "—";
 }
 
+/**
+ * The Risk Portfolio (risk book) the fill's risk routed into, resolved id → the
+ * portfolio's human NAME via the `listRiskBooks` roster. Falls back to the raw id
+ * when the roster does not carry it (a routed-but-since-renamed book), and `—` when
+ * the fill routed to no portfolio (unrouted — no graph / routing fall-back).
+ */
+function riskPortfolioLabel(d: Deal, names: ReadonlyMap<string, string>): string {
+  if (d.riskBookId === undefined) return "—";
+  return names.get(d.riskBookId) ?? d.riskBookId;
+}
+
 /** All of a deal's user-visible textual fields, concatenated for substring search. */
-function dealSearchText(d: Deal): string {
+function dealSearchText(d: Deal, names: ReadonlyMap<string, string>): string {
   return [
     fmtClock(d.executedAtNanos),
     d.counterparty,
@@ -66,6 +77,7 @@ function dealSearchText(d: Deal): string {
     sideLabel(d.side),
     d.trader,
     positionLabel(d),
+    riskPortfolioLabel(d, names),
     d.dealId,
   ].join(" ");
 }
@@ -81,6 +93,27 @@ export function DealsBlotterWorkspace(): React.ReactElement {
   const [allDeals, setAllDeals] = useState<Deal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Deal | null>(null);
+  // The Risk Portfolio roster (id → human name) resolves each deal's routed
+  // `riskBookId` to its portfolio name. Best-effort: an unavailable roster (e.g. no
+  // routing configured) leaves the column falling back to the raw id / `—`.
+  const [riskBookNames, setRiskBookNames] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
+
+  useEffect(() => {
+    let live = true;
+    void app.transport
+      .listRiskBooks()
+      .then((books) => {
+        if (live) setRiskBookNames(new Map(books.map((b) => [b.id, b.name])));
+      })
+      .catch(() => {
+        /* no roster ⇒ the column falls back to the raw id / `—` (non-fatal). */
+      });
+    return () => {
+      live = false;
+    };
+  }, [app.transport]);
 
   const refresh = useCallback(() => {
     void app.transport
@@ -107,7 +140,11 @@ export function DealsBlotterWorkspace(): React.ReactElement {
     [allDeals, activeAsset],
   );
 
-  const { query, setQuery, filtered, shown, total } = useTableFilter(deals, dealSearchText);
+  const searchText = useCallback(
+    (d: Deal) => dealSearchText(d, riskBookNames),
+    [riskBookNames],
+  );
+  const { query, setQuery, filtered, shown, total } = useTableFilter(deals, searchText);
 
   const isOffline = !app.transport.label.startsWith("live");
   const totalNotional = deals.reduce((acc, d) => acc + d.notional, 0);
@@ -162,6 +199,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                       <th>Side</th>
                       <th>Trader</th>
                       <th>Position</th>
+                      <th>Risk Portfolio</th>
                       <th>Deal</th>
                     </tr>
                   </thead>
@@ -199,6 +237,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                     <td>{sideLabel(d.side)}</td>
                     <td>{d.trader}</td>
                     <td className={styles.mono}>{positionLabel(d)}</td>
+                    <td>{riskPortfolioLabel(d, riskBookNames)}</td>
                     <td className={styles.dealId}>{d.dealId}</td>
                       </tr>
                     ))}

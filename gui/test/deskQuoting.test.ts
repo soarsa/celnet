@@ -321,10 +321,31 @@ describe("desk quoting — codec round-trips (wire shape)", () => {
       executed_at_nanos: 1_700_000_000_000_000_000n,
       trader: "Sam",
       position_id: 42,
+      risk_book_id: "BOOK-EMEA",
     });
     expect(deal.dealId).toBe("deal-3");
     expect(deal.kind).toBe("IOI");
     expect(deal.positionId).toBe(42n);
+    // The routed Risk Portfolio id is surfaced when present…
+    expect(deal.riskBookId).toBe("BOOK-EMEA");
+    // …and absent (present-with-null on the wire) leaves it undefined — never fabricated.
+    const unrouted = dealFromWire({
+      deal_id: "deal-4",
+      request_id: "req-8",
+      kind: 1,
+      counterparty: "Initech",
+      desk: "g10-rates",
+      instrument: { ois: { tenor_years: 2, fixed_rate: 0.04, notional: 1e7, side: 0 } },
+      curve_set: { currency: "USD", reference_date: { year: 2026, month: 6, day: 26 }, ois_pillars: [] },
+      side: 1,
+      notional: 1e7,
+      price: 0.0405,
+      executed_at_nanos: 1_700_000_000_000_000_000n,
+      trader: "Sam",
+      position_id: 43,
+      risk_book_id: null,
+    });
+    expect(unrouted.riskBookId).toBeUndefined();
 
     const pos = ratesPositionFromWire({
       position_id: 99,

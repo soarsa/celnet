@@ -1837,6 +1837,9 @@ export function dealFromWire(o: WireObject): Deal {
   if (pid !== undefined) d.positionId = pid;
   const corr = o["correlation_id"];
   if (typeof corr === "string" && corr.length > 0) d.correlationId = corr;
+  // The routed Risk Portfolio id (present-with-null when the fill routed nowhere).
+  const rb = o["risk_book_id"];
+  if (typeof rb === "string" && rb.length > 0) d.riskBookId = rb;
   return d;
 }
 
