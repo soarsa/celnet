@@ -1394,6 +1394,49 @@ async fn handle_unary(
                 generated_codec::encode_list_risk_book_risk_response
             )
         }
+        // Risk transfer — the manual move of existing risk (RISK-TRANSFER §10). The
+        // WS mirror of the AuthService transfer RPCs; the `ws_codec_differential`
+        // harness proves each generated decode/encode byte-identical to the hand codec.
+        "initiate_risk_transfer" => {
+            let req = decode!(generated_codec::decode_initiate_risk_transfer_request(o));
+            call!(
+                services.auth.initiate_risk_transfer(Request::new(req)),
+                "risk_transfer_initiated",
+                generated_codec::encode_initiate_risk_transfer_response
+            )
+        }
+        "accept_risk_transfer" => {
+            let req = decode!(generated_codec::decode_accept_risk_transfer_request(o));
+            call!(
+                services.auth.accept_risk_transfer(Request::new(req)),
+                "risk_transfer_accepted",
+                generated_codec::encode_accept_risk_transfer_response
+            )
+        }
+        "reject_risk_transfer" => {
+            let req = decode!(generated_codec::decode_reject_risk_transfer_request(o));
+            call!(
+                services.auth.reject_risk_transfer(Request::new(req)),
+                "risk_transfer_rejected",
+                generated_codec::encode_reject_risk_transfer_response
+            )
+        }
+        "cancel_risk_transfer" => {
+            let req = decode!(generated_codec::decode_cancel_risk_transfer_request(o));
+            call!(
+                services.auth.cancel_risk_transfer(Request::new(req)),
+                "risk_transfer_cancelled",
+                generated_codec::encode_cancel_risk_transfer_response
+            )
+        }
+        "list_risk_transfers" => {
+            let req = decode!(generated_codec::decode_list_risk_transfers_request(o));
+            call!(
+                services.auth.list_risk_transfers(Request::new(req)),
+                "risk_transfers",
+                generated_codec::encode_list_risk_transfers_response
+            )
+        }
         "list_instruments" => {
             let req = decode!(generated_codec::decode_list_instruments_request(o));
             call!(

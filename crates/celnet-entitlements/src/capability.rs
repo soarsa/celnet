@@ -323,15 +323,15 @@ mod tests {
 
         let transferrer = CapabilitySet::empty().grant(fi_transfer);
         assert!(transferrer.allows(fi_transfer));
-        assert!(
-            !transferrer.allows(fi_book),
-            "transfer must not imply book"
-        );
+        assert!(!transferrer.allows(fi_book), "transfer must not imply book");
         assert!(
             !transferrer.allows(fx_transfer),
             "FI transfer must not grant FX transfer"
         );
-        assert_eq!(Action::from_label("risk_transfer"), Some(Action::RiskTransfer));
+        assert_eq!(
+            Action::from_label("risk_transfer"),
+            Some(Action::RiskTransfer)
+        );
     }
 
     /// Separation of duties: price-but-not-execute is representable.

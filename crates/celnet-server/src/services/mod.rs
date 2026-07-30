@@ -33,8 +33,10 @@ pub mod quote;
 pub mod rates_book;
 pub mod rates_risk;
 pub mod risk;
+pub mod risk_transfer;
 pub mod stream;
 pub mod surface;
+pub mod transfer_apply;
 
 pub mod deploy;
 pub mod sessions;

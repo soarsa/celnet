@@ -34,6 +34,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use celnet_entitlements::{Action, AssetClass, Capability};
 use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
+    AcceptRiskTransferRequest, AcceptRiskTransferResponse, CancelRiskTransferRequest,
+    CancelRiskTransferResponse, InitiateRiskTransferRequest, InitiateRiskTransferResponse,
+    ListRiskTransfersRequest, ListRiskTransfersResponse, RejectRiskTransferRequest,
+    RejectRiskTransferResponse,
+};
+use celnet_proto::{
     AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, AggregationScopeMode, AxeSide,
     BookDesc, BrokenDate, BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
     CreateAggregatedBookRequest, CreateAggregatedBookResponse, CreateBookRequest,
@@ -185,6 +191,10 @@ pub struct AuthEdge {
     /// beside the FX store on every risk-book/graph write, so a routed rates fill buckets
     /// into its risk book (and `ListRiskBookRisk` sums it). `None` in an isolated auth test.
     rates_store: Option<Arc<crate::services::rates_book::RatesPositionStore>>,
+    /// The shared risk-transfer service backing the transfer RPCs (initiate / accept /
+    /// reject / cancel / list). `None` in an isolated auth test (the transfer RPCs then
+    /// report `unavailable`, exactly as the other injected collaborators do).
+    transfer_service: Option<Arc<crate::services::risk_transfer::RiskTransferService>>,
 }
 
 impl AuthEdge {
@@ -208,7 +218,30 @@ impl AuthEdge {
             aggregation_hub: None,
             position_store: None,
             rates_store: None,
+            transfer_service: None,
         }
+    }
+
+    /// Inject the shared risk-transfer service so the transfer RPCs are live (the boot
+    /// path shares the SAME registry / inbox broker / apply engine the notification
+    /// stream and the position stores are wired into).
+    #[must_use]
+    pub fn with_transfer_service(
+        mut self,
+        service: Arc<crate::services::risk_transfer::RiskTransferService>,
+    ) -> Self {
+        self.transfer_service = Some(service);
+        self
+    }
+
+    /// The wired transfer service, or a uniform `unavailable` status when none is
+    /// injected (an isolated auth test / a misconfigured boot).
+    fn transfer_service(
+        &self,
+    ) -> Result<&Arc<crate::services::risk_transfer::RiskTransferService>, Status> {
+        self.transfer_service
+            .as_ref()
+            .ok_or_else(|| Status::unavailable("risk transfer service is not wired on this edge"))
     }
 
     /// Inject the shared position store so a risk-book/graph write re-primes its router
@@ -1841,6 +1874,117 @@ impl AuthService for AuthEdge {
         };
         Ok(Response::new(ListRiskBookRiskResponse {
             books,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    // --- risk transfer ---------------------------------------------------------
+    //
+    // The MANUAL move of EXISTING risk between books / desks / traders (the complement
+    // to routing). Every RPC gates on the narrow `risk_transfer` capability × the
+    // position's asset class (resolved from where the positions live), NOT admin. A
+    // desk-to-desk / trader-to-trader accept additionally enforces approver ≠ initiator
+    // (four-eyes) inside the service. `docs/RISK-TRANSFER-REQUIREMENTS.md` §7.
+
+    async fn initiate_risk_transfer(
+        &self,
+        request: Request<InitiateRiskTransferRequest>,
+    ) -> Result<Response<InitiateRiskTransferResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let correlation_id = req.correlation_id;
+        let service = Arc::clone(self.transfer_service()?);
+        let source = req
+            .source
+            .as_ref()
+            .ok_or_else(|| Status::invalid_argument("a source leg is required"))?;
+        let asset = service.classify_asset_class(&source.risk_book_id, &source.position_ids)?;
+        let user = self.require_capability(
+            &req.session_token,
+            Capability::new(Action::RiskTransfer, asset),
+        )?;
+        let transfer = service.initiate(&user.email, req)?;
+        Ok(Response::new(InitiateRiskTransferResponse {
+            transfer: Some(transfer),
+            correlation_id,
+        }))
+    }
+
+    async fn accept_risk_transfer(
+        &self,
+        request: Request<AcceptRiskTransferRequest>,
+    ) -> Result<Response<AcceptRiskTransferResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let service = Arc::clone(self.transfer_service()?);
+        let asset = service.asset_class_of(&req.transfer_id)?;
+        let user = self.require_capability(
+            &req.session_token,
+            Capability::new(Action::RiskTransfer, asset),
+        )?;
+        let transfer = service.accept(&user.email, &req.transfer_id)?;
+        Ok(Response::new(AcceptRiskTransferResponse {
+            transfer: Some(transfer),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn reject_risk_transfer(
+        &self,
+        request: Request<RejectRiskTransferRequest>,
+    ) -> Result<Response<RejectRiskTransferResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let service = Arc::clone(self.transfer_service()?);
+        let asset = service.asset_class_of(&req.transfer_id)?;
+        let user = self.require_capability(
+            &req.session_token,
+            Capability::new(Action::RiskTransfer, asset),
+        )?;
+        let transfer = service.reject(&user.email, &req.transfer_id, &req.reason)?;
+        Ok(Response::new(RejectRiskTransferResponse {
+            transfer: Some(transfer),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn cancel_risk_transfer(
+        &self,
+        request: Request<CancelRiskTransferRequest>,
+    ) -> Result<Response<CancelRiskTransferResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let service = Arc::clone(self.transfer_service()?);
+        let asset = service.asset_class_of(&req.transfer_id)?;
+        let user = self.require_capability(
+            &req.session_token,
+            Capability::new(Action::RiskTransfer, asset),
+        )?;
+        let transfer = service.cancel(&user.email, &req.transfer_id)?;
+        Ok(Response::new(CancelRiskTransferResponse {
+            transfer: Some(transfer),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn list_risk_transfers(
+        &self,
+        request: Request<ListRiskTransfersRequest>,
+    ) -> Result<Response<ListRiskTransfersResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let service = Arc::clone(self.transfer_service()?);
+        // The audit blotter is readable by any authenticated caller (the write path is
+        // capability-gated; the read is the immutable trail).
+        self.authenticate(&req.session_token)?;
+        let transfers = service.list(&req);
+        Ok(Response::new(ListRiskTransfersResponse {
+            transfers,
             correlation_id: req.correlation_id,
         }))
     }
@@ -3874,17 +4018,22 @@ mod tests {
             Action::ALL.len() * AssetClass::ALL.len()
         );
 
-        // A fresh trader holds the role bundle: all actions but `administer` (9 × 2).
+        // A fresh trader holds the role bundle: all actions but the two narrow,
+        // explicitly-granted authorities `administer` and `risk_transfer` (9 × 2).
         let (trader_id, _t) = make_trader(&edge, &admin.session_token, "lc@celnet.com").await;
         let trader = login(&edge, "lc@celnet.com", "trader-pw-123")
             .await
             .unwrap();
         assert_eq!(
             trader.capabilities.len(),
-            (Action::ALL.len() - 1) * AssetClass::ALL.len()
+            (Action::ALL.len() - 2) * AssetClass::ALL.len()
         );
         assert!(has_cap(&trader.capabilities, "execute", "fixed_income"));
         assert!(!has_cap(&trader.capabilities, "administer", "fx_options"));
+        assert!(
+            !has_cap(&trader.capabilities, "risk_transfer", "fixed_income"),
+            "cross-desk transfer is a narrow authority, not in the default bundle"
+        );
 
         // After an admin denies one capability, the trader's NEXT login (their prior
         // session was revoked by the change) re-derives the narrowed set.

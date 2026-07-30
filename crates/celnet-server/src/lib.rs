@@ -684,6 +684,23 @@ impl Edge {
         // warn on an unresolved routing desk.
         let identity_arc = Arc::new(std::sync::Mutex::new(identity_store));
         fix_registry.set_desk_directory(Arc::clone(&identity_arc) as _);
+        // The risk-transfer service (RISK-TRANSFER-REQUIREMENTS §11.2/§11.5): the
+        // transfer registry + inbox broker + apply engine over the SHARED FX + rates
+        // stores and the identity registry, wired into BOTH the `AuthService` transfer
+        // RPCs and the `NotificationService` inbox push. Off the pinned pricing core
+        // (guardrail 11 — the apply runs on the async booking tier the sinks run on).
+        let transfer_service = Arc::new(services::risk_transfer::RiskTransferService::new(
+            Arc::new(services::risk_transfer::RiskTransferRegistry::new()),
+            Arc::new(services::risk_transfer::RiskTransferBroker::new()),
+            Arc::new(services::transfer_apply::TransferApplier::new(
+                Arc::clone(&store),
+                Arc::clone(&rates_store),
+            )),
+            Arc::clone(&identity_arc),
+        ));
+        // The desk edge (already `Arc`-shared) publishes/serves the inbox push over the
+        // SAME service.
+        rfq_desk_edge.set_transfer_service(Arc::clone(&transfer_service));
         let auth_edge = Arc::new(
             AuthEdge::new(
                 Arc::clone(&identity_arc),
@@ -702,7 +719,10 @@ impl Edge {
             .with_position_store(Arc::clone(&store))
             // Re-prime the shared LINEAR-RATES store's router beside the FX store, and sum its
             // routed positions into the `ListRiskBookRisk` roll-up.
-            .with_rates_store(Arc::clone(&rates_store)),
+            .with_rates_store(Arc::clone(&rates_store))
+            // Back the transfer RPCs (initiate / accept / reject / cancel / list) with the
+            // shared transfer service.
+            .with_transfer_service(Arc::clone(&transfer_service)),
         );
         let auth = AuthServiceServer::from_arc(Arc::clone(&auth_edge));
 

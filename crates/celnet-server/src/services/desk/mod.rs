@@ -113,6 +113,15 @@ pub struct RfqDeskEdge {
     rates: Arc<RatesPositionStore>,
     /// The notification push broker.
     notify: Arc<NotificationBroker>,
+    /// The risk-transfer service backing the transfer-inbox push stream (§9.2). Set
+    /// once at boot (via [`RfqDeskEdge::set_transfer_service`]) AFTER this edge is
+    /// already shared behind an `Arc` — the identity store the transfer service needs
+    /// is constructed later than this edge — so it is a [`OnceLock`] rather than a
+    /// pre-`Arc` builder field. Unset in an isolated desk test (the inbox stream then
+    /// reports `unavailable`).
+    ///
+    /// [`OnceLock`]: std::sync::OnceLock
+    transfer_service: std::sync::OnceLock<Arc<crate::services::risk_transfer::RiskTransferService>>,
     /// The edge clock (receipt / execution timestamps), manual in tests.
     clock: Clock,
 }
@@ -139,8 +148,19 @@ impl RfqDeskEdge {
             deals,
             rates,
             notify,
+            transfer_service: std::sync::OnceLock::new(),
             clock,
         }
+    }
+
+    /// Wire the shared risk-transfer service so the transfer-inbox push stream is live
+    /// (the boot path shares the SAME service the `AuthService` transfer RPCs use). Set
+    /// once, after this edge is already `Arc`-shared; a second call is a no-op.
+    pub fn set_transfer_service(
+        &self,
+        service: Arc<crate::services::risk_transfer::RiskTransferService>,
+    ) {
+        let _ = self.transfer_service.set(service);
     }
 
     /// The shared notification broker (so the WS connection layer registers
@@ -206,6 +226,41 @@ impl RfqDeskEdge {
             .unwrap_or_default();
         let filter = effective_desk_filter(&requested, &caller.desk_scope());
         Ok(self.notify.subscribe(filter))
+    }
+
+    /// Resolve + authorize a risk-transfer-inbox subscriber and register it on the
+    /// transfer broker under its entitlement-resolved desk filter (all the caller's
+    /// desks), then prime it with the current `Pending` roster. Shared by the gRPC
+    /// `StreamRiskTransferInbox` handler and the WS subscribe frame.
+    ///
+    /// # Errors
+    /// [`Status::unavailable`] when no transfer service is wired; the shared
+    /// authorization boundary's statuses otherwise.
+    pub fn subscribe_transfer_inbox(
+        &self,
+        req: &celnet_proto::StreamRiskTransferInboxRequest,
+    ) -> Result<crate::services::risk_transfer::InboxSubscription, Status> {
+        let service = self.transfer_service.get().ok_or_else(|| {
+            Status::unavailable("risk transfer service is not wired on this edge")
+        })?;
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
+            self.access_store.access_mode(),
+            &caller,
+            "NotificationService/StreamRiskTransferInbox",
+            RequiredAuthority::ReadAny,
+            None,
+        )?;
+        let filter = effective_desk_filter(&[], &caller.desk_scope());
+        let subscription = service.broker().subscribe(filter);
+        // Prime the fresh subscriber with the current pending roster (its desk-filtered
+        // slice arrives on the next publish tick).
+        service.publish_inbox();
+        Ok(subscription)
     }
 }
 
@@ -1006,6 +1061,46 @@ impl celnet_proto::notification_service_server::NotificationService for RfqDeskE
             }
             // The broker side closed (edge shutdown) or the client went away — either
             // way, deregister this subscriber so it never leaks.
+            broker.unsubscribe(sub_id);
+        });
+        Ok(Response::new(
+            crate::services::stream_rx::ReceiverStream::new(out_rx),
+        ))
+    }
+
+    type StreamRiskTransferInboxStream =
+        crate::services::stream_rx::ReceiverStream<Result<celnet_proto::RiskTransferInbox, Status>>;
+
+    async fn stream_risk_transfer_inbox(
+        &self,
+        request: Request<celnet_proto::StreamRiskTransferInboxRequest>,
+    ) -> Result<Response<Self::StreamRiskTransferInboxStream>, Status> {
+        // A draining instance refuses new streams; the guard is held for the stream
+        // lifetime (the drain barrier), exactly as `stream_notifications` does.
+        let guard = self.gate.enter();
+        if !self.gate.is_ready() {
+            return Err(Status::unavailable(
+                "edge not ready (starting or draining); steer to the active instance",
+            ));
+        }
+        let req = request.into_inner();
+        let service = Arc::clone(self.transfer_service.get().ok_or_else(|| {
+            Status::unavailable("risk transfer service is not wired on this edge")
+        })?);
+        let subscription = self.subscribe_transfer_inbox(&req)?;
+        let sub_id = subscription.id;
+        let mut broker_rx = subscription.rx;
+        let broker = Arc::clone(service.broker());
+        let (out_tx, out_rx) = tokio::sync::mpsc::channel::<
+            Result<celnet_proto::RiskTransferInbox, Status>,
+        >(crate::services::risk_transfer::INBOX_QUEUE_DEPTH);
+        tokio::spawn(async move {
+            let _guard = guard; // held for the stream lifetime (drain barrier).
+            while let Some(frame) = broker_rx.recv().await {
+                if out_tx.send(Ok(frame)).await.is_err() {
+                    break; // the client dropped the stream.
+                }
+            }
             broker.unsubscribe(sub_id);
         });
         Ok(Response::new(
