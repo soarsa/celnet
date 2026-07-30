@@ -33,7 +33,9 @@ celnet_bin_dir:      "{{ celnet_shared_dir }}/bin"
 celnet_tls_dir:      "{{ celnet_shared_dir }}/tls"
 
 # How many historical releases to keep on disk (older are pruned after a deploy).
-celnet_keep_releases: 5
+# Set to 2 (current + one previous for rollback) to conserve disk on the tight box;
+# override per-environment as needed — this is the single knob the prune task reads.
+celnet_keep_releases: 2
 
 # --- Build ------------------------------------------------------------------
 # We build ON the target host (native x86_64-unknown-linux-gnu), so the pinned
