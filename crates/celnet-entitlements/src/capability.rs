@@ -77,12 +77,34 @@ pub enum Action {
     Simulate,
     /// User / desk / connection / permission **administration**.
     Administer,
+    /// Manage the **risk-control** surfaces: the risk-portfolio tree
+    /// (`RiskBookDef` CRUD), the risk-routing decision graph (get/update), and the
+    /// firm-wide routed-risk roll-up (the risk dashboard). A firm risk-control
+    /// function **distinct** from publishing a quote ([`Action::QuoteRespond`], which
+    /// this replaces as the FI risk-manager stand-in) and from super-admin
+    /// ([`Action::Administer`]): a desk/risk lead can be granted it **without** full
+    /// administration. Not in the default trader bundle — a narrow, explicitly-granted
+    /// authority (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1).
+    RiskManage,
+    /// Manage **FI client-pricing** structure: pricing-group structure/membership
+    /// CRUD (which inbound FIX sessions / users / desks a group prices) — hence the
+    /// session-pivoted **tiering assignment**, expressed as a group's membership edit.
+    /// The per-group **pipeline retune** stays a quoting-trader knob on
+    /// [`Action::QuoteRespond`], NOT this. A client-pricing-desk control separable
+    /// from identity administration (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1).
+    ManagePricing,
+    /// Manage **inbound liquidity / venue ops**: FIX connection administration
+    /// (create/update/delete/enable) and aggregated-book configuration. Distinct from
+    /// identity administration ([`Action::Administer`]) — a venue-ops seat. Exercised
+    /// on the asset the venue serves, so an FX-liquidity and an FI-liquidity seat are
+    /// separately expressible (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1).
+    ManageLiquidity,
 }
 
 impl Action {
     /// Every action, in discriminant order — the canonical iteration set for
     /// building bundles and exhaustiveness tests.
-    pub const ALL: [Action; 11] = [
+    pub const ALL: [Action; 14] = [
         Action::View,
         Action::Price,
         Action::QuoteRespond,
@@ -94,6 +116,9 @@ impl Action {
         Action::RiskTransfer,
         Action::Simulate,
         Action::Administer,
+        Action::RiskManage,
+        Action::ManagePricing,
+        Action::ManageLiquidity,
     ];
 
     /// Stable snake_case label for audit/log/wire fields.
@@ -111,6 +136,9 @@ impl Action {
             Action::RiskTransfer => "risk_transfer",
             Action::Simulate => "simulate",
             Action::Administer => "administer",
+            Action::RiskManage => "risk_manage",
+            Action::ManagePricing => "manage_pricing",
+            Action::ManageLiquidity => "manage_liquidity",
         }
     }
 
@@ -331,6 +359,93 @@ mod tests {
         assert_eq!(
             Action::from_label("risk_transfer"),
             Some(Action::RiskTransfer)
+        );
+    }
+
+    /// The three management authorities (`risk_manage`, `manage_pricing`,
+    /// `manage_liquidity`) are each a NARROW, distinct capability: granting one never
+    /// implies another, none is implied by any trading action, and each is asset-scoped
+    /// (an FI grant never leaks to FX). Deny-by-default keeps an ungranted user closed.
+    #[test]
+    fn manage_capabilities_are_distinct_and_narrow() {
+        let risk = Capability::new(Action::RiskManage, AssetClass::FixedIncome);
+        let pricing = Capability::new(Action::ManagePricing, AssetClass::FixedIncome);
+        let liquidity = Capability::new(Action::ManageLiquidity, AssetClass::FixedIncome);
+
+        // A risk-manager holds ONLY risk-manage — not pricing, not liquidity, not
+        // quote-respond (the overloaded capability this replaces).
+        let rm = CapabilitySet::empty().grant(risk);
+        assert!(rm.allows(risk));
+        assert!(
+            !rm.allows(pricing),
+            "risk_manage must not imply manage_pricing"
+        );
+        assert!(
+            !rm.allows(liquidity),
+            "risk_manage must not imply manage_liquidity"
+        );
+        assert!(
+            !rm.allows(Capability::new(
+                Action::QuoteRespond,
+                AssetClass::FixedIncome
+            )),
+            "risk_manage is distinct from quote_respond"
+        );
+        assert!(
+            !rm.allows(Capability::new(Action::RiskManage, AssetClass::FxOptions)),
+            "FI risk_manage must not grant FX risk_manage"
+        );
+
+        // A pricing-desk seat holds ONLY manage_pricing.
+        let pd = CapabilitySet::empty().grant(pricing);
+        assert!(pd.allows(pricing));
+        assert!(
+            !pd.allows(risk),
+            "manage_pricing must not imply risk_manage"
+        );
+        assert!(
+            !pd.allows(liquidity),
+            "manage_pricing must not imply manage_liquidity"
+        );
+
+        // A venue-ops seat holds ONLY manage_liquidity.
+        let vo = CapabilitySet::empty().grant(liquidity);
+        assert!(vo.allows(liquidity));
+        assert!(
+            !vo.allows(risk),
+            "manage_liquidity must not imply risk_manage"
+        );
+        assert!(
+            !vo.allows(pricing),
+            "manage_liquidity must not imply manage_pricing"
+        );
+
+        // None is in the default (empty) set, and each label round-trips.
+        for action in [
+            Action::RiskManage,
+            Action::ManagePricing,
+            Action::ManageLiquidity,
+        ] {
+            assert_eq!(Action::from_label(action.label()), Some(action));
+            for asset in AssetClass::ALL {
+                assert!(!CapabilitySet::empty().allows(Capability::new(action, asset)));
+            }
+        }
+    }
+
+    /// Deny wins over grant-all for a management capability too — an admin can be
+    /// walled out of exactly one manage authority.
+    #[test]
+    fn deny_wins_over_grant_all_for_manage_caps() {
+        let rm_fi = Capability::new(Action::RiskManage, AssetClass::FixedIncome);
+        let set = CapabilitySet::grant_all().deny(rm_fi);
+        assert!(!set.allows(rm_fi), "explicit deny overrides grant-all");
+        assert!(
+            set.allows(Capability::new(
+                Action::ManagePricing,
+                AssetClass::FixedIncome
+            )),
+            "other manage caps still admitted under grant-all"
         );
     }
 

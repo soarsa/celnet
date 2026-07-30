@@ -31,6 +31,9 @@ import { TieringWorkspace } from "../workspaces/TieringWorkspace";
 import { RiskBooksWorkspace } from "../workspaces/RiskBooksWorkspace";
 import { RiskDashboardWorkspace } from "../workspaces/RiskDashboardWorkspace";
 import { RiskRoutingWorkspace } from "../workspaces/riskrouting/RiskRoutingWorkspace";
+import { RiskTransferWorkspace } from "../workspaces/risktransfer/RiskTransferWorkspace";
+import { RiskTransferInboxWorkspace } from "../workspaces/risktransfer/RiskTransferInboxWorkspace";
+import { RiskTransferAuditWorkspace } from "../workspaces/risktransfer/RiskTransferAuditWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { XvaWorkspace } from "../workspaces/XvaWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
@@ -111,6 +114,13 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // firm-wide rules that route each fill's risk into a desk book (typed condition
   // nodes → book leaves), with a live "trace a sample fill". Admin edit. FI-only.
   riskrouting: RiskRoutingWorkspace,
+  // Risk Transfer (docs/RISK-TRANSFER-REQUIREMENTS.md §9): the MANUAL move of
+  // existing risk — the complement to routing. Ticket (initiate) + Inbox (accept /
+  // reject four-eyes counterparty) + Audit (immutable provenance blotter). FI-only;
+  // initiate/accept gate on the `risk_transfer` capability, audit on `view`.
+  risktransfer: RiskTransferWorkspace,
+  transferinbox: RiskTransferInboxWorkspace,
+  transferaudit: RiskTransferAuditWorkspace,
   // Market Data: FX vol surface + FI rates curve as two lenses of ONE workspace
   // (#2). Opens the FX surface lens by default; the FI curve is the rates lens.
   surface: MarketDataWorkspace,

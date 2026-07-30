@@ -92,11 +92,17 @@ impl Role {
 }
 
 /// The default capability **bundle** of the [`Role::Trader`] role (and any future
-/// non-admin role): every action except [`Action::Administer`] and
-/// [`Action::RiskTransfer`] on **both** asset classes — the two narrow, explicitly-
-/// granted authorities (admin, and cross-desk risk transfer) are held back from the
-/// default. This is the slice-1 hardcoded base that the admin-editable
-/// [`IdentityStore::role_bundles`] overlay now persists and can narrow/widen
+/// non-admin role): every action on **both** asset classes **except** the five narrow,
+/// explicitly-granted authorities held back from the default —
+/// [`Action::Administer`] (super-admin), [`Action::RiskTransfer`] (cross-desk risk
+/// move), and the three per-feature management authorities [`Action::RiskManage`],
+/// [`Action::ManagePricing`] and [`Action::ManageLiquidity`]
+/// (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §5). A plain trader therefore keeps every
+/// trading capability but does **not** get the Risk Routing / Risk Portfolios / Risk
+/// Dashboard, Pricing-Group / Tiering, or FIX-connection / Aggregated-Book management
+/// surfaces until an admin grants the matching capability (per-user overlay or an
+/// editable role bundle). This is the slice-1 hardcoded base that the admin-editable
+/// [`IdentityStore::role_bundles`] overlay persists and can narrow/widen
 /// (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §3.3/§10). A store with no
 /// persisted bundle for the role resolves to exactly this set, so an existing
 /// `identity.json` (which carries no `role_bundles`) behaves identically to before.
@@ -104,7 +110,14 @@ impl Role {
 pub fn default_trader_bundle() -> Vec<Capability> {
     let mut caps = Vec::new();
     for action in Action::ALL {
-        if matches!(action, Action::Administer | Action::RiskTransfer) {
+        if matches!(
+            action,
+            Action::Administer
+                | Action::RiskTransfer
+                | Action::RiskManage
+                | Action::ManagePricing
+                | Action::ManageLiquidity
+        ) {
             continue;
         }
         for asset in AssetClass::ALL {

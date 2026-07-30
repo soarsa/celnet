@@ -53,6 +53,9 @@ export type WorkspaceId =
   | "riskbooks"
   | "riskdashboard"
   | "riskrouting"
+  | "risktransfer"
+  | "transferinbox"
+  | "transferaudit"
   | "xva"
   | "excel"
   | "connections"
@@ -143,6 +146,15 @@ export const RAIL: readonly {
   // Risk Routing: the ordered rules table that routes each fill's risk into a desk's
   // risk portfolio. Admin edit; read-only otherwise. Single-asset FI row.
   { id: "riskrouting", glyph: "⑃", label: "Risk Routing", subtitle: "Fill → portfolio rules", assets: ["fixed_income"] },
+  // FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md): the MANUAL move of
+  // EXISTING risk between risk portfolios — the complement to routing (which
+  // auto-assigns NEW fills). Three single-asset FI surfaces, initiate/accept gated
+  // on the narrow `risk_transfer` capability (see {@link WORKSPACE_CAPABILITY}); the
+  // audit trail stays `view` for any FI trader. Their subtitles disambiguate the
+  // trio the way FI-BOOK-CONCEPTS disambiguates the "Book" family.
+  { id: "risktransfer", glyph: "⇆", label: "Risk Transfer", subtitle: "Move existing risk between portfolios", assets: ["fixed_income"] },
+  { id: "transferinbox", glyph: "⇱", label: "Transfer Inbox", subtitle: "Approve incoming transfers", assets: ["fixed_income"] },
+  { id: "transferaudit", glyph: "❑", label: "Transfer Audit", subtitle: "Who moved what · when · at what price", assets: ["fixed_income"] },
   { id: "surface", glyph: "◷", label: "Market Data", subtitle: "Curves & vol surface", assets: CAPABILITY_ASSETS },
   // The class-parametric SCENARIO risk grid (spot×vol P&L / rates netted risk) — an
   // analytics view, NOT the routed-risk roll-up (Risk Dashboard) nor the ledger.
@@ -218,20 +230,38 @@ export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<Workspace
 ]);
 
 /**
+ * The capability ACTION a workspace's reachability gates on, when it is NOT the
+ * default `view`. A few surfaces are write-class enough that merely viewing their
+ * asset does not entitle a user to reach them — the FI Risk Transfer ticket and
+ * inbox are booking-class writes (initiate / accept), so they gate on the narrow
+ * `risk_transfer` capability, exactly as the server does (initiate/accept require
+ * `risk_transfer`; the audit trail stays `view` for any FI trader). A workspace
+ * absent from this map defaults to `view` (the base "can see this at all" gate).
+ * `can` is permissive signed-out, so pre-login these rails still render.
+ */
+export const WORKSPACE_CAPABILITY: Partial<Record<WorkspaceId, CapabilityAction>> = {
+  risktransfer: "risk_transfer",
+  transferinbox: "risk_transfer",
+};
+
+/**
  * Whether a single WORKSPACE is reachable by this identity. Admin-only workspaces
- * require `isAdmin`; every trading workspace is reachable if the identity can
- * `view` AT LEAST ONE of the asset classes it serves (a class-parametric row —
- * Ticket / Market Data / Risk / Book — is reachable via EITHER FX or FI view; a
- * single-asset row via that one). The base read capability `view` is the right
- * gate for "can see this at all" (write controls remain individually gated by 5b);
- * the denied/unlicensed class is gated per-lens INSIDE the pane. Signed out, `can`
- * is permissive ⇒ every trading workspace stays visible. Used by the rail filter,
- * the palette/⌘N command filter, and the AppContext redirect so no path can strand
- * a user on a hidden workspace.
+ * require `isAdmin`; every trading workspace is reachable if the identity holds the
+ * workspace's gating action ({@link WORKSPACE_CAPABILITY}, default `view`) on AT
+ * LEAST ONE of the asset classes it serves (a class-parametric row — Ticket /
+ * Market Data / Risk / Book — is reachable via EITHER FX or FI; a single-asset row
+ * via that one). `view` is the right gate for ordinary "can see this at all"
+ * surfaces (write controls remain individually gated by 5b); the write-class Risk
+ * Transfer surfaces gate on `risk_transfer` so a booking-only trader without the
+ * narrow transfer grant never reaches the ticket/inbox. The denied/unlicensed class
+ * is gated per-lens INSIDE the pane. Signed out, `can` is permissive ⇒ every trading
+ * workspace stays visible. Used by the rail filter, the palette/⌘N command filter,
+ * and the AppContext redirect so no path can strand a user on a hidden workspace.
  */
 export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
   if (ADMIN_ONLY_WORKSPACES.has(id)) return auth.isAdmin;
-  return workspaceAssets(id).some((asset) => auth.can("view", asset));
+  const action = WORKSPACE_CAPABILITY[id] ?? "view";
+  return workspaceAssets(id).some((asset) => auth.can(action, asset));
 }
 
 /**
