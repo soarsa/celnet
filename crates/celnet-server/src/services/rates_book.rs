@@ -118,6 +118,40 @@ pub struct RatesPositionStore {
     risk_version: AtomicU64,
 }
 
+/// A read view of one booked rates position assembled for a **risk transfer** (§6):
+/// the slice fields the pure leg computation needs (signed notional, per-unit dealt-level
+/// mark, linear DV01) plus the stored [`RatesPosition`] template an economic transfer
+/// re-books its offsetting / opening legs from. Produced by
+/// [`RatesPositionStore::rates_transfer_view`].
+#[derive(Debug, Clone)]
+pub struct RatesTransferView {
+    /// The risk book the position is currently stamped into (`None` ⇒ unrouted).
+    pub risk_book: Option<String>,
+    /// Trade-direction signed notional (+ pay-fixed / long, − receive-fixed / short).
+    pub signed_notional: f64,
+    /// The per-unit dealt-level mark (swap/FRA `fixed_rate`, bond `coupon_rate`) — a rates
+    /// cell carries no marking surface, so this contractual level is its stored mark.
+    pub mark: f64,
+    /// The curve-free linear PV01 proxy (`notional · tenor · 1bp`, signed by IR duration) —
+    /// the same measure the pre-trade limit gate charges (the exact curve DV01 needs a live
+    /// `CurveSet` not carried on the transfer seam).
+    pub dv01: f64,
+    /// The stored position (the template an economic transfer re-books legs from).
+    pub template: RatesPosition,
+}
+
+impl Default for RatesTransferView {
+    fn default() -> Self {
+        Self {
+            risk_book: None,
+            signed_notional: 0.0,
+            mark: 0.0,
+            dv01: 0.0,
+            template: RatesPosition::default(),
+        }
+    }
+}
+
 impl Default for RatesPositionStore {
     fn default() -> Self {
         Self::new()
@@ -268,6 +302,285 @@ impl RatesPositionStore {
             })
             .cloned()
             .collect()
+    }
+
+    /// Mint a fresh rates position id for a **risk-transfer leg** (§6) — the moved slice of
+    /// a partial re-attribution split (an economic leg auto-assigns via
+    /// [`Self::book_into_risk_book`] with id `0`). Draws from the SAME monotonic counter the
+    /// booking path uses, so a minted id never collides with a booked or auto-assigned one.
+    #[must_use]
+    pub fn mint_position_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// A read view of one booked rates position for a **risk transfer** (§6): its current
+    /// risk-book stamp, trade-direction signed notional, per-unit "dealt level" mark, the
+    /// linear DV01, and the stored [`RatesPosition`] template (so an economic transfer can
+    /// re-book offsetting / opening legs off the exact instrument). Returns `None` for an id
+    /// that is not booked.
+    ///
+    /// **Mark.** A rates cell carries **no marking surface** (see the module docs), so the
+    /// economically-meaningful stored "current mark" is the instrument's contractual dealt
+    /// level — the swap/FRA `fixed_rate`, the bond `coupon_rate` — the same level the routing
+    /// engine reads on its `strike` axis. A `Mid`/`MarkToMarket` transfer resolves the
+    /// transfer price to this level ⇒ zero realised P&L; an `Agreed` override crosses P&L
+    /// against it.
+    ///
+    /// **DV01.** The moved DV01 is the curve-free **linear PV01 proxy**
+    /// ([`rates_linear_exposure`]) — `notional · tenor · 1bp`, signed by IR-duration
+    /// direction — the SAME conservative measure the pre-trade limit gate charges. The exact
+    /// curve-bootstrapped DV01 needs a live `CurveSet`, which is not carried on the async
+    /// transfer seam (transfers run off the pricing path); using the limit-gate measure keeps
+    /// the moved-risk vector consistent with the book's enforced exposure rather than
+    /// fabricating a zero or an unavailable curve number (guardrail 2 / 5).
+    #[must_use]
+    pub fn rates_transfer_view(&self, position_id: u64) -> Option<RatesTransferView> {
+        let g = self
+            .inner
+            .read()
+            .expect("rates position store lock poisoned");
+        let position = *g.iter().find(|p| p.position_id == position_id)?;
+        drop(g);
+        Some(RatesTransferView {
+            risk_book: self.risk_book_of(position_id),
+            signed_notional: rates_signed_notional(&position),
+            mark: rates_dealt_level(&position),
+            dv01: rates_linear_exposure(&position),
+            template: position,
+        })
+    }
+
+    /// Re-point an already-booked rates position's **risk-book stamp** to `target_book` — a
+    /// pure re-attribution (§6.1): no new position, economics unchanged. The caller runs the
+    /// target's headroom check ([`Self::check_risk_book_headroom`]) first. Advances the risk
+    /// version.
+    ///
+    /// # Errors
+    /// `not_found` if no rates position is booked under `position_id`.
+    pub fn restamp_risk_book(
+        &self,
+        position_id: u64,
+        target_book: &str,
+    ) -> Result<(), tonic::Status> {
+        {
+            let g = self
+                .inner
+                .read()
+                .expect("rates position store lock poisoned");
+            if !g.iter().any(|p| p.position_id == position_id) {
+                return Err(tonic::Status::not_found(format!(
+                    "rates position {position_id} is not booked"
+                )));
+            }
+        }
+        self.risk_book
+            .write()
+            .expect("rates risk-book lock poisoned")
+            .insert(position_id, target_book.to_owned());
+        self.risk_version.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Split a rates position for a **partial re-attribution** (§6.1 step 4): reduce the
+    /// source position's notional magnitude to `|remainder_notional|` (same instrument /
+    /// side, keeps its id and current book) and insert a NEW position at `moved_position_id`
+    /// carrying `|moved_notional|` (same side), stamped into `target_book`. The two slices'
+    /// notionals sum back to the original (no risk created or destroyed). Advances the risk
+    /// version.
+    ///
+    /// # Errors
+    /// `not_found` if `source_position_id` is not booked; `failed_precondition` if it carries
+    /// no instrument arm to split.
+    pub fn split_rates_position(
+        &self,
+        source_position_id: u64,
+        remainder_notional: f64,
+        moved_position_id: u64,
+        moved_notional: f64,
+        target_book: &str,
+    ) -> Result<(), tonic::Status> {
+        let template = {
+            let g = self
+                .inner
+                .read()
+                .expect("rates position store lock poisoned");
+            *g.iter()
+                .find(|p| p.position_id == source_position_id)
+                .ok_or_else(|| {
+                    tonic::Status::not_found(format!(
+                        "rates position {source_position_id} is not booked"
+                    ))
+                })?
+        };
+        if template
+            .instrument
+            .as_ref()
+            .and_then(|i| i.instrument.as_ref())
+            .is_none()
+        {
+            return Err(tonic::Status::failed_precondition(format!(
+                "rates position {source_position_id} carries no instrument arm to split"
+            )));
+        }
+        let remainder =
+            rates_with_signed_notional(&template, remainder_notional, source_position_id);
+        let moved = rates_with_signed_notional(&template, moved_notional, moved_position_id);
+        {
+            let mut g = self
+                .inner
+                .write()
+                .expect("rates position store lock poisoned");
+            if let Some(slot) = g.iter_mut().find(|p| p.position_id == source_position_id) {
+                *slot = remainder;
+            } else {
+                return Err(tonic::Status::not_found(format!(
+                    "rates position {source_position_id} is not booked"
+                )));
+            }
+            g.push(moved);
+        }
+        self.risk_book
+            .write()
+            .expect("rates risk-book lock poisoned")
+            .insert(moved_position_id, target_book.to_owned());
+        self.risk_version.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// The hard-limit **headroom check** for a rates book receiving an incoming `(net,
+    /// gross)` notional batch (§6): projects the resolved book AND each ancestor exactly as
+    /// the routed-fill gate does, excluding every moved id. Returns `Ok(())` when no cap on
+    /// the path is exceeded (or none is configured), the typed breach otherwise. A
+    /// re-attribution calls this BEFORE any mutation so a move that would blow the target's
+    /// (or an ancestor's) cap is refused with the store unmutated.
+    ///
+    /// # Errors
+    /// `failed_precondition` if the incoming batch would EXCEED a hard net/gross notional cap
+    /// on `target_book` or an ancestor.
+    pub fn check_risk_book_headroom(
+        &self,
+        target_book: &str,
+        incoming_net: f64,
+        incoming_gross: f64,
+        exclude_position_ids: &[u64],
+    ) -> Result<(), tonic::Status> {
+        match self.project_rates_book_breach_multi(
+            target_book,
+            incoming_net,
+            incoming_gross,
+            exclude_position_ids,
+        ) {
+            Some(status) => Err(status),
+            None => Ok(()),
+        }
+    }
+
+    /// Book a rates position into an **explicit** risk book (an economic-transfer leg, §6.2)
+    /// rather than the routed one — the rates analogue of
+    /// [`PositionStore::book_into_risk_book`](super::risk::store::PositionStore::book_into_risk_book).
+    /// Runs the SAME gates [`Self::book`] runs — the `book → entity → firm` pre-trade gate
+    /// and the per-book hard notional-cap gate over `risk_book` + its ancestors — over a read
+    /// snapshot BEFORE any mutation, refuses a hard breach with the store unmutated, routes a
+    /// `Strong`-tier book's write through the quorum log first, then stamps the EXPLICIT book
+    /// (never the routed one). Advances the risk version. `position_id == 0` ⇒ a fresh id is
+    /// assigned.
+    ///
+    /// # Errors
+    /// `failed_precondition` on a hard `(book → entity → firm)` limit or per-book notional-cap
+    /// breach.
+    pub fn book_into_risk_book(
+        &self,
+        mut position: RatesPosition,
+        risk_book: &str,
+    ) -> Result<RatesPosition, tonic::Status> {
+        // (1) The FactKey pre-trade gate — identical to `book_with_routing`, skipped when no
+        // limit is configured (byte-identical to the pre-gate path).
+        {
+            let limits = self.limits.read().expect("rates limit tree lock poisoned");
+            if !limits.is_empty() {
+                let g = self
+                    .inner
+                    .read()
+                    .expect("rates position store lock poisoned");
+                let result = rates_pre_trade(&g, &limits, &position);
+                if result.decision == PreTradeDecision::Reject {
+                    return Err(limit_breached_status(&result));
+                }
+            }
+        }
+        // (2) The per-book HARD-limit gate on the EXPLICIT book (not routed).
+        if let Some(breach) = self.project_rates_risk_book_breach(risk_book, &position) {
+            return Err(breach);
+        }
+        // (3) A `Strong`-tier book routes its authoritative write through the quorum log
+        // BEFORE the local apply (mirrors `book_with_routing`); a `Local` cell skips it.
+        if let Some(consensus) = self.consensus.get()
+            && consensus.level_for_rates_book(position.book).is_strong()
+        {
+            if position.position_id == 0 {
+                position.position_id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            }
+            consensus.commit_book_write(
+                rates_book_key(position.position_id),
+                rates_linear_exposure(&position),
+            )?;
+        }
+        {
+            let mut g = self
+                .inner
+                .write()
+                .expect("rates position store lock poisoned");
+            if position.position_id == 0 {
+                position.position_id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            } else {
+                let mut cur = self.next_id.load(Ordering::Relaxed);
+                while position.position_id >= cur {
+                    match self.next_id.compare_exchange(
+                        cur,
+                        position.position_id + 1,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => break,
+                        Err(observed) => cur = observed,
+                    }
+                }
+            }
+            if let Some(slot) = g.iter_mut().find(|p| p.position_id == position.position_id) {
+                *slot = position;
+            } else {
+                g.push(position);
+            }
+        }
+        self.risk_book
+            .write()
+            .expect("rates risk-book lock poisoned")
+            .insert(position.position_id, risk_book.to_owned());
+        self.risk_version.fetch_add(1, Ordering::Relaxed);
+        Ok(position)
+    }
+
+    /// Remove a booked rates position entirely — its cell and its risk-book stamp. The
+    /// economic-transfer **rollback** primitive (§6.2): a staged source-offset leg is
+    /// un-booked if the paired target leg is refused, so a rejected transfer never leaves a
+    /// half-transfer. Advances the risk version when a position was actually removed.
+    pub fn remove_position(&self, position_id: u64) {
+        let removed = {
+            let mut g = self
+                .inner
+                .write()
+                .expect("rates position store lock poisoned");
+            let before = g.len();
+            g.retain(|p| p.position_id != position_id);
+            g.len() != before
+        };
+        self.risk_book
+            .write()
+            .expect("rates risk-book lock poisoned")
+            .remove(&position_id);
+        if removed {
+            self.risk_version.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// **The pre-trade limit gate + booking sink** for linear-rates positions
@@ -458,6 +771,27 @@ impl RatesPositionStore {
         resolved_book: &str,
         fill: &RatesPosition,
     ) -> Option<tonic::Status> {
+        // A single incoming rates fill: its signed notional is the net, its magnitude the
+        // gross, and exactly its own prior fact is excluded — byte-identical to the original
+        // single-fill gate the routed-fill path runs.
+        let n = rates_signed_notional(fill);
+        self.project_rates_book_breach_multi(resolved_book, n, n.abs(), &[fill.position_id])
+    }
+
+    /// The general per-book hard-limit projection over an incoming `(net, gross)` notional
+    /// pair and a set of excluded ids — the shared core of the single-fill routed gate
+    /// ([`Self::project_rates_risk_book_breach`]) and the multi-position transfer headroom
+    /// check ([`Self::check_risk_book_headroom`], §6). A re-attribution or an economic
+    /// transfer can move several rates positions (mixed sides) at once, so the incoming net
+    /// and gross are passed separately and every moved id is excluded from the current-book
+    /// roll-up so the projection is `others + incoming`, never double-counting a moved line.
+    fn project_rates_book_breach_multi(
+        &self,
+        resolved_book: &str,
+        incoming_net: f64,
+        incoming_gross: f64,
+        exclude_ids: &[u64],
+    ) -> Option<tonic::Status> {
         let limits_map = self
             .risk_book_limits
             .read()
@@ -477,10 +811,8 @@ impl RatesPositionStore {
         if scoped.is_empty() {
             return None;
         }
-        let fill_notional = rates_signed_notional(fill);
-        let exclude = fill.position_id;
         // The current per-book OWN (un-rolled) net/gross from the stamped rates positions,
-        // excluding this fill's own prior fact (re-book supersede — never double-counted).
+        // excluding every moved id (re-book supersede — never double-counted against itself).
         let stamps = self
             .risk_book
             .read()
@@ -491,7 +823,7 @@ impl RatesPositionStore {
             .expect("rates position store lock poisoned");
         let mut own: HashMap<&str, (f64, f64)> = HashMap::new();
         for p in g.iter() {
-            if exclude != 0 && p.position_id == exclude {
+            if exclude_ids.contains(&p.position_id) {
                 continue;
             }
             if let Some(book) = stamps.get(&p.position_id) {
@@ -502,10 +834,10 @@ impl RatesPositionStore {
             }
         }
         for (scope, lim) in scoped {
-            // Subtree roll-up: this fill + every current book whose ancestor-or-self chain
-            // passes through `scope` (i.e. the book is in the subtree rooted at `scope`).
-            let mut net = fill_notional;
-            let mut gross = fill_notional.abs();
+            // Subtree roll-up: the incoming batch + every current book whose ancestor-or-self
+            // chain passes through `scope` (i.e. the book is in the subtree rooted at `scope`).
+            let mut net = incoming_net;
+            let mut gross = incoming_gross;
             for (book, (bnet, bgross)) in &own {
                 if rates_risk_book_chain(&limits_map, book).contains(&scope) {
                     net += bnet;
@@ -659,6 +991,72 @@ pub(crate) fn rates_signed_notional(position: &RatesPosition) -> f64 {
         Ok(Side::Sell) => -magnitude,
         _ => magnitude,
     }
+}
+
+/// The instrument's contractual **dealt level** — the closest analogue of a marked "price"
+/// a rates cell carries (it has no marking surface): the swap/FRA `fixed_rate`, the bond
+/// `coupon_rate`. Used as the transfer P&L cost basis (§6): a `Mid`/`MarkToMarket` cross
+/// resolves the transfer price to this level ⇒ zero realised P&L; an `Agreed` override
+/// crosses P&L against it. `0.0` for a position with no instrument arm.
+#[must_use]
+pub(crate) fn rates_dealt_level(position: &RatesPosition) -> f64 {
+    let Some(instr) = position
+        .instrument
+        .as_ref()
+        .and_then(|i| i.instrument.as_ref())
+    else {
+        return 0.0;
+    };
+    match instr {
+        rates_instrument::Instrument::Ois(ois) => ois.fixed_rate,
+        rates_instrument::Instrument::Irs(irs) => irs.fixed_rate,
+        rates_instrument::Instrument::Fra(fra) => fra.fixed_rate,
+        rates_instrument::Instrument::Bond(bond) => bond.coupon_rate,
+    }
+}
+
+/// A copy of `template` re-cast to carry `signed_notional`'s magnitude and direction under
+/// `position_id` — the constructor for a transfer's offsetting / opening / split legs (§6).
+/// The instrument's notional-bearing field (`notional`, or a bond's `redemption`) is set to
+/// `|signed_notional|` and its `side` to `SIDE_BUY` for a non-negative signed notional /
+/// `SIDE_SELL` for a negative one, matching the [`rates_signed_notional`] trade-direction
+/// convention (a payer / long bond is `+`, a receiver / short bond is `−`). A template with
+/// no instrument arm is returned unchanged but for the id (its notional is honestly zero).
+#[must_use]
+pub(crate) fn rates_with_signed_notional(
+    template: &RatesPosition,
+    signed_notional: f64,
+    position_id: u64,
+) -> RatesPosition {
+    let mut out = *template;
+    out.position_id = position_id;
+    let magnitude = signed_notional.abs();
+    let side = if signed_notional < 0.0 {
+        Side::Sell
+    } else {
+        Side::Buy
+    } as i32;
+    if let Some(instr) = out.instrument.as_mut().and_then(|i| i.instrument.as_mut()) {
+        match instr {
+            rates_instrument::Instrument::Ois(ois) => {
+                ois.notional = magnitude;
+                ois.side = side;
+            }
+            rates_instrument::Instrument::Irs(irs) => {
+                irs.notional = magnitude;
+                irs.side = side;
+            }
+            rates_instrument::Instrument::Fra(fra) => {
+                fra.notional = magnitude;
+                fra.side = side;
+            }
+            rates_instrument::Instrument::Bond(bond) => {
+                bond.redemption = magnitude;
+                bond.side = side;
+            }
+        }
+    }
+    out
 }
 
 /// Map a booked rates fill onto the routing engine's [`RoutingContext`] (§4) — the input the

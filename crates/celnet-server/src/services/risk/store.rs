@@ -55,7 +55,7 @@ use celnet_risk_cube::{
     NodeAggregate, PositionId, RiskFact, TraderId, VegaPillarMap,
 };
 use celnet_risk_normalize::{CanonicalLeaf, PositionRisk, canonicalize};
-use celnet_types::{CcyPair, DeltaConvention, OptionType, PremiumStyle};
+use celnet_types::{Carry, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
 
 use celnet_limits::{
     IncrementalTrade, LimitScope, LimitTree, NonAdditiveExposure, PreTradeDecision, PreTradeResult,
@@ -146,6 +146,34 @@ pub struct BookedExotic {
     pub surface_version: u64,
 }
 
+/// A read view of one booked FX position assembled for a **risk transfer** (§6): the
+/// slice fields the pure leg computation needs (signed notional, per-unit mark, canonical
+/// greeks) plus the reconstructed [`BookedPosition`] an economic transfer re-books its
+/// offsetting / opening legs from. Produced by [`PositionStore::fx_transfer_view`].
+#[derive(Debug, Clone)]
+pub struct FxTransferView {
+    /// The risk book the position is currently stamped into (`None` ⇒ unrouted).
+    pub risk_book: Option<String>,
+    /// Signed base-currency notional (+ long, − short).
+    pub signed_notional: f64,
+    /// The per-unit "current mark": the marked option premium (PV) in the quote/numeraire
+    /// currency per unit of base notional (`leaf.premium_quote / notional_base`) — the fair
+    /// value the store carries at the fact's `surface_version`. A transfer at `Mid`/`MTM`
+    /// resolves to this ⇒ zero realised P&L; an `Agreed` override crosses P&L against it.
+    pub mark: f64,
+    /// Canonical, notional-scaled spot delta (base-leg hedge amount).
+    pub delta: f64,
+    /// Canonical, notional-scaled gamma.
+    pub gamma: f64,
+    /// Canonical, notional-scaled vega (premium-currency terms).
+    pub vega: f64,
+    /// Canonical, notional-scaled theta (per year).
+    pub theta: f64,
+    /// The reconstructed booking (instrument + inputs + conventions + surface version) —
+    /// the template an economic transfer re-books offsetting / opening legs from.
+    pub booked: BookedPosition,
+}
+
 /// A compact, server-side projection of a [`RiskBookDef`](crate::config::identity::RiskBookDef)
 /// carrying only what the booking sink's per-book limit gate needs: the book id, its parent
 /// (for ancestor roll-up), and its optional hard [`RiskLimits`]. Pushed into the store by
@@ -206,6 +234,14 @@ pub struct PositionStore {
     /// composite version. A relaxed atomic (read lock-free off the streaming tick loop,
     /// never the pinned pricing core); starts at `0`.
     risk_version: AtomicU64,
+    /// A monotonic **transfer id source** for the freshly-minted position handles a risk
+    /// transfer (§6) needs — the moved slice of a partial re-attribution split and the
+    /// offsetting / opening legs of an economic transfer. [`Self::mint_position_id`] hands
+    /// out ids strictly above the current max live handle, so a minted id never collides
+    /// with a booked position. The FX book (unlike the rates book) does not otherwise assign
+    /// ids — client fills carry their own — so this counter exists solely for transfer legs.
+    /// A relaxed atomic on the async booking tier; starts at `0`.
+    next_transfer_id: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -274,6 +310,7 @@ impl PositionStore {
             permissive_access: AtomicBool::new(false),
             consensus: OnceLock::new(),
             risk_version: AtomicU64::new(0),
+            next_transfer_id: AtomicU64::new(0),
         }
     }
 
@@ -361,6 +398,9 @@ impl PositionStore {
             // Transient staging view: it books no fills and streams no risk, so its risk
             // version is inert (starts at 0, never polled by a stream).
             risk_version: AtomicU64::new(0),
+            // A staged federation-union view books no transfer legs, so its transfer id
+            // source is inert (starts at 0, never minted from).
+            next_transfer_id: AtomicU64::new(0),
         }
     }
 
@@ -527,6 +567,360 @@ impl PositionStore {
             })
             .cloned()
             .collect()
+    }
+
+    /// A read view of one booked FX position for a **risk transfer** (§6): its current
+    /// risk-book stamp, signed base notional, per-unit mark, canonical greeks, and the
+    /// reconstructed [`BookedPosition`] (so an economic transfer can re-book offsetting /
+    /// opening legs from the exact instrument/inputs). Returns `None` for an id that is
+    /// not booked, overflows the `u32` handle space, or is not an FX position (a non-FX
+    /// carry cannot be lifted back into FX [`VanillaInputs`]).
+    ///
+    /// **Mark.** The per-unit "current mark" is the position's marked option premium (its
+    /// PV) in the quote/numeraire currency per unit of base notional —
+    /// `leaf.premium_quote / notional_base` — the fair value the store already carries at
+    /// the fact's `surface_version` (never re-priced here, off the hot core). This is the
+    /// economically correct cost basis the transfer P&L crystallises against: a
+    /// `Mid`/`MarkToMarket` transfer resolves the transfer price to this same mark ⇒ zero
+    /// realised P&L (a fair internal cross), while an `Agreed` override crosses
+    /// `moved · (agreed − mark)`. A zero-notional line marks at `0.0` (no per-unit basis).
+    #[must_use]
+    pub fn fx_transfer_view(&self, position_id: u64) -> Option<FxTransferView> {
+        let handle = u32::try_from(position_id).ok()?;
+        let g = self.inner.read().expect("position store lock poisoned");
+        let fact = g.facts.iter().find(|f| f.position_id.0 == handle)?;
+        let booked = booked_from_fact(fact, position_id)?;
+        let notional = fact.measure.position.notional_base;
+        let greeks = &fact.measure.leaf.greeks;
+        let mark = if notional != 0.0 {
+            fact.measure.leaf.premium_quote / notional
+        } else {
+            0.0
+        };
+        Some(FxTransferView {
+            risk_book: g.risk_book.get(&handle).cloned(),
+            signed_notional: notional,
+            mark,
+            // Canonical, notional-scaled greeks straight off the marked leaf (the same
+            // per-position sensitivities the risk cube aggregates). DV01 is absent for FX
+            // vanilla (mirrors the per-book gate skipping `max_dv01`) — the transfer's
+            // rates path carries DV01 instead.
+            delta: greeks.delta_base,
+            gamma: greeks.gamma,
+            vega: greeks.vega,
+            theta: greeks.theta,
+            booked,
+        })
+    }
+
+    /// Mint a fresh position id for a **risk-transfer leg** (§6) — the moved slice of a
+    /// partial re-attribution split or an economic transfer's offsetting / opening leg. The
+    /// id is strictly above both the current max live handle and every previously-minted
+    /// transfer id, so it never collides with a booked position (the FX book does not
+    /// otherwise assign ids — client fills carry their own). Monotonic and lock-free-ish
+    /// (one read snapshot for the max handle + a CAS on the counter).
+    #[must_use]
+    pub fn mint_position_id(&self) -> u64 {
+        let max_handle = {
+            let g = self.inner.read().expect("position store lock poisoned");
+            g.facts.iter().map(|f| f.position_id.0).max().unwrap_or(0)
+        };
+        let base = u64::from(max_handle) + 1;
+        let mut cur = self.next_transfer_id.load(Ordering::Relaxed);
+        loop {
+            let next = cur.max(base);
+            match self.next_transfer_id.compare_exchange(
+                cur,
+                next + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return next,
+                Err(observed) => cur = observed,
+            }
+        }
+    }
+
+    /// Re-point an already-booked FX position's **risk-book stamp** to `target_book` — a
+    /// pure re-attribution (§6.1): no new fact, no re-pricing, economics unchanged. The
+    /// caller runs the target's hard-limit headroom check ([`Self::check_risk_book_headroom`])
+    /// BEFORE calling this, so the move only re-labels the routing dimension. Advances the
+    /// risk version (the per-book stream re-aggregates on its next tick).
+    ///
+    /// # Errors
+    /// `invalid_argument` if the id overflows the `u32` handle space; `not_found` if no
+    /// position is booked under it.
+    pub fn restamp_risk_book(
+        &self,
+        position_id: u64,
+        target_book: &str,
+    ) -> Result<(), tonic::Status> {
+        let handle = u32::try_from(position_id).map_err(|_| {
+            tonic::Status::invalid_argument(format!(
+                "position_id {position_id} exceeds the u32 cube handle space"
+            ))
+        })?;
+        let mut g = self.inner.write().expect("position store lock poisoned");
+        if !g.facts.iter().any(|f| f.position_id.0 == handle) {
+            return Err(tonic::Status::not_found(format!(
+                "position {position_id} is not booked"
+            )));
+        }
+        g.risk_book.insert(handle, target_book.to_owned());
+        drop(g);
+        self.risk_version.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Split an FX position for a **partial re-attribution** (§6.1 step 4): reduce the
+    /// source fact to `remainder_notional` (same instrument/inputs/marks, keeps its
+    /// original id and current book) and insert a NEW fact at `moved_position_id` carrying
+    /// `moved_notional`, stamped into `target_book`. Both slices are canonicalised through
+    /// the SAME `canonical_vanilla_fact` path a booking uses, so their greeks/marks are
+    /// re-derived identically — and because greeks are linear in notional, the two slices'
+    /// risk sums back to the original (no risk created or destroyed). Advances the risk
+    /// version.
+    ///
+    /// # Errors
+    /// `invalid_argument` if either id overflows `u32` or the position is not priceable;
+    /// `not_found` if `source_position_id` is not booked.
+    pub fn split_position(
+        &self,
+        source_position_id: u64,
+        remainder_notional: f64,
+        moved_position_id: u64,
+        moved_notional: f64,
+        target_book: &str,
+    ) -> Result<(), tonic::Status> {
+        let source_handle = u32::try_from(source_position_id).map_err(|_| {
+            tonic::Status::invalid_argument(format!(
+                "position_id {source_position_id} exceeds the u32 cube handle space"
+            ))
+        })?;
+        // Reconstruct the source instrument, then derive the two split slices off it.
+        let template = {
+            let g = self.inner.read().expect("position store lock poisoned");
+            let fact = g
+                .facts
+                .iter()
+                .find(|f| f.position_id.0 == source_handle)
+                .ok_or_else(|| {
+                    tonic::Status::not_found(format!("position {source_position_id} is not booked"))
+                })?;
+            booked_from_fact(fact, source_position_id).ok_or_else(|| {
+                tonic::Status::failed_precondition(format!(
+                    "position {source_position_id} is not an FX position and cannot be split"
+                ))
+            })?
+        };
+        let remainder = BookedPosition {
+            notional_base: remainder_notional,
+            ..template
+        };
+        let moved = BookedPosition {
+            position_id: moved_position_id,
+            notional_base: moved_notional,
+            ..template
+        };
+        // Canonicalise both off-lock (pure); the key is resolved from the source fact's
+        // existing org placement so the remainder keeps the same attribution chain.
+        let (rem_position, _rem_leaf, rem_fact);
+        let (mv_position, _mv_leaf, mv_fact);
+        let (source_key, source_attr) = {
+            let g = self.inner.read().expect("position store lock poisoned");
+            let fact = g
+                .facts
+                .iter()
+                .find(|f| f.position_id.0 == source_handle)
+                .ok_or_else(|| {
+                    tonic::Status::not_found(format!("position {source_position_id} is not booked"))
+                })?;
+            (fact.key.clone(), g.attribution.get(&source_handle).cloned())
+        };
+        let moved_handle = u32::try_from(moved_position_id).map_err(|_| {
+            tonic::Status::invalid_argument(format!(
+                "position_id {moved_position_id} exceeds the u32 cube handle space"
+            ))
+        })?;
+        (rem_position, _rem_leaf, rem_fact) =
+            canonical_vanilla_fact(&remainder, source_key.clone())?;
+        (mv_position, _mv_leaf, mv_fact) = canonical_vanilla_fact(&moved, source_key)?;
+        let _ = (&rem_position, &mv_position); // canonicalisation validates priceability.
+        let mut g = self.inner.write().expect("position store lock poisoned");
+        // Replace the source fact in place with the reduced remainder (same handle, same
+        // book stamp, same attribution — unchanged organisationally).
+        if let Some(slot) = g
+            .facts
+            .iter_mut()
+            .find(|f| f.position_id.0 == source_handle)
+        {
+            *slot = rem_fact;
+        } else {
+            return Err(tonic::Status::not_found(format!(
+                "position {source_position_id} is not booked"
+            )));
+        }
+        // Insert the moved slice as a fresh fact stamped into the target book.
+        g.facts.push(mv_fact);
+        g.wire_ids.insert(moved_handle, moved_position_id);
+        g.risk_book.insert(moved_handle, target_book.to_owned());
+        if let Some(attr) = source_attr {
+            g.attribution.insert(moved_handle, attr);
+        }
+        drop(g);
+        self.risk_version.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// The hard-limit **headroom check** for a book receiving an incoming `(net, gross)`
+    /// notional batch (§6): projects the resolved book AND each ancestor exactly as the
+    /// routed-fill gate ([`project_risk_book_breach`]) does, excluding every moved source
+    /// handle so a within-book move never double-counts a line against itself. Returns
+    /// `Ok(())` when no cap on the path is exceeded (or none is configured — byte-identical
+    /// to the pre-enforcement path), and the typed `failed_precondition` breach otherwise.
+    /// A re-attribution calls this over a read snapshot BEFORE any mutation so a move that
+    /// would blow the target's (or an ancestor's) cap is refused with the store unmutated.
+    ///
+    /// # Errors
+    /// `failed_precondition` if the incoming batch would EXCEED a hard net/gross notional
+    /// cap on `target_book` or one of its ancestors.
+    pub fn check_risk_book_headroom(
+        &self,
+        target_book: &str,
+        incoming_net: f64,
+        incoming_gross: f64,
+        exclude_position_ids: &[u64],
+    ) -> Result<(), tonic::Status> {
+        let excl: Vec<u32> = exclude_position_ids
+            .iter()
+            .filter_map(|&id| u32::try_from(id).ok())
+            .collect();
+        let g = self.inner.read().expect("position store lock poisoned");
+        match project_risk_book_breach_multi(&g, target_book, incoming_net, incoming_gross, &excl) {
+            Some(status) => Err(status),
+            None => Ok(()),
+        }
+    }
+
+    /// Book an FX position into an **explicit** risk book (an economic-transfer leg, §6.2)
+    /// rather than the routed one. This is the transfer's booking primitive: the routed
+    /// sink ([`Self::book`]) stamps whatever the routing graph resolves, but a transfer must
+    /// land its offsetting / opening legs in NAMED books (source / target). It runs the
+    /// SAME gates the routed sink runs — the FactKey Greeks/notional pre-trade gate and the
+    /// per-book hard notional-cap gate over `risk_book` + its ancestors — over a read
+    /// snapshot BEFORE any mutation, refuses a hard breach with the store unmutated, and
+    /// (for a `Strong`-tier book) routes the authoritative write through the quorum log
+    /// before the local apply, exactly as [`Self::book`] does. Never bypasses limits or the
+    /// consensus path. The org FactKey is resolved from `attribution` the way
+    /// [`Self::book_from_attribution`] resolves it. Advances the risk version.
+    ///
+    /// # Errors
+    /// `invalid_argument` if the id overflows `u32` or the position is not priceable;
+    /// `failed_precondition` on a hard FactKey-limit or per-book notional-cap breach.
+    pub fn book_into_risk_book(
+        &self,
+        booked: BookedPosition,
+        attribution: &AttributionRecord,
+        risk_book: &str,
+    ) -> Result<(), tonic::Status> {
+        // Resolve the org placement from the attribution holder seat, mirroring
+        // `book_from_attribution` exactly (same interning, same DEFAULT-LOCATION unit).
+        let holder = attribution
+            .held_by
+            .as_ref()
+            .or(attribution.quoted_by.as_ref());
+        let (book_name, trader_name) = holder
+            .map(|b| (b.book.as_str().to_owned(), seat_name(b)))
+            .unwrap_or_else(|| ("UNATTRIBUTED".to_owned(), "unattributed".to_owned()));
+        let (book_h, trader_h, location_h) = {
+            let mut g = self.inner.write().expect("position store lock poisoned");
+            let book_h = g.interner.intern(&book_name);
+            let trader_h = g.interner.intern(&trader_name);
+            let location_h = g.interner.intern("DEFAULT-LOCATION");
+            (book_h, trader_h, location_h)
+        };
+        let key = FactKey {
+            trader: TraderId(trader_h),
+            book: CubeBookId(book_h),
+            desk: DeskId(0),
+            underlying: celnet_types::Underlying::Fx(booked.pair),
+            location: LocationId(location_h),
+            entity: EntityId(0),
+        };
+        let (position, leaf, fact) = canonical_vanilla_fact(&booked, key.clone())?;
+        let handle = fact.position_id.0;
+        // Both gates on a single READ snapshot, BEFORE the write lock (a hard breach never
+        // books; the O(#facts) projections never run under the exclusive lock).
+        {
+            let g = self.inner.read().expect("position store lock poisoned");
+            if !g.limits.is_empty() {
+                let result = project_pre_trade(
+                    &g.facts,
+                    &g.limits,
+                    &g.hierarchy,
+                    &position,
+                    &leaf,
+                    key,
+                    handle,
+                );
+                if result.decision == PreTradeDecision::Reject {
+                    return Err(limit_breached_status(&result));
+                }
+            }
+            if let Some(breach) =
+                project_risk_book_breach(&g, risk_book, booked.notional_base, handle)
+            {
+                return Err(breach);
+            }
+        }
+        // A `Strong`-tier book routes its authoritative write through the quorum log BEFORE
+        // the local apply — keyed on the org book name, exactly as `book` does (a `Local`
+        // book, the default, skips this and stays byte-identical).
+        if let Some(consensus) = self.consensus.get()
+            && consensus.level_for_book(&book_name).is_strong()
+        {
+            consensus.commit_book_write(fx_book_key(booked.position_id), booked.notional_base)?;
+        }
+        let mut g = self.inner.write().expect("position store lock poisoned");
+        if let Some(slot) = g
+            .facts
+            .iter_mut()
+            .find(|f| f.position_id == fact.position_id)
+        {
+            *slot = fact;
+        } else {
+            g.facts.push(fact);
+        }
+        g.wire_ids.insert(handle, booked.position_id);
+        g.risk_book.insert(handle, risk_book.to_owned());
+        g.attribution.insert(handle, attribution.clone());
+        drop(g);
+        self.risk_version.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Remove a booked FX position entirely — its fact, risk-book stamp, wire id, and
+    /// attribution. The economic-transfer **rollback** primitive (§6.2): a staged
+    /// source-offset leg is un-booked if the paired target leg is refused, so a rejected
+    /// transfer never leaves a half-transfer. Advances the risk version when a position was
+    /// actually removed; a no-op (no bump) for an unknown id.
+    pub fn remove_position(&self, position_id: u64) {
+        let Ok(handle) = u32::try_from(position_id) else {
+            return;
+        };
+        let removed = {
+            let mut g = self.inner.write().expect("position store lock poisoned");
+            let before = g.facts.len();
+            g.facts.retain(|f| f.position_id.0 != handle);
+            let removed = g.facts.len() != before;
+            g.risk_book.remove(&handle);
+            g.wire_ids.remove(&handle);
+            g.attribution.remove(&handle);
+            removed
+        };
+        if removed {
+            self.risk_version.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Record a booked position into the live book under an explicit
@@ -1139,6 +1533,40 @@ fn unattributed_fx_key(pair: CcyPair) -> FactKey {
 /// fact)` — the pure, lock-free step shared by [`PositionStore::book`] and
 /// [`PositionStore::evaluate_pre_trade`]. The leaf drives the pre-trade increment;
 /// the fact is the store record inserted on a clean/soft decision.
+/// Reconstruct a [`BookedPosition`] from a stored FX [`RiskFact`] — the inverse of the
+/// `canonicalize` on the booking path — so a risk transfer can re-book offsetting / opening
+/// legs or split slices off the exact instrument/inputs/conventions the position was booked
+/// under. Returns `None` for a non-FX fact: only an FX two-rate carry
+/// ([`Carry::FxRates`]) lifts back into [`VanillaInputs`]; a generalized cost-of-carry
+/// position (equity/commodity/digital-asset) is not FX-transferable through this path.
+fn booked_from_fact(fact: &RiskFact, wire_id: u64) -> Option<BookedPosition> {
+    let p = &fact.measure.position;
+    let pair = p.underlying.as_ccy_pair()?;
+    let Carry::FxRates { r_dom, r_for } = p.inputs.carry else {
+        return None;
+    };
+    let inputs = VanillaInputs::new(
+        p.inputs.spot,
+        p.inputs.strike,
+        p.inputs.vol,
+        p.inputs.t,
+        r_dom,
+        r_for,
+    );
+    Some(BookedPosition {
+        position_id: wire_id,
+        pair,
+        option: p.option,
+        notional_base: p.notional_base,
+        inputs,
+        // FX positions always carry both conventions; the defaults are unreachable for an
+        // FX fact and exist only to keep the reconstruction total.
+        quoted_delta: p.quoted_delta.unwrap_or(DeltaConvention::SpotUnadjusted),
+        premium_style: p.premium_style.unwrap_or(PremiumStyle::DomesticPips),
+        surface_version: fact.surface_version,
+    })
+}
+
 fn canonical_vanilla_fact(
     booked: &BookedPosition,
     key: FactKey,
@@ -1277,6 +1705,33 @@ fn project_risk_book_breach(
     fill_notional: f64,
     exclude_handle: u32,
 ) -> Option<tonic::Status> {
+    // A single incoming fill: its signed notional is the net, its magnitude the gross, and
+    // exactly its own prior fact is excluded (re-book supersede) — byte-identical to the
+    // original single-position gate the routed-fill path in [`PositionStore::book`] runs.
+    project_risk_book_breach_multi(
+        inner,
+        resolved_book,
+        fill_notional,
+        fill_notional.abs(),
+        &[exclude_handle],
+    )
+}
+
+/// The general per-book hard-limit projection over an incoming `(net, gross)` notional
+/// pair and a set of excluded handles — the shared core of the single-fill routed gate
+/// ([`project_risk_book_breach`]) and the multi-position transfer headroom check
+/// ([`PositionStore::check_risk_book_headroom`], §6). A re-attribution or an economic
+/// transfer can move several positions with mixed sides at once, so the incoming net and
+/// gross are passed separately (for a mixed-sign batch `gross ≠ |net|`) and every moved
+/// source handle is excluded from the current-book roll-up so the projection is
+/// `others + incoming`, never double-counting a moved line against itself.
+fn project_risk_book_breach_multi(
+    inner: &StoreInner,
+    resolved_book: &str,
+    incoming_net: f64,
+    incoming_gross: f64,
+    exclude_handles: &[u32],
+) -> Option<tonic::Status> {
     let limits_map = &inner.risk_book_limits;
     // The scopes to enforce: the resolved book + its ancestors, keeping only those that
     // actually carry a `RiskLimits`. No caps on the whole path ⇒ nothing to gate.
@@ -1297,7 +1752,7 @@ fn project_risk_book_breach(
     // fill's own prior fact (re-book supersede — never double-counted against itself).
     let mut own: HashMap<&str, (f64, f64)> = HashMap::new();
     for f in &inner.facts {
-        if f.position_id.0 == exclude_handle {
+        if exclude_handles.contains(&f.position_id.0) {
             continue;
         }
         if let Some(book) = inner.risk_book.get(&f.position_id.0) {
@@ -1308,10 +1763,10 @@ fn project_risk_book_breach(
         }
     }
     for (scope, lim) in scoped {
-        // Subtree roll-up: this fill + every current book whose ancestor-or-self chain
-        // passes through `scope` (i.e. the book is in the subtree rooted at `scope`).
-        let mut net = fill_notional;
-        let mut gross = fill_notional.abs();
+        // Subtree roll-up: the incoming batch + every current book whose ancestor-or-self
+        // chain passes through `scope` (i.e. the book is in the subtree rooted at `scope`).
+        let mut net = incoming_net;
+        let mut gross = incoming_gross;
         for (book, (bnet, bgross)) in &own {
             if risk_book_chain_contains(limits_map, book, scope) {
                 net += bnet;
