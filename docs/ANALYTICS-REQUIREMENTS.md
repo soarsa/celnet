@@ -717,6 +717,59 @@ TCA and the risk books: **who is trading with us (client-flow)** and **what we a
   change, not an auto-loop — no silent auto-repricing). Grounds in the tiering feature library
   (§3, §11.2).
 
+### 11.1a P&L attribution — $/mm, spread economics & quote-fishing
+
+The trader-facing payoff of client-flow: *how much are we actually making on each client, is our
+pricing right, and who is just harvesting our prices?* These are the desk's daily questions and
+the direct actuator into pricing groups / tiering.
+
+- **Dollar-per-million ($/mm, "DPM") — the desk's canonical margin-efficiency metric.** For every
+  trade, margin captured normalised to **per USD 1mm notional**, so a 5mm and a 50mm trade are
+  comparable. Numerator = booked-price-vs-fair margin straight off the **`PricingProvenance`
+  waterfall** (raw composite → constructed → tiered → outbound; the outbound-vs-raw delta *is* the
+  gross margin we added), denominator = trade notional in mm. Roll up **$/mm by client, by
+  counterparty, by instrument, by tenor bucket, by desk, and by pricing-group/tier** — the whole
+  point is to see the *distribution*: the client we make USD 120/mm on vs the one we make USD 8/mm
+  on. This is the concrete denominator under §11.1's "franchise value."
+- **Gross vs net $/mm (P&L attribution).** Attribute each client's P&L into its components:
+  **gross $/mm** (spread captured) **− adverse-selection cost** (§2.4 markout per client, in $/mm)
+  **− hedging/warehousing cost** (cost to externalise or DV01-carry to internalise, §11.1) = **net
+  $/mm**. A client can show fat gross $/mm and *negative* net once markout is subtracted — the
+  attribution makes that visible instead of hiding it in a blended number. This is the
+  build-out of §11.1's franchise formula into a reported waterfall per client.
+- **Spread economics / "pricing-out" diagnostics — are our spreads tight enough?** Diagnose per
+  client/instrument whether we are **too wide** (pricing ourselves out — persistently high cover
+  distance, near-zero hit-rate, we're not really competing) or **too tight** (winning below the
+  markout+cost breakeven — giving edge away):
+  - **Captured-vs-offered spread**: realised $/mm against the spread we actually *quoted* (from
+    provenance) — are we capturing what we quote, or getting picked off inside it?
+  - **Cover distance** (our price vs the winning/cover price, already captured §2.4) — the raw
+    competitiveness signal: how far off the market each losing quote was.
+  - **Hit-rate ↔ spread-width elasticity**: the decision curve — how much hit-rate does tightening
+    *N* bps buy on this client/instrument, and is the incremental volume $/mm-**accretive** after
+    markout? This is the number that says "tighten" or "hold." Surfaced read-only; the
+    `PricingGroupDef`/tiering config is the (human-approved) actuator — no silent auto-repricing.
+  - **Breakeven spread**: the spread at which net $/mm = 0 for a client (markout + cost), so a
+    trader can see how much cushion a quote has before it's a loser.
+- **Quote-fishing / data-harvesting detection — who is mining our prices without trading?** Some
+  clients fire many RFQs or consume the ESP stream continuously but rarely deal — using our quotes
+  as free curve/mark data (and leaking our axes/levels). Detect and cost it:
+  - **Quote-to-trade ratio** per client (quotes or RFQs sent ÷ trades done; the RFQ inverse of
+    hit-rate). A very high ratio with a near-zero hit-rate = **fishing**, not price discovery. This
+    mirrors the regulated **order-to-trade ratio** venues police for exactly this reason (MiFID II
+    RTS 9). Slice by instrument so we catch clients fishing *only* the illiquid/long-end curve
+    points we're most exposed on.
+  - **Streaming-consumption vs execution** (ESP): update-count / bandwidth pulled from the stream
+    vs volume actually dealt — a client soaking continuous two-ways and never lifting.
+  - **Cost-to-serve**: quoting isn't free — it burns pricing/compute *and* leaks information;
+    attribute a soft cost-to-serve per client so a chronically-fishing, zero-P&L client shows up
+    red even though it "does no harm" on a naive volume view. (Information-handling / clients
+    harvesting streamed prices is exactly what the **FX Global Code** governs —
+    [globalfxc.org](https://www.globalfxc.org/).)
+  - **Actuator**: a fishing client → wider/slower/**indicative-only** tier, throttled ESP update
+    frequency, or RFQ auto-decline — same human-approved pricing-group config path as the toxicity
+    loop (§11.1), never an auto-block.
+
 ### 11.2 Inventory analytics
 
 - **Inventory / position analytics** — net position, signed inventory `q`, and its distribution
@@ -748,7 +801,13 @@ TCA and the risk books: **who is trading with us (client-flow)** and **what we a
 Client-flow: `markout_by_client[horizon]`, `residual_toxicity_by_client`,
 `franchise_value_by_client`, `internalisation_ratio`, `externalisation_cost`,
 `win_rate_by_client` (panel-normalised), `quality_adjusted_hit_ratio`, `cover_distance_by_client`,
-`volume_pnl_by_{client,desk,cpty}`. Inventory: `net_inventory`, `inventory_age`, `axe_list`,
+`volume_pnl_by_{client,desk,cpty}`. P&L attribution / $-per-mm (§11.1a):
+`dpm_gross_by_{client,cpty,instrument,tenor,desk,tier}` ($/mm margin off the provenance waterfall),
+`dpm_net_by_client` (gross − markout − hedging cost), `captured_vs_offered_spread`,
+`breakeven_spread_by_client`, `hitrate_spread_elasticity` (Δhit-rate per bp tightened, with
+$/mm-accretion sign). Quote-fishing (§11.1a): `quote_to_trade_ratio_by_client` (RFQ + ESP),
+`stream_consumption_vs_executed`, `cost_to_serve_by_client`, `fishing_score` (high ratio × low
+hit-rate × zero net $/mm). Inventory: `net_inventory`, `inventory_age`, `axe_list`,
 `turnover`, `concentration_by_{issuer,sector,bucket}`, `limit_usage`, `inventory_dv01`,
 `inventory_keyrate_dv01`, `inventory_var` (NEW), `skew_effectiveness`. FI-TCA (from §2.4):
 `cover_price`, `price_improvement_vs_cover`, `eval_price_slippage`, `dealers_in_competition`,
@@ -785,6 +844,19 @@ Client-flow: `markout_by_client[horizon]`, `residual_toxicity_by_client`,
   (`requester`, `booked_lp_id`, `execution`); **nothing aggregates flow across quotes per
   client**. The `celnet-analytics` fold (§4.2) gains a per-client/per-cpty rollup keyed on
   `RequesterBinding`, joined to markout and provenance, feeding §11.1's tiering feedback signal.
+- **$/mm & spread economics (§11.1a) — numerator already stamped.** The margin per trade is the
+  outbound-vs-raw delta on `PricingProvenance` (proto `:4426-4459`; stamped Quote→Execution→Deal),
+  so **$/mm needs no new pricing capture — only the notional-normalised fold + per-client
+  grouping**. Cover distance / captured-vs-offered come from `QuoteRecord.dealers`/`booked_lp_id`
+  (`services/quote.rs:266-301`); the hit-rate↔spread elasticity is a regression over that same
+  per-client history (P2 rollup).
+- **Quote-fishing (§11.1a) — quote-to-trade is a count fold; ESP-consumption is a NEW seam.**
+  Quote-to-trade ratio + hit-rate are derivable from the existing `QuoteRecord`/`Execution` stream
+  keyed on `requester` (RFQ side, no new capture). **ESP streaming-consumption is NOT counted
+  today** — the streaming path (`services/stream.rs`) publishes without a per-client update/volume
+  meter; a lightweight per-subscriber counter (updates sent, bytes, last-dealt) is a **NEW seam**
+  feeding `stream_consumption_vs_executed` + `cost_to_serve`. All fishing signals surface read-only
+  into the same tiering actuator (no auto-block).
 
 **Phase placement:** lands in **P2 (pillar-A rollups)** for the flow/inventory rollups + metrics,
 extended in **P3 (GUI)** with per-client toxicity/markout and inventory/axe/aging dashboards, and
