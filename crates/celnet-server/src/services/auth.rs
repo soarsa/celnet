@@ -3941,6 +3941,97 @@ mod tests {
         .map(Response::into_inner)
     }
 
+    /// Build an edge over a temp identity file (seeded admin) wired to the SAME shared
+    /// FX + rates position stores the live server wires (`lib.rs`) — the streamed Risk
+    /// Dashboard aggregates over the FX store's risk-book *tree*, so this is the setup
+    /// that exercises the create → reconcile → tree-push → aggregate chain.
+    fn edge_with_stores(
+        tag: &str,
+    ) -> (
+        AuthEdge,
+        PathBuf,
+        Arc<PositionStore>,
+        Arc<crate::services::rates_book::RatesPositionStore>,
+    ) {
+        let dir = std::env::temp_dir().join("celnet-auth-edge");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("identity-{}-{}.json", std::process::id(), tag));
+        let _ = std::fs::remove_file(&path);
+        let mut store = IdentityStore::default();
+        store.ensure_seed_admin().unwrap();
+        store.save(&path).unwrap();
+        let identity = Arc::new(Mutex::new(store));
+        let clock = Clock::system();
+        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
+        let gate = Arc::new(ReadinessGate::new());
+        gate.mark_ready();
+        let pos = Arc::new(PositionStore::new());
+        let rates = Arc::new(crate::services::rates_book::RatesPositionStore::new());
+        let edge = AuthEdge::new(identity, path.clone(), sessions, gate, clock)
+            .with_position_store(Arc::clone(&pos))
+            .with_rates_store(Arc::clone(&rates));
+        (edge, path, pos, rates)
+    }
+
+    /// REGRESSION (feature-blocking bug): a risk portfolio created LIVE must be visible
+    /// to the streamed Risk Dashboard immediately — not only after a restart. The dashboard
+    /// reads [`aggregate_enabled_risk_books`] over the position store's reconciled risk-book
+    /// *tree*; `create_risk_book` must re-push that tree (via `reconcile_risk_routing`), or a
+    /// freshly created enabled portfolio stays invisible and the dashboard shows its empty
+    /// "No enabled risk portfolios to report" state despite the portfolio existing.
+    #[tokio::test]
+    async fn created_risk_portfolio_is_visible_to_the_streamed_dashboard_aggregate() {
+        use crate::services::risk::book_risk::aggregate_enabled_risk_books;
+
+        let (edge, _path, pos, rates) = edge_with_stores("riskbook-visible");
+
+        // Before any create, the streamed aggregate over the store's (empty) tree is empty
+        // — this is exactly the state the dashboard renders as "No enabled risk portfolios".
+        assert!(
+            aggregate_enabled_risk_books(&pos, Some(&rates)).is_empty(),
+            "precondition: no books ⇒ empty aggregate"
+        );
+
+        let token = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+
+        // Create an ENABLED risk portfolio LIVE (the trader's `MAREX_FI_LDN`).
+        let created = edge
+            .create_risk_book(Request::new(CreateRiskBookRequest {
+                session_token: token,
+                spec: Some(RiskBookSpec {
+                    id: String::new(),
+                    name: "MAREX FI LDN".into(),
+                    parent_id: None,
+                    desk_id: None,
+                    description: String::new(),
+                    limits: None,
+                    enabled: true,
+                }),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .book
+            .expect("create returns the minted book");
+
+        // The streamed dashboard source must now SEE the freshly created enabled portfolio.
+        let rolled = aggregate_enabled_risk_books(&pos, Some(&rates));
+        assert!(
+            rolled.iter().any(|r| r.book_id == created.id),
+            "created enabled portfolio `{}` invisible to the streamed dashboard aggregate; \
+             tree rolled up: {:?}",
+            created.id,
+            rolled
+                .iter()
+                .map(|r| r.book_id.as_str())
+                .collect::<Vec<_>>(),
+        );
+    }
+
     #[tokio::test]
     async fn seed_admin_logs_in_and_token_validates() {
         let (edge, path, _s) = edge("login-ok");
