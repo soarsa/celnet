@@ -23,6 +23,7 @@ mod exotic;
 mod fix;
 mod future_option;
 mod linear;
+mod notify;
 mod perpetual;
 mod price;
 mod rfq;

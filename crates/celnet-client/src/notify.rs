@@ -249,4 +249,42 @@ mod tests {
         assert!(NotificationKind::from_wire(999).is_err());
         assert!(NotificationKind::from_wire(WireNotificationKind::Unspecified as i32).is_err());
     }
+
+    #[test]
+    fn order_received_and_fill_wire_tags_decode_to_typed_kinds() {
+        // Phase-6 parity: a wire kind=8 / kind=9 notification (emitted by the desk
+        // FIX-venue lift `book_fix_lift`) decodes to the typed `OrderReceived` / `Fill`
+        // arms, never a silent default — the SDK is the reference every other client
+        // matches.
+        assert_eq!(
+            NotificationKind::from_wire(WireNotificationKind::OrderReceived as i32)
+                .expect("kind 8"),
+            NotificationKind::OrderReceived,
+        );
+        assert_eq!(
+            NotificationKind::from_wire(WireNotificationKind::Fill as i32).expect("kind 9"),
+            NotificationKind::Fill,
+        );
+        assert_eq!(WireNotificationKind::OrderReceived as i32, 8);
+        assert_eq!(WireNotificationKind::Fill as i32, 9);
+    }
+
+    #[test]
+    fn fill_notification_round_trips_through_from_wire() {
+        let wire = WireNotification {
+            notification_id: "notif-fill-1".to_owned(),
+            kind: WireNotificationKind::Fill as i32,
+            at_nanos: 42,
+            request_id: Some("ord-7".to_owned()),
+            desk: "g10".to_owned(),
+            counterparty: "ACME".to_owned(),
+            request_kind: celnet_proto::DeskRequestKind::Rfq as i32,
+            headline: "Filled".to_owned(),
+            detail: Some("5y OIS 25mm".to_owned()),
+            ..Default::default()
+        };
+        let n = Notification::from_wire(&wire).expect("decodes");
+        assert_eq!(n.kind, NotificationKind::Fill);
+        assert_eq!(n.request_id.as_deref(), Some("ord-7"));
+    }
 }

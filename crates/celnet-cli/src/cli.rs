@@ -19,7 +19,9 @@ use crate::risk::{
     self, AggregateReq, CliDimension, DrillReq, LimitsReq, PositionsReq, RiskCommon, StreamReq,
 };
 use crate::tenor::parse_tenor;
-use crate::{convention, desk, exotic, fix, future_option, linear, perpetual, price, rfq, surface};
+use crate::{
+    convention, desk, exotic, fix, future_option, linear, notify, perpetual, price, rfq, surface,
+};
 
 use celnet_client::{OrgDimension, Scope, StrikeSpec};
 
@@ -96,6 +98,13 @@ pub(crate) enum Command {
     /// blotter — the SAME desk contract the GUI desk view consumes. The
     /// quote/accept actions are capability-gated; pass `--session-token`.
     Desk(DeskArgs),
+    /// Subscribe to the dealer-desk notification push stream
+    /// (`NotificationService.StreamNotifications`) against a running edge via the
+    /// `celnet-client` SDK and print each pushed event with a human-readable label
+    /// (RFQ/IOI in, Order in, Fill, Won/Lost, Withdrawn/Expired) — the SAME
+    /// notification contract the GUI `NotificationCenter` and the Excel add-in
+    /// consume. Every `NotificationKind` is first-class (no silent default).
+    Notify(NotifyArgs),
 }
 
 /// Arguments to `risk` — the edge endpoint, the entitlement scope flags, and one
@@ -278,6 +287,26 @@ pub(crate) struct StreamArgs {
     /// An `AuthService.Login`-issued session token authenticating the stream as that
     /// user. Omitted ⇒ the SDK sends the audited grant-all `Authenticate` frame the
     /// production deny-by-default edge admits (parity with the risk commands).
+    #[arg(long = "session-token")]
+    pub(crate) session_token: Option<String>,
+}
+
+/// Arguments to `notify`.
+#[derive(Debug, Args)]
+pub(crate) struct NotifyArgs {
+    /// The gRPC endpoint of the edge.
+    #[arg(long, default_value = "http://127.0.0.1:50551")]
+    pub(crate) endpoint: String,
+    /// A desk to scope the subscription to (repeatable). Omitted ⇒ every desk the
+    /// caller is entitled to (intersected server-side with the caller's entitlement).
+    #[arg(long = "desk")]
+    pub(crate) desks: Vec<String>,
+    /// The number of pushed notifications to print before unsubscribing.
+    #[arg(long, default_value_t = 3)]
+    pub(crate) count: u32,
+    /// An `AuthService.Login`-issued session token authenticating the subscription as
+    /// that user. Omitted ⇒ the SDK sends the audited grant-all `Authenticate` frame
+    /// the production deny-by-default edge admits (parity with the risk commands).
     #[arg(long = "session-token")]
     pub(crate) session_token: Option<String>,
 }
@@ -2059,6 +2088,16 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
             Ok(())
         }
         Command::Desk(a) => dispatch_desk(a, out),
+        Command::Notify(a) => {
+            let req = notify::NotifyReq {
+                endpoint: a.endpoint,
+                session_token: a.session_token,
+                desks: a.desks,
+                count: a.count,
+            };
+            notify::run_notify(&req, out).map_err(DispatchError::Risk)?;
+            Ok(())
+        }
     }
 }
 
