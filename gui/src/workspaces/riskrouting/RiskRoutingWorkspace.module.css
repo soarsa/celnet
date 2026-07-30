@@ -1042,3 +1042,244 @@
   font-size: var(--type-micro);
   color: var(--text-danger, var(--danger));
 }
+
+/* ============================================================================
+ * Rules-table + per-rule-editor CRUD surface (the primary risk-routing UI).
+ * ==========================================================================*/
+
+.statusWarn {
+  font-size: var(--type-micro);
+  color: var(--warn, #b7791f);
+  font-weight: var(--weight-emphasis);
+}
+
+/* --- the rules table ------------------------------------------------------ */
+.tableEmpty {
+  padding: var(--space-6, 24px);
+  text-align: center;
+  color: var(--text-muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md, 8px);
+}
+.rulesTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-body);
+}
+.rulesTable thead th {
+  text-align: left;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.rulesTable tbody td {
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+  vertical-align: middle;
+}
+.ruleTr {
+  cursor: grab;
+}
+.ruleTr:hover {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.06));
+}
+.ruleTrDisabled {
+  opacity: 0.55;
+}
+.ruleTrError {
+  background: var(--danger-bg, rgba(220, 38, 38, 0.06));
+}
+.colPri {
+  width: 3.5rem;
+  white-space: nowrap;
+}
+.priNum {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-emphasis);
+}
+.dragHandle {
+  margin-left: 6px;
+  color: var(--text-muted);
+  cursor: grab;
+}
+.ruleDesc {
+  font-variant-numeric: tabular-nums;
+}
+.defaultTag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  font-size: var(--type-micro);
+  font-weight: var(--weight-emphasis);
+  color: var(--brand);
+  border: 1px solid var(--brand);
+  border-radius: var(--radius-pill, 999px);
+}
+.ruleRoutes {
+  font-weight: var(--weight-emphasis);
+  color: var(--brand);
+  white-space: nowrap;
+}
+.colEnabled,
+.colConflict {
+  width: 6rem;
+}
+.colActions {
+  width: 9rem;
+  white-space: nowrap;
+}
+.toggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: var(--type-micro);
+  cursor: pointer;
+}
+.badgeOk {
+  color: var(--ok, #16a34a);
+  font-weight: var(--weight-emphasis);
+}
+.badgeError {
+  color: var(--danger);
+  font-weight: var(--weight-emphasis);
+  font-size: var(--type-micro);
+  white-space: nowrap;
+}
+.badgeWarn {
+  color: var(--warn, #b7791f);
+  font-weight: var(--weight-emphasis);
+  font-size: var(--type-micro);
+  white-space: nowrap;
+}
+
+/* --- the per-rule editor -------------------------------------------------- */
+.ruleEditor {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.ruleEditorPanel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface);
+}
+.ruleEditorHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3, 12px);
+  padding: var(--space-4, 16px);
+  border-bottom: 1px solid var(--border);
+}
+.ruleEditorTitle {
+  margin: 0;
+  font-size: var(--type-h3, 1.1rem);
+}
+.ruleEditorHint {
+  margin: 4px 0 0;
+  font-size: var(--type-micro);
+  color: var(--text-muted);
+  max-width: 52ch;
+}
+.ruleEditorBody {
+  display: flex;
+  gap: var(--space-4, 16px);
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4, 16px);
+}
+.ruleEditorMain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 16px);
+  flex: 1;
+  min-width: 0;
+}
+.condArea {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-3, 12px);
+  min-height: 6rem;
+}
+.condAreaTitle {
+  margin: 0 0 var(--space-2, 8px);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.condEmpty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--type-body);
+}
+.condList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+}
+.condRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+  padding: var(--space-2, 8px);
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: var(--radius-sm, 6px);
+}
+.condAnd {
+  align-self: center;
+  font-size: var(--type-micro);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-muted);
+}
+.condControls {
+  display: flex;
+  gap: var(--space-3, 12px);
+  align-items: flex-end;
+  flex-wrap: wrap;
+  flex: 1;
+}
+.destArea {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-3, 12px);
+}
+.destRow {
+  display: flex;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+}
+.rulePreview {
+  margin: 0;
+  padding: var(--space-3, 12px);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-sunken, rgba(127, 127, 127, 0.06));
+  font-variant-numeric: tabular-nums;
+}
+.rulePreviewLabel {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.ruleEditorFoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3, 12px);
+  padding: var(--space-4, 16px);
+  border-top: 1px solid var(--border);
+}

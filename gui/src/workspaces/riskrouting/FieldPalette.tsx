@@ -33,6 +33,9 @@ export function decodeDrag(raw: string): DragPayload | null {
 interface FieldPaletteProps {
   /** Whether the palette is interactive (admins) or a static reference (read-only). */
   readOnly: boolean;
+  /** Whether to show the "Book leaf" destination chip (default true). The rule
+   * editor hides it — its destination is a dedicated desk→book picker, not a chip. */
+  showBookChip?: boolean;
 }
 
 const KIND_TAG: Record<FieldSpec["kind"], string> = {
@@ -41,7 +44,7 @@ const KIND_TAG: Record<FieldSpec["kind"], string> = {
   string: "text",
 };
 
-export function FieldPalette({ readOnly }: FieldPaletteProps): React.ReactElement {
+export function FieldPalette({ readOnly, showBookChip = true }: FieldPaletteProps): React.ReactElement {
   const [query, setQuery] = useState("");
 
   const grouped = useMemo(() => {
@@ -75,21 +78,23 @@ export function FieldPalette({ readOnly }: FieldPaletteProps): React.ReactElemen
         />
       </div>
 
-      <div
-        className={`${styles.chip} ${styles.chipBook}`}
-        draggable={!readOnly}
-        onDragStart={onDragStart({ kind: "book" })}
-        aria-label="Drag to add a book destination"
-        data-testid="palette-book-chip"
-      >
-        <span className={styles.chipGlyph} aria-hidden>
-          ❦
-        </span>
-        <span className={styles.chipMain}>
-          <span className={styles.chipLabel}>Book leaf</span>
-          <span className={styles.chipHint}>A risk-book destination.</span>
-        </span>
-      </div>
+      {showBookChip && (
+        <div
+          className={`${styles.chip} ${styles.chipBook}`}
+          draggable={!readOnly}
+          onDragStart={onDragStart({ kind: "book" })}
+          aria-label="Drag to add a book destination"
+          data-testid="palette-book-chip"
+        >
+          <span className={styles.chipGlyph} aria-hidden>
+            ❦
+          </span>
+          <span className={styles.chipMain}>
+            <span className={styles.chipLabel}>Book leaf</span>
+            <span className={styles.chipHint}>A risk-book destination.</span>
+          </span>
+        </div>
+      )}
 
       {FIELD_GROUPS.map((group) => {
         const items = grouped.get(group) ?? [];

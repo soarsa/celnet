@@ -1,50 +1,48 @@
 /**
- * RiskRoutingWorkspace — the decision-tree canvas. Driven with `useApp` mocked (no
- * server): a valid graph loads, an in-editor mutation makes it dirty + saveable and
- * round-trips through `updateRiskRoutingGraph`; a cyclic or dangling graph is caught
- * client-side (Save disabled, issues surfaced) exactly as the server would reject
- * it; and the live trace lands the default fill on the DEFAULT book.
+ * RiskRoutingWorkspace — the reworked rules-TABLE + per-rule-editor CRUD surface
+ * (the old decision-tree canvas / yes-no port wiring is gone). Driven with `useApp`
+ * mocked (no server): a loaded graph decompiles into table rows; "Create risk rule"
+ * opens the per-rule editor; dragging a field chip adds a condition; picking a book
+ * + Save adds a row and "Save routing" persists the compiled graph via
+ * `updateRiskRoutingGraph`; reordering re-weights; and an error conflict disables
+ * Save. Capability-gated: without the FI risk capability the table is read-only.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import type { DeskDesc, RiskBook, RiskRoutingGraph, RoutingNode } from "../src/data/contract";
+import type { DeskDesc, RiskBook, RiskRoutingGraph } from "../src/data/contract";
+import {
+  compileRulesToGraph,
+  newRuleId,
+  type RiskRule,
+  type RuleCondition,
+} from "../src/lib/riskRules";
+import { encodeDrag } from "../src/workspaces/riskrouting/FieldPalette";
 
 const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 
 import { RiskRoutingWorkspace } from "../src/workspaces/riskrouting/RiskRoutingWorkspace";
-import { encodeDrag } from "../src/workspaces/riskrouting/FieldPalette";
 
 function book(id: string, name: string, deskId: string | null = null): RiskBook {
   return { id, name, parentId: null, deskId, description: "", limits: null, enabled: true };
 }
+function cond(field: RuleCondition["field"], op: RuleCondition["op"], text: string): RuleCondition {
+  return { field, op, value: { kind: "text", text } };
+}
+function rule(conditions: RuleCondition[], bookId: string | null): RiskRule {
+  return { id: newRuleId(), conditions, bookId, enabled: true };
+}
 
-/** A minimal VALID graph: ccy == EUR → BOOK-A else DEFAULT. */
-function validGraph(): RiskRoutingGraph {
-  const nodes: RoutingNode[] = [
-    {
-      kind: "condition",
-      id: 0,
-      condition: {
-        field: "ccy",
-        op: "eq",
-        value: { kind: "text", text: "EUR" },
-        onTrue: 1,
-        onFalse: 2,
-      },
-    },
-    { kind: "book", id: 1, bookId: "BOOK-A" },
-    { kind: "book", id: 2, bookId: "DEFAULT" },
-  ];
-  return { entry: 0, nodes };
+/** A loaded graph = the compiled form of a rule list (round-trips into the table). */
+function graphOf(rules: RiskRule[]): RiskRoutingGraph {
+  return compileRulesToGraph(rules);
 }
 
 function makeApp(opts: {
   graph: RiskRoutingGraph | null;
   books: RiskBook[];
   desks?: DeskDesc[];
-  isAdmin?: boolean;
   canEdit?: boolean;
   onUpdate?: (g: RiskRoutingGraph) => void;
 }) {
@@ -61,8 +59,8 @@ function makeApp(opts: {
       listFixConnections: vi.fn(async () => []),
     },
     auth: {
-      user: { id: "u", email: "admin@celnet.com" },
-      isAdmin: opts.isAdmin ?? true,
+      user: { id: "u", email: "risk@celnet.com" },
+      isAdmin: true,
       can: () => opts.canEdit ?? true,
     },
     setSignInOpen: vi.fn(),
@@ -75,205 +73,129 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-describe("RiskRoutingWorkspace", () => {
-  it("shows the empty-state prompt and palette when no graph exists", async () => {
-    state.app = makeApp({ graph: null, books: [book("DEFAULT", "Default")] });
+const TWO_RULES = (): RiskRule[] => [
+  rule([cond("ccy", "eq", "EUR")], "BOOK-A"),
+  rule([], "DEFAULT"),
+];
+const BOOKS = () => [book("BOOK-A", "A", "rates"), book("BOOK-B", "B", "rates"), book("DEFAULT", "Def")];
+const DESKS: DeskDesc[] = [{ id: "rates", name: "RATES" }];
+
+describe("RiskRoutingWorkspace (rules table + editor)", () => {
+  it("renders the loaded graph as table rows (description + destination)", async () => {
+    state.app = makeApp({ graph: graphOf(TWO_RULES()), books: BOOKS(), desks: DESKS });
     render(<RiskRoutingWorkspace />);
 
-    expect(await screen.findByText(/routing graph is empty/i)).toBeInTheDocument();
-    // Field palette chips are always present (draggable sources).
-    expect(screen.getByTestId("palette-field-ccy")).toBeInTheDocument();
-    expect(screen.getByTestId("palette-book-chip")).toBeInTheDocument();
+    expect(await screen.findByTestId("rules-table")).toBeInTheDocument();
+    expect(screen.getByTestId("rule-desc-0")).toHaveTextContent(/Currency = EUR/);
+    expect(screen.getByTestId("rule-desc-1")).toHaveTextContent(/Otherwise/);
+    // Destination resolves desk-scoped.
+    expect(screen.getByTestId("rule-row-0")).toHaveTextContent("RATES / A");
   });
 
-  it("creates the FIRST node by dropping a field onto the empty canvas", async () => {
-    state.app = makeApp({ graph: null, books: [book("DEFAULT", "Default")] });
+  it("‘Create risk rule’ opens the per-rule editor", async () => {
+    state.app = makeApp({ graph: graphOf(TWO_RULES()), books: BOOKS(), desks: DESKS });
     render(<RiskRoutingWorkspace />);
 
-    const empty = await screen.findByTestId("routing-canvas-empty");
-    const data = encodeDrag({ kind: "field", field: "ccy" });
-    const dataTransfer = { getData: (_t: string) => data, dropEffect: "copy" };
-    fireEvent.dragOver(empty, { dataTransfer });
-    fireEvent.drop(empty, { dataTransfer });
-
-    // The empty prompt is replaced by the canvas with the newly-created node.
-    expect(screen.queryByTestId("routing-canvas-empty")).toBeNull();
-    expect(await screen.findByTestId("node-0")).toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId("create-rule"));
+    expect(await screen.findByTestId("rule-editor")).toBeInTheDocument();
   });
 
-  it("loads a valid graph as clean (Save disabled) and reports it valid", async () => {
-    state.app = makeApp({ graph: validGraph(), books: [book("BOOK-A", "A"), book("DEFAULT", "Def")] });
+  it("dragging a field chip into the editor adds a condition row", async () => {
+    state.app = makeApp({ graph: graphOf(TWO_RULES()), books: BOOKS(), desks: DESKS });
     render(<RiskRoutingWorkspace />);
 
-    expect(await screen.findByTestId("validation-status")).toHaveTextContent(/valid/i);
-    expect(screen.getByTestId("save-graph")).toBeDisabled();
+    fireEvent.click(await screen.findByTestId("create-rule"));
+    const area = await screen.findByTestId("rule-condition-area");
+    const data = encodeDrag({ kind: "field", field: "product" });
+    const dataTransfer = { getData: (_t: string) => data };
+    fireEvent.dragOver(area, { dataTransfer });
+    fireEvent.drop(area, { dataTransfer });
+
+    expect(await screen.findByTestId("cond-row-0")).toBeInTheDocument();
+    expect(screen.getByTestId("cond-field-0")).toBeInTheDocument();
   });
 
-  it("edits a node and round-trips the mutation through updateRiskRoutingGraph", async () => {
+  it("building a rule + Save adds a table row and persists the compiled graph", async () => {
     let saved: RiskRoutingGraph | null = null;
     state.app = makeApp({
-      graph: validGraph(),
-      books: [book("BOOK-A", "A"), book("DEFAULT", "Def")],
+      graph: graphOf(TWO_RULES()),
+      books: BOOKS(),
+      desks: DESKS,
       onUpdate: (g) => {
         saved = g;
       },
     });
     render(<RiskRoutingWorkspace />);
 
-    // Select the entry condition node, then change its operator (eq → ne).
-    fireEvent.click(await screen.findByTestId("node-0"));
-    fireEvent.change(screen.getByTestId("op-select"), { target: { value: "ne" } });
+    // Open the editor, drag in a condition, pick a destination, save the rule.
+    fireEvent.click(await screen.findByTestId("create-rule"));
+    const area = await screen.findByTestId("rule-condition-area");
+    const data = encodeDrag({ kind: "field", field: "product" });
+    const dataTransfer = { getData: (_t: string) => data };
+    fireEvent.drop(area, { dataTransfer });
 
+    fireEvent.change(await screen.findByTestId("book-desk-select"), { target: { value: "rates" } });
+    fireEvent.change(screen.getByTestId("book-target-select"), { target: { value: "BOOK-B" } });
+    fireEvent.click(screen.getByTestId("rule-save"));
+
+    // Back on the table: the new rule slotted ABOVE the default (3 rows now).
+    expect(await screen.findByTestId("rule-row-2")).toBeInTheDocument();
+    expect(screen.getByTestId("rule-desc-1")).toHaveTextContent(/Product/);
+
+    // Persist the whole compiled graph.
     const saveBtn = screen.getByTestId("save-graph");
     expect(saveBtn).toBeEnabled();
     fireEvent.click(saveBtn);
-
-    await screen.findByText(/routing graph saved/i);
+    await screen.findByText(/routing rules saved/i);
     expect(saved).not.toBeNull();
-    const node0 = saved!.nodes.find((n) => n.id === 0);
-    expect(node0?.kind === "condition" && node0.condition.op).toBe("ne");
+    // The compiled graph is a first-match-wins spine ending at a book leaf.
+    expect(saved!.nodes.some((n) => n.kind === "book" && n.bookId === "BOOK-B")).toBe(true);
   });
 
-  it("catches a cyclic graph client-side (issues surfaced, Save disabled)", async () => {
-    const cyclic: RiskRoutingGraph = {
-      entry: 0,
-      nodes: [
-        {
-          kind: "condition",
-          id: 0,
-          condition: { field: "ccy", op: "eq", value: { kind: "text", text: "EUR" }, onTrue: 1, onFalse: 1 },
-        },
-        {
-          kind: "condition",
-          id: 1,
-          condition: { field: "ccy", op: "eq", value: { kind: "text", text: "USD" }, onTrue: 0, onFalse: 0 },
-        },
-      ],
-    };
-    state.app = makeApp({ graph: cyclic, books: [book("DEFAULT", "Def")] });
-    render(<RiskRoutingWorkspace />);
-
-    expect(await screen.findByTestId("validation-status")).toHaveTextContent(/issue/i);
-    expect(screen.getByTestId("save-graph")).toBeDisabled();
-  });
-
-  it("catches a dangling edge client-side", async () => {
-    const dangling: RiskRoutingGraph = {
-      entry: 0,
-      nodes: [
-        {
-          kind: "condition",
-          id: 0,
-          condition: { field: "ccy", op: "eq", value: { kind: "text", text: "EUR" }, onTrue: 77, onFalse: 1 },
-        },
-        { kind: "book", id: 1, bookId: "DEFAULT" },
-      ],
-    };
-    state.app = makeApp({ graph: dangling, books: [book("DEFAULT", "Def")] });
-    render(<RiskRoutingWorkspace />);
-
-    expect(await screen.findByTestId("validation-status")).toHaveTextContent(/issue/i);
-    expect(screen.getByTestId("save-graph")).toBeDisabled();
-  });
-
-  it("live-traces the default fill to the DEFAULT book (server-parity walk)", async () => {
-    state.app = makeApp({ graph: validGraph(), books: [book("BOOK-A", "A"), book("DEFAULT", "Def")] });
-    render(<RiskRoutingWorkspace />);
-
-    // Default fill has ccy "" ≠ EUR ⇒ the false branch lands on DEFAULT ("Def").
-    expect(await screen.findByTestId("trace-landing")).toHaveTextContent("Def");
-  });
-
-  it("is read-only without the FI risk capability (no Save button)", async () => {
+  it("dragging a row re-weights the rules (priority order)", async () => {
     state.app = makeApp({
-      graph: validGraph(),
-      books: [book("BOOK-A", "A"), book("DEFAULT", "Def")],
-      isAdmin: false,
-      canEdit: false,
+      graph: graphOf([
+        rule([cond("ccy", "eq", "EUR")], "BOOK-A"),
+        rule([cond("ccy", "eq", "GBP")], "BOOK-B"),
+        rule([], "DEFAULT"),
+      ]),
+      books: BOOKS(),
+      desks: DESKS,
     });
     render(<RiskRoutingWorkspace />);
 
-    await screen.findByTestId("validation-status");
+    await screen.findByTestId("rules-table");
+    expect(screen.getByTestId("rule-desc-0")).toHaveTextContent(/EUR/);
+
+    // Drag row 0 onto row 1 → the GBP rule becomes the highest priority.
+    const row0 = screen.getByTestId("rule-row-0");
+    const row1 = screen.getByTestId("rule-row-1");
+    fireEvent.dragStart(row0);
+    fireEvent.dragOver(row1);
+    fireEvent.drop(row1);
+
+    expect(screen.getByTestId("rule-desc-0")).toHaveTextContent(/GBP/);
+    expect(screen.getByTestId("rule-desc-1")).toHaveTextContent(/EUR/);
+  });
+
+  it("an error conflict disables Save routing", async () => {
+    state.app = makeApp({ graph: graphOf(TWO_RULES()), books: BOOKS(), desks: DESKS });
+    render(<RiskRoutingWorkspace />);
+
+    // Delete the default (row 1) → no catch-all rule ⇒ an error conflict.
+    fireEvent.click(await screen.findByTestId("rule-delete-1"));
+
+    expect(screen.getByTestId("validation-status")).toHaveTextContent(/issue/i);
+    expect(screen.getByTestId("save-graph")).toBeDisabled();
+  });
+
+  it("is read-only without the FI risk capability (table visible, no Create/Save)", async () => {
+    state.app = makeApp({ graph: graphOf(TWO_RULES()), books: BOOKS(), desks: DESKS, canEdit: false });
+    render(<RiskRoutingWorkspace />);
+
+    expect(await screen.findByTestId("rules-table")).toBeInTheDocument();
+    expect(screen.queryByTestId("create-rule")).toBeNull();
     expect(screen.queryByTestId("save-graph")).toBeNull();
-  });
-
-  it("a non-admin risk manager WITH the FI capability can edit (Save present)", async () => {
-    state.app = makeApp({
-      graph: validGraph(),
-      books: [book("BOOK-A", "A"), book("DEFAULT", "Def")],
-      isAdmin: false,
-      canEdit: true,
-    });
-    render(<RiskRoutingWorkspace />);
-
-    await screen.findByTestId("validation-status");
-    expect(screen.getByTestId("save-graph")).toBeTruthy();
-  });
-
-  it("picks a book leaf's destination DESK-SCOPED (desk select then that desk's books)", async () => {
-    state.app = makeApp({
-      graph: validGraph(),
-      books: [book("BOOK-A", "GOVIES", "rates"), book("DEFAULT", "Def")],
-      desks: [{ id: "rates", name: "RATES" }],
-    });
-    render(<RiskRoutingWorkspace />);
-
-    // Select the BOOK-A leaf (node 1) — its editor shows the desk + book selects.
-    fireEvent.click(await screen.findByTestId("node-1"));
-    const deskSelect = (await screen.findByTestId("book-desk-select")) as HTMLSelectElement;
-    // The owning desk is pre-selected and the RATES option is present.
-    expect(deskSelect.value).toBe("rates");
-    expect(screen.getByRole("option", { name: "RATES" })).toBeInTheDocument();
-    // The book select is scoped to that desk's books and holds BOOK-A (GOVIES).
-    const bookSelect = screen.getByTestId("book-target-select") as HTMLSelectElement;
-    expect(bookSelect.value).toBe("BOOK-A");
-    expect(screen.getByRole("option", { name: /GOVIES/ })).toBeInTheDocument();
-  });
-
-  it("drag-connect wires a branch: press a port, drag, release on a target node", async () => {
-    let saved: RiskRoutingGraph | null = null;
-    state.app = makeApp({
-      graph: validGraph(), // node0.onTrue = 1 initially
-      books: [book("BOOK-A", "A"), book("DEFAULT", "Def")],
-      onUpdate: (g) => {
-        saved = g;
-      },
-    });
-    render(<RiskRoutingWorkspace />);
-
-    const yesPort = await screen.findByTestId("port-0-onTrue");
-    const surface = screen.getByTestId("routing-canvas");
-    const target = screen.getByTestId("node-2");
-
-    // Press the yes port, drag across the canvas, release over node 2.
-    fireEvent.pointerDown(yesPort, { clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(surface, { clientX: 200, clientY: 120 });
-    fireEvent.pointerUp(target, { clientX: 210, clientY: 130 });
-
-    // The edge is rewired: node0's yes branch now points at node 2.
-    const saveBtn = screen.getByTestId("save-graph");
-    expect(saveBtn).toBeEnabled();
-    fireEvent.click(saveBtn);
-    await screen.findByText(/routing graph saved/i);
-    const node0 = saved!.nodes.find((n) => n.id === 0);
-    expect(node0?.kind === "condition" && node0.condition.onTrue).toBe(2);
-  });
-
-  it("lists every rule in evaluation order in the Rules panel", async () => {
-    state.app = makeApp({
-      graph: validGraph(),
-      books: [book("BOOK-A", "A", "rates"), book("DEFAULT", "Def")],
-      desks: [{ id: "rates", name: "RATES" }],
-    });
-    render(<RiskRoutingWorkspace />);
-
-    await screen.findByTestId("rules-panel");
-    // Two root-to-leaf rules, in on_true-before-on_false order.
-    const rule0 = screen.getByTestId("rule-0");
-    const rule1 = screen.getByTestId("rule-1");
-    expect(screen.queryByTestId("rule-2")).toBeNull();
-    // Rule 1 lands BOOK-A shown desk-scoped ("RATES / A"); Rule 2 lands DEFAULT.
-    expect(rule0).toHaveTextContent("RATES / A");
-    expect(rule1).toHaveTextContent("Def");
+    expect(screen.getByTestId("rule-toggle-0")).toBeDisabled();
   });
 });

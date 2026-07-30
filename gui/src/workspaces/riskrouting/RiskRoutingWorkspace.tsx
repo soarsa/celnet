@@ -1,11 +1,16 @@
 /**
- * RiskRoutingWorkspace — the drag-and-drop node/flow decision-tree canvas where a
- * trader defines the firm's risk-routing rules and routes each fill to a desk
- * portfolio (docs/FI-RISK-ROUTING-REQUIREMENTS.md §6.1, §8.6). It composes the
- * field palette, the flow canvas, the typed node editor, and the live "trace a
- * sample fill" panel; it loads the graph + rosters, validates client-side (the
- * `RiskRoutingGraph::validate` mirror) and only enables Save when the graph is one
- * the server will accept. Admin-gated edit; read-only otherwise.
+ * RiskRoutingWorkspace — the FI risk-routing editor, reworked as a conventional
+ * RULES-TABLE + per-rule-editor CRUD flow (docs/FI-RISK-ROUTING-REQUIREMENTS.md
+ * §6.1, §8.6). The home view is an ordered TABLE of `IF <ANDed conditions> THEN
+ * <risk book>` rules — row order is priority (first-match-wins). "Create risk rule"
+ * / "Edit" opens the {@link RuleEditor}; Save adds/updates the rule and returns to
+ * the table; "Save routing" persists the whole compiled graph.
+ *
+ * The wire model ({@link RiskRoutingGraph}) is UNCHANGED — the table compiles to a
+ * deterministic first-match-wins graph spine ({@link compileRulesToGraph}) and loads
+ * back via {@link decompileGraphToRules}. There is NO yes/no branch wiring and no
+ * hand-built graph cycles: the confusing decision-tree canvas is gone. Editing needs
+ * the FI risk capability; everyone else sees the table read-only.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -15,28 +20,19 @@ import type {
   FixConnection,
   RiskBook,
   RiskRoutingGraph,
-  RouteOp,
-  RouteValue,
 } from "../../data/contract";
-import { blankFill, traceGraph, validateGraph, type SampleFill } from "../../lib/routeTrace";
-import { FieldPalette, decodeDrag, type DragPayload } from "./FieldPalette";
 import {
-  addBook,
-  addCondition,
-  deleteNode,
-  replaceField,
-  setBookTarget,
-  setBranch,
-  setEntry,
-  setOperator,
-  setValue,
-} from "./graphOps";
-import { computeLayout, type NodePos } from "./layout";
+  compileRulesToGraph,
+  decompileGraphToRules,
+  detectRuleConflicts,
+  newRuleId,
+  type RiskRule,
+  type RuleConflict,
+} from "../../lib/riskRules";
+import { validateGraph } from "../../lib/routeTrace";
 import { makeBookLabel } from "./nodeLabel";
-import { NodeEditor } from "./NodeEditor";
-import { RoutingCanvas, type Connecting } from "./RoutingCanvas";
-import { RulesPanel } from "./RulesPanel";
-import { TracePanel } from "./TracePanel";
+import { RiskRulesTable } from "./RiskRulesTable";
+import { RuleEditor } from "./RuleEditor";
 import styles from "./RiskRoutingWorkspace.module.css";
 
 type SaveState =
@@ -45,9 +41,18 @@ type SaveState =
   | { kind: "ok"; message: string }
   | { kind: "error"; message: string };
 
+type Mode = { kind: "list" } | { kind: "editor"; index: number | null; draft: RiskRule };
+
 const EMPTY_GRAPH: RiskRoutingGraph = { entry: 0, nodes: [] };
-const ZOOM_MIN = 0.5;
-const ZOOM_MAX = 1.5;
+
+/** Move `from`→`to` in a new array (row re-prioritise). */
+function reorder<T>(items: readonly T[], from: number, to: number): T[] {
+  const next = [...items];
+  const moved = next.splice(from, 1)[0];
+  if (moved === undefined) return next;
+  next.splice(to, 0, moved);
+  return next;
+}
 
 export function RiskRoutingWorkspace(): React.ReactElement {
   const app = useApp();
@@ -58,18 +63,13 @@ export function RiskRoutingWorkspace(): React.ReactElement {
   const canEdit = auth.can("quote_respond", "fixed_income");
   const readOnly = !canEdit;
 
-  const [graph, setGraph] = useState<RiskRoutingGraph>(EMPTY_GRAPH);
-  const [baseline, setBaseline] = useState<string>(JSON.stringify(EMPTY_GRAPH));
+  const [rules, setRules] = useState<RiskRule[]>([]);
+  const [baseline, setBaseline] = useState<string>("[]");
   const [books, setBooks] = useState<RiskBook[]>([]);
   const [desks, setDesks] = useState<DeskDesc[]>([]);
   const [connections, setConnections] = useState<FixConnection[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [overrides, setOverrides] = useState<Map<number, NodePos>>(new Map());
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [connecting, setConnecting] = useState<Connecting | null>(null);
-  const [ruleHighlight, setRuleHighlight] = useState<number[] | null>(null);
-  const [zoom, setZoom] = useState(1);
-  const [fill, setFill] = useState<SampleFill>(blankFill());
+  const [mode, setMode] = useState<Mode>({ kind: "list" });
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
 
   // --- load -----------------------------------------------------------------
@@ -78,15 +78,20 @@ export function RiskRoutingWorkspace(): React.ReactElement {
     let cancelled = false;
     void (async () => {
       try {
-        const [g, b] = await Promise.all([app.transport.getRiskRoutingGraph(), app.transport.listRiskBooks()]);
+        const [g, b] = await Promise.all([
+          app.transport.getRiskRoutingGraph(),
+          app.transport.listRiskBooks(),
+        ]);
         if (cancelled) return;
-        const graphVal = g ?? EMPTY_GRAPH;
-        setGraph(graphVal);
-        setBaseline(JSON.stringify(graphVal));
+        const loaded = decompileGraphToRules(g ?? EMPTY_GRAPH);
+        setRules(loaded);
+        setBaseline(JSON.stringify(loaded));
         setBooks(b);
         setLoadError(null);
       } catch (e: unknown) {
-        if (!cancelled) setLoadError(e instanceof Error ? e.message : "failed to load the routing graph");
+        if (!cancelled) {
+          setLoadError(e instanceof Error ? e.message : "failed to load the routing rules");
+        }
       }
     })();
     return () => {
@@ -94,8 +99,8 @@ export function RiskRoutingWorkspace(): React.ReactElement {
     };
   }, [app.transport, signedIn]);
 
-  // Desks are loaded for EVERYONE — the desk-scoped book labels ("DESK / BOOK") on
-  // the canvas, node editor, and rules list read them even in the read-only view.
+  // Desks power the desk-scoped book labels ("DESK / BOOK") in the table + editor —
+  // loaded for everyone (the read-only view reads them too).
   useEffect(() => {
     let cancelled = false;
     void app.transport
@@ -125,145 +130,151 @@ export function RiskRoutingWorkspace(): React.ReactElement {
     () => new Set(books.filter((b) => b.enabled).map((b) => b.id)),
     [books],
   );
-  // Desk-scoped book label ("DESK / BOOK") — shown on canvas cards, the node editor,
-  // and the rules list so it is obvious a leaf routes risk into a desk's portfolio.
   const bookLabel = useMemo(() => makeBookLabel(books, desks), [books, desks]);
-  const trace = useMemo(() => (graph.nodes.length > 0 ? traceGraph(graph, fill) : null), [graph, fill]);
-  // A picked rule highlights its path on the canvas via the shared trace mechanism,
-  // taking precedence over the live sample-fill trace until the fill changes.
-  const effectiveTrace = useMemo(
-    () =>
-      ruleHighlight !== null
-        ? { path: ruleHighlight, landedBook: null, outcome: "book" as const }
-        : trace,
-    [ruleHighlight, trace],
+
+  const conflicts = useMemo(
+    () => detectRuleConflicts(rules, knownBookIds),
+    [rules, knownBookIds],
   );
-  const issues = useMemo(() => validateGraph(graph, knownBookIds), [graph, knownBookIds]);
-  const invalidNodes = useMemo(() => {
-    const s = new Set<number>();
-    for (const i of issues) if (i.node !== null) s.add(i.node);
-    return s;
-  }, [issues]);
-  const dirty = JSON.stringify(graph) !== baseline;
+  const conflictsByRule = useMemo(() => {
+    const m = new Map<string, RuleConflict[]>();
+    for (const c of conflicts) {
+      const list = m.get(c.ruleId);
+      if (list) list.push(c);
+      else m.set(c.ruleId, [c]);
+    }
+    return m;
+  }, [conflicts]);
+  const errorCount = conflicts.filter((c) => c.severity === "error").length;
+  const warnCount = conflicts.filter((c) => c.severity === "warn").length;
 
-  const positions = useMemo(() => {
-    const computed = computeLayout(graph);
-    for (const [id, p] of overrides) if (computed.has(id)) computed.set(id, p);
-    return computed;
-  }, [graph, overrides]);
-
-  const selectedNode = useMemo(
-    () => graph.nodes.find((n) => n.id === selectedId) ?? null,
-    [graph.nodes, selectedId],
+  // The compiled graph (enabled rules only) + the server-parity graph validation.
+  const compiled = useMemo(
+    () => compileRulesToGraph(rules.filter((r) => r.enabled)),
+    [rules],
+  );
+  const graphIssues = useMemo(
+    () => validateGraph(compiled, knownBookIds),
+    [compiled, knownBookIds],
   );
 
-  // --- edit handlers --------------------------------------------------------
-  const applyGraph = useCallback((next: RiskRoutingGraph): void => {
-    setGraph(next);
+  const dirty = JSON.stringify(rules) !== baseline;
+  const blockSave = errorCount > 0 || graphIssues.length > 0;
+
+  // --- rule mutations -------------------------------------------------------
+  const applyRules = useCallback((next: RiskRule[]): void => {
+    setRules(next);
     setSaveState({ kind: "idle" });
   }, []);
 
-  const onDropPayload = useCallback(
-    (payload: DragPayload, at: NodePos): void => {
-      const result = payload.kind === "field" ? addCondition(graph, payload.field) : addBook(graph);
-      applyGraph(result.graph);
-      setOverrides((m) => new Map(m).set(result.id, at));
-      setSelectedId(result.id);
-    },
-    [graph, applyGraph],
-  );
-
-  const onDropFieldOnNode = useCallback(
-    (nodeId: number, payload: DragPayload): void => {
-      if (payload.kind !== "field") return;
-      applyGraph(replaceField(graph, nodeId, payload.field));
-      setSelectedId(nodeId);
-    },
-    [graph, applyGraph],
-  );
-
-  const onMoveNode = useCallback((nodeId: number, pos: NodePos): void => {
-    setOverrides((m) => new Map(m).set(nodeId, pos));
+  const onCreate = useCallback((): void => {
+    setMode({
+      kind: "editor",
+      index: null,
+      draft: { id: newRuleId(), conditions: [], bookId: null, enabled: true },
+    });
   }, []);
 
-  const onPortClick = useCallback((nodeId: number, branch: "onTrue" | "onFalse"): void => {
-    setConnecting((c) => (c && c.nodeId === nodeId && c.branch === branch ? null : { nodeId, branch }));
-  }, []);
-
-  const onConnectTo = useCallback(
-    (target: number): void => {
-      if (!connecting) return;
-      applyGraph(setBranch(graph, connecting.nodeId, connecting.branch, target));
-      setConnecting(null);
+  const onEditRow = useCallback(
+    (index: number): void => {
+      const draft = rules[index];
+      if (draft) setMode({ kind: "editor", index, draft });
     },
-    [connecting, graph, applyGraph],
+    [rules],
   );
 
-  // Drag-to-connect: wire a branch straight to the drop target (the primary path).
-  const onConnect = useCallback(
-    (fromId: number, branch: "onTrue" | "onFalse", target: number): void => {
-      applyGraph(setBranch(graph, fromId, branch, target));
-      setConnecting(null);
-    },
-    [graph, applyGraph],
+  const onDeleteRow = useCallback(
+    (index: number): void => applyRules(rules.filter((_, i) => i !== index)),
+    [rules, applyRules],
   );
 
-  // Toggle a rule's path highlight on the canvas.
-  const pickRule = useCallback((nodes: number[]): void => {
-    setRuleHighlight((cur) =>
-      cur !== null && cur.length === nodes.length && cur.every((v, i) => v === nodes[i])
-        ? null
-        : nodes,
-    );
-  }, []);
+  const onToggleRow = useCallback(
+    (index: number): void =>
+      applyRules(rules.map((r, i) => (i === index ? { ...r, enabled: !r.enabled } : r))),
+    [rules, applyRules],
+  );
 
-  const onChangeFill = useCallback((next: SampleFill): void => {
-    setFill(next);
-    setRuleHighlight(null);
-  }, []);
+  const onReorderRow = useCallback(
+    (from: number, to: number): void => applyRules(reorder(rules, from, to)),
+    [rules, applyRules],
+  );
 
-  const onDelete = useCallback(
-    (nodeId: number): void => {
-      applyGraph(deleteNode(graph, nodeId));
-      setOverrides((m) => {
-        const next = new Map(m);
-        next.delete(nodeId);
-        return next;
+  const onEditorSave = useCallback(
+    (rule: RiskRule): void => {
+      setRules((cur) => {
+        if (mode.kind !== "editor") return cur;
+        if (mode.index !== null) {
+          return cur.map((r, i) => (i === mode.index ? rule : r));
+        }
+        // A NEW rule: a specific rule slots ABOVE the trailing catch-all so the
+        // default stays last (first-match-wins); a new default appends.
+        const defaultIdx = cur.findIndex((r) => r.conditions.length === 0);
+        if (rule.conditions.length > 0 && defaultIdx >= 0) {
+          const next = [...cur];
+          next.splice(defaultIdx, 0, rule);
+          return next;
+        }
+        return [...cur, rule];
       });
-      setSelectedId(null);
+      setSaveState({ kind: "idle" });
+      setMode({ kind: "list" });
     },
-    [graph, applyGraph],
+    [mode],
   );
 
-  const save = useCallback(async (): Promise<void> => {
-    if (issues.length > 0) {
-      setSaveState({ kind: "error", message: "Resolve the highlighted issues before saving." });
+  const onEditorCancel = useCallback(() => setMode({ kind: "list" }), []);
+
+  // --- persist --------------------------------------------------------------
+  const saveRouting = useCallback(async (): Promise<void> => {
+    if (blockSave) {
+      setSaveState({
+        kind: "error",
+        message: "Resolve the highlighted rule conflicts before saving.",
+      });
       return;
     }
     setSaveState({ kind: "saving" });
     try {
-      const saved = await app.transport.updateRiskRoutingGraph(graph);
-      setGraph(saved);
-      setBaseline(JSON.stringify(saved));
-      setSaveState({ kind: "ok", message: "Routing graph saved." });
+      await app.transport.updateRiskRoutingGraph(compileRulesToGraph(rules.filter((r) => r.enabled)));
+      // Keep the local rules (incl. disabled) as the new clean baseline.
+      setBaseline(JSON.stringify(rules));
+      setSaveState({ kind: "ok", message: "Routing rules saved." });
     } catch (e: unknown) {
-      setSaveState({ kind: "error", message: e instanceof Error ? e.message : "failed to save the routing graph" });
+      setSaveState({
+        kind: "error",
+        message: e instanceof Error ? e.message : "failed to save the routing rules",
+      });
     }
-  }, [issues.length, graph, app.transport]);
+  }, [blockSave, rules, app.transport]);
 
-  const resetGraph = useCallback((): void => {
-    const restored = JSON.parse(baseline) as RiskRoutingGraph;
-    setGraph(restored);
-    setOverrides(new Map());
-    setSelectedId(null);
-    setConnecting(null);
+  const resetRules = useCallback((): void => {
+    setRules(JSON.parse(baseline) as RiskRule[]);
+    setMode({ kind: "list" });
     setSaveState({ kind: "idle" });
   }, [baseline]);
 
   if (!signedIn) {
     return (
       <div className={styles.wrap}>
-        <p className={styles.centerEmpty}>Sign in to view the risk-routing graph.</p>
+        <p className={styles.centerEmpty}>Sign in to view the risk-routing rules.</p>
+      </div>
+    );
+  }
+
+  if (mode.kind === "editor") {
+    return (
+      <div className={styles.wrap}>
+        <RuleEditor
+          draft={mode.draft}
+          isNew={mode.index === null}
+          books={books}
+          desks={desks}
+          connections={connections}
+          bookLabel={bookLabel}
+          readOnly={readOnly}
+          onSave={onEditorSave}
+          onCancel={onEditorCancel}
+        />
       </div>
     );
   }
@@ -274,35 +285,32 @@ export function RiskRoutingWorkspace(): React.ReactElement {
         <div className={styles.headMain}>
           <h1 className={styles.title}>Risk Routing</h1>
           <p className={styles.note}>
-            Compose the firm-wide decision tree that routes every fill's risk into a desk book. Drag
-            a field onto the canvas to add a rule; wire its <span className={styles.yesInline}>yes</span> /{" "}
-            <span className={styles.noInline}>no</span> branches to the next test or a book leaf.{" "}
-            {readOnly ? "Read-only view." : "Admin edit."}
+            Ordered rules route every fill's risk into a desk's book — the first rule that matches
+            wins. Reorder rows to re-prioritise. {readOnly ? "Read-only view." : "FI risk edit."}
           </p>
         </div>
         <div className={styles.headActions}>
-          <div className={styles.zoomer} role="group" aria-label="Zoom">
-            <button type="button" className={styles.zoomBtn} onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z - 0.1))} aria-label="Zoom out">
-              −
-            </button>
-            <span className={styles.zoomVal}>{Math.round(zoom * 100)}%</span>
-            <button type="button" className={styles.zoomBtn} onClick={() => setZoom((z) => Math.min(ZOOM_MAX, z + 0.1))} aria-label="Zoom in">
-              +
-            </button>
-          </div>
           {!readOnly && (
             <>
-              <button type="button" className={styles.ghostBtn} onClick={resetGraph} disabled={!dirty}>
+              <button
+                type="button"
+                className={styles.saveBtn}
+                onClick={onCreate}
+                data-testid="create-rule"
+              >
+                + Create risk rule
+              </button>
+              <button type="button" className={styles.ghostBtn} onClick={resetRules} disabled={!dirty}>
                 Reset
               </button>
               <button
                 type="button"
                 className={styles.saveBtn}
-                onClick={() => void save()}
-                disabled={saveState.kind === "saving" || issues.length > 0 || !dirty}
+                onClick={() => void saveRouting()}
+                disabled={saveState.kind === "saving" || blockSave || !dirty}
                 data-testid="save-graph"
               >
-                {saveState.kind === "saving" ? "Saving…" : "Save graph"}
+                {saveState.kind === "saving" ? "Saving…" : "Save routing"}
               </button>
             </>
           )}
@@ -316,19 +324,19 @@ export function RiskRoutingWorkspace(): React.ReactElement {
       )}
 
       <div className={styles.statusRow}>
-        {issues.length === 0 ? (
-          <span className={styles.statusOk} data-testid="validation-status">
-            ✓ Valid — {graph.nodes.length} node{graph.nodes.length === 1 ? "" : "s"}
+        {blockSave ? (
+          <span className={styles.statusBad} data-testid="validation-status">
+            ⚠ {errorCount + graphIssues.length} issue
+            {errorCount + graphIssues.length === 1 ? "" : "s"} to resolve before saving
           </span>
         ) : (
-          <span className={styles.statusBad} data-testid="validation-status">
-            ⚠ {issues.length} issue{issues.length === 1 ? "" : "s"} to resolve before saving
+          <span className={styles.statusOk} data-testid="validation-status">
+            ✓ Valid — {rules.length} rule{rules.length === 1 ? "" : "s"}
           </span>
         )}
-        {connecting && (
-          <span className={styles.connectHint}>
-            Click a target node to wire the {connecting.branch === "onTrue" ? "yes" : "no"} branch, or
-            the same port to cancel.
+        {warnCount > 0 && (
+          <span className={styles.statusWarn}>
+            {warnCount} warning{warnCount === 1 ? "" : "s"}
           </span>
         )}
         {saveState.kind === "ok" && <span className={styles.statusOk}>{saveState.message}</span>}
@@ -339,92 +347,16 @@ export function RiskRoutingWorkspace(): React.ReactElement {
         )}
       </div>
 
-      <div className={styles.body}>
-        <div className={styles.leftCol}>
-          <FieldPalette readOnly={readOnly} />
-          <RulesPanel
-            graph={graph}
-            knownBookIds={knownBookIds}
-            bookLabel={bookLabel}
-            activePath={ruleHighlight}
-            onPick={pickRule}
-          />
-        </div>
-
-        <div className={styles.canvasCol}>
-          {graph.nodes.length === 0 ? (
-            // The empty state is ALSO a drop target — otherwise the very first node
-            // could never be created (there is no RoutingCanvas surface to drop onto
-            // until at least one node exists).
-            <div
-              className={styles.canvasEmpty}
-              data-testid="routing-canvas-empty"
-              onDragOver={(e) => {
-                if (!readOnly) e.preventDefault();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (readOnly) return;
-                const payload = decodeDrag(e.dataTransfer.getData("text/plain"));
-                if (payload) onDropPayload(payload, { x: 120, y: 100 });
-              }}
-            >
-              <p>The routing graph is empty.</p>
-              <p className={styles.canvasEmptyHint}>
-                {readOnly
-                  ? "No routing rules are defined yet."
-                  : "Drag a field chip from the left onto this canvas to add your first rule, then drop a Book leaf for its destination."}
-              </p>
-            </div>
-          ) : (
-            <RoutingCanvas
-              graph={graph}
-              positions={positions}
-              trace={effectiveTrace}
-              selectedId={selectedId}
-              connecting={connecting}
-              zoom={zoom}
-              readOnly={readOnly}
-              invalidNodes={invalidNodes}
-              bookName={bookLabel}
-              onSelect={setSelectedId}
-              onMoveNode={onMoveNode}
-              onDropPayload={onDropPayload}
-              onDropFieldOnNode={onDropFieldOnNode}
-              onPortClick={onPortClick}
-              onConnectTo={onConnectTo}
-              onConnect={onConnect}
-            />
-          )}
-        </div>
-
-        <div className={styles.side}>
-          {selectedNode ? (
-            <NodeEditor
-              node={selectedNode}
-              graph={graph}
-              books={books}
-              desks={desks}
-              connections={connections}
-              issues={issues.filter((i) => i.node === selectedNode.id)}
-              readOnly={readOnly}
-              isEntry={graph.entry === selectedNode.id}
-              onSetOperator={(id, op: RouteOp) => applyGraph(setOperator(graph, id, op))}
-              onSetValue={(id, v: RouteValue) => applyGraph(setValue(graph, id, v))}
-              onSetBranch={(id, branch, target) => applyGraph(setBranch(graph, id, branch, target))}
-              onSetBookTarget={(id, bookId) => applyGraph(setBookTarget(graph, id, bookId))}
-              onSetEntry={(id) => applyGraph(setEntry(graph, id))}
-              onDelete={onDelete}
-            />
-          ) : (
-            <section className={styles.editor} aria-label="Node editor">
-              <p className={styles.editorEmpty}>Select a node to edit it, or drag a field onto the canvas.</p>
-            </section>
-          )}
-
-          <TracePanel fill={fill} trace={trace} books={books} onChange={onChangeFill} />
-        </div>
-      </div>
+      <RiskRulesTable
+        rules={rules}
+        bookLabel={bookLabel}
+        conflictsByRule={conflictsByRule}
+        readOnly={readOnly}
+        onEdit={onEditRow}
+        onDelete={onDeleteRow}
+        onToggle={onToggleRow}
+        onReorder={onReorderRow}
+      />
     </div>
   );
 }
