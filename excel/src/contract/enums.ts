@@ -27,15 +27,18 @@ import type {
   Cut,
   DayCount,
   DeltaConvention,
+  DeskRequestKind,
   DigitalStyle,
   ExerciseStyle,
   FixingSource,
   LookbackMonitoring,
   LookbackStyle,
   Margining,
+  ManualInterventionReason,
   MarketObservable,
   Metal,
   MonitoringStyle,
+  NotificationKind,
   OptionType,
   PremiumStyle,
   PricingModel,
@@ -73,6 +76,26 @@ function enumCodec<T extends string>(membersInWireOrder: readonly T[]): EnumCode
   return {
     toWire: (value: T) => toNumber.get(value) ?? 0,
     fromWire: (n: number) => membersInWireOrder[n] ?? zero,
+  };
+}
+
+/**
+ * Build a reversible codec for a proto enum whose named members START at a tag
+ * other than 0 (e.g. `NotificationKind` / `DeskRequestKind` reserve tag 0 for an
+ * `*_UNSPECIFIED` sentinel and name their first real member at tag 1). The array
+ * index maps to `index + firstTag`; the first member is the unknown-number
+ * fallback on decode (mirrors `gui/src/data/enums.ts`).
+ */
+function offsetEnumCodec<T extends string>(
+  membersInWireOrder: readonly T[],
+  firstTag: number,
+): EnumCodec<T> {
+  const toNumber = new Map<T, number>();
+  membersInWireOrder.forEach((m, i) => toNumber.set(m, i + firstTag));
+  const zero = membersInWireOrder[0]!;
+  return {
+    toWire: (value: T) => toNumber.get(value) ?? firstTag,
+    fromWire: (n: number) => membersInWireOrder[n - firstTag] ?? zero,
   };
 }
 
@@ -317,3 +340,43 @@ export const margining = enumCodec<Margining>(["EQUITY_STYLE", "FUTURES_STYLE"])
  * (BASKET_KIND_BASKET=0, BASKET_KIND_BEST_OF=1, BASKET_KIND_WORST_OF=2).
  */
 export const basketKind = enumCodec<BasketKind>(["BASKET", "BEST_OF", "WORST_OF"]);
+
+/**
+ * `DeskRequestKind` ↔ proto `DeskRequestKind` (UNSPECIFIED=0, RFQ=1, IOI=2). Named
+ * members start at tag 1; carried on a `Notification.request_kind`.
+ */
+export const deskRequestKind = offsetEnumCodec<DeskRequestKind>(["RFQ", "IOI"], 1);
+
+/**
+ * `NotificationKind` ↔ proto `NotificationKind` (UNSPECIFIED=0, RFQ_RECEIVED=1,
+ * IOI_RECEIVED=2, REQUEST_WITHDRAWN=3, REQUEST_EXPIRED=4, QUOTE_ACCEPTED=5,
+ * QUOTE_REJECTED=6, MANUAL_INTERVENTION_REQUIRED=7, ORDER_RECEIVED=8, FILL=9).
+ * `ORDER_RECEIVED`=8 / `FILL`=9 are the notifications phase-5 additive arms (a
+ * FIX-venue firm-order lift emits both). The array order MUST match the proto tag
+ * order; named members start at tag 1.
+ */
+export const notificationKind = offsetEnumCodec<NotificationKind>(
+  [
+    "RFQ_RECEIVED",
+    "IOI_RECEIVED",
+    "REQUEST_WITHDRAWN",
+    "REQUEST_EXPIRED",
+    "QUOTE_ACCEPTED",
+    "QUOTE_REJECTED",
+    "MANUAL_INTERVENTION_REQUIRED",
+    "ORDER_RECEIVED",
+    "FILL",
+  ],
+  1,
+);
+
+/**
+ * `ManualInterventionReason` ↔ proto `ManualInterventionReason` (UNSPECIFIED=0,
+ * UNCONFIGURED_TENOR=1, CREDIT_RISK_BREAK=2, UNKNOWN_SECURITY=3,
+ * PRICING_FAILURE=4). Carried on the `reason` field of a
+ * `MANUAL_INTERVENTION_REQUIRED` notification; ordinals start at 1.
+ */
+export const manualInterventionReason = offsetEnumCodec<ManualInterventionReason>(
+  ["UNCONFIGURED_TENOR", "CREDIT_RISK_BREAK", "UNKNOWN_SECURITY", "PRICING_FAILURE"],
+  1,
+);

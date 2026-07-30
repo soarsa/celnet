@@ -48,6 +48,8 @@ import type {
   ListedFutureOption,
   Lookback,
   MultiDealerQuote,
+  Notification,
+  NotificationKind,
   OisInstrument,
   PerpetualOption,
   Pivot,
@@ -1710,6 +1712,71 @@ export function markCurveResponseFromWire(o: WireObject): MarkCurveResponse {
     })),
     epochNanos: numToBigInt(o, "epoch_nanos"),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Desk notification push stream — decode + present (parity with the GUI
+// `notificationFromWire` + kind labelling)
+// ---------------------------------------------------------------------------
+
+/**
+ * Decode a wire `Notification` (`NotificationService.StreamNotifications`) — the
+ * EXACT mirror of the server's `notification_to_json` and the GUI's
+ * `notificationFromWire`. `kind` / `request_kind` are numeric proto enum tags;
+ * `request_id` / `detail` are presence-tracked; `reason` is meaningful only for
+ * the manual-intervention kind (decoded only when present as a positive ordinal).
+ */
+export function notificationFromWire(o: WireObject): Notification {
+  const n: Notification = {
+    notificationId: str(o, "notification_id"),
+    kind: e.notificationKind.fromWire(enumNum(o, "kind")),
+    atNanos: numToBigInt(o, "at_nanos"),
+    desk: str(o, "desk"),
+    counterparty: str(o, "counterparty"),
+    requestKind: e.deskRequestKind.fromWire(enumNum(o, "request_kind")),
+    headline: str(o, "headline"),
+    // The server's authoritative popup gate: missing / non-`true` ⇒ lands quietly.
+    alertWorthy: o["alert_worthy"] === true,
+  };
+  const rid = o["request_id"];
+  if (typeof rid === "string" && rid.length > 0) n.requestId = rid;
+  const detail = o["detail"];
+  if (typeof detail === "string" && detail.length > 0) n.detail = detail;
+  const reason = o["reason"];
+  if (typeof reason === "number" && reason > 0) {
+    n.reason = e.manualInterventionReason.fromWire(reason);
+  }
+  return n;
+}
+
+/**
+ * The human-readable label for a notification kind — EXHAUSTIVE so every kind
+ * (including the phase-5 `ORDER_RECEIVED` / `FILL` arms) is first-class and no
+ * kind falls into a silent default bucket. Cross-client parity: the labels match
+ * the CLI `kind_label` and the GUI's event taxonomy so an inbound order/fill reads
+ * identically in every client.
+ */
+export function notificationKindLabel(kind: NotificationKind): string {
+  switch (kind) {
+    case "RFQ_RECEIVED":
+      return "RFQ in";
+    case "IOI_RECEIVED":
+      return "IOI in";
+    case "REQUEST_WITHDRAWN":
+      return "Withdrawn";
+    case "REQUEST_EXPIRED":
+      return "Expired";
+    case "QUOTE_ACCEPTED":
+      return "Won";
+    case "QUOTE_REJECTED":
+      return "Lost";
+    case "MANUAL_INTERVENTION_REQUIRED":
+      return "Needs pricing";
+    case "ORDER_RECEIVED":
+      return "Order in";
+    case "FILL":
+      return "Fill";
+  }
 }
 
 /** Re-export the `StrategyKind` type guard surface for callers that need it. */

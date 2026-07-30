@@ -1927,3 +1927,86 @@ export interface XvaResult {
   /** The all-in adjustment `cva − dva + fva` subtracted from the risk-free value. */
   totalAdjustment: number;
 }
+
+// ---------------------------------------------------------------------------
+// Desk notification push contract — ONE CONTRACT, minimal duplicate of
+// `gui/src/data/contract.ts` (CLAUDE.md rule 9), semantics-identical. The typed
+// face of `NotificationService.StreamNotifications`: the server pushes a
+// `Notification` the instant a desk-lifecycle event occurs (an RFQ/IOI lands, a
+// request is withdrawn/expires, a quote is accepted/rejected, an order lands, a
+// deal fills). The add-in mirrors the GUI's kind taxonomy so an inbound
+// order/fill labels identically across every client.
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether an inbound desk request is a firm-price RFQ or a non-firm IOI
+ * (`celnet.wire.DeskRequestKind`, proto RFQ=1, IOI=2). Carried on a
+ * `Notification.requestKind`.
+ */
+export type DeskRequestKind = "RFQ" | "IOI";
+
+/**
+ * What a pushed notification concerns (`celnet.wire.NotificationKind`, proto
+ * RFQ_RECEIVED=1 … FILL=9). `ORDER_RECEIVED`=8 / `FILL`=9 are the notifications
+ * phase-5 additive arms — a FIX-venue firm-order lift emits both (order landed →
+ * deal booked). Every member is first-class: no silent default drops the new arms
+ * into a generic bucket (four-client parity with the GUI + CLI + SDK).
+ */
+export type NotificationKind =
+  | "RFQ_RECEIVED"
+  | "IOI_RECEIVED"
+  | "REQUEST_WITHDRAWN"
+  | "REQUEST_EXPIRED"
+  | "QUOTE_ACCEPTED"
+  | "QUOTE_REJECTED"
+  | "MANUAL_INTERVENTION_REQUIRED"
+  | "ORDER_RECEIVED"
+  | "FILL";
+
+/**
+ * Why the server raised a `MANUAL_INTERVENTION_REQUIRED` notification
+ * (`celnet.wire.ManualInterventionReason`, proto UNCONFIGURED_TENOR=1,
+ * CREDIT_RISK_BREAK=2, UNKNOWN_SECURITY=3, PRICING_FAILURE=4). Present only on the
+ * manual-intervention kind.
+ */
+export type ManualInterventionReason =
+  | "UNCONFIGURED_TENOR"
+  | "CREDIT_RISK_BREAK"
+  | "UNKNOWN_SECURITY"
+  | "PRICING_FAILURE";
+
+/**
+ * One pushed desk-lifecycle event (`celnet.wire.Notification`) — the WHOLE wire
+ * message, field-for-field. The add-in renders `kind` via
+ * `notificationKindLabel` and keys de-dup on `notificationId`.
+ */
+export interface Notification {
+  notificationId: string;
+  kind: NotificationKind;
+  /** Event timestamp, nanoseconds since the Unix epoch (UTC). */
+  atNanos: bigint;
+  /** The `DeskRequest.requestId` this notification concerns (when applicable). */
+  requestId?: string;
+  desk: string;
+  counterparty: string;
+  requestKind: DeskRequestKind;
+  headline: string;
+  detail?: string;
+  /**
+   * The server's authoritative decision on whether this event warrants a POPUP:
+   * `true` ⇒ surface it; missing / non-`true` ⇒ it lands quietly. The client can
+   * narrow this further but can never force a popup the server marked quiet.
+   */
+  alertWorthy: boolean;
+  /** Only meaningful for `MANUAL_INTERVENTION_REQUIRED`. */
+  reason?: ManualInterventionReason;
+}
+
+/**
+ * `NotificationService.StreamNotifications` scope — narrow the subscription to a
+ * set of desks (intersected server-side with the caller's entitlement); empty ⇒
+ * every entitled desk.
+ */
+export interface NotificationScope {
+  desks: string[];
+}
