@@ -178,12 +178,14 @@ export function advanceStreak(prev: StreakState, nowMs: number, windowMs: number
 }
 
 /**
- * Whether a kind counts toward the fill-streak. Today the booked-deal
- * `QUOTE_ACCEPTED` (a lifted quote) is the "own fill" the desk sees; the deferred
- * `FILL`/`FILL_BLOCK` kinds (phase 5) will join here when the server emits them.
+ * Whether a kind counts toward the fill-streak. The phase-5 `FILL` kind (an own
+ * execution booked — the FIX-venue firm-order lift) is the primary own-fill; the
+ * booked-deal `QUOTE_ACCEPTED` (a lifted RFQ quote) is also an own fill and stays
+ * included so RFQ lifts keep their fill cue/streak. (`FillBlock` is a client-side
+ * size derivation over a `FILL`, not a distinct wire kind.)
  */
 export function isFillKind(kind: NotificationKind): boolean {
-  return kind === "QUOTE_ACCEPTED";
+  return kind === "FILL" || kind === "QUOTE_ACCEPTED";
 }
 
 /**

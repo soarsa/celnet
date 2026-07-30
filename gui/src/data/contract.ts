@@ -3854,12 +3854,15 @@ export type DeskRequestState =
 
 /**
  * The kind of a push `Notification` (`celnet.wire.NotificationKind`, proto
- * RFQ_RECEIVED=1 … QUOTE_REJECTED=6, MANUAL_INTERVENTION_REQUIRED=7). The
- * `*_RECEIVED` kinds signal a new inbound request requiring desk attention; the
- * lifecycle kinds report a request's resolution;
+ * RFQ_RECEIVED=1 … QUOTE_REJECTED=6, MANUAL_INTERVENTION_REQUIRED=7,
+ * ORDER_RECEIVED=8, FILL=9). The `*_RECEIVED` kinds signal a new inbound request
+ * requiring desk attention; the lifecycle kinds report a request's resolution;
  * `MANUAL_INTERVENTION_REQUIRED` (added by the server exception contract, commit
  * 542e547) signals the auto-pricer could not handle a request and the desk must
- * step in — its {@link Notification.reason} names why.
+ * step in — its {@link Notification.reason} names why. `ORDER_RECEIVED` (a firm
+ * order landed) and `FILL` (an own execution booked) are the phase-5 arms — a
+ * FIX-venue firm-order lift emits both, distinct from `QUOTE_ACCEPTED` (an
+ * explicit desk-quote lift over the platform).
  */
 export type NotificationKind =
   | "RFQ_RECEIVED"
@@ -3868,7 +3871,9 @@ export type NotificationKind =
   | "REQUEST_EXPIRED"
   | "QUOTE_ACCEPTED"
   | "QUOTE_REJECTED"
-  | "MANUAL_INTERVENTION_REQUIRED";
+  | "MANUAL_INTERVENTION_REQUIRED"
+  | "ORDER_RECEIVED"
+  | "FILL";
 
 /**
  * Why the server raised a `MANUAL_INTERVENTION_REQUIRED` notification

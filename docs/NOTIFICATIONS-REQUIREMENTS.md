@@ -329,11 +329,16 @@ second terminal keeps their kit. The proto/`AuthService` CRUD precedent
    focus-aware growl. Pure-decision tests extended.
 4. **Settings UI** — `SettingsPanel.tsx` per-event table + preview/test buttons +
    reduced-motion + a11y roles on toasts (`NotificationCenter.tsx`).
-5. **New event kinds (server + contract)** — additive `ORDER_RECEIVED` + `FILL`
-   `NotificationKind` arms in `celnet.proto`; emit them at the booking seams
-   (`stream.rs` ESP fill, `quote.rs`/`desk/mod.rs` RFQ fill); codec entries
-   (`ws/codec.rs` + descriptor-driven `generated_codec.rs`); client `notify.rs` +
-   `wsCodec.ts` decode; `contract.ts` types.
+5. **New event kinds (server + contract)** — ✅ **DONE.** Additive `ORDER_RECEIVED=8`
+   + `FILL=9` `NotificationKind` arms in `celnet.proto`; `desk/mod.rs::book_fix_lift`
+   (a taker's firm `NewOrderSingle` lift that fills atomically) now emits **both**
+   `ORDER_RECEIVED` (order landed) then `FILL` (deal booked), while `accept_desk_quote`
+   keeps `QUOTE_ACCEPTED` (explicit platform quote-lift — no double-notify). No WS codec
+   change was needed: the wire `kind` is a passthrough i32 (`notification_to_json`), so
+   only the GUI offset-enum codec (`enums.ts`), `NotificationKind` union (`contract.ts`),
+   `eventTypeForKind` (`settingsSchema.ts`), `isFillKind`/`kindClass` needed the arms.
+   Client SDK `notify.rs` gained both variants. GUI `Fill`/`OrderReceived` config rows
+   are now live (not forward-ready).
 6. **Cross-client + e2e** — CLI/Excel/SDK notification parity for the new kinds; a
    live GUI check that each event lights the right toast/desktop/sound.
 
@@ -345,9 +350,12 @@ phase 5 is the only server change. Each phase gated (`just t1` per crate; GUI
 ## 8. Open items for the next review
 - **Server-side pref sync (`UserDef`)** — cross-device kit persistence vs today's
   per-browser `localStorage` (§6.3). Decision: client-only for v1, promote later?
-- **`ORDER_RECEIVED`/`FILL` scope** — do we emit own-fill notifications for *every*
-  fill (chatty) or only counterparty/desk-facing ones? Ties to the fill booking seam
-  shared with FI-risk-routing.
+- **`ORDER_RECEIVED`/`FILL` scope** — ✅ **RESOLVED (phase 5).** Emitted at the desk
+  FIX-venue lift (`book_fix_lift`), NOT the FX ESP hot path (`stream.rs` stays
+  log/alloc-free per guardrail 11 — no string-building notification on the zero-alloc
+  core). A firm-order lift emits ORDER_RECEIVED + FILL; the explicit RFQ quote-lift
+  stays QUOTE_ACCEPTED. Remaining seam: FX-ESP own-fills would need a bounded-queue
+  offload to notify without touching the hot core (future, if desired).
 - **Streak semantics** — window length, per-instrument vs per-desk streak counting,
   and the ladder ceiling (how high the `fill-streak` climbs).
 - **CC0 sample vetting workflow** — a checklist + committed provenance record

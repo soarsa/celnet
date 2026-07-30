@@ -22,10 +22,10 @@ import { SOUND_IDS, type SoundChoice } from "../lib/soundKit";
 
 /**
  * The configurable trader event families (§3 of NOTIFICATIONS-REQUIREMENTS). The
- * lifecycle/RFQ/manual kinds map onto the existing wire {@link NotificationKind};
- * `OrderReceived`/`Fill`/`FillBlock` are FORWARD-READY rows (their server
- * `ORDER_RECEIVED`/`FILL` kinds land in the deferred phase 5) so the config table
- * is complete now.
+ * lifecycle/RFQ/manual kinds map onto the wire {@link NotificationKind}. The server
+ * now emits `ORDER_RECEIVED`/`FILL` (phase 5 — a FIX-venue firm-order lift emits
+ * both), so `OrderReceived`/`Fill` are live; `FillBlock` is a CLIENT-side derivation
+ * (a large/block `FILL` picks the `fill-block` cue) with no distinct wire kind.
  */
 export type NotificationEventType =
   | "OrderReceived"
@@ -72,6 +72,10 @@ export function eventTypeForKind(kind: NotificationKind): NotificationEventType 
     case "REQUEST_WITHDRAWN":
     case "REQUEST_EXPIRED":
       return "RequestLapsed";
+    case "ORDER_RECEIVED":
+      return "OrderReceived";
+    case "FILL":
+      return "Fill";
   }
 }
 

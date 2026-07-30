@@ -45,6 +45,12 @@ pub enum NotificationKind {
     QuoteAccepted,
     /// A desk quote was rejected by the counterparty.
     QuoteRejected,
+    /// A firm order landed on the desk (a taker's NewOrderSingle against a live
+    /// auto-quote on the FIX venue) — the inbound-order signal.
+    OrderReceived,
+    /// An own execution booked — a fill (a firm order filled and the deal + position
+    /// booked). Distinct from `QuoteAccepted` (an explicit desk-quote lift).
+    Fill,
 }
 
 impl NotificationKind {
@@ -56,6 +62,8 @@ impl NotificationKind {
             Ok(WireNotificationKind::RequestExpired) => Ok(NotificationKind::RequestExpired),
             Ok(WireNotificationKind::QuoteAccepted) => Ok(NotificationKind::QuoteAccepted),
             Ok(WireNotificationKind::QuoteRejected) => Ok(NotificationKind::QuoteRejected),
+            Ok(WireNotificationKind::OrderReceived) => Ok(NotificationKind::OrderReceived),
+            Ok(WireNotificationKind::Fill) => Ok(NotificationKind::Fill),
             _ => Err(ClientError::Wire(WireError::UnknownEnum {
                 kind: "NotificationKind",
                 tag,

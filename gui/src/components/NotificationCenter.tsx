@@ -52,8 +52,10 @@ function kindClass(kind: NotificationKind): string {
   switch (kind) {
     case "RFQ_RECEIVED":
     case "IOI_RECEIVED":
+    case "ORDER_RECEIVED":
       return styles.dotNew ?? "";
     case "QUOTE_ACCEPTED":
+    case "FILL":
       return styles.dotAccepted ?? "";
     case "QUOTE_REJECTED":
       return styles.dotRejected ?? "";

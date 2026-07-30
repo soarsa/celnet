@@ -6835,6 +6835,14 @@ enum NotificationKind {
   // (see ManualInterventionReason). Distinct from RFQ_RECEIVED, which is a routine
   // routed RFQ the desk prices in the normal flow (quiet, no popup).
   NOTIFICATION_KIND_MANUAL_INTERVENTION_REQUIRED = 7;
+  // A firm order landed on the desk (a taker's NewOrderSingle against a live
+  // auto-quote on the FIX venue) — the inbound-order signal, quiet by default.
+  // Distinct from RFQ_RECEIVED (a request for a quote): this is a firm order.
+  NOTIFICATION_KIND_ORDER_RECEIVED = 8;
+  // An own execution booked — a fill. Emitted when a firm order fills and the
+  // deal + position book (the FIX-venue lift path). Quiet/informational; distinct
+  // from QUOTE_ACCEPTED (an explicit desk-quote lift over the platform RPC).
+  NOTIFICATION_KIND_FILL = 9;
 }
 // Why an inbound RFQ/RFS cannot be auto-priced and must be handled by a trader. The
 // machine-readable signal the GUI renders on a manual-intervention alert. Extensible:

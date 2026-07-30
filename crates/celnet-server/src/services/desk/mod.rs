@@ -596,10 +596,23 @@ impl RfqDeskEdge {
 
         current.state = DeskRequestState::Accepted as i32;
         let stored = self.requests.replace(current)?;
+        // A FIX-venue lift is a taker's firm NewOrderSingle that fills atomically: the
+        // ORDER arrived and the deal booked (a FILL). Emit both — distinct trader event
+        // families (the GUI configures/sounds them separately) — while the explicit
+        // platform quote-lift (`accept_desk_quote`) keeps QUOTE_ACCEPTED. Both quiet.
         self.publish_notification(
-            NotificationKind::QuoteAccepted,
+            NotificationKind::OrderReceived,
             &stored,
-            format!("FIX lift — deal {} booked", deal.deal_id),
+            format!("Order in — FIX lift from {}", stored.counterparty),
+            Some(format!(
+                "{} {:.4} on {:.0} notional — firm order on the FIX venue",
+                stored.desk, deal.price, deal.notional
+            )),
+        );
+        self.publish_notification(
+            NotificationKind::Fill,
+            &stored,
+            format!("Fill — deal {} booked", deal.deal_id),
             Some(format!(
                 "{} {:.4} on {:.0} notional — executed on the FIX venue",
                 stored.desk, deal.price, deal.notional
@@ -1618,6 +1631,57 @@ mod tests {
         let n = sub.rx.try_recv().expect("a notification was published");
         assert_eq!(n.kind, NotificationKind::RfqReceived as i32);
         assert_eq!(n.desk, "g10");
+    }
+
+    /// A FIX-venue lift (a taker's firm NewOrderSingle that fills atomically) publishes
+    /// ORDER_RECEIVED then FILL — the two phase-5 arms — distinct from the platform
+    /// `accept_desk_quote` path, which stays QUOTE_ACCEPTED. Both are quiet.
+    #[tokio::test]
+    async fn book_fix_lift_publishes_order_received_then_fill() {
+        let edge = edge();
+        let token = trader_token(&edge);
+        let id = edge
+            .submit_desk_request(Request::new(submit_req(DeskRequestKind::Rfq, Side::Buy)))
+            .await
+            .expect("submit")
+            .into_inner()
+            .request
+            .expect("request")
+            .request_id;
+        edge.respond_desk_request(Request::new(RespondDeskRequestRequest {
+            session_token: Some(token.clone()),
+            request_id: id.clone(),
+            principal: Some(celnet_proto::EntitlementPrincipal {
+                grant_all: true,
+                grants: vec![],
+                denies: vec![],
+            }),
+            correlation_id: None,
+            response: Some(RespondArm::Quote(DeskQuote {
+                price: 0.0411,
+                notional: 25_000_000.0,
+                valid_for_ms: 30_000,
+                trader: "alice".to_owned(),
+            })),
+        }))
+        .await
+        .expect("respond");
+
+        // Subscribe AFTER quoting so the channel carries only the lift's notifications.
+        let mut sub = edge.notify.subscribe(DeskFilter::All);
+        edge.book_fix_lift(&id).expect("fix lift books a deal");
+        assert_eq!(edge.deals.len(), 1);
+
+        let first = sub.rx.try_recv().expect("order-received published");
+        assert_eq!(first.kind, NotificationKind::OrderReceived as i32);
+        assert!(
+            !first.alert_worthy,
+            "an inbound order is quiet, not alert-worthy"
+        );
+        let second = sub.rx.try_recv().expect("fill published");
+        assert_eq!(second.kind, NotificationKind::Fill as i32);
+        assert!(!second.alert_worthy, "a fill is quiet, not alert-worthy");
+        assert_eq!(second.request_id.as_deref(), Some(id.as_str()));
     }
 
     /// The shared `subscribe_notifications` path (gRPC + WS) authorizes the caller and
