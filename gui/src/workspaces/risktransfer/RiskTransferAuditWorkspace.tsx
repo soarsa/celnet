@@ -244,9 +244,24 @@ export function RiskTransferAuditWorkspace(): React.ReactElement {
                     className={expanded ? styles.rowActive : undefined}
                     data-testid={`audit-row-${t.id}`}
                     onClick={() => setExpandedId(expanded ? null : t.id)}
-                    aria-expanded={expanded}
                   >
-                    <td className={styles.mono}>#{t.id}</td>
+                    <td>
+                      {/* A real disclosure button carries aria-expanded (invalid on a
+                          plain table row) and gives keyboard users the toggle; the row
+                          onClick stays a mouse convenience. */}
+                      <button
+                        type="button"
+                        className={styles.expandBtn}
+                        aria-expanded={expanded}
+                        data-testid={`audit-expand-${t.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandedId(expanded ? null : t.id);
+                        }}
+                      >
+                        <span className={styles.mono}>#{t.id}</span>
+                      </button>
+                    </td>
                     <td>
                       <span className={`${styles.kindDot} ${styles[`kind_${t.kind}`]}`} aria-hidden />
                       {t.kind.replace(/_/g, " ").toLowerCase()}
@@ -279,7 +294,7 @@ export function RiskTransferAuditWorkspace(): React.ReactElement {
                       <td colSpan={9}>
                         <div className={styles.detail} data-testid={`audit-detail-${t.id}`}>
                           <div className={styles.detailCol}>
-                            <h3 className={styles.detailTitle}>Moved positions</h3>
+                            <p className={styles.detailTitle}>Moved positions</p>
                             {t.source.positionIds.length === 0 ? (
                               <p className={styles.muted}>No position ids recorded.</p>
                             ) : (
@@ -293,7 +308,7 @@ export function RiskTransferAuditWorkspace(): React.ReactElement {
                             )}
                           </div>
                           <div className={styles.detailCol}>
-                            <h3 className={styles.detailTitle}>Provenance</h3>
+                            <p className={styles.detailTitle}>Provenance</p>
                             {p ? (
                               <dl className={styles.provList}>
                                 <Prov label="Price basis" value={p.priceBasis.toLowerCase()} />

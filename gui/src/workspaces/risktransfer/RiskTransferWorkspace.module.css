@@ -250,19 +250,25 @@
   letter-spacing: 0.04em;
 }
 
+/* Badge text is --text-primary (not the raw accent/warn/brand) so the small 10px
+   uppercase copy clears 4.5:1 on the tinted background in both themes; the semantic
+   colour lives in the tint + a saturated left border. */
 .kind_RE_ATTRIBUTE {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--text-primary);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .kind_DESK_TO_DESK {
   background: color-mix(in srgb, var(--warn) 22%, transparent);
-  color: var(--warn);
+  color: var(--text-primary);
+  box-shadow: inset 3px 0 0 var(--warn);
 }
 
 .kind_TRADER_TO_TRADER {
   background: color-mix(in srgb, var(--brand) 20%, transparent);
-  color: var(--brand);
+  color: var(--text-primary);
+  box-shadow: inset 3px 0 0 var(--brand);
 }
 
 .kindMeaning {
@@ -286,6 +292,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  /* min-height keeps the native control's tap target + neighbour spacing at the
+     WCAG 2.2 (2.5.8) 24px minimum without oversizing the visible input. */
+  min-height: 1.75rem;
   font-size: var(--type-caption);
   color: var(--text-primary);
   cursor: pointer;
@@ -298,7 +307,9 @@
 
 .ghostBtn {
   font-size: var(--type-micro);
-  color: var(--accent);
+  /* --text-primary (not raw --accent) so the 10px label clears 4.5:1; the accent
+     identity stays in the border + hover fill. */
+  color: var(--text-primary);
   background: transparent;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: var(--r-sm, 6px);

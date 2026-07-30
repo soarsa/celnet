@@ -112,19 +112,24 @@
   letter-spacing: 0.04em;
 }
 
+/* Text is --text-primary so the 10px badge copy clears 4.5:1 on the tint (both
+   themes); the semantic colour lives in the tint + a saturated left border. */
 .kind_RE_ATTRIBUTE {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--text-primary);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .kind_DESK_TO_DESK {
   background: color-mix(in srgb, var(--warn) 22%, transparent);
-  color: var(--warn);
+  color: var(--text-primary);
+  box-shadow: inset 3px 0 0 var(--warn);
 }
 
 .kind_TRADER_TO_TRADER {
   background: color-mix(in srgb, var(--brand) 20%, transparent);
-  color: var(--brand);
+  color: var(--text-primary);
+  box-shadow: inset 3px 0 0 var(--brand);
 }
 
 .itemId {

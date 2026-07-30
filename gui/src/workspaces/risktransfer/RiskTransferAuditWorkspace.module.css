@@ -148,6 +148,37 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The per-row disclosure trigger — a transparent button so the row still reads as a
+   table cell but carries valid aria-expanded + a keyboard target. */
+.expandBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 2px var(--space-2);
+  margin: -2px calc(-1 * var(--space-2));
+  border-radius: var(--r-sm, 6px);
+  font: inherit;
+}
+
+.expandBtn::before {
+  content: "▸";
+  color: var(--text-tertiary);
+  transition: transform var(--dur-fast, 120ms) var(--ease-out, ease);
+}
+
+.rowActive .expandBtn::before {
+  transform: rotate(90deg);
+}
+
+.expandBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .route {
   color: var(--text-secondary);
 }
@@ -161,7 +192,7 @@
 
 .approver {
   font-size: var(--type-micro);
-  color: var(--bid, var(--brand));
+  color: var(--text-secondary);
 }
 
 .when {
@@ -200,20 +231,22 @@
   letter-spacing: 0.03em;
 }
 
+/* Tag text is --text-primary so the 10px uppercase copy clears 4.5:1 on the tint in
+   both themes; the semantic colour is carried by the tinted background. */
 .state_BOOKED {
-  background: color-mix(in srgb, var(--bid, var(--brand)) 20%, transparent);
-  color: var(--bid, var(--brand));
+  background: color-mix(in srgb, var(--bid, var(--brand)) 26%, transparent);
+  color: var(--text-primary);
 }
 
 .state_PENDING {
-  background: color-mix(in srgb, var(--warn) 22%, transparent);
-  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 28%, transparent);
+  color: var(--text-primary);
 }
 
 .state_REJECTED,
 .state_CANCELLED {
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
-  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+  color: var(--text-primary);
 }
 
 .state_ACCEPTED,
