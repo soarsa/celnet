@@ -109,6 +109,9 @@ import type {
   RouteCondition,
   RoutingNode,
   RiskRoutingGraph,
+  ClientFlowMetrics,
+  FlowGroupBy,
+  FlowWindow,
   RiskTransfer,
   RiskTransferProvenance,
   TransferLeg,
@@ -4840,6 +4843,55 @@ export function riskTransferResponseFromWire(o: WireObject): RiskTransfer {
 /** Decode the `{ transfers: [...] }` list reply (newest first). */
 export function listRiskTransfersResponseFromWire(o: WireObject): RiskTransfer[] {
   return array(o, "transfers").map(riskTransferFromWire);
+}
+
+// --- client-flow analytics (ListClientFlowMetrics) --------------------------
+
+/**
+ * Decode one `ClientFlowMetricsDesc` row. The `optional double` fields decode via
+ * {@link optNum} to `number | undefined` — a `null`/absent value is genuinely
+ * ABSENT (zero-denominator guard), never coerced to `0`. Counts are `uint64` on
+ * the wire, recovered as JS numbers (rollup magnitudes stay within safe-integer).
+ */
+export function clientFlowMetricsFromWire(o: WireObject): ClientFlowMetrics {
+  return {
+    label: str(o, "label"),
+    quoteCount: num(o, "quote_count"),
+    tradedCount: num(o, "traded_count"),
+    tradedNotional: num(o, "traded_notional"),
+    grossPnl: num(o, "gross_pnl"),
+    totalMarkout: num(o, "total_markout"),
+    totalHedgeCost: num(o, "total_hedge_cost"),
+    netPnl: num(o, "net_pnl"),
+    dpmGross: optNum(o, "dpm_gross"),
+    dpmNet: optNum(o, "dpm_net"),
+    capturedVsOffered: optNum(o, "captured_vs_offered"),
+    meanCoverDistance: optNum(o, "mean_cover_distance"),
+    breakevenSpread: optNum(o, "breakeven_spread"),
+    quoteToTradeRatio: optNum(o, "quote_to_trade_ratio"),
+    hitRate: optNum(o, "hit_rate"),
+    fishingScore: num(o, "fishing_score"),
+  };
+}
+
+/**
+ * Frame `list_client_flow_metrics` — the grouping dimension as its i32 tag plus an
+ * optional epoch-nanos window (each bound omitted when absent; `session_token` is
+ * auto-injected by the WS connection). `bigint` bounds serialize as JSON numbers.
+ */
+export function listClientFlowMetricsRequestToWire(
+  groupBy: FlowGroupBy,
+  window?: FlowWindow,
+): WireObject {
+  const m: WireObject = { group_by: e.flowGroupBy.toWire(groupBy) };
+  if (window?.fromNanos !== undefined) m["from_nanos"] = Number(window.fromNanos);
+  if (window?.toNanos !== undefined) m["to_nanos"] = Number(window.toNanos);
+  return m;
+}
+
+/** Decode the `{ metrics: [...] }` client-flow reply (one row per group key). */
+export function listClientFlowMetricsResponseFromWire(o: WireObject): ClientFlowMetrics[] {
+  return array(o, "metrics").map(clientFlowMetricsFromWire);
 }
 
 /** Decode a `RiskTransferInbox` push frame (`{ pending: [...], at_nanos }`). */

@@ -41,6 +41,7 @@ import { ConnectionsWorkspace } from "../workspaces/ConnectionsWorkspace";
 import { AdminWorkspace } from "../workspaces/AdminWorkspace";
 import { PermissionsWorkspace } from "../workspaces/PermissionsWorkspace";
 import { PricingGroupsWorkspace } from "../workspaces/PricingGroupsWorkspace";
+import { ClientFlowWorkspace } from "../workspaces/analytics/ClientFlowWorkspace";
 import { ExcelWorkspace } from "../workspaces/ExcelWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
@@ -135,6 +136,9 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   quoting: QuotingWorkspace,
   xva: XvaWorkspace,
   excel: ExcelWorkspace,
+  // Analytics: the cross-asset client-flow / P&L-attribution table — its own
+  // top-level tab, gated on `view_analytics` (hidden without it). FI + FXO.
+  clientflow: ClientFlowWorkspace,
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,
   permissions: PermissionsWorkspace,
@@ -178,7 +182,10 @@ export function Shell(): React.ReactElement {
   // out both trading tabs are present and Administration is hidden.
   const domainStateOf = (d: Domain): RailState => {
     if (!domainAccessible(d, app.auth)) return "hidden";
-    if (d !== "admin" && !licensed(d)) return "gated-upsell";
+    // Admin + Analytics are cross-asset ops/analytics tabs with NO license concept
+    // (they serve both classes; `licensed` only ranges over CapabilityAsset), so
+    // they never enter the gated-upsell state — only the trading domains do.
+    if (d !== "admin" && d !== "analytics" && !licensed(d)) return "gated-upsell";
     return "present";
   };
   const domainTabs = DOMAINS.map((d) => ({ def: d, state: domainStateOf(d.id) })).filter(

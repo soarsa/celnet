@@ -29,15 +29,17 @@ describe("roleAllows — the role bundle baseline", () => {
     }
   });
 
-  it("trader holds every action except the five held-back authorities", () => {
-    // The default trader bundle withholds administer, risk_transfer, and the three
-    // granular management caps (mirrors the server's default_trader_bundle).
+  it("trader holds every action except the six held-back authorities", () => {
+    // The default trader bundle withholds administer, risk_transfer, the three
+    // granular management caps, and view_analytics (mirrors the server's
+    // default_trader_bundle).
     const heldBack = new Set([
       "administer",
       "risk_transfer",
       "risk_manage",
       "manage_pricing",
       "manage_liquidity",
+      "view_analytics",
     ]);
     for (const action of CAPABILITY_ACTIONS) {
       expect(roleAllows("TRADER", action)).toBe(!heldBack.has(action));
@@ -151,16 +153,17 @@ describe("roleBaselineSummary — the honest per-asset role-baseline chip counts
     ]);
   });
 
-  it("trader holds every action except the five held-back authorities on both assets (9/14 · 9/14)", () => {
+  it("trader holds every action except the six held-back authorities on both assets (9/15 · 9/15)", () => {
     const summary = roleBaselineSummary("TRADER");
     const total = CAPABILITY_ACTIONS.length;
     expect(summary).toEqual([
-      { asset: "fx_options", allowed: total - 5, total },
-      { asset: "fixed_income", allowed: total - 5, total },
+      { asset: "fx_options", allowed: total - 6, total },
+      { asset: "fixed_income", allowed: total - 6, total },
     ]);
     // Sanity: administer + risk_transfer + risk_manage + manage_pricing +
-    // manage_liquidity are the five dropped actions, per asset (14 total → 9 held).
-    expect(total).toBe(14);
+    // manage_liquidity + view_analytics are the six dropped actions, per asset
+    // (15 total → 9 held).
+    expect(total).toBe(15);
   });
 
   it("emits one entry per asset in canonical order", () => {

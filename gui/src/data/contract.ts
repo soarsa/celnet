@@ -2239,7 +2239,8 @@ export type CapabilityAction =
   | "administer"
   | "risk_manage"
   | "manage_pricing"
-  | "manage_liquidity";
+  | "manage_liquidity"
+  | "view_analytics";
 
 /** The asset class a capability applies to (`celnet.wire.CapabilityDesc.asset`). */
 export type CapabilityAsset = "fx_options" | "fixed_income";
@@ -2269,6 +2270,7 @@ export const CAPABILITY_ACTIONS: readonly CapabilityAction[] = [
   "risk_manage",
   "manage_pricing",
   "manage_liquidity",
+  "view_analytics",
 ];
 
 /** Both asset classes in canonical order — the column axis of the matrix. */
@@ -2307,6 +2309,76 @@ export interface UserCapabilities {
 export interface RoleCapabilities {
   /** The capabilities the role confers as its base. */
   capabilities: Capability[];
+}
+
+// ---------------------------------------------------------------------------
+// analytics — the cross-asset client-flow / P&L-attribution rollup
+// (`AuthService.ListClientFlowMetrics`; docs/ANALYTICS-REQUIREMENTS.md §11.1a).
+// Mirrors `celnet.wire.ClientFlowMetricsDesc` one-to-one: a flat per-group-key
+// row of margin-efficiency ($/mm), spread economics and quote-fishing signals.
+// Gated on the `view_analytics` capability × the caller's assets.
+// ---------------------------------------------------------------------------
+
+/**
+ * The dimension a client-flow rollup groups by
+ * (`celnet.wire.FlowGroupBy`; CLIENT=0, COUNTERPARTY=1, INSTRUMENT=2, ASSET=3).
+ * `asset` is the cross-product slice (FI vs FXO); the others slice per requesting
+ * client, per covering counterparty, or per instrument.
+ */
+export type FlowGroupBy = "client" | "counterparty" | "instrument" | "asset";
+
+/**
+ * One client-flow rollup row (`celnet.wire.ClientFlowMetricsDesc`). The `Option<f64>`
+ * server fields (`optional double` on the wire) arrive as `number | undefined` — a
+ * ratio's denominator was zero, so the value is genuinely ABSENT (rendered "—",
+ * never a fabricated `0` or `NaN`). Non-optional fields (counts, notional, the P&L
+ * components, `fishingScore`) are always present.
+ */
+export interface ClientFlowMetrics {
+  /** The group key this row belongs to (client / counterparty / instrument / asset). */
+  label: string;
+  /** Number of quote/RFQ responses issued to this key. */
+  quoteCount: number;
+  /** Number of fills done with this key. */
+  tradedCount: number;
+  /** Sum of traded notional magnitude. */
+  tradedNotional: number;
+  /** Gross margin captured on fills (Σ margin over traded records). */
+  grossPnl: number;
+  /** Total adverse-selection cost (Σ markout, positive = cost to us). */
+  totalMarkout: number;
+  /** Total hedging/warehousing cost (Σ hedge cost, positive = cost). */
+  totalHedgeCost: number;
+  /** Net P&L = grossPnl − totalMarkout − totalHedgeCost. */
+  netPnl: number;
+  /** Gross margin per USD 1mm traded. ABSENT when no notional traded. */
+  dpmGross?: number | undefined;
+  /** Net P&L per USD 1mm traded. ABSENT when no notional traded. */
+  dpmNet?: number | undefined;
+  /** Realised margin ÷ quoted spread over fills. ABSENT when we quoted no spread. */
+  capturedVsOffered?: number | undefined;
+  /** Mean cover distance (we vs second-best panel quote). ABSENT when no cover. */
+  meanCoverDistance?: number | undefined;
+  /** Offered spread ($/mm) at which net $/mm hits zero. ABSENT when undefined. */
+  breakevenSpread?: number | undefined;
+  /** Quotes ÷ trades. ABSENT when no trades (zero-trade fisher caught by fishingScore). */
+  quoteToTradeRatio?: number | undefined;
+  /** Trades ÷ quotes (the RFQ hit-rate). ABSENT when no quotes. */
+  hitRate?: number | undefined;
+  /** Bounded [0,1] quote-fishing score (high quote-to-trade × low net $/mm). */
+  fishingScore: number;
+}
+
+/**
+ * An optional epoch-nanos time window for a client-flow query — both bounds
+ * optional (absent ⇒ open on that side). Passed to
+ * {@link CelnetTransport.listClientFlowMetrics}.
+ */
+export interface FlowWindow {
+  /** Inclusive lower bound (epoch nanos); absent ⇒ open. */
+  fromNanos?: bigint;
+  /** Exclusive upper bound (epoch nanos); absent ⇒ open. */
+  toNanos?: bigint;
 }
 
 // ---------------------------------------------------------------------------

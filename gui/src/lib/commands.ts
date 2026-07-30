@@ -58,6 +58,7 @@ export type WorkspaceId =
   | "transferaudit"
   | "xva"
   | "excel"
+  | "clientflow"
   | "connections"
   | "admin"
   | "permissions"
@@ -84,6 +85,7 @@ export type RailSection =
   | "risk"
   | "transfers"
   | "tools"
+  | "analytics"
   | "admin";
 
 /**
@@ -100,6 +102,7 @@ export const RAIL_SECTIONS: readonly { id: RailSection; label: string }[] = [
   { id: "risk", label: "Risk" },
   { id: "transfers", label: "Transfers" },
   { id: "tools", label: "Tools" },
+  { id: "analytics", label: "Client Analytics" },
   { id: "admin", label: "Administration" },
 ] as const;
 
@@ -233,6 +236,12 @@ export const RAIL: readonly {
   { id: "quoting", glyph: "⇌", label: "Quoting", subtitle: "RFQ / IOI desk inbox", section: "markets", assets: ["fixed_income"] },
   { id: "xva", glyph: "⊗", label: "XVA", section: "tools", assets: ["fx_options"] },
   { id: "excel", glyph: "▦", label: "Excel", section: "tools", assets: ["fx_options"] },
+  // Analytics — the cross-asset (FI + FXO) client-flow surface, its own top-level
+  // tab (see {@link ANALYTICS_WORKSPACES}). Serves BOTH assets, but gated on the
+  // `view_analytics` capability (holding it on EITHER asset admits — the cross-product
+  // OR the server enforces), held back from the default trader bundle. Room for future
+  // Latency / TCA / Inventory rows under the "analytics" section.
+  { id: "clientflow", glyph: "⌗", label: "Client Flow", subtitle: "Per-client $/mm · fishing", section: "analytics", assets: CAPABILITY_ASSETS },
   // Administration / ops — admin-gated, no license concept. (Connections is venue
   // ops: its rail stays admin-gated, but its in-pane edits gate on `manage_liquidity`
   // server-side — see AggregatedBookWorkspace for the reachable manage_liquidity
@@ -304,6 +313,18 @@ export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<Workspace
 ]);
 
 /**
+ * Workspaces belonging to the cross-asset **Analytics** top-level tab. Like the
+ * admin set this is a domain-membership override: though these rows SERVE both
+ * asset classes (so their capability gate can OR across assets), they must appear
+ * under the single "analytics" domain — NOT under both trading tabs — so
+ * {@link workspaceDomains} maps them here. Reachability is still the per-workspace
+ * capability gate ({@link WORKSPACE_CAPABILITY}, `view_analytics`).
+ */
+export const ANALYTICS_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
+  "clientflow",
+]);
+
+/**
  * The capability ACTION a workspace's reachability gates on, when it is NOT the
  * default `view`. A few surfaces are write-class enough that merely viewing their
  * asset does not entitle a user to reach them — the FI Risk Transfer ticket and
@@ -316,6 +337,10 @@ export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<Workspace
 export const WORKSPACE_CAPABILITY: Partial<Record<WorkspaceId, CapabilityAction>> = {
   risktransfer: "risk_transfer",
   transferinbox: "risk_transfer",
+  // Analytics is a management-sensitive READ gated on `view_analytics`. It serves
+  // BOTH assets, so `workspaceAccessible`'s `.some` over the served assets makes
+  // holding it on EITHER asset admit — mirroring the server's cross-product OR.
+  clientflow: "view_analytics",
 };
 
 /**
@@ -380,35 +405,49 @@ export function firstAccessibleWorkspace(
 // shared screens; the rail still applies {@link railState} per row.
 // ---------------------------------------------------------------------------
 
-/** A top-level product domain (tab). Trading domains ARE their CapabilityAsset. */
-export type Domain = CapabilityAsset | "admin";
+/**
+ * A top-level product domain (tab). Trading domains ARE their CapabilityAsset;
+ * `"analytics"` is the cross-asset client-flow tab; `"admin"` the ops tab.
+ */
+export type Domain = CapabilityAsset | "analytics" | "admin";
 
-/** The top-level domain tabs, in bar order. */
+/** The top-level domain tabs, in bar order (Analytics sits next to Administration). */
 export const DOMAINS: readonly { id: Domain; label: string }[] = [
   { id: "fx_options", label: "FX Options" },
   { id: "fixed_income", label: "Fixed Income" },
+  { id: "analytics", label: "Analytics" },
   { id: "admin", label: "Administration" },
 ] as const;
 
 /**
- * The domain tab(s) a workspace appears under — DERIVED from its served assets.
- * Cross-asset rows appear under BOTH FX and FI (Model A); admin/ops rows (which
- * serve no asset) under the single "admin" domain.
+ * The domain tab(s) a workspace appears under — DERIVED from its served assets,
+ * with two membership overrides: {@link ANALYTICS_WORKSPACES} → the single
+ * "analytics" domain (though they serve both assets, they are NOT trading rows),
+ * and {@link ADMIN_ONLY_WORKSPACES} → "admin". Ordinary cross-asset rows appear
+ * under BOTH FX and FI (Model A); a single-asset row under its one tab.
  */
 export function workspaceDomains(id: WorkspaceId): readonly Domain[] {
+  if (ANALYTICS_WORKSPACES.has(id)) return ["analytics"];
   if (ADMIN_ONLY_WORKSPACES.has(id)) return ["admin"];
   const assets = workspaceAssets(id);
   return assets.length > 0 ? assets : ["admin"];
 }
 
 /**
- * Whether a top-level DOMAIN tab is accessible: admin → `isAdmin`; a trading
+ * Whether a top-level DOMAIN tab is accessible: admin → `isAdmin`; analytics →
+ * `view_analytics` on EITHER asset (the server's cross-product OR); a trading
  * domain → `view` on its class. Signed-out `can` is permissive ⇒ both trading
- * tabs render pre-login; the Administration tab stays `isAdmin`-gated (hidden
- * signed out — matches the existing admin-pane hide; no special-case).
+ * tabs render pre-login, but the analytics + admin tabs stay gated (a signed-out
+ * or ordinary user without the grant never sees Analytics — hidden, not disabled).
  */
 export function domainAccessible(domain: Domain, auth: NavAuth): boolean {
   if (domain === "admin") return auth.isAdmin;
+  if (domain === "analytics") {
+    return (
+      auth.can("view_analytics", "fx_options") ||
+      auth.can("view_analytics", "fixed_income")
+    );
+  }
   return auth.can("view", domain);
 }
 

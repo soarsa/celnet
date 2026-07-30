@@ -1,0 +1,318 @@
+/* ClientFlowWorkspace — the cross-asset client-flow / P&L-attribution table.
+   Uses the app design tokens (src/design/tokens.css) so both themes are honoured
+   automatically. A dense, scannable trading grid: sticky header + row-header
+   column, right-aligned monospaced numerics, semantic colour for net-negative
+   $/mm and the fishing-score meter. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.headMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 12rem;
+}
+
+.title {
+  font-family: var(--font-brand, var(--font-ui));
+  font-size: var(--type-title);
+  line-height: var(--type-title-lh);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.subtitle {
+  font-size: var(--type-caption);
+  line-height: var(--type-caption-lh);
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 40rem;
+}
+
+.controls {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+}
+
+.segLabel {
+  font-size: var(--type-micro);
+  line-height: var(--type-micro-lh);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: 0 var(--space-2) 0 var(--space-1);
+  font-weight: var(--weight-emphasis);
+}
+
+.segBtn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-caption);
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition:
+    background var(--workspace-switch, 120ms) var(--ease-out),
+    color 120ms var(--ease-out);
+}
+
+.segBtn:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+.segBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.segOn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-base);
+  font-weight: var(--weight-emphasis);
+}
+
+.segOn:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--bg-base);
+}
+
+.segBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.explainer {
+  font-size: var(--type-caption);
+  line-height: var(--type-caption-lh);
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 62rem;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+}
+
+.explainer strong {
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
+}
+
+.error {
+  color: var(--danger);
+  font-size: var(--type-caption);
+  margin: 0;
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: var(--type-body);
+  margin: var(--space-6) 0;
+  text-align: center;
+}
+
+.tableScroll {
+  overflow-x: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+}
+
+.table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+}
+
+.caption {
+  caption-side: top;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--grid-line);
+  white-space: nowrap;
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+}
+
+.thLabel {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+}
+
+.thNum {
+  text-align: right;
+}
+
+.sortBtn,
+.sortBtnNum {
+  appearance: none;
+  background: transparent;
+  border: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--cell-pad-y, 6px) var(--cell-pad-x, 10px);
+  width: 100%;
+}
+
+.sortBtnNum {
+  justify-content: flex-end;
+}
+
+.sortBtn:hover,
+.sortBtnNum:hover {
+  color: var(--text-primary);
+}
+
+.sortBtn:focus-visible,
+.sortBtnNum:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.sortGlyph {
+  font-size: 0.7em;
+  color: var(--text-tertiary);
+}
+
+.table tbody tr:nth-child(even) {
+  background: color-mix(in oklab, var(--bg-inset) 40%, transparent);
+}
+
+.table tbody tr:hover {
+  background: var(--bg-inset);
+}
+
+.rowLabel {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: var(--bg-raised);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+  white-space: nowrap;
+  padding: var(--cell-pad-y, 6px) var(--cell-pad-x, 10px);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.table tbody tr:hover .rowLabel {
+  background: var(--bg-inset);
+}
+
+.num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: var(--cell-pad-y, 6px) var(--cell-pad-x, 10px);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.negative {
+  color: var(--danger);
+}
+
+/* Fishing-score meter: a filled bar behind the numeric value, coloured by band. */
+.fish {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 3.4rem;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--bg-inset);
+}
+
+.fishBar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+  opacity: 0.35;
+}
+
+.fishVal {
+  position: relative;
+  z-index: 1;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.fish-low .fishBar {
+  background: var(--accent);
+}
+
+.fish-mid .fishBar {
+  background: var(--warn);
+}
+
+.fish-high {
+  outline: 1px solid var(--danger);
+}
+
+.fish-high .fishBar {
+  background: var(--danger);
+  opacity: 0.5;
+}
+
+.fish-high .fishVal {
+  color: var(--danger);
+  font-weight: var(--weight-emphasis);
+}

@@ -50,6 +50,9 @@ import type {
   RiskTransfer,
   InitiateRiskTransferInput,
   ListRiskTransfersFilter,
+  ClientFlowMetrics,
+  FlowGroupBy,
+  FlowWindow,
   InstrumentDef,
   InstrumentInput,
   BuildCurveRequest,
@@ -251,6 +254,8 @@ import {
   listRiskTransfersRequestToWire,
   riskTransferResponseFromWire,
   listRiskTransfersResponseFromWire,
+  listClientFlowMetricsRequestToWire,
+  listClientFlowMetricsResponseFromWire,
   riskBookRiskSubscribeToWire,
   riskBookRiskStreamSnapshotFromWire,
   riskBookRiskStreamUpdateFromWire,
@@ -2166,6 +2171,18 @@ export class WsTransport implements CelnetTransport {
       "risk_transfers",
     );
     return listRiskTransfersResponseFromWire(reply);
+  }
+
+  async listClientFlowMetrics(
+    groupBy: FlowGroupBy,
+    window?: FlowWindow,
+  ): Promise<ClientFlowMetrics[]> {
+    const reply = await this.conn.request(
+      "list_client_flow_metrics",
+      listClientFlowMetricsRequestToWire(groupBy, window),
+      "client_flow_metrics",
+    );
+    return listClientFlowMetricsResponseFromWire(reply);
   }
 
   /**

@@ -29,6 +29,7 @@ import type {
   DeskRequestState,
   DigitalStyle,
   Enforcement,
+  FlowGroupBy,
   NotificationKind,
   ExerciseStyle,
   FixingSource,
@@ -470,3 +471,15 @@ export const priceBasis = offsetEnumCodec<PriceBasis>(
   ["MID", "MARK_TO_MARKET", "AGREED"],
   1,
 );
+
+/**
+ * `FlowGroupBy` ↔ proto `FlowGroupBy` (FLOW_GROUP_BY_CLIENT=0, COUNTERPARTY=1,
+ * INSTRUMENT=2, ASSET=3). The GUI union NAMES the proto3 zero member (`client`),
+ * so this is a plain zero-based codec (no offset); decode-zero = `client`.
+ */
+export const flowGroupBy = enumCodec<FlowGroupBy>([
+  "client",
+  "counterparty",
+  "instrument",
+  "asset",
+]);

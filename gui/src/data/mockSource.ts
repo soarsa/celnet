@@ -51,6 +51,9 @@ import type {
   MovedRisk,
   InitiateRiskTransferInput,
   ListRiskTransfersFilter,
+  ClientFlowMetrics,
+  FlowGroupBy,
+  FlowWindow,
   RagBand,
   RiskLimitUtilization,
   LpContribution,
@@ -222,6 +225,123 @@ function mockCounterpartyFor(i: number): string {
   const idx = ((i % pool.length) + pool.length) % pool.length;
   // `idx` is always in range; the fallback only satisfies noUncheckedIndexedAccess.
   return pool[idx] ?? pool[0] ?? "Counterparty";
+}
+
+// --- client-flow analytics fixture (ListClientFlowMetrics, offline) ----------
+//
+// A deterministic spread of per-(client, asset) leaf flow records reusing the
+// counterparty pool: some FRANCHISE-positive lines (tight cover, high net $/mm,
+// low fishing), some FISHERS (high quote-to-trade, ~0 net $/mm, fishing ≈ 1),
+// across BOTH assets so the Asset group-by splits FI vs FXO. Each leaf carries
+// RAW accumulators; the derived $/mm and ratio metrics (with zero-denominator
+// guards → `undefined`) are computed by the fold so a grouping over several leaves
+// stays exact — the same shape the server's rollup produces.
+
+/** One raw client-flow leaf (a single client's flow in a single asset). */
+interface MockFlowLeaf {
+  client: string;
+  counterparty: string;
+  instrument: string;
+  asset: "fixed_income" | "fx_options";
+  quoteCount: number;
+  tradedCount: number;
+  tradedNotional: number; // USD
+  grossPnl: number; // USD
+  totalMarkout: number; // USD (adverse-selection cost)
+  totalHedgeCost: number; // USD
+  quotedSpread: number; // USD (Σ quoted spread over fills; 0 ⇒ captured/offered absent)
+  coverDistanceSum: number; // Σ bps (we vs cover) over covered quotes
+  coverCount: number; // covered quotes (0 ⇒ mean cover distance absent)
+}
+
+const MOCK_FLOW_LEAVES: readonly MockFlowLeaf[] = [
+  // FRANCHISE — tight cover, healthy net $/mm, low fishing.
+  { client: "Millennium Capital", counterparty: "Nordea Markets", instrument: "US 10Y", asset: "fixed_income", quoteCount: 120, tradedCount: 84, tradedNotional: 640_000_000, grossPnl: 82_000, totalMarkout: 9_000, totalHedgeCost: 6_500, quotedSpread: 112_000, coverDistanceSum: 50, coverCount: 84 },
+  { client: "Jane Street", counterparty: "Citadel", instrument: "EUR/USD 1M", asset: "fx_options", quoteCount: 210, tradedCount: 138, tradedNotional: 910_000_000, grossPnl: 121_000, totalMarkout: 14_000, totalHedgeCost: 9_000, quotedSpread: 158_000, coverDistanceSum: 96, coverCount: 138 },
+  // Citadel trades BOTH assets — folds into one client row, splits under Asset.
+  { client: "Citadel", counterparty: "Rabobank", instrument: "UK 5Y", asset: "fixed_income", quoteCount: 96, tradedCount: 60, tradedNotional: 430_000_000, grossPnl: 51_000, totalMarkout: 7_500, totalHedgeCost: 4_800, quotedSpread: 74_000, coverDistanceSum: 48, coverCount: 60 },
+  { client: "Citadel", counterparty: "Jane Street", instrument: "GBP/USD 3M", asset: "fx_options", quoteCount: 140, tradedCount: 82, tradedNotional: 520_000_000, grossPnl: 63_000, totalMarkout: 11_000, totalHedgeCost: 6_000, quotedSpread: 88_000, coverDistanceSum: 66, coverCount: 82 },
+  // MID — moderate hit-rate, positive but thinner net $/mm.
+  { client: "Brevan Howard", counterparty: "DekaBank", instrument: "EUR 2Y", asset: "fixed_income", quoteCount: 180, tradedCount: 72, tradedNotional: 300_000_000, grossPnl: 26_000, totalMarkout: 8_000, totalHedgeCost: 4_500, quotedSpread: 60_000, coverDistanceSum: 180, coverCount: 72 },
+  { client: "Marshall Wace", counterparty: "SEB", instrument: "USD/JPY 2M", asset: "fx_options", quoteCount: 260, tradedCount: 96, tradedNotional: 380_000_000, grossPnl: 31_000, totalMarkout: 12_000, totalHedgeCost: 6_500, quotedSpread: 78_000, coverDistanceSum: 288, coverCount: 96 },
+  { client: "Point72", counterparty: "Danske Bank", instrument: "US 30Y", asset: "fixed_income", quoteCount: 150, tradedCount: 54, tradedNotional: 210_000_000, grossPnl: 18_000, totalMarkout: 9_500, totalHedgeCost: 5_000, quotedSpread: 44_000, coverDistanceSum: 189, coverCount: 54 },
+  { client: "Balyasny", counterparty: "Handelsbanken", instrument: "EUR/USD 6M", asset: "fx_options", quoteCount: 300, tradedCount: 90, tradedNotional: 340_000_000, grossPnl: 24_000, totalMarkout: 15_000, totalHedgeCost: 7_000, quotedSpread: 70_000, coverDistanceSum: 360, coverCount: 90 },
+  // FISHERS — huge quote-to-trade, near-zero/negative net $/mm, fishing ≈ 1.
+  { client: "Segantii", counterparty: "Swedbank", instrument: "EUR/USD 1W", asset: "fx_options", quoteCount: 900, tradedCount: 4, tradedNotional: 12_000_000, grossPnl: 700, totalMarkout: 1_400, totalHedgeCost: 300, quotedSpread: 1_500, coverDistanceSum: 88, coverCount: 4 },
+  { client: "Optiver", counterparty: "DNB Markets", instrument: "USD/JPY 1W", asset: "fx_options", quoteCount: 1_200, tradedCount: 6, tradedNotional: 18_000_000, grossPnl: 900, totalMarkout: 1_600, totalHedgeCost: 400, quotedSpread: 2_100, coverDistanceSum: 150, coverCount: 6 },
+  // Pure fisher — zero fills: every ratio with a trade denominator is ABSENT.
+  { client: "IMC", counterparty: "Pictet", instrument: "US 2Y", asset: "fixed_income", quoteCount: 420, tradedCount: 0, tradedNotional: 0, grossPnl: 0, totalMarkout: 0, totalHedgeCost: 0, quotedSpread: 0, coverDistanceSum: 0, coverCount: 0 },
+  { client: "Capstone", counterparty: "Julius Baer", instrument: "UK 10Y", asset: "fixed_income", quoteCount: 540, tradedCount: 9, tradedNotional: 22_000_000, grossPnl: 1_100, totalMarkout: 2_000, totalHedgeCost: 500, quotedSpread: 2_600, coverDistanceSum: 171, coverCount: 9 },
+];
+
+/** Clamp to the unit interval (the bounded fishing-score range). */
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+/** The asset-dimension display label (group_by=asset row key). */
+function flowAssetLabel(asset: MockFlowLeaf["asset"]): string {
+  return asset === "fixed_income" ? "Fixed Income" : "FX Options";
+}
+
+/**
+ * Fold the leaves into `ClientFlowMetrics` rows keyed by `keyOf`, deriving the
+ * $/mm and ratio metrics from the summed accumulators (zero-denominator ⇒ the
+ * field is `undefined`, never `0`/`NaN`). Rows are key-ordered (the server
+ * contract), matching `services/analytics::fold`.
+ */
+function foldMockFlow(keyOf: (l: MockFlowLeaf) => string): ClientFlowMetrics[] {
+  const groups = new Map<string, MockFlowLeaf[]>();
+  for (const leaf of MOCK_FLOW_LEAVES) {
+    const key = keyOf(leaf);
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(leaf);
+    else groups.set(key, [leaf]);
+  }
+  const rows: ClientFlowMetrics[] = [];
+  for (const [label, leaves] of groups) {
+    const sum = (pick: (l: MockFlowLeaf) => number): number =>
+      leaves.reduce((acc, l) => acc + pick(l), 0);
+    const quoteCount = sum((l) => l.quoteCount);
+    const tradedCount = sum((l) => l.tradedCount);
+    const tradedNotional = sum((l) => l.tradedNotional);
+    const grossPnl = sum((l) => l.grossPnl);
+    const totalMarkout = sum((l) => l.totalMarkout);
+    const totalHedgeCost = sum((l) => l.totalHedgeCost);
+    const quotedSpread = sum((l) => l.quotedSpread);
+    const coverDistanceSum = sum((l) => l.coverDistanceSum);
+    const coverCount = sum((l) => l.coverCount);
+    const netPnl = grossPnl - totalMarkout - totalHedgeCost;
+    const mm = tradedNotional / 1_000_000;
+    const dpmGross = mm > 0 ? grossPnl / mm : undefined;
+    const dpmNet = mm > 0 ? netPnl / mm : undefined;
+    const hitRate = quoteCount > 0 ? tradedCount / quoteCount : undefined;
+    // Fishing: high (1 − hit-rate) × a penalty that saturates at 1 for ≤0 net $/mm
+    // and eases toward 0 as net $/mm approaches a healthy franchise level.
+    const DPM_HEALTHY = 60;
+    const dnm = dpmNet ?? -1; // no fills ⇒ treated as adverse (a pure fisher).
+    const netPenalty = dnm <= 0 ? 1 : clamp01(1 - dnm / DPM_HEALTHY);
+    const fishingScore = clamp01((1 - (hitRate ?? 0)) * netPenalty);
+    rows.push({
+      label,
+      quoteCount,
+      tradedCount,
+      tradedNotional,
+      grossPnl,
+      totalMarkout,
+      totalHedgeCost,
+      netPnl,
+      dpmGross,
+      dpmNet,
+      capturedVsOffered: quotedSpread > 0 ? grossPnl / quotedSpread : undefined,
+      meanCoverDistance: coverCount > 0 ? coverDistanceSum / coverCount : undefined,
+      breakevenSpread: mm > 0 ? (totalMarkout + totalHedgeCost) / mm : undefined,
+      quoteToTradeRatio: tradedCount > 0 ? quoteCount / tradedCount : undefined,
+      hitRate,
+      fishingScore,
+    });
+  }
+  return rows.sort((a, b) => a.label.localeCompare(b.label));
 }
 
 /** The desk the exception-contract sample notifications are attributed to. */
@@ -3452,6 +3572,23 @@ export class MockTransport implements CelnetTransport {
     };
   }
 
+  async listClientFlowMetrics(
+    groupBy: FlowGroupBy,
+    _window?: FlowWindow,
+  ): Promise<ClientFlowMetrics[]> {
+    switch (groupBy) {
+      case "counterparty":
+        return foldMockFlow((l) => l.counterparty);
+      case "instrument":
+        return foldMockFlow((l) => l.instrument);
+      case "asset":
+        return foldMockFlow((l) => flowAssetLabel(l.asset));
+      case "client":
+      default:
+        return foldMockFlow((l) => l.client);
+    }
+  }
+
   /** The set of book ids strictly below `id` in the seeded tree (for the acyclic guard). */
   private riskBookDescendants(id: string): Set<string> {
     const out = new Set<string>();
@@ -4218,17 +4355,19 @@ export class MockTransport implements CelnetTransport {
 const MOCK_MIN_PASSWORD_LEN = 12;
 
 /** The actions NOT in the default `TRADER` bundle — the narrow, explicitly-granted
- * authorities `administer` / `risk_transfer` and the three management caps
- * `risk_manage` / `manage_pricing` / `manage_liquidity` (mirrors the server's
- * `default_trader_bundle`, `config/identity.rs`, which holds back
- * `Action::{Administer, RiskTransfer, RiskManage, ManagePricing, ManageLiquidity}`).
- * `ADMIN` is grant-all (holds every action, including these). */
+ * authorities `administer` / `risk_transfer`, the three management caps
+ * `risk_manage` / `manage_pricing` / `manage_liquidity`, and the cross-asset read
+ * `view_analytics` (mirrors the server's `default_trader_bundle`,
+ * `config/identity.rs`, which holds back `Action::{Administer, RiskTransfer,
+ * RiskManage, ManagePricing, ManageLiquidity, ViewAnalytics}`). `ADMIN` is
+ * grant-all (holds every action, including these). */
 const MOCK_TRADER_EXCLUDED_ACTIONS: ReadonlySet<CapabilityAction> = new Set<CapabilityAction>([
   "administer",
   "risk_transfer",
   "risk_manage",
   "manage_pricing",
   "manage_liquidity",
+  "view_analytics",
 ]);
 
 /** The full action-by-asset surface (the ADMIN grant-all bundle). */

@@ -93,6 +93,7 @@ export type WorkspaceId =
   | "transferaudit"
   | "xva"
   | "excel"
+  | "clientflow"
   | "connections"
   | "admin"
   | "permissions"

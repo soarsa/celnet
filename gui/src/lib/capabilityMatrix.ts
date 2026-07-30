@@ -44,6 +44,7 @@ export const ACTION_LABELS: Record<CapabilityAction, string> = {
   risk_manage: "Manage risk",
   manage_pricing: "Manage pricing",
   manage_liquidity: "Manage liquidity",
+  view_analytics: "View analytics",
 };
 
 /**
@@ -52,7 +53,8 @@ export const ACTION_LABELS: Record<CapabilityAction, string> = {
  * require an explicit per-user (or edited-role) grant. Mirrors the server's
  * `config/identity.rs::default_trader_bundle`, which withholds `Administer`,
  * `RiskTransfer`, and the three management authorities `RiskManage` /
- * `ManagePricing` / `ManageLiquidity` (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §5).
+ * `ManagePricing` / `ManageLiquidity` and the cross-asset read `ViewAnalytics`
+ * (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §5; `config/identity.rs`).
  */
 export const TRADER_HELD_BACK_ACTIONS: ReadonlySet<CapabilityAction> =
   new Set<CapabilityAction>([
@@ -61,6 +63,7 @@ export const TRADER_HELD_BACK_ACTIONS: ReadonlySet<CapabilityAction> =
     "risk_manage",
     "manage_pricing",
     "manage_liquidity",
+    "view_analytics",
   ]);
 
 /** Human-friendly asset-class labels for the matrix columns. */
@@ -218,6 +221,7 @@ const ACTION_PHRASE: Record<CapabilityAction, (asset: string) => string> = {
   risk_manage: (a) => `managing ${a} risk portfolios, routing and the risk dashboard`,
   manage_pricing: (a) => `managing ${a} pricing groups and session tiering`,
   manage_liquidity: (a) => `managing ${a} liquidity connections and aggregated books`,
+  view_analytics: (a) => `viewing the ${a} client-flow analytics`,
 };
 
 /**
@@ -258,7 +262,11 @@ export function overlaysDiffer(a: OverlayMap, b: OverlayMap): boolean {
 // ---------------------------------------------------------------------------
 
 /** The grid section a component is grouped under (mirrors the product domains). */
-export type ComponentSection = "fx_options" | "fixed_income" | "administration";
+export type ComponentSection =
+  | "fx_options"
+  | "fixed_income"
+  | "analytics"
+  | "administration";
 
 /**
  * One trader-facing component and the capabilities that constitute its Read and
@@ -424,6 +432,18 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     readActions: ["view"],
     writeActions: ["manage_liquidity"],
   },
+  // Analytics — the cross-asset client-flow / P&L-attribution surface
+  // (docs/ANALYTICS-REQUIREMENTS.md §11.1a). A management-sensitive READ on BOTH
+  // assets (holding it on either admits — the server gate is a cross-product OR),
+  // held back from the default trader bundle. Read-only (no write affordance).
+  {
+    id: "analytics",
+    label: "Analytics",
+    section: "analytics",
+    assets: CAPABILITY_ASSETS,
+    readActions: ["view_analytics"],
+    writeActions: [],
+  },
   // Administration — a single cross-asset toggle governing `administer` on BOTH
   // assets together. Read == Write (the same capability).
   {
@@ -440,6 +460,7 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
 export const COMPONENT_SECTIONS: readonly { id: ComponentSection; label: string }[] = [
   { id: "fx_options", label: "FX Options" },
   { id: "fixed_income", label: "Fixed Income" },
+  { id: "analytics", label: "Analytics" },
   { id: "administration", label: "Administration" },
 ];
 
@@ -557,7 +578,7 @@ export interface RoleAssetSummary {
  * The honest ROLE-BASELINE capability summary for a user row: for each asset
  * class, how many of the {@link CAPABILITY_ACTIONS} the role holds with NO
  * per-user overlay (`resolveEffective(role, ∅)`). This is the baseline the role
- * confers (admin ⇒ 14/14 both; trader ⇒ 9/14 both — every action except the five
+ * confers (admin ⇒ 15/15 both; trader ⇒ 9/15 both — every action except the six
  * held-back authorities in {@link TRADER_HELD_BACK_ACTIONS}); the full,
  * overlay-adjusted effective set stays reachable through the per-user Permissions
  * editor. Deliberately overlay-free so a compact roster chip never misrepresents a

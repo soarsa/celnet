@@ -22,8 +22,11 @@ import type {
   AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
+  ClientFlowMetrics,
   CombinedTailRiskRequest,
   CombinedTailRiskResponse,
+  FlowGroupBy,
+  FlowWindow,
   BookRatesPositionRequest,
   BookRatesPositionResponse,
   BrokerQuoteSet,
@@ -767,6 +770,21 @@ export interface CelnetTransport {
    * (the server exposes the inbox stream over gRPC, not the WS mirror yet).
    */
   streamRiskTransferInbox(onInbox: (pending: RiskTransfer[]) => void): () => void;
+
+  // --- cross-asset analytics -------------------------------------------------
+
+  /**
+   * AuthService.ListClientFlowMetrics — the cross-asset (FI + FXO) client-flow /
+   * P&L-attribution rollup (docs/ANALYTICS-REQUIREMENTS.md §11.1a), grouped by
+   * `groupBy` (client / counterparty / instrument / asset) over an optional
+   * epoch-nanos `window`. One row per group key, key-ordered. Gated server-side on
+   * the `view_analytics` capability × the caller's assets (holding it on EITHER
+   * asset admits).
+   */
+  listClientFlowMetrics(
+    groupBy: FlowGroupBy,
+    window?: FlowWindow,
+  ): Promise<ClientFlowMetrics[]>;
 
   // --- instrument reference-data registry ------------------------------------
 

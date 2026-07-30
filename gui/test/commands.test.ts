@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ADMIN_ONLY_WORKSPACES,
+  ANALYTICS_WORKSPACES,
   buildCommands,
   cheatsheet,
   COMMAND_META,
@@ -228,9 +229,19 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
   }
   const signedOut: NavAuth = { isAdmin: false, can: () => true };
 
-  it("DOMAINS is exactly FX / FI / Administration, in bar order", () => {
-    expect(DOMAINS.map((d) => d.id)).toEqual(["fx_options", "fixed_income", "admin"]);
-    expect(DOMAINS.map((d) => d.label)).toEqual(["FX Options", "Fixed Income", "Administration"]);
+  it("DOMAINS is exactly FX / FI / Analytics / Administration, in bar order", () => {
+    expect(DOMAINS.map((d) => d.id)).toEqual([
+      "fx_options",
+      "fixed_income",
+      "analytics",
+      "admin",
+    ]);
+    expect(DOMAINS.map((d) => d.label)).toEqual([
+      "FX Options",
+      "Fixed Income",
+      "Analytics",
+      "Administration",
+    ]);
   });
 
   describe("workspaceDomains (derived from served assets — Model A)", () => {
@@ -259,7 +270,12 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
     it("derives membership from `assets` — no row's domains diverge from its served assets", () => {
       for (const r of RAIL) {
         const doms = workspaceDomains(r.id);
-        if (ADMIN_ONLY_WORKSPACES.has(r.id)) {
+        if (ANALYTICS_WORKSPACES.has(r.id)) {
+          // Cross-asset analytics rows are a membership override — the single
+          // "analytics" domain, NOT their served assets (which are both trading
+          // classes but must not put the row under the trading tabs).
+          expect(doms).toEqual(["analytics"]);
+        } else if (ADMIN_ONLY_WORKSPACES.has(r.id)) {
           expect(doms).toEqual(["admin"]);
         } else {
           expect([...doms].sort()).toEqual([...r.assets].sort());
@@ -383,7 +399,7 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
   const visible = (domain: Parameters<typeof railForDomain>[0], auth: NavAuth) =>
     railForDomain(domain).filter((r) => workspaceAccessible(r.id, auth));
 
-  it("RAIL_SECTIONS is the seven labelled sections, in render order", () => {
+  it("RAIL_SECTIONS is the eight labelled sections, in render order", () => {
     expect(RAIL_SECTIONS.map((s) => s.id)).toEqual([
       "trading",
       "markets",
@@ -391,6 +407,7 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
       "risk",
       "transfers",
       "tools",
+      "analytics",
       "admin",
     ]);
     expect(RAIL_SECTIONS.map((s) => s.label)).toEqual([
@@ -400,6 +417,7 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
       "Risk",
       "Transfers",
       "Tools",
+      "Client Analytics",
       "Administration",
     ]);
     for (const s of RAIL_SECTIONS) expect(s.label.length).toBeGreaterThan(0);
