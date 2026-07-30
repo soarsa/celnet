@@ -1283,3 +1283,23 @@
   padding: var(--space-4, 16px);
   border-top: 1px solid var(--border);
 }
+
+/* Visible conflict / validation details (why a rule is warn/error) — surfaced under
+   the status row so the reason is readable, not hidden in a hover tooltip. */
+.conflictList {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+  background: var(--bg-raised, rgba(255, 255, 255, 0.03));
+  display: grid;
+  gap: 0.25rem;
+  font-size: var(--type-caption, 0.8rem);
+}
+.conflictError {
+  color: var(--danger, #f87171);
+}
+.conflictWarn {
+  color: var(--warn, #b7791f);
+}

@@ -347,6 +347,28 @@ export function RiskRoutingWorkspace(): React.ReactElement {
         )}
       </div>
 
+      {(conflicts.length > 0 || graphIssues.length > 0) && (
+        <ul className={styles.conflictList} data-testid="conflict-details">
+          {conflicts.map((c, i) => {
+            const idx = rules.findIndex((r) => r.id === c.ruleId);
+            return (
+              <li
+                key={`c-${i}`}
+                className={c.severity === "error" ? styles.conflictError : styles.conflictWarn}
+              >
+                <strong>{c.severity === "error" ? "Error" : "Warning"}</strong>
+                {idx >= 0 ? ` · Rule ${idx + 1}` : ""} — {c.message}
+              </li>
+            );
+          })}
+          {graphIssues.map((g, i) => (
+            <li key={`g-${i}`} className={styles.conflictError}>
+              <strong>Error</strong> — {g.message}
+            </li>
+          ))}
+        </ul>
+      )}
+
       <RiskRulesTable
         rules={rules}
         bookLabel={bookLabel}
