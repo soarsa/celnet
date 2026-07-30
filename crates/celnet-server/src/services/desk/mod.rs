@@ -58,7 +58,7 @@ use crate::readiness::ReadinessGate;
 use celnet_entitlements::{Action, AssetClass};
 
 use crate::services::access::{DeskScope, RequiredAuthority, authorize_caller, resolve_caller};
-use crate::services::rates_book::RatesPositionStore;
+use crate::services::rates_book::{RatesPositionStore, RatesRoutingAttribution};
 use crate::services::risk::store::PositionStore;
 use crate::services::sessions::SessionRegistry;
 use celnet_proto::RatesPricingResult;
@@ -553,12 +553,22 @@ impl RfqDeskEdge {
         // consults; a hard breach refuses the booking (Err) → leave the request QUOTED.
         let booked = self
             .rates
-            .book(RatesPosition {
-                position_id: 0,
-                entity: 0,
-                book: 0,
-                instrument: Some(booked_instrument),
-            })
+            .book_with_routing(
+                RatesPosition {
+                    position_id: 0,
+                    entity: 0,
+                    book: 0,
+                    instrument: Some(booked_instrument),
+                },
+                RatesRoutingAttribution {
+                    counterparty: current.counterparty.clone(),
+                    ccy: current
+                        .curve_set
+                        .as_ref()
+                        .map(|c| c.currency.clone())
+                        .unwrap_or_default(),
+                },
+            )
             .ok()?;
 
         let now = self.clock.now_nanos();
@@ -830,12 +840,22 @@ impl RfqDeskService for RfqDeskEdge {
             desk_side,
         )
         .ok_or_else(|| Status::invalid_argument("request carries no bookable FI instrument"))?;
-        let booked = self.rates.book(RatesPosition {
-            position_id: 0,
-            entity: 0,
-            book: 0,
-            instrument: Some(booked_instrument),
-        })?;
+        let booked = self.rates.book_with_routing(
+            RatesPosition {
+                position_id: 0,
+                entity: 0,
+                book: 0,
+                instrument: Some(booked_instrument),
+            },
+            RatesRoutingAttribution {
+                counterparty: current.counterparty.clone(),
+                ccy: current
+                    .curve_set
+                    .as_ref()
+                    .map(|c| c.currency.clone())
+                    .unwrap_or_default(),
+            },
+        )?;
 
         let now = self.clock.now_nanos();
         let deal = Deal {

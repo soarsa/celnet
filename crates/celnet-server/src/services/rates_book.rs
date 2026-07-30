@@ -49,6 +49,24 @@ use crate::services::risk::store::{RiskBookLimitDef, limit_breached_status};
 /// exposure (see [`rates_linear_exposure`]).
 const ONE_BP: f64 = 1e-4;
 
+/// The booking-time **routing attribution** for a rates fill — the originating fields the
+/// `RatesPosition` does not itself carry but the firm-wide routing graph can match on
+/// (`RouteField::Counterparty` / `RouteField::Ccy`). It is a pure routing *input*, not
+/// persisted on the position (the position round-trips without it), so it is threaded
+/// alongside [`RatesPositionStore::book_with_routing`] rather than added to the proto — the
+/// RFQ desk path supplies both from the `DeskRequest` (its requester = counterparty, and the
+/// `CurveSet` currency), while the manual `RiskService::BookRatesPosition` path carries
+/// neither and books with the empty default (honestly unmatched by a counterparty/ccy rule).
+#[derive(Debug, Clone, Default)]
+pub struct RatesRoutingAttribution {
+    /// The originating counterparty (the client / FIX session that dealt), or empty when the
+    /// booking path does not carry one (the manual `BookRatesPosition`).
+    pub counterparty: String,
+    /// The settlement/curve currency (ISO 4217, e.g. `"USD"`) the fill priced under, or empty
+    /// when unknown at the booking site.
+    pub ccy: String,
+}
+
 /// The shared in-memory linear-rates position book. Cheap to share behind an
 /// [`Arc`](std::sync::Arc); every mutation takes the write lock briefly. Lives
 /// strictly on the async edge — never the pinned zero-alloc pricing core.
@@ -276,7 +294,26 @@ impl RatesPositionStore {
     /// # Errors
     /// `failed_precondition` when a **hard** `(book → entity → firm)` limit OR a routed
     /// **risk-book** hard notional cap (the resolved book or an ancestor) would be breached.
-    pub fn book(&self, mut position: RatesPosition) -> Result<RatesPosition, tonic::Status> {
+    pub fn book(&self, position: RatesPosition) -> Result<RatesPosition, tonic::Status> {
+        // The default booking path (RiskService::BookRatesPosition + the existing tests):
+        // no originating counterparty/ccy is known, so route with the empty attribution
+        // (a counterparty/ccy rule is honestly unmatched). The RFQ desk path calls
+        // `book_with_routing` with the real originating fields.
+        self.book_with_routing(position, RatesRoutingAttribution::default())
+    }
+
+    /// [`Self::book`] with an explicit booking-time [`RatesRoutingAttribution`] — the RFQ
+    /// desk path supplies the originating counterparty + curve currency so a
+    /// `RouteField::Counterparty` / `RouteField::Ccy` rule can route the fill. Identical to
+    /// [`Self::book`] in every other respect (pre-trade gate, per-book cap, stamp, version).
+    ///
+    /// # Errors
+    /// As [`Self::book`].
+    pub fn book_with_routing(
+        &self,
+        mut position: RatesPosition,
+        attribution: RatesRoutingAttribution,
+    ) -> Result<RatesPosition, tonic::Status> {
         // Pre-trade limit gate (ADR-0016 A1) over a READ snapshot, BEFORE the write lock,
         // so a hard breach can never book and the projection never runs while the exclusive
         // write lock is held (guardrails #6/#11 — a fill never serialises the whole book
@@ -306,7 +343,7 @@ impl RatesPositionStore {
         let resolved_book: Option<String> = {
             let routing = self.routing.read().expect("rates routing lock poisoned");
             routing.as_ref().and_then(|graph| {
-                let ctx = routing_context_from_rates(&position);
+                let ctx = routing_context_from_rates(&position, &attribution);
                 match RiskRouter::route(graph, &ctx) {
                     Ok(book) => Some(book.to_owned()),
                     Err(err) => {
@@ -645,20 +682,30 @@ pub(crate) fn rates_signed_notional(position: &RatesPosition) -> f64 {
 /// * `instrument_id` — the product family (a rates cell carries no security-master id).
 /// * `desk` — the netting `book` id as text: a rates cell is **not** desk-attributed, so its
 ///   netting book (its coarsest org unit) stands in on the desk axis, letting a rule route by
-///   rates book. `counterparty` / `user` are left `""` (a rates cell carries neither), and the
-///   `entity` axis has no routing field today (a future `RouteField::Entity` is its clean home
-///   — it is honestly unmapped, not folded onto a mismatched field).
-/// * `ccy` — `""`: a rates position stores no currency of its own (its notional is in the
-///   *curve* currency, supplied at price time), so the routable currency is genuinely absent.
+///   rates book. The `entity` axis has no routing field today (a future `RouteField::Entity`
+///   is its clean home — it is honestly unmapped, not folded onto a mismatched field).
+/// * `counterparty` / `ccy` — from the booking-time [`RatesRoutingAttribution`]: the RFQ desk
+///   path supplies the originating counterparty (its `DeskRequest` requester) + the `CurveSet`
+///   currency, so a `RouteField::Counterparty` / `RouteField::Ccy` rule matches FI executions;
+///   the manual `BookRatesPosition` path passes the empty default (both `""`, honestly absent
+///   — a rates position stores no counterparty, and its notional is in the *curve* currency
+///   which the position itself does not carry).
+/// * `user` — `""`: a rates cell carries no booking user.
 /// * `price` — `0.0`: the marked PV is a derived quantity not needed to route on economics.
 #[must_use]
-pub(crate) fn routing_context_from_rates(position: &RatesPosition) -> RoutingContext {
+pub(crate) fn routing_context_from_rates(
+    position: &RatesPosition,
+    attribution: &RatesRoutingAttribution,
+) -> RoutingContext {
     let Some(instr) = position
         .instrument
         .as_ref()
         .and_then(|i| i.instrument.as_ref())
     else {
         return RoutingContext {
+            instrument_id: String::new(),
+            ccy: attribution.ccy.clone(),
+            counterparty: attribution.counterparty.clone(),
             desk: position.book.to_string(),
             ..RoutingContext::default()
         };
@@ -703,13 +750,13 @@ pub(crate) fn routing_context_from_rates(position: &RatesPosition) -> RoutingCon
     .to_owned();
     RoutingContext {
         instrument_id: product.to_owned(),
-        ccy: String::new(),
+        ccy: attribution.ccy.clone(),
         product: product.to_owned(),
         side,
         notional,
         tenor,
         strike: level,
-        counterparty: String::new(),
+        counterparty: attribution.counterparty.clone(),
         user: String::new(),
         desk: position.book.to_string(),
         price: 0.0,
@@ -1118,8 +1165,10 @@ mod tests {
     /// product/notional/tenor/side/strike(level)/desk(book), with ccy honestly empty.
     #[test]
     fn routing_context_from_rates_maps_ois_and_bond() {
-        // OIS: 5y 10mm pay-fixed (SIDE_BUY), fixed 4%, netting book 10.
-        let ois = routing_context_from_rates(&position(1, 1, 10));
+        // OIS: 5y 10mm pay-fixed (SIDE_BUY), fixed 4%, netting book 10. No attribution ⇒
+        // counterparty/ccy honestly empty.
+        let ois =
+            routing_context_from_rates(&position(1, 1, 10), &RatesRoutingAttribution::default());
         assert_eq!(ois.product, "ois");
         assert_eq!(ois.instrument_id, "ois");
         assert_eq!(ois.notional, 10_000_000.0);
@@ -1132,13 +1181,97 @@ mod tests {
         assert_eq!(ois.user, "");
 
         // Bond: short (SIDE_SELL) 100 face, 5% coupon, book 7; tenor honestly 0 (no ref date).
-        let bond = routing_context_from_rates(&bond_position(2, 100.0, Side::Sell));
+        let bond = routing_context_from_rates(
+            &bond_position(2, 100.0, Side::Sell),
+            &RatesRoutingAttribution::default(),
+        );
         assert_eq!(bond.product, "bond");
         assert_eq!(bond.notional, 100.0);
         assert_eq!(bond.tenor, 0.0);
         assert_eq!(bond.side, "Sell");
         assert_eq!(bond.strike, 0.05);
         assert_eq!(bond.desk, "7");
+    }
+
+    /// A rates fill originating from a counterparty in a currency routes via a
+    /// `Counterparty`/`Ccy` rule chain; a manual `BookRatesPosition` (empty attribution)
+    /// falls through (the counterparty rule is honestly unmatched).
+    #[test]
+    fn counterparty_and_ccy_route_a_rates_fill() {
+        use std::collections::BTreeMap;
+        // Chain: Counterparty == "celer-rates-celnet" AND Ccy == "USD" → BOOK-CP, else DEFAULT.
+        let graph = {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                0u32,
+                RoutingNode::Condition {
+                    field: RouteField::Counterparty,
+                    op: RouteOp::Eq,
+                    value: RouteValue::Text("celer-rates-celnet".to_owned()),
+                    on_true: 1,
+                    on_false: 3,
+                },
+            );
+            nodes.insert(
+                1u32,
+                RoutingNode::Condition {
+                    field: RouteField::Ccy,
+                    op: RouteOp::Eq,
+                    value: RouteValue::Text("USD".to_owned()),
+                    on_true: 2,
+                    on_false: 3,
+                },
+            );
+            nodes.insert(
+                2u32,
+                RoutingNode::Book {
+                    risk_book_id: "BOOK-CP".to_owned(),
+                },
+            );
+            nodes.insert(
+                3u32,
+                RoutingNode::Book {
+                    risk_book_id: "DEFAULT".to_owned(),
+                },
+            );
+            RiskRoutingGraph { entry: 0, nodes }
+        };
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(graph));
+
+        // A desk-originated fill (counterparty "celer-rates-celnet" in USD) → BOOK-CP.
+        let routed = store
+            .book_with_routing(
+                position(0, 1, 10),
+                RatesRoutingAttribution {
+                    counterparty: "celer-rates-celnet".to_owned(),
+                    ccy: "USD".to_owned(),
+                },
+            )
+            .expect("desk fill books");
+        assert_eq!(
+            store.risk_book_of(routed.position_id).as_deref(),
+            Some("BOOK-CP")
+        );
+
+        // A manual BookRatesPosition (empty attribution) → the counterparty rule is unmatched,
+        // so it falls through to DEFAULT (never BOOK-CP).
+        let manual = store.book(position(0, 1, 11)).expect("manual fill books");
+        assert_eq!(
+            store.risk_book_of(manual.position_id).as_deref(),
+            Some("DEFAULT")
+        );
+
+        // The threaded fields land on the context a rule matches.
+        let ctx = routing_context_from_rates(
+            &position(1, 1, 10),
+            &RatesRoutingAttribution {
+                counterparty: "celer-rates-celnet".to_owned(),
+                ccy: "USD".to_owned(),
+            },
+        );
+        assert_eq!(ctx.counterparty, "celer-rates-celnet");
+        assert_eq!(ctx.ccy, "USD");
     }
 
     /// A routed rates fill that would blow the resolved book's HARD net-notional cap is
