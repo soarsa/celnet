@@ -29,10 +29,10 @@ describe("roleAllows — the role bundle baseline", () => {
     }
   });
 
-  it("trader holds every action except the six held-back authorities", () => {
+  it("trader holds every action except the eight held-back authorities", () => {
     // The default trader bundle withholds administer, risk_transfer, the three
-    // granular management caps, and view_analytics (mirrors the server's
-    // default_trader_bundle).
+    // granular management caps, view_analytics, hedge, and refdata (mirrors the
+    // server's default_trader_bundle).
     const heldBack = new Set([
       "administer",
       "risk_transfer",
@@ -41,6 +41,7 @@ describe("roleAllows — the role bundle baseline", () => {
       "manage_liquidity",
       "view_analytics",
       "hedge",
+      "refdata",
     ]);
     for (const action of CAPABILITY_ACTIONS) {
       expect(roleAllows("TRADER", action)).toBe(!heldBack.has(action));
@@ -120,7 +121,7 @@ describe("resolveEffective — full enumeration matches the server algebra", () 
     expect(keys.has(capKey("execute", "fx_options"))).toBe(true);
   });
 
-  it("admin with no overlay = the full 14 × 2 grid", () => {
+  it("admin with no overlay = the full 17 × 2 grid", () => {
     const effective = resolveEffective("ADMIN", new Map());
     expect(effective.length).toBe(CAPABILITY_ACTIONS.length * CAPABILITY_ASSETS.length);
   });
@@ -146,7 +147,7 @@ describe("resolveEffective — full enumeration matches the server algebra", () 
 });
 
 describe("roleBaselineSummary — the honest per-asset role-baseline chip counts", () => {
-  it("admin holds every action on both assets (14/14 · 14/14)", () => {
+  it("admin holds every action on both assets (17/17 · 17/17)", () => {
     const summary = roleBaselineSummary("ADMIN");
     expect(summary).toEqual([
       { asset: "fx_options", allowed: CAPABILITY_ACTIONS.length, total: CAPABILITY_ACTIONS.length },
@@ -154,17 +155,18 @@ describe("roleBaselineSummary — the honest per-asset role-baseline chip counts
     ]);
   });
 
-  it("trader holds every action except the seven held-back authorities on both assets (9/16 · 9/16)", () => {
+  it("trader holds every action except the eight held-back authorities on both assets (9/17 · 9/17)", () => {
     const summary = roleBaselineSummary("TRADER");
     const total = CAPABILITY_ACTIONS.length;
     expect(summary).toEqual([
-      { asset: "fx_options", allowed: total - 7, total },
-      { asset: "fixed_income", allowed: total - 7, total },
+      { asset: "fx_options", allowed: total - 8, total },
+      { asset: "fixed_income", allowed: total - 8, total },
     ]);
     // Sanity: administer + risk_transfer + risk_manage + manage_pricing +
-    // manage_liquidity + view_analytics + hedge are the seven dropped actions, per
-    // asset (16 total → 9 held).
-    expect(total).toBe(16);
+    // manage_liquidity + view_analytics + hedge + refdata are the eight dropped
+    // actions, per asset (17 total → 9 held). refdata is the 17th action (the bond
+    // corporate-action confirm/apply steward seat), held back from the trader bundle.
+    expect(total).toBe(17);
   });
 
   it("emits one entry per asset in canonical order", () => {

@@ -87,6 +87,16 @@ import type {
   ListDeskRequestsResponse,
   ListRatesPositionsRequest,
   ListRatesPositionsResponse,
+  ListInstrumentScheduleRequest,
+  ListInstrumentScheduleResponse,
+  ListCorporateActionsRequest,
+  ListCorporateActionsResponse,
+  ConfirmCorporateActionRequest,
+  ConfirmCorporateActionResponse,
+  ApplyCorporateActionRequest,
+  ApplyCorporateActionResponse,
+  CorporateAction,
+  InstrumentScheduleFlow,
   LoginResult,
   Heartbeat,
   Instrument,
@@ -1347,6 +1357,136 @@ class MockStreamSession implements StreamSession {
   }
 }
 
+// --- offline corporate-actions seed -----------------------------------------
+//
+// A small, self-consistent CA universe keyed to the mock instrument registry
+// (their ISINs), plus the pre-event effective schedules the CA-apply path mutates.
+// Applying the full-call (MCAL) truncates the callable bond's schedule to its call
+// cashflow — so the workspace demonstrates apply-a-call → the shown schedule
+// shortens. Off any hot path (mock/dev only); mirrors the server's flat wire shape.
+
+/** Step an ISO `YYYY-MM-DD` date forward by whole months (day preserved). */
+function isoAddMonths(iso: string, months: number): string {
+  const [y, m, d] = iso.split("-").map((p) => Number(p));
+  const total = (y ?? 0) * 12 + (m ?? 1) - 1 + months;
+  const ny = Math.floor(total / 12);
+  const nm = (total % 12) + 1;
+  return `${ny}-${String(nm).padStart(2, "0")}-${String(d ?? 1).padStart(2, "0")}`;
+}
+
+/**
+ * Build a semi-annual coupon schedule (coupon `couponPer100` per 100 face on each
+ * date, a single `100` principal on the terminal date) from `firstIso` through
+ * `maturityIso` inclusive, stepping 6 months.
+ */
+function semiAnnualSchedule(
+  firstIso: string,
+  maturityIso: string,
+  couponPer100: number,
+): InstrumentScheduleFlow[] {
+  const flows: InstrumentScheduleFlow[] = [];
+  let date = firstIso;
+  // Guard the loop to a sane horizon (≤ 80 semi-annual periods).
+  for (let i = 0; i < 80 && date <= maturityIso; i += 1) {
+    const isMaturity = date === maturityIso;
+    flows.push({ date, coupon: couponPer100, principal: isMaturity ? 100 : 0 });
+    date = isoAddMonths(date, 6);
+  }
+  return flows;
+}
+
+/** The seeded pre-event effective schedules, keyed by instrument id. */
+function seedSchedules(): [string, InstrumentScheduleFlow[]][] {
+  return [
+    // Callable corporate bond (ISIN US04966QAX86) — the MCAL apply truncates this.
+    ["corp-atlas-6-2032", semiAnnualSchedule("2025-09-15", "2032-03-15", 3.0)],
+    // US Treasury 4.25% 2035 (ISIN US91282CHK24) — the INTR coupon acts on this.
+    ["us-treasury-4-25-2035", semiAnnualSchedule("2026-08-15", "2035-02-15", 2.125)],
+    // 3M discount bill (ISIN US912797KX52) — zero coupon, single redemption.
+    ["912797KX5", [{ date: "2026-10-22", coupon: 0, principal: 100 }]],
+  ];
+}
+
+/** The seeded CA inbox (a coupon, a full call, a maturity, a voluntary tender). */
+function seedCorporateActions(): [string, CorporateAction][] {
+  const actions: CorporateAction[] = [
+    {
+      caId: "ca-intr-ust425-2026h2",
+      isin: "US91282CHK24",
+      caev: "INTR",
+      camv: "MAND",
+      status: "ANNOUNCED",
+      announcementDate: "2026-07-15",
+      recordDate: "2026-08-01",
+      exDate: "2026-07-31",
+      paymentDate: "2026-08-15",
+      cashPer100: 2.125,
+      redeemedFraction: 0,
+      targetInstrument: "",
+      targetUnitsPer100: 0,
+      sourceRef: "seev.031/CANO-2026-0771",
+      sourcePriority: 10,
+      source: "us-treasury-fiscaldata",
+    },
+    {
+      caId: "ca-mcal-atlas-2026",
+      isin: "US04966QAX86",
+      caev: "MCAL",
+      camv: "MAND",
+      status: "ANNOUNCED",
+      announcementDate: "2026-08-10",
+      recordDate: "2026-09-01",
+      exDate: "2026-08-31",
+      paymentDate: "2026-09-15",
+      cashPer100: 101.5,
+      redeemedFraction: 1,
+      targetInstrument: "",
+      targetUnitsPer100: 0,
+      sourceRef: "MT564/CALL-ATLAS-2026",
+      sourcePriority: 40,
+      source: "vendor-ca-feed",
+    },
+    {
+      caId: "ca-redm-bill-2026",
+      isin: "US912797KX52",
+      caev: "REDM",
+      camv: "MAND",
+      status: "CONFIRMED",
+      announcementDate: "2026-07-22",
+      recordDate: "2026-10-21",
+      exDate: "2026-10-20",
+      paymentDate: "2026-10-22",
+      cashPer100: 100,
+      redeemedFraction: 1,
+      targetInstrument: "",
+      targetUnitsPer100: 0,
+      sourceRef: "seev.036/CACO-2026-1180",
+      sourcePriority: 10,
+      source: "us-treasury-fiscaldata",
+    },
+    {
+      caId: "ca-tend-atlas-2026",
+      isin: "US04966QAX86",
+      caev: "TEND",
+      camv: "VOLU",
+      status: "ANNOUNCED",
+      announcementDate: "2026-10-01",
+      recordDate: "2026-10-20",
+      exDate: "2026-10-19",
+      responseDeadline: "2026-11-01",
+      paymentDate: "2026-11-08",
+      cashPer100: 99.25,
+      redeemedFraction: 1,
+      targetInstrument: "",
+      targetUnitsPer100: 0,
+      sourceRef: "seev.031/CANO-2026-0904",
+      sourcePriority: 40,
+      source: "vendor-ca-feed",
+    },
+  ];
+  return actions.map((a) => [a.caId, a]);
+}
+
 /** The standalone mock transport. Construct once and inject at the app root. */
 export class MockTransport implements CelnetTransport {
   readonly label = "mock/replay";
@@ -2022,6 +2162,30 @@ export class MockTransport implements CelnetTransport {
         calendars: ["united_states"],
       },
     },
+    // A CALLABLE corporate bond — the offline join target for the mock full-call
+    // (MCAL) corporate action, so the Corporate Actions workspace can demonstrate
+    // apply-a-call → the shown schedule shortens. Its ISIN keys the seeded CA.
+    {
+      instrumentId: "corp-atlas-6-2032",
+      name: "Atlas Corp 6.00% 2032 (callable)",
+      description: "Atlas Corp senior note, 6.00% semi-annual, callable at 101.50",
+      currency: "USD",
+      externalIds: [{ scheme: "isin", value: "US04966QAX86" }],
+      family: "bond",
+      bond: {
+        issuer: "Atlas Corp",
+        couponRate: 6.0,
+        couponType: "fixed",
+        couponFrequency: "semi_annual",
+        dayCount: "act_act",
+        issueDate: { year: 2024, month: 3, day: 15 },
+        datedDate: { year: 2024, month: 3, day: 15 },
+        firstCouponDate: { year: 2024, month: 9, day: 15 },
+        maturityDate: { year: 2032, month: 3, day: 15 },
+        redemption: 100,
+        calendars: ["united_states"],
+      },
+    },
   ];
   /**
    * The admin-editable per-role capability bundles (the role's base authority).
@@ -2049,6 +2213,14 @@ export class MockTransport implements CelnetTransport {
   private readonly deals = new Map<string, Deal>();
   /** The booked linear-rates book: position_id → RatesPosition. */
   private readonly ratesPositions = new Map<bigint, RatesPosition>();
+  /** The offline corporate-action inbox: ca_id → CorporateAction (current version). */
+  private readonly corpActions = new Map<string, CorporateAction>(seedCorporateActions());
+  /** The effective (post-any-applied-CA) schedules: instrument_id → flows. */
+  private readonly instrumentSchedules = new Map<string, InstrumentScheduleFlow[]>(
+    seedSchedules(),
+  );
+  /** Outstanding-nominal pool factors: instrument_id → fraction of original (default 1). */
+  private readonly poolFactors = new Map<string, number>();
   /** Live notification subscribers (the global NotificationCenter), with desk scope. */
   private readonly notificationSubs = new Set<{
     scope: NotificationScope | undefined;
@@ -4556,6 +4728,126 @@ export class MockTransport implements CelnetTransport {
     return { positions };
   }
 
+  // --- CorporateActionsService (offline) -------------------------------------
+
+  /** Resolve a CA's ISIN to its reference-data instrument id (the schedule key). */
+  private instrumentIdForIsin(isin: string): string | undefined {
+    const def = this.mockInstruments.find((d) =>
+      d.externalIds.some((x) => x.scheme === "isin" && x.value === isin),
+    );
+    return def?.instrumentId;
+  }
+
+  async listInstrumentSchedule(
+    request: ListInstrumentScheduleRequest,
+  ): Promise<ListInstrumentScheduleResponse> {
+    const flows = this.instrumentSchedules.get(request.instrumentId) ?? [];
+    return {
+      instrumentId: request.instrumentId,
+      // Return a defensive copy so a caller cannot mutate the stored schedule.
+      flows: flows.map((f) => ({ ...f })),
+      poolFactor: this.poolFactors.get(request.instrumentId) ?? 1,
+    };
+  }
+
+  async listCorporateActions(
+    request: ListCorporateActionsRequest,
+  ): Promise<ListCorporateActionsResponse> {
+    let actions = [...this.corpActions.values()];
+    if (request.isin !== undefined && request.isin.length > 0) {
+      actions = actions.filter((a) => a.isin === request.isin);
+    }
+    return { actions: actions.map((a) => ({ ...a })) };
+  }
+
+  async confirmCorporateAction(
+    request: ConfirmCorporateActionRequest,
+  ): Promise<ConfirmCorporateActionResponse> {
+    const existing = this.corpActions.get(request.caId);
+    if (!existing) throw new Error(`unknown corporate action \`${request.caId}\``);
+    if (existing.status !== "ANNOUNCED" && existing.status !== "ELECTED") {
+      throw new Error(
+        `corporate action \`${request.caId}\` cannot be confirmed from status ${existing.status}`,
+      );
+    }
+    const confirmed: CorporateAction = { ...existing, status: "CONFIRMED" };
+    this.corpActions.set(confirmed.caId, confirmed);
+    return { action: { ...confirmed } };
+  }
+
+  async applyCorporateAction(
+    request: ApplyCorporateActionRequest,
+  ): Promise<ApplyCorporateActionResponse> {
+    const existing = this.corpActions.get(request.caId);
+    if (!existing) throw new Error(`unknown corporate action \`${request.caId}\``);
+    if (existing.status !== "CONFIRMED") {
+      throw new Error(
+        `corporate action \`${request.caId}\` must be confirmed before it can be applied`,
+      );
+    }
+    const instrumentId = this.instrumentIdForIsin(existing.isin);
+    if (instrumentId === undefined) {
+      throw new Error(`no instrument found for ISIN ${existing.isin}`);
+    }
+    const heldFace = request.heldFace;
+    const before = this.instrumentSchedules.get(instrumentId) ?? [];
+    let faceDelta = 0;
+    let cash = 0;
+    let after = before;
+    let poolFactor = this.poolFactors.get(instrumentId) ?? 1;
+
+    switch (existing.caev) {
+      // Full realisation events: the holding redeems, the schedule collapses to the
+      // single terminal cashflow at the event's payment date — the shown schedule
+      // SHORTENS. This is the demonstrable apply-a-call effect.
+      case "REDM":
+      case "MCAL":
+      case "BPUT":
+      case "TEND":
+      case "EXOF":
+      case "CONV": {
+        faceDelta = -heldFace;
+        cash = (heldFace * existing.cashPer100) / 100;
+        after = [{ date: existing.paymentDate, coupon: 0, principal: existing.cashPer100 }];
+        poolFactor = 0;
+        break;
+      }
+      // Partial reductions: outstanding nominal scales down by `redeemedFraction`;
+      // future principal scales in lockstep and the pool factor drops.
+      case "PCAL":
+      case "PRED":
+      case "DRAW": {
+        const frac = existing.redeemedFraction;
+        faceDelta = -heldFace * frac;
+        cash = (heldFace * frac * existing.cashPer100) / 100;
+        after = before.map((f) => ({ ...f, principal: f.principal * (1 - frac) }));
+        poolFactor *= 1 - frac;
+        break;
+      }
+      // Coupon / interest: cash income, no face change; the coupon just paid drops
+      // off the front of the remaining schedule.
+      case "INTR": {
+        faceDelta = 0;
+        cash = (heldFace * existing.cashPer100) / 100;
+        after = before.filter((f) => !(f.date === existing.paymentDate && f.principal === 0));
+        break;
+      }
+    }
+
+    this.instrumentSchedules.set(instrumentId, after);
+    this.poolFactors.set(instrumentId, poolFactor);
+    const applied: CorporateAction = { ...existing, status: "APPLIED" };
+    this.corpActions.set(applied.caId, applied);
+
+    return {
+      instrumentId,
+      faceDelta,
+      cash,
+      remainingFlows: after.length,
+      action: { ...applied },
+    };
+  }
+
   // --- NotificationService (offline) -----------------------------------------
 
   streamNotifications(
@@ -4783,11 +5075,12 @@ const MOCK_MIN_PASSWORD_LEN = 12;
 
 /** The actions NOT in the default `TRADER` bundle — the narrow, explicitly-granted
  * authorities `administer` / `risk_transfer`, the three management caps
- * `risk_manage` / `manage_pricing` / `manage_liquidity`, and the cross-asset read
- * `view_analytics` (mirrors the server's `default_trader_bundle`,
+ * `risk_manage` / `manage_pricing` / `manage_liquidity`, the cross-asset read
+ * `view_analytics`, the `hedge` authoring seat, and the `refdata` (corporate-action
+ * confirm/apply) steward seat (mirrors the server's `default_trader_bundle`,
  * `config/identity.rs`, which holds back `Action::{Administer, RiskTransfer,
- * RiskManage, ManagePricing, ManageLiquidity, ViewAnalytics}`). `ADMIN` is
- * grant-all (holds every action, including these). */
+ * RiskManage, ManagePricing, ManageLiquidity, ViewAnalytics, Hedge, Refdata}`).
+ * `ADMIN` is grant-all (holds every action, including these). */
 const MOCK_TRADER_EXCLUDED_ACTIONS: ReadonlySet<CapabilityAction> = new Set<CapabilityAction>([
   "administer",
   "risk_transfer",
@@ -4796,6 +5089,7 @@ const MOCK_TRADER_EXCLUDED_ACTIONS: ReadonlySet<CapabilityAction> = new Set<Capa
   "manage_liquidity",
   "view_analytics",
   "hedge",
+  "refdata",
 ]);
 
 /** The full action-by-asset surface (the ADMIN grant-all bundle). */

@@ -66,6 +66,14 @@ import type {
   ListDeskRequestsResponse,
   ListRatesPositionsRequest,
   ListRatesPositionsResponse,
+  ListInstrumentScheduleRequest,
+  ListInstrumentScheduleResponse,
+  ListCorporateActionsRequest,
+  ListCorporateActionsResponse,
+  ConfirmCorporateActionRequest,
+  ConfirmCorporateActionResponse,
+  ApplyCorporateActionRequest,
+  ApplyCorporateActionResponse,
   Notification,
   NotificationScope,
   RespondDeskRequestRequest,
@@ -473,6 +481,32 @@ export interface CelnetTransport {
 
   /** RiskService.ListRatesPositions — the booked rates positions, optionally scoped. */
   listRatesPositions(request: ListRatesPositionsRequest): Promise<ListRatesPositionsResponse>;
+
+  // --- CorporateActionsService — bond corporate actions ----------------------
+  //
+  // The bond CA surface: the effective post-CA instrument schedule read, the CA
+  // inbox read, and the confirm/apply lifecycle. Reads sit on the `view` floor;
+  // confirm/apply require the `refdata` capability (server-enforced).
+
+  /** CorporateActionsService.ListInstrumentSchedule — the effective post-CA cashflow schedule. */
+  listInstrumentSchedule(
+    request: ListInstrumentScheduleRequest,
+  ): Promise<ListInstrumentScheduleResponse>;
+
+  /** CorporateActionsService.ListCorporateActions — the CA inbox, optionally filtered to one ISIN. */
+  listCorporateActions(
+    request: ListCorporateActionsRequest,
+  ): Promise<ListCorporateActionsResponse>;
+
+  /** CorporateActionsService.ConfirmCorporateAction — announced|elected → confirmed (`refdata`). */
+  confirmCorporateAction(
+    request: ConfirmCorporateActionRequest,
+  ): Promise<ConfirmCorporateActionResponse>;
+
+  /** CorporateActionsService.ApplyCorporateAction — apply a confirmed CA + book the effect (`refdata`). */
+  applyCorporateAction(
+    request: ApplyCorporateActionRequest,
+  ): Promise<ApplyCorporateActionResponse>;
 
   /**
    * NotificationService.StreamNotifications — open the dedicated server→client

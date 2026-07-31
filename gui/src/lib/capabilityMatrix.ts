@@ -46,6 +46,7 @@ export const ACTION_LABELS: Record<CapabilityAction, string> = {
   manage_liquidity: "Manage liquidity",
   view_analytics: "View analytics",
   hedge: "Auto-hedge",
+  refdata: "Reference data",
 };
 
 /**
@@ -66,6 +67,7 @@ export const TRADER_HELD_BACK_ACTIONS: ReadonlySet<CapabilityAction> =
     "manage_liquidity",
     "view_analytics",
     "hedge",
+    "refdata",
   ]);
 
 /** Human-friendly asset-class labels for the matrix columns. */
@@ -225,6 +227,7 @@ const ACTION_PHRASE: Record<CapabilityAction, (asset: string) => string> = {
   manage_liquidity: (a) => `managing ${a} liquidity connections and aggregated books`,
   view_analytics: (a) => `viewing the ${a} client-flow analytics`,
   hedge: (a) => `authoring ${a} auto-hedge policies, thresholds and the hedge monitor`,
+  refdata: (a) => `confirming and applying ${a} corporate actions`,
 };
 
 /**
@@ -435,6 +438,19 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     readActions: ["view"],
     writeActions: ["manage_liquidity"],
   },
+  // Corporate Actions (docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md
+  // §11): the reference-data steward seat that confirms / applies bond corporate
+  // actions. Read = `view·FI` (the CA-inbox + schedule reads sit on the view floor,
+  // shared with the other FI reads); Write = the narrow `refdata` capability the
+  // confirm/apply lifecycle gates on (held back from the default trader bundle).
+  {
+    id: "corpactions",
+    label: "Corporate Actions",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: ["refdata"],
+  },
   // Analytics — the cross-asset client-flow / P&L-attribution surface
   // (docs/ANALYTICS-REQUIREMENTS.md §11.1a). A management-sensitive READ on BOTH
   // assets (holding it on either admits — the server gate is a cross-product OR),
@@ -581,7 +597,7 @@ export interface RoleAssetSummary {
  * The honest ROLE-BASELINE capability summary for a user row: for each asset
  * class, how many of the {@link CAPABILITY_ACTIONS} the role holds with NO
  * per-user overlay (`resolveEffective(role, ∅)`). This is the baseline the role
- * confers (admin ⇒ 15/15 both; trader ⇒ 9/15 both — every action except the six
+ * confers (admin ⇒ 17/17 both; trader ⇒ 9/17 both — every action except the eight
  * held-back authorities in {@link TRADER_HELD_BACK_ACTIONS}); the full,
  * overlay-adjusted effective set stays reachable through the per-user Permissions
  * editor. Deliberately overlay-free so a compact roster chip never misrepresents a

@@ -2241,7 +2241,8 @@ export type CapabilityAction =
   | "manage_pricing"
   | "manage_liquidity"
   | "view_analytics"
-  | "hedge";
+  | "hedge"
+  | "refdata";
 
 /** The asset class a capability applies to (`celnet.wire.CapabilityDesc.asset`). */
 export type CapabilityAsset = "fx_options" | "fixed_income";
@@ -2273,6 +2274,11 @@ export const CAPABILITY_ACTIONS: readonly CapabilityAction[] = [
   "manage_liquidity",
   "view_analytics",
   "hedge",
+  // Master reference data: confirm / apply bond corporate actions (the CAEV/CAMV
+  // lifecycle). The 17th action (server `Action::ALL` discriminant order — last,
+  // after `hedge`). Held back from the default trader bundle (an explicitly-granted
+  // steward seat) — see `TRADER_HELD_BACK_ACTIONS`.
+  "refdata",
 ];
 
 /** Both asset classes in canonical order — the column axis of the matrix. */
@@ -4817,3 +4823,201 @@ export interface NotificationScope {
 export interface StreamNotificationsRequest {
   scope?: NotificationScope;
 }
+
+// --- bond corporate actions (CorporateActionsService) -----------------------
+//
+// The bond corporate-action surface — the effective post-CA instrument schedule
+// read, the CA inbox read, and the confirm/apply lifecycle. Messages are FLAT and
+// civil dates are ISO `YYYY-MM-DD` strings (the wire carries them verbatim);
+// `caev`/`camv`/`status` ride as their proto enum tags (see `data/enums.ts`). The
+// reads sit on the `view` floor; confirm/apply require the dedicated `refdata`
+// capability (gated in the workspace + enforced server-side).
+
+/**
+ * CAEV — the corporate-action event type (proto `CorpEventType`, tags 1..10; the
+ * proto3 `0`/`UNSPECIFIED` sentinel is unnamed here). The govvie-deterministic set
+ * (REDM/INTR/MCAL/PCAL/PRED/DRAW/BPUT) is derivable in-house; the corporate set
+ * (TEND/EXOF/CONV) is sourced only via a customer-wired vendor adapter.
+ */
+export type CorpEventType =
+  | "REDM"
+  | "INTR"
+  | "MCAL"
+  | "PCAL"
+  | "PRED"
+  | "DRAW"
+  | "BPUT"
+  | "TEND"
+  | "EXOF"
+  | "CONV";
+
+/**
+ * CAMV — the mandatory / voluntary indicator that drives the election lifecycle
+ * (proto `CorpMandatory`, tags 1..3): MAND applies automatically; VOLU opens a
+ * holder-optional election; CHOS must respond, choosing among outcomes.
+ */
+export type CorpMandatory = "MAND" | "VOLU" | "CHOS";
+
+/**
+ * The lifecycle status of a corporate action (proto `CorpActionStatus`, tags 1..6):
+ * `ANNOUNCED → (ELECTED) → CONFIRMED → APPLIED`, plus `REVERSED` / `CANCELLED`. The
+ * proto3 `0`/`UNSPECIFIED` sentinel is unnamed.
+ */
+export type CorpActionStatus =
+  | "ANNOUNCED"
+  | "ELECTED"
+  | "CONFIRMED"
+  | "APPLIED"
+  | "REVERSED"
+  | "CANCELLED";
+
+/**
+ * A normalized corporate-action event as stored in the golden source
+ * (`celnet.wire.CorporateActionDesc`), flattened for the CA inbox. Dates are ISO
+ * `YYYY-MM-DD` strings; `responseDeadline` is present only for a VOLU/CHOS election.
+ */
+export interface CorporateAction {
+  /** The stable id of the corporate action (shared across its lifecycle versions). */
+  caId: string;
+  /** The ISO 6166 ISIN of the affected instrument (the join key to the schedule). */
+  isin: string;
+  /** The event type. */
+  caev: CorpEventType;
+  /** The mandatory / voluntary indicator. */
+  camv: CorpMandatory;
+  /** The current lifecycle status. */
+  status: CorpActionStatus;
+  /** Announcement date (ISO `YYYY-MM-DD`). */
+  announcementDate: string;
+  /** Record date — the balance snapshot that fixes entitlement. */
+  recordDate: string;
+  /** Ex date — from which the security trades without the entitlement. */
+  exDate: string;
+  /** Response / market deadline for a VOLU/CHOS election (absent for MAND). */
+  responseDeadline?: string;
+  /** Payment / effective date — when the movement settles and the effect applies. */
+  paymentDate: string;
+  /** Cash per 100 face of a redemption / call / put / tender (or coupon cash). */
+  cashPer100: number;
+  /** Fraction of outstanding nominal redeemed by a partial event, in [0, 1]. */
+  redeemedFraction: number;
+  /** Exchange / conversion target instrument id (EXOF / CONV); empty otherwise. */
+  targetInstrument: string;
+  /** Units of the target created per 100 face of the source; 0 otherwise. */
+  targetUnitsPer100: number;
+  /** Originating source-message reference (MT 564 / seev.031 id) for audit lineage. */
+  sourceRef: string;
+  /** The source-priority the mastering provenance stamped (survivorship ordering). */
+  sourcePriority: number;
+  /** The source label that produced this version (lineage). */
+  source: string;
+}
+
+/**
+ * One dated cashflow of the effective (post-any-applied-CA) bond schedule, in
+ * per-100-original-face cash (`celnet.wire.InstrumentScheduleFlow`).
+ */
+export interface InstrumentScheduleFlow {
+  /** The payment date, ISO `YYYY-MM-DD`. */
+  date: string;
+  /** Coupon / interest cash on this date, per 100 face. */
+  coupon: number;
+  /** Principal / redemption cash on this date, per 100 face (0 except a redemption). */
+  principal: number;
+}
+
+/** `CorporateActionsService.ListInstrumentSchedule` request. */
+export interface ListInstrumentScheduleRequest {
+  /** The reference-data instrument id whose schedule to resolve. */
+  instrumentId: string;
+}
+
+/** The effective (post-any-applied-CA) schedule of the requested instrument. */
+export interface ListInstrumentScheduleResponse {
+  /** The instrument the schedule belongs to. */
+  instrumentId: string;
+  /** The remaining cashflows in ascending date order. */
+  flows: InstrumentScheduleFlow[];
+  /** Current outstanding nominal as a fraction of original (1.0 = full). */
+  poolFactor: number;
+}
+
+/** `CorporateActionsService.ListCorporateActions` request; absent `isin` ⇒ all. */
+export interface ListCorporateActionsRequest {
+  /** Restrict to actions targeting this ISIN (absent ⇒ all known actions). */
+  isin?: string;
+}
+
+/** The current version of every matching corporate action. */
+export interface ListCorporateActionsResponse {
+  actions: CorporateAction[];
+}
+
+/**
+ * `CorporateActionsService.ConfirmCorporateAction` request — confirm a CA's
+ * movement (`announced|elected → confirmed`). Requires the `refdata` capability.
+ */
+export interface ConfirmCorporateActionRequest {
+  caId: string;
+}
+
+/** The corporate action after the confirm transition. */
+export interface ConfirmCorporateActionResponse {
+  action: CorporateAction;
+}
+
+/**
+ * `CorporateActionsService.ApplyCorporateAction` request — apply a confirmed CA:
+ * re-derive the schedule and book the position effect on the desk's held face.
+ * Requires the `refdata` capability.
+ */
+export interface ApplyCorporateActionRequest {
+  caId: string;
+  /** The desk's held face (nominal) in the instrument the effect acts on. */
+  heldFace: number;
+}
+
+/** The result of applying a corporate action. */
+export interface ApplyCorporateActionResponse {
+  /** The instrument the effect touched. */
+  instrumentId: string;
+  /** The change in held face; negative = a reduction, `-heldFace` = realised. */
+  faceDelta: number;
+  /** The cash thrown off by the event on the holding (coupon or principal). */
+  cash: number;
+  /** Cashflows remaining in the instrument's post-event schedule. */
+  remainingFlows: number;
+  /** The corporate action after the apply (status APPLIED). */
+  action: CorporateAction;
+}
+
+/** Human-readable labels for the {@link CorpEventType} rows (CAEV). */
+export const CORP_EVENT_TYPE_LABELS: Record<CorpEventType, string> = {
+  REDM: "Redemption",
+  INTR: "Coupon / interest",
+  MCAL: "Full call",
+  PCAL: "Partial call",
+  PRED: "Partial redemption",
+  DRAW: "Sinking-fund drawing",
+  BPUT: "Put",
+  TEND: "Tender offer",
+  EXOF: "Exchange offer",
+  CONV: "Conversion",
+};
+
+/** Human-readable labels for the {@link CorpMandatory} indicator (CAMV). */
+export const CORP_MANDATORY_LABELS: Record<CorpMandatory, string> = {
+  MAND: "Mandatory",
+  VOLU: "Voluntary",
+  CHOS: "Choice",
+};
+
+/** Human-readable labels for the {@link CorpActionStatus} lifecycle. */
+export const CORP_ACTION_STATUS_LABELS: Record<CorpActionStatus, string> = {
+  ANNOUNCED: "Announced",
+  ELECTED: "Elected",
+  CONFIRMED: "Confirmed",
+  APPLIED: "Applied",
+  REVERSED: "Reversed",
+  CANCELLED: "Cancelled",
+};

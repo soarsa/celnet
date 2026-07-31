@@ -22,6 +22,9 @@ import type {
   BarrierKind,
   BarrierSide,
   BasketKind,
+  CorpActionStatus,
+  CorpEventType,
+  CorpMandatory,
   Cut,
   DayCount,
   DeltaConvention,
@@ -469,6 +472,33 @@ export const transferPriceBasis = offsetEnumCodec<TransferPriceBasis>(
  */
 export const priceBasis = offsetEnumCodec<PriceBasis>(
   ["MID", "MARK_TO_MARKET", "AGREED"],
+  1,
+);
+
+/**
+ * `CorpEventType` ↔ proto `CorpEventType` (CORP_EVENT_TYPE_UNSPECIFIED=0, REDM=1,
+ * INTR=2, MCAL=3, PCAL=4, PRED=5, DRAW=6, BPUT=7, TEND=8, EXOF=9, CONV=10). The GUI
+ * union names only the meaningful members, so the codec offsets the first named
+ * member (`REDM`) to proto tag 1; decode-zero (`UNSPECIFIED`) clamps to `REDM`.
+ */
+export const corpEventType = offsetEnumCodec<CorpEventType>(
+  ["REDM", "INTR", "MCAL", "PCAL", "PRED", "DRAW", "BPUT", "TEND", "EXOF", "CONV"],
+  1,
+);
+
+/**
+ * `CorpMandatory` ↔ proto `CorpMandatory` (CORP_MANDATORY_UNSPECIFIED=0, MAND=1,
+ * VOLU=2, CHOS=3). Named members start at proto tag 1.
+ */
+export const corpMandatory = offsetEnumCodec<CorpMandatory>(["MAND", "VOLU", "CHOS"], 1);
+
+/**
+ * `CorpActionStatus` ↔ proto `CorpActionStatus` (CORP_ACTION_STATUS_UNSPECIFIED=0,
+ * ANNOUNCED=1, ELECTED=2, CONFIRMED=3, APPLIED=4, REVERSED=5, CANCELLED=6). Named
+ * members start at proto tag 1.
+ */
+export const corpActionStatus = offsetEnumCodec<CorpActionStatus>(
+  ["ANNOUNCED", "ELECTED", "CONFIRMED", "APPLIED", "REVERSED", "CANCELLED"],
   1,
 );
 

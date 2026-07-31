@@ -75,6 +75,14 @@ import type {
   ListDeskRequestsResponse,
   ListRatesPositionsRequest,
   ListRatesPositionsResponse,
+  ListInstrumentScheduleRequest,
+  ListInstrumentScheduleResponse,
+  ListCorporateActionsRequest,
+  ListCorporateActionsResponse,
+  ConfirmCorporateActionRequest,
+  ConfirmCorporateActionResponse,
+  ApplyCorporateActionRequest,
+  ApplyCorporateActionResponse,
   Notification,
   NotificationScope,
   RespondDeskRequestRequest,
@@ -132,6 +140,14 @@ import {
   listDeskRequestsResponseFromWire,
   listRatesPositionsToWire,
   listRatesPositionsResponseFromWire,
+  listInstrumentScheduleToWire,
+  listInstrumentScheduleResponseFromWire,
+  listCorporateActionsToWire,
+  listCorporateActionsResponseFromWire,
+  confirmCorporateActionToWire,
+  confirmCorporateActionResponseFromWire,
+  applyCorporateActionToWire,
+  applyCorporateActionResponseFromWire,
   notificationFromWire,
   respondDeskRequestToWire,
   respondDeskRequestResponseFromWire,
@@ -1684,6 +1700,52 @@ export class WsTransport implements CelnetTransport {
       "list_rates_positions_response",
     );
     return listRatesPositionsResponseFromWire(reply);
+  }
+
+  // --- CorporateActionsService — bond corporate actions ----------------------
+
+  async listInstrumentSchedule(
+    request: ListInstrumentScheduleRequest,
+  ): Promise<ListInstrumentScheduleResponse> {
+    const reply = await this.conn.request(
+      "list_instrument_schedule",
+      listInstrumentScheduleToWire(request),
+      "instrument_schedule",
+    );
+    return listInstrumentScheduleResponseFromWire(reply);
+  }
+
+  async listCorporateActions(
+    request: ListCorporateActionsRequest,
+  ): Promise<ListCorporateActionsResponse> {
+    const reply = await this.conn.request(
+      "list_corporate_actions",
+      listCorporateActionsToWire(request),
+      "corporate_actions",
+    );
+    return listCorporateActionsResponseFromWire(reply);
+  }
+
+  async confirmCorporateAction(
+    request: ConfirmCorporateActionRequest,
+  ): Promise<ConfirmCorporateActionResponse> {
+    const reply = await this.conn.request(
+      "confirm_corporate_action",
+      confirmCorporateActionToWire(request),
+      "corporate_action_confirmed",
+    );
+    return confirmCorporateActionResponseFromWire(reply);
+  }
+
+  async applyCorporateAction(
+    request: ApplyCorporateActionRequest,
+  ): Promise<ApplyCorporateActionResponse> {
+    const reply = await this.conn.request(
+      "apply_corporate_action",
+      applyCorporateActionToWire(request),
+      "corporate_action_applied",
+    );
+    return applyCorporateActionResponseFromWire(reply);
   }
 
   // --- NotificationService — dedicated server→client push stream -------------

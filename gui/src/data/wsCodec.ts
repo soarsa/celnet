@@ -47,6 +47,16 @@ import type {
   CcyExposureLeg,
   CcyPair,
   Conventions,
+  CorporateAction,
+  InstrumentScheduleFlow,
+  ListInstrumentScheduleRequest,
+  ListInstrumentScheduleResponse,
+  ListCorporateActionsRequest,
+  ListCorporateActionsResponse,
+  ConfirmCorporateActionRequest,
+  ConfirmCorporateActionResponse,
+  ApplyCorporateActionRequest,
+  ApplyCorporateActionResponse,
   CrossGamma,
   Deal,
   DealerQuote,
@@ -1997,6 +2007,108 @@ export function listDealsToWire(r: ListDealsRequest): WireObject {
 
 export function listDealsResponseFromWire(o: WireObject): ListDealsResponse {
   return { deals: array(o, "deals").map(dealFromWire) };
+}
+
+// --- bond corporate actions (CorporateActionsService) -----------------------
+//
+// Flat messages, ISO `YYYY-MM-DD` civil-date strings, and `caev`/`camv`/`status`
+// as their proto enum tags — the exact mirror of the server's generated_codec CA
+// field tables. Request `session_token` + framing `correlation_id` are auto-injected
+// by the `WsConnection`, so the encoders carry only the domain fields.
+
+/** Decode a wire `CorporateActionDesc` (flat, ISO dates, tag-carried enums). */
+export function corporateActionFromWire(o: WireObject): CorporateAction {
+  const a: CorporateAction = {
+    caId: str(o, "ca_id"),
+    isin: str(o, "isin"),
+    caev: e.corpEventType.fromWire(enumNum(o, "caev")),
+    camv: e.corpMandatory.fromWire(enumNum(o, "camv")),
+    status: e.corpActionStatus.fromWire(enumNum(o, "status")),
+    announcementDate: str(o, "announcement_date"),
+    recordDate: str(o, "record_date"),
+    exDate: str(o, "ex_date"),
+    paymentDate: str(o, "payment_date"),
+    cashPer100: num(o, "cash_per_100"),
+    redeemedFraction: num(o, "redeemed_fraction"),
+    targetInstrument: str(o, "target_instrument"),
+    targetUnitsPer100: num(o, "target_units_per_100"),
+    sourceRef: str(o, "source_ref"),
+    sourcePriority: num(o, "source_priority"),
+    source: str(o, "source"),
+  };
+  // proto3 `optional string`: present only for a VOLU/CHOS election.
+  const rd = o["response_deadline"];
+  if (typeof rd === "string" && rd.length > 0) a.responseDeadline = rd;
+  return a;
+}
+
+/** Decode one wire `InstrumentScheduleFlow`. */
+export function instrumentScheduleFlowFromWire(o: WireObject): InstrumentScheduleFlow {
+  return {
+    date: str(o, "date"),
+    coupon: num(o, "coupon"),
+    principal: num(o, "principal"),
+  };
+}
+
+export function listInstrumentScheduleToWire(
+  r: ListInstrumentScheduleRequest,
+): WireObject {
+  return { instrument_id: r.instrumentId };
+}
+
+export function listInstrumentScheduleResponseFromWire(
+  o: WireObject,
+): ListInstrumentScheduleResponse {
+  return {
+    instrumentId: str(o, "instrument_id"),
+    flows: array(o, "flows").map(instrumentScheduleFlowFromWire),
+    poolFactor: num(o, "pool_factor"),
+  };
+}
+
+export function listCorporateActionsToWire(
+  r: ListCorporateActionsRequest,
+): WireObject {
+  const w: WireObject = {};
+  if (r.isin !== undefined && r.isin.length > 0) w["isin"] = r.isin;
+  return w;
+}
+
+export function listCorporateActionsResponseFromWire(
+  o: WireObject,
+): ListCorporateActionsResponse {
+  return { actions: array(o, "actions").map(corporateActionFromWire) };
+}
+
+export function confirmCorporateActionToWire(
+  r: ConfirmCorporateActionRequest,
+): WireObject {
+  return { ca_id: r.caId };
+}
+
+export function confirmCorporateActionResponseFromWire(
+  o: WireObject,
+): ConfirmCorporateActionResponse {
+  return { action: corporateActionFromWire(child(o, "action")) };
+}
+
+export function applyCorporateActionToWire(
+  r: ApplyCorporateActionRequest,
+): WireObject {
+  return { ca_id: r.caId, held_face: r.heldFace };
+}
+
+export function applyCorporateActionResponseFromWire(
+  o: WireObject,
+): ApplyCorporateActionResponse {
+  return {
+    instrumentId: str(o, "instrument_id"),
+    faceDelta: num(o, "face_delta"),
+    cash: num(o, "cash"),
+    remainingFlows: num(o, "remaining_flows"),
+    action: corporateActionFromWire(child(o, "action")),
+  };
 }
 
 // --- rates Book/List encoders + decoders ------------------------------------
