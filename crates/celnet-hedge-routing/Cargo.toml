@@ -1,0 +1,29 @@
+[package]
+name = "celnet-hedge-routing"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet auto-hedge exit-policy engine — the pure, server-free decision-graph that resolves a book's warehoused-risk state to an EXIT ACTION (warehouse / cross-internal / skew / submit-market-order / rfq-out / split / escalate) from typed IF <risk-field> <op> <value> THEN <action> rules, plus the soft banded warehouse-threshold model (band classification + overflow-to-edge sizing + internalise-then-hedge netting decomposition). Mirrors celnet-risk-routing file-for-file, reuses its RouteOp/RouteValue verbatim and celnet-limits' RagStatus/LimitMetric bands. No server, wire, or market-data dependency."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+# The typed condition vocabulary (RouteOp/RouteValue/CtxValue/FieldKind) and its
+# total, never-panicking eval matrix are reused VERBATIM — one source of truth for
+# the decision-graph condition semantics shared with risk routing (docs
+# AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md §5.1). One-way edge:
+# hedge-routing -> risk-routing.
+celnet-risk-routing.workspace = true
+# The warehouse threshold is a SOFT banded limit reusing the limits vocabulary
+# (LimitMetric / LimitSpec soft bands / RagStatus / Utilization) rather than a
+# parallel one (§4.2). One-way edge: hedge-routing -> limits.
+celnet-limits.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true
