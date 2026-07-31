@@ -72,9 +72,15 @@ struct Args {
     #[arg(long, default_value_t = 5)]
     members: usize,
 
-    /// Seconds between composite emissions.
+    /// Seconds between composite emissions / per-member quote pushes.
     #[arg(long, default_value_t = 2)]
     interval: u64,
+
+    /// Sub-second override of `--interval`, in **milliseconds** (`0` ⇒ use `--interval`
+    /// seconds). Lets the LP feed refresh the composite faster than 1s for a livelier
+    /// book (the deploy sets it via `LPSIM_PERIOD_MS`).
+    #[arg(long, default_value_t = 0)]
+    interval_ms: u64,
 
     /// Which instruments to quote: `all`, or a comma-separated list of ISINs and/or
     /// CUSIPs.
@@ -144,6 +150,19 @@ struct Args {
     /// round to exercise the server's MAD gate and staleness decay).
     #[arg(long, default_value_t = false)]
     no_faults: bool,
+}
+
+impl Args {
+    /// The effective quote/composite cadence: `--interval-ms` when set (sub-second
+    /// capable), else `--interval` whole seconds; floored to 1ms so the loop always
+    /// advances.
+    fn quote_interval(&self) -> Duration {
+        if self.interval_ms > 0 {
+            Duration::from_millis(self.interval_ms.max(1))
+        } else {
+            Duration::from_secs(self.interval.max(1))
+        }
+    }
 }
 
 fn main() -> std::process::ExitCode {
@@ -223,7 +242,7 @@ fn main() -> std::process::ExitCode {
         };
         let opts = BookFeedOptions {
             book_poll: Duration::from_secs(args.book_poll.max(1)),
-            quote_interval: Duration::from_secs(args.interval.max(1)),
+            quote_interval: args.quote_interval(),
             credentials: LoginCredentials {
                 email: email.clone(),
                 password,
@@ -309,7 +328,7 @@ fn main() -> std::process::ExitCode {
         if args.once {
             return std::process::ExitCode::SUCCESS;
         }
-        std::thread::sleep(std::time::Duration::from_secs(args.interval.max(1)));
+        std::thread::sleep(args.quote_interval());
     }
 }
 
@@ -365,4 +384,25 @@ fn wall_clock() -> String {
 /// Parse a `YYYY-MM-DD` date into a [`BrokenDate`], validated against the calendar.
 fn parse_iso_date(s: &str) -> Option<BrokenDate> {
     celnet_lp_sim::universe::parse_civil_date(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The default parse (no `--interval-ms`) keeps the whole-second cadence; an
+    /// `--interval-ms` override takes precedence and is sub-second capable, so a redeploy
+    /// with `LPSIM_PERIOD_MS` refreshes the composite faster than 1s.
+    #[test]
+    fn interval_ms_overrides_seconds_and_is_sub_second_capable() {
+        let base = Args::parse_from(["lp-sim", "--interval", "2"]);
+        assert_eq!(base.quote_interval(), Duration::from_secs(2));
+
+        let fast = Args::parse_from(["lp-sim", "--interval", "2", "--interval-ms", "250"]);
+        assert_eq!(fast.quote_interval(), Duration::from_millis(250));
+
+        // A zero override falls back to the whole-second interval; both floor to ≥1 unit.
+        let zero = Args::parse_from(["lp-sim", "--interval", "0", "--interval-ms", "0"]);
+        assert_eq!(zero.quote_interval(), Duration::from_secs(1));
+    }
 }

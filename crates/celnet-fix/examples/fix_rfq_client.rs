@@ -109,7 +109,10 @@ struct Args {
     req_id: String,
     // Persistent-session loop controls (see the local defaults in `parse_args`).
     repeat: u64,
-    interval_secs: u64,
+    /// Cadence between streamed RFQs, in milliseconds (sub-second capable). Set by
+    /// `--interval-ms` directly, or `--interval` (whole seconds ×1000); default
+    /// [`DEFAULT_INTERVAL_MS`].
+    interval_ms: u64,
     manual_every: u64,
     manual_tenor: u32,
     // The bogus curve symbol used for the "unknown security" manual variant: half the
@@ -123,9 +126,10 @@ struct Args {
     // Run the fixed-income venue as an RFS *stream* (Subscribe → continuous re-priced
     // quotes) instead of a one-shot RFQ (Snapshot); each cycle holds the stream.
     stream: bool,
-    // The RFS hold per cycle (seconds): how long to read streamed updates before the
-    // next cycle / lift. Only used in `--intent rfs` mode.
-    stream_hold_secs: u64,
+    // The RFS hold per cycle, in milliseconds: how long to read streamed updates before
+    // the next cycle / lift. Set by `--stream-hold-ms` directly, or `--stream-hold` (whole
+    // seconds ×1000); default [`DEFAULT_STREAM_HOLD_MS`]. Only used in `--intent rfs` mode.
+    stream_hold_ms: u64,
 }
 
 fn usage_and_exit(msg: &str) -> ! {
@@ -143,16 +147,24 @@ fn print_help() -> ! {
          fi:  --curve USD-OIS  --tenor 5  --notional 10000000  --side pay|receive|two-way\n  \
          fx:  --pair EURUSD  --type call|put  --strike 1.10  --expiry-years 1.0\n       \
          --side observe|buy|sell  --settlement deliverable|ndf  --exercise european|american\n  \
-         loop: --repeat 0  --interval 120  --manual-every 3  --manual-tenor 15  --manual-security XXX-UNKNOWN  --lift-every 3\n  \
+         loop: --repeat 0  --interval-ms 750 (or --interval SECS)  --stream-hold-ms 2000  --manual-every 3  --manual-tenor 15  --manual-security XXX-UNKNOWN  --lift-every 3\n  \
          common: --sender CELNET-CPTY  --target CELNET  --req-id RFQ-CLI"
     );
     std::process::exit(0);
 }
 
-/// Default cadence between streamed RFQs (seconds) when `--interval` is not given — the
-/// operator-standard 120s heartbeat. The deploy simulator overrides it via `--interval`
-/// (`FIXSIM_PERIOD`); never a bare magic number at the call site.
-const DEFAULT_INTERVAL_SECS: u64 = 120;
+/// Default cadence between streamed RFQs, in **milliseconds**, when neither `--interval`
+/// nor `--interval-ms` is given — a deliberately **fast** sub-second default (750ms) so a
+/// stream builds up deals / positions / per-client flow / portfolio risk quickly for a
+/// lively demo, bounded so it never floods the venue. The deploy simulator overrides it
+/// via `--interval-ms` (`FIXSIM_PERIOD_MS`) or `--interval` (`FIXSIM_PERIOD`, whole
+/// seconds); never a bare magic number at the call site.
+const DEFAULT_INTERVAL_MS: u64 = 750;
+
+/// Default RFS hold per cycle, in **milliseconds**, when neither `--stream-hold` nor
+/// `--stream-hold-ms` is given — how long an RFS cycle reads streamed updates before the
+/// next cycle / lift. Kept short (2s) so the fast cadence turns over many cycles.
+const DEFAULT_STREAM_HOLD_MS: u64 = 2_000;
 
 /// Default `--manual-every`: 1 in 3 streamed RFQs is a manual (desk-routed) one, giving a
 /// ~2/3 auto-quoted : ~1/3 manual mix.
@@ -185,13 +197,13 @@ fn parse_args() -> Args {
     // rotates the tenor: mostly on-the-run (auto-quoted), every `--manual-every`-th a
     // `--manual-tenor` request the venue routes to a human desk.
     let mut repeat = 1_u64;
-    let mut interval_secs = DEFAULT_INTERVAL_SECS;
+    let mut interval_ms = DEFAULT_INTERVAL_MS;
     let mut manual_every = DEFAULT_MANUAL_EVERY;
     let mut manual_tenor = 15_u32;
     let mut manual_security = String::from(DEFAULT_MANUAL_SECURITY);
     let mut lift_every = 0_u64;
     let mut stream = false;
-    let mut stream_hold_secs = 20_u64;
+    let mut stream_hold_ms = DEFAULT_STREAM_HOLD_MS;
     // `--side` means different things per asset and flags arrive in any order, so
     // capture it raw and interpret it after the loop once `--asset` is known.
     let mut side_raw: Option<String> = None;
@@ -270,8 +282,14 @@ fn parse_args() -> Args {
                 })
             }
             "--interval" => {
-                interval_secs = val.parse().unwrap_or_else(|_| {
+                let secs: u64 = val.parse().unwrap_or_else(|_| {
                     usage_and_exit("--interval must be a whole number of seconds")
+                });
+                interval_ms = secs.saturating_mul(1_000);
+            }
+            "--interval-ms" => {
+                interval_ms = val.parse().unwrap_or_else(|_| {
+                    usage_and_exit("--interval-ms must be a whole number of milliseconds")
                 })
             }
             "--manual-every" => {
@@ -298,8 +316,14 @@ fn parse_args() -> Args {
                 }
             }
             "--stream-hold" => {
-                stream_hold_secs = val.parse().unwrap_or_else(|_| {
+                let secs: u64 = val.parse().unwrap_or_else(|_| {
                     usage_and_exit("--stream-hold must be a whole number of seconds")
+                });
+                stream_hold_ms = secs.saturating_mul(1_000);
+            }
+            "--stream-hold-ms" => {
+                stream_hold_ms = val.parse().unwrap_or_else(|_| {
+                    usage_and_exit("--stream-hold-ms must be a whole number of milliseconds")
                 })
             }
             other => usage_and_exit(&format!("unknown flag `{other}`")),
@@ -385,13 +409,13 @@ fn parse_args() -> Args {
         target,
         req_id,
         repeat,
-        interval_secs,
+        interval_ms,
         manual_every,
         manual_tenor,
         manual_security,
         lift_every,
         stream,
-        stream_hold_secs,
+        stream_hold_ms,
     }
 }
 
@@ -587,7 +611,7 @@ async fn main() -> std::io::Result<()> {
                         side: args.rates_side,
                         subscription: SubscriptionRequest::Subscribe,
                     };
-                    let hold = std::time::Duration::from_secs(args.stream_hold_secs.max(1));
+                    let hold = std::time::Duration::from_millis(args.stream_hold_ms.max(1));
                     let lift_after = should_lift.then(|| hold / 2);
                     let outcome = sess
                         .stream(
@@ -794,7 +818,7 @@ async fn main() -> std::io::Result<()> {
         if !forever && i >= args.repeat {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_secs(args.interval_secs)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(args.interval_ms)).await;
     }
 
     Ok(())
