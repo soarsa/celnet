@@ -97,8 +97,9 @@ describe("FI Streaming — domain membership (Fixed Income ONLY)", () => {
   it("LEADS the Fixed Income rail (the primary FI surface) — above the shared widgets", () => {
     const fi = railForDomain("fixed_income").map((r) => r.id);
     expect(fi[0]).toBe("fistreaming");
-    // Above every other FI widget (Market Data / Risk / Book / Quoting).
-    for (const other of ["surface", "risk", "book", "quoting"] as const) {
+    // Above every other FI widget (Market Data / Risk / Quoting). "book" is no
+    // longer on the FI rail — the FI ledger is folded into FI "Risk" as tabs.
+    for (const other of ["surface", "risk", "quoting"] as const) {
       expect(fi.indexOf("fistreaming")).toBeLessThan(fi.indexOf(other));
     }
   });

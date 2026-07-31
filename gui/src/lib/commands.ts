@@ -249,6 +249,10 @@ export const RAIL: readonly {
   { id: "risk", glyph: "⊞", label: "Risk", subtitle: "Scenario P&L / greeks", section: "risk", assets: CAPABILITY_ASSETS },
   // The position LEDGER — booked positions, booking, and deals (what you hold), NOT
   // the LP price composite (Agg Book) nor a risk-management bucket (Risk Portfolios).
+  // FX-TAB ONLY: under Fixed Income this row is dropped ({@link DOMAIN_RAIL_EXCLUDED})
+  // — the FI ledger (Positions + Deals + Quotes) is folded into the FI "Risk" surface
+  // as tabs (docs/FI-BOOK-CONCEPTS.md). It still serves both assets (reachability /
+  // license / ⌘N unchanged); only its FI rail membership is withdrawn.
   { id: "book", glyph: "▤", label: "Book", subtitle: "Positions · deals · P&L", section: "risk", assets: CAPABILITY_ASSETS },
   { id: "quoting", glyph: "⇌", label: "Quoting", subtitle: "RFQ / IOI desk inbox", section: "markets", assets: ["fixed_income"] },
   // Corporate Actions (docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md):
@@ -377,6 +381,26 @@ export const HEDGING_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>
 ]);
 
 /**
+ * Per-domain rail memberships WITHDRAWN from a cross-asset row even though it
+ * serves that asset — a per-domain CONSOLIDATION override (the inverse of the
+ * {@link ANALYTICS_WORKSPACES} / {@link HEDGING_WORKSPACES} hoists, which FORCE a
+ * single domain; this only SUBTRACTS a domain).
+ *
+ * The Fixed-Income "Book" (position ledger) is folded INTO the Fixed-Income "Risk"
+ * surface: its Deals + Positions (+ Quotes) become tabs of `RiskWorkspace` under
+ * Fixed Income (docs/FI-BOOK-CONCEPTS.md), so the redundant Book rail entry is
+ * dropped from the FI rail — while it STAYS on FX Options, where Risk and Book
+ * remain separate surfaces. Crucially the row keeps serving BOTH asset classes:
+ * `workspaceAssets("book")`, `workspaceAccessible`, the license three-state and the
+ * global `⌘N` chord are ALL unchanged — only the row's Fixed-Income rail MEMBERSHIP
+ * is removed, mirroring how the membership-override sets scope a row's domains
+ * without touching its `assets`.
+ */
+export const DOMAIN_RAIL_EXCLUDED: Partial<Record<WorkspaceId, ReadonlySet<Domain>>> = {
+  book: new Set<Domain>(["fixed_income"]),
+};
+
+/**
  * The capability ACTION a workspace's reachability gates on, when it is NOT the
  * default `view`. A few surfaces are write-class enough that merely viewing their
  * asset does not entitle a user to reach them — the FI Risk Transfer ticket and
@@ -496,7 +520,11 @@ export function workspaceDomains(id: WorkspaceId): readonly Domain[] {
   if (ANALYTICS_WORKSPACES.has(id)) return ["analytics"];
   if (ADMIN_ONLY_WORKSPACES.has(id)) return ["admin"];
   const assets = workspaceAssets(id);
-  return assets.length > 0 ? assets : ["admin"];
+  const base: readonly Domain[] = assets.length > 0 ? assets : ["admin"];
+  // Withdraw any per-domain rail membership consolidated away (e.g. FI "Book" folded
+  // into FI "Risk"), keeping the row on its remaining domains + its `assets` intact.
+  const excluded = DOMAIN_RAIL_EXCLUDED[id];
+  return excluded ? base.filter((d) => !excluded.has(d)) : base;
 }
 
 /**

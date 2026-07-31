@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   ADMIN_ONLY_WORKSPACES,
   ANALYTICS_WORKSPACES,
+  DOMAIN_RAIL_EXCLUDED,
   HEDGING_WORKSPACES,
   buildCommands,
   cheatsheet,
@@ -249,9 +250,20 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
 
   describe("workspaceDomains (derived from served assets — Model A)", () => {
     it("shared cross-asset rows appear under BOTH trading domains", () => {
-      for (const id of ["surface", "risk", "book"] as const) {
+      for (const id of ["surface", "risk"] as const) {
         expect([...workspaceDomains(id)].sort()).toEqual(["fixed_income", "fx_options"]);
       }
+    });
+
+    it("Book is FX-only: its Fixed-Income rail membership is withdrawn (folded into FI Risk)", () => {
+      // The FI "Book" ledger is consolidated INTO the FI "Risk" surface as tabs, so
+      // the Book row is dropped from the Fixed-Income rail while STAYING on FX
+      // Options (DOMAIN_RAIL_EXCLUDED). `assets` is unchanged (see workspaceAssets).
+      expect(DOMAIN_RAIL_EXCLUDED.book).toEqual(new Set(["fixed_income"]));
+      expect(workspaceDomains("book")).toEqual(["fx_options"]);
+      expect(new Set(workspaceAssets("book"))).toEqual(
+        new Set(["fx_options", "fixed_income"]),
+      );
     });
 
     it("single-asset rows appear under their one trading domain only", () => {
@@ -284,6 +296,13 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
           expect(doms).toEqual(["analytics"]);
         } else if (ADMIN_ONLY_WORKSPACES.has(r.id)) {
           expect(doms).toEqual(["admin"]);
+        } else if (DOMAIN_RAIL_EXCLUDED[r.id]) {
+          // A per-domain consolidation override (e.g. FI "Book" folded into FI
+          // "Risk"): domains = served assets MINUS the withdrawn domain(s).
+          const excluded = DOMAIN_RAIL_EXCLUDED[r.id]!;
+          expect([...doms].sort()).toEqual(
+            [...r.assets].filter((a) => !excluded.has(a)).sort(),
+          );
         } else {
           expect([...doms].sort()).toEqual([...r.assets].sort());
         }
@@ -311,7 +330,9 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
   });
 
   describe("railForDomain (structural membership, RAIL order)", () => {
-    it("FX Options = the FX-only rows + the shared rows, in RAIL order", () => {
+    it("FX Options = the FX-only rows + the shared rows (incl. Book, kept on FX), in RAIL order", () => {
+      // Book stays on FX Options unchanged — the consolidation only withdrew its FI
+      // rail membership, so FX keeps both the Risk AND the Book rows.
       expect(railForDomain("fx_options").map((r) => r.id)).toEqual([
         "ticket",
         "stream",
@@ -337,7 +358,8 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         "transferaudit",
         "surface",
         "risk",
-        "book",
+        // "book" is DROPPED from the FI rail — the FI ledger is folded into FI "Risk"
+        // as tabs (DOMAIN_RAIL_EXCLUDED); it stays on the FX Options rail.
         "quoting",
         // Corporate Actions: a Fixed-Income reference-data surface (CA inbox +
         // schedule viewer), NOT admin-gated — reads on the view·FI floor.
@@ -522,12 +544,12 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     expect(byLabel("Markets & Liquidity")).toEqual(["fistreaming", "aggbook", "surface", "quoting"]);
     expect(byLabel("Pricing")).toEqual(["tiering", "pricinggroups"]);
     // hedging is no longer here — it is hoisted into its own top-level "Hedging" tab.
+    // "book" is no longer here either — the FI ledger is folded into FI "Risk" tabs.
     expect(byLabel("Risk")).toEqual([
       "riskbooks",
       "riskdashboard",
       "riskrouting",
       "risk",
-      "book",
     ]);
     expect(byLabel("Transfers")).toEqual(["risktransfer", "transferinbox", "transferaudit"]);
     expect(byLabel("Reference Data")).toEqual(["corpactions"]);
@@ -545,6 +567,8 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
       groups.find((g) => g.section.label === label)!.rows.map((r) => r.id);
     expect(byLabel("Trading")).toEqual(["ticket", "stream"]);
     expect(byLabel("Markets & Liquidity")).toEqual(["surface"]);
+    // FX keeps BOTH Risk and Book (unchanged) — the FI-only consolidation does not
+    // touch the FX rail.
     expect(byLabel("Risk")).toEqual(["risk", "book"]);
     expect(byLabel("Tools")).toEqual(["xva", "excel"]);
   });
@@ -562,10 +586,10 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     expect(labels).not.toContain("Pricing");
     // Every rendered group is non-empty (the empty-section invariant).
     for (const g of groups) expect(g.rows.length).toBeGreaterThan(0);
-    // Risk section is still present, now only the non-management scenario + ledger rows.
+    // Risk section is still present, now only the non-management scenario row (the
+    // FI "Book" ledger is folded into FI "Risk" as tabs, so it is off the rail).
     expect(groups.find((g) => g.section.label === "Risk")!.rows.map((r) => r.id)).toEqual([
       "risk",
-      "book",
     ]);
     // Markets survives too (Agg Book / Market Data are plain view·FI).
     expect(labels).toContain("Markets & Liquidity");

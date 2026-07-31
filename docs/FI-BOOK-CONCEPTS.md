@@ -10,7 +10,7 @@ UI-name ↔ wire-name mapping.
 | Surface (UI label) | What it is | Workspace file | Rail id |
 | --- | --- | --- | --- |
 | **Agg Book** | The **liquidity composite** — consolidated best bid/offer aggregated across a book's inbound LP connections (FIX/API). A *price* view, not positions. | `gui/src/workspaces/AggregatedBookWorkspace.tsx` | `aggbook` |
-| **Book** | The **position ledger** — your booked positions, booking, and deals (the rates warehouse; what you actually hold). | `gui/src/workspaces/BookWorkspace.tsx` (+ `RatesBookWorkspace.tsx`, `DealsBlotterWorkspace.tsx`) | `book` |
+| **Book** | The **position ledger** — your booked positions, booking, and deals (the rates warehouse; what you actually hold). **FX-tab only:** under Fixed Income this rail entry is removed and its ledger surfaces (Positions · Quotes · Deals) are folded into the FI **Risk** workspace as tabs — see the note below. | `gui/src/workspaces/BookWorkspace.tsx` (+ `RatesBookWorkspace.tsx`, `DealsBlotterWorkspace.tsx`) | `book` (FX rail only) |
 | **Risk Portfolios** | The **risk-management overlay** — the trader-defined hierarchy (desk → portfolio → sub-portfolio) that routing rules drop each fill's risk into, each with its own limits, feeding the Risk Dashboard roll-up. | `gui/src/workspaces/RiskBooksWorkspace.tsx`, `gui/src/workspaces/RiskDashboardWorkspace.tsx`, `gui/src/workspaces/riskrouting/` | `riskbooks`, `riskdashboard`, `riskrouting` |
 
 One-line distinguishers (also shown as subtitles in each workspace):
@@ -36,6 +36,31 @@ So: **prices come from the Agg Book, the position is booked in the Book, and the
 is bucketed into a Risk Portfolio.** The Book (ledger) and a Risk Portfolio are not
 the same thing — the ledger is where the position is actually held; the risk
 portfolio is a management overlay for limits and risk roll-up.
+
+## Fixed-Income "Book" → "Risk" consolidation (2026-07-31)
+
+Traders found the FI **Book** and FI **Risk** rail entries redundant: the FI Book's
+"Aggregate Risk" lens rendered the SAME `RatesRiskPanel` the Risk workspace already
+shows. So under **Fixed Income** the **Book** rail entry is REMOVED and its
+position-ledger surfaces are folded INTO the **Risk** workspace as tabs — FI Risk is
+now the single **risk + positions + deals** surface:
+
+| FI Risk tab | Renders | Was |
+| --- | --- | --- |
+| **Scenario Risk** | `RatesRiskPanel` (netted rates what-if) | the Risk workspace's own content |
+| **Positions** | `RatesBookWorkspace` (ledger + booking) | Book lens "Positions & Booking" |
+| **Quotes** | `QuotesBlotterWorkspace` (shown-quotes) | Book lens "Quotes" (kept — non-redundant with Deals) |
+| **Deals** | `DealsBlotterWorkspace` (incl. routed Risk-Portfolio column) | Book lens "Deals" |
+
+The Book lens **"Aggregate Risk"** is DROPPED as the redundancy this removes (it was
+identical to Scenario Risk). **FX Options is unchanged:** the FX rail keeps BOTH a
+**Risk** row (scenario grid only, no tabs) and a separate **Book** row — the
+consolidation is FI-only.
+
+Mechanism (GUI): the `book` workspace and its `assets` are untouched (still serves
+both classes; reachability / license / `⌘N` unchanged) — only its Fixed-Income rail
+membership is withdrawn via `DOMAIN_RAIL_EXCLUDED` in `gui/src/lib/commands.ts`. The
+FI tab bar lives in `RiskWorkspace.tsx` (`FiRiskSurface`).
 
 ## UI name ↔ wire name mapping (Risk Portfolios)
 

@@ -12,6 +12,17 @@
  * under a fixed-income license and an FX desk never sees a lens it cannot use;
  * when the derived lens's class is not viewable, the honest empty-state is shown.
  *
+ * FI "Book" → "Risk" CONSOLIDATION (docs/FI-BOOK-CONCEPTS.md): the redundant
+ * Fixed-Income "Book" rail entry is REMOVED (its FI "Aggregate Risk" lens rendered
+ * the SAME `RatesRiskPanel` this workspace already shows). To lose nothing, its
+ * position-ledger surfaces are folded IN here as tabs, so under Fixed Income the
+ * Risk workspace is the SINGLE risk + positions + deals surface — a `FiRiskSurface`
+ * with a tab bar (Scenario Risk · Positions · Quotes · Deals). FX is UNCHANGED:
+ * under FX Options the Risk workspace still renders ONLY the scenario grid, and the
+ * separate FX "Book" rail entry stays. The FI rail-membership drop lives in
+ * `lib/commands.ts` (`DOMAIN_RAIL_EXCLUDED`); the `book` workspace itself is
+ * untouched (still mounted for the FX tab).
+ *
  * The firm-wide joint options+FI tail cube is NOT a per-domain risk view — it is
  * a separate cross-asset surface (Book/Combined) and no longer appears here. The
  * pure joint-tail request helpers (`seedTailRiskOptionLegs`,
@@ -56,6 +67,9 @@ import { fmtPnlAdaptive, fmtSigned, fmtCompact } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
 import { configuredLicense, type LicensePredicate } from "../lib/commands";
 import { RatesRiskPanel } from "./RatesRiskWorkspace";
+import { RatesBookWorkspace } from "./RatesBookWorkspace";
+import { DealsBlotterWorkspace } from "./DealsBlotterWorkspace";
+import { QuotesBlotterWorkspace } from "./QuotesBlotterWorkspace";
 import styles from "./RiskWorkspace.module.css";
 
 /**
@@ -107,18 +121,40 @@ type Metric = (typeof METRICS)[number]["id"];
  * Book/Combined surface, not a per-domain risk view). */
 export type RiskLens = "fx" | "rates";
 
+/**
+ * The tab the consolidated Fixed-Income Risk surface shows (the FI "Book" → "Risk"
+ * fold; docs/FI-BOOK-CONCEPTS.md). `risk` is the netted rates scenario panel (the FI
+ * Risk workspace's own content — the former FI Book "Aggregate Risk" lens was
+ * IDENTICAL to it and is dropped as the redundancy this consolidation removes);
+ * `positions`/`quotes`/`deals` are the former FI Book ledger lenses, moved here so
+ * nothing is lost.
+ */
+export type FiRiskTab = "risk" | "positions" | "quotes" | "deals";
+
+/** One row per tab the consolidated FI Risk surface spans: its id + toggle label. */
+const FI_RISK_TABS: readonly { tab: FiRiskTab; label: string }[] = [
+  { tab: "risk", label: "Scenario Risk" },
+  { tab: "positions", label: "Positions" },
+  { tab: "quotes", label: "Quotes" },
+  { tab: "deals", label: "Deals" },
+];
+
 export function RiskWorkspace({
   initialLens,
+  initialFiTab = "risk",
 }: {
   initialLens?: RiskLens;
+  /** The initial FI tab (fixed_income only) — stories/tests may fix it; the UI
+   * defaults to Scenario Risk and the trader picks from the tab bar. */
+  initialFiTab?: FiRiskTab;
 } = {}): React.ReactElement {
   const app = useApp();
   const licensed: LicensePredicate = useMemo(() => configuredLicense(), []);
 
   // Hard vertical asset separation (W1): the lens is DERIVED STRICTLY from the
-  // active domain — fixed_income → the rates netted-risk panel, otherwise → the FX
-  // spot×vol scenario grid. There is NO in-screen cross-asset toggle; each domain
-  // renders only its own asset. An explicit `initialLens` (stories/tests) may
+  // active domain — fixed_income → the consolidated rates Risk surface, otherwise →
+  // the FX spot×vol scenario grid. There is NO in-screen cross-asset toggle; each
+  // domain renders only its own asset. An explicit `initialLens` (stories/tests) may
   // override the domain-derived lens for a fixed render, but never reintroduces a
   // user-facing switch.
   const lens: RiskLens = initialLens ?? (app.activeDomain === "fixed_income" ? "rates" : "fx");
@@ -131,27 +167,113 @@ export function RiskWorkspace({
     return <div className={styles.loading}>No risk lens available for your entitlements.</div>;
   }
 
+  // Fixed Income: the consolidated risk + positions + deals surface (FI Book folded
+  // in as tabs). FX Options: the scenario grid only, Book stays a separate rail row.
+  if (lens === "rates") {
+    return <FiRiskSurface initialTab={initialFiTab} />;
+  }
+
   return (
     <div className={styles.classShell}>
       <p className={styles.shellSub}>
-        {lens === "rates" ? (
-          <>
-            Netted <strong>scenario risk</strong> for your rates book — what-if P&amp;L and greeks
-            under shocks. Not the routed-risk <em>Risk Dashboard</em>, the <em>Risk Portfolios</em>{" "}
-            tree, nor the position-ledger <em>Book</em>.
-          </>
-        ) : (
-          <>
-            Spot×vol <strong>scenario</strong> P&amp;L + greeks for the selected structure — an
-            analytics what-if grid, not the ledger <em>Book</em> of positions.
-          </>
-        )}
+        Spot×vol <strong>scenario</strong> P&amp;L + greeks for the selected structure — an
+        analytics what-if grid, not the ledger <em>Book</em> of positions.
       </p>
       <div className={styles.lensBody}>
-        {lens === "fx" ? <FxScenarioLens /> : <RatesRiskPanel />}
+        <FxScenarioLens />
       </div>
     </div>
   );
+}
+
+/**
+ * FiRiskSurface — the consolidated Fixed-Income Risk workspace (FI "Book" → "Risk"
+ * fold; docs/FI-BOOK-CONCEPTS.md). The redundant FI "Book" rail entry is removed and
+ * its position-ledger surfaces move here as tabs, so FI Risk is the single
+ * risk + positions + quotes + deals surface:
+ *   • Scenario Risk (`RatesRiskPanel`) — the netted rates what-if panel (this
+ *     workspace's own content; the former Book "Aggregate Risk" lens rendered the
+ *     SAME panel and is dropped as redundant).
+ *   • Positions (`RatesBookWorkspace`) — the position ledger + booking form.
+ *   • Quotes (`QuotesBlotterWorkspace`) — the shown-quotes blotter; NON-redundant
+ *     with Deals (what was SHOWN vs what was BOOKED), kept so it is not orphaned.
+ *   • Deals (`DealsBlotterWorkspace`) — the executed-deals blotter incl. the routed
+ *     Risk-Portfolio column + search/filter.
+ * The four moved bodies are composed VERBATIM (no rebuild); only the active tab's
+ * body mounts, so heavy effects fire only for the view on screen.
+ */
+function FiRiskSurface({
+  initialTab = "risk",
+}: {
+  initialTab?: FiRiskTab;
+}): React.ReactElement {
+  const [tab, setTab] = useState<FiRiskTab>(initialTab);
+  return (
+    <div className={styles.classShell}>
+      <div className={styles.lensBar} role="group" aria-label="risk view">
+        {FI_RISK_TABS.map((t) => (
+          <button
+            key={t.tab}
+            type="button"
+            className={`${styles.lensTab} ${tab === t.tab ? styles.lensTabActive : ""}`}
+            aria-pressed={tab === t.tab}
+            onClick={() => setTab(t.tab)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <p className={styles.shellSub}>{fiRiskSubtitle(tab)}</p>
+      <div className={styles.lensBody}>
+        {tab === "risk" ? (
+          <RatesRiskPanel />
+        ) : tab === "positions" ? (
+          <RatesBookWorkspace />
+        ) : tab === "quotes" ? (
+          <QuotesBlotterWorkspace />
+        ) : (
+          <DealsBlotterWorkspace />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The one-line concept subtitle for the active FI Risk tab — disambiguates this
+ * surface from the routed-risk Dashboard, the Risk Portfolios tree, and the Agg
+ * Book of LP prices (docs/FI-BOOK-CONCEPTS.md). */
+function fiRiskSubtitle(tab: FiRiskTab): React.ReactElement {
+  switch (tab) {
+    case "risk":
+      return (
+        <>
+          Netted <strong>scenario risk</strong> for your rates book — what-if P&amp;L and greeks
+          under shocks. Not the routed-risk <em>Risk Dashboard</em> nor the{" "}
+          <em>Risk Portfolios</em> tree.
+        </>
+      );
+    case "positions":
+      return (
+        <>
+          Your booked <strong>positions</strong> + booking — the rates ledger of what you
+          actually hold.
+        </>
+      );
+    case "quotes":
+      return (
+        <>
+          Every RFQ/IOI the desk has <strong>shown</strong> (quoted), newest first — the
+          read-only sibling of Deals (shown vs booked).
+        </>
+      );
+    case "deals":
+      return (
+        <>
+          Every <strong>booked</strong> deal, newest first, with its routed{" "}
+          <em>Risk Portfolio</em> — refreshes live on fills.
+        </>
+      );
+  }
 }
 
 /**
