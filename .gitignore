@@ -91,3 +91,4 @@ identity.json.tmp
 
 # Office (Excel/Word) temp lock files
 ~$*
+.e2e-shots/
