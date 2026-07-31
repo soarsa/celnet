@@ -34,13 +34,29 @@
 //! [`group_by_instrument`] / [`group_by_asset`] helpers are pure functions of
 //! their input slice — no clock, no rng, no I/O — hence deterministic and
 //! oracle-testable.
+//!
+//! # Street-side / LP liquidity analytics (the second pillar)
+//!
+//! The client-flow rollup above grades *our clients'* flow. Its **LP-keyed
+//! analogue** — [`LpFlowRecord`] → [`LpFlowMetrics`] via [`lp_metrics_from`] /
+//! [`group_by_lp`] — grades *our liquidity providers'* street-side behaviour: per
+//! LP **tick rate** (quote-update frequency), **deals won** (+ won notional),
+//! **missed deals** (on the panel but lost), **last-look rejects**, **win-rate**,
+//! and mean **cover distance**. [`merge_tick_counts`] folds the server's bounded
+//! off-core ingest tick tally into the fold. Same purity / oracle discipline.
 
 mod fishing;
 mod grouping;
+mod lp_grouping;
+mod lp_metrics;
+mod lp_record;
 mod metrics;
 mod record;
 
 pub use fishing::{DPM_VALUE_SCALE, fishing_score};
 pub use grouping::{group_by_asset, group_by_client, group_by_counterparty, group_by_instrument};
+pub use lp_grouping::group_by_lp;
+pub use lp_metrics::{LpFlowMetrics, lp_metrics_from, merge_tick_counts};
+pub use lp_record::LpFlowRecord;
 pub use metrics::{ClientFlowMetrics, NOTIONAL_PER_MILLION, metrics_from};
 pub use record::{FlowRecord, Side};
