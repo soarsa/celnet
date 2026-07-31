@@ -77,7 +77,6 @@ fn book(
         instrument_ids: instrument_ids.iter().map(|s| (*s).to_string()).collect(),
         params: None,
         enabled,
-        tiering: None,
     }
 }
 
