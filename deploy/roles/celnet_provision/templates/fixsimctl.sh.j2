@@ -29,6 +29,10 @@ export FIXSIM_NOTIONAL="{{ celnet_fixsim_notional | default('10000000') }}"
 {% endif %}{% if celnet_fixsim_target is defined %}export FIXSIM_TARGET="{{ celnet_fixsim_target }}"
 {% endif %}export FIXSIM_PERIOD="{{ celnet_fixsim_period | default('20') }}"
 export FIXSIM_JITTER="{{ celnet_fixsim_jitter | default('60') }}"
+# FAST sub-second cadence (ms): OVERRIDES FIXSIM_PERIOD via the client's --interval-ms so a
+# redeploy builds up deals/positions/flow/risk quickly. Default 750ms; set "" to fall back.
+export FIXSIM_PERIOD_MS="{{ celnet_fixsim_period_ms | default('750') }}"
+export FIXSIM_STREAM_HOLD_MS="{{ celnet_fixsim_stream_hold_ms | default('2000') }}"
 # Every Nth auto-quote is LIFTED (executed → booked deal); the rest stay quoted-only.
 export FIXSIM_LIFT_EVERY="{{ celnet_fixsim_lift_every | default('3') }}"
 {% if celnet_fixsim_stream_port is defined and celnet_fixsim_stream_port %}
@@ -37,6 +41,19 @@ export FIXSIM_STREAM_PORT="{{ celnet_fixsim_stream_port }}"
 export FIXSIM_STREAM_SENDER="{{ celnet_fixsim_stream_sender | default('CELER_RATES_STREAM') }}"
 export FIXSIM_STREAM_HOLD="{{ celnet_fixsim_stream_hold | default('15') }}"
 {% endif %}
+# ESP (streaming) leg: when enabled AND a fixed-income STREAM acceptor is reachable, a
+# supervised `--asset esp` client downloads the top-N reference-data instruments over gRPC
+# and streams bond RFS on them (composite-priced + pricing-group-tiered), randomly lifting
+# some to book live streaming deals.
+export FIXSIM_ESP="{{ '1' if celnet_fixsim_esp_enabled | default(false) else '0' }}"
+{% if celnet_fixsim_esp_port is defined and celnet_fixsim_esp_port %}export FIXSIM_ESP_PORT="{{ celnet_fixsim_esp_port }}"
+{% elif celnet_fixsim_stream_port is defined and celnet_fixsim_stream_port %}export FIXSIM_ESP_PORT="{{ celnet_fixsim_stream_port }}"
+{% endif %}export FIXSIM_ESP_SENDER="{{ celnet_fixsim_esp_sender | default('CELER_RATES_STREAM') }}"
+export FIXSIM_GRPC_ADDR="{{ celnet_fixsim_grpc_addr | default('http://127.0.0.1:50051') }}"
+export FIXSIM_ESP_INSTRUMENTS="{{ celnet_fixsim_esp_instruments | default('15') }}"
+export FIXSIM_ESP_SEED="{{ celnet_fixsim_esp_seed | default('0x5EED1234') }}"
+export FIXSIM_USER="{{ celnet_fixsim_user | default(celnet_lpsim_user | default('admin@celnet.com')) }}"
+export FIXSIM_PASSWORD="{{ celnet_fixsim_password | default(celnet_lpsim_password | default('password')) }}"
 PIDFILE="$FIXSIM_RUN_DIR/fix-sim.pid"
 
 is_running() {

@@ -38,6 +38,9 @@ LPSIM_LP_NAME="${LPSIM_LP_NAME:-LP-SIM}"
 LPSIM_BOOK="${LPSIM_BOOK:-ust-composite}"
 LPSIM_MEMBERS="${LPSIM_MEMBERS:-5}"
 LPSIM_INTERVAL="${LPSIM_INTERVAL:-2}"
+# Sub-second override (ms): non-empty ⇒ the feed uses the binary's --interval-ms so the
+# composite refreshes faster than 1s for a livelier book. Empty ⇒ the whole-second interval.
+LPSIM_INTERVAL_MS="${LPSIM_INTERVAL_MS:-}"
 LPSIM_BOOK_POLL="${LPSIM_BOOK_POLL:-5}"
 LPSIM_NO_BOOK_POLL="${LPSIM_NO_BOOK_POLL:-0}"
 LPSIM_INSTRUMENTS="${LPSIM_INSTRUMENTS:-all}"
@@ -129,6 +132,8 @@ build_args() {
     --members "$LPSIM_MEMBERS" --interval "$LPSIM_INTERVAL" \
     --instruments "$LPSIM_INSTRUMENTS" --max-instruments "$LPSIM_MAX_INSTRUMENTS" \
     --seed "$LPSIM_SEED" --settlement "$LPSIM_SETTLEMENT")
+  # Sub-second composite refresh when the ms override is set (overrides --interval).
+  [ -n "$LPSIM_INTERVAL_MS" ] && ARGS+=(--interval-ms "$LPSIM_INTERVAL_MS")
   if [ "$LPSIM_INCLUDE_BILLS" = "1" ]; then ARGS+=(--include-bills); fi
   # Network feed: push LpQuotes to the server ingest so the composite surfaces to GUI
   # subscribers (mirrors how the FIX sim passes --addr to its acceptor). In this

@@ -58,6 +58,21 @@ celnet_rust_profile: minimal
 # It dials the managed FIX acceptor (registry "CELER_FXO_CELNET" @127.0.0.1:56001);
 # override with celnet_fixsim_host/port/sender/target if the GUI FIX admin changes it.
 celnet_fixsim_enabled: true
+# FAST sub-second cadence (ms) for the FIX sim — OVERRIDES the whole-second heartbeat via
+# the client's --interval-ms, so a redeploy builds up deals/positions/flow/risk quickly.
+# Set to "" to fall back to celnet_fixsim_period (whole seconds). Bounded so it stays
+# livelier-but-not-flooding.
+celnet_fixsim_period_ms: 750             # ms between streamed RFQs (sub-second; "" ⇒ seconds)
+celnet_fixsim_stream_hold_ms: 2000       # ms RFS/ESP hold per cycle
+# ESP streaming leg: when enabled AND a fixed-income STREAM acceptor is reachable
+# (celnet_fixsim_esp_port, else celnet_fixsim_stream_port), a supervised `--asset esp`
+# client downloads the top-N reference-data instruments over gRPC and streams bond RFS on
+# them (priced off the aggregated-book composite, tiered by the connection's pricing group),
+# randomly lifting some to book LIVE streaming deals.
+celnet_fixsim_esp_enabled: false
+celnet_fixsim_grpc_addr: "http://127.0.0.1:50051"  # reference-data + login endpoint
+celnet_fixsim_esp_instruments: 15        # top-N most-liquid/relevant instruments to stream
+celnet_fixsim_esp_seed: "0x5EED1234"     # deterministic seed for the random-trade selection
 
 # --- LP-SIM Treasury liquidity feed -----------------------------------------
 # When true, the release builds the celnet-lp-sim `lp-sim` binary, ships it as
@@ -76,6 +91,7 @@ celnet_lpsim_lp_name: "LP-SIM"           # base LP connection name → LP-SIM-01
 celnet_lpsim_book: "ust-composite"       # cosmetic book label (book-aware mode discovers books)
 celnet_lpsim_members: 5                   # 5 distinct-character LPs by default (LP-SIM-01..05)
 celnet_lpsim_interval: 2                  # seconds between quote-emission rounds
+celnet_lpsim_interval_ms: ""             # sub-second override (ms); "" ⇒ use interval seconds
 celnet_lpsim_book_poll: 5                 # seconds between aggregated-book polls (book-aware)
 celnet_lpsim_no_book_poll: 0             # 1 = broadcast fallback (no book polling)
 celnet_lpsim_instruments: "all"          # all (book-aware default), or a CSV of ISINs/CUSIPs

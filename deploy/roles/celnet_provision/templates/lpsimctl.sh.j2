@@ -24,6 +24,8 @@ export LPSIM_LP_NAME="{{ celnet_lpsim_lp_name | default('LP-SIM') }}"
 export LPSIM_BOOK="{{ celnet_lpsim_book | default('ust-composite') }}"
 export LPSIM_MEMBERS="{{ celnet_lpsim_members | default('5') }}"
 export LPSIM_INTERVAL="{{ celnet_lpsim_interval | default('2') }}"
+# Sub-second override (ms): non-empty ⇒ the feed refreshes the composite faster than 1s.
+export LPSIM_INTERVAL_MS="{{ celnet_lpsim_interval_ms | default('') }}"
 export LPSIM_BOOK_POLL="{{ celnet_lpsim_book_poll | default('5') }}"
 export LPSIM_NO_BOOK_POLL="{{ celnet_lpsim_no_book_poll | default('0') }}"
 export LPSIM_INSTRUMENTS="{{ celnet_lpsim_instruments | default('all') }}"

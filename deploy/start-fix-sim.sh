@@ -76,10 +76,15 @@ fi
 FIXSIM_CURVE="${FIXSIM_CURVE:-USD-OIS}"
 FIXSIM_TENOR="${FIXSIM_TENOR:-5}"
 FIXSIM_NOTIONAL="${FIXSIM_NOTIONAL:-10000000}"
-# Cadence: ~one RFQ/RFS every 120s (the operator-standard heartbeat). Named +
+# Cadence: the whole-second fallback (the operator-standard heartbeat). Named +
 # env-overridable, no bare magic number; flows to the client's `--interval`.
 FIXSIM_PERIOD="${FIXSIM_PERIOD:-120}"
 FIXSIM_JITTER="${FIXSIM_JITTER:-60}"
+# FAST sub-second cadence (ms). When non-empty it OVERRIDES FIXSIM_PERIOD via the client's
+# `--interval-ms`, so a redeploy builds up deals/positions/flow/risk quickly. Default 750ms
+# — clearly livelier than the 120s heartbeat, still bounded so it never floods the venue.
+# Set FIXSIM_PERIOD_MS="" to fall back to the whole-second FIXSIM_PERIOD.
+FIXSIM_PERIOD_MS="${FIXSIM_PERIOD_MS:-750}"
 # Every Nth auto-quote is LIFTED (executed → booked deal) so the blotter fills with
 # completed rates deals, not just shown quotes; the rest stay quoted-only. 0 = never lift.
 FIXSIM_LIFT_EVERY="${FIXSIM_LIFT_EVERY:-3}"
@@ -89,6 +94,22 @@ FIXSIM_LIFT_EVERY="${FIXSIM_LIFT_EVERY:-3}"
 FIXSIM_STREAM_PORT="${FIXSIM_STREAM_PORT:-}"
 FIXSIM_STREAM_SENDER="${FIXSIM_STREAM_SENDER:-CELER_RATES_STREAM}"
 FIXSIM_STREAM_HOLD="${FIXSIM_STREAM_HOLD:-15}"
+# FAST RFS hold per cycle (ms). Non-empty ⇒ the RFS/ESP legs use `--stream-hold-ms`;
+# default 2000ms so the fast cadence turns over many stream cycles.
+FIXSIM_STREAM_HOLD_MS="${FIXSIM_STREAM_HOLD_MS:-2000}"
+# Optional ESP leg: when FIXSIM_ESP=1 AND a fixed-income STREAM acceptor is reachable at
+# FIXSIM_ESP_PORT (defaults to FIXSIM_STREAM_PORT), a supervised client runs `--asset esp`
+# — it downloads the top-N reference-data instruments over gRPC (FIXSIM_GRPC_ADDR) and
+# streams bond RFS on them (priced off the aggregated-book composite, tiered by the
+# connection's pricing group), randomly lifting some to book live streaming deals.
+FIXSIM_ESP="${FIXSIM_ESP:-0}"
+FIXSIM_ESP_PORT="${FIXSIM_ESP_PORT:-${FIXSIM_STREAM_PORT:-}}"
+FIXSIM_ESP_SENDER="${FIXSIM_ESP_SENDER:-${FIXSIM_STREAM_SENDER:-CELER_RATES_STREAM}}"
+FIXSIM_GRPC_ADDR="${FIXSIM_GRPC_ADDR:-http://127.0.0.1:50051}"
+FIXSIM_ESP_INSTRUMENTS="${FIXSIM_ESP_INSTRUMENTS:-15}"
+FIXSIM_ESP_SEED="${FIXSIM_ESP_SEED:-0x5EED1234}"
+FIXSIM_USER="${FIXSIM_USER:-admin@celnet.com}"
+FIXSIM_PASSWORD="${FIXSIM_PASSWORD:-password}"
 FIXSIM_ONESHOT="${FIXSIM_ONESHOT:-0}"
 FIXSIM_DAEMON="${FIXSIM_DAEMON:-0}"
 
@@ -267,13 +288,19 @@ if [ -n "$FIXSIM_STREAM_PORT" ]; then
     timeout 3 bash -c "exec 3<>/dev/tcp/$FIXSIM_HOST/$FIXSIM_STREAM_PORT" >/dev/null 2>&1 || stream_up=0
   fi
   if [ "$stream_up" = 1 ]; then
+    # Cadence flags: prefer the fast ms knobs (sub-second) over the whole-second fallback.
+    if [ -n "$FIXSIM_PERIOD_MS" ]; then
+      STREAM_CADENCE=(--stream-hold-ms "$FIXSIM_STREAM_HOLD_MS" --interval-ms "$FIXSIM_PERIOD_MS")
+    else
+      STREAM_CADENCE=(--stream-hold "$FIXSIM_STREAM_HOLD" --interval 2)
+    fi
     STREAM_ARGS=("${RUNNER[@]}" --addr "$FIXSIM_HOST:$FIXSIM_STREAM_PORT" \
       --sender "$FIXSIM_STREAM_SENDER" --target "$FIXSIM_TARGET" \
       --req-id "FIXSIM-RFS-$(date +%s)" \
       --asset fi --intent rfs --curve "$FIXSIM_CURVE" --notional "$FIXSIM_NOTIONAL" \
       --side pay --manual-every 0 --lift-every "$FIXSIM_LIFT_EVERY" \
-      --stream-hold "$FIXSIM_STREAM_HOLD" --repeat 0 --interval 2)
-    log "RFS leg: streaming from $FIXSIM_HOST:$FIXSIM_STREAM_PORT ($FIXSIM_STREAM_SENDER); hold ${FIXSIM_STREAM_HOLD}s, lift every ${FIXSIM_LIFT_EVERY}."
+      --repeat 0 "${STREAM_CADENCE[@]}")
+    log "RFS leg: streaming from $FIXSIM_HOST:$FIXSIM_STREAM_PORT ($FIXSIM_STREAM_SENDER); lift every ${FIXSIM_LIFT_EVERY}."
     ( while true; do "${STREAM_ARGS[@]}" || log "RFS client exited ($?) — reconnecting in 5s"; sleep 5; done ) &
     STREAM_PID=$!
     trap 'kill "$STREAM_PID" 2>/dev/null || true' EXIT INT TERM
@@ -282,12 +309,53 @@ if [ -n "$FIXSIM_STREAM_PORT" ]; then
   fi
 fi
 
-# Persistent stream: log on ONCE and stream RFQs over the SAME session, one every
-# FIXSIM_PERIOD seconds (the client sleeps between requests; it does not re-logon). A
-# supervisor restarts the client if the session ever drops.
+# --- Optional ESP (streaming) leg -------------------------------------------------
+# When FIXSIM_ESP=1 and a fixed-income STREAM acceptor is reachable at FIXSIM_ESP_PORT,
+# run a supervised `--asset esp` client: it downloads the top-N reference-data instruments
+# over gRPC (FIXSIM_GRPC_ADDR) and streams bond RFS on them — priced off the aggregated-book
+# composite, tiered by the connection's pricing group — randomly lifting some to book live
+# streaming deals. Backgrounded like the RFS leg; skipped with a loud log if unreachable.
+if [ "$FIXSIM_ESP" = "1" ] && [ -n "$FIXSIM_ESP_PORT" ]; then
+  esp_up=1
+  if command -v nc >/dev/null 2>&1; then
+    nc -z -w 3 "$FIXSIM_HOST" "$FIXSIM_ESP_PORT" >/dev/null 2>&1 || esp_up=0
+  else
+    timeout 3 bash -c "exec 3<>/dev/tcp/$FIXSIM_HOST/$FIXSIM_ESP_PORT" >/dev/null 2>&1 || esp_up=0
+  fi
+  if [ "$esp_up" = 1 ]; then
+    if [ -n "$FIXSIM_PERIOD_MS" ]; then
+      ESP_CADENCE=(--stream-hold-ms "$FIXSIM_STREAM_HOLD_MS" --interval-ms "$FIXSIM_PERIOD_MS")
+    else
+      ESP_CADENCE=(--stream-hold "$FIXSIM_STREAM_HOLD" --interval 1)
+    fi
+    ESP_ARGS=("${RUNNER[@]}" --addr "$FIXSIM_HOST:$FIXSIM_ESP_PORT" \
+      --sender "$FIXSIM_ESP_SENDER" --target "$FIXSIM_TARGET" \
+      --req-id "FIXSIM-ESP-$(date +%s)" \
+      --asset esp --grpc-addr "$FIXSIM_GRPC_ADDR" \
+      --esp-instruments "$FIXSIM_ESP_INSTRUMENTS" --seed "$FIXSIM_ESP_SEED" \
+      --user "$FIXSIM_USER" --password "$FIXSIM_PASSWORD" \
+      --notional "$FIXSIM_NOTIONAL" --repeat 0 "${ESP_CADENCE[@]}")
+    log "ESP leg: streaming top-$FIXSIM_ESP_INSTRUMENTS refdata bonds from $FIXSIM_HOST:$FIXSIM_ESP_PORT (refdata $FIXSIM_GRPC_ADDR)."
+    ( while true; do "${ESP_ARGS[@]}" || log "ESP client exited ($?) — reconnecting in 5s"; sleep 5; done ) &
+    ESP_PID=$!
+    trap 'kill "${STREAM_PID:-}" "$ESP_PID" 2>/dev/null || true' EXIT INT TERM
+  else
+    log "ESP leg: acceptor $FIXSIM_HOST:$FIXSIM_ESP_PORT NOT reachable — skipping (RFQ leg continues)."
+  fi
+fi
+
+# Persistent stream: log on ONCE and stream RFQs over the SAME session (the client sleeps
+# between requests; it does not re-logon). A supervisor restarts the client if the session
+# ever drops. The FAST sub-second cadence (FIXSIM_PERIOD_MS via --interval-ms) is preferred;
+# an empty FIXSIM_PERIOD_MS falls back to the whole-second FIXSIM_PERIOD.
 build_client_args
-CLIENT_ARGS+=(--repeat 0 --interval "$FIXSIM_PERIOD")
-log "streaming RFQs over ONE persistent session every ${FIXSIM_PERIOD}s (Ctrl-C to stop)."
+if [ -n "$FIXSIM_PERIOD_MS" ]; then
+  CLIENT_ARGS+=(--repeat 0 --interval-ms "$FIXSIM_PERIOD_MS")
+  log "streaming RFQs over ONE persistent session every ${FIXSIM_PERIOD_MS}ms (Ctrl-C to stop)."
+else
+  CLIENT_ARGS+=(--repeat 0 --interval "$FIXSIM_PERIOD")
+  log "streaming RFQs over ONE persistent session every ${FIXSIM_PERIOD}s (Ctrl-C to stop)."
+fi
 while true; do
   "${CLIENT_ARGS[@]}" || log "sim client exited ($?) — reconnecting in 5s"
   sleep 5
