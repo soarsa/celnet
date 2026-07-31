@@ -24,6 +24,15 @@
 //!     every `--manual-every`-th (American exercise, or an NDF request on a deliverable
 //!     major) so the venue routes it to the FX desk for manual pricing (no `Quote(S)`).
 //!
+//!   * **esp** — the streaming ESP lifecycle ([`run_esp`]): connect to the server's
+//!     reference-data service (`AuthService` over gRPC, `--grpc-addr`), download the top-N
+//!     most-liquid/relevant instruments (`--esp-instruments`, default 15), then open ONE
+//!     FIX session and stream **bond RFS** on them — which the venue prices off the
+//!     aggregated-book composite, tiered by the connection's pricing group — while randomly
+//!     LIFTING some (seeded by `--seed`) to book live streaming deals into the blotter,
+//!     stamping a rotated counterparty per request. This is where the composite-based +
+//!     tiered outbound stream and the "streaming deals" show up end-to-end.
+//!
 //! This is not a stub: it drives the SAME [`celnet_fix::initiator::Initiator`] the
 //! integration tests use over a loopback socket, so it exercises the live RFQ →
 //! Quote → (FX) lift path exactly as an external counterparty would.
@@ -72,16 +81,27 @@ use celnet_fix::dialect_rates::{self, RatesQuoteRequestParams, RatesSide, Subscr
 use celnet_fix::initiator::{Initiator, LiftPolicy};
 use celnet_fix::session::{InMemoryStore, Role, Session, SessionConfig};
 use celnet_fix::sim;
+use celnet_proto::auth_service_client::AuthServiceClient;
+use celnet_proto::{
+    AccrualBasis, BrokenDate, ListInstrumentsRequest, LoginRequest, PaymentFrequency, Side,
+    instrument_def_desc,
+};
 use celnet_types::{OptionType, Settlement};
 use tokio::net::TcpStream;
 
-/// The asset class the client drives — one session, two dialects.
+/// The asset class the client drives — one session, several dialects/lifecycles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssetClass {
     /// A fixed-income OIS rates RFQ (the [`dialect_rates`] vocabulary).
     FixedIncome,
     /// A single-leg FX-option RFQ (the [`dialect_fx`] vocabulary).
     FxOption,
+    /// The **streaming ESP** lifecycle: connect, download the top-N reference-data
+    /// instruments from the server's reference-data service, then subscribe/stream bond
+    /// RFS prices on them (which the venue prices off the aggregated-book composite,
+    /// tiered by the connection's pricing group) AND randomly lift some — booking live
+    /// streaming deals. See [`run_esp`].
+    Esp,
 }
 
 /// The parsed client request — owned so the backing bytes outlive the async send.
@@ -130,6 +150,20 @@ struct Args {
     // the next cycle / lift. Set by `--stream-hold-ms` directly, or `--stream-hold` (whole
     // seconds ×1000); default [`DEFAULT_STREAM_HOLD_MS`]. Only used in `--intent rfs` mode.
     stream_hold_ms: u64,
+    // ESP-mode (`--asset esp`) controls.
+    /// The gRPC endpoint of the server's reference-data service (`AuthService`), used to
+    /// log on and download the top-N instruments to stream. Default `http://127.0.0.1:50051`.
+    grpc_addr: String,
+    /// How many of the most-liquid/relevant reference-data instruments to download and
+    /// stream in ESP mode (`--asset esp`). Default [`DEFAULT_ESP_INSTRUMENTS`].
+    esp_instruments: usize,
+    /// Service login email/password for the ESP reference-data download (`AuthService.Login`).
+    /// Default the seeded admin so it authenticates out-of-the-box on a fresh box.
+    user: String,
+    password: String,
+    /// Deterministic seed for the ESP random-trade selection (which streamed instruments
+    /// get lifted) — the same seed replays the same trade decisions.
+    seed: u64,
 }
 
 fn usage_and_exit(msg: &str) -> ! {
@@ -143,10 +177,11 @@ fn print_help() -> ! {
     println!(
         "fix_rfq_client — FIX 4.4 RFQ price-taker (rates OIS or FX option)\n\n\
          Flags (all optional; sensible defaults dial the demo edge):\n  \
-         --asset fi|fx (fi)   --addr HOST:PORT (127.0.0.1:9099)\n  \
+         --asset fi|fx|esp (fi)   --addr HOST:PORT (127.0.0.1:9099)\n  \
          fi:  --curve USD-OIS  --tenor 5  --notional 10000000  --side pay|receive|two-way\n  \
          fx:  --pair EURUSD  --type call|put  --strike 1.10  --expiry-years 1.0\n       \
          --side observe|buy|sell  --settlement deliverable|ndf  --exercise european|american\n  \
+         esp: --grpc-addr http://127.0.0.1:50051  --esp-instruments 15  --user admin@celnet.com  --password ****  --seed 0x5EED1234\n  \
          loop: --repeat 0  --interval-ms 750 (or --interval SECS)  --stream-hold-ms 2000  --manual-every 3  --manual-tenor 15  --manual-security XXX-UNKNOWN  --lift-every 3\n  \
          common: --sender CELNET-CPTY  --target CELNET  --req-id RFQ-CLI"
     );
@@ -172,6 +207,17 @@ const DEFAULT_MANUAL_EVERY: u64 = 3;
 
 /// Default bogus `Symbol(55)` for the unknown-security manual variant (see [`Args`]).
 const DEFAULT_MANUAL_SECURITY: &str = "XXX-UNKNOWN";
+
+/// Default number of top reference-data instruments the ESP client downloads + streams.
+const DEFAULT_ESP_INSTRUMENTS: usize = 15;
+
+/// Default ESP login (the seeded admin), so the reference-data download authenticates
+/// out-of-the-box on a fresh box. Override with `--user` / `--password`.
+const DEFAULT_ESP_USER: &str = "admin@celnet.com";
+const DEFAULT_ESP_PASSWORD: &str = "password";
+
+/// Default deterministic seed for the ESP random-trade selection.
+const DEFAULT_ESP_SEED: u64 = 0x5EED_1234;
 
 fn parse_args() -> Args {
     let mut addr = String::from("127.0.0.1:9099");
@@ -204,6 +250,11 @@ fn parse_args() -> Args {
     let mut lift_every = 0_u64;
     let mut stream = false;
     let mut stream_hold_ms = DEFAULT_STREAM_HOLD_MS;
+    let mut grpc_addr = String::from("http://127.0.0.1:50051");
+    let mut esp_instruments = DEFAULT_ESP_INSTRUMENTS;
+    let mut user = String::from(DEFAULT_ESP_USER);
+    let mut password = String::from(DEFAULT_ESP_PASSWORD);
+    let mut seed = DEFAULT_ESP_SEED;
     // `--side` means different things per asset and flags arrive in any order, so
     // capture it raw and interpret it after the loop once `--asset` is known.
     let mut side_raw: Option<String> = None;
@@ -222,8 +273,22 @@ fn parse_args() -> Args {
                 asset = match val.to_lowercase().as_str() {
                     "fi" | "rates" | "fixedincome" | "fixed-income" => AssetClass::FixedIncome,
                     "fx" | "options" | "fxo" | "fxoption" => AssetClass::FxOption,
-                    other => usage_and_exit(&format!("--asset must be fi|fx, got `{other}`")),
+                    "esp" | "stream" | "streaming" => AssetClass::Esp,
+                    other => usage_and_exit(&format!("--asset must be fi|fx|esp, got `{other}`")),
                 }
+            }
+            "--grpc-addr" => grpc_addr = val,
+            "--esp-instruments" => {
+                esp_instruments = val.parse().unwrap_or_else(|_| {
+                    usage_and_exit("--esp-instruments must be a whole number (>= 1)")
+                })
+            }
+            "--user" => user = val,
+            "--password" => password = val,
+            "--seed" => {
+                seed = val
+                    .parse()
+                    .unwrap_or_else(|_| usage_and_exit("--seed must be a whole number"))
             }
             "--curve" => curve = val.to_uppercase(),
             "--tenor" => {
@@ -362,6 +427,8 @@ fn parse_args() -> Args {
                 },
             };
         }
+        // ESP mode drives its own lifecycle (`run_esp`) — `--side` does not apply.
+        AssetClass::Esp => {}
     }
 
     // Validate per asset, so an fi run never trips FX-pair rules and vice versa.
@@ -390,6 +457,17 @@ fn parse_args() -> Args {
                 usage_and_exit("--expiry-years must be positive");
             }
         }
+        AssetClass::Esp => {
+            if esp_instruments < 1 {
+                usage_and_exit("--esp-instruments must be >= 1");
+            }
+            if !(notional > 0.0 && notional.is_finite()) {
+                usage_and_exit("--notional must be positive");
+            }
+            if grpc_addr.trim().is_empty() {
+                usage_and_exit("--grpc-addr must be a non-empty gRPC endpoint");
+            }
+        }
     }
     Args {
         addr,
@@ -416,6 +494,11 @@ fn parse_args() -> Args {
         lift_every,
         stream,
         stream_hold_ms,
+        grpc_addr,
+        esp_instruments,
+        user,
+        password,
+        seed,
     }
 }
 
@@ -468,6 +551,11 @@ fn print_quote(quote_id: Option<&[u8]>, bid: f64, offer: f64) {
 async fn main() -> std::io::Result<()> {
     let args = parse_args();
 
+    // ESP mode drives its own connect → download-refdata → stream + random-trade lifecycle.
+    if args.asset == AssetClass::Esp {
+        return run_esp(&args).await;
+    }
+
     println!("── celnet FIX RFQ client ─────────────────────────────");
     println!(
         "  connect   {} as {} → {}",
@@ -500,6 +588,8 @@ async fn main() -> std::io::Result<()> {
                 args.pair, type_label, args.strike, args.expiry_years, side_label
             );
         }
+        // ESP returns early (`run_esp`) before this header prints.
+        AssetClass::Esp => unreachable!("ESP mode is handled by run_esp"),
     }
     println!("──────────────────────────────────────────────────────");
 
@@ -802,6 +892,8 @@ async fn main() -> std::io::Result<()> {
                 }
                 r
             }
+            // ESP returns early (`run_esp`) before this loop is reached.
+            AssetClass::Esp => unreachable!("ESP mode is handled by run_esp"),
         };
 
         // Auto-accept/trade visibility: when the lift policy trades, report the fill.
@@ -822,4 +914,330 @@ async fn main() -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+// ===========================================================================
+// ESP streaming lifecycle (`--asset esp`)
+// ===========================================================================
+
+/// A tiny deterministic PRNG (SplitMix64) — seeded, reproducible, no external dependency.
+/// The ESP random-trade selection draws from this so a run with a given `--seed` replays
+/// the same lift/observe decisions (gate-testable), matching this module's determinism
+/// ethos while giving genuinely varied, non-periodic trade timing.
+struct SplitMix64(u64);
+
+impl SplitMix64 {
+    fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// A bounded roll in `[0, n)` (`0` when `n == 0`).
+    fn below(&mut self, n: u64) -> u64 {
+        if n == 0 { 0 } else { self.next_u64() % n }
+    }
+}
+
+/// One downloaded bond the ESP client streams — the reference-data fields the FIX bond
+/// dialect needs on the wire, resolved from the server's [`instrument_def_desc::Definition`].
+struct EspBond {
+    instrument_id: String,
+    name: String,
+    coupon_rate: f64,
+    coupon_frequency: PaymentFrequency,
+    day_count: AccrualBasis,
+    maturity: BrokenDate,
+    redemption: f64,
+}
+
+/// Map a reference-data `coupon_frequency` label onto the FIX dialect's [`PaymentFrequency`].
+/// A blank/`zero` label (zero-coupon) defaults to semi-annual, which the wire encodes as the
+/// standard 2/yr — the coupon itself is `0`, so the frequency is inert for a zero.
+fn esp_frequency_from_label(label: &str) -> PaymentFrequency {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "annual" => PaymentFrequency::Annual,
+        "quarterly" => PaymentFrequency::Quarterly,
+        _ => PaymentFrequency::SemiAnnual,
+    }
+}
+
+/// Map a reference-data `day_count` label onto the FIX dialect's [`AccrualBasis`]. The bond
+/// dialect wire supports Act/360, Act/365F and 30/360; an `act_act` govvie basis (not on the
+/// wire enum) maps to 30/360 — the RFQ still prices and streams, and the composite two-way
+/// (what ESP demonstrates) is resolved by symbol, independent of the accrual basis.
+fn esp_day_count_from_label(label: &str) -> AccrualBasis {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "act_360" | "act360" => AccrualBasis::Act360,
+        "act_365_fixed" | "act365fixed" | "act_365f" | "act365f" => AccrualBasis::Act365Fixed,
+        _ => AccrualBasis::Thirty360BondBasis,
+    }
+}
+
+/// Download the top-N streamable instruments from the server's reference-data service:
+/// authenticate (`AuthService.Login`), `ListInstruments`, and keep the bond-family
+/// definitions (with a resolvable maturity) in registry order — the curated benchmark
+/// universe the platform actually makes markets in and the LP feed streams, i.e. the most
+/// liquid/relevant set, NOT a hardcoded client list — capped at `--esp-instruments`.
+async fn download_top_bonds(args: &Args) -> Result<Vec<EspBond>, String> {
+    let channel = tonic::transport::Channel::from_shared(args.grpc_addr.clone())
+        .map_err(|e| format!("bad --grpc-addr `{}`: {e}", args.grpc_addr))?
+        .connect()
+        .await
+        .map_err(|e| format!("connect {}: {e}", args.grpc_addr))?;
+    let mut auth = AuthServiceClient::new(channel);
+    let token = auth
+        .login(LoginRequest {
+            email: args.user.clone(),
+            password: args.password.clone(),
+            correlation_id: None,
+        })
+        .await
+        .map_err(|e| format!("login as {}: {}", args.user, e.message()))?
+        .into_inner()
+        .session_token;
+    let resp = auth
+        .list_instruments(ListInstrumentsRequest {
+            session_token: token,
+            correlation_id: None,
+        })
+        .await
+        .map_err(|e| format!("list_instruments: {}", e.message()))?
+        .into_inner();
+
+    let mut out: Vec<EspBond> = Vec::new();
+    for desc in resp.instruments {
+        let Some(instrument_def_desc::Definition::Bond(bond)) = desc.definition else {
+            continue;
+        };
+        let Some(maturity) = bond.maturity_date else {
+            continue;
+        };
+        let name = if desc.name.trim().is_empty() {
+            desc.instrument_id.clone()
+        } else {
+            desc.name.clone()
+        };
+        out.push(EspBond {
+            instrument_id: desc.instrument_id,
+            name,
+            coupon_rate: bond.coupon_rate,
+            coupon_frequency: esp_frequency_from_label(&bond.coupon_frequency),
+            day_count: esp_day_count_from_label(&bond.day_count),
+            maturity,
+            redemption: if bond.redemption > 0.0 {
+                bond.redemption
+            } else {
+                100.0
+            },
+        });
+        if out.len() >= args.esp_instruments {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// The streaming **ESP** lifecycle (`--asset esp`): connect to the server's reference-data
+/// service, download the top-N most-liquid/relevant instruments, then open ONE FIX session
+/// and stream bond RFS on them — which the venue prices off the aggregated-book composite,
+/// tiered by this connection's pricing group (the composite+tiered outbound seam) — while
+/// randomly LIFTING some to book live streaming deals into the blotter. Deterministic under
+/// `--seed`: the same seed replays the same trade decisions and instrument rotation.
+async fn run_esp(args: &Args) -> std::io::Result<()> {
+    println!("── celnet ESP streaming client ───────────────────────");
+    println!("  refdata   {} as {}", args.grpc_addr, args.user);
+    println!(
+        "  stream    FIX {} as {} → {}",
+        args.addr, args.sender, args.target
+    );
+    println!(
+        "  top-N     {}  ·  cadence {}ms  ·  hold {}ms  ·  seed {:#x}",
+        args.esp_instruments, args.interval_ms, args.stream_hold_ms, args.seed
+    );
+
+    // 1) Download the top-N instruments from the reference-data service.
+    let bonds = match download_top_bonds(args).await {
+        Ok(b) if !b.is_empty() => b,
+        Ok(_) => {
+            eprintln!(
+                "✗ reference-data at {} returned no streamable bonds",
+                args.grpc_addr
+            );
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("✗ reference-data download failed: {e}");
+            std::process::exit(1);
+        }
+    };
+    println!(
+        "  loaded    {} instrument(s): {}",
+        bonds.len(),
+        bonds
+            .iter()
+            .map(|b| b.instrument_id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    println!("──────────────────────────────────────────────────────");
+
+    // 2) Open the FIX session ONCE and stream RFS over it (no logon/logout churn).
+    let tcp = match TcpStream::connect(&args.addr).await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "✗ could not connect FIX {} — is the edge up with a fixed-income STREAM \
+                 acceptor? ({e})",
+                args.addr
+            );
+            std::process::exit(1);
+        }
+    };
+    tcp.set_nodelay(true).ok();
+    let cfg = SessionConfig {
+        sender: args.sender.clone().into_bytes(),
+        target: args.target.clone().into_bytes(),
+        heart_bt_int: 30,
+        role: Role::Initiator,
+    };
+    let session = Session::new(cfg, InMemoryStore::new());
+    let mut initiator = Initiator::new(session, LiftPolicy::Observe);
+    let mut sess = initiator.open(tcp, fix_utc_timestamp().as_bytes()).await?;
+
+    // 3) Stream + randomly trade. Each cycle streams one instrument's RFS (round-robin over
+    // the downloaded set, so all N build up live server-side subscriptions) and lifts ~1 in 3
+    // cycles (seeded) — a lift books a streaming deal into the blotter via the venue's bond
+    // RFS lift path. A stable per-instrument QuoteReqID REPLACES that instrument's one live
+    // stream on each re-subscribe (keyed by QuoteReqID) instead of piling up.
+    let mut rng = SplitMix64::new(args.seed);
+    let hold = std::time::Duration::from_millis(args.stream_hold_ms.max(1));
+    let forever = args.repeat == 0;
+    let mut i: u64 = 0;
+    loop {
+        let bond = &bonds[(i as usize) % bonds.len()];
+        let counterparty = sim::counterparty_for(i);
+        // Randomly (seeded) LIFT ~1 in 3 cycles; a lift executes + books a streaming deal.
+        let should_lift = rng.below(3) == 0;
+        sess.set_policy(if should_lift {
+            LiftPolicy::LiftOffer
+        } else {
+            LiftPolicy::Observe
+        });
+
+        let stream_req_id = format!("{}-ESP-{}", args.req_id, bond.instrument_id).into_bytes();
+        let symbol = bond.instrument_id.clone().into_bytes();
+        let params = dialect_rates::BondQuoteRequestParams {
+            quote_req_id: &stream_req_id,
+            symbol: &symbol,
+            coupon_rate: bond.coupon_rate,
+            coupon_frequency: bond.coupon_frequency,
+            day_count: bond.day_count,
+            maturity: bond.maturity,
+            redemption: bond.redemption,
+            notional: args.notional,
+            side: Side::TwoWay,
+            subscription: SubscriptionRequest::Subscribe,
+        };
+        let party = counterparty.as_bytes();
+        let sending_time = fix_utc_timestamp().into_bytes();
+        let lift_after = should_lift.then(|| hold / 2);
+        let outcome = sess
+            .stream(
+                &sending_time,
+                |hdr, enc| {
+                    dialect_rates::build_bond_quote_request_with_party(
+                        hdr,
+                        &params,
+                        Some(party),
+                        enc,
+                    )
+                },
+                hold,
+                lift_after,
+            )
+            .await?;
+        println!(
+            "[{i}] {counterparty} · {} ({}) ESP — streamed {} update(s)",
+            bond.name, bond.instrument_id, outcome.updates
+        );
+        if let (Some(bid), Some(offer)) = (outcome.result.bid, outcome.result.offer) {
+            print_quote(outcome.result.quote_id.as_deref(), bid, offer);
+        }
+        if should_lift {
+            if outcome.result.filled {
+                let px = outcome.result.fill_px.unwrap_or(f64::NAN);
+                println!("[{i}] ✓ streamed quote LIFTED & FILLED @ {px:.8} — deal booked");
+            } else {
+                println!("[{i}] ✗ stream lift NOT filled (last-look declined / no auto-quote yet)");
+            }
+        }
+
+        i += 1;
+        if !forever && i >= args.repeat {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(args.interval_ms)).await;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The seeded PRNG is deterministic (same seed ⇒ same sequence) and its bounded roll
+    /// stays in range — so the ESP random-trade selection replays identically under a seed.
+    #[test]
+    fn splitmix64_is_deterministic_and_bounded() {
+        let mut a = SplitMix64::new(0x5EED_1234);
+        let mut b = SplitMix64::new(0x5EED_1234);
+        for _ in 0..256 {
+            assert_eq!(a.next_u64(), b.next_u64());
+        }
+        let mut r = SplitMix64::new(7);
+        for _ in 0..1_000 {
+            assert!(r.below(3) < 3);
+        }
+        // A different seed yields a different stream (with overwhelming probability).
+        assert_ne!(SplitMix64::new(1).next_u64(), SplitMix64::new(2).next_u64());
+    }
+
+    /// The reference-data label mappers resolve the govvie/registry labels onto the FIX
+    /// bond dialect enums, defaulting unknown/blank labels to the standard USD conventions
+    /// (semi-annual, 30/360) so a downloaded bond always encodes to a valid wire descriptor.
+    #[test]
+    fn esp_label_mappers_cover_the_registry_labels() {
+        assert_eq!(esp_frequency_from_label("annual"), PaymentFrequency::Annual);
+        assert_eq!(
+            esp_frequency_from_label("semi_annual"),
+            PaymentFrequency::SemiAnnual
+        );
+        assert_eq!(
+            esp_frequency_from_label("quarterly"),
+            PaymentFrequency::Quarterly
+        );
+        assert_eq!(esp_frequency_from_label(""), PaymentFrequency::SemiAnnual);
+
+        assert_eq!(
+            esp_day_count_from_label("act_365_fixed"),
+            AccrualBasis::Act365Fixed
+        );
+        assert_eq!(esp_day_count_from_label("act_360"), AccrualBasis::Act360);
+        // An act/act govvie basis (not on the wire enum) maps to 30/360; blanks likewise.
+        assert_eq!(
+            esp_day_count_from_label("act_act"),
+            AccrualBasis::Thirty360BondBasis
+        );
+        assert_eq!(
+            esp_day_count_from_label(""),
+            AccrualBasis::Thirty360BondBasis
+        );
+    }
 }

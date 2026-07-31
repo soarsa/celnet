@@ -416,6 +416,22 @@ pub fn build_bond_quote_request(
     p: &BondQuoteRequestParams<'_>,
     enc: &mut FrameEncoder,
 ) -> Vec<u8> {
+    build_bond_quote_request_with_party(hdr, p, None, enc)
+}
+
+/// Build a flat cash-bond `QuoteRequest(R)` frame, stamping an **originating counterparty**
+/// `PartyID(448)` when `party_id` is `Some` (the client on whose behalf the RFQ is entered —
+/// see [`crate::messages::push_originating_party`]). Passing `party_id = None` emits a frame
+/// byte-identical to [`build_bond_quote_request`]. The ESP simulator names a rotated
+/// counterparty per request so the desk blotter shows a varied, realistic pool over one FIX
+/// session — the bond analogue of [`build_rates_quote_request_with_party`].
+#[must_use]
+pub fn build_bond_quote_request_with_party(
+    hdr: &Header<'_>,
+    p: &BondQuoteRequestParams<'_>,
+    party_id: Option<&[u8]>,
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
     enc.clear();
     hdr.encode(MsgType::QuoteRequest, enc);
     enc.push(131, p.quote_req_id);
@@ -440,6 +456,7 @@ pub fn build_bond_quote_request(
     if let Some(side) = side_to_fix_byte(p.side) {
         enc.push(54, &[side]);
     }
+    crate::messages::push_originating_party(enc, party_id);
     enc.finish()
 }
 
@@ -843,6 +860,33 @@ mod tests {
         let raw = build_bond_quote_request(&header(), p, &mut enc);
         let frame = FrameCursor::parse(&raw).expect("frame parses");
         decode_bond_rfq(&frame).expect("bond rfq decodes")
+    }
+
+    #[test]
+    fn bond_party_id_is_optional_and_round_trips_on_the_wire() {
+        let p = bond_params();
+        let mut e1 = FrameEncoder::new();
+        let plain = build_bond_quote_request(&header(), &p, &mut e1);
+        let mut e2 = FrameEncoder::new();
+        let none = build_bond_quote_request_with_party(&header(), &p, None, &mut e2);
+        assert_eq!(
+            plain, none,
+            "None party must be byte-identical to the plain bond builder"
+        );
+
+        let mut e3 = FrameEncoder::new();
+        let named =
+            build_bond_quote_request_with_party(&header(), &p, Some(b"Jane Street"), &mut e3);
+        let frame = FrameCursor::parse(&named).expect("named bond frame parses");
+        assert_eq!(
+            frame.get(crate::messages::TAG_PARTY_ID),
+            Some(b"Jane Street".as_ref()),
+        );
+        // The bond RFQ payload still decodes exactly — the party block is additive, so the
+        // ESP simulator can stamp a rotated counterparty without disturbing the instrument.
+        let rfq = decode_bond_rfq(&frame).expect("bond rfq still decodes");
+        assert_eq!(rfq.symbol, b"US-TREASURY-5Y");
+        assert_eq!(rfq.instrument.coupon_rate, 0.045);
     }
 
     #[test]
