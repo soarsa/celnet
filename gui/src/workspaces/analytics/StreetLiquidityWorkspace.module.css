@@ -192,9 +192,11 @@
   border-bottom: 1px solid var(--hairline);
 }
 
-/* Last-look rejecter — a notable slice of ranked wins pulled at last-look. */
+/* Last-look rejecter — a notable slice of ranked wins pulled at last-look. The
+   danger hue is lifted toward the theme's primary text so the small (11px) numeric
+   clears WCAG AA 4.5:1 on BOTH zebra-row backgrounds in either theme. */
 .reject {
-  color: var(--danger);
+  color: color-mix(in oklab, var(--danger) 72%, var(--text-primary));
   font-weight: var(--weight-emphasis);
 }
 
