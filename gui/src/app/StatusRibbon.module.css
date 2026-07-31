@@ -28,6 +28,17 @@
   color: var(--warn);
 }
 
+/* Headline trading latency — the prominent right-cluster readout. */
+.trading {
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
+}
+
+/* Demoted client paint metric — present but visually subordinate. */
+.muted {
+  color: var(--text-tertiary);
+}
+
 .sep {
   color: var(--text-tertiary);
   opacity: 0.5;

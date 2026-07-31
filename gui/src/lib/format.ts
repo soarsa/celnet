@@ -145,6 +145,19 @@ export function fmtLatencyNanos(nanos: bigint): string {
   return `${(Number(nanos) / 1_000_000).toFixed(2)}ms`;
 }
 
+/**
+ * Adaptive µs/ms latency label from a nanosecond COUNT — the `number` sibling of
+ * {@link fmtLatencyNanos} (which takes the bigint wire value). `LatencyStage`
+ * figures (mean/p99/…) arrive as plain `number`s; this renders the trading-latency
+ * scale the status ribbon shows: sub-millisecond in µs (1 dp), a millisecond or
+ * more in ms (2 dp). A non-finite / negative input is a data gap, rendered "—".
+ */
+export function fmtLatencyShort(nanos: number): string {
+  if (!Number.isFinite(nanos) || nanos < 0) return "—";
+  if (nanos < 1_000_000) return `${(nanos / 1_000).toFixed(1)}µs`;
+  return `${(nanos / 1_000_000).toFixed(2)}ms`;
+}
+
 /** Seconds remaining until a nanosecond deadline, clamped at 0. */
 export function secondsUntil(deadlineNanos: bigint, nowNanos: bigint): number {
   const remNs = deadlineNanos - nowNanos;

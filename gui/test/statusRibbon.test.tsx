@@ -1,79 +1,195 @@
 /**
- * StatusRibbon server-observability UX — renders the REAL `ServerObservabilityItems`
- * (the ribbon's observability cluster, a pure component over the distilled
- * `ServerObservability`) with hand-built values, and asserts the trader-facing
- * rendering: the drain-side price p99, the exact ring conflation-drop count, and
- * the surface/correlation provenance echo. Empty-state shows "—" (never a
- * fabricated zero); a non-zero drop count flags the warn class.
+ * StatusRibbon — the trading-latency readout in the bottom ribbon. The pure stage
+ * selectors + adaptive formatter, then the rendered ribbon driven by `useApp`
+ * mocked (no server): the headline **avg quote** + **order p99** show real values
+ * from a stubbed `listLatencyMetrics` (incl. the mock fixture — parity), degrade to
+ * "—" on absent/denied, and are gated on `view_analytics` (hidden — and NOT polled —
+ * for a caller without it). The demoted client render p99 stays for everyone.
  */
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 
-import { ServerObservabilityItems } from "../src/app/StatusRibbon";
-import type { ServerObservability } from "../src/hooks/useStreamSession";
+import type { LatencyMetrics, LatencyStage } from "../src/data/contract";
 
-const EMPTY: ServerObservability = {
-  received: false,
-  conflationDrops: 0n,
-  serverPriceP99Nanos: 0n,
+const state: { app: unknown } = { app: null };
+vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
+
+import { MockTransport } from "../src/data/mockSource";
+import {
+  StatusRibbon,
+  selectAvgQuoteNs,
+  selectOrderP99Ns,
+} from "../src/app/StatusRibbon";
+import { fmtLatencyShort } from "../src/lib/format";
+
+// --- fixtures ---------------------------------------------------------------
+
+function stage(op: string, overrides: Partial<LatencyStage> = {}): LatencyStage {
+  return {
+    op,
+    stageLabel: op,
+    count: 1_000,
+    p50Ns: 1_000,
+    p99Ns: 4_000,
+    p999Ns: 8_000,
+    p9999Ns: 12_000,
+    minNs: 500,
+    maxNs: 16_000,
+    meanNs: 1_500,
+    ...overrides,
+  };
+}
+
+const HEALTH: LatencyMetrics["health"] = {
+  drainedTotal: 10,
+  droppedTotal: 0,
+  observedGaps: 0,
+  tickHz: 24_000_000,
 };
 
-describe("StatusRibbon — server observability cluster", () => {
-  it("shows the honest empty-state (— / — drops) before any beat", () => {
-    render(<ServerObservabilityItems observability={EMPTY} />);
-    expect(screen.getByTestId("server-p99").textContent).toContain("—");
-    expect(screen.getByTestId("conflation-drops").textContent).toContain("— drops");
-    // No provenance row until a beat carries an echo.
-    expect(screen.queryByTestId("provenance-echo")).toBeNull();
+function metrics(stages: LatencyStage[]): LatencyMetrics {
+  return { stages, health: { ...HEALTH } };
+}
+
+/** A mock app whose `listLatencyMetrics` resolves `result` (or rejects if it is an Error). */
+function makeApp(opts: { can?: boolean; result?: LatencyMetrics | Error } = {}) {
+  const can = opts.can ?? true;
+  const listLatencyMetrics = vi.fn(async (): Promise<LatencyMetrics> => {
+    if (opts.result instanceof Error) throw opts.result;
+    return opts.result ?? metrics([]);
+  });
+  return {
+    app: {
+      transport: { label: "mock/replay", listLatencyMetrics },
+      auth: { user: null, can: () => can },
+      stream: {
+        rows: [{ health: "HEALTHY", gaps: 0 }],
+        totalSeq: 0n,
+        lpCount: 3,
+        observability: { received: false, serverPriceP99Nanos: 0n, conflationDrops: 0n },
+      },
+    },
+    listLatencyMetrics,
+  };
+}
+
+async function renderRibbon(app: unknown): Promise<void> {
+  state.app = app;
+  await act(async () => {
+    render(<StatusRibbon />);
+  });
+}
+
+afterEach(() => {
+  cleanup();
+  state.app = null;
+});
+
+// --- pure selectors ---------------------------------------------------------
+
+describe("StatusRibbon latency selectors", () => {
+  it("avg quote prefers the ESP tick→quote publish stage (mean)", () => {
+    const m = metrics([stage("stream_publish", { meanNs: 1_980 }), stage("rfq_respond", { meanNs: 286_400 })]);
+    expect(selectAvgQuoteNs(m)).toBe(1_980);
   });
 
-  it("renders the server price p99 in a scale-adaptive unit", () => {
-    render(
-      <ServerObservabilityItems
-        observability={{ received: true, conflationDrops: 0n, serverPriceP99Nanos: 3100n }}
-      />,
-    );
-    // 3100ns → 3.1µs (the format helper's sub-ms µs band).
-    expect(screen.getByTestId("server-p99").textContent).toContain("3.1µs");
+  it("avg quote falls back to RFQ respond when the publish stage is absent or empty", () => {
+    const absent = metrics([stage("rfq_respond", { meanNs: 286_400 })]);
+    expect(selectAvgQuoteNs(absent)).toBe(286_400);
+    const empty = metrics([stage("stream_publish", { count: 0, meanNs: 1_980 }), stage("rfq_respond", { meanNs: 286_400 })]);
+    expect(selectAvgQuoteNs(empty)).toBe(286_400);
   });
 
-  it("renders the exact conflation-drop count and flags a non-zero count", () => {
-    render(
-      <ServerObservabilityItems
-        observability={{ received: true, conflationDrops: 16n, serverPriceP99Nanos: 4800n }}
-      />,
-    );
-    const drops = screen.getByTestId("conflation-drops");
-    expect(drops.textContent).toContain("16 drops");
-    // A non-zero drop count must be visually warned, not silently green.
-    expect(drops.className).toMatch(/warn/);
+  it("order p99 prefers the ack→fill→book stage (p99), falling back to quote accept", () => {
+    const m = metrics([stage("book", { p99Ns: 6_100_000 }), stage("quote_accept", { p99Ns: 3_400_000 })]);
+    expect(selectOrderP99Ns(m)).toBe(6_100_000);
+    const fallback = metrics([stage("quote_accept", { p99Ns: 3_400_000 })]);
+    expect(selectOrderP99Ns(fallback)).toBe(3_400_000);
   });
 
-  it("treats zero drops on a real beat as clean (no warn)", () => {
-    render(
-      <ServerObservabilityItems
-        observability={{ received: true, conflationDrops: 0n, serverPriceP99Nanos: 900n }}
-      />,
-    );
-    const drops = screen.getByTestId("conflation-drops");
-    expect(drops.textContent).toContain("0 drops");
-    expect(drops.className).not.toMatch(/warn/);
+  it("returns null for no metrics or no matching stage (rendered '—', never a fabricated 0)", () => {
+    expect(selectAvgQuoteNs(null)).toBeNull();
+    expect(selectOrderP99Ns(null)).toBeNull();
+    expect(selectAvgQuoteNs(metrics([stage("book")]))).toBeNull();
+  });
+});
+
+describe("fmtLatencyShort", () => {
+  it("renders sub-millisecond in µs and a millisecond or more in ms", () => {
+    expect(fmtLatencyShort(1_980)).toBe("2.0µs");
+    expect(fmtLatencyShort(6_100_000)).toBe("6.10ms");
+  });
+  it("renders a gap for non-finite / negative input", () => {
+    expect(fmtLatencyShort(Number.NaN)).toBe("—");
+    expect(fmtLatencyShort(-1)).toBe("—");
+  });
+});
+
+// --- rendered ribbon --------------------------------------------------------
+
+describe("StatusRibbon trading-latency readout", () => {
+  it("renders avg-quote (µs) + order-p99 (ms) from a stubbed listLatencyMetrics", async () => {
+    const { app } = makeApp({
+      result: metrics([
+        stage("stream_publish", { meanNs: 1_980 }),
+        stage("book", { p99Ns: 6_100_000 }),
+      ]),
+    });
+    await renderRibbon(app);
+    const avg = await screen.findByTestId("avg-quote");
+    await waitFor(() => expect(avg).toHaveTextContent("avg quote 2.0µs"));
+    expect(screen.getByTestId("order-p99")).toHaveTextContent("order p99 6.10ms");
   });
 
-  it("echoes the surface version and correlation id when present", () => {
-    render(
-      <ServerObservabilityItems
-        observability={{
-          received: true,
-          conflationDrops: 0n,
-          serverPriceP99Nanos: 900n,
-          surfaceVersion: 9n,
-          correlationId: 42n,
-        }}
-      />,
-    );
-    const echo = screen.getByTestId("provenance-echo");
-    expect(echo.textContent).toContain("sv 9");
-    expect(echo.textContent).toContain("corr 42");
+  it("shows realistic values from the offline MOCK fixture (parity)", async () => {
+    const mock = new MockTransport();
+    const app = {
+      transport: { label: "mock/replay", listLatencyMetrics: () => mock.listLatencyMetrics() },
+      auth: { user: null, can: () => true },
+      stream: {
+        rows: [{ health: "HEALTHY", gaps: 0 }],
+        totalSeq: 0n,
+        lpCount: 3,
+        observability: { received: false, serverPriceP99Nanos: 0n, conflationDrops: 0n },
+      },
+    };
+    await renderRibbon(app);
+    // stream_publish mean 1_980.9ns → 2.0µs ; book p99 6_100_000ns → 6.10ms
+    await waitFor(() => expect(screen.getByTestId("avg-quote")).toHaveTextContent("avg quote 2.0µs"));
+    expect(screen.getByTestId("order-p99")).toHaveTextContent("order p99 6.10ms");
+  });
+
+  it("degrades to '—' when the metrics carry no matching stage", async () => {
+    const { app } = makeApp({ result: metrics([stage("surface_vol")]) });
+    await renderRibbon(app);
+    const avg = await screen.findByTestId("avg-quote");
+    await waitFor(() => expect(avg).toHaveTextContent("avg quote —"));
+    expect(screen.getByTestId("order-p99")).toHaveTextContent("order p99 —");
+  });
+
+  it("swallows an RPC denial / disconnect to '—' (never throws)", async () => {
+    const { app } = makeApp({ result: new Error("denied: view_analytics required") });
+    await renderRibbon(app);
+    const avg = await screen.findByTestId("avg-quote");
+    await waitFor(() => expect(avg).toHaveTextContent("avg quote —"));
+    expect(screen.getByTestId("order-p99")).toHaveTextContent("order p99 —");
+  });
+
+  it("hides the readout AND does not poll for a caller without view_analytics", async () => {
+    const { app, listLatencyMetrics } = makeApp({ can: false });
+    await renderRibbon(app);
+    expect(screen.queryByTestId("avg-quote")).toBeNull();
+    expect(screen.queryByTestId("order-p99")).toBeNull();
+    expect(listLatencyMetrics).not.toHaveBeenCalled();
+    // the client render p99 stays for everyone
+    expect(screen.getByText(/render p99/)).toBeInTheDocument();
+  });
+
+  it("keeps the demoted client render p99 alongside the trading numbers", async () => {
+    const { app } = makeApp({ result: metrics([stage("stream_publish"), stage("book")]) });
+    await renderRibbon(app);
+    const footer = screen.getByRole("contentinfo");
+    expect(within(footer).getByText(/render p99/)).toBeInTheDocument();
   });
 });
