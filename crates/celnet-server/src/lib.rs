@@ -540,6 +540,12 @@ impl Edge {
             )
             .map_err(|e| std::io::Error::new(e.kind(), format!("FIX connection config: {e}")))?,
         );
+        // Price a managed fixed-income STREAM acceptor's outbound RFS/ESP off the
+        // aggregated-book composite through the connection's pricing group (design §5):
+        // wire the SAME hub the gRPC/WS RFQ path prices against, so the FIX stream is
+        // composite-based + tiered too (closing the deferred rates-RFS group-pricing seam).
+        // Set before the enabled acceptors bind below.
+        fix_registry.set_aggregation_hub(Arc::clone(&aggregation_hub));
         // ONE admin edge backs both the gRPC server and the WS mirror (shared behind an
         // `Arc`), so the two fronts manage the SAME registry through one entitlement
         // boundary — exactly the single-edge sharing the risk service uses.

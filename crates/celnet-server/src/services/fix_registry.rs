@@ -109,6 +109,15 @@ pub struct FixAcceptorRegistry {
     /// emits a loud unresolved-desk warning. Absent (e.g. in unit tests that never
     /// wire it) ⇒ desk-resolution checks are skipped best-effort.
     desk_directory: OnceLock<Arc<dyn DeskDirectory>>,
+    /// The live aggregated-book composite and pricing-group registry a managed
+    /// fixed-income **stream** acceptor prices its outbound RFS/ESP off (composite-based
+    /// and tiered per the connection's pricing group — see
+    /// [`FixContext::with_aggregation`]). Injected once after boot (the hub is constructed
+    /// alongside this registry but wired here through a set-once handle to keep
+    /// [`Self::load`]'s signature stable), so it is a set-once [`OnceLock`]. Absent (unit
+    /// tests that never wire it) ⇒ the stream keeps the standalone P0 demo re-price,
+    /// byte-identical.
+    aggregation_hub: OnceLock<Arc<crate::services::aggregation::AggregationHub>>,
     config_path: PathBuf,
 }
 
@@ -158,8 +167,18 @@ impl FixAcceptorRegistry {
             desk_edge,
             auto_quote: RatesAutoQuotePolicy::default(),
             desk_directory: OnceLock::new(),
+            aggregation_hub: OnceLock::new(),
             config_path,
         })
+    }
+
+    /// Inject the aggregated-book composite and pricing-group registry a managed
+    /// fixed-income **stream** acceptor prices its outbound RFS/ESP off (composite-based
+    /// and tiered per the connection's pricing group). Called once at boot after the hub
+    /// is built, before [`Self::start_enabled`]. Idempotent: a second call is ignored
+    /// (set-once). Absent ⇒ streams keep the standalone P0 demo re-price.
+    pub fn set_aggregation_hub(&self, hub: Arc<crate::services::aggregation::AggregationHub>) {
+        let _ = self.aggregation_hub.set(hub);
     }
 
     /// Inject the desk directory used to validate connection routing desks and to
@@ -409,7 +428,11 @@ impl FixAcceptorRegistry {
             self.desk_edge.clone(),
             def.desk.clone(),
             self.auto_quote.clone(),
-        );
+        )
+        // Price a fixed-income STREAM venue's outbound RFS/ESP off the aggregated-book
+        // composite through the connection's pricing group when a book covers the streamed
+        // instrument (design §5); absent ⇒ the standalone P0 demo re-price.
+        .with_aggregation(self.aggregation_hub.get().cloned());
         FixAcceptor::start(addr, ctx)
             .await
             .map_err(|e| format!("could not bind {addr}: {e}"))

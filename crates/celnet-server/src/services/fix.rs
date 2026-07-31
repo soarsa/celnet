@@ -198,6 +198,18 @@ pub(crate) struct FixContext {
     /// `Text(58) = "limit breached: …"` — before the fill is emitted. Shared behind an
     /// `Arc` with every gRPC/WS edge, so the FIX venue sees the same firm/pair caps.
     store: Arc<PositionStore>,
+    /// The live aggregated-book composite + pricing-group registry a fixed-income
+    /// **stream** venue prices its outbound RFS/ESP two-way off (`docs/FI-PRICING-GROUPS-
+    /// DESIGN.md` §5): when the streamed instrument is covered by an enabled aggregated
+    /// book, the pushed two-way is the book's consolidated composite run through THIS
+    /// connection's pricing-group pipeline (resolved by connection id, then desk) —
+    /// closing the deferred rates-RFS group-pricing seam so the FIX stream is
+    /// composite-based + tiered exactly like the gRPC/WS RFQ path
+    /// ([`super::quote::QuoteEdge::book_composite_for_caller`]). `None` on the legacy env
+    /// seed / tests that wire no hub — the stream then falls back to the standalone P0
+    /// demo re-price, byte-identical to before. Resolution happens on the FIX session
+    /// ticker task (never the pinned zero-alloc pricer), so guardrail 11 holds.
+    aggregation_hub: Option<Arc<crate::services::aggregation::AggregationHub>>,
 }
 
 /// The admission policy that decides whether an inbound rates RFQ is **auto-quoted**
@@ -317,6 +329,7 @@ impl FixContext {
             desk: String::new(),
             auto_quote: RatesAutoQuotePolicy::default(),
             store,
+            aggregation_hub: None,
         }
     }
 
@@ -351,7 +364,22 @@ impl FixContext {
             desk: String::new(),
             auto_quote: RatesAutoQuotePolicy::default(),
             store,
+            aggregation_hub: None,
         }
+    }
+
+    /// Wire the live aggregated-book composite + pricing-group registry a fixed-income
+    /// **stream** venue prices its outbound RFS/ESP off (see the field docs). Builder-
+    /// style so existing callers/tests that don't wire a hub are unchanged (the stream
+    /// then keeps the standalone P0 demo re-price). A no-op wire for an FX-options
+    /// acceptor, whose path never streams a composite.
+    #[must_use]
+    pub(crate) fn with_aggregation(
+        mut self,
+        hub: Option<Arc<crate::services::aggregation::AggregationHub>>,
+    ) -> Self {
+        self.aggregation_hub = hub;
+        self
     }
 
     /// Wire the desk routing for a managed fixed-income venue: the inbox `desk_edge`
@@ -833,8 +861,45 @@ impl FixSession {
         )
     }
 
-    /// Re-price every live RFS subscription off the P0 curve (with a small deterministic
-    /// demo movement) and return the fresh two-way `Quote(S)` frames to push. Each update
+    /// Resolve the aggregated-book composite two-way for a streamed instrument, applying
+    /// **this connection's** pricing group when one resolves — the seam that makes the FIX
+    /// RFS/ESP outbound composite-based **and tiered**, matching the gRPC/WS RFQ path
+    /// ([`super::quote::QuoteEdge::book_composite_for_caller`]). A grouped connection prices
+    /// off the book's RAW consolidated composite through its own effective RFS/RFQ pipeline
+    /// (`share_pipeline ? esp : rfq`); an ungrouped one receives the book-default composite.
+    ///
+    /// Returns `None` when no hub is wired, no enabled book covers `symbol`, or the
+    /// composite is degenerate — the RFS ticker then falls back to the standalone P0 demo
+    /// re-price, so an instrument no book covers (e.g. a plain OIS curve) and the legacy
+    /// env seed stay byte-identical. Runs on the FIX **session ticker task**, never the
+    /// pinned zero-alloc pricer, so the composite/pipeline lookup (which takes the hub
+    /// read locks) respects guardrail 11.
+    fn composite_two_way(&self, symbol: &[u8], size: f64) -> Option<PricedLine> {
+        let hub = self.ctx.aggregation_hub.as_ref()?;
+        let instrument_id = std::str::from_utf8(symbol).ok()?;
+        let resolver = hub.pricing_groups();
+        let desk = self.ctx.desk.trim();
+        let comp = match resolver
+            .resolve_for_connection(&self.ctx.connection_id, (!desk.is_empty()).then_some(desk))
+        {
+            Some(group) => hub.resolve_rfq_composite_priced(
+                instrument_id,
+                &group.id,
+                group.rfq_effective_pipeline(),
+            ),
+            None => hub.resolve_rfq_composite(instrument_id),
+        }?;
+        Some(PricedLine {
+            bid: comp.best_bid,
+            offer: comp.best_offer,
+            size,
+        })
+    }
+
+    /// Re-price every live RFS subscription and return the fresh two-way `Quote(S)` frames
+    /// to push. Each subscription is priced off the aggregated-book composite through this
+    /// connection's pricing group ([`Self::composite_two_way`]) when a book covers it, and
+    /// otherwise off the P0 curve with a small deterministic demo movement. Each update
     /// retires the subscription's prior live quote so only the latest stays liftable,
     /// keeping the live-quote table bounded to one entry per subscription. Driven by the
     /// session loop's streaming ticker; returns an empty vec when no subscription is live.
@@ -865,13 +930,21 @@ impl FixSession {
             if let Some(q) = to_retire {
                 self.live.remove(&q);
             }
-            let moved_par = rfs_streamed_rate(base_par, tick);
-            let (bid, offer) = dialect_rates::two_way_rates(moved_par, RATES_HALF_SPREAD);
-            let priced = PricedLine {
-                bid,
-                offer,
-                size: notional,
-            };
+            // Prefer the aggregated-book composite (this connection's group-tiered two-way)
+            // when a book covers the streamed instrument — the composite-based + tiered
+            // outbound seam (design §5). Fall back to the standalone P0 demo re-price for an
+            // instrument no book covers (e.g. a plain OIS curve) or when no hub is wired.
+            let priced = self
+                .composite_two_way(&symbol, notional)
+                .unwrap_or_else(|| {
+                    let moved_par = rfs_streamed_rate(base_par, tick);
+                    let (bid, offer) = dialect_rates::two_way_rates(moved_par, RATES_HALF_SPREAD);
+                    PricedLine {
+                        bid,
+                        offer,
+                        size: notional,
+                    }
+                });
             let quote_id = self.emit_two_way_quote(
                 st,
                 &req_id,
@@ -999,11 +1072,37 @@ impl FixSession {
                 Err(()) => RatesAdmission::Manual(ManualInterventionReason::PricingFailure),
             }
         };
-        if let RatesAdmission::Auto(priced) = &admission {
-            self.emit_two_way_quote(st, req_id, symbol, priced, None, None, out);
-        }
+        // Record the inbox row first so its id can ride an auto-quote (a lift then books
+        // the deal), exactly as the OIS arm does.
         let counterparty = self.display_counterparty(frame);
-        self.record_bond_rfq(&rfq, &counterparty, &curve, &admission);
+        let request_id = self.record_bond_rfq(&rfq, &counterparty, &curve, &admission);
+        if let RatesAdmission::Auto(priced) = &admission {
+            let mid = 0.5 * (priced.bid + priced.offer);
+            let quote_id =
+                self.emit_two_way_quote(st, req_id, symbol, priced, None, request_id.clone(), out);
+            // On a STREAM (RFS) venue a bond Subscribe opens a CONTINUOUS stream — register
+            // it so the session ticker re-prices and pushes updates until an Unsubscribe.
+            // The re-price prefers the aggregated-book composite (this connection's
+            // group-tiered two-way) via [`Self::composite_two_way`] — the bond arm is the
+            // instrument family an aggregated book actually covers, so this is where the
+            // composite-based + tiered outbound RFS is exercised. The desk row id rides
+            // every update so a lift of any one books the same deal and closes the stream.
+            if intent == RatesIntent::Rfs {
+                self.rfs.insert(
+                    req_id.to_vec(),
+                    RfsSubscription {
+                        req_id: req_id.to_vec(),
+                        symbol: symbol.to_vec(),
+                        notional: rfq.notional,
+                        base_par: mid,
+                        request_id,
+                        tick: 0,
+                        last_quote_id: Some(quote_id),
+                        prev_quote_id: None,
+                    },
+                );
+            }
+        }
     }
 
     /// Record an inbound cash-bond RFQ into the desk inbox under this venue's desk — the
@@ -1019,12 +1118,10 @@ impl FixSession {
         counterparty: &str,
         curve: &CurveSet,
         admission: &RatesAdmission,
-    ) {
-        let Some(edge) = self.ctx.desk_edge.as_ref() else {
-            return;
-        };
+    ) -> Option<String> {
+        let edge = self.ctx.desk_edge.as_ref()?;
         if self.ctx.desk.trim().is_empty() {
-            return;
+            return None;
         }
         let side = Side::try_from(rfq.instrument.side).unwrap_or(Side::TwoWay);
         let instrument = RatesInstrument {
@@ -1040,7 +1137,7 @@ impl FixSession {
             RatesAdmission::RoutedToDesk => RfqIngestOutcome::RoutedToDesk,
             RatesAdmission::Manual(reason) => RfqIngestOutcome::ManualIntervention(*reason),
         };
-        edge.ingest_fix_rfq(
+        let stored = edge.ingest_fix_rfq(
             &self.ctx.desk,
             counterparty,
             instrument,
@@ -1049,6 +1146,7 @@ impl FixSession {
             rfq.notional,
             outcome,
         );
+        Some(stored.request_id)
     }
 
     /// Execute a `NewOrderSingle(D)` / `NewOrderMultileg(AB)` against a live quote:
@@ -1558,6 +1656,163 @@ mod tests {
         assert_eq!(s.len(), "YYYYMMDD-HH:MM:SS.sss".len());
         assert_eq!(&s[8..9], "-");
         assert!(s.starts_with("2026"));
+    }
+
+    /// A hub with one flat book covering `BND-5Y` (raw composite 99.50/99.60 ⇒ mid 99.55)
+    /// and one enabled pricing group `grp-fix` whose member connection is `conn-grouped`,
+    /// pricing its RFS/RFQ outbound through a Flat ±50 price-bps tier. The SAME construction
+    /// pattern the `aggregation`/`quote` tests use, kept local so this test owns its fixture.
+    fn grouped_stream_hub() -> Arc<crate::services::aggregation::AggregationHub> {
+        use crate::config::identity::{
+            AggregatedBookDef, AggregationParams, IdentityStore, PricingGroupDef, Scope,
+        };
+        use celnet_tiering::{
+            FeaturePipeline, Guardrails, PricingFeature, SpreadUnit, StalePolicy, StrategySpec,
+            TieringConfig,
+        };
+        const HUB_NOW: i64 = 1_700_000_000_000_000_000;
+        let flat_50 = FeaturePipeline::new(
+            vec![PricingFeature::Tiering {
+                config: TieringConfig {
+                    unit: SpreadUnit::PriceBps,
+                    strategies: vec![StrategySpec::FlatMarkup { half_spread: 50.0 }],
+                    guardrails: Guardrails::new(0.0, 1_000.0, 1_000.0, 1e-9),
+                    stale_policy: StalePolicy::Suppress,
+                },
+            }],
+            Guardrails::new(0.0, 1_000.0, 1_000.0, 1e-9),
+        );
+        let hub =
+            crate::services::aggregation::AggregationHub::new(crate::clock::Clock::manual(HUB_NOW));
+        let mut store = IdentityStore::default();
+        store.aggregated_books.push(AggregatedBookDef {
+            id: "agg-book".to_string(),
+            name: "agg-book".to_string(),
+            member_connection_ids: vec!["LP-1".to_string()],
+            instrument_scope: Scope::Explicit(vec!["BND-5Y".to_string()]),
+            params: AggregationParams {
+                staleness_tau_ms: 30_000,
+                max_quote_age_ms: 86_400_000,
+                divergence_gating: false,
+                min_contributors: 1,
+                depth_levels: 1,
+            },
+            enabled: true,
+        });
+        store.pricing_groups.push(PricingGroupDef {
+            id: "grp-fix".to_string(),
+            name: "GRP-FIX".to_string(),
+            description: String::new(),
+            member_connection_ids: vec!["conn-grouped".to_string()],
+            member_user_ids: vec![],
+            member_desks: vec![],
+            esp_pipeline: flat_50.clone(),
+            rfq_pipeline: flat_50,
+            share_pipeline: false,
+            enabled: true,
+        });
+        hub.reconcile(&store);
+        assert!(
+            hub.ingest(&celnet_proto::LpQuote {
+                lp_name: "LP-1".to_string(),
+                instrument_id: "BND-5Y".to_string(),
+                bid: 99.50,
+                offer: 99.60,
+                bid_size: 1_000_000.0,
+                offer_size: 2_000_000.0,
+                ts_nanos: HUB_NOW,
+            }),
+            "LP-1 ingested into the book"
+        );
+        hub
+    }
+
+    /// Build a fixed-income STREAM session on `connection_id` wired to `hub` (or none) —
+    /// the minimal context [`FixSession::composite_two_way`] reads (hub + connection id +
+    /// desk); the engine collaborators are inert for a composite lookup.
+    fn stream_session(
+        connection_id: &str,
+        hub: Option<Arc<crate::services::aggregation::AggregationHub>>,
+    ) -> FixSession {
+        let link = {
+            let initial = celnet_engine::testing::make_state(
+                1.10,
+                celnet_conventions::resolve(
+                    celnet_types::CcyPair::parse("EURUSD").unwrap(),
+                    celnet_types::Tenor::Years(1),
+                )
+                .record,
+            );
+            CoreLink::start(initial, None)
+        };
+        let ctx = FixContext::with_comp_ids(
+            link,
+            SpreadModel::default(),
+            Clock::system(),
+            Arc::new(SurfaceBook::new()),
+            b"CELNET".to_vec(),
+            b"CPTY".to_vec(),
+            Arc::new(FixMonitor::new()),
+            connection_id.to_string(),
+            AcceptorKind::FixedIncomeStream,
+            Arc::new(PositionStore::new()),
+        )
+        .with_aggregation(hub);
+        let cfg = SessionConfig {
+            sender: ctx.sender.clone(),
+            target: ctx.counterparty.clone(),
+            heart_bt_int: 30,
+            role: Role::Acceptor,
+        };
+        FixSession::new(cfg, ctx)
+    }
+
+    /// The composite-based + tiered outbound seam (design §5): a fixed-income STREAM
+    /// session prices a streamed instrument OFF the aggregated-book composite, and a
+    /// GROUPED connection's two-way is its group's tier applied to the RAW composite —
+    /// DIFFERENT from the raw two-way an ungrouped connection receives. Raw mid 99.55,
+    /// Flat ±50 price-bps ⇒ grouped 99.05/100.05; ungrouped = raw 99.50/99.60.
+    #[tokio::test]
+    async fn stream_prices_off_composite_and_tiers_per_pricing_group() {
+        let hub = grouped_stream_hub();
+
+        // Grouped connection ⇒ the group's Flat ±50 tier off the RAW mid 99.55.
+        let grouped = stream_session("conn-grouped", Some(Arc::clone(&hub)));
+        let g = grouped
+            .composite_two_way(b"BND-5Y", 5_000_000.0)
+            .expect("a covered instrument prices off the composite");
+        assert!((g.bid - 99.05).abs() < 1e-9, "grouped bid={}", g.bid);
+        assert!((g.offer - 100.05).abs() < 1e-9, "grouped offer={}", g.offer);
+        assert!((g.size - 5_000_000.0).abs() < 1e-9);
+
+        // Ungrouped connection ⇒ the RAW composite verbatim (tiering is group-only).
+        let plain = stream_session("conn-plain", Some(Arc::clone(&hub)));
+        let p = plain
+            .composite_two_way(b"BND-5Y", 5_000_000.0)
+            .expect("a covered instrument prices off the composite");
+        assert!((p.bid - 99.50).abs() < 1e-9, "ungrouped bid={}", p.bid);
+        assert!(
+            (p.offer - 99.60).abs() < 1e-9,
+            "ungrouped offer={}",
+            p.offer
+        );
+
+        // The grouped two-way genuinely DIFFERS from the raw (the seam actually tiers).
+        assert!(
+            (g.bid - p.bid).abs() > 1e-6 && (g.offer - p.offer).abs() > 1e-6,
+            "grouped tier must differ from the raw composite"
+        );
+
+        // An instrument NO book covers falls back (None) — the ticker keeps the P0 demo
+        // re-price for it (e.g. a plain OIS curve), so nothing regresses.
+        assert!(
+            plain.composite_two_way(b"USD-OIS", 5_000_000.0).is_none(),
+            "an uncovered instrument yields no composite (standalone fallback)"
+        );
+
+        // No hub wired ⇒ always None (the legacy env seed / tests stay byte-identical).
+        let no_hub = stream_session("conn-grouped", None);
+        assert!(no_hub.composite_two_way(b"BND-5Y", 5_000_000.0).is_none());
     }
 
     /// The auto-quote policy admits small, on-the-run clips and routes larger or
