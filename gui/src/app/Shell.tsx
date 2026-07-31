@@ -45,6 +45,7 @@ import { PermissionsWorkspace } from "../workspaces/PermissionsWorkspace";
 import { PricingGroupsWorkspace } from "../workspaces/PricingGroupsWorkspace";
 import { ClientFlowWorkspace } from "../workspaces/analytics/ClientFlowWorkspace";
 import { LatencyOpsWorkspace } from "../workspaces/analytics/LatencyOpsWorkspace";
+import { StreetLiquidityWorkspace } from "../workspaces/analytics/StreetLiquidityWorkspace";
 import { ExcelWorkspace } from "../workspaces/ExcelWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
@@ -151,6 +152,9 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // Analytics: the per-stage pipeline-latency / ops table — same top-level tab
   // and `view_analytics` gate as Client Flow. Cross-asset, read-only.
   latencyops: LatencyOpsWorkspace,
+  // Analytics: the street-side LP-liquidity league table — same top-level tab and
+  // `view_analytics` gate. Cross-asset, read-only.
+  streetliquidity: StreetLiquidityWorkspace,
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,
   permissions: PermissionsWorkspace,

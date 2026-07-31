@@ -61,6 +61,7 @@ export type WorkspaceId =
   | "excel"
   | "clientflow"
   | "latencyops"
+  | "streetliquidity"
   | "connections"
   | "admin"
   | "permissions"
@@ -270,6 +271,11 @@ export const RAIL: readonly {
   // health. Cross-asset, same `view_analytics` gate as Client Flow (trader-visible
   // when granted). Read-only ops observability, not an admin surface.
   { id: "latencyops", glyph: "⏱", label: "Latency / Ops", subtitle: "Per-stage p50/p99 · tick→quote", section: "analytics", assets: CAPABILITY_ASSETS },
+  // Street Liquidity — the LP-side league table (who we trade WITH on the street
+  // side): per-LP tick rate, quotes, deals won, won notional, misses, last-look
+  // rejects, win-rate + mean cover. Cross-asset, same `view_analytics` gate as the
+  // other analytics rows. Read-only ops/analytics observability.
+  { id: "streetliquidity", glyph: "⇶", label: "Street Liquidity", subtitle: "Per-LP win-rate · deals · last-look", section: "analytics", assets: CAPABILITY_ASSETS },
   // Administration / ops — admin-gated, no license concept. (Connections is venue
   // ops: its rail stays admin-gated, but its in-pane edits gate on `manage_liquidity`
   // server-side — see AggregatedBookWorkspace for the reachable manage_liquidity
@@ -351,6 +357,7 @@ export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<Workspace
 export const ANALYTICS_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
   "clientflow",
   "latencyops",
+  "streetliquidity",
 ]);
 
 /**
@@ -388,6 +395,8 @@ export const WORKSPACE_CAPABILITY: Partial<Record<WorkspaceId, CapabilityAction>
   clientflow: "view_analytics",
   // Latency / Ops is the same management-sensitive READ gate as Client Flow.
   latencyops: "view_analytics",
+  // Street Liquidity is the LP-side analytics READ — same `view_analytics` gate.
+  streetliquidity: "view_analytics",
 };
 
 /**

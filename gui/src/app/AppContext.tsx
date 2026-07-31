@@ -96,6 +96,7 @@ export type WorkspaceId =
   | "excel"
   | "clientflow"
   | "latencyops"
+  | "streetliquidity"
   | "connections"
   | "admin"
   | "permissions"

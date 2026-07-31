@@ -54,6 +54,7 @@ export type WorkspaceId =
   | "excel"
   | "clientflow"
   | "latencyops"
+  | "streetliquidity"
   | "connections"
   | "admin"
   | "permissions"
@@ -82,6 +83,7 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "excel",
   "clientflow",
   "latencyops",
+  "streetliquidity",
   "connections",
   "admin",
   "permissions",
