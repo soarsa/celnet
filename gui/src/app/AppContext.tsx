@@ -100,6 +100,7 @@ export type WorkspaceId =
   | "admin"
   | "permissions"
   | "pricinggroups"
+  | "corpactions"
   | "refdata";
 
 // Re-export the scope vocabulary from its owning module so existing consumers

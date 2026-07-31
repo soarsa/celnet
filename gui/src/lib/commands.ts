@@ -65,6 +65,7 @@ export type WorkspaceId =
   | "admin"
   | "permissions"
   | "pricinggroups"
+  | "corpactions"
   | "refdata";
 
 /** A logical grouping of related commands (sections the cheatsheet + palette use). */
@@ -86,6 +87,7 @@ export type RailSection =
   | "pricing"
   | "risk"
   | "transfers"
+  | "refdata"
   | "tools"
   | "analytics"
   | "admin";
@@ -103,6 +105,7 @@ export const RAIL_SECTIONS: readonly { id: RailSection; label: string }[] = [
   { id: "pricing", label: "Pricing" },
   { id: "risk", label: "Risk" },
   { id: "transfers", label: "Transfers" },
+  { id: "refdata", label: "Reference Data" },
   { id: "tools", label: "Tools" },
   { id: "analytics", label: "Client Analytics" },
   { id: "admin", label: "Administration" },
@@ -247,6 +250,14 @@ export const RAIL: readonly {
   // the LP price composite (Agg Book) nor a risk-management bucket (Risk Portfolios).
   { id: "book", glyph: "▤", label: "Book", subtitle: "Positions · deals · P&L", section: "risk", assets: CAPABILITY_ASSETS },
   { id: "quoting", glyph: "⇌", label: "Quoting", subtitle: "RFQ / IOI desk inbox", section: "markets", assets: ["fixed_income"] },
+  // Corporate Actions (docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md):
+  // the bond CA inbox + the effective post-CA instrument schedule viewer. A single-
+  // asset FI reference-data surface. NOT admin-gated and carries NO `viewCap`: the
+  // CA-inbox + schedule READS sit on the `view·FI` floor (any FI viewer sees the
+  // list), while the Confirm / Apply lifecycle WRITES gate on the narrow `refdata`
+  // capability PER-CONTROL inside the pane (read-only without it). It renders under
+  // the FI tab in its own "Reference Data" rail section.
+  { id: "corpactions", glyph: "❖", label: "Corporate Actions", subtitle: "CA inbox · schedule effect", section: "refdata", assets: ["fixed_income"] },
   { id: "xva", glyph: "⊗", label: "XVA", section: "tools", assets: ["fx_options"] },
   { id: "excel", glyph: "▦", label: "Excel", section: "tools", assets: ["fx_options"] },
   // Analytics — the cross-asset (FI + FXO) client-flow surface, its own top-level

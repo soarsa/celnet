@@ -23,6 +23,7 @@ import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
 import { MarketDataWorkspace } from "../workspaces/MarketDataWorkspace";
 import { QuotingWorkspace } from "../workspaces/QuotingWorkspace";
+import { CorporateActionsWorkspace } from "../workspaces/CorporateActionsWorkspace";
 import { ReferenceDataWorkspace } from "../workspaces/ReferenceDataWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { FiStreamingWorkspace } from "../workspaces/FiStreamingWorkspace";
@@ -157,6 +158,9 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // connections / users / desks resolve to ONE group, each carrying an ESP and an
   // RFQ feature pipeline (RAW → ordered features → OUTBOUND). Admin-gated.
   pricinggroups: PricingGroupsWorkspace,
+  // Corporate Actions: the bond CA inbox + effective-schedule viewer under the FI
+  // tab. Reads on the `view·FI` floor; Confirm/Apply gate on `refdata` per-control.
+  corpactions: CorporateActionsWorkspace,
   refdata: ReferenceDataWorkspace,
 };
 

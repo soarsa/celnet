@@ -339,6 +339,9 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         "risk",
         "book",
         "quoting",
+        // Corporate Actions: a Fixed-Income reference-data surface (CA inbox +
+        // schedule viewer), NOT admin-gated — reads on the view·FI floor.
+        "corpactions",
         // Pricing Groups is a ManagePricing·FI client-pricing surface, moved off the
         // Administration tab onto Fixed Income (viewCap-gated); it sits at its RAIL
         // position (after the admin/ops block) so it trails the FI rows.
@@ -455,13 +458,14 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
   const visible = (domain: Parameters<typeof railForDomain>[0], auth: NavAuth) =>
     railForDomain(domain).filter((r) => workspaceAccessible(r.id, auth));
 
-  it("RAIL_SECTIONS is the eight labelled sections, in render order", () => {
+  it("RAIL_SECTIONS is the nine labelled sections, in render order", () => {
     expect(RAIL_SECTIONS.map((s) => s.id)).toEqual([
       "trading",
       "markets",
       "pricing",
       "risk",
       "transfers",
+      "refdata",
       "tools",
       "analytics",
       "admin",
@@ -472,6 +476,7 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
       "Pricing",
       "Risk",
       "Transfers",
+      "Reference Data",
       "Tools",
       "Client Analytics",
       "Administration",
@@ -499,15 +504,17 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     }
   });
 
-  it("the Fixed-Income rail groups into the four labelled sections, in order", () => {
+  it("the Fixed-Income rail groups into the five labelled sections, in order", () => {
     const groups = railSections(visible("fixed_income", signedOut));
     // NOTE: signed-out `can` is permissive, so the viewCap-gated Pricing/Risk-mgmt
-    // rows ARE visible here — the FI rail shows all four sections.
+    // rows ARE visible here — the FI rail shows all five sections (incl. the new
+    // Reference Data section holding Corporate Actions).
     expect(groups.map((g) => g.section.label)).toEqual([
       "Markets & Liquidity",
       "Pricing",
       "Risk",
       "Transfers",
+      "Reference Data",
     ]);
     const byLabel = (label: string) =>
       groups.find((g) => g.section.label === label)!.rows.map((r) => r.id);
@@ -523,6 +530,7 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
       "book",
     ]);
     expect(byLabel("Transfers")).toEqual(["risktransfer", "transferinbox", "transferaudit"]);
+    expect(byLabel("Reference Data")).toEqual(["corpactions"]);
   });
 
   it("the FX rail groups into Trading / Markets / Risk / Tools, in order", () => {
