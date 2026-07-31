@@ -16,5 +16,6 @@
 pub mod consistency;
 pub mod curve_calibration;
 pub mod fix_connections;
+pub mod hedge_policy;
 pub mod identity;
 pub mod reference_data;

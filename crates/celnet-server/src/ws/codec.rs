@@ -125,6 +125,19 @@ use celnet_proto::{
     ClientFlowMetricsDesc, LatencyStageDesc, LatencyTelemetryHealth, ListClientFlowMetricsRequest,
     ListClientFlowMetricsResponse, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
 };
+// AuthService — auto-hedging / risk-internalisation (Phase B): the WS mirror of the
+// hedge-policy graph / warehouse-threshold / provenance / engine-config RPCs. The
+// hedge decision graph reuses `RouteValueDesc`/`RouteOpEnum` verbatim; the `HedgeNodeDesc`
+// oneof + `ExitActionDesc` flat leaf mirror the risk-routing shapes one-for-one.
+use celnet_proto::{
+    ExitActionDesc, GetHedgeConfigRequest, GetHedgeConfigResponse, GetHedgePolicyGraphRequest,
+    GetHedgePolicyGraphResponse, HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle,
+    HedgeGraphDesc, HedgeIntent, HedgeNodeDesc, HedgeProvenance, HedgeSizeDesc,
+    ListHedgeProvenanceRequest, ListHedgeProvenanceResponse, ListHedgeThresholdsRequest,
+    ListHedgeThresholdsResponse, SetHedgeConfigRequest, SetHedgeConfigResponse,
+    UpdateHedgePolicyGraphRequest, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest,
+    UpdateHedgeThresholdResponse, WarehouseThresholdDesc, hedge_node_desc,
+};
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
 /// human-readable reason echoed back to the client as a typed `error` frame.
@@ -4435,6 +4448,427 @@ pub(super) fn update_risk_routing_graph_response_to_json(
     })
 }
 
+// --- auto-hedging / risk-internalisation (AuthService hedge RPCs) ------------
+//
+// The WS mirror of the hedge-policy graph, warehouse thresholds, fired-hedge
+// provenance, and engine config. The `HedgeGraphDesc` decision graph reuses the
+// routing `RouteValueDesc` value oneof verbatim; the `HedgeNodeDesc.node` oneof and
+// the flat `ExitActionDesc` leaf mirror `RoutingNodeDesc`/the risk-transfer records
+// one-for-one. Every field is snake_case on the wire (no FX-legacy remaps).
+
+/// A hedge sizing choice → JSON (a `kind` tag + the explicit `fixed` magnitude).
+fn hedge_size_desc_to_json(d: &HedgeSizeDesc) -> Value {
+    json!({ "kind": d.kind, "fixed": d.fixed })
+}
+
+/// A hedge sizing choice ← JSON (a nested `size` object).
+fn hedge_size_desc_from_json(v: &Value) -> Result<HedgeSizeDesc> {
+    let o = obj(v, "size")?;
+    Ok(HedgeSizeDesc {
+        kind: enum_or_zero(o, "kind"),
+        fixed: f64_or_zero(o, "fixed"),
+    })
+}
+
+/// An exit action → JSON. Enums ride as their i32 tag; the nested `size` message
+/// renders as `null` when absent; the presence-tracked `skew_bp` scalar is OMITTED
+/// when absent (mirrors the risk-transfer provenance discipline).
+fn exit_action_desc_to_json(a: &ExitActionDesc) -> Value {
+    let mut m = Map::new();
+    m.insert("kind".to_string(), json!(a.kind));
+    m.insert("instrument".to_string(), json!(a.instrument));
+    m.insert(
+        "size".to_string(),
+        json!(a.size.as_ref().map(hedge_size_desc_to_json)),
+    );
+    if let Some(s) = a.skew_bp {
+        m.insert("skew_bp".to_string(), json!(s));
+    }
+    m.insert("to_edge".to_string(), json!(a.to_edge));
+    m.insert("style".to_string(), json!(a.style));
+    m.insert("lps".to_string(), json!(a.lps));
+    m.insert("internal_first".to_string(), json!(a.internal_first));
+    m.insert("reason".to_string(), json!(a.reason));
+    Value::Object(m)
+}
+
+/// An exit action ← JSON (the `action` node arm / the `action` provenance field).
+/// The nested `size` message decodes to `None` when absent/null; `skew_bp` decodes
+/// leniently to `None`; `lps` decodes to an empty vec when absent.
+fn exit_action_desc_from_json(v: &Value) -> Result<ExitActionDesc> {
+    let o = obj(v, "action")?;
+    Ok(ExitActionDesc {
+        kind: enum_or_zero(o, "kind"),
+        instrument: string_or_empty(o, "instrument"),
+        size: opt_nested(o, "size", hedge_size_desc_from_json)?,
+        skew_bp: opt_f64(o, "skew_bp"),
+        to_edge: bool_or_false(o, "to_edge"),
+        style: enum_or_zero(o, "style"),
+        lps: string_array(o, "lps"),
+        internal_first: bool_or_false(o, "internal_first"),
+        reason: string_or_empty(o, "reason"),
+    })
+}
+
+/// A hedge condition → JSON. Enums ride as their i32 tag; an absent `value` message
+/// renders as JSON `null` (reuses the routing `RouteValueDesc` codec verbatim).
+fn hedge_condition_desc_to_json(c: &HedgeConditionDesc) -> Value {
+    json!({
+        "field": c.field,
+        "op": c.op,
+        "value": c.value.as_ref().map(route_value_desc_to_json),
+        "on_true": c.on_true,
+        "on_false": c.on_false,
+    })
+}
+
+/// A hedge condition ← JSON (the `condition` node arm body).
+fn hedge_condition_desc_from_json(v: &Value) -> Result<HedgeConditionDesc> {
+    let o = obj(v, "condition")?;
+    Ok(HedgeConditionDesc {
+        field: enum_or_zero(o, "field"),
+        op: enum_or_zero(o, "op"),
+        value: opt_nested(o, "value", route_value_desc_from_json)?,
+        on_true: u32_or_zero(o, "on_true"),
+        on_false: u32_or_zero(o, "on_false"),
+    })
+}
+
+/// A hedge node → JSON: its `id` plus exactly the live `node` oneof arm.
+fn hedge_node_desc_to_json(n: &HedgeNodeDesc) -> Value {
+    let mut m = Map::new();
+    m.insert("id".to_string(), json!(n.id));
+    match &n.node {
+        Some(hedge_node_desc::Node::Condition(c)) => {
+            m.insert("condition".to_string(), hedge_condition_desc_to_json(c));
+        }
+        Some(hedge_node_desc::Node::Action(a)) => {
+            m.insert("action".to_string(), exit_action_desc_to_json(a));
+        }
+        // A node with no body — the generated encoder emits only `id` too.
+        None => {}
+    }
+    Value::Object(m)
+}
+
+/// A hedge node ← JSON. Exactly one `node` arm (`condition` / `action`) must be
+/// present (the `HedgeNodeDesc.node` oneof is required).
+fn hedge_node_desc_from_json(v: &Value) -> Result<HedgeNodeDesc> {
+    let o = obj(v, "node")?;
+    let id = u32_or_zero(o, "id");
+    let node = if o.contains_key("condition") {
+        hedge_node_desc::Node::Condition(hedge_condition_desc_from_json(
+            o.get("condition").unwrap(),
+        )?)
+    } else if o.contains_key("action") {
+        hedge_node_desc::Node::Action(exit_action_desc_from_json(o.get("action").unwrap())?)
+    } else {
+        return Err(err(
+            "hedge node `node` oneof: expected a `condition` or `action` arm",
+        ));
+    };
+    Ok(HedgeNodeDesc {
+        id,
+        node: Some(node),
+    })
+}
+
+/// A hedge policy graph → JSON (`entry` + the id-carrying node array).
+fn hedge_graph_desc_to_json(g: &HedgeGraphDesc) -> Value {
+    json!({
+        "entry": g.entry,
+        "nodes": Value::Array(g.nodes.iter().map(hedge_node_desc_to_json).collect()),
+    })
+}
+
+/// A hedge policy graph ← JSON (a nested `graph` object).
+fn hedge_graph_desc_from_json(v: &Value) -> Result<HedgeGraphDesc> {
+    let o = obj(v, "graph")?;
+    let nodes = o.get("nodes").and_then(Value::as_array).map_or_else(
+        || Ok(Vec::new()),
+        |arr| {
+            arr.iter()
+                .map(hedge_node_desc_from_json)
+                .collect::<Result<Vec<_>>>()
+        },
+    )?;
+    Ok(HedgeGraphDesc {
+        entry: u32_or_zero(o, "entry"),
+        nodes,
+    })
+}
+
+/// A warehouse threshold → JSON (all scalars; the two enums ride as their i32 tag).
+fn warehouse_threshold_desc_to_json(t: &WarehouseThresholdDesc) -> Value {
+    json!({
+        "scope_kind": t.scope_kind,
+        "scope_id": t.scope_id,
+        "metric": t.metric,
+        "cap": t.cap,
+        "amber": t.amber,
+        "red": t.red,
+        "target_fraction": t.target_fraction,
+        "min_clip": t.min_clip,
+        "max_clip": t.max_clip,
+        "ramped": t.ramped,
+        "ramp_k": t.ramp_k,
+    })
+}
+
+/// A warehouse threshold ← JSON (a nested `threshold` object).
+fn warehouse_threshold_desc_from_json(v: &Value) -> Result<WarehouseThresholdDesc> {
+    let o = obj(v, "threshold")?;
+    Ok(WarehouseThresholdDesc {
+        scope_kind: enum_or_zero(o, "scope_kind"),
+        scope_id: string_or_empty(o, "scope_id"),
+        metric: enum_or_zero(o, "metric"),
+        cap: f64_or_zero(o, "cap"),
+        amber: f64_or_zero(o, "amber"),
+        red: f64_or_zero(o, "red"),
+        target_fraction: f64_or_zero(o, "target_fraction"),
+        min_clip: f64_or_zero(o, "min_clip"),
+        max_clip: f64_or_zero(o, "max_clip"),
+        ramped: bool_or_false(o, "ramped"),
+        ramp_k: f64_or_zero(o, "ramp_k"),
+    })
+}
+
+/// A fired-hedge provenance record → JSON (encode-only). Enums ride as their i32
+/// tag; `policy_path` is an array of ints; the nested `action` renders as `null`
+/// when absent; the presence-tracked `lp_won` is OMITTED when absent (mirrors the
+/// risk-transfer provenance discipline — a nested sub-message, not a reply envelope).
+fn hedge_provenance_to_json(p: &HedgeProvenance) -> Value {
+    let mut m = Map::new();
+    m.insert("hedge_id".to_string(), json!(p.hedge_id));
+    m.insert("book".to_string(), json!(p.book));
+    m.insert("instrument".to_string(), json!(p.instrument));
+    m.insert("fired_at".to_string(), json!(p.fired_at));
+    m.insert("metric".to_string(), json!(p.metric));
+    m.insert("threshold".to_string(), json!(p.threshold));
+    m.insert("net_risk".to_string(), json!(p.net_risk));
+    m.insert("utilization".to_string(), json!(p.utilization));
+    m.insert("band".to_string(), json!(p.band));
+    m.insert("policy_path".to_string(), json!(p.policy_path));
+    m.insert(
+        "action".to_string(),
+        json!(p.action.as_ref().map(exit_action_desc_to_json)),
+    );
+    m.insert("internal_crossed".to_string(), json!(p.internal_crossed));
+    m.insert("external_hedged".to_string(), json!(p.external_hedged));
+    m.insert("residual".to_string(), json!(p.residual));
+    m.insert("hedge_price".to_string(), json!(p.hedge_price));
+    m.insert("mid_at_fire".to_string(), json!(p.mid_at_fire));
+    m.insert("slippage_bp".to_string(), json!(p.slippage_bp));
+    if let Some(lp) = &p.lp_won {
+        m.insert("lp_won".to_string(), json!(lp));
+    }
+    m.insert("advisory".to_string(), json!(p.advisory));
+    Value::Object(m)
+}
+
+/// A hedge intent (advisory shadow-run projection) → JSON (encode-only). Enums ride
+/// as their i32 tag; `policy_path` is an array of ints; the nested `action` renders
+/// as `null` when absent. No presence-tracked fields (every scalar always emits).
+fn hedge_intent_to_json(i: &HedgeIntent) -> Value {
+    json!({
+        "book": i.book,
+        "instrument": i.instrument,
+        "action": i.action.as_ref().map(exit_action_desc_to_json),
+        "band": i.band,
+        "net_risk": i.net_risk,
+        "threshold": i.threshold,
+        "utilization": i.utilization,
+        "overflow": i.overflow,
+        "size": i.size,
+        "internal_crossed": i.internal_crossed,
+        "external_hedged": i.external_hedged,
+        "advisory": i.advisory,
+        "fired_at": i.fired_at,
+        "policy_path": i.policy_path,
+        "reason": i.reason,
+    })
+}
+
+/// A per-desk hedge enable toggle → JSON.
+fn hedge_desk_toggle_to_json(t: &HedgeDeskToggle) -> Value {
+    json!({ "desk": t.desk, "enabled": t.enabled })
+}
+
+/// A per-desk hedge enable toggle ← JSON (a `desk_enabled` array element).
+fn hedge_desk_toggle_from_json(v: &Value) -> Result<HedgeDeskToggle> {
+    let o = obj(v, "desk_enabled")?;
+    Ok(HedgeDeskToggle {
+        desk: string_or_empty(o, "desk"),
+        enabled: bool_or_false(o, "enabled"),
+    })
+}
+
+/// The auto-hedge engine config → JSON (the per-desk toggle array + the rate guards).
+fn hedge_config_desc_to_json(c: &HedgeConfigDesc) -> Value {
+    json!({
+        "kill_switch": c.kill_switch,
+        "advisory_only": c.advisory_only,
+        "desk_enabled": Value::Array(
+            c.desk_enabled.iter().map(hedge_desk_toggle_to_json).collect(),
+        ),
+        "max_clip": c.max_clip,
+        "max_hedges_per_interval": c.max_hedges_per_interval,
+        "daily_external_notional_cap": c.daily_external_notional_cap,
+    })
+}
+
+/// The auto-hedge engine config ← JSON (a nested `config` object).
+fn hedge_config_desc_from_json(v: &Value) -> Result<HedgeConfigDesc> {
+    let o = obj(v, "config")?;
+    let desk_enabled = o
+        .get("desk_enabled")
+        .and_then(Value::as_array)
+        .map_or_else(
+            || Ok(Vec::new()),
+            |arr| {
+                arr.iter()
+                    .map(hedge_desk_toggle_from_json)
+                    .collect::<Result<Vec<_>>>()
+            },
+        )?;
+    Ok(HedgeConfigDesc {
+        kill_switch: bool_or_false(o, "kill_switch"),
+        advisory_only: bool_or_false(o, "advisory_only"),
+        desk_enabled,
+        max_clip: f64_or_zero(o, "max_clip"),
+        max_hedges_per_interval: u32_or_zero(o, "max_hedges_per_interval"),
+        daily_external_notional_cap: f64_or_zero(o, "daily_external_notional_cap"),
+    })
+}
+
+pub(super) fn get_hedge_policy_graph_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<GetHedgePolicyGraphRequest> {
+    Ok(GetHedgePolicyGraphRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn get_hedge_policy_graph_response_to_json(r: &GetHedgePolicyGraphResponse) -> Value {
+    json!({
+        "graph": r.graph.as_ref().map(hedge_graph_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_hedge_policy_graph_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdateHedgePolicyGraphRequest> {
+    Ok(UpdateHedgePolicyGraphRequest {
+        session_token: string_field(o, "session_token")?,
+        graph: Some(nested(o, "graph", hedge_graph_desc_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_hedge_policy_graph_response_to_json(
+    r: &UpdateHedgePolicyGraphResponse,
+) -> Value {
+    json!({
+        "graph": r.graph.as_ref().map(hedge_graph_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn list_hedge_thresholds_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListHedgeThresholdsRequest> {
+    Ok(ListHedgeThresholdsRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_hedge_thresholds_response_to_json(r: &ListHedgeThresholdsResponse) -> Value {
+    json!({
+        "thresholds": Value::Array(
+            r.thresholds.iter().map(warehouse_threshold_desc_to_json).collect(),
+        ),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_hedge_threshold_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdateHedgeThresholdRequest> {
+    Ok(UpdateHedgeThresholdRequest {
+        session_token: string_field(o, "session_token")?,
+        threshold: Some(nested(o, "threshold", warehouse_threshold_desc_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_hedge_threshold_response_to_json(r: &UpdateHedgeThresholdResponse) -> Value {
+    json!({
+        "thresholds": Value::Array(
+            r.thresholds.iter().map(warehouse_threshold_desc_to_json).collect(),
+        ),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn list_hedge_provenance_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListHedgeProvenanceRequest> {
+    Ok(ListHedgeProvenanceRequest {
+        session_token: string_field(o, "session_token")?,
+        book: opt_string(o, "book"),
+        instrument: opt_string(o, "instrument"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_hedge_provenance_response_to_json(r: &ListHedgeProvenanceResponse) -> Value {
+    json!({
+        "records": Value::Array(r.records.iter().map(hedge_provenance_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn get_hedge_config_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<GetHedgeConfigRequest> {
+    Ok(GetHedgeConfigRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn get_hedge_config_response_to_json(r: &GetHedgeConfigResponse) -> Value {
+    json!({
+        "config": r.config.as_ref().map(hedge_config_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn set_hedge_config_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<SetHedgeConfigRequest> {
+    Ok(SetHedgeConfigRequest {
+        session_token: string_field(o, "session_token")?,
+        config: Some(nested(o, "config", hedge_config_desc_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn set_hedge_config_response_to_json(r: &SetHedgeConfigResponse) -> Value {
+    json!({
+        "config": r.config.as_ref().map(hedge_config_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+/// A hedge intent push frame → JSON (encode-only; a server push, never decoded).
+pub(super) fn hedge_intent_push_to_json(i: &HedgeIntent) -> Value {
+    hedge_intent_to_json(i)
+}
+
 // --- instrument reference data (AuthService instrument RPCs) ----------------
 //
 // The WS mirror of the instrument registry. The `InstrumentDefDesc.definition`
@@ -5259,6 +5693,15 @@ pub mod diff_support {
     // Latency/Ops analytics (AuthService ListLatencyMetrics): request decoder +
     // reply encoder the generated codec is proven byte-identical to.
     use celnet_proto::{ListLatencyMetricsRequest, ListLatencyMetricsResponse};
+    // Auto-hedging / risk-internalisation (AuthService hedge RPCs): the request
+    // decoders + reply/push encoders the generated codec is proven byte-identical to.
+    use celnet_proto::{
+        GetHedgeConfigRequest, GetHedgeConfigResponse, GetHedgePolicyGraphRequest,
+        GetHedgePolicyGraphResponse, HedgeIntent, ListHedgeProvenanceRequest,
+        ListHedgeProvenanceResponse, ListHedgeThresholdsRequest, ListHedgeThresholdsResponse,
+        SetHedgeConfigRequest, SetHedgeConfigResponse, UpdateHedgePolicyGraphRequest,
+        UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest, UpdateHedgeThresholdResponse,
+    };
     use serde_json::{Map, Value};
 
     use super::CodecError;
@@ -6591,6 +7034,126 @@ pub mod diff_support {
         r: &UpdateRiskRoutingGraphResponse,
     ) -> Value {
         super::update_risk_routing_graph_response_to_json(r)
+    }
+
+    /// Hand-codec `GetHedgePolicyGraphRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_get_hedge_policy_graph_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<GetHedgePolicyGraphRequest, CodecError> {
+        super::get_hedge_policy_graph_request_from_json(o)
+    }
+
+    /// Hand-codec `GetHedgePolicyGraphResponse` encoder.
+    #[must_use]
+    pub fn hand_get_hedge_policy_graph_response_to_json(r: &GetHedgePolicyGraphResponse) -> Value {
+        super::get_hedge_policy_graph_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdateHedgePolicyGraphRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_hedge_policy_graph_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateHedgePolicyGraphRequest, CodecError> {
+        super::update_hedge_policy_graph_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateHedgePolicyGraphResponse` encoder.
+    #[must_use]
+    pub fn hand_update_hedge_policy_graph_response_to_json(
+        r: &UpdateHedgePolicyGraphResponse,
+    ) -> Value {
+        super::update_hedge_policy_graph_response_to_json(r)
+    }
+
+    /// Hand-codec `ListHedgeThresholdsRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_hedge_thresholds_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListHedgeThresholdsRequest, CodecError> {
+        super::list_hedge_thresholds_request_from_json(o)
+    }
+
+    /// Hand-codec `ListHedgeThresholdsResponse` encoder.
+    #[must_use]
+    pub fn hand_list_hedge_thresholds_response_to_json(r: &ListHedgeThresholdsResponse) -> Value {
+        super::list_hedge_thresholds_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdateHedgeThresholdRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_hedge_threshold_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateHedgeThresholdRequest, CodecError> {
+        super::update_hedge_threshold_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateHedgeThresholdResponse` encoder.
+    #[must_use]
+    pub fn hand_update_hedge_threshold_response_to_json(r: &UpdateHedgeThresholdResponse) -> Value {
+        super::update_hedge_threshold_response_to_json(r)
+    }
+
+    /// Hand-codec `ListHedgeProvenanceRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_hedge_provenance_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListHedgeProvenanceRequest, CodecError> {
+        super::list_hedge_provenance_request_from_json(o)
+    }
+
+    /// Hand-codec `ListHedgeProvenanceResponse` encoder.
+    #[must_use]
+    pub fn hand_list_hedge_provenance_response_to_json(r: &ListHedgeProvenanceResponse) -> Value {
+        super::list_hedge_provenance_response_to_json(r)
+    }
+
+    /// Hand-codec `GetHedgeConfigRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_get_hedge_config_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<GetHedgeConfigRequest, CodecError> {
+        super::get_hedge_config_request_from_json(o)
+    }
+
+    /// Hand-codec `GetHedgeConfigResponse` encoder.
+    #[must_use]
+    pub fn hand_get_hedge_config_response_to_json(r: &GetHedgeConfigResponse) -> Value {
+        super::get_hedge_config_response_to_json(r)
+    }
+
+    /// Hand-codec `SetHedgeConfigRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_set_hedge_config_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<SetHedgeConfigRequest, CodecError> {
+        super::set_hedge_config_request_from_json(o)
+    }
+
+    /// Hand-codec `SetHedgeConfigResponse` encoder.
+    #[must_use]
+    pub fn hand_set_hedge_config_response_to_json(r: &SetHedgeConfigResponse) -> Value {
+        super::set_hedge_config_response_to_json(r)
+    }
+
+    /// Hand-codec `HedgeIntent` push-frame encoder.
+    #[must_use]
+    pub fn hand_hedge_intent_to_json(i: &HedgeIntent) -> Value {
+        super::hedge_intent_push_to_json(i)
     }
 
     /// Hand-codec `InitiateRiskTransferRequest` decoder.

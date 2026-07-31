@@ -143,6 +143,20 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "DeleteRiskBookResponse",
     "GetRiskRoutingGraphResponse",
     "UpdateRiskRoutingGraphResponse",
+    // The AuthService auto-hedging reply envelopes (Phase B): each `json!({ .. })` hand
+    // encoder emits the `Option<u64>` `correlation_id` as JSON `null` when absent; the
+    // `graph` / `config` singular-message payloads already render `null`-when-absent via
+    // the generic singular-message rule and need no entry. The nested `ExitActionDesc` /
+    // `HedgeProvenance` records are NOT listed: their presence-tracked scalars (`skew_bp`
+    // / `lp_won`) OMIT-when-absent, exactly like `RiskTransferProvenance`. (The threshold
+    // list envelopes carry only the repeated `thresholds` + the null-absent `correlation_id`.)
+    "GetHedgePolicyGraphResponse",
+    "UpdateHedgePolicyGraphResponse",
+    "ListHedgeThresholdsResponse",
+    "UpdateHedgeThresholdResponse",
+    "ListHedgeProvenanceResponse",
+    "GetHedgeConfigResponse",
+    "SetHedgeConfigResponse",
     // The AuthService risk-transfer reply envelopes (RiskTransfer RPCs): each
     // `json!({ .. })` hand encoder emits the `Option<u64>` `correlation_id` as JSON
     // `null` when absent; the `transfer` singular-message payload already renders
@@ -317,6 +331,9 @@ pub(crate) fn oneof_required(message: &str, group: &str) -> bool {
         // A routing node must be either a condition or a book leaf — the hand
         // `routing_node_desc_from_json` errors on a node carrying neither arm.
         | ("RoutingNodeDesc", "node")
+        // A hedge node must be either a condition or a terminal exit action — the hand
+        // `hedge_node_desc_from_json` errors on a node carrying neither arm.
+        | ("HedgeNodeDesc", "node")
     )
 }
 

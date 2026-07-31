@@ -150,6 +150,20 @@ use celnet_proto::{
     ClientFlowMetricsDesc, LatencyStageDesc, LatencyTelemetryHealth, ListClientFlowMetricsRequest,
     ListClientFlowMetricsResponse, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
 };
+// Auto-hedging / risk-internalisation verb family (AuthService hedge RPCs): the
+// request decode + reply/push encode side, proven byte-identical to the hand codec
+// by `tests/ws_codec_differential.rs`. The `HedgeGraphDesc` decision graph reuses the
+// routing `RouteValueDesc` value oneof; `HedgeNodeDesc`/`ExitActionDesc` mirror the
+// risk-routing node/leaf shapes one-for-one.
+use celnet_proto::{
+    ExitActionDesc, GetHedgeConfigRequest, GetHedgeConfigResponse, GetHedgePolicyGraphRequest,
+    GetHedgePolicyGraphResponse, HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle,
+    HedgeGraphDesc, HedgeIntent, HedgeNodeDesc, HedgeProvenance, HedgeSizeDesc,
+    ListHedgeProvenanceRequest, ListHedgeProvenanceResponse, ListHedgeThresholdsRequest,
+    ListHedgeThresholdsResponse, SetHedgeConfigRequest, SetHedgeConfigResponse,
+    UpdateHedgePolicyGraphRequest, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest,
+    UpdateHedgeThresholdResponse, WarehouseThresholdDesc, hedge_node_desc,
+};
 use serde_json::{Map, Value, json};
 
 use super::codec::CodecError;
@@ -185,6 +199,9 @@ enum WireVal<'a> {
     /// A `repeated uint64` scalar field (e.g. a transfer leg's `position_ids`
     /// selection) — encoded as an array of JSON integers.
     RepeatedU64(&'a [u64]),
+    /// A `repeated uint32` scalar field (e.g. a hedge provenance / intent
+    /// `policy_path`) — encoded as an array of JSON integers.
+    RepeatedU32(&'a [u32]),
     /// A `repeated string` scalar field (e.g. an instrument family's `calendars`).
     RepeatedStr(&'a [String]),
     /// A `repeated` enum field, carried by canonical enum number (e.g. the
@@ -258,6 +275,7 @@ fn encode_value(field: &WireField, value: WireVal<'_>) -> Value {
         ),
         WireVal::RepeatedF64(items) => Value::Array(items.iter().map(|x| json!(x)).collect()),
         WireVal::RepeatedU64(items) => Value::Array(items.iter().map(|x| json!(x)).collect()),
+        WireVal::RepeatedU32(items) => Value::Array(items.iter().map(|x| json!(x)).collect()),
         WireVal::RepeatedStr(items) => Value::Array(items.iter().map(|s| json!(s)).collect()),
         WireVal::RepeatedEnum(items) => Value::Array(items.iter().map(|x| json!(x)).collect()),
     }
@@ -6230,6 +6248,231 @@ impl WireBuilder for UpdateRiskRoutingGraphRequest {
     }
 }
 
+// --- auto-hedging WireBuilders (decode) -------------------------------------
+
+impl WireBuilder for HedgeSizeDesc {
+    const MESSAGE: &'static str = "HedgeSizeDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "kind" => self.kind = enum_or_zero(value),
+            "fixed" => self.fixed = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ExitActionDesc {
+    const MESSAGE: &'static str = "ExitActionDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "kind" => self.kind = enum_or_zero(value),
+            "instrument" => self.instrument = string_or_empty(value),
+            "size" => self.size = opt_msg::<HedgeSizeDesc>(value, "size")?,
+            "skew_bp" => self.skew_bp = opt_f64(value),
+            "to_edge" => self.to_edge = bool_or_false(value),
+            "style" => self.style = enum_or_zero(value),
+            "lps" => self.lps = string_vec(value),
+            "internal_first" => self.internal_first = bool_or_false(value),
+            "reason" => self.reason = string_or_empty(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for HedgeConditionDesc {
+    const MESSAGE: &'static str = "HedgeConditionDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "field" => self.field = enum_or_zero(value),
+            "op" => self.op = enum_or_zero(value),
+            "value" => self.value = opt_msg::<RouteValueDesc>(value, "value")?,
+            "on_true" => self.on_true = u32_or_zero(value),
+            "on_false" => self.on_false = u32_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for HedgeNodeDesc {
+    const MESSAGE: &'static str = "HedgeNodeDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        use hedge_node_desc::Node;
+        match field.proto_name {
+            "id" => self.id = u32_or_zero(value),
+            "condition" => {
+                self.node = Some(Node::Condition(req_msg::<HedgeConditionDesc>(
+                    value,
+                    "condition",
+                )?));
+            }
+            "action" => {
+                self.node = Some(Node::Action(req_msg::<ExitActionDesc>(value, "action")?));
+            }
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for HedgeGraphDesc {
+    const MESSAGE: &'static str = "HedgeGraphDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "entry" => self.entry = u32_or_zero(value),
+            "nodes" => self.nodes = opt_repeated::<HedgeNodeDesc>(value, "node")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for WarehouseThresholdDesc {
+    const MESSAGE: &'static str = "WarehouseThresholdDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "scope_kind" => self.scope_kind = enum_or_zero(value),
+            "scope_id" => self.scope_id = string_or_empty(value),
+            "metric" => self.metric = enum_or_zero(value),
+            "cap" => self.cap = f64_or_zero(value),
+            "amber" => self.amber = f64_or_zero(value),
+            "red" => self.red = f64_or_zero(value),
+            "target_fraction" => self.target_fraction = f64_or_zero(value),
+            "min_clip" => self.min_clip = f64_or_zero(value),
+            "max_clip" => self.max_clip = f64_or_zero(value),
+            "ramped" => self.ramped = bool_or_false(value),
+            "ramp_k" => self.ramp_k = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for HedgeDeskToggle {
+    const MESSAGE: &'static str = "HedgeDeskToggle";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "desk" => self.desk = string_or_empty(value),
+            "enabled" => self.enabled = bool_or_false(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for HedgeConfigDesc {
+    const MESSAGE: &'static str = "HedgeConfigDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "kill_switch" => self.kill_switch = bool_or_false(value),
+            "advisory_only" => self.advisory_only = bool_or_false(value),
+            "desk_enabled" => {
+                self.desk_enabled = opt_repeated::<HedgeDeskToggle>(value, "desk_enabled")?;
+            }
+            "max_clip" => self.max_clip = f64_or_zero(value),
+            "max_hedges_per_interval" => self.max_hedges_per_interval = u32_or_zero(value),
+            "daily_external_notional_cap" => {
+                self.daily_external_notional_cap = f64_or_zero(value);
+            }
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for GetHedgePolicyGraphRequest {
+    const MESSAGE: &'static str = "GetHedgePolicyGraphRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateHedgePolicyGraphRequest {
+    const MESSAGE: &'static str = "UpdateHedgePolicyGraphRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "graph" => self.graph = Some(req_msg::<HedgeGraphDesc>(value, "graph")?),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListHedgeThresholdsRequest {
+    const MESSAGE: &'static str = "ListHedgeThresholdsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateHedgeThresholdRequest {
+    const MESSAGE: &'static str = "UpdateHedgeThresholdRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "threshold" => {
+                self.threshold = Some(req_msg::<WarehouseThresholdDesc>(value, "threshold")?);
+            }
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListHedgeProvenanceRequest {
+    const MESSAGE: &'static str = "ListHedgeProvenanceRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "book" => self.book = opt_string(value, "book")?,
+            "instrument" => self.instrument = opt_string(value, "instrument")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for GetHedgeConfigRequest {
+    const MESSAGE: &'static str = "GetHedgeConfigRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for SetHedgeConfigRequest {
+    const MESSAGE: &'static str = "SetHedgeConfigRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "config" => self.config = Some(req_msg::<HedgeConfigDesc>(value, "config")?),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 // --- risk-transfer WireBuilders (decode) ------------------------------------
 
 impl WireBuilder for TransferLeg {
@@ -6786,6 +7029,81 @@ pub fn decode_update_risk_routing_graph_request(
     o: &Map<String, Value>,
 ) -> DResult<UpdateRiskRoutingGraphRequest> {
     decode(UpdateRiskRoutingGraphRequest::MESSAGE, o)
+}
+
+// --- auto-hedging decode entry points ---------------------------------------
+
+/// Decode a [`GetHedgePolicyGraphRequest`] envelope — fully generic (session token +
+/// an optional correlation id).
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_get_hedge_policy_graph_request(
+    o: &Map<String, Value>,
+) -> DResult<GetHedgePolicyGraphRequest> {
+    decode(GetHedgePolicyGraphRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateHedgePolicyGraphRequest`] envelope — the required `graph` nests the
+/// [`HedgeGraphDesc`] body (its `HedgeNodeDesc` array, each carrying the condition/action
+/// `node` oneof; a condition nests the reused `RouteValueDesc` value oneof, an action the
+/// flat `ExitActionDesc` leaf with its optional `size` / `skew_bp`).
+///
+/// # Errors
+/// A missing `session_token`, a missing/malformed `graph`, as a [`CodecError`].
+pub fn decode_update_hedge_policy_graph_request(
+    o: &Map<String, Value>,
+) -> DResult<UpdateHedgePolicyGraphRequest> {
+    decode(UpdateHedgePolicyGraphRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListHedgeThresholdsRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_hedge_thresholds_request(
+    o: &Map<String, Value>,
+) -> DResult<ListHedgeThresholdsRequest> {
+    decode(ListHedgeThresholdsRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateHedgeThresholdRequest`] envelope — the required `threshold` nests the
+/// [`WarehouseThresholdDesc`] body (all scalars + the scope/metric enums).
+///
+/// # Errors
+/// A missing `session_token`, a missing/malformed `threshold`, as a [`CodecError`].
+pub fn decode_update_hedge_threshold_request(
+    o: &Map<String, Value>,
+) -> DResult<UpdateHedgeThresholdRequest> {
+    decode(UpdateHedgeThresholdRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListHedgeProvenanceRequest`] envelope — the optional `book`/`instrument`
+/// filters decode to `None` when absent.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_hedge_provenance_request(
+    o: &Map<String, Value>,
+) -> DResult<ListHedgeProvenanceRequest> {
+    decode(ListHedgeProvenanceRequest::MESSAGE, o)
+}
+
+/// Decode a [`GetHedgeConfigRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_get_hedge_config_request(o: &Map<String, Value>) -> DResult<GetHedgeConfigRequest> {
+    decode(GetHedgeConfigRequest::MESSAGE, o)
+}
+
+/// Decode a [`SetHedgeConfigRequest`] envelope — the required `config` nests the
+/// [`HedgeConfigDesc`] body (the per-desk toggle array + the rate guards).
+///
+/// # Errors
+/// A missing `session_token`, a missing/malformed `config`, as a [`CodecError`].
+pub fn decode_set_hedge_config_request(o: &Map<String, Value>) -> DResult<SetHedgeConfigRequest> {
+    decode(SetHedgeConfigRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListRiskBookRiskRequest`] envelope — fully generic (session token + an
@@ -7979,6 +8297,274 @@ impl WireAdapter for UpdateRiskRoutingGraphResponse {
     }
 }
 
+// --- auto-hedging WireAdapters (encode) -------------------------------------
+
+impl WireAdapter for HedgeSizeDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "kind" => Some(WireVal::Enum(self.kind)),
+            "fixed" => Some(WireVal::F64(self.fixed)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ExitActionDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "kind" => Some(WireVal::Enum(self.kind)),
+            "instrument" => Some(WireVal::Str(&self.instrument)),
+            // Absent singular message ⇒ JSON null (the hand codec's `.map(..)` yields null).
+            "size" => self
+                .size
+                .as_ref()
+                .map(|s| WireVal::Msg(s as &dyn WireAdapter)),
+            // proto3 `optional`: absent ⇒ omitted (ExitActionDesc is not on the null-absent
+            // list — a nested sub-message, not a reply envelope).
+            "skew_bp" => self.skew_bp.map(WireVal::F64),
+            "to_edge" => Some(WireVal::Bool(self.to_edge)),
+            "style" => Some(WireVal::Enum(self.style)),
+            "lps" => Some(WireVal::RepeatedStr(&self.lps)),
+            "internal_first" => Some(WireVal::Bool(self.internal_first)),
+            "reason" => Some(WireVal::Str(&self.reason)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for HedgeConditionDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "field" => Some(WireVal::Enum(self.field)),
+            "op" => Some(WireVal::Enum(self.op)),
+            // Absent singular message ⇒ JSON null (the hand codec's `.map(..)` yields null).
+            "value" => self
+                .value
+                .as_ref()
+                .map(|v| WireVal::Msg(v as &dyn WireAdapter)),
+            "on_true" => Some(WireVal::U64(u64::from(self.on_true))),
+            "on_false" => Some(WireVal::U64(u64::from(self.on_false))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for HedgeNodeDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        use hedge_node_desc::Node;
+        match (proto_name, &self.node) {
+            ("id", _) => Some(WireVal::U64(u64::from(self.id))),
+            ("condition", Some(Node::Condition(c))) => Some(WireVal::Msg(c as &dyn WireAdapter)),
+            ("action", Some(Node::Action(a))) => Some(WireVal::Msg(a as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for HedgeGraphDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "entry" => Some(WireVal::U64(u64::from(self.entry))),
+            "nodes" => Some(WireVal::RepeatedMsg(
+                self.nodes.iter().map(|n| n as &dyn WireAdapter).collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for WarehouseThresholdDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "scope_kind" => Some(WireVal::Enum(self.scope_kind)),
+            "scope_id" => Some(WireVal::Str(&self.scope_id)),
+            "metric" => Some(WireVal::Enum(self.metric)),
+            "cap" => Some(WireVal::F64(self.cap)),
+            "amber" => Some(WireVal::F64(self.amber)),
+            "red" => Some(WireVal::F64(self.red)),
+            "target_fraction" => Some(WireVal::F64(self.target_fraction)),
+            "min_clip" => Some(WireVal::F64(self.min_clip)),
+            "max_clip" => Some(WireVal::F64(self.max_clip)),
+            "ramped" => Some(WireVal::Bool(self.ramped)),
+            "ramp_k" => Some(WireVal::F64(self.ramp_k)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for HedgeProvenance {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "hedge_id" => Some(WireVal::Str(&self.hedge_id)),
+            "book" => Some(WireVal::Str(&self.book)),
+            "instrument" => Some(WireVal::Str(&self.instrument)),
+            "fired_at" => Some(WireVal::I64(self.fired_at)),
+            "metric" => Some(WireVal::Enum(self.metric)),
+            "threshold" => Some(WireVal::F64(self.threshold)),
+            "net_risk" => Some(WireVal::F64(self.net_risk)),
+            "utilization" => Some(WireVal::F64(self.utilization)),
+            "band" => Some(WireVal::Str(&self.band)),
+            "policy_path" => Some(WireVal::RepeatedU32(&self.policy_path)),
+            // Absent singular message ⇒ JSON null.
+            "action" => self
+                .action
+                .as_ref()
+                .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            "internal_crossed" => Some(WireVal::F64(self.internal_crossed)),
+            "external_hedged" => Some(WireVal::F64(self.external_hedged)),
+            "residual" => Some(WireVal::F64(self.residual)),
+            "hedge_price" => Some(WireVal::F64(self.hedge_price)),
+            "mid_at_fire" => Some(WireVal::F64(self.mid_at_fire)),
+            "slippage_bp" => Some(WireVal::F64(self.slippage_bp)),
+            // proto3 `optional`: absent ⇒ omitted (HedgeProvenance is not on the null-absent
+            // list — a nested audit sub-message, not a reply envelope).
+            "lp_won" => self.lp_won.as_deref().map(WireVal::Str),
+            "advisory" => Some(WireVal::Bool(self.advisory)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for HedgeIntent {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book" => Some(WireVal::Str(&self.book)),
+            "instrument" => Some(WireVal::Str(&self.instrument)),
+            // Absent singular message ⇒ JSON null.
+            "action" => self
+                .action
+                .as_ref()
+                .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            "band" => Some(WireVal::Str(&self.band)),
+            "net_risk" => Some(WireVal::F64(self.net_risk)),
+            "threshold" => Some(WireVal::F64(self.threshold)),
+            "utilization" => Some(WireVal::F64(self.utilization)),
+            "overflow" => Some(WireVal::F64(self.overflow)),
+            "size" => Some(WireVal::F64(self.size)),
+            "internal_crossed" => Some(WireVal::F64(self.internal_crossed)),
+            "external_hedged" => Some(WireVal::F64(self.external_hedged)),
+            "advisory" => Some(WireVal::Bool(self.advisory)),
+            "fired_at" => Some(WireVal::I64(self.fired_at)),
+            "policy_path" => Some(WireVal::RepeatedU32(&self.policy_path)),
+            "reason" => Some(WireVal::Str(&self.reason)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for HedgeDeskToggle {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "desk" => Some(WireVal::Str(&self.desk)),
+            "enabled" => Some(WireVal::Bool(self.enabled)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for HedgeConfigDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "kill_switch" => Some(WireVal::Bool(self.kill_switch)),
+            "advisory_only" => Some(WireVal::Bool(self.advisory_only)),
+            "desk_enabled" => Some(WireVal::RepeatedMsg(
+                self.desk_enabled
+                    .iter()
+                    .map(|d| d as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "max_clip" => Some(WireVal::F64(self.max_clip)),
+            "max_hedges_per_interval" => {
+                Some(WireVal::U64(u64::from(self.max_hedges_per_interval)))
+            }
+            "daily_external_notional_cap" => Some(WireVal::F64(self.daily_external_notional_cap)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for GetHedgePolicyGraphResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "graph" => self.graph.as_ref().map(|g| WireVal::Msg(g)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateHedgePolicyGraphResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "graph" => self.graph.as_ref().map(|g| WireVal::Msg(g)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListHedgeThresholdsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "thresholds" => Some(WireVal::RepeatedMsg(
+                self.thresholds
+                    .iter()
+                    .map(|t| t as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateHedgeThresholdResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "thresholds" => Some(WireVal::RepeatedMsg(
+                self.thresholds
+                    .iter()
+                    .map(|t| t as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListHedgeProvenanceResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "records" => Some(WireVal::RepeatedMsg(
+                self.records.iter().map(|r| r as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for GetHedgeConfigResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "config" => self.config.as_ref().map(|c| WireVal::Msg(c)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for SetHedgeConfigResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "config" => self.config.as_ref().map(|c| WireVal::Msg(c)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 // --- risk-transfer WireAdapters (encode) ------------------------------------
 
 impl WireAdapter for TransferLeg {
@@ -8437,6 +9023,61 @@ pub fn encode_get_risk_routing_graph_response(r: &GetRiskRoutingGraphResponse) -
 #[must_use]
 pub fn encode_update_risk_routing_graph_response(r: &UpdateRiskRoutingGraphResponse) -> Value {
     encode("UpdateRiskRoutingGraphResponse", r)
+}
+
+// --- auto-hedging encode entry points ---------------------------------------
+
+/// Encode a [`GetHedgePolicyGraphResponse`] to its WS JSON — descriptor-driven. The
+/// absent `graph` singular message renders as `null`; the envelope `correlation_id`
+/// rides as `null` when absent (its null-absent policy).
+#[must_use]
+pub fn encode_get_hedge_policy_graph_response(r: &GetHedgePolicyGraphResponse) -> Value {
+    encode("GetHedgePolicyGraphResponse", r)
+}
+
+/// Encode an [`UpdateHedgePolicyGraphResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_hedge_policy_graph_response(r: &UpdateHedgePolicyGraphResponse) -> Value {
+    encode("UpdateHedgePolicyGraphResponse", r)
+}
+
+/// Encode a [`ListHedgeThresholdsResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_hedge_thresholds_response(r: &ListHedgeThresholdsResponse) -> Value {
+    encode("ListHedgeThresholdsResponse", r)
+}
+
+/// Encode an [`UpdateHedgeThresholdResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_hedge_threshold_response(r: &UpdateHedgeThresholdResponse) -> Value {
+    encode("UpdateHedgeThresholdResponse", r)
+}
+
+/// Encode a [`ListHedgeProvenanceResponse`] to its WS JSON — descriptor-driven. Each
+/// nested `HedgeProvenance` record OMITs its absent `lp_won` and renders an absent
+/// `action` as `null`, byte-identical to the hand codec.
+#[must_use]
+pub fn encode_list_hedge_provenance_response(r: &ListHedgeProvenanceResponse) -> Value {
+    encode("ListHedgeProvenanceResponse", r)
+}
+
+/// Encode a [`GetHedgeConfigResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_get_hedge_config_response(r: &GetHedgeConfigResponse) -> Value {
+    encode("GetHedgeConfigResponse", r)
+}
+
+/// Encode a [`SetHedgeConfigResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_set_hedge_config_response(r: &SetHedgeConfigResponse) -> Value {
+    encode("SetHedgeConfigResponse", r)
+}
+
+/// Encode a [`HedgeIntent`] push frame to its WS JSON — descriptor-driven
+/// (encode-only; a server push / advisory shadow-run projection, never decoded).
+#[must_use]
+pub fn encode_hedge_intent(i: &HedgeIntent) -> Value {
+    encode("HedgeIntent", i)
 }
 
 /// Encode a [`ListRiskBookRiskResponse`] to its WS JSON — descriptor-driven. The nested

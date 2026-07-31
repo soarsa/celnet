@@ -109,12 +109,25 @@ pub enum Action {
     /// *any* asset may open the tab and see that asset's slice). Not in the default
     /// trader bundle — a narrow, explicitly-granted authority like the `Manage*` seats.
     ViewAnalytics,
+    /// **Author / arm an auto-hedge (risk-internalisation) policy**: edit the
+    /// firm-wide hedge-policy decision graph (get/update), the warehouse-threshold
+    /// bands, and the engine config (advisory-only / kill-switch / rate guards)
+    /// (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §8.2). A NARROW
+    /// risk-control authority **distinct** from [`Action::Book`]: *running* inside a
+    /// policy — the booking-class internal-cross / external-hedge legs the engine
+    /// fires — still gates on `Book` × the position's asset, so a desk can be granted
+    /// *authoring* the policy without the standing authority to book, and vice-versa.
+    /// Also distinct from super-admin ([`Action::Administer`]): a risk lead can arm a
+    /// hedge policy without full administration. Exercised per [`AssetClass`]. Not in
+    /// the default trader bundle — an explicitly-granted authority like the `Manage*`
+    /// / `RiskTransfer` seats.
+    Hedge,
 }
 
 impl Action {
     /// Every action, in discriminant order — the canonical iteration set for
     /// building bundles and exhaustiveness tests.
-    pub const ALL: [Action; 15] = [
+    pub const ALL: [Action; 16] = [
         Action::View,
         Action::Price,
         Action::QuoteRespond,
@@ -130,6 +143,7 @@ impl Action {
         Action::ManagePricing,
         Action::ManageLiquidity,
         Action::ViewAnalytics,
+        Action::Hedge,
     ];
 
     /// Stable snake_case label for audit/log/wire fields.
@@ -151,6 +165,7 @@ impl Action {
             Action::ManagePricing => "manage_pricing",
             Action::ManageLiquidity => "manage_liquidity",
             Action::ViewAnalytics => "view_analytics",
+            Action::Hedge => "hedge",
         }
     }
 
@@ -459,6 +474,44 @@ mod tests {
             )),
             "other manage caps still admitted under grant-all"
         );
+    }
+
+    /// Separation of duties: `hedge` (author an auto-hedge policy) is a NARROW
+    /// authority distinct from `book` (the booking the engine performs when it fires)
+    /// and from `administer` — granting one never implies another, and it is
+    /// asset-scoped (an FI grant never leaks to FX). Not in the default (empty) set.
+    #[test]
+    fn hedge_is_distinct_from_book_and_administer() {
+        let fi_hedge = Capability::new(Action::Hedge, AssetClass::FixedIncome);
+        let fi_book = Capability::new(Action::Book, AssetClass::FixedIncome);
+        let fx_hedge = Capability::new(Action::Hedge, AssetClass::FxOptions);
+
+        // A hedge-policy author holds ONLY hedge — not book, not administer.
+        let author = CapabilitySet::empty().grant(fi_hedge);
+        assert!(author.allows(fi_hedge));
+        assert!(
+            !author.allows(fi_book),
+            "authoring a hedge policy must not imply booking authority"
+        );
+        assert!(
+            !author.allows(Capability::new(Action::Administer, AssetClass::FixedIncome)),
+            "hedge is distinct from administer"
+        );
+        assert!(!author.allows(fx_hedge), "FI hedge must not grant FX hedge");
+
+        // A booker holds ONLY book — not the authority to arm a hedge policy.
+        let booker = CapabilitySet::empty().grant(fi_book);
+        assert!(booker.allows(fi_book));
+        assert!(
+            !booker.allows(fi_hedge),
+            "book must not imply hedge-policy authoring"
+        );
+
+        // Not in the default set; label round-trips.
+        assert_eq!(Action::from_label("hedge"), Some(Action::Hedge));
+        for asset in AssetClass::ALL {
+            assert!(!CapabilitySet::empty().allows(Capability::new(Action::Hedge, asset)));
+        }
     }
 
     /// Separation of duties: price-but-not-execute is representable.

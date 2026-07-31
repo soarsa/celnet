@@ -4909,6 +4909,446 @@ message UpdateRiskRoutingGraphResponse {
   optional uint64 correlation_id = 2;
 }
 
+// ===========================================================================
+// auto-hedging / risk-internalisation (Phase B — the wire mirror of the
+// `celnet-hedge-routing` pure crate + the server auto-hedge engine).
+// `docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`. A hedge policy is a
+// decision graph of the SAME shape as `RiskRoutingGraphDesc`, but its leaves are
+// EXIT ACTIONS (`ExitActionDesc`) instead of book targets; conditions reuse
+// `RouteOpEnum` + `RouteValueDesc` verbatim (asset-agnostic). The warehouse
+// threshold (`WarehouseThresholdDesc`) is the soft, banded "100". `HedgeProvenance`
+// mirrors `RiskTransferProvenance` (the immutable "why it fired" record);
+// `HedgeIntent` is the advisory shadow-run projection. Every message mirrors the
+// domain types field-for-field (same ordinal order for enums).
+// ===========================================================================
+
+// Which risk-state field a hedge condition matches (mirrors
+// `celnet_hedge_routing::HedgeField`, same ordinal order). Prefixed per the
+// file-scope enum convention.
+enum HedgeFieldEnum {
+  // Instrument identifier / symbol (a String field).
+  HEDGE_FIELD_INSTRUMENT_ID = 0;
+  // Currency or pair (an Enum field).
+  HEDGE_FIELD_CCY = 1;
+  // Product family — vanilla / swap / bond / … (an Enum field).
+  HEDGE_FIELD_PRODUCT = 2;
+  // Owning risk book / portfolio (an Enum field).
+  HEDGE_FIELD_BOOK = 3;
+  // Owning desk (an Enum field).
+  HEDGE_FIELD_DESK = 4;
+  // Signed net DV01 of the book (Numeric, FI budget metric).
+  HEDGE_FIELD_NET_DV01 = 5;
+  // Signed net notional / base-currency delta (Numeric, FX budget metric).
+  HEDGE_FIELD_NET_NOTIONAL = 6;
+  // Signed net vega (Numeric).
+  HEDGE_FIELD_NET_VEGA = 7;
+  // Signed net gamma (Numeric).
+  HEDGE_FIELD_NET_GAMMA = 8;
+  // Inventory sign +1/−1 (Numeric).
+  HEDGE_FIELD_INVENTORY_SIGN = 9;
+  // The resolved warehouse threshold — the "100" for this scope (Numeric).
+  HEDGE_FIELD_THRESHOLD = 10;
+  // `|net_risk| / threshold` — the RAG utilisation ratio (Numeric).
+  HEDGE_FIELD_UTILIZATION = 11;
+  // `max(0, |net_risk| − target)` — overflow beyond the band edge (Numeric).
+  HEDGE_FIELD_OVERFLOW = 12;
+  // Whether the risk is at/over the red band (an Enum field: "true"/"false").
+  HEDGE_FIELD_BREACHED = 13;
+  // Markout / residual toxicity of the flow that built this inventory (Numeric).
+  HEDGE_FIELD_COUNTERPARTY_TOXICITY = 14;
+  // How long this risk has sat, in seconds (Numeric).
+  HEDGE_FIELD_INVENTORY_AGE_SECS = 15;
+  // Opposing internal flow the aggregator could cross now (Numeric).
+  HEDGE_FIELD_INTERNAL_OFFSET_AVAILABLE = 16;
+  // Current external hedge-cost estimate — spread + impact, in bp (Numeric).
+  HEDGE_FIELD_HEDGE_COST_BP = 17;
+}
+
+// The execution schedule of an external hedge (mirrors
+// `celnet_hedge_routing::ExecStyle`). `IMMEDIATE` = one clip / back-to-back;
+// `WORKED` = an Almgren–Chriss-scheduled slice series.
+enum ExecStyleEnum {
+  // One clip, now (back-to-back).
+  EXEC_STYLE_IMMEDIATE = 0;
+  // An Almgren–Chriss-scheduled series of slices.
+  EXEC_STYLE_WORKED = 1;
+}
+
+// The budget metric a warehouse threshold caps (maps to `celnet_limits::LimitMetric`).
+enum HedgeMetricEnum {
+  // Net DV01 (FI first-order rate risk).
+  HEDGE_METRIC_DV01 = 0;
+  // Net base-currency notional.
+  HEDGE_METRIC_NET_NOTIONAL = 1;
+  // Net base-currency delta.
+  HEDGE_METRIC_NET_DELTA = 2;
+  // Net vega.
+  HEDGE_METRIC_NET_VEGA = 3;
+}
+
+// The scope a warehouse threshold binds to (most-specific-wins resolution,
+// instrument > book > desk).
+enum HedgeScopeKindEnum {
+  // A whole desk's aggregate risk.
+  HEDGE_SCOPE_DESK = 0;
+  // A single risk book / portfolio.
+  HEDGE_SCOPE_BOOK = 1;
+  // A single instrument.
+  HEDGE_SCOPE_INSTRUMENT = 2;
+}
+
+// How much of a position an exit action targets (mirrors
+// `celnet_hedge_routing::HedgeSize`).
+enum HedgeSizeKind {
+  // Hedge the overflow beyond the band edge (default).
+  HEDGE_SIZE_OVERFLOW = 0;
+  // Flatten the whole net position.
+  HEDGE_SIZE_FULL = 1;
+  // An explicit magnitude (carried in `fixed`).
+  HEDGE_SIZE_FIXED = 2;
+}
+
+// A sizing choice: a `kind` plus, for `HEDGE_SIZE_FIXED`, the explicit magnitude.
+message HedgeSizeDesc {
+  // The sizing rule.
+  HedgeSizeKind kind = 1;
+  // The explicit magnitude (only read when `kind == HEDGE_SIZE_FIXED`).
+  double fixed = 2;
+}
+
+// The exit-action vocabulary (mirrors `celnet_hedge_routing::ExitAction`), carried
+// FLAT as a `kind` discriminant + the union of every arm's fields (only the fields
+// relevant to `kind` are read by the domain converter). A flat form — not a
+// oneof-of-messages — keeps the wire codec small while remaining lossless.
+message ExitActionDesc {
+  // Which exit action this leaf fires.
+  ExitActionKind kind = 1;
+  // CROSS_INTERNAL: the aggregation instrument to cross against (must exist).
+  string instrument = 2;
+  // CROSS_INTERNAL / SUBMIT_MARKET_ORDER / RFQ_OUT: how much to shed.
+  HedgeSizeDesc size = 3;
+  // SKEW: an explicit skew in bp, or absent to lean to the band edge (`to_edge`).
+  optional double skew_bp = 4;
+  // SKEW: whether to size the lean off the band-edge overflow rather than `skew_bp`.
+  bool to_edge = 5;
+  // SUBMIT_MARKET_ORDER / SPLIT: the execution schedule for the externalised leg.
+  ExecStyleEnum style = 6;
+  // RFQ_OUT: the LPs to fan the request to (each must be a known, enabled LP).
+  repeated string lps = 7;
+  // SPLIT: net internally first (vs. externalise first).
+  bool internal_first = 8;
+  // ESCALATE: the rationale surfaced on the notification.
+  string reason = 9;
+}
+
+// The kind of exit action (mirrors `celnet_hedge_routing::ExitAction`'s variants).
+enum ExitActionKind {
+  // Hold — do nothing, keep the risk (the green-band leaf).
+  EXIT_ACTION_WAREHOUSE = 0;
+  // Offset against opposing internal flow in the Agg Book (internal cross @ mid).
+  EXIT_ACTION_CROSS_INTERNAL = 1;
+  // Lean the two-way to attract the offsetting side (passive internalisation).
+  EXIT_ACTION_SKEW = 2;
+  // Back-to-back: place an offsetting external order onto the RFQ/FIX panel.
+  EXIT_ACTION_SUBMIT_MARKET_ORDER = 3;
+  // Request a two-way from named external LPs and lift the best.
+  EXIT_ACTION_RFQ_OUT = 4;
+  // Net internally then externalise the residual.
+  EXIT_ACTION_SPLIT = 5;
+  // Fire an alert / route to a human desk instead of auto-acting.
+  EXIT_ACTION_ESCALATE = 6;
+}
+
+// A decision node: evaluate `field op value` on the risk state (mirrors
+// `HedgeNode::Condition`; reuses `RouteOpEnum` + `RouteValueDesc` verbatim).
+message HedgeConditionDesc {
+  // The risk-state field to test.
+  HedgeFieldEnum field = 1;
+  // The comparison operator.
+  RouteOpEnum op = 2;
+  // The literal compared against.
+  RouteValueDesc value = 3;
+  // Successor node id when the condition holds.
+  uint32 on_true = 4;
+  // Successor node id when the condition does not hold.
+  uint32 on_false = 5;
+}
+
+// One node in a `HedgeGraphDesc`, keyed by its `id` (mirrors `HedgeNode`). The
+// `node` oneof is either an internal condition test or a terminal exit-action leaf.
+message HedgeNodeDesc {
+  // The node id, unique within the graph.
+  uint32 id = 1;
+  // The node body: exactly one arm is set — a condition or a terminal exit action.
+  oneof node {
+    // An internal decision node.
+    HedgeConditionDesc condition = 2;
+    // A terminal leaf: the risk state resolves to this exit action.
+    ExitActionDesc action = 3;
+  }
+}
+
+// The firm-wide hedge-policy decision graph (mirrors `celnet_hedge_routing::HedgeGraph`:
+// a `BTreeMap<NodeId, HedgeNode>` flattened to an id-carrying node list, entered at
+// `entry`). Validated server-side on write against the aggregation instruments + LP ids.
+message HedgeGraphDesc {
+  // The node at which every evaluation's walk begins.
+  uint32 entry = 1;
+  // All nodes (id-carrying); the store rebuilds the id→node map from them.
+  repeated HedgeNodeDesc nodes = 2;
+}
+
+// A soft, banded warehouse threshold for one scope (mirrors
+// `celnet_hedge_routing::WarehouseThreshold` + its scope binding). The "100".
+message WarehouseThresholdDesc {
+  // What the scope_id names (desk / book / instrument).
+  HedgeScopeKindEnum scope_kind = 1;
+  // The scope identifier (a desk id / book id / instrument id).
+  string scope_id = 2;
+  // The budget metric.
+  HedgeMetricEnum metric = 3;
+  // The budget magnitude — the "100", in the metric's native units.
+  double cap = 4;
+  // Amber utilisation fraction (start skewing) in [0, red].
+  double amber = 5;
+  // Red utilisation fraction (start hedging the overflow) in [amber, 1].
+  double red = 6;
+  // Band-edge target as a fraction of cap (default = amber): hedge the overflow to here.
+  double target_fraction = 7;
+  // Minimum hedge clip (fixed-cost / minimum-ticket floor).
+  double min_clip = 8;
+  // Maximum single hedge clip; a larger overflow is worked.
+  double max_clip = 9;
+  // Whether to ramp the hedged fraction with utilisation (soft externalisation).
+  bool ramped = 10;
+  // The ramp gain k in `hedge_fraction = clamp(k·(utilization − 1), 0, 1)`.
+  double ramp_k = 11;
+}
+
+// The immutable audit record stamped on every fired hedge (mirrors
+// `RiskTransferProvenance` discipline). Structured, additive; surfaced on the blotter
+// and risk dashboard: "why did the system hedge EURUSD at 14:32, at what price, on
+// whose policy?"
+message HedgeProvenance {
+  // Stable hedge id (audit key).
+  string hedge_id = 1;
+  // The book whose risk fired the hedge.
+  string book = 2;
+  // The instrument hedged.
+  string instrument = 3;
+  // When it fired (epoch nanos, UTC).
+  int64 fired_at = 4;
+  // The budget metric that tripped.
+  HedgeMetricEnum metric = 5;
+  // The resolved threshold ("100").
+  double threshold = 6;
+  // The signed net risk at fire.
+  double net_risk = 7;
+  // `|net_risk| / threshold`.
+  double utilization = 8;
+  // The RAG band label at fire ("green"/"amber"/"red"/"breach").
+  string band = 9;
+  // The exact graph path walked (the "why this action").
+  repeated uint32 policy_path = 10;
+  // The exit action fired.
+  ExitActionDesc action = 11;
+  // Crossed against opposing internal flow (the Agg Book).
+  double internal_crossed = 12;
+  // Externalised onto the RFQ/FIX panel.
+  double external_hedged = 13;
+  // The unshed residual (warehoused / escalated).
+  double residual = 14;
+  // The realised hedge price (0 for a no-trade action).
+  double hedge_price = 15;
+  // The consolidated mid at fire.
+  double mid_at_fire = 16;
+  // Realised slippage in bp versus the mid.
+  double slippage_bp = 17;
+  // The winning external LP (absent for internal / no-trade).
+  optional string lp_won = 18;
+  // Whether this was an ADVISORY (dry-run) fire — computed but not traded.
+  bool advisory = 19;
+}
+
+// The advisory shadow-run projection of one hedge decision — what the engine WOULD
+// do (or did) for a (book × instrument) risk state on a `risk_version` bump. The
+// live-streamable summary that precedes/accompanies the immutable `HedgeProvenance`.
+message HedgeIntent {
+  // The book whose risk moved.
+  string book = 1;
+  // The instrument.
+  string instrument = 2;
+  // The resolved exit action.
+  ExitActionDesc action = 3;
+  // The RAG band label ("green"/"amber"/"red"/"breach").
+  string band = 4;
+  // The signed net risk.
+  double net_risk = 5;
+  // The resolved threshold.
+  double threshold = 6;
+  // `|net_risk| / threshold`.
+  double utilization = 7;
+  // The overflow beyond the band edge.
+  double overflow = 8;
+  // The sized hedge magnitude.
+  double size = 9;
+  // The internal-cross portion of the sized hedge.
+  double internal_crossed = 10;
+  // The external portion of the sized hedge.
+  double external_hedged = 11;
+  // Whether the policy is armed advisory-only (no live trading).
+  bool advisory = 12;
+  // When resolved (epoch nanos, UTC).
+  int64 fired_at = 13;
+  // The exact graph path walked.
+  repeated uint32 policy_path = 14;
+  // A short human rationale (band / action summary).
+  string reason = 15;
+}
+
+// One per-desk enable toggle in the engine config.
+message HedgeDeskToggle {
+  // The desk id.
+  string desk = 1;
+  // Whether auto-hedging is enabled for the desk (absent from the list ⇒ default on).
+  bool enabled = 2;
+}
+
+// The auto-hedge engine's global controls (mirrors the server `HedgeConfig`).
+message HedgeConfigDesc {
+  // Global kill-switch: when true, ALL auto-hedging halts (positions warehouse).
+  bool kill_switch = 1;
+  // Advisory-only: compute + emit intents/provenance but never trade externally.
+  bool advisory_only = 2;
+  // Per-desk enable overrides.
+  repeated HedgeDeskToggle desk_enabled = 3;
+  // A hard ceiling on any single hedge clip (native metric units).
+  double max_clip = 4;
+  // Max hedges fired per rate-limit interval (0 ⇒ unbounded).
+  uint32 max_hedges_per_interval = 5;
+  // A daily externalised-notional cap (0 ⇒ unbounded).
+  double daily_external_notional_cap = 6;
+}
+
+// Read the firm-wide hedge policy graph (gated `hedge` × asset). Absent until defined.
+message GetHedgePolicyGraphRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The current hedge policy graph, or absent when none is defined yet.
+message GetHedgePolicyGraphResponse {
+  // The firm-wide hedge policy graph (absent ⇒ none defined).
+  optional HedgeGraphDesc graph = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Replace the firm-wide hedge policy graph (gated `hedge` × asset). Validated against
+// the aggregation instruments + FIX LP registry before commit.
+message UpdateHedgePolicyGraphRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // The new hedge policy graph.
+  HedgeGraphDesc graph = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The committed hedge policy graph.
+message UpdateHedgePolicyGraphResponse {
+  // The committed graph.
+  HedgeGraphDesc graph = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// List the configured warehouse thresholds (gated `hedge` × asset).
+message ListHedgeThresholdsRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The full threshold roster.
+message ListHedgeThresholdsResponse {
+  // Every configured threshold.
+  repeated WarehouseThresholdDesc thresholds = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Upsert one warehouse threshold by scope (gated `hedge` × asset). A cap of 0 with
+// scope match deletes the threshold; otherwise it is inserted/replaced.
+message UpdateHedgeThresholdRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // The threshold to upsert (keyed by scope_kind + scope_id).
+  WarehouseThresholdDesc threshold = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The threshold roster after the upsert.
+message UpdateHedgeThresholdResponse {
+  // Every configured threshold after the change.
+  repeated WarehouseThresholdDesc thresholds = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// List fired-hedge provenance records for the audit trail (gated `hedge` × asset),
+// optionally filtered by book / instrument.
+message ListHedgeProvenanceRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Restrict to this book (absent ⇒ all).
+  optional string book = 2;
+  // Restrict to this instrument (absent ⇒ all).
+  optional string instrument = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+// The matching provenance records, newest first.
+message ListHedgeProvenanceResponse {
+  // The matching records (descending `fired_at`).
+  repeated HedgeProvenance records = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Read the auto-hedge engine config (gated `hedge` × asset).
+message GetHedgeConfigRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The current engine config.
+message GetHedgeConfigResponse {
+  // The engine config.
+  HedgeConfigDesc config = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Replace the auto-hedge engine config (gated `hedge` × asset) — the kill-switch,
+// advisory-only flag, per-desk toggles and rate guards.
+message SetHedgeConfigRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // The new engine config.
+  HedgeConfigDesc config = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The committed engine config.
+message SetHedgeConfigResponse {
+  // The committed config.
+  HedgeConfigDesc config = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
 // ---------------------------------------------------------------------------
 // Per-risk-book risk aggregation (FI risk routing, phase 5 — §5, §8.5). One
 // read-only RPC rolls each enabled risk book's routed positions UP the book
@@ -6254,6 +6694,20 @@ service AuthService {
   rpc DeleteRiskBook(DeleteRiskBookRequest) returns (DeleteRiskBookResponse);
   rpc GetRiskRoutingGraph(GetRiskRoutingGraphRequest) returns (GetRiskRoutingGraphResponse);
   rpc UpdateRiskRoutingGraph(UpdateRiskRoutingGraphRequest) returns (UpdateRiskRoutingGraphResponse);
+  // Auto-hedging / risk-internalisation (Phase B — `docs/AUTO-HEDGING-AND-
+  // INTERNALISATION-REQUIREMENTS.md`). The hedge-policy exit graph (get/update), the
+  // warehouse thresholds (list/upsert), the engine config (kill-switch / advisory /
+  // rate guards) and the fired-hedge provenance audit trail. Authoring/arming gates on
+  // the narrow `hedge` capability × asset (distinct from `book`, which gates the
+  // booking-class legs the engine itself fires). Advisory intents stream over the
+  // existing notification channel (a hedge-advisory notification kind).
+  rpc GetHedgePolicyGraph(GetHedgePolicyGraphRequest) returns (GetHedgePolicyGraphResponse);
+  rpc UpdateHedgePolicyGraph(UpdateHedgePolicyGraphRequest) returns (UpdateHedgePolicyGraphResponse);
+  rpc ListHedgeThresholds(ListHedgeThresholdsRequest) returns (ListHedgeThresholdsResponse);
+  rpc UpdateHedgeThreshold(UpdateHedgeThresholdRequest) returns (UpdateHedgeThresholdResponse);
+  rpc ListHedgeProvenance(ListHedgeProvenanceRequest) returns (ListHedgeProvenanceResponse);
+  rpc GetHedgeConfig(GetHedgeConfigRequest) returns (GetHedgeConfigResponse);
+  rpc SetHedgeConfig(SetHedgeConfigRequest) returns (SetHedgeConfigResponse);
   // Aggregate risk per risk book, rolled up the book tree (phase 5 — §5, §8.5).
   rpc ListRiskBookRisk(ListRiskBookRiskRequest) returns (ListRiskBookRiskResponse);
   // Risk transfer — the MANUAL move of EXISTING risk between books / desks /

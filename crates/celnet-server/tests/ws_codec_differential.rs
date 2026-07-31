@@ -62,6 +62,18 @@ use celnet_proto::{
 use celnet_proto::{
     LatencyStageDesc, LatencyTelemetryHealth, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
 };
+// Auto-hedging / risk-internalisation (AuthService hedge RPCs): the hedge-policy graph
+// (`HedgeGraphDesc`/`HedgeNodeDesc`/`ExitActionDesc`/`HedgeSizeDesc`), warehouse
+// thresholds, fired-hedge provenance, engine config + the advisory `HedgeIntent`.
+use celnet_proto::ExecStyleEnum;
+use celnet_proto::{
+    ExitActionDesc, ExitActionKind, GetHedgeConfigResponse, GetHedgePolicyGraphResponse,
+    HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle, HedgeFieldEnum, HedgeGraphDesc,
+    HedgeIntent, HedgeMetricEnum, HedgeNodeDesc, HedgeProvenance, HedgeScopeKindEnum,
+    HedgeSizeDesc, HedgeSizeKind, ListHedgeProvenanceResponse, ListHedgeThresholdsResponse,
+    SetHedgeConfigResponse, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdResponse,
+    WarehouseThresholdDesc, hedge_node_desc,
+};
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
 use celnet_server::ws::generated_codec as generated;
@@ -5992,5 +6004,623 @@ fn risk_transfer_inbox_encode_byte_identical() {
         "RiskTransferInbox(empty)",
         &generated::encode_risk_transfer_inbox(&empty),
         &hand::hand_risk_transfer_inbox_to_json(&empty),
+    );
+}
+
+// ===========================================================================
+// Auto-hedging / risk-internalisation (AuthService hedge RPCs)
+// ===========================================================================
+//
+// The nested-oneof workhorse mirrors the risk-routing graph: a `HedgeGraphDesc`
+// exercising a reused-`RouteValueDesc` condition + a terminal `ExitActionDesc` leaf
+// of every `ExitActionKind` (incl. CROSS_INTERNAL / RFQ_OUT with an LP fan-out, a
+// SKEW with an absent `skew_bp`, and a SKEW with a present one — the OMIT/present
+// edges of the presence-tracked optional scalar), plus the warehouse-threshold /
+// provenance / engine-config / intent surfaces.
+
+/// A hedge-policy graph JSON body — a reused-value condition + one leaf per action
+/// kind (CROSS_INTERNAL/RFQ_OUT with LPs, SKEW with absent + present `skew_bp`).
+fn hedge_graph_body() -> Value {
+    json!({
+        "entry": 0,
+        "nodes": [
+            { "id": 0, "condition": {
+                "field": HedgeFieldEnum::HedgeFieldUtilization as i32,
+                "op": RouteOpEnum::RouteOpGt as i32,
+                "value": { "num": 0.8 },
+                "on_true": 1, "on_false": 2 } },
+            { "id": 1, "condition": {
+                "field": HedgeFieldEnum::HedgeFieldCcy as i32,
+                "op": RouteOpEnum::RouteOpIn as i32,
+                "value": { "list": { "values": ["HF-1", "HF-2"] } },
+                "on_true": 3, "on_false": 4 } },
+            { "id": 2, "action": {
+                "kind": ExitActionKind::ExitActionWarehouse as i32,
+                "instrument": "", "to_edge": false,
+                "style": ExecStyleEnum::ExecStyleImmediate as i32,
+                "lps": [], "internal_first": false, "reason": "" } },
+            { "id": 3, "action": {
+                "kind": ExitActionKind::ExitActionCrossInternal as i32,
+                "instrument": "EURUSD",
+                "size": { "kind": HedgeSizeKind::HedgeSizeFixed as i32, "fixed": 2_500_000.0 },
+                "to_edge": false,
+                "style": ExecStyleEnum::ExecStyleImmediate as i32,
+                "lps": [], "internal_first": false, "reason": "" } },
+            { "id": 4, "action": {
+                "kind": ExitActionKind::ExitActionSkew as i32,
+                "instrument": "", "to_edge": true,
+                "style": ExecStyleEnum::ExecStyleImmediate as i32,
+                "lps": [], "internal_first": false, "reason": "" } },
+            { "id": 5, "action": {
+                "kind": ExitActionKind::ExitActionSkew as i32,
+                "instrument": "", "skew_bp": 12.5, "to_edge": false,
+                "style": ExecStyleEnum::ExecStyleImmediate as i32,
+                "lps": [], "internal_first": false, "reason": "" } },
+            { "id": 6, "action": {
+                "kind": ExitActionKind::ExitActionSubmitMarketOrder as i32,
+                "instrument": "EURUSD",
+                "size": { "kind": HedgeSizeKind::HedgeSizeOverflow as i32, "fixed": 0.0 },
+                "to_edge": false,
+                "style": ExecStyleEnum::ExecStyleWorked as i32,
+                "lps": [], "internal_first": false, "reason": "" } },
+            { "id": 7, "action": {
+                "kind": ExitActionKind::ExitActionRfqOut as i32,
+                "instrument": "EURUSD",
+                "size": { "kind": HedgeSizeKind::HedgeSizeFull as i32, "fixed": 0.0 },
+                "to_edge": false,
+                "style": ExecStyleEnum::ExecStyleImmediate as i32,
+                "lps": ["LP-A", "LP-B", "LP-C"], "internal_first": false, "reason": "" } },
+            { "id": 8, "action": {
+                "kind": ExitActionKind::ExitActionSplit as i32,
+                "instrument": "EURUSD",
+                "size": { "kind": HedgeSizeKind::HedgeSizeOverflow as i32, "fixed": 0.0 },
+                "to_edge": false,
+                "style": ExecStyleEnum::ExecStyleWorked as i32,
+                "lps": [], "internal_first": true, "reason": "" } },
+            { "id": 9, "action": {
+                "kind": ExitActionKind::ExitActionEscalate as i32,
+                "instrument": "", "to_edge": false,
+                "style": ExecStyleEnum::ExecStyleImmediate as i32,
+                "lps": [], "internal_first": false, "reason": "manual desk review" } },
+        ],
+    })
+}
+
+/// A hedge-policy graph descriptor mirroring [`hedge_graph_body`] — for the encode
+/// differential (every action kind + the absent/present `size`/`skew_bp` edges).
+fn hedge_graph_desc() -> HedgeGraphDesc {
+    let cond = |field: HedgeFieldEnum, op: RouteOpEnum, value: RouteValueDesc, t: u32, f: u32| {
+        HedgeConditionDesc {
+            field: field as i32,
+            op: op as i32,
+            value: Some(value),
+            on_true: t,
+            on_false: f,
+        }
+    };
+    let node = |id: u32, n: hedge_node_desc::Node| HedgeNodeDesc { id, node: Some(n) };
+    let cnode = |id: u32, c: HedgeConditionDesc| node(id, hedge_node_desc::Node::Condition(c));
+    let anode = |id: u32, a: ExitActionDesc| node(id, hedge_node_desc::Node::Action(a));
+    let size = |kind: HedgeSizeKind, fixed: f64| HedgeSizeDesc {
+        kind: kind as i32,
+        fixed,
+    };
+    HedgeGraphDesc {
+        entry: 0,
+        nodes: vec![
+            cnode(
+                0,
+                cond(
+                    HedgeFieldEnum::HedgeFieldUtilization,
+                    RouteOpEnum::RouteOpGt,
+                    RouteValueDesc {
+                        v: Some(route_value_desc::V::Num(0.8)),
+                    },
+                    1,
+                    2,
+                ),
+            ),
+            cnode(
+                1,
+                cond(
+                    HedgeFieldEnum::HedgeFieldCcy,
+                    RouteOpEnum::RouteOpIn,
+                    RouteValueDesc {
+                        v: Some(route_value_desc::V::List(StringList {
+                            values: vec!["HF-1".to_owned(), "HF-2".to_owned()],
+                        })),
+                    },
+                    3,
+                    4,
+                ),
+            ),
+            anode(
+                2,
+                ExitActionDesc {
+                    kind: ExitActionKind::ExitActionWarehouse as i32,
+                    ..Default::default()
+                },
+            ),
+            anode(
+                3,
+                ExitActionDesc {
+                    kind: ExitActionKind::ExitActionCrossInternal as i32,
+                    instrument: "EURUSD".to_owned(),
+                    size: Some(size(HedgeSizeKind::HedgeSizeFixed, 2_500_000.0)),
+                    ..Default::default()
+                },
+            ),
+            anode(
+                4,
+                ExitActionDesc {
+                    kind: ExitActionKind::ExitActionSkew as i32,
+                    to_edge: true,
+                    ..Default::default()
+                },
+            ),
+            anode(
+                5,
+                ExitActionDesc {
+                    kind: ExitActionKind::ExitActionSkew as i32,
+                    skew_bp: Some(12.5),
+                    ..Default::default()
+                },
+            ),
+            anode(
+                6,
+                ExitActionDesc {
+                    kind: ExitActionKind::ExitActionSubmitMarketOrder as i32,
+                    instrument: "EURUSD".to_owned(),
+                    size: Some(size(HedgeSizeKind::HedgeSizeOverflow, 0.0)),
+                    style: ExecStyleEnum::ExecStyleWorked as i32,
+                    ..Default::default()
+                },
+            ),
+            anode(
+                7,
+                ExitActionDesc {
+                    kind: ExitActionKind::ExitActionRfqOut as i32,
+                    instrument: "EURUSD".to_owned(),
+                    size: Some(size(HedgeSizeKind::HedgeSizeFull, 0.0)),
+                    lps: vec!["LP-A".to_owned(), "LP-B".to_owned(), "LP-C".to_owned()],
+                    ..Default::default()
+                },
+            ),
+            anode(
+                8,
+                ExitActionDesc {
+                    kind: ExitActionKind::ExitActionSplit as i32,
+                    instrument: "EURUSD".to_owned(),
+                    size: Some(size(HedgeSizeKind::HedgeSizeOverflow, 0.0)),
+                    style: ExecStyleEnum::ExecStyleWorked as i32,
+                    internal_first: true,
+                    ..Default::default()
+                },
+            ),
+            anode(
+                9,
+                ExitActionDesc {
+                    kind: ExitActionKind::ExitActionEscalate as i32,
+                    reason: "manual desk review".to_owned(),
+                    ..Default::default()
+                },
+            ),
+        ],
+    }
+}
+
+#[test]
+fn get_hedge_policy_graph_request_decode_byte_identical() {
+    let body = json!({ "session_token": "tok", "correlation_id": 4 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "GetHedgePolicyGraphRequest",
+        generated::decode_get_hedge_policy_graph_request(o),
+        hand::hand_get_hedge_policy_graph_request_from_json(o),
+    );
+}
+
+#[test]
+fn update_hedge_policy_graph_request_decode_byte_identical() {
+    // The nested-oneof workhorse: a graph exercising a reused-value condition + every
+    // action-kind leaf (incl. CROSS_INTERNAL, RFQ_OUT, and SKEW with absent `skew_bp`).
+    let body = json!({ "session_token": "tok", "graph": hedge_graph_body(), "correlation_id": 9 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateHedgePolicyGraphRequest(full graph)",
+        generated::decode_update_hedge_policy_graph_request(o),
+        hand::hand_update_hedge_policy_graph_request_from_json(o),
+    );
+    // Minimal graph: entry only, no nodes (⇒ empty node vec on both sides).
+    let minimal = json!({ "session_token": "t", "graph": { "entry": 0 } });
+    let mo = minimal.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateHedgePolicyGraphRequest(minimal graph)",
+        generated::decode_update_hedge_policy_graph_request(mo),
+        hand::hand_update_hedge_policy_graph_request_from_json(mo),
+    );
+}
+
+#[test]
+fn get_hedge_policy_graph_response_encode_byte_identical() {
+    let present = GetHedgePolicyGraphResponse {
+        graph: Some(hedge_graph_desc()),
+        correlation_id: Some(2),
+    };
+    assert_bytes_eq(
+        "GetHedgePolicyGraphResponse(present)",
+        &generated::encode_get_hedge_policy_graph_response(&present),
+        &hand::hand_get_hedge_policy_graph_response_to_json(&present),
+    );
+    // Absent graph ⇒ JSON null; absent correlation_id ⇒ null.
+    let absent = GetHedgePolicyGraphResponse::default();
+    assert_bytes_eq(
+        "GetHedgePolicyGraphResponse(absent)",
+        &generated::encode_get_hedge_policy_graph_response(&absent),
+        &hand::hand_get_hedge_policy_graph_response_to_json(&absent),
+    );
+}
+
+#[test]
+fn update_hedge_policy_graph_response_encode_byte_identical() {
+    let updated = UpdateHedgePolicyGraphResponse {
+        graph: Some(hedge_graph_desc()),
+        correlation_id: Some(9),
+    };
+    assert_bytes_eq(
+        "UpdateHedgePolicyGraphResponse",
+        &generated::encode_update_hedge_policy_graph_response(&updated),
+        &hand::hand_update_hedge_policy_graph_response_to_json(&updated),
+    );
+    let empty = UpdateHedgePolicyGraphResponse::default();
+    assert_bytes_eq(
+        "UpdateHedgePolicyGraphResponse(empty)",
+        &generated::encode_update_hedge_policy_graph_response(&empty),
+        &hand::hand_update_hedge_policy_graph_response_to_json(&empty),
+    );
+}
+
+/// A fully-populated warehouse threshold (both enums + all scalars, ramped).
+fn warehouse_threshold_full() -> WarehouseThresholdDesc {
+    WarehouseThresholdDesc {
+        scope_kind: HedgeScopeKindEnum::HedgeScopeBook as i32,
+        scope_id: "gm".to_owned(),
+        metric: HedgeMetricEnum::HedgeMetricNetNotional as i32,
+        cap: 100_000_000.0,
+        amber: 0.7,
+        red: 0.9,
+        target_fraction: 0.7,
+        min_clip: 1_000_000.0,
+        max_clip: 50_000_000.0,
+        ramped: true,
+        ramp_k: 2.5,
+    }
+}
+
+/// The JSON body mirroring [`warehouse_threshold_full`] for the request decode.
+fn warehouse_threshold_body() -> Value {
+    json!({
+        "scope_kind": HedgeScopeKindEnum::HedgeScopeBook as i32,
+        "scope_id": "gm",
+        "metric": HedgeMetricEnum::HedgeMetricNetNotional as i32,
+        "cap": 100_000_000.0, "amber": 0.7, "red": 0.9,
+        "target_fraction": 0.7, "min_clip": 1_000_000.0, "max_clip": 50_000_000.0,
+        "ramped": true, "ramp_k": 2.5,
+    })
+}
+
+#[test]
+fn list_hedge_thresholds_request_decode_byte_identical() {
+    for (label, body) in [
+        (
+            "full",
+            json!({ "session_token": "tok", "correlation_id": 5 }),
+        ),
+        ("minimal", json!({ "session_token": "tok" })),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("ListHedgeThresholdsRequest({label})"),
+            generated::decode_list_hedge_thresholds_request(o),
+            hand::hand_list_hedge_thresholds_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn list_hedge_thresholds_response_encode_byte_identical() {
+    let full = ListHedgeThresholdsResponse {
+        thresholds: vec![
+            warehouse_threshold_full(),
+            WarehouseThresholdDesc::default(),
+        ],
+        correlation_id: Some(4),
+    };
+    assert_bytes_eq(
+        "ListHedgeThresholdsResponse(full)",
+        &generated::encode_list_hedge_thresholds_response(&full),
+        &hand::hand_list_hedge_thresholds_response_to_json(&full),
+    );
+    let empty = ListHedgeThresholdsResponse::default();
+    assert_bytes_eq(
+        "ListHedgeThresholdsResponse(empty)",
+        &generated::encode_list_hedge_thresholds_response(&empty),
+        &hand::hand_list_hedge_thresholds_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn update_hedge_threshold_request_decode_byte_identical() {
+    let body = json!({
+        "session_token": "tok", "threshold": warehouse_threshold_body(), "correlation_id": 8
+    });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateHedgeThresholdRequest",
+        generated::decode_update_hedge_threshold_request(o),
+        hand::hand_update_hedge_threshold_request_from_json(o),
+    );
+}
+
+#[test]
+fn update_hedge_threshold_response_encode_byte_identical() {
+    let resp = UpdateHedgeThresholdResponse {
+        thresholds: vec![warehouse_threshold_full()],
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "UpdateHedgeThresholdResponse",
+        &generated::encode_update_hedge_threshold_response(&resp),
+        &hand::hand_update_hedge_threshold_response_to_json(&resp),
+    );
+}
+
+/// A fully-populated fired-hedge provenance record (present `lp_won` + nested action).
+fn hedge_provenance_full() -> HedgeProvenance {
+    HedgeProvenance {
+        hedge_id: "hedge-1".to_owned(),
+        book: "gm".to_owned(),
+        instrument: "EURUSD".to_owned(),
+        fired_at: 1_700_000_000_000_000_000,
+        metric: HedgeMetricEnum::HedgeMetricNetNotional as i32,
+        threshold: 100_000_000.0,
+        net_risk: -125_000_000.0,
+        utilization: 1.25,
+        band: "red".to_owned(),
+        policy_path: vec![0, 1, 7],
+        action: Some(ExitActionDesc {
+            kind: ExitActionKind::ExitActionRfqOut as i32,
+            instrument: "EURUSD".to_owned(),
+            size: Some(HedgeSizeDesc {
+                kind: HedgeSizeKind::HedgeSizeFull as i32,
+                fixed: 0.0,
+            }),
+            lps: vec!["LP-A".to_owned(), "LP-B".to_owned()],
+            ..Default::default()
+        }),
+        internal_crossed: 25_000_000.0,
+        external_hedged: 100_000_000.0,
+        residual: 0.0,
+        hedge_price: 1.0925,
+        mid_at_fire: 1.0924,
+        slippage_bp: 0.9,
+        lp_won: Some("LP-A".to_owned()),
+        advisory: false,
+    }
+}
+
+/// A provenance record with an ABSENT `lp_won` (the OMIT edge) — an advisory,
+/// internal, no-trade fire whose nested `action` is a warehouse-hold (absent `size`).
+fn hedge_provenance_no_lp() -> HedgeProvenance {
+    HedgeProvenance {
+        hedge_id: "hedge-2".to_owned(),
+        book: "gm".to_owned(),
+        instrument: "GBPUSD".to_owned(),
+        fired_at: 1_700_000_060_000_000_000,
+        metric: HedgeMetricEnum::HedgeMetricNetVega as i32,
+        threshold: 50_000.0,
+        net_risk: 60_000.0,
+        utilization: 1.2,
+        band: "amber".to_owned(),
+        policy_path: vec![0, 2],
+        action: Some(ExitActionDesc {
+            kind: ExitActionKind::ExitActionSkew as i32,
+            to_edge: true,
+            ..Default::default()
+        }),
+        internal_crossed: 0.0,
+        external_hedged: 0.0,
+        residual: 60_000.0,
+        hedge_price: 0.0,
+        mid_at_fire: 1.27,
+        slippage_bp: 0.0,
+        lp_won: None,
+        advisory: true,
+    }
+}
+
+#[test]
+fn list_hedge_provenance_request_decode_byte_identical() {
+    for (label, body) in [
+        (
+            "full",
+            json!({
+                "session_token": "tok", "book": "gm", "instrument": "EURUSD", "correlation_id": 5
+            }),
+        ),
+        ("minimal", json!({ "session_token": "tok" })),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            &format!("ListHedgeProvenanceRequest({label})"),
+            generated::decode_list_hedge_provenance_request(o),
+            hand::hand_list_hedge_provenance_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn list_hedge_provenance_response_encode_byte_identical() {
+    // A full provenance (present lp_won) + one with an absent lp_won (the OMIT edge).
+    let full = ListHedgeProvenanceResponse {
+        records: vec![
+            hedge_provenance_full(),
+            hedge_provenance_no_lp(),
+            HedgeProvenance::default(),
+        ],
+        correlation_id: Some(6),
+    };
+    assert_bytes_eq(
+        "ListHedgeProvenanceResponse(full)",
+        &generated::encode_list_hedge_provenance_response(&full),
+        &hand::hand_list_hedge_provenance_response_to_json(&full),
+    );
+    let empty = ListHedgeProvenanceResponse::default();
+    assert_bytes_eq(
+        "ListHedgeProvenanceResponse(empty)",
+        &generated::encode_list_hedge_provenance_response(&empty),
+        &hand::hand_list_hedge_provenance_response_to_json(&empty),
+    );
+}
+
+/// A fully-populated engine config (a mixed per-desk toggle roster + the rate guards).
+fn hedge_config_full() -> HedgeConfigDesc {
+    HedgeConfigDesc {
+        kill_switch: false,
+        advisory_only: true,
+        desk_enabled: vec![
+            HedgeDeskToggle {
+                desk: "fi-desk".to_owned(),
+                enabled: true,
+            },
+            HedgeDeskToggle {
+                desk: "fx-desk".to_owned(),
+                enabled: false,
+            },
+        ],
+        max_clip: 50_000_000.0,
+        max_hedges_per_interval: 10,
+        daily_external_notional_cap: 1_000_000_000.0,
+    }
+}
+
+/// The JSON body mirroring [`hedge_config_full`] for the request decode.
+fn hedge_config_body() -> Value {
+    json!({
+        "kill_switch": false,
+        "advisory_only": true,
+        "desk_enabled": [
+            { "desk": "fi-desk", "enabled": true },
+            { "desk": "fx-desk", "enabled": false },
+        ],
+        "max_clip": 50_000_000.0,
+        "max_hedges_per_interval": 10,
+        "daily_external_notional_cap": 1_000_000_000.0,
+    })
+}
+
+#[test]
+fn get_hedge_config_request_decode_byte_identical() {
+    let body = json!({ "session_token": "tok", "correlation_id": 3 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "GetHedgeConfigRequest",
+        generated::decode_get_hedge_config_request(o),
+        hand::hand_get_hedge_config_request_from_json(o),
+    );
+}
+
+#[test]
+fn get_hedge_config_response_encode_byte_identical() {
+    let present = GetHedgeConfigResponse {
+        config: Some(hedge_config_full()),
+        correlation_id: Some(2),
+    };
+    assert_bytes_eq(
+        "GetHedgeConfigResponse(present)",
+        &generated::encode_get_hedge_config_response(&present),
+        &hand::hand_get_hedge_config_response_to_json(&present),
+    );
+    // Absent config ⇒ JSON null; absent correlation_id ⇒ null.
+    let absent = GetHedgeConfigResponse::default();
+    assert_bytes_eq(
+        "GetHedgeConfigResponse(absent)",
+        &generated::encode_get_hedge_config_response(&absent),
+        &hand::hand_get_hedge_config_response_to_json(&absent),
+    );
+}
+
+#[test]
+fn set_hedge_config_request_decode_byte_identical() {
+    let body =
+        json!({ "session_token": "tok", "config": hedge_config_body(), "correlation_id": 8 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "SetHedgeConfigRequest",
+        generated::decode_set_hedge_config_request(o),
+        hand::hand_set_hedge_config_request_from_json(o),
+    );
+    // Minimal config: defaults + an empty desk roster (⇒ empty vec on both sides).
+    let minimal = json!({ "session_token": "t", "config": { "kill_switch": true } });
+    let mo = minimal.as_object().expect("object");
+    assert_decode_eq(
+        "SetHedgeConfigRequest(minimal config)",
+        generated::decode_set_hedge_config_request(mo),
+        hand::hand_set_hedge_config_request_from_json(mo),
+    );
+}
+
+#[test]
+fn set_hedge_config_response_encode_byte_identical() {
+    let resp = SetHedgeConfigResponse {
+        config: Some(hedge_config_full()),
+        correlation_id: None,
+    };
+    assert_bytes_eq(
+        "SetHedgeConfigResponse",
+        &generated::encode_set_hedge_config_response(&resp),
+        &hand::hand_set_hedge_config_response_to_json(&resp),
+    );
+}
+
+#[test]
+fn hedge_intent_encode_byte_identical() {
+    // The advisory shadow-run push frame (encode-only): a nested action + policy_path.
+    let intent = HedgeIntent {
+        book: "gm".to_owned(),
+        instrument: "EURUSD".to_owned(),
+        action: Some(ExitActionDesc {
+            kind: ExitActionKind::ExitActionCrossInternal as i32,
+            instrument: "EURUSD".to_owned(),
+            size: Some(HedgeSizeDesc {
+                kind: HedgeSizeKind::HedgeSizeOverflow as i32,
+                fixed: 0.0,
+            }),
+            ..Default::default()
+        }),
+        band: "red".to_owned(),
+        net_risk: -125_000_000.0,
+        threshold: 100_000_000.0,
+        utilization: 1.25,
+        overflow: 25_000_000.0,
+        size: 25_000_000.0,
+        internal_crossed: 25_000_000.0,
+        external_hedged: 0.0,
+        advisory: false,
+        fired_at: 1_700_000_000_000_000_000,
+        policy_path: vec![0, 3],
+        reason: "red band → internal cross".to_owned(),
+    };
+    assert_bytes_eq(
+        "HedgeIntent(populated)",
+        &generated::encode_hedge_intent(&intent),
+        &hand::hand_hedge_intent_to_json(&intent),
+    );
+    // The absent-action edge: a bare intent whose nested `action` renders as null.
+    let bare = HedgeIntent::default();
+    assert_bytes_eq(
+        "HedgeIntent(bare)",
+        &generated::encode_hedge_intent(&bare),
+        &hand::hand_hedge_intent_to_json(&bare),
     );
 }

@@ -25,6 +25,7 @@
 pub mod access;
 pub mod aggregation;
 pub mod analytics;
+pub mod auto_hedge;
 pub mod consensus;
 pub mod desk;
 pub mod error_status;

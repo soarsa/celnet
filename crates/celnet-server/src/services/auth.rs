@@ -79,6 +79,13 @@ use celnet_proto::{
     StringList, UpdateRiskBookRequest, UpdateRiskBookResponse, UpdateRiskRoutingGraphRequest,
     UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
 };
+use celnet_proto::{
+    GetHedgeConfigRequest, GetHedgeConfigResponse, GetHedgePolicyGraphRequest,
+    GetHedgePolicyGraphResponse, ListHedgeProvenanceRequest, ListHedgeProvenanceResponse,
+    ListHedgeThresholdsRequest, ListHedgeThresholdsResponse, SetHedgeConfigRequest,
+    SetHedgeConfigResponse, UpdateHedgePolicyGraphRequest, UpdateHedgePolicyGraphResponse,
+    UpdateHedgeThresholdRequest, UpdateHedgeThresholdResponse,
+};
 use celnet_rates::{CalibrationInstrument, bootstrap_curve};
 use tonic::{Request, Response, Status};
 
@@ -94,6 +101,11 @@ use crate::config::identity::{
 };
 use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
+use crate::services::auto_hedge::AutoHedgeEngine;
+use crate::services::auto_hedge::wire::{
+    config_from_wire, config_to_wire, hedge_graph_from_wire, hedge_graph_to_wire,
+    threshold_from_wire, threshold_to_wire,
+};
 use crate::services::instrument_wire::{instrument_from_wire, instrument_to_wire};
 use crate::services::risk::book_risk::{
     LimitUtilization, RagBand as DomainRagBand, RiskBookRisk, aggregate_risk_book,
@@ -208,6 +220,12 @@ pub struct AuthEdge {
     /// backing the `ListLatencyMetrics` RPC. `None` in an isolated auth test (the
     /// RPC then reports the hub is not wired), `Some` on the real boot path.
     telemetry: Option<Arc<crate::services::telemetry::TelemetryHub>>,
+    /// The auto-hedge engine (Phase B) whose immutable provenance ring the
+    /// `ListHedgeProvenance` RPC reads. Always present — a self-contained, off-core
+    /// decision + provenance engine; the live control loop that feeds it on each
+    /// `risk_version` bump shares this SAME `Arc` (the P2 boot wiring). Constructed empty
+    /// by [`AuthEdge::new`], so an isolated auth test simply serves an empty audit trail.
+    auto_hedge: Arc<AutoHedgeEngine>,
 }
 
 impl AuthEdge {
@@ -234,7 +252,22 @@ impl AuthEdge {
             transfer_service: None,
             analytics_sources: Vec::new(),
             telemetry: None,
+            auto_hedge: Arc::new(AutoHedgeEngine::default()),
         }
+    }
+
+    /// Share the boot-path auto-hedge engine so the `ListHedgeProvenance` RPC serves the
+    /// SAME provenance ring the live control loop stamps into (the P2 wiring). Chainable.
+    #[must_use]
+    pub fn with_auto_hedge_engine(mut self, engine: Arc<AutoHedgeEngine>) -> Self {
+        self.auto_hedge = engine;
+        self
+    }
+
+    /// The shared auto-hedge engine handle (the provenance-ring reader).
+    #[must_use]
+    pub fn auto_hedge_engine(&self) -> &Arc<AutoHedgeEngine> {
+        &self.auto_hedge
     }
 
     /// Inject the shared latency/ops telemetry hub so the `ListLatencyMetrics` RPC
@@ -1906,6 +1939,187 @@ impl AuthService for AuthEdge {
         self.reconcile_risk_routing(&guard);
         Ok(Response::new(UpdateRiskRoutingGraphResponse {
             graph: Some(routing_graph_to_wire(&graph)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    // --- auto-hedging / risk-internalisation (Phase B) -------------------------
+    //
+    // The hedge-policy exit graph (get/update), the warehouse thresholds (list/upsert),
+    // the engine config (kill-switch / advisory / rate guards) and the fired-hedge
+    // provenance audit trail. AUTHORING gates on the narrow `hedge` capability × asset
+    // (`Action::Hedge`), distinct from `Action::Book` (which gates the booking-class legs
+    // the engine itself fires) and from `Action::Administer`. We gate on
+    // `hedge·fixed_income` as the representative asset (mirroring the routing RPCs' choice;
+    // the hedge surface spans both asset classes). `docs/…REQUIREMENTS.md` §8.2.
+
+    async fn get_hedge_policy_graph(
+        &self,
+        request: Request<GetHedgePolicyGraphRequest>,
+    ) -> Result<Response<GetHedgePolicyGraphResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::Hedge, AssetClass::FixedIncome),
+        )?;
+        let graph = self.lock().hedge_policy_graph().map(hedge_graph_to_wire);
+        Ok(Response::new(GetHedgePolicyGraphResponse {
+            graph,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_hedge_policy_graph(
+        &self,
+        request: Request<UpdateHedgePolicyGraphRequest>,
+    ) -> Result<Response<UpdateHedgePolicyGraphResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::Hedge, AssetClass::FixedIncome),
+        )?;
+
+        let wire = req
+            .graph
+            .ok_or_else(|| Status::invalid_argument("hedge policy graph is required"))?;
+        let graph = hedge_graph_from_wire(wire)?;
+
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        // The store re-validates the graph against the live aggregation-instrument + FIX-LP
+        // registries (acyclic, type-consistent conditions, every action leaf's targets
+        // exist), so a malformed graph fails loudly at the write and never reaches the engine.
+        next.set_hedge_policy_graph(graph.clone())
+            .map_err(Status::invalid_argument)?;
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(UpdateHedgePolicyGraphResponse {
+            graph: Some(hedge_graph_to_wire(&graph)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn list_hedge_thresholds(
+        &self,
+        request: Request<ListHedgeThresholdsRequest>,
+    ) -> Result<Response<ListHedgeThresholdsResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::Hedge, AssetClass::FixedIncome),
+        )?;
+        let thresholds = self
+            .lock()
+            .hedge_thresholds()
+            .iter()
+            .map(threshold_to_wire)
+            .collect();
+        Ok(Response::new(ListHedgeThresholdsResponse {
+            thresholds,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_hedge_threshold(
+        &self,
+        request: Request<UpdateHedgeThresholdRequest>,
+    ) -> Result<Response<UpdateHedgeThresholdResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::Hedge, AssetClass::FixedIncome),
+        )?;
+        let wire = req
+            .threshold
+            .ok_or_else(|| Status::invalid_argument("a warehouse threshold is required"))?;
+        let entry = threshold_from_wire(&wire);
+
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        // A non-positive cap removes the same-scope threshold (the operator's delete); else
+        // it inserts / replaces it (§4).
+        next.upsert_hedge_threshold(entry);
+        self.persist_and_commit(&mut guard, next)?;
+        let thresholds = guard
+            .hedge_thresholds()
+            .iter()
+            .map(threshold_to_wire)
+            .collect();
+        Ok(Response::new(UpdateHedgeThresholdResponse {
+            thresholds,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn list_hedge_provenance(
+        &self,
+        request: Request<ListHedgeProvenanceRequest>,
+    ) -> Result<Response<ListHedgeProvenanceResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::Hedge, AssetClass::FixedIncome),
+        )?;
+        // The immutable fired-hedge audit trail from the engine's bounded provenance ring,
+        // newest first, optionally filtered by book / instrument.
+        let records = self
+            .auto_hedge
+            .provenance(req.book.as_deref(), req.instrument.as_deref());
+        Ok(Response::new(ListHedgeProvenanceResponse {
+            records,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn get_hedge_config(
+        &self,
+        request: Request<GetHedgeConfigRequest>,
+    ) -> Result<Response<GetHedgeConfigResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::Hedge, AssetClass::FixedIncome),
+        )?;
+        let config = Some(config_to_wire(self.lock().hedge_config()));
+        Ok(Response::new(GetHedgeConfigResponse {
+            config,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn set_hedge_config(
+        &self,
+        request: Request<SetHedgeConfigRequest>,
+    ) -> Result<Response<SetHedgeConfigResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::Hedge, AssetClass::FixedIncome),
+        )?;
+        let wire = req
+            .config
+            .ok_or_else(|| Status::invalid_argument("a hedge engine config is required"))?;
+        let cfg = config_from_wire(&wire);
+
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        next.set_hedge_config(cfg);
+        self.persist_and_commit(&mut guard, next)?;
+        Ok(Response::new(SetHedgeConfigResponse {
+            config: Some(config_to_wire(guard.hedge_config())),
             correlation_id: req.correlation_id,
         }))
     }

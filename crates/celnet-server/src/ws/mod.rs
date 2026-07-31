@@ -1386,6 +1386,65 @@ async fn handle_unary(
                 generated_codec::encode_update_risk_routing_graph_response
             )
         }
+        // Auto-hedging / risk-internalisation (Phase B). The WS mirror of the AuthService
+        // hedge RPCs; the `ws_codec_differential` harness proves each generated decode/encode
+        // byte-identical to the hand codec.
+        "get_hedge_policy_graph" => {
+            let req = decode!(generated_codec::decode_get_hedge_policy_graph_request(o));
+            call!(
+                services.auth.get_hedge_policy_graph(Request::new(req)),
+                "hedge_policy_graph",
+                generated_codec::encode_get_hedge_policy_graph_response
+            )
+        }
+        "update_hedge_policy_graph" => {
+            let req = decode!(generated_codec::decode_update_hedge_policy_graph_request(o));
+            call!(
+                services.auth.update_hedge_policy_graph(Request::new(req)),
+                "hedge_policy_graph_updated",
+                generated_codec::encode_update_hedge_policy_graph_response
+            )
+        }
+        "list_hedge_thresholds" => {
+            let req = decode!(generated_codec::decode_list_hedge_thresholds_request(o));
+            call!(
+                services.auth.list_hedge_thresholds(Request::new(req)),
+                "hedge_thresholds",
+                generated_codec::encode_list_hedge_thresholds_response
+            )
+        }
+        "update_hedge_threshold" => {
+            let req = decode!(generated_codec::decode_update_hedge_threshold_request(o));
+            call!(
+                services.auth.update_hedge_threshold(Request::new(req)),
+                "hedge_threshold_updated",
+                generated_codec::encode_update_hedge_threshold_response
+            )
+        }
+        "list_hedge_provenance" => {
+            let req = decode!(generated_codec::decode_list_hedge_provenance_request(o));
+            call!(
+                services.auth.list_hedge_provenance(Request::new(req)),
+                "hedge_provenance",
+                generated_codec::encode_list_hedge_provenance_response
+            )
+        }
+        "get_hedge_config" => {
+            let req = decode!(generated_codec::decode_get_hedge_config_request(o));
+            call!(
+                services.auth.get_hedge_config(Request::new(req)),
+                "hedge_config",
+                generated_codec::encode_get_hedge_config_response
+            )
+        }
+        "set_hedge_config" => {
+            let req = decode!(generated_codec::decode_set_hedge_config_request(o));
+            call!(
+                services.auth.set_hedge_config(Request::new(req)),
+                "hedge_config_updated",
+                generated_codec::encode_set_hedge_config_response
+            )
+        }
         "list_risk_book_risk" => {
             let req = decode!(generated_codec::decode_list_risk_book_risk_request(o));
             call!(

@@ -633,6 +633,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-hedge-routing"
+version = "0.0.0"
+dependencies = [
+ "celnet-limits",
+ "celnet-risk-routing",
+ "proptest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "celnet-heston"
 version = "0.0.0"
 dependencies = [
@@ -941,6 +952,7 @@ dependencies = [
  "celnet-fanout",
  "celnet-fix",
  "celnet-golden",
+ "celnet-hedge-routing",
  "celnet-integration",
  "celnet-limits",
  "celnet-linear",

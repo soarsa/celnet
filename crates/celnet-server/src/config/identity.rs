@@ -31,8 +31,11 @@ use std::path::{Path, PathBuf};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use celnet_entitlements::{Action, AssetClass, Capability};
+use celnet_hedge_routing::HedgeGraph;
 use celnet_risk_routing::{RiskRoutingGraph, RoutingNode};
 use serde::{Deserialize, Serialize};
+
+use super::hedge_policy::{HedgeConfigDef, ScopedThreshold};
 
 use super::reference_data::{
     self, ExternalScheme, InstrumentDef, ensure_seed_instruments, government_bond_defs,
@@ -118,6 +121,7 @@ pub fn default_trader_bundle() -> Vec<Capability> {
                 | Action::ManagePricing
                 | Action::ManageLiquidity
                 | Action::ViewAnalytics
+                | Action::Hedge
         ) {
             continue;
         }
@@ -905,6 +909,27 @@ pub struct IdentityStore {
     /// `identity.json` (which carries no `risk_routing_graph`) loads unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk_routing_graph: Option<RiskRoutingGraph>,
+    /// The firm-wide **auto-hedge / risk-internalisation policy graph** (Phase B —
+    /// `docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §5). The sibling of
+    /// [`risk_routing_graph`](Self::risk_routing_graph) whose leaves are **exit actions**
+    /// instead of book targets. `None` until an operator first defines one; when present,
+    /// every `CrossInternal` leaf must name a known instrument and every `RfqOut` leaf a
+    /// known LP (validated at load and every write via
+    /// [`check_hedge_policy_graph`](IdentityStore::check_hedge_policy_graph)). An additive
+    /// serde-default field, so an existing `identity.json` loads unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hedge_policy_graph: Option<HedgeGraph>,
+    /// The configured **warehouse thresholds** (the "100" per desk / book / instrument —
+    /// §4). Each binds a scope id to a soft, banded risk budget. An additive serde-default
+    /// list, so an existing `identity.json` (which carries no `hedge_thresholds`) loads
+    /// unchanged as an empty roster.
+    #[serde(default)]
+    pub hedge_thresholds: Vec<ScopedThreshold>,
+    /// The **auto-hedge engine config** — kill-switch, advisory-only, per-desk toggles,
+    /// rate guards (§8.4). An additive serde-default field (advisory-only defaults ON), so
+    /// an existing `identity.json` loads with the safe shadow-run defaults.
+    #[serde(default)]
+    pub hedge_config: HedgeConfigDef,
 }
 
 impl IdentityStore {
@@ -1899,6 +1924,96 @@ impl IdentityStore {
         Ok(())
     }
 
+    // --- auto-hedge policy / thresholds / config (Phase B) -------------------
+
+    /// The firm-wide auto-hedge policy graph, if defined.
+    #[must_use]
+    pub fn hedge_policy_graph(&self) -> Option<&HedgeGraph> {
+        self.hedge_policy_graph.as_ref()
+    }
+
+    /// Install (or replace) the firm-wide hedge policy graph after validating it against
+    /// the aggregation instrument registry + FIX LP registry the store holds
+    /// ([`check_hedge_policy_graph`](Self::check_hedge_policy_graph)). On any defect the
+    /// store is left unchanged.
+    ///
+    /// # Errors
+    /// The graph is malformed (dangling entry/edge, a cycle, a type-inconsistent
+    /// condition) or an action leaf names an unknown instrument / LP.
+    pub fn set_hedge_policy_graph(&mut self, graph: HedgeGraph) -> Result<(), String> {
+        self.check_hedge_policy_graph(&graph)?;
+        self.hedge_policy_graph = Some(graph);
+        Ok(())
+    }
+
+    /// The set of instrument ids a `CrossInternal` leaf may target — the canonical
+    /// instrument-reference-data registry (§6.1: the Agg Book crosses named instruments).
+    #[must_use]
+    fn known_hedge_instruments(&self) -> BTreeSet<String> {
+        self.instruments
+            .iter()
+            .map(|i| i.instrument_id.clone())
+            .collect()
+    }
+
+    /// The set of LP ids an `RfqOut` leaf may target — the FIX connection ids the store
+    /// holds via the aggregated-book members (the external-liquidity venues wired in).
+    #[must_use]
+    fn known_hedge_lps(&self) -> BTreeSet<String> {
+        self.aggregated_books
+            .iter()
+            .flat_map(|b| b.member_connection_ids.iter().cloned())
+            .collect()
+    }
+
+    /// Validate a hedge policy graph against the current registries: build the known
+    /// instrument + LP sets and delegate to the pure engine's
+    /// [`HedgeGraph::validate`](celnet_hedge_routing::HedgeGraph::validate), mapping its
+    /// collected defects into one human-readable message.
+    ///
+    /// # Errors
+    /// A malformed graph, or an action leaf naming an unknown instrument / LP.
+    pub fn check_hedge_policy_graph(&self, graph: &HedgeGraph) -> Result<(), String> {
+        let instruments = self.known_hedge_instruments();
+        let lps = self.known_hedge_lps();
+        graph.validate(&instruments, &lps).map_err(|errs| {
+            let joined = errs
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("hedge policy graph is invalid: {joined}")
+        })
+    }
+
+    /// The configured warehouse thresholds (§4), in insertion order.
+    #[must_use]
+    pub fn hedge_thresholds(&self) -> &[ScopedThreshold] {
+        &self.hedge_thresholds
+    }
+
+    /// Upsert one warehouse threshold by scope (kind + id). A non-positive `cap` **removes**
+    /// the matching threshold (the operator's delete gesture); otherwise it inserts or
+    /// replaces the same-scope entry. Returns the full roster after the change.
+    pub fn upsert_hedge_threshold(&mut self, entry: ScopedThreshold) -> &[ScopedThreshold] {
+        self.hedge_thresholds.retain(|t| !t.same_scope(&entry));
+        if entry.def.cap > 0.0 {
+            self.hedge_thresholds.push(entry);
+        }
+        &self.hedge_thresholds
+    }
+
+    /// The auto-hedge engine config (§8.4).
+    #[must_use]
+    pub fn hedge_config(&self) -> &HedgeConfigDef {
+        &self.hedge_config
+    }
+
+    /// Replace the auto-hedge engine config.
+    pub fn set_hedge_config(&mut self, config: HedgeConfigDef) {
+        self.hedge_config = config;
+    }
+
     /// The risk books strictly **above** `id` in the parent tree, immediate parent first
     /// then upward. Pure and cycle-safe (bounded by the registry, even on an as-yet
     /// unvalidated store). An unknown or top-level `id` yields an empty vec.
@@ -1949,6 +2064,9 @@ impl IdentityStore {
         }
         if let Some(graph) = &self.risk_routing_graph {
             self.check_risk_routing_graph(graph)?;
+        }
+        if let Some(graph) = &self.hedge_policy_graph {
+            self.check_hedge_policy_graph(graph)?;
         }
         Ok(())
     }
@@ -2879,6 +2997,122 @@ mod tests {
             store.risk_book(&a.id).unwrap().enabled,
             "update rolled back"
         );
+    }
+
+    #[test]
+    fn hedge_policy_graph_validates_against_instrument_and_lp_registries() {
+        use celnet_hedge_routing::{ExitAction, HedgeGraph, HedgeNode, HedgeSize};
+        use std::collections::BTreeMap;
+
+        let mut store = IdentityStore::default();
+
+        // A Warehouse-only policy names no external target ⇒ always valid, no registries needed.
+        let warehouse = {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                0,
+                HedgeNode::Action {
+                    exit: ExitAction::Warehouse,
+                },
+            );
+            HedgeGraph { entry: 0, nodes }
+        };
+        store
+            .set_hedge_policy_graph(warehouse)
+            .expect("a warehouse-only policy is always valid");
+        assert!(store.hedge_policy_graph().is_some());
+
+        // A CROSS_INTERNAL leaf naming an unknown instrument is rejected (the known set is
+        // derived from the instrument registry, which is empty here).
+        let cross_ghost = {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                0,
+                HedgeNode::Action {
+                    exit: ExitAction::CrossInternal {
+                        instrument: "GHOST".into(),
+                        max_size: HedgeSize::Overflow,
+                    },
+                },
+            );
+            HedgeGraph { entry: 0, nodes }
+        };
+        let err = store.set_hedge_policy_graph(cross_ghost).unwrap_err();
+        assert!(
+            err.contains("hedge policy graph is invalid") && err.contains("GHOST"),
+            "got: {err}"
+        );
+
+        // Seeding the instrument registry makes a CROSS_INTERNAL against a seeded id valid.
+        store.ensure_seed_instruments();
+        let known = store
+            .instruments
+            .first()
+            .expect("seed instruments")
+            .instrument_id
+            .clone();
+        let cross_known = {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                0,
+                HedgeNode::Action {
+                    exit: ExitAction::CrossInternal {
+                        instrument: known,
+                        max_size: HedgeSize::Overflow,
+                    },
+                },
+            );
+            HedgeGraph { entry: 0, nodes }
+        };
+        store
+            .set_hedge_policy_graph(cross_known)
+            .expect("a cross against a seeded instrument is valid");
+    }
+
+    #[test]
+    fn hedge_threshold_upsert_replaces_by_scope_and_deletes_on_zero_cap() {
+        use crate::config::hedge_policy::{
+            HedgeMetric, HedgeScopeKind, HedgeThresholdDef, ScopedThreshold,
+        };
+
+        let mut store = IdentityStore::default();
+        let def = |cap: f64| HedgeThresholdDef {
+            scope_kind: HedgeScopeKind::Book,
+            metric: HedgeMetric::Dv01,
+            cap,
+            amber: 0.8,
+            red: 0.9,
+            target_fraction: 0.8,
+            min_clip: 0.0,
+            max_clip: f64::INFINITY,
+            ramped: false,
+            ramp_k: 1.0,
+        };
+        store.upsert_hedge_threshold(ScopedThreshold {
+            scope_id: "RATES-EUR".into(),
+            def: def(100_000.0),
+        });
+        assert_eq!(store.hedge_thresholds().len(), 1);
+        // Same scope replaces (not appends).
+        store.upsert_hedge_threshold(ScopedThreshold {
+            scope_id: "RATES-EUR".into(),
+            def: def(200_000.0),
+        });
+        assert_eq!(store.hedge_thresholds().len(), 1);
+        assert_eq!(store.hedge_thresholds()[0].def.cap, 200_000.0);
+        // A different scope appends.
+        store.upsert_hedge_threshold(ScopedThreshold {
+            scope_id: "RATES-USD".into(),
+            def: def(50_000.0),
+        });
+        assert_eq!(store.hedge_thresholds().len(), 2);
+        // A non-positive cap deletes the matching scope.
+        store.upsert_hedge_threshold(ScopedThreshold {
+            scope_id: "RATES-EUR".into(),
+            def: def(0.0),
+        });
+        assert_eq!(store.hedge_thresholds().len(), 1);
+        assert_eq!(store.hedge_thresholds()[0].scope_id, "RATES-USD");
     }
 
     #[test]
