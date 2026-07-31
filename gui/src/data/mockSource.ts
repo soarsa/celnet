@@ -59,6 +59,7 @@ import type {
   ClientFlowMetrics,
   FlowGroupBy,
   FlowWindow,
+  LpFlowMetrics,
   LatencyMetrics,
   LatencyStage,
   RagBand,
@@ -360,6 +361,76 @@ function foldMockFlow(keyOf: (l: MockFlowLeaf) => string): ClientFlowMetrics[] {
     });
   }
   return rows.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// --- street-liquidity analytics fixture (ListLpFlowMetrics, offline) ---------
+//
+// A deterministic spread of street-side LPs (who we trade WITH on the LP side),
+// drawn from the existing venue/LP names: some TIGHT WINNERS (high tick rate, high
+// win-rate, big won notional), some CHRONIC MISSERS (quoted a lot, hardly ever win),
+// two LAST-LOOK REJECTERS (a chunk of their ranked wins rejected at last-look), and a
+// DORMANT LP that streamed a few ticks but never made a panel — so its win-rate is
+// genuinely ABSENT ("—", never 0). Each leaf carries RAW accumulators; the two
+// derived ratios (`winRate`, `meanCover`) are computed with zero-denominator guards
+// (→ `undefined`), the same shape the server's rollup produces.
+
+/** One raw street-LP leaf (a single LP's activity + competition outcome). */
+interface MockLpLeaf {
+  lpId: string;
+  tickCount: number;
+  quoteCount: number;
+  dealsWon: number;
+  wonNotional: number; // USD
+  missed: number;
+  lastLookRejects: number;
+  coverDistanceSum: number; // Σ bps (this LP vs winner) when it was the runner-up
+  coverCount: number; // times it was the cover (0 ⇒ meanCover absent)
+}
+
+const MOCK_LP_LEAVES: readonly MockLpLeaf[] = [
+  // Native internal maker — always-on, huge tick rate, internalises the most flow.
+  { lpId: "celnet-auto-pricer", tickCount: 120_000, quoteCount: 1_500, dealsWon: 900, wonNotional: 5_200_000_000, missed: 560, lastLookRejects: 0, coverDistanceSum: 384, coverCount: 480 },
+  // TIGHT WINNERS — high win-rate, tight cover, big won notional.
+  { lpId: "XTX Markets", tickCount: 91_500, quoteCount: 1_240, dealsWon: 705, wonNotional: 3_600_000_000, missed: 520, lastLookRejects: 12, coverDistanceSum: 360, coverCount: 400 },
+  { lpId: "Citadel Securities", tickCount: 48_200, quoteCount: 980, dealsWon: 612, wonNotional: 4_100_000_000, missed: 360, lastLookRejects: 4, coverDistanceSum: 240, coverCount: 300 },
+  // SOLID — good hit-rate, thinner cover.
+  { lpId: "Jump Trading", tickCount: 33_100, quoteCount: 640, dealsWon: 288, wonNotional: 1_900_000_000, missed: 340, lastLookRejects: 6, coverDistanceSum: 294, coverCount: 210 },
+  // MID banks — moderate win-rate.
+  { lpId: "Nordea Markets", tickCount: 12_400, quoteCount: 410, dealsWon: 138, wonNotional: 820_000_000, missed: 260, lastLookRejects: 11, coverDistanceSum: 315, coverCount: 150 },
+  { lpId: "SEB", tickCount: 9_800, quoteCount: 360, dealsWon: 96, wonNotional: 540_000_000, missed: 258, lastLookRejects: 7, coverDistanceSum: 300, coverCount: 120 },
+  // LAST-LOOK REJECTERS — a large slice of their ranked wins rejected at last-look.
+  { lpId: "Handelsbanken", tickCount: 6_600, quoteCount: 520, dealsWon: 40, wonNotional: 210_000_000, missed: 296, lastLookRejects: 180, coverDistanceSum: 341, coverCount: 110 },
+  { lpId: "DekaBank", tickCount: 5_200, quoteCount: 280, dealsWon: 30, wonNotional: 150_000_000, missed: 158, lastLookRejects: 90, coverDistanceSum: 224, coverCount: 70 },
+  // CHRONIC MISSERS — quoted heavily, hardly ever win.
+  { lpId: "DNB Markets", tickCount: 15_200, quoteCount: 720, dealsWon: 22, wonNotional: 90_000_000, missed: 690, lastLookRejects: 8, coverDistanceSum: 1_188, coverCount: 360 },
+  // Chronic misser that is NEVER the cover — meanCover absent though win-rate present.
+  { lpId: "Swedbank", tickCount: 4_300, quoteCount: 300, dealsWon: 9, wonNotional: 34_000_000, missed: 289, lastLookRejects: 3, coverDistanceSum: 0, coverCount: 0 },
+  // DORMANT — streamed a few ticks but never made a panel: win-rate + cover ABSENT.
+  { lpId: "Raiffeisen", tickCount: 800, quoteCount: 0, dealsWon: 0, wonNotional: 0, missed: 0, lastLookRejects: 0, coverDistanceSum: 0, coverCount: 0 },
+];
+
+/**
+ * Project the raw LP leaves into `LpFlowMetrics` rows, deriving the two ratio fields
+ * with zero-denominator guards (→ `undefined`, never `0`/`NaN`). Rows are lp_id-ordered
+ * (the server contract). When `lpId` is set + non-empty, only that LP's row is returned.
+ */
+function mockLpFlowMetrics(lpId?: string): LpFlowMetrics[] {
+  const rows: LpFlowMetrics[] = MOCK_LP_LEAVES.map((l) => ({
+    lpId: l.lpId,
+    tickCount: l.tickCount,
+    quoteCount: l.quoteCount,
+    dealsWon: l.dealsWon,
+    wonNotional: l.wonNotional,
+    missed: l.missed,
+    lastLookRejects: l.lastLookRejects,
+    winRate: l.quoteCount > 0 ? l.dealsWon / l.quoteCount : undefined,
+    meanCover: l.coverCount > 0 ? l.coverDistanceSum / l.coverCount : undefined,
+  }));
+  const ordered = rows.sort((a, b) => a.lpId.localeCompare(b.lpId));
+  if (lpId !== undefined && lpId.length > 0) {
+    return ordered.filter((r) => r.lpId === lpId);
+  }
+  return ordered;
 }
 
 // --- latency / ops analytics fixture (ListLatencyMetrics, offline) -----------
@@ -4182,6 +4253,13 @@ export class MockTransport implements CelnetTransport {
       default:
         return foldMockFlow((l) => l.client);
     }
+  }
+
+  async listLpFlowMetrics(
+    _window?: FlowWindow,
+    lpId?: string,
+  ): Promise<LpFlowMetrics[]> {
+    return mockLpFlowMetrics(lpId);
   }
 
   async listLatencyMetrics(): Promise<LatencyMetrics> {

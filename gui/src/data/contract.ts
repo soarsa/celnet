@@ -2389,6 +2389,40 @@ export interface FlowWindow {
   toNanos?: bigint;
 }
 
+/**
+ * One street-side LP liquidity row (`celnet.wire.LpFlowMetricsDesc`; the LP-side
+ * pillar of docs/ANALYTICS-REQUIREMENTS.md §11). Mirrors the server rollup
+ * one-to-one — the raw activity/outcome counts are ALWAYS present, while the two
+ * `optional double` ratio fields (`winRate`, `meanCover`) arrive as
+ * `number | undefined`: a zero-denominator guard means the value is genuinely
+ * ABSENT (rendered "—", never a fabricated `0` or `NaN`). This is the street side —
+ * who we trade WITH on the LP side — the mirror of {@link ClientFlowMetrics}'s
+ * client side.
+ */
+export interface LpFlowMetrics {
+  /** The liquidity-provider id / venue name this row belongs to. */
+  lpId: string;
+  /** Quote-update ticks observed from this LP over the window (its update frequency). */
+  tickCount: number;
+  /** Panel responses from this LP (Σ was_quoted) — the win-rate denominator. */
+  quoteCount: number;
+  /** Deals this LP won (booked_lp_id == lpId). */
+  dealsWon: number;
+  /** Summed notional magnitude of the deals this LP won (USD). */
+  wonNotional: number;
+  /** Panel appearances where the LP was quoted but the deal went elsewhere. */
+  missed: number;
+  /** Times this LP's quote was rejected at ranking on last-look. */
+  lastLookRejects: number;
+  /** Win-rate = dealsWon ÷ quoteCount. ABSENT when the LP made no quotes. */
+  winRate?: number | undefined;
+  /**
+   * Mean cover distance (this LP's price vs the winner when it was the runner-up).
+   * ABSENT when the LP was never the cover.
+   */
+  meanCover?: number | undefined;
+}
+
 // ---------------------------------------------------------------------------
 // latency / ops analytics — the per-stage pipeline-latency rollup
 // (`AuthService.ListLatencyMetrics`; docs/ANALYTICS-REQUIREMENTS.md §11 latency).

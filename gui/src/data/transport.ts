@@ -27,6 +27,7 @@ import type {
   CombinedTailRiskResponse,
   FlowGroupBy,
   FlowWindow,
+  LpFlowMetrics,
   LatencyMetrics,
   BookRatesPositionRequest,
   BookRatesPositionResponse,
@@ -868,6 +869,19 @@ export interface CelnetTransport {
     groupBy: FlowGroupBy,
     window?: FlowWindow,
   ): Promise<ClientFlowMetrics[]>;
+
+  /**
+   * AuthService.ListLpFlowMetrics — the street-side LP-liquidity rollup (the LP-side
+   * pillar of docs/ANALYTICS-REQUIREMENTS.md §11): one {@link LpFlowMetrics} row per
+   * liquidity provider (lp_id-ordered) over an optional epoch-nanos `window`, optionally
+   * narrowed to a single `lpId`. This is the mirror of {@link listClientFlowMetrics} —
+   * who we trade WITH on the LP side. Read-only, gated server-side on the
+   * `view_analytics` capability × the caller's assets (either asset admits).
+   */
+  listLpFlowMetrics(
+    window?: FlowWindow,
+    lpId?: string,
+  ): Promise<LpFlowMetrics[]>;
 
   /**
    * AuthService.ListLatencyMetrics — the per-stage pipeline-latency rollup

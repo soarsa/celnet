@@ -137,6 +137,7 @@ import type {
   HedgeConfig,
   ClientFlowMetrics,
   FlowGroupBy,
+  LpFlowMetrics,
   FlowWindow,
   LatencyStage,
   LatencyHealth,
@@ -5488,6 +5489,51 @@ export function listClientFlowMetricsRequestToWire(
 /** Decode the `{ metrics: [...] }` client-flow reply (one row per group key). */
 export function listClientFlowMetricsResponseFromWire(o: WireObject): ClientFlowMetrics[] {
   return array(o, "metrics").map(clientFlowMetricsFromWire);
+}
+
+// --- street-liquidity analytics (ListLpFlowMetrics) -------------------------
+
+/**
+ * Decode one `LpFlowMetricsDesc` row (the street/LP side). The `optional double`
+ * ratio fields (`win_rate`, `mean_cover`) decode via {@link optNum} to
+ * `number | undefined` — a `null`/absent value is genuinely ABSENT (zero-denominator
+ * guard), never coerced to `0`. The activity/outcome counts are `uint64` on the wire,
+ * recovered as JS numbers (rollup magnitudes stay within safe-integer).
+ */
+export function lpFlowMetricsFromWire(o: WireObject): LpFlowMetrics {
+  return {
+    lpId: str(o, "lp_id"),
+    tickCount: num(o, "tick_count"),
+    quoteCount: num(o, "quote_count"),
+    dealsWon: num(o, "deals_won"),
+    wonNotional: num(o, "won_notional"),
+    missed: num(o, "missed"),
+    lastLookRejects: num(o, "last_look_rejects"),
+    winRate: optNum(o, "win_rate"),
+    meanCover: optNum(o, "mean_cover"),
+  };
+}
+
+/**
+ * Frame `list_lp_flow_metrics` — an optional epoch-nanos window (each bound omitted
+ * when absent) plus an optional per-LP `lp_id` filter (omitted when absent/empty; a
+ * set value narrows the reply to that single LP). `session_token` is auto-injected by
+ * the WS connection; `bigint` bounds serialize as JSON numbers.
+ */
+export function listLpFlowMetricsRequestToWire(
+  window?: FlowWindow,
+  lpId?: string,
+): WireObject {
+  const m: WireObject = {};
+  if (window?.fromNanos !== undefined) m["from_nanos"] = Number(window.fromNanos);
+  if (window?.toNanos !== undefined) m["to_nanos"] = Number(window.toNanos);
+  if (lpId !== undefined && lpId.length > 0) m["lp_id"] = lpId;
+  return m;
+}
+
+/** Decode the `{ metrics: [...] }` street-liquidity reply (one row per LP, lp_id-ordered). */
+export function listLpFlowMetricsResponseFromWire(o: WireObject): LpFlowMetrics[] {
+  return array(o, "metrics").map(lpFlowMetricsFromWire);
 }
 
 // --- latency / ops analytics (ListLatencyMetrics) ---------------------------

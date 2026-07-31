@@ -58,6 +58,7 @@ import type {
   ClientFlowMetrics,
   FlowGroupBy,
   FlowWindow,
+  LpFlowMetrics,
   LatencyMetrics,
   InstrumentDef,
   InstrumentInput,
@@ -290,6 +291,8 @@ import {
   listRiskTransfersResponseFromWire,
   listClientFlowMetricsRequestToWire,
   listClientFlowMetricsResponseFromWire,
+  listLpFlowMetricsRequestToWire,
+  listLpFlowMetricsResponseFromWire,
   listLatencyMetricsRequestToWire,
   listLatencyMetricsResponseFromWire,
   riskBookRiskSubscribeToWire,
@@ -2340,6 +2343,18 @@ export class WsTransport implements CelnetTransport {
       "client_flow_metrics",
     );
     return listClientFlowMetricsResponseFromWire(reply);
+  }
+
+  async listLpFlowMetrics(
+    window?: FlowWindow,
+    lpId?: string,
+  ): Promise<LpFlowMetrics[]> {
+    const reply = await this.conn.request(
+      "list_lp_flow_metrics",
+      listLpFlowMetricsRequestToWire(window, lpId),
+      "lp_flow_metrics",
+    );
+    return listLpFlowMetricsResponseFromWire(reply);
   }
 
   async listLatencyMetrics(): Promise<LatencyMetrics> {
