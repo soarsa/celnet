@@ -6624,3 +6624,222 @@ fn hedge_intent_encode_byte_identical() {
         &hand::hand_hedge_intent_to_json(&bare),
     );
 }
+
+// ===========================================================================
+// Bond corporate actions (CorporateActionsService) — generated-codec self-
+// consistency vectors. These messages are BORN on the descriptor-driven
+// generated codec (there is no legacy hand codec to diff against), so the
+// byte-identity contract here is that the generated ENCODE is exactly inverted
+// by the generated DECODE (a self-consistent codec) over concrete instances,
+// AND that the on-wire JSON has the expected snake_case keys, enum-as-int
+// tags, and proto3-optional omission — exercising the nested
+// CorporateActionDesc / InstrumentScheduleFlow field tables in both directions.
+// ===========================================================================
+mod corpactions_codec {
+    use celnet_proto::{
+        ApplyCorporateActionRequest, ConfirmCorporateActionRequest, ListCorporateActionsRequest,
+        ListInstrumentScheduleRequest,
+    };
+    use celnet_proto::{
+        ApplyCorporateActionResponse, ConfirmCorporateActionResponse, CorpActionStatus,
+        CorpEventType, CorpMandatory, CorporateActionDesc, InstrumentScheduleFlow,
+        ListCorporateActionsResponse, ListInstrumentScheduleResponse,
+    };
+    use celnet_server::ws::generated_codec as generated;
+    use serde_json::json;
+
+    /// A fully-populated corporate action (every scalar non-default, the optional
+    /// `response_deadline` present) — the nested workhorse.
+    fn ca_full() -> CorporateActionDesc {
+        CorporateActionDesc {
+            ca_id: "isin1:MCAL:20340915".to_owned(),
+            isin: "TESTISIN0001".to_owned(),
+            caev: CorpEventType::Mcal as i32,
+            camv: CorpMandatory::Volu as i32,
+            status: CorpActionStatus::Confirmed as i32,
+            announcement_date: "2034-01-01".to_owned(),
+            record_date: "2034-09-01".to_owned(),
+            ex_date: "2034-09-02".to_owned(),
+            response_deadline: Some("2034-09-10".to_owned()),
+            payment_date: "2034-09-15".to_owned(),
+            cash_per_100: 101.0,
+            redeemed_fraction: 1.0,
+            target_instrument: String::new(),
+            target_units_per_100: 0.0,
+            source_ref: "seev.031:abc".to_owned(),
+            source_priority: 200,
+            source: "derived".to_owned(),
+        }
+    }
+
+    #[test]
+    fn corporate_action_desc_round_trips_and_has_the_wire_shape() {
+        let ca = ca_full();
+        let resp = ListCorporateActionsResponse {
+            actions: vec![ca.clone()],
+            correlation_id: Some(7),
+        };
+        let j = generated::encode_list_corporate_actions_response(&resp);
+        // The on-wire JSON: snake_case keys, enums as ints, present response_deadline.
+        let a0 = &j["actions"][0];
+        assert_eq!(a0["ca_id"], json!("isin1:MCAL:20340915"));
+        assert_eq!(a0["caev"], json!(CorpEventType::Mcal as i32));
+        assert_eq!(a0["camv"], json!(CorpMandatory::Volu as i32));
+        assert_eq!(a0["status"], json!(CorpActionStatus::Confirmed as i32));
+        assert_eq!(a0["response_deadline"], json!("2034-09-10"));
+        assert_eq!(a0["cash_per_100"], json!(101.0));
+        assert_eq!(a0["source_priority"], json!(200));
+        assert_eq!(j["correlation_id"], json!(7));
+
+        // Encode is exactly inverted by decode (self-consistent codec).
+        let back =
+            generated::decode_list_corporate_actions_response(j.as_object().expect("object"))
+                .expect("decode");
+        assert_eq!(resp, back);
+    }
+
+    #[test]
+    fn absent_response_deadline_is_omitted_and_round_trips() {
+        let mut ca = ca_full();
+        ca.response_deadline = None;
+        let resp = ListCorporateActionsResponse {
+            actions: vec![ca],
+            correlation_id: None,
+        };
+        let j = generated::encode_list_corporate_actions_response(&resp);
+        // proto3-optional absent ⇒ the key is omitted (not null), and the absent
+        // correlation_id is likewise omitted.
+        assert!(j["actions"][0].get("response_deadline").is_none());
+        assert!(j.get("correlation_id").is_none());
+        let back =
+            generated::decode_list_corporate_actions_response(j.as_object().expect("object"))
+                .expect("decode");
+        assert_eq!(resp, back);
+    }
+
+    #[test]
+    fn instrument_schedule_response_round_trips() {
+        let resp = ListInstrumentScheduleResponse {
+            instrument_id: "test-callable".to_owned(),
+            flows: vec![
+                InstrumentScheduleFlow {
+                    date: "2034-12-15".to_owned(),
+                    coupon: 2.0,
+                    principal: 0.0,
+                },
+                InstrumentScheduleFlow {
+                    date: "2035-06-15".to_owned(),
+                    coupon: 2.0,
+                    principal: 100.0,
+                },
+            ],
+            pool_factor: 0.7,
+            correlation_id: Some(3),
+        };
+        let j = generated::encode_list_instrument_schedule_response(&resp);
+        assert_eq!(j["flows"][0]["date"], json!("2034-12-15"));
+        assert_eq!(j["flows"][1]["principal"], json!(100.0));
+        assert_eq!(j["pool_factor"], json!(0.7));
+        let back =
+            generated::decode_list_instrument_schedule_response(j.as_object().expect("object"))
+                .expect("decode");
+        assert_eq!(resp, back);
+    }
+
+    #[test]
+    fn confirm_and_apply_responses_round_trip() {
+        let confirm = ConfirmCorporateActionResponse {
+            action: Some(ca_full()),
+            correlation_id: Some(1),
+        };
+        let jc = generated::encode_confirm_corporate_action_response(&confirm);
+        let back_c =
+            generated::decode_confirm_corporate_action_response(jc.as_object().expect("object"))
+                .expect("decode");
+        assert_eq!(confirm, back_c);
+
+        let apply = ApplyCorporateActionResponse {
+            instrument_id: "test-callable".to_owned(),
+            face_delta: -1_000_000.0,
+            cash: 1_010_000.0,
+            remaining_flows: 0,
+            action: Some(ca_full()),
+            correlation_id: None,
+        };
+        let ja = generated::encode_apply_corporate_action_response(&apply);
+        assert_eq!(ja["face_delta"], json!(-1_000_000.0));
+        assert_eq!(ja["remaining_flows"], json!(0));
+        let back_a =
+            generated::decode_apply_corporate_action_response(ja.as_object().expect("object"))
+                .expect("decode");
+        assert_eq!(apply, back_a);
+    }
+
+    #[test]
+    fn request_decoders_read_the_snake_case_wire() {
+        // ListInstrumentSchedule.
+        let sched = generated::decode_list_instrument_schedule_request(
+            json!({"session_token": "t", "instrument_id": "test-callable", "correlation_id": 5})
+                .as_object()
+                .unwrap(),
+        )
+        .expect("decode");
+        assert_eq!(
+            sched,
+            ListInstrumentScheduleRequest {
+                session_token: "t".to_owned(),
+                instrument_id: "test-callable".to_owned(),
+                correlation_id: Some(5),
+            }
+        );
+
+        // ListCorporateActions with the optional isin filter.
+        let list = generated::decode_list_corporate_actions_request(
+            json!({"session_token": "t", "isin": "TESTISIN0001"})
+                .as_object()
+                .unwrap(),
+        )
+        .expect("decode");
+        assert_eq!(
+            list,
+            ListCorporateActionsRequest {
+                session_token: "t".to_owned(),
+                isin: Some("TESTISIN0001".to_owned()),
+                correlation_id: None,
+            }
+        );
+
+        // Confirm.
+        let confirm = generated::decode_confirm_corporate_action_request(
+            json!({"session_token": "t", "ca_id": "ca1"})
+                .as_object()
+                .unwrap(),
+        )
+        .expect("decode");
+        assert_eq!(
+            confirm,
+            ConfirmCorporateActionRequest {
+                session_token: "t".to_owned(),
+                ca_id: "ca1".to_owned(),
+                correlation_id: None,
+            }
+        );
+
+        // Apply.
+        let apply = generated::decode_apply_corporate_action_request(
+            json!({"session_token": "t", "ca_id": "ca1", "held_face": 1000000.0})
+                .as_object()
+                .unwrap(),
+        )
+        .expect("decode");
+        assert_eq!(
+            apply,
+            ApplyCorporateActionRequest {
+                session_token: "t".to_owned(),
+                ca_id: "ca1".to_owned(),
+                held_face: 1_000_000.0,
+                correlation_id: None,
+            }
+        );
+    }
+}

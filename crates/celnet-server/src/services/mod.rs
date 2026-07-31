@@ -27,6 +27,7 @@ pub mod aggregation;
 pub mod analytics;
 pub mod auto_hedge;
 pub mod consensus;
+pub mod corpactions;
 pub mod desk;
 pub mod error_status;
 pub mod liquidity_feed;

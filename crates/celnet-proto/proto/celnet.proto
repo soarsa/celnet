@@ -7880,3 +7880,219 @@ service NotificationService {
   // broker). `docs/RISK-TRANSFER-REQUIREMENTS.md` §9.2/§10.
   rpc StreamRiskTransferInbox(StreamRiskTransferInboxRequest) returns (stream RiskTransferInbox);
 }
+
+// ===========================================================================
+// Bond corporate actions — the CAEV/CAMV event surface + the effective
+// (post-CA) instrument schedule (ADR: BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING).
+// The wire mirror of `celnet-corpactions` (the CaEvent/BondSchedule model) +
+// `celnet-refstore` (the effective-dated golden store + announce→confirm→apply
+// lifecycle). A confirmed+applied CA re-derives the stored schedule so bond
+// pricing + DV01 re-derive off the post-event schedule, and books the position
+// effect through the SAME rates-book path a trade uses. Civil dates travel as
+// ISO `YYYY-MM-DD` strings so the surface is human-readable in the GUI CA inbox.
+// Additive, vendor-neutral (guardrail 8); off the pinned hot core (guardrail 11).
+
+// CAEV — the corporate-action event type (ISO 15022 / ISO 20022 code set). The
+// govvie-deterministic set (REDM/INTR/MCAL/PCAL/PRED/DRAW/BPUT) is derivable
+// in-house; the corporate set (TEND/EXOF/CONV) is modelled but sourced only via a
+// customer-wired vendor adapter.
+enum CorpEventType {
+  // proto3 zero default — never a real event.
+  CORP_EVENT_TYPE_UNSPECIFIED = 0;
+  // Final redemption at maturity (mandatory): position realised, schedule ends.
+  CORP_EVENT_TYPE_REDM = 1;
+  // Interest / coupon payment (mandatory): cash income; future schedule intact.
+  CORP_EVENT_TYPE_INTR = 2;
+  // Full call — mandatory early redemption of the whole issue at the call price.
+  CORP_EVENT_TYPE_MCAL = 3;
+  // Partial call — pro-rata / lottery call of part of the issue at the call price.
+  CORP_EVENT_TYPE_PCAL = 4;
+  // Partial redemption — pro-rata reduction of outstanding nominal (no lottery).
+  CORP_EVENT_TYPE_PRED = 5;
+  // Sinking-fund drawing / lottery redemption of a scheduled sinking amount.
+  CORP_EVENT_TYPE_DRAW = 6;
+  // Put — holder exercises a put, redeeming (all or part) at the put price.
+  CORP_EVENT_TYPE_BPUT = 7;
+  // Tender offer (voluntary) — holder optionally sells back at the tender price.
+  CORP_EVENT_TYPE_TEND = 8;
+  // Exchange offer — the security is exchanged into a target instrument.
+  CORP_EVENT_TYPE_EXOF = 9;
+  // Conversion — the security converts into a target instrument at a ratio.
+  CORP_EVENT_TYPE_CONV = 10;
+}
+
+// CAMV — the mandatory / voluntary indicator that drives the election lifecycle.
+enum CorpMandatory {
+  // proto3 zero default — never a real value.
+  CORP_MANDATORY_UNSPECIFIED = 0;
+  // Mandatory — applies automatically, no holder election.
+  CORP_MANDATORY_MAND = 1;
+  // Voluntary — holder-optional; opens an election.
+  CORP_MANDATORY_VOLU = 2;
+  // Mandatory with options / choice — must respond, choosing among outcomes.
+  CORP_MANDATORY_CHOS = 3;
+}
+
+// The lifecycle status of a corporate-action event.
+enum CorpActionStatus {
+  // proto3 zero default — never a real status.
+  CORP_ACTION_STATUS_UNSPECIFIED = 0;
+  // Announced (MT 564 / seev.031); not yet applied.
+  CORP_ACTION_STATUS_ANNOUNCED = 1;
+  // Desk election resolved for a VOLU/CHOS event (MT 565 / seev.033).
+  CORP_ACTION_STATUS_ELECTED = 2;
+  // Movement confirmed (MT 566 / seev.036); ready to apply.
+  CORP_ACTION_STATUS_CONFIRMED = 3;
+  // Position effect applied to the book / inventory.
+  CORP_ACTION_STATUS_APPLIED = 4;
+  // A confirmed movement reversed (seev.037) — the effect is un-applied.
+  CORP_ACTION_STATUS_REVERSED = 5;
+  // An announced event cancelled before application (seev.039).
+  CORP_ACTION_STATUS_CANCELLED = 6;
+}
+
+// One dated cashflow of the effective (post-any-applied-CA) bond schedule, in
+// per-100-original-face cash. The wire mirror of `celnet_corpactions::ScheduleFlow`.
+message InstrumentScheduleFlow {
+  // The payment date, ISO `YYYY-MM-DD`.
+  string date = 1;
+  // Coupon / interest cash on this date, per 100 face.
+  double coupon = 2;
+  // Principal / redemption cash on this date, per 100 face (0 except a redemption).
+  double principal = 3;
+}
+
+// A normalized corporate-action event as stored in the golden source — the wire
+// mirror of `celnet_refstore::StoredCorpAction` (its `ca_id` + `CaEvent` +
+// mastering provenance), flattened for the GUI CA inbox.
+message CorporateActionDesc {
+  // The stable id of the corporate action (shared across its lifecycle versions).
+  string ca_id = 1;
+  // The ISO 6166 ISIN of the affected instrument (the join key to the schedule).
+  string isin = 2;
+  // The event type.
+  CorpEventType caev = 3;
+  // The mandatory / voluntary indicator.
+  CorpMandatory camv = 4;
+  // The current lifecycle status.
+  CorpActionStatus status = 5;
+  // Announcement date (ISO `YYYY-MM-DD`).
+  string announcement_date = 6;
+  // Record date — the balance snapshot that fixes entitlement.
+  string record_date = 7;
+  // Ex date — from which the security trades without the entitlement.
+  string ex_date = 8;
+  // Response / market deadline for a VOLU/CHOS election (absent for MAND).
+  optional string response_deadline = 9;
+  // Payment / effective date — when the movement settles and the effect applies.
+  string payment_date = 10;
+  // Cash price per 100 face of a redemption / call / put / tender (or coupon cash).
+  double cash_per_100 = 11;
+  // Fraction of outstanding nominal redeemed by a partial event, in [0, 1].
+  double redeemed_fraction = 12;
+  // Exchange / conversion target instrument id (EXOF / CONV); empty otherwise.
+  string target_instrument = 13;
+  // Units of the target created per 100 face of the source; 0 otherwise.
+  double target_units_per_100 = 14;
+  // Originating source-message reference (MT 564 / seev.031 id) for audit lineage.
+  string source_ref = 15;
+  // The source-priority the mastering provenance stamped (survivorship ordering).
+  uint32 source_priority = 16;
+  // The source label that produced this version (lineage).
+  string source = 17;
+}
+
+// List the effective (post-any-applied-CA) cashflow schedule of one instrument.
+message ListInstrumentScheduleRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // The reference-data instrument id whose schedule to resolve.
+  string instrument_id = 2;
+  // Optional caller correlation id, echoed by the server.
+  optional uint64 correlation_id = 3;
+}
+// The effective schedule of the requested instrument.
+message ListInstrumentScheduleResponse {
+  // The instrument the schedule belongs to.
+  string instrument_id = 1;
+  // The remaining cashflows in ascending date order (post-any-applied-CA).
+  repeated InstrumentScheduleFlow flows = 2;
+  // Current outstanding nominal as a fraction of original (1.0 = full).
+  double pool_factor = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+
+// List corporate actions, optionally filtered to one ISIN.
+message ListCorporateActionsRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Restrict to actions targeting this ISIN (absent ⇒ all known actions).
+  optional string isin = 2;
+  // Optional caller correlation id, echoed by the server.
+  optional uint64 correlation_id = 3;
+}
+// The current version of every matching corporate action.
+message ListCorporateActionsResponse {
+  // The matching corporate actions (current lifecycle version each).
+  repeated CorporateActionDesc actions = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Confirm a corporate action's movement (announced|elected → confirmed), readying
+// it to apply. Reference-data admin authority (`refdata` capability).
+message ConfirmCorporateActionRequest {
+  // The caller's bearer token (must resolve to the `refdata` capability).
+  string session_token = 1;
+  // The corporate action to confirm.
+  string ca_id = 2;
+  // Optional caller correlation id, echoed by the server.
+  optional uint64 correlation_id = 3;
+}
+// The confirmed corporate action.
+message ConfirmCorporateActionResponse {
+  // The corporate action after the transition.
+  CorporateActionDesc action = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Apply a confirmed corporate action: re-derive the stored schedule and book the
+// position effect on the desk's held face through the rates-book path. Reference-
+// data admin authority (`refdata` capability).
+message ApplyCorporateActionRequest {
+  // The caller's bearer token (must resolve to the `refdata` capability).
+  string session_token = 1;
+  // The confirmed corporate action to apply.
+  string ca_id = 2;
+  // The desk's held face (nominal) in the instrument the effect acts on.
+  double held_face = 3;
+  // Optional caller correlation id, echoed by the server.
+  optional uint64 correlation_id = 4;
+}
+// The result of applying a corporate action.
+message ApplyCorporateActionResponse {
+  // The instrument the effect touched.
+  string instrument_id = 1;
+  // The change in held face (nominal); negative = a reduction, -held_face = realised.
+  double face_delta = 2;
+  // The cash thrown off by the event on the holding (coupon or principal returned).
+  double cash = 3;
+  // Cashflows remaining in the instrument's post-event schedule.
+  uint32 remaining_flows = 4;
+  // The corporate action after the apply (status APPLIED).
+  CorporateActionDesc action = 5;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 6;
+}
+
+// The bond corporate-actions surface: the effective post-CA instrument schedule
+// read, the CA inbox read, and the confirm/apply lifecycle drivers. The reads are
+// authenticated; confirm/apply require the dedicated `refdata` capability.
+service CorporateActionsService {
+  rpc ListInstrumentSchedule(ListInstrumentScheduleRequest) returns (ListInstrumentScheduleResponse);
+  rpc ListCorporateActions(ListCorporateActionsRequest) returns (ListCorporateActionsResponse);
+  rpc ConfirmCorporateAction(ConfirmCorporateActionRequest) returns (ConfirmCorporateActionResponse);
+  rpc ApplyCorporateAction(ApplyCorporateActionRequest) returns (ApplyCorporateActionResponse);
+}

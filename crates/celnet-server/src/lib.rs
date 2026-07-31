@@ -514,6 +514,38 @@ impl Edge {
                 Arc::clone(&rfq_desk_edge),
             );
 
+        // The bond corporate-actions edge: the effective-dated, journal-backed golden
+        // source (seeded once from the deterministic OSS govvie universe) + the shared
+        // rates book a confirmed+applied CA realises/scales into (the SAME `book` path a
+        // trade uses). Off the pinned hot core; the reads are on the `view` floor, the
+        // confirm/apply writes gated on the `refdata` capability. ONE edge backs the gRPC
+        // server and the WS mirror (shared behind an `Arc`), like every other service.
+        let corp_actions_journal = data_dir
+            .map(|d| d.join("corpactions.journal"))
+            .unwrap_or_else(|| std::env::temp_dir().join("celnet-corpactions.journal"));
+        let corp_store = celnet_refstore::GoldenSourceStore::open(&corp_actions_journal)
+            .map_err(|e| std::io::Error::other(format!("corporate-actions golden store: {e}")))?;
+        let corp_actions_edge = Arc::new(services::corpactions::CorporateActionsEdge::new(
+            Arc::clone(&sessions),
+            Arc::clone(&gate),
+            Arc::clone(&rates_store),
+            corp_store,
+        ));
+        // Seed the golden source once from the curated OSS govvie universe (masters + the
+        // next upcoming coupon/redemption per instrument) so the schedule + CA-inbox reads
+        // resolve from first boot. Idempotent; a seed failure is non-fatal (the reads just
+        // return empty) — never fail the whole edge over reference-data seeding.
+        if let Err(e) = corp_actions_edge.seed_from_source(
+            &celnet_refstore::GovvieSource::curated(),
+            celnet_corpactions::CivilDate::new(2026, 1, 1),
+        ) {
+            tracing::warn!(error = %e, "corporate-actions golden source seeding skipped");
+        }
+        let corp_actions =
+            celnet_proto::corporate_actions_service_server::CorporateActionsServiceServer::from_arc(
+                Arc::clone(&corp_actions_edge),
+            );
+
         // The managed inbound FIX-acceptor registry: the persisted set of acceptor
         // connections (`fix-connections.json`, path from `CELNET_FIX_CONFIG`) the
         // operator defines via `FixAdminService`. It shares the SAME pricing core,
@@ -775,6 +807,7 @@ impl Edge {
                 .add_service(auth)
                 .add_service(rfq_desk)
                 .add_service(notifications)
+                .add_service(corp_actions)
                 .add_service(liquidity_feed)
                 .serve_with_incoming_shutdown(incoming, async {
                     let _ = grpc_rx.await;
@@ -802,6 +835,7 @@ impl Edge {
             Arc::clone(&fix_admin_edge),
             Arc::clone(&auth_edge),
             Arc::clone(&rfq_desk_edge),
+            Arc::clone(&corp_actions_edge),
             fleet.clone(),
             panel,
             Arc::clone(&aggregation_hub),

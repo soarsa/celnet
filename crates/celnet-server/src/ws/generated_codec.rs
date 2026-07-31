@@ -9324,3 +9324,373 @@ pub fn encode_risk_book_risk_snapshot(s: &RiskBookRiskSnapshot) -> Value {
 pub fn encode_risk_book_risk_update(u: &RiskBookRiskUpdate) -> Value {
     encode("RiskBookRiskUpdate", u)
 }
+
+// ===========================================================================
+// Bond corporate actions (CorporateActionsService) — the descriptor-driven
+// codec for the effective-schedule + CA-inbox reads and the confirm/apply
+// lifecycle. Flat, snake_case messages (no FX-legacy wire quirk), so they
+// encode/decode straight from the field tables with no override entry. The
+// differential harness (`tests/ws_codec_differential.rs`) proves the generated
+// encode+decode round-trips for concrete instances.
+// ===========================================================================
+
+use celnet_proto::{
+    ApplyCorporateActionRequest, ApplyCorporateActionResponse, ConfirmCorporateActionRequest,
+    ConfirmCorporateActionResponse, CorporateActionDesc, InstrumentScheduleFlow,
+    ListCorporateActionsRequest, ListCorporateActionsResponse, ListInstrumentScheduleRequest,
+    ListInstrumentScheduleResponse,
+};
+
+impl WireAdapter for InstrumentScheduleFlow {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "date" => Some(WireVal::Str(&self.date)),
+            "coupon" => Some(WireVal::F64(self.coupon)),
+            "principal" => Some(WireVal::F64(self.principal)),
+            _ => None,
+        }
+    }
+}
+
+impl WireBuilder for InstrumentScheduleFlow {
+    const MESSAGE: &'static str = "InstrumentScheduleFlow";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "date" => self.date = string_or_empty(value),
+            "coupon" => self.coupon = f64_or_zero(value),
+            "principal" => self.principal = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireAdapter for CorporateActionDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "ca_id" => Some(WireVal::Str(&self.ca_id)),
+            "isin" => Some(WireVal::Str(&self.isin)),
+            "caev" => Some(WireVal::Enum(self.caev)),
+            "camv" => Some(WireVal::Enum(self.camv)),
+            "status" => Some(WireVal::Enum(self.status)),
+            "announcement_date" => Some(WireVal::Str(&self.announcement_date)),
+            "record_date" => Some(WireVal::Str(&self.record_date)),
+            "ex_date" => Some(WireVal::Str(&self.ex_date)),
+            // proto3 `optional string`: absent ⇒ omitted.
+            "response_deadline" => self.response_deadline.as_deref().map(WireVal::Str),
+            "payment_date" => Some(WireVal::Str(&self.payment_date)),
+            "cash_per_100" => Some(WireVal::F64(self.cash_per_100)),
+            "redeemed_fraction" => Some(WireVal::F64(self.redeemed_fraction)),
+            "target_instrument" => Some(WireVal::Str(&self.target_instrument)),
+            "target_units_per_100" => Some(WireVal::F64(self.target_units_per_100)),
+            "source_ref" => Some(WireVal::Str(&self.source_ref)),
+            "source_priority" => Some(WireVal::U64(u64::from(self.source_priority))),
+            "source" => Some(WireVal::Str(&self.source)),
+            _ => None,
+        }
+    }
+}
+
+impl WireBuilder for CorporateActionDesc {
+    const MESSAGE: &'static str = "CorporateActionDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "ca_id" => self.ca_id = string_or_empty(value),
+            "isin" => self.isin = string_or_empty(value),
+            "caev" => self.caev = enum_or_zero(value),
+            "camv" => self.camv = enum_or_zero(value),
+            "status" => self.status = enum_or_zero(value),
+            "announcement_date" => self.announcement_date = string_or_empty(value),
+            "record_date" => self.record_date = string_or_empty(value),
+            "ex_date" => self.ex_date = string_or_empty(value),
+            "response_deadline" => self.response_deadline = opt_string(value, "response_deadline")?,
+            "payment_date" => self.payment_date = string_or_empty(value),
+            "cash_per_100" => self.cash_per_100 = f64_or_zero(value),
+            "redeemed_fraction" => self.redeemed_fraction = f64_or_zero(value),
+            "target_instrument" => self.target_instrument = string_or_empty(value),
+            "target_units_per_100" => self.target_units_per_100 = f64_or_zero(value),
+            "source_ref" => self.source_ref = string_or_empty(value),
+            "source_priority" => self.source_priority = u32_or_zero(value),
+            "source" => self.source = string_or_empty(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListInstrumentScheduleRequest {
+    const MESSAGE: &'static str = "ListInstrumentScheduleRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "instrument_id" => self.instrument_id = req_string(value, "instrument_id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireAdapter for ListInstrumentScheduleResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "instrument_id" => Some(WireVal::Str(&self.instrument_id)),
+            "flows" => Some(WireVal::RepeatedMsg(
+                self.flows.iter().map(|f| f as &dyn WireAdapter).collect(),
+            )),
+            "pool_factor" => Some(WireVal::F64(self.pool_factor)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireBuilder for ListInstrumentScheduleResponse {
+    const MESSAGE: &'static str = "ListInstrumentScheduleResponse";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "instrument_id" => self.instrument_id = string_or_empty(value),
+            "flows" => self.flows = opt_repeated::<InstrumentScheduleFlow>(value, "flows")?,
+            "pool_factor" => self.pool_factor = f64_or_zero(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListCorporateActionsRequest {
+    const MESSAGE: &'static str = "ListCorporateActionsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "isin" => self.isin = opt_string(value, "isin")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireAdapter for ListCorporateActionsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "actions" => Some(WireVal::RepeatedMsg(
+                self.actions.iter().map(|a| a as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireBuilder for ListCorporateActionsResponse {
+    const MESSAGE: &'static str = "ListCorporateActionsResponse";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "actions" => self.actions = opt_repeated::<CorporateActionDesc>(value, "actions")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ConfirmCorporateActionRequest {
+    const MESSAGE: &'static str = "ConfirmCorporateActionRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "ca_id" => self.ca_id = req_string(value, "ca_id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireAdapter for ConfirmCorporateActionResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            // Absent singular message ⇒ JSON null (the generic singular-message rule).
+            "action" => self
+                .action
+                .as_ref()
+                .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireBuilder for ConfirmCorporateActionResponse {
+    const MESSAGE: &'static str = "ConfirmCorporateActionResponse";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "action" => self.action = opt_msg::<CorporateActionDesc>(value, "action")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ApplyCorporateActionRequest {
+    const MESSAGE: &'static str = "ApplyCorporateActionRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "ca_id" => self.ca_id = req_string(value, "ca_id")?,
+            "held_face" => self.held_face = f64_or_zero(value),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireAdapter for ApplyCorporateActionResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "instrument_id" => Some(WireVal::Str(&self.instrument_id)),
+            "face_delta" => Some(WireVal::F64(self.face_delta)),
+            "cash" => Some(WireVal::F64(self.cash)),
+            "remaining_flows" => Some(WireVal::U64(u64::from(self.remaining_flows))),
+            "action" => self
+                .action
+                .as_ref()
+                .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireBuilder for ApplyCorporateActionResponse {
+    const MESSAGE: &'static str = "ApplyCorporateActionResponse";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "instrument_id" => self.instrument_id = string_or_empty(value),
+            "face_delta" => self.face_delta = f64_or_zero(value),
+            "cash" => self.cash = f64_or_zero(value),
+            "remaining_flows" => self.remaining_flows = u32_or_zero(value),
+            "action" => self.action = opt_msg::<CorporateActionDesc>(value, "action")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+// --- public typed entry points (the WS dispatch surface) -------------------
+
+/// Decode a [`ListInstrumentScheduleRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token` / `instrument_id`, as a [`CodecError`].
+pub fn decode_list_instrument_schedule_request(
+    o: &Map<String, Value>,
+) -> DResult<ListInstrumentScheduleRequest> {
+    decode(ListInstrumentScheduleRequest::MESSAGE, o)
+}
+
+/// Encode a [`ListInstrumentScheduleResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_instrument_schedule_response(r: &ListInstrumentScheduleResponse) -> Value {
+    encode("ListInstrumentScheduleResponse", r)
+}
+
+/// Decode a [`ListCorporateActionsRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_corporate_actions_request(
+    o: &Map<String, Value>,
+) -> DResult<ListCorporateActionsRequest> {
+    decode(ListCorporateActionsRequest::MESSAGE, o)
+}
+
+/// Encode a [`ListCorporateActionsResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_corporate_actions_response(r: &ListCorporateActionsResponse) -> Value {
+    encode("ListCorporateActionsResponse", r)
+}
+
+/// Decode a [`ConfirmCorporateActionRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token` / `ca_id`, as a [`CodecError`].
+pub fn decode_confirm_corporate_action_request(
+    o: &Map<String, Value>,
+) -> DResult<ConfirmCorporateActionRequest> {
+    decode(ConfirmCorporateActionRequest::MESSAGE, o)
+}
+
+/// Encode a [`ConfirmCorporateActionResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_confirm_corporate_action_response(r: &ConfirmCorporateActionResponse) -> Value {
+    encode("ConfirmCorporateActionResponse", r)
+}
+
+/// Decode an [`ApplyCorporateActionRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token` / `ca_id`, as a [`CodecError`].
+pub fn decode_apply_corporate_action_request(
+    o: &Map<String, Value>,
+) -> DResult<ApplyCorporateActionRequest> {
+    decode(ApplyCorporateActionRequest::MESSAGE, o)
+}
+
+/// Encode an [`ApplyCorporateActionResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_apply_corporate_action_response(r: &ApplyCorporateActionResponse) -> Value {
+    encode("ApplyCorporateActionResponse", r)
+}
+
+// --- differential-harness inverse decoders ---------------------------------
+// The reply messages are server→client (never decoded on the edge); these typed
+// decoders exist so `tests/ws_codec_differential.rs` can prove the generated
+// encode is exactly inverted by the generated decode (a self-consistent codec)
+// over concrete instances, exercising the nested CorporateActionDesc /
+// InstrumentScheduleFlow field tables in both directions.
+
+/// Decode a [`ListInstrumentScheduleResponse`] (the encode inverse — differential harness).
+///
+/// # Errors
+/// A malformed body, as a [`CodecError`].
+pub fn decode_list_instrument_schedule_response(
+    o: &Map<String, Value>,
+) -> DResult<ListInstrumentScheduleResponse> {
+    decode(ListInstrumentScheduleResponse::MESSAGE, o)
+}
+
+/// Decode a [`ListCorporateActionsResponse`] (the encode inverse — differential harness).
+///
+/// # Errors
+/// A malformed body, as a [`CodecError`].
+pub fn decode_list_corporate_actions_response(
+    o: &Map<String, Value>,
+) -> DResult<ListCorporateActionsResponse> {
+    decode(ListCorporateActionsResponse::MESSAGE, o)
+}
+
+/// Decode a [`ConfirmCorporateActionResponse`] (the encode inverse — differential harness).
+///
+/// # Errors
+/// A malformed body, as a [`CodecError`].
+pub fn decode_confirm_corporate_action_response(
+    o: &Map<String, Value>,
+) -> DResult<ConfirmCorporateActionResponse> {
+    decode(ConfirmCorporateActionResponse::MESSAGE, o)
+}
+
+/// Decode an [`ApplyCorporateActionResponse`] (the encode inverse — differential harness).
+///
+/// # Errors
+/// A malformed body, as a [`CodecError`].
+pub fn decode_apply_corporate_action_response(
+    o: &Map<String, Value>,
+) -> DResult<ApplyCorporateActionResponse> {
+    decode(ApplyCorporateActionResponse::MESSAGE, o)
+}

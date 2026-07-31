@@ -122,12 +122,27 @@ pub enum Action {
     /// the default trader bundle — an explicitly-granted authority like the `Manage*`
     /// / `RiskTransfer` seats.
     Hedge,
+    /// Master **reference data**: confirm / apply bond **corporate actions** (the
+    /// CAEV/CAMV lifecycle that re-derives an instrument's cashflow schedule and books
+    /// the resulting redemption/coupon movement) and, more broadly, the golden-source
+    /// security-master admin surface
+    /// (`docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md` §11). A NARROW
+    /// reference-data authority **distinct** from [`Action::Book`] (a CA apply *books*
+    /// through the same rates path, still gated on `Book`, but *authorising* the
+    /// mastered-data change is this separate seat), from [`Action::RiskManage`], and
+    /// from super-admin ([`Action::Administer`]): a data/ops steward can confirm/apply
+    /// corporate actions without full administration. The schedule / CA-inbox **reads**
+    /// stay on the [`Action::View`] floor; only the confirm/apply *writes* need this.
+    /// Exercised per [`AssetClass`] (corporate actions are a fixed-income concern
+    /// today). Not in the default trader bundle — an explicitly-granted authority like
+    /// the `Manage*` / `RiskTransfer` / `Hedge` seats.
+    Refdata,
 }
 
 impl Action {
     /// Every action, in discriminant order — the canonical iteration set for
     /// building bundles and exhaustiveness tests.
-    pub const ALL: [Action; 16] = [
+    pub const ALL: [Action; 17] = [
         Action::View,
         Action::Price,
         Action::QuoteRespond,
@@ -144,6 +159,7 @@ impl Action {
         Action::ManageLiquidity,
         Action::ViewAnalytics,
         Action::Hedge,
+        Action::Refdata,
     ];
 
     /// Stable snake_case label for audit/log/wire fields.
@@ -166,6 +182,7 @@ impl Action {
             Action::ManageLiquidity => "manage_liquidity",
             Action::ViewAnalytics => "view_analytics",
             Action::Hedge => "hedge",
+            Action::Refdata => "refdata",
         }
     }
 
@@ -511,6 +528,47 @@ mod tests {
         assert_eq!(Action::from_label("hedge"), Some(Action::Hedge));
         for asset in AssetClass::ALL {
             assert!(!CapabilitySet::empty().allows(Capability::new(Action::Hedge, asset)));
+        }
+    }
+
+    /// Separation of duties: `refdata` (confirm/apply a bond corporate action) is a
+    /// NARROW authority distinct from `book` (the booking the CA apply performs) and
+    /// from `administer` — granting one never implies another, and it is asset-scoped.
+    /// Not in the default (empty) set.
+    #[test]
+    fn refdata_is_distinct_from_book_and_administer() {
+        let fi_refdata = Capability::new(Action::Refdata, AssetClass::FixedIncome);
+        let fi_book = Capability::new(Action::Book, AssetClass::FixedIncome);
+        let fx_refdata = Capability::new(Action::Refdata, AssetClass::FxOptions);
+
+        // A reference-data steward holds ONLY refdata — not book, not administer.
+        let steward = CapabilitySet::empty().grant(fi_refdata);
+        assert!(steward.allows(fi_refdata));
+        assert!(
+            !steward.allows(fi_book),
+            "authorising a CA apply must not imply booking authority"
+        );
+        assert!(
+            !steward.allows(Capability::new(Action::Administer, AssetClass::FixedIncome)),
+            "refdata is distinct from administer"
+        );
+        assert!(
+            !steward.allows(fx_refdata),
+            "FI refdata must not grant FX refdata"
+        );
+
+        // A booker holds ONLY book — not the authority to confirm/apply a CA.
+        let booker = CapabilitySet::empty().grant(fi_book);
+        assert!(booker.allows(fi_book));
+        assert!(
+            !booker.allows(fi_refdata),
+            "book must not imply reference-data mastering"
+        );
+
+        // Not in the default set; label round-trips.
+        assert_eq!(Action::from_label("refdata"), Some(Action::Refdata));
+        for asset in AssetClass::ALL {
+            assert!(!CapabilitySet::empty().allows(Capability::new(Action::Refdata, asset)));
         }
     }
 

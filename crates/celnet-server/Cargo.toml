@@ -35,6 +35,13 @@ celnet-bond.workspace = true
 # Aggregated Book tiles resolve real names + ISIN/CUSIP and the security-list
 # download can filter by region + sub-asset-type.
 celnet-refdata.workspace = true
+# The bond corporate-actions model (CAEV/CAMV CaEvent + BondSchedule + the pure
+# apply_event/position_delta effect functions) and the effective-dated golden-source
+# ingestion layer (GoldenSourceStore + GovvieSource + the announce→confirm→apply
+# lifecycle) the CorporateActionsService edge wires (services/corpactions). One-way
+# edge (server → refstore → {corpactions, refdata, journal}); no cycle.
+celnet-corpactions.workspace = true
+celnet-refstore.workspace = true
 # Instrument reference-data convention labels (config/reference_data.rs) reuse the
 # shared calendar vocabularies (RollRule business-day convention, CentreId
 # settlement centres) so the registry can never drift from what the engine resolves.

@@ -227,6 +227,20 @@ mod tests {
             Arc::new(crate::services::desk::notify::NotificationBroker::new()),
             Clock::system(),
         ));
+        // A throwaway corporate-actions edge over a fresh golden store: the cap test never
+        // exercises corporate actions, it just needs the edge the WS set now requires.
+        let corp_journal = std::env::temp_dir().join(format!(
+            "celnet-ws-cap-corpactions-{}.journal",
+            std::process::id()
+        ));
+        let corp_store = celnet_refstore::GoldenSourceStore::open(&corp_journal)
+            .expect("open throwaway corp-actions store");
+        let corpactions = Arc::new(crate::services::corpactions::CorporateActionsEdge::new(
+            Arc::clone(&sessions),
+            Arc::clone(&gate),
+            Arc::new(crate::services::rates_book::RatesPositionStore::new()),
+            corp_store,
+        ));
         let services = WsServices::new(
             link,
             gate,
@@ -239,6 +253,7 @@ mod tests {
             fix_admin,
             auth,
             rfq_desk,
+            corpactions,
             None,
             LpPanelConfig { synthetic_lps: 0 },
             crate::services::aggregation::AggregationHub::new(Clock::system()),

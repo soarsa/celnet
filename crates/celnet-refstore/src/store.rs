@@ -222,6 +222,21 @@ impl GoldenSourceStore {
             .collect()
     }
 
+    /// The current (latest-appended) version of **every** corporate action, one per
+    /// distinct `ca_id`, in first-seen order — the CA-inbox read across the whole store.
+    #[must_use]
+    pub fn current_corp_actions(&self) -> Vec<&StoredCorpAction> {
+        let mut ids: Vec<&str> = Vec::new();
+        for c in &self.corp_actions {
+            if !ids.contains(&c.ca_id.as_str()) {
+                ids.push(c.ca_id.as_str());
+            }
+        }
+        ids.into_iter()
+            .filter_map(|id| self.latest_corp_action(id))
+            .collect()
+    }
+
     /// The durable sequence of the most recent append (for checkpoint watermarking / diagnostics).
     #[must_use]
     pub fn last_sequence(&self) -> Option<u64> {

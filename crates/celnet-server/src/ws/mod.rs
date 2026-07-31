@@ -86,6 +86,7 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tonic::Request;
 
 use celnet_proto::auth_service_server::AuthService;
+use celnet_proto::corporate_actions_service_server::CorporateActionsService;
 use celnet_proto::fix_admin_service_server::FixAdminService;
 use celnet_proto::pricing_service_server::PricingService;
 use celnet_proto::quote_service_server::QuoteService;
@@ -99,6 +100,7 @@ use crate::core_link::CoreLink;
 use crate::readiness::{InFlightGuard, ReadinessGate};
 use crate::services::aggregation::AggregationHub;
 use crate::services::auth::AuthEdge;
+use crate::services::corpactions::CorporateActionsEdge;
 use crate::services::desk::RfqDeskEdge;
 use crate::services::desk::notify::NotificationBroker;
 use crate::services::fix_admin::FixAdminEdge;
@@ -142,6 +144,9 @@ pub struct WsServices {
     /// The dealer-quoting desk edge (RFQ/IOI capture + response + accept + reads) and
     /// the publisher behind the notification push channel.
     rfq_desk: Arc<RfqDeskEdge>,
+    /// The bond corporate-actions edge (effective-schedule + CA-inbox reads + the
+    /// confirm/apply lifecycle drivers), shared with the gRPC server.
+    corpactions: Arc<CorporateActionsEdge>,
     gate: Arc<ReadinessGate>,
 }
 
@@ -165,6 +170,7 @@ impl WsServices {
         fix_admin: Arc<FixAdminEdge>,
         auth: Arc<AuthEdge>,
         rfq_desk: Arc<RfqDeskEdge>,
+        corpactions: Arc<CorporateActionsEdge>,
         fleet: Option<Arc<crate::services::risk::federate::Fleet>>,
         panel: LpPanelConfig,
         aggregation_hub: Arc<AggregationHub>,
@@ -248,6 +254,7 @@ impl WsServices {
             fix_admin,
             auth,
             rfq_desk,
+            corpactions,
             gate,
         }
     }
@@ -1558,6 +1565,49 @@ async fn handle_unary(
                 services.auth.build_curve(Request::new(req)),
                 "calibrated_curve",
                 generated_codec::encode_calibrated_curve
+            )
+        }
+        // Bond corporate actions (CorporateActionsService): the effective post-CA
+        // schedule + CA-inbox reads and the confirm/apply lifecycle drivers, dispatched
+        // onto the SAME edge the gRPC server hosts (one contract, one golden store).
+        "list_instrument_schedule" => {
+            let req = decode!(generated_codec::decode_list_instrument_schedule_request(o));
+            call!(
+                services
+                    .corpactions
+                    .list_instrument_schedule(Request::new(req)),
+                "instrument_schedule",
+                generated_codec::encode_list_instrument_schedule_response
+            )
+        }
+        "list_corporate_actions" => {
+            let req = decode!(generated_codec::decode_list_corporate_actions_request(o));
+            call!(
+                services
+                    .corpactions
+                    .list_corporate_actions(Request::new(req)),
+                "corporate_actions",
+                generated_codec::encode_list_corporate_actions_response
+            )
+        }
+        "confirm_corporate_action" => {
+            let req = decode!(generated_codec::decode_confirm_corporate_action_request(o));
+            call!(
+                services
+                    .corpactions
+                    .confirm_corporate_action(Request::new(req)),
+                "corporate_action_confirmed",
+                generated_codec::encode_confirm_corporate_action_response
+            )
+        }
+        "apply_corporate_action" => {
+            let req = decode!(generated_codec::decode_apply_corporate_action_request(o));
+            call!(
+                services
+                    .corpactions
+                    .apply_corporate_action(Request::new(req)),
+                "corporate_action_applied",
+                generated_codec::encode_apply_corporate_action_response
             )
         }
         other => codec::error_frame(&format!("unknown request type `{other}`"), correlation_id),

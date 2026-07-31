@@ -122,6 +122,7 @@ pub fn default_trader_bundle() -> Vec<Capability> {
                 | Action::ManageLiquidity
                 | Action::ViewAnalytics
                 | Action::Hedge
+                | Action::Refdata
         ) {
             continue;
         }
