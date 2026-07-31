@@ -373,6 +373,10 @@ impl Edge {
         // (API-first parity: the Book/Risk views read the server's aggregate, never
         // looping positions client-side).
         let store = Arc::new(PositionStore::new());
+        // Wire the shared latency/ops telemetry hub (owned by the `CoreLink`) into the
+        // position store so a successful FX booking records its ack→fill→book commit
+        // latency (best-order timer O3), off the pinned pricing thread.
+        store.set_telemetry(Arc::clone(link.telemetry()));
 
         // The edge-wide aggregated-book engine hub (D3): shared by the LP ingest
         // service (which feeds it) and the stream service (which reads its
@@ -740,7 +744,11 @@ impl Edge {
             )
             .with_client_flow_source(
                 Arc::clone(&rfq_desk_edge) as Arc<dyn services::analytics::ClientFlowSource>
-            ),
+            )
+            // Back the Latency/Ops analytics RPC with the SAME telemetry hub the
+            // `CoreLink` owns — the pinned core + async edges fold their per-stage
+            // latency into it, and this RPC reads that store (Analytics pillar B).
+            .with_telemetry(Arc::clone(link.telemetry())),
         );
         let auth = AuthServiceServer::from_arc(Arc::clone(&auth_edge));
 

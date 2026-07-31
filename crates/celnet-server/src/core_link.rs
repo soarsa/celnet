@@ -66,8 +66,11 @@ use std::thread::JoinHandle;
 use celnet_engine::rt::{request_ring, response_ring};
 use celnet_engine::{MarketState, PriceRequest, PriceResponse, PricingCore};
 use celnet_exotics::{BarrierStyle, SingleBarrier, single_barrier_price};
+use celnet_observability::{HotProbe, HotSample, OpKind};
 use celnet_types::{OptionType, VanillaInputs};
 use tokio::sync::{mpsc, oneshot};
+
+use crate::services::telemetry::TelemetryHub;
 
 /// The number of requests the core prices per busy-poll iteration before it
 /// services the control channel and yields the CPU once if idle. Bounded work
@@ -271,6 +274,13 @@ pub struct CoreLink {
     /// The dedicated core + response-router thread join handles (taken on
     /// shutdown). Both are joined exactly once so the test process always exits.
     threads: std::sync::Mutex<Option<(JoinHandle<()>, JoinHandle<()>)>>,
+    /// The latency/ops telemetry hub. The pinned core publishes a POD
+    /// [`HotSample`] per priced request into its lossy SPSC ring; a periodic
+    /// drain task (spawned in [`Self::start`]) folds those into per-`OpKind`
+    /// HdrHistograms off the hot core. Shared (`Arc`) with the analytics edge so
+    /// the `ListLatencyMetrics` RPC reads the same store (guardrail 11 — the core
+    /// only reads the cycle counter and pushes; all aggregation is on the drain).
+    telemetry: Arc<TelemetryHub>,
 }
 
 impl CoreLink {
@@ -296,6 +306,16 @@ impl CoreLink {
         // The hot-path SPSC rings (edge ⇄ core).
         let (mut req_tx, mut req_rx) = request_ring();
         let (mut resp_tx, mut resp_rx) = response_ring();
+
+        // The latency/ops telemetry hub, calibrated to this host's cycle-counter
+        // frequency. The pinned core produces POD `HotSample`s into its lossy SPSC
+        // ring (drop-on-full, never blocks); the drain task below folds them off
+        // the hot core (guardrail 11).
+        let telemetry = Arc::new(TelemetryHub::new(celnet_engine::tick_hz()));
+        let mut hot_probe = telemetry.install_hot_ring();
+        // The core id the pinned thread runs on (best-effort, for per-core
+        // attribution in the POD sample); `pin_core` names the requested index.
+        let core_id = u16::try_from(pin_core.unwrap_or(0)).unwrap_or(0);
 
         // A single shutdown flag the two dedicated OS threads observe so their
         // non-blocking poll loops exit promptly on `stop()` / `Drop`.
@@ -337,6 +357,8 @@ impl CoreLink {
                     &mut resp_tx,
                     &core_ctrl_rx,
                     &core_shutdown,
+                    &mut hot_probe,
+                    core_id,
                 );
                 // Belt-and-braces: once the core loop has returned (Stop / flag),
                 // publish the shutdown flag so the router winds down even if it
@@ -446,13 +468,43 @@ impl CoreLink {
                 .clear();
         });
 
+        // The telemetry drain task: on a non-critical async worker, periodically
+        // pop the pinned-core POD samples, convert opaque ticks → ns, and fold
+        // them into the per-`OpKind` HdrHistograms. Bounded work per tick; it
+        // parks on the interval timer when idle (no spin) and exits on shutdown.
+        // Draining off the hot core is the whole point — the core never does
+        // HdrHistogram bookkeeping (guardrail 11).
+        let drain_telemetry = Arc::clone(&telemetry);
+        let drain_shutdown = Arc::clone(&shutdown);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_millis(50));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                ticker.tick().await;
+                drain_telemetry.drain_hot();
+                if drain_shutdown.load(Ordering::Acquire) {
+                    // Final drain so no in-ring sample is lost at shutdown.
+                    drain_telemetry.drain_hot();
+                    break;
+                }
+            }
+        });
+
         Arc::new(Self {
             next_id: AtomicU64::new(1),
             submit_tx,
             control_tx,
             shutdown,
             threads: std::sync::Mutex::new(Some((core_thread, router_thread))),
+            telemetry,
         })
+    }
+
+    /// The shared latency/ops telemetry hub the pinned core feeds and the
+    /// `ListLatencyMetrics` analytics RPC reads. Cheap `Arc` clone.
+    #[must_use]
+    pub fn telemetry(&self) -> &Arc<TelemetryHub> {
+        &self.telemetry
     }
 
     /// Allocate the next hot-path correlation id.
@@ -663,12 +715,63 @@ fn observe_live(st: &MarketState, observable: Observable) -> Option<f64> {
 /// drives the async bridge — so a `Control::Stop` that depends on the bridge could
 /// never be forwarded, deadlocking the join. Observing the flag directly lets the
 /// core thread exit without any cooperation from the (possibly-blocked) runtime.
+/// A latency-instrumented one-shot drain of the hot request ring — the pinned
+/// core's per-request timing (§4.1 L2, tick-to-quote **priced** stage).
+///
+/// Behaviourally identical to [`PricingCore::drain`] (bounded, wait-free ring
+/// ops, back-pressure on a full response ring, priced result always published in
+/// the seqlock), but it brackets each `core.price(req)` with two architectural
+/// cycle-counter reads and publishes a `Copy` [`HotSample`] carrying the opaque
+/// `elapsed_ticks`. The publish is **lossy** (drop-on-full) and never blocks the
+/// core; the drain converts ticks → ns and folds the sample off-core. This adds
+/// only two register reads and one ring push to the hot path (guardrail 11 —
+/// `docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md` §5).
+fn drain_timed(
+    core: &mut PricingCore,
+    req_rx: &mut rtrb::Consumer<PriceRequest>,
+    resp_tx: &mut rtrb::Producer<PriceResponse>,
+    budget: usize,
+    probe: &mut HotProbe,
+    core_id: u16,
+) -> usize {
+    let mut done = 0;
+    while done < budget {
+        match req_rx.pop() {
+            Ok(req) => {
+                let request_id = req.request_id;
+                let t0 = celnet_engine::now_ticks();
+                let resp = core.price(req);
+                let elapsed_ticks = celnet_engine::now_ticks().wrapping_sub(t0);
+                // Lossy telemetry publish: on a full ring the sample is dropped
+                // and counted rather than blocking the pinned core.
+                let _ = probe.publish(HotSample::new(
+                    request_id,
+                    OpKind::VanillaPrice,
+                    elapsed_ticks,
+                    core_id,
+                ));
+                if resp_tx.push(resp).is_err() {
+                    // Response ring full: stop; the priced result is still
+                    // published in the seqlock and the edge will catch up.
+                    break;
+                }
+                done += 1;
+            }
+            Err(_) => break, // ring empty
+        }
+    }
+    done
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_core(
     core: &mut PricingCore,
     req_rx: &mut rtrb::Consumer<PriceRequest>,
     resp_tx: &mut rtrb::Producer<PriceResponse>,
     ctrl_rx: &std::sync::mpsc::Receiver<Control>,
     shutdown: &AtomicBool,
+    probe: &mut HotProbe,
+    core_id: u16,
 ) {
     use std::sync::mpsc::TryRecvError;
     loop {
@@ -740,8 +843,13 @@ fn run_core(
             }
         }
 
-        // Hot path: price a bounded batch from the ring.
-        let priced = core.drain(req_rx, resp_tx, DRAIN_BUDGET);
+        // Hot path: price a bounded batch from the ring, timing each price with
+        // the architectural cycle counter and publishing a POD `HotSample` into
+        // the lossy telemetry ring. Two `now_ticks()` reads + one wait-free ring
+        // push per price — no heap, no lock, no format, no wall clock — so the
+        // pricing loop stays guardrail-11 clean; conversion + HdrHistogram folding
+        // happen entirely on the drain task (`TelemetryHub::drain_hot`).
+        let priced = drain_timed(core, req_rx, resp_tx, DRAIN_BUDGET, probe, core_id);
 
         // If nothing happened this iteration, park briefly so we don't pin the
         // CPU on a shared host. A pinned/isolated core would set a tiny park.

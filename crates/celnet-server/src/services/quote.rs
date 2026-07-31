@@ -1037,6 +1037,13 @@ impl QuoteService for QuoteEdge {
         self.require_ready()?;
         let req = request.into_inner();
 
+        // Best-order timer O1 (RFQ receive → priced → respond,
+        // `docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md` §4.3): bracket the
+        // whole edge respond path with a monotonic `Instant` and record it into the
+        // shared telemetry hub on the success return. This is the already-non-critical
+        // async edge (allocation-OK), never the pinned hot core (guardrail 11).
+        let rfq_t0 = std::time::Instant::now();
+
         // Caller gate (item B §2): resolve the caller from the unary body's
         // `session_token` + asserted `principal` and authorize under the live access
         // mode BEFORE the distributed-forward branch, so a forwarding edge is gated
@@ -1307,6 +1314,12 @@ impl QuoteService for QuoteEdge {
             bid,
             offer,
             "quote returned"
+        );
+        // O1: record the RFQ receive→respond latency (fresh-price or book-composite
+        // path) into the per-`OpKind` telemetry store, off the hot core.
+        self.link.telemetry().record_edge(
+            celnet_observability::OpKind::RfqRespond,
+            u64::try_from(rfq_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         );
         Ok(Response::new(quote))
     }

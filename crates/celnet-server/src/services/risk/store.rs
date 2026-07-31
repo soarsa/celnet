@@ -226,6 +226,11 @@ pub struct PositionStore {
     /// byte-identical. Set once at boot and read on the async booking tier only — never
     /// the pinned pricing thread (§4.3).
     consensus: OnceLock<Arc<ConsensusHandle>>,
+    /// The shared latency/ops telemetry hub (best-order timer O3 — ack→fill→book
+    /// commit latency, `docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md` §4.3).
+    /// Set once at boot; a successful [`Self::book`] records its commit latency here,
+    /// on the async booking tier, never the pinned pricing thread (guardrail 11).
+    telemetry: OnceLock<Arc<crate::services::telemetry::TelemetryHub>>,
     /// A monotonic **risk version** bumped on every change that can alter a risk book's
     /// aggregated risk: a successful routed [`Self::book`] (a position change) and an
     /// admin edit of the risk-book tree ([`Self::set_risk_book_tree`]). It is the signal
@@ -309,9 +314,17 @@ impl PositionStore {
             inner: RwLock::new(StoreInner::default()),
             permissive_access: AtomicBool::new(false),
             consensus: OnceLock::new(),
+            telemetry: OnceLock::new(),
             risk_version: AtomicU64::new(0),
             next_transfer_id: AtomicU64::new(0),
         }
+    }
+
+    /// Attach the shared latency/ops telemetry hub so a successful [`Self::book`]
+    /// records its ack→fill→book commit latency (best-order timer O3). Idempotent-once;
+    /// a store never given a hub simply records nothing.
+    pub fn set_telemetry(&self, hub: Arc<crate::services::telemetry::TelemetryHub>) {
+        let _ = self.telemetry.set(hub);
     }
 
     /// Attach the activated consistency tier (ADR-0015 §2.1). Called once at edge boot
@@ -395,6 +408,8 @@ impl PositionStore {
             // A staged federation-union view is transient and never the must-order
             // writer, so it never replicates (ADR-0015 §4.3 single-writer discipline).
             consensus: OnceLock::new(),
+            // A staged view books no fills, so it carries no latency telemetry hub.
+            telemetry: OnceLock::new(),
             // Transient staging view: it books no fills and streams no risk, so its risk
             // version is inert (starts at 0, never polled by a stream).
             risk_version: AtomicU64::new(0),
@@ -1154,6 +1169,10 @@ impl PositionStore {
         key: FactKey,
         attribution: Option<AttributionRecord>,
     ) -> Result<PreTradeDecision, tonic::Status> {
+        // Best-order timer O3 (ack→fill→book commit latency): bracket the whole
+        // booking commit with a monotonic `Instant`; recorded into the telemetry hub
+        // on a successful book below. This is the async booking tier (guardrail 11).
+        let book_t0 = std::time::Instant::now();
         // Canonicalize off-lock (pure, convention-free). The key is cloned into the fact;
         // the original drives the pre-trade scope resolution below.
         let (position, leaf, fact) = canonical_vanilla_fact(&booked, key.clone())?;
@@ -1280,6 +1299,13 @@ impl PositionStore {
         // A relaxed bump after the mutation is visible; a subscriber re-aggregates on the
         // next tick when it observes the newer version.
         self.risk_version.fetch_add(1, Ordering::Relaxed);
+        // O3: record the ack→fill→book commit latency into the per-`OpKind` store.
+        if let Some(hub) = self.telemetry.get() {
+            hub.record_edge(
+                celnet_observability::OpKind::Book,
+                u64::try_from(book_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            );
+        }
         Ok(decision)
     }
 

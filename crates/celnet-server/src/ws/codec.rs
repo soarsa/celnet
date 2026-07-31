@@ -122,7 +122,8 @@ use celnet_proto::{
     RiskVectorDesc, TransferLeg,
 };
 use celnet_proto::{
-    ClientFlowMetricsDesc, ListClientFlowMetricsRequest, ListClientFlowMetricsResponse,
+    ClientFlowMetricsDesc, LatencyStageDesc, LatencyTelemetryHealth, ListClientFlowMetricsRequest,
+    ListClientFlowMetricsResponse, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
 };
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
@@ -5092,6 +5093,58 @@ pub(super) fn list_client_flow_metrics_request_from_json(
     })
 }
 
+/// One latency-stage row → JSON. All percentile fields are `uint64` ns (serialize
+/// as JSON numbers, matching the descriptor codec); `mean_ns` is a `double`.
+fn latency_stage_desc_to_json(d: &LatencyStageDesc) -> Value {
+    json!({
+        "op": d.op,
+        "stage_label": d.stage_label,
+        "count": d.count,
+        "p50_ns": d.p50_ns,
+        "p99_ns": d.p99_ns,
+        "p999_ns": d.p999_ns,
+        "p9999_ns": d.p9999_ns,
+        "min_ns": d.min_ns,
+        "max_ns": d.max_ns,
+        "mean_ns": d.mean_ns,
+    })
+}
+
+/// The telemetry ring/drain health → JSON.
+fn latency_telemetry_health_to_json(h: &LatencyTelemetryHealth) -> Value {
+    json!({
+        "drained_total": h.drained_total,
+        "dropped_total": h.dropped_total,
+        "observed_gaps": h.observed_gaps,
+        "tick_hz": h.tick_hz,
+    })
+}
+
+/// The Latency/Ops snapshot → JSON (`ListLatencyMetrics` reply). The `health`
+/// message is `null`-when-absent (matching a missing proto message field);
+/// `correlation_id` is `null`-when-absent.
+pub(super) fn list_latency_metrics_response_to_json(r: &ListLatencyMetricsResponse) -> Value {
+    json!({
+        "stages": Value::Array(r.stages.iter().map(latency_stage_desc_to_json).collect()),
+        // An absent singular message renders as JSON `null` (the descriptor codec's
+        // default for a `.map(..)` singular message); `correlation_id` is `null`-when
+        // -absent too (this message is on the `null_absent_optional` list).
+        "health": r.health.as_ref().map_or(Value::Null, latency_telemetry_health_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+/// The `ListLatencyMetrics` request ← JSON. Only the session token is required;
+/// `correlation_id` is a presence-tracked `optional uint64`.
+pub(super) fn list_latency_metrics_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListLatencyMetricsRequest> {
+    Ok(ListLatencyMetricsRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
 /// The per-desk / per-trader transfer inbox push frame → JSON (encode-only; a
 /// server push, never decoded). No optional field, so nothing is null-when-absent.
 pub(super) fn risk_transfer_inbox_to_json(i: &RiskTransferInbox) -> Value {
@@ -5203,6 +5256,9 @@ pub mod diff_support {
     // Client-flow analytics (AuthService ListClientFlowMetrics): the request decoder +
     // reply encoder the generated codec is proven byte-identical to.
     use celnet_proto::{ListClientFlowMetricsRequest, ListClientFlowMetricsResponse};
+    // Latency/Ops analytics (AuthService ListLatencyMetrics): request decoder +
+    // reply encoder the generated codec is proven byte-identical to.
+    use celnet_proto::{ListLatencyMetricsRequest, ListLatencyMetricsResponse};
     use serde_json::{Map, Value};
 
     use super::CodecError;
@@ -6633,6 +6689,22 @@ pub mod diff_support {
         r: &ListClientFlowMetricsResponse,
     ) -> Value {
         super::list_client_flow_metrics_response_to_json(r)
+    }
+
+    /// Hand-codec `ListLatencyMetricsRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_latency_metrics_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListLatencyMetricsRequest, CodecError> {
+        super::list_latency_metrics_request_from_json(o)
+    }
+
+    /// Hand-codec `ListLatencyMetricsResponse` encoder.
+    #[must_use]
+    pub fn hand_list_latency_metrics_response_to_json(r: &ListLatencyMetricsResponse) -> Value {
+        super::list_latency_metrics_response_to_json(r)
     }
 
     /// Hand-codec `RiskTransferInbox` push-frame encoder.

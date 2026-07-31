@@ -37,6 +37,7 @@ pub mod risk;
 pub mod risk_transfer;
 pub mod stream;
 pub mod surface;
+pub mod telemetry;
 pub mod transfer_apply;
 
 pub mod deploy;

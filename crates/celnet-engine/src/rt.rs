@@ -593,9 +593,126 @@ pub fn pin_current_thread_to_core(core_index: usize) -> bool {
     }
 }
 
+/// Read the architectural monotonic cycle/system counter as an opaque `u64`
+/// **tick** — the correct hot-path clock (`docs/LATENCY-AND-HEDGING-ANALYTICS-
+/// REQUIREMENTS.md` §2.4). A counter read is a few nanoseconds, does not trap,
+/// does not allocate, and does not lock; two reads bracketing an op yield an
+/// opaque `elapsed_ticks` that the drain converts to nanoseconds via a calibrated
+/// `TickRate`. The ticks are *only* meaningful as differences and only against a
+/// [`tick_hz`] measured on the same host — never a wall clock.
+///
+/// * aarch64 reads the virtual count register `cntvct_el0`.
+/// * x86-64 reads the invariant timestamp counter via `rdtsc`.
+/// * any other target falls back to the monotonic [`std::time::Instant`] epoch in
+///   nanoseconds (so `tick_hz` reports 1 GHz there) — correct, just not as cheap.
+#[inline]
+#[must_use]
+pub fn now_ticks() -> u64 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let ticks: u64;
+        // SAFETY: `cntvct_el0` is an unprivileged, side-effect-free read of the
+        // virtual count register available in EL0 on all AArch64 (ARMv8+); it
+        // clobbers only the output register and cannot fault.
+        #[allow(unsafe_code)]
+        unsafe {
+            core::arch::asm!("mrs {}, cntvct_el0", out(reg) ticks, options(nomem, nostack));
+        }
+        ticks
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: `_rdtsc` is a side-effect-free read of the timestamp counter,
+        // available on all x86-64; it takes no memory operands and cannot fault.
+        #[allow(unsafe_code)]
+        unsafe {
+            core::arch::x86_64::_rdtsc()
+        }
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        use std::sync::OnceLock;
+        use std::time::Instant;
+        static EPOCH: OnceLock<Instant> = OnceLock::new();
+        let epoch = EPOCH.get_or_init(Instant::now);
+        u64::try_from(epoch.elapsed().as_nanos()).unwrap_or(u64::MAX)
+    }
+}
+
+/// The frequency of the [`now_ticks`] counter in ticks per second, so the drain
+/// can build a `TickRate` and convert opaque ticks to nanoseconds.
+///
+/// * aarch64 reads `cntfrq_el0` (the exact, firmware-programmed counter
+///   frequency — e.g. 24 MHz on Apple silicon), so no calibration is needed.
+/// * x86-64 has no architectural frequency register for `rdtsc`, so we calibrate
+///   **once** by sampling the counter across a short monotonic-clock interval and
+///   caching the result.
+/// * the fallback target reports 1 GHz (ticks are already nanoseconds there).
+#[must_use]
+pub fn tick_hz() -> u64 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let freq: u64;
+        // SAFETY: `cntfrq_el0` is an unprivileged, side-effect-free read of the
+        // counter-frequency register, available in EL0 on all AArch64; it
+        // clobbers only the output register and cannot fault.
+        #[allow(unsafe_code)]
+        unsafe {
+            core::arch::asm!("mrs {}, cntfrq_el0", out(reg) freq, options(nomem, nostack));
+        }
+        // A zero frequency would be a broken platform; fall back to 1 GHz rather
+        // than produce an ill-defined TickRate.
+        if freq == 0 { 1_000_000_000 } else { freq }
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        use std::sync::OnceLock;
+        use std::time::Instant;
+        static HZ: OnceLock<u64> = OnceLock::new();
+        *HZ.get_or_init(|| {
+            #[cfg(target_arch = "x86_64")]
+            {
+                // Calibrate rdtsc against a 10 ms monotonic interval, once.
+                let t0 = now_ticks();
+                let start = Instant::now();
+                while start.elapsed().as_millis() < 10 {
+                    core::hint::spin_loop();
+                }
+                let elapsed = start.elapsed();
+                let dt = now_ticks().wrapping_sub(t0);
+                let secs = elapsed.as_secs_f64();
+                if secs > 0.0 && dt > 0 {
+                    (dt as f64 / secs) as u64
+                } else {
+                    1_000_000_000
+                }
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                1_000_000_000
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cycle_counter_is_monotone_and_calibrated() {
+        let hz = tick_hz();
+        assert!(hz >= 1_000_000, "tick frequency {hz} implausibly low");
+        let a = now_ticks();
+        // Busy a little so the counter certainly advances.
+        let mut acc = 0u64;
+        for i in 0..10_000u64 {
+            acc = acc.wrapping_add(i);
+        }
+        std::hint::black_box(acc);
+        let b = now_ticks();
+        assert!(b >= a, "counter must be monotone: {a} -> {b}");
+    }
 
     #[test]
     fn padded_counter_is_cache_line_isolated() {

@@ -173,6 +173,12 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     // divide-by-zero guard, never a fabricated zero. Both names listed (envelope + nested row).
     "ListClientFlowMetricsResponse",
     "ClientFlowMetricsDesc",
+    // The Latency/Ops analytics snapshot (Analytics pillar B): the
+    // `ListLatencyMetricsResponse` envelope emits its `Option<u64>` `correlation_id`
+    // as JSON `null` when absent (and its absent singular `health` message renders
+    // as `null` by the descriptor default) — quirk-symmetric with the client-flow
+    // envelope so the hand + generated encoders stay byte-identical.
+    "ListLatencyMetricsResponse",
     "ListInstrumentsResponse",
     "GetInstrumentResponse",
     "CreateInstrumentResponse",

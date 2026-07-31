@@ -5081,6 +5081,74 @@ message ListClientFlowMetricsResponse {
 }
 
 // ===========================================================================
+// Latency / Ops analytics (Analytics pillar B —
+// `docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md` Part 1). Per-stage
+// tick-to-quote and tick-to-trade latency, folded off the pinned hot core from
+// the `celnet-observability` HdrHistogram telemetry (guardrail 11). A read-only
+// snapshot gated on the same `view_analytics` capability as client-flow.
+// ===========================================================================
+
+// A single instrumented pipeline stage's latency distribution (one HdrHistogram
+// recorder), in nanoseconds. Percentiles are coordinated-omission-aware p50/p99/
+// p99.9/p99.99 + max/min/mean (`REPORTED_PERCENTILES`).
+message LatencyStageDesc {
+  // Stable, vendor-neutral op label (`OpKind::label` — e.g. "vanilla_price",
+  // "tiering_run", "rfq_respond").
+  string op = 1;
+  // Human-facing stage label for the workspace (`OpKind::stage_label`).
+  string stage_label = 2;
+  // Number of samples recorded into this stage's histogram.
+  uint64 count = 3;
+  // Median (p50) latency, ns.
+  uint64 p50_ns = 4;
+  // 99th percentile latency, ns.
+  uint64 p99_ns = 5;
+  // 99.9th percentile latency, ns.
+  uint64 p999_ns = 6;
+  // 99.99th percentile latency, ns.
+  uint64 p9999_ns = 7;
+  // Minimum latency, ns.
+  uint64 min_ns = 8;
+  // Maximum latency, ns.
+  uint64 max_ns = 9;
+  // Arithmetic mean latency, ns.
+  double mean_ns = 10;
+}
+
+// Telemetry ring / drain health — surfaced so an operator can see lossy-telemetry
+// drops (a full pinned-core → drain ring) at a glance.
+message LatencyTelemetryHealth {
+  // POD samples drained from the SPSC ring over the process lifetime.
+  uint64 drained_total = 1;
+  // Samples the pinned-core producer dropped on a full ring (lossy by design).
+  uint64 dropped_total = 2;
+  // Sequence-gaps the drain observed (holes from producer drops).
+  uint64 observed_gaps = 3;
+  // The calibrated cycle-counter frequency (ticks/sec) used for tick→ns.
+  uint64 tick_hz = 4;
+}
+
+// Request the current per-stage latency snapshot. No filter/paging: the store is
+// a fixed set of per-`OpKind` HdrHistograms (bounded memory, guardrail 6).
+message ListLatencyMetricsRequest {
+  // The caller's session token (validated + capability-checked server-side).
+  string session_token = 1;
+  // Optional echoed correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// The per-stage latency snapshot + telemetry health.
+message ListLatencyMetricsResponse {
+  // One row per instrumented stage that has recorded a sample, in `OpKind`
+  // discriminant order.
+  repeated LatencyStageDesc stages = 1;
+  // Ring / drain health.
+  LatencyTelemetryHealth health = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+
+// ===========================================================================
 // LP liquidity ingest — the machine-to-machine feed by which an inbound
 // liquidity connection (the `lp-sim` binary today, any FIX/API LP adapter
 // tomorrow) pushes its per-instrument two-way top-of-book INTO the server, where
@@ -6206,6 +6274,12 @@ service AuthService {
   // the dedicated `view_analytics` capability × the caller's assets (spans FI+FXO,
   // NOT admin-only). Read-only; a pure fold over already-captured quote/deal data.
   rpc ListClientFlowMetrics(ListClientFlowMetricsRequest) returns (ListClientFlowMetricsResponse);
+  // Latency / Ops analytics — the per-stage tick-to-quote / tick-to-trade latency
+  // snapshot (p50/p99/p99.9/max per pipeline stage) + telemetry ring health,
+  // folded off the pinned hot core from the observability HdrHistograms
+  // (`docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md` Part 1). Gated on the
+  // same `view_analytics` capability × the caller's assets (spans FI+FXO).
+  rpc ListLatencyMetrics(ListLatencyMetricsRequest) returns (ListLatencyMetricsResponse);
   // List the instrument reference-data definitions (any authenticated caller —
   // curve-building and pricing resolve against this, so it is NOT admin-only).
   rpc ListInstruments(ListInstrumentsRequest) returns (ListInstrumentsResponse);

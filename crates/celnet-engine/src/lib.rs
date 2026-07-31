@@ -64,5 +64,5 @@ pub use handoff::{HandoffError, restore_state, serialize_state};
 pub use journal::{DurableBook, RecoveryError, recover};
 pub use rt::{
     BookState, MarketState, PaddedCounter, PriceSnapshot, RequestRing, ResponseRing, Seqlock,
-    StateHandle, StateReader, pin_current_thread_to_core,
+    StateHandle, StateReader, now_ticks, pin_current_thread_to_core, tick_hz,
 };

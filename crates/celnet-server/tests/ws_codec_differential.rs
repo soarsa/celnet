@@ -59,6 +59,9 @@ use celnet_proto::{
     RouteValueDesc, RoutingNodeDesc, StringList, UpdateRiskBookResponse,
     UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
 };
+use celnet_proto::{
+    LatencyStageDesc, LatencyTelemetryHealth, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
+};
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
 use celnet_server::ws::generated_codec as generated;
@@ -1424,6 +1427,112 @@ fn list_client_flow_metrics_request_decode_byte_identical() {
             &format!("ListClientFlowMetricsRequest({label})"),
             generated::decode_list_client_flow_metrics_request(o),
             hand::hand_list_client_flow_metrics_request_from_json(o),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Latency / Ops analytics (Analytics pillar B): ListLatencyMetrics reply +
+// request. Exercises repeated nested stage rows, a singular nested `health`
+// message (present ⇒ object, absent ⇒ JSON null), and the `optional uint64`
+// correlation-id presence contract.
+// ---------------------------------------------------------------------------
+
+/// A realistic pinned-core price stage row (sub-µs p50).
+fn latency_price_stage() -> LatencyStageDesc {
+    LatencyStageDesc {
+        op: "vanilla_price".to_owned(),
+        stage_label: "Price (pinned core)".to_owned(),
+        count: 120_000,
+        p50_ns: 820,
+        p99_ns: 2_400,
+        p999_ns: 5_200,
+        p9999_ns: 9_100,
+        min_ns: 240,
+        max_ns: 14_000,
+        mean_ns: 910.4,
+    }
+}
+
+/// A booking stage row (ms-scale), so the vector spans the ns→ms range.
+fn latency_book_stage() -> LatencyStageDesc {
+    LatencyStageDesc {
+        op: "book".to_owned(),
+        stage_label: "Ack→fill→book".to_owned(),
+        count: 512,
+        p50_ns: 1_200_000,
+        p99_ns: 4_800_000,
+        p999_ns: 9_000_000,
+        p9999_ns: 12_000_000,
+        min_ns: 400_000,
+        max_ns: 15_000_000,
+        mean_ns: 1_450_000.0,
+    }
+}
+
+#[test]
+fn list_latency_metrics_response_encode_byte_identical() {
+    let full = ListLatencyMetricsResponse {
+        stages: vec![latency_price_stage(), latency_book_stage()],
+        health: Some(LatencyTelemetryHealth {
+            drained_total: 120_512,
+            dropped_total: 17,
+            observed_gaps: 3,
+            tick_hz: 24_000_000,
+        }),
+        correlation_id: Some(42),
+    };
+    let g = generated::encode_list_latency_metrics_response(&full);
+    // Per-stage uint64 percentiles stay JSON numbers; the nested health is an object.
+    let price = &g.get("stages").and_then(Value::as_array).expect("stages")[0];
+    assert_eq!(price.get("p50_ns").and_then(Value::as_u64), Some(820));
+    assert_eq!(
+        g.get("health")
+            .and_then(|h| h.get("tick_hz"))
+            .and_then(Value::as_u64),
+        Some(24_000_000)
+    );
+    assert_bytes_eq(
+        "ListLatencyMetricsResponse(full)",
+        &g,
+        &hand::hand_list_latency_metrics_response_to_json(&full),
+    );
+
+    // Empty stages + absent health + absent correlation_id ⇒ `[]` + `null` + `null`.
+    let empty = ListLatencyMetricsResponse {
+        stages: vec![],
+        health: None,
+        correlation_id: None,
+    };
+    let ge = generated::encode_list_latency_metrics_response(&empty);
+    assert_eq!(ge.get("stages"), Some(&Value::Array(vec![])));
+    // Absent singular `health` message + absent `optional` correlation_id ⇒ both
+    // present-with-`null` (the null-absent-optional convention for this envelope).
+    assert_eq!(ge.get("health"), Some(&Value::Null));
+    assert_eq!(ge.get("correlation_id"), Some(&Value::Null));
+    assert_bytes_eq(
+        "ListLatencyMetricsResponse(empty)",
+        &ge,
+        &hand::hand_list_latency_metrics_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn list_latency_metrics_request_decode_byte_identical() {
+    let cases = [
+        (
+            "full",
+            json!({ "session_token": "tok-abc", "correlation_id": 7 }),
+        ),
+        // Minimal: only the required session token; correlation id absent.
+        ("minimal", json!({ "session_token": "tok" })),
+    ];
+    for (label, body) in cases {
+        let o = body.as_object().expect("object");
+        assert_decode_eq::<ListLatencyMetricsRequest, _>(
+            &format!("ListLatencyMetricsRequest({label})"),
+            generated::decode_list_latency_metrics_request(o),
+            hand::hand_list_latency_metrics_request_from_json(o),
         );
     }
 }

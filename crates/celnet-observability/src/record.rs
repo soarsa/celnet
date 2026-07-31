@@ -37,11 +37,32 @@ pub enum OpKind {
     RfqQuote = 4,
     /// A market-state republication (blue-green hot-swap / surface mark).
     StatePublish = 5,
+    // --- Async-edge stages (drain-side `LatencyByKind` producers, never the
+    //     pinned ring; see `docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md`
+    //     §4.1/§4.2). They share the same aggregator shape as the pinned-core
+    //     kinds above, but are recorded straight into a shared drain-side
+    //     recorder from the already-non-critical async edge. ---
+    /// Spread / tiering feature-pipeline application (mid-shift → tier → guard).
+    TieringRun = 6,
+    /// Aggregation / consolidation of an inbound book into a composite quote.
+    Consolidate = 7,
+    /// Quote publication on the streaming edge (snapshot/update assembled).
+    StreamPublish = 8,
+    /// RFQ receive → price → respond round trip on the quote edge.
+    RfqRespond = 9,
+    /// Quote → lift / acceptance handling on the quote/desk edge.
+    QuoteAccept = 10,
+    /// Booking commit (ack → fill → book) into a position store.
+    Book = 11,
+    /// Risk-routing decision-graph evaluation for an accepted trade.
+    RiskRoute = 12,
+    /// Auto-hedge fire (threshold breach → hedge action) on the booking tier.
+    HedgeFire = 13,
 }
 
 impl OpKind {
     /// The number of distinct kinds; used to size per-kind aggregation arrays.
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 14;
 
     /// Stable, vendor-neutral label for metrics and structured logs.
     #[must_use]
@@ -53,6 +74,37 @@ impl OpKind {
             OpKind::StreamQuote => "stream_quote",
             OpKind::RfqQuote => "rfq_quote",
             OpKind::StatePublish => "state_publish",
+            OpKind::TieringRun => "tiering_run",
+            OpKind::Consolidate => "consolidate",
+            OpKind::StreamPublish => "stream_publish",
+            OpKind::RfqRespond => "rfq_respond",
+            OpKind::QuoteAccept => "quote_accept",
+            OpKind::Book => "book",
+            OpKind::RiskRoute => "risk_route",
+            OpKind::HedgeFire => "hedge_fire",
+        }
+    }
+
+    /// A human-facing stage label for the Latency/Ops workspace (the tick-to-quote
+    /// and tick-to-trade stage decomposition). Distinct from [`Self::label`] (the
+    /// stable metric key): this is for display only.
+    #[must_use]
+    pub const fn stage_label(self) -> &'static str {
+        match self {
+            OpKind::VanillaPrice => "Price (pinned core)",
+            OpKind::SurfaceVol => "Surface / curve rebuild",
+            OpKind::ExoticPrice => "Exotic price",
+            OpKind::StreamQuote => "Stream quote",
+            OpKind::StatePublish => "State publish",
+            OpKind::TieringRun => "Spread / tiering",
+            OpKind::Consolidate => "Aggregation / consolidation",
+            OpKind::StreamPublish => "Quote publish (tick→quote)",
+            OpKind::RfqQuote => "RFQ price",
+            OpKind::RfqRespond => "RFQ receive→respond",
+            OpKind::QuoteAccept => "Quote→lift / accept",
+            OpKind::Book => "Ack→fill→book",
+            OpKind::RiskRoute => "Risk routing",
+            OpKind::HedgeFire => "Auto-hedge fire",
         }
     }
 
@@ -67,6 +119,14 @@ impl OpKind {
             3 => Some(OpKind::StreamQuote),
             4 => Some(OpKind::RfqQuote),
             5 => Some(OpKind::StatePublish),
+            6 => Some(OpKind::TieringRun),
+            7 => Some(OpKind::Consolidate),
+            8 => Some(OpKind::StreamPublish),
+            9 => Some(OpKind::RfqRespond),
+            10 => Some(OpKind::QuoteAccept),
+            11 => Some(OpKind::Book),
+            12 => Some(OpKind::RiskRoute),
+            13 => Some(OpKind::HedgeFire),
             _ => None,
         }
     }

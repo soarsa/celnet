@@ -147,7 +147,8 @@ use celnet_proto::{
     RiskVectorDesc, TransferLeg,
 };
 use celnet_proto::{
-    ClientFlowMetricsDesc, ListClientFlowMetricsRequest, ListClientFlowMetricsResponse,
+    ClientFlowMetricsDesc, LatencyStageDesc, LatencyTelemetryHealth, ListClientFlowMetricsRequest,
+    ListClientFlowMetricsResponse, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
 };
 use serde_json::{Map, Value, json};
 
@@ -6321,6 +6322,18 @@ impl WireBuilder for ListRiskTransfersRequest {
     }
 }
 
+impl WireBuilder for ListLatencyMetricsRequest {
+    const MESSAGE: &'static str = "ListLatencyMetricsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for ListClientFlowMetricsRequest {
     const MESSAGE: &'static str = "ListClientFlowMetricsRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -6849,6 +6862,16 @@ pub fn decode_list_client_flow_metrics_request(
     o: &Map<String, Value>,
 ) -> DResult<ListClientFlowMetricsRequest> {
     decode(ListClientFlowMetricsRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListLatencyMetricsRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_latency_metrics_request(
+    o: &Map<String, Value>,
+) -> DResult<ListLatencyMetricsRequest> {
+    decode(ListLatencyMetricsRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListInstrumentsRequest`] envelope — fully generic.
@@ -7833,6 +7856,49 @@ impl WireAdapter for CreateRiskBookResponse {
     }
 }
 
+impl WireAdapter for LatencyStageDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "op" => Some(WireVal::Str(&self.op)),
+            "stage_label" => Some(WireVal::Str(&self.stage_label)),
+            "count" => Some(WireVal::U64(self.count)),
+            "p50_ns" => Some(WireVal::U64(self.p50_ns)),
+            "p99_ns" => Some(WireVal::U64(self.p99_ns)),
+            "p999_ns" => Some(WireVal::U64(self.p999_ns)),
+            "p9999_ns" => Some(WireVal::U64(self.p9999_ns)),
+            "min_ns" => Some(WireVal::U64(self.min_ns)),
+            "max_ns" => Some(WireVal::U64(self.max_ns)),
+            "mean_ns" => Some(WireVal::F64(self.mean_ns)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for LatencyTelemetryHealth {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "drained_total" => Some(WireVal::U64(self.drained_total)),
+            "dropped_total" => Some(WireVal::U64(self.dropped_total)),
+            "observed_gaps" => Some(WireVal::U64(self.observed_gaps)),
+            "tick_hz" => Some(WireVal::U64(self.tick_hz)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListLatencyMetricsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "stages" => Some(WireVal::RepeatedMsg(
+                self.stages.iter().map(|s| s as &dyn WireAdapter).collect(),
+            )),
+            "health" => self.health.as_ref().map(|h| WireVal::Msg(h)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for ClientFlowMetricsDesc {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -8419,6 +8485,12 @@ pub fn encode_list_risk_transfers_response(r: &ListRiskTransfersResponse) -> Val
 #[must_use]
 pub fn encode_list_client_flow_metrics_response(r: &ListClientFlowMetricsResponse) -> Value {
     encode("ListClientFlowMetricsResponse", r)
+}
+
+/// Encode a [`ListLatencyMetricsResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_latency_metrics_response(r: &ListLatencyMetricsResponse) -> Value {
+    encode("ListLatencyMetricsResponse", r)
 }
 
 /// Encode a [`RiskTransferInbox`] push frame to its WS JSON — descriptor-driven

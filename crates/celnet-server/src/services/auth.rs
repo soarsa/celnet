@@ -36,8 +36,10 @@ use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
     AcceptRiskTransferRequest, AcceptRiskTransferResponse, CancelRiskTransferRequest,
     CancelRiskTransferResponse, InitiateRiskTransferRequest, InitiateRiskTransferResponse,
-    ListClientFlowMetricsRequest, ListClientFlowMetricsResponse, ListRiskTransfersRequest,
-    ListRiskTransfersResponse, RejectRiskTransferRequest, RejectRiskTransferResponse,
+    LatencyStageDesc, LatencyTelemetryHealth, ListClientFlowMetricsRequest,
+    ListClientFlowMetricsResponse, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
+    ListRiskTransfersRequest, ListRiskTransfersResponse, RejectRiskTransferRequest,
+    RejectRiskTransferResponse,
 };
 use celnet_proto::{
     AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, AggregationScopeMode, AxeSide,
@@ -202,6 +204,10 @@ pub struct AuthEdge {
     /// `docs/ANALYTICS-REQUIREMENTS.md` §11). Empty in an isolated auth test (the
     /// RPC then returns an empty roster, exactly as the other collaborators no-op).
     analytics_sources: Vec<Arc<dyn crate::services::analytics::ClientFlowSource>>,
+    /// The shared latency/ops telemetry hub (the `CoreLink`'s drain-side store)
+    /// backing the `ListLatencyMetrics` RPC. `None` in an isolated auth test (the
+    /// RPC then reports the hub is not wired), `Some` on the real boot path.
+    telemetry: Option<Arc<crate::services::telemetry::TelemetryHub>>,
 }
 
 impl AuthEdge {
@@ -227,7 +233,20 @@ impl AuthEdge {
             rates_store: None,
             transfer_service: None,
             analytics_sources: Vec::new(),
+            telemetry: None,
         }
+    }
+
+    /// Inject the shared latency/ops telemetry hub so the `ListLatencyMetrics` RPC
+    /// serves the per-stage HdrHistogram snapshot the pinned core + async edges
+    /// fold into (the SAME `Arc<TelemetryHub>` the `CoreLink` owns).
+    #[must_use]
+    pub fn with_telemetry(
+        mut self,
+        telemetry: Arc<crate::services::telemetry::TelemetryHub>,
+    ) -> Self {
+        self.telemetry = Some(telemetry);
+        self
     }
 
     /// Register a client-flow analytics source (the FXO quote edge, the FI desk edge).
@@ -2095,6 +2114,76 @@ impl AuthService for AuthEdge {
         Ok(Response::new(ListClientFlowMetricsResponse {
             metrics,
             group_by: req.group_by,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    // --- latency / ops analytics -----------------------------------------------
+    // The per-stage tick-to-quote / tick-to-trade latency snapshot + telemetry
+    // ring health, folded off the pinned hot core from the observability
+    // HdrHistograms (`docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md` Part 1).
+    // Gated on the SAME cross-product `view_analytics` capability as client-flow.
+
+    async fn list_latency_metrics(
+        &self,
+        request: Request<ListLatencyMetricsRequest>,
+    ) -> Result<Response<ListLatencyMetricsResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Same cross-product `view_analytics` gate as client-flow: holding it on
+        // EITHER asset admits the caller to the Analytics surface.
+        let who = self.authenticate(&req.session_token)?;
+        let caps = who.capabilities();
+        let allowed = caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FxOptions,
+        )) || caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FixedIncome,
+        ));
+        if !allowed {
+            return Err(Status::permission_denied(
+                "capability view_analytics·{fx_options|fixed_income} required",
+            ));
+        }
+
+        let (stages, health) = match &self.telemetry {
+            Some(hub) => {
+                let stages = hub
+                    .stage_stats()
+                    .into_iter()
+                    .map(|s| LatencyStageDesc {
+                        op: s.kind.label().to_owned(),
+                        stage_label: s.kind.stage_label().to_owned(),
+                        count: s.snapshot.count,
+                        p50_ns: s.snapshot.p50_ns,
+                        p99_ns: s.snapshot.p99_ns,
+                        p999_ns: s.snapshot.p999_ns,
+                        p9999_ns: s.snapshot.p9999_ns,
+                        min_ns: s.snapshot.min_ns,
+                        max_ns: s.snapshot.max_ns,
+                        mean_ns: s.snapshot.mean_ns,
+                    })
+                    .collect();
+                let h = hub.health();
+                (
+                    stages,
+                    Some(LatencyTelemetryHealth {
+                        drained_total: h.drained_total,
+                        dropped_total: h.dropped_total,
+                        observed_gaps: h.observed_gaps,
+                        tick_hz: h.tick_hz,
+                    }),
+                )
+            }
+            // No hub wired (isolated auth test): an empty, honest snapshot.
+            None => (Vec::new(), Some(LatencyTelemetryHealth::default())),
+        };
+
+        Ok(Response::new(ListLatencyMetricsResponse {
+            stages,
+            health,
             correlation_id: req.correlation_id,
         }))
     }
