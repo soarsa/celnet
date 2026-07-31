@@ -346,6 +346,9 @@ async fn stale_winner_rejected_by_last_look_and_next_best_promoted() {
         // STALE's offer 0.0090 would be best, but it is last-look-rejected too ⇒
         // FRESH's 0.0099 wins the offer over THIRD's 0.0101.
         assert_eq!(panel.lp_won_offer.as_deref(), Some("FRESH"));
+        // Street-side analytics seam: exactly STALE is surfaced as last-look-rejected
+        // (it responded firm but its validity had lapsed); FRESH/THIRD are not.
+        assert_eq!(panel.last_look_rejected, vec!["STALE".to_owned()]);
     })
     .await
     .expect("test timed out");
@@ -371,6 +374,9 @@ async fn all_stale_yields_no_winner_but_counts_responders() {
         assert_eq!(panel.best_offer, None);
         assert_eq!(panel.lp_won_bid, None);
         assert_eq!(panel.lp_won_offer, None);
+        // Every responder lapsed ⇒ all three surface as last-look-rejected
+        // (deterministic lp_id order, since `rows` is lp_id-sorted).
+        assert_eq!(panel.last_look_rejected, vec!["S1", "S2", "S3"]);
     })
     .await
     .expect("test timed out");

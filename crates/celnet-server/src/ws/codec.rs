@@ -124,6 +124,7 @@ use celnet_proto::{
 use celnet_proto::{
     ClientFlowMetricsDesc, LatencyStageDesc, LatencyTelemetryHealth, ListClientFlowMetricsRequest,
     ListClientFlowMetricsResponse, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
+    ListLpFlowMetricsRequest, ListLpFlowMetricsResponse, LpFlowMetricsDesc,
 };
 // AuthService — auto-hedging / risk-internalisation (Phase B): the WS mirror of the
 // hedge-policy graph / warehouse-threshold / provenance / engine-config RPCs. The
@@ -5527,6 +5528,46 @@ pub(super) fn list_client_flow_metrics_request_from_json(
     })
 }
 
+/// One street-side LP liquidity row → JSON. Every `Option<f64>` ratio serializes to
+/// `null` when absent (the `json!` macro's `Option` behaviour) — the byte-identical
+/// `optional double` presence contract the differential harness checks.
+fn lp_flow_metrics_desc_to_json(d: &LpFlowMetricsDesc) -> Value {
+    json!({
+        "lp_id": d.lp_id,
+        "tick_count": d.tick_count,
+        "quote_count": d.quote_count,
+        "deals_won": d.deals_won,
+        "won_notional": d.won_notional,
+        "missed": d.missed,
+        "last_look_rejects": d.last_look_rejects,
+        "win_rate": d.win_rate,
+        "mean_cover": d.mean_cover,
+    })
+}
+
+/// The street-side LP liquidity roster → JSON (`ListLpFlowMetrics` reply).
+/// `correlation_id` is `null`-when-absent.
+pub(super) fn list_lp_flow_metrics_response_to_json(r: &ListLpFlowMetricsResponse) -> Value {
+    json!({
+        "metrics": Value::Array(r.metrics.iter().map(lp_flow_metrics_desc_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+/// The `ListLpFlowMetrics` request ← JSON. The time bounds are presence-tracked
+/// `optional int64`; `lp_id` is a presence-tracked `optional string` filter.
+pub(super) fn list_lp_flow_metrics_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListLpFlowMetricsRequest> {
+    Ok(ListLpFlowMetricsRequest {
+        session_token: string_field(o, "session_token")?,
+        from_nanos: opt_i64(o, "from_nanos"),
+        to_nanos: opt_i64(o, "to_nanos"),
+        lp_id: opt_string(o, "lp_id"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
 /// One latency-stage row → JSON. All percentile fields are `uint64` ns (serialize
 /// as JSON numbers, matching the descriptor codec); `mean_ns` is a `double`.
 fn latency_stage_desc_to_json(d: &LatencyStageDesc) -> Value {
@@ -5690,6 +5731,7 @@ pub mod diff_support {
     // Client-flow analytics (AuthService ListClientFlowMetrics): the request decoder +
     // reply encoder the generated codec is proven byte-identical to.
     use celnet_proto::{ListClientFlowMetricsRequest, ListClientFlowMetricsResponse};
+    use celnet_proto::{ListLpFlowMetricsRequest, ListLpFlowMetricsResponse};
     // Latency/Ops analytics (AuthService ListLatencyMetrics): request decoder +
     // reply encoder the generated codec is proven byte-identical to.
     use celnet_proto::{ListLatencyMetricsRequest, ListLatencyMetricsResponse};
@@ -7252,6 +7294,22 @@ pub mod diff_support {
         r: &ListClientFlowMetricsResponse,
     ) -> Value {
         super::list_client_flow_metrics_response_to_json(r)
+    }
+
+    /// Hand-codec `ListLpFlowMetricsRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_list_lp_flow_metrics_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<ListLpFlowMetricsRequest, CodecError> {
+        super::list_lp_flow_metrics_request_from_json(o)
+    }
+
+    /// Hand-codec `ListLpFlowMetricsResponse` encoder.
+    #[must_use]
+    pub fn hand_list_lp_flow_metrics_response_to_json(r: &ListLpFlowMetricsResponse) -> Value {
+        super::list_lp_flow_metrics_response_to_json(r)
     }
 
     /// Hand-codec `ListLatencyMetricsRequest` decoder.

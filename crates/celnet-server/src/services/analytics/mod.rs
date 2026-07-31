@@ -29,6 +29,8 @@
 //! fabricated value. The rollup's divide-by-zero guards then report the derived
 //! ratio as absent rather than inventing one.
 
+pub mod lp;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

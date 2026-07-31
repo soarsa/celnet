@@ -279,6 +279,13 @@ struct QuoteRecord {
     /// naming a non-native `lp_id` books against the matching pinned row — the
     /// exact price/validity/attribution the client was shown — never a re-price.
     dealers: Vec<DealerQuote>,
+    /// The `lp_id`s on this quote's panel whose firm quote was **rejected on
+    /// last-look** (validity lapsed at ranking) — pinned from the multi-dealer
+    /// engine's [`RankedPanel::last_look_rejected`](celnet_rfq::RankedPanel). Empty
+    /// on a non-panel (single native) quote. Read on-query by the street-side LP
+    /// liquidity analytics fold to grade each LP's last-look renege rate; never on
+    /// the hot path.
+    last_look_rejected: Vec<String>,
     /// The dealer line the booking traded on: the normalized `lp_id` (an empty
     /// accept normalizes to the native maker). Meaningful only once `execution`
     /// is set; polices accept-retries (a retry naming a different line is a
@@ -463,6 +470,143 @@ fn quote_record_to_flow(
         markout: None,
         hedge_cost: None,
     })
+}
+
+/// The FX-options quote edge as a **street-side / LP liquidity analytics source**
+/// (`docs/ANALYTICS-REQUIREMENTS.md` §2.4): it maps the RFQ panel rows pinned on
+/// each retained [`QuoteRecord`] into per-LP [`LpFlowRecord`](celnet_analytics::LpFlowRecord)s
+/// — one per dealer on the panel — so the fold grades each LP's win/miss/last-look
+/// behaviour. Read-only, on-query, off the hot path.
+#[tonic::async_trait]
+impl crate::services::analytics::lp::LpFlowSource for QuoteEdge {
+    async fn lp_flow_records(
+        &self,
+        from: Option<i64>,
+        to: Option<i64>,
+    ) -> Vec<celnet_analytics::LpFlowRecord> {
+        let records = self.store.lock().await.snapshot();
+        records
+            .iter()
+            .flat_map(|rec| quote_record_to_lp_flows(rec, from, to))
+            .collect()
+    }
+}
+
+/// Project one retained [`QuoteRecord`]'s pinned RFQ panel onto per-LP
+/// [`LpFlowRecord`](celnet_analytics::LpFlowRecord)s — one per dealer row — or an
+/// empty vec when the quote carried no panel or its event time is outside the
+/// `[from, to)` window.
+///
+/// Honest mapping (guardrail 2): every panel dealer `was_quoted`; on a **booked**
+/// RFQ the `booked_lp_id` line `was_won` (carrying the deal notional) and the rest
+/// `was_missed`; a line in the record's `last_look_rejected` set is flagged
+/// `was_last_look_reject`. `cover_distance` is attached to the runner-up (cover) LP
+/// on the executed side when the panel priced ≥2 lines; `None` otherwise — never
+/// fabricated.
+fn quote_record_to_lp_flows(
+    rec: &QuoteRecord,
+    from: Option<i64>,
+    to: Option<i64>,
+) -> Vec<celnet_analytics::LpFlowRecord> {
+    use celnet_analytics::LpFlowRecord;
+
+    if rec.dealers.is_empty() {
+        return Vec::new();
+    }
+    let ts = rec
+        .execution
+        .as_ref()
+        .map_or(rec.quote.epoch_nanos, |e| e.epoch_nanos);
+    if !in_window(ts, from, to) {
+        return Vec::new();
+    }
+
+    let traded = rec.execution.is_some();
+    let booked = rec.booked_lp_id.as_str();
+    let notional = rec
+        .instrument
+        .quantity
+        .as_ref()
+        .map_or(0.0, |q| q.notional.abs());
+    let (asset_tag, symbol) = underlying_label(rec.instrument.underlying.as_ref());
+    let instrument = if symbol.is_empty() {
+        format!("fxo-{asset_tag}")
+    } else {
+        symbol
+    };
+    let exec_side = rec
+        .execution
+        .as_ref()
+        .and_then(|e| celnet_proto::Side::try_from(e.side).ok());
+    // The runner-up (cover) LP + its price distance from the winner on the executed
+    // side, computed once for the whole panel (attached to the cover LP's row).
+    let cover = if traded {
+        panel_cover(&rec.dealers, booked, exec_side)
+    } else {
+        None
+    };
+
+    rec.dealers
+        .iter()
+        .map(|d| {
+            let is_winner = traded && !booked.is_empty() && d.lp_id == booked;
+            let cover_distance = cover
+                .as_ref()
+                .filter(|(cover_lp, _)| *cover_lp == d.lp_id)
+                .map(|(_, dist)| *dist);
+            LpFlowRecord {
+                was_quoted: true,
+                was_won: is_winner,
+                was_missed: traded && !is_winner,
+                was_last_look_reject: rec.last_look_rejected.iter().any(|lp| lp == &d.lp_id),
+                notional: if is_winner { notional } else { 0.0 },
+                cover_distance,
+                ..LpFlowRecord::blank(d.lp_id.clone(), instrument.clone())
+            }
+        })
+        .collect()
+}
+
+/// The cover (runner-up) LP and its price distance from the winning `booked` line
+/// on the `exec_side`, over the priced panel dealers. `None` when the winner has no
+/// price, there is no priced non-winner, or the side is unknown.
+///
+/// On the side the client lifted, "better" is a lower offer (client bought) or a
+/// higher bid (client sold); the cover is the best-priced line among the losers,
+/// and the distance is `|winner − cover|` (a non-negative price/premium gap).
+fn panel_cover(
+    dealers: &[DealerQuote],
+    booked: &str,
+    exec_side: Option<celnet_proto::Side>,
+) -> Option<(String, f64)> {
+    if booked.is_empty() {
+        return None;
+    }
+    // Price on the executed side for a dealer row, if priced.
+    let side_price = |d: &DealerQuote| -> Option<f64> {
+        d.price.as_ref().map(|p| match exec_side {
+            Some(celnet_proto::Side::Sell) => p.offer, // desk sold ⇒ client lifted the offer
+            _ => p.bid,                                // desk bought ⇒ client hit the bid
+        })
+    };
+    let winner_px = dealers
+        .iter()
+        .find(|d| d.lp_id == booked)
+        .and_then(&side_price)?;
+    // Best-priced loser = the cover. Offer side: minimise; bid side: maximise.
+    let is_offer = matches!(exec_side, Some(celnet_proto::Side::Sell));
+    dealers
+        .iter()
+        .filter(|d| d.lp_id != booked)
+        .filter_map(|d| side_price(d).map(|px| (d.lp_id.clone(), px)))
+        .min_by(|a, b| {
+            if is_offer {
+                a.1.total_cmp(&b.1)
+            } else {
+                b.1.total_cmp(&a.1)
+            }
+        })
+        .map(|(lp, px)| (lp, (winner_px - px).abs()))
 }
 
 /// The RFQ service over the [`CoreLink`] and the readiness gate.
@@ -1290,6 +1434,7 @@ impl QuoteService for QuoteEdge {
                     execution: None,
                     rejected: false,
                     dealers: Vec::new(),
+                    last_look_rejected: Vec::new(),
                     booked_lp_id: String::new(),
                     // Bind the requesting caller (item B §2): a later accept by a
                     // different authenticated principal is refused.
@@ -1496,6 +1641,9 @@ impl QuoteService for QuoteEdge {
             let mut store = self.store.lock().await;
             if let Some(rec) = store.by_id.get_mut(&quote.quote_id) {
                 rec.dealers = dealers.clone();
+                // Pin which panel lines lapsed on last-look, for the street-side LP
+                // liquidity analytics fold (the renege-rate seam, §2.4).
+                rec.last_look_rejected = ranked.last_look_rejected.clone();
             }
         }
 
@@ -2471,6 +2619,7 @@ mod tests {
                     execution: None,
                     rejected: false,
                     dealers: Vec::new(),
+                    last_look_rejected: Vec::new(),
                     booked_lp_id: String::new(),
                     requester: RequesterBinding::Anonymous,
                     pre_trade: None,

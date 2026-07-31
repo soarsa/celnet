@@ -5520,6 +5520,63 @@ message ListClientFlowMetricsResponse {
   optional uint64 correlation_id = 3;
 }
 
+// ── Street-side / LP liquidity analytics (docs/ANALYTICS-REQUIREMENTS.md §2.4) ─
+//
+// The LP-keyed analogue of client-flow: a read-only fold over what each liquidity
+// provider ticked, won, missed, and reneged on (last-look), keyed per LP. Mirrors
+// the pure `celnet-analytics` `LpFlowMetrics` struct 1:1 (Rust `Option<f64>` ⇒
+// proto3 `optional double`). Gated on the SAME `view_analytics` capability as
+// client-flow.
+
+// One LP's street-side liquidity row — activity, competition outcome, and derived
+// ratios for one liquidity provider. Ratio fields are `optional`: absent (JSON
+// null) when their denominator is zero (divide-by-zero guard), never NaN/inf.
+message LpFlowMetricsDesc {
+  // The liquidity-provider id this row belongs to (the panel `lp_id` / venue name).
+  string lp_id = 1;
+  // Quote-update ticks observed from this LP (its update frequency over the window).
+  uint64 tick_count = 2;
+  // Panel responses from this LP (Σ was_quoted) — the response-presence count and
+  // the win-rate denominator.
+  uint64 quote_count = 3;
+  // Deals this LP won (booked_lp_id == lp_id).
+  uint64 deals_won = 4;
+  // Summed notional magnitude of the deals this LP won.
+  double won_notional = 5;
+  // Panel appearances where the LP was quoted but a deal went elsewhere.
+  uint64 missed = 6;
+  // Times this LP's quote was rejected at ranking on last-look.
+  uint64 last_look_rejects = 7;
+  // Win-rate = deals_won ÷ quote_count. ABSENT when the LP made no quotes.
+  optional double win_rate = 8;
+  // Mean cover distance (this LP's price vs the winner when it was the runner-up).
+  // ABSENT when the LP was never the cover.
+  optional double mean_cover = 9;
+}
+
+// Query the street-side LP liquidity rollup. Gated on `view_analytics` × the
+// caller's assets (a cross-product read — a manager holding it on ANY asset may
+// query).
+message ListLpFlowMetricsRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Inclusive lower time bound (epoch nanos) on the source records. ABSENT ⇒ open.
+  optional int64 from_nanos = 2;
+  // Exclusive upper time bound (epoch nanos) on the source records. ABSENT ⇒ open.
+  optional int64 to_nanos = 3;
+  // Optional per-LP filter: when set + non-empty, only this LP's row is returned.
+  optional string lp_id = 4;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 5;
+}
+// The rolled-up LP liquidity metrics, one row per LP (lp_id-ordered).
+message ListLpFlowMetricsResponse {
+  // One row per LP, ordered by lp_id.
+  repeated LpFlowMetricsDesc metrics = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
 // ===========================================================================
 // Latency / Ops analytics (Analytics pillar B —
 // `docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md` Part 1). Per-stage
@@ -6728,6 +6785,13 @@ service AuthService {
   // the dedicated `view_analytics` capability × the caller's assets (spans FI+FXO,
   // NOT admin-only). Read-only; a pure fold over already-captured quote/deal data.
   rpc ListClientFlowMetrics(ListClientFlowMetricsRequest) returns (ListClientFlowMetricsResponse);
+  // Street-side / LP liquidity analytics — the per-LP tick-rate, deals-won (+ won
+  // notional), missed-deals, last-look-rejects, win-rate and mean cover-distance
+  // rollup over what each liquidity provider ticked and competed for
+  // (`docs/ANALYTICS-REQUIREMENTS.md` §2.4). Read-only; a pure fold over the
+  // aggregation-hub ingest tally + the RFQ panel history. Gated on the same
+  // `view_analytics` capability × the caller's assets (spans FI+FXO, NOT admin-only).
+  rpc ListLpFlowMetrics(ListLpFlowMetricsRequest) returns (ListLpFlowMetricsResponse);
   // Latency / Ops analytics — the per-stage tick-to-quote / tick-to-trade latency
   // snapshot (p50/p99/p99.9/max per pipeline stage) + telemetry ring health,
   // folded off the pinned hot core from the observability HdrHistograms

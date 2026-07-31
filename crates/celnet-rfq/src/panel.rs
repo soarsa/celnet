@@ -279,6 +279,14 @@ pub struct RankedPanel {
     pub lp_won_bid: Option<String>,
     /// The `lp_id` that won the offer side (`⊆` responders), if any.
     pub lp_won_offer: Option<String>,
+    /// Responders whose firm quote was **rejected on last-look** — its
+    /// `valid_until_nanos` had already lapsed at ranking time, so it was excluded
+    /// from winning on both sides (`⊆` `rows`, deterministic `lp_id` order). Empty
+    /// in the common case; surfaced so street-side LP analytics can grade an LP's
+    /// last-look renege rate (`docs/ANALYTICS-REQUIREMENTS.md` §2.4). A responder is
+    /// listed here iff it responded firm **and** its validity had lapsed — it may
+    /// still appear in `rows` (it responded), but it cannot win.
+    pub last_look_rejected: Vec<String>,
 }
 
 /// A panel-level logic error. Distinct from a *data* condition (a source
@@ -404,6 +412,15 @@ impl MultiDealerEngine {
         check_winner(&rows, "bid", lp_won_bid.as_deref())?;
         check_winner(&rows, "offer", lp_won_offer.as_deref())?;
 
+        // Responders whose validity had lapsed at ranking — excluded from winning
+        // on both sides (last-look). `rows` is already `lp_id`-sorted, so this
+        // preserves the deterministic audit order.
+        let last_look_rejected: Vec<String> = rows
+            .iter()
+            .filter(|r| r.valid_until_nanos < now_nanos)
+            .map(|r| r.lp_id.clone())
+            .collect();
+
         Ok(RankedPanel {
             request_id: request.request_id.clone(),
             rows,
@@ -412,6 +429,7 @@ impl MultiDealerEngine {
             best_offer,
             lp_won_bid,
             lp_won_offer,
+            last_look_rejected,
         })
     }
 }

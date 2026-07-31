@@ -62,6 +62,7 @@ use celnet_proto::{
 use celnet_proto::{
     LatencyStageDesc, LatencyTelemetryHealth, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
 };
+use celnet_proto::{ListLpFlowMetricsRequest, ListLpFlowMetricsResponse, LpFlowMetricsDesc};
 // Auto-hedging / risk-internalisation (AuthService hedge RPCs): the hedge-policy graph
 // (`HedgeGraphDesc`/`HedgeNodeDesc`/`ExitActionDesc`/`HedgeSizeDesc`), warehouse
 // thresholds, fired-hedge provenance, engine config + the advisory `HedgeIntent`.
@@ -1439,6 +1440,110 @@ fn list_client_flow_metrics_request_decode_byte_identical() {
             &format!("ListClientFlowMetricsRequest({label})"),
             generated::decode_list_client_flow_metrics_request(o),
             hand::hand_list_client_flow_metrics_request_from_json(o),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Street-side / LP liquidity analytics (§2.4): ListLpFlowMetrics reply + request.
+// Exercises repeated nested LP rows AND the `optional double` null-absent presence
+// contract (a tick-only LP with win_rate/mean_cover absent ⇒ JSON null).
+// ---------------------------------------------------------------------------
+
+/// A fully-competing LP row: win-rate + cover present, ticks + wins recorded.
+fn lp_flow_winner() -> LpFlowMetricsDesc {
+    LpFlowMetricsDesc {
+        lp_id: "LP_TIGHT".to_owned(),
+        tick_count: 4000,
+        quote_count: 10,
+        deals_won: 6,
+        won_notional: 30_000_000.0,
+        missed: 4,
+        last_look_rejects: 0,
+        win_rate: Some(0.6),
+        mean_cover: Some(2.5),
+    }
+}
+
+/// A tick-only LP row: streamed but never on a panel ⇒ win_rate + mean_cover
+/// ABSENT (`None`), which must reach the wire as JSON `null`, not `0`.
+fn lp_flow_tick_only() -> LpFlowMetricsDesc {
+    LpFlowMetricsDesc {
+        lp_id: "LP_STREAM".to_owned(),
+        tick_count: 900,
+        quote_count: 0,
+        deals_won: 0,
+        won_notional: 0.0,
+        missed: 0,
+        last_look_rejects: 0,
+        win_rate: None,
+        mean_cover: None,
+    }
+}
+
+#[test]
+fn lp_flow_metrics_response_encode_byte_identical() {
+    let full = ListLpFlowMetricsResponse {
+        metrics: vec![lp_flow_winner(), lp_flow_tick_only()],
+        correlation_id: Some(11),
+    };
+    let g = generated::encode_list_lp_flow_metrics_response(&full);
+    // The tick-only row's absent ratios are JSON null (present-with-null), NOT
+    // omitted and NOT a fabricated zero — the divide-by-zero guard on the wire.
+    let tick_only = &g.get("metrics").and_then(Value::as_array).expect("metrics")[1];
+    assert_eq!(tick_only.get("win_rate"), Some(&Value::Null));
+    assert_eq!(tick_only.get("mean_cover"), Some(&Value::Null));
+    // A present ratio stays a number.
+    let winner = &g.get("metrics").and_then(Value::as_array).expect("metrics")[0];
+    assert_eq!(winner.get("win_rate").and_then(Value::as_f64), Some(0.6));
+    assert_bytes_eq(
+        "ListLpFlowMetricsResponse(full)",
+        &g,
+        &hand::hand_list_lp_flow_metrics_response_to_json(&full),
+    );
+
+    // Empty roster + absent correlation_id ⇒ `[]` + `null`.
+    let empty = ListLpFlowMetricsResponse {
+        metrics: vec![],
+        correlation_id: None,
+    };
+    let ge = generated::encode_list_lp_flow_metrics_response(&empty);
+    assert_eq!(ge.get("correlation_id"), Some(&Value::Null));
+    assert_eq!(ge.get("metrics"), Some(&Value::Array(vec![])));
+    assert_bytes_eq(
+        "ListLpFlowMetricsResponse(empty)",
+        &ge,
+        &hand::hand_list_lp_flow_metrics_response_to_json(&empty),
+    );
+}
+
+#[test]
+fn list_lp_flow_metrics_request_decode_byte_identical() {
+    let cases = [
+        (
+            "full",
+            json!({
+                "session_token": "tok-abc",
+                "from_nanos": 100,
+                "to_nanos": 200,
+                "lp_id": "LP_TIGHT",
+                "correlation_id": 11
+            }),
+        ),
+        // Minimal: time bounds + lp_id filter + correlation absent.
+        ("minimal", json!({ "session_token": "tok" })),
+        // Open lower bound, per-LP filter only.
+        (
+            "filter-open-lower",
+            json!({ "session_token": "tok", "to_nanos": 500, "lp_id": "LP_X" }),
+        ),
+    ];
+    for (label, body) in cases {
+        let o = body.as_object().expect("object");
+        assert_decode_eq::<ListLpFlowMetricsRequest, _>(
+            &format!("ListLpFlowMetricsRequest({label})"),
+            generated::decode_list_lp_flow_metrics_request(o),
+            hand::hand_list_lp_flow_metrics_request_from_json(o),
         );
     }
 }

@@ -38,8 +38,8 @@ use celnet_proto::{
     CancelRiskTransferResponse, InitiateRiskTransferRequest, InitiateRiskTransferResponse,
     LatencyStageDesc, LatencyTelemetryHealth, ListClientFlowMetricsRequest,
     ListClientFlowMetricsResponse, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
-    ListRiskTransfersRequest, ListRiskTransfersResponse, RejectRiskTransferRequest,
-    RejectRiskTransferResponse,
+    ListLpFlowMetricsRequest, ListLpFlowMetricsResponse, ListRiskTransfersRequest,
+    ListRiskTransfersResponse, RejectRiskTransferRequest, RejectRiskTransferResponse,
 };
 use celnet_proto::{
     AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, AggregationScopeMode, AxeSide,
@@ -216,6 +216,12 @@ pub struct AuthEdge {
     /// `docs/ANALYTICS-REQUIREMENTS.md` §11). Empty in an isolated auth test (the
     /// RPC then returns an empty roster, exactly as the other collaborators no-op).
     analytics_sources: Vec<Arc<dyn crate::services::analytics::ClientFlowSource>>,
+    /// The **street-side / LP liquidity analytics** sources folded by the
+    /// `ListLpFlowMetrics` RPC — the FXO quote edge (RFQ panel outcomes) + the
+    /// aggregation hub (per-LP tick tally). Each contributes its OWN already-captured
+    /// history on-query, off the hot path (`docs/ANALYTICS-REQUIREMENTS.md` §2.4).
+    /// Empty in an isolated auth test (the RPC then returns an empty roster).
+    lp_analytics_sources: Vec<Arc<dyn crate::services::analytics::lp::LpFlowSource>>,
     /// The shared latency/ops telemetry hub (the `CoreLink`'s drain-side store)
     /// backing the `ListLatencyMetrics` RPC. `None` in an isolated auth test (the
     /// RPC then reports the hub is not wired), `Some` on the real boot path.
@@ -251,6 +257,7 @@ impl AuthEdge {
             rates_store: None,
             transfer_service: None,
             analytics_sources: Vec::new(),
+            lp_analytics_sources: Vec::new(),
             telemetry: None,
             auto_hedge: Arc::new(AutoHedgeEngine::default()),
         }
@@ -291,6 +298,19 @@ impl AuthEdge {
         source: Arc<dyn crate::services::analytics::ClientFlowSource>,
     ) -> Self {
         self.analytics_sources.push(source);
+        self
+    }
+
+    /// Register a street-side / LP liquidity analytics source (the FXO quote edge's
+    /// RFQ panel outcomes, the aggregation hub's per-LP tick tally). Each contributes
+    /// its own already-captured history to the `ListLpFlowMetrics` fold. Chainable;
+    /// order is irrelevant (the fold is a set union then a group-by).
+    #[must_use]
+    pub fn with_lp_flow_source(
+        mut self,
+        source: Arc<dyn crate::services::analytics::lp::LpFlowSource>,
+    ) -> Self {
+        self.lp_analytics_sources.push(source);
         self
     }
 
@@ -2328,6 +2348,49 @@ impl AuthService for AuthEdge {
         Ok(Response::new(ListClientFlowMetricsResponse {
             metrics,
             group_by: req.group_by,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    // --- street-side / LP liquidity analytics ----------------------------------
+    //
+    // The per-LP tick-rate / deals-won / missed / last-look / win-rate / cover
+    // rollup, folded from the FXO quote edge's RFQ panel history + the aggregation
+    // hub's ingest tick tally. Same cross-product `view_analytics` gate as
+    // client-flow (spans FI+FXO, NOT admin-only). Pure fold over already-captured
+    // data, off the hot path (`docs/ANALYTICS-REQUIREMENTS.md` §2.4).
+
+    async fn list_lp_flow_metrics(
+        &self,
+        request: Request<ListLpFlowMetricsRequest>,
+    ) -> Result<Response<ListLpFlowMetricsResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let who = self.authenticate(&req.session_token)?;
+        let caps = who.capabilities();
+        let allowed = caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FxOptions,
+        )) || caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FixedIncome,
+        ));
+        if !allowed {
+            return Err(Status::permission_denied(
+                "capability view_analytics·{fx_options|fixed_income} required",
+            ));
+        }
+
+        let (records, ticks) = crate::services::analytics::lp::collect(
+            &self.lp_analytics_sources,
+            req.from_nanos,
+            req.to_nanos,
+        )
+        .await;
+        let metrics = crate::services::analytics::lp::fold(&records, &ticks, req.lp_id.as_deref());
+        Ok(Response::new(ListLpFlowMetricsResponse {
+            metrics,
             correlation_id: req.correlation_id,
         }))
     }

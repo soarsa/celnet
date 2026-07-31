@@ -149,6 +149,7 @@ use celnet_proto::{
 use celnet_proto::{
     ClientFlowMetricsDesc, LatencyStageDesc, LatencyTelemetryHealth, ListClientFlowMetricsRequest,
     ListClientFlowMetricsResponse, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
+    ListLpFlowMetricsRequest, ListLpFlowMetricsResponse, LpFlowMetricsDesc,
 };
 // Auto-hedging / risk-internalisation verb family (AuthService hedge RPCs): the
 // request decode + reply/push encode side, proven byte-identical to the hand codec
@@ -6592,6 +6593,21 @@ impl WireBuilder for ListClientFlowMetricsRequest {
     }
 }
 
+impl WireBuilder for ListLpFlowMetricsRequest {
+    const MESSAGE: &'static str = "ListLpFlowMetricsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "from_nanos" => self.from_nanos = opt_i64(value),
+            "to_nanos" => self.to_nanos = opt_i64(value),
+            "lp_id" => self.lp_id = opt_string(value, "lp_id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for ListInstrumentsRequest {
     const MESSAGE: &'static str = "ListInstrumentsRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -7180,6 +7196,16 @@ pub fn decode_list_client_flow_metrics_request(
     o: &Map<String, Value>,
 ) -> DResult<ListClientFlowMetricsRequest> {
     decode(ListClientFlowMetricsRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListLpFlowMetricsRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_lp_flow_metrics_request(
+    o: &Map<String, Value>,
+) -> DResult<ListLpFlowMetricsRequest> {
+    decode(ListLpFlowMetricsRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListLatencyMetricsRequest`] envelope — fully generic.
@@ -8257,6 +8283,38 @@ impl WireAdapter for ListClientFlowMetricsResponse {
     }
 }
 
+impl WireAdapter for LpFlowMetricsDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "lp_id" => Some(WireVal::Str(&self.lp_id)),
+            "tick_count" => Some(WireVal::U64(self.tick_count)),
+            "quote_count" => Some(WireVal::U64(self.quote_count)),
+            "deals_won" => Some(WireVal::U64(self.deals_won)),
+            "won_notional" => Some(WireVal::F64(self.won_notional)),
+            "missed" => Some(WireVal::U64(self.missed)),
+            "last_look_rejects" => Some(WireVal::U64(self.last_look_rejects)),
+            // proto3 `optional double`: absent (a zero denominator) ⇒ JSON null
+            // (LpFlowMetricsDesc is on the null-absent list) — the divide-by-zero
+            // guard, never a fabricated zero.
+            "win_rate" => self.win_rate.map(WireVal::F64),
+            "mean_cover" => self.mean_cover.map(WireVal::F64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListLpFlowMetricsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "metrics" => Some(WireVal::RepeatedMsg(
+                self.metrics.iter().map(|m| m as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for UpdateRiskBookResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -9126,6 +9184,12 @@ pub fn encode_list_risk_transfers_response(r: &ListRiskTransfersResponse) -> Val
 #[must_use]
 pub fn encode_list_client_flow_metrics_response(r: &ListClientFlowMetricsResponse) -> Value {
     encode("ListClientFlowMetricsResponse", r)
+}
+
+/// Encode a [`ListLpFlowMetricsResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_lp_flow_metrics_response(r: &ListLpFlowMetricsResponse) -> Value {
+    encode("ListLpFlowMetricsResponse", r)
 }
 
 /// Encode a [`ListLatencyMetricsResponse`] to its WS JSON — descriptor-driven.

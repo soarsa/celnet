@@ -777,6 +777,15 @@ impl Edge {
             .with_client_flow_source(
                 Arc::clone(&rfq_desk_edge) as Arc<dyn services::analytics::ClientFlowSource>
             )
+            // Register the street-side / LP liquidity analytics sources (§2.4): the FXO
+            // quote edge (RFQ panel win/miss/last-look outcomes) + the aggregation hub
+            // (per-LP quote-update tick tally), each folded on-query, off the hot path.
+            .with_lp_flow_source(
+                Arc::clone(&quote_edge) as Arc<dyn services::analytics::lp::LpFlowSource>
+            )
+            .with_lp_flow_source(
+                Arc::clone(&aggregation_hub) as Arc<dyn services::analytics::lp::LpFlowSource>
+            )
             // Back the Latency/Ops analytics RPC with the SAME telemetry hub the
             // `CoreLink` owns — the pinned core + async edges fold their per-stage
             // latency into it, and this RPC reads that store (Analytics pillar B).

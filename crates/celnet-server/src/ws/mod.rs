@@ -1511,6 +1511,14 @@ async fn handle_unary(
                 generated_codec::encode_list_client_flow_metrics_response
             )
         }
+        "list_lp_flow_metrics" => {
+            let req = decode!(generated_codec::decode_list_lp_flow_metrics_request(o));
+            call!(
+                services.auth.list_lp_flow_metrics(Request::new(req)),
+                "lp_flow_metrics",
+                generated_codec::encode_list_lp_flow_metrics_response
+            )
+        }
         "list_latency_metrics" => {
             let req = decode!(generated_codec::decode_list_latency_metrics_request(o));
             call!(

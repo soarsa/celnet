@@ -187,6 +187,12 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     // divide-by-zero guard, never a fabricated zero. Both names listed (envelope + nested row).
     "ListClientFlowMetricsResponse",
     "ClientFlowMetricsDesc",
+    // The street-side / LP liquidity roster (§2.4): the `ListLpFlowMetricsResponse`
+    // envelope emits its `Option<u64>` `correlation_id` as JSON `null` when absent, and
+    // each nested `LpFlowMetricsDesc` row emits its optional `win_rate` / `mean_cover`
+    // ratios as JSON `null` when their denominator is zero — the divide-by-zero guard.
+    "ListLpFlowMetricsResponse",
+    "LpFlowMetricsDesc",
     // The Latency/Ops analytics snapshot (Analytics pillar B): the
     // `ListLatencyMetricsResponse` envelope emits its `Option<u64>` `correlation_id`
     // as JSON `null` when absent (and its absent singular `health` message renders

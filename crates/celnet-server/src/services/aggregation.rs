@@ -288,6 +288,15 @@ pub struct AggregationHub {
     /// byte-identical. Behind an `RwLock<Arc<…>>` for the same hot-swap-whole discipline
     /// as each book's `cfg`.
     pricing: RwLock<Arc<PricingGroupResolver>>,
+    /// **Street-side LP tick tally** — a bounded per-LP monotonic count of accepted
+    /// quote-update pushes, keyed by `lp_name`. This is the tick-rate source for the
+    /// LP liquidity analytics fold (`docs/ANALYTICS-REQUIREMENTS.md` §2.4): the sink
+    /// only ever keeps the *latest* quote per venue (it overwrites), so the number of
+    /// updates cannot be recovered from the sink — this counter records it at the
+    /// ingest seam. Off the pinned hot core (ingest already runs on the async feed
+    /// edge, guardrail 11); bounded by the member-LP count, never by time. Read
+    /// on-query by [`Self::lp_tick_counts`].
+    lp_ticks: Mutex<HashMap<String, u64>>,
 }
 
 impl std::fmt::Debug for AggregationHub {
@@ -297,6 +306,25 @@ impl std::fmt::Debug for AggregationHub {
         f.debug_struct("AggregationHub")
             .field("books", &books)
             .finish()
+    }
+}
+
+/// The aggregation hub as a **street-side / LP liquidity analytics source**
+/// (`docs/ANALYTICS-REQUIREMENTS.md` §2.4): it contributes the per-LP quote-update
+/// **tick tally** (the tick-rate seam) to the fold. It holds no RFQ panel history,
+/// so it emits no panel records — only the tick counts, snapshotted on-query.
+#[tonic::async_trait]
+impl crate::services::analytics::lp::LpFlowSource for AggregationHub {
+    async fn lp_flow_records(
+        &self,
+        _from: Option<i64>,
+        _to: Option<i64>,
+    ) -> Vec<celnet_analytics::LpFlowRecord> {
+        Vec::new()
+    }
+
+    fn tick_counts(&self) -> std::collections::BTreeMap<String, u64> {
+        self.lp_tick_counts()
     }
 }
 
@@ -310,6 +338,7 @@ impl AggregationHub {
             clock,
             inventory: None,
             pricing: RwLock::new(Arc::new(PricingGroupResolver::default())),
+            lp_ticks: Mutex::new(HashMap::new()),
         })
     }
 
@@ -324,6 +353,7 @@ impl AggregationHub {
             clock,
             inventory: Some(inventory),
             pricing: RwLock::new(Arc::new(PricingGroupResolver::default())),
+            lp_ticks: Mutex::new(HashMap::new()),
         })
     }
 
@@ -396,7 +426,30 @@ impl AggregationHub {
             state.dirty_version += 1;
             accepted = true;
         }
+        // Street-side tick tally: one accepted push = one quote-update from this LP.
+        // Counted once per ingest (not per book fed) at the off-core feed edge.
+        if accepted {
+            *self
+                .lp_ticks
+                .lock()
+                .expect("lp tick tally lock poisoned")
+                .entry(q.lp_name.clone())
+                .or_insert(0) += 1;
+        }
         accepted
+    }
+
+    /// A snapshot of the per-LP quote-update tick tally (`lp_name` → count) — the
+    /// tick-rate source for the street-side LP liquidity analytics fold. Read
+    /// on-query, off the hot path; cloned out under the brief tally lock.
+    #[must_use]
+    pub fn lp_tick_counts(&self) -> std::collections::BTreeMap<String, u64> {
+        self.lp_ticks
+            .lock()
+            .expect("lp tick tally lock poisoned")
+            .iter()
+            .map(|(lp, &n)| (lp.clone(), n))
+            .collect()
     }
 
     /// The current published composite for `book_id`, (re)consolidating lazily if a
