@@ -1,0 +1,30 @@
+[package]
+name = "celnet-corpactions"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet corporate-actions model — the vendor-neutral CAEV/CAMV event vocabulary (ISO 15022 MT 56x / ISO 20022 seev.*) and the PURE, deterministic effect functions that transform a bond's absolute-dated cashflow schedule and a holder's position for each event (REDM/INTR/MCAL/PCAL/PRED/DRAW/BPUT redemptions + calls + sinking draws, plus the TEND/EXOF/CONV corporate shapes). No IO, no clock, no rng; the govvie-deterministic set is fully derivable in-house, corporate content arrives via a pluggable feed adapter (see docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md). Off the pinned pricing hot core."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# Absolute-dated schedule arithmetic and event dates. `time` gives civil-date
+# subtraction (ACT/365F present value) and ordering; `celnet-calendar` gives the
+# end-of-month-aware month stepping used to generate a fixed-coupon schedule (the
+# same primitive celnet-bond's CashflowSchedule rolls back from maturity).
+time.workspace = true
+celnet-calendar.workspace = true
+# Serde derives so the normalized CorporateAction/InstrumentMaster records the
+# ingestion layer masters and journals round-trip through JSON (the identity-store
+# chassis discipline); the pure effect math itself needs no serialization.
+serde.workspace = true
+
+[dev-dependencies]
+# The independent oracle: hand-computed truth-table cases + property tests
+# (post-event schedule PV consistency, notional conservation on partial events).
+proptest.workspace = true
+serde_json.workspace = true
