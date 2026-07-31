@@ -15,7 +15,7 @@
 //!
 //! `docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4 / §8.4.
 
-use celnet_hedge_routing::{LimitMetric, WarehouseThreshold};
+use celnet_hedge_routing::{HedgeLpPanel, LimitMetric, WarehouseThreshold};
 use serde::{Deserialize, Serialize};
 
 /// The budget metric a warehouse threshold caps. A stored, serde-stable enum decoupled
@@ -206,6 +206,34 @@ impl ScopedThreshold {
     }
 }
 
+/// A **standing hedging LP panel** bound to a scope — the include/exclude
+/// liquidity-provider selection every external exit action inherits for that
+/// desk / book / instrument (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`
+/// §4/§6.2). Resolves **most-specific-wins** (instrument > book > desk), the same
+/// precedence style as [`ScopedThreshold`].
+///
+/// The include/exclude selection is the pure-crate [`HedgeLpPanel`] (whose resolver
+/// [`HedgeLpPanel::effective_lps`] owns the semantics — one source of truth); this
+/// server type adds only the scope binding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopedLpPanel {
+    /// What the bound `scope_id` names (desk / book / instrument).
+    pub scope_kind: HedgeScopeKind,
+    /// The desk / book / instrument id this panel binds to.
+    pub scope_id: String,
+    /// The include/exclude selection (resolved to an effective LP set by the engine).
+    #[serde(default)]
+    pub panel: HedgeLpPanel,
+}
+
+impl ScopedLpPanel {
+    /// Whether two scoped panels address the same scope (kind + id) — the upsert key.
+    #[must_use]
+    pub fn same_scope(&self, other: &ScopedLpPanel) -> bool {
+        self.scope_kind == other.scope_kind && self.scope_id == other.scope_id
+    }
+}
+
 /// One per-desk enable toggle in the engine config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HedgeDeskToggle {
@@ -240,6 +268,12 @@ pub struct HedgeConfigDef {
     /// A daily externalised-notional cap; `0` ⇒ unbounded.
     #[serde(default)]
     pub daily_external_notional_cap: f64,
+    /// The standing **hedging LP panels** — per-scope include/exclude LP selection
+    /// every external exit action inherits (§4/§6.2). Resolves most-specific-wins
+    /// (instrument > book > desk); an empty roster ⇒ no restriction (all known LPs).
+    /// An additive serde-default list, so an existing `identity.json` loads unchanged.
+    #[serde(default)]
+    pub lp_panels: Vec<ScopedLpPanel>,
 }
 
 /// serde default for [`HedgeConfigDef::advisory_only`].
@@ -256,6 +290,7 @@ impl Default for HedgeConfigDef {
             max_clip: 0.0,
             max_hedges_per_interval: 0,
             daily_external_notional_cap: 0.0,
+            lp_panels: Vec::new(),
         }
     }
 }
@@ -273,6 +308,39 @@ impl HedgeConfigDef {
             .iter()
             .find(|t| t.desk == desk)
             .is_none_or(|t| t.enabled)
+    }
+
+    /// Resolve the standing hedging LP panel for a `(desk, book, instrument)` risk
+    /// state, **most-specific-wins** (instrument > book > desk). Returns `None` when no
+    /// panel is configured for any of the three scopes — the caller then falls back to
+    /// the per-rule `RfqOut` include list, else the full known-LP set (§6.2).
+    #[must_use]
+    pub fn resolve_lp_panel(
+        &self,
+        desk: &str,
+        book: &str,
+        instrument: &str,
+    ) -> Option<&HedgeLpPanel> {
+        // Probe most-specific → least-specific; the first hit wins.
+        let by = |kind: HedgeScopeKind, id: &str| {
+            self.lp_panels
+                .iter()
+                .find(move |p| p.scope_kind == kind && p.scope_id == id)
+        };
+        by(HedgeScopeKind::Instrument, instrument)
+            .or_else(|| by(HedgeScopeKind::Book, book))
+            .or_else(|| by(HedgeScopeKind::Desk, desk))
+            .map(|p| &p.panel)
+    }
+
+    /// Upsert one LP panel by scope (kind + id). A panel that is **unrestricted** (empty
+    /// include *and* exclude) **removes** the matching entry (the operator's "clear the
+    /// panel" gesture); otherwise it inserts / replaces the same-scope entry.
+    pub fn upsert_lp_panel(&mut self, entry: ScopedLpPanel) {
+        self.lp_panels.retain(|p| !p.same_scope(&entry));
+        if !entry.panel.is_unrestricted() {
+            self.lp_panels.push(entry);
+        }
     }
 }
 
@@ -358,5 +426,74 @@ mod tests {
             ..HedgeConfigDef::default()
         };
         assert!(!killed.desk_active("RATES"), "kill-switch halts every desk");
+    }
+
+    fn panel(
+        scope_kind: HedgeScopeKind,
+        id: &str,
+        include: &[&str],
+        exclude: &[&str],
+    ) -> ScopedLpPanel {
+        ScopedLpPanel {
+            scope_kind,
+            scope_id: id.into(),
+            panel: HedgeLpPanel {
+                include: include.iter().map(|s| (*s).to_string()).collect(),
+                exclude: exclude.iter().map(|s| (*s).to_string()).collect(),
+            },
+        }
+    }
+
+    #[test]
+    fn lp_panel_resolves_most_specific_wins() {
+        let cfg = HedgeConfigDef {
+            lp_panels: vec![
+                panel(HedgeScopeKind::Desk, "RATES", &[], &["LP-1"]),
+                panel(HedgeScopeKind::Book, "RATES-EUR", &["LP-2", "LP-3"], &[]),
+                panel(HedgeScopeKind::Instrument, "EURUSD", &[], &["LP-4"]),
+            ],
+            ..HedgeConfigDef::default()
+        };
+        // Instrument beats book beats desk.
+        assert_eq!(
+            cfg.resolve_lp_panel("RATES", "RATES-EUR", "EURUSD")
+                .unwrap()
+                .exclude,
+            vec!["LP-4"]
+        );
+        // No instrument panel → book wins.
+        assert_eq!(
+            cfg.resolve_lp_panel("RATES", "RATES-EUR", "GBPUSD")
+                .unwrap()
+                .include,
+            vec!["LP-2", "LP-3"]
+        );
+        // No instrument/book panel → desk wins.
+        assert_eq!(
+            cfg.resolve_lp_panel("RATES", "RATES-USD", "USDJPY")
+                .unwrap()
+                .exclude,
+            vec!["LP-1"]
+        );
+        // No panel at any scope → None (caller falls back).
+        assert!(cfg.resolve_lp_panel("FX", "FX-G10", "AUDUSD").is_none());
+    }
+
+    #[test]
+    fn upsert_lp_panel_replaces_by_scope_and_clears_on_unrestricted() {
+        let mut cfg = HedgeConfigDef::default();
+        cfg.upsert_lp_panel(panel(HedgeScopeKind::Book, "RATES-EUR", &["LP-1"], &[]));
+        assert_eq!(cfg.lp_panels.len(), 1);
+        // Same scope replaces (not appends).
+        cfg.upsert_lp_panel(panel(HedgeScopeKind::Book, "RATES-EUR", &[], &["LP-2"]));
+        assert_eq!(cfg.lp_panels.len(), 1);
+        assert_eq!(cfg.lp_panels[0].panel.exclude, vec!["LP-2"]);
+        // A different scope appends.
+        cfg.upsert_lp_panel(panel(HedgeScopeKind::Desk, "RATES", &["LP-3"], &[]));
+        assert_eq!(cfg.lp_panels.len(), 2);
+        // An unrestricted (empty/empty) upsert clears the same-scope entry.
+        cfg.upsert_lp_panel(panel(HedgeScopeKind::Book, "RATES-EUR", &[], &[]));
+        assert_eq!(cfg.lp_panels.len(), 1);
+        assert!(cfg.resolve_lp_panel("RATES", "RATES-EUR", "x").is_some()); // desk panel still resolves
     }
 }

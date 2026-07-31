@@ -133,7 +133,7 @@ use celnet_proto::{
 use celnet_proto::{
     ExitActionDesc, GetHedgeConfigRequest, GetHedgeConfigResponse, GetHedgePolicyGraphRequest,
     GetHedgePolicyGraphResponse, HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle,
-    HedgeGraphDesc, HedgeIntent, HedgeNodeDesc, HedgeProvenance, HedgeSizeDesc,
+    HedgeGraphDesc, HedgeIntent, HedgeLpPanelDesc, HedgeNodeDesc, HedgeProvenance, HedgeSizeDesc,
     ListHedgeProvenanceRequest, ListHedgeProvenanceResponse, ListHedgeThresholdsRequest,
     ListHedgeThresholdsResponse, SetHedgeConfigRequest, SetHedgeConfigResponse,
     UpdateHedgePolicyGraphRequest, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest,
@@ -4664,6 +4664,7 @@ fn hedge_provenance_to_json(p: &HedgeProvenance) -> Value {
         m.insert("lp_won".to_string(), json!(lp));
     }
     m.insert("advisory".to_string(), json!(p.advisory));
+    m.insert("lps".to_string(), json!(p.lps));
     Value::Object(m)
 }
 
@@ -4687,6 +4688,7 @@ fn hedge_intent_to_json(i: &HedgeIntent) -> Value {
         "fired_at": i.fired_at,
         "policy_path": i.policy_path,
         "reason": i.reason,
+        "lps": i.lps,
     })
 }
 
@@ -4704,7 +4706,29 @@ fn hedge_desk_toggle_from_json(v: &Value) -> Result<HedgeDeskToggle> {
     })
 }
 
-/// The auto-hedge engine config → JSON (the per-desk toggle array + the rate guards).
+/// A scoped hedging LP panel → JSON (a `lp_panels` array element).
+fn hedge_lp_panel_desc_to_json(p: &HedgeLpPanelDesc) -> Value {
+    json!({
+        "scope_kind": p.scope_kind,
+        "scope_id": p.scope_id,
+        "include": p.include,
+        "exclude": p.exclude,
+    })
+}
+
+/// A scoped hedging LP panel ← JSON (a `lp_panels` array element).
+fn hedge_lp_panel_desc_from_json(v: &Value) -> Result<HedgeLpPanelDesc> {
+    let o = obj(v, "lp_panels")?;
+    Ok(HedgeLpPanelDesc {
+        scope_kind: enum_or_zero(o, "scope_kind"),
+        scope_id: string_or_empty(o, "scope_id"),
+        include: string_array(o, "include"),
+        exclude: string_array(o, "exclude"),
+    })
+}
+
+/// The auto-hedge engine config → JSON (the per-desk toggle array + the rate guards +
+/// the standing hedging LP panels).
 fn hedge_config_desc_to_json(c: &HedgeConfigDesc) -> Value {
     json!({
         "kill_switch": c.kill_switch,
@@ -4715,6 +4739,9 @@ fn hedge_config_desc_to_json(c: &HedgeConfigDesc) -> Value {
         "max_clip": c.max_clip,
         "max_hedges_per_interval": c.max_hedges_per_interval,
         "daily_external_notional_cap": c.daily_external_notional_cap,
+        "lp_panels": Value::Array(
+            c.lp_panels.iter().map(hedge_lp_panel_desc_to_json).collect(),
+        ),
     })
 }
 
@@ -4732,6 +4759,14 @@ fn hedge_config_desc_from_json(v: &Value) -> Result<HedgeConfigDesc> {
                     .collect::<Result<Vec<_>>>()
             },
         )?;
+    let lp_panels = o.get("lp_panels").and_then(Value::as_array).map_or_else(
+        || Ok(Vec::new()),
+        |arr| {
+            arr.iter()
+                .map(hedge_lp_panel_desc_from_json)
+                .collect::<Result<Vec<_>>>()
+        },
+    )?;
     Ok(HedgeConfigDesc {
         kill_switch: bool_or_false(o, "kill_switch"),
         advisory_only: bool_or_false(o, "advisory_only"),
@@ -4739,6 +4774,7 @@ fn hedge_config_desc_from_json(v: &Value) -> Result<HedgeConfigDesc> {
         max_clip: f64_or_zero(o, "max_clip"),
         max_hedges_per_interval: u32_or_zero(o, "max_hedges_per_interval"),
         daily_external_notional_cap: f64_or_zero(o, "daily_external_notional_cap"),
+        lp_panels,
     })
 }
 

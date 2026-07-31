@@ -27,6 +27,11 @@
 //! - [`ExitAction`] — the terminal leaves: the exit vocabulary the graph resolves
 //!   to (`WAREHOUSE`, `CROSS_INTERNAL`, `SKEW`, `SUBMIT_MARKET_ORDER`, `RFQ_OUT`,
 //!   `SPLIT`, `ESCALATE`).
+//! - [`HedgeLpPanel`] — the standing include/exclude liquidity-provider selection an
+//!   external exit action fans to, and its pure resolver
+//!   ([`HedgeLpPanel::effective_lps`]) that turns include/exclude into the **effective
+//!   LP set** against the live known-LP registry (generalising the per-rule `RfqOut`
+//!   include list with exclude semantics — the LP-panel config the tutorial needs).
 //! - [`HedgeGraph`] — a directed graph of [`HedgeNode`]s ([`HedgeNode::Condition`]
 //!   internal nodes with `yes`/`no` edges; [`HedgeNode::Action`] terminal leaves),
 //!   entered at a single node per evaluation.
@@ -58,12 +63,14 @@ mod band;
 mod context;
 mod field;
 mod graph;
+mod lp_panel;
 mod router;
 
 pub use band::{HedgeSizing, NettingSplit, WarehouseThreshold, netting_split};
 pub use context::HedgeContext;
 pub use field::{HedgeField, HedgeFieldKind};
 pub use graph::{ExecStyle, ExitAction, HedgeError, HedgeGraph, HedgeNode, HedgeSize, NodeId};
+pub use lp_panel::{HedgeLpPanel, LpPanelError};
 pub use router::HedgeRouter;
 
 // Re-export the condition vocabulary reused verbatim from risk routing, so a

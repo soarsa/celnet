@@ -2136,7 +2136,11 @@ impl AuthService for AuthEdge {
 
         let mut guard = self.lock();
         let mut next = guard.clone();
-        next.set_hedge_config(cfg);
+        // The store re-validates the config's hedging LP panels against the live known-LP
+        // registry (every include/exclude id is a known LP; no panel resolves to an empty
+        // set), so a malformed panel fails loudly at the write and never reaches the engine.
+        next.set_hedge_config(cfg)
+            .map_err(Status::invalid_argument)?;
         self.persist_and_commit(&mut guard, next)?;
         Ok(Response::new(SetHedgeConfigResponse {
             config: Some(config_to_wire(guard.hedge_config())),

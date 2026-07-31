@@ -15,19 +15,19 @@
 #![allow(clippy::result_large_err)]
 
 use celnet_hedge_routing::{
-    ExecStyle, ExitAction, HedgeField, HedgeGraph, HedgeNode, HedgeSize, NodeId, RagStatus,
-    RouteOp, RouteValue,
+    ExecStyle, ExitAction, HedgeField, HedgeGraph, HedgeLpPanel, HedgeNode, HedgeSize, NodeId,
+    RagStatus, RouteOp, RouteValue,
 };
 use celnet_proto::{
     ExecStyleEnum, ExitActionDesc, ExitActionKind, HedgeConditionDesc, HedgeConfigDesc,
-    HedgeDeskToggle as HedgeDeskToggleDesc, HedgeFieldEnum, HedgeGraphDesc, HedgeNodeDesc,
-    HedgeSizeDesc, HedgeSizeKind, RouteRange, RouteValueDesc, StringList, WarehouseThresholdDesc,
-    hedge_node_desc, route_value_desc,
+    HedgeDeskToggle as HedgeDeskToggleDesc, HedgeFieldEnum, HedgeGraphDesc, HedgeLpPanelDesc,
+    HedgeNodeDesc, HedgeSizeDesc, HedgeSizeKind, RouteRange, RouteValueDesc, StringList,
+    WarehouseThresholdDesc, hedge_node_desc, route_value_desc,
 };
 use tonic::Status;
 
 use crate::config::hedge_policy::{
-    HedgeConfigDef, HedgeDeskToggle, HedgeMetric, HedgeScopeKind, HedgeThresholdDef,
+    HedgeConfigDef, HedgeDeskToggle, HedgeMetric, HedgeScopeKind, HedgeThresholdDef, ScopedLpPanel,
     ScopedThreshold,
 };
 
@@ -442,6 +442,32 @@ pub fn threshold_from_wire(d: &WarehouseThresholdDesc) -> ScopedThreshold {
     }
 }
 
+// --- HedgeLpPanel (scoped) ⇄ HedgeLpPanelDesc -------------------------------
+
+/// Map a persisted [`ScopedLpPanel`] onto its wire [`HedgeLpPanelDesc`].
+#[must_use]
+pub fn lp_panel_to_wire(p: &ScopedLpPanel) -> HedgeLpPanelDesc {
+    HedgeLpPanelDesc {
+        scope_kind: p.scope_kind.as_i32(),
+        scope_id: p.scope_id.clone(),
+        include: p.panel.include.clone(),
+        exclude: p.panel.exclude.clone(),
+    }
+}
+
+/// Map a wire [`HedgeLpPanelDesc`] onto a persisted [`ScopedLpPanel`].
+#[must_use]
+pub fn lp_panel_from_wire(d: &HedgeLpPanelDesc) -> ScopedLpPanel {
+    ScopedLpPanel {
+        scope_kind: HedgeScopeKind::from_i32(d.scope_kind),
+        scope_id: d.scope_id.clone(),
+        panel: HedgeLpPanel {
+            include: d.include.clone(),
+            exclude: d.exclude.clone(),
+        },
+    }
+}
+
 // --- HedgeConfig ⇄ HedgeConfigDesc ------------------------------------------
 
 /// Map the persisted [`HedgeConfigDef`] onto its wire [`HedgeConfigDesc`].
@@ -461,6 +487,7 @@ pub fn config_to_wire(c: &HedgeConfigDef) -> HedgeConfigDesc {
         max_clip: c.max_clip,
         max_hedges_per_interval: c.max_hedges_per_interval,
         daily_external_notional_cap: c.daily_external_notional_cap,
+        lp_panels: c.lp_panels.iter().map(lp_panel_to_wire).collect(),
     }
 }
 
@@ -481,6 +508,7 @@ pub fn config_from_wire(d: &HedgeConfigDesc) -> HedgeConfigDef {
         max_clip: d.max_clip,
         max_hedges_per_interval: d.max_hedges_per_interval,
         daily_external_notional_cap: d.daily_external_notional_cap,
+        lp_panels: d.lp_panels.iter().map(lp_panel_from_wire).collect(),
     }
 }
 
@@ -619,7 +647,38 @@ mod tests {
             max_clip: 25_000.0,
             max_hedges_per_interval: 10,
             daily_external_notional_cap: 1_000_000.0,
+            lp_panels: vec![
+                ScopedLpPanel {
+                    scope_kind: HedgeScopeKind::Book,
+                    scope_id: "RATES-EUR".into(),
+                    panel: HedgeLpPanel {
+                        include: vec!["LP-1".into(), "LP-2".into()],
+                        exclude: vec!["LP-3".into()],
+                    },
+                },
+                ScopedLpPanel {
+                    scope_kind: HedgeScopeKind::Desk,
+                    scope_id: "RATES".into(),
+                    panel: HedgeLpPanel {
+                        include: vec![],
+                        exclude: vec!["LP-4".into()],
+                    },
+                },
+            ],
         };
         assert_eq!(config_from_wire(&config_to_wire(&c)), c);
+    }
+
+    #[test]
+    fn lp_panel_round_trips() {
+        let p = ScopedLpPanel {
+            scope_kind: HedgeScopeKind::Instrument,
+            scope_id: "EURUSD".into(),
+            panel: HedgeLpPanel {
+                include: vec!["LP-A".into()],
+                exclude: vec!["LP-B".into(), "LP-C".into()],
+            },
+        };
+        assert_eq!(lp_panel_from_wire(&lp_panel_to_wire(&p)), p);
     }
 }

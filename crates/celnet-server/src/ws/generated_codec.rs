@@ -159,7 +159,7 @@ use celnet_proto::{
 use celnet_proto::{
     ExitActionDesc, GetHedgeConfigRequest, GetHedgeConfigResponse, GetHedgePolicyGraphRequest,
     GetHedgePolicyGraphResponse, HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle,
-    HedgeGraphDesc, HedgeIntent, HedgeNodeDesc, HedgeProvenance, HedgeSizeDesc,
+    HedgeGraphDesc, HedgeIntent, HedgeLpPanelDesc, HedgeNodeDesc, HedgeProvenance, HedgeSizeDesc,
     ListHedgeProvenanceRequest, ListHedgeProvenanceResponse, ListHedgeThresholdsRequest,
     ListHedgeThresholdsResponse, SetHedgeConfigRequest, SetHedgeConfigResponse,
     UpdateHedgePolicyGraphRequest, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest,
@@ -6363,6 +6363,20 @@ impl WireBuilder for HedgeDeskToggle {
     }
 }
 
+impl WireBuilder for HedgeLpPanelDesc {
+    const MESSAGE: &'static str = "HedgeLpPanelDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "scope_kind" => self.scope_kind = enum_or_zero(value),
+            "scope_id" => self.scope_id = string_or_empty(value),
+            "include" => self.include = string_vec(value),
+            "exclude" => self.exclude = string_vec(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for HedgeConfigDesc {
     const MESSAGE: &'static str = "HedgeConfigDesc";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -6376,6 +6390,9 @@ impl WireBuilder for HedgeConfigDesc {
             "max_hedges_per_interval" => self.max_hedges_per_interval = u32_or_zero(value),
             "daily_external_notional_cap" => {
                 self.daily_external_notional_cap = f64_or_zero(value);
+            }
+            "lp_panels" => {
+                self.lp_panels = opt_repeated::<HedgeLpPanelDesc>(value, "lp_panels")?;
             }
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
@@ -8478,6 +8495,7 @@ impl WireAdapter for HedgeProvenance {
             // list — a nested audit sub-message, not a reply envelope).
             "lp_won" => self.lp_won.as_deref().map(WireVal::Str),
             "advisory" => Some(WireVal::Bool(self.advisory)),
+            "lps" => Some(WireVal::RepeatedStr(&self.lps)),
             _ => None,
         }
     }
@@ -8505,6 +8523,7 @@ impl WireAdapter for HedgeIntent {
             "fired_at" => Some(WireVal::I64(self.fired_at)),
             "policy_path" => Some(WireVal::RepeatedU32(&self.policy_path)),
             "reason" => Some(WireVal::Str(&self.reason)),
+            "lps" => Some(WireVal::RepeatedStr(&self.lps)),
             _ => None,
         }
     }
@@ -8515,6 +8534,18 @@ impl WireAdapter for HedgeDeskToggle {
         match proto_name {
             "desk" => Some(WireVal::Str(&self.desk)),
             "enabled" => Some(WireVal::Bool(self.enabled)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for HedgeLpPanelDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "scope_kind" => Some(WireVal::Enum(self.scope_kind)),
+            "scope_id" => Some(WireVal::Str(&self.scope_id)),
+            "include" => Some(WireVal::RepeatedStr(&self.include)),
+            "exclude" => Some(WireVal::RepeatedStr(&self.exclude)),
             _ => None,
         }
     }
@@ -8536,6 +8567,12 @@ impl WireAdapter for HedgeConfigDesc {
                 Some(WireVal::U64(u64::from(self.max_hedges_per_interval)))
             }
             "daily_external_notional_cap" => Some(WireVal::F64(self.daily_external_notional_cap)),
+            "lp_panels" => Some(WireVal::RepeatedMsg(
+                self.lp_panels
+                    .iter()
+                    .map(|p| p as &dyn WireAdapter)
+                    .collect(),
+            )),
             _ => None,
         }
     }

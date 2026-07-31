@@ -28,7 +28,7 @@
 //! resolved threshold, records into a bounded in-memory provenance ring, and mutates only
 //! its own rate counters under one short-held lock. No float work on any hot path.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::RwLock;
 
 use celnet_hedge_routing::{
@@ -127,14 +127,18 @@ impl AutoHedgeEngine {
     /// Resolve one risk state to an exit action and its intent + provenance.
     ///
     /// `now_nanos` is the trusted-source fire timestamp (injected so the pure decision is
-    /// deterministic under test). The full pipeline: guard (kill-switch / desk) → resolve
-    /// policy → size → net → advisory/rate gate → stamp intent + provenance.
+    /// deterministic under test). `known_lps` is the live known-LP registry (the
+    /// aggregation hub / FIX LP sessions), supplied by the caller off-core, used to
+    /// resolve the effective hedging LP set for external actions. The full pipeline:
+    /// guard (kill-switch / desk) → resolve policy → size → net → resolve LP panel →
+    /// advisory/rate gate → stamp intent + provenance.
     pub fn evaluate(
         &self,
         graph: &HedgeGraph,
         threshold: &HedgeThresholdDef,
         config: &HedgeConfigDef,
         ctx: &HedgeContext,
+        known_lps: &BTreeSet<String>,
         now_nanos: i64,
     ) -> HedgeOutcome {
         let wh = threshold.to_threshold();
@@ -199,6 +203,7 @@ impl AutoHedgeEngine {
                     fired_at: now_nanos,
                     policy_path: path,
                     reason: format!("{} · WAREHOUSE", band_label(band)),
+                    lps: Vec::new(),
                 },
                 provenance: None,
             };
@@ -213,6 +218,15 @@ impl AutoHedgeEngine {
 
         // Decompose internal-first vs external per the action's semantics.
         let split = decompose(&action, sized, ctx.internal_offset_available);
+
+        // Resolve the effective hedging LP set the external action TARGETS — the
+        // standing scope panel (most-specific-wins), else the per-rule RFQ include list,
+        // else the full known panel (§6.2). Internal / no-trade actions target no LP.
+        let lps = if action.is_external() {
+            resolve_effective_lps(config, ctx, &action, known_lps)
+        } else {
+            Vec::new()
+        };
 
         // Advisory gate: external actions are advisory unless the desk has disarmed it
         // (advisory_only == false) with the kill-switch off; internal actions execute.
@@ -262,6 +276,7 @@ impl AutoHedgeEngine {
             fired_at: now_nanos,
             policy_path: path.clone(),
             reason,
+            lps: lps.clone(),
         };
 
         let provenance = self.stamp_provenance(
@@ -275,6 +290,7 @@ impl AutoHedgeEngine {
             action_wire,
             &split,
             advisory,
+            lps,
             now_nanos,
         );
 
@@ -298,6 +314,7 @@ impl AutoHedgeEngine {
         action: ExitActionDesc,
         split: &Split,
         advisory: bool,
+        lps: Vec<String>,
         now_nanos: i64,
     ) -> HedgeProvenance {
         let mut g = self.lock();
@@ -325,6 +342,7 @@ impl AutoHedgeEngine {
             slippage_bp: 0.0,
             lp_won: None,
             advisory,
+            lps,
         };
         if g.ring.len() >= self.capacity {
             g.ring.pop_front();
@@ -437,7 +455,38 @@ fn warehouse_intent(
         fired_at: now_nanos,
         policy_path: Vec::new(),
         reason: reason.to_owned(),
+        lps: Vec::new(),
     }
+}
+
+/// Resolve the effective hedging LP set an external [`ExitAction`] targets (§6.2).
+///
+/// Precedence:
+/// 1. the standing **scope LP panel** (most-specific-wins, instrument > book > desk) —
+///    inherited by BOTH `SUBMIT_MARKET_ORDER` and `RFQ_OUT`, generalising the include
+///    list with exclude semantics. A stale panel (an id the registry no longer knows)
+///    degrades safely to the full known set rather than dropping the hedge;
+/// 2. the per-rule `RFQ_OUT` **include list** (the shipped back-compat behaviour), when
+///    no scope panel is configured;
+/// 3. the **full known panel** (every known LP) — the default for `SUBMIT_MARKET_ORDER`
+///    / `SPLIT` / an empty `RFQ_OUT` with no scope panel.
+fn resolve_effective_lps(
+    config: &HedgeConfigDef,
+    ctx: &HedgeContext,
+    action: &ExitAction,
+    known_lps: &BTreeSet<String>,
+) -> Vec<String> {
+    if let Some(panel) = config.resolve_lp_panel(&ctx.desk, &ctx.book, &ctx.instrument_id) {
+        return panel
+            .effective_lps(known_lps)
+            .unwrap_or_else(|_| known_lps.iter().cloned().collect());
+    }
+    if let ExitAction::RfqOut { lps, .. } = action
+        && !lps.is_empty()
+    {
+        return lps.clone();
+    }
+    known_lps.iter().cloned().collect()
 }
 
 /// Map the pure [`WarehouseThreshold`](celnet_hedge_routing::WarehouseThreshold) metric back to the wire metric ordinal — only used
@@ -509,6 +558,14 @@ mod tests {
         }
     }
 
+    /// The known-LP registry the engine resolves the effective panel against.
+    fn known() -> BTreeSet<String> {
+        ["LP-1", "LP-2", "LP-3", "LP-4"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect()
+    }
+
     #[test]
     fn green_band_warehouses_with_no_provenance() {
         let e = AutoHedgeEngine::default();
@@ -521,6 +578,7 @@ mod tests {
             &thr(),
             &HedgeConfigDef::default(),
             &ctx(50_000.0, false, 0.0, "RATES"),
+            &known(),
             1,
         );
         assert_eq!(
@@ -544,6 +602,7 @@ mod tests {
             &thr(),
             &HedgeConfigDef::default(),
             &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
             42,
         );
         let prov = out.provenance.expect("an action stamps provenance");
@@ -569,6 +628,7 @@ mod tests {
             &thr(),
             &HedgeConfigDef::default(),
             &ctx(95_000.0, true, 6_000.0, "RATES"),
+            &known(),
             7,
         );
         let prov = out.provenance.unwrap();
@@ -592,7 +652,14 @@ mod tests {
             kill_switch: true,
             ..HedgeConfigDef::default()
         };
-        let out = e.evaluate(&g, &thr(), &cfg, &ctx(95_000.0, true, 0.0, "RATES"), 1);
+        let out = e.evaluate(
+            &g,
+            &thr(),
+            &cfg,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            1,
+        );
         assert_eq!(
             out.intent.action.unwrap().kind,
             ExitActionKind::ExitActionWarehouse as i32
@@ -612,15 +679,36 @@ mod tests {
             max_hedges_per_interval: 1,
             ..HedgeConfigDef::default()
         };
-        let first = e.evaluate(&g, &thr(), &cfg, &ctx(95_000.0, true, 0.0, "RATES"), 1);
+        let first = e.evaluate(
+            &g,
+            &thr(),
+            &cfg,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            1,
+        );
         assert!(!first.intent.advisory, "first live external fire");
         // Second fire trips the per-interval rate cap → downgraded to advisory.
-        let second = e.evaluate(&g, &thr(), &cfg, &ctx(95_000.0, true, 0.0, "RATES"), 2);
+        let second = e.evaluate(
+            &g,
+            &thr(),
+            &cfg,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            2,
+        );
         assert!(second.intent.advisory, "rate cap forces advisory");
         assert!(second.intent.reason.contains("rate cap"));
         // Rolling the interval re-enables a live fire.
         e.roll_rate_interval();
-        let third = e.evaluate(&g, &thr(), &cfg, &ctx(95_000.0, true, 0.0, "RATES"), 3);
+        let third = e.evaluate(
+            &g,
+            &thr(),
+            &cfg,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            3,
+        );
         assert!(
             !third.intent.advisory,
             "interval roll re-arms the live fire"
@@ -640,7 +728,14 @@ mod tests {
             ..HedgeConfigDef::default()
         };
         // Full flatten of 95k > 10k cap → advisory.
-        let out = e.evaluate(&g, &thr(), &cfg, &ctx(95_000.0, true, 0.0, "RATES"), 1);
+        let out = e.evaluate(
+            &g,
+            &thr(),
+            &cfg,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            1,
+        );
         assert!(out.intent.advisory);
         assert!(out.intent.reason.contains("daily external"));
     }
@@ -656,7 +751,14 @@ mod tests {
             max_clip: 5_000.0,
             ..HedgeConfigDef::default()
         };
-        let out = e.evaluate(&g, &thr(), &cfg, &ctx(95_000.0, true, 0.0, "RATES"), 1);
+        let out = e.evaluate(
+            &g,
+            &thr(),
+            &cfg,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            1,
+        );
         assert_eq!(out.intent.size, 5_000.0, "config max_clip caps the shed");
     }
 
@@ -673,9 +775,182 @@ mod tests {
                 &thr(),
                 &HedgeConfigDef::default(),
                 &ctx(95_000.0, true, 0.0, "RATES"),
+                &known(),
                 t,
             );
         }
         assert_eq!(e.provenance(None, None).len(), 2, "ring caps at capacity");
+    }
+
+    // --- hedging LP panel: include / exclude resolution on external actions -----
+
+    use crate::config::hedge_policy::{HedgeScopeKind, ScopedLpPanel};
+    use celnet_hedge_routing::HedgeLpPanel;
+
+    fn panel_cfg(
+        scope_kind: HedgeScopeKind,
+        id: &str,
+        include: &[&str],
+        exclude: &[&str],
+    ) -> HedgeConfigDef {
+        HedgeConfigDef {
+            lp_panels: vec![ScopedLpPanel {
+                scope_kind,
+                scope_id: id.into(),
+                panel: HedgeLpPanel {
+                    include: include.iter().map(|s| (*s).to_string()).collect(),
+                    exclude: exclude.iter().map(|s| (*s).to_string()).collect(),
+                },
+            }],
+            ..HedgeConfigDef::default()
+        }
+    }
+
+    #[test]
+    fn submit_market_order_defaults_to_full_known_panel() {
+        // No scope panel, no per-rule list → SUBMIT_MARKET_ORDER targets every known LP.
+        let e = AutoHedgeEngine::default();
+        let g = graph(ExitAction::SubmitMarketOrder {
+            size: HedgeSize::Overflow,
+            style: ExecStyle::Immediate,
+        });
+        let out = e.evaluate(
+            &g,
+            &thr(),
+            &HedgeConfigDef::default(),
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            1,
+        );
+        assert_eq!(out.intent.lps, vec!["LP-1", "LP-2", "LP-3", "LP-4"]);
+        assert_eq!(
+            out.provenance.unwrap().lps,
+            vec!["LP-1", "LP-2", "LP-3", "LP-4"]
+        );
+    }
+
+    #[test]
+    fn per_rule_rfq_include_list_is_honoured_without_a_scope_panel() {
+        // The shipped back-compat behaviour: RFQ_OUT's own include list wins when no
+        // scope panel is configured.
+        let e = AutoHedgeEngine::default();
+        let g = graph(ExitAction::RfqOut {
+            lps: vec!["LP-2".into(), "LP-3".into()],
+            size: HedgeSize::Overflow,
+        });
+        let out = e.evaluate(
+            &g,
+            &thr(),
+            &HedgeConfigDef::default(),
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            1,
+        );
+        assert_eq!(out.intent.lps, vec!["LP-2", "LP-3"]);
+    }
+
+    #[test]
+    fn scope_panel_exclude_removes_an_lp_for_both_external_actions() {
+        // A book-scoped exclude panel: hedge on all known LPs EXCEPT LP-2. It applies to
+        // SUBMIT_MARKET_ORDER (no per-rule list) AND overrides an RFQ per-rule list.
+        let cfg = panel_cfg(HedgeScopeKind::Book, "RATES-EUR", &[], &["LP-2"]);
+        let e = AutoHedgeEngine::default();
+
+        let smo = graph(ExitAction::SubmitMarketOrder {
+            size: HedgeSize::Overflow,
+            style: ExecStyle::Immediate,
+        });
+        let out = e.evaluate(
+            &smo,
+            &thr(),
+            &cfg,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            1,
+        );
+        assert_eq!(
+            out.intent.lps,
+            vec!["LP-1", "LP-3", "LP-4"],
+            "exclude drops LP-2"
+        );
+
+        // The standing scope panel supersedes the per-rule include list on RFQ_OUT.
+        let rfq = graph(ExitAction::RfqOut {
+            lps: vec!["LP-1".into(), "LP-2".into()],
+            size: HedgeSize::Overflow,
+        });
+        let out2 = e.evaluate(
+            &rfq,
+            &thr(),
+            &cfg,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            2,
+        );
+        assert_eq!(
+            out2.intent.lps,
+            vec!["LP-1", "LP-3", "LP-4"],
+            "panel wins over per-rule list"
+        );
+    }
+
+    #[test]
+    fn scope_panel_include_narrows_the_targeted_set() {
+        // An instrument-scoped include panel: hedge only on LP-4.
+        let cfg = panel_cfg(HedgeScopeKind::Instrument, "EURUSD", &["LP-4"], &[]);
+        let e = AutoHedgeEngine::default();
+        let g = graph(ExitAction::SubmitMarketOrder {
+            size: HedgeSize::Overflow,
+            style: ExecStyle::Immediate,
+        });
+        let out = e.evaluate(
+            &g,
+            &thr(),
+            &cfg,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            1,
+        );
+        assert_eq!(out.intent.lps, vec!["LP-4"]);
+    }
+
+    #[test]
+    fn internal_and_no_trade_actions_target_no_lps() {
+        let e = AutoHedgeEngine::default();
+        let g = graph(ExitAction::CrossInternal {
+            instrument: "EURUSD".into(),
+            max_size: HedgeSize::Overflow,
+        });
+        let out = e.evaluate(
+            &g,
+            &thr(),
+            &HedgeConfigDef::default(),
+            &ctx(95_000.0, true, 6_000.0, "RATES"),
+            &known(),
+            1,
+        );
+        assert!(out.intent.lps.is_empty(), "an internal cross targets no LP");
+        assert!(out.provenance.unwrap().lps.is_empty());
+    }
+
+    #[test]
+    fn stale_panel_id_degrades_to_full_known_set() {
+        // A panel naming an LP the registry no longer knows resolves safely to the full
+        // known set (never drops the hedge).
+        let cfg = panel_cfg(HedgeScopeKind::Book, "RATES-EUR", &["GHOST"], &[]);
+        let e = AutoHedgeEngine::default();
+        let g = graph(ExitAction::SubmitMarketOrder {
+            size: HedgeSize::Overflow,
+            style: ExecStyle::Immediate,
+        });
+        let out = e.evaluate(
+            &g,
+            &thr(),
+            &cfg,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            1,
+        );
+        assert_eq!(out.intent.lps, vec!["LP-1", "LP-2", "LP-3", "LP-4"]);
     }
 }

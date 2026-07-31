@@ -70,10 +70,10 @@ use celnet_proto::ExecStyleEnum;
 use celnet_proto::{
     ExitActionDesc, ExitActionKind, GetHedgeConfigResponse, GetHedgePolicyGraphResponse,
     HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle, HedgeFieldEnum, HedgeGraphDesc,
-    HedgeIntent, HedgeMetricEnum, HedgeNodeDesc, HedgeProvenance, HedgeScopeKindEnum,
-    HedgeSizeDesc, HedgeSizeKind, ListHedgeProvenanceResponse, ListHedgeThresholdsResponse,
-    SetHedgeConfigResponse, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdResponse,
-    WarehouseThresholdDesc, hedge_node_desc,
+    HedgeIntent, HedgeLpPanelDesc, HedgeMetricEnum, HedgeNodeDesc, HedgeProvenance,
+    HedgeScopeKindEnum, HedgeSizeDesc, HedgeSizeKind, ListHedgeProvenanceResponse,
+    ListHedgeThresholdsResponse, SetHedgeConfigResponse, UpdateHedgePolicyGraphResponse,
+    UpdateHedgeThresholdResponse, WarehouseThresholdDesc, hedge_node_desc,
 };
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
@@ -6511,6 +6511,8 @@ fn hedge_provenance_full() -> HedgeProvenance {
         slippage_bp: 0.9,
         lp_won: Some("LP-A".to_owned()),
         advisory: false,
+        // The effective LP set the RFQ hedge targeted (repeated string — populated edge).
+        lps: vec!["LP-A".to_owned(), "LP-B".to_owned()],
     }
 }
 
@@ -6541,6 +6543,8 @@ fn hedge_provenance_no_lp() -> HedgeProvenance {
         slippage_bp: 0.0,
         lp_won: None,
         advisory: true,
+        // Internal / no-trade fire → no LP targeted (empty repeated edge).
+        lps: Vec::new(),
     }
 }
 
@@ -6606,6 +6610,22 @@ fn hedge_config_full() -> HedgeConfigDesc {
         max_clip: 50_000_000.0,
         max_hedges_per_interval: 10,
         daily_external_notional_cap: 1_000_000_000.0,
+        // The standing hedging LP panels: a book-scoped include+exclude and a desk-scoped
+        // exclude-only (the repeated-nested-message edge, each with repeated-string fields).
+        lp_panels: vec![
+            HedgeLpPanelDesc {
+                scope_kind: HedgeScopeKindEnum::HedgeScopeBook as i32,
+                scope_id: "gm".to_owned(),
+                include: vec!["LP-A".to_owned(), "LP-B".to_owned()],
+                exclude: vec!["LP-C".to_owned()],
+            },
+            HedgeLpPanelDesc {
+                scope_kind: HedgeScopeKindEnum::HedgeScopeDesk as i32,
+                scope_id: "fi-desk".to_owned(),
+                include: vec![],
+                exclude: vec!["LP-D".to_owned()],
+            },
+        ],
     }
 }
 
@@ -6621,6 +6641,12 @@ fn hedge_config_body() -> Value {
         "max_clip": 50_000_000.0,
         "max_hedges_per_interval": 10,
         "daily_external_notional_cap": 1_000_000_000.0,
+        "lp_panels": [
+            { "scope_kind": HedgeScopeKindEnum::HedgeScopeBook as i32, "scope_id": "gm",
+              "include": ["LP-A", "LP-B"], "exclude": ["LP-C"] },
+            { "scope_kind": HedgeScopeKindEnum::HedgeScopeDesk as i32, "scope_id": "fi-desk",
+              "include": [], "exclude": ["LP-D"] },
+        ],
     })
 }
 
@@ -6715,6 +6741,8 @@ fn hedge_intent_encode_byte_identical() {
         fired_at: 1_700_000_000_000_000_000,
         policy_path: vec![0, 3],
         reason: "red band → internal cross".to_owned(),
+        // The effective LP set the intent would target (populated repeated-string edge).
+        lps: vec!["LP-1".to_owned(), "LP-2".to_owned()],
     };
     assert_bytes_eq(
         "HedgeIntent(populated)",

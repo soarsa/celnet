@@ -2010,9 +2010,51 @@ impl IdentityStore {
         &self.hedge_config
     }
 
-    /// Replace the auto-hedge engine config.
-    pub fn set_hedge_config(&mut self, config: HedgeConfigDef) {
+    /// Validate an engine config's **hedging LP panels** against the live known-LP
+    /// registry: every `include` / `exclude` id a panel names must be a known LP, and a
+    /// panel must not resolve to an empty effective set (all excluded). Delegates to the
+    /// pure [`HedgeLpPanel::effective_lps`](celnet_hedge_routing::HedgeLpPanel::effective_lps)
+    /// resolver (one source of truth), collecting every defect into one message.
+    ///
+    /// # Errors
+    /// Any panel naming an unknown LP, or resolving to no LPs.
+    pub fn check_hedge_lp_panels(&self, config: &HedgeConfigDef) -> Result<(), String> {
+        let lps = self.known_hedge_lps();
+        let mut msgs = Vec::new();
+        for scoped in &config.lp_panels {
+            if let Err(errs) = scoped.panel.effective_lps(&lps) {
+                let joined = errs
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                msgs.push(format!(
+                    "LP panel for {} {:?}: {joined}",
+                    scoped.scope_kind.label(),
+                    scoped.scope_id
+                ));
+            }
+        }
+        if msgs.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "hedge LP panel config is invalid: {}",
+                msgs.join("; ")
+            ))
+        }
+    }
+
+    /// Replace the auto-hedge engine config after validating its LP panels against the
+    /// live known-LP registry ([`check_hedge_lp_panels`](Self::check_hedge_lp_panels)).
+    /// On any defect the store is left unchanged.
+    ///
+    /// # Errors
+    /// A panel naming an unknown LP, or resolving to an empty effective set.
+    pub fn set_hedge_config(&mut self, config: HedgeConfigDef) -> Result<(), String> {
+        self.check_hedge_lp_panels(&config)?;
         self.hedge_config = config;
+        Ok(())
     }
 
     /// The risk books strictly **above** `id` in the parent tree, immediate parent first
@@ -3068,6 +3110,39 @@ mod tests {
         store
             .set_hedge_policy_graph(cross_known)
             .expect("a cross against a seeded instrument is valid");
+    }
+
+    #[test]
+    fn set_hedge_config_validates_lp_panels_against_known_lps() {
+        use crate::config::hedge_policy::{HedgeConfigDef, HedgeScopeKind, ScopedLpPanel};
+        use celnet_hedge_routing::HedgeLpPanel;
+
+        let mut store = IdentityStore::default();
+        // The default config (no panels) is always valid.
+        store
+            .set_hedge_config(HedgeConfigDef::default())
+            .expect("an empty-panel config is always valid");
+
+        // A panel naming an LP the (here empty) registry does not know is rejected at the
+        // write, collecting the unknown id into the message.
+        let bad = HedgeConfigDef {
+            lp_panels: vec![ScopedLpPanel {
+                scope_kind: HedgeScopeKind::Book,
+                scope_id: "RATES-EUR".into(),
+                panel: HedgeLpPanel {
+                    include: vec!["LP-1".into()],
+                    exclude: vec![],
+                },
+            }],
+            ..HedgeConfigDef::default()
+        };
+        let err = store.set_hedge_config(bad).unwrap_err();
+        assert!(
+            err.contains("hedge LP panel config is invalid") && err.contains("LP-1"),
+            "got: {err}"
+        );
+        // The store is left unchanged on rejection.
+        assert!(store.hedge_config().lp_panels.is_empty());
     }
 
     #[test]

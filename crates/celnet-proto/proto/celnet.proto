@@ -5168,6 +5168,10 @@ message HedgeProvenance {
   optional string lp_won = 18;
   // Whether this was an ADVISORY (dry-run) fire — computed but not traded.
   bool advisory = 19;
+  // The effective LP set the hedge TARGETED — the resolved include/exclude panel (or,
+  // when no scope panel is set, the per-rule RFQ include list / the full known panel).
+  // Empty for internal / no-trade actions. Answers "which LPs did we hedge on?".
+  repeated string lps = 20;
 }
 
 // The advisory shadow-run projection of one hedge decision — what the engine WOULD
@@ -5204,6 +5208,11 @@ message HedgeIntent {
   repeated uint32 policy_path = 14;
   // A short human rationale (band / action summary).
   string reason = 15;
+  // The effective LP set the hedge would TARGET — the resolved include/exclude panel
+  // (or the per-rule RFQ include list / full known panel when no scope panel is set).
+  // Empty for internal / no-trade actions. Lets a desk see which LPs an advisory hedge
+  // would fan to before it arms live.
+  repeated string lps = 16;
 }
 
 // One per-desk enable toggle in the engine config.
@@ -5212,6 +5221,25 @@ message HedgeDeskToggle {
   string desk = 1;
   // Whether auto-hedging is enabled for the desk (absent from the list ⇒ default on).
   bool enabled = 2;
+}
+
+// A standing hedging LP panel bound to a scope (mirrors
+// `crate::config::hedge_policy::ScopedLpPanel` + the pure `celnet_hedge_routing::HedgeLpPanel`).
+// The include/exclude liquidity-provider selection every external exit action inherits
+// for that desk / book / instrument; resolves most-specific-wins (instrument > book >
+// desk). An empty include starts from ALL known LPs; excludes are then subtracted. An
+// unrestricted (empty include AND exclude) panel is the "no restriction" default and is
+// not persisted. (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4/§6.2.)
+message HedgeLpPanelDesc {
+  // What the scope_id names (desk / book / instrument).
+  HedgeScopeKindEnum scope_kind = 1;
+  // The desk / book / instrument id this panel binds to.
+  string scope_id = 2;
+  // LPs to start from (empty ⇒ all known LPs). A non-empty include is the base set,
+  // in this order (the RFQ fan priority). Each must be a known, enabled LP.
+  repeated string include = 3;
+  // LPs to subtract from the base set (the exclude semantics). Each must be known.
+  repeated string exclude = 4;
 }
 
 // The auto-hedge engine's global controls (mirrors the server `HedgeConfig`).
@@ -5228,6 +5256,9 @@ message HedgeConfigDesc {
   uint32 max_hedges_per_interval = 5;
   // A daily externalised-notional cap (0 ⇒ unbounded).
   double daily_external_notional_cap = 6;
+  // The standing hedging LP panels — per-scope include/exclude LP selection every
+  // external exit action inherits (most-specific-wins). Empty ⇒ no restriction.
+  repeated HedgeLpPanelDesc lp_panels = 7;
 }
 
 // Read the firm-wide hedge policy graph (gated `hedge` × asset). Absent until defined.
