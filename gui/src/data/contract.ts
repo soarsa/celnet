@@ -2240,7 +2240,8 @@ export type CapabilityAction =
   | "risk_manage"
   | "manage_pricing"
   | "manage_liquidity"
-  | "view_analytics";
+  | "view_analytics"
+  | "hedge";
 
 /** The asset class a capability applies to (`celnet.wire.CapabilityDesc.asset`). */
 export type CapabilityAsset = "fx_options" | "fixed_income";
@@ -2271,6 +2272,7 @@ export const CAPABILITY_ACTIONS: readonly CapabilityAction[] = [
   "manage_pricing",
   "manage_liquidity",
   "view_analytics",
+  "hedge",
 ];
 
 /** Both asset classes in canonical order — the column axis of the matrix. */
@@ -3280,6 +3282,300 @@ export interface RiskRoutingGraph {
   entry: number;
   /** All nodes (id-carrying); the store rebuilds the id→node map from them. */
   nodes: RoutingNode[];
+}
+
+// --- Auto-hedging / risk internalisation (docs/AUTO-HEDGING-AND-INTERNALISATION- ---
+//    REQUIREMENTS.md) ---------------------------------------------------------
+//
+// The THIRD risk-lifecycle operation (after routing + transfer): manage WAREHOUSED
+// risk against a soft, banded threshold — internalise below the "100", hedge the
+// overflow above it — via a trader-composed EXIT-POLICY decision graph. Built on the
+// shipped risk-routing graph engine: a `HedgeGraph` reuses {@link RouteOp} /
+// {@link RouteValue} verbatim, differing only in that its leaves are EXIT ACTIONS
+// ({@link ExitAction}) rather than book targets, and it branches on a per-book
+// RISK-STATE ({@link HedgeField}) rather than a per-fill trade snapshot. Every type
+// mirrors its `celnet.proto` message field-for-field; the GUI hand-decodes the WS
+// JSON so {@link wsCodec} matches the server descriptor codec's snake_case names,
+// numeric enum tags and the `condition|action` node oneof. Authoring gates on the
+// narrow `hedge` capability × asset.
+
+/**
+ * Which risk-state attribute a hedge condition matches (mirrors the wire
+ * `HedgeFieldEnum` / `celnet_hedge_routing::HedgeField`, same ordinal order 0..17).
+ * `breached` is an ENUM field compared by `== "true"/"false"`; `instrument_id` is a
+ * free STRING; every other risk number is NUMERIC (its kind is pinned in
+ * `lib/hedgeFields.ts`, the mirror of `HedgeField::kind`).
+ */
+export type HedgeField =
+  | "instrument_id"
+  | "ccy"
+  | "product"
+  | "book"
+  | "desk"
+  | "net_dv01"
+  | "net_notional"
+  | "net_vega"
+  | "net_gamma"
+  | "inventory_sign"
+  | "threshold"
+  | "utilization"
+  | "overflow"
+  | "breached"
+  | "counterparty_toxicity"
+  | "inventory_age_secs"
+  | "internal_offset_available"
+  | "hedge_cost_bp";
+
+/**
+ * The execution schedule of an external hedge (mirrors the wire `ExecStyleEnum`,
+ * ordinals immediate=0 / worked=1): `immediate` = one clip / back-to-back;
+ * `worked` = an Almgren–Chriss-scheduled slice series.
+ */
+export type ExecStyle = "immediate" | "worked";
+
+/**
+ * The budget metric a warehouse threshold caps (mirrors `HedgeMetricEnum`,
+ * ordinals dv01=0 / net_notional=1 / net_delta=2 / net_vega=3).
+ */
+export type HedgeMetric = "dv01" | "net_notional" | "net_delta" | "net_vega";
+
+/**
+ * The scope a warehouse threshold binds to (most-specific-wins resolution
+ * instrument > book > desk; mirrors `HedgeScopeKindEnum`, ordinals desk=0 /
+ * book=1 / instrument=2).
+ */
+export type HedgeScopeKind = "desk" | "book" | "instrument";
+
+/**
+ * How much of a position an exit action targets (mirrors `HedgeSizeKind`,
+ * ordinals overflow=0 / full=1 / fixed=2): `overflow` hedges to the band edge,
+ * `full` flattens, `fixed` uses the explicit {@link HedgeSize.fixed} magnitude.
+ */
+export type HedgeSizeKind = "overflow" | "full" | "fixed";
+
+/** A sizing choice (mirrors `HedgeSizeDesc`): a kind + explicit magnitude for `fixed`. */
+export interface HedgeSize {
+  /** The sizing rule. */
+  kind: HedgeSizeKind;
+  /** The explicit magnitude — only read when `kind === "fixed"`. */
+  fixed: number;
+}
+
+/**
+ * The kind of exit-action leaf (mirrors `ExitActionKind`, ordinals warehouse=0 /
+ * cross_internal=1 / skew=2 / submit_market_order=3 / rfq_out=4 / split=5 /
+ * escalate=6).
+ */
+export type ExitActionKind =
+  | "warehouse"
+  | "cross_internal"
+  | "skew"
+  | "submit_market_order"
+  | "rfq_out"
+  | "split"
+  | "escalate";
+
+/**
+ * One exit action — a terminal leaf of a {@link HedgeGraph} (mirrors `ExitActionDesc`,
+ * a FLAT `kind` discriminant + the union of every arm's fields; only the fields
+ * relevant to `kind` are read). See docs §5.3.
+ */
+export interface ExitAction {
+  /** Which exit action this leaf fires. */
+  kind: ExitActionKind;
+  /** CROSS_INTERNAL: the aggregation instrument to cross against. */
+  instrument: string;
+  /** CROSS_INTERNAL / SUBMIT_MARKET_ORDER / RFQ_OUT: how much to shed. */
+  size: HedgeSize;
+  /** SKEW: an explicit skew in bp, or `null` to lean to the band edge (`toEdge`). */
+  skewBp: number | null;
+  /** SKEW: size the lean off the band-edge overflow rather than `skewBp`. */
+  toEdge: boolean;
+  /** SUBMIT_MARKET_ORDER / SPLIT: the execution schedule for the externalised leg. */
+  style: ExecStyle;
+  /** RFQ_OUT: the LPs to fan the request to. */
+  lps: string[];
+  /** SPLIT: net internally first (vs. externalise first). */
+  internalFirst: boolean;
+  /** ESCALATE: the rationale surfaced on the notification. */
+  reason: string;
+}
+
+/**
+ * A decision node body: evaluate `field op value` on the risk state; on `true`
+ * follow {@link onTrue}, else {@link onFalse} (mirrors `HedgeConditionDesc`;
+ * reuses {@link RouteOp} / {@link RouteValue} verbatim). `value` is `null` for a
+ * not-yet-set condition (server rejects on write).
+ */
+export interface HedgeCondition {
+  /** The risk-state field to test. */
+  field: HedgeField;
+  /** The comparison operator. */
+  op: RouteOp;
+  /** The literal compared against; `null` ⇒ unset. */
+  value: RouteValue | null;
+  /** Successor node id when the condition holds. */
+  onTrue: number;
+  /** Successor node id when the condition does not hold. */
+  onFalse: number;
+}
+
+/**
+ * One node in a {@link HedgeGraph}, keyed by its {@link id} (mirrors the wire
+ * `HedgeNodeDesc` oneof / `HedgeNode`). Either an internal `condition` test or a
+ * terminal `action` leaf carrying its {@link ExitAction}.
+ */
+export type HedgeNode =
+  | { kind: "condition"; id: number; condition: HedgeCondition }
+  | { kind: "action"; id: number; action: ExitAction };
+
+/**
+ * The firm-wide hedge-policy decision graph (mirrors `HedgeGraphDesc` /
+ * `celnet_hedge_routing::HedgeGraph`): the walk begins at {@link entry} and follows
+ * condition successors until an action leaf. Well-formedness is validated
+ * server-side on write against the aggregation instruments + LP registry.
+ */
+export interface HedgeGraph {
+  /** The node id at which every risk-state walk begins. */
+  entry: number;
+  /** All nodes (id-carrying); the store rebuilds the id→node map from them. */
+  nodes: HedgeNode[];
+}
+
+/**
+ * A soft, banded warehouse threshold for one scope — the configurable "100"
+ * (mirrors `WarehouseThresholdDesc` / `celnet_hedge_routing::WarehouseThreshold`).
+ */
+export interface WarehouseThreshold {
+  /** What the {@link scopeId} names (desk / book / instrument). */
+  scopeKind: HedgeScopeKind;
+  /** The scope identifier (a desk id / book id / instrument id). */
+  scopeId: string;
+  /** The budget metric. */
+  metric: HedgeMetric;
+  /** The budget magnitude — the "100", in the metric's native units. */
+  cap: number;
+  /** Amber utilisation fraction (start skewing) in [0, red]. */
+  amber: number;
+  /** Red utilisation fraction (start hedging the overflow) in [amber, 1]. */
+  red: number;
+  /** Band-edge target as a fraction of cap (default = amber): hedge the overflow to here. */
+  targetFraction: number;
+  /** Minimum hedge clip (fixed-cost / minimum-ticket floor). */
+  minClip: number;
+  /** Maximum single hedge clip; a larger overflow is worked. */
+  maxClip: number;
+  /** Whether to ramp the hedged fraction with utilisation (soft externalisation). */
+  ramped: boolean;
+  /** The ramp gain k in `hedge_fraction = clamp(k·(utilization − 1), 0, 1)`. */
+  rampK: number;
+}
+
+/**
+ * The immutable audit record stamped on every fired hedge (mirrors `HedgeProvenance`
+ * / the `RiskTransferProvenance` discipline). Surfaced on the hedge monitor.
+ */
+export interface HedgeProvenance {
+  /** Stable hedge id (audit key). */
+  hedgeId: string;
+  /** The book whose risk fired the hedge. */
+  book: string;
+  /** The instrument hedged. */
+  instrument: string;
+  /** When it fired (epoch millis, UTC). */
+  firedAt: number;
+  /** The budget metric that tripped. */
+  metric: HedgeMetric;
+  /** The resolved threshold ("100"). */
+  threshold: number;
+  /** The signed net risk at fire. */
+  netRisk: number;
+  /** `|netRisk| / threshold`. */
+  utilization: number;
+  /** The RAG band label at fire ("green"/"amber"/"red"/"breach"). */
+  band: string;
+  /** The exact graph path walked (the "why this action"). */
+  policyPath: number[];
+  /** The exit action fired, or `null` when absent. */
+  action: ExitAction | null;
+  /** Crossed against opposing internal flow (the Agg Book). */
+  internalCrossed: number;
+  /** Externalised onto the RFQ/FIX panel. */
+  externalHedged: number;
+  /** The unshed residual (warehoused / escalated). */
+  residual: number;
+  /** The realised hedge price (0 for a no-trade action). */
+  hedgePrice: number;
+  /** The consolidated mid at fire. */
+  midAtFire: number;
+  /** Realised slippage in bp versus the mid. */
+  slippageBp: number;
+  /** The winning external LP, or `null` for internal / no-trade. */
+  lpWon: string | null;
+  /** Whether this was an ADVISORY (dry-run) fire — computed but not traded. */
+  advisory: boolean;
+}
+
+/**
+ * The advisory shadow-run projection of one hedge decision — what the engine WOULD
+ * do (or did) for a (book × instrument) risk state on a `risk_version` bump
+ * (mirrors `HedgeIntent`).
+ */
+export interface HedgeIntent {
+  /** The book whose risk moved. */
+  book: string;
+  /** The instrument. */
+  instrument: string;
+  /** The resolved exit action, or `null` when absent. */
+  action: ExitAction | null;
+  /** The RAG band label ("green"/"amber"/"red"/"breach"). */
+  band: string;
+  /** The signed net risk. */
+  netRisk: number;
+  /** The resolved threshold. */
+  threshold: number;
+  /** `|netRisk| / threshold`. */
+  utilization: number;
+  /** The overflow beyond the band edge. */
+  overflow: number;
+  /** The sized hedge magnitude. */
+  size: number;
+  /** The internal-cross portion of the sized hedge. */
+  internalCrossed: number;
+  /** The external portion of the sized hedge. */
+  externalHedged: number;
+  /** Whether the policy is armed advisory-only (no live trading). */
+  advisory: boolean;
+  /** When resolved (epoch millis, UTC). */
+  firedAt: number;
+  /** The exact graph path walked. */
+  policyPath: number[];
+  /** A short human rationale (band / action summary). */
+  reason: string;
+}
+
+/** One per-desk enable toggle in the engine config (mirrors `HedgeDeskToggle`). */
+export interface HedgeDeskToggle {
+  /** The desk id. */
+  desk: string;
+  /** Whether auto-hedging is enabled for the desk. */
+  enabled: boolean;
+}
+
+/** The auto-hedge engine's global controls (mirrors `HedgeConfigDesc`). */
+export interface HedgeConfig {
+  /** Global kill-switch: when true, ALL auto-hedging halts (positions warehouse). */
+  killSwitch: boolean;
+  /** Advisory-only: compute + emit intents/provenance but never trade externally. */
+  advisoryOnly: boolean;
+  /** Per-desk enable overrides. */
+  deskEnabled: HedgeDeskToggle[];
+  /** A hard ceiling on any single hedge clip (native metric units). */
+  maxClip: number;
+  /** Max hedges fired per rate-limit interval (0 ⇒ unbounded). */
+  maxHedgesPerInterval: number;
+  /** A daily externalised-notional cap (0 ⇒ unbounded). */
+  dailyExternalNotionalCap: number;
 }
 
 /**

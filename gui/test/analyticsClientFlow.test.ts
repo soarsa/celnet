@@ -227,7 +227,7 @@ function authWith(caps: string[], isAdmin = false): NavAuth {
 describe("view_analytics capability model", () => {
   it("view_analytics is the 15th action, held back from the default trader bundle", () => {
     expect(CAPABILITY_ACTIONS).toContain("view_analytics");
-    expect(CAPABILITY_ACTIONS).toHaveLength(15);
+    expect(CAPABILITY_ACTIONS).toHaveLength(16);
     expect(TRADER_HELD_BACK_ACTIONS.has("view_analytics")).toBe(true);
   });
 

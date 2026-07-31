@@ -45,6 +45,7 @@ export const ACTION_LABELS: Record<CapabilityAction, string> = {
   manage_pricing: "Manage pricing",
   manage_liquidity: "Manage liquidity",
   view_analytics: "View analytics",
+  hedge: "Auto-hedge",
 };
 
 /**
@@ -64,6 +65,7 @@ export const TRADER_HELD_BACK_ACTIONS: ReadonlySet<CapabilityAction> =
     "manage_pricing",
     "manage_liquidity",
     "view_analytics",
+    "hedge",
   ]);
 
 /** Human-friendly asset-class labels for the matrix columns. */
@@ -222,6 +224,7 @@ const ACTION_PHRASE: Record<CapabilityAction, (asset: string) => string> = {
   manage_pricing: (a) => `managing ${a} pricing groups and session tiering`,
   manage_liquidity: (a) => `managing ${a} liquidity connections and aggregated books`,
   view_analytics: (a) => `viewing the ${a} client-flow analytics`,
+  hedge: (a) => `authoring ${a} auto-hedge policies, thresholds and the hedge monitor`,
 };
 
 /**

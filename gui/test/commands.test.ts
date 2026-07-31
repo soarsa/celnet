@@ -324,6 +324,7 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         "riskbooks",
         "riskdashboard",
         "riskrouting",
+        "hedging",
         "risktransfer",
         "transferinbox",
         "transferaudit",
@@ -462,6 +463,7 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
       "riskbooks",
       "riskdashboard",
       "riskrouting",
+      "hedging",
       "risk",
       "book",
     ]);

@@ -109,6 +109,11 @@ import type {
   RiskBook,
   RiskBookRisk,
   RiskRoutingGraph,
+  HedgeGraph,
+  WarehouseThreshold,
+  HedgeProvenance,
+  HedgeIntent,
+  HedgeConfig,
   RiskTransfer,
   InitiateRiskTransferInput,
   ListRiskTransfersFilter,
@@ -725,6 +730,49 @@ export interface CelnetTransport {
   subscribeRiskBookRisk?(
     onSnapshot: (books: RiskBookRisk[], version: number) => void,
   ): () => void;
+
+  // --- Auto-hedging / risk internalisation -----------------------------------
+  //
+  // The THIRD risk-lifecycle operation (docs/AUTO-HEDGING-AND-INTERNALISATION-
+  // REQUIREMENTS.md): manage WAREHOUSED risk against a soft banded threshold —
+  // internalise below the "100", hedge the overflow above — via a trader-composed
+  // EXIT-POLICY decision graph (reusing the routing graph engine, leaves = exit
+  // actions). Every RPC gates server-side on the narrow `hedge` capability × asset.
+
+  /** AuthService.GetHedgePolicyGraph (`hedge`) — the firm-wide exit policy, or `null` until first defined. */
+  getHedgePolicyGraph(): Promise<HedgeGraph | null>;
+
+  /** AuthService.UpdateHedgePolicyGraph (`hedge`) — replace the firm-wide policy; resolves to the committed graph. */
+  updateHedgePolicyGraph(graph: HedgeGraph): Promise<HedgeGraph>;
+
+  /** AuthService.ListHedgeThresholds (`hedge`) — the full warehouse-threshold roster. */
+  listHedgeThresholds(): Promise<WarehouseThreshold[]>;
+
+  /**
+   * AuthService.UpdateHedgeThreshold (`hedge`) — upsert one threshold by scope; a
+   * `cap` of 0 with a scope match deletes it. Resolves to the roster after the change.
+   */
+  updateHedgeThreshold(threshold: WarehouseThreshold): Promise<WarehouseThreshold[]>;
+
+  /**
+   * AuthService.ListHedgeProvenance (`hedge`) — the fired-hedge audit trail (newest
+   * first), optionally filtered by book / instrument.
+   */
+  listHedgeProvenance(book?: string, instrument?: string): Promise<HedgeProvenance[]>;
+
+  /** AuthService.GetHedgeConfig (`hedge`) — the engine controls (kill-switch, advisory, rate guards). */
+  getHedgeConfig(): Promise<HedgeConfig>;
+
+  /** AuthService.SetHedgeConfig (`hedge`) — replace the engine config; resolves to the committed config. */
+  setHedgeConfig(config: HedgeConfig): Promise<HedgeConfig>;
+
+  /**
+   * The live push of advisory hedge INTENTS (the shadow-run projection folded into
+   * the notification/stream infra). `onIntent` fires with each newly-resolved intent
+   * as risk crosses a threshold; the returned disposer unsubscribes. The offline mock
+   * synthesises a ticking stream so the monitor renders without a live server.
+   */
+  streamHedgeIntents(onIntent: (intent: HedgeIntent) => void): () => void;
 
   // --- FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md) ------------------
   //

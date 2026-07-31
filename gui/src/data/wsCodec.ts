@@ -109,6 +109,22 @@ import type {
   RouteCondition,
   RoutingNode,
   RiskRoutingGraph,
+  HedgeField,
+  HedgeMetric,
+  HedgeScopeKind,
+  HedgeSizeKind,
+  ExecStyle,
+  ExitActionKind,
+  HedgeSize,
+  ExitAction,
+  HedgeCondition,
+  HedgeNode,
+  HedgeGraph,
+  WarehouseThreshold,
+  HedgeProvenance,
+  HedgeIntent,
+  HedgeDeskToggle,
+  HedgeConfig,
   ClientFlowMetrics,
   FlowGroupBy,
   FlowWindow,
@@ -4076,6 +4092,471 @@ export function riskRoutingGraphToWire(g: RiskRoutingGraph): WireObject {
 /** Decode a `RiskRoutingGraphDesc` (`entry` + node list). */
 export function riskRoutingGraphFromWire(o: WireObject): RiskRoutingGraph {
   return { entry: num(o, "entry"), nodes: array(o, "nodes").map(routingNodeFromWire) };
+}
+
+// --- Auto-hedge / risk internalisation (docs/AUTO-HEDGING …) ------------------
+//
+// Byte-compatible with the server's descriptor-driven WS codec
+// (`crates/celnet-server/src/ws/generated_codec.rs` hedge adapters): the exact
+// snake_case field names, NUMERIC enum i32 tags (`field`/`op`/`kind`/`metric`/
+// `scope_kind`/`style`), the `HedgeNodeDesc.node` oneof carried as a `condition` OR
+// `action` sub-object beside `id`, the reused `RouteValueDesc` value oneof, and the
+// null/omit policy for absent presence-tracked fields (`size`/`value`/`action`
+// singular messages render as JSON `null`; proto3-`optional` `skew_bp`/`lp_won` are
+// OMITTED when absent). Enum ordinals verified vs the proto (`HedgeFieldEnum` 0..17,
+// `ExecStyleEnum` 0..1, `HedgeMetricEnum` 0..3, `HedgeScopeKindEnum` 0..2,
+// `HedgeSizeKind` 0..2, `ExitActionKind` 0..6); `RouteOpEnum` is reused via
+// {@link routeOpToWire}/{@link routeOpFromWire}.
+
+const HEDGE_FIELD_WIRE: Record<HedgeField, number> = {
+  instrument_id: 0,
+  ccy: 1,
+  product: 2,
+  book: 3,
+  desk: 4,
+  net_dv01: 5,
+  net_notional: 6,
+  net_vega: 7,
+  net_gamma: 8,
+  inventory_sign: 9,
+  threshold: 10,
+  utilization: 11,
+  overflow: 12,
+  breached: 13,
+  counterparty_toxicity: 14,
+  inventory_age_secs: 15,
+  internal_offset_available: 16,
+  hedge_cost_bp: 17,
+};
+const HEDGE_FIELD_FROM: readonly HedgeField[] = [
+  "instrument_id",
+  "ccy",
+  "product",
+  "book",
+  "desk",
+  "net_dv01",
+  "net_notional",
+  "net_vega",
+  "net_gamma",
+  "inventory_sign",
+  "threshold",
+  "utilization",
+  "overflow",
+  "breached",
+  "counterparty_toxicity",
+  "inventory_age_secs",
+  "internal_offset_available",
+  "hedge_cost_bp",
+];
+/** The wire `HedgeFieldEnum` i32 tag for a GUI hedge field. */
+export function hedgeFieldToWire(f: HedgeField): number {
+  return HEDGE_FIELD_WIRE[f];
+}
+/** A GUI hedge field from the wire i32 tag (out of range ⇒ the proto3 zero). */
+export function hedgeFieldFromWire(n: number): HedgeField {
+  return HEDGE_FIELD_FROM[n] ?? "instrument_id";
+}
+
+const EXEC_STYLE_WIRE: Record<ExecStyle, number> = { immediate: 0, worked: 1 };
+const EXEC_STYLE_FROM: readonly ExecStyle[] = ["immediate", "worked"];
+/** The wire `ExecStyleEnum` i32 tag. */
+export function execStyleToWire(s: ExecStyle): number {
+  return EXEC_STYLE_WIRE[s];
+}
+/** A GUI exec style from the wire i32 tag. */
+export function execStyleFromWire(n: number): ExecStyle {
+  return EXEC_STYLE_FROM[n] ?? "immediate";
+}
+
+const HEDGE_METRIC_WIRE: Record<HedgeMetric, number> = {
+  dv01: 0,
+  net_notional: 1,
+  net_delta: 2,
+  net_vega: 3,
+};
+const HEDGE_METRIC_FROM: readonly HedgeMetric[] = ["dv01", "net_notional", "net_delta", "net_vega"];
+/** The wire `HedgeMetricEnum` i32 tag. */
+export function hedgeMetricToWire(m: HedgeMetric): number {
+  return HEDGE_METRIC_WIRE[m];
+}
+/** A GUI hedge metric from the wire i32 tag. */
+export function hedgeMetricFromWire(n: number): HedgeMetric {
+  return HEDGE_METRIC_FROM[n] ?? "dv01";
+}
+
+const HEDGE_SCOPE_WIRE: Record<HedgeScopeKind, number> = { desk: 0, book: 1, instrument: 2 };
+const HEDGE_SCOPE_FROM: readonly HedgeScopeKind[] = ["desk", "book", "instrument"];
+/** The wire `HedgeScopeKindEnum` i32 tag. */
+export function hedgeScopeToWire(s: HedgeScopeKind): number {
+  return HEDGE_SCOPE_WIRE[s];
+}
+/** A GUI hedge scope kind from the wire i32 tag. */
+export function hedgeScopeFromWire(n: number): HedgeScopeKind {
+  return HEDGE_SCOPE_FROM[n] ?? "desk";
+}
+
+const HEDGE_SIZE_WIRE: Record<HedgeSizeKind, number> = { overflow: 0, full: 1, fixed: 2 };
+const HEDGE_SIZE_FROM: readonly HedgeSizeKind[] = ["overflow", "full", "fixed"];
+/** The wire `HedgeSizeKind` i32 tag. */
+export function hedgeSizeKindToWire(k: HedgeSizeKind): number {
+  return HEDGE_SIZE_WIRE[k];
+}
+/** A GUI hedge size kind from the wire i32 tag. */
+export function hedgeSizeKindFromWire(n: number): HedgeSizeKind {
+  return HEDGE_SIZE_FROM[n] ?? "overflow";
+}
+
+const EXIT_ACTION_WIRE: Record<ExitActionKind, number> = {
+  warehouse: 0,
+  cross_internal: 1,
+  skew: 2,
+  submit_market_order: 3,
+  rfq_out: 4,
+  split: 5,
+  escalate: 6,
+};
+const EXIT_ACTION_FROM: readonly ExitActionKind[] = [
+  "warehouse",
+  "cross_internal",
+  "skew",
+  "submit_market_order",
+  "rfq_out",
+  "split",
+  "escalate",
+];
+/** The wire `ExitActionKind` i32 tag. */
+export function exitActionKindToWire(k: ExitActionKind): number {
+  return EXIT_ACTION_WIRE[k];
+}
+/** A GUI exit-action kind from the wire i32 tag. */
+export function exitActionKindFromWire(n: number): ExitActionKind {
+  return EXIT_ACTION_FROM[n] ?? "warehouse";
+}
+
+/** A presence-tracked boolean (absent ⇒ false, matching proto3). */
+function boolOf(o: WireObject, key: string): boolean {
+  return o[key] === true;
+}
+
+/** An array of wire integers (u32 `policy_path`), absent ⇒ []. */
+function numArrayOf(o: WireObject, key: string): number[] {
+  const v = o[key];
+  return Array.isArray(v) ? (v as unknown[]).filter((x): x is number => typeof x === "number") : [];
+}
+
+/** Encode a hedge sizing choice (`kind` i32 tag + `fixed` magnitude). */
+export function hedgeSizeToWire(s: HedgeSize): WireObject {
+  return { kind: hedgeSizeKindToWire(s.kind), fixed: s.fixed };
+}
+/** Decode a hedge sizing choice. */
+export function hedgeSizeFromWire(o: WireObject): HedgeSize {
+  return { kind: hedgeSizeKindFromWire(enumNum(o, "kind")), fixed: num(o, "fixed") };
+}
+
+/**
+ * Encode an exit action FLAT (mirrors `ExitActionDesc`): `kind` i32 tag, the always-
+ * present `size` sub-message, the proto3-`optional` `skew_bp` emitted only when set,
+ * and the remaining scalar/enum/repeated fields.
+ */
+export function exitActionToWire(a: ExitAction): WireObject {
+  const m: WireObject = {
+    kind: exitActionKindToWire(a.kind),
+    instrument: a.instrument,
+    size: hedgeSizeToWire(a.size),
+    to_edge: a.toEdge,
+    style: execStyleToWire(a.style),
+    lps: [...a.lps],
+    internal_first: a.internalFirst,
+    reason: a.reason,
+  };
+  if (a.skewBp !== null) m["skew_bp"] = a.skewBp;
+  return m;
+}
+/** Decode an exit action (absent `skew_bp` ⇒ `null`; absent `size` ⇒ default overflow). */
+export function exitActionFromWire(o: WireObject): ExitAction {
+  const rawSize = o["size"];
+  return {
+    kind: exitActionKindFromWire(enumNum(o, "kind")),
+    instrument: str(o, "instrument"),
+    size:
+      rawSize && typeof rawSize === "object"
+        ? hedgeSizeFromWire(rawSize as WireObject)
+        : { kind: "overflow", fixed: 0 },
+    skewBp: optNumberOrNull(o, "skew_bp"),
+    toEdge: boolOf(o, "to_edge"),
+    style: execStyleFromWire(enumNum(o, "style")),
+    lps: strArrayOf(o, "lps"),
+    internalFirst: boolOf(o, "internal_first"),
+    reason: str(o, "reason"),
+  };
+}
+
+/** Encode a hedge condition (enums ride as i32 tags; `value` null when unset). */
+export function hedgeConditionToWire(c: HedgeCondition): WireObject {
+  return {
+    field: hedgeFieldToWire(c.field),
+    op: routeOpToWire(c.op),
+    value: c.value !== null ? routeValueToWire(c.value) : null,
+    on_true: c.onTrue,
+    on_false: c.onFalse,
+  };
+}
+/** Decode a hedge condition (absent / null `value` ⇒ `null`). */
+export function hedgeConditionFromWire(o: WireObject): HedgeCondition {
+  const rawValue = o["value"];
+  return {
+    field: hedgeFieldFromWire(enumNum(o, "field")),
+    op: routeOpFromWire(enumNum(o, "op")),
+    value:
+      rawValue && typeof rawValue === "object" ? routeValueFromWire(rawValue as WireObject) : null,
+    onTrue: num(o, "on_true"),
+    onFalse: num(o, "on_false"),
+  };
+}
+
+/** Encode a hedge node: its `id` plus exactly the live `node` oneof arm. */
+export function hedgeNodeToWire(n: HedgeNode): WireObject {
+  const m: WireObject = { id: n.id };
+  if (n.kind === "condition") m["condition"] = hedgeConditionToWire(n.condition);
+  else m["action"] = exitActionToWire(n.action);
+  return m;
+}
+/** Decode a hedge node (a `condition` sub-object ⇒ internal; else an `action` leaf). */
+export function hedgeNodeFromWire(o: WireObject): HedgeNode {
+  const id = num(o, "id");
+  const rawCondition = o["condition"];
+  if (rawCondition && typeof rawCondition === "object") {
+    return { kind: "condition", id, condition: hedgeConditionFromWire(rawCondition as WireObject) };
+  }
+  return { kind: "action", id, action: exitActionFromWire(child(o, "action")) };
+}
+
+/** Encode the hedge policy graph (`entry` + the id-carrying node array). */
+export function hedgeGraphToWire(g: HedgeGraph): WireObject {
+  return { entry: g.entry, nodes: g.nodes.map(hedgeNodeToWire) };
+}
+/** Decode a `HedgeGraphDesc` (`entry` + node list). */
+export function hedgeGraphFromWire(o: WireObject): HedgeGraph {
+  return { entry: num(o, "entry"), nodes: array(o, "nodes").map(hedgeNodeFromWire) };
+}
+
+/** Encode a warehouse threshold (all scalars + scope/metric enum tags). */
+export function warehouseThresholdToWire(t: WarehouseThreshold): WireObject {
+  return {
+    scope_kind: hedgeScopeToWire(t.scopeKind),
+    scope_id: t.scopeId,
+    metric: hedgeMetricToWire(t.metric),
+    cap: t.cap,
+    amber: t.amber,
+    red: t.red,
+    target_fraction: t.targetFraction,
+    min_clip: t.minClip,
+    max_clip: t.maxClip,
+    ramped: t.ramped,
+    ramp_k: t.rampK,
+  };
+}
+/** Decode a `WarehouseThresholdDesc`. */
+export function warehouseThresholdFromWire(o: WireObject): WarehouseThreshold {
+  return {
+    scopeKind: hedgeScopeFromWire(enumNum(o, "scope_kind")),
+    scopeId: str(o, "scope_id"),
+    metric: hedgeMetricFromWire(enumNum(o, "metric")),
+    cap: num(o, "cap"),
+    amber: num(o, "amber"),
+    red: num(o, "red"),
+    targetFraction: num(o, "target_fraction"),
+    minClip: num(o, "min_clip"),
+    maxClip: num(o, "max_clip"),
+    ramped: boolOf(o, "ramped"),
+    rampK: num(o, "ramp_k"),
+  };
+}
+
+/** Encode a fired-hedge provenance record (absent `action` ⇒ null; absent `lp_won` ⇒ omitted). */
+export function hedgeProvenanceToWire(p: HedgeProvenance): WireObject {
+  const m: WireObject = {
+    hedge_id: p.hedgeId,
+    book: p.book,
+    instrument: p.instrument,
+    fired_at: p.firedAt,
+    metric: hedgeMetricToWire(p.metric),
+    threshold: p.threshold,
+    net_risk: p.netRisk,
+    utilization: p.utilization,
+    band: p.band,
+    policy_path: [...p.policyPath],
+    action: p.action !== null ? exitActionToWire(p.action) : null,
+    internal_crossed: p.internalCrossed,
+    external_hedged: p.externalHedged,
+    residual: p.residual,
+    hedge_price: p.hedgePrice,
+    mid_at_fire: p.midAtFire,
+    slippage_bp: p.slippageBp,
+    advisory: p.advisory,
+  };
+  if (p.lpWon !== null) m["lp_won"] = p.lpWon;
+  return m;
+}
+/** Decode a `HedgeProvenance`. */
+export function hedgeProvenanceFromWire(o: WireObject): HedgeProvenance {
+  const rawAction = o["action"];
+  const rawLp = o["lp_won"];
+  return {
+    hedgeId: str(o, "hedge_id"),
+    book: str(o, "book"),
+    instrument: str(o, "instrument"),
+    firedAt: num(o, "fired_at"),
+    metric: hedgeMetricFromWire(enumNum(o, "metric")),
+    threshold: num(o, "threshold"),
+    netRisk: num(o, "net_risk"),
+    utilization: num(o, "utilization"),
+    band: str(o, "band"),
+    policyPath: numArrayOf(o, "policy_path"),
+    action:
+      rawAction && typeof rawAction === "object" ? exitActionFromWire(rawAction as WireObject) : null,
+    internalCrossed: num(o, "internal_crossed"),
+    externalHedged: num(o, "external_hedged"),
+    residual: num(o, "residual"),
+    hedgePrice: num(o, "hedge_price"),
+    midAtFire: num(o, "mid_at_fire"),
+    slippageBp: num(o, "slippage_bp"),
+    lpWon: typeof rawLp === "string" ? rawLp : null,
+    advisory: boolOf(o, "advisory"),
+  };
+}
+
+/** Encode a hedge intent (advisory shadow-run projection; absent `action` ⇒ null). */
+export function hedgeIntentToWire(i: HedgeIntent): WireObject {
+  return {
+    book: i.book,
+    instrument: i.instrument,
+    action: i.action !== null ? exitActionToWire(i.action) : null,
+    band: i.band,
+    net_risk: i.netRisk,
+    threshold: i.threshold,
+    utilization: i.utilization,
+    overflow: i.overflow,
+    size: i.size,
+    internal_crossed: i.internalCrossed,
+    external_hedged: i.externalHedged,
+    advisory: i.advisory,
+    fired_at: i.firedAt,
+    policy_path: [...i.policyPath],
+    reason: i.reason,
+  };
+}
+/** Decode a `HedgeIntent`. */
+export function hedgeIntentFromWire(o: WireObject): HedgeIntent {
+  const rawAction = o["action"];
+  return {
+    book: str(o, "book"),
+    instrument: str(o, "instrument"),
+    action:
+      rawAction && typeof rawAction === "object" ? exitActionFromWire(rawAction as WireObject) : null,
+    band: str(o, "band"),
+    netRisk: num(o, "net_risk"),
+    threshold: num(o, "threshold"),
+    utilization: num(o, "utilization"),
+    overflow: num(o, "overflow"),
+    size: num(o, "size"),
+    internalCrossed: num(o, "internal_crossed"),
+    externalHedged: num(o, "external_hedged"),
+    advisory: boolOf(o, "advisory"),
+    firedAt: num(o, "fired_at"),
+    policyPath: numArrayOf(o, "policy_path"),
+    reason: str(o, "reason"),
+  };
+}
+
+/** Encode a per-desk enable toggle. */
+export function hedgeDeskToggleToWire(d: HedgeDeskToggle): WireObject {
+  return { desk: d.desk, enabled: d.enabled };
+}
+/** Decode a `HedgeDeskToggle`. */
+export function hedgeDeskToggleFromWire(o: WireObject): HedgeDeskToggle {
+  return { desk: str(o, "desk"), enabled: boolOf(o, "enabled") };
+}
+
+/** Encode the auto-hedge engine config (`desk_enabled` array + rate guards). */
+export function hedgeConfigToWire(c: HedgeConfig): WireObject {
+  return {
+    kill_switch: c.killSwitch,
+    advisory_only: c.advisoryOnly,
+    desk_enabled: c.deskEnabled.map(hedgeDeskToggleToWire),
+    max_clip: c.maxClip,
+    max_hedges_per_interval: c.maxHedgesPerInterval,
+    daily_external_notional_cap: c.dailyExternalNotionalCap,
+  };
+}
+/** Decode a `HedgeConfigDesc`. */
+export function hedgeConfigFromWire(o: WireObject): HedgeConfig {
+  return {
+    killSwitch: boolOf(o, "kill_switch"),
+    advisoryOnly: boolOf(o, "advisory_only"),
+    deskEnabled: array(o, "desk_enabled").map(hedgeDeskToggleFromWire),
+    maxClip: num(o, "max_clip"),
+    maxHedgesPerInterval: num(o, "max_hedges_per_interval"),
+    dailyExternalNotionalCap: num(o, "daily_external_notional_cap"),
+  };
+}
+
+// --- hedge request framing + response decoders (the 7 hedge RPCs) ------------
+
+/** `get_hedge_policy_graph` request body (session/correlation added by the framing). */
+export function getHedgePolicyGraphRequestToWire(): WireObject {
+  return {};
+}
+/** Decode `{ graph: {...} | null }` — the policy is absent until first defined. */
+export function hedgePolicyGraphResponseFromWire(o: WireObject): HedgeGraph | null {
+  const raw = o["graph"];
+  return raw && typeof raw === "object" ? hedgeGraphFromWire(raw as WireObject) : null;
+}
+/** `update_hedge_policy_graph` request body. */
+export function updateHedgePolicyGraphRequestToWire(graph: HedgeGraph): WireObject {
+  return { graph: hedgeGraphToWire(graph) };
+}
+/** Decode `{ graph: {...} }` from the update reply (always present). */
+export function updateHedgePolicyGraphResponseFromWire(o: WireObject): HedgeGraph {
+  return hedgeGraphFromWire(child(o, "graph"));
+}
+
+/** `list_hedge_thresholds` request body. */
+export function listHedgeThresholdsRequestToWire(): WireObject {
+  return {};
+}
+/** Decode `{ thresholds: [...] }`. */
+export function hedgeThresholdsResponseFromWire(o: WireObject): WarehouseThreshold[] {
+  return array(o, "thresholds").map(warehouseThresholdFromWire);
+}
+/** `update_hedge_threshold` request body. */
+export function updateHedgeThresholdRequestToWire(threshold: WarehouseThreshold): WireObject {
+  return { threshold: warehouseThresholdToWire(threshold) };
+}
+
+/** `list_hedge_provenance` request body (optional book / instrument filters). */
+export function listHedgeProvenanceRequestToWire(book?: string, instrument?: string): WireObject {
+  const m: WireObject = {};
+  if (book !== undefined && book.length > 0) m["book"] = book;
+  if (instrument !== undefined && instrument.length > 0) m["instrument"] = instrument;
+  return m;
+}
+/** Decode `{ records: [...] }` (newest first). */
+export function hedgeProvenanceResponseFromWire(o: WireObject): HedgeProvenance[] {
+  return array(o, "records").map(hedgeProvenanceFromWire);
+}
+
+/** `get_hedge_config` / `set_hedge_config` share the `{ config: {...} }` reply. */
+export function getHedgeConfigRequestToWire(): WireObject {
+  return {};
+}
+/** Decode `{ config: {...} }`. */
+export function hedgeConfigResponseFromWire(o: WireObject): HedgeConfig {
+  return hedgeConfigFromWire(child(o, "config"));
+}
+/** `set_hedge_config` request body. */
+export function setHedgeConfigRequestToWire(config: HedgeConfig): WireObject {
+  return { config: hedgeConfigToWire(config) };
 }
 
 /** Decode one risk-book limit-utilization row (band rides as its i32 tag). */

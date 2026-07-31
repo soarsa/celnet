@@ -15,9 +15,20 @@
  * TYPED value editor and the validator reject a graph the server would reject.
  */
 import type { RouteField, RouteOp } from "../data/contract";
+import {
+  ENUM_LIKE_OPS,
+  NUMERIC_OPS,
+  STRING_OPS,
+  type FieldKind,
+  opGlyph,
+  opLabel,
+} from "./routeOps";
 
-/** The value shape of a field — pins which operators and value editor apply. */
-export type FieldKind = "enum" | "numeric" | "string";
+// Re-exported so existing importers (`RuleEditor`, `riskRules`, `routeTrace`, …)
+// keep sourcing these from `routeFields` while the definitions live in the shared
+// `routeOps` primitive (also consumed by `hedgeFields`).
+export { opGlyph, opLabel };
+export type { FieldKind };
 
 /** Which live roster fills an enum field's value dropdown (or a static list). */
 export type EnumSource = "side" | "product" | "ccy" | "desk" | "counterparty";
@@ -43,12 +54,10 @@ export interface FieldSpec {
   hint: string;
 }
 
-/** Numeric fields accept ordering + equality + range (no substring / membership-by-list). */
-const NUMERIC_OPS: RouteOp[] = ["eq", "ne", "gt", "ge", "lt", "le", "between"];
-/** Free strings accept equality + substring + list membership (no ordering). */
-const STRING_OPS: RouteOp[] = ["eq", "ne", "contains", "in"];
-/** Enums accept equality + list membership only (no substring — an enum has no infix). */
-const ENUM_OPS: RouteOp[] = ["eq", "ne", "in"];
+// The per-kind legal-operator lists (`NUMERIC_OPS` / `STRING_OPS` / `ENUM_LIKE_OPS`)
+// now live in the shared `routeOps` primitive; `ENUM_OPS` is the local alias kept so
+// the registry rows below read unchanged.
+const ENUM_OPS = ENUM_LIKE_OPS;
 
 /**
  * The full field registry, in palette-render order. Grouped Instrument → Trade →
@@ -208,50 +217,5 @@ export const CCY_VALUES: readonly string[] = [
   "USDJPY",
 ];
 
-/** Human label for an operator (the editor dropdown + edge affordances share it). */
-export function opLabel(op: RouteOp): string {
-  switch (op) {
-    case "eq":
-      return "equals";
-    case "ne":
-      return "not equal";
-    case "gt":
-      return "greater than";
-    case "ge":
-      return "≥";
-    case "lt":
-      return "less than";
-    case "le":
-      return "≤";
-    case "contains":
-      return "contains";
-    case "in":
-      return "in list";
-    case "between":
-      return "between";
-  }
-}
-
-/** A compact operator glyph for the node card (kept legible at small sizes). */
-export function opGlyph(op: RouteOp): string {
-  switch (op) {
-    case "eq":
-      return "=";
-    case "ne":
-      return "≠";
-    case "gt":
-      return ">";
-    case "ge":
-      return "≥";
-    case "lt":
-      return "<";
-    case "le":
-      return "≤";
-    case "contains":
-      return "⊃";
-    case "in":
-      return "∈";
-    case "between":
-      return "⇔";
-  }
-}
+// `opLabel` / `opGlyph` are defined in the shared `routeOps` primitive and
+// re-exported from the import block at the top of this file.

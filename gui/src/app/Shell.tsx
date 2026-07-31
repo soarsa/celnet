@@ -31,6 +31,7 @@ import { TieringWorkspace } from "../workspaces/TieringWorkspace";
 import { RiskBooksWorkspace } from "../workspaces/RiskBooksWorkspace";
 import { RiskDashboardWorkspace } from "../workspaces/RiskDashboardWorkspace";
 import { RiskRoutingWorkspace } from "../workspaces/riskrouting/RiskRoutingWorkspace";
+import { HedgingWorkspace } from "../workspaces/hedging/HedgingWorkspace";
 import { RiskTransferWorkspace } from "../workspaces/risktransfer/RiskTransferWorkspace";
 import { RiskTransferInboxWorkspace } from "../workspaces/risktransfer/RiskTransferInboxWorkspace";
 import { RiskTransferAuditWorkspace } from "../workspaces/risktransfer/RiskTransferAuditWorkspace";
@@ -117,6 +118,12 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // firm-wide rules that route each fill's risk into a desk book (typed condition
   // nodes → book leaves), with a live "trace a sample fill". Admin edit. FI-only.
   riskrouting: RiskRoutingWorkspace,
+  // Auto-Hedging (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md): the
+  // trader-composed EXIT-POLICY graph (reusing the risk-routing drag-and-drop
+  // editor with ExitAction leaves), the warehouse-threshold config, and the live
+  // hedge monitor (advisory intents + provenance + per-book band RAG). Rail-gated
+  // on the narrow `hedge` capability × FI. FI-only.
+  hedging: HedgingWorkspace,
   // Risk Transfer (docs/RISK-TRANSFER-REQUIREMENTS.md §9): the MANUAL move of
   // existing risk — the complement to routing. Ticket (initiate) + Inbox (accept /
   // reject four-eyes counterparty) + Audit (immutable provenance blotter). FI-only;

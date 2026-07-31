@@ -88,6 +88,7 @@ export type WorkspaceId =
   | "riskbooks"
   | "riskdashboard"
   | "riskrouting"
+  | "hedging"
   | "risktransfer"
   | "transferinbox"
   | "transferaudit"

@@ -47,6 +47,11 @@ import type {
   RiskBook,
   RiskBookRisk,
   RiskRoutingGraph,
+  HedgeGraph,
+  WarehouseThreshold,
+  HedgeProvenance,
+  HedgeIntent,
+  HedgeConfig,
   RiskTransfer,
   InitiateRiskTransferInput,
   ListRiskTransfersFilter,
@@ -248,6 +253,18 @@ import {
   updateRiskRoutingGraphResponseFromWire,
   listRiskBookRiskRequestToWire,
   riskBookRiskResponseFromWire,
+  getHedgePolicyGraphRequestToWire,
+  hedgePolicyGraphResponseFromWire,
+  updateHedgePolicyGraphRequestToWire,
+  updateHedgePolicyGraphResponseFromWire,
+  listHedgeThresholdsRequestToWire,
+  hedgeThresholdsResponseFromWire,
+  updateHedgeThresholdRequestToWire,
+  listHedgeProvenanceRequestToWire,
+  hedgeProvenanceResponseFromWire,
+  getHedgeConfigRequestToWire,
+  hedgeConfigResponseFromWire,
+  setHedgeConfigRequestToWire,
   initiateRiskTransferRequestToWire,
   acceptRiskTransferRequestToWire,
   rejectRiskTransferRequestToWire,
@@ -2127,6 +2144,81 @@ export class WsTransport implements CelnetTransport {
       session.close();
       subId = null;
     };
+  }
+
+  // --- Auto-hedging / risk internalisation -----------------------------------
+
+  async getHedgePolicyGraph(): Promise<HedgeGraph | null> {
+    const reply = await this.conn.request(
+      "get_hedge_policy_graph",
+      getHedgePolicyGraphRequestToWire(),
+      "hedge_policy_graph",
+    );
+    return hedgePolicyGraphResponseFromWire(reply);
+  }
+
+  async updateHedgePolicyGraph(graph: HedgeGraph): Promise<HedgeGraph> {
+    const reply = await this.conn.request(
+      "update_hedge_policy_graph",
+      updateHedgePolicyGraphRequestToWire(graph),
+      "hedge_policy_graph_updated",
+    );
+    return updateHedgePolicyGraphResponseFromWire(reply);
+  }
+
+  async listHedgeThresholds(): Promise<WarehouseThreshold[]> {
+    const reply = await this.conn.request(
+      "list_hedge_thresholds",
+      listHedgeThresholdsRequestToWire(),
+      "hedge_thresholds",
+    );
+    return hedgeThresholdsResponseFromWire(reply);
+  }
+
+  async updateHedgeThreshold(threshold: WarehouseThreshold): Promise<WarehouseThreshold[]> {
+    const reply = await this.conn.request(
+      "update_hedge_threshold",
+      updateHedgeThresholdRequestToWire(threshold),
+      "hedge_threshold_updated",
+    );
+    return hedgeThresholdsResponseFromWire(reply);
+  }
+
+  async listHedgeProvenance(book?: string, instrument?: string): Promise<HedgeProvenance[]> {
+    const reply = await this.conn.request(
+      "list_hedge_provenance",
+      listHedgeProvenanceRequestToWire(book, instrument),
+      "hedge_provenance",
+    );
+    return hedgeProvenanceResponseFromWire(reply);
+  }
+
+  async getHedgeConfig(): Promise<HedgeConfig> {
+    const reply = await this.conn.request(
+      "get_hedge_config",
+      getHedgeConfigRequestToWire(),
+      "hedge_config",
+    );
+    return hedgeConfigResponseFromWire(reply);
+  }
+
+  async setHedgeConfig(config: HedgeConfig): Promise<HedgeConfig> {
+    const reply = await this.conn.request(
+      "set_hedge_config",
+      setHedgeConfigRequestToWire(config),
+      "hedge_config_updated",
+    );
+    return hedgeConfigResponseFromWire(reply);
+  }
+
+  streamHedgeIntents(_onIntent: (intent: HedgeIntent) => void): () => void {
+    // The advisory-intent stream is folded into the server's notification/stream
+    // infra (not the WS request/response mirror), and intents are also queryable as
+    // advisory `HedgeProvenance` records via {@link listHedgeProvenance}. Until the
+    // intent push is mirrored onto this WS channel, the live transport registers no
+    // live source and returns a no-op disposer; the monitor still renders fired
+    // provenance via the poll. The offline mock supplies the live-feeling stream.
+    return () => undefined;
   }
 
   // --- FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md) -----------------

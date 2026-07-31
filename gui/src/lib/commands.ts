@@ -53,6 +53,7 @@ export type WorkspaceId =
   | "riskbooks"
   | "riskdashboard"
   | "riskrouting"
+  | "hedging"
   | "risktransfer"
   | "transferinbox"
   | "transferaudit"
@@ -218,6 +219,13 @@ export const RAIL: readonly {
   // risk portfolio. Rail-gated + edited on `risk_manage·FI` (was the overloaded
   // `quote_respond·FI` stand-in). Single-asset FI row.
   { id: "riskrouting", glyph: "⑃", label: "Risk Routing", subtitle: "Fill → portfolio rules", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
+  // Auto-Hedging (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md): the
+  // trader-composed EXIT-POLICY graph (internalise below the threshold, hedge the
+  // overflow above), the warehouse-threshold config, and the live hedge monitor.
+  // Rail-gated on the NARROW `hedge` capability × FI — authoring a hedge policy is
+  // separable from running it (booking), so a hedge lead sees it WITHOUT full admin
+  // and an ordinary trader does not. Single-asset FI row.
+  { id: "hedging", glyph: "◈", label: "Hedging", subtitle: "Exit policy · thresholds · monitor", section: "risk", assets: ["fixed_income"], viewCap: { action: "hedge", asset: "fixed_income" } },
   // FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md): the MANUAL move of
   // EXISTING risk between risk portfolios — the complement to routing (which
   // auto-assigns NEW fills). Three single-asset FI surfaces, initiate/accept gated

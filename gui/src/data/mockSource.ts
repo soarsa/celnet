@@ -45,6 +45,11 @@ import type {
   RiskBook,
   RiskBookRisk,
   RiskRoutingGraph,
+  HedgeGraph,
+  WarehouseThreshold,
+  HedgeProvenance,
+  HedgeIntent,
+  HedgeConfig,
   RiskTransfer,
   RiskTransferProvenance,
   TransferLeg,
@@ -171,6 +176,7 @@ import {
 import { calibrateSmile, markSurface } from "./surface";
 import { tenorYearsOf } from "../lib/trend";
 import { blankFill, traceGraph } from "../lib/routeTrace";
+import { blankHedgeState, traceHedgeGraph } from "../lib/hedgeTrace";
 import type {
   CelnetTransport,
   MarketSeriesParams,
@@ -1635,6 +1641,185 @@ export class MockTransport implements CelnetTransport {
       { kind: "book", id: 2, bookId: "fi-rates-emea" },
     ],
   };
+
+  // --- Auto-hedge (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md) -----
+  //
+  // A GENUINE in-memory hedge feature (not a stub): a seeded exit-policy graph, a
+  // couple of warehouse thresholds bound to the seeded FI books/desk, the engine
+  // config, and a growing provenance log. `streamHedgeIntents` synthesises risk
+  // states that CROSS the thresholds and resolves each through the live policy graph
+  // (via {@link traceHedgeGraph}), so the hedge monitor renders advisory intents +
+  // fired provenance + per-book RAG with zero server.
+
+  /**
+   * The offline firm-wide hedge exit policy. Seeded with the doc §5.4 example:
+   *   IF breached == false        → WAREHOUSE
+   *   ELSE IF toxicity > 0.6      → SUBMIT_MARKET_ORDER (overflow, immediate)
+   *   ELSE IF internal_offset > 0 → CROSS_INTERNAL (overflow)
+   *   ELSE                        → SPLIT (net internal first, worked)
+   */
+  private mockHedgeGraph: HedgeGraph | null = {
+    entry: 0,
+    nodes: [
+      {
+        kind: "condition",
+        id: 0,
+        condition: {
+          field: "breached",
+          op: "eq",
+          value: { kind: "text", text: "false" },
+          onTrue: 1,
+          onFalse: 2,
+        },
+      },
+      {
+        kind: "action",
+        id: 1,
+        action: {
+          kind: "warehouse",
+          instrument: "",
+          size: { kind: "overflow", fixed: 0 },
+          skewBp: null,
+          toEdge: false,
+          style: "immediate",
+          lps: [],
+          internalFirst: false,
+          reason: "",
+        },
+      },
+      {
+        kind: "condition",
+        id: 2,
+        condition: {
+          field: "counterparty_toxicity",
+          op: "gt",
+          value: { kind: "num", num: 0.6 },
+          onTrue: 3,
+          onFalse: 4,
+        },
+      },
+      {
+        kind: "action",
+        id: 3,
+        action: {
+          kind: "submit_market_order",
+          instrument: "",
+          size: { kind: "overflow", fixed: 0 },
+          skewBp: null,
+          toEdge: false,
+          style: "immediate",
+          lps: [],
+          internalFirst: false,
+          reason: "",
+        },
+      },
+      {
+        kind: "condition",
+        id: 4,
+        condition: {
+          field: "internal_offset_available",
+          op: "gt",
+          value: { kind: "num", num: 0 },
+          onTrue: 5,
+          onFalse: 6,
+        },
+      },
+      {
+        kind: "action",
+        id: 5,
+        action: {
+          kind: "cross_internal",
+          instrument: "AGG-OIS",
+          size: { kind: "overflow", fixed: 0 },
+          skewBp: null,
+          toEdge: false,
+          style: "immediate",
+          lps: [],
+          internalFirst: false,
+          reason: "",
+        },
+      },
+      {
+        kind: "action",
+        id: 6,
+        action: {
+          kind: "split",
+          instrument: "",
+          size: { kind: "overflow", fixed: 0 },
+          skewBp: null,
+          toEdge: false,
+          style: "worked",
+          lps: ["LP-1", "LP-2"],
+          internalFirst: true,
+          reason: "",
+        },
+      },
+    ],
+  };
+
+  /** Seeded warehouse thresholds bound to the offline FI books / desk. */
+  private mockHedgeThresholds: WarehouseThreshold[] = [
+    {
+      scopeKind: "book",
+      scopeId: "fi-rates-emea",
+      metric: "dv01",
+      cap: 250_000,
+      amber: 0.7,
+      red: 0.9,
+      targetFraction: 0.7,
+      minClip: 1_000,
+      maxClip: 100_000,
+      ramped: false,
+      rampK: 0,
+    },
+    {
+      scopeKind: "book",
+      scopeId: "fi-marex",
+      metric: "net_notional",
+      cap: 400_000_000,
+      amber: 0.75,
+      red: 0.9,
+      targetFraction: 0.75,
+      minClip: 1_000_000,
+      maxClip: 150_000_000,
+      ramped: true,
+      rampK: 1.5,
+    },
+    {
+      scopeKind: "desk",
+      scopeId: "emea",
+      metric: "dv01",
+      cap: 500_000,
+      amber: 0.8,
+      red: 0.95,
+      targetFraction: 0.8,
+      minClip: 2_000,
+      maxClip: 120_000,
+      ramped: false,
+      rampK: 0,
+    },
+  ];
+
+  /** The auto-hedge engine config — advisory-only by default (the mandatory shadow run). */
+  private mockHedgeConfig: HedgeConfig = {
+    killSwitch: false,
+    advisoryOnly: true,
+    deskEnabled: [
+      { desk: "emea", enabled: true },
+      { desk: "marex", enabled: true },
+    ],
+    maxClip: 150_000_000,
+    maxHedgesPerInterval: 20,
+    dailyExternalNotionalCap: 2_000_000_000,
+  };
+
+  /** The growing fired-hedge provenance log (newest appended; monitor shows newest first). */
+  private readonly mockHedgeProvenance: HedgeProvenance[] = [];
+
+  /** Live advisory-intent subscribers + the synth ticker driving them. */
+  private readonly hedgeIntentSubs = new Set<{ onIntent: (i: HedgeIntent) => void }>();
+  private hedgeIntentTimer: ReturnType<typeof setInterval> | null = null;
+  private hedgeIntentSeq = 0;
   /**
    * The offline instrument reference-data registry (a GENUINE in-memory store,
    * not a stub): seeded with one OIS and one bond definition so the Reference
@@ -3208,6 +3393,204 @@ export class MockTransport implements CelnetTransport {
     return cloneRiskGraph(this.mockRiskGraph);
   }
 
+  // --- Auto-hedge (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md) -----
+
+  async getHedgePolicyGraph(): Promise<HedgeGraph | null> {
+    return this.mockHedgeGraph === null ? null : cloneJson(this.mockHedgeGraph);
+  }
+
+  async updateHedgePolicyGraph(graph: HedgeGraph): Promise<HedgeGraph> {
+    this.mockHedgeGraph = cloneJson(graph);
+    return cloneJson(this.mockHedgeGraph);
+  }
+
+  async listHedgeThresholds(): Promise<WarehouseThreshold[]> {
+    return this.mockHedgeThresholds.map((t) => cloneJson(t));
+  }
+
+  async updateHedgeThreshold(threshold: WarehouseThreshold): Promise<WarehouseThreshold[]> {
+    const idx = this.mockHedgeThresholds.findIndex(
+      (t) => t.scopeKind === threshold.scopeKind && t.scopeId === threshold.scopeId,
+    );
+    // A cap of 0 with a scope match DELETES the threshold (mirrors the server upsert).
+    if (threshold.cap === 0) {
+      if (idx >= 0) this.mockHedgeThresholds.splice(idx, 1);
+    } else if (idx >= 0) {
+      this.mockHedgeThresholds.splice(idx, 1, cloneJson(threshold));
+    } else {
+      this.mockHedgeThresholds.push(cloneJson(threshold));
+    }
+    return this.mockHedgeThresholds.map((t) => cloneJson(t));
+  }
+
+  async listHedgeProvenance(book?: string, instrument?: string): Promise<HedgeProvenance[]> {
+    return this.mockHedgeProvenance
+      .filter((p) => (book === undefined || book.length === 0 ? true : p.book === book))
+      .filter((p) =>
+        instrument === undefined || instrument.length === 0 ? true : p.instrument === instrument,
+      )
+      .slice()
+      .sort((a, b) => b.firedAt - a.firedAt)
+      .map((p) => cloneJson(p));
+  }
+
+  async getHedgeConfig(): Promise<HedgeConfig> {
+    return cloneJson(this.mockHedgeConfig);
+  }
+
+  async setHedgeConfig(config: HedgeConfig): Promise<HedgeConfig> {
+    this.mockHedgeConfig = cloneJson(config);
+    return cloneJson(this.mockHedgeConfig);
+  }
+
+  /**
+   * Whether the engine is armed for `desk` right now (respects the kill-switch + the
+   * per-desk toggle). When killed, all books simply warehouse — no intents fire.
+   */
+  private hedgeEngineActive(desk: string): boolean {
+    if (this.mockHedgeConfig.killSwitch) return false;
+    const toggle = this.mockHedgeConfig.deskEnabled.find((d) => d.desk === desk);
+    return toggle === undefined ? true : toggle.enabled;
+  }
+
+  /**
+   * Synthesise ONE hedge decision: a risk state that CROSSES a seeded threshold,
+   * resolved through the live policy graph (the exact {@link traceHedgeGraph} the
+   * editor's trace panel uses). Returns the advisory intent + the fired provenance,
+   * or `null` when the engine is disarmed for the scope's desk.
+   */
+  private synthHedgeDecision(): { intent: HedgeIntent; provenance: HedgeProvenance } | null {
+    const thresholds = this.mockHedgeThresholds;
+    if (thresholds.length === 0 || this.mockHedgeGraph === null) return null;
+    const seq = (this.hedgeIntentSeq += 1);
+    const threshold = thresholds[seq % thresholds.length] as WarehouseThreshold;
+    const book = threshold.scopeKind === "book" ? threshold.scopeId : "fi-rates-emea";
+    const desk = book === "fi-marex" ? "marex" : "emea";
+    if (!this.hedgeEngineActive(desk)) return null;
+
+    const instrument = (["US10Y", "EURUSD-1Y", "UK5Y", "OIS-5Y"] as const)[seq % 4] as string;
+    const utilization = 1.0 + (seq % 3) * 0.12; // 1.0 / 1.12 / 1.24 — always a breach
+    const sign = seq % 2 === 0 ? 1 : -1;
+    const netRisk = sign * threshold.cap * utilization;
+    const target = threshold.cap * threshold.targetFraction;
+    const overflow = Math.max(0, Math.abs(netRisk) - target);
+    const toxicity = seq % 3 === 0 ? 0.75 : 0.2;
+    const internalOffset = seq % 3 === 1 ? overflow * 0.8 : 0;
+
+    const state = {
+      ...blankHedgeState(),
+      instrumentId: instrument,
+      book,
+      desk,
+      netDv01: threshold.metric === "dv01" ? netRisk : 0,
+      netNotional: threshold.metric === "net_notional" ? netRisk : 0,
+      inventorySign: sign,
+      threshold: threshold.cap,
+      utilization,
+      overflow,
+      breached: true,
+      counterpartyToxicity: toxicity,
+      internalOffsetAvailable: internalOffset,
+      hedgeCostBp: 1.2,
+    };
+    const trace = traceHedgeGraph(this.mockHedgeGraph, state);
+    const action = trace.landedAction;
+    const sizeMag = Math.min(Math.max(overflow, threshold.minClip), threshold.maxClip);
+
+    let internalCrossed = 0;
+    let externalHedged = 0;
+    const kind = action?.kind ?? "warehouse";
+    if (kind === "cross_internal") {
+      internalCrossed = Math.min(sizeMag, internalOffset > 0 ? internalOffset : sizeMag);
+    } else if (kind === "submit_market_order" || kind === "rfq_out") {
+      externalHedged = sizeMag;
+    } else if (kind === "split") {
+      internalCrossed = Math.min(sizeMag, internalOffset);
+      externalHedged = Math.max(0, sizeMag - internalCrossed);
+    }
+    const residual = Math.max(0, overflow - (internalCrossed + externalHedged));
+    const advisory = this.mockHedgeConfig.advisoryOnly;
+    const firedAt = Date.now();
+    const band = "breach";
+    const external = externalHedged > 0;
+
+    const intent: HedgeIntent = {
+      book,
+      instrument,
+      action,
+      band,
+      netRisk,
+      threshold: threshold.cap,
+      utilization,
+      overflow,
+      size: sizeMag,
+      internalCrossed,
+      externalHedged,
+      advisory,
+      firedAt,
+      policyPath: trace.path,
+      reason: `${band} · ${kind}`,
+    };
+    const provenance: HedgeProvenance = {
+      hedgeId: `H-${seq.toString().padStart(4, "0")}`,
+      book,
+      instrument,
+      firedAt,
+      metric: threshold.metric,
+      threshold: threshold.cap,
+      netRisk,
+      utilization,
+      band,
+      policyPath: trace.path,
+      action,
+      internalCrossed,
+      externalHedged,
+      residual,
+      hedgePrice: external ? 100.25 + (sign > 0 ? 0.012 : -0.012) : 0,
+      midAtFire: external ? 100.25 : 0,
+      slippageBp: external ? 1.2 : 0,
+      lpWon: kind === "submit_market_order" || kind === "rfq_out" ? "LP-2" : null,
+      advisory,
+    };
+    return { intent, provenance };
+  }
+
+  /** Record a provenance row (newest last), capping the log so it never grows unbounded. */
+  private pushHedgeProvenance(p: HedgeProvenance): void {
+    this.mockHedgeProvenance.push(p);
+    const MAX = 60;
+    if (this.mockHedgeProvenance.length > MAX) {
+      this.mockHedgeProvenance.splice(0, this.mockHedgeProvenance.length - MAX);
+    }
+  }
+
+  streamHedgeIntents(onIntent: (intent: HedgeIntent) => void): () => void {
+    const sub = { onIntent };
+    this.hedgeIntentSubs.add(sub);
+    // Fire one baseline decision immediately so the monitor is populated at once.
+    const baseline = this.synthHedgeDecision();
+    if (baseline !== null) {
+      this.pushHedgeProvenance(baseline.provenance);
+      onIntent(cloneJson(baseline.intent));
+    }
+    // Then tick: synth a fresh crossing decision and broadcast to every subscriber.
+    if (this.hedgeIntentTimer === null) {
+      this.hedgeIntentTimer = setInterval(() => {
+        const decision = this.synthHedgeDecision();
+        if (decision === null) return;
+        this.pushHedgeProvenance(decision.provenance);
+        for (const s of this.hedgeIntentSubs) s.onIntent(cloneJson(decision.intent));
+      }, 2500);
+    }
+    return () => {
+      this.hedgeIntentSubs.delete(sub);
+      if (this.hedgeIntentSubs.size === 0 && this.hedgeIntentTimer !== null) {
+        clearInterval(this.hedgeIntentTimer);
+        this.hedgeIntentTimer = null;
+      }
+    };
+  }
+
   /**
    * Route every booked deal through the current firm-wide routing graph and sum its
    * risk contribution into the enabled portfolio it lands in — the offline mirror of
@@ -4412,6 +4795,7 @@ const MOCK_TRADER_EXCLUDED_ACTIONS: ReadonlySet<CapabilityAction> = new Set<Capa
   "manage_pricing",
   "manage_liquidity",
   "view_analytics",
+  "hedge",
 ]);
 
 /** The full action-by-asset surface (the ADMIN grant-all bundle). */
@@ -4532,6 +4916,11 @@ function cloneRiskBook(b: RiskBook): RiskBook {
 /** Deep-clone a routing graph (nodes carry nested condition/value oneofs). */
 function cloneRiskGraph(g: RiskRoutingGraph): RiskRoutingGraph {
   return { entry: g.entry, nodes: g.nodes.map((n) => structuredClone(n)) };
+}
+
+/** A generic deep clone for the hedge value objects (graph / threshold / config / provenance / intent). */
+function cloneJson<T>(x: T): T {
+  return structuredClone(x);
 }
 
 /** A small stable hash of a string → [0, 1), for deterministic synthetic risk. */
