@@ -1,0 +1,29 @@
+[package]
+name = "celnet-refstore"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet mastered reference-data + corporate-actions ingestion layer — the effective-dated, append-only, journal-backed golden-source store for InstrumentMaster / CorporateAction records (bitemporal + lineage; reversals supersede, never delete), the RefDataSource / CorpActionSource adapter traits, a deterministic OSS govvie source that DERIVES schedule-driven CA events from open issuance terms, and the announce->confirm->apply lifecycle that drives a bond's cashflow schedule and a holder's position so pricing + DV01 re-derive off the post-event schedule. Off the pinned pricing hot core; OSS-only (govvie/rates deterministic, corporate content via a pluggable customer-wired adapter)."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The pure CAEV/CAMV model + effect functions this layer sources, stores and applies.
+celnet-corpactions.workspace = true
+# The static govvie reference universe the deterministic OSS source derives masters + CA events from.
+celnet-refdata.workspace = true
+# The durable append-only substrate the effective-dated golden store is written on (bitemporal +
+# torn-tail-safe recovery); the same durability discipline the engine's control plane uses.
+celnet-journal.workspace = true
+# Record (de)serialization for the journal payloads and the JSON admin snapshot.
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# Per-test isolated journal files.
+tempfile.workspace = true
+proptest.workspace = true
