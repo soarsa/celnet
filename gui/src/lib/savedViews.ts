@@ -52,6 +52,7 @@ export type WorkspaceId =
   | "xva"
   | "excel"
   | "clientflow"
+  | "latencyops"
   | "connections"
   | "admin"
   | "permissions"
@@ -77,6 +78,7 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "xva",
   "excel",
   "clientflow",
+  "latencyops",
   "connections",
   "admin",
   "permissions",

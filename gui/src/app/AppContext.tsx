@@ -94,6 +94,7 @@ export type WorkspaceId =
   | "xva"
   | "excel"
   | "clientflow"
+  | "latencyops"
   | "connections"
   | "admin"
   | "permissions"

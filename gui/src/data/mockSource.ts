@@ -54,6 +54,8 @@ import type {
   ClientFlowMetrics,
   FlowGroupBy,
   FlowWindow,
+  LatencyMetrics,
+  LatencyStage,
   RagBand,
   RiskLimitUtilization,
   LpContribution,
@@ -342,6 +344,44 @@ function foldMockFlow(keyOf: (l: MockFlowLeaf) => string): ClientFlowMetrics[] {
     });
   }
   return rows.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// --- latency / ops analytics fixture (ListLatencyMetrics, offline) -----------
+
+/**
+ * The eight instrumented pipeline stages, in the server's emit order (pinned-core
+ * price → surface → tiering → consolidation → publish → RFQ → accept → book). All
+ * figures are nanoseconds; each row is monotone
+ * (`min ≤ p50 ≤ p99 ≤ p999 ≤ p9999 ≤ max`) with a realistic per-stage magnitude —
+ * the pinned core is sub-µs, surface rebuild is tens of µs, the tiering/consolidate/
+ * publish steps are low-µs, and the RFQ→accept→book venue round-trips run into the ms.
+ * Deterministic (a static table), mirroring `services/analytics::latency_digest`.
+ */
+const MOCK_LATENCY_STAGES: readonly LatencyStage[] = [
+  { op: "vanilla_price", stageLabel: "Price (pinned core)", count: 4_210_000, p50Ns: 820, p99Ns: 2_400, p999Ns: 5_200, p9999Ns: 9_100, minNs: 240, maxNs: 14_000, meanNs: 910.4 },
+  { op: "surface_vol", stageLabel: "Surface / curve rebuild", count: 38_400, p50Ns: 42_000, p99Ns: 88_000, p999Ns: 140_000, p9999Ns: 210_000, minNs: 18_000, maxNs: 262_000, meanNs: 51_320.5 },
+  { op: "tiering_run", stageLabel: "Spread / tiering", count: 3_960_000, p50Ns: 3_400, p99Ns: 9_800, p999Ns: 18_400, p9999Ns: 31_000, minNs: 900, maxNs: 44_000, meanNs: 4_120.7 },
+  { op: "consolidate", stageLabel: "Aggregation / consolidation", count: 3_940_000, p50Ns: 2_100, p99Ns: 6_400, p999Ns: 12_500, p9999Ns: 22_000, minNs: 700, maxNs: 30_800, meanNs: 2_680.3 },
+  { op: "stream_publish", stageLabel: "Quote publish (tick→quote)", count: 4_105_000, p50Ns: 1_600, p99Ns: 4_800, p999Ns: 9_600, p9999Ns: 16_400, minNs: 520, maxNs: 21_500, meanNs: 1_980.9 },
+  { op: "rfq_respond", stageLabel: "RFQ receive→respond", count: 128_600, p50Ns: 240_000, p99Ns: 620_000, p999Ns: 1_100_000, p9999Ns: 1_800_000, minNs: 96_000, maxNs: 2_420_000, meanNs: 286_400.2 },
+  { op: "quote_accept", stageLabel: "Quote→lift / accept", count: 54_200, p50Ns: 1_200_000, p99Ns: 3_400_000, p999Ns: 5_800_000, p9999Ns: 8_200_000, minNs: 480_000, maxNs: 11_000_000, meanNs: 1_460_500.6 },
+  { op: "book", stageLabel: "Ack→fill→book", count: 41_300, p50Ns: 2_600_000, p99Ns: 6_100_000, p999Ns: 9_400_000, p9999Ns: 13_000_000, minNs: 1_100_000, maxNs: 17_200_000, meanNs: 2_980_100.4 },
+];
+
+/** The offline telemetry offload-queue health digest (a few drops, no gaps, 24 MHz tick). */
+const MOCK_LATENCY_HEALTH: LatencyMetrics["health"] = {
+  drainedTotal: 16_477_500,
+  droppedTotal: 37,
+  observedGaps: 0,
+  tickHz: 24_000_000,
+};
+
+/** The offline latency rollup — a deep copy so the caller can never mutate the fixture. */
+function mockLatencyMetrics(): LatencyMetrics {
+  return {
+    stages: MOCK_LATENCY_STAGES.map((s) => ({ ...s })),
+    health: { ...MOCK_LATENCY_HEALTH },
+  };
 }
 
 /** The desk the exception-contract sample notifications are attributed to. */
@@ -3587,6 +3627,10 @@ export class MockTransport implements CelnetTransport {
       default:
         return foldMockFlow((l) => l.client);
     }
+  }
+
+  async listLatencyMetrics(): Promise<LatencyMetrics> {
+    return mockLatencyMetrics();
   }
 
   /** The set of book ids strictly below `id` in the seeded tree (for the acyclic guard). */

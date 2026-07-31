@@ -27,6 +27,7 @@ import type {
   CombinedTailRiskResponse,
   FlowGroupBy,
   FlowWindow,
+  LatencyMetrics,
   BookRatesPositionRequest,
   BookRatesPositionResponse,
   BrokerQuoteSet,
@@ -785,6 +786,15 @@ export interface CelnetTransport {
     groupBy: FlowGroupBy,
     window?: FlowWindow,
   ): Promise<ClientFlowMetrics[]>;
+
+  /**
+   * AuthService.ListLatencyMetrics — the per-stage pipeline-latency rollup
+   * (docs/ANALYTICS-REQUIREMENTS.md §11 latency): one {@link LatencyStage} per
+   * instrumented stage of the tick→quote→book pipeline (server order) plus the
+   * telemetry offload-queue {@link LatencyHealth}. Read-only, gated server-side on
+   * the `view_analytics` capability × the caller's assets (either asset admits).
+   */
+  listLatencyMetrics(): Promise<LatencyMetrics>;
 
   // --- instrument reference-data registry ------------------------------------
 

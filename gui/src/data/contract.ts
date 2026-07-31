@@ -2382,6 +2382,72 @@ export interface FlowWindow {
 }
 
 // ---------------------------------------------------------------------------
+// latency / ops analytics — the per-stage pipeline-latency rollup
+// (`AuthService.ListLatencyMetrics`; docs/ANALYTICS-REQUIREMENTS.md §11 latency).
+// One row per instrumented stage of the tick→quote→book pipeline, each a
+// nanosecond HdrHistogram digest (p50/p99/p99.9/p99.99, min/max/mean, count),
+// plus a telemetry-health digest for the bounded offload queue. Read-only and
+// gated on the `view_analytics` capability, exactly like the client-flow rollup.
+// ---------------------------------------------------------------------------
+
+/**
+ * One instrumented pipeline stage's latency digest (`celnet.wire.LatencyStageDesc`).
+ * `op` is the stable OpKind label (e.g. `vanilla_price`) the server emits; `stageLabel`
+ * is its human title. All latencies are **nanoseconds**; the percentiles are monotone
+ * (`p50Ns ≤ p99Ns ≤ p999Ns ≤ p9999Ns ≤ maxNs`). Every field is always present — a stage
+ * with no samples reports zeros (rendered "—" by the workspace, never a fabricated value).
+ */
+export interface LatencyStage {
+  /** Stable OpKind label the stage is keyed by (e.g. `vanilla_price`). */
+  op: string;
+  /** Human-readable stage title (e.g. "Price (pinned core)"). */
+  stageLabel: string;
+  /** Number of samples in the digest. */
+  count: number;
+  /** 50th-percentile (median) latency, nanoseconds. */
+  p50Ns: number;
+  /** 99th-percentile latency, nanoseconds. */
+  p99Ns: number;
+  /** 99.9th-percentile latency, nanoseconds. */
+  p999Ns: number;
+  /** 99.99th-percentile latency, nanoseconds. */
+  p9999Ns: number;
+  /** Minimum observed latency, nanoseconds. */
+  minNs: number;
+  /** Maximum observed latency, nanoseconds. */
+  maxNs: number;
+  /** Arithmetic mean latency, nanoseconds. */
+  meanNs: number;
+}
+
+/**
+ * The telemetry offload-queue health digest (`celnet.wire.LatencyHealthDesc`). The
+ * pinned hot core stays alloc/log/lock-free (guardrail 11) and offloads samples over a
+ * bounded queue; this reports how many were drained vs dropped, any observed gaps in the
+ * sample stream, and the histogram tick frequency (ticks per second) the ns figures derive from.
+ */
+export interface LatencyHealth {
+  /** Total samples drained from the offload queue into the digests. */
+  drainedTotal: number;
+  /** Total samples dropped (bounded queue full — the hot core never blocks). */
+  droppedTotal: number;
+  /** Observed gaps in the sample sequence (a monotonic-counter skip). */
+  observedGaps: number;
+  /** Histogram tick frequency (ticks/second) the nanosecond figures derive from. */
+  tickHz: number;
+}
+
+/**
+ * The full latency/ops rollup (`AuthService.ListLatencyMetrics` reply): one
+ * {@link LatencyStage} per instrumented stage (server order) plus the offload-queue
+ * {@link LatencyHealth} digest.
+ */
+export interface LatencyMetrics {
+  stages: LatencyStage[];
+  health: LatencyHealth;
+}
+
+// ---------------------------------------------------------------------------
 // fixed-income (rates) — the linear-rates pricing contract (`PricingService
 // .PriceRates`). Mirrors the `celnet.wire` rates messages one-to-one: a
 // `CurveSet` of par-OIS pillars + an `OisInstrument`, priced to a

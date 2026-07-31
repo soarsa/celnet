@@ -59,6 +59,7 @@ export type WorkspaceId =
   | "xva"
   | "excel"
   | "clientflow"
+  | "latencyops"
   | "connections"
   | "admin"
   | "permissions"
@@ -242,6 +243,10 @@ export const RAIL: readonly {
   // OR the server enforces), held back from the default trader bundle. Room for future
   // Latency / TCA / Inventory rows under the "analytics" section.
   { id: "clientflow", glyph: "⌗", label: "Client Flow", subtitle: "Per-client $/mm · fishing", section: "analytics", assets: CAPABILITY_ASSETS },
+  // Latency / Ops — per-stage p50/p99 of the tick→quote→book pipeline + telemetry
+  // health. Cross-asset, same `view_analytics` gate as Client Flow (trader-visible
+  // when granted). Read-only ops observability, not an admin surface.
+  { id: "latencyops", glyph: "⏱", label: "Latency / Ops", subtitle: "Per-stage p50/p99 · tick→quote", section: "analytics", assets: CAPABILITY_ASSETS },
   // Administration / ops — admin-gated, no license concept. (Connections is venue
   // ops: its rail stays admin-gated, but its in-pane edits gate on `manage_liquidity`
   // server-side — see AggregatedBookWorkspace for the reachable manage_liquidity
@@ -322,6 +327,7 @@ export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<Workspace
  */
 export const ANALYTICS_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
   "clientflow",
+  "latencyops",
 ]);
 
 /**
@@ -341,6 +347,8 @@ export const WORKSPACE_CAPABILITY: Partial<Record<WorkspaceId, CapabilityAction>
   // BOTH assets, so `workspaceAccessible`'s `.some` over the served assets makes
   // holding it on EITHER asset admit — mirroring the server's cross-product OR.
   clientflow: "view_analytics",
+  // Latency / Ops is the same management-sensitive READ gate as Client Flow.
+  latencyops: "view_analytics",
 };
 
 /**

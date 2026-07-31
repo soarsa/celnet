@@ -112,6 +112,9 @@ import type {
   ClientFlowMetrics,
   FlowGroupBy,
   FlowWindow,
+  LatencyStage,
+  LatencyHealth,
+  LatencyMetrics,
   RiskTransfer,
   RiskTransferProvenance,
   TransferLeg,
@@ -4892,6 +4895,54 @@ export function listClientFlowMetricsRequestToWire(
 /** Decode the `{ metrics: [...] }` client-flow reply (one row per group key). */
 export function listClientFlowMetricsResponseFromWire(o: WireObject): ClientFlowMetrics[] {
   return array(o, "metrics").map(clientFlowMetricsFromWire);
+}
+
+// --- latency / ops analytics (ListLatencyMetrics) ---------------------------
+
+/**
+ * Decode one `LatencyStageDesc` row. All latency fields are `uint64` nanoseconds on the
+ * wire (`p50_ns` … `max_ns`) recovered as JS numbers (they stay well within safe-integer);
+ * `mean_ns` is a `double`. Every field is non-optional — an unsampled stage reports zeros.
+ */
+export function latencyStageFromWire(o: WireObject): LatencyStage {
+  return {
+    op: str(o, "op"),
+    stageLabel: str(o, "stage_label"),
+    count: num(o, "count"),
+    p50Ns: num(o, "p50_ns"),
+    p99Ns: num(o, "p99_ns"),
+    p999Ns: num(o, "p999_ns"),
+    p9999Ns: num(o, "p9999_ns"),
+    minNs: num(o, "min_ns"),
+    maxNs: num(o, "max_ns"),
+    meanNs: num(o, "mean_ns"),
+  };
+}
+
+/** Decode the `LatencyHealthDesc` telemetry offload-queue digest. */
+export function latencyHealthFromWire(o: WireObject): LatencyHealth {
+  return {
+    drainedTotal: num(o, "drained_total"),
+    droppedTotal: num(o, "dropped_total"),
+    observedGaps: num(o, "observed_gaps"),
+    tickHz: num(o, "tick_hz"),
+  };
+}
+
+/**
+ * Frame `list_latency_metrics` — no arguments beyond the auto-injected
+ * `session_token`, so the request body is empty (the WS connection injects the token).
+ */
+export function listLatencyMetricsRequestToWire(): WireObject {
+  return {};
+}
+
+/** Decode the `{ stages: [...], health: {...} }` latency reply (stages in server order). */
+export function listLatencyMetricsResponseFromWire(o: WireObject): LatencyMetrics {
+  return {
+    stages: array(o, "stages").map(latencyStageFromWire),
+    health: latencyHealthFromWire(child(o, "health")),
+  };
 }
 
 /** Decode a `RiskTransferInbox` push frame (`{ pending: [...], at_nanos }`). */

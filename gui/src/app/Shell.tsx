@@ -42,6 +42,7 @@ import { AdminWorkspace } from "../workspaces/AdminWorkspace";
 import { PermissionsWorkspace } from "../workspaces/PermissionsWorkspace";
 import { PricingGroupsWorkspace } from "../workspaces/PricingGroupsWorkspace";
 import { ClientFlowWorkspace } from "../workspaces/analytics/ClientFlowWorkspace";
+import { LatencyOpsWorkspace } from "../workspaces/analytics/LatencyOpsWorkspace";
 import { ExcelWorkspace } from "../workspaces/ExcelWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
@@ -139,6 +140,9 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // Analytics: the cross-asset client-flow / P&L-attribution table — its own
   // top-level tab, gated on `view_analytics` (hidden without it). FI + FXO.
   clientflow: ClientFlowWorkspace,
+  // Analytics: the per-stage pipeline-latency / ops table — same top-level tab
+  // and `view_analytics` gate as Client Flow. Cross-asset, read-only.
+  latencyops: LatencyOpsWorkspace,
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,
   permissions: PermissionsWorkspace,
