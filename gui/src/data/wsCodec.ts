@@ -135,6 +135,7 @@ import type {
   HedgeIntent,
   HedgeDeskToggle,
   HedgeConfig,
+  HedgeLpPanel,
   ClientFlowMetrics,
   FlowGroupBy,
   LpFlowMetrics,
@@ -4507,6 +4508,7 @@ export function hedgeProvenanceToWire(p: HedgeProvenance): WireObject {
     mid_at_fire: p.midAtFire,
     slippage_bp: p.slippageBp,
     advisory: p.advisory,
+    lps: [...p.lps],
   };
   if (p.lpWon !== null) m["lp_won"] = p.lpWon;
   return m;
@@ -4536,6 +4538,7 @@ export function hedgeProvenanceFromWire(o: WireObject): HedgeProvenance {
     slippageBp: num(o, "slippage_bp"),
     lpWon: typeof rawLp === "string" ? rawLp : null,
     advisory: boolOf(o, "advisory"),
+    lps: strArrayOf(o, "lps"),
   };
 }
 
@@ -4557,6 +4560,7 @@ export function hedgeIntentToWire(i: HedgeIntent): WireObject {
     fired_at: i.firedAt,
     policy_path: [...i.policyPath],
     reason: i.reason,
+    lps: [...i.lps],
   };
 }
 /** Decode a `HedgeIntent`. */
@@ -4579,6 +4583,26 @@ export function hedgeIntentFromWire(o: WireObject): HedgeIntent {
     firedAt: num(o, "fired_at"),
     policyPath: numArrayOf(o, "policy_path"),
     reason: str(o, "reason"),
+    lps: strArrayOf(o, "lps"),
+  };
+}
+
+/** Encode a standing hedging LP panel (`scope_kind` i32 tag + scope id + include/exclude lists). */
+export function hedgeLpPanelToWire(p: HedgeLpPanel): WireObject {
+  return {
+    scope_kind: hedgeScopeToWire(p.scopeKind),
+    scope_id: p.scopeId,
+    include: [...p.include],
+    exclude: [...p.exclude],
+  };
+}
+/** Decode a `HedgeLpPanelDesc`. */
+export function hedgeLpPanelFromWire(o: WireObject): HedgeLpPanel {
+  return {
+    scopeKind: hedgeScopeFromWire(enumNum(o, "scope_kind")),
+    scopeId: str(o, "scope_id"),
+    include: strArrayOf(o, "include"),
+    exclude: strArrayOf(o, "exclude"),
   };
 }
 
@@ -4600,6 +4624,7 @@ export function hedgeConfigToWire(c: HedgeConfig): WireObject {
     max_clip: c.maxClip,
     max_hedges_per_interval: c.maxHedgesPerInterval,
     daily_external_notional_cap: c.dailyExternalNotionalCap,
+    lp_panels: c.lpPanels.map(hedgeLpPanelToWire),
   };
 }
 /** Decode a `HedgeConfigDesc`. */
@@ -4611,6 +4636,7 @@ export function hedgeConfigFromWire(o: WireObject): HedgeConfig {
     maxClip: num(o, "max_clip"),
     maxHedgesPerInterval: num(o, "max_hedges_per_interval"),
     dailyExternalNotionalCap: num(o, "daily_external_notional_cap"),
+    lpPanels: array(o, "lp_panels").map(hedgeLpPanelFromWire),
   };
 }
 

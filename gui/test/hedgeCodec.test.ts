@@ -34,12 +34,15 @@ import {
   hedgeIntentFromWire,
   hedgeConfigToWire,
   hedgeConfigFromWire,
+  hedgeLpPanelToWire,
+  hedgeLpPanelFromWire,
 } from "../src/data/wsCodec";
 import type {
   ExitAction,
   HedgeConfig,
   HedgeGraph,
   HedgeIntent,
+  HedgeLpPanel,
   HedgeProvenance,
   WarehouseThreshold,
 } from "../src/data/contract";
@@ -224,10 +227,21 @@ describe("provenance + intent round-trip", () => {
     slippageBp: 1.2,
     lpWon: "LP-2",
     advisory: true,
+    lps: ["LP-1", "LP-3"],
   };
 
   it("round-trips a provenance with lp_won present", () => {
     expect(hedgeProvenanceFromWire(hedgeProvenanceToWire(prov))).toEqual(prov);
+  });
+  it("carries the targeted lps array on the wire", () => {
+    const wire = hedgeProvenanceToWire(prov);
+    expect(wire["lps"]).toEqual(["LP-1", "LP-3"]);
+    expect(hedgeProvenanceFromWire(wire).lps).toEqual(["LP-1", "LP-3"]);
+  });
+  it("round-trips an empty lps set (internal / no-trade)", () => {
+    const wire = hedgeProvenanceToWire({ ...prov, lps: [] });
+    expect(wire["lps"]).toEqual([]);
+    expect(hedgeProvenanceFromWire(wire).lps).toEqual([]);
   });
   it("OMITS lp_won when null and nulls the action when absent", () => {
     const wire = hedgeProvenanceToWire({ ...prov, lpWon: null, action: null });
@@ -254,8 +268,53 @@ describe("provenance + intent round-trip", () => {
       firedAt: 1_700_000_000_123,
       policyPath: [0, 2, 4, 5],
       reason: "red · cross_internal",
+      lps: [],
     };
     expect(hedgeIntentFromWire(hedgeIntentToWire(intent))).toEqual(intent);
+  });
+  it("carries the targeted lps array on an external intent", () => {
+    const intent: HedgeIntent = {
+      book: "fi-rates-emea",
+      instrument: "US10Y",
+      action: fullAction,
+      band: "breach",
+      netRisk: 300_000,
+      threshold: 250_000,
+      utilization: 1.2,
+      overflow: 50_000,
+      size: 50_000,
+      internalCrossed: 0,
+      externalHedged: 50_000,
+      advisory: true,
+      firedAt: 1_700_000_000_500,
+      policyPath: [0, 3],
+      reason: "breach · rfq_out",
+      lps: ["LP-1", "LP-2", "LP-4"],
+    };
+    const wire = hedgeIntentToWire(intent);
+    expect(wire["lps"]).toEqual(["LP-1", "LP-2", "LP-4"]);
+    expect(hedgeIntentFromWire(wire)).toEqual(intent);
+  });
+});
+
+describe("hedging LP panel round-trip", () => {
+  it("round-trips a panel + rides scope_kind as i32 with include/exclude arrays", () => {
+    const p: HedgeLpPanel = {
+      scopeKind: "book",
+      scopeId: "fi-rates-emea",
+      include: ["LP-1", "LP-2", "LP-3"],
+      exclude: ["LP-2"],
+    };
+    const wire = hedgeLpPanelToWire(p);
+    expect(wire["scope_kind"]).toBe(1); // book
+    expect(wire["scope_id"]).toBe("fi-rates-emea");
+    expect(wire["include"]).toEqual(["LP-1", "LP-2", "LP-3"]);
+    expect(wire["exclude"]).toEqual(["LP-2"]);
+    expect(hedgeLpPanelFromWire(wire)).toEqual(p);
+  });
+  it("round-trips an unrestricted (empty include/exclude) panel", () => {
+    const p: HedgeLpPanel = { scopeKind: "desk", scopeId: "emea", include: [], exclude: [] };
+    expect(hedgeLpPanelFromWire(hedgeLpPanelToWire(p))).toEqual(p);
   });
 });
 
@@ -271,10 +330,29 @@ describe("engine config round-trip", () => {
       maxClip: 150_000_000,
       maxHedgesPerInterval: 20,
       dailyExternalNotionalCap: 2_000_000_000,
+      lpPanels: [],
     };
     const wire = hedgeConfigToWire(c);
     expect(wire["kill_switch"]).toBe(false);
     expect(wire["max_hedges_per_interval"]).toBe(20);
+    expect(hedgeConfigFromWire(wire)).toEqual(c);
+  });
+  it("round-trips config carrying standing lp_panels", () => {
+    const c: HedgeConfig = {
+      killSwitch: false,
+      advisoryOnly: true,
+      deskEnabled: [{ desk: "emea", enabled: true }],
+      maxClip: 150_000_000,
+      maxHedgesPerInterval: 20,
+      dailyExternalNotionalCap: 2_000_000_000,
+      lpPanels: [
+        { scopeKind: "book", scopeId: "fi-rates-emea", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] },
+        { scopeKind: "desk", scopeId: "emea", include: [], exclude: ["LP-4"] },
+      ],
+    };
+    const wire = hedgeConfigToWire(c);
+    expect(Array.isArray(wire["lp_panels"])).toBe(true);
+    expect((wire["lp_panels"] as unknown[]).length).toBe(2);
     expect(hedgeConfigFromWire(wire)).toEqual(c);
   });
 });

@@ -91,6 +91,15 @@ export function HedgeMonitor({ intents, provenance }: HedgeMonitorProps): React.
                   <span className={styles.intentNums}>
                     util {(i.utilization * 100).toFixed(0)}% · overflow {compact(i.overflow)}
                   </span>
+                  {i.lps.length > 0 && (
+                    <span className={styles.lpChips} data-testid="intent-lps">
+                      {i.lps.map((lp) => (
+                        <span key={lp} className={styles.lpChip}>
+                          {lp}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                   {i.advisory && (
                     <span className={styles.advisoryBadge} data-testid="advisory-badge">
                       ADVISORY
@@ -126,6 +135,7 @@ export function HedgeMonitor({ intents, provenance }: HedgeMonitorProps): React.
                     <th scope="col">Internal</th>
                     <th scope="col">External</th>
                     <th scope="col">LP</th>
+                    <th scope="col">Targeted LPs</th>
                     <th scope="col">Mode</th>
                   </tr>
                 </thead>
@@ -148,6 +158,19 @@ export function HedgeMonitor({ intents, provenance }: HedgeMonitorProps): React.
                         <td className={styles.num}>{compact(p.internalCrossed)}</td>
                         <td className={styles.num}>{compact(p.externalHedged)}</td>
                         <td>{p.lpWon ?? "—"}</td>
+                        <td>
+                          {p.lps.length > 0 ? (
+                            <span className={styles.lpChips} data-testid={`provenance-lps-${p.hedgeId}`}>
+                              {p.lps.map((lp) => (
+                                <span key={lp} className={styles.lpChip}>
+                                  {lp}
+                                </span>
+                              ))}
+                            </span>
+                          ) : (
+                            <span className={styles.lpMuted}>—</span>
+                          )}
+                        </td>
                         <td>
                           {p.advisory ? (
                             <span className={styles.advisoryBadge}>ADVISORY</span>

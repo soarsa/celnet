@@ -188,6 +188,7 @@ import { calibrateSmile, markSurface } from "./surface";
 import { tenorYearsOf } from "../lib/trend";
 import { blankFill, traceGraph } from "../lib/routeTrace";
 import { blankHedgeState, traceHedgeGraph } from "../lib/hedgeTrace";
+import { KNOWN_LPS, effectiveLps, resolveLpPanelForScope } from "../lib/hedgeLpPanel";
 import type {
   CelnetTransport,
   MarketSeriesParams,
@@ -2022,6 +2023,13 @@ export class MockTransport implements CelnetTransport {
     maxClip: 150_000_000,
     maxHedgesPerInterval: 20,
     dailyExternalNotionalCap: 2_000_000_000,
+    // Standing per-scope LP panels (mirrors the server seed shape). The book panel
+    // trims LP-2 from an explicit include so an external hedge on fi-rates-emea fans to
+    // {LP-1, LP-3}; the desk panel excludes LP-4 from all-known for the rest of emea.
+    lpPanels: [
+      { scopeKind: "book", scopeId: "fi-rates-emea", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] },
+      { scopeKind: "desk", scopeId: "emea", include: [], exclude: ["LP-4"] },
+    ],
   };
 
   /** The growing fired-hedge provenance log (newest appended; monitor shows newest first). */
@@ -3757,6 +3765,17 @@ export class MockTransport implements CelnetTransport {
     const band = "breach";
     const external = externalHedged > 0;
 
+    // Resolve the effective LP set the external hedge targets, exactly as the engine
+    // does: the most-specific standing scope panel → the per-rule RFQ include list →
+    // the full known panel. Internal / no-trade actions target no LP.
+    let targetedLps: string[] = [];
+    if (external) {
+      const panel = resolveLpPanelForScope(this.mockHedgeConfig.lpPanels, { instrument, book, desk });
+      if (panel !== null) targetedLps = effectiveLps(panel, KNOWN_LPS);
+      else if (kind === "rfq_out" && action !== null && action.lps.length > 0) targetedLps = [...action.lps];
+      else targetedLps = [...KNOWN_LPS];
+    }
+
     const intent: HedgeIntent = {
       book,
       instrument,
@@ -3773,6 +3792,7 @@ export class MockTransport implements CelnetTransport {
       firedAt,
       policyPath: trace.path,
       reason: `${band} · ${kind}`,
+      lps: targetedLps,
     };
     const provenance: HedgeProvenance = {
       hedgeId: `H-${seq.toString().padStart(4, "0")}`,
@@ -3792,8 +3812,12 @@ export class MockTransport implements CelnetTransport {
       hedgePrice: external ? 100.25 + (sign > 0 ? 0.012 : -0.012) : 0,
       midAtFire: external ? 100.25 : 0,
       slippageBp: external ? 1.2 : 0,
-      lpWon: kind === "submit_market_order" || kind === "rfq_out" ? "LP-2" : null,
+      lpWon:
+        kind === "submit_market_order" || kind === "rfq_out"
+          ? (targetedLps[0] ?? "LP-1")
+          : null,
       advisory,
+      lps: targetedLps,
     };
     return { intent, provenance };
   }

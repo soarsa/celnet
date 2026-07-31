@@ -40,10 +40,12 @@ import { HedgeMonitor } from "./HedgeMonitor";
 import { HedgeRuleEditor } from "./HedgeRuleEditor";
 import { HedgeRulesTable } from "./HedgeRulesTable";
 import { HedgeTracePanel } from "./HedgeTracePanel";
+import { LpPanelConfig } from "./LpPanelConfig";
 import { ThresholdConfig } from "./ThresholdConfig";
 import styles from "./HedgingWorkspace.module.css";
+import type { HedgeLpPanel } from "../../data/contract";
 
-type Tab = "policy" | "thresholds" | "monitor";
+type Tab = "policy" | "thresholds" | "lp-panels" | "monitor";
 type Mode = { kind: "list" } | { kind: "editor"; index: number | null; draft: HedgeRule };
 type SaveState =
   | { kind: "idle" }
@@ -117,6 +119,15 @@ export function HedgingWorkspace(): React.ReactElement {
           </button>
           <button
             type="button"
+            className={tab === "lp-panels" ? styles.tabActive : styles.tab}
+            aria-pressed={tab === "lp-panels"}
+            data-testid="tab-lp-panels"
+            onClick={() => setTab("lp-panels")}
+          >
+            LP Panels
+          </button>
+          <button
+            type="button"
             className={tab === "monitor" ? styles.tabActive : styles.tab}
             aria-pressed={tab === "monitor"}
             data-testid="tab-monitor"
@@ -129,6 +140,7 @@ export function HedgingWorkspace(): React.ReactElement {
 
       {tab === "policy" && <PolicyTab app={app} readOnly={readOnly} />}
       {tab === "thresholds" && <ThresholdsTab app={app} readOnly={readOnly} />}
+      {tab === "lp-panels" && <LpPanelsTab app={app} readOnly={readOnly} />}
       {tab === "monitor" && <MonitorTab app={app} readOnly={readOnly} />}
     </div>
   );
@@ -410,6 +422,75 @@ function ThresholdsTab({
         onUpsert={onUpsert}
         onDelete={onDelete}
       />
+    </div>
+  );
+}
+
+// --- LP Panels tab ----------------------------------------------------------
+
+function LpPanelsTab({
+  app,
+  readOnly,
+}: {
+  app: ReturnType<typeof useApp>;
+  readOnly: boolean;
+}): React.ReactElement {
+  const [config, setConfig] = useState<HedgeConfig | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void app.transport
+      .getHedgeConfig()
+      .then((c) => !cancelled && setConfig(c))
+      .catch((e: unknown) => !cancelled && setLoadError(e instanceof Error ? e.message : "load failed"));
+    return () => {
+      cancelled = true;
+    };
+  }, [app.transport]);
+
+  const onCommit = useCallback(
+    (panels: HedgeLpPanel[]): void => {
+      if (config === null) return;
+      const next: HedgeConfig = { ...config, lpPanels: panels };
+      setBusy(true);
+      // Optimistic: reflect the edit immediately; on a server rejection (unknown id /
+      // empty effective set) the store is LEFT UNCHANGED, so we revert + surface it.
+      const prev = config;
+      setConfig(next);
+      void app.transport
+        .setHedgeConfig(next)
+        .then((c) => {
+          setConfig(c);
+          setSaveError(null);
+        })
+        .catch((e: unknown) => {
+          setConfig(prev);
+          setSaveError(e instanceof Error ? e.message : "the server rejected the LP panel");
+        })
+        .finally(() => setBusy(false));
+    },
+    [app.transport, config],
+  );
+
+  return (
+    <div className={styles.singleTab}>
+      {loadError !== null && (
+        <p className={styles.errorText} role="alert">
+          {loadError}
+        </p>
+      )}
+      {config !== null && (
+        <LpPanelConfig
+          panels={config.lpPanels}
+          readOnly={readOnly}
+          busy={busy}
+          saveError={saveError}
+          onCommit={onCommit}
+        />
+      )}
     </div>
   );
 }

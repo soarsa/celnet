@@ -3554,6 +3554,13 @@ export interface HedgeProvenance {
   lpWon: string | null;
   /** Whether this was an ADVISORY (dry-run) fire — computed but not traded. */
   advisory: boolean;
+  /**
+   * The effective LP set the hedge TARGETED — the resolved include/exclude panel
+   * (or, when no scope panel is set, the per-rule RFQ include list / full known
+   * panel). Empty for internal / no-trade actions. Answers "which LPs did we hedge
+   * on?" (mirrors `HedgeProvenance.lps`, field 20).
+   */
+  lps: string[];
 }
 
 /**
@@ -3592,6 +3599,13 @@ export interface HedgeIntent {
   policyPath: number[];
   /** A short human rationale (band / action summary). */
   reason: string;
+  /**
+   * The effective LP set the hedge would TARGET — the resolved include/exclude panel
+   * (or the per-rule RFQ include list / full known panel when no scope panel is set).
+   * Empty for internal / no-trade actions. Lets a desk see which LPs an advisory hedge
+   * would fan to (mirrors `HedgeIntent.lps`, field 16).
+   */
+  lps: string[];
 }
 
 /** One per-desk enable toggle in the engine config (mirrors `HedgeDeskToggle`). */
@@ -3600,6 +3614,27 @@ export interface HedgeDeskToggle {
   desk: string;
   /** Whether auto-hedging is enabled for the desk. */
   enabled: boolean;
+}
+
+/**
+ * A standing per-scope hedging LP panel — the include/exclude liquidity-provider
+ * selection every EXTERNAL exit action inherits (mirrors `HedgeLpPanelDesc` /
+ * `crate::config::hedge_policy::ScopedLpPanel` + the pure
+ * `celnet_hedge_routing::HedgeLpPanel`). Resolution is most-specific-wins across
+ * scopes: instrument > book > desk. An empty {@link include} starts from ALL known
+ * LPs; {@link exclude} is then subtracted. An unrestricted panel (empty include AND
+ * exclude) is the "no restriction" default. The server rejects unknown ids and any
+ * panel whose effective set is empty.
+ */
+export interface HedgeLpPanel {
+  /** What the {@link scopeId} names (desk / book / instrument). */
+  scopeKind: HedgeScopeKind;
+  /** The scope identifier (a desk id / book id / instrument id). */
+  scopeId: string;
+  /** LPs to start from (empty ⇒ all known LPs); a non-empty include is the base set, in order. */
+  include: string[];
+  /** LPs to subtract from the base set (the exclude semantics). Each must be a known LP. */
+  exclude: string[];
 }
 
 /** The auto-hedge engine's global controls (mirrors `HedgeConfigDesc`). */
@@ -3616,6 +3651,11 @@ export interface HedgeConfig {
   maxHedgesPerInterval: number;
   /** A daily externalised-notional cap (0 ⇒ unbounded). */
   dailyExternalNotionalCap: number;
+  /**
+   * The standing hedging LP panels — per-scope include/exclude LP selection every
+   * external exit action inherits (mirrors `HedgeConfigDesc.lp_panels`, field 7).
+   */
+  lpPanels: HedgeLpPanel[];
 }
 
 /**

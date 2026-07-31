@@ -469,6 +469,39 @@
   flex-wrap: wrap;
 }
 
+/* --- LP panels (include/exclude chips) ------------------------------------ */
+
+.lpChips {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.lpChip,
+.lpChipExcluded {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill, 999px);
+  white-space: nowrap;
+}
+.lpChip {
+  color: var(--text-primary);
+  background: var(--bg-inset, var(--bg-surface));
+  border: 1px solid var(--border-subtle, var(--border));
+}
+.lpChipExcluded {
+  color: var(--rag-amber, #d97706);
+  border: 1px solid var(--rag-amber, #d97706);
+  background: transparent;
+  text-decoration: line-through;
+}
+.lpMuted {
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+}
+
 /* --- monitor -------------------------------------------------------------- */
 
 .ragStrip {

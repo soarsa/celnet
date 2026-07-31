@@ -58,6 +58,9 @@ const config: HedgeConfig = {
   maxClip: 1_000_000,
   maxHedgesPerInterval: 20,
   dailyExternalNotionalCap: 1_000_000_000,
+  lpPanels: [
+    { scopeKind: "book", scopeId: "fi-rates-emea", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] },
+  ],
 };
 
 const advisoryIntent: HedgeIntent = {
@@ -76,6 +79,7 @@ const advisoryIntent: HedgeIntent = {
   firedAt: Date.now(),
   policyPath: [0, 1],
   reason: "breach · submit_market_order",
+  lps: ["LP-1", "LP-3"],
 };
 
 const provenanceRow: HedgeProvenance = {
@@ -96,8 +100,9 @@ const provenanceRow: HedgeProvenance = {
   hedgePrice: 100.26,
   midAtFire: 100.25,
   slippageBp: 1.2,
-  lpWon: "LP-2",
+  lpWon: "LP-1",
   advisory: true,
+  lps: ["LP-1", "LP-3"],
 };
 
 function makeApp(opts: { canEdit?: boolean } = {}) {
@@ -195,6 +200,79 @@ describe("HedgingWorkspace — monitor", () => {
 
     // The fired provenance appears in the audit table.
     expect(await screen.findByTestId("provenance-row-H-0001")).toBeInTheDocument();
+    // The resolved targeted LP set is surfaced on the advisory intent end-to-end.
+    expect(await screen.findByTestId("intent-lps")).toHaveTextContent("LP-1");
+    expect(screen.getByTestId("intent-lps")).toHaveTextContent("LP-3");
+  });
+});
+
+describe("HedgingWorkspace — LP panels", () => {
+  it("renders the standing panels with their resolved effective LP set", async () => {
+    state.app = makeApp();
+    render(<HedgingWorkspace />);
+    fireEvent.click(screen.getByTestId("tab-lp-panels"));
+
+    expect(await screen.findByTestId("lp-panels-table")).toBeInTheDocument();
+    // The seeded book panel (include LP-1/2/3, exclude LP-2) resolves to {LP-1, LP-3}.
+    const resolved = screen.getByTestId("lp-panel-resolved-book-fi-rates-emea");
+    expect(resolved).toHaveTextContent("LP-1");
+    expect(resolved).toHaveTextContent("LP-3");
+    expect(resolved).not.toHaveTextContent("LP-2");
+  });
+
+  it("adds a panel with an include + an exclude and shows the resolved set live, then saves", async () => {
+    const app = makeApp();
+    state.app = app;
+    render(<HedgingWorkspace />);
+    fireEvent.click(screen.getByTestId("tab-lp-panels"));
+
+    fireEvent.click(await screen.findByTestId("lp-panel-add"));
+    expect(await screen.findByTestId("lp-panel-editor")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId("lp-panel-scope-id"), { target: { value: "fi-marex" } });
+    fireEvent.click(screen.getByTestId("lp-panel-include-LP-1"));
+    fireEvent.click(screen.getByTestId("lp-panel-include-LP-2"));
+    fireEvent.click(screen.getByTestId("lp-panel-include-LP-3"));
+    fireEvent.click(screen.getByTestId("lp-panel-exclude-LP-2"));
+
+    // The live resolved-set display reflects include-minus-exclude = {LP-1, LP-3}.
+    const resolved = screen.getByTestId("lp-panel-resolved");
+    expect(resolved).toHaveTextContent("LP-1");
+    expect(resolved).toHaveTextContent("LP-3");
+    expect(resolved).not.toHaveTextContent("LP-2");
+
+    fireEvent.click(screen.getByTestId("lp-panel-save"));
+    // The new row appears once the (optimistic) commit settles — flushes the async set.
+    expect(await screen.findByTestId("lp-panel-row-book-fi-marex")).toBeInTheDocument();
+    // The committed config carries the new panel bound to lpPanels.
+    expect(app.transport.setHedgeConfig).toHaveBeenCalledTimes(1);
+    const committed = app.transport.setHedgeConfig.mock.calls[0][0] as HedgeConfig;
+    const added = committed.lpPanels.find((p) => p.scopeId === "fi-marex");
+    expect(added).toEqual({ scopeKind: "book", scopeId: "fi-marex", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] });
+  });
+
+  it("blocks saving a panel whose effective set is empty (client mirror of the server check)", async () => {
+    state.app = makeApp();
+    render(<HedgingWorkspace />);
+    fireEvent.click(screen.getByTestId("tab-lp-panels"));
+
+    fireEvent.click(await screen.findByTestId("lp-panel-add"));
+    fireEvent.change(screen.getByTestId("lp-panel-scope-id"), { target: { value: "fi-x" } });
+    // Include LP-1 then exclude it ⇒ empty effective set ⇒ error + save disabled.
+    fireEvent.click(screen.getByTestId("lp-panel-include-LP-1"));
+    fireEvent.click(screen.getByTestId("lp-panel-exclude-LP-1"));
+
+    expect(await screen.findByTestId("lp-panel-errors")).toHaveTextContent(/empty/i);
+    expect(screen.getByTestId("lp-panel-save")).toBeDisabled();
+  });
+
+  it("is read-only without the hedge capability (no add affordance)", async () => {
+    state.app = makeApp({ canEdit: false });
+    render(<HedgingWorkspace />);
+    fireEvent.click(screen.getByTestId("tab-lp-panels"));
+    expect(await screen.findByTestId("lp-panels-table")).toBeInTheDocument();
+    expect(screen.queryByTestId("lp-panel-add")).toBeNull();
+    expect(screen.queryByTestId("lp-panel-edit-book-fi-rates-emea")).toBeNull();
   });
 });
 
