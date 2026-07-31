@@ -135,4 +135,32 @@ describe("authored tours", () => {
     expect(selectors).toContain('[data-tour-id="tiering-bps"]');
     expect(selectors).toContain('[data-tour-id="tiering-preview"]');
   });
+
+  test("the configure-hedging tour lives in the hedging workspace and anchors to real controls", () => {
+    const t = TOUR_INDEX.find((x) => x.id === "configure-hedging");
+    expect(t, "configure-hedging tour is registered").toBeDefined();
+    expect(t!.workspace).toBe("hedging");
+    // Six guide-mirroring steps + a centred intro.
+    expect(t!.steps.length).toBe(7);
+    const selectors = t!.steps.map((s) => s.targetSelector).filter(Boolean);
+    // Each anchor is a real, present data-testid on the HedgingWorkspace surface
+    // (the three tab buttons + threshold/policy/trace/monitor controls).
+    for (const sel of [
+      '[data-testid="tab-thresholds"]',
+      '[data-testid="threshold-cap"]',
+      '[data-testid="hedge-create-rule"]',
+      '[data-testid="hedge-trace"]',
+      '[data-testid="tab-monitor"]',
+      '[data-testid="hedge-monitor"]',
+    ]) {
+      expect(selectors, `missing anchor ${sel}`).toContain(sel);
+    }
+    // Every non-intro (targeted) step off the default Policy tab carries an
+    // off-screen hint so it degrades gracefully when its tab isn't active.
+    for (const s of t!.steps) {
+      if (s.placement !== "center" && s.targetSelector && !s.targetSelector.startsWith('[data-testid="tab-')) {
+        expect(s.offScreenHint, `${s.title} needs an offScreenHint`).toBeTruthy();
+      }
+    }
+  });
 });

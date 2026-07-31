@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   ADMIN_ONLY_WORKSPACES,
   ANALYTICS_WORKSPACES,
+  HEDGING_WORKSPACES,
   buildCommands,
   cheatsheet,
   COMMAND_META,
@@ -229,16 +230,18 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
   }
   const signedOut: NavAuth = { isAdmin: false, can: () => true };
 
-  it("DOMAINS is exactly FX / FI / Analytics / Administration, in bar order", () => {
+  it("DOMAINS is exactly FX / FI / Hedging / Analytics / Administration, in bar order", () => {
     expect(DOMAINS.map((d) => d.id)).toEqual([
       "fx_options",
       "fixed_income",
+      "hedging",
       "analytics",
       "admin",
     ]);
     expect(DOMAINS.map((d) => d.label)).toEqual([
       "FX Options",
       "Fixed Income",
+      "Hedging",
       "Analytics",
       "Administration",
     ]);
@@ -270,7 +273,11 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
     it("derives membership from `assets` — no row's domains diverge from its served assets", () => {
       for (const r of RAIL) {
         const doms = workspaceDomains(r.id);
-        if (ANALYTICS_WORKSPACES.has(r.id)) {
+        if (HEDGING_WORKSPACES.has(r.id)) {
+          // Auto-hedge is a membership override — the single "hedging" domain, NOT
+          // its served asset (fixed income), so it is hoisted out of the FI rail.
+          expect(doms).toEqual(["hedging"]);
+        } else if (ANALYTICS_WORKSPACES.has(r.id)) {
           // Cross-asset analytics rows are a membership override — the single
           // "analytics" domain, NOT their served assets (which are both trading
           // classes but must not put the row under the trading tabs).
@@ -324,7 +331,7 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         "riskbooks",
         "riskdashboard",
         "riskrouting",
-        "hedging",
+        // hedging is HOISTED out of the FI rail into its own top-level "Hedging" tab.
         "risktransfer",
         "transferinbox",
         "transferaudit",
@@ -354,6 +361,54 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
           expect(railForDomain(d).some((x) => x.id === r.id)).toBe(true);
         }
       }
+    });
+  });
+
+  describe("Hedging top-level domain (auto-hedge hoisted out of the FI rail)", () => {
+    it("HEDGING_WORKSPACES membership: hedging maps to the single 'hedging' domain", () => {
+      expect([...HEDGING_WORKSPACES]).toEqual(["hedging"]);
+      expect(workspaceDomains("hedging")).toEqual(["hedging"]);
+    });
+
+    it("the Hedging rail is exactly the hedging workspace", () => {
+      expect(railForDomain("hedging").map((r) => r.id)).toEqual(["hedging"]);
+    });
+
+    it("hedging appears under NO trading/analytics/admin domain (fully hoisted)", () => {
+      for (const d of ["fx_options", "fixed_income", "analytics", "admin"] as const) {
+        expect(railForDomain(d).some((r) => r.id === "hedging")).toBe(false);
+      }
+    });
+
+    it("the Hedging tab requires the hedge · FI capability (hidden without it)", () => {
+      const hedger = navAuth({
+        isAdmin: false,
+        allow: new Set(["view·fixed_income", "hedge·fixed_income"]),
+      });
+      const plainTrader = navAuth({
+        isAdmin: false,
+        allow: new Set(["view·fx_options", "view·fixed_income"]),
+      });
+      expect(domainAccessible("hedging", hedger)).toBe(true);
+      expect(domainAccessible("hedging", plainTrader)).toBe(false);
+      // Mirrors the workspace's own viewCap gate: no hedge ⇒ the row is unreachable.
+      expect(workspaceAccessible("hedging", plainTrader)).toBe(false);
+      expect(workspaceAccessible("hedging", hedger)).toBe(true);
+    });
+
+    it("an admin (grant_all) and a signed-out user both see the Hedging tab", () => {
+      const admin = navAuth({ isAdmin: true, allow: new Set(["hedge·fixed_income"]) });
+      expect(domainAccessible("hedging", admin)).toBe(true);
+      // Signed-out `can` is permissive, so pre-login discovery keeps the tab (as Analytics).
+      expect(domainAccessible("hedging", signedOut)).toBe(true);
+    });
+
+    it("firstAccessibleWorkspace lands on hedging within the Hedging domain", () => {
+      const hedger = navAuth({
+        isAdmin: false,
+        allow: new Set(["view·fixed_income", "hedge·fixed_income"]),
+      });
+      expect(firstAccessibleWorkspace(hedger, "hedging")).toBe("hedging");
     });
   });
 
@@ -459,11 +514,11 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     // Grouping REORDERS the RAIL-interleaved rows up under their section header.
     expect(byLabel("Markets & Liquidity")).toEqual(["fistreaming", "aggbook", "surface", "quoting"]);
     expect(byLabel("Pricing")).toEqual(["tiering", "pricinggroups"]);
+    // hedging is no longer here — it is hoisted into its own top-level "Hedging" tab.
     expect(byLabel("Risk")).toEqual([
       "riskbooks",
       "riskdashboard",
       "riskrouting",
-      "hedging",
       "risk",
       "book",
     ]);

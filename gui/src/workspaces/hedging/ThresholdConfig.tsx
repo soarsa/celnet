@@ -25,16 +25,21 @@ const SCOPE_LABEL: Record<HedgeScopeKind, string> = {
   instrument: "Instrument",
 };
 
-/** A fresh, valid draft threshold. */
+/**
+ * A fresh, valid draft threshold. The bands (amber 0.80 / red 0.90) and the
+ * target-at-the-amber-edge (0.80) mirror the engine's `WarehouseThreshold::default`
+ * (`celnet-hedge-routing` `DEFAULT_AMBER`/`DEFAULT_RED`, `target_fraction = amber`)
+ * so the pre-fill matches what the pricer would apply with no explicit bands.
+ */
 function blankThreshold(): WarehouseThreshold {
   return {
     scopeKind: "book",
     scopeId: "",
     metric: "dv01",
     cap: 100_000,
-    amber: 0.7,
+    amber: 0.8,
     red: 0.9,
-    targetFraction: 0.7,
+    targetFraction: 0.8,
     minClip: 1_000,
     maxClip: 50_000,
     ramped: false,

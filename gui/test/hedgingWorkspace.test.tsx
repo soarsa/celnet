@@ -163,6 +163,19 @@ describe("HedgingWorkspace — thresholds", () => {
     expect(screen.getByTestId("threshold-row-fi-rates-emea")).toBeInTheDocument();
     expect(screen.getByTestId("threshold-form")).toBeInTheDocument();
   });
+
+  it("pre-fills the bands at the engine default (amber 0.80 / red 0.90, target at the amber edge)", async () => {
+    state.app = makeApp();
+    render(<HedgingWorkspace />);
+    fireEvent.click(screen.getByTestId("tab-thresholds"));
+    expect(await screen.findByTestId("threshold-form")).toBeInTheDocument();
+    // The blank-draft pre-fill must match celnet-hedge-routing's WarehouseThreshold
+    // default (DEFAULT_AMBER 0.80 / DEFAULT_RED 0.90, target_fraction = amber) — not
+    // the old 0.70 amber, which diverged from the engine.
+    expect(screen.getByLabelText("Amber (0–1)")).toHaveValue(0.8);
+    expect(screen.getByLabelText("Red (0–1)")).toHaveValue(0.9);
+    expect(screen.getByLabelText("Target fraction")).toHaveValue(0.8);
+  });
 });
 
 describe("HedgingWorkspace — monitor", () => {

@@ -224,7 +224,11 @@ export const RAIL: readonly {
   // overflow above), the warehouse-threshold config, and the live hedge monitor.
   // Rail-gated on the NARROW `hedge` capability × FI — authoring a hedge policy is
   // separable from running it (booking), so a hedge lead sees it WITHOUT full admin
-  // and an ordinary trader does not. Single-asset FI row.
+  // and an ordinary trader does not. It SERVES fixed income (so the `hedge`·FI gate
+  // stays meaningful), but auto-hedging is a firm-wide risk-EXIT function, so it is
+  // HOISTED out of the FI rail into its OWN top-level "Hedging" domain tab (a
+  // {@link HEDGING_WORKSPACES} membership override), next to Analytics — cross-cutting,
+  // not FI-nested.
   { id: "hedging", glyph: "◈", label: "Hedging", subtitle: "Exit policy · thresholds · monitor", section: "risk", assets: ["fixed_income"], viewCap: { action: "hedge", asset: "fixed_income" } },
   // FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md): the MANUAL move of
   // EXISTING risk between risk portfolios — the complement to routing (which
@@ -339,6 +343,22 @@ export const ANALYTICS_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceI
 ]);
 
 /**
+ * Workspaces belonging to the cross-cutting **Hedging** top-level tab. Auto-hedging
+ * is a firm-wide risk-EXIT function, not an FI-nested surface, so — exactly like
+ * {@link ANALYTICS_WORKSPACES} — this is a domain-membership override: though the
+ * hedging workspace SERVES fixed income (its `assets`, which keep its `hedge`
+ * capability gate meaningful), it is hoisted OUT of the Fixed-Income rail into its
+ * own top-level "hedging" domain, so {@link workspaceDomains} maps it here.
+ * Reachability is still the per-workspace `hedge`-capability gate (the {@link RAIL}
+ * row's `viewCap`), so the whole tab is hidden from a signed-in user without it.
+ * A single-workspace set today, with room for future hedging sub-views (e.g. a
+ * standing hedge-LP panel) under this domain.
+ */
+export const HEDGING_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
+  "hedging",
+]);
+
+/**
  * The capability ACTION a workspace's reachability gates on, when it is NOT the
  * default `view`. A few surfaces are write-class enough that merely viewing their
  * asset does not entitle a user to reach them — the FI Risk Transfer ticket and
@@ -423,26 +443,36 @@ export function firstAccessibleWorkspace(
 
 /**
  * A top-level product domain (tab). Trading domains ARE their CapabilityAsset;
- * `"analytics"` is the cross-asset client-flow tab; `"admin"` the ops tab.
+ * `"hedging"` is the cross-cutting auto-hedge tab; `"analytics"` the cross-asset
+ * client-flow tab; `"admin"` the ops tab.
  */
-export type Domain = CapabilityAsset | "analytics" | "admin";
+export type Domain = CapabilityAsset | "hedging" | "analytics" | "admin";
 
-/** The top-level domain tabs, in bar order (Analytics sits next to Administration). */
+/**
+ * The top-level domain tabs, in bar order. The two trading tabs lead; the
+ * cross-cutting **Hedging** and **Analytics** tabs sit together before
+ * **Administration** (Hedging beside Analytics — both are firm-wide, non-trading
+ * functions hoisted out of the FI rail).
+ */
 export const DOMAINS: readonly { id: Domain; label: string }[] = [
   { id: "fx_options", label: "FX Options" },
   { id: "fixed_income", label: "Fixed Income" },
+  { id: "hedging", label: "Hedging" },
   { id: "analytics", label: "Analytics" },
   { id: "admin", label: "Administration" },
 ] as const;
 
 /**
  * The domain tab(s) a workspace appears under — DERIVED from its served assets,
- * with two membership overrides: {@link ANALYTICS_WORKSPACES} → the single
- * "analytics" domain (though they serve both assets, they are NOT trading rows),
- * and {@link ADMIN_ONLY_WORKSPACES} → "admin". Ordinary cross-asset rows appear
- * under BOTH FX and FI (Model A); a single-asset row under its one tab.
+ * with three membership overrides: {@link HEDGING_WORKSPACES} → the single
+ * "hedging" domain (auto-hedge is hoisted out of the FI rail), {@link
+ * ANALYTICS_WORKSPACES} → the single "analytics" domain (though they serve both
+ * assets, they are NOT trading rows), and {@link ADMIN_ONLY_WORKSPACES} →
+ * "admin". Ordinary cross-asset rows appear under BOTH FX and FI (Model A); a
+ * single-asset row under its one tab.
  */
 export function workspaceDomains(id: WorkspaceId): readonly Domain[] {
+  if (HEDGING_WORKSPACES.has(id)) return ["hedging"];
   if (ANALYTICS_WORKSPACES.has(id)) return ["analytics"];
   if (ADMIN_ONLY_WORKSPACES.has(id)) return ["admin"];
   const assets = workspaceAssets(id);
@@ -450,14 +480,17 @@ export function workspaceDomains(id: WorkspaceId): readonly Domain[] {
 }
 
 /**
- * Whether a top-level DOMAIN tab is accessible: admin → `isAdmin`; analytics →
- * `view_analytics` on EITHER asset (the server's cross-product OR); a trading
- * domain → `view` on its class. Signed-out `can` is permissive ⇒ both trading
- * tabs render pre-login, but the analytics + admin tabs stay gated (a signed-out
- * or ordinary user without the grant never sees Analytics — hidden, not disabled).
+ * Whether a top-level DOMAIN tab is accessible: admin → `isAdmin`; hedging →
+ * the `hedge` capability × FI (mirroring the hedging workspace's own `viewCap`);
+ * analytics → `view_analytics` on EITHER asset (the server's cross-product OR); a
+ * trading domain → `view` on its class. `can` is permissive signed-out, so pre-login
+ * discovery is unchanged; gating only ever NARROWS a real signed-in identity — a
+ * signed-in user WITHOUT the `hedge` capability never sees the Hedging tab (hidden,
+ * not disabled), exactly as the analytics tab hides without `view_analytics`.
  */
 export function domainAccessible(domain: Domain, auth: NavAuth): boolean {
   if (domain === "admin") return auth.isAdmin;
+  if (domain === "hedging") return auth.can("hedge", "fixed_income");
   if (domain === "analytics") {
     return (
       auth.can("view_analytics", "fx_options") ||

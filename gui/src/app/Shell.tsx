@@ -193,10 +193,10 @@ export function Shell(): React.ReactElement {
   // out both trading tabs are present and Administration is hidden.
   const domainStateOf = (d: Domain): RailState => {
     if (!domainAccessible(d, app.auth)) return "hidden";
-    // Admin + Analytics are cross-asset ops/analytics tabs with NO license concept
-    // (they serve both classes; `licensed` only ranges over CapabilityAsset), so
-    // they never enter the gated-upsell state — only the trading domains do.
-    if (d !== "admin" && d !== "analytics" && !licensed(d)) return "gated-upsell";
+    // Admin, Analytics and Hedging are cross-asset ops/analytics/risk-exit tabs with
+    // NO license concept (`licensed` only ranges over CapabilityAsset), so they never
+    // enter the gated-upsell state — only the trading domains do.
+    if (d !== "admin" && d !== "analytics" && d !== "hedging" && !licensed(d)) return "gated-upsell";
     return "present";
   };
   const domainTabs = DOMAINS.map((d) => ({ def: d, state: domainStateOf(d.id) })).filter(

@@ -43,12 +43,13 @@ describe("risk-transfer rail rows", () => {
     expect(new Set(glyphs).size).toBe(glyphs.length);
   });
 
-  it("places all three under the Fixed Income domain immediately after hedging", () => {
-    // The hedging row sits between riskrouting and the transfer trio (auto-hedging
-    // is the third risk-lifecycle operation, docs/AUTO-HEDGING-AND-INTERNALISATION-
-    // REQUIREMENTS.md §1), so the transfer rows now follow `hedging` in RAIL order.
+  it("places all three under the Fixed Income domain immediately after risk routing", () => {
+    // Auto-hedging was hoisted OUT of the FI rail into its own top-level "Hedging"
+    // tab, so in the FI rail the transfer trio now follows `riskrouting` directly
+    // (the hedging row no longer sits between them).
     const fi = railForDomain("fixed_income").map((r) => r.id);
-    const i = fi.indexOf("hedging");
+    expect(fi.includes("hedging")).toBe(false);
+    const i = fi.indexOf("riskrouting");
     expect(fi.slice(i + 1, i + 4)).toEqual(TRANSFER_ROWS);
   });
 });
