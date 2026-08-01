@@ -131,6 +131,23 @@ export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 ts() { date +%Y-%m-%dT%H:%M:%S%z; }
 log() { echo "[$(ts)] [fix-sim] $*"; }
 
+# --- RESTART, don't ACCUMULATE (same rationale as start-lp-sim.sh): stop every prior
+# fix-sim (supervisor script + fix_rfq_client binary) before starting fresh, so each
+# release RESTARTS the incoming-client RFS/ESP sims instead of leaking a new one on top.
+# Runs ONCE at the top level: the re-exec'd child (FIXSIM__CHILD) and the asset=both
+# fan-out legs (FIXSIM__RESTARTED) skip it, so a fresh sim never kills itself/its sibling.
+if [ "${FIXSIM__CHILD:-0}" != "1" ] && [ "${FIXSIM__RESTARTED:-0}" != "1" ]; then
+  __self=$$; __parent=${PPID:-0}; __uid="$(id -u)"
+  for __pid in $(pgrep -u "$__uid" -f 'fix_rfq_client|start-fix-sim.sh' 2>/dev/null || true); do
+    case "$__pid" in "$__self"|"$__parent") continue ;; esac
+    kill "$__pid" 2>/dev/null || true
+  done
+  sleep 1
+  # Belt-and-braces: SIGKILL any fix_rfq_client BINARY still up (matches the binary,
+  # never this shell script).
+  pkill -9 -u "$__uid" -f 'fix_rfq_client' 2>/dev/null || true
+fi
+
 # --- asset=both: fan out into two independent supervised daemons ------------------
 # Drive the fixed-income (rates/OIS) leg AND the FX-options leg concurrently, each as
 # its own supervised daemon under a DISJOINT run dir (⇒ its own PID file + log), so the
@@ -143,8 +160,8 @@ log() { echo "[$(ts)] [fix-sim] $*"; }
 if [ "$FIXSIM_ASSET" = "both" ]; then
   BASE_RUN="${FIXSIM_RUN_DIR:-$REPO_ROOT/deploy/fix-sim-run}"
   log "asset=both — launching supervised FI and FX legs as separate daemons under $BASE_RUN"
-  FIXSIM_ASSET=fi FIXSIM_DAEMON=1 FIXSIM_RUN_DIR="$BASE_RUN/fi" "$0"
-  FIXSIM_ASSET=fx FIXSIM_DAEMON=1 FIXSIM_RUN_DIR="$BASE_RUN/fx" "$0"
+  FIXSIM__RESTARTED=1 FIXSIM_ASSET=fi FIXSIM_DAEMON=1 FIXSIM_RUN_DIR="$BASE_RUN/fi" "$0"
+  FIXSIM__RESTARTED=1 FIXSIM_ASSET=fx FIXSIM_DAEMON=1 FIXSIM_RUN_DIR="$BASE_RUN/fx" "$0"
   log "both legs launched; PID files at $BASE_RUN/fi/fix-sim.pid and $BASE_RUN/fx/fix-sim.pid"
   exit 0
 fi

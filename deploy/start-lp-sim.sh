@@ -83,6 +83,25 @@ export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 ts() { date +%Y-%m-%dT%H:%M:%S%z; }
 log() { echo "[$(ts)] [lp-sim] $*"; }
 
+# --- RESTART, don't ACCUMULATE: stop every prior lp-sim (supervisor + binary) before
+# starting a fresh one, so each release/relaunch RESTARTS the feed instead of leaking a
+# new daemon on top of the old ones (orphaned lp-sim daemons had piled up to 10+ on the
+# box, reparented to init, burning RAM). Runs ONLY in the parent invocation (the re-exec'd
+# LPSIM__CHILD skips it, so a fresh feed never kills itself or its just-spawned sibling).
+if [ "${LPSIM__CHILD:-0}" != "1" ]; then
+  __self=$$; __parent=${PPID:-0}; __uid="$(id -u)"
+  # Prior supervisors + lp-sim binaries owned by this user, except THIS invocation/parent.
+  for __pid in $(pgrep -u "$__uid" -f 'lp-sim' 2>/dev/null || true); do
+    case "$__pid" in "$__self"|"$__parent") continue ;; esac
+    kill "$__pid" 2>/dev/null || true
+  done
+  sleep 1
+  # Belt-and-braces: SIGKILL any lp-sim BINARY still up (the daemon invocation always
+  # carries `--lp-name`; this pattern matches the binary, never this shell script).
+  pkill -9 -u "$__uid" -f 'lp-sim --lp-name' 2>/dev/null || true
+  rm -f "$PID_FILE" 2>/dev/null || true
+fi
+
 # --- Daemon: re-exec self into the logfile, record the child PID, and return. --
 if [ "$LPSIM_DAEMON" = "1" ] && [ "${LPSIM__CHILD:-0}" != "1" ]; then
   touch "$LOG"
