@@ -438,6 +438,28 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     readActions: ["view"],
     writeActions: ["manage_liquidity"],
   },
+  // Hedging — the auto-hedge / internalisation surface (exit-policy graph, thresholds,
+  // monitor). The WHOLE surface is `hedge`-gated (the top-level Hedging tab hides
+  // without it), so BOTH Read and Write require `hedge` (held back from the default
+  // trader bundle), unlike the FI management authorities whose reads sit on `view·FI`.
+  {
+    id: "hedging",
+    label: "Hedging",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["hedge"],
+    writeActions: ["hedge"],
+  },
+  // Risk Transfer — the move-existing-risk surface. The audit trail is a `view·FI`
+  // read; initiating/accepting a transfer is the narrow `risk_transfer` capability.
+  {
+    id: "risktransfer",
+    label: "Risk Transfer",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["view"],
+    writeActions: ["risk_transfer"],
+  },
   // Corporate Actions (docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md
   // §11): the reference-data steward seat that confirms / applies bond corporate
   // actions. Read = `view·FI` (the CA-inbox + schedule reads sit on the view floor,
