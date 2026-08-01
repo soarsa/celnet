@@ -123,6 +123,25 @@ LOG="${FIXSIM_LOG:-$RUN_DIR/log/fix-sim.log}"
 PID_FILE="$RUN_DIR/fix-sim.pid"
 FIXSIM_BIN="${FIXSIM_BIN:-$REPO_ROOT/target/release/fix-sim}"
 
+# Auto-detect the release-shipped RFQ-client binary so ON THE SERVER (no cargo) the sim
+# "just runs" without the operator hand-setting FIXSIM_RFQ_BIN. The release role
+# (deploy/roles/celnet_release) installs it at <release>/bin/fix-rfq-client, and `current`
+# symlinks the live release — so from REPO_ROOT=<...>/shared the sibling `../current/bin`
+# is the live binary. Probe the standard locations in order; first hit wins. An explicit
+# FIXSIM_RFQ_BIN (or a full FIXSIM_BIN) still overrides — this only fills the empty default.
+if [ -z "${FIXSIM_RFQ_BIN:-}" ]; then
+  for __cand in \
+    "$REPO_ROOT/../current/bin/fix-rfq-client" \
+    "$REPO_ROOT/bin/fix-rfq-client" \
+    "$SCRIPT_DIR/fix-rfq-client" \
+    "/opt/celnet/current/bin/fix-rfq-client"; do
+    if [ -x "$__cand" ]; then
+      FIXSIM_RFQ_BIN="$(cd "$(dirname "$__cand")" && pwd)/$(basename "$__cand")"
+      break
+    fi
+  done
+fi
+
 # Source the Rust toolchain (shell does not persist env on this estate).
 if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"

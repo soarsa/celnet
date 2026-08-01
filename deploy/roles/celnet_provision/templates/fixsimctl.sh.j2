@@ -71,6 +71,14 @@ case "${1:-}" in
   once)
     FIXSIM_ONESHOT=1 "$LAUNCHER"
     ;;
+  restart)
+    # Managed-service restart: stop any running daemon, then start a fresh one. Used by
+    # the deploy (deploy.yml post_tasks) so every release re-launches the FIX sim — the
+    # launcher itself also sweeps stray sims, so this converges even if the PID file drifted.
+    "$0" stop || true
+    sleep 1
+    "$0" start
+    ;;
   stop)
     if is_running; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; echo "Stopped."; else echo "fix-sim not running"; rm -f "$PIDFILE"; fi
     ;;
@@ -81,6 +89,6 @@ case "${1:-}" in
     tail -n "${2:-50}" -f "$FIXSIM_LOG"
     ;;
   *)
-    echo "usage: fixsimctl {start|once|stop|status|tail [n]}"; exit 64
+    echo "usage: fixsimctl {start|once|restart|stop|status|tail [n]}"; exit 64
     ;;
 esac

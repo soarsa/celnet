@@ -37,7 +37,20 @@
       when:
         - celnet_lpsim_enabled | default(true) | bool
         - celnet_lpsimctl_bin.stat.exists
+    # The FIX RFQ/RFS client simulator is likewise a managed service: (re)start it on EVERY
+    # deploy so a fresh release always has incoming client RFQ/RFS flow driving deals, quotes
+    # and positions. Skipped when the box isn't provisioned yet (no fixsimctl) or it's disabled.
+    - name: Check the fixsimctl FIX-simulator control script is installed
+      ansible.builtin.stat:
+        path: "{{ celnet_bin_dir }}/fixsimctl"
+      register: celnet_fixsimctl_bin
+    - name: (Re)start the FIX RFQ/RFS client simulator via fixsimctl
+      ansible.builtin.command: "{{ celnet_bin_dir }}/fixsimctl restart"
+      changed_when: true
+      when:
+        - celnet_fixsim_enabled | default(true) | bool
+        - celnet_fixsimctl_bin.stat.exists
     - name: Release summary
       ansible.builtin.debug:
-        msg: "Released {{ celnet_release_name }} -> {{ celnet_current_link }} (celnet-server + lp-sim restarted)"
+        msg: "Released {{ celnet_release_name }} -> {{ celnet_current_link }} (celnet-server + lp-sim + fix-sim restarted)"
 
