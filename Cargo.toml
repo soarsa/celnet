@@ -126,12 +126,22 @@ all = "warn"
 [profile.dev]
 debug = "line-tables-only"
 
-# Release profile tuned for the latency-sensitive product; reproducible (codegen-units=1).
+# Release profile tuned for the latency-sensitive product; reproducible (codegen-units=1)
+# AND minimal on-disk footprint so it builds on the undersized UAT box.
 [profile.release]
 opt-level = 3
 lto = "thin"
 codegen-units = 1
-debug = "line-tables-only"
+# debug info OFF (was "line-tables-only"): the line tables were baked into every release
+# artifact across the whole tonic/prost/hyper/axum dependency tree, roughly DOUBLING
+# target/release — which overflowed the undersized UAT box (ENOSPC compiling celnet-proto).
+# Zero runtime cost (opt-level/lto/codegen-units unchanged); the only loss is source-line
+# numbers in panic backtraces, and the desk debugs via structured tracing/logging + the
+# audit trail, not interactive backtraces — so this is the right prod trade.
+debug = false
+# Strip symbol tables from the shipped binaries — smaller per-release footprint on a box
+# that keeps N historical releases. No effect on the latency-critical code paths.
+strip = "symbols"
 
 # Mutation-gate profile (cargo-mutants `--profile mutants`; wired in
 # `.config/mutants-exotics.toml`). Optimized code so the per-mutant test phase
