@@ -274,11 +274,27 @@ pub struct HedgeConfigDef {
     /// An additive serde-default list, so an existing `identity.json` loads unchanged.
     #[serde(default)]
     pub lp_panels: Vec<ScopedLpPanel>,
+    /// The minimum dealer-captured **edge** (basis points) a booked fill must clear to be
+    /// internalised (warehoused) rather than handed back to the street as an advisory
+    /// external back-to-back (§6): a fill dealt within this floor of the engine reference
+    /// mid is a losing / marginal trade to warehouse. The price-tolerance floor the
+    /// [`InternaliseVerdict`](crate::services::internalise::InternaliseVerdict) gates on.
+    /// An additive serde-default field (defaults to `0.5`bp, matching
+    /// [`DEFAULT_MIN_EDGE_BPS`](crate::services::internalise::DEFAULT_MIN_EDGE_BPS)), so an
+    /// existing `identity.json` loads unchanged.
+    #[serde(default = "default_min_edge_bps")]
+    pub min_edge_bps: f64,
 }
 
 /// serde default for [`HedgeConfigDef::advisory_only`].
 const fn default_true() -> bool {
     true
+}
+
+/// serde default for [`HedgeConfigDef::min_edge_bps`] — kept in sync with
+/// [`crate::services::internalise::DEFAULT_MIN_EDGE_BPS`] (0.5bp).
+const fn default_min_edge_bps() -> f64 {
+    0.5
 }
 
 impl Default for HedgeConfigDef {
@@ -291,6 +307,7 @@ impl Default for HedgeConfigDef {
             max_hedges_per_interval: 0,
             daily_external_notional_cap: 0.0,
             lp_panels: Vec::new(),
+            min_edge_bps: default_min_edge_bps(),
         }
     }
 }

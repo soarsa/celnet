@@ -30,6 +30,7 @@ pub mod consensus;
 pub mod corpactions;
 pub mod desk;
 pub mod error_status;
+pub mod internalise;
 pub mod liquidity_feed;
 pub mod pricing;
 pub mod quote;

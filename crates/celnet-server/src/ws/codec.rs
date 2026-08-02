@@ -102,10 +102,10 @@ use celnet_proto::{
 // Linear-rates portfolio risk — the WS mirror of RiskService::AggregateRatesRisk.
 use celnet_proto::{
     AcceptDeskQuoteRequest, BookRatesPositionRequest, BookRatesPositionResponse, Deal, DeskQuote,
-    DeskReject, DeskRequest, DeskRequestScope, ListDealsRequest, ListDealsResponse,
-    ListDeskRequestsRequest, ListDeskRequestsResponse, ListRatesPositionsRequest,
-    ListRatesPositionsResponse, Notification, RespondDeskRequestRequest, SubmitDeskRequestRequest,
-    respond_desk_request_request::Response as RespondArm,
+    DeskReject, DeskRequest, DeskRequestScope, InternaliseProvenance, ListDealsRequest,
+    ListDealsResponse, ListDeskRequestsRequest, ListDeskRequestsResponse,
+    ListRatesPositionsRequest, ListRatesPositionsResponse, Notification, RespondDeskRequestRequest,
+    SubmitDeskRequestRequest, respond_desk_request_request::Response as RespondArm,
 };
 use celnet_proto::{
     AggregateRatesRiskRequest, AggregateRatesRiskResponse, KeyRateDv01, RatesPosition,
@@ -2799,6 +2799,24 @@ fn deal_to_json(d: &Deal) -> Value {
         // The routed Risk Portfolio id, or `null` when the fill routed to no portfolio
         // (no graph / routing fall-back) — presence-tracked, never fabricated.
         "risk_book_id": d.risk_book_id,
+        // The auto-hedge / internalisation decision provenance, or `null` when no hedge
+        // policy applied (no threshold/graph configured, or the manual booking path) —
+        // presence-tracked, never fabricated.
+        "internalise": d.internalise.as_ref().map(internalise_provenance_to_json),
+    })
+}
+
+/// Encode an `InternaliseProvenance` (the auto-hedge / internalisation decision stamped
+/// on a booked `Deal`). Every field is a plain scalar (no presence tracking within), so
+/// the two codecs render it identically.
+fn internalise_provenance_to_json(p: &InternaliseProvenance) -> Value {
+    json!({
+        "internalised": p.internalised,
+        "internal_dv01": p.internal_dv01,
+        "external_dv01": p.external_dv01,
+        "edge_bps": p.edge_bps,
+        "within_tolerance": p.within_tolerance,
+        "hedge_band": p.hedge_band,
     })
 }
 

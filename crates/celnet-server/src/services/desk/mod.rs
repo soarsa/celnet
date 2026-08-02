@@ -53,7 +53,7 @@ use celnet_proto::{
 use tonic::{Request, Response, Status};
 
 use crate::clock::Clock;
-use crate::rates_pricing::{RatesPriceError, price_rates};
+use crate::rates_pricing::{RatesPriceError, price_rates, quote_bond};
 use crate::readiness::ReadinessGate;
 use celnet_entitlements::{Action, AssetClass};
 
@@ -368,6 +368,30 @@ pub fn price_desk_request(
         RatesPriceError::Bootstrap(_) => Status::internal(e.to_string()),
         _ => Status::invalid_argument(e.to_string()),
     })
+}
+
+/// The engine **reference mid** a dealt fill's captured edge is measured against — in the
+/// SAME units as the dealt `DeskQuote.price`: the fair **par rate** for a rate market
+/// (OIS / IRS / FRA), the mid **clean price** for a cash bond. Priced against the request's
+/// own `CurveSet` through the shared pricing entries (never a second copy of the math). `None`
+/// when the instrument/curve is missing or the pricing fails — the booking then carries no
+/// reference mid and no internalise decision runs (surfaced, never fabricated).
+fn desk_reference_mid(
+    instrument: Option<&RatesInstrument>,
+    curve_set: Option<&CurveSet>,
+) -> Option<f64> {
+    let arm = instrument.and_then(|i| i.instrument.as_ref())?;
+    match arm {
+        // A cash bond's dealt level is a CLEAN PRICE, so the reference mid is the mid clean
+        // price (`quote_bond`), NOT the yield the scalar pricing result carries as `par_rate`.
+        rates_instrument::Instrument::Bond(b) => {
+            quote_bond(b, curve_set?).ok().map(|q| q.clean_price)
+        }
+        // Every swap/FRA arm's dealt level is a fixed RATE, comparable to the fair par rate.
+        _ => price_desk_request(instrument, curve_set)
+            .ok()
+            .map(|r| r.par_rate),
+    }
 }
 
 /// The counterparty's submitted direction, read from whichever FI arm the request
@@ -687,6 +711,10 @@ impl RfqDeskEdge {
             quote.notional,
             desk_side,
         )?;
+        // The engine reference mid (fair par rate / mid clean price) the internalise decision
+        // measures the dealt level's captured edge against — same as the gRPC accept path.
+        let reference_mid =
+            desk_reference_mid(current.instrument.as_ref(), current.curve_set.as_ref());
         // The position book enforces the SAME pre-trade limit tree the gRPC accept path
         // consults; a hard breach refuses the booking (Err) → leave the request QUOTED.
         let booked = self
@@ -705,6 +733,8 @@ impl RfqDeskEdge {
                         .as_ref()
                         .map(|c| c.currency.clone())
                         .unwrap_or_default(),
+                    dealt_price: Some(quote.price),
+                    reference_mid,
                 },
             )
             .ok()?;
@@ -733,6 +763,9 @@ impl RfqDeskEdge {
             // position's stamp: `None` when the firm installed no routing graph (or a
             // routing fall-back left it unrouted) — surfaced, never fabricated.
             risk_book_id: self.rates.risk_book_of(booked.position_id),
+            // The auto-hedge / internalisation decision the booking engine reached, read from
+            // the fill's stamp: `None` when no hedge policy is configured (§6).
+            internalise: self.rates.internalise_of(booked.position_id),
         };
         self.deals.insert(deal.clone());
 
@@ -995,6 +1028,11 @@ impl RfqDeskService for RfqDeskEdge {
             desk_side,
         )
         .ok_or_else(|| Status::invalid_argument("request carries no bookable FI instrument"))?;
+        // The engine reference mid (fair par rate / mid clean price) the internalise decision
+        // measures the dealt level's captured edge against — priced from the request's own
+        // curve. `None` (missing curve / pricing failure) ⇒ no internalise decision.
+        let reference_mid =
+            desk_reference_mid(current.instrument.as_ref(), current.curve_set.as_ref());
         let booked = self.rates.book_with_routing(
             RatesPosition {
                 position_id: 0,
@@ -1009,6 +1047,8 @@ impl RfqDeskService for RfqDeskEdge {
                     .as_ref()
                     .map(|c| c.currency.clone())
                     .unwrap_or_default(),
+                dealt_price: Some(quote.price),
+                reference_mid,
             },
         )?;
 
@@ -1036,6 +1076,10 @@ impl RfqDeskService for RfqDeskEdge {
             // position's stamp: `None` when the firm installed no routing graph (or a
             // routing fall-back left it unrouted) — surfaced, never fabricated.
             risk_book_id: self.rates.risk_book_of(booked.position_id),
+            // The auto-hedge / internalisation decision the booking engine reached, read from
+            // the fill's stamp: `None` when no hedge policy is configured / the manual path —
+            // surfaced, never fabricated (§6).
+            internalise: self.rates.internalise_of(booked.position_id),
         };
         self.deals.insert(deal.clone());
 
@@ -2055,6 +2099,102 @@ mod tests {
         assert!(!edge.rates.has_routing());
         let deal = lift_a_deal(&edge).await;
         assert_eq!(deal.risk_book_id, None);
+    }
+
+    /// End-to-end (§6): with a hedge policy primed, a FIX-lift booking (a) routes the fill
+    /// into an enabled risk book that shows on the per-book risk roll-up, AND (b) carries the
+    /// auto-hedge / internalisation decision on the booked `Deal`, matching the store's stamp.
+    #[tokio::test]
+    async fn book_fix_lift_deal_carries_internalise_and_shows_on_dashboard() {
+        use crate::config::hedge_policy::{
+            HedgeConfigDef, HedgeMetric, HedgeScopeKind, HedgeThresholdDef, ScopedThreshold,
+        };
+        use crate::config::identity::{IdentityStore, RiskBookEdit, default_hedge_policy_graph};
+        use crate::services::auto_hedge::AutoHedgeEngine;
+        use crate::services::rates_book::RatesHedgePolicy;
+        use crate::services::risk::book_risk::aggregate_risk_book;
+        use celnet_risk_routing::{RiskRoutingGraph, RoutingNode};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let rates = Arc::new(RatesPositionStore::new());
+        // Route every fill to the enabled "warehouse" book.
+        let graph = {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                0u32,
+                RoutingNode::Book {
+                    risk_book_id: "warehouse".to_owned(),
+                },
+            );
+            RiskRoutingGraph { entry: 0, nodes }
+        };
+        rates.set_routing(Some(graph));
+        // Prime a hedge policy: the default warehouse-vs-hedge graph + a generous DV01 budget
+        // on the "warehouse" book (so a single fill sits under cap).
+        rates.set_hedge_policy(Some(RatesHedgePolicy {
+            engine: Arc::new(AutoHedgeEngine::default()),
+            graph: Some(default_hedge_policy_graph()),
+            thresholds: vec![ScopedThreshold {
+                scope_id: "warehouse".to_owned(),
+                def: HedgeThresholdDef {
+                    scope_kind: HedgeScopeKind::Book,
+                    metric: HedgeMetric::Dv01,
+                    cap: 10_000_000.0,
+                    amber: 0.8,
+                    red: 0.9,
+                    target_fraction: 0.8,
+                    min_clip: 0.0,
+                    max_clip: f64::INFINITY,
+                    ramped: false,
+                    ramp_k: 1.0,
+                },
+            }],
+            config: HedgeConfigDef::default(),
+            known_lps: BTreeSet::new(),
+        }));
+
+        let edge = edge_with_rates(Arc::clone(&rates));
+        let deal = lift_a_deal(&edge).await;
+
+        // (b) The deal carries the internalise decision, matching the store's own stamp.
+        let prov = deal
+            .internalise
+            .clone()
+            .expect("the lifted deal carries an internalise decision");
+        assert!(prov.edge_bps.is_finite());
+        assert!(matches!(
+            prov.hedge_band.as_str(),
+            "green" | "amber" | "red" | "breach"
+        ));
+        assert_eq!(
+            Some(prov),
+            edge.rates
+                .internalise_of(deal.position_id.expect("position id"))
+        );
+
+        // (a) The routed fill shows on the per-book risk roll-up under the enabled book.
+        let mut identity = IdentityStore::default();
+        let wh = identity
+            .create_risk_book(RiskBookEdit {
+                name: "Warehouse".to_owned(),
+                parent_id: None,
+                desk_id: None,
+                description: String::new(),
+                limits: None,
+                enabled: true,
+            })
+            .expect("create warehouse book");
+        assert_eq!(wh.id, "warehouse");
+        let fx = PositionStore::new();
+        let risk = aggregate_risk_book(&fx, Some(&edge.rates), &identity, &wh);
+        assert_eq!(
+            risk.position_count, 1,
+            "the lifted fill rolls up under the routed book",
+        );
+        assert!(
+            risk.dv01.is_some(),
+            "a routed rates fill surfaces a DV01 on the dashboard",
+        );
     }
 
     /// The shared `subscribe_notifications` path (gRPC + WS) authorizes the caller and

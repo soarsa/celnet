@@ -35,7 +35,9 @@ use celnet_hedge_routing::HedgeGraph;
 use celnet_risk_routing::{RiskRoutingGraph, RoutingNode};
 use serde::{Deserialize, Serialize};
 
-use super::hedge_policy::{HedgeConfigDef, ScopedThreshold};
+use super::hedge_policy::{
+    HedgeConfigDef, HedgeMetric, HedgeScopeKind, HedgeThresholdDef, ScopedThreshold,
+};
 
 use super::reference_data::{
     self, ExternalScheme, InstrumentDef, ensure_seed_instruments, government_bond_defs,
@@ -61,6 +63,13 @@ pub const SEED_ADMIN_PASSWORD: &str = "password";
 pub const DEFAULT_WAREHOUSE_BOOK_ID: &str = "warehouse";
 /// The display name of the default warehouse book seeded on a pristine store.
 pub const DEFAULT_WAREHOUSE_BOOK_NAME: &str = "Firm Warehouse";
+/// The default warehouse **DV01 budget** (the "100") seeded for the default warehouse book on
+/// a pristine store, so the internalise decision has a cap to measure fills against out of the
+/// box (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4). A deliberately generous
+/// firm-warehouse budget: a normally-sized single fill sits comfortably under it (⇒ fully
+/// internalised when the desk captured edge), so the deal blotter shows a real internalise
+/// decision from first boot. An operator narrows it via `AuthService.UpdateHedgeThreshold`.
+pub const DEFAULT_WAREHOUSE_DV01_CAP: f64 = 1_000_000.0;
 
 /// What a user is allowed to do on the edge.
 ///
@@ -2013,6 +2022,41 @@ impl IdentityStore {
         true
     }
 
+    /// Additively ensure a default **auto-hedge / internalisation policy** (a warehouse-vs-
+    /// hedge exit graph + a DV01 warehouse threshold on the default warehouse book) exists on
+    /// a pristine hedge config, so a booked FI fill carries a real internalise decision on the
+    /// deal blotter from first boot (§4/§6). Seeds ONLY when no hedge-policy graph AND no
+    /// warehouse thresholds are configured yet AND the default warehouse book exists to bind
+    /// the threshold to — so an operator who has begun configuring the hedge policy is never
+    /// clobbered. The seeded graph warehouses green-band risk and sheds the over-cap overflow
+    /// to an *advisory* external back-to-back (advisory-only is the config default), so nothing
+    /// trades externally. Returns whether anything was seeded (the caller then persists).
+    pub fn ensure_seed_hedge_policy(&mut self) -> bool {
+        if self.hedge_policy_graph.is_some() || !self.hedge_thresholds.is_empty() {
+            return false;
+        }
+        if self.risk_book(DEFAULT_WAREHOUSE_BOOK_ID).is_none() {
+            return false;
+        }
+        self.hedge_policy_graph = Some(default_hedge_policy_graph());
+        self.hedge_thresholds.push(ScopedThreshold {
+            scope_id: DEFAULT_WAREHOUSE_BOOK_ID.to_owned(),
+            def: HedgeThresholdDef {
+                scope_kind: HedgeScopeKind::Book,
+                metric: HedgeMetric::Dv01,
+                cap: DEFAULT_WAREHOUSE_DV01_CAP,
+                amber: 0.8,
+                red: 0.9,
+                target_fraction: 0.8,
+                min_clip: 0.0,
+                max_clip: f64::INFINITY,
+                ramped: false,
+                ramp_k: 1.0,
+            },
+        });
+        true
+    }
+
     // --- auto-hedge policy / thresholds / config (Phase B) -------------------
 
     /// The firm-wide auto-hedge policy graph, if defined.
@@ -2046,9 +2090,11 @@ impl IdentityStore {
     }
 
     /// The set of LP ids an `RfqOut` leaf may target — the FIX connection ids the store
-    /// holds via the aggregated-book members (the external-liquidity venues wired in).
+    /// holds via the aggregated-book members (the external-liquidity venues wired in). Public
+    /// so the boot / reconcile path can prime the rates store's hedge-policy snapshot with the
+    /// live known-LP set the engine resolves an external action's target panel against.
     #[must_use]
-    fn known_hedge_lps(&self) -> BTreeSet<String> {
+    pub fn known_hedge_lps(&self) -> BTreeSet<String> {
         self.aggregated_books
             .iter()
             .flat_map(|b| b.member_connection_ids.iter().cloned())
@@ -2524,6 +2570,45 @@ pub fn default_risk_routing_graph(book_id: &str) -> RiskRoutingGraph {
         },
     );
     RiskRoutingGraph { entry: 0, nodes }
+}
+
+/// Build the default **auto-hedge / internalisation** exit graph seeded on a pristine store
+/// ([`IdentityStore::ensure_seed_hedge_policy`]): warehouse (hold) while the book's risk sits
+/// in the green band (`breached == false`), and shed the over-cap overflow to an *advisory*
+/// external back-to-back (`SUBMIT_MARKET_ORDER`) once the red band fires. Names no instrument
+/// / LP (so it validates against any registry), is acyclic, and every path terminates.
+#[must_use]
+pub fn default_hedge_policy_graph() -> HedgeGraph {
+    use celnet_hedge_routing::{
+        ExecStyle, ExitAction, HedgeField, HedgeNode, HedgeSize, RouteOp, RouteValue,
+    };
+    let mut nodes = std::collections::BTreeMap::new();
+    nodes.insert(
+        0u32,
+        HedgeNode::Condition {
+            field: HedgeField::Breached,
+            op: RouteOp::Eq,
+            value: RouteValue::Text("false".to_owned()),
+            on_true: 1,
+            on_false: 2,
+        },
+    );
+    nodes.insert(
+        1u32,
+        HedgeNode::Action {
+            exit: ExitAction::Warehouse,
+        },
+    );
+    nodes.insert(
+        2u32,
+        HedgeNode::Action {
+            exit: ExitAction::SubmitMarketOrder {
+                size: HedgeSize::Overflow,
+                style: ExecStyle::Immediate,
+            },
+        },
+    );
+    HedgeGraph { entry: 0, nodes }
 }
 
 /// Mint a stable, unique, URL-safe id for a new risk book from its name, disambiguating
@@ -3174,7 +3259,9 @@ mod tests {
 
         // Never seeds over an operator who already defined a book (no graph yet).
         let mut with_book = IdentityStore::default();
-        with_book.create_risk_book(rb_edit("Alpha", None, None)).unwrap();
+        with_book
+            .create_risk_book(rb_edit("Alpha", None, None))
+            .unwrap();
         assert!(
             !with_book.ensure_seed_risk_routing(),
             "a store with an operator book is not pristine ⇒ no seed",
@@ -3198,14 +3285,18 @@ mod tests {
         assert!(provisioned.enabled, "auto-provisioned books are enabled");
         assert!(store.risk_routing_graph().is_some());
         // Whole-config validation now passes (the graph targets an enabled, known book).
-        store.validate_risk_books().expect("valid after provisioning");
+        store
+            .validate_risk_books()
+            .expect("valid after provisioning");
     }
 
     #[test]
     fn install_risk_routing_graph_never_mutates_existing_books() {
         let mut store = IdentityStore::default();
         // An existing ENABLED book keeps its identity untouched (no duplicate provision).
-        let alpha = store.create_risk_book(rb_edit("Alpha", None, None)).unwrap();
+        let alpha = store
+            .create_risk_book(rb_edit("Alpha", None, None))
+            .unwrap();
         store
             .install_risk_routing_graph(cond_graph(&alpha.id))
             .expect("installs against the existing enabled book");

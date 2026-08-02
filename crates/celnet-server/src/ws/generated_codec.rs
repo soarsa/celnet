@@ -67,15 +67,16 @@ use celnet_proto::{
     AggregateRatesRiskResponse, AggregateRiskRequest, AggregateRiskResponse,
     BookRatesPositionRequest, BookRatesPositionResponse, BrokerQuoteSet, BucketedRisk,
     CcyExposureLeg, CrossGamma, Deal, DealScope, DeskQuote, DeskReject, DeskRequest,
-    DeskRequestScope, DrillRiskRequest, DrillRiskResponse, GetSmileRequest, KeyRateDv01,
-    LimitStatusRequest, LimitStatusResponse, LimitUtilization, ListDealsRequest, ListDealsResponse,
-    ListDeskRequestsRequest, ListDeskRequestsResponse, ListPositionsRequest, ListPositionsResponse,
-    ListRatesPositionsRequest, ListRatesPositionsResponse, MarkSurfaceRequest, MarkSurfaceResponse,
-    NonAdditiveRisk, NumeraireRate, OrgKey, RatesPosition, RatesRiskNode, RatesRiskScope,
-    ReportingNumeraire, RespondDeskRequestRequest, RespondDeskRequestResponse, RiskBucketRequest,
-    RiskNode, RiskPosition, ScenarioPoint, ScenarioRequest, ScenarioResponse, ShockAxis, Smile,
-    SmileModel, SmilePoint, SubmitDeskRequestRequest, SubmitDeskRequestResponse, VanillaInputs,
-    VegaBucket, VegaLadderBucket, VegaPillar, respond_desk_request_request::Response as RespondArm,
+    DeskRequestScope, DrillRiskRequest, DrillRiskResponse, GetSmileRequest, InternaliseProvenance,
+    KeyRateDv01, LimitStatusRequest, LimitStatusResponse, LimitUtilization, ListDealsRequest,
+    ListDealsResponse, ListDeskRequestsRequest, ListDeskRequestsResponse, ListPositionsRequest,
+    ListPositionsResponse, ListRatesPositionsRequest, ListRatesPositionsResponse,
+    MarkSurfaceRequest, MarkSurfaceResponse, NonAdditiveRisk, NumeraireRate, OrgKey, RatesPosition,
+    RatesRiskNode, RatesRiskScope, ReportingNumeraire, RespondDeskRequestRequest,
+    RespondDeskRequestResponse, RiskBucketRequest, RiskNode, RiskPosition, ScenarioPoint,
+    ScenarioRequest, ScenarioResponse, ShockAxis, Smile, SmileModel, SmilePoint,
+    SubmitDeskRequestRequest, SubmitDeskRequestResponse, VanillaInputs, VegaBucket,
+    VegaLadderBucket, VegaPillar, respond_desk_request_request::Response as RespondArm,
 };
 // Curve-query verb family (SurfaceService `GetCurve` / `MarkCurve` / `CurveScenario`
 // — the fixed-income market-data query surface, ADR-0021). Pure rates messages with
@@ -5097,6 +5098,24 @@ impl WireAdapter for Deal {
                 .as_ref()
                 .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
             "risk_book_id" => self.risk_book_id.as_deref().map(WireVal::Str),
+            "internalise" => self
+                .internalise
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for InternaliseProvenance {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "internalised" => Some(WireVal::Bool(self.internalised)),
+            "internal_dv01" => Some(WireVal::F64(self.internal_dv01)),
+            "external_dv01" => Some(WireVal::F64(self.external_dv01)),
+            "edge_bps" => Some(WireVal::F64(self.edge_bps)),
+            "within_tolerance" => Some(WireVal::Bool(self.within_tolerance)),
+            "hedge_band" => Some(WireVal::Str(&self.hedge_band)),
             _ => None,
         }
     }

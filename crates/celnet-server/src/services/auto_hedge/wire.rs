@@ -509,6 +509,10 @@ pub fn config_from_wire(d: &HedgeConfigDesc) -> HedgeConfigDef {
         max_hedges_per_interval: d.max_hedges_per_interval,
         daily_external_notional_cap: d.daily_external_notional_cap,
         lp_panels: d.lp_panels.iter().map(lp_panel_from_wire).collect(),
+        // `min_edge_bps` is not carried on `HedgeConfigDesc` (a server-side price-tolerance
+        // floor, not a GUI-edited engine control), so it defaults here; the `set_hedge_config`
+        // handler PRESERVES the operator's stored value across a wire write.
+        min_edge_bps: crate::services::internalise::DEFAULT_MIN_EDGE_BPS,
     }
 }
 
@@ -665,6 +669,10 @@ mod tests {
                     },
                 },
             ],
+            // `min_edge_bps` is a server-side price-tolerance floor NOT carried on the wire, so
+            // `config_from_wire` recovers the default — the round-trip only holds when `c`
+            // carries that same default here.
+            min_edge_bps: crate::services::internalise::DEFAULT_MIN_EDGE_BPS,
         };
         assert_eq!(config_from_wire(&config_to_wire(&c)), c);
     }

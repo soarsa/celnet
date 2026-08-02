@@ -7836,6 +7836,41 @@ message Deal {
   // (`RatesPositionStore::risk_book_of`). Absent when the fill routed to no portfolio
   // (no graph configured, or a routing fall-back) — never fabricated. Presence-tracked.
   optional string risk_book_id = 16;
+  // The auto-hedge / internalisation decision the booking engine reached for this fill
+  // (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §6/§8.4). Present only when a
+  // warehouse threshold AND a hedge-policy graph are configured for the routed book AND the
+  // booking path supplied the priced reference mid + dealt price (the RFQ desk accept / FIX
+  // lift paths); absent on the manual `BookRatesPosition` path and when no policy is
+  // configured — surfaced, never fabricated. Presence-tracked.
+  optional InternaliseProvenance internalise = 17;
+}
+// The auto-hedge / internalisation decision provenance stamped on a booked `Deal`
+// (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §6). A pure DECISION + audit
+// record: the internal portion is warehoused and the external portion is an *advisory*
+// back-to-back (nothing is submitted to a live venue at this seam, matching the mandatory
+// shadow-run posture, §8.4). Every field is computed from the fill's real economics —
+// never fabricated.
+message InternaliseProvenance {
+  // Whether the fill was fully internalised (warehoused): true when the dealer captured
+  // sufficient edge (`within_tolerance`) AND booking it left the routed book within its
+  // warehouse cap, so no external hedge was required (`external_dv01 == 0`).
+  bool internalised = 1;
+  // The DV01 (linear PV01 proxy, native units) warehoused internally for this fill.
+  double internal_dv01 = 2;
+  // The DV01 shed to an advisory external back-to-back — the over-cap overflow, or the
+  // whole fill when the captured edge was below tolerance (a losing fill is not warehoused).
+  double external_dv01 = 3;
+  // The dealer's captured edge on THIS fill in basis points: the signed, dealer-favourable
+  // distance of the dealt price from the engine reference mid (positive = the desk dealt
+  // *better* than mid). See `crate::services::internalise` for the pay/receive-fixed sign
+  // derivation.
+  double edge_bps = 4;
+  // Whether `edge_bps` cleared the configured minimum-edge floor (`min_edge_bps`) — the
+  // "are we making money" gate that decides internalise vs external back-to-back.
+  bool within_tolerance = 5;
+  // The warehouse RAG band the routed book's net risk fell in after this fill
+  // (`green` / `amber` / `red` / `breach`) — the engine's own band label.
+  string hedge_band = 6;
 }
 // A scope filter for the received-deals blotter.
 message DealScope {

@@ -395,6 +395,24 @@ impl AuthEdge {
         }
     }
 
+    /// Re-prime the shared rates store's **auto-hedge / internalisation policy** snapshot
+    /// from the committed store (a no-op when no rates store is wired). Called after every
+    /// admin hedge write (policy graph / warehouse threshold / engine config) so a booked FI
+    /// fill's internalise decision reflects the new policy immediately. Shares the SAME
+    /// `auto_hedge` engine so a stamped decision also lands in the `ListHedgeProvenance` ring.
+    /// The boot path runs the equivalent prime once (`celnet-server/src/lib.rs`).
+    fn reconcile_hedge_policy(&self, store: &IdentityStore) {
+        if let Some(rates_store) = &self.rates_store {
+            rates_store.set_hedge_policy(Some(crate::services::rates_book::RatesHedgePolicy {
+                engine: Arc::clone(&self.auto_hedge),
+                graph: store.hedge_policy_graph().cloned(),
+                thresholds: store.hedge_thresholds().to_vec(),
+                config: store.hedge_config().clone(),
+                known_lps: store.known_hedge_lps(),
+            }));
+        }
+    }
+
     /// Inject the edge-wide aggregated-book engine hub so book CRUD re-reconciles the
     /// running engines (the boot path shares the SAME hub the stream + LP ingest
     /// services use).
@@ -2021,6 +2039,7 @@ impl AuthService for AuthEdge {
         next.set_hedge_policy_graph(graph.clone())
             .map_err(Status::invalid_argument)?;
         self.persist_and_commit(&mut guard, next)?;
+        self.reconcile_hedge_policy(&guard);
         Ok(Response::new(UpdateHedgePolicyGraphResponse {
             graph: Some(hedge_graph_to_wire(&graph)),
             correlation_id: req.correlation_id,
@@ -2072,6 +2091,7 @@ impl AuthService for AuthEdge {
         // it inserts / replaces it (§4).
         next.upsert_hedge_threshold(entry);
         self.persist_and_commit(&mut guard, next)?;
+        self.reconcile_hedge_policy(&guard);
         let thresholds = guard
             .hedge_thresholds()
             .iter()
@@ -2137,9 +2157,12 @@ impl AuthService for AuthEdge {
         let wire = req
             .config
             .ok_or_else(|| Status::invalid_argument("a hedge engine config is required"))?;
-        let cfg = config_from_wire(&wire);
+        let mut cfg = config_from_wire(&wire);
 
         let mut guard = self.lock();
+        // `min_edge_bps` is a server-side price-tolerance floor not carried on the wire —
+        // preserve the operator's stored value across a GUI config write (never reset it).
+        cfg.min_edge_bps = guard.hedge_config().min_edge_bps;
         let mut next = guard.clone();
         // The store re-validates the config's hedging LP panels against the live known-LP
         // registry (every include/exclude id is a known LP; no panel resolves to an empty
@@ -2147,6 +2170,7 @@ impl AuthService for AuthEdge {
         next.set_hedge_config(cfg)
             .map_err(Status::invalid_argument)?;
         self.persist_and_commit(&mut guard, next)?;
+        self.reconcile_hedge_policy(&guard);
         Ok(Response::new(SetHedgeConfigResponse {
             config: Some(config_to_wire(guard.hedge_config())),
             correlation_id: req.correlation_id,

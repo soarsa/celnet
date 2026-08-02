@@ -26,23 +26,31 @@
 // house convention (see `services::quote` / `services::desk`), not boxed per call.
 #![allow(clippy::result_large_err)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::services::consensus::{ConsensusHandle, rates_book_key};
 
+use celnet_hedge_routing::{HedgeContext, HedgeGraph};
 use celnet_limits::{
     IncrementalTrade, LimitScope, LimitSpec, LimitTree, NonAdditiveExposure, PreTradeDecision,
     PreTradeResult, ScopePath, pre_trade_check,
 };
 use celnet_proto::{
-    EntitlementPrincipal, EntitlementRule, RatesPosition, RiskDimension, Side, rates_instrument,
+    EntitlementPrincipal, EntitlementRule, InternaliseProvenance, RatesPosition, RiskDimension,
+    Side, rates_instrument,
 };
 use celnet_risk_cube::{BookId, EntityId, NetGreeks, NodeAggregate, VegaPillar};
 use celnet_risk_routing::{RiskRouter, RiskRoutingGraph, RoutingContext};
 
+use crate::config::hedge_policy::{
+    HedgeConfigDef, HedgeScopeKind, HedgeThresholdDef, ScopedThreshold,
+};
 use crate::config::identity::RiskLimits;
+use crate::services::auto_hedge::AutoHedgeEngine;
+use crate::services::auto_hedge::wire::band_label;
+use crate::services::internalise::{self, QuoteKind};
 use crate::services::risk::store::{RiskBookLimitDef, limit_breached_status};
 
 /// One basis point in absolute rate terms — the scale of the linear-rates limit
@@ -65,6 +73,50 @@ pub struct RatesRoutingAttribution {
     /// The settlement/curve currency (ISO 4217, e.g. `"USD"`) the fill priced under, or empty
     /// when unknown at the booking site.
     pub ccy: String,
+    /// The **dealt level** of the fill (the accepted `DeskQuote.price`): the swap/FRA fixed
+    /// rate, or the cash-bond clean price. `Some` on the RFQ-desk accept / FIX-lift paths (so
+    /// the booking engine can measure the dealer-captured edge); `None` on the manual
+    /// `BookRatesPosition` path (no internalise decision — byte-identical to before).
+    pub dealt_price: Option<f64>,
+    /// The engine **reference mid** the fill is measured against — the fair par rate (rate
+    /// markets) or the mid clean price (bonds) the pricer computed in the accept/lift handler.
+    /// `Some` beside [`dealt_price`](Self::dealt_price); `None` ⇒ no internalise decision.
+    pub reference_mid: Option<f64>,
+}
+
+/// The firm-wide **auto-hedge / internalisation policy** snapshot primed into the rates
+/// store beside the routing graph (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`
+/// §6/§7). A booked RFQ-desk / FIX-lift fill that carries a priced reference mid resolves
+/// its `(warehouse-cap × hedge-policy graph)` here and stamps an [`InternaliseProvenance`]
+/// decision onto the deal — the internal (warehoused) vs advisory-external split, the
+/// captured edge, and the RAG band. Primed once at boot from the persisted `IdentityStore`
+/// and re-primed after every admin hedge write (the `AuthEdge` reconcile hook). `None` on the
+/// store ⇒ no internalise decision runs and booking is byte-identical to the pre-Phase-B path.
+#[derive(Clone)]
+pub struct RatesHedgePolicy {
+    /// The shared off-core decision + provenance engine (the SAME `Arc` the
+    /// `ListHedgeProvenance` RPC reads), so a stamped decision also lands in the audit ring.
+    pub engine: Arc<AutoHedgeEngine>,
+    /// The firm-wide hedge-policy exit graph. `None` ⇒ no policy resolves ⇒ no internalise
+    /// decision (the deal books plainly).
+    pub graph: Option<HedgeGraph>,
+    /// The configured warehouse thresholds (the "100" per desk / book / instrument), resolved
+    /// most-specific-wins per fill.
+    pub thresholds: Vec<ScopedThreshold>,
+    /// The engine config (kill-switch / advisory / rate guards / `min_edge_bps` tolerance floor).
+    pub config: HedgeConfigDef,
+    /// The live known-LP registry the engine resolves an external action's target panel against.
+    pub known_lps: BTreeSet<String>,
+}
+
+impl std::fmt::Debug for RatesHedgePolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RatesHedgePolicy")
+            .field("has_graph", &self.graph.is_some())
+            .field("thresholds", &self.thresholds.len())
+            .field("known_lps", &self.known_lps.len())
+            .finish()
+    }
 }
 
 /// The shared in-memory linear-rates position book. Cheap to share behind an
@@ -116,6 +168,17 @@ pub struct RatesPositionStore {
     /// fill does. A relaxed atomic (read lock-free off the streaming tick loop, never the
     /// pinned pricing core); starts at `0`.
     risk_version: AtomicU64,
+    /// The firm-wide **auto-hedge / internalisation policy** snapshot (§6/§7). `None` ⇒ no
+    /// internalise decision runs (booking byte-identical to the pre-Phase-B path); `Some`
+    /// enables the per-fill warehouse-vs-external decision + [`InternaliseProvenance`] stamp.
+    /// Primed at boot + on every admin hedge write, behind an [`Arc`] so a booking clones only
+    /// a pointer off the off-hot-path booking tier.
+    hedge_policy: RwLock<Option<Arc<RatesHedgePolicy>>>,
+    /// The internalise-decision provenance stamped on each fill that carried a priced
+    /// reference mid AND resolved a hedge policy, keyed by rates position id (the analogue of
+    /// [`risk_book`](Self::risk_book)). Absent ⇒ the fill booked with no internalise decision
+    /// (manual path, or no policy configured) — surfaced on the deal, never fabricated.
+    internalise: RwLock<HashMap<u64, InternaliseProvenance>>,
 }
 
 /// A read view of one booked rates position assembled for a **risk transfer** (§6):
@@ -171,6 +234,8 @@ impl RatesPositionStore {
             risk_book: RwLock::new(HashMap::new()),
             risk_book_limits: RwLock::new(HashMap::new()),
             risk_version: AtomicU64::new(0),
+            hedge_policy: RwLock::new(None),
+            internalise: RwLock::new(HashMap::new()),
         }
     }
 
@@ -247,6 +312,34 @@ impl RatesPositionStore {
             .write()
             .expect("rates risk-book limit lock poisoned");
         *g = books.into_iter().map(|b| (b.id.clone(), b)).collect();
+    }
+
+    /// Install (or clear) the firm-wide **auto-hedge / internalisation policy** snapshot
+    /// (§6/§7). Pushed at boot from the persisted `IdentityStore` and re-pushed after every
+    /// admin hedge write (the SAME `AuthEdge` reconcile hook that re-primes the routing graph),
+    /// so defining / editing / clearing the hedge graph, thresholds, or config takes effect on
+    /// subsequent fills immediately. `Some(policy)` ⇒ a booked fill carrying a priced reference
+    /// mid resolves its warehouse-vs-external decision and stamps an [`InternaliseProvenance`];
+    /// `None` ⇒ no decision runs and booking is byte-identical to the pre-Phase-B path. Behind
+    /// an [`Arc`] so a concurrent booking sees the old or new policy atomically, never a torn one.
+    pub fn set_hedge_policy(&self, policy: Option<RatesHedgePolicy>) {
+        let mut g = self
+            .hedge_policy
+            .write()
+            .expect("rates hedge-policy lock poisoned");
+        *g = policy.map(Arc::new);
+    }
+
+    /// The internalise-decision provenance stamped on a booked rates fill, or `None` when the
+    /// fill booked with no decision (the manual `BookRatesPosition` path, or no hedge policy
+    /// configured). Looked up by rates position id — the analogue of [`Self::risk_book_of`].
+    #[must_use]
+    pub fn internalise_of(&self, position_id: u64) -> Option<InternaliseProvenance> {
+        self.internalise
+            .read()
+            .expect("rates internalise lock poisoned")
+            .get(&position_id)
+            .cloned()
     }
 
     /// Whether a risk-routing graph is currently installed (routing is active).
@@ -751,7 +844,140 @@ impl RatesPositionStore {
         // have moved: advance the monotonic risk version the live per-book risk stream folds
         // into its poll signal (mirrors the FX sink's unconditional post-mutation bump).
         self.risk_version.fetch_add(1, Ordering::Relaxed);
+        // Auto-hedge / internalise decision (§6): when a hedge policy is primed AND this fill
+        // routed to a book AND the booking path supplied a priced reference mid + dealt price
+        // (the RFQ-desk accept / FIX-lift paths), resolve the warehouse-vs-external split +
+        // price-tolerance verdict and stamp it onto the fill for the deal blotter. A no-op
+        // otherwise (the manual `BookRatesPosition` path, or no policy) — byte-identical.
+        self.stamp_internalise(&position, resolved_book.as_deref(), &attribution);
         Ok(position)
+    }
+
+    /// Resolve and stamp this fill's auto-hedge / internalisation decision (§6), when a hedge
+    /// policy is primed, the fill routed to a book, and the booking path supplied a priced
+    /// reference mid + dealt price. Reads the routed book's post-fill net DV01, builds a
+    /// [`HedgeContext`], runs the pure [`AutoHedgeEngine`] (which also records the firm-wide
+    /// audit provenance the `ListHedgeProvenance` RPC serves), combines the engine's
+    /// internal/external decompose with the price-tolerance
+    /// [`InternaliseVerdict`](crate::services::internalise::InternaliseVerdict), and stamps the
+    /// resulting [`InternaliseProvenance`] keyed by the fill's position id. A no-op (no stamp)
+    /// when any precondition is absent — the deal then carries no internalise provenance
+    /// (surfaced, never fabricated). Off the pinned pricing core (guardrail 11).
+    fn stamp_internalise(
+        &self,
+        fill: &RatesPosition,
+        resolved_book: Option<&str>,
+        attribution: &RatesRoutingAttribution,
+    ) {
+        let Some(book) = resolved_book else { return };
+        let (Some(dealt), Some(mid)) = (attribution.dealt_price, attribution.reference_mid) else {
+            return;
+        };
+        let Some(policy) = self
+            .hedge_policy
+            .read()
+            .expect("rates hedge-policy lock poisoned")
+            .clone()
+        else {
+            return;
+        };
+        // A hedge-policy graph is required to resolve an exit action.
+        let Some(graph) = policy.graph.as_ref() else {
+            return;
+        };
+        // The fill's side + whether its dealt level is a rate or a clean price.
+        let Some((desk_side, kind)) = fill_side_and_quote_kind(fill) else {
+            return;
+        };
+        let instrument = internalise_instrument_label(fill);
+        // Resolve the most-specific warehouse threshold for this fill (instrument > book >
+        // desk). No configured threshold ⇒ no "100" to decide against ⇒ no decision.
+        let Some(thr_def) = resolve_hedge_threshold(&policy.thresholds, "", book, &instrument)
+        else {
+            return;
+        };
+        let wh = thr_def.to_threshold();
+
+        // The routed book's post-fill net DV01 (signed linear PV01 proxy) — the risk state the
+        // warehouse cap is measured against — plus this fill's own DV01 magnitude.
+        let book_net_dv01 = self.book_net_dv01(book);
+        let fill_dv01 = rates_linear_exposure(fill).abs();
+
+        // The price-tolerance verdict: did the desk capture enough edge to warehouse this fill?
+        let verdict = internalise::verdict(desk_side, dealt, mid, kind, policy.config.min_edge_bps);
+
+        // Run the pure engine on the book's risk state: it decomposes the shed internal-vs-
+        // external per the firm's hedge-policy graph AND records the firm-wide audit provenance
+        // in the shared ring the `ListHedgeProvenance` RPC serves. `now` is the (off-core)
+        // fire timestamp for that audit record.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
+            .unwrap_or(0);
+        let ctx = HedgeContext {
+            instrument_id: instrument,
+            ccy: attribution.ccy.clone(),
+            book: book.to_owned(),
+            net_dv01: book_net_dv01,
+            // The rates warehouse budget is DV01-based; mirror it onto `net_notional` so a
+            // threshold configured with a non-DV01 metric still classifies the SAME magnitude
+            // against the cap (RAG classification depends only on `|exposure| / cap`).
+            net_notional: book_net_dv01,
+            breached: wh.breached(book_net_dv01),
+            threshold: wh.cap,
+            utilization: wh.utilization(book_net_dv01),
+            overflow: wh.overflow(book_net_dv01),
+            internal_offset_available: 0.0,
+            ..HedgeContext::default()
+        };
+        let outcome = policy.engine.evaluate(
+            graph,
+            &thr_def,
+            &policy.config,
+            &ctx,
+            &policy.known_lps,
+            now,
+        );
+        // The book-level external shed the graph's decompose decided; attribute up to this
+        // fill's own DV01 to it (a fill can shed at most what it added).
+        let shed = outcome.intent.external_hedged;
+
+        // Combine the engine's shed with the tolerance verdict (§6):
+        // - within tolerance (making money): warehouse the fill, shedding only the over-cap
+        //   overflow (clamped to the fill's DV01) externally; internalised iff nothing is shed.
+        // - below tolerance (thin / adverse edge): a losing fill is NOT warehoused — the whole
+        //   fill goes to an advisory external back-to-back.
+        let (internal_dv01, external_dv01, internalised) = if verdict.within_tolerance {
+            let ext = shed.min(fill_dv01).max(0.0);
+            (fill_dv01 - ext, ext, ext == 0.0)
+        } else {
+            (0.0, fill_dv01, false)
+        };
+
+        let prov = InternaliseProvenance {
+            internalised,
+            internal_dv01,
+            external_dv01,
+            edge_bps: verdict.edge_bps,
+            within_tolerance: verdict.within_tolerance,
+            hedge_band: band_label(wh.classify(book_net_dv01)).to_owned(),
+        };
+        self.internalise
+            .write()
+            .expect("rates internalise lock poisoned")
+            .insert(fill.position_id, prov);
+    }
+
+    /// The routed book's net DV01 (signed linear PV01 proxy) over the positions currently
+    /// stamped into it — the risk state the internalise decision measures against the
+    /// warehouse cap. Own positions only (the per-fill decision is book-local; the dashboard's
+    /// subtree roll-up is the separate `book_risk` seam).
+    #[must_use]
+    fn book_net_dv01(&self, book: &str) -> f64 {
+        self.positions_in_risk_book(book)
+            .iter()
+            .map(rates_linear_exposure)
+            .sum()
     }
 
     /// Project this fill's post-book risk-book aggregate over the resolved book **and each
@@ -896,6 +1122,59 @@ impl RatesPositionStore {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+/// The DESK's side + the quote kind (rate vs clean price) of a rates fill, read from its
+/// instrument arm — the inputs the internalise price-tolerance verdict needs. `None` for a
+/// missing / unrecognised arm or side (the fill then carries no internalise decision).
+fn fill_side_and_quote_kind(fill: &RatesPosition) -> Option<(Side, QuoteKind)> {
+    let arm = fill
+        .instrument
+        .as_ref()
+        .and_then(|i| i.instrument.as_ref())?;
+    let (side_i32, kind) = match arm {
+        rates_instrument::Instrument::Ois(o) => (o.side, QuoteKind::Rate),
+        rates_instrument::Instrument::Irs(i) => (i.side, QuoteKind::Rate),
+        rates_instrument::Instrument::Fra(f) => (f.side, QuoteKind::Rate),
+        rates_instrument::Instrument::Bond(b) => (b.side, QuoteKind::Price),
+    };
+    Some((Side::try_from(side_i32).ok()?, kind))
+}
+
+/// A short instrument-family label (`OIS` / `IRS` / `FRA` / `BOND`) for the internalise
+/// decision's [`HedgeContext`] + instrument-scoped threshold match. Empty for a missing arm.
+fn internalise_instrument_label(fill: &RatesPosition) -> String {
+    let Some(arm) = fill.instrument.as_ref().and_then(|i| i.instrument.as_ref()) else {
+        return String::new();
+    };
+    match arm {
+        rates_instrument::Instrument::Ois(_) => "OIS",
+        rates_instrument::Instrument::Irs(_) => "IRS",
+        rates_instrument::Instrument::Fra(_) => "FRA",
+        rates_instrument::Instrument::Bond(_) => "BOND",
+    }
+    .to_owned()
+}
+
+/// Resolve the most-specific warehouse [`HedgeThresholdDef`] for a `(desk, book, instrument)`
+/// fill — instrument > book > desk (the same precedence as the hedging LP panels, §4.4).
+/// `None` when no threshold is configured for any of the three scopes (⇒ no internalise
+/// decision runs).
+fn resolve_hedge_threshold(
+    thresholds: &[ScopedThreshold],
+    desk: &str,
+    book: &str,
+    instrument: &str,
+) -> Option<HedgeThresholdDef> {
+    let by = |kind: HedgeScopeKind, id: &str| {
+        thresholds
+            .iter()
+            .find(move |t| t.def.scope_kind == kind && t.scope_id == id)
+    };
+    by(HedgeScopeKind::Instrument, instrument)
+        .or_else(|| by(HedgeScopeKind::Book, book))
+        .or_else(|| by(HedgeScopeKind::Desk, desk))
+        .map(|t| t.def)
 }
 
 /// The signed **linear interest-rate exposure** a rates position charges against a
@@ -1644,6 +1923,7 @@ mod tests {
                 RatesRoutingAttribution {
                     counterparty: "celer-rates-celnet".to_owned(),
                     ccy: "USD".to_owned(),
+                    ..RatesRoutingAttribution::default()
                 },
             )
             .expect("desk fill books");
@@ -1666,6 +1946,7 @@ mod tests {
             &RatesRoutingAttribution {
                 counterparty: "celer-rates-celnet".to_owned(),
                 ccy: "USD".to_owned(),
+                ..RatesRoutingAttribution::default()
             },
         );
         assert_eq!(ctx.counterparty, "celer-rates-celnet");
@@ -1707,5 +1988,181 @@ mod tests {
             store.risk_book_of(ok.position_id).as_deref(),
             Some("BOOK-A")
         );
+    }
+
+    // ---- auto-hedge / internalisation decision (§6) --------------------------
+    //
+    // A 5y 10mm pay-fixed (Buy) OIS charges `+5000` of signed linear DV01 (`10mm·5·1bp`).
+    // The internalise decision runs only when a hedge policy is primed AND the fill carried a
+    // priced dealt level + reference mid. The pieces combine: the price-tolerance verdict
+    // (did the desk capture edge?) × the warehouse-cap sizing (is the book over its "100"?).
+
+    use crate::config::hedge_policy::HedgeMetric;
+
+    /// A single-book routing graph: every fill → `book`.
+    fn single_book_graph(book: &str) -> RiskRoutingGraph {
+        let mut nodes = std::collections::BTreeMap::new();
+        nodes.insert(
+            0u32,
+            RoutingNode::Book {
+                risk_book_id: book.to_owned(),
+            },
+        );
+        RiskRoutingGraph { entry: 0, nodes }
+    }
+
+    /// A hedge policy: the default warehouse-vs-hedge exit graph + one Book-scoped DV01
+    /// threshold on `book` with budget `cap`, advisory-only, `min_edge_bps` tolerance floor.
+    fn hedge_policy(book: &str, cap: f64, min_edge_bps: f64) -> RatesHedgePolicy {
+        let config = HedgeConfigDef {
+            min_edge_bps,
+            ..HedgeConfigDef::default()
+        };
+        RatesHedgePolicy {
+            engine: Arc::new(AutoHedgeEngine::default()),
+            graph: Some(crate::config::identity::default_hedge_policy_graph()),
+            thresholds: vec![ScopedThreshold {
+                scope_id: book.to_owned(),
+                def: HedgeThresholdDef {
+                    scope_kind: HedgeScopeKind::Book,
+                    metric: HedgeMetric::Dv01,
+                    cap,
+                    amber: 0.8,
+                    red: 0.9,
+                    target_fraction: 0.8,
+                    min_clip: 0.0,
+                    max_clip: f64::INFINITY,
+                    ramped: false,
+                    ramp_k: 1.0,
+                },
+            }],
+            config,
+            known_lps: BTreeSet::new(),
+        }
+    }
+
+    /// A booking attribution carrying the dealt level + reference mid (the RFQ-desk / lift path).
+    fn priced_attribution(dealt: f64, mid: f64) -> RatesRoutingAttribution {
+        RatesRoutingAttribution {
+            counterparty: "cp".to_owned(),
+            ccy: "USD".to_owned(),
+            dealt_price: Some(dealt),
+            reference_mid: Some(mid),
+        }
+    }
+
+    /// Making money + under the warehouse cap ⇒ the fill is FULLY internalised (warehoused),
+    /// nothing shed externally, and the verdict is within tolerance.
+    #[test]
+    fn internalise_within_tolerance_under_cap_is_fully_internalised() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        store.set_hedge_policy(Some(hedge_policy("wh", 100_000.0, 0.5)));
+        // Pay-fixed 4.00% vs a 4.05% fair mid → paying 5bp under fair = +5bp dealer edge; the
+        // 5000-DV01 fill sits far under the 100k cap → green band → warehoused.
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
+            .expect("books");
+        let prov = store
+            .internalise_of(booked.position_id)
+            .expect("a priced fill under a hedge policy is stamped");
+        assert!(prov.within_tolerance);
+        assert!(
+            prov.internalised,
+            "under cap + making money ⇒ fully internalised"
+        );
+        assert!((prov.internal_dv01 - 5000.0).abs() < 1e-6);
+        assert_eq!(prov.external_dv01, 0.0);
+        assert!((prov.edge_bps - 5.0).abs() < 1e-6);
+        assert_eq!(prov.hedge_band, "green");
+    }
+
+    /// A thin (sub-floor) edge ⇒ a losing / marginal fill is NOT warehoused: the whole fill
+    /// goes to an advisory external back-to-back, and it is not internalised.
+    #[test]
+    fn thin_edge_books_external_back_to_back() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        store.set_hedge_policy(Some(hedge_policy("wh", 100_000.0, 0.5)));
+        // 4.049% vs 4.05% mid → 0.1bp edge, below the 0.5bp floor.
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.04049, 0.0405))
+            .expect("books");
+        let prov = store.internalise_of(booked.position_id).expect("stamped");
+        assert!(!prov.within_tolerance, "0.1bp is below the 0.5bp floor");
+        assert!(!prov.internalised);
+        assert_eq!(prov.internal_dv01, 0.0);
+        assert!(
+            (prov.external_dv01 - 5000.0).abs() < 1e-6,
+            "the whole fill goes to the street"
+        );
+    }
+
+    /// A fill that pushes the book's net DV01 over the warehouse cap ⇒ the over-cap overflow
+    /// is shed externally and the rest warehoused (a split), even when making money.
+    #[test]
+    fn over_cap_fill_splits_internal_and_external() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        // cap 4000 DV01: the 5000-DV01 fill breaches (util 1.25). target = 0.8·4000 = 3200 →
+        // overflow 5000 − 3200 = 1800 shed externally; the remaining 3200 warehoused.
+        store.set_hedge_policy(Some(hedge_policy("wh", 4000.0, 0.5)));
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
+            .expect("books");
+        let prov = store.internalise_of(booked.position_id).expect("stamped");
+        assert!(prov.within_tolerance, "5bp edge clears the floor");
+        assert!(
+            !prov.internalised,
+            "an over-cap fill is not fully internalised"
+        );
+        assert!(
+            (prov.external_dv01 - 1800.0).abs() < 1e-6,
+            "the over-cap overflow is shed externally, got {}",
+            prov.external_dv01
+        );
+        assert!(
+            (prov.internal_dv01 - 3200.0).abs() < 1e-6,
+            "the rest is warehoused, got {}",
+            prov.internal_dv01
+        );
+        assert_eq!(prov.hedge_band, "breach");
+    }
+
+    /// The manual `book` path (no dealt/mid) stamps NO internalise decision — byte-identical
+    /// to the pre-Phase-B booking path even with a hedge policy primed.
+    #[test]
+    fn manual_booking_stamps_no_internalise_decision() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        store.set_hedge_policy(Some(hedge_policy("wh", 100_000.0, 0.5)));
+        let booked = store.book(position(0, 1, 10)).expect("books");
+        assert!(store.internalise_of(booked.position_id).is_none());
+    }
+
+    /// With no hedge policy primed, a priced fill still books but carries no internalise
+    /// decision (surfaced, never fabricated).
+    #[test]
+    fn no_hedge_policy_stamps_no_internalise_decision() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
+            .expect("books");
+        assert!(store.internalise_of(booked.position_id).is_none());
+    }
+
+    /// With no warehouse threshold configured for the routed book, there is no "100" to
+    /// decide against ⇒ no internalise decision (even with a graph + priced fill).
+    #[test]
+    fn no_threshold_for_book_stamps_no_internalise_decision() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        // A policy whose only threshold is on a DIFFERENT book ⇒ unresolved for "wh".
+        store.set_hedge_policy(Some(hedge_policy("other-book", 100_000.0, 0.5)));
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
+            .expect("books");
+        assert!(store.internalise_of(booked.position_id).is_none());
     }
 }

@@ -647,11 +647,18 @@ impl Edge {
         // risk book or routing graph exists. Runs BEFORE the routers are primed below so the
         // seeded graph takes effect from first boot.
         let risk_routing_seeded = identity_store.ensure_seed_risk_routing();
+        // Seed a default auto-hedge / internalisation policy (a warehouse-vs-hedge exit graph +
+        // a DV01 warehouse threshold on the default warehouse book) on a pristine hedge config,
+        // so a booked FI fill carries a real internalise decision on the deal blotter from first
+        // boot (§4/§6). Idempotent + advisory-only (nothing trades externally). Runs AFTER the
+        // risk-routing seed (it binds to the default warehouse book that seed creates).
+        let hedge_policy_seeded = identity_store.ensure_seed_hedge_policy();
         if admin_seeded
             || registry_seeded
             || instruments_seeded
             || gov_bonds_seeded
             || risk_routing_seeded
+            || hedge_policy_seeded
         {
             identity_store
                 .save(&identity_path)
@@ -709,6 +716,23 @@ impl Edge {
                 .map(crate::services::risk::store::RiskBookLimitDef::from)
                 .collect(),
         );
+        // The shared off-core auto-hedge decision + provenance engine (Phase B). The SAME
+        // `Arc` is primed into the rates store's hedge-policy snapshot (so a booked FI fill's
+        // internalise decision stamps into its ring) AND handed to the `AuthEdge` (so the
+        // `ListHedgeProvenance` RPC reads that same audit ring).
+        let auto_hedge_engine = Arc::new(services::auto_hedge::AutoHedgeEngine::default());
+        // Prime the rates store's auto-hedge / internalisation policy from the persisted config
+        // (the exit graph + warehouse thresholds + engine config + known-LP set), so a booked
+        // RFQ-desk / FIX-lift fill carrying a priced reference mid resolves its warehouse-vs-
+        // external decision + tolerance verdict from first boot (§6). Re-primed on every admin
+        // hedge write via `AuthEdge::reconcile_hedge_policy`. `None`/no threshold ⇒ no decision.
+        rates_store.set_hedge_policy(Some(services::rates_book::RatesHedgePolicy {
+            engine: Arc::clone(&auto_hedge_engine),
+            graph: identity_store.hedge_policy_graph().cloned(),
+            thresholds: identity_store.hedge_thresholds().to_vec(),
+            config: identity_store.hedge_config().clone(),
+            known_lps: identity_store.known_hedge_lps(),
+        }));
 
         // ADR-0015 §2.1: activate the configurable consistency tier — Raft **wired
         // everywhere but forced nowhere**. A `RaftNode` is booted ONLY when a
@@ -777,6 +801,10 @@ impl Edge {
             // Re-prime the shared LINEAR-RATES store's router beside the FX store, and sum its
             // routed positions into the `ListRiskBookRisk` roll-up.
             .with_rates_store(Arc::clone(&rates_store))
+            // Share the SAME auto-hedge engine the rates store's internalise decision stamps
+            // into, so `ListHedgeProvenance` serves that live audit ring; admin hedge writes
+            // then re-prime the rates store's hedge-policy snapshot.
+            .with_auto_hedge_engine(Arc::clone(&auto_hedge_engine))
             // Back the transfer RPCs (initiate / accept / reject / cancel / list) with the
             // shared transfer service.
             .with_transfer_service(Arc::clone(&transfer_service))

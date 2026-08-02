@@ -2987,9 +2987,9 @@ fn book_and_list_rates_positions_response_encode_are_byte_identical() {
 // ===========================================================================
 
 use celnet_proto::{
-    AcceptDeskQuoteResponse, CurveSet, Deal, DeskQuote, DeskRequest, ListDealsResponse,
-    ListDeskRequestsResponse, OisPillar, PillarTenor, RespondDeskRequestResponse,
-    SubmitDeskRequestResponse, pillar_tenor,
+    AcceptDeskQuoteResponse, CurveSet, Deal, DeskQuote, DeskRequest, InternaliseProvenance,
+    ListDealsResponse, ListDeskRequestsResponse, OisPillar, PillarTenor,
+    RespondDeskRequestResponse, SubmitDeskRequestResponse, pillar_tenor,
 };
 
 /// A calibrated OIS curve set (a broken reference date + one year pillar).
@@ -3105,6 +3105,16 @@ fn a_deal() -> Deal {
         // presence-tracked `risk_book_id` string encodes byte-identically when set; the
         // absent case is covered by `deal_null` below (and the store unit test).
         risk_book_id: Some("BOOK-EMEA".to_owned()),
+        // A populated internalise decision so the differential proves the nested §6
+        // provenance encodes byte-identically; the absent case is `deal_null` below.
+        internalise: Some(InternaliseProvenance {
+            internalised: false,
+            internal_dv01: 3_500.0,
+            external_dv01: 1_500.0,
+            edge_bps: 2.75,
+            within_tolerance: true,
+            hedge_band: "amber".to_owned(),
+        }),
     }
 }
 
@@ -3457,6 +3467,9 @@ fn desk_reply_encode_is_byte_identical() {
         position_id: None,
         correlation_id: None,
         risk_book_id: None,
+        // An unrouted / no-policy fill leaves the nested internalise message absent →
+        // present-with-null on the wire (Deal is a NULL_ABSENT_OPTIONAL message).
+        internalise: None,
         ..a_deal()
     };
     let list_deals = ListDealsResponse {
@@ -3466,6 +3479,10 @@ fn desk_reply_encode_is_byte_identical() {
     assert_eq!(gd["deals"][1].get("position_id"), Some(&Value::Null));
     assert_eq!(gd["deals"][1].get("correlation_id"), Some(&Value::Null));
     assert_eq!(gd["deals"][1].get("risk_book_id"), Some(&Value::Null));
+    assert_eq!(gd["deals"][1].get("internalise"), Some(&Value::Null));
+    // The populated internalise decision encodes its nested scalar fields verbatim.
+    assert_eq!(gd["deals"][0]["internalise"]["edge_bps"], json!(2.75));
+    assert_eq!(gd["deals"][0]["internalise"]["hedge_band"], json!("amber"));
     // The routed deal carries the resolved Risk Portfolio id verbatim.
     assert_eq!(
         gd["deals"][0].get("risk_book_id"),
