@@ -38,6 +38,13 @@ function messageOf(error: unknown): string {
 export interface AuthApi {
   /** The signed-in user, or `null` when anonymous. */
   user: UserDesc | null;
+  /**
+   * Whether there is a signed-in identity (`user !== null`). Distinct from
+   * {@link can}, which is permissive when anonymous: `signedIn` lets navigation
+   * gating keep the delegable ADMIN-domain surfaces deny-by-default pre-login even
+   * though `can` returns `true` for everything when signed out (see `NavAuth`).
+   */
+  signedIn: boolean;
   /** Whether the signed-in user is an administrator (false when anonymous). */
   isAdmin: boolean;
   /**
@@ -122,6 +129,7 @@ export function useAuth(transport: CelnetTransport): AuthApi {
 
   return {
     user,
+    signedIn: user !== null,
     isAdmin: user?.role === "ADMIN",
     capabilities,
     can,

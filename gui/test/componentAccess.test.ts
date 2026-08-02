@@ -102,6 +102,45 @@ describe("COMPONENT_ACCESS — the component → capability spec", () => {
     }
   });
 
+  it("adds the FX Book split sibling (grantable Write = book·FX, Read = view·FX)", () => {
+    const fxbook = byId("fxbook");
+    expect(fxbook.section).toBe("fx_options");
+    expect(keysOf(componentReadCaps(fxbook))).toEqual(new Set([capKey("view", "fx_options")]));
+    expect(keysOf(componentWriteCaps(fxbook))).toEqual(new Set([capKey("book", "fx_options")]));
+    expect(isReadOnlyComponent(fxbook)).toBe(false);
+    // Distinct id from the FI read-only `book` row — the per-asset split, like
+    // surface/curve and risk/ratesrisk.
+    expect(fxbook.id).not.toBe("book");
+  });
+
+  it("adds XVA + Excel as FX read-only tool rows (view·FX, no write)", () => {
+    for (const id of ["xva", "excel"]) {
+      const c = byId(id);
+      expect(c.section).toBe("fx_options");
+      expect(keysOf(componentReadCaps(c))).toEqual(new Set([capKey("view", "fx_options")]));
+      expect(componentWriteCaps(c)).toHaveLength(0);
+      expect(isReadOnlyComponent(c)).toBe(true);
+    }
+  });
+
+  it("adds FIX Connections (delegable) — Read == Write == manage_liquidity·FI", () => {
+    const conn = byId("connections");
+    expect(conn.section).toBe("fixed_income");
+    const cap = new Set([capKey("manage_liquidity", "fixed_income")]);
+    expect(keysOf(componentReadCaps(conn))).toEqual(cap);
+    expect(keysOf(componentWriteCaps(conn))).toEqual(cap);
+    expect(isReadOnlyComponent(conn)).toBe(false);
+  });
+
+  it("adds Reference Data (delegable) — Read == Write == refdata·FI", () => {
+    const rd = byId("refdata");
+    expect(rd.section).toBe("fixed_income");
+    const cap = new Set([capKey("refdata", "fixed_income")]);
+    expect(keysOf(componentReadCaps(rd))).toEqual(cap);
+    expect(keysOf(componentWriteCaps(rd))).toEqual(cap);
+    expect(isReadOnlyComponent(rd)).toBe(false);
+  });
+
   it("every component belongs to a declared section and every action label is known", () => {
     const sections = new Set(COMPONENT_SECTIONS.map((s) => s.id));
     for (const c of COMPONENT_ACCESS) {

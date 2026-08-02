@@ -611,10 +611,16 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
 });
 
 describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace-asset)", () => {
-  /** A NavAuth whose `can` admits exactly the given set of `action·asset` keys. */
-  function navAuth(opts: { isAdmin: boolean; allow?: ReadonlySet<string> }): NavAuth {
+  /** A NavAuth whose `can` admits exactly the given set of `action·asset` keys.
+   * `signedIn` (default absent ⇒ anonymous) gates the delegable admin surfaces. */
+  function navAuth(opts: {
+    isAdmin: boolean;
+    allow?: ReadonlySet<string>;
+    signedIn?: boolean;
+  }): NavAuth {
     return {
       isAdmin: opts.isAdmin,
+      signedIn: opts.signedIn,
       can: (action, asset) => opts.allow?.has(`${action}·${asset}`) ?? false,
     };
   }
@@ -717,6 +723,77 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
       for (const id of [...RISK_ROWS, ...PRICING_ROWS]) {
         expect(workspaceAccessible(id, admin)).toBe(true);
       }
+    });
+
+    // Delegable ADMIN-domain surfaces (docs/PERMISSIONS-GRANULAR-REVIEW.md §4): each
+    // is reachable by a SIGNED-IN holder of its fine-grained viewCap WITHOUT the
+    // coarse isAdmin flag — and the Administration tab follows.
+    it("a signed-in manage_liquidity·FI holder reaches Connections (delegated off isAdmin)", () => {
+      const liq = navAuth({
+        isAdmin: false,
+        signedIn: true,
+        allow: new Set(["manage_liquidity·fixed_income"]),
+      });
+      expect(workspaceAccessible("connections", liq)).toBe(true);
+      expect(domainAccessible("admin", liq)).toBe(true);
+      // …but NOT the administer/refdata surfaces.
+      expect(workspaceAccessible("admin", liq)).toBe(false);
+      expect(workspaceAccessible("permissions", liq)).toBe(false);
+      expect(workspaceAccessible("refdata", liq)).toBe(false);
+    });
+
+    it("a signed-in administer holder reaches Admin + Permissions (delegated)", () => {
+      const adminer = navAuth({
+        isAdmin: false,
+        signedIn: true,
+        allow: new Set(["administer·fx_options"]),
+      });
+      expect(workspaceAccessible("admin", adminer)).toBe(true);
+      expect(workspaceAccessible("permissions", adminer)).toBe(true);
+      expect(domainAccessible("admin", adminer)).toBe(true);
+      expect(workspaceAccessible("connections", adminer)).toBe(false);
+      expect(workspaceAccessible("refdata", adminer)).toBe(false);
+    });
+
+    it("a signed-in refdata·FI holder reaches Reference Data (delegated)", () => {
+      const rd = navAuth({
+        isAdmin: false,
+        signedIn: true,
+        allow: new Set(["refdata·fixed_income"]),
+      });
+      expect(workspaceAccessible("refdata", rd)).toBe(true);
+      expect(domainAccessible("admin", rd)).toBe(true);
+      expect(workspaceAccessible("connections", rd)).toBe(false);
+      expect(workspaceAccessible("admin", rd)).toBe(false);
+    });
+
+    it("a signed-in user holding NONE of the delegated caps sees no admin surface", () => {
+      const plain = navAuth({
+        isAdmin: false,
+        signedIn: true,
+        allow: new Set(["view·fx_options", "view·fixed_income"]),
+      });
+      for (const id of ADMIN_ONLY_WORKSPACES) {
+        expect(workspaceAccessible(id, plain)).toBe(false);
+      }
+      expect(domainAccessible("admin", plain)).toBe(false);
+    });
+
+    it("the anonymous session never surfaces an admin pane despite permissive can", () => {
+      // signedOut.can is permissive (returns true) but signedIn is absent, so the
+      // delegable admin surfaces stay deny-by-default pre-login.
+      for (const id of ADMIN_ONLY_WORKSPACES) {
+        expect(workspaceAccessible(id, signedOut)).toBe(false);
+      }
+      expect(domainAccessible("admin", signedOut)).toBe(false);
+    });
+
+    it("isAdmin remains a super-user over every admin surface (and the tab)", () => {
+      const admin = navAuth({ isAdmin: true });
+      for (const id of ADMIN_ONLY_WORKSPACES) {
+        expect(workspaceAccessible(id, admin)).toBe(true);
+      }
+      expect(domainAccessible("admin", admin)).toBe(true);
     });
   });
 

@@ -282,19 +282,29 @@ export const RAIL: readonly {
   // rejects, win-rate + mean cover. Cross-asset, same `view_analytics` gate as the
   // other analytics rows. Read-only ops/analytics observability.
   { id: "streetliquidity", glyph: "⇶", label: "Street Liquidity", subtitle: "Per-LP win-rate · deals · last-look", section: "analytics", assets: CAPABILITY_ASSETS },
-  // Administration / ops — admin-gated, no license concept. (Connections is venue
-  // ops: its rail stays admin-gated, but its in-pane edits gate on `manage_liquidity`
-  // server-side — see AggregatedBookWorkspace for the reachable manage_liquidity
-  // affordance an FI-liquidity seat uses.)
-  { id: "connections", glyph: "⇄", label: "Connections", section: "admin", assets: [] },
-  { id: "admin", glyph: "⚇", label: "Admin", section: "admin", assets: [] },
-  { id: "permissions", glyph: "⚷", label: "Permissions", section: "admin", assets: [] },
+  // Administration / ops — the Administration DOMAIN tab, no license concept. These
+  // four surfaces carry an explicit `viewCap` so they are DELEGABLE off the coarse
+  // `isAdmin` flag (docs/PERMISSIONS-GRANULAR-REVIEW.md §4): a signed-in holder of
+  // the surface's fine-grained capability reaches it WITHOUT full admin, while an
+  // admin (grant_all) still sees all. The anonymous/pre-login session (permissive
+  // `can`) is kept OUT — admin surfaces are deny-by-default there — by the
+  // `signedIn` gate in {@link workspaceAccessible}.
+  //   • Connections → `manage_liquidity·FI` (venue/liquidity ops: FIX-connection
+  //     admin is exactly what `Action::ManageLiquidity` authorizes server-side).
+  //   • Admin console + Permissions editor → `administer` (the super-admin action;
+  //     an `administer`-holder can edit permissions — an intentional delegation).
+  { id: "connections", glyph: "⇄", label: "Connections", section: "admin", assets: [], viewCap: { action: "manage_liquidity", asset: "fixed_income" } },
+  { id: "admin", glyph: "⚇", label: "Admin", section: "admin", assets: [], viewCap: { action: "administer", asset: "fx_options" } },
+  { id: "permissions", glyph: "⚷", label: "Permissions", section: "admin", assets: [], viewCap: { action: "administer", asset: "fx_options" } },
   // Pricing Groups is a Fixed-Income CLIENT-PRICING surface, not identity admin: it
   // moved OFF the Administration tab onto the FI tab (assets: fixed_income) and gates
   // rail visibility + structure edits on `manage_pricing·FI`, so the FI pricing desk
   // sees and edits it WITHOUT full Administer (docs/PERMISSIONS-GRANULAR-REVIEW.md §4).
   { id: "pricinggroups", glyph: "⚙", label: "Pricing Groups", subtitle: "Per-client feature pipelines", section: "pricing", assets: ["fixed_income"], viewCap: { action: "manage_pricing", asset: "fixed_income" } },
-  { id: "refdata", glyph: "❏", label: "Reference Data", section: "admin", assets: [] },
+  // Reference Data admin surface → delegable on `refdata·FI` (`Action::Refdata`),
+  // so the reference-data steward reaches it WITHOUT full admin (same signed-in
+  // deny-by-default gate as the other three admin surfaces).
+  { id: "refdata", glyph: "❏", label: "Reference Data", section: "admin", assets: [], viewCap: { action: "refdata", asset: "fixed_income" } },
 ] as const;
 
 /**
@@ -347,18 +357,34 @@ export function workspaceAssets(id: WorkspaceId): readonly CapabilityAsset[] {
  * only ever NARROWS a real signed-in identity.
  */
 export interface NavAuth {
-  /** Whether the identity is an administrator (governs the Administration tab). */
+  /** Whether the identity is an administrator (super-user over every surface). */
   isAdmin: boolean;
+  /**
+   * Whether there is a REAL signed-in identity (`false`/absent ⇒ the anonymous,
+   * pre-login session whose {@link can} is permissive). It exists ONLY to keep the
+   * delegable ADMIN-domain surfaces (connections / admin / permissions / refdata)
+   * deny-by-default for the anonymous session: those are reachable by `isAdmin` OR
+   * a *signed-in* holder of the surface's `viewCap`, so a permissive `can` can
+   * never leak an admin pane pre-login. The FI management viewCap rows (tiering,
+   * pricing groups, risk management) are NOT admin-domain and keep their permissive
+   * pre-login discovery unchanged. Absent on a hand-built NavAuth ⇒ treated as
+   * anonymous; production always sets it (`AuthApi.signedIn = user !== null`).
+   */
+  signedIn?: boolean;
   /** Whether the identity holds `action` on `asset` (permissive when signed out). */
   can: (action: CapabilityAction, asset: CapabilityAsset) => boolean;
 }
 
 /**
- * Workspaces only an administrator may open — the members of the Administration
- * domain. Reference Data is admin-managed and lives here too: the registry is
- * cross-asset and server-resolvable by any caller (pricing/curve-building), but
- * its management UI is admin-only. This is the per-workspace backstop the Shell
- * hides and the AppContext redirect bounces.
+ * The members of the Administration DOMAIN — the four ops/admin surfaces. Each now
+ * carries a `viewCap` so it is DELEGABLE (docs/PERMISSIONS-GRANULAR-REVIEW.md §4):
+ * a signed-in holder of the surface's fine-grained capability reaches it without the
+ * coarse `isAdmin` flag, while an admin (grant_all) still sees all. This set no
+ * longer means "isAdmin-only"; it now marks (a) the surfaces whose delegation is
+ * additionally gated on a REAL signed-in identity — so the permissive anonymous
+ * `can` keeps them deny-by-default pre-login ({@link workspaceAccessible}) — and (b)
+ * the domain-membership override ({@link workspaceDomains} → "admin"). A future
+ * admin surface WITHOUT a `viewCap` still falls back to the plain isAdmin gate.
  */
 export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
   "connections",
@@ -464,7 +490,20 @@ export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
   // the folded surface gates IDENTICALLY to the host (riskbooks ≡ riskdashboard).
   const resolvedId = CONSOLIDATED_WORKSPACE_ALIAS[id] ?? id;
   const viewCap = RAIL.find((r) => r.id === resolvedId)?.viewCap;
-  if (viewCap) return auth.can(viewCap.action, viewCap.asset);
+  if (viewCap) {
+    // A viewCap surface is reachable by a super-user OR a holder of the fine-grained
+    // capability — this is what DELEGATES the surface off the coarse `isAdmin` flag.
+    // The ADMIN-domain surfaces (connections / admin / permissions / refdata) add a
+    // `signedIn` requirement so the permissive anonymous `can` never surfaces an admin
+    // pane pre-login (deny-by-default); the FI management viewCap rows keep permissive
+    // pre-login discovery. Placed BEFORE the ADMIN_ONLY branch so a delegated admin
+    // surface is no longer trapped by the hard isAdmin-only gate.
+    if (auth.isAdmin) return true;
+    const holds = auth.can(viewCap.action, viewCap.asset);
+    if (ADMIN_ONLY_WORKSPACES.has(resolvedId)) return auth.signedIn === true && holds;
+    return holds;
+  }
+  // A workspace WITHOUT a viewCap that is still admin-only behaves as before (isAdmin).
   if (ADMIN_ONLY_WORKSPACES.has(id)) return auth.isAdmin;
   const action = WORKSPACE_CAPABILITY[id] ?? "view";
   return workspaceAssets(id).some((asset) => auth.can(action, asset));
@@ -557,7 +596,15 @@ export function workspaceDomains(id: WorkspaceId): readonly Domain[] {
  * not disabled), exactly as the analytics tab hides without `view_analytics`.
  */
 export function domainAccessible(domain: Domain, auth: NavAuth): boolean {
-  if (domain === "admin") return auth.isAdmin;
+  // The Administration tab is visible to a super-user OR any signed-in holder of a
+  // delegated admin-surface capability (connections→manage_liquidity·FI,
+  // refdata→refdata·FI, admin/permissions→administer). DERIVED from the surfaces'
+  // own reachability so the tab tracks delegation automatically — and stays hidden
+  // for the anonymous session, since each admin workspace is deny-by-default there
+  // (see {@link workspaceAccessible}), preserving the isAdmin-gated pre-login posture.
+  if (domain === "admin") {
+    return railForDomain("admin").some((r) => workspaceAccessible(r.id, auth));
+  }
   if (domain === "hedging") return auth.can("hedge", "fixed_income");
   if (domain === "analytics") {
     return (

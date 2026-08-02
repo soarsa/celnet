@@ -224,7 +224,8 @@ const ACTION_PHRASE: Record<CapabilityAction, (asset: string) => string> = {
   administer: () => `administering Celnet`,
   risk_manage: (a) => `managing ${a} risk portfolios, routing and the risk dashboard`,
   manage_pricing: (a) => `managing ${a} pricing groups and session tiering`,
-  manage_liquidity: (a) => `managing ${a} liquidity connections and aggregated books`,
+  manage_liquidity: (a) =>
+    `managing ${a} liquidity connections, aggregated books and the pricing kill-switch`,
   view_analytics: (a) => `viewing the ${a} client-flow analytics`,
   hedge: (a) => `authoring ${a} auto-hedge policies, thresholds and the hedge monitor`,
   refdata: (a) => `confirming and applying ${a} corporate actions`,
@@ -344,6 +345,36 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     readActions: ["view"],
     writeActions: [],
   },
+  // FX Book — the FX position-ledger surface. The `book` cross-asset rail row splits
+  // per-asset in the grid exactly like surface/curve and risk/ratesrisk: the FI
+  // sibling is the read-only `book` row below; this FX sibling is grantable (Write =
+  // `book·fx_options`, the right to book FX positions). Read = the shared `view·FX`.
+  {
+    id: "fxbook",
+    label: "FX Book",
+    section: "fx_options",
+    assets: ["fx_options"],
+    readActions: ["view"],
+    writeActions: ["book"],
+  },
+  // XVA + Excel — FX read-only tool surfaces (no write action), given a grid row so
+  // they are grantable from the friendly grid like Surface/Risk. Read = `view·FX`.
+  {
+    id: "xva",
+    label: "XVA",
+    section: "fx_options",
+    assets: ["fx_options"],
+    readActions: ["view"],
+    writeActions: [],
+  },
+  {
+    id: "excel",
+    label: "Excel",
+    section: "fx_options",
+    assets: ["fx_options"],
+    readActions: ["view"],
+    writeActions: [],
+  },
   // Fixed Income (asset `fixed_income`).
   {
     id: "rates",
@@ -422,12 +453,30 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     readActions: ["view"],
     writeActions: ["manage_pricing"],
   },
+  // Manage Liquidity now governs THREE surfaces, not just the aggregated book: the
+  // FIX-connection admin (the `connections` row below), the aggregated-book manage
+  // mode, AND the pricing kill-switch (PricingControlMenu) — all gated on
+  // `manage_liquidity·FI`. Granting it unlocks every one (the denial tooltip in
+  // {@link capabilityDenialTitle} lists them). Read = the shared `view·FI`.
   {
     id: "manageliquidity",
     label: "Manage Liquidity",
     section: "fixed_income",
     assets: ["fixed_income"],
     readActions: ["view"],
+    writeActions: ["manage_liquidity"],
+  },
+  // FIX Connections — the venue/liquidity-connection admin surface. Its rail row is
+  // delegable on `manage_liquidity·FI` (docs/PERMISSIONS-GRANULAR-REVIEW.md §4), so
+  // seeing AND editing connections both require the cap: Read = Write =
+  // `manage_liquidity·FI` (not the `view` floor — you cannot see Connections without
+  // the manage-liquidity grant). Shares the underlying cap with Manage Liquidity.
+  {
+    id: "connections",
+    label: "FIX Connections",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["manage_liquidity"],
     writeActions: ["manage_liquidity"],
   },
   // Hedging — the auto-hedge / internalisation surface (exit-policy graph, thresholds,
@@ -463,6 +512,19 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     section: "fixed_income",
     assets: ["fixed_income"],
     readActions: ["view"],
+    writeActions: ["refdata"],
+  },
+  // Reference Data — the admin-managed reference-data surface (distinct from the
+  // Corporate Actions steward seat above, which sits on the `view·FI` floor). This
+  // whole surface is `refdata`-gated (its rail `viewCap` is `refdata·FI`), so seeing
+  // AND editing both require the cap: Read = Write = `refdata·FI`. Delegable off the
+  // coarse admin flag exactly like FIX Connections.
+  {
+    id: "refdata",
+    label: "Reference Data",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["refdata"],
     writeActions: ["refdata"],
   },
   // Analytics — the cross-asset client-flow / P&L-attribution surface
