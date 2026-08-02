@@ -291,11 +291,13 @@ export const RAIL: readonly {
   // `signedIn` gate in {@link workspaceAccessible}.
   //   • Connections → `manage_liquidity·FI` (venue/liquidity ops: FIX-connection
   //     admin is exactly what `Action::ManageLiquidity` authorizes server-side).
-  //   • Admin console + Permissions editor → `administer` (the super-admin action;
-  //     an `administer`-holder can edit permissions — an intentional delegation).
+  // The Admin console + Permissions editor deliberately carry NO `viewCap`: they are
+  // the super-user surfaces that can grant ANY capability (incl. `administer`), so
+  // delegating them is a self-escalation vector — they stay hard `isAdmin`-only until
+  // an operator explicitly opts into admin delegation.
   { id: "connections", glyph: "⇄", label: "Connections", section: "admin", assets: [], viewCap: { action: "manage_liquidity", asset: "fixed_income" } },
-  { id: "admin", glyph: "⚇", label: "Admin", section: "admin", assets: [], viewCap: { action: "administer", asset: "fx_options" } },
-  { id: "permissions", glyph: "⚷", label: "Permissions", section: "admin", assets: [], viewCap: { action: "administer", asset: "fx_options" } },
+  { id: "admin", glyph: "⚇", label: "Admin", section: "admin", assets: [] },
+  { id: "permissions", glyph: "⚷", label: "Permissions", section: "admin", assets: [] },
   // Pricing Groups is a Fixed-Income CLIENT-PRICING surface, not identity admin: it
   // moved OFF the Administration tab onto the FI tab (assets: fixed_income) and gates
   // rail visibility + structure edits on `manage_pricing·FI`, so the FI pricing desk

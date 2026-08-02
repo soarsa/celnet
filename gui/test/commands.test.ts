@@ -742,17 +742,21 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
       expect(workspaceAccessible("refdata", liq)).toBe(false);
     });
 
-    it("a signed-in administer holder reaches Admin + Permissions (delegated)", () => {
+    it("Admin + Permissions are NOT delegable — they stay hard isAdmin-only (self-escalation guard)", () => {
+      // The Admin console + Permissions editor can grant ANY capability (incl. administer),
+      // so delegating them off isAdmin is a self-escalation vector. They deliberately carry
+      // NO viewCap and remain isAdmin-only; holding `administer` alone must NOT reach them.
       const adminer = navAuth({
         isAdmin: false,
         signedIn: true,
         allow: new Set(["administer·fx_options"]),
       });
-      expect(workspaceAccessible("admin", adminer)).toBe(true);
-      expect(workspaceAccessible("permissions", adminer)).toBe(true);
-      expect(domainAccessible("admin", adminer)).toBe(true);
+      expect(workspaceAccessible("admin", adminer)).toBe(false);
+      expect(workspaceAccessible("permissions", adminer)).toBe(false);
+      // administer alone also doesn't confer the other delegated (capability-gated) surfaces.
       expect(workspaceAccessible("connections", adminer)).toBe(false);
       expect(workspaceAccessible("refdata", adminer)).toBe(false);
+      expect(domainAccessible("admin", adminer)).toBe(false);
     });
 
     it("a signed-in refdata·FI holder reaches Reference Data (delegated)", () => {

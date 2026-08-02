@@ -44,7 +44,10 @@ export function ReferenceDataWorkspace(): React.ReactElement {
   const app = useApp();
   const { auth } = app;
   const isAuthed = auth.user !== null;
-  const isAdmin = auth.isAdmin;
+  // Editing the reference-data registry is DELEGABLE off the coarse admin flag: an admin
+  // OR a holder of `refdata·FI` (Action::Refdata — the reference-data/master-data steward)
+  // may create/edit/delete definitions. Listing stays open to any signed-in user.
+  const canEdit = auth.isAdmin || auth.can("refdata", "fixed_income");
   const data = useReferenceData(app.transport, isAuthed);
 
   const [editing, setEditing] = useState<InstrumentDef | null>(null);
@@ -68,7 +71,7 @@ export function ReferenceDataWorkspace(): React.ReactElement {
           <h2 className={admin.gateTitle}>Reference Data</h2>
           <p className={admin.gateHint}>
             Sign in to browse the instrument reference-data registry. Listing is open to any
-            signed-in user; creating and editing definitions requires an administrator account.
+            signed-in user; creating and editing definitions requires reference-data permission.
           </p>
           <Button variant="primary" onClick={() => app.setSignInOpen(true)}>
             Sign in
@@ -98,7 +101,7 @@ export function ReferenceDataWorkspace(): React.ReactElement {
       <Button variant="ghost" onClick={() => void data.refetch()} disabled={data.isLoading}>
         Refresh
       </Button>
-      {isAdmin && (
+      {canEdit && (
         <Button variant="primary" onClick={openCreate}>
           New instrument
         </Button>
@@ -106,17 +109,17 @@ export function ReferenceDataWorkspace(): React.ReactElement {
     </div>
   );
 
-  const formOpen = isAdmin && (showCreate || editing !== null);
+  const formOpen = canEdit && (showCreate || editing !== null);
 
   return (
     <div className={admin.root}>
       <Panel title="Instruments" glyph="❏" actions={headActions}>
         {data.error && <p className={admin.banner}>{data.error}</p>}
         {actionError && <p className={admin.banner}>{actionError}</p>}
-        {!isAdmin && (
+        {!canEdit && (
           <p className={styles.adminNote}>
             You can browse the registry. Creating, editing and deleting instrument definitions
-            requires an administrator account.
+            requires reference-data permission.
           </p>
         )}
         {data.instruments.length === 0 ? (
@@ -130,7 +133,7 @@ export function ReferenceDataWorkspace(): React.ReactElement {
                 <th scope="col">Currency</th>
                 <th scope="col">Family</th>
                 <th scope="col">External ids</th>
-                {isAdmin && (
+                {canEdit && (
                   <th scope="col" className={admin.actionsCol}>
                     Actions
                   </th>
@@ -149,7 +152,7 @@ export function ReferenceDataWorkspace(): React.ReactElement {
                   <td>
                     <ExternalIds def={def} />
                   </td>
-                  {isAdmin && (
+                  {canEdit && (
                     <td className={admin.actionsCol}>
                       <div className={admin.rowActions}>
                         <Button variant="secondary" onClick={() => openEdit(def)}>
