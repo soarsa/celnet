@@ -209,16 +209,18 @@ export const RAIL: readonly {
   // ManagePricing·FI surface (assign a group = a group-membership edit) — gated at
   // the rail on `manage_pricing·FI` so only the FI pricing desk sees it.
   { id: "tiering", glyph: "⚖", label: "Tiering", subtitle: "Per-session pricing", section: "pricing", assets: ["fixed_income"], viewCap: { action: "manage_pricing", asset: "fixed_income" } },
-  // FI Risk routing (docs/FI-RISK-ROUTING-REQUIREMENTS.md): the hierarchical risk-
-  // portfolio tree editor and the per-portfolio risk DASHBOARD. Single-asset FI
-  // rows gated at the rail on the granular `risk_manage·FI` capability
+  // FI Risk (docs/FI-RISK-ROUTING-REQUIREMENTS.md): the CONSOLIDATED risk surface — a
+  // single rail entry whose workspace hosts a "Dashboard" tab (the per-portfolio risk
+  // roll-up) AND a "Portfolios" tab (the hierarchical risk-portfolio tree editor,
+  // formerly the separate "Risk Portfolios" row, now folded in as a tab). Single-asset
+  // FI, gated at the rail on the granular `risk_manage·FI` capability
   // (docs/PERMISSIONS-GRANULAR-REVIEW.md §4) — a firm risk-control function distinct
-  // from super-admin, so a risk lead sees + edits these WITHOUT full Administer, and
-  // an ordinary FI trader no longer sees them at all. USER-FACING name "Risk
-  // Portfolios"; the wire type stays `RiskBookDef`/`riskbooks` (rename is UI-only —
+  // from super-admin, so a risk lead sees + edits it WITHOUT full Administer, and an
+  // ordinary FI trader does not see it at all. The `riskbooks` workspace id is kept
+  // valid (deep-links to the Portfolios tab) but has no rail row of its own. USER-FACING
+  // roll-up name "Risk Dashboard"; the wire type stays `RiskBookDef` (UI-only rename —
   // see docs/FI-BOOK-CONCEPTS.md).
-  { id: "riskbooks", glyph: "❦", label: "Risk Portfolios", subtitle: "Risk buckets + limits", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
-  { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", subtitle: "Routed-risk roll-up", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
+  { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", subtitle: "Roll-up + portfolios", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
   // Risk Routing: the ordered rules table that routes each fill's risk into a desk's
   // risk portfolio. Rail-gated + edited on `risk_manage·FI` (was the overloaded
   // `quote_respond·FI` stand-in). Single-asset FI row.
@@ -296,14 +298,29 @@ export const RAIL: readonly {
 ] as const;
 
 /**
+ * Workspace ids that have NO rail row of their own yet remain valid navigable ids —
+ * deep-link ALIASES into a consolidated surface. They borrow their HOST row's asset
+ * classes / domain for gating so `workspaceAssets` and friends resolve without a rail
+ * row of their own (the id still round-trips through saved views + `navigate`).
+ *   • `riskbooks` ("Risk Portfolios") → folded into `riskdashboard`'s "Portfolios"
+ *     tab (see the RAIL note above); the id opens the merged surface on that tab.
+ */
+const CONSOLIDATED_WORKSPACE_ALIAS: Partial<Record<WorkspaceId, WorkspaceId>> = {
+  riskbooks: "riskdashboard",
+};
+
+/**
  * The asset class(es) a workspace serves — looked up via {@link RAIL}. Cross-asset
  * (class-parametric) rows return both classes; single-asset rows one; admin/ops
- * rows the empty list. Drives navigation gating (reachable if the identity can view
- * ANY served class) and the license three-state, replacing the retired per-domain
- * asset mapping now that the rail no longer splits by asset class.
+ * rows the empty list. Rail-less consolidated aliases ({@link
+ * CONSOLIDATED_WORKSPACE_ALIAS}) resolve through their host row. Drives navigation
+ * gating (reachable if the identity can view ANY served class) and the license
+ * three-state, replacing the retired per-domain asset mapping now that the rail no
+ * longer splits by asset class.
  */
 export function workspaceAssets(id: WorkspaceId): readonly CapabilityAsset[] {
-  const entry = RAIL.find((r) => r.id === id);
+  const resolved = CONSOLIDATED_WORKSPACE_ALIAS[id] ?? id;
+  const entry = RAIL.find((r) => r.id === resolved);
   if (!entry) {
     throw new Error(`workspaceAssets: unknown workspace id \`${id}\` (not in RAIL)`);
   }
@@ -443,7 +460,10 @@ export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
   // (admin holds `grant_all`; `can` is permissive signed-out). This is what hides
   // the FI management surfaces (Risk Portfolios/Routing/Dashboard, Tiering, Pricing
   // Groups) from an ordinary trader while surfacing them to the granted manager.
-  const viewCap = RAIL.find((r) => r.id === id)?.viewCap;
+  // A rail-less consolidated alias borrows its host row's viewCap so a deep-link to
+  // the folded surface gates IDENTICALLY to the host (riskbooks ≡ riskdashboard).
+  const resolvedId = CONSOLIDATED_WORKSPACE_ALIAS[id] ?? id;
+  const viewCap = RAIL.find((r) => r.id === resolvedId)?.viewCap;
   if (viewCap) return auth.can(viewCap.action, viewCap.asset);
   if (ADMIN_ONLY_WORKSPACES.has(id)) return auth.isAdmin;
   const action = WORKSPACE_CAPABILITY[id] ?? "view";

@@ -349,7 +349,8 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         "fistreaming",
         "aggbook",
         "tiering",
-        "riskbooks",
+        // "riskbooks" (Risk Portfolios) is CONSOLIDATED into the Risk Dashboard as its
+        // "Portfolios" tab — no standalone rail row (the id deep-links to that tab).
         "riskdashboard",
         "riskrouting",
         // hedging is HOISTED out of the FI rail into its own top-level "Hedging" tab.
@@ -545,8 +546,9 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     expect(byLabel("Pricing")).toEqual(["tiering", "pricinggroups"]);
     // hedging is no longer here — it is hoisted into its own top-level "Hedging" tab.
     // "book" is no longer here either — the FI ledger is folded into FI "Risk" tabs.
+    // "riskbooks" (Risk Portfolios) is folded into "riskdashboard" as its Portfolios
+    // tab — no standalone rail row in the Risk section.
     expect(byLabel("Risk")).toEqual([
-      "riskbooks",
       "riskdashboard",
       "riskrouting",
       "risk",

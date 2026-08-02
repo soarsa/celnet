@@ -41,6 +41,9 @@ function makeApp(opts: { risk: RiskBookRisk[]; books: RiskBook[] }) {
     transport: {
       listRiskBookRisk: vi.fn(async () => opts.risk),
       listRiskBooks: vi.fn(async () => opts.books),
+      // The Portfolios tab (RiskBooksWorkspace) loads the desk roster on mount for
+      // admins — stub it so switching tabs in a test does not throw.
+      listDesks: vi.fn(async () => []),
     },
     auth: { user: { id: "u", email: "admin@celnet.com" }, isAdmin: true, can: () => true },
     setSignInOpen: vi.fn(),
@@ -200,6 +203,29 @@ describe("RiskDashboardWorkspace", () => {
     expect(within(overview).getByText("FX EMEA")).toBeInTheDocument();
     // No live badge on the fallback poll path.
     expect(screen.queryByRole("status", { name: /live risk stream/i })).not.toBeInTheDocument();
+  });
+
+  it("exposes Dashboard + Portfolios tabs and the empty-state link lands on Portfolios", async () => {
+    // Zero enabled portfolios ⇒ the Dashboard empty-state is shown.
+    state.app = makeApp({ risk: [], books: [] });
+    render(<RiskDashboardWorkspace />);
+
+    // Both consolidated tabs are present; Dashboard is the default.
+    const dashboardTab = await screen.findByTestId("risk-tab-dashboard");
+    const portfoliosTab = screen.getByTestId("risk-tab-portfolios");
+    expect(dashboardTab).toHaveAttribute("aria-pressed", "true");
+    expect(portfoliosTab).toHaveAttribute("aria-pressed", "false");
+
+    // The empty-state's inline "Portfolios" affordance switches to that tab — where
+    // the create/enable editor now lives (no separate rail destination).
+    fireEvent.click(await screen.findByTestId("empty-goto-portfolios"));
+
+    expect(screen.getByTestId("risk-tab-portfolios")).toHaveAttribute("aria-pressed", "true");
+    // The relocated risk-portfolio editor is now mounted as the tab panel.
+    expect(
+      await screen.findByRole("navigation", { name: /risk portfolio tree/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("new-risk-book")).toBeInTheDocument();
   });
 
   it("shows the limit-utilization strip with a RAG meter for the selected book", async () => {

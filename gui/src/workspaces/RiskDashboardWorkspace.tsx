@@ -1,8 +1,22 @@
 /**
- * RiskDashboardWorkspace — the per-portfolio RISK dashboard (docs/FI-RISK-ROUTING-
- * REQUIREMENTS.md §6.3, §8.6). USER-FACING name "Risk Portfolios"; the wire type
- * stays {@link RiskBook}/`RiskBookDef` (rename is UI-only — see
- * docs/FI-BOOK-CONCEPTS.md). Reads each enabled risk portfolio's rolled-up risk from
+ * RiskDashboardWorkspace — the consolidated fixed-income RISK surface: a tabbed shell
+ * over TWO sibling views that were previously two separate rail destinations
+ * (mirroring the FI "Book → Risk" merge in {@link RiskWorkspace}):
+ *   • **Dashboard** (default) — the per-portfolio rolled-up risk view ({@link
+ *     DashboardPanel}); the routed-risk roll-up (docs/FI-RISK-ROUTING-REQUIREMENTS.md
+ *     §6.3, §8.6).
+ *   • **Portfolios** — the create / enable / edit / limits / hierarchy editor
+ *     ({@link RiskBooksWorkspace}, composed VERBATIM as a tab panel), so the editor
+ *     the Dashboard's empty-state points at now lives one tab away, not in a separate
+ *     rail entry.
+ * Both tabs share the SAME rail gate (`risk_manage·fixed_income`), so anyone who can
+ * reach this workspace can view both; the Portfolios editor keeps its own
+ * `readOnly = !risk_manage·FI` affordance gate internally. The standalone "Risk
+ * Portfolios" rail entry is removed (`lib/commands.ts`); the `riskbooks` workspace id
+ * now deep-links straight to the Portfolios tab (`app/Shell.tsx`).
+ *
+ * The DASHBOARD tab ({@link DashboardPanel}) reads each enabled risk portfolio's
+ * rolled-up risk from
  * `listRiskBookRisk()` (net/gross base-currency notional, position count, the
  * additive greeks Δ/Γ/Vega/Θ, and a per-cap limit-utilization strip with RAG bands)
  * plus the roster for names / tree order. A heat OVERVIEW ranks every portfolio by
@@ -17,7 +31,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import type { RiskLimitUtilization, RagBand, RiskBook, RiskBookRisk } from "../data/contract";
+import { RiskBooksWorkspace } from "./RiskBooksWorkspace";
 import styles from "./RiskDashboardWorkspace.module.css";
+
+/** The tab the consolidated Risk surface shows: the rolled-up Dashboard or the
+ * risk-portfolio editor. `dashboard` is the default; `portfolios` is the deep-link
+ * target for the old "Risk Portfolios" rail entry + the Dashboard empty-state link. */
+export type RiskDashboardTab = "dashboard" | "portfolios";
+
+/** One row per tab the consolidated Risk surface spans: its id + toggle label. */
+const RISK_TABS: readonly { tab: RiskDashboardTab; label: string }[] = [
+  { tab: "dashboard", label: "Dashboard" },
+  { tab: "portfolios", label: "Portfolios" },
+];
 
 const notional = (n: number): string =>
   new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(n);
@@ -116,7 +142,17 @@ function UtilizationBar({ util }: { util: RiskLimitUtilization }): React.ReactEl
   );
 }
 
-export function RiskDashboardWorkspace(): React.ReactElement {
+/**
+ * DashboardPanel — the per-portfolio rolled-up RISK view (this workspace's original
+ * body, unchanged). The empty-state's "create a portfolio" affordance now switches
+ * to the sibling Portfolios tab via {@link onGoToPortfolios} instead of pointing at a
+ * separate rail entry.
+ */
+function DashboardPanel({
+  onGoToPortfolios,
+}: {
+  onGoToPortfolios: () => void;
+}): React.ReactElement {
   const app = useApp();
   const { auth } = app;
   const signedIn = auth.user !== undefined && auth.user !== null;
@@ -298,9 +334,16 @@ export function RiskDashboardWorkspace(): React.ReactElement {
               <tr>
                 <td colSpan={6} className={styles.empty}>
                   No enabled risk portfolios to report. Routing <em>rules</em> only pick a
-                  destination — they do not create the portfolio. Create one in{" "}
-                  <strong>Risk Portfolios</strong> and mark it <strong>enabled</strong>; routed
-                  fills then roll up here.
+                  destination — they do not create the portfolio. Create one on the{" "}
+                  <button
+                    type="button"
+                    className={styles.emptyLink}
+                    onClick={onGoToPortfolios}
+                    data-testid="empty-goto-portfolios"
+                  >
+                    Portfolios
+                  </button>{" "}
+                  tab and mark it <strong>enabled</strong>; routed fills then roll up here.
                 </td>
               </tr>
             )}
@@ -368,6 +411,50 @@ export function RiskDashboardWorkspace(): React.ReactElement {
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+/**
+ * RiskDashboardWorkspace — the tabbed shell composing the rolled-up {@link
+ * DashboardPanel} and the {@link RiskBooksWorkspace} editor as sibling tabs (see the
+ * file header). Mirrors the FI "Book → Risk" tab primitive: a slim segmented bar
+ * above the active panel, which fills the remaining pane height and scrolls its own
+ * content (the Shell pane is overflow:hidden with a definite height). Only the active
+ * tab's body mounts, so each panel's effects (the Dashboard risk stream, the roster
+ * load) fire only while it is on screen.
+ */
+export function RiskDashboardWorkspace({
+  initialTab = "dashboard",
+}: {
+  /** The initial tab — the `riskbooks` deep-link opens on `portfolios`; the rail's
+   * Risk Dashboard entry (and stories/tests) default to `dashboard`. */
+  initialTab?: RiskDashboardTab;
+} = {}): React.ReactElement {
+  const [tab, setTab] = useState<RiskDashboardTab>(initialTab);
+  return (
+    <div className={styles.shell}>
+      <div className={styles.tabBar} role="group" aria-label="risk view">
+        {RISK_TABS.map((t) => (
+          <button
+            key={t.tab}
+            type="button"
+            className={`${styles.tabBtn} ${tab === t.tab ? styles.tabBtnActive : ""}`}
+            aria-pressed={tab === t.tab}
+            data-testid={`risk-tab-${t.tab}`}
+            onClick={() => setTab(t.tab)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className={styles.tabPanel}>
+        {tab === "dashboard" ? (
+          <DashboardPanel onGoToPortfolios={() => setTab("portfolios")} />
+        ) : (
+          <RiskBooksWorkspace />
+        )}
+      </div>
     </div>
   );
 }

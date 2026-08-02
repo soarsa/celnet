@@ -29,7 +29,6 @@ import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { FiStreamingWorkspace } from "../workspaces/FiStreamingWorkspace";
 import { AggregatedBookWorkspace } from "../workspaces/AggregatedBookWorkspace";
 import { TieringWorkspace } from "../workspaces/TieringWorkspace";
-import { RiskBooksWorkspace } from "../workspaces/RiskBooksWorkspace";
 import { RiskDashboardWorkspace } from "../workspaces/RiskDashboardWorkspace";
 import { RiskRoutingWorkspace } from "../workspaces/riskrouting/RiskRoutingWorkspace";
 import { HedgingWorkspace } from "../workspaces/hedging/HedgingWorkspace";
@@ -110,11 +109,14 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // tiering (widen/skew before publish). Gated on `quote_respond·fixed_income`
   // (ordinary traders hold it — NOT admin-gated). Fixed-Income-only.
   tiering: TieringWorkspace,
-  // Risk Books: the hierarchical risk-book tree editor (desk → book → sub-book) —
-  // fills route risk into a leaf book. Admin edit; read-only otherwise. FI-only.
-  riskbooks: RiskBooksWorkspace,
-  // Risk Dashboard: per-book rolled-up risk (net/gross, greeks, RAG limit
-  // utilization) with a heat overview across all books. Read-only. FI-only.
+  // Risk Portfolios: the hierarchical risk-portfolio tree editor is CONSOLIDATED into
+  // the Risk Dashboard as its "Portfolios" tab (no standalone rail entry). This id is
+  // kept valid so any deep-link (command palette / saved views) lands straight on that
+  // tab within the merged surface. FI-only.
+  riskbooks: () => <RiskDashboardWorkspace initialTab="portfolios" />,
+  // Risk Dashboard: the consolidated FI risk surface — a "Dashboard" tab (per-portfolio
+  // rolled-up net/gross, positions, DV01, RAG limit utilization + heat overview) and a
+  // "Portfolios" tab (the create/enable/edit/limits/hierarchy editor). FI-only.
   riskdashboard: RiskDashboardWorkspace,
   // Risk Routing: the drag-and-drop decision-tree canvas — traders compose the
   // firm-wide rules that route each fill's risk into a desk book (typed condition
