@@ -124,6 +124,9 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "CreateAggregatedBookResponse",
     "UpdateAggregatedBookResponse",
     "DeleteAggregatedBookResponse",
+    // The firm-wide pricing kill-switch reply: the `json!({ .. })` hand encoder emits
+    // the `Option<String>` `correlation_id` as JSON `null` when absent.
+    "SetPricingControlResponse",
     // The AuthService pricing-group reply envelopes (FI client-tiering): each
     // `json!({ .. })` hand encoder emits the `Option<u64>` `correlation_id` as JSON `null`
     // when absent; the `group` singular-message payload already renders `null`-when-absent

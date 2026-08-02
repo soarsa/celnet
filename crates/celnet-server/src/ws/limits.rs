@@ -257,6 +257,7 @@ mod tests {
             None,
             LpPanelConfig { synthetic_lps: 0 },
             crate::services::aggregation::AggregationHub::new(Clock::system()),
+            crate::services::pricing_control::PricingControl::new(true, true),
         );
         WsMirror::start(
             "127.0.0.1:0".parse().expect("loopback bind addr parses"),
@@ -296,9 +297,20 @@ mod tests {
     where
         S: StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
     {
-        match next_message(ws).await {
-            WsMessage::Text(t) => serde_json::from_str(&t).expect("frame is valid JSON"),
-            other => panic!("expected a text frame, got: {other:?}"),
+        loop {
+            match next_message(ws).await {
+                WsMessage::Text(t) => {
+                    let v: Value = serde_json::from_str(&t).expect("frame is valid JSON");
+                    // Skip the unsolicited connect-time firm-wide pricing-control frame
+                    // (every connection is handed the current kill-switch state on
+                    // connect); these tests assert on the reply to their own request.
+                    if v.get("type").and_then(Value::as_str) == Some("pricing_control") {
+                        continue;
+                    }
+                    return v;
+                }
+                other => panic!("expected a text frame, got: {other:?}"),
+            }
         }
     }
 

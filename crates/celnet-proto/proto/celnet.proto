@@ -4297,6 +4297,35 @@ message UpdateAggregatedBookResponse {
   optional uint64 correlation_id = 2;
 }
 
+// Set the firm-wide pricing kill-switch (server-only control plane). Two independent
+// controls, both default true. `outbound_enabled=false` suppresses ALL outbound
+// pricing to FIX-connected clients (RFQ auto-quotes + RFS/ESP streams) while inbound
+// LP aggregation keeps running ("Stop all pricing"); `inbound_enabled=false` stops LP
+// ingestion into the aggregated books. Both false = "Stop all"; both true = "Resume".
+// Gated on the fixed-income liquidity-management capability.
+message SetPricingControlRequest {
+  // The caller's bearer token (must hold ManageLiquidity·FixedIncome).
+  string session_token = 1;
+  // Whether the server sends outbound pricing to FIX-connected clients.
+  bool outbound_enabled = 2;
+  // Whether LP-feed ingestion into the aggregated books runs.
+  bool inbound_enabled = 3;
+  // Echoed request correlation id.
+  optional string correlation_id = 4;
+}
+// The applied firm-wide pricing kill-switch state, echoed back with its monotonic
+// version (also fanned out to every connected client as a `pricing_control` frame).
+message SetPricingControlResponse {
+  // The applied outbound-pricing control.
+  bool outbound_enabled = 1;
+  // The applied inbound-ingest control.
+  bool inbound_enabled = 2;
+  // The monotonic version of the applied control state (starts at 1; +1 per change).
+  uint64 version = 3;
+  // Echoed request correlation id.
+  optional string correlation_id = 4;
+}
+
 // Delete an aggregated book (admin only).
 message DeleteAggregatedBookRequest {
   // The caller's bearer token (must resolve to an admin).
@@ -6759,6 +6788,9 @@ service AuthService {
   rpc UpdateAggregatedBook(UpdateAggregatedBookRequest) returns (UpdateAggregatedBookResponse);
   // Delete an aggregated book (admin only).
   rpc DeleteAggregatedBook(DeleteAggregatedBookRequest) returns (DeleteAggregatedBookResponse);
+  // Set the firm-wide pricing kill-switch (server-only control plane). Gated on the
+  // fixed-income liquidity-management capability (same bar as UpdateAggregatedBook).
+  rpc SetPricingControl(SetPricingControlRequest) returns (SetPricingControlResponse);
   // List the pricing groups (any authenticated caller — the roster is readable for
   // the GUI, so this is NOT admin-only).
   rpc ListPricingGroups(ListPricingGroupsRequest) returns (ListPricingGroupsResponse);

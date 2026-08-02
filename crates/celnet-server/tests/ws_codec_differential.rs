@@ -43,10 +43,10 @@ use celnet_proto::{
     DeleteAggregatedBookResponse, DeletePricingGroupResponse, EspOrRfq, FeatureKind,
     FeaturePipelineDesc, FeatureSpecDesc, Greeks, Leg, ListAggregatedBooksResponse,
     ListPricingGroupsResponse, LpContribution, MarketContext, MetalPair, PricingGroupDesc,
-    RateSensitivities, Strategy, StrategyKind, StrikeOrDelta, SubscriptionId, Tenor,
-    TieringConfigDesc, TieringGuardrailsDesc, TieringSpreadUnit, TieringStalePolicy,
-    TieringStrategyDesc, TieringStrategyKind, Underlying, UpdateAggregatedBookResponse,
-    UpdatePricingGroupPipelineResponse, UpdatePricingGroupResponse,
+    RateSensitivities, SetPricingControlResponse, Strategy, StrategyKind, StrikeOrDelta,
+    SubscriptionId, Tenor, TieringConfigDesc, TieringGuardrailsDesc, TieringSpreadUnit,
+    TieringStalePolicy, TieringStrategyDesc, TieringStrategyKind, Underlying,
+    UpdateAggregatedBookResponse, UpdatePricingGroupPipelineResponse, UpdatePricingGroupResponse,
 };
 use celnet_proto::{
     ClientFlowMetricsDesc, FlowGroupBy, ListClientFlowMetricsRequest, ListClientFlowMetricsResponse,
@@ -4707,6 +4707,82 @@ fn delete_aggregated_book_request_decode_byte_identical() {
         generated::decode_delete_aggregated_book_request(o),
         hand::hand_delete_aggregated_book_request_from_json(o),
     );
+}
+
+#[test]
+fn set_pricing_control_request_decode_byte_identical() {
+    // Every true/false combo of the two controls, plus present + absent correlation_id.
+    for (label, body) in [
+        (
+            "stop-all-pricing",
+            json!({ "session_token": "tok", "outbound_enabled": false, "inbound_enabled": true, "correlation_id": "c1" }),
+        ),
+        (
+            "stop-all",
+            json!({ "session_token": "tok", "outbound_enabled": false, "inbound_enabled": false }),
+        ),
+        (
+            "resume",
+            json!({ "session_token": "tok", "outbound_enabled": true, "inbound_enabled": true, "correlation_id": "c2" }),
+        ),
+    ] {
+        let o = body.as_object().expect("object");
+        assert_decode_eq(
+            label,
+            generated::decode_set_pricing_control_request(o),
+            hand::hand_set_pricing_control_request_from_json(o),
+        );
+    }
+}
+
+#[test]
+fn set_pricing_control_response_encode_byte_identical() {
+    for (label, resp) in [
+        (
+            "stop-all-pricing",
+            SetPricingControlResponse {
+                outbound_enabled: false,
+                inbound_enabled: true,
+                version: 2,
+                correlation_id: Some("c1".to_owned()),
+            },
+        ),
+        (
+            "stop-all-no-corr",
+            SetPricingControlResponse {
+                outbound_enabled: false,
+                inbound_enabled: false,
+                version: 3,
+                correlation_id: None,
+            },
+        ),
+        (
+            "resume",
+            SetPricingControlResponse {
+                outbound_enabled: true,
+                inbound_enabled: true,
+                version: 4,
+                correlation_id: Some("c2".to_owned()),
+            },
+        ),
+    ] {
+        assert_bytes_eq(
+            label,
+            &generated::encode_set_pricing_control_response(&resp),
+            &hand::hand_set_pricing_control_response_to_json(&resp),
+        );
+    }
+    // Absent correlation_id renders as JSON `null` (the `null_absent_optional` policy).
+    let absent = SetPricingControlResponse {
+        outbound_enabled: false,
+        inbound_enabled: false,
+        version: 3,
+        correlation_id: None,
+    };
+    let g = generated::encode_set_pricing_control_response(&absent);
+    assert_eq!(g.get("correlation_id"), Some(&Value::Null));
+    assert_eq!(g.get("outbound_enabled"), Some(&Value::Bool(false)));
+    assert_eq!(g.get("version"), Some(&json!(3)));
 }
 
 /// A fully-populated aggregated-book descriptor (explicit scope + nested params).

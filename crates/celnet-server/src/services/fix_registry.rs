@@ -118,6 +118,12 @@ pub struct FixAcceptorRegistry {
     /// tests that never wire it) ⇒ the stream keeps the standalone P0 demo re-price,
     /// byte-identical.
     aggregation_hub: OnceLock<Arc<crate::services::aggregation::AggregationHub>>,
+    /// The firm-wide runtime **pricing kill-switch** each managed acceptor's context is
+    /// wired with so its outbound RFQ auto-quotes + RFS/ESP streams honour
+    /// `SetPricingControl`. Injected once at boot (set-once), like `aggregation_hub`.
+    /// Absent (unit tests) ⇒ the acceptor keeps `FixContext`'s default both-enabled
+    /// control, byte-identical to before.
+    pricing_control: OnceLock<Arc<crate::services::pricing_control::PricingControl>>,
     config_path: PathBuf,
 }
 
@@ -168,6 +174,7 @@ impl FixAcceptorRegistry {
             auto_quote: RatesAutoQuotePolicy::default(),
             desk_directory: OnceLock::new(),
             aggregation_hub: OnceLock::new(),
+            pricing_control: OnceLock::new(),
             config_path,
         })
     }
@@ -179,6 +186,17 @@ impl FixAcceptorRegistry {
     /// (set-once). Absent ⇒ streams keep the standalone P0 demo re-price.
     pub fn set_aggregation_hub(&self, hub: Arc<crate::services::aggregation::AggregationHub>) {
         let _ = self.aggregation_hub.set(hub);
+    }
+
+    /// Inject the firm-wide runtime pricing kill-switch each managed acceptor's outbound
+    /// pricing is gated by. Called once at boot after the control is built, before
+    /// [`Self::start_enabled`]. Idempotent (set-once); absent ⇒ acceptors keep the
+    /// default both-enabled control.
+    pub fn set_pricing_control(
+        &self,
+        control: Arc<crate::services::pricing_control::PricingControl>,
+    ) {
+        let _ = self.pricing_control.set(control);
     }
 
     /// Inject the desk directory used to validate connection routing desks and to
@@ -432,7 +450,10 @@ impl FixAcceptorRegistry {
         // Price a fixed-income STREAM venue's outbound RFS/ESP off the aggregated-book
         // composite through the connection's pricing group when a book covers the streamed
         // instrument (design §5); absent ⇒ the standalone P0 demo re-price.
-        .with_aggregation(self.aggregation_hub.get().cloned());
+        .with_aggregation(self.aggregation_hub.get().cloned())
+        // Gate this venue's outbound RFQ auto-quotes + RFS/ESP streams on the firm-wide
+        // kill-switch; absent ⇒ the default both-enabled control (byte-identical).
+        .with_pricing_control(self.pricing_control.get().cloned());
         FixAcceptor::start(addr, ctx)
             .await
             .map_err(|e| format!("could not bind {addr}: {e}"))

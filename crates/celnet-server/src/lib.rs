@@ -383,7 +383,17 @@ impl Edge {
         // composite). Reconciled to the persisted enabled books once the identity
         // store is loaded (below), and again on every admin book CRUD (via the
         // AuthEdge). Bound to the edge clock so staleness decay measures quote age.
-        let aggregation_hub = services::aggregation::AggregationHub::new(clock.clone());
+        // The firm-wide runtime **pricing kill-switch** (server-only control plane). ONE
+        // shared control threaded into the aggregation ingest (inbound gate), every FIX
+        // session (outbound gate), the AuthEdge (the `SetPricingControl` RPC), and the WS
+        // layer (change fan-out). Seeded both-enabled here and reconciled to the operator's
+        // persisted setting once the identity store is loaded (below) — so a bounce restores
+        // a halt rather than silently resuming pricing.
+        let pricing_control = services::pricing_control::PricingControl::new(true, true);
+        let aggregation_hub = services::aggregation::AggregationHub::with_control(
+            clock.clone(),
+            Arc::clone(&pricing_control),
+        );
 
         // Connect the backend fleet ONCE for a distributed topology (one
         // `celnet_client::Client` per endpoint, sharing its HTTP/2 channel) and share
@@ -582,6 +592,11 @@ impl Edge {
         // composite-based + tiered too (closing the deferred rates-RFS group-pricing seam).
         // Set before the enabled acceptors bind below.
         fix_registry.set_aggregation_hub(Arc::clone(&aggregation_hub));
+        // Gate every managed acceptor's outbound RFQ auto-quotes + RFS/ESP streams on the
+        // firm-wide kill-switch (the SAME runtime control). Set before the enabled
+        // acceptors bind below; the persisted setting is applied to the shared control
+        // once the identity store loads (above).
+        fix_registry.set_pricing_control(Arc::clone(&pricing_control));
         // ONE admin edge backs both the gRPC server and the WS mirror (shared behind an
         // `Arc`), so the two fronts manage the SAME registry through one entitlement
         // boundary — exactly the single-edge sharing the risk service uses.
@@ -678,6 +693,22 @@ impl Edge {
         // boot. Runs before `identity_store` is moved into the `AuthEdge`; every
         // admin book CRUD re-reconciles (see `AuthEdge::with_aggregation_hub`).
         aggregation_hub.reconcile(&identity_store);
+
+        // Restore the operator's persisted firm-wide pricing kill-switch into the runtime
+        // control (a bounce must not silently resume pricing an operator halted). Applied
+        // before any FIX venue binds or LP feed lands, so the gates are correct from the
+        // first tick. Both-enabled (the default) is a no-op re-seed.
+        {
+            let persisted = identity_store.pricing_control();
+            let current = pricing_control.snapshot();
+            // Only apply (and bump the version) when the persisted setting actually
+            // differs from the both-enabled default — a fresh store stays at version 1.
+            if persisted.outbound_enabled != current.outbound_enabled
+                || persisted.inbound_enabled != current.inbound_enabled
+            {
+                pricing_control.set(persisted.outbound_enabled, persisted.inbound_enabled);
+            }
+        }
 
         // Prime the shared position store's risk router from the persisted firm-wide
         // routing graph (phase 4 boot reconcile, `docs/FI-RISK-ROUTING-REQUIREMENTS.md`
@@ -829,7 +860,11 @@ impl Edge {
             // Back the Latency/Ops analytics RPC with the SAME telemetry hub the
             // `CoreLink` owns — the pinned core + async edges fold their per-stage
             // latency into it, and this RPC reads that store (Analytics pillar B).
-            .with_telemetry(Arc::clone(link.telemetry())),
+            .with_telemetry(Arc::clone(link.telemetry()))
+            // Drive the firm-wide pricing kill-switch (`SetPricingControl`) through the
+            // SAME runtime control the aggregation ingest + FIX seams read and the WS
+            // layer fans out.
+            .with_pricing_control(Arc::clone(&pricing_control)),
         );
         let auth = AuthServiceServer::from_arc(Arc::clone(&auth_edge));
 
@@ -888,6 +923,7 @@ impl Edge {
             fleet.clone(),
             panel,
             Arc::clone(&aggregation_hub),
+            Arc::clone(&pricing_control),
         );
         let ws_mirror = ws::WsMirror::start(ws_addr, ws_services).await?;
 
@@ -914,7 +950,10 @@ impl Edge {
                     Arc::clone(&fix_monitor),
                     LEGACY_FIX_CONNECTION_ID.to_owned(),
                     Arc::clone(&store),
-                );
+                )
+                // Gate the legacy env-seeded acceptor's outbound FX auto-quotes on the
+                // firm-wide kill-switch (the SAME runtime control).
+                .with_pricing_control(Some(Arc::clone(&pricing_control)));
                 Some(FixAcceptor::start(addr, ctx).await?)
             }
             None => None,

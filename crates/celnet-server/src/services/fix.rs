@@ -210,6 +210,15 @@ pub(crate) struct FixContext {
     /// demo re-price, byte-identical to before. Resolution happens on the FIX session
     /// ticker task (never the pinned zero-alloc pricer), so guardrail 11 holds.
     aggregation_hub: Option<Arc<crate::services::aggregation::AggregationHub>>,
+    /// The firm-wide **outbound** pricing kill-switch. Read (a cheap `Relaxed` load on
+    /// the FIX session ticker task, never the pinned pricer) before every outbound
+    /// pricing emission: when outbound is disabled, RFQ auto-quotes are suppressed and
+    /// RFS/ESP streams pause (they re-check each tick, so they resume from live on
+    /// re-enable). Inbound LP consumption, the desk-inbox RFQ recording, and internal
+    /// book updates are untouched. Defaulted to a both-enabled control by the
+    /// constructors (byte-identical to before the kill-switch); the boot path shares
+    /// the one runtime control via [`FixContext::with_pricing_control`].
+    pricing_control: Arc<crate::services::pricing_control::PricingControl>,
 }
 
 /// The admission policy that decides whether an inbound rates RFQ is **auto-quoted**
@@ -330,6 +339,7 @@ impl FixContext {
             auto_quote: RatesAutoQuotePolicy::default(),
             store,
             aggregation_hub: None,
+            pricing_control: crate::services::pricing_control::PricingControl::new(true, true),
         }
     }
 
@@ -365,7 +375,24 @@ impl FixContext {
             auto_quote: RatesAutoQuotePolicy::default(),
             store,
             aggregation_hub: None,
+            pricing_control: crate::services::pricing_control::PricingControl::new(true, true),
         }
+    }
+
+    /// Share the firm-wide runtime **pricing kill-switch** so this venue's outbound
+    /// pricing (RFQ auto-quotes + RFS/ESP streams) is gated by `SetPricingControl`.
+    /// Takes an `Option` so the managed registry can pass its set-once handle (or `None`
+    /// in tests that never wire it, keeping the default both-enabled control). Builder-
+    /// style; a no-op wire keeps existing callers/tests byte-identical.
+    #[must_use]
+    pub(crate) fn with_pricing_control(
+        mut self,
+        control: Option<Arc<crate::services::pricing_control::PricingControl>>,
+    ) -> Self {
+        if let Some(control) = control {
+            self.pricing_control = control;
+        }
+        self
     }
 
     /// Wire the live aggregated-book composite + pricing-group registry a fixed-income
@@ -661,6 +688,16 @@ impl FixSession {
             Ok(p) => p,
             Err(_) => return,
         };
+        // Firm-wide OUTBOUND kill-switch: while outbound pricing is halted, suppress the
+        // auto-quote frame (never push it to the client). Internal book state / limits
+        // are untouched; nothing else in this path records history for an FX RFQ.
+        if !self.ctx.pricing_control.outbound_enabled() {
+            tracing::debug!(
+                connection_id = %self.ctx.connection_id,
+                "outbound pricing halted: suppressing FX RFQ auto-quote"
+            );
+            return;
+        }
         self.emit_two_way_quote(st, &req_id, &symbol, &priced, fx, None, out);
     }
 
@@ -803,13 +840,33 @@ impl FixSession {
         // price (the desk prices them).
         if let RatesAdmission::Auto(priced) = &admission {
             let mid = 0.5 * (priced.bid + priced.offer);
-            let quote_id =
-                self.emit_two_way_quote(st, req_id, symbol, priced, None, request_id.clone(), out);
+            // Firm-wide OUTBOUND kill-switch: while outbound pricing is halted, suppress
+            // the outbound `Quote(S)` frame (do NOT push it) — the desk-inbox row above
+            // was already recorded, so nothing internal is lost. On an RFS venue the
+            // subscription is STILL registered (with no live quote yet) so the ticker
+            // resumes streaming from live on re-enable.
+            let last_quote_id = if self.ctx.pricing_control.outbound_enabled() {
+                Some(self.emit_two_way_quote(
+                    st,
+                    req_id,
+                    symbol,
+                    priced,
+                    None,
+                    request_id.clone(),
+                    out,
+                ))
+            } else {
+                tracing::debug!(
+                    connection_id = %self.ctx.connection_id,
+                    "outbound pricing halted: suppressing OIS RFQ auto-quote"
+                );
+                None
+            };
             // On a STREAM (RFS) venue a Subscribe opens a CONTINUOUS stream: register the
             // subscription so the session ticker re-prices and pushes updates until an
-            // Unsubscribe (or session close). The quote just emitted is the first update;
-            // the desk row id rides every update so a lift of any one books the same deal
-            // and closes the stream.
+            // Unsubscribe (or session close). The quote just emitted (if any) is the first
+            // update; the desk row id rides every update so a lift of any one books the
+            // same deal and closes the stream.
             if intent == RatesIntent::Rfs {
                 self.rfs.insert(
                     req_id.to_vec(),
@@ -820,7 +877,7 @@ impl FixSession {
                         base_par: mid,
                         request_id,
                         tick: 0,
-                        last_quote_id: Some(quote_id),
+                        last_quote_id,
                         prev_quote_id: None,
                     },
                 );
@@ -904,6 +961,13 @@ impl FixSession {
     /// keeping the live-quote table bounded to one entry per subscription. Driven by the
     /// session loop's streaming ticker; returns an empty vec when no subscription is live.
     fn tick_rfs_stream(&mut self, st: &[u8]) -> Vec<Vec<u8>> {
+        // Firm-wide OUTBOUND kill-switch: while outbound pricing is halted, pause every
+        // live RFS/ESP stream (push no updates). Cheap `Relaxed` load off the pinned
+        // pricer; the ticker re-checks each tick, so streams resume from live on
+        // re-enable (the subscriptions stay registered, never torn down).
+        if !self.ctx.pricing_control.outbound_enabled() {
+            return Vec::new();
+        }
         let mut frames = Vec::new();
         // Snapshot the keys so the loop can re-borrow `self` (live table, quote minter)
         // between subscriptions while mutating the subscription set in place.
@@ -1078,8 +1142,26 @@ impl FixSession {
         let request_id = self.record_bond_rfq(&rfq, &counterparty, &curve, &admission);
         if let RatesAdmission::Auto(priced) = &admission {
             let mid = 0.5 * (priced.bid + priced.offer);
-            let quote_id =
-                self.emit_two_way_quote(st, req_id, symbol, priced, None, request_id.clone(), out);
+            // Firm-wide OUTBOUND kill-switch: suppress the outbound `Quote(S)` while halted
+            // (the desk-inbox row above already recorded it); on an RFS venue the
+            // subscription is STILL registered so streaming resumes from live on re-enable.
+            let last_quote_id = if self.ctx.pricing_control.outbound_enabled() {
+                Some(self.emit_two_way_quote(
+                    st,
+                    req_id,
+                    symbol,
+                    priced,
+                    None,
+                    request_id.clone(),
+                    out,
+                ))
+            } else {
+                tracing::debug!(
+                    connection_id = %self.ctx.connection_id,
+                    "outbound pricing halted: suppressing bond RFQ auto-quote"
+                );
+                None
+            };
             // On a STREAM (RFS) venue a bond Subscribe opens a CONTINUOUS stream — register
             // it so the session ticker re-prices and pushes updates until an Unsubscribe.
             // The re-price prefers the aggregated-book composite (this connection's
@@ -1097,7 +1179,7 @@ impl FixSession {
                         base_par: mid,
                         request_id,
                         tick: 0,
-                        last_quote_id: Some(quote_id),
+                        last_quote_id,
                         prev_quote_id: None,
                     },
                 );
@@ -1734,6 +1816,17 @@ mod tests {
         connection_id: &str,
         hub: Option<Arc<crate::services::aggregation::AggregationHub>>,
     ) -> FixSession {
+        stream_session_with_control(connection_id, hub, None)
+    }
+
+    /// Build a fixed-income STREAM session, optionally sharing an explicit firm-wide
+    /// pricing kill-switch `control` so the outbound-gate tests can flip it (absent ⇒
+    /// the default both-enabled control).
+    fn stream_session_with_control(
+        connection_id: &str,
+        hub: Option<Arc<crate::services::aggregation::AggregationHub>>,
+        control: Option<Arc<crate::services::pricing_control::PricingControl>>,
+    ) -> FixSession {
         let link = {
             let initial = celnet_engine::testing::make_state(
                 1.10,
@@ -1757,7 +1850,8 @@ mod tests {
             AcceptorKind::FixedIncomeStream,
             Arc::new(PositionStore::new()),
         )
-        .with_aggregation(hub);
+        .with_aggregation(hub)
+        .with_pricing_control(control);
         let cfg = SessionConfig {
             sender: ctx.sender.clone(),
             target: ctx.counterparty.clone(),
@@ -1813,6 +1907,74 @@ mod tests {
         // No hub wired ⇒ always None (the legacy env seed / tests stay byte-identical).
         let no_hub = stream_session("conn-grouped", None);
         assert!(no_hub.composite_two_way(b"BND-5Y", 5_000_000.0).is_none());
+    }
+
+    /// A small, auto-quotable OIS Subscribe RFQ (within the clip cap + on-the-run) for
+    /// the outbound-kill-switch test — 10 mm at 5 y, which `classify_ois_rfq` admits.
+    fn small_ois_subscribe_frame() -> Vec<u8> {
+        let hdr = Header {
+            sender: b"CELNET",
+            target: b"CELNET-CPTY",
+            seq_num: 7,
+            sending_time: b"20260625-12:00:00.000",
+        };
+        let p = RatesQuoteRequestParams {
+            quote_req_id: b"RFQ-KS",
+            symbol: b"USD-OIS",
+            tenor_years: 5,
+            notional: 10_000_000.0,
+            side: RatesSide::TwoWay,
+            subscription: SubscriptionRequest::Subscribe,
+        };
+        let mut enc = FrameEncoder::new();
+        build_rates_quote_request(&hdr, &p, &mut enc)
+    }
+
+    /// The firm-wide OUTBOUND kill-switch (test i + the RFS-resume behaviour): with
+    /// outbound pricing halted, an inbound client RFQ produces NO outbound `Quote(S)`
+    /// frame, yet the RFS stream is still registered so it resumes from live on
+    /// re-enable. The desk-inbox recording (None here — no desk wired) is untouched.
+    #[tokio::test]
+    async fn outbound_kill_switch_suppresses_auto_quote_but_keeps_stream() {
+        use crate::services::pricing_control::PricingControl;
+        let control = PricingControl::new(true, true);
+        let mut session = stream_session_with_control("conn-ks", None, Some(Arc::clone(&control)));
+        let st = session.sending_time();
+        let frame_bytes = small_ois_subscribe_frame();
+        let frame = FrameCursor::parse(&frame_bytes).expect("frame parses");
+        let req_id = frame
+            .get(131)
+            .map(<[u8]>::to_vec)
+            .expect("QuoteReqID present");
+        let symbol = frame.get(55).map(<[u8]>::to_vec).expect("Symbol present");
+
+        // Outbound HALTED: no outbound Quote(S) frame, but the RFS stream registers so it
+        // can resume from live later (last_quote_id starts absent).
+        control.set(false, true);
+        let mut out = Vec::new();
+        session
+            .on_rates_quote_request(&frame, &st, &req_id, &symbol, &mut out)
+            .await;
+        assert!(out.is_empty(), "outbound halted: no Quote(S) frame pushed");
+        assert_eq!(
+            session.rfs.len(),
+            1,
+            "the RFS subscription is still registered"
+        );
+        assert!(
+            session.rfs.values().next().unwrap().last_quote_id.is_none(),
+            "no live quote while halted"
+        );
+        // A tick while halted pushes nothing.
+        assert!(
+            session.tick_rfs_stream(&st).is_empty(),
+            "the ticker pauses while outbound is halted"
+        );
+
+        // Re-enable: the ticker now streams a fresh update from live (resume, no replay).
+        control.set(true, true);
+        let frames = session.tick_rfs_stream(&st);
+        assert!(!frames.is_empty(), "streams resume from live on re-enable");
     }
 
     /// The auto-quote policy admits small, on-the-run clips and routes larger or

@@ -105,6 +105,7 @@ use crate::services::desk::RfqDeskEdge;
 use crate::services::desk::notify::NotificationBroker;
 use crate::services::fix_admin::FixAdminEdge;
 use crate::services::pricing::PricingEdge;
+use crate::services::pricing_control::PricingControl;
 use crate::services::quote::{LpPanelConfig, QuoteEdge};
 use crate::services::risk::RiskEdge;
 use crate::services::risk::store::PositionStore;
@@ -148,6 +149,10 @@ pub struct WsServices {
     /// confirm/apply lifecycle drivers), shared with the gRPC server.
     corpactions: Arc<CorporateActionsEdge>,
     gate: Arc<ReadinessGate>,
+    /// The firm-wide runtime **pricing kill-switch**. Each WS connection subscribes to
+    /// its change channel and forwards a `pricing_control` frame (current state on
+    /// connect, then on every change) so all connected GUIs reflect the halt firm-wide.
+    pricing_control: Arc<PricingControl>,
 }
 
 impl WsServices {
@@ -174,6 +179,7 @@ impl WsServices {
         fleet: Option<Arc<crate::services::risk::federate::Fleet>>,
         panel: LpPanelConfig,
         aggregation_hub: Arc<AggregationHub>,
+        pricing_control: Arc<PricingControl>,
     ) -> Self {
         // The SAME shared backend fleet the gRPC edges use (or `None` in-process), so
         // the WS unary mirror forwards owned-pair requests identically (API-first
@@ -256,6 +262,7 @@ impl WsServices {
             rfq_desk,
             corpactions,
             gate,
+            pricing_control,
         }
     }
 }
@@ -377,6 +384,36 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
         run_session(driver, rfs_in_stream, rfs_out_tx).await;
     });
 
+    // The per-connection firm-wide **pricing kill-switch** forwarder: emit the CURRENT
+    // control state on connect, then a `pricing_control` frame on every change, so all
+    // connected GUIs reflect a firm-wide halt/resume. Bounded-queue offload
+    // (`CLAUDE.md` §11), off the pinned core. Ends when the outbound channel closes
+    // (socket gone) or is aborted on teardown.
+    let pricing_control_tx = out_tx.clone();
+    let mut pc_rx = services.pricing_control.subscribe();
+    let pricing_control_task = tokio::spawn(async move {
+        // `borrow_and_update` reads AND marks the current value seen, so the first
+        // `changed()` waits for the next real change (no duplicate initial frame).
+        let initial = *pc_rx.borrow_and_update();
+        if pricing_control_tx
+            .send(Outbound::Frame(codec::pricing_control_frame(&initial)))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        while pc_rx.changed().await.is_ok() {
+            let state = *pc_rx.borrow_and_update();
+            if pricing_control_tx
+                .send(Outbound::Frame(codec::pricing_control_frame(&state)))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+
     // The writer task: serialize every outbound frame to a WS text message. Forwards
     // both the request/response replies (`out_rx`) and the RFS server messages
     // (`rfs_out_rx`), closing the socket when both dry up.
@@ -484,7 +521,11 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
     drop(rfs_in_tx);
     drop(out_tx);
     rfs_task.abort();
+    // Stop the pricing-control forwarder so its outbound-sender clone drops and the
+    // writer can drain to completion.
+    pricing_control_task.abort();
     let _ = rfs_task.await;
+    let _ = pricing_control_task.await;
     let _ = writer.await;
     drop(guard);
 }
@@ -1301,6 +1342,17 @@ async fn handle_unary(
                 services.auth.delete_aggregated_book(Request::new(req)),
                 "aggregated_book_deleted",
                 generated_codec::encode_delete_aggregated_book_response
+            )
+        }
+        "set_pricing_control" => {
+            // The firm-wide pricing kill-switch. The reply confirms the applied state to
+            // the caller; the change is ALSO fanned out to every connected client as a
+            // `pricing_control` push frame (the per-connection forwarder task).
+            let req = decode!(generated_codec::decode_set_pricing_control_request(o));
+            call!(
+                services.auth.set_pricing_control(Request::new(req)),
+                "set_pricing_control_response",
+                generated_codec::encode_set_pricing_control_response
             )
         }
         "list_pricing_groups" => {

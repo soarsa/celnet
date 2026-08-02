@@ -297,6 +297,14 @@ pub struct AggregationHub {
     /// edge, guardrail 11); bounded by the member-LP count, never by time. Read
     /// on-query by [`Self::lp_tick_counts`].
     lp_ticks: Mutex<HashMap<String, u64>>,
+    /// The firm-wide **inbound** pricing kill-switch. Read (a cheap `Relaxed` load) at
+    /// the very top of every [`Self::ingest`] before any book lock is taken: when
+    /// inbound ingest is disabled the pushed quote is dropped (no composite mutation),
+    /// resuming from live on re-enable. A default-constructed hub (via [`Self::new`] /
+    /// [`Self::with_inventory`]) uses a both-enabled control, so every existing ingest
+    /// test and the standalone path behave exactly as before; the boot path shares the
+    /// one runtime control via [`Self::with_control`].
+    pricing_control: Arc<crate::services::pricing_control::PricingControl>,
 }
 
 impl std::fmt::Debug for AggregationHub {
@@ -329,17 +337,34 @@ impl crate::services::analytics::lp::LpFlowSource for AggregationHub {
 }
 
 impl AggregationHub {
-    /// Construct an empty hub bound to the edge `clock` (the valuation clock the
-    /// staleness decay measures quote age against).
-    #[must_use]
-    pub fn new(clock: Clock) -> Arc<Self> {
+    /// The shared constructor: an empty hub bound to `clock`, with the optional
+    /// live `inventory` source and the firm-wide inbound `pricing_control` gate.
+    fn build(
+        clock: Clock,
+        inventory: Option<Arc<dyn InventorySource>>,
+        pricing_control: Arc<crate::services::pricing_control::PricingControl>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             books: RwLock::new(HashMap::new()),
             clock,
-            inventory: None,
+            inventory,
             pricing: RwLock::new(Arc::new(PricingGroupResolver::default())),
             lp_ticks: Mutex::new(HashMap::new()),
+            pricing_control,
         })
+    }
+
+    /// Construct an empty hub bound to the edge `clock` (the valuation clock the
+    /// staleness decay measures quote age against). The inbound kill-switch defaults to
+    /// **enabled** (byte-identical to before the kill-switch); the boot path shares the
+    /// runtime control via [`Self::with_control`].
+    #[must_use]
+    pub fn new(clock: Clock) -> Arc<Self> {
+        Self::build(
+            clock,
+            None,
+            crate::services::pricing_control::PricingControl::new(true, true),
+        )
     }
 
     /// Construct a hub bound to `clock` **and** a live [`InventorySource`] the
@@ -348,13 +373,22 @@ impl AggregationHub {
     /// net position; a hub built via [`Self::new`] reads zero inventory (no skew).
     #[must_use]
     pub fn with_inventory(clock: Clock, inventory: Arc<dyn InventorySource>) -> Arc<Self> {
-        Arc::new(Self {
-            books: RwLock::new(HashMap::new()),
+        Self::build(
             clock,
-            inventory: Some(inventory),
-            pricing: RwLock::new(Arc::new(PricingGroupResolver::default())),
-            lp_ticks: Mutex::new(HashMap::new()),
-        })
+            Some(inventory),
+            crate::services::pricing_control::PricingControl::new(true, true),
+        )
+    }
+
+    /// Construct an empty hub bound to `clock` sharing the firm-wide runtime inbound
+    /// **pricing kill-switch** — the boot path so `SetPricingControl(inbound_enabled=false)`
+    /// halts LP ingestion into this hub's books.
+    #[must_use]
+    pub fn with_control(
+        clock: Clock,
+        pricing_control: Arc<crate::services::pricing_control::PricingControl>,
+    ) -> Arc<Self> {
+        Self::build(clock, None, pricing_control)
     }
 
     /// Rebuild the running engine set from the persisted identity store: stand up
@@ -405,6 +439,12 @@ impl AggregationHub {
     /// as a member and whose scope admits the instrument. Returns `true` if the
     /// quote was accepted into at least one book (the ingest ack counts these).
     pub fn ingest(&self, q: &LpQuote) -> bool {
+        // Firm-wide inbound kill-switch (cheap `Relaxed` load, before any book lock): a
+        // halted feed drops the quote — no composite mutation, and `LpFeedAck.accepted`
+        // does not count it. Resumes from live on re-enable (no stale replay).
+        if !self.pricing_control.inbound_enabled() {
+            return false;
+        }
         if q.lp_name.is_empty() || q.instrument_id.is_empty() {
             return false;
         }
@@ -1161,6 +1201,40 @@ mod tests {
         assert!(inst.confidence > 0.0 && inst.confidence <= 1.0);
         // Best offer of 100.05 is LP-3's; its size stacks the offer side.
         assert_eq!(inst.offer_size.to_bits(), 2_000_000.0_f64.to_bits());
+    }
+
+    #[test]
+    fn inbound_kill_switch_drops_ingest_and_leaves_composite_unchanged() {
+        use crate::services::pricing_control::PricingControl;
+        let control = PricingControl::new(true, true);
+        let hub = AggregationHub::with_control(Clock::manual(NOW), Arc::clone(&control));
+        let mut store = IdentityStore::default();
+        store
+            .aggregated_books
+            .push(def("b", &["LP-1", "LP-2"], params(false, 1, 60_000)));
+        hub.reconcile(&store);
+
+        // Inbound enabled: the first LP tick is accepted and forms a composite.
+        assert!(hub.ingest(&lp_quote("LP-1", "CUSIP-A", 99.90, 100.10, NOW)));
+
+        // Halt inbound ingest: the next LP tick is dropped (returns false), no composite
+        // mutation — the halted LP-2 line does not enter and does not set a new best.
+        control.set(true, false);
+        assert!(!hub.ingest(&lp_quote("LP-2", "CUSIP-A", 99.99, 100.00, NOW)));
+        let inst = &hub.snapshot("b").expect("book").snapshot.instruments[0];
+        assert_eq!(
+            inst.contributions.len(),
+            1,
+            "the halted LP-2 tick did not enter the book"
+        );
+        assert_eq!(inst.best_offer.to_bits(), 100.10_f64.to_bits());
+
+        // Re-enable: the next tick ingests live (no stale replay of the dropped one).
+        control.set(true, true);
+        assert!(hub.ingest(&lp_quote("LP-2", "CUSIP-A", 99.99, 100.00, NOW)));
+        let inst2 = &hub.snapshot("b").expect("book").snapshot.instruments[0];
+        assert_eq!(inst2.contributions.len(), 2);
+        assert_eq!(inst2.best_offer.to_bits(), 100.00_f64.to_bits());
     }
 
     #[test]

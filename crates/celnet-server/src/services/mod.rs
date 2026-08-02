@@ -33,6 +33,7 @@ pub mod error_status;
 pub mod internalise;
 pub mod liquidity_feed;
 pub mod pricing;
+pub mod pricing_control;
 pub mod quote;
 pub mod rates_book;
 pub mod rates_risk;

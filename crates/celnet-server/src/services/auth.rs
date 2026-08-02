@@ -40,6 +40,7 @@ use celnet_proto::{
     ListClientFlowMetricsResponse, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
     ListLpFlowMetricsRequest, ListLpFlowMetricsResponse, ListRiskTransfersRequest,
     ListRiskTransfersResponse, RejectRiskTransferRequest, RejectRiskTransferResponse,
+    SetPricingControlRequest, SetPricingControlResponse,
 };
 use celnet_proto::{
     AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, AggregationScopeMode, AxeSide,
@@ -95,9 +96,9 @@ use crate::config::curve_calibration::{
 };
 use crate::config::identity::{
     AggregatedBookDef, AggregatedBookEdit, AggregationParams, BookDef, DeskDef, EntityDef,
-    IdentityStore, PermissionGrant, PricingGroupDef, PricingGroupEdit, PricingMode, RiskBookDef,
-    RiskBookEdit, RiskLimits, Role, Scope, UserDef, hash_password, mint_desk_id, mint_user_id,
-    verify_password,
+    IdentityStore, PermissionGrant, PricingControlDef, PricingGroupDef, PricingGroupEdit,
+    PricingMode, RiskBookDef, RiskBookEdit, RiskLimits, Role, Scope, UserDef, hash_password,
+    mint_desk_id, mint_user_id, verify_password,
 };
 use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
@@ -107,6 +108,7 @@ use crate::services::auto_hedge::wire::{
     threshold_from_wire, threshold_to_wire,
 };
 use crate::services::instrument_wire::{instrument_from_wire, instrument_to_wire};
+use crate::services::pricing_control::PricingControl;
 use crate::services::risk::book_risk::{
     LimitUtilization, RagBand as DomainRagBand, RiskBookRisk, aggregate_risk_book,
 };
@@ -232,6 +234,12 @@ pub struct AuthEdge {
     /// `risk_version` bump shares this SAME `Arc` (the P2 boot wiring). Constructed empty
     /// by [`AuthEdge::new`], so an isolated auth test simply serves an empty audit trail.
     auto_hedge: Arc<AutoHedgeEngine>,
+    /// The runtime firm-wide **pricing kill-switch** the `SetPricingControl` RPC drives.
+    /// The SAME `Arc` the aggregation ingest + FIX enforcement seams read and the WS
+    /// layer fans out (the boot wiring shares it via [`AuthEdge::with_pricing_control`]).
+    /// Defaulted to a both-enabled control by [`AuthEdge::new`], so an isolated auth test
+    /// applies the setting to its own standalone control.
+    pricing_control: Arc<PricingControl>,
 }
 
 impl AuthEdge {
@@ -260,7 +268,24 @@ impl AuthEdge {
             lp_analytics_sources: Vec::new(),
             telemetry: None,
             auto_hedge: Arc::new(AutoHedgeEngine::default()),
+            pricing_control: PricingControl::new(true, true),
         }
+    }
+
+    /// Share the boot-path firm-wide pricing kill-switch so the `SetPricingControl` RPC
+    /// drives the SAME runtime control the aggregation ingest + FIX enforcement seams
+    /// read and the WS layer fans out. Chainable; seeded at boot from the persisted
+    /// [`IdentityStore::pricing_control`].
+    #[must_use]
+    pub fn with_pricing_control(mut self, control: Arc<PricingControl>) -> Self {
+        self.pricing_control = control;
+        self
+    }
+
+    /// The shared runtime pricing kill-switch handle (the enforcement seams read this).
+    #[must_use]
+    pub fn pricing_control(&self) -> &Arc<PricingControl> {
+        &self.pricing_control
     }
 
     /// Share the boot-path auto-hedge engine so the `ListHedgeProvenance` RPC serves the
@@ -1596,6 +1621,41 @@ impl AuthService for AuthEdge {
         self.reconcile_aggregation(&guard);
         Ok(Response::new(UpdateAggregatedBookResponse {
             book: Some(aggregated_book_to_wire(&def)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn set_pricing_control(
+        &self,
+        request: Request<SetPricingControlRequest>,
+    ) -> Result<Response<SetPricingControlResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Same bar as every liquidity/pricing control op (mirrors update_aggregated_book).
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::ManageLiquidity, AssetClass::FixedIncome),
+        )?;
+
+        // Persist the operator's choice first (survives a bounce), then apply it to the
+        // live runtime control so the enforcement seams + WS fan-out see it immediately.
+        let def = PricingControlDef {
+            outbound_enabled: req.outbound_enabled,
+            inbound_enabled: req.inbound_enabled,
+        };
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        next.set_pricing_control(def);
+        self.persist_and_commit(&mut guard, next)?;
+        drop(guard);
+        let state = self
+            .pricing_control
+            .set(req.outbound_enabled, req.inbound_enabled);
+        Ok(Response::new(SetPricingControlResponse {
+            outbound_enabled: state.outbound_enabled,
+            inbound_enabled: state.inbound_enabled,
+            version: state.version,
             correlation_id: req.correlation_id,
         }))
     }

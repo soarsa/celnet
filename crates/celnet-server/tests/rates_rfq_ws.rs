@@ -136,7 +136,14 @@ where
             .expect("the socket stays open")
             .expect("the frame is well-formed");
         match frame {
-            WsMessage::Text(t) => return serde_json::from_str(&t).expect("frame is valid JSON"),
+            WsMessage::Text(t) => {
+                let v: Value = serde_json::from_str(&t).expect("frame is valid JSON");
+                // Skip the unsolicited connect-time firm-wide pricing-control frame.
+                if v.get("type").and_then(Value::as_str) == Some("pricing_control") {
+                    continue;
+                }
+                return v;
+            }
             WsMessage::Ping(_) | WsMessage::Pong(_) => continue,
             other => panic!("unexpected non-text WS frame: {other:?}"),
         }

@@ -111,11 +111,12 @@ use celnet_proto::{
     ListPricingGroupsRequest, ListPricingGroupsResponse, ListUsersRequest, ListUsersResponse,
     LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, OisDef, PricingGroupDesc,
     PricingGroupSpec, PricingProvenance, ResetPasswordRequest, ResetPasswordResponse,
-    SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
-    SetUserCapabilitiesResponse, StirFutureDef, TieringConfigDesc, TieringGuardrailsDesc,
-    TieringStrategyDesc, UpdateAggregatedBookRequest, UpdateAggregatedBookResponse,
-    UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse,
-    UpdateEntityRequest, UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse,
+    SetPricingControlRequest, SetPricingControlResponse, SetRoleCapabilitiesRequest,
+    SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
+    StirFutureDef, TieringConfigDesc, TieringGuardrailsDesc, TieringStrategyDesc,
+    UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookRequest,
+    UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest,
+    UpdateEntityResponse, UpdateInstrumentRequest, UpdateInstrumentResponse,
     UpdatePricingGroupPipelineRequest, UpdatePricingGroupPipelineResponse,
     UpdatePricingGroupRequest, UpdatePricingGroupResponse, UpdateUserRequest, UpdateUserResponse,
     UserDesc, VanillaIrsDef, instrument_def_desc::Definition as InstrumentDefinition,
@@ -5917,6 +5918,20 @@ impl WireBuilder for UpdateAggregatedBookRequest {
     }
 }
 
+impl WireBuilder for SetPricingControlRequest {
+    const MESSAGE: &'static str = "SetPricingControlRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "outbound_enabled" => self.outbound_enabled = bool_or_false(value),
+            "inbound_enabled" => self.inbound_enabled = bool_or_false(value),
+            "correlation_id" => self.correlation_id = opt_string(value, "correlation_id")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for DeleteAggregatedBookRequest {
     const MESSAGE: &'static str = "DeleteAggregatedBookRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -6974,6 +6989,16 @@ pub fn decode_delete_aggregated_book_request(
     decode(DeleteAggregatedBookRequest::MESSAGE, o)
 }
 
+/// Decode a [`SetPricingControlRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_set_pricing_control_request(
+    o: &Map<String, Value>,
+) -> DResult<SetPricingControlRequest> {
+    decode(SetPricingControlRequest::MESSAGE, o)
+}
+
 /// Decode a [`ListPricingGroupsRequest`] envelope — fully generic.
 ///
 /// # Errors
@@ -7950,6 +7975,20 @@ impl WireAdapter for DeleteAggregatedBookResponse {
         match proto_name {
             "removed" => Some(WireVal::Bool(self.removed)),
             "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for SetPricingControlResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "outbound_enabled" => Some(WireVal::Bool(self.outbound_enabled)),
+            "inbound_enabled" => Some(WireVal::Bool(self.inbound_enabled)),
+            "version" => Some(WireVal::U64(self.version)),
+            // proto3 `optional string`: absent ⇒ omitted here, rendered `null` by the
+            // `null_absent_optional` policy (matching the `json!({ .. })` hand codec).
+            "correlation_id" => self.correlation_id.as_deref().map(WireVal::Str),
             _ => None,
         }
     }
@@ -9069,6 +9108,12 @@ pub fn encode_update_aggregated_book_response(r: &UpdateAggregatedBookResponse) 
 #[must_use]
 pub fn encode_delete_aggregated_book_response(r: &DeleteAggregatedBookResponse) -> Value {
     encode("DeleteAggregatedBookResponse", r)
+}
+
+/// Encode a [`SetPricingControlResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_set_pricing_control_response(r: &SetPricingControlResponse) -> Value {
+    encode("SetPricingControlResponse", r)
 }
 
 /// Encode a [`ListPricingGroupsResponse`] to its WS JSON — descriptor-driven.

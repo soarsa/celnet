@@ -57,12 +57,12 @@ use celnet_proto::{
     ListDesksResponse, ListEntitiesRequest, ListEntitiesResponse, ListPricingGroupsRequest,
     ListPricingGroupsResponse, ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse,
     LogoutRequest, LogoutResponse, PricingGroupDesc, PricingGroupSpec, ResetPasswordRequest,
-    ResetPasswordResponse, SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse,
-    SetUserCapabilitiesRequest, SetUserCapabilitiesResponse, TieringConfigDesc,
-    TieringGuardrailsDesc, TieringStrategyDesc, UpdateAggregatedBookRequest,
-    UpdateAggregatedBookResponse, UpdateBookRequest, UpdateBookResponse, UpdateDeskRequest,
-    UpdateDeskResponse, UpdateEntityRequest, UpdateEntityResponse,
-    UpdatePricingGroupPipelineRequest, UpdatePricingGroupPipelineResponse,
+    ResetPasswordResponse, SetPricingControlRequest, SetPricingControlResponse,
+    SetRoleCapabilitiesRequest, SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest,
+    SetUserCapabilitiesResponse, TieringConfigDesc, TieringGuardrailsDesc, TieringStrategyDesc,
+    UpdateAggregatedBookRequest, UpdateAggregatedBookResponse, UpdateBookRequest,
+    UpdateBookResponse, UpdateDeskRequest, UpdateDeskResponse, UpdateEntityRequest,
+    UpdateEntityResponse, UpdatePricingGroupPipelineRequest, UpdatePricingGroupPipelineResponse,
     UpdatePricingGroupRequest, UpdatePricingGroupResponse, UpdateUserRequest, UpdateUserResponse,
     UserDesc,
 };
@@ -2839,6 +2839,22 @@ pub(super) fn notification_to_json(n: &Notification) -> Value {
     })
 }
 
+/// Build the firm-wide **pricing kill-switch** push frame every WS connection forwards
+/// (current state on connect, then on every change) so all connected GUIs render the
+/// halt banner + button state. The push-frame convention (a `"type"`-tagged body,
+/// exactly like [`notification_to_json`]); the same three keys are echoed by the
+/// `SetPricingControl` reply.
+pub(super) fn pricing_control_frame(
+    state: &crate::services::pricing_control::PricingControlState,
+) -> Value {
+    json!({
+        "type": "pricing_control",
+        "outbound_enabled": state.outbound_enabled,
+        "inbound_enabled": state.inbound_enabled,
+        "version": state.version,
+    })
+}
+
 // ---- BookRatesPosition / ListRatesPositions (RiskService rates Book/List) ----
 
 pub(super) fn book_rates_position_request_from_json(
@@ -3895,6 +3911,26 @@ pub(super) fn delete_aggregated_book_request_from_json(
 
 pub(super) fn delete_aggregated_book_response_to_json(r: &DeleteAggregatedBookResponse) -> Value {
     json!({ "removed": r.removed, "correlation_id": r.correlation_id })
+}
+
+pub(super) fn set_pricing_control_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<SetPricingControlRequest> {
+    Ok(SetPricingControlRequest {
+        session_token: string_field(o, "session_token")?,
+        outbound_enabled: bool_or_false(o, "outbound_enabled"),
+        inbound_enabled: bool_or_false(o, "inbound_enabled"),
+        correlation_id: opt_string(o, "correlation_id"),
+    })
+}
+
+pub(super) fn set_pricing_control_response_to_json(r: &SetPricingControlResponse) -> Value {
+    json!({
+        "outbound_enabled": r.outbound_enabled,
+        "inbound_enabled": r.inbound_enabled,
+        "version": r.version,
+        "correlation_id": r.correlation_id,
+    })
 }
 
 // --- pricing groups (AuthService FI client-tiering RPCs) --------------------
@@ -5759,7 +5795,8 @@ pub mod diff_support {
     use celnet_proto::{
         CreateAggregatedBookRequest, CreateAggregatedBookResponse, DeleteAggregatedBookRequest,
         DeleteAggregatedBookResponse, ListAggregatedBooksRequest, ListAggregatedBooksResponse,
-        UpdateAggregatedBookRequest, UpdateAggregatedBookResponse,
+        SetPricingControlRequest, SetPricingControlResponse, UpdateAggregatedBookRequest,
+        UpdateAggregatedBookResponse,
     };
     use celnet_proto::{
         CreatePricingGroupRequest, CreatePricingGroupResponse, DeletePricingGroupRequest,
@@ -6934,6 +6971,22 @@ pub mod diff_support {
     #[must_use]
     pub fn hand_delete_aggregated_book_response_to_json(r: &DeleteAggregatedBookResponse) -> Value {
         super::delete_aggregated_book_response_to_json(r)
+    }
+
+    /// Hand-codec `SetPricingControlRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_set_pricing_control_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<SetPricingControlRequest, CodecError> {
+        super::set_pricing_control_request_from_json(o)
+    }
+
+    /// Hand-codec `SetPricingControlResponse` encoder.
+    #[must_use]
+    pub fn hand_set_pricing_control_response_to_json(r: &SetPricingControlResponse) -> Value {
+        super::set_pricing_control_response_to_json(r)
     }
 
     /// Hand-codec `ListPricingGroupsRequest` decoder.

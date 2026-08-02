@@ -854,6 +854,39 @@ pub struct RiskBookEdit {
     pub enabled: bool,
 }
 
+/// serde default for the [`PricingControlDef`] flags — both controls default **on**.
+const fn default_true() -> bool {
+    true
+}
+
+/// The persisted **firm-wide pricing kill-switch** setting — the operator's last
+/// [`outbound_enabled`](Self::outbound_enabled) / [`inbound_enabled`](Self::inbound_enabled)
+/// choice, so a server bounce restores the halt rather than silently resuming pricing.
+/// Both flags `#[serde(default = "default_true")]`, so an existing `identity.json`
+/// written before this contract loads as **both-enabled** (additive, no
+/// `schema_version`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PricingControlDef {
+    /// Whether the server sends outbound pricing to FIX-connected clients (RFQ
+    /// auto-quotes + RFS/ESP streams). `false` = "Stop all pricing".
+    #[serde(default = "default_true")]
+    pub outbound_enabled: bool,
+    /// Whether LP-feed ingestion into the aggregated books runs. `false` stops new
+    /// composite prices entering; combined with `outbound_enabled: false` = "Stop all".
+    #[serde(default = "default_true")]
+    pub inbound_enabled: bool,
+}
+
+impl Default for PricingControlDef {
+    /// Both controls on — pricing flows in and out by default.
+    fn default() -> Self {
+        Self {
+            outbound_enabled: true,
+            inbound_enabled: true,
+        }
+    }
+}
+
 /// The persisted document: the users and desks of the edge.
 ///
 /// `Eq` is intentionally **not** derived: the instrument reference-data registry
@@ -949,6 +982,13 @@ pub struct IdentityStore {
     /// an existing `identity.json` loads with the safe shadow-run defaults.
     #[serde(default)]
     pub hedge_config: HedgeConfigDef,
+    /// The persisted **firm-wide pricing kill-switch** setting (the operator's last
+    /// outbound/inbound halt choice). Restored into the runtime `PricingControl` at
+    /// boot so a server bounce does not silently resume pricing an operator halted. An
+    /// additive serde-default field (both controls default on), so an existing
+    /// `identity.json` (which carries no `pricing_control`) loads as both-enabled.
+    #[serde(default)]
+    pub pricing_control: PricingControlDef,
 }
 
 impl IdentityStore {
@@ -2189,6 +2229,19 @@ impl IdentityStore {
         self.check_hedge_lp_panels(&config)?;
         self.hedge_config = config;
         Ok(())
+    }
+
+    /// The persisted firm-wide pricing kill-switch setting.
+    #[must_use]
+    pub fn pricing_control(&self) -> PricingControlDef {
+        self.pricing_control
+    }
+
+    /// Replace the persisted firm-wide pricing kill-switch setting (persisted through
+    /// the usual atomic `save`; the runtime `PricingControl` is updated separately by
+    /// the RPC handler).
+    pub fn set_pricing_control(&mut self, def: PricingControlDef) {
+        self.pricing_control = def;
     }
 
     /// The risk books strictly **above** `id` in the parent tree, immediate parent first
@@ -3554,6 +3607,31 @@ mod tests {
         let reloaded = IdentityStore::load(&path).unwrap();
         assert_eq!(store, reloaded);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn pricing_control_round_trips_and_defaults_both_enabled() {
+        // A store with no `pricing_control` key loads as both-enabled (additive default).
+        let bare: IdentityStore = serde_json::from_str("{}").unwrap();
+        assert_eq!(bare.pricing_control(), PricingControlDef::default());
+        assert!(bare.pricing_control().outbound_enabled);
+        assert!(bare.pricing_control().inbound_enabled);
+
+        // A halt setting round-trips through JSON exactly.
+        let mut store = IdentityStore::default();
+        store.set_pricing_control(PricingControlDef {
+            outbound_enabled: false,
+            inbound_enabled: true,
+        });
+        let json = serde_json::to_string(&store).unwrap();
+        let reloaded: IdentityStore = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            reloaded.pricing_control(),
+            PricingControlDef {
+                outbound_enabled: false,
+                inbound_enabled: true,
+            }
+        );
     }
 
     #[test]
