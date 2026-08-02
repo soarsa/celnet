@@ -76,6 +76,7 @@ import type {
   ApplyCorporateActionRequest,
   ApplyCorporateActionResponse,
   Notification,
+  PricingControl,
   NotificationScope,
   RespondDeskRequestRequest,
   RespondDeskRequestResponse,
@@ -519,6 +520,31 @@ export interface CelnetTransport {
     scope: NotificationScope | undefined,
     onNotification: (notification: Notification) => void,
   ): () => void;
+
+  // --- firm-wide pricing kill-switch (server `pricing_control`) ---------------
+
+  /**
+   * Set the firm-wide pricing kill-switch (server `set_pricing_control`, gated on
+   * `ManageLiquidity·FixedIncome`). `outboundEnabled=false` halts ALL outbound
+   * quoting to FIX-connected clients; `inboundEnabled=false` also stops inbound LP
+   * aggregation into the books. Resolves to the server's committed
+   * {@link PricingControl} (carrying the new monotonic `version`). Both transports
+   * satisfy it — an unauthorized caller is rejected server-side.
+   */
+  setPricingControl(
+    outboundEnabled: boolean,
+    inboundEnabled: boolean,
+  ): Promise<PricingControl>;
+
+  /**
+   * Subscribe to the unsolicited firm-wide `pricing_control` push. The server
+   * emits the current state on EVERY connect (that connect-time frame IS the
+   * initial state — no subscribe verb) and again on every change to all clients.
+   * `onControl` fires for each pushed state; the caller reconciles by `version`.
+   * Returns a disposer. A late subscriber is immediately replayed the last-seen
+   * state (live transport) so the banner/control never miss the connect-time frame.
+   */
+  subscribePricingControl(onControl: (control: PricingControl) => void): () => void;
 
   /**
    * RiskService.LimitStatus — the limit tree + per-limit utilization/RAG for a

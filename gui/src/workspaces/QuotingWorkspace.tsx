@@ -5,10 +5,7 @@
  * `priceRates` engine the Rates workspace uses), then RESPONDS — quoting a rate
  * or rejecting — and can ACCEPT (simulating the counterparty lifting the quote)
  * to demonstrate booking a deal + a rates position. The inbox is populated only
- * by REAL inbound requests (the FIX gateway / live counterparties); exploratory
- * mock requests live in the standalone, permission-gated Simulator popup
- * (`components/SimulatorPanel`), a pure client-side sandbox that never injects
- * into this priced flow.
+ * by REAL inbound requests (the FIX gateway / live counterparties).
  *
  * One contract, two transports (GUI-DESIGN §6.2): the workspace talks ONLY to the
  * `CelnetTransport` desk seam (`submitDeskRequest` / `respondDeskRequest` /

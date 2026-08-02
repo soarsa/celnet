@@ -4794,12 +4794,33 @@ export interface Notification {
   reason?: ManualInterventionReason;
 }
 
+// --- firm-wide pricing kill-switch (server `pricing_control`) ----------------
+
+/**
+ * The firm-wide pricing kill-switch state — the server's `set_pricing_control`
+ * committed value + the unsolicited `pricing_control` push. Two independent gates:
+ *   - `outboundEnabled` — whether the edge QUOTES FIX-connected clients (ESP/RFQ
+ *     outbound). `false` ⇒ ALL outbound pricing to clients is halted (the desk may
+ *     still receive inbound LP aggregated pricing into the books).
+ *   - `inboundEnabled`  — whether inbound LP liquidity is AGGREGATED into the
+ *     books. `false` ⇒ inbound aggregation is stopped too.
+ * `version` is the server's MONOTONIC counter: a client reconciles push frames by
+ * it (ignore a frame whose `version <=` the last seen) so a stale / out-of-order
+ * push never regresses the displayed state. Mutating it is gated on
+ * `ManageLiquidity·FixedIncome`; the resulting state is broadcast to EVERY client
+ * (so the halted banner shows to all users, operable only by the entitled few).
+ */
+export interface PricingControl {
+  outboundEnabled: boolean;
+  inboundEnabled: boolean;
+  version: number;
+}
+
 // --- desk request/response messages -----------------------------------------
 
 /**
- * `RfqDeskService.SubmitDeskRequest` request — inject an inbound RFQ/IOI (used by
- * the counterparty simulator). The desk enqueues it `PENDING` and pushes a
- * `*_RECEIVED` notification.
+ * `RfqDeskService.SubmitDeskRequest` request — inject an inbound RFQ/IOI. The desk
+ * enqueues it `PENDING` and pushes a `*_RECEIVED` notification.
  */
 export interface SubmitDeskRequestRequest {
   kind: DeskRequestKind;

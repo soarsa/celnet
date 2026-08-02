@@ -76,6 +76,7 @@ import type {
   ListRatesPositionsRequest,
   ListRatesPositionsResponse,
   Notification,
+  PricingControl,
   NotificationScope,
   RespondDeskRequestRequest,
   RespondDeskRequestResponse,
@@ -3790,6 +3791,32 @@ export function updateAggregatedBookRequestToWire(
 
 export function deleteAggregatedBookRequestToWire(id: string): WireObject {
   return { id };
+}
+
+// --- firm-wide pricing kill-switch codec (server `pricing_control`) ----------
+
+/**
+ * Encode the `set_pricing_control` request body. The `session_token` (bearer) and
+ * `correlation_id` are injected by the connection, exactly as every other request.
+ */
+export function setPricingControlRequestToWire(
+  outboundEnabled: boolean,
+  inboundEnabled: boolean,
+): WireObject {
+  return { outbound_enabled: outboundEnabled, inbound_enabled: inboundEnabled };
+}
+
+/**
+ * Decode a firm-wide pricing-control frame — used for BOTH the unsolicited
+ * `pricing_control` push and the `set_pricing_control_response` reply, which carry
+ * the same `outbound_enabled` / `inbound_enabled` / `version` shape.
+ */
+export function pricingControlFromWire(o: WireObject): PricingControl {
+  return {
+    outboundEnabled: o["outbound_enabled"] === true,
+    inboundEnabled: o["inbound_enabled"] === true,
+    version: num(o, "version"),
+  };
 }
 
 /** A single-book response (`{ book: {...} }`) from create / update. */

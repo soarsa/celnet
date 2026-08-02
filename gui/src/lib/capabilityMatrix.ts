@@ -287,7 +287,7 @@ export type ComponentSection =
  * collapsing it would STRAND those per-asset capabilities. A component id here is a
  * capability-grouping key — most map to a rail workspace, some (`rates`/`curve`/
  * `ratesrisk`/`deals`/`ratesbook`) now map to a lens/product-family reached via a
- * SHARED class-parametric workspace, and `simulator`/`administration` are non-rail.
+ * SHARED class-parametric workspace, and `administration` is non-rail.
  */
 export interface ComponentAccess {
   /** Stable capability-grouping id (usually a rail workspace id; see the note above). */
@@ -400,14 +400,6 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     assets: ["fixed_income"],
     readActions: ["view"],
     writeActions: [],
-  },
-  {
-    id: "simulator",
-    label: "Simulator",
-    section: "fixed_income",
-    assets: ["fixed_income"],
-    readActions: ["view"],
-    writeActions: ["simulate"],
   },
   // FI management authorities (docs/PERMISSIONS-GRANULAR-REVIEW.md §4.3): one
   // trader-friendly Write toggle per granular management cap, so an admin can grant

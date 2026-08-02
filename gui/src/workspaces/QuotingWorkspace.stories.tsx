@@ -11,8 +11,7 @@
  * seam (submitDeskRequest / respondDeskRequest / acceptDeskQuote / listDeskRequests /
  * priceRates), so the SAME lifecycle runs through the deterministic in-app source and
  * the live RfqDeskService edge. The inbox is populated only by REAL inbound requests
- * (the FIX gateway / live counterparties); exploratory mock requests live in the
- * standalone, permission-gated Simulator popup — never injected into this priced flow.
+ * (the FIX gateway / live counterparties).
  */
 
 import type { Meta, StoryObj } from "@storybook/react";

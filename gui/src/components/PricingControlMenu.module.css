@@ -1,0 +1,209 @@
+/* PricingControlMenu — the firm-wide pricing kill-switch toolbar control. */
+
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-callout);
+  cursor: pointer;
+  transition:
+    border-color var(--ease-out),
+    color var(--ease-out);
+}
+.trigger:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.triggerLabel {
+  line-height: 1;
+}
+
+/* Live/warn/danger state colouring, shared by the trigger + the popover badge. */
+.stateLive {
+  color: var(--bid);
+  border-color: oklch(from var(--bid) l c h / 0.4);
+}
+.stateWarn {
+  color: var(--warn);
+  border-color: oklch(from var(--warn) l c h / 0.5);
+  background: oklch(from var(--warn) l c h / 0.1);
+}
+.stateDanger {
+  color: var(--danger);
+  border-color: oklch(from var(--danger) l c h / 0.55);
+  background: oklch(from var(--danger) l c h / 0.12);
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  width: 320px;
+  padding: var(--space-4);
+  border-radius: var(--r-md);
+  background: var(--bg-elevated, var(--bg-base));
+  border: var(--hairline);
+  box-shadow: var(--shadow-pop, 0 12px 32px oklch(0 0 0 / 0.35));
+  z-index: 80;
+}
+.popover:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.title {
+  margin: 0;
+  font-size: var(--type-callout);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--space-2);
+  border-radius: var(--r-sm);
+  border: 1px solid currentColor;
+  font-size: var(--type-micro);
+  font-weight: var(--weight-emphasis);
+}
+
+.note {
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.actionWarn,
+.actionDanger,
+.actionResume {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: var(--space-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color var(--ease-out),
+    background var(--ease-out);
+}
+.actionWarn:hover:not(:disabled) {
+  border-color: var(--warn);
+  background: oklch(from var(--warn) l c h / 0.1);
+}
+.actionDanger:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: oklch(from var(--danger) l c h / 0.1);
+}
+.actionResume:hover:not(:disabled) {
+  border-color: var(--bid);
+  background: oklch(from var(--bid) l c h / 0.1);
+}
+.actionWarn:focus-visible,
+.actionDanger:focus-visible,
+.actionResume:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.actionWarn:disabled,
+.actionDanger:disabled,
+.actionResume:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.actionTitle {
+  font-size: var(--type-callout);
+  font-weight: var(--weight-emphasis);
+}
+.actionSub {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.confirmText {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+.confirmButtons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.confirmGo {
+  padding: 0 var(--space-4);
+  height: 30px;
+  border-radius: var(--r-sm);
+  background: var(--danger);
+  border: 1px solid var(--danger);
+  color: oklch(0.99 0 0);
+  font: inherit;
+  font-size: var(--type-callout);
+  font-weight: var(--weight-emphasis);
+  cursor: pointer;
+}
+.confirmGo:hover:not(:disabled) {
+  background: oklch(from var(--danger) calc(l - 0.05) c h);
+}
+.confirmGo:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.confirmGo:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.error {
+  margin: var(--space-3) 0 0;
+  font-size: var(--type-caption);
+  color: var(--danger);
+}

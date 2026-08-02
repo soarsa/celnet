@@ -115,6 +115,7 @@ import type {
   Notification,
   NotificationKind,
   NotificationScope,
+  PricingControl,
   OisInstrument,
   Quote,
   RatesCurveSet,
@@ -2331,6 +2332,18 @@ export class MockTransport implements CelnetTransport {
   private deskRequestSeq = 1n;
   private dealSeq = 1n;
   private notificationSeq = 1n;
+  /**
+   * The firm-wide pricing kill-switch state (offline). Starts fully enabled, and
+   * every `setPricingControl` bumps the monotonic `version` and broadcasts to the
+   * live subscribers — mirroring the server's unsolicited `pricing_control` push.
+   */
+  private pricingControl: PricingControl = {
+    outboundEnabled: true,
+    inboundEnabled: true,
+    version: 1,
+  };
+  /** Live `pricing_control` push subscribers (banner + toolbar control). */
+  private readonly pricingControlSubs = new Set<(c: PricingControl) => void>();
   private ratesPositionSeq = 1n;
   /**
    * The risk-transfer store: transfer_id → RiskTransfer. Backs the ticket (initiate),
@@ -4998,6 +5011,33 @@ export class MockTransport implements CelnetTransport {
       cash,
       remainingFlows: after.length,
       action: { ...applied },
+    };
+  }
+
+  // --- firm-wide pricing kill-switch (offline) -------------------------------
+
+  async setPricingControl(
+    outboundEnabled: boolean,
+    inboundEnabled: boolean,
+  ): Promise<PricingControl> {
+    this.pricingControl = {
+      outboundEnabled,
+      inboundEnabled,
+      version: this.pricingControl.version + 1,
+    };
+    // Broadcast to every live subscriber, exactly as the server pushes the new
+    // state to all clients on change.
+    for (const cb of this.pricingControlSubs) cb(this.pricingControl);
+    return this.pricingControl;
+  }
+
+  subscribePricingControl(onControl: (control: PricingControl) => void): () => void {
+    this.pricingControlSubs.add(onControl);
+    // The connect-time push: replay the current state immediately (the server
+    // emits it on every connect, no subscribe verb).
+    onControl(this.pricingControl);
+    return () => {
+      this.pricingControlSubs.delete(onControl);
     };
   }
 

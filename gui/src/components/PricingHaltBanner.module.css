@@ -1,0 +1,40 @@
+/* PricingHaltBanner — a full-width firm-wide halt banner mounted above the tab bar. */
+
+.banner {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--type-callout);
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid var(--hairline);
+  /* Ride above the tab/title bars so the emergency state is never occluded. */
+  z-index: 70;
+}
+
+.warn {
+  background: oklch(from var(--warn) l c h / 0.16);
+  color: var(--warn);
+  border-bottom-color: oklch(from var(--warn) l c h / 0.5);
+}
+
+.danger {
+  background: oklch(from var(--danger) l c h / 0.18);
+  color: var(--danger);
+  border-bottom-color: oklch(from var(--danger) l c h / 0.55);
+}
+
+.glyph {
+  font-size: var(--type-body);
+  line-height: 1;
+}
+
+.title {
+  font-weight: var(--weight-emphasis);
+  text-transform: uppercase;
+}
+
+.detail {
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+}

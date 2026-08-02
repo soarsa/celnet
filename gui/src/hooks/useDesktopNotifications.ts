@@ -37,6 +37,14 @@ function desktopBody(n: DeskNotification): string {
   return n.detail ?? "";
 }
 
+/**
+ * The Celnet mark as the OS-notification icon — the same coral pinwheel data-URI
+ * the page favicon uses (`index.html`), so the desktop banner is branded and
+ * self-contained (no network fetch, works offline / behind the strict CSP).
+ */
+const NOTIFICATION_ICON =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 501 500'%3E%3Cpath fill='%23ff7357' d='M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19'/%3E%3C/svg%3E";
+
 /** The user preference (mute/unmute), independent of the browser grant. */
 const PREF_KEY = "celnet.desktopNotifications.enabled";
 /** A one-shot guard so the first-mount auto-request prompts at most once, ever. */
@@ -191,6 +199,7 @@ export function useDesktopNotifications(onActivate?: () => void): DesktopNotific
       const options: NotificationOptions & { renotify?: boolean } = {
         body: desktopBody(n),
         tag: n.notificationId,
+        icon: NOTIFICATION_ICON,
         renotify: false,
       };
       const osNote = new window.Notification(n.headline, options);

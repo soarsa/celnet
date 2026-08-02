@@ -177,10 +177,12 @@
  * single class-parametric rail (Model A for the shared cross-asset screens). */
 .main {
   display: grid;
-  /* domain tab bar · title bar · workspace canvas · status ribbon. The rows MUST
-   * mirror the four rendered children (the canvas panes are absolutely positioned,
-   * so a stale `auto` row would collapse it to 0). */
-  grid-template-rows: 38px 44px 1fr 28px;
+  /* pricing-halt banner · domain tab bar · title bar · workspace canvas · status
+   * ribbon. The rows MUST mirror the five rendered children (the canvas panes are
+   * absolutely positioned, so a stale `auto` row would collapse it to 0). The first
+   * `auto` row is the firm-wide PricingHaltBanner: it renders null when pricing is
+   * live, so the row collapses to 0 and the layout is byte-identical to before. */
+  grid-template-rows: auto 38px 44px 1fr 28px;
   min-width: 0;
   min-height: 0;
 }
@@ -293,7 +295,7 @@
   background: oklch(0 0 0 / 0.2);
 }
 
-.simBtn {
+.toolBtn {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -306,19 +308,19 @@
   font-size: var(--type-callout);
   cursor: pointer;
 }
-.simBtn:hover:not(:disabled) {
+.toolBtn:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--text-primary);
 }
-.simBtn:focus-visible {
+.toolBtn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-.simBtn:disabled {
+.toolBtn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
-.simGlyph {
+.toolGlyph {
   font-size: var(--type-body);
   line-height: 1;
 }

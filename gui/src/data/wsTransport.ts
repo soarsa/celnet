@@ -86,6 +86,7 @@ import type {
   ApplyCorporateActionResponse,
   Notification,
   NotificationScope,
+  PricingControl,
   RespondDeskRequestRequest,
   RespondDeskRequestResponse,
   SubmitDeskRequestRequest,
@@ -150,6 +151,8 @@ import {
   applyCorporateActionToWire,
   applyCorporateActionResponseFromWire,
   notificationFromWire,
+  pricingControlFromWire,
+  setPricingControlRequestToWire,
   respondDeskRequestToWire,
   respondDeskRequestResponseFromWire,
   submitDeskRequestToWire,
@@ -428,6 +431,20 @@ class WsConnection {
     symbol,
     { readonly scope: NotificationScope | undefined; readonly onFrame: (frame: WireObject) => void }
   >();
+  /**
+   * Live firm-wide `pricing_control` push handlers, keyed by an opaque token. This
+   * is an UNSOLICITED server→client broadcast (no subscribe verb): the server emits
+   * the current state on every connect and again on every change, so a handler is
+   * dispatched purely by frame `type` (like `notification`).
+   */
+  private readonly pricingControlSubs = new Map<symbol, (frame: WireObject) => void>();
+  /**
+   * The last-seen `pricing_control` frame, cached so a subscriber that registers
+   * AFTER the connect-time push (the common case — React mounts after the socket
+   * opens) is immediately replayed the current state rather than waiting for the
+   * next change.
+   */
+  private lastPricingControl: WireObject | null = null;
   /** Connection-state listeners (for the status ribbon / debugging). */
   private readonly stateListeners = new Set<(open: boolean) => void>();
   /**
@@ -580,6 +597,15 @@ class WsConnection {
       for (const sub of this.notificationSubs.values()) sub.onFrame(frame);
       return;
     }
+    // The firm-wide pricing kill-switch push (server → all clients, unsolicited):
+    // emitted on every connect (the initial state) and on every change. It carries
+    // no `correlation_id` (it is not a reply), so it never matches a waiter —
+    // dispatched purely by `type`. Cached so a late subscriber gets it immediately.
+    if (type === "pricing_control") {
+      this.lastPricingControl = frame;
+      for (const cb of this.pricingControlSubs.values()) cb(frame);
+      return;
+    }
     // Some contract reply messages do not carry a `correlation_id` — the `smile`,
     // `mark_surface_response`, `scenario_response` and `reject_ack` proto messages
     // have no correlation field, so the server cannot echo one. Match such a reply
@@ -712,6 +738,21 @@ class WsConnection {
       if (this.notificationSubs.delete(key) && this.notificationSubs.size === 0) {
         this.send({ type: "unsubscribe_notifications" });
       }
+    };
+  }
+
+  /**
+   * Register a `pricing_control` push handler. There is NO subscribe verb — the
+   * server broadcasts the state to every connected client — so this only wires the
+   * handler and immediately replays the last-seen frame (the connect-time state)
+   * when one is cached. Returns a disposer that unregisters the handler.
+   */
+  subscribePricingControl(onFrame: (frame: WireObject) => void): () => void {
+    const key = Symbol("pricing-control-sub");
+    this.pricingControlSubs.set(key, onFrame);
+    if (this.lastPricingControl) onFrame(this.lastPricingControl);
+    return () => {
+      this.pricingControlSubs.delete(key);
     };
   }
 
@@ -1759,6 +1800,26 @@ export class WsTransport implements CelnetTransport {
   ): () => void {
     return this.conn.subscribeNotifications(scope, (frame) =>
       onNotification(notificationFromWire(frame)),
+    );
+  }
+
+  // --- firm-wide pricing kill-switch -----------------------------------------
+
+  async setPricingControl(
+    outboundEnabled: boolean,
+    inboundEnabled: boolean,
+  ): Promise<PricingControl> {
+    const reply = await this.conn.request(
+      "set_pricing_control",
+      setPricingControlRequestToWire(outboundEnabled, inboundEnabled),
+      "set_pricing_control_response",
+    );
+    return pricingControlFromWire(reply);
+  }
+
+  subscribePricingControl(onControl: (control: PricingControl) => void): () => void {
+    return this.conn.subscribePricingControl((frame) =>
+      onControl(pricingControlFromWire(frame)),
     );
   }
 
