@@ -42,8 +42,12 @@
       when: celnet_lpsim_enabled | default(true) | bool
     # FIX RFQ/RFS client simulator — likewise (re)start on every full deploy so a freshly
     # provisioned/released box always has incoming client flow driving deals/quotes/positions.
-    - name: (Re)start the FIX RFQ/RFS client simulator via fixsimctl
-      ansible.builtin.command: "{{ celnet_bin_dir }}/fixsimctl restart"
+    # stop+start (primitive verbs present in every fixsimctl version) rather than the newer
+    # 'restart' verb, so a full deploy works even if the on-box script predates 'restart'.
+    - name: (Re)start the FIX RFQ/RFS client simulator via fixsimctl (skew-proof stop+start)
+      ansible.builtin.shell: >-
+        "{{ celnet_bin_dir }}/fixsimctl" stop || true;
+        "{{ celnet_bin_dir }}/fixsimctl" start
       become: false
       changed_when: true
       when: celnet_fixsim_enabled | default(true) | bool

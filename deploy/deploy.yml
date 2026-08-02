@@ -44,8 +44,14 @@
       ansible.builtin.stat:
         path: "{{ celnet_bin_dir }}/fixsimctl"
       register: celnet_fixsimctl_bin
-    - name: (Re)start the FIX RFQ/RFS client simulator via fixsimctl
-      ansible.builtin.command: "{{ celnet_bin_dir }}/fixsimctl restart"
+    # Use the primitive stop+start verbs (present in every fixsimctl version) rather than
+    # the newer 'restart' verb: deploy.yml does NOT re-provision the control script (that's
+    # the provision role), so the on-box fixsimctl may predate 'restart'. stop||true + start
+    # is skew-proof and the launcher self-sweeps stray sims, so it converges cleanly.
+    - name: (Re)start the FIX RFQ/RFS client simulator via fixsimctl (skew-proof stop+start)
+      ansible.builtin.shell: >-
+        "{{ celnet_bin_dir }}/fixsimctl" stop || true;
+        "{{ celnet_bin_dir }}/fixsimctl" start
       changed_when: true
       when:
         - celnet_fixsim_enabled | default(true) | bool
