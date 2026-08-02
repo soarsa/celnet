@@ -157,14 +157,17 @@ log() { echo "[$(ts)] [fix-sim] $*"; }
 # fan-out legs (FIXSIM__RESTARTED) skip it, so a fresh sim never kills itself/its sibling.
 if [ "${FIXSIM__CHILD:-0}" != "1" ] && [ "${FIXSIM__RESTARTED:-0}" != "1" ]; then
   __self=$$; __parent=${PPID:-0}; __uid="$(id -u)"
-  for __pid in $(pgrep -u "$__uid" -f 'fix_rfq_client|start-fix-sim.sh' 2>/dev/null || true); do
+  # Match BOTH binary spellings: the cargo example target is `fix_rfq_client` (underscore),
+  # but the RELEASE ships it as `fix-rfq-client` (hyphen). The `fix[-_]rfq[-_]client` class
+  # sweeps either — an underscore-only pattern silently leaks the hyphenated release binary.
+  for __pid in $(pgrep -u "$__uid" -f 'fix[-_]rfq[-_]client|start-fix-sim.sh' 2>/dev/null || true); do
     case "$__pid" in "$__self"|"$__parent") continue ;; esac
     kill "$__pid" 2>/dev/null || true
   done
   sleep 1
-  # Belt-and-braces: SIGKILL any fix_rfq_client BINARY still up (matches the binary,
-  # never this shell script).
-  pkill -9 -u "$__uid" -f 'fix_rfq_client' 2>/dev/null || true
+  # Belt-and-braces: SIGKILL any fix-rfq-client / fix_rfq_client BINARY still up (matches
+  # the binary, never this shell script).
+  pkill -9 -u "$__uid" -f 'fix[-_]rfq[-_]client' 2>/dev/null || true
 fi
 
 # --- asset=both: fan out into two independent supervised daemons ------------------

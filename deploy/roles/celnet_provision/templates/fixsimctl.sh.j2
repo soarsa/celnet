@@ -83,7 +83,7 @@ case "${1:-}" in
     if is_running; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; echo "Stopped."; else echo "fix-sim not running"; rm -f "$PIDFILE"; fi
     ;;
   status)
-    if is_running; then echo "fix-sim: RUNNING (pid $(cat "$PIDFILE"))"; echo "  log: $FIXSIM_LOG"; echo "  acceptor: $FIXSIM_HOST:$FIXSIM_PORT ($FIXSIM_SENDER -> $FIXSIM_TARGET)"; else echo "fix-sim: STOPPED"; exit 3; fi
+    if is_running; then echo "fix-sim: RUNNING (pid $(cat "$PIDFILE"))"; echo "  log: $FIXSIM_LOG"; echo "  acceptor: $FIXSIM_HOST:${FIXSIM_PORT:-auto} (${FIXSIM_SENDER:-auto} -> ${FIXSIM_TARGET:-CELNET})"; else echo "fix-sim: STOPPED"; exit 3; fi
     ;;
   tail)
     tail -n "${2:-50}" -f "$FIXSIM_LOG"
