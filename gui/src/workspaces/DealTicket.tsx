@@ -12,6 +12,7 @@
 
 import type { Deal, Side } from "../data/contract";
 import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
+import { fmtEdgeBps, hedgeBandLabel, internaliseLabel } from "../lib/internalise";
 import styles from "./DealTicket.module.css";
 
 function directionLabel(side: Side): string {
@@ -109,6 +110,57 @@ export function DealTicket({ deal, onClose }: DealTicketProps): React.ReactEleme
           <Row label="Trader" value={deal.trader} />
         </dl>
       </section>
+
+      {deal.internalise !== undefined && (
+        <section className={styles.section}>
+          <h3 className={styles.sectionTitle}>Internalise &amp; auto-hedge</h3>
+          <dl className={styles.dl}>
+            <Row
+              label="Decision"
+              value={
+                <span
+                  className={styles.decision}
+                  data-band={deal.internalise.hedgeBand}
+                  data-losing={deal.internalise.withinTolerance ? undefined : "true"}
+                >
+                  {internaliseLabel(deal.internalise)}
+                </span>
+              }
+            />
+            <Row
+              label="Captured edge"
+              value={
+                <span
+                  className={deal.internalise.edgeBps < 0 ? styles.neg : styles.pos}
+                >
+                  {fmtEdgeBps(deal.internalise.edgeBps)}
+                </span>
+              }
+              mono
+            />
+            <Row
+              label="Within tolerance"
+              value={
+                deal.internalise.withinTolerance ? (
+                  "Yes"
+                ) : (
+                  <span className={styles.neg}>No — losing</span>
+                )
+              }
+            />
+            <Row
+              label="Hedge band"
+              value={
+                <span className={styles.band} data-band={deal.internalise.hedgeBand}>
+                  {hedgeBandLabel(deal.internalise.hedgeBand)}
+                </span>
+              }
+            />
+            <Row label="Internal DV01" value={fmtCompact(deal.internalise.internalDv01)} mono />
+            <Row label="External DV01" value={fmtCompact(deal.internalise.externalDv01)} mono />
+          </dl>
+        </section>
+      )}
 
       <section className={styles.section}>
         <h3 className={styles.sectionTitle}>References</h3>

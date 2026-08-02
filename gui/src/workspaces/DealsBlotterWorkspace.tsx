@@ -20,8 +20,9 @@ import { TableSearch } from "../components/TableSearch";
 import { useTableFilter } from "../hooks/useTableFilter";
 import { principalForScope } from "../data/riskView";
 import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
-import type { Deal, Side } from "../data/contract";
+import type { Deal, Internalise, Side } from "../data/contract";
 import { capabilityAssetForDomain, dealAsset } from "../data/assetClass";
+import { fmtEdgeBps, hedgeBandLabel, internaliseLabel } from "../lib/internalise";
 import { DealTicket } from "./DealTicket";
 import styles from "./DealsBlotterWorkspace.module.css";
 
@@ -62,6 +63,41 @@ function riskPortfolioLabel(d: Deal, names: ReadonlyMap<string, string>): string
   return names.get(d.riskBookId) ?? d.riskBookId;
 }
 
+/**
+ * A compact inline badge surfacing an FI lift's internalise decision: whether the
+ * fill was warehoused internally ("Internalised") or shed external ("B2B"), tinted
+ * by the DV01-utilisation `hedgeBand` (green→bid, amber→warn, red→offer,
+ * breach→danger), with a "losing" dot when the captured edge is off-tolerance.
+ * Rendered ONLY for deals that carry `internalise` (FI lifts).
+ */
+function InternaliseBadge({ inl }: { readonly inl: Internalise }): React.ReactElement {
+  const toleranceNote = inl.withinTolerance ? "" : " · below tolerance (losing)";
+  const label = `${internaliseLabel(inl)} · edge ${fmtEdgeBps(inl.edgeBps)} · ${hedgeBandLabel(inl.hedgeBand)} band${toleranceNote}`;
+  return (
+    <span
+      className={styles.inl}
+      data-band={inl.hedgeBand}
+      data-losing={inl.withinTolerance ? undefined : "true"}
+      aria-label={label}
+      title={label}
+    >
+      {internaliseLabel(inl)}
+      {!inl.withinTolerance && <span className={styles.inlLosing} aria-hidden="true" />}
+    </span>
+  );
+}
+
+/** The searchable text of a deal's internalise decision (empty when it has none). */
+function internaliseSearchText(d: Deal): string {
+  if (d.internalise === undefined) return "";
+  return [
+    internaliseLabel(d.internalise),
+    hedgeBandLabel(d.internalise.hedgeBand),
+    fmtEdgeBps(d.internalise.edgeBps),
+    d.internalise.withinTolerance ? "within tolerance" : "below tolerance losing",
+  ].join(" ");
+}
+
 /** All of a deal's user-visible textual fields, concatenated for substring search. */
 function dealSearchText(d: Deal, names: ReadonlyMap<string, string>): string {
   return [
@@ -78,6 +114,7 @@ function dealSearchText(d: Deal, names: ReadonlyMap<string, string>): string {
     d.trader,
     positionLabel(d),
     riskPortfolioLabel(d, names),
+    internaliseSearchText(d),
     d.dealId,
   ].join(" ");
 }
@@ -200,6 +237,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                       <th>Trader</th>
                       <th>Position</th>
                       <th>Risk Portfolio</th>
+                      <th>Hedge</th>
                       <th>Deal</th>
                     </tr>
                   </thead>
@@ -238,6 +276,13 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                     <td>{d.trader}</td>
                     <td className={styles.mono}>{positionLabel(d)}</td>
                     <td>{riskPortfolioLabel(d, riskBookNames)}</td>
+                    <td>
+                      {d.internalise ? (
+                        <InternaliseBadge inl={d.internalise} />
+                      ) : (
+                        <span className={styles.inlNone}>—</span>
+                      )}
+                    </td>
                     <td className={styles.dealId}>{d.dealId}</td>
                       </tr>
                     ))}

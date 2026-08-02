@@ -68,6 +68,8 @@ import type {
   InstrumentDef,
   InstrumentInput,
   Deal,
+  HedgeBand,
+  Internalise,
   DealerQuote,
   DeskDesc,
   DeskRequest,
@@ -246,6 +248,27 @@ function mockCounterpartyFor(i: number): string {
   // `idx` is always in range; the fallback only satisfies noUncheckedIndexedAccess.
   return pool[idx] ?? pool[0] ?? "Counterparty";
 }
+
+/**
+ * The deterministic internalise-decision profiles the offline mock rotates through
+ * so the deals blotter demonstrates the full spread the server's internalise
+ * strategy can stamp: internalised-green (comfortable, positive edge), internalised-
+ * amber (approaching the cap, still positive), external back-to-back below tolerance
+ * (red, NEGATIVE edge = losing), and an internalised warehouse breach (over the cap,
+ * off-tolerance). `internalFrac` splits the deal's DV01 into internal vs external.
+ */
+const INTERNALISE_PROFILES: readonly {
+  internalised: boolean;
+  internalFrac: number;
+  edgeBps: number;
+  withinTolerance: boolean;
+  hedgeBand: HedgeBand;
+}[] = [
+  { internalised: true, internalFrac: 1, edgeBps: 1.85, withinTolerance: true, hedgeBand: "green" },
+  { internalised: true, internalFrac: 0.8, edgeBps: 0.92, withinTolerance: true, hedgeBand: "amber" },
+  { internalised: false, internalFrac: 0.1, edgeBps: -0.58, withinTolerance: false, hedgeBand: "red" },
+  { internalised: true, internalFrac: 0.95, edgeBps: 0.12, withinTolerance: false, hedgeBand: "breach" },
+];
 
 // --- client-flow analytics fixture (ListClientFlowMetrics, offline) ----------
 //
@@ -3890,6 +3913,30 @@ export class MockTransport implements CelnetTransport {
     return traceGraph(graph, fill).landedBook;
   }
 
+  /**
+   * The offline mirror of the server's internalise strategy stamp on an FI lift
+   * (`Deal.internalise`): a deterministic decision derived from the deal so the
+   * blotter demonstrates the full spread of outcomes offline — internalised-green,
+   * internalised-amber, external back-to-back below tolerance (losing/red), and a
+   * warehouse breach. Rotated by `idx` so a run shows a mix. DV01 uses the same
+   * `notional · tenor · 1bp` PV01 proxy the risk roll-up uses.
+   */
+  private internaliseFor(d: Deal, idx: number): Internalise {
+    const dv01 = d.notional * d.instrument.tenorYears * 1e-4;
+    const n = INTERNALISE_PROFILES.length;
+    // The modulo keeps the index in range (INTERNALISE_PROFILES is a non-empty
+    // literal), so the assertion only satisfies noUncheckedIndexedAccess.
+    const profile = INTERNALISE_PROFILES[((idx % n) + n) % n]!;
+    return {
+      internalised: profile.internalised,
+      internalDv01: dv01 * profile.internalFrac,
+      externalDv01: dv01 * (1 - profile.internalFrac),
+      edgeBps: profile.edgeBps,
+      withinTolerance: profile.withinTolerance,
+      hedgeBand: profile.hedgeBand,
+    };
+  }
+
   private routedRiskContributions(): Map<
     string,
     { net: number; gross: number; count: number; dv01: number }
@@ -4755,6 +4802,10 @@ export class MockTransport implements CelnetTransport {
     // demonstrable offline; unrouted fills leave `riskBookId` absent.
     const landedBook = this.landedBookForDeal(deal);
     if (landedBook !== null) deal.riskBookId = landedBook;
+    // Stamp the internalise / auto-hedge provenance the server's internalise strategy
+    // runs on an FI lift — every desk-booked deal here is structurally an OIS (FI), so
+    // it carries the decision; rotated so a session shows the full band spread.
+    deal.internalise = this.internaliseFor(deal, this.deals.size);
     this.deals.set(dealId, deal);
     const updated: DeskRequest = { ...existing, state: "ACCEPTED" };
     this.deskRequests.set(existing.requestId, updated);
@@ -5168,6 +5219,55 @@ export class MockTransport implements CelnetTransport {
         notional: s.notionalMm * 1_000_000,
         ttlMs: 0,
       });
+    }
+
+    // A handful of already-booked FI lifts so the deals blotter is populated on load
+    // and demonstrates the full internalise spread (green/amber/red/breach, incl. a
+    // below-tolerance losing back-to-back) without needing to accept a quote first.
+    const dealSeeds: {
+      counterpartyIdx: number;
+      tenorYears: number;
+      notionalMm: number;
+      side: "BUY" | "SELL";
+      profileIdx: number;
+    }[] = [
+      { counterpartyIdx: 4, tenorYears: 5, notionalMm: 120, side: "BUY", profileIdx: 0 },
+      { counterpartyIdx: 5, tenorYears: 10, notionalMm: 80, side: "SELL", profileIdx: 1 },
+      { counterpartyIdx: 6, tenorYears: 2, notionalMm: 200, side: "BUY", profileIdx: 2 },
+      { counterpartyIdx: 7, tenorYears: 30, notionalMm: 45, side: "SELL", profileIdx: 3 },
+    ];
+    const seedBase = nowNanos();
+    for (const s of dealSeeds) {
+      const notional = s.notionalMm * 1_000_000;
+      const instrument: OisInstrument = {
+        tenorYears: s.tenorYears,
+        fixedRate: parOf(s.tenorYears),
+        notional,
+        direction: s.side === "BUY" ? "PAY_FIXED" : "RECEIVE_FIXED",
+      };
+      const dealId = `deal-${this.dealSeq++}`;
+      // These demo lifts populate the DEALS blotter (the internalise surface) only;
+      // they intentionally do NOT register a rates-ledger position (positionId is
+      // absent → the Position column reads "—", a valid state), so the seeded
+      // position ledger the risk/positions views assert on stays untouched.
+      const deal: Deal = {
+        dealId,
+        requestId: `seed-req-${dealId}`,
+        kind: "RFQ",
+        counterparty: mockCounterpartyFor(s.counterpartyIdx),
+        desk: "g10-rates",
+        instrument,
+        curveSet: curve,
+        side: s.side,
+        notional,
+        price: parOf(s.tenorYears),
+        executedAtNanos: seedBase - BigInt(s.profileIdx) * 60_000_000_000n,
+        trader: "desk",
+      };
+      const landedBook = this.landedBookForDeal(deal);
+      if (landedBook !== null) deal.riskBookId = landedBook;
+      deal.internalise = this.internaliseFor(deal, s.profileIdx);
+      this.deals.set(dealId, deal);
     }
   }
 }

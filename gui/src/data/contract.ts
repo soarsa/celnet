@@ -4694,6 +4694,35 @@ export interface DeskRequest {
 }
 
 /**
+ * The DV01-utilisation band of a lifted FI fill vs the internal warehouse cap,
+ * as stamped by the server's internalise strategy: `green` (comfortable), `amber`
+ * (approaching the cap), `red` (at/over the cap), `breach` (hard limit exceeded).
+ * Tinted through the existing bid/warn/offer/danger semantic tokens.
+ */
+export type HedgeBand = "green" | "amber" | "red" | "breach";
+
+/**
+ * The internalise / auto-hedge provenance the server stamps on an FI lift
+ * (`celnet.wire.Deal.internalise`): the outcome of running the internalise
+ * strategy on the fill. Present ONLY for FI lifts that ran the evaluation —
+ * absent (undefined) on every other deal, never fabricated.
+ */
+export interface Internalise {
+  /** `true` = warehoused the fill from risk; `false` = went external/back-to-back. */
+  internalised: boolean;
+  /** DV01 warehoused internally. */
+  internalDv01: number;
+  /** DV01 shed to external back-to-back (advisory). */
+  externalDv01: number;
+  /** Dealer captured edge vs engine mid, in bp (can be negative = losing). */
+  edgeBps: number;
+  /** `true` when `edgeBps` clears the min-edge floor (are we making money). */
+  withinTolerance: boolean;
+  /** DV01-utilisation band vs the warehouse cap. */
+  hedgeBand: HedgeBand;
+}
+
+/**
  * A booked received deal (`celnet.wire.Deal`): the executed terms of an
  * `ACCEPTED` desk request — the dealt `price`, `notional`, `side`, the booking
  * `trader`, and (when the deal booked a rates position) its `positionId`.
@@ -4723,6 +4752,12 @@ export interface Deal {
    * graph configured, or a routing fall-back) — never fabricated.
    */
   riskBookId?: string;
+  /**
+   * The internalise / auto-hedge provenance the server stamped when this fill ran
+   * the internalise strategy — present ONLY for FI lifts that ran the evaluation;
+   * absent (undefined) on every other deal.
+   */
+  internalise?: Internalise;
 }
 
 /**

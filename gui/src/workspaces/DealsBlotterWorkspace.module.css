@@ -142,6 +142,57 @@
   color: var(--text-tertiary);
 }
 
+/* Internalise / auto-hedge decision badge (FI lifts only). Tinted by hedge band:
+   green→bid (default), amber→warn, red→offer, breach→danger — reusing the same
+   semantic tokens as the rest of the trading surface, so it themes automatically. */
+.inl {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: var(--type-micro) / 1 var(--font-mono);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--bid) 18%, transparent);
+  /* Text mixed toward --text-primary so the semantic hue reads while the badge
+     clears WCAG AA contrast in light AND dark (bare low-lightness red/danger
+     tokens fall short of 4.5:1 on a tinted chip). */
+  color: color-mix(in oklab, var(--bid) 62%, var(--text-primary));
+}
+
+.inl[data-band="amber"] {
+  background: color-mix(in oklab, var(--warn) 20%, transparent);
+  color: color-mix(in oklab, var(--warn) 62%, var(--text-primary));
+}
+
+.inl[data-band="red"] {
+  background: color-mix(in oklab, var(--offer) 18%, transparent);
+  color: color-mix(in oklab, var(--offer) 62%, var(--text-primary));
+}
+
+.inl[data-band="breach"] {
+  background: color-mix(in oklab, var(--danger) 22%, transparent);
+  color: color-mix(in oklab, var(--danger) 60%, var(--text-primary));
+}
+
+/* Off-tolerance (losing edge): a warn ring + a danger dot, regardless of band. */
+.inl[data-losing="true"] {
+  outline: var(--hairline) solid color-mix(in oklab, var(--danger) 60%, transparent);
+  outline-offset: 1px;
+}
+
+.inlLosing {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.inlNone {
+  color: var(--text-tertiary);
+}
+
 /* Rows are click/keyboard targets that open the deal ticket. */
 .table tbody tr.row {
   cursor: pointer;

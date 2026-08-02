@@ -127,3 +127,54 @@
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
 }
+
+/* Internalise decision badge + band pill — tinted by hedge band through the same
+   bid/warn/offer/danger semantic tokens the trading surface uses (green default).
+   The text is mixed toward --text-primary so the hue reads clearly while the pill
+   clears WCAG AA contrast in BOTH light and dark themes (the low-lightness red/
+   danger tokens fall short of 4.5:1 as bare text on a tinted chip). */
+.decision,
+.band {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  font-size: var(--type-micro);
+  font-weight: var(--weight-emphasis);
+  letter-spacing: 0.04em;
+  background: oklch(from var(--bid) l c h / 0.18);
+  color: color-mix(in oklab, var(--bid) 62%, var(--text-primary));
+}
+
+.decision[data-band="amber"],
+.band[data-band="amber"] {
+  background: oklch(from var(--warn) l c h / 0.2);
+  color: color-mix(in oklab, var(--warn) 62%, var(--text-primary));
+}
+
+.decision[data-band="red"],
+.band[data-band="red"] {
+  background: oklch(from var(--offer) l c h / 0.18);
+  color: color-mix(in oklab, var(--offer) 62%, var(--text-primary));
+}
+
+.decision[data-band="breach"],
+.band[data-band="breach"] {
+  background: oklch(from var(--danger) l c h / 0.22);
+  color: color-mix(in oklab, var(--danger) 60%, var(--text-primary));
+}
+
+/* Off-tolerance (losing) decision reads with a danger ring even on a calm band. */
+.decision[data-losing="true"] {
+  outline: 1px solid oklch(from var(--danger) l c h / 0.6);
+  outline-offset: 1px;
+}
+
+/* Sign-aware edge: money made = bid/green, losing = offer/red — mixed toward the
+   text colour so both clear AA contrast against the ticket surface. */
+.pos {
+  color: color-mix(in oklab, var(--bid) 62%, var(--text-primary));
+}
+
+.neg {
+  color: color-mix(in oklab, var(--offer) 62%, var(--text-primary));
+}

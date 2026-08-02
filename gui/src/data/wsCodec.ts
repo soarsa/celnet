@@ -59,6 +59,8 @@ import type {
   ApplyCorporateActionResponse,
   CrossGamma,
   Deal,
+  HedgeBand,
+  Internalise,
   DealerQuote,
   AcceptDeskQuoteRequest,
   AcceptDeskQuoteResponse,
@@ -1858,6 +1860,25 @@ export function deskRequestFromWire(o: WireObject): DeskRequest {
   return r;
 }
 
+/**
+ * Decode the optional `deal.internalise` provenance object (snake_case on the
+ * wire). Present-tracked: the caller only invokes this when the key is a real
+ * object, so this decodes the fields the server stamps.
+ */
+function internaliseFromWire(o: WireObject): Internalise {
+  const band = str(o, "hedge_band");
+  const hedgeBand: HedgeBand =
+    band === "amber" || band === "red" || band === "breach" ? band : "green";
+  return {
+    internalised: o["internalised"] === true,
+    internalDv01: num(o, "internal_dv01"),
+    externalDv01: num(o, "external_dv01"),
+    edgeBps: num(o, "edge_bps"),
+    withinTolerance: o["within_tolerance"] === true,
+    hedgeBand,
+  };
+}
+
 /** Decode a wire `Deal`. */
 export function dealFromWire(o: WireObject): Deal {
   const d: Deal = {
@@ -1881,6 +1902,10 @@ export function dealFromWire(o: WireObject): Deal {
   // The routed Risk Portfolio id (present-with-null when the fill routed nowhere).
   const rb = o["risk_book_id"];
   if (typeof rb === "string" && rb.length > 0) d.riskBookId = rb;
+  // The internalise / auto-hedge provenance — present ONLY for FI lifts that ran
+  // the evaluation; absent/null otherwise (never fabricated).
+  const inl = o["internalise"];
+  if (inl && typeof inl === "object") d.internalise = internaliseFromWire(inl as WireObject);
   return d;
 }
 
