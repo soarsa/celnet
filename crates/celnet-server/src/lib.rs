@@ -640,7 +640,19 @@ impl Edge {
         // streams the same instrument_ids) and powers the region/sub-asset-type
         // security-list download.
         let gov_bonds_seeded = identity_store.ensure_seed_government_bonds();
-        if admin_seeded || registry_seeded || instruments_seeded || gov_bonds_seeded {
+        // Seed a default ENABLED "Firm Warehouse" risk book + a default single-leaf routing
+        // graph that targets it on a PRISTINE store, so an accepted / lifted fill routes into
+        // an enabled risk book and the per-book risk dashboard shows a row out of the box
+        // (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1/§8.2). Idempotent — a no-op once any
+        // risk book or routing graph exists. Runs BEFORE the routers are primed below so the
+        // seeded graph takes effect from first boot.
+        let risk_routing_seeded = identity_store.ensure_seed_risk_routing();
+        if admin_seeded
+            || registry_seeded
+            || instruments_seeded
+            || gov_bonds_seeded
+            || risk_routing_seeded
+        {
             identity_store
                 .save(&identity_path)
                 .map_err(|e| std::io::Error::new(e.kind(), format!("seed identity: {e}")))?;

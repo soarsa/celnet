@@ -1950,10 +1950,15 @@ impl AuthService for AuthEdge {
 
         let mut guard = self.lock();
         let mut next = guard.clone();
-        // The store re-validates the graph against the live risk-book registry (acyclic,
-        // every path terminates at a known ENABLED book, type-consistent conditions), so a
-        // malformed graph fails loudly at the write and never reaches the router.
-        next.set_risk_routing_graph(graph.clone())
+        // Install the graph, AUTO-PROVISIONING an enabled risk book for every terminal Book
+        // leaf whose target id has no existing book — so saving a graph that references a new
+        // portfolio id creates that (enabled) portfolio and a routed fill always has an
+        // enabled home on the dashboard (§8.2). The store then re-validates the whole config
+        // (acyclic, every path terminates at a known ENABLED book, type-consistent
+        // conditions; a leaf naming a pre-existing DISABLED book is rejected), so a malformed
+        // graph fails loudly at the write and never reaches the router. Non-destructive: an
+        // already-defined book is never mutated.
+        next.install_risk_routing_graph(graph.clone())
             .map_err(risk_routing_status)?;
         self.persist_and_commit(&mut guard, next)?;
         self.reconcile_risk_routing(&guard);

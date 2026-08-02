@@ -53,6 +53,15 @@ pub const SEED_ADMIN_EMAIL: &str = "admin@celnet.com";
 /// is expected to change it immediately via `AuthService.ResetPassword`.
 pub const SEED_ADMIN_PASSWORD: &str = "password";
 
+/// The stable id of the default **"Firm Warehouse"** risk book seeded on a pristine
+/// store (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1/§8.2). Its presence — plus the
+/// default single-leaf routing graph that targets it — is what makes an accepted /
+/// lifted fill land in an ENABLED risk book (and show a row on the per-book risk
+/// dashboard) out of the box, before an operator has defined any finer books.
+pub const DEFAULT_WAREHOUSE_BOOK_ID: &str = "warehouse";
+/// The display name of the default warehouse book seeded on a pristine store.
+pub const DEFAULT_WAREHOUSE_BOOK_NAME: &str = "Firm Warehouse";
+
 /// What a user is allowed to do on the edge.
 ///
 /// `Ord`/`PartialOrd` are derived so a [`Role`] can key the persisted
@@ -1925,6 +1934,85 @@ impl IdentityStore {
         Ok(())
     }
 
+    /// Install (or replace) the firm-wide risk-routing graph, **auto-provisioning** an
+    /// ENABLED [`RiskBookDef`] for every terminal [`RoutingNode::Book`] leaf whose target
+    /// id has no existing book — so saving a graph that references a not-yet-created
+    /// portfolio id *creates that portfolio* (enabled) and a routed fill therefore always
+    /// has an enabled home to show on the per-book risk dashboard
+    /// (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §8.2). Idempotent and **non-destructive**:
+    /// a leaf that names an already-defined book (enabled OR disabled) never mutates it, so
+    /// re-saving a graph provisions nothing new and a deliberately-disabled book stays
+    /// disabled (and its graph then fails validation, loudly, rather than being silently
+    /// re-enabled). After provisioning it re-validates the whole risk config; on any defect
+    /// the store is left unchanged (the caller commits only on `Ok`).
+    ///
+    /// A provisioned book is named for its id (ids are unique, so the name is unique) and
+    /// carries no parent / desk / limits.
+    ///
+    /// # Errors
+    /// The graph is malformed (dangling entry/edge, a cycle, a type-inconsistent condition),
+    /// a leaf targets a book that already exists but is **disabled**, or auto-provisioning
+    /// would violate a book invariant (e.g. a provisioned name collides with an existing
+    /// book's name).
+    pub fn install_risk_routing_graph(&mut self, graph: RiskRoutingGraph) -> Result<(), String> {
+        // Snapshot so a validation failure leaves the store byte-for-byte unchanged
+        // (mirrors [`create_risk_book`](Self::create_risk_book)'s roll-back discipline).
+        let prev_books = self.risk_books.clone();
+        let prev_graph = self.risk_routing_graph.clone();
+        for node in graph.nodes.values() {
+            if let RoutingNode::Book { risk_book_id } = node
+                && self.risk_book(risk_book_id).is_none()
+            {
+                self.risk_books.push(RiskBookDef {
+                    id: risk_book_id.clone(),
+                    name: risk_book_id.clone(),
+                    parent_id: None,
+                    desk_id: None,
+                    description: "Auto-provisioned from the risk-routing graph.".to_owned(),
+                    limits: None,
+                    enabled: true,
+                });
+            }
+        }
+        self.risk_routing_graph = Some(graph);
+        // Validates BOTH the (now-extended) book registry and the graph against it — so a
+        // graph naming a pre-existing DISABLED book is rejected here (never routed to).
+        if let Err(e) = self.validate_risk_books() {
+            self.risk_books = prev_books;
+            self.risk_routing_graph = prev_graph;
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// Additively ensure a default ENABLED **"Firm Warehouse"** risk book + a default
+    /// single-leaf routing graph that targets it exist on a **pristine** store, so an
+    /// accepted / lifted fill routes into an enabled book and the per-book risk dashboard
+    /// shows a row from first boot (§3.1/§8.2). Seeds ONLY when the store carries neither a
+    /// risk book nor a routing graph — so a restart (or an operator who has begun defining
+    /// their own books/graph) is never clobbered. Returns whether anything was seeded (the
+    /// caller then persists), mirroring [`ensure_seed_registry`](Self::ensure_seed_registry).
+    pub fn ensure_seed_risk_routing(&mut self) -> bool {
+        // A pristine store only: never seed over any operator-defined book or graph.
+        if !self.risk_books.is_empty() || self.risk_routing_graph.is_some() {
+            return false;
+        }
+        self.risk_books.push(RiskBookDef {
+            id: DEFAULT_WAREHOUSE_BOOK_ID.to_owned(),
+            name: DEFAULT_WAREHOUSE_BOOK_NAME.to_owned(),
+            parent_id: None,
+            desk_id: None,
+            description: "Default landing book for routed fills — every accepted / lifted \
+                          position's risk lands here until finer risk books and a routing \
+                          graph are configured."
+                .to_owned(),
+            limits: None,
+            enabled: true,
+        });
+        self.risk_routing_graph = Some(default_risk_routing_graph(DEFAULT_WAREHOUSE_BOOK_ID));
+        true
+    }
+
     // --- auto-hedge policy / thresholds / config (Phase B) -------------------
 
     /// The firm-wide auto-hedge policy graph, if defined.
@@ -2421,9 +2509,25 @@ pub fn mint_pricing_group_id(name: &str, existing: &[PricingGroupDef]) -> String
     unique_id(&base, |cand| existing.iter().any(|g| g.id == cand))
 }
 
-/// Mint a stable, unique, URL-safe id for a new risk book from its name,
-/// disambiguating against the existing set with a numeric suffix (mirrors
-/// [`mint_pricing_group_id`]).
+/// Build the default single-leaf risk-routing graph whose only terminal routes **every**
+/// fill to `book_id` — the out-of-the-box graph seeded beside the default warehouse book
+/// ([`IdentityStore::ensure_seed_risk_routing`]) so a lifted fill lands in an enabled book
+/// from first boot. A one-node graph (`entry → Book{book_id}`) is trivially acyclic and
+/// terminates, so it validates against any registry that carries `book_id` enabled.
+#[must_use]
+pub fn default_risk_routing_graph(book_id: &str) -> RiskRoutingGraph {
+    let mut nodes = std::collections::BTreeMap::new();
+    nodes.insert(
+        0u32,
+        RoutingNode::Book {
+            risk_book_id: book_id.to_owned(),
+        },
+    );
+    RiskRoutingGraph { entry: 0, nodes }
+}
+
+/// Mint a stable, unique, URL-safe id for a new risk book from its name, disambiguating
+/// against the existing set with a numeric suffix (mirrors [`mint_aggregated_book_id`]).
 #[must_use]
 pub fn mint_risk_book_id(name: &str, existing: &[RiskBookDef]) -> String {
     let base = slugify(name);
@@ -3039,6 +3143,95 @@ mod tests {
         assert!(
             store.risk_book(&a.id).unwrap().enabled,
             "update rolled back"
+        );
+    }
+
+    #[test]
+    fn seed_risk_routing_is_pristine_only_and_idempotent() {
+        // A pristine store seeds the default enabled warehouse book + a default graph that
+        // routes every fill to it.
+        let mut store = IdentityStore::default();
+        assert!(store.ensure_seed_risk_routing(), "pristine store seeds");
+        let seeded = store
+            .risk_book(DEFAULT_WAREHOUSE_BOOK_ID)
+            .expect("default warehouse book seeded");
+        assert!(seeded.enabled, "the default book is enabled (routable)");
+        assert_eq!(seeded.name, DEFAULT_WAREHOUSE_BOOK_NAME);
+        let graph = store.risk_routing_graph().expect("default graph seeded");
+        assert!(
+            graph.nodes.values().any(|n| matches!(
+                n,
+                RoutingNode::Book { risk_book_id } if risk_book_id == DEFAULT_WAREHOUSE_BOOK_ID
+            )),
+            "the default graph routes to the default warehouse book",
+        );
+        // The seed passes the whole-config validation (enabled target, acyclic, terminates).
+        store.validate_risk_books().expect("seed is valid");
+
+        // Idempotent: a second call seeds nothing.
+        assert!(!store.ensure_seed_risk_routing(), "already-seeded ⇒ no-op");
+        assert_eq!(store.risk_books.len(), 1, "no duplicate default book");
+
+        // Never seeds over an operator who already defined a book (no graph yet).
+        let mut with_book = IdentityStore::default();
+        with_book.create_risk_book(rb_edit("Alpha", None, None)).unwrap();
+        assert!(
+            !with_book.ensure_seed_risk_routing(),
+            "a store with an operator book is not pristine ⇒ no seed",
+        );
+        assert!(with_book.risk_book(DEFAULT_WAREHOUSE_BOOK_ID).is_none());
+        assert!(with_book.risk_routing_graph().is_none());
+    }
+
+    #[test]
+    fn install_risk_routing_graph_auto_provisions_new_books() {
+        // Saving a graph that references a not-yet-created portfolio id creates that
+        // portfolio ENABLED, so a routed fill always has an enabled home.
+        let mut store = IdentityStore::default();
+        assert!(store.risk_book("fresh-book").is_none());
+        store
+            .install_risk_routing_graph(cond_graph("fresh-book"))
+            .expect("graph installs, provisioning the new book");
+        let provisioned = store
+            .risk_book("fresh-book")
+            .expect("the referenced book was auto-provisioned");
+        assert!(provisioned.enabled, "auto-provisioned books are enabled");
+        assert!(store.risk_routing_graph().is_some());
+        // Whole-config validation now passes (the graph targets an enabled, known book).
+        store.validate_risk_books().expect("valid after provisioning");
+    }
+
+    #[test]
+    fn install_risk_routing_graph_never_mutates_existing_books() {
+        let mut store = IdentityStore::default();
+        // An existing ENABLED book keeps its identity untouched (no duplicate provision).
+        let alpha = store.create_risk_book(rb_edit("Alpha", None, None)).unwrap();
+        store
+            .install_risk_routing_graph(cond_graph(&alpha.id))
+            .expect("installs against the existing enabled book");
+        assert_eq!(store.risk_books.len(), 1, "no book auto-provisioned");
+        assert_eq!(
+            store.risk_book(&alpha.id).unwrap().name,
+            "Alpha",
+            "the existing book is not mutated",
+        );
+
+        // A graph naming a pre-existing DISABLED book is rejected (never silently
+        // re-enabled), and the store is left unchanged (the caller commits only on Ok).
+        let mut store2 = IdentityStore::default();
+        let beta = store2
+            .create_risk_book(RiskBookEdit {
+                enabled: false,
+                ..rb_edit("Beta", None, None)
+            })
+            .unwrap();
+        let err = store2
+            .install_risk_routing_graph(cond_graph(&beta.id))
+            .unwrap_err();
+        assert!(err.contains("risk routing graph is invalid"), "got: {err}");
+        assert!(
+            !store2.risk_book(&beta.id).unwrap().enabled,
+            "the disabled book stays disabled",
         );
     }
 
