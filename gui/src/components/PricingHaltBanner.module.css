@@ -1,5 +1,14 @@
 /* PricingHaltBanner — a full-width firm-wide halt banner mounted above the tab bar. */
 
+/* Zero-height placeholder rendered when pricing is LIVE: it holds the banner's `.main`
+ * grid slot (row 1) so the four following children stay on their intended rows, while
+ * the `auto` row collapses to 0 — the shell looks byte-identical to an unhalted layout. */
+.collapsed {
+  display: block;
+  height: 0;
+  overflow: hidden;
+}
+
 .banner {
   display: flex;
   align-items: baseline;

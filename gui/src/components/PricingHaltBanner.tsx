@@ -9,6 +9,9 @@
  * being quoted, but the books keep aggregating); a full halt is a DANGER (inbound
  * aggregation is stopped too). The danger banner is an assertive `role="alert"`; the
  * warn a polite `role="status"`.
+ *
+ * When pricing is live it renders a zero-height, aria-hidden placeholder (NOT null) so
+ * it keeps its `.main` grid row and the workspace canvas below it stays full-height.
  */
 
 import { usePricingControl, type HaltLevel } from "../app/PricingControlProvider";
@@ -40,10 +43,15 @@ function bannerFor(level: HaltLevel): { danger: boolean; title: string; detail: 
   }
 }
 
-export function PricingHaltBanner(): React.ReactElement | null {
+export function PricingHaltBanner(): React.ReactElement {
   const { level } = usePricingControl();
   const banner = bannerFor(level);
-  if (banner === null) return null;
+  // When pricing is live we must STILL render a node so the banner keeps its `.main`
+  // grid slot (row 1). Returning null here vacates the cell and the remaining four
+  // children auto-flow up a row — collapsing the `1fr` workspace canvas onto the 44px
+  // title row (empty-void + clipped sub-header). An empty aria-hidden placeholder sizes
+  // the `auto` row to 0, so the layout is byte-identical to an unhalted shell.
+  if (banner === null) return <div aria-hidden className={styles.collapsed} />;
   return (
     <div
       className={`${styles.banner} ${banner.danger ? styles.danger : styles.warn}`}
