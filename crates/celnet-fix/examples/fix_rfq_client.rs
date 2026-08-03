@@ -681,10 +681,18 @@ async fn main() -> std::io::Result<()> {
                     )
                 };
                 let symbol = symbol_str.as_bytes().to_vec();
-                // Lift (execute + book) an auto-quote every `--lift-every`-th cycle; a
+                // Lift (execute + book) every `--lift-every`-th LIFTABLE (auto-quoted,
+                // non-manual) request — keyed off the auto-quote ORDINAL (cycle index minus
+                // the desk-routed manual requests seen so far), NOT the raw cycle index. A
                 // manual (desk-routed) tenor has no quote to lift, so it is never lifted.
+                // Keying off `i` made `!is_manual && (i+1)%N == 0` an unsatisfiable
+                // contradiction whenever `--lift-every` and `--manual-every` shared a period
+                // (e.g. both 3 — the launcher default): the desk then quoted but booked ZERO
+                // deals. The ordinal decouples the two cadences so lifts always occur.
+                let auto_ordinal =
+                    (i + 1) - if args.manual_every > 0 { (i + 1) / args.manual_every } else { 0 };
                 let should_lift =
-                    !is_manual && args.lift_every > 0 && (i + 1).is_multiple_of(args.lift_every);
+                    !is_manual && args.lift_every > 0 && auto_ordinal.is_multiple_of(args.lift_every);
 
                 if args.stream {
                     // RFS: Subscribe → the venue streams continuous re-priced quotes; hold
@@ -823,10 +831,16 @@ async fn main() -> std::io::Result<()> {
                     Some(sim::FxLegKind::ManualAmerican)
                         | Some(sim::FxLegKind::ManualNonDeliverable)
                 );
-                // Lift (execute + book) an auto-quote every `--lift-every`-th cycle; a
-                // desk-routed manual leg has no quote to lift, so it is never lifted.
+                // Lift (execute + book) every `--lift-every`-th LIFTABLE (auto-quoted,
+                // non-manual) request — keyed off the auto-quote ORDINAL (cycle index minus
+                // the desk-routed manual legs injected so far), NOT the raw cycle index; a
+                // desk-routed manual leg has no quote to lift, so it is never lifted. Keying
+                // off `i` made `!is_manual && (i+1)%N == 0` unsatisfiable whenever
+                // `--lift-every` and `--manual-every` shared a period, booking ZERO deals.
+                let auto_ordinal =
+                    (i + 1) - if args.manual_every > 0 { (i + 1) / args.manual_every } else { 0 };
                 let should_lift =
-                    !is_manual && args.lift_every > 0 && (i + 1).is_multiple_of(args.lift_every);
+                    !is_manual && args.lift_every > 0 && auto_ordinal.is_multiple_of(args.lift_every);
                 // Only override the session policy on the stream path; a one-shot keeps
                 // the policy the `--side` flag constructed the initiator with.
                 if args.repeat != 1 {
