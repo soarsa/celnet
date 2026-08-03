@@ -3,6 +3,9 @@
    editor / read-only summary (right). Uses the app design tokens so both themes are
    honoured automatically. */
 
+/* `.wrap` scrolls its OWN content — this surface is now the "Tiering" tab panel of
+ * the consolidated Pricing workspace (whose `.tabPanel` is overflow:hidden), exactly
+ * as it renders standalone. */
 .wrap {
   display: flex;
   flex-direction: column;
@@ -10,6 +13,7 @@
   padding: var(--space-5);
   height: 100%;
   min-height: 0;
+  overflow: auto;
 }
 
 /* --- header --------------------------------------------------------------- */

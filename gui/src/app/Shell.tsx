@@ -27,7 +27,6 @@ import { ReferenceDataWorkspace } from "../workspaces/ReferenceDataWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { FiStreamingWorkspace } from "../workspaces/FiStreamingWorkspace";
 import { AggregatedBookWorkspace } from "../workspaces/AggregatedBookWorkspace";
-import { TieringWorkspace } from "../workspaces/TieringWorkspace";
 import { RiskDashboardWorkspace } from "../workspaces/RiskDashboardWorkspace";
 import { RiskRoutingWorkspace } from "../workspaces/riskrouting/RiskRoutingWorkspace";
 import { HedgingWorkspace } from "../workspaces/hedging/HedgingWorkspace";
@@ -60,6 +59,7 @@ import { PricingControlMenu } from "../components/PricingControlMenu";
 import { SignInDialog } from "../components/SignInDialog";
 import {
   buildCommands,
+  CONSOLIDATED_ALIAS_ENTRIES,
   configuredLicense,
   domainAccessible,
   DOMAINS,
@@ -104,10 +104,11 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // Agg Book: the FI aggregated-book live composite view (consolidated best
   // bid/offer across a book's inbound liquidity members). Fixed-Income-only.
   aggbook: AggregatedBookWorkspace,
-  // Tiering: a trader-facing surface to discover + retune a book's OUTBOUND
-  // tiering (widen/skew before publish). Gated on `quote_respond·fixed_income`
-  // (ordinary traders hold it — NOT admin-gated). Fixed-Income-only.
-  tiering: TieringWorkspace,
+  // Tiering: the session→pricing-group roster is CONSOLIDATED into the "Pricing"
+  // workspace as its "Tiering" tab (no standalone rail entry). This id is kept valid
+  // so any deep-link (command palette / saved views) lands straight on that tab
+  // within the merged surface. FI-only, `manage_pricing·FI`-gated (via the alias).
+  tiering: () => <PricingGroupsWorkspace initialTab="tiering" />,
   // Risk Portfolios: the hierarchical risk-portfolio tree editor is CONSOLIDATED into
   // the Risk Dashboard as its "Portfolios" tab (no standalone rail entry). This id is
   // kept valid so any deep-link (command palette / saved views) lands straight on that
@@ -159,9 +160,9 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,
   permissions: PermissionsWorkspace,
-  // Pricing Groups: the admin drag-and-drop pipeline builder — many FIX
-  // connections / users / desks resolve to ONE group, each carrying an ESP and an
-  // RFQ feature pipeline (RAW → ordered features → OUTBOUND). Admin-gated.
+  // Pricing: the CONSOLIDATED FI client-pricing surface — a tabbed shell hosting the
+  // "Pricing Groups" drag-and-drop pipeline builder (default) and the "Tiering"
+  // session→group roster. `manage_pricing·FI`-gated.
   pricinggroups: PricingGroupsWorkspace,
   // Corporate Actions: the bond CA inbox + effective-schedule viewer under the FI
   // tab. Reads on the `view·FI` floor; Confirm/Apply gate on `refdata` per-control.
@@ -263,6 +264,16 @@ export function Shell(): React.ReactElement {
   // that keyboard/command navigation may target — a wholly-unlicensed class never
   // mounts a workspace it cannot use. (Default all-licensed ⇒ usable == shown.)
   const mountRail = RAIL.filter((r) => stateOfWs(r) === "present");
+  // The consolidated deep-link ALIASES (no rail row of their own — e.g. `tiering`
+  // folded into "Pricing", `riskbooks` into "Risk Dashboard"): mount a hidden pane
+  // for each whose HOST row is present, so a `view=<alias>` deep-link renders the
+  // host workspace on its folded tab (the alias's `initialTab` variant in
+  // WORKSPACE_VIEW) instead of an empty canvas. The alias gates IDENTICALLY to its
+  // host, so host-present ⇒ alias mountable.
+  const presentIds = new Set(mountRail.map((r) => r.id));
+  const mountAliasIds: WorkspaceId[] = CONSOLIDATED_ALIAS_ENTRIES.filter(
+    ([, host]) => presentIds.has(host),
+  ).map(([alias]) => alias);
 
   // One rail entry. A license-gated (entitled-but-unlicensed) row is PRESENT-BUT-
   // LOCKED (greyed + lock + upsell title, aria-disabled, no nav handler — the class
@@ -492,12 +503,14 @@ export function Shell(): React.ReactElement {
          * Risk/Book in-progress state, no re-fired heavy effects).
          */}
         <div className={styles.canvas}>
-          {mountRail.map((r) => {
-            const View = WORKSPACE_VIEW[r.id];
-            const active = app.workspace === r.id;
+          {/* Rail-backed panes + the consolidated deep-link alias panes (no rail row,
+              but a `view=<alias>` deep-link must render the host on its folded tab). */}
+          {[...mountRail.map((r) => r.id), ...mountAliasIds].map((id) => {
+            const View = WORKSPACE_VIEW[id];
+            const active = app.workspace === id;
             return (
               <div
-                key={r.id}
+                key={id}
                 className={`${styles.pane} ${active ? styles.paneActive : styles.paneHidden}`}
                 aria-hidden={!active}
                 inert={!active}

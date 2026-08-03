@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   ADMIN_ONLY_WORKSPACES,
   ANALYTICS_WORKSPACES,
+  CONSOLIDATED_ALIAS_ENTRIES,
   DOMAIN_RAIL_EXCLUDED,
   HEDGING_WORKSPACES,
   buildCommands,
@@ -344,11 +345,12 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
       ]);
     });
 
-    it("Fixed Income = Streaming (primary FI surface, top) + Tiering + the shared rows + quoting + Pricing Groups (moved off Admin), in RAIL order", () => {
+    it("Fixed Income = Streaming (primary FI surface, top) + the shared rows + quoting + Pricing (groups + tiering), in RAIL order", () => {
       expect(railForDomain("fixed_income").map((r) => r.id)).toEqual([
         "fistreaming",
         "aggbook",
-        "tiering",
+        // "tiering" is CONSOLIDATED into the "Pricing" workspace as its "Tiering" tab —
+        // no standalone rail row (the id deep-links to that tab).
         // "riskbooks" (Risk Portfolios) is CONSOLIDATED into the Risk Dashboard as its
         // "Portfolios" tab — no standalone rail row (the id deep-links to that tab).
         "riskdashboard",
@@ -365,9 +367,9 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         // Corporate Actions: a Fixed-Income reference-data surface (CA inbox +
         // schedule viewer), NOT admin-gated — reads on the view·FI floor.
         "corpactions",
-        // Pricing Groups is a ManagePricing·FI client-pricing surface, moved off the
-        // Administration tab onto Fixed Income (viewCap-gated); it sits at its RAIL
-        // position (after the admin/ops block) so it trails the FI rows.
+        // Pricing is the CONSOLIDATED ManagePricing·FI client-pricing surface (the
+        // pipeline builder + the session-tiering roster as tabs); viewCap-gated, it
+        // sits at its RAIL position (after the admin/ops block) so it trails the FI rows.
         "pricinggroups",
       ]);
     });
@@ -543,7 +545,8 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
       groups.find((g) => g.section.label === label)!.rows.map((r) => r.id);
     // Grouping REORDERS the RAIL-interleaved rows up under their section header.
     expect(byLabel("Markets & Liquidity")).toEqual(["fistreaming", "aggbook", "surface", "quoting"]);
-    expect(byLabel("Pricing")).toEqual(["tiering", "pricinggroups"]);
+    // "tiering" is folded into "pricinggroups" as its Tiering tab — one Pricing row.
+    expect(byLabel("Pricing")).toEqual(["pricinggroups"]);
     // hedging is no longer here — it is hoisted into its own top-level "Hedging" tab.
     // "book" is no longer here either — the FI ledger is folded into FI "Risk" tabs.
     // "riskbooks" (Risk Portfolios) is folded into "riskdashboard" as its Portfolios
@@ -577,8 +580,8 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
 
   it("a section whose rows are ALL capability-hidden renders NO header (no empty group)", () => {
     // A plain FI trader (view only, no manage_pricing / risk_manage): the whole
-    // Pricing section (tiering + pricinggroups) is hidden ⇒ that group must vanish,
-    // NOT render an empty "Pricing" header. Risk survives (risk + book stay visible).
+    // Pricing section (the consolidated pricinggroups surface) is hidden ⇒ that group
+    // must vanish, NOT render an empty "Pricing" header. Risk survives (risk visible).
     const trader = navAuth({
       isAdmin: false,
       allow: new Set(["view·fx_options", "view·fixed_income"]),
@@ -676,9 +679,48 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
     });
 
     // Per-feature rail visibility (docs/PERMISSIONS-GRANULAR-REVIEW.md §4): a row with
-    // a viewCap is visible ONLY to a holder of that fine-grained capability.
+    // a viewCap is visible ONLY to a holder of that fine-grained capability. The
+    // consolidated aliases (`riskbooks`→`riskdashboard`, `tiering`→`pricinggroups`)
+    // have NO rail row of their own yet gate IDENTICALLY to their host via the alias.
     const RISK_ROWS = ["riskbooks", "riskdashboard", "riskrouting"] as const;
     const PRICING_ROWS = ["tiering", "pricinggroups"] as const;
+
+    it("every consolidated alias maps to a REAL rail-row host (so the Shell mounts its deep-link pane)", () => {
+      // CONSOLIDATED_ALIAS_ENTRIES drives the Shell's alias-pane mount (a `view=<alias>`
+      // deep-link renders the host on its folded tab). Each host MUST be a real RAIL row
+      // (present-mountable) or the deep-link would render an empty canvas.
+      const hosts = new Set(RAIL.map((r) => r.id));
+      expect(CONSOLIDATED_ALIAS_ENTRIES.length).toBeGreaterThan(0);
+      for (const [alias, host] of CONSOLIDATED_ALIAS_ENTRIES) {
+        expect(RAIL.some((r) => r.id === alias)).toBe(false); // the alias has no rail row
+        expect(hosts.has(host)).toBe(true); // …but its host does (so the pane mounts)
+      }
+      // The two consolidations: Tiering → Pricing, Risk Portfolios → Risk Dashboard.
+      expect(Object.fromEntries(CONSOLIDATED_ALIAS_ENTRIES)).toEqual({
+        tiering: "pricinggroups",
+        riskbooks: "riskdashboard",
+      });
+    });
+
+    it("the retired `tiering` id has no rail row but resolves to its `pricinggroups` host", () => {
+      // Consolidated away: no standalone rail row (it is the host's "Tiering" tab)…
+      expect(RAIL.some((r) => r.id === "tiering")).toBe(false);
+      // …but still a valid navigable id — `workspaceAssets` resolves via the alias
+      // (fixed_income, borrowed from the host) rather than throwing "not in RAIL".
+      expect(workspaceAssets("tiering")).toEqual(["fixed_income"]);
+      // …and gates IDENTICALLY to the host: a manage_pricing·FI holder reaches it,
+      // a plain FI trader (view only) does not.
+      const priceMgr = navAuth({
+        isAdmin: false,
+        allow: new Set(["view·fixed_income", "manage_pricing·fixed_income"]),
+      });
+      const trader = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
+      expect(workspaceAccessible("tiering", priceMgr)).toBe(true);
+      expect(workspaceAccessible("tiering", trader)).toBe(false);
+      // The host row itself is the single consolidated "Pricing" surface.
+      const host = RAIL.find((r) => r.id === "pricinggroups");
+      expect(host?.label).toBe("Pricing");
+    });
 
     it("a risk_manage·FI seat SEES the risk management rows and NOT the pricing rows", () => {
       const riskMgr = navAuth({

@@ -131,7 +131,7 @@ const TOUR_LIST: readonly Tour[] = [
   {
     id: "build-pricing-group",
     title: "Build a pricing group",
-    summary: "Administration → Pricing Groups: create, drag a feature, configure, assign, preview.",
+    summary: "Fixed Income → Pricing → Pricing Groups: create, drag a feature, configure, assign, preview.",
     workspace: "pricinggroups",
     steps: [
       {
@@ -144,7 +144,7 @@ const TOUR_LIST: readonly Tour[] = [
         title: "Create a group",
         body: "Click “+ New” to start a group. Give it a code name (e.g. GROUP-A) in the name field.",
         placement: "right",
-        offScreenHint: "Open Administration → Pricing Groups to see the group roster.",
+        offScreenHint: "Open Fixed Income → Pricing → Pricing Groups tab to see the group roster.",
       },
       {
         targetSelector: "#pg-custom",

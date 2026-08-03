@@ -11,7 +11,14 @@
  * price-space guardrails.
  *
  * Editing tiering itself happens in the Pricing Groups builder (deep-linked from
- * here). This surface offers ONE structural edit: a PRICING MANAGER can reassign a
+ * here). Tiering is now the "Tiering" TAB of the consolidated "Pricing" workspace
+ * (hosted by {@link PricingGroupsWorkspace}); the host passes {@link
+ * TieringWorkspaceProps.onEditInPricingGroups} so the "Edit tiering in Pricing
+ * Groups" affordance switches to the sibling "Pricing Groups" tab in place, rather
+ * than a rail navigation. Rendered standalone (no prop) it falls back to
+ * `setWorkspace("pricinggroups")`, so the deep-linked `tiering` id still resolves.
+ *
+ * This surface offers ONE structural edit: a PRICING MANAGER can reassign a
  * session between groups (moving `session.id` in/out of each group's
  * `memberConnectionIds`) via the `AuthService.UpdatePricingGroup` RPC — a group
  * membership edit, which the server gates on `manage_pricing·fixed_income`.
@@ -207,7 +214,20 @@ function PipelineSummary({ label, pipeline }: { label: string; pipeline: Feature
   );
 }
 
-export function TieringWorkspace(): React.ReactElement {
+/** Props for the Tiering surface. */
+interface TieringWorkspaceProps {
+  /**
+   * Switch the consolidated Pricing workspace to its "Pricing Groups" tab — supplied
+   * by the host ({@link PricingGroupsWorkspace}) so the "Edit tiering in Pricing
+   * Groups" affordance moves tabs in place. Omitted when rendered standalone (a
+   * deep-linked `tiering` id), where it falls back to `setWorkspace("pricinggroups")`.
+   */
+  onEditInPricingGroups?: () => void;
+}
+
+export function TieringWorkspace({
+  onEditInPricingGroups,
+}: TieringWorkspaceProps = {}): React.ReactElement {
   const app = useApp();
   const { auth } = app;
   const signedIn = auth.user !== undefined && auth.user !== null;
@@ -525,7 +545,11 @@ export function TieringWorkspace(): React.ReactElement {
                       {canManagePricing ? (
                         <Button
                           variant="ghost"
-                          onClick={() => app.setWorkspace("pricinggroups")}
+                          onClick={() =>
+                            onEditInPricingGroups
+                              ? onEditInPricingGroups()
+                              : app.setWorkspace("pricinggroups")
+                          }
                           title="Open the Pricing Groups builder to edit this pipeline"
                         >
                           Edit tiering in Pricing Groups →

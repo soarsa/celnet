@@ -1,6 +1,24 @@
 /**
- * PricingGroupsWorkspace — the admin drag-and-drop pricing-pipeline builder
- * (docs/FI-PRICING-GROUPS-DESIGN.md §6 + §8.5, server commit 07fc99f).
+ * PricingGroupsWorkspace — the consolidated fixed-income CLIENT-PRICING surface: a
+ * tabbed shell over TWO sibling views that were previously two separate rail
+ * destinations (mirroring the "Risk Portfolios → Risk Dashboard" tab-merge in {@link
+ * RiskDashboardWorkspace}):
+ *   • **Pricing Groups** (default) — the drag-and-drop feature-pipeline builder
+ *     ({@link PricingGroupsPanel}, this file's original body, extracted VERBATIM).
+ *   • **Tiering** — the session→pricing-group roster ({@link TieringWorkspace},
+ *     composed WHOLESALE as a tab panel), formerly the separate "Tiering" rail row,
+ *     now folded in one tab away.
+ * Both tabs share the SAME rail gate (`manage_pricing·fixed_income`), so anyone who
+ * can reach this workspace can view/edit both — the merge changes no authorization.
+ * The standalone "Tiering" rail entry is removed (`lib/commands.ts`); the `tiering`
+ * workspace id now deep-links straight to the Tiering tab (`app/Shell.tsx`), gating
+ * identically via the `tiering → pricinggroups` consolidated alias.
+ *
+ * ---
+ *
+ * The **Pricing Groups** tab ({@link PricingGroupsPanel}) is the admin drag-and-drop
+ * pricing-pipeline builder (docs/FI-PRICING-GROUPS-DESIGN.md §6 + §8.5, server commit
+ * 07fc99f).
  *
  * A pricing group maps many FIX connections / users / desks onto ONE pricing
  * definition: two feature pipelines (ESP streaming + RFQ / RFS quoting), each a
@@ -60,6 +78,7 @@ import {
 } from "../lib/pricingGroups";
 import { PricingFeatureCard } from "./PricingFeatureCard";
 import styles from "./PricingGroupsWorkspace.module.css";
+import { TieringWorkspace } from "./TieringWorkspace";
 
 const PRICING_MODES: readonly PricingMode[] = ["ESP", "RFQ"];
 const PRICING_MODE_LABEL: Record<PricingMode, string> = { ESP: "ESP (streaming)", RFQ: "RFQ / RFS" };
@@ -123,7 +142,69 @@ type SaveState =
 
 const fmt = (n: number): string => n.toFixed(4);
 
-export function PricingGroupsWorkspace(): React.ReactElement {
+/** The tab the consolidated Pricing surface shows: the pipeline builder or the
+ * session-tiering roster. `groups` is the default; `tiering` is the deep-link target
+ * for the retired "Tiering" rail entry. */
+export type PricingTab = "groups" | "tiering";
+
+/** One row per tab the consolidated Pricing surface spans: its id + toggle label. */
+const PRICING_TABS: readonly { tab: PricingTab; label: string }[] = [
+  { tab: "groups", label: "Pricing Groups" },
+  { tab: "tiering", label: "Tiering" },
+];
+
+/**
+ * PricingGroupsWorkspace — the tabbed shell composing the {@link PricingGroupsPanel}
+ * builder and the {@link TieringWorkspace} roster as sibling tabs (see the file
+ * header). Reuses the Risk Dashboard "Book → Risk" tab primitive VERBATIM: a slim
+ * segmented bar above the active panel, which fills the remaining pane height and
+ * scrolls its own content (the Shell pane is overflow:hidden with a definite height).
+ * Only the active tab's body mounts, so each panel's effects (the builder's roster
+ * loads, the Tiering session/group loads) fire only while it is on screen. The
+ * Tiering tab's "Edit in Pricing Groups" affordance switches to the Groups tab in
+ * place via {@link onEditInPricingGroups}.
+ */
+export function PricingGroupsWorkspace({
+  initialTab = "groups",
+}: {
+  /** The initial tab — the retired `tiering` deep-link opens on `tiering`; the rail's
+   * Pricing entry (and stories/tests) default to `groups`. */
+  initialTab?: PricingTab;
+} = {}): React.ReactElement {
+  const [tab, setTab] = useState<PricingTab>(initialTab);
+  return (
+    <div className={styles.shell}>
+      <div className={styles.tabBar} role="group" aria-label="pricing view">
+        {PRICING_TABS.map((t) => (
+          <button
+            key={t.tab}
+            type="button"
+            className={`${styles.tabBtn} ${tab === t.tab ? styles.tabBtnActive : ""}`}
+            aria-pressed={tab === t.tab}
+            data-testid={`pricing-tab-${t.tab}`}
+            onClick={() => setTab(t.tab)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className={styles.tabPanel}>
+        {tab === "groups" ? (
+          <PricingGroupsPanel />
+        ) : (
+          <TieringWorkspace onEditInPricingGroups={() => setTab("groups")} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * PricingGroupsPanel — the admin drag-and-drop pricing-pipeline builder (this
+ * workspace's original body, extracted VERBATIM as the default "Pricing Groups"
+ * tab). See the file header for the full builder description.
+ */
+function PricingGroupsPanel(): React.ReactElement {
   const app = useApp();
   const { activeTourId } = useTour();
   const { auth } = app;

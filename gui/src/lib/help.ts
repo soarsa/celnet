@@ -126,7 +126,7 @@ const ENTRY_LIST: readonly HelpEntry[] = [
       takeaway: "The 0.10 LP spread becomes your 0.50 quoted spread — the 0.25 half-spread is your margin.",
     },
     howToConfigure: [
-      "Add a TIERING feature (or open a book in the Tiering workspace).",
+      "Add a TIERING feature (or review a session's applied tiering on Fixed Income → Pricing → Tiering tab).",
       "Pick the spread unit (Price bps for a fixed price offset; Yield bps for a duration-consistent curve spread).",
       "Add a strategy — Flat markup for a constant margin; Scaled Smoothed Spread instead when you want spread-volatility damping.",
       "Set the half-spread H (or the SCALE_SMOOTH params), then set the guardrails (h_min / h_max / spread_floor).",
@@ -340,7 +340,7 @@ const ENTRY_LIST: readonly HelpEntry[] = [
       takeaway: "The desk's margin is the difference between your 0.50 quoted spread and the 0.10 LP spread.",
     },
     howToConfigure: [
-      "Open Fixed Income → Tiering (or a pricing group's TIERING feature).",
+      "Open Fixed Income → Pricing → Tiering tab (or a pricing group's TIERING feature).",
       "Enable tiering and pick a spread unit.",
       "Add a Flat markup strategy and set the half-spread (e.g. 25 price bps).",
       "Set guardrails and apply — the sample preview shows 99.50 / 99.60 → 99.30 / 99.80.",
@@ -369,7 +369,7 @@ const ENTRY_LIST: readonly HelpEntry[] = [
       takeaway: "One raw price, per-client margins — the standard dealer client-tiering model.",
     },
     howToConfigure: [
-      "Open Administration → Pricing Groups and create a group.",
+      "Open Fixed Income → Pricing → Pricing Groups tab and create a group.",
       "Enable a custom pipeline and drag features (MID SHIFT · TIERING · AXE · POSITION · PANIC/SKEW) onto the canvas.",
       "Configure each feature and watch the live preview waterfall.",
       "Assign FIX connections / users / desks as members, then save.",

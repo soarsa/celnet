@@ -8,7 +8,9 @@
  * `useApp` mocked so we inject a fixed session + pricing-group roster and observe
  * the admin reassign mutation. Covers:
  *  (a) the sign-in gate for an anonymous session;
- *  (b) rail registration — `tiering` is a Fixed-Income row, NOT admin-only;
+ *  (b) consolidation — `tiering` has NO standalone rail row (it is the "Tiering" tab
+ *      of the "Pricing" workspace), but is still a valid Fixed-Income navigable id
+ *      resolving to its `pricinggroups` host via the consolidated alias;
  *  (c) the session roster resolves each session's pricing group (exact session
  *      bind → desk default → none);
  *  (d) the detail pane shows the resolved group + a tiering summary read from the
@@ -162,13 +164,15 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("TieringWorkspace — rail registration", () => {
-  it("is a Fixed-Income row and is NOT admin-only", () => {
-    const row = RAIL.find((r) => r.id === "tiering");
-    expect(row).toBeDefined();
-    expect(row!.label).toBe("Tiering");
+describe("TieringWorkspace — rail registration (consolidated into Pricing)", () => {
+  it("has NO standalone rail row but resolves to the pricinggroups host, FI, not admin-only", () => {
+    // Consolidated: no rail row of its own (it is the "Pricing" workspace's Tiering tab).
+    expect(RAIL.some((r) => r.id === "tiering")).toBe(false);
+    // Still a valid Fixed-Income navigable id via the alias, NOT admin-only.
     expect(workspaceDomains("tiering")).toEqual(["fixed_income"]);
     expect(ADMIN_ONLY_WORKSPACES.has("tiering")).toBe(false);
+    // The consolidated host is the single "Pricing" surface.
+    expect(RAIL.find((r) => r.id === "pricinggroups")?.label).toBe("Pricing");
   });
 });
 

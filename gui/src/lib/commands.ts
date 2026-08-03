@@ -150,7 +150,7 @@ export interface CommandMeta {
  *     FI reconciliation was built for them, so their entitlement is unchanged).
  *   • ADMIN/ops rows list NONE — gated by `isAdmin`, with no license concept.
  *   • MANAGEMENT rows carry a fine-grained `viewCap` (Risk Portfolios/Routing/
- *     Dashboard → `risk_manage·FI`; Tiering/Pricing Groups → `manage_pricing·FI`):
+ *     Dashboard → `risk_manage·FI`; Pricing (groups + tiering) → `manage_pricing·FI`):
  *     visible ONLY to a holder of that capability (docs/PERMISSIONS-GRANULAR-REVIEW.md
  *     §4). They still declare their served asset for domain-tab placement.
  * The rail is driven by scope/underlier + license, NOT by an FX/FI domain tab.
@@ -185,7 +185,7 @@ export const RAIL: readonly {
    * gates the whole surface on `auth.can(viewCap.action, viewCap.asset)` — a user
    * without it never sees the entry (not merely a disabled control). Used for the FI
    * management surfaces (Risk Portfolios/Routing/Dashboard → `risk_manage·FI`;
-   * Tiering/Pricing Groups → `manage_pricing·FI`) so only the granted risk/pricing
+   * Pricing (groups + tiering) → `manage_pricing·FI`) so only the granted risk/pricing
    * managers see them. Absent ⇒ the default gate (admin-only ⇒ isAdmin; else view on
    * any served asset). Admin holds `grant_all`, so admins see every viewCap surface;
    * `can` is permissive signed-out, so pre-login discovery is unchanged.
@@ -205,10 +205,6 @@ export const RAIL: readonly {
   // FI aggregated-book live composite view (ADR-0022): consolidated best bid/offer
   // across a book's inbound liquidity members — a single-asset FI read surface.
   { id: "aggbook", glyph: "◫", label: "Agg Book", subtitle: "LP-aggregated prices", section: "markets", assets: ["fixed_income"] },
-  // Tiering: the roster of FIX sessions → the pricing group applied to each. A
-  // ManagePricing·FI surface (assign a group = a group-membership edit) — gated at
-  // the rail on `manage_pricing·FI` so only the FI pricing desk sees it.
-  { id: "tiering", glyph: "⚖", label: "Tiering", subtitle: "Per-session pricing", section: "pricing", assets: ["fixed_income"], viewCap: { action: "manage_pricing", asset: "fixed_income" } },
   // FI Risk (docs/FI-RISK-ROUTING-REQUIREMENTS.md): the CONSOLIDATED risk surface — a
   // single rail entry whose workspace hosts a "Dashboard" tab (the per-portfolio risk
   // roll-up) AND a "Portfolios" tab (the hierarchical risk-portfolio tree editor,
@@ -298,11 +294,16 @@ export const RAIL: readonly {
   { id: "connections", glyph: "⇄", label: "Connections", section: "admin", assets: [], viewCap: { action: "manage_liquidity", asset: "fixed_income" } },
   { id: "admin", glyph: "⚇", label: "Admin", section: "admin", assets: [] },
   { id: "permissions", glyph: "⚷", label: "Permissions", section: "admin", assets: [] },
-  // Pricing Groups is a Fixed-Income CLIENT-PRICING surface, not identity admin: it
-  // moved OFF the Administration tab onto the FI tab (assets: fixed_income) and gates
-  // rail visibility + structure edits on `manage_pricing·FI`, so the FI pricing desk
-  // sees and edits it WITHOUT full Administer (docs/PERMISSIONS-GRANULAR-REVIEW.md §4).
-  { id: "pricinggroups", glyph: "⚙", label: "Pricing Groups", subtitle: "Per-client feature pipelines", section: "pricing", assets: ["fixed_income"], viewCap: { action: "manage_pricing", asset: "fixed_income" } },
+  // Pricing is a Fixed-Income CLIENT-PRICING surface, not identity admin: it lives on
+  // the FI tab (assets: fixed_income) and gates rail visibility + edits on
+  // `manage_pricing·FI`, so the FI pricing desk sees and edits it WITHOUT full
+  // Administer (docs/PERMISSIONS-GRANULAR-REVIEW.md §4). It is the CONSOLIDATED pricing
+  // surface: a tabbed shell hosting the "Pricing Groups" feature-pipeline builder
+  // (default) AND a "Tiering" tab (the session→pricing-group roster, formerly the
+  // separate "Tiering" row, now folded in as a tab — mirroring the Risk Dashboard
+  // merge). The `tiering` workspace id is kept valid (deep-links to the Tiering tab)
+  // but has no rail row of its own (see {@link CONSOLIDATED_WORKSPACE_ALIAS}).
+  { id: "pricinggroups", glyph: "⚙", label: "Pricing", subtitle: "Feature pipelines + session tiering", section: "pricing", assets: ["fixed_income"], viewCap: { action: "manage_pricing", asset: "fixed_income" } },
   // Reference Data admin surface → delegable on `refdata·FI` (`Action::Refdata`),
   // so the reference-data steward reaches it WITHOUT full admin (same signed-in
   // deny-by-default gate as the other three admin surfaces).
@@ -316,10 +317,24 @@ export const RAIL: readonly {
  * row of their own (the id still round-trips through saved views + `navigate`).
  *   • `riskbooks` ("Risk Portfolios") → folded into `riskdashboard`'s "Portfolios"
  *     tab (see the RAIL note above); the id opens the merged surface on that tab.
+ *   • `tiering` ("Tiering") → folded into `pricinggroups`'s "Tiering" tab (the
+ *     consolidated "Pricing" surface); the id opens the merged surface on that tab.
  */
-const CONSOLIDATED_WORKSPACE_ALIAS: Partial<Record<WorkspaceId, WorkspaceId>> = {
+export const CONSOLIDATED_WORKSPACE_ALIAS: Partial<Record<WorkspaceId, WorkspaceId>> = {
   riskbooks: "riskdashboard",
+  tiering: "pricinggroups",
 };
+
+/**
+ * A retired-but-navigable alias id → its host row, for every {@link
+ * CONSOLIDATED_WORKSPACE_ALIAS} entry, as `[alias, host]` pairs. The Shell mounts a
+ * hidden pane for each alias whose HOST is mountable so a `view=<alias>` deep-link
+ * (e.g. `view=tiering`, `view=riskbooks`) renders the host workspace on the folded
+ * tab (via its `initialTab` variant in the Shell's view map) instead of an empty
+ * canvas — the alias has no rail row, so it is otherwise never in `mountRail`.
+ */
+export const CONSOLIDATED_ALIAS_ENTRIES: readonly (readonly [WorkspaceId, WorkspaceId])[] =
+  Object.entries(CONSOLIDATED_WORKSPACE_ALIAS) as [WorkspaceId, WorkspaceId][];
 
 /**
  * The asset class(es) a workspace serves — looked up via {@link RAIL}. Cross-asset
@@ -486,10 +501,11 @@ export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
   // Per-feature visibility wins (docs/PERMISSIONS-GRANULAR-REVIEW.md §4.1): a row
   // with a `viewCap` is visible ONLY to a holder of that fine-grained capability
   // (admin holds `grant_all`; `can` is permissive signed-out). This is what hides
-  // the FI management surfaces (Risk Portfolios/Routing/Dashboard, Tiering, Pricing
-  // Groups) from an ordinary trader while surfacing them to the granted manager.
+  // the FI management surfaces (Risk Portfolios/Routing/Dashboard, Pricing groups +
+  // tiering) from an ordinary trader while surfacing them to the granted manager.
   // A rail-less consolidated alias borrows its host row's viewCap so a deep-link to
-  // the folded surface gates IDENTICALLY to the host (riskbooks ≡ riskdashboard).
+  // the folded surface gates IDENTICALLY to the host (riskbooks ≡ riskdashboard;
+  // tiering ≡ pricinggroups).
   const resolvedId = CONSOLIDATED_WORKSPACE_ALIAS[id] ?? id;
   const viewCap = RAIL.find((r) => r.id === resolvedId)?.viewCap;
   if (viewCap) {
