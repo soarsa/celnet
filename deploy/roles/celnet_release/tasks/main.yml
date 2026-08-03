@@ -55,6 +55,10 @@
     RUSTUP_HOME: "{{ celnet_base }}/.rustup"
     CARGO_TERM_COLOR: "never"
     RUSTC_WRAPPER: ""        # guard: never use sccache on the host
+    # Cap parallel codegen jobs so a full release build fits the swapless UAT box's RAM —
+    # an unbounded build OOM-kills the box mid-link (celnet-server is the memory peak).
+    # Tune with -e celnet_cargo_build_jobs=N; raise it on a larger host.
+    CARGO_BUILD_JOBS: "{{ celnet_cargo_build_jobs | default('2') }}"
   register: celnet_build
   changed_when: true
 
@@ -87,6 +91,7 @@
     CARGO_HOME: "{{ celnet_base }}/.cargo"
     RUSTUP_HOME: "{{ celnet_base }}/.rustup"
     RUSTC_WRAPPER: ""
+    CARGO_BUILD_JOBS: "{{ celnet_cargo_build_jobs | default('2') }}"
   changed_when: true
   when: celnet_fixsim_enabled | default(true) | bool
 
@@ -120,6 +125,7 @@
     CARGO_HOME: "{{ celnet_base }}/.cargo"
     RUSTUP_HOME: "{{ celnet_base }}/.rustup"
     RUSTC_WRAPPER: ""
+    CARGO_BUILD_JOBS: "{{ celnet_cargo_build_jobs | default('2') }}"
   changed_when: true
   when: celnet_lpsim_enabled | default(true) | bool
 
