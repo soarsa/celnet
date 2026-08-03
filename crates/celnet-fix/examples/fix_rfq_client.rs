@@ -689,10 +689,11 @@ async fn main() -> std::io::Result<()> {
                 // contradiction whenever `--lift-every` and `--manual-every` shared a period
                 // (e.g. both 3 — the launcher default): the desk then quoted but booked ZERO
                 // deals. The ordinal decouples the two cadences so lifts always occur.
-                let auto_ordinal =
-                    (i + 1) - if args.manual_every > 0 { (i + 1) / args.manual_every } else { 0 };
-                let should_lift =
-                    !is_manual && args.lift_every > 0 && auto_ordinal.is_multiple_of(args.lift_every);
+                let manual_seen = (i + 1).checked_div(args.manual_every).unwrap_or(0);
+                let auto_ordinal = (i + 1) - manual_seen;
+                let should_lift = !is_manual
+                    && args.lift_every > 0
+                    && auto_ordinal.is_multiple_of(args.lift_every);
 
                 if args.stream {
                     // RFS: Subscribe → the venue streams continuous re-priced quotes; hold
@@ -837,10 +838,11 @@ async fn main() -> std::io::Result<()> {
                 // desk-routed manual leg has no quote to lift, so it is never lifted. Keying
                 // off `i` made `!is_manual && (i+1)%N == 0` unsatisfiable whenever
                 // `--lift-every` and `--manual-every` shared a period, booking ZERO deals.
-                let auto_ordinal =
-                    (i + 1) - if args.manual_every > 0 { (i + 1) / args.manual_every } else { 0 };
-                let should_lift =
-                    !is_manual && args.lift_every > 0 && auto_ordinal.is_multiple_of(args.lift_every);
+                let manual_seen = (i + 1).checked_div(args.manual_every).unwrap_or(0);
+                let auto_ordinal = (i + 1) - manual_seen;
+                let should_lift = !is_manual
+                    && args.lift_every > 0
+                    && auto_ordinal.is_multiple_of(args.lift_every);
                 // Only override the session policy on the stream path; a one-shot keeps
                 // the policy the `--side` flag constructed the initiator with.
                 if args.repeat != 1 {
