@@ -1317,23 +1317,38 @@ impl FixSession {
             text = Some(reason.as_bytes());
         }
 
-        // A successful lift retires the quote (idempotency: a second lift of the same
-        // QuoteID now rejects as already-consumed via the ledger). A limit-rejected lift
-        // is NOT retired, but its token is already consumed, so a re-lift still rejects.
-        if filled && let Some(q) = quote_id.as_ref() {
-            self.live.remove(q);
-        }
-
         // A filled rates auto-quote / RFS-stream lift books the desk request it created as
         // a completed deal (dealt position + Deal + ACCEPTED) and closes any live RFS
         // stream for it — so the FIX taker's execution shows in the deal blotter and the
-        // rates Book, exactly like a GUI desk accept.
-        if filled && let Some(request_id) = rates_request_id {
-            if let Some(edge) = self.ctx.desk_edge.as_ref() {
-                let _ = edge.book_fix_lift(&request_id);
+        // rates Book, exactly like a GUI desk accept. `book_fix_lift` runs the rates
+        // pre-trade + per-risk-book limit gates AND the internalisation/hedge rules; if it
+        // REJECTS (limit / risk-book breach) it books NOTHING and returns `None`. We MUST
+        // reflect that on the wire: report REJECTED instead of a phantom FILLED with no deal
+        // behind it. (The last-look token is already consumed, so a re-lift still rejects.)
+        if filled && let Some(request_id) = rates_request_id.as_ref() {
+            let book_attempted = self
+                .ctx
+                .desk_edge
+                .as_ref()
+                .map(|edge| edge.book_fix_lift(request_id));
+            if matches!(book_attempted, Some(None)) {
+                filled = false;
+                const REJECT: &[u8] = b"rates lift rejected: pre-trade / risk-book limit breach";
+                text = text.or(Some(REJECT));
             }
-            self.rfs
-                .retain(|_, sub| sub.request_id.as_deref() != Some(request_id.as_str()));
+            // Only a genuinely-booked lift closes the RFS stream; a rejected one leaves it
+            // live so the counterparty can re-request.
+            if filled {
+                self.rfs
+                    .retain(|_, sub| sub.request_id.as_deref() != Some(request_id.as_str()));
+            }
+        }
+
+        // A successful lift retires the quote (idempotency: a second lift of the same
+        // QuoteID now rejects as already-consumed via the ledger). A rejected lift is NOT
+        // retired here, but its token is already consumed, so a re-lift still rejects.
+        if filled && let Some(q) = quote_id.as_ref() {
+            self.live.remove(q);
         }
 
         let order_id = self.mint_id("O");
