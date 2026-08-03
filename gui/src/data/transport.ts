@@ -120,6 +120,7 @@ import type {
   RiskBookRisk,
   RiskRoutingGraph,
   HedgeGraph,
+  AcceptanceGraph,
   WarehouseThreshold,
   HedgeProvenance,
   HedgeIntent,
@@ -805,6 +806,19 @@ export interface CelnetTransport {
 
   /** AuthService.UpdateHedgePolicyGraph (`hedge`) — replace the firm-wide policy; resolves to the committed graph. */
   updateHedgePolicyGraph(graph: HedgeGraph): Promise<HedgeGraph>;
+
+  // --- Incoming-quote acceptance (celnet-acceptance) -------------------------
+  //
+  // The THIRD trader-configurable rule engine: a first-match decision graph run AT
+  // ACCEPTANCE (after last-look, before booking) on each incoming lift, resolving it
+  // to accept / reject / hold-for-review. Both RPCs gate server-side on the narrow
+  // `manage_acceptance` capability × asset.
+
+  /** AuthService.GetAcceptanceGraph (`manage_acceptance`) — the firm-wide acceptance policy, or `null` until first defined. */
+  getAcceptanceGraph(): Promise<AcceptanceGraph | null>;
+
+  /** AuthService.UpdateAcceptanceGraph (`manage_acceptance`) — replace the firm-wide policy; resolves to the committed graph. */
+  updateAcceptanceGraph(graph: AcceptanceGraph): Promise<AcceptanceGraph>;
 
   /** AuthService.ListHedgeThresholds (`hedge`) — the full warehouse-threshold roster. */
   listHedgeThresholds(): Promise<WarehouseThreshold[]>;

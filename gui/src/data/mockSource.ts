@@ -46,6 +46,7 @@ import type {
   RiskBookRisk,
   RiskRoutingGraph,
   HedgeGraph,
+  AcceptanceGraph,
   WarehouseThreshold,
   HedgeProvenance,
   HedgeIntent,
@@ -1993,6 +1994,17 @@ export class MockTransport implements CelnetTransport {
     ],
   };
 
+  /**
+   * The offline firm-wide incoming-quote-acceptance policy. Seeded with the
+   * accept-all default (a single decision leaf) so a fresh install books every lift
+   * exactly as before until a policy is authored. The rules editor overwrites this via
+   * {@link updateAcceptanceGraph}.
+   */
+  private mockAcceptanceGraph: AcceptanceGraph | null = {
+    entry: 0,
+    nodes: [{ kind: "decision", id: 0, action: { kind: "accept", reason: "" } }],
+  };
+
   /** Seeded warehouse thresholds bound to the offline FI books / desk. */
   private mockHedgeThresholds: WarehouseThreshold[] = [
     {
@@ -3691,6 +3703,17 @@ export class MockTransport implements CelnetTransport {
     return cloneJson(this.mockHedgeGraph);
   }
 
+  // --- Incoming-quote acceptance (celnet-acceptance) -------------------------
+
+  async getAcceptanceGraph(): Promise<AcceptanceGraph | null> {
+    return this.mockAcceptanceGraph === null ? null : cloneJson(this.mockAcceptanceGraph);
+  }
+
+  async updateAcceptanceGraph(graph: AcceptanceGraph): Promise<AcceptanceGraph> {
+    this.mockAcceptanceGraph = cloneJson(graph);
+    return cloneJson(this.mockAcceptanceGraph);
+  }
+
   async listHedgeThresholds(): Promise<WarehouseThreshold[]> {
     return this.mockHedgeThresholds.map((t) => cloneJson(t));
   }
@@ -5319,9 +5342,10 @@ const MOCK_MIN_PASSWORD_LEN = 12;
  * authorities `administer` / `risk_transfer`, the three management caps
  * `risk_manage` / `manage_pricing` / `manage_liquidity`, the cross-asset read
  * `view_analytics`, the `hedge` authoring seat, and the `refdata` (corporate-action
- * confirm/apply) steward seat (mirrors the server's `default_trader_bundle`,
- * `config/identity.rs`, which holds back `Action::{Administer, RiskTransfer,
- * RiskManage, ManagePricing, ManageLiquidity, ViewAnalytics, Hedge, Refdata}`).
+ * confirm/apply) steward seat, and the `manage_acceptance` (incoming-quote-acceptance
+ * author) seat (mirrors the server's `default_trader_bundle`, `config/identity.rs`,
+ * which holds back `Action::{Administer, RiskTransfer, RiskManage, ManagePricing,
+ * ManageLiquidity, ViewAnalytics, Hedge, Refdata, ManageAcceptance}`).
  * `ADMIN` is grant-all (holds every action, including these). */
 const MOCK_TRADER_EXCLUDED_ACTIONS: ReadonlySet<CapabilityAction> = new Set<CapabilityAction>([
   "administer",
@@ -5332,6 +5356,7 @@ const MOCK_TRADER_EXCLUDED_ACTIONS: ReadonlySet<CapabilityAction> = new Set<Capa
   "view_analytics",
   "hedge",
   "refdata",
+  "manage_acceptance",
 ]);
 
 /** The full action-by-asset surface (the ADMIN grant-all bundle). */

@@ -47,6 +47,7 @@ export const ACTION_LABELS: Record<CapabilityAction, string> = {
   view_analytics: "View analytics",
   hedge: "Auto-hedge",
   refdata: "Reference data",
+  manage_acceptance: "Deal acceptance",
 };
 
 /**
@@ -56,7 +57,8 @@ export const ACTION_LABELS: Record<CapabilityAction, string> = {
  * `config/identity.rs::default_trader_bundle`, which withholds `Administer`,
  * `RiskTransfer`, and the three management authorities `RiskManage` /
  * `ManagePricing` / `ManageLiquidity` and the cross-asset read `ViewAnalytics`
- * (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §5; `config/identity.rs`).
+ * (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §5; `config/identity.rs`). `ManageAcceptance`
+ * (author the incoming-quote-acceptance graph) joins the held-back seats.
  */
 export const TRADER_HELD_BACK_ACTIONS: ReadonlySet<CapabilityAction> =
   new Set<CapabilityAction>([
@@ -68,6 +70,7 @@ export const TRADER_HELD_BACK_ACTIONS: ReadonlySet<CapabilityAction> =
     "view_analytics",
     "hedge",
     "refdata",
+    "manage_acceptance",
   ]);
 
 /** Human-friendly asset-class labels for the matrix columns. */
@@ -229,6 +232,7 @@ const ACTION_PHRASE: Record<CapabilityAction, (asset: string) => string> = {
   view_analytics: (a) => `viewing the ${a} client-flow analytics`,
   hedge: (a) => `authoring ${a} auto-hedge policies, thresholds and the hedge monitor`,
   refdata: (a) => `confirming and applying ${a} corporate actions`,
+  manage_acceptance: (a) => `authoring the ${a} incoming-quote acceptance rules`,
 };
 
 /**
@@ -491,6 +495,19 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     readActions: ["hedge"],
     writeActions: ["hedge"],
   },
+  // Deal Acceptance — the incoming-quote-acceptance rule builder (accept / reject /
+  // hold-for-review on each incoming lift). The WHOLE surface is `manage_acceptance`-
+  // gated (its rail `viewCap` is `manage_acceptance·FI`), so seeing AND editing both
+  // require the cap: Read = Write = `manage_acceptance·FI` (held back from the default
+  // trader bundle), like Hedging / Reference Data.
+  {
+    id: "acceptance",
+    label: "Deal Acceptance",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["manage_acceptance"],
+    writeActions: ["manage_acceptance"],
+  },
   // Risk Transfer — the move-existing-risk surface. The audit trail is a `view·FI`
   // read; initiating/accepting a transfer is the narrow `risk_transfer` capability.
   {
@@ -673,7 +690,7 @@ export interface RoleAssetSummary {
  * The honest ROLE-BASELINE capability summary for a user row: for each asset
  * class, how many of the {@link CAPABILITY_ACTIONS} the role holds with NO
  * per-user overlay (`resolveEffective(role, ∅)`). This is the baseline the role
- * confers (admin ⇒ 17/17 both; trader ⇒ 9/17 both — every action except the eight
+ * confers (admin ⇒ 18/18 both; trader ⇒ 9/18 both — every action except the nine
  * held-back authorities in {@link TRADER_HELD_BACK_ACTIONS}); the full,
  * overlay-adjusted effective set stays reachable through the per-user Permissions
  * editor. Deliberately overlay-free so a compact roster chip never misrepresents a

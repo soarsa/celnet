@@ -43,13 +43,14 @@ describe("risk-transfer rail rows", () => {
     expect(new Set(glyphs).size).toBe(glyphs.length);
   });
 
-  it("places all three under the Fixed Income domain immediately after risk routing", () => {
+  it("places all three under the Fixed Income domain immediately after acceptance", () => {
     // Auto-hedging was hoisted OUT of the FI rail into its own top-level "Hedging"
-    // tab, so in the FI rail the transfer trio now follows `riskrouting` directly
-    // (the hedging row no longer sits between them).
+    // tab. The incoming-quote-acceptance row sits in the FI "Risk" section right after
+    // risk routing, so the transfer trio now follows `acceptance` directly.
     const fi = railForDomain("fixed_income").map((r) => r.id);
     expect(fi.includes("hedging")).toBe(false);
-    const i = fi.indexOf("riskrouting");
+    expect(fi.indexOf("acceptance")).toBe(fi.indexOf("riskrouting") + 1);
+    const i = fi.indexOf("acceptance");
     expect(fi.slice(i + 1, i + 4)).toEqual(TRANSFER_ROWS);
   });
 });

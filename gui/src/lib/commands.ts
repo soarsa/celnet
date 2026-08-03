@@ -54,6 +54,7 @@ export type WorkspaceId =
   | "riskdashboard"
   | "riskrouting"
   | "hedging"
+  | "acceptance"
   | "risktransfer"
   | "transferinbox"
   | "transferaudit"
@@ -232,6 +233,15 @@ export const RAIL: readonly {
   // {@link HEDGING_WORKSPACES} membership override), next to Analytics — cross-cutting,
   // not FI-nested.
   { id: "hedging", glyph: "◈", label: "Hedging", subtitle: "Exit policy · thresholds · monitor", section: "risk", assets: ["fixed_income"], viewCap: { action: "hedge", asset: "fixed_income" } },
+  // Incoming-quote Acceptance (docs — celnet-acceptance): the trader-composed
+  // first-match ACCEPTANCE rule graph — runs at acceptance (after last-look, before
+  // booking) on each incoming client lift and resolves it to Accept / Reject / Hold-
+  // for-review. The THIRD trader-configurable rule engine, mirroring the Risk Routing
+  // and Hedging builders. A single-asset FI risk surface, rail-gated on the narrow
+  // `manage_acceptance` capability × FI (held back from the default trader bundle), so
+  // only the granted acceptance-policy author sees it and an ordinary FI trader does
+  // not. It stays under the Fixed-Income "Risk" section (next to Risk Routing).
+  { id: "acceptance", glyph: "⊨", label: "Acceptance", subtitle: "Incoming lift accept/reject rules", section: "risk", assets: ["fixed_income"], viewCap: { action: "manage_acceptance", asset: "fixed_income" } },
   // FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md): the MANUAL move of
   // EXISTING risk between risk portfolios — the complement to routing (which
   // auto-assigns NEW fills). Three single-asset FI surfaces, initiate/accept gated

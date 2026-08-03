@@ -29,10 +29,10 @@ describe("roleAllows — the role bundle baseline", () => {
     }
   });
 
-  it("trader holds every action except the eight held-back authorities", () => {
+  it("trader holds every action except the nine held-back authorities", () => {
     // The default trader bundle withholds administer, risk_transfer, the three
-    // granular management caps, view_analytics, hedge, and refdata (mirrors the
-    // server's default_trader_bundle).
+    // granular management caps, view_analytics, hedge, refdata, and manage_acceptance
+    // (mirrors the server's default_trader_bundle).
     const heldBack = new Set([
       "administer",
       "risk_transfer",
@@ -42,6 +42,7 @@ describe("roleAllows — the role bundle baseline", () => {
       "view_analytics",
       "hedge",
       "refdata",
+      "manage_acceptance",
     ]);
     for (const action of CAPABILITY_ACTIONS) {
       expect(roleAllows("TRADER", action)).toBe(!heldBack.has(action));
@@ -147,7 +148,7 @@ describe("resolveEffective — full enumeration matches the server algebra", () 
 });
 
 describe("roleBaselineSummary — the honest per-asset role-baseline chip counts", () => {
-  it("admin holds every action on both assets (17/17 · 17/17)", () => {
+  it("admin holds every action on both assets (18/18 · 18/18)", () => {
     const summary = roleBaselineSummary("ADMIN");
     expect(summary).toEqual([
       { asset: "fx_options", allowed: CAPABILITY_ACTIONS.length, total: CAPABILITY_ACTIONS.length },
@@ -155,18 +156,18 @@ describe("roleBaselineSummary — the honest per-asset role-baseline chip counts
     ]);
   });
 
-  it("trader holds every action except the eight held-back authorities on both assets (9/17 · 9/17)", () => {
+  it("trader holds every action except the nine held-back authorities on both assets (9/18 · 9/18)", () => {
     const summary = roleBaselineSummary("TRADER");
     const total = CAPABILITY_ACTIONS.length;
     expect(summary).toEqual([
-      { asset: "fx_options", allowed: total - 8, total },
-      { asset: "fixed_income", allowed: total - 8, total },
+      { asset: "fx_options", allowed: total - 9, total },
+      { asset: "fixed_income", allowed: total - 9, total },
     ]);
     // Sanity: administer + risk_transfer + risk_manage + manage_pricing +
-    // manage_liquidity + view_analytics + hedge + refdata are the eight dropped
-    // actions, per asset (17 total → 9 held). refdata is the 17th action (the bond
-    // corporate-action confirm/apply steward seat), held back from the trader bundle.
-    expect(total).toBe(17);
+    // manage_liquidity + view_analytics + hedge + refdata + manage_acceptance are the
+    // nine dropped actions, per asset (18 total → 9 held). manage_acceptance is the 18th
+    // action (the incoming-quote-acceptance author seat), held back from the trader bundle.
+    expect(total).toBe(18);
   });
 
   it("emits one entry per asset in canonical order", () => {

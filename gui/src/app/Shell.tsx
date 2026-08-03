@@ -30,6 +30,7 @@ import { AggregatedBookWorkspace } from "../workspaces/AggregatedBookWorkspace";
 import { RiskDashboardWorkspace } from "../workspaces/RiskDashboardWorkspace";
 import { RiskRoutingWorkspace } from "../workspaces/riskrouting/RiskRoutingWorkspace";
 import { HedgingWorkspace } from "../workspaces/hedging/HedgingWorkspace";
+import { AcceptanceWorkspace } from "../workspaces/acceptance/AcceptanceWorkspace";
 import { RiskTransferWorkspace } from "../workspaces/risktransfer/RiskTransferWorkspace";
 import { RiskTransferInboxWorkspace } from "../workspaces/risktransfer/RiskTransferInboxWorkspace";
 import { RiskTransferAuditWorkspace } from "../workspaces/risktransfer/RiskTransferAuditWorkspace";
@@ -128,6 +129,11 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // hedge monitor (advisory intents + provenance + per-book band RAG). Rail-gated
   // on the narrow `hedge` capability × FI. FI-only.
   hedging: HedgingWorkspace,
+  // Incoming-quote Acceptance (celnet-acceptance): the trader-composed first-match
+  // acceptance rule graph (accept / reject / hold-for-review), reusing the risk-routing
+  // rule-table ⇄ graph builder with decision leaves. Rail-gated on the narrow
+  // `manage_acceptance` capability × FI. FI-only.
+  acceptance: AcceptanceWorkspace,
   // Risk Transfer (docs/RISK-TRANSFER-REQUIREMENTS.md §9): the MANUAL move of
   // existing risk — the complement to routing. Ticket (initiate) + Inbox (accept /
   // reject four-eyes counterparty) + Audit (immutable provenance blotter). FI-only;

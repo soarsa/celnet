@@ -99,8 +99,8 @@ describe("MockTransport role bundles", () => {
   it("the Admin role reports grant-all and rejects a Set", async () => {
     const t = new MockTransport();
     const bundle = await t.getRoleCapabilities("ADMIN");
-    // 17 actions x 2 assets.
-    expect(bundle.capabilities.length).toBe(34);
+    // 18 actions x 2 assets.
+    expect(bundle.capabilities.length).toBe(36);
     await expect(
       t.setRoleCapabilities("ADMIN", [{ action: "view", asset: "fx_options" }]),
     ).rejects.toThrow(/cannot be narrowed/);

@@ -133,6 +133,12 @@ import type {
   HedgeCondition,
   HedgeNode,
   HedgeGraph,
+  AcceptanceField,
+  AcceptanceActionKind,
+  AcceptanceAction,
+  AcceptanceCondition,
+  AcceptanceNode,
+  AcceptanceGraph,
   WarehouseThreshold,
   HedgeProvenance,
   HedgeIntent,
@@ -4710,6 +4716,152 @@ export function updateHedgePolicyGraphRequestToWire(graph: HedgeGraph): WireObje
 /** Decode `{ graph: {...} }` from the update reply (always present). */
 export function updateHedgePolicyGraphResponseFromWire(o: WireObject): HedgeGraph {
   return hedgeGraphFromWire(child(o, "graph"));
+}
+
+// --- Incoming-quote acceptance (celnet-acceptance) ---------------------------
+//
+// Byte-compatible with the server's WS codec (`crates/celnet-server/src/ws/codec.rs`
+// acceptance block): the exact snake_case field names, NUMERIC enum i32 tags
+// (`field`/`op`/`kind`), the `AcceptanceNodeDesc.node` oneof carried as a `condition`
+// OR `decision` sub-object beside `id`, and the reused `RouteValueDesc` value oneof.
+// Enum ordinals verified vs the proto (`AcceptanceFieldEnum` 0..8,
+// `AcceptanceActionKind` 0..2); `RouteOpEnum` is reused via
+// {@link routeOpToWire}/{@link routeOpFromWire}.
+
+const ACCEPTANCE_FIELD_WIRE: Record<AcceptanceField, number> = {
+  counterparty: 0,
+  notional_usd: 1,
+  tenor_years: 2,
+  instrument_symbol: 3,
+  side: 4,
+  edge_bps: 5,
+  quote_age_ms: 6,
+  asset_class: 7,
+  desk: 8,
+};
+
+/** The wire `AcceptanceFieldEnum` i32 tag for a GUI acceptance field. */
+export function acceptanceFieldToWire(f: AcceptanceField): number {
+  return ACCEPTANCE_FIELD_WIRE[f];
+}
+
+const ACCEPTANCE_FIELD_FROM: readonly AcceptanceField[] = [
+  "counterparty",
+  "notional_usd",
+  "tenor_years",
+  "instrument_symbol",
+  "side",
+  "edge_bps",
+  "quote_age_ms",
+  "asset_class",
+  "desk",
+];
+
+/** A GUI acceptance field from the wire i32 tag (out of range ⇒ the proto3 zero). */
+export function acceptanceFieldFromWire(n: number): AcceptanceField {
+  return ACCEPTANCE_FIELD_FROM[n] ?? "counterparty";
+}
+
+const ACCEPTANCE_ACTION_KIND_WIRE: Record<AcceptanceActionKind, number> = {
+  accept: 0,
+  reject: 1,
+  hold_for_review: 2,
+};
+
+/** The wire `AcceptanceActionKind` i32 tag for a GUI acceptance decision kind. */
+export function acceptanceActionKindToWire(k: AcceptanceActionKind): number {
+  return ACCEPTANCE_ACTION_KIND_WIRE[k];
+}
+
+const ACCEPTANCE_ACTION_KIND_FROM: readonly AcceptanceActionKind[] = [
+  "accept",
+  "reject",
+  "hold_for_review",
+];
+
+/** A GUI acceptance decision kind from the wire i32 tag (out of range ⇒ `accept`). */
+export function acceptanceActionKindFromWire(n: number): AcceptanceActionKind {
+  return ACCEPTANCE_ACTION_KIND_FROM[n] ?? "accept";
+}
+
+/** Encode an acceptance decision (a `kind` tag + the `reason` string, both always present). */
+export function acceptanceActionToWire(a: AcceptanceAction): WireObject {
+  return { kind: acceptanceActionKindToWire(a.kind), reason: a.reason };
+}
+/** Decode an acceptance decision (absent `reason` ⇒ empty string). */
+export function acceptanceActionFromWire(o: WireObject): AcceptanceAction {
+  return { kind: acceptanceActionKindFromWire(enumNum(o, "kind")), reason: str(o, "reason") };
+}
+
+/** Encode an acceptance condition (enums ride as i32 tags; `value` null when unset). */
+export function acceptanceConditionToWire(c: AcceptanceCondition): WireObject {
+  return {
+    field: acceptanceFieldToWire(c.field),
+    op: routeOpToWire(c.op),
+    value: c.value !== null ? routeValueToWire(c.value) : null,
+    on_true: c.onTrue,
+    on_false: c.onFalse,
+  };
+}
+/** Decode an acceptance condition (absent / null `value` ⇒ `null`). */
+export function acceptanceConditionFromWire(o: WireObject): AcceptanceCondition {
+  const rawValue = o["value"];
+  return {
+    field: acceptanceFieldFromWire(enumNum(o, "field")),
+    op: routeOpFromWire(enumNum(o, "op")),
+    value:
+      rawValue && typeof rawValue === "object" ? routeValueFromWire(rawValue as WireObject) : null,
+    onTrue: num(o, "on_true"),
+    onFalse: num(o, "on_false"),
+  };
+}
+
+/** Encode an acceptance node: its `id` plus exactly the live `node` oneof arm. */
+export function acceptanceNodeToWire(n: AcceptanceNode): WireObject {
+  const m: WireObject = { id: n.id };
+  if (n.kind === "condition") m["condition"] = acceptanceConditionToWire(n.condition);
+  else m["decision"] = acceptanceActionToWire(n.action);
+  return m;
+}
+/** Decode an acceptance node (a `condition` sub-object ⇒ internal; else a `decision` leaf). */
+export function acceptanceNodeFromWire(o: WireObject): AcceptanceNode {
+  const id = num(o, "id");
+  const rawCondition = o["condition"];
+  if (rawCondition && typeof rawCondition === "object") {
+    return {
+      kind: "condition",
+      id,
+      condition: acceptanceConditionFromWire(rawCondition as WireObject),
+    };
+  }
+  return { kind: "decision", id, action: acceptanceActionFromWire(child(o, "decision")) };
+}
+
+/** Encode the acceptance graph (`entry` + the id-carrying node array). */
+export function acceptanceGraphToWire(g: AcceptanceGraph): WireObject {
+  return { entry: g.entry, nodes: g.nodes.map(acceptanceNodeToWire) };
+}
+/** Decode an `AcceptanceGraphDesc` (`entry` + node list). */
+export function acceptanceGraphFromWire(o: WireObject): AcceptanceGraph {
+  return { entry: num(o, "entry"), nodes: array(o, "nodes").map(acceptanceNodeFromWire) };
+}
+
+/** `get_acceptance_graph` request body (session/correlation added by the framing). */
+export function getAcceptanceGraphRequestToWire(): WireObject {
+  return {};
+}
+/** Decode `{ graph: {...} | null }` — the acceptance policy is absent until first defined. */
+export function acceptanceGraphResponseFromWire(o: WireObject): AcceptanceGraph | null {
+  const raw = o["graph"];
+  return raw && typeof raw === "object" ? acceptanceGraphFromWire(raw as WireObject) : null;
+}
+/** `update_acceptance_graph` request body. */
+export function updateAcceptanceGraphRequestToWire(graph: AcceptanceGraph): WireObject {
+  return { graph: acceptanceGraphToWire(graph) };
+}
+/** Decode `{ graph: {...} }` from the update reply (always present). */
+export function updateAcceptanceGraphResponseFromWire(o: WireObject): AcceptanceGraph {
+  return acceptanceGraphFromWire(child(o, "graph"));
 }
 
 /** `list_hedge_thresholds` request body. */

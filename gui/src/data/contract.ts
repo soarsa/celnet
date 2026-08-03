@@ -2242,7 +2242,8 @@ export type CapabilityAction =
   | "manage_liquidity"
   | "view_analytics"
   | "hedge"
-  | "refdata";
+  | "refdata"
+  | "manage_acceptance";
 
 /** The asset class a capability applies to (`celnet.wire.CapabilityDesc.asset`). */
 export type CapabilityAsset = "fx_options" | "fixed_income";
@@ -2275,10 +2276,14 @@ export const CAPABILITY_ACTIONS: readonly CapabilityAction[] = [
   "view_analytics",
   "hedge",
   // Master reference data: confirm / apply bond corporate actions (the CAEV/CAMV
-  // lifecycle). The 17th action (server `Action::ALL` discriminant order — last,
-  // after `hedge`). Held back from the default trader bundle (an explicitly-granted
+  // lifecycle). Held back from the default trader bundle (an explicitly-granted
   // steward seat) — see `TRADER_HELD_BACK_ACTIONS`.
   "refdata",
+  // Author the incoming-quote-acceptance rule graph (the third trader-configurable
+  // rule engine — `celnet-acceptance`). The 18th action (server `Action::ALL`
+  // discriminant order — LAST, after `refdata`). Held back from the default trader
+  // bundle (an explicitly-granted acceptance-policy author seat).
+  "manage_acceptance",
 ];
 
 /** Both asset classes in canonical order — the column axis of the matrix. */
@@ -3480,6 +3485,102 @@ export interface HedgeGraph {
   entry: number;
   /** All nodes (id-carrying); the store rebuilds the id→node map from them. */
   nodes: HedgeNode[];
+}
+
+// --- Incoming-quote acceptance (docs — celnet-acceptance) --------------------
+//
+// The THIRD trader-configurable rule engine (after risk-routing + auto-hedge): a
+// first-match decision graph that runs AT ACCEPTANCE (after last-look, before
+// booking) on each incoming client LIFT and resolves it to ACCEPT / REJECT /
+// HOLD_FOR_REVIEW. Built on the SAME graph engine: an `AcceptanceGraph` reuses
+// {@link RouteOp} / {@link RouteValue} verbatim, differing only in that its leaves
+// are DECISIONS ({@link AcceptanceAction}) rather than book targets / exit actions,
+// and it branches on a per-lift {@link AcceptanceField} snapshot. Every type mirrors
+// its `celnet.wire` message field-for-field; the GUI hand-decodes the WS JSON so
+// {@link wsCodec} matches the server descriptor codec's snake_case names, numeric
+// enum tags and the `condition|decision` node oneof. Authoring gates on the narrow
+// `manage_acceptance` capability × asset.
+
+/**
+ * Which lift attribute an acceptance condition matches (mirrors the wire
+ * `AcceptanceFieldEnum` / `celnet_acceptance::AcceptanceField`, same ordinal order
+ * 0..8). `counterparty` / `side` / `asset_class` / `desk` are ENUM fields compared
+ * by equality / membership; `instrument_symbol` is a free STRING (supports
+ * substring); every other attribute is NUMERIC (its kind is pinned in
+ * `lib/acceptanceFields.ts`, the mirror of `AcceptanceField::kind`).
+ */
+export type AcceptanceField =
+  | "counterparty"
+  | "notional_usd"
+  | "tenor_years"
+  | "instrument_symbol"
+  | "side"
+  | "edge_bps"
+  | "quote_age_ms"
+  | "asset_class"
+  | "desk";
+
+/**
+ * The kind of acceptance decision leaf (mirrors `AcceptanceActionKind`, ordinals
+ * accept=0 / reject=1 / hold_for_review=2): `accept` books the lift; `reject`
+ * declines it with the reason (surfaced on the FIX `Text(58)`); `hold_for_review`
+ * routes the lift to the desk inbox for a human to accept manually.
+ */
+export type AcceptanceActionKind = "accept" | "reject" | "hold_for_review";
+
+/**
+ * One acceptance decision — a terminal leaf of an {@link AcceptanceGraph} (mirrors
+ * the wire `AcceptanceActionDesc`: a `kind` tag + the `reason` string; the `reason`
+ * is read only for `reject` / `hold_for_review`).
+ */
+export interface AcceptanceAction {
+  /** Which decision this leaf fires. */
+  kind: AcceptanceActionKind;
+  /** REJECT / HOLD_FOR_REVIEW: the rationale surfaced to the counterparty / desk. */
+  reason: string;
+}
+
+/**
+ * A decision node body: evaluate `field op value` on the lift; on `true` follow
+ * {@link onTrue}, else {@link onFalse} (mirrors `AcceptanceConditionDesc`; reuses
+ * {@link RouteOp} / {@link RouteValue} verbatim). `value` is `null` for a
+ * not-yet-set condition (server rejects on write).
+ */
+export interface AcceptanceCondition {
+  /** The lift field to test. */
+  field: AcceptanceField;
+  /** The comparison operator. */
+  op: RouteOp;
+  /** The literal compared against; `null` ⇒ unset. */
+  value: RouteValue | null;
+  /** Successor node id when the condition holds. */
+  onTrue: number;
+  /** Successor node id when the condition does not hold. */
+  onFalse: number;
+}
+
+/**
+ * One node in an {@link AcceptanceGraph}, keyed by its {@link id} (mirrors the wire
+ * `AcceptanceNodeDesc` oneof / `celnet_acceptance::AcceptanceNode`). Either an
+ * internal `condition` test or a terminal `decision` leaf carrying its
+ * {@link AcceptanceAction}.
+ */
+export type AcceptanceNode =
+  | { kind: "condition"; id: number; condition: AcceptanceCondition }
+  | { kind: "decision"; id: number; action: AcceptanceAction };
+
+/**
+ * The firm-wide incoming-quote-acceptance decision graph (mirrors
+ * `AcceptanceGraphDesc` / `celnet_acceptance::AcceptanceGraph`): the walk begins at
+ * {@link entry} and follows condition successors until a decision leaf. The default
+ * graph is a single accept-all decision leaf. Well-formedness is validated
+ * server-side on write.
+ */
+export interface AcceptanceGraph {
+  /** The node id at which every lift walk begins. */
+  entry: number;
+  /** All nodes (id-carrying); the store rebuilds the id→node map from them. */
+  nodes: AcceptanceNode[];
 }
 
 /**

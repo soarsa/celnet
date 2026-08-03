@@ -48,6 +48,7 @@ import type {
   RiskBookRisk,
   RiskRoutingGraph,
   HedgeGraph,
+  AcceptanceGraph,
   WarehouseThreshold,
   HedgeProvenance,
   HedgeIntent,
@@ -277,6 +278,10 @@ import {
   hedgePolicyGraphResponseFromWire,
   updateHedgePolicyGraphRequestToWire,
   updateHedgePolicyGraphResponseFromWire,
+  getAcceptanceGraphRequestToWire,
+  acceptanceGraphResponseFromWire,
+  updateAcceptanceGraphRequestToWire,
+  updateAcceptanceGraphResponseFromWire,
   listHedgeThresholdsRequestToWire,
   hedgeThresholdsResponseFromWire,
   updateHedgeThresholdRequestToWire,
@@ -2290,6 +2295,26 @@ export class WsTransport implements CelnetTransport {
       "hedge_policy_graph_updated",
     );
     return updateHedgePolicyGraphResponseFromWire(reply);
+  }
+
+  // --- Incoming-quote acceptance ---------------------------------------------
+
+  async getAcceptanceGraph(): Promise<AcceptanceGraph | null> {
+    const reply = await this.conn.request(
+      "get_acceptance_graph",
+      getAcceptanceGraphRequestToWire(),
+      "acceptance_graph",
+    );
+    return acceptanceGraphResponseFromWire(reply);
+  }
+
+  async updateAcceptanceGraph(graph: AcceptanceGraph): Promise<AcceptanceGraph> {
+    const reply = await this.conn.request(
+      "update_acceptance_graph",
+      updateAcceptanceGraphRequestToWire(graph),
+      "acceptance_graph_updated",
+    );
+    return updateAcceptanceGraphResponseFromWire(reply);
   }
 
   async listHedgeThresholds(): Promise<WarehouseThreshold[]> {

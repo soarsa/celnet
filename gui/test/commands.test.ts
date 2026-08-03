@@ -356,6 +356,9 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         "riskdashboard",
         "riskrouting",
         // hedging is HOISTED out of the FI rail into its own top-level "Hedging" tab.
+        // acceptance (incoming-quote-acceptance rule builder) stays in the FI "Risk"
+        // section, right after risk routing.
+        "acceptance",
         "risktransfer",
         "transferinbox",
         "transferaudit",
@@ -554,6 +557,9 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     expect(byLabel("Risk")).toEqual([
       "riskdashboard",
       "riskrouting",
+      // acceptance (incoming-quote-acceptance builder) sits in the Risk section after
+      // risk routing (hedging is hoisted out to its own top-level tab).
+      "acceptance",
       "risk",
     ]);
     expect(byLabel("Transfers")).toEqual(["risktransfer", "transferinbox", "transferaudit"]);
