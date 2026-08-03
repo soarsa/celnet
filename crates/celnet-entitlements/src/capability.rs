@@ -137,12 +137,25 @@ pub enum Action {
     /// today). Not in the default trader bundle — an explicitly-granted authority like
     /// the `Manage*` / `RiskTransfer` / `Hedge` seats.
     Refdata,
+    /// **Author / arm the incoming-quote-acceptance policy**: read/replace the firm-wide
+    /// acceptance decision graph (get/update) that gates whether an inbound counterparty
+    /// lift is ACCEPTED, REJECTED, or HELD for manual review at the acceptance point (the
+    /// third trader-configurable rule engine — `celnet-acceptance`; the future home for
+    /// credit checks + quote validations). A NARROW risk-control authority **distinct**
+    /// from [`Action::Book`] (the booking a *accepted* lift performs, still gated on
+    /// `Book` × the position's asset — so a desk can author the acceptance policy without
+    /// the standing authority to book, and vice-versa), from [`Action::RiskManage`] and
+    /// [`Action::Hedge`], and from super-admin ([`Action::Administer`]): a risk lead can
+    /// arm the acceptance policy without full administration. Exercised per
+    /// [`AssetClass`]. Not in the default trader bundle — an explicitly-granted authority
+    /// like the `Manage*` / `RiskTransfer` / `Hedge` / `Refdata` seats.
+    ManageAcceptance,
 }
 
 impl Action {
     /// Every action, in discriminant order — the canonical iteration set for
     /// building bundles and exhaustiveness tests.
-    pub const ALL: [Action; 17] = [
+    pub const ALL: [Action; 18] = [
         Action::View,
         Action::Price,
         Action::QuoteRespond,
@@ -160,6 +173,7 @@ impl Action {
         Action::ViewAnalytics,
         Action::Hedge,
         Action::Refdata,
+        Action::ManageAcceptance,
     ];
 
     /// Stable snake_case label for audit/log/wire fields.
@@ -183,6 +197,7 @@ impl Action {
             Action::ViewAnalytics => "view_analytics",
             Action::Hedge => "hedge",
             Action::Refdata => "refdata",
+            Action::ManageAcceptance => "manage_acceptance",
         }
     }
 
@@ -569,6 +584,57 @@ mod tests {
         assert_eq!(Action::from_label("refdata"), Some(Action::Refdata));
         for asset in AssetClass::ALL {
             assert!(!CapabilitySet::empty().allows(Capability::new(Action::Refdata, asset)));
+        }
+    }
+
+    /// Separation of duties: `manage_acceptance` (author the incoming-quote-acceptance
+    /// policy) is a NARROW authority distinct from `book` (the booking an accepted lift
+    /// performs), from `hedge`, and from `administer` — granting one never implies another,
+    /// and it is asset-scoped (an FI grant never leaks to FX). Not in the default (empty) set.
+    #[test]
+    fn manage_acceptance_is_distinct_from_book_hedge_administer() {
+        let fi_accept = Capability::new(Action::ManageAcceptance, AssetClass::FixedIncome);
+        let fi_book = Capability::new(Action::Book, AssetClass::FixedIncome);
+        let fi_hedge = Capability::new(Action::Hedge, AssetClass::FixedIncome);
+        let fx_accept = Capability::new(Action::ManageAcceptance, AssetClass::FxOptions);
+
+        // An acceptance-policy author holds ONLY manage_acceptance — not book, hedge, admin.
+        let author = CapabilitySet::empty().grant(fi_accept);
+        assert!(author.allows(fi_accept));
+        assert!(
+            !author.allows(fi_book),
+            "authoring an acceptance policy must not imply booking authority"
+        );
+        assert!(
+            !author.allows(fi_hedge),
+            "manage_acceptance must not imply hedge"
+        );
+        assert!(
+            !author.allows(Capability::new(Action::Administer, AssetClass::FixedIncome)),
+            "manage_acceptance is distinct from administer"
+        );
+        assert!(
+            !author.allows(fx_accept),
+            "FI manage_acceptance must not grant FX manage_acceptance"
+        );
+
+        // A booker holds ONLY book — not the authority to arm the acceptance policy.
+        let booker = CapabilitySet::empty().grant(fi_book);
+        assert!(booker.allows(fi_book));
+        assert!(
+            !booker.allows(fi_accept),
+            "book must not imply acceptance-policy authoring"
+        );
+
+        // Not in the default set; label round-trips.
+        assert_eq!(
+            Action::from_label("manage_acceptance"),
+            Some(Action::ManageAcceptance)
+        );
+        for asset in AssetClass::ALL {
+            assert!(
+                !CapabilitySet::empty().allows(Capability::new(Action::ManageAcceptance, asset))
+            );
         }
     }
 

@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use celnet_acceptance::{AcceptanceGraph, default_accept_all_graph};
 use celnet_entitlements::{Action, AssetClass, Capability};
 use celnet_hedge_routing::HedgeGraph;
 use celnet_risk_routing::{RiskRoutingGraph, RoutingNode};
@@ -141,6 +142,7 @@ pub fn default_trader_bundle() -> Vec<Capability> {
                 | Action::ViewAnalytics
                 | Action::Hedge
                 | Action::Refdata
+                | Action::ManageAcceptance
         ) {
             continue;
         }
@@ -971,6 +973,19 @@ pub struct IdentityStore {
     /// serde-default field, so an existing `identity.json` loads unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hedge_policy_graph: Option<HedgeGraph>,
+    /// The firm-wide **incoming-quote-acceptance decision graph** (the third
+    /// trader-configurable rule engine — `celnet-acceptance`). Gates whether an inbound
+    /// counterparty lift is ACCEPTED, REJECTED, or HELD for manual review at the
+    /// acceptance point. The sibling of [`risk_routing_graph`](Self::risk_routing_graph)
+    /// and [`hedge_policy_graph`](Self::hedge_policy_graph) whose leaves are **acceptance
+    /// actions**. Seeded **accept-all** on a pristine store so existing behaviour is
+    /// UNCHANGED until a trader writes rules; validated (acyclic, type-consistent
+    /// conditions) at load and every write via
+    /// [`check_acceptance_graph`](IdentityStore::check_acceptance_graph). An additive
+    /// serde-default field, so an existing `identity.json` (which carries no
+    /// `acceptance_graph`) loads unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance_graph: Option<AcceptanceGraph>,
     /// The configured **warehouse thresholds** (the "100" per desk / book / instrument —
     /// §4). Each binds a scope id to a soft, banded risk budget. An additive serde-default
     /// list, so an existing `identity.json` (which carries no `hedge_thresholds`) loads
@@ -2097,6 +2112,59 @@ impl IdentityStore {
         true
     }
 
+    /// Additively seed the default **accept-all** acceptance graph on a pristine store, so
+    /// `acceptance_graph()` returns a real (identity) policy from first boot — every inbound
+    /// lift resolves to `Accept` and books exactly as before, leaving existing behaviour
+    /// UNCHANGED until a trader writes rules. Seeds ONLY when no acceptance graph is
+    /// configured yet (idempotent; an operator who has begun configuring it is never
+    /// clobbered). Returns whether anything was seeded (the caller then persists).
+    pub fn ensure_seed_acceptance(&mut self) -> bool {
+        if self.acceptance_graph.is_some() {
+            return false;
+        }
+        self.acceptance_graph = Some(default_accept_all_graph());
+        true
+    }
+
+    // --- incoming-quote acceptance ------------------------------------------
+
+    /// The firm-wide acceptance decision graph, if defined.
+    #[must_use]
+    pub fn acceptance_graph(&self) -> Option<&AcceptanceGraph> {
+        self.acceptance_graph.as_ref()
+    }
+
+    /// Install (or replace) the firm-wide acceptance graph after validating it
+    /// ([`check_acceptance_graph`](Self::check_acceptance_graph)). On any defect the store
+    /// is left unchanged.
+    ///
+    /// # Errors
+    /// The graph is malformed (dangling entry/edge, a cycle, a type-inconsistent condition).
+    pub fn set_acceptance_graph(&mut self, graph: AcceptanceGraph) -> Result<(), String> {
+        self.check_acceptance_graph(&graph)?;
+        self.acceptance_graph = Some(graph);
+        Ok(())
+    }
+
+    /// Validate an acceptance graph via the pure engine's
+    /// [`AcceptanceGraph::validate`](celnet_acceptance::AcceptanceGraph::validate), mapping
+    /// its collected defects into one human-readable message. An acceptance decision leaf
+    /// carries no external registry target, so — unlike the hedge graph — no instrument / LP
+    /// registry is consulted.
+    ///
+    /// # Errors
+    /// A malformed graph (dangling entry/edge, cycle, type-inconsistent condition).
+    pub fn check_acceptance_graph(&self, graph: &AcceptanceGraph) -> Result<(), String> {
+        graph.validate().map_err(|errs| {
+            let joined = errs
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("acceptance graph is invalid: {joined}")
+        })
+    }
+
     // --- auto-hedge policy / thresholds / config (Phase B) -------------------
 
     /// The firm-wide auto-hedge policy graph, if defined.
@@ -2297,6 +2365,9 @@ impl IdentityStore {
         }
         if let Some(graph) = &self.hedge_policy_graph {
             self.check_hedge_policy_graph(graph)?;
+        }
+        if let Some(graph) = &self.acceptance_graph {
+            self.check_acceptance_graph(graph)?;
         }
         Ok(())
     }

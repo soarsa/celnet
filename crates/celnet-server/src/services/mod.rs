@@ -22,6 +22,7 @@
 //! Every RPC enters the readiness gate (bumping the in-flight drain counter) and
 //! refuses new work with `UNAVAILABLE` while the edge is starting or draining.
 
+pub mod acceptance;
 pub mod access;
 pub mod aggregation;
 pub mod analytics;

@@ -90,6 +90,10 @@ celnet-risk-routing.workspace = true
 # HedgeGraph / WarehouseThreshold / HedgeRouter the identity store persists + validates
 # and the server auto-hedge control loop resolves off-core on each risk_version bump.
 celnet-hedge-routing.workspace = true
+# Incoming-quote acceptance (the third trader-configurable rule engine — celnet-acceptance):
+# the pure acceptance decision-graph the identity store persists + validates and the FIX
+# acceptance point evaluates off-core to gate an inbound lift (accept / reject / hold).
+celnet-acceptance.workspace = true
 # The pure risk-transfer domain (validation + leg computation) whose types the server
 # apply engine drives through the existing booking sinks (Phase 2, RISK-TRANSFER §11.1).
 celnet-risk-transfer.workspace = true

@@ -70,6 +70,8 @@ use celnet_proto::{instrument, strike_or_delta};
 
 use celnet_types::{OptionType, Tenor};
 
+use celnet_acceptance::AcceptanceDecision;
+
 use crate::clock::Clock;
 use crate::config::fix_connections::AcceptorKind;
 use crate::core_link::CoreLink;
@@ -123,6 +125,11 @@ struct FixQuote {
     /// rates auto-quote surfaces as a booked deal + live position. `None` for an FX line
     /// or a venue that is not desk-routed.
     rates_request_id: Option<String>,
+    /// The clock time (nanos) this quote was minted — captured at
+    /// [`Session::emit_two_way_quote`] alongside the token validity. A lift derives the
+    /// quote's **age** (`now − mint_nanos`) for the incoming-quote-acceptance context, so a
+    /// rule can reject / hold a stale lift.
+    mint_nanos: i64,
 }
 
 /// A live **RFS** (request-for-stream) subscription on a fixed-income STREAM venue: the
@@ -766,6 +773,7 @@ impl FixSession {
                 sell_token,
                 fx,
                 rates_request_id,
+                mint_nanos: now,
             },
         );
 
@@ -1274,6 +1282,12 @@ impl FixSession {
             .as_ref()
             .and_then(|q| self.live.get(q))
             .and_then(|lq| lq.rates_request_id.clone());
+        // The clock time this quote was minted, so a lift can derive the quote's age for the
+        // incoming-quote-acceptance context (`None` for an FX/unknown line).
+        let quote_mint_nanos = quote_id
+            .as_ref()
+            .and_then(|q| self.live.get(q))
+            .map(|lq| lq.mint_nanos);
 
         // Book through the SAME last-look ledger the RFS stream uses. An unknown
         // quote/side ⇒ UnknownToken (no live token), exactly as a forged token.
@@ -1325,23 +1339,56 @@ impl FixSession {
         // REJECTS (limit / risk-book breach) it books NOTHING and returns `None`. We MUST
         // reflect that on the wire: report REJECTED instead of a phantom FILLED with no deal
         // behind it. (The last-look token is already consumed, so a re-lift still rejects.)
+        //
+        // Incoming-quote-acceptance gate (the third trader-configurable rule engine —
+        // `celnet-acceptance`): AFTER last-look validity passes (the ledger `Booked` above)
+        // and BEFORE `book_fix_lift`, the acceptance graph gates the lift. `Accept` (the
+        // seeded ACCEPT-ALL default, so a NO-OP until configured) books exactly as today;
+        // `Reject` refuses the lift with its reason (EXEC_REJECTED, nothing booked); `Hold`
+        // routes it to the desk inbox for manual accept (the request stays QUOTED so a human
+        // accepts it later via `accept_desk_quote`) and does NOT close the RFS stream. The
+        // last-look token was already consumed by `try_book`, so a re-lift re-rejects
+        // (consistent with the existing last-look ordering) — a Hold relies on the GUI
+        // desk-accept path, not a FIX re-lift.
+        let mut acceptance_reason: Option<String> = None;
         if filled && let Some(request_id) = rates_request_id.as_ref() {
-            let book_attempted = self
-                .ctx
-                .desk_edge
-                .as_ref()
-                .map(|edge| edge.book_fix_lift(request_id));
-            if matches!(book_attempted, Some(None)) {
-                filled = false;
-                const REJECT: &[u8] = b"rates lift rejected: pre-trade / risk-book limit breach";
-                text = text.or(Some(REJECT));
+            if let Some(edge) = self.ctx.desk_edge.as_ref() {
+                let quote_age_ms = quote_mint_nanos
+                    .map(|mint| ((now.saturating_sub(mint)).max(0) as f64) / 1_000_000.0)
+                    .unwrap_or(0.0);
+                match edge.evaluate_fix_acceptance(request_id, quote_age_ms) {
+                    AcceptanceDecision::Accept => {
+                        if edge.book_fix_lift(request_id).is_none() {
+                            filled = false;
+                            const REJECT: &[u8] =
+                                b"rates lift rejected: pre-trade / risk-book limit breach";
+                            text = text.or(Some(REJECT));
+                        }
+                    }
+                    AcceptanceDecision::Reject(reason) => {
+                        // Refuse the lift — book NOTHING. Leave the RFS stream live so the
+                        // counterparty can re-request (a fresh quote mints a new token).
+                        filled = false;
+                        acceptance_reason = Some(format!("acceptance rejected: {reason}"));
+                    }
+                    AcceptanceDecision::Hold(reason) => {
+                        // Route to the desk inbox for MANUAL accept: the request stays QUOTED
+                        // (never booked here), so a human accepts it via the GUI desk-accept
+                        // path. Do NOT retire the quote / close the RFS stream on a Hold.
+                        filled = false;
+                        acceptance_reason = Some(format!("held for manual review: {reason}"));
+                    }
+                }
             }
-            // Only a genuinely-booked lift closes the RFS stream; a rejected one leaves it
-            // live so the counterparty can re-request.
+            // Only a genuinely-booked (or no-edge test) lift closes the RFS stream; a
+            // rejected / held one leaves it live so the counterparty can re-request.
             if filled {
                 self.rfs
                     .retain(|_, sub| sub.request_id.as_deref() != Some(request_id.as_str()));
             }
+        }
+        if let Some(reason) = &acceptance_reason {
+            text = Some(reason.as_bytes());
         }
 
         // A successful lift retires the quote (idempotency: a second lift of the same

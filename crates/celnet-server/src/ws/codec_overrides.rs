@@ -160,6 +160,14 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "ListHedgeProvenanceResponse",
     "GetHedgeConfigResponse",
     "SetHedgeConfigResponse",
+    // The AuthService incoming-quote-acceptance reply envelopes (the third
+    // trader-configurable rule engine): each `json!({ .. })` hand encoder emits the
+    // `Option<u64>` `correlation_id` as JSON `null` when absent; the `graph` singular-message
+    // payload already renders `null`-when-absent via the generic singular-message rule. The
+    // nested `AcceptanceActionDesc` carries only plain scalars (no presence-tracked field),
+    // so it is not listed.
+    "GetAcceptanceGraphResponse",
+    "UpdateAcceptanceGraphResponse",
     // The AuthService risk-transfer reply envelopes (RiskTransfer RPCs): each
     // `json!({ .. })` hand encoder emits the `Option<u64>` `correlation_id` as JSON
     // `null` when absent; the `transfer` singular-message payload already renders

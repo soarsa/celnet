@@ -5323,6 +5323,137 @@ message UpdateHedgePolicyGraphResponse {
   optional uint64 correlation_id = 2;
 }
 
+// ===========================================================================
+// incoming-quote acceptance (the third trader-configurable rule engine — the
+// wire mirror of the `celnet-acceptance` pure crate). An acceptance policy is a
+// decision graph of the SAME shape as `RiskRoutingGraphDesc` / `HedgeGraphDesc`,
+// but its leaves are ACCEPTANCE ACTIONS (`AcceptanceActionDesc`: accept / reject /
+// hold-for-review) instead of book targets or exit actions; conditions reuse
+// `RouteOpEnum` + `RouteValueDesc` verbatim (asset-agnostic). Every message mirrors
+// the domain types field-for-field (same ordinal order for enums).
+// ===========================================================================
+
+// Which lift field an acceptance condition matches (mirrors
+// `celnet_acceptance::AcceptanceField`, same ordinal order). Prefixed per the
+// file-scope enum convention.
+enum AcceptanceFieldEnum {
+  // Counterparty / originating party id (an Enum field).
+  ACCEPTANCE_FIELD_COUNTERPARTY = 0;
+  // Absolute USD notional of the lift (Numeric).
+  ACCEPTANCE_FIELD_NOTIONAL_USD = 1;
+  // Tenor / years to maturity of the lifted instrument (Numeric).
+  ACCEPTANCE_FIELD_TENOR_YEARS = 2;
+  // Instrument identifier / curve / security symbol (a String field).
+  ACCEPTANCE_FIELD_INSTRUMENT_SYMBOL = 3;
+  // Lift side — pay/receive/buy/sell (an Enum field).
+  ACCEPTANCE_FIELD_SIDE = 4;
+  // Dealer edge of the lift versus the engine mid, in bp (Numeric, signed).
+  ACCEPTANCE_FIELD_EDGE_BPS = 5;
+  // Age of the quote at lift time, in milliseconds (Numeric).
+  ACCEPTANCE_FIELD_QUOTE_AGE_MS = 6;
+  // Owning asset class — "fx_options" / "fixed_income" (an Enum field).
+  ACCEPTANCE_FIELD_ASSET_CLASS = 7;
+  // Owning / target desk (an Enum field).
+  ACCEPTANCE_FIELD_DESK = 8;
+}
+
+// The kind of acceptance action a leaf takes (mirrors
+// `celnet_acceptance::AcceptanceAction`'s variants, same ordinal order).
+enum AcceptanceActionKind {
+  // Accept the lift — proceed to book exactly as today.
+  ACCEPTANCE_ACTION_ACCEPT = 0;
+  // Reject the lift — do not book; surface `reason` to the counterparty.
+  ACCEPTANCE_ACTION_REJECT = 1;
+  // Hold the lift for manual review — do not auto-book; leave the desk request
+  // pending so a human accepts it via the existing desk-accept path.
+  ACCEPTANCE_ACTION_HOLD_FOR_REVIEW = 2;
+}
+
+// The acceptance-action vocabulary (mirrors `celnet_acceptance::AcceptanceAction`),
+// carried FLAT as a `kind` discriminant + the reason (only read for REJECT /
+// HOLD_FOR_REVIEW). A flat form — not a oneof-of-messages — keeps the wire codec small
+// while remaining lossless.
+message AcceptanceActionDesc {
+  // Which acceptance action this leaf takes.
+  AcceptanceActionKind kind = 1;
+  // REJECT / HOLD_FOR_REVIEW: the rationale surfaced on the FIX `Text(58)` (empty for
+  // ACCEPT).
+  string reason = 2;
+}
+
+// A decision node: evaluate `field op value` on the lift (mirrors
+// `AcceptanceNode::Condition`; reuses `RouteOpEnum` + `RouteValueDesc` verbatim).
+message AcceptanceConditionDesc {
+  // The lift field to test.
+  AcceptanceFieldEnum field = 1;
+  // The comparison operator.
+  RouteOpEnum op = 2;
+  // The literal compared against.
+  RouteValueDesc value = 3;
+  // Successor node id when the condition holds.
+  uint32 on_true = 4;
+  // Successor node id when the condition does not hold.
+  uint32 on_false = 5;
+}
+
+// One node in an `AcceptanceGraphDesc`, keyed by its `id` (mirrors `AcceptanceNode`).
+// The `node` oneof is either an internal condition test or a terminal decision leaf.
+message AcceptanceNodeDesc {
+  // The node id, unique within the graph.
+  uint32 id = 1;
+  // The node body: exactly one arm is set — a condition or a terminal decision.
+  oneof node {
+    // An internal decision node.
+    AcceptanceConditionDesc condition = 2;
+    // A terminal leaf: the lift resolves to this acceptance action.
+    AcceptanceActionDesc decision = 3;
+  }
+}
+
+// The firm-wide acceptance decision graph (mirrors `celnet_acceptance::AcceptanceGraph`:
+// a `BTreeMap<NodeId, AcceptanceNode>` flattened to an id-carrying node list, entered at
+// `entry`). Validated server-side on write (acyclic, type-consistent conditions).
+message AcceptanceGraphDesc {
+  // The node at which every evaluation's walk begins.
+  uint32 entry = 1;
+  // All nodes (id-carrying); the store rebuilds the id→node map from them.
+  repeated AcceptanceNodeDesc nodes = 2;
+}
+
+// Read the firm-wide acceptance graph (gated `manage_acceptance` × asset). Absent until
+// defined.
+message GetAcceptanceGraphRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The current acceptance graph, or absent when none is defined yet.
+message GetAcceptanceGraphResponse {
+  // The firm-wide acceptance graph (absent ⇒ none defined).
+  optional AcceptanceGraphDesc graph = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Replace the firm-wide acceptance graph (gated `manage_acceptance` × asset). Validated
+// (acyclic, type-consistent conditions) before commit.
+message UpdateAcceptanceGraphRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // The new acceptance graph.
+  AcceptanceGraphDesc graph = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The committed acceptance graph.
+message UpdateAcceptanceGraphResponse {
+  // The committed graph.
+  AcceptanceGraphDesc graph = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
 // List the configured warehouse thresholds (gated `hedge` × asset).
 message ListHedgeThresholdsRequest {
   // The caller's bearer token.
@@ -6828,6 +6959,15 @@ service AuthService {
   rpc ListHedgeProvenance(ListHedgeProvenanceRequest) returns (ListHedgeProvenanceResponse);
   rpc GetHedgeConfig(GetHedgeConfigRequest) returns (GetHedgeConfigResponse);
   rpc SetHedgeConfig(SetHedgeConfigRequest) returns (SetHedgeConfigResponse);
+  // Incoming-quote acceptance (the third trader-configurable rule engine —
+  // `celnet-acceptance`). Read / replace the firm-wide acceptance decision graph that
+  // gates whether an inbound counterparty lift is ACCEPTED, REJECTED, or HELD for
+  // manual review at the acceptance point (the future home for credit checks + quote
+  // validations). Authoring gates on the narrow `manage_acceptance` capability × asset.
+  // Every write pushes the live graph into the rates store's acceptance snapshot the
+  // FIX acceptance point evaluates.
+  rpc GetAcceptanceGraph(GetAcceptanceGraphRequest) returns (GetAcceptanceGraphResponse);
+  rpc UpdateAcceptanceGraph(UpdateAcceptanceGraphRequest) returns (UpdateAcceptanceGraphResponse);
   // Aggregate risk per risk book, rolled up the book tree (phase 5 — §5, §8.5).
   rpc ListRiskBookRisk(ListRiskBookRiskRequest) returns (ListRiskBookRiskResponse);
   // Risk transfer — the MANUAL move of EXISTING risk between books / desks /

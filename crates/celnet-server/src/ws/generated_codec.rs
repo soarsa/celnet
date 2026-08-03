@@ -167,6 +167,13 @@ use celnet_proto::{
     UpdateHedgePolicyGraphRequest, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest,
     UpdateHedgeThresholdResponse, WarehouseThresholdDesc, hedge_node_desc,
 };
+// Incoming-quote acceptance (the third trader-configurable rule engine) — the acceptance
+// decision-graph node/leaf shapes, mirroring the risk-routing / hedge node/leaf shapes.
+use celnet_proto::{
+    AcceptanceActionDesc, AcceptanceConditionDesc, AcceptanceGraphDesc, AcceptanceNodeDesc,
+    GetAcceptanceGraphRequest, GetAcceptanceGraphResponse, UpdateAcceptanceGraphRequest,
+    UpdateAcceptanceGraphResponse, acceptance_node_desc,
+};
 use serde_json::{Map, Value, json};
 
 use super::codec::CodecError;
@@ -6364,6 +6371,68 @@ impl WireBuilder for HedgeGraphDesc {
     }
 }
 
+impl WireBuilder for AcceptanceActionDesc {
+    const MESSAGE: &'static str = "AcceptanceActionDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "kind" => self.kind = enum_or_zero(value),
+            "reason" => self.reason = string_or_empty(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for AcceptanceConditionDesc {
+    const MESSAGE: &'static str = "AcceptanceConditionDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "field" => self.field = enum_or_zero(value),
+            "op" => self.op = enum_or_zero(value),
+            "value" => self.value = opt_msg::<RouteValueDesc>(value, "value")?,
+            "on_true" => self.on_true = u32_or_zero(value),
+            "on_false" => self.on_false = u32_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for AcceptanceNodeDesc {
+    const MESSAGE: &'static str = "AcceptanceNodeDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        use acceptance_node_desc::Node;
+        match field.proto_name {
+            "id" => self.id = u32_or_zero(value),
+            "condition" => {
+                self.node = Some(Node::Condition(req_msg::<AcceptanceConditionDesc>(
+                    value,
+                    "condition",
+                )?));
+            }
+            "decision" => {
+                self.node = Some(Node::Decision(req_msg::<AcceptanceActionDesc>(
+                    value, "decision",
+                )?));
+            }
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for AcceptanceGraphDesc {
+    const MESSAGE: &'static str = "AcceptanceGraphDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "entry" => self.entry = u32_or_zero(value),
+            "nodes" => self.nodes = opt_repeated::<AcceptanceNodeDesc>(value, "node")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for WarehouseThresholdDesc {
     const MESSAGE: &'static str = "WarehouseThresholdDesc";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -6452,6 +6521,31 @@ impl WireBuilder for UpdateHedgePolicyGraphRequest {
         match field.proto_name {
             "session_token" => self.session_token = req_string(value, "session_token")?,
             "graph" => self.graph = Some(req_msg::<HedgeGraphDesc>(value, "graph")?),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for GetAcceptanceGraphRequest {
+    const MESSAGE: &'static str = "GetAcceptanceGraphRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateAcceptanceGraphRequest {
+    const MESSAGE: &'static str = "UpdateAcceptanceGraphRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "graph" => self.graph = Some(req_msg::<AcceptanceGraphDesc>(value, "graph")?),
             "correlation_id" => self.correlation_id = opt_u64(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
@@ -7132,6 +7226,30 @@ pub fn decode_update_hedge_policy_graph_request(
     o: &Map<String, Value>,
 ) -> DResult<UpdateHedgePolicyGraphRequest> {
     decode(UpdateHedgePolicyGraphRequest::MESSAGE, o)
+}
+
+/// Decode a [`GetAcceptanceGraphRequest`] envelope — fully generic (session token +
+/// an optional correlation id).
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_get_acceptance_graph_request(
+    o: &Map<String, Value>,
+) -> DResult<GetAcceptanceGraphRequest> {
+    decode(GetAcceptanceGraphRequest::MESSAGE, o)
+}
+
+/// Decode an [`UpdateAcceptanceGraphRequest`] envelope — the required `graph` nests the
+/// [`AcceptanceGraphDesc`] body (its `AcceptanceNodeDesc` array, each carrying the
+/// condition/decision `node` oneof; a condition nests the reused `RouteValueDesc` value
+/// oneof, a decision the flat `AcceptanceActionDesc` leaf).
+///
+/// # Errors
+/// A missing `session_token`, a missing/malformed `graph`, as a [`CodecError`].
+pub fn decode_update_acceptance_graph_request(
+    o: &Map<String, Value>,
+) -> DResult<UpdateAcceptanceGraphRequest> {
+    decode(UpdateAcceptanceGraphRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListHedgeThresholdsRequest`] envelope — fully generic.
@@ -8506,6 +8624,57 @@ impl WireAdapter for HedgeGraphDesc {
     }
 }
 
+impl WireAdapter for AcceptanceActionDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "kind" => Some(WireVal::Enum(self.kind)),
+            "reason" => Some(WireVal::Str(&self.reason)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AcceptanceConditionDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "field" => Some(WireVal::Enum(self.field)),
+            "op" => Some(WireVal::Enum(self.op)),
+            // Absent singular message ⇒ JSON null (the hand codec's `.map(..)` yields null).
+            "value" => self
+                .value
+                .as_ref()
+                .map(|v| WireVal::Msg(v as &dyn WireAdapter)),
+            "on_true" => Some(WireVal::U64(u64::from(self.on_true))),
+            "on_false" => Some(WireVal::U64(u64::from(self.on_false))),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AcceptanceNodeDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        use acceptance_node_desc::Node;
+        match (proto_name, &self.node) {
+            ("id", _) => Some(WireVal::U64(u64::from(self.id))),
+            ("condition", Some(Node::Condition(c))) => Some(WireVal::Msg(c as &dyn WireAdapter)),
+            ("decision", Some(Node::Decision(a))) => Some(WireVal::Msg(a as &dyn WireAdapter)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for AcceptanceGraphDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "entry" => Some(WireVal::U64(u64::from(self.entry))),
+            "nodes" => Some(WireVal::RepeatedMsg(
+                self.nodes.iter().map(|n| n as &dyn WireAdapter).collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for WarehouseThresholdDesc {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -8647,6 +8816,26 @@ impl WireAdapter for GetHedgePolicyGraphResponse {
 }
 
 impl WireAdapter for UpdateHedgePolicyGraphResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "graph" => self.graph.as_ref().map(|g| WireVal::Msg(g)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for GetAcceptanceGraphResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "graph" => self.graph.as_ref().map(|g| WireVal::Msg(g)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateAcceptanceGraphResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
             "graph" => self.graph.as_ref().map(|g| WireVal::Msg(g)),
@@ -9198,6 +9387,20 @@ pub fn encode_get_hedge_policy_graph_response(r: &GetHedgePolicyGraphResponse) -
 #[must_use]
 pub fn encode_update_hedge_policy_graph_response(r: &UpdateHedgePolicyGraphResponse) -> Value {
     encode("UpdateHedgePolicyGraphResponse", r)
+}
+
+/// Encode a [`GetAcceptanceGraphResponse`] to its WS JSON — descriptor-driven. The
+/// absent `graph` singular message renders as `null`; the envelope `correlation_id`
+/// rides as `null` when absent (its null-absent policy).
+#[must_use]
+pub fn encode_get_acceptance_graph_response(r: &GetAcceptanceGraphResponse) -> Value {
+    encode("GetAcceptanceGraphResponse", r)
+}
+
+/// Encode an [`UpdateAcceptanceGraphResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_acceptance_graph_response(r: &UpdateAcceptanceGraphResponse) -> Value {
+    encode("UpdateAcceptanceGraphResponse", r)
 }
 
 /// Encode a [`ListHedgeThresholdsResponse`] to its WS JSON — descriptor-driven.

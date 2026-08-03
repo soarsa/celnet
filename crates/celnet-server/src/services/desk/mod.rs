@@ -57,8 +57,11 @@ use crate::rates_pricing::{RatesPriceError, price_rates, quote_bond};
 use crate::readiness::ReadinessGate;
 use celnet_entitlements::{Action, AssetClass};
 
+use celnet_acceptance::{AcceptanceContext, AcceptanceDecision, AcceptanceEngine};
+
 use crate::services::access::{DeskScope, RequiredAuthority, authorize_caller, resolve_caller};
 use crate::services::analytics::{ClientFlowSource, in_window};
+use crate::services::internalise::{self, QuoteKind};
 use crate::services::rates_book::{RatesPositionStore, RatesRoutingAttribution};
 use crate::services::risk::store::PositionStore;
 use crate::services::sessions::SessionRegistry;
@@ -486,6 +489,72 @@ fn opposite_side(side: Side) -> Side {
     }
 }
 
+/// The lifted instrument's tenor in years for the acceptance context — OIS/IRS
+/// `tenor_years`; FRA `end_months / 12`; a **bond is `0.0`** (its tenor needs the
+/// settlement/reference date the request does not carry — honestly zero, never a
+/// fabricated span). Mirrors the `tenor` derivation in `routing_context_from_rates`.
+fn rates_tenor_years(instrument: Option<&RatesInstrument>) -> f64 {
+    match instrument.and_then(|i| i.instrument.as_ref()) {
+        Some(rates_instrument::Instrument::Ois(o)) => f64::from(o.tenor_years),
+        Some(rates_instrument::Instrument::Irs(i)) => f64::from(i.tenor_years),
+        Some(rates_instrument::Instrument::Fra(f)) => f64::from(f.end_months) / 12.0,
+        Some(rates_instrument::Instrument::Bond(_)) | None => 0.0,
+    }
+}
+
+/// The [`QuoteKind`] of a lifted instrument's dealt level: a cash bond deals on a CLEAN
+/// PRICE (`Price` bp scale), every swap/FRA arm on a fixed RATE (`Rate` bp scale) — the
+/// same distinction [`desk_reference_mid`] makes.
+fn quote_kind_of(instrument: Option<&RatesInstrument>) -> QuoteKind {
+    match instrument.and_then(|i| i.instrument.as_ref()) {
+        Some(rates_instrument::Instrument::Bond(_)) => QuoteKind::Price,
+        _ => QuoteKind::Rate,
+    }
+}
+
+/// A stable side label for the acceptance context (`"Buy"` = pay-fixed / long, `"Sell"`
+/// = receive / short; a two-way — which never reaches a firm booking — is empty).
+fn side_label(side: Side) -> &'static str {
+    match side {
+        Side::Buy => "Buy",
+        Side::Sell => "Sell",
+        Side::TwoWay => "",
+    }
+}
+
+/// Build the [`AcceptanceContext`] the acceptance graph evaluates for a FIX lift of a
+/// quoted desk request, from the desk request + the quote's age. The captured `edge_bps`
+/// is the dealt level's dealer edge versus the engine reference mid (reusing
+/// [`internalise::dealer_edge_bps`]); a missing quote / reference mid yields a `0.0`
+/// edge (no directional edge, never a fabricated number). The counterparty's traded side
+/// stands on the `side` axis (as `routing_context_from_rates` does).
+fn build_fix_acceptance_context(current: &DeskRequest, quote_age_ms: f64) -> AcceptanceContext {
+    let traded_side = traded_side_of(current.instrument.as_ref()).unwrap_or(Side::Buy);
+    let edge_bps = match (
+        current.quote.as_ref(),
+        desk_reference_mid(current.instrument.as_ref(), current.curve_set.as_ref()),
+    ) {
+        (Some(quote), Some(mid)) => internalise::dealer_edge_bps(
+            opposite_side(traded_side),
+            quote.price,
+            mid,
+            quote_kind_of(current.instrument.as_ref()),
+        ),
+        _ => 0.0,
+    };
+    AcceptanceContext {
+        counterparty: current.counterparty.clone(),
+        notional_usd: current.notional.abs(),
+        tenor_years: rates_tenor_years(current.instrument.as_ref()),
+        instrument: rates_instrument_label(current.instrument.as_ref()),
+        side: side_label(traded_side).to_owned(),
+        edge_bps,
+        quote_age_ms,
+        asset: AssetClass::FixedIncome.label().to_owned(),
+        desk: current.desk.clone(),
+    }
+}
+
 /// A short human label for a manual-intervention reason (headline/detail text only — the
 /// machine-readable signal the GUI gates on is the enum on the `Notification.reason`
 /// field, never this string).
@@ -675,6 +744,32 @@ impl RfqDeskEdge {
             ),
         }
         stored
+    }
+
+    /// Evaluate the firm-wide **incoming-quote-acceptance** policy for a FIX lift of the
+    /// quoted desk request `request_id`, `quote_age_ms` old — the acceptance gate the FIX
+    /// acceptance point runs AFTER last-look validity passes and BEFORE
+    /// [`Self::book_fix_lift`]. Reads the acceptance snapshot the reconcile hook primed on the
+    /// rates store; `None` snapshot (no policy configured) ⇒ [`AcceptanceDecision::Accept`]
+    /// (a no-op, byte-identical to the pre-acceptance path). Builds the
+    /// [`AcceptanceContext`] from the desk request + the quote's age (counterparty, notional,
+    /// tenor, instrument, side, captured edge, asset, desk) and walks the graph to its first
+    /// decision. Pure + allocation-light; runs off the async FIX edge, never the pinned
+    /// pricing core. An unknown `request_id` accepts (the normal book path then no-ops it).
+    #[must_use]
+    pub fn evaluate_fix_acceptance(
+        &self,
+        request_id: &str,
+        quote_age_ms: f64,
+    ) -> AcceptanceDecision {
+        let Some(graph) = self.rates.acceptance_graph() else {
+            return AcceptanceDecision::Accept;
+        };
+        let Some(current) = self.requests.get(request_id) else {
+            return AcceptanceDecision::Accept;
+        };
+        let ctx = build_fix_acceptance_context(&current, quote_age_ms);
+        AcceptanceEngine.evaluate(&graph, &ctx).decision
     }
 
     /// Book a FIX-venue auto-quote **lift**: the taker sent a `NewOrderSingle(D)` against
@@ -2039,6 +2134,266 @@ mod tests {
         .await
         .expect("respond");
         edge.book_fix_lift(&id).expect("fix lift books a deal")
+    }
+
+    // --- incoming-quote acceptance (`evaluate_fix_acceptance`) --------------
+
+    use celnet_acceptance::{
+        AcceptanceAction, AcceptanceDecision, AcceptanceField, AcceptanceGraph, AcceptanceNode,
+        RouteOp, RouteValue,
+    };
+    use std::collections::BTreeMap;
+
+    /// Submit + auto-quote a desk request with explicit counterparty / notional / quoted
+    /// price, returning its (QUOTED) request id — so an acceptance test controls the fields
+    /// the acceptance graph branches on.
+    async fn quote_request(
+        edge: &RfqDeskEdge,
+        counterparty: &str,
+        notional: f64,
+        price: f64,
+    ) -> String {
+        let token = trader_token(edge);
+        let id = edge
+            .submit_desk_request(Request::new(SubmitDeskRequestRequest {
+                session_token: None,
+                kind: DeskRequestKind::Rfq as i32,
+                counterparty: counterparty.to_owned(),
+                desk: "g10".to_owned(),
+                instrument: Some(ois_instrument(Side::Buy)),
+                curve_set: Some(curve()),
+                side: Side::Buy as i32,
+                notional,
+                ttl_ms: 0,
+                correlation_id: None,
+                principal: Some(celnet_proto::EntitlementPrincipal {
+                    grant_all: true,
+                    grants: vec![],
+                    denies: vec![],
+                }),
+            }))
+            .await
+            .expect("submit")
+            .into_inner()
+            .request
+            .expect("request")
+            .request_id;
+        edge.respond_desk_request(Request::new(RespondDeskRequestRequest {
+            session_token: Some(token),
+            request_id: id.clone(),
+            principal: Some(celnet_proto::EntitlementPrincipal {
+                grant_all: true,
+                grants: vec![],
+                denies: vec![],
+            }),
+            correlation_id: None,
+            response: Some(RespondArm::Quote(DeskQuote {
+                price,
+                notional,
+                valid_for_ms: 30_000,
+                trader: "alice".to_owned(),
+            })),
+        }))
+        .await
+        .expect("respond");
+        id
+    }
+
+    fn cond(
+        field: AcceptanceField,
+        op: RouteOp,
+        value: RouteValue,
+        t: u32,
+        f: u32,
+    ) -> AcceptanceNode {
+        AcceptanceNode::Condition {
+            field,
+            op,
+            value,
+            on_true: t,
+            on_false: f,
+        }
+    }
+
+    /// A single-condition graph: `field op value ? <yes> : ACCEPT`.
+    fn gate_graph(
+        field: AcceptanceField,
+        op: RouteOp,
+        value: RouteValue,
+        yes: AcceptanceAction,
+    ) -> AcceptanceGraph {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(0u32, cond(field, op, value, 1, 2));
+        nodes.insert(1u32, AcceptanceNode::Decision { action: yes });
+        nodes.insert(
+            2u32,
+            AcceptanceNode::Decision {
+                action: AcceptanceAction::Accept,
+            },
+        );
+        AcceptanceGraph { entry: 0, nodes }
+    }
+
+    /// No acceptance graph installed ⇒ every lift is accepted (byte-identical to the
+    /// pre-acceptance path).
+    #[tokio::test]
+    async fn acceptance_none_accepts_and_books() {
+        let rates = Arc::new(RatesPositionStore::new());
+        let edge = edge_with_rates(Arc::clone(&rates));
+        let id = quote_request(&edge, "cp-bank", 25_000_000.0, 0.0411).await;
+        assert_eq!(
+            edge.evaluate_fix_acceptance(&id, 0.0),
+            AcceptanceDecision::Accept
+        );
+        assert!(edge.book_fix_lift(&id).is_some(), "an accepted lift books");
+        assert_eq!(edge.deals.len(), 1);
+    }
+
+    /// The seeded ACCEPT-ALL default graph is a no-op: the lift accepts and books.
+    #[tokio::test]
+    async fn acceptance_accept_all_default_books() {
+        let rates = Arc::new(RatesPositionStore::new());
+        rates.set_acceptance(Some(celnet_acceptance::default_accept_all_graph()));
+        let edge = edge_with_rates(Arc::clone(&rates));
+        let id = quote_request(&edge, "cp-bank", 25_000_000.0, 0.0411).await;
+        assert_eq!(
+            edge.evaluate_fix_acceptance(&id, 0.0),
+            AcceptanceDecision::Accept
+        );
+        assert!(edge.book_fix_lift(&id).is_some());
+    }
+
+    /// A counterparty-block rule rejects that counterparty's lift with the reason, while a
+    /// DIFFERENT counterparty still accepts + books.
+    #[tokio::test]
+    async fn acceptance_rejects_by_counterparty_and_others_fill() {
+        let rates = Arc::new(RatesPositionStore::new());
+        rates.set_acceptance(Some(gate_graph(
+            AcceptanceField::Counterparty,
+            RouteOp::Eq,
+            RouteValue::Text("cp-bank".to_owned()),
+            AcceptanceAction::Reject {
+                reason: "blocked name".to_owned(),
+            },
+        )));
+        let edge = edge_with_rates(Arc::clone(&rates));
+
+        let blocked = quote_request(&edge, "cp-bank", 25_000_000.0, 0.0411).await;
+        assert_eq!(
+            edge.evaluate_fix_acceptance(&blocked, 0.0),
+            AcceptanceDecision::Reject("blocked name".to_owned())
+        );
+
+        let other = quote_request(&edge, "other-bank", 25_000_000.0, 0.0411).await;
+        assert_eq!(
+            edge.evaluate_fix_acceptance(&other, 0.0),
+            AcceptanceDecision::Accept
+        );
+        assert!(
+            edge.book_fix_lift(&other).is_some(),
+            "a non-blocked counterparty still fills"
+        );
+    }
+
+    /// A notional-cap rule rejects an over-cap lift; a smaller one accepts.
+    #[tokio::test]
+    async fn acceptance_rejects_over_notional_cap() {
+        let rates = Arc::new(RatesPositionStore::new());
+        rates.set_acceptance(Some(gate_graph(
+            AcceptanceField::NotionalUsd,
+            RouteOp::Gt,
+            RouteValue::Num(20_000_000.0),
+            AcceptanceAction::Reject {
+                reason: "over notional cap".to_owned(),
+            },
+        )));
+        let edge = edge_with_rates(Arc::clone(&rates));
+
+        let big = quote_request(&edge, "cp-bank", 25_000_000.0, 0.0411).await;
+        assert_eq!(
+            edge.evaluate_fix_acceptance(&big, 0.0),
+            AcceptanceDecision::Reject("over notional cap".to_owned())
+        );
+        let small = quote_request(&edge, "cp-bank", 5_000_000.0, 0.0411).await;
+        assert_eq!(
+            edge.evaluate_fix_acceptance(&small, 0.0),
+            AcceptanceDecision::Accept
+        );
+    }
+
+    /// An edge-floor rule rejects an unprofitable lift (dealt through mid ⇒ negative
+    /// captured edge) while a profitable one accepts. The desk's side of a Buy-side
+    /// counterparty request is receive-fixed, so dealing BELOW the par mid is a loss.
+    #[tokio::test]
+    async fn acceptance_rejects_below_edge_floor() {
+        let rates = Arc::new(RatesPositionStore::new());
+        rates.set_acceptance(Some(gate_graph(
+            AcceptanceField::EdgeBps,
+            RouteOp::Lt,
+            RouteValue::Num(0.0),
+            AcceptanceAction::Reject {
+                reason: "unprofitable".to_owned(),
+            },
+        )));
+        let edge = edge_with_rates(Arc::clone(&rates));
+
+        // A deeply through-mid dealt rate (0.01 « the ~0.04 par mid) is a loss for the
+        // receive-fixed desk ⇒ edge_bps < 0 ⇒ REJECT.
+        let loss = quote_request(&edge, "cp-bank", 25_000_000.0, 0.010).await;
+        assert_eq!(
+            edge.evaluate_fix_acceptance(&loss, 0.0),
+            AcceptanceDecision::Reject("unprofitable".to_owned())
+        );
+        // A dealt rate above the par mid captures spread ⇒ edge_bps > 0 ⇒ ACCEPT.
+        let gain = quote_request(&edge, "cp-bank", 25_000_000.0, 0.060).await;
+        assert_eq!(
+            edge.evaluate_fix_acceptance(&gain, 0.0),
+            AcceptanceDecision::Accept
+        );
+    }
+
+    /// A hold rule routes the lift to the desk inbox: the acceptance decision is `Hold` and
+    /// — because the caller does NOT book on a Hold — the request stays QUOTED, so a human
+    /// still accepts it via the existing `accept_desk_quote` platform path.
+    #[tokio::test]
+    async fn acceptance_hold_leaves_request_acceptable() {
+        let rates = Arc::new(RatesPositionStore::new());
+        rates.set_acceptance(Some(gate_graph(
+            AcceptanceField::NotionalUsd,
+            RouteOp::Gt,
+            RouteValue::Num(20_000_000.0),
+            AcceptanceAction::HoldForReview {
+                reason: "desk review".to_owned(),
+            },
+        )));
+        let edge = edge_with_rates(Arc::clone(&rates));
+        let token = trader_token(&edge);
+        let id = quote_request(&edge, "cp-bank", 25_000_000.0, 0.0411).await;
+
+        assert_eq!(
+            edge.evaluate_fix_acceptance(&id, 0.0),
+            AcceptanceDecision::Hold("desk review".to_owned())
+        );
+        // The FIX acceptance point does NOT book on a Hold — the request is still QUOTED and
+        // therefore acceptable via the platform desk-accept path.
+        assert!(edge.deals.is_empty(), "a held lift books nothing here");
+        let accepted = edge
+            .accept_desk_quote(Request::new(AcceptDeskQuoteRequest {
+                session_token: Some(token),
+                request_id: id.clone(),
+                principal: Some(celnet_proto::EntitlementPrincipal {
+                    grant_all: true,
+                    grants: vec![],
+                    denies: vec![],
+                }),
+                correlation_id: None,
+            }))
+            .await
+            .expect("a human accepts the held quote");
+        assert!(
+            accepted.into_inner().deal.is_some(),
+            "the held request remains manually acceptable"
+        );
     }
 
     /// A firm-wide graph routing on the booking-time counterparty attribution the desk

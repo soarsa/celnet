@@ -1,0 +1,23 @@
+[package]
+name = "celnet-acceptance"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet incoming-quote-acceptance engine — the pure, server-free decision-graph that gates whether an inbound counterparty lift is ACCEPTED, REJECTED, or HELD for manual review, from typed IF <lift-field> <op> <value> THEN <acceptance-action> rules. The future home for credit checks + quote validations at the acceptance point. Mirrors celnet-risk-routing / celnet-hedge-routing file-for-file and reuses their RouteOp/RouteValue/FieldKind condition vocabulary VERBATIM. No server, wire, or market-data dependency."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+# The typed condition vocabulary (RouteOp/RouteValue/CtxValue/FieldKind) and its total,
+# never-panicking eval matrix are reused VERBATIM — one source of truth for the
+# decision-graph condition semantics shared with risk routing and hedge routing. One-way
+# edge: acceptance -> risk-routing.
+celnet-risk-routing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

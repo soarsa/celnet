@@ -75,6 +75,13 @@ use celnet_proto::{
     ListHedgeThresholdsResponse, SetHedgeConfigResponse, UpdateHedgePolicyGraphResponse,
     UpdateHedgeThresholdResponse, WarehouseThresholdDesc, hedge_node_desc,
 };
+// Incoming-quote acceptance (AuthService acceptance RPCs): the acceptance decision graph
+// (`AcceptanceGraphDesc`/`AcceptanceNodeDesc`/`AcceptanceConditionDesc`/`AcceptanceActionDesc`).
+use celnet_proto::{
+    AcceptanceActionDesc, AcceptanceActionKind, AcceptanceConditionDesc, AcceptanceFieldEnum,
+    AcceptanceGraphDesc, AcceptanceNodeDesc, GetAcceptanceGraphResponse,
+    UpdateAcceptanceGraphResponse, acceptance_node_desc,
+};
 use celnet_proto::{OptionType, Side, rate_sensitivities, strike_or_delta, tenor};
 use celnet_server::ws::codec::diff_support as hand;
 use celnet_server::ws::generated_codec as generated;
@@ -6475,6 +6482,179 @@ fn update_hedge_policy_graph_response_encode_byte_identical() {
         "UpdateHedgePolicyGraphResponse(empty)",
         &generated::encode_update_hedge_policy_graph_response(&empty),
         &hand::hand_update_hedge_policy_graph_response_to_json(&empty),
+    );
+}
+
+// --- incoming-quote acceptance (AuthService acceptance RPCs) ----------------
+
+/// A WS JSON body for an acceptance graph exercising a reused-value numeric condition, an
+/// enum-membership condition, and every acceptance-action leaf kind (accept / reject /
+/// hold-for-review), for the DECODE differential.
+fn acceptance_graph_body() -> Value {
+    json!({
+        "entry": 0,
+        "nodes": [
+            { "id": 0, "condition": {
+                "field": AcceptanceFieldEnum::AcceptanceFieldEdgeBps as i32,
+                "op": RouteOpEnum::RouteOpLt as i32,
+                "value": { "num": 0.2 },
+                "on_true": 1, "on_false": 2 } },
+            { "id": 1, "decision": {
+                "kind": AcceptanceActionKind::AcceptanceActionReject as i32,
+                "reason": "below edge floor" } },
+            { "id": 2, "condition": {
+                "field": AcceptanceFieldEnum::AcceptanceFieldCounterparty as i32,
+                "op": RouteOpEnum::RouteOpIn as i32,
+                "value": { "list": { "values": ["HF-1", "HF-2"] } },
+                "on_true": 3, "on_false": 4 } },
+            { "id": 3, "decision": {
+                "kind": AcceptanceActionKind::AcceptanceActionHoldForReview as i32,
+                "reason": "named counterparty — desk review" } },
+            { "id": 4, "decision": {
+                "kind": AcceptanceActionKind::AcceptanceActionAccept as i32,
+                "reason": "" } },
+        ],
+    })
+}
+
+/// An acceptance graph descriptor mirroring [`acceptance_graph_body`] — for the ENCODE
+/// differential.
+fn acceptance_graph_desc() -> AcceptanceGraphDesc {
+    let cond =
+        |field: AcceptanceFieldEnum, op: RouteOpEnum, value: RouteValueDesc, t: u32, f: u32| {
+            AcceptanceConditionDesc {
+                field: field as i32,
+                op: op as i32,
+                value: Some(value),
+                on_true: t,
+                on_false: f,
+            }
+        };
+    let node = |id: u32, n: acceptance_node_desc::Node| AcceptanceNodeDesc { id, node: Some(n) };
+    let cnode =
+        |id: u32, c: AcceptanceConditionDesc| node(id, acceptance_node_desc::Node::Condition(c));
+    let dnode = |id: u32, kind: AcceptanceActionKind, reason: &str| {
+        node(
+            id,
+            acceptance_node_desc::Node::Decision(AcceptanceActionDesc {
+                kind: kind as i32,
+                reason: reason.to_string(),
+            }),
+        )
+    };
+    AcceptanceGraphDesc {
+        entry: 0,
+        nodes: vec![
+            cnode(
+                0,
+                cond(
+                    AcceptanceFieldEnum::AcceptanceFieldEdgeBps,
+                    RouteOpEnum::RouteOpLt,
+                    RouteValueDesc {
+                        v: Some(route_value_desc::V::Num(0.2)),
+                    },
+                    1,
+                    2,
+                ),
+            ),
+            dnode(
+                1,
+                AcceptanceActionKind::AcceptanceActionReject,
+                "below edge floor",
+            ),
+            cnode(
+                2,
+                cond(
+                    AcceptanceFieldEnum::AcceptanceFieldCounterparty,
+                    RouteOpEnum::RouteOpIn,
+                    RouteValueDesc {
+                        v: Some(route_value_desc::V::List(StringList {
+                            values: vec!["HF-1".to_string(), "HF-2".to_string()],
+                        })),
+                    },
+                    3,
+                    4,
+                ),
+            ),
+            dnode(
+                3,
+                AcceptanceActionKind::AcceptanceActionHoldForReview,
+                "named counterparty — desk review",
+            ),
+            dnode(4, AcceptanceActionKind::AcceptanceActionAccept, ""),
+        ],
+    }
+}
+
+#[test]
+fn get_acceptance_graph_request_decode_byte_identical() {
+    let body = json!({ "session_token": "tok", "correlation_id": 5 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "GetAcceptanceGraphRequest",
+        generated::decode_get_acceptance_graph_request(o),
+        hand::hand_get_acceptance_graph_request_from_json(o),
+    );
+}
+
+#[test]
+fn update_acceptance_graph_request_decode_byte_identical() {
+    // The nested-oneof workhorse: a graph exercising reused-value conditions + every
+    // acceptance-action leaf kind (accept / reject / hold-for-review).
+    let body =
+        json!({ "session_token": "tok", "graph": acceptance_graph_body(), "correlation_id": 7 });
+    let o = body.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateAcceptanceGraphRequest(full graph)",
+        generated::decode_update_acceptance_graph_request(o),
+        hand::hand_update_acceptance_graph_request_from_json(o),
+    );
+    // Minimal graph: entry only, no nodes (⇒ empty node vec on both sides).
+    let minimal = json!({ "session_token": "t", "graph": { "entry": 0 } });
+    let mo = minimal.as_object().expect("object");
+    assert_decode_eq(
+        "UpdateAcceptanceGraphRequest(minimal graph)",
+        generated::decode_update_acceptance_graph_request(mo),
+        hand::hand_update_acceptance_graph_request_from_json(mo),
+    );
+}
+
+#[test]
+fn get_acceptance_graph_response_encode_byte_identical() {
+    let present = GetAcceptanceGraphResponse {
+        graph: Some(acceptance_graph_desc()),
+        correlation_id: Some(2),
+    };
+    assert_bytes_eq(
+        "GetAcceptanceGraphResponse(present)",
+        &generated::encode_get_acceptance_graph_response(&present),
+        &hand::hand_get_acceptance_graph_response_to_json(&present),
+    );
+    // Absent graph ⇒ JSON null; absent correlation_id ⇒ null.
+    let absent = GetAcceptanceGraphResponse::default();
+    assert_bytes_eq(
+        "GetAcceptanceGraphResponse(absent)",
+        &generated::encode_get_acceptance_graph_response(&absent),
+        &hand::hand_get_acceptance_graph_response_to_json(&absent),
+    );
+}
+
+#[test]
+fn update_acceptance_graph_response_encode_byte_identical() {
+    let updated = UpdateAcceptanceGraphResponse {
+        graph: Some(acceptance_graph_desc()),
+        correlation_id: Some(9),
+    };
+    assert_bytes_eq(
+        "UpdateAcceptanceGraphResponse",
+        &generated::encode_update_acceptance_graph_response(&updated),
+        &hand::hand_update_acceptance_graph_response_to_json(&updated),
+    );
+    let empty = UpdateAcceptanceGraphResponse::default();
+    assert_bytes_eq(
+        "UpdateAcceptanceGraphResponse(empty)",
+        &generated::encode_update_acceptance_graph_response(&empty),
+        &hand::hand_update_acceptance_graph_response_to_json(&empty),
     );
 }
 

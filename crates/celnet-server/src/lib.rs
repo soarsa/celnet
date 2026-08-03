@@ -668,12 +668,18 @@ impl Edge {
         // boot (§4/§6). Idempotent + advisory-only (nothing trades externally). Runs AFTER the
         // risk-routing seed (it binds to the default warehouse book that seed creates).
         let hedge_policy_seeded = identity_store.ensure_seed_hedge_policy();
+        // Seed the default ACCEPT-ALL acceptance graph on a pristine store so the FIX
+        // acceptance point evaluates a real (identity) policy from first boot — every lift
+        // is accepted and books exactly as before, until a trader writes rules (the third
+        // trader-configurable rule engine — `celnet-acceptance`). Idempotent.
+        let acceptance_seeded = identity_store.ensure_seed_acceptance();
         if admin_seeded
             || registry_seeded
             || instruments_seeded
             || gov_bonds_seeded
             || risk_routing_seeded
             || hedge_policy_seeded
+            || acceptance_seeded
         {
             identity_store
                 .save(&identity_path)
@@ -764,6 +770,11 @@ impl Edge {
             config: identity_store.hedge_config().clone(),
             known_lps: identity_store.known_hedge_lps(),
         }));
+        // Prime the rates store's incoming-quote-acceptance graph from the persisted store
+        // (seeded ACCEPT-ALL on a pristine store), so the FIX acceptance point gates inbound
+        // lifts from first boot. Re-primed on every admin acceptance write via
+        // `AuthEdge::reconcile_acceptance`. `None` ⇒ acceptance off (every lift accepted).
+        rates_store.set_acceptance(identity_store.acceptance_graph().cloned());
 
         // ADR-0015 §2.1: activate the configurable consistency tier — Raft **wired
         // everywhere but forced nowhere**. A `RaftNode` is booted ONLY when a

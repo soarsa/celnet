@@ -1464,6 +1464,22 @@ async fn handle_unary(
                 generated_codec::encode_update_hedge_policy_graph_response
             )
         }
+        "get_acceptance_graph" => {
+            let req = decode!(generated_codec::decode_get_acceptance_graph_request(o));
+            call!(
+                services.auth.get_acceptance_graph(Request::new(req)),
+                "acceptance_graph",
+                generated_codec::encode_get_acceptance_graph_response
+            )
+        }
+        "update_acceptance_graph" => {
+            let req = decode!(generated_codec::decode_update_acceptance_graph_request(o));
+            call!(
+                services.auth.update_acceptance_graph(Request::new(req)),
+                "acceptance_graph_updated",
+                generated_codec::encode_update_acceptance_graph_response
+            )
+        }
         "list_hedge_thresholds" => {
             let req = decode!(generated_codec::decode_list_hedge_thresholds_request(o));
             call!(

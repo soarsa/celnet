@@ -81,6 +81,10 @@ use celnet_proto::{
     UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
 };
 use celnet_proto::{
+    GetAcceptanceGraphRequest, GetAcceptanceGraphResponse, UpdateAcceptanceGraphRequest,
+    UpdateAcceptanceGraphResponse,
+};
+use celnet_proto::{
     GetHedgeConfigRequest, GetHedgeConfigResponse, GetHedgePolicyGraphRequest,
     GetHedgePolicyGraphResponse, ListHedgeProvenanceRequest, ListHedgeProvenanceResponse,
     ListHedgeThresholdsRequest, ListHedgeThresholdsResponse, SetHedgeConfigRequest,
@@ -102,6 +106,7 @@ use crate::config::identity::{
 };
 use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
+use crate::services::acceptance::{acceptance_graph_from_wire, acceptance_graph_to_wire};
 use crate::services::auto_hedge::AutoHedgeEngine;
 use crate::services::auto_hedge::wire::{
     config_from_wire, config_to_wire, hedge_graph_from_wire, hedge_graph_to_wire,
@@ -435,6 +440,17 @@ impl AuthEdge {
                 config: store.hedge_config().clone(),
                 known_lps: store.known_hedge_lps(),
             }));
+        }
+    }
+
+    /// Re-prime the shared rates store's **incoming-quote-acceptance** graph snapshot from
+    /// the committed store (a no-op when no rates store is wired). Called after every admin
+    /// acceptance write so the FIX acceptance point gates subsequent lifts against the new
+    /// policy immediately. The boot path runs the equivalent prime once
+    /// (`celnet-server/src/lib.rs`).
+    fn reconcile_acceptance(&self, store: &IdentityStore) {
+        if let Some(rates_store) = &self.rates_store {
+            rates_store.set_acceptance(store.acceptance_graph().cloned());
         }
     }
 
@@ -2102,6 +2118,67 @@ impl AuthService for AuthEdge {
         self.reconcile_hedge_policy(&guard);
         Ok(Response::new(UpdateHedgePolicyGraphResponse {
             graph: Some(hedge_graph_to_wire(&graph)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    // --- incoming-quote acceptance ------------------------------------------
+    //
+    // The firm-wide acceptance decision graph (get/update) — the third trader-configurable
+    // rule engine (`celnet-acceptance`) that gates whether an inbound counterparty lift is
+    // ACCEPTED, REJECTED, or HELD for manual review at the acceptance point (the future home
+    // for credit checks + quote validations). AUTHORING gates on the narrow
+    // `manage_acceptance` capability × asset (`Action::ManageAcceptance`), distinct from
+    // `Action::Book` (which gates the booking an accepted lift performs) and from
+    // `Action::Administer`. We gate on `manage_acceptance·fixed_income` as the representative
+    // asset (mirroring the routing / hedge RPCs' choice; the acceptance surface spans both
+    // asset classes).
+
+    async fn get_acceptance_graph(
+        &self,
+        request: Request<GetAcceptanceGraphRequest>,
+    ) -> Result<Response<GetAcceptanceGraphResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::ManageAcceptance, AssetClass::FixedIncome),
+        )?;
+        let graph = self.lock().acceptance_graph().map(acceptance_graph_to_wire);
+        Ok(Response::new(GetAcceptanceGraphResponse {
+            graph,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_acceptance_graph(
+        &self,
+        request: Request<UpdateAcceptanceGraphRequest>,
+    ) -> Result<Response<UpdateAcceptanceGraphResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::ManageAcceptance, AssetClass::FixedIncome),
+        )?;
+
+        let wire = req
+            .graph
+            .ok_or_else(|| Status::invalid_argument("acceptance graph is required"))?;
+        let graph = acceptance_graph_from_wire(wire)?;
+
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        // The store re-validates the graph (acyclic, type-consistent conditions), so a
+        // malformed graph fails loudly at the write and never reaches the acceptance point.
+        next.set_acceptance_graph(graph.clone())
+            .map_err(Status::invalid_argument)?;
+        self.persist_and_commit(&mut guard, next)?;
+        self.reconcile_acceptance(&guard);
+        Ok(Response::new(UpdateAcceptanceGraphResponse {
+            graph: Some(acceptance_graph_to_wire(&graph)),
             correlation_id: req.correlation_id,
         }))
     }
@@ -4678,12 +4755,13 @@ mod tests {
             Action::ALL.len() * AssetClass::ALL.len()
         );
 
-        // A fresh trader holds the role bundle: all actions but the EIGHT narrow,
+        // A fresh trader holds the role bundle: all actions but the NINE narrow,
         // explicitly-granted authorities held back from the default —
         // `administer`, `risk_transfer`, `risk_manage`, `manage_pricing`,
-        // `manage_liquidity`, `view_analytics`, `hedge`, `refdata` — on both assets
-        // (9 × 2 = 18). Must equal the held-back set in `default_trader_bundle`.
-        const HELD_BACK: usize = 8;
+        // `manage_liquidity`, `view_analytics`, `hedge`, `refdata`, `manage_acceptance` —
+        // on both assets (9 × 2 = 18). Must equal the held-back set in
+        // `default_trader_bundle`.
+        const HELD_BACK: usize = 9;
         let (trader_id, _t) = make_trader(&edge, &admin.session_token, "lc@celnet.com").await;
         let trader = login(&edge, "lc@celnet.com", "trader-pw-123")
             .await
@@ -6026,6 +6104,171 @@ mod tests {
             tonic::Code::PermissionDenied,
             "manage_pricing must not authorize the risk-routing graph"
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A trader granted ONLY `manage_acceptance·fixed_income` can update + read the
+    /// firm-wide incoming-quote-acceptance graph; the write PERSISTS (survives a reload) and
+    /// ROUND-TRIPS byte-for-byte; and a structurally-invalid (cyclic) graph is rejected at
+    /// the write with `InvalidArgument`.
+    #[tokio::test]
+    async fn acceptance_graph_update_persists_round_trips_and_validates() {
+        use crate::services::acceptance::{acceptance_graph_from_wire, acceptance_graph_to_wire};
+        use celnet_acceptance::{AcceptanceAction, AcceptanceGraph, AcceptanceNode};
+        use std::collections::BTreeMap;
+
+        let (edge, path, _s) = edge("acceptance-graph");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+
+        // A trader granted ONLY manage_acceptance·FI (re-login: the grant revoked the session).
+        let (id, _t) = make_trader(&edge, &admin, "acceptmgr@celnet.com").await;
+        edge.set_user_capabilities(Request::new(SetUserCapabilitiesRequest {
+            session_token: admin.clone(),
+            id,
+            grants: vec![cap("manage_acceptance", "fixed_income")],
+            denies: vec![],
+            correlation_id: None,
+        }))
+        .await
+        .unwrap();
+        let mgr = login(&edge, "acceptmgr@celnet.com", "trader-pw-123")
+            .await
+            .unwrap()
+            .session_token;
+
+        // A valid graph: `counterparty == "cp-bank" ? REJECT : ACCEPT`.
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0u32,
+            AcceptanceNode::Condition {
+                field: celnet_acceptance::AcceptanceField::Counterparty,
+                op: celnet_acceptance::RouteOp::Eq,
+                value: celnet_acceptance::RouteValue::Text("cp-bank".to_owned()),
+                on_true: 1,
+                on_false: 2,
+            },
+        );
+        nodes.insert(
+            1u32,
+            AcceptanceNode::Decision {
+                action: AcceptanceAction::Reject {
+                    reason: "blocked".to_owned(),
+                },
+            },
+        );
+        nodes.insert(
+            2u32,
+            AcceptanceNode::Decision {
+                action: AcceptanceAction::Accept,
+            },
+        );
+        let graph = AcceptanceGraph { entry: 0, nodes };
+
+        let updated = edge
+            .update_acceptance_graph(Request::new(UpdateAcceptanceGraphRequest {
+                session_token: mgr.clone(),
+                graph: Some(acceptance_graph_to_wire(&graph)),
+                correlation_id: Some(3),
+            }))
+            .await
+            .expect("manage_acceptance may update the acceptance graph")
+            .into_inner();
+        assert_eq!(updated.correlation_id, Some(3));
+        assert_eq!(
+            acceptance_graph_from_wire(updated.graph.expect("committed graph")).unwrap(),
+            graph,
+            "the committed graph round-trips"
+        );
+
+        // GET returns the same graph.
+        let got = edge
+            .get_acceptance_graph(Request::new(GetAcceptanceGraphRequest {
+                session_token: mgr.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .expect("manage_acceptance may read the acceptance graph")
+            .into_inner();
+        assert_eq!(
+            acceptance_graph_from_wire(got.graph.expect("graph present")).unwrap(),
+            graph
+        );
+
+        // PERSISTENCE: the write reached disk — a fresh load carries the same graph.
+        let reloaded = IdentityStore::load(&path).unwrap();
+        assert_eq!(reloaded.acceptance_graph(), Some(&graph));
+
+        // A structurally-invalid (self-cyclic) graph is rejected at the write.
+        let mut bad_nodes = BTreeMap::new();
+        bad_nodes.insert(
+            0u32,
+            AcceptanceNode::Condition {
+                field: celnet_acceptance::AcceptanceField::Counterparty,
+                op: celnet_acceptance::RouteOp::Eq,
+                value: celnet_acceptance::RouteValue::Text("x".to_owned()),
+                on_true: 0,
+                on_false: 0,
+            },
+        );
+        let bad = AcceptanceGraph {
+            entry: 0,
+            nodes: bad_nodes,
+        };
+        let err = edge
+            .update_acceptance_graph(Request::new(UpdateAcceptanceGraphRequest {
+                session_token: mgr,
+                graph: Some(acceptance_graph_to_wire(&bad)),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The acceptance graph RPCs deny an unprivileged caller: a plain trader (no
+    /// `manage_acceptance`) is `PermissionDenied` on both get and update.
+    #[tokio::test]
+    async fn acceptance_graph_denies_unprivileged_caller() {
+        use crate::services::acceptance::acceptance_graph_to_wire;
+
+        let (edge, path, _s) = edge("acceptance-denied");
+        let admin = login(&edge, "admin@celnet.com", "password")
+            .await
+            .unwrap()
+            .session_token;
+        let (_id, trader) = make_trader(&edge, &admin, "plain@celnet.com").await;
+
+        assert_eq!(
+            edge.get_acceptance_graph(Request::new(GetAcceptanceGraphRequest {
+                session_token: trader.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err()
+            .code(),
+            tonic::Code::PermissionDenied,
+            "a plain trader may not read the acceptance graph"
+        );
+        assert_eq!(
+            edge.update_acceptance_graph(Request::new(UpdateAcceptanceGraphRequest {
+                session_token: trader,
+                graph: Some(acceptance_graph_to_wire(
+                    &celnet_acceptance::default_accept_all_graph()
+                )),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err()
+            .code(),
+            tonic::Code::PermissionDenied,
+            "a plain trader may not update the acceptance graph"
+        );
+
         let _ = std::fs::remove_file(&path);
     }
 

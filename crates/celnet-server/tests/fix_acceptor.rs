@@ -441,6 +441,16 @@ async fn fix_rates_rfq_quotes_par_and_lift_fills() {
     .expect("test timed out");
 }
 
+// NOTE: the incoming-quote-acceptance gate runs on the DESK-ROUTED FI venue path
+// (`on_new_order` → `RfqDeskEdge::evaluate_fix_acceptance` → `book_fix_lift`), which the
+// legacy `attach_fix_acceptor` harness here does NOT stand up (it wires no `desk_edge`, so a
+// rates lift fills on the token ledger without booking and never reaches the gate). The
+// acceptance gate is therefore exercised directly against `evaluate_fix_acceptance` — the
+// exact method `on_new_order` invokes — in the `services::desk` unit tests
+// (accept-all / reject-by-counterparty / notional-cap / edge-floor / hold), plus the graph
+// RPC (persist / round-trip / capability) in the `services::auth` tests and the WS
+// byte-identity vectors in `ws_codec_differential`.
+
 /// Fixed-income RFQ → Quote on the cash-BOND dialect: the maker shows a two-way CLEAN
 /// PRICE market centred on the engine's clean price for the bond off the P0 static
 /// USD-SOFR curve (the exact-price field reconciles to 1e-12), and a BUY lift books a

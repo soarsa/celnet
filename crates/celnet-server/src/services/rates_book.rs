@@ -32,6 +32,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::services::consensus::{ConsensusHandle, rates_book_key};
 
+use celnet_acceptance::AcceptanceGraph;
 use celnet_hedge_routing::{HedgeContext, HedgeGraph};
 use celnet_limits::{
     IncrementalTrade, LimitScope, LimitSpec, LimitTree, NonAdditiveExposure, PreTradeDecision,
@@ -179,6 +180,14 @@ pub struct RatesPositionStore {
     /// [`risk_book`](Self::risk_book)). Absent ⇒ the fill booked with no internalise decision
     /// (manual path, or no policy configured) — surfaced on the deal, never fabricated.
     internalise: RwLock<HashMap<u64, InternaliseProvenance>>,
+    /// The firm-wide **incoming-quote-acceptance** decision graph snapshot (the third
+    /// trader-configurable rule engine — `celnet-acceptance`). `None` ⇒ no acceptance
+    /// gating: the FIX acceptance point accepts every lift, byte-identical to the
+    /// pre-acceptance path. Primed at boot + on every admin acceptance write (the SAME
+    /// `AuthEdge` reconcile hook that re-primes the routing / hedge snapshots), behind an
+    /// [`Arc`] so the desk edge clones only a pointer when it evaluates a lift off the FIX
+    /// edge (never the pinned pricing core).
+    acceptance: RwLock<Option<Arc<AcceptanceGraph>>>,
 }
 
 /// A read view of one booked rates position assembled for a **risk transfer** (§6):
@@ -236,6 +245,7 @@ impl RatesPositionStore {
             risk_version: AtomicU64::new(0),
             hedge_policy: RwLock::new(None),
             internalise: RwLock::new(HashMap::new()),
+            acceptance: RwLock::new(None),
         }
     }
 
@@ -328,6 +338,34 @@ impl RatesPositionStore {
             .write()
             .expect("rates hedge-policy lock poisoned");
         *g = policy.map(Arc::new);
+    }
+
+    /// Install (or clear) the firm-wide **incoming-quote-acceptance** decision graph
+    /// snapshot (the third trader-configurable rule engine — `celnet-acceptance`). Pushed at
+    /// boot from the persisted `IdentityStore` and re-pushed after every admin acceptance
+    /// write (the SAME `AuthEdge` reconcile hook that re-primes the routing / hedge
+    /// snapshots), so defining / editing / clearing the acceptance graph takes effect on
+    /// subsequent inbound lifts immediately. `Some(graph)` ⇒ the FIX acceptance point gates
+    /// each lift (accept / reject / hold); `None` ⇒ acceptance is off and every lift is
+    /// accepted, byte-identical to the pre-acceptance path. Behind an [`Arc`] so the desk
+    /// edge clones only a pointer, never a torn graph.
+    pub fn set_acceptance(&self, graph: Option<AcceptanceGraph>) {
+        let mut g = self
+            .acceptance
+            .write()
+            .expect("rates acceptance lock poisoned");
+        *g = graph.map(Arc::new);
+    }
+
+    /// The firm-wide acceptance decision graph snapshot, if installed — the graph the FIX
+    /// acceptance point evaluates a lift against. Clones the `Arc` (a pointer) under the read
+    /// lock so the evaluation runs lock-free off the FIX edge.
+    #[must_use]
+    pub fn acceptance_graph(&self) -> Option<Arc<AcceptanceGraph>> {
+        self.acceptance
+            .read()
+            .expect("rates acceptance lock poisoned")
+            .clone()
     }
 
     /// The internalise-decision provenance stamped on a booked rates fill, or `None` when the

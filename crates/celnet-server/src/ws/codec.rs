@@ -139,6 +139,12 @@ use celnet_proto::{
     UpdateHedgePolicyGraphRequest, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest,
     UpdateHedgeThresholdResponse, WarehouseThresholdDesc, hedge_node_desc,
 };
+// AuthService — incoming-quote acceptance (WS mirror of the acceptance graph RPCs).
+use celnet_proto::{
+    AcceptanceActionDesc, AcceptanceConditionDesc, AcceptanceGraphDesc, AcceptanceNodeDesc,
+    GetAcceptanceGraphRequest, GetAcceptanceGraphResponse, UpdateAcceptanceGraphRequest,
+    UpdateAcceptanceGraphResponse, acceptance_node_desc,
+};
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
 /// human-readable reason echoed back to the client as a typed `error` frame.
@@ -4867,6 +4873,154 @@ pub(super) fn update_hedge_policy_graph_response_to_json(
     })
 }
 
+// --- incoming-quote acceptance (AuthService acceptance RPCs) -----------------
+//
+// The WS mirror of the acceptance decision graph (the third trader-configurable rule
+// engine — `celnet-acceptance`). The `AcceptanceGraphDesc` reuses the routing
+// `RouteValueDesc` value oneof verbatim; the `AcceptanceNodeDesc.node` oneof and the flat
+// `AcceptanceActionDesc` leaf mirror `HedgeNodeDesc`/`ExitActionDesc` one-for-one. Every
+// field is snake_case on the wire (no FX-legacy remaps).
+
+/// An acceptance action → JSON (a `kind` tag + the `reason` string).
+fn acceptance_action_desc_to_json(a: &AcceptanceActionDesc) -> Value {
+    json!({ "kind": a.kind, "reason": a.reason })
+}
+
+/// An acceptance action ← JSON (the `decision` node arm body).
+fn acceptance_action_desc_from_json(v: &Value) -> Result<AcceptanceActionDesc> {
+    let o = obj(v, "decision")?;
+    Ok(AcceptanceActionDesc {
+        kind: enum_or_zero(o, "kind"),
+        reason: string_or_empty(o, "reason"),
+    })
+}
+
+/// An acceptance condition → JSON. Enums ride as their i32 tag; an absent `value` message
+/// renders as JSON `null` (reuses the routing `RouteValueDesc` codec verbatim).
+fn acceptance_condition_desc_to_json(c: &AcceptanceConditionDesc) -> Value {
+    json!({
+        "field": c.field,
+        "op": c.op,
+        "value": c.value.as_ref().map(route_value_desc_to_json),
+        "on_true": c.on_true,
+        "on_false": c.on_false,
+    })
+}
+
+/// An acceptance condition ← JSON (the `condition` node arm body).
+fn acceptance_condition_desc_from_json(v: &Value) -> Result<AcceptanceConditionDesc> {
+    let o = obj(v, "condition")?;
+    Ok(AcceptanceConditionDesc {
+        field: enum_or_zero(o, "field"),
+        op: enum_or_zero(o, "op"),
+        value: opt_nested(o, "value", route_value_desc_from_json)?,
+        on_true: u32_or_zero(o, "on_true"),
+        on_false: u32_or_zero(o, "on_false"),
+    })
+}
+
+/// An acceptance node → JSON: its `id` plus exactly the live `node` oneof arm.
+fn acceptance_node_desc_to_json(n: &AcceptanceNodeDesc) -> Value {
+    let mut m = Map::new();
+    m.insert("id".to_string(), json!(n.id));
+    match &n.node {
+        Some(acceptance_node_desc::Node::Condition(c)) => {
+            m.insert(
+                "condition".to_string(),
+                acceptance_condition_desc_to_json(c),
+            );
+        }
+        Some(acceptance_node_desc::Node::Decision(a)) => {
+            m.insert("decision".to_string(), acceptance_action_desc_to_json(a));
+        }
+        // A node with no body — the generated encoder emits only `id` too.
+        None => {}
+    }
+    Value::Object(m)
+}
+
+/// An acceptance node ← JSON. Exactly one `node` arm (`condition` / `decision`) must be
+/// present (the `AcceptanceNodeDesc.node` oneof is required).
+fn acceptance_node_desc_from_json(v: &Value) -> Result<AcceptanceNodeDesc> {
+    let o = obj(v, "node")?;
+    let id = u32_or_zero(o, "id");
+    let node = if o.contains_key("condition") {
+        acceptance_node_desc::Node::Condition(acceptance_condition_desc_from_json(
+            o.get("condition").unwrap(),
+        )?)
+    } else if o.contains_key("decision") {
+        acceptance_node_desc::Node::Decision(acceptance_action_desc_from_json(
+            o.get("decision").unwrap(),
+        )?)
+    } else {
+        return Err(err(
+            "acceptance node `node` oneof: expected a `condition` or `decision` arm",
+        ));
+    };
+    Ok(AcceptanceNodeDesc {
+        id,
+        node: Some(node),
+    })
+}
+
+/// An acceptance graph → JSON (`entry` + the id-carrying node array).
+fn acceptance_graph_desc_to_json(g: &AcceptanceGraphDesc) -> Value {
+    json!({
+        "entry": g.entry,
+        "nodes": Value::Array(g.nodes.iter().map(acceptance_node_desc_to_json).collect()),
+    })
+}
+
+/// An acceptance graph ← JSON (a nested `graph` object).
+fn acceptance_graph_desc_from_json(v: &Value) -> Result<AcceptanceGraphDesc> {
+    let o = obj(v, "graph")?;
+    let nodes = o.get("nodes").and_then(Value::as_array).map_or_else(
+        || Ok(Vec::new()),
+        |arr| {
+            arr.iter()
+                .map(acceptance_node_desc_from_json)
+                .collect::<Result<Vec<_>>>()
+        },
+    )?;
+    Ok(AcceptanceGraphDesc {
+        entry: u32_or_zero(o, "entry"),
+        nodes,
+    })
+}
+
+pub(super) fn get_acceptance_graph_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<GetAcceptanceGraphRequest> {
+    Ok(GetAcceptanceGraphRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn get_acceptance_graph_response_to_json(r: &GetAcceptanceGraphResponse) -> Value {
+    json!({
+        "graph": r.graph.as_ref().map(acceptance_graph_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_acceptance_graph_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdateAcceptanceGraphRequest> {
+    Ok(UpdateAcceptanceGraphRequest {
+        session_token: string_field(o, "session_token")?,
+        graph: Some(nested(o, "graph", acceptance_graph_desc_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_acceptance_graph_response_to_json(r: &UpdateAcceptanceGraphResponse) -> Value {
+    json!({
+        "graph": r.graph.as_ref().map(acceptance_graph_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
 pub(super) fn list_hedge_thresholds_request_from_json(
     o: &Map<String, Value>,
 ) -> Result<ListHedgeThresholdsRequest> {
@@ -5834,6 +5988,12 @@ pub mod diff_support {
         ListHedgeProvenanceResponse, ListHedgeThresholdsRequest, ListHedgeThresholdsResponse,
         SetHedgeConfigRequest, SetHedgeConfigResponse, UpdateHedgePolicyGraphRequest,
         UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest, UpdateHedgeThresholdResponse,
+    };
+    // Incoming-quote acceptance (AuthService acceptance RPCs): the request decoders +
+    // reply encoders the generated codec is proven byte-identical to.
+    use celnet_proto::{
+        GetAcceptanceGraphRequest, GetAcceptanceGraphResponse, UpdateAcceptanceGraphRequest,
+        UpdateAcceptanceGraphResponse,
     };
     use serde_json::{Map, Value};
 
@@ -7217,6 +7377,40 @@ pub mod diff_support {
         r: &UpdateHedgePolicyGraphResponse,
     ) -> Value {
         super::update_hedge_policy_graph_response_to_json(r)
+    }
+
+    /// Hand-codec `GetAcceptanceGraphRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_get_acceptance_graph_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<GetAcceptanceGraphRequest, CodecError> {
+        super::get_acceptance_graph_request_from_json(o)
+    }
+
+    /// Hand-codec `GetAcceptanceGraphResponse` encoder.
+    #[must_use]
+    pub fn hand_get_acceptance_graph_response_to_json(r: &GetAcceptanceGraphResponse) -> Value {
+        super::get_acceptance_graph_response_to_json(r)
+    }
+
+    /// Hand-codec `UpdateAcceptanceGraphRequest` decoder.
+    ///
+    /// # Errors
+    /// Propagates the hand codec's [`CodecError`] on a malformed body.
+    pub fn hand_update_acceptance_graph_request_from_json(
+        o: &Map<String, Value>,
+    ) -> Result<UpdateAcceptanceGraphRequest, CodecError> {
+        super::update_acceptance_graph_request_from_json(o)
+    }
+
+    /// Hand-codec `UpdateAcceptanceGraphResponse` encoder.
+    #[must_use]
+    pub fn hand_update_acceptance_graph_response_to_json(
+        r: &UpdateAcceptanceGraphResponse,
+    ) -> Value {
+        super::update_acceptance_graph_response_to_json(r)
     }
 
     /// Hand-codec `ListHedgeThresholdsRequest` decoder.
