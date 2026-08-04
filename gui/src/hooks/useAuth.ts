@@ -18,7 +18,7 @@
  * identity over that path; it does not gate the workspace.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
   Capability,
@@ -113,6 +113,22 @@ export function useAuth(transport: CelnetTransport): AuthApi {
       setError(null);
       setBusy(false);
     }
+  }, [transport]);
+
+  // Server-side session expiry: the edge rejected our held bearer token (e.g. a
+  // server restart / blue-green cutover emptied the session registry, or the token
+  // TTL'd out). The transport has already dropped the dead token so the socket
+  // reconnects anonymously and STAYS open (a tokened reconnect would be closed by
+  // the edge every cycle — the reconnect-loop this guards against). Here we clear
+  // the local identity so the app falls back to the sign-in screen for a fresh
+  // login, and surface why. A no-op on transports without the observer (the mock).
+  useEffect(() => {
+    const dispose = transport.onSessionExpired?.(() => {
+      setUser(null);
+      setCapabilities([]);
+      setError("Your session expired — please sign in again.");
+    });
+    return dispose;
   }, [transport]);
 
   const clearError = useCallback(() => setError(null), []);

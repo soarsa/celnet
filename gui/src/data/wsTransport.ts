@@ -384,6 +384,17 @@ const PRICING_REQUEST_TIMEOUT_MS = 90_000;
  */
 const RISK_TRANSFER_INBOX_POLL_MS = 4_000;
 
+/**
+ * The canonical server marker for a rejected bearer session — the stable prefix of
+ * the `Status::unauthenticated` message the edge emits when a presented
+ * `session_token` no longer validates (`services/access.rs`,
+ * `"invalid or expired session token — re-authenticate via AuthService.Login"`).
+ * The transport matches this on an unsolicited `error` frame to detect that our
+ * HELD token is dead and stop re-presenting it (see {@link WsConnection.dispatch}).
+ * This is the one canonical contract message; there is no separate wire code for it.
+ */
+const INVALID_SESSION_MARKER = "invalid or expired session token";
+
 /** An error surfaced when a request/response call cannot complete. */
 export class WsTransportError extends Error {
   constructor(message: string) {
@@ -450,6 +461,18 @@ class WsConnection {
    * next change.
    */
   private lastPricingControl: WireObject | null = null;
+  /**
+   * Session-expiry listeners. Fired when the server rejects our HELD bearer token
+   * as invalid/expired (an unsolicited `error` frame — see
+   * {@link INVALID_SESSION_MARKER}). The auth layer subscribes to drop the identity
+   * back to the sign-in screen. See {@link maybeExpireSession} for why this must
+   * exist: without it a stale token (e.g. after a server restart / blue-green
+   * cutover that empties the session registry) is re-sent on every reconnect's
+   * `authenticate` frame, the server closes the session each time
+   * (`services/stream.rs`: a presented-but-invalid token is a hard close), and the
+   * client reconnect-loops forever re-presenting the same dead credential.
+   */
+  private readonly sessionExpiredSubs = new Set<() => void>();
   /** Connection-state listeners (for the status ribbon / debugging). */
   private readonly stateListeners = new Set<(open: boolean) => void>();
   /**
@@ -580,6 +603,13 @@ class WsConnection {
     }
     const type = typeof frame["type"] === "string" ? (frame["type"] as string) : "";
     const corr = frame["correlation_id"];
+    // The server rejected our held bearer token as invalid/expired. Clear it and
+    // fire the expiry listeners BEFORE any other routing, so the next reconnect
+    // authenticates anonymously (which the server does NOT close) instead of
+    // re-presenting the dead credential — breaking the connect→reject→close→
+    // reconnect loop. Non-terminal here: the frame still routes normally below (a
+    // reply-shaped rejection still fails its waiter).
+    this.maybeExpireSession(type, frame);
     // A reply to a request/response call: route to the waiter by correlation id.
     if (typeof corr === "number" || typeof corr === "bigint") {
       const key = BigInt(corr as number | bigint);
@@ -759,6 +789,34 @@ class WsConnection {
     return () => {
       this.pricingControlSubs.delete(key);
     };
+  }
+
+  /**
+   * Register a session-expiry handler, fired when the server rejects our held
+   * bearer token (see {@link maybeExpireSession}). Returns a disposer.
+   */
+  onSessionExpired(listener: () => void): () => void {
+    this.sessionExpiredSubs.add(listener);
+    return () => this.sessionExpiredSubs.delete(listener);
+  }
+
+  /**
+   * If `frame` is the server's unsolicited "invalid or expired session token"
+   * rejection AND we currently hold a token, drop the dead token and notify the
+   * expiry listeners. Idempotent per stale credential: clearing the token means a
+   * re-delivery (or the next reconnect's rejection) finds no held token and is a
+   * no-op, so listeners fire exactly once per expired session. Guarded on holding a
+   * token so an anonymous session's ordinary capability denials — which carry the
+   * same class of message on some gated verbs — never trip a spurious "expiry".
+   */
+  private maybeExpireSession(type: string, frame: WireObject): void {
+    if (this.sessionToken === null || type !== "error") return;
+    const message = frame["message"];
+    if (typeof message !== "string" || !message.includes(INVALID_SESSION_MARKER)) return;
+    // The token is dead — stop injecting it (subsequent requests + every reconnect's
+    // `authenticate` now go out anonymously, which the server keeps open).
+    this.sessionToken = null;
+    for (const listener of this.sessionExpiredSubs) listener();
   }
 
   /** Send the `subscribe_notifications` control frame (injecting the bearer token). */
@@ -1360,6 +1418,17 @@ export class WsTransport implements CelnetTransport {
   /** Snapshot of socket liveness (`true` iff the live socket is currently OPEN). */
   isConnected(): boolean {
     return this.conn.isOpen();
+  }
+
+  /**
+   * Observe server-side session expiry — fired when the edge rejects our held
+   * bearer token as invalid/expired (e.g. after a server restart / blue-green
+   * cutover empties the session registry). The auth flow subscribes to drop the
+   * identity back to sign-in; the transport has already cleared the dead token so
+   * the live socket reconnects anonymously (and stays open) instead of looping.
+   */
+  onSessionExpired(listener: () => void): () => void {
+    return this.conn.onSessionExpired(listener);
   }
 
   /**

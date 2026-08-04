@@ -263,6 +263,20 @@ export interface CelnetTransport {
   isConnected?(): boolean;
 
   /**
+   * Observe server-side session expiry — the listener fires when the edge rejects
+   * the transport's HELD bearer token as invalid/expired (e.g. after a server
+   * restart / blue-green cutover empties the session registry, or the token TTLs
+   * out). The transport clears the dead token itself; the auth flow subscribes to
+   * drop the identity back to sign-in. Returns a disposer. Present ONLY on the live
+   * WS transport; ABSENT on the in-app mock (whose token is never rejected).
+   *
+   * Without this, a stale token is re-sent on every reconnect's `authenticate`
+   * frame, the edge closes the session each time (a presented-but-invalid token is
+   * a hard close server-side), and the client reconnect-loops forever.
+   */
+  onSessionExpired?(listener: () => void): () => void;
+
+  /**
    * Install (or clear, with `null`) the bearer session token from
    * `AuthService.Login`. Once set, the transport authenticates every gated RPC
    * with it server-side (and admin RPCs are role-gated on it); cleared on logout.
