@@ -30,6 +30,10 @@ pub mod auto_hedge;
 pub mod consensus;
 pub mod corpactions;
 pub mod desk;
+/// End-to-end trade-lifecycle test suite (drives a real incoming order through the whole
+/// pipeline: last-look → acceptance → book → route → internalise/hedge → aggregation).
+#[cfg(test)]
+mod e2e_lifecycle;
 pub mod error_status;
 pub mod internalise;
 pub mod liquidity_feed;

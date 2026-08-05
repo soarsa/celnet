@@ -1610,13 +1610,13 @@ fn rule_covers_cell(rule: &EntitlementRule, entity: u32, book: u32) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use celnet_proto::{
         EntitlementRule, OisInstrument, RatesInstrument, RiskScope, Side, rates_instrument,
     };
 
-    fn position(id: u64, entity: u32, book: u32) -> RatesPosition {
+    pub(crate) fn position(id: u64, entity: u32, book: u32) -> RatesPosition {
         RatesPosition {
             position_id: id,
             entity,
@@ -2038,7 +2038,7 @@ mod tests {
     use crate::config::hedge_policy::HedgeMetric;
 
     /// A single-book routing graph: every fill → `book`.
-    fn single_book_graph(book: &str) -> RiskRoutingGraph {
+    pub(crate) fn single_book_graph(book: &str) -> RiskRoutingGraph {
         let mut nodes = std::collections::BTreeMap::new();
         nodes.insert(
             0u32,
@@ -2051,7 +2051,7 @@ mod tests {
 
     /// A hedge policy: the default warehouse-vs-hedge exit graph + one Book-scoped DV01
     /// threshold on `book` with budget `cap`, advisory-only, `min_edge_bps` tolerance floor.
-    fn hedge_policy(book: &str, cap: f64, min_edge_bps: f64) -> RatesHedgePolicy {
+    pub(crate) fn hedge_policy(book: &str, cap: f64, min_edge_bps: f64) -> RatesHedgePolicy {
         let config = HedgeConfigDef {
             min_edge_bps,
             ..HedgeConfigDef::default()
@@ -2080,7 +2080,7 @@ mod tests {
     }
 
     /// A booking attribution carrying the dealt level + reference mid (the RFQ-desk / lift path).
-    fn priced_attribution(dealt: f64, mid: f64) -> RatesRoutingAttribution {
+    pub(crate) fn priced_attribution(dealt: f64, mid: f64) -> RatesRoutingAttribution {
         RatesRoutingAttribution {
             counterparty: "cp".to_owned(),
             ccy: "USD".to_owned(),

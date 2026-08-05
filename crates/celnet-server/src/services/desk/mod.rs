@@ -1340,7 +1340,7 @@ impl celnet_proto::notification_service_server::NotificationService for RfqDeskE
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::services::rates_book::RatesPositionStore;
     use celnet_limits::{LimitScope, LimitSpec};
@@ -1455,7 +1455,7 @@ mod tests {
     /// An edge over a caller-supplied rates store — so a test can install a firm-wide
     /// risk-routing graph on the store before booking and assert the routed
     /// `Deal.risk_book_id` the desk path stamps.
-    fn edge_with_rates(rates: Arc<RatesPositionStore>) -> RfqDeskEdge {
+    pub(crate) fn edge_with_rates(rates: Arc<RatesPositionStore>) -> RfqDeskEdge {
         let gate = Arc::new(ReadinessGate::new());
         gate.mark_ready();
         RfqDeskEdge::new(
@@ -2147,7 +2147,7 @@ mod tests {
     /// Submit + auto-quote a desk request with explicit counterparty / notional / quoted
     /// price, returning its (QUOTED) request id — so an acceptance test controls the fields
     /// the acceptance graph branches on.
-    async fn quote_request(
+    pub(crate) async fn quote_request(
         edge: &RfqDeskEdge,
         counterparty: &str,
         notional: f64,
@@ -2216,7 +2216,7 @@ mod tests {
     }
 
     /// A single-condition graph: `field op value ? <yes> : ACCEPT`.
-    fn gate_graph(
+    pub(crate) fn gate_graph(
         field: AcceptanceField,
         op: RouteOp,
         value: RouteValue,
