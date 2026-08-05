@@ -188,6 +188,14 @@ pub struct RatesPositionStore {
     /// [`Arc`] so the desk edge clones only a pointer when it evaluates a lift off the FIX
     /// edge (never the pinned pricing core).
     acceptance: RwLock<Option<Arc<AcceptanceGraph>>>,
+    /// The shared latency/ops telemetry hub (the SAME `Arc` the FX
+    /// [`PositionStore`](super::risk::store::PositionStore) and the `CoreLink` hold,
+    /// `docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md` §4.3). Set once at boot; the FI
+    /// booking seams on the async edge record their per-stage latency here (best-order booking
+    /// commit, risk-routing decision, auto-hedge fire) — never the pinned pricing thread
+    /// (guardrail 11). `None` (a store never given a hub — the unit tests' default) ⇒ the
+    /// record calls are no-ops, byte-identical to the pre-instrumentation path.
+    telemetry: OnceLock<Arc<crate::services::telemetry::TelemetryHub>>,
 }
 
 /// A read view of one booked rates position assembled for a **risk transfer** (§6):
@@ -246,6 +254,28 @@ impl RatesPositionStore {
             hedge_policy: RwLock::new(None),
             internalise: RwLock::new(HashMap::new()),
             acceptance: RwLock::new(None),
+            telemetry: OnceLock::new(),
+        }
+    }
+
+    /// Attach the shared latency/ops telemetry hub so the FI booking seams record their
+    /// per-stage latency (best-order booking commit → [`OpKind::Book`], risk-routing decision
+    /// → [`OpKind::RiskRoute`], auto-hedge fire → [`OpKind::HedgeFire`]). The SAME hub the FX
+    /// [`PositionStore::set_telemetry`](super::risk::store::PositionStore::set_telemetry)
+    /// receives, wired once at boot. Idempotent-once; a store never given a hub records
+    /// nothing (byte-identical to the pre-instrumentation path).
+    pub fn set_telemetry(&self, hub: Arc<crate::services::telemetry::TelemetryHub>) {
+        let _ = self.telemetry.set(hub);
+    }
+
+    /// Record an async-edge stage latency (`nanos`) under `kind` into the shared telemetry hub,
+    /// when one is installed — the drain-side `record_edge` idiom, off the pinned pricing core
+    /// (guardrail 11). A no-op when no hub is attached, so the booking seams and the desk edge
+    /// (which holds this store) can bracket their work unconditionally without a hub check at
+    /// every call site. `nanos` is a monotonic `Instant` elapsed span the caller measured.
+    pub fn record_latency(&self, kind: celnet_observability::OpKind, nanos: u64) {
+        if let Some(hub) = self.telemetry.get() {
+            hub.record_edge(kind, nanos);
         }
     }
 
@@ -758,6 +788,12 @@ impl RatesPositionStore {
         mut position: RatesPosition,
         attribution: RatesRoutingAttribution,
     ) -> Result<RatesPosition, tonic::Status> {
+        // Best-order timer O3 (ack→fill→book commit latency, `OpKind::Book`): bracket the whole
+        // rates booking commit with a monotonic `Instant`; recorded into the telemetry hub on a
+        // successful book below — the rates analogue of the FX sink
+        // ([`PositionStore::book`](super::risk::store::PositionStore::book)). This is the async
+        // booking tier, never the pinned pricing core (guardrail 11).
+        let book_t0 = std::time::Instant::now();
         // Pre-trade limit gate (ADR-0016 A1) over a READ snapshot, BEFORE the write lock,
         // so a hard breach can never book and the projection never runs while the exclusive
         // write lock is held (guardrails #6/#11 — a fill never serialises the whole book
@@ -784,8 +820,14 @@ impl RatesPositionStore {
         // mutation — mirroring the FX sink. A routing error on an already-validated graph
         // falls back to UNROUTED (a routing failure never rejects the fill), byte-identical
         // to the pre-routing path; `None` (no graph) is likewise unrouted.
+        // Best-order timer: bracket just the routing decision-graph evaluation (`OpKind::RiskRoute`).
+        // Recorded only when a graph was actually installed (routing ran) so an unrouted store
+        // never folds a trivial no-graph span into the stage.
+        let route_t0 = std::time::Instant::now();
+        let routing_ran;
         let resolved_book: Option<String> = {
             let routing = self.routing.read().expect("rates routing lock poisoned");
+            routing_ran = routing.is_some();
             routing.as_ref().and_then(|graph| {
                 let ctx = routing_context_from_rates(&position, &attribution);
                 match RiskRouter::route(graph, &ctx) {
@@ -801,6 +843,12 @@ impl RatesPositionStore {
                 }
             })
         };
+        if routing_ran {
+            self.record_latency(
+                celnet_observability::OpKind::RiskRoute,
+                u64::try_from(route_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            );
+        }
         // The per-book HARD-limit gate (§8.3): if the fill's resolved book (or any ancestor)
         // would EXCEED a hard notional cap, reject BEFORE any mutation — store unchanged. No
         // caps on the path ⇒ `None`, byte-identical to the pre-enforcement path.
@@ -888,6 +936,12 @@ impl RatesPositionStore {
         // price-tolerance verdict and stamp it onto the fill for the deal blotter. A no-op
         // otherwise (the manual `BookRatesPosition` path, or no policy) — byte-identical.
         self.stamp_internalise(&position, resolved_book.as_deref(), &attribution);
+        // O3: record the ack→fill→book commit latency into the per-`OpKind` store (mirrors the
+        // FX sink). Off the pinned pricing core; a no-op when no hub is installed.
+        self.record_latency(
+            celnet_observability::OpKind::Book,
+            u64::try_from(book_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
         Ok(position)
     }
 
@@ -968,6 +1022,12 @@ impl RatesPositionStore {
             internal_offset_available: 0.0,
             ..HedgeContext::default()
         };
+        // Best-order timer: bracket the auto-hedge decision (`OpKind::HedgeFire`) — the pure
+        // engine's threshold-breach → hedge-action evaluation on this fill's post-book book
+        // risk. Measured at the call site (not inside the engine) so the pinned/pure engine
+        // stays telemetry-free; recorded off the async booking tier via the store's hub
+        // (guardrail 11), a no-op when no hub is installed.
+        let hedge_t0 = std::time::Instant::now();
         let outcome = policy.engine.evaluate(
             graph,
             &thr_def,
@@ -975,6 +1035,10 @@ impl RatesPositionStore {
             &ctx,
             &policy.known_lps,
             now,
+        );
+        self.record_latency(
+            celnet_observability::OpKind::HedgeFire,
+            u64::try_from(hedge_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         );
         // The book-level external shed the graph's decompose decided; attribute up to this
         // fill's own DV01 to it (a fill can shed at most what it added).
@@ -2113,6 +2177,94 @@ pub(crate) mod tests {
         assert_eq!(prov.external_dv01, 0.0);
         assert!((prov.edge_bps - 5.0).abs() < 1e-6);
         assert_eq!(prov.hedge_band, "green");
+    }
+
+    // ---- latency instrumentation (docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md) ----
+
+    /// A routed, priced rates booking through the FI sink records its per-stage latency into
+    /// the installed telemetry hub: the booking commit (`Book`), the risk-routing decision
+    /// (`RiskRoute`), and the auto-hedge decision (`HedgeFire`) all show `count > 0` in
+    /// `stage_stats()` — the stages the Latency/Ops workspace renders. Drives the SAME routed +
+    /// hedge-policy fixture the internalise tests use.
+    #[test]
+    fn fi_booking_seams_record_latency_stages() {
+        use celnet_observability::OpKind;
+        let store = RatesPositionStore::new();
+        let hub = Arc::new(crate::services::telemetry::TelemetryHub::new(1_000_000_000));
+        store.set_telemetry(Arc::clone(&hub));
+        store.set_routing(Some(single_book_graph("wh")));
+        store.set_hedge_policy(Some(hedge_policy("wh", 100_000.0, 0.5)));
+
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
+            .expect("routed priced booking succeeds");
+        assert!(
+            store.internalise_of(booked.position_id).is_some(),
+            "the fixture must exercise the hedge/internalise path so HedgeFire fires"
+        );
+
+        let stats = hub.stage_stats();
+        let count_of = |k: OpKind| {
+            stats
+                .iter()
+                .find(|s| s.kind == k)
+                .map_or(0, |s| s.snapshot.count)
+        };
+        assert!(
+            count_of(OpKind::Book) > 0,
+            "the booking commit records the Book stage, got {stats:?}"
+        );
+        assert!(
+            count_of(OpKind::RiskRoute) > 0,
+            "the routing decision records the RiskRoute stage, got {stats:?}"
+        );
+        assert!(
+            count_of(OpKind::HedgeFire) > 0,
+            "the auto-hedge decision records the HedgeFire stage, got {stats:?}"
+        );
+    }
+
+    /// With no hub installed the same booking is a silent no-op for telemetry — booking still
+    /// succeeds, byte-identical to the pre-instrumentation path (the record calls short-circuit).
+    #[test]
+    fn fi_booking_seams_are_silent_without_a_hub() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        store.set_hedge_policy(Some(hedge_policy("wh", 100_000.0, 0.5)));
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
+            .expect("booking succeeds with no telemetry hub attached");
+        assert_eq!(booked.position_id, 1);
+    }
+
+    /// An unrouted booking (no graph) does NOT fold a trivial no-graph span into the RiskRoute
+    /// stage — RiskRoute stays empty while Book still records. Guards the `routing_ran` gate.
+    #[test]
+    fn unrouted_booking_records_book_but_not_riskroute() {
+        use celnet_observability::OpKind;
+        let store = RatesPositionStore::new();
+        let hub = Arc::new(crate::services::telemetry::TelemetryHub::new(1_000_000_000));
+        store.set_telemetry(Arc::clone(&hub));
+        // No routing graph installed.
+        let _ = store
+            .book(position(0, 1, 10))
+            .expect("unrouted booking succeeds");
+        let stats = hub.stage_stats();
+        let count_of = |k: OpKind| {
+            stats
+                .iter()
+                .find(|s| s.kind == k)
+                .map_or(0, |s| s.snapshot.count)
+        };
+        assert!(
+            count_of(OpKind::Book) > 0,
+            "Book still records when unrouted"
+        );
+        assert_eq!(
+            count_of(OpKind::RiskRoute),
+            0,
+            "no graph ⇒ RiskRoute records nothing (no trivial span), got {stats:?}"
+        );
     }
 
     /// A thin (sub-floor) edge ⇒ a losing / marginal fill is NOT warehoused: the whole fill

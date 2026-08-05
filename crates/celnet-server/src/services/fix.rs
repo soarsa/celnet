@@ -730,6 +730,13 @@ impl FixSession {
         rates_request_id: Option<String>,
         out: &mut Vec<Vec<u8>>,
     ) -> Vec<u8> {
+        // Best-order timer O1 (outbound quote publish, `OpKind::StreamPublish` —
+        // "Quote publish (tick→quote)"): bracket the quote-ready → frame-emitted span (mint the
+        // two-way tokens, build the `Quote(S)` wire frame, push it) with a monotonic `Instant`,
+        // recorded into the shared telemetry hub before returning. Shared by the FX-options RFQ
+        // auto-quote, the rates RFQ auto-quote, and the RFS/ESP stream tick, so every outbound
+        // maker quote folds into this stage. The async FIX edge, never the pinned pricing core.
+        let publish_t0 = std::time::Instant::now();
         let now = self.ctx.clock.now_nanos();
         let line_id = {
             self.next_line += 1;
@@ -791,6 +798,11 @@ impl FixSession {
             messages::build_quote(h, &p, e)
         });
         out.push(frame_out);
+        // O1: record the tick→quote publish latency into the per-`OpKind` store, off the hot core.
+        self.ctx.link.telemetry().record_edge(
+            celnet_observability::OpKind::StreamPublish,
+            u64::try_from(publish_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
         quote_id
     }
 
@@ -838,7 +850,17 @@ impl FixSession {
         // is auto-quoted; a routine large clip is routed quietly; an unknown security /
         // unconfigured tenor / pricing failure is routed as an ALERT-worthy manual
         // intervention. Every case records to the desk inbox — nothing is dropped.
+        // Best-order timer O1 (rates quote CONSTRUCTION, `OpKind::RfqQuote`): bracket the desk
+        // quote build — the classify + engine price step that constructs the par-rate / PV
+        // two-way for this inbound RFQ — with a monotonic `Instant`, recorded into the shared
+        // telemetry hub. The FIX session runs on the async edge (allocation-OK), never the
+        // pinned pricing core (guardrail 11).
+        let price_t0 = std::time::Instant::now();
         let admission = self.classify_ois_rfq(&rfq, intent, frame);
+        self.ctx.link.telemetry().record_edge(
+            celnet_observability::OpKind::RfqQuote,
+            u64::try_from(price_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
         // The display counterparty rides the RFQ's PartyID(448) when the initiator names one
         // (a SIM rotates realistic names per request), else the authenticated CompID.
         let counterparty = self.display_counterparty(frame);
@@ -2037,6 +2059,51 @@ mod tests {
         control.set(true, true);
         let frames = session.tick_rfs_stream(&st);
         assert!(!frames.is_empty(), "streams resume from live on re-enable");
+    }
+
+    /// Latency instrumentation (docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md): driving an
+    /// inbound auto-quotable rates RFQ through the FIX edge records the quote CONSTRUCTION stage
+    /// (`RfqQuote` — the classify/price step) AND the outbound quote PUBLISH stage
+    /// (`StreamPublish` — the `emit_two_way_quote` frame emit) into the shared telemetry hub the
+    /// `CoreLink` owns, both with `count > 0` in `stage_stats()`.
+    #[tokio::test]
+    async fn rates_rfq_records_construction_and_publish_stages() {
+        use celnet_observability::OpKind;
+        // Default (both-enabled) control ⇒ an admitted clip is auto-quoted (emits a Quote(S)).
+        let mut session = stream_session("conn-lat", None);
+        let st = session.sending_time();
+        let frame_bytes = small_ois_subscribe_frame();
+        let frame = FrameCursor::parse(&frame_bytes).expect("frame parses");
+        let req_id = frame
+            .get(131)
+            .map(<[u8]>::to_vec)
+            .expect("QuoteReqID present");
+        let symbol = frame.get(55).map(<[u8]>::to_vec).expect("Symbol present");
+
+        let mut out = Vec::new();
+        session
+            .on_rates_quote_request(&frame, &st, &req_id, &symbol, &mut out)
+            .await;
+        assert!(
+            !out.is_empty(),
+            "an admitted, on-the-run clip emits an outbound Quote(S)"
+        );
+
+        let stats = session.ctx.link.telemetry().stage_stats();
+        let count_of = |k: OpKind| {
+            stats
+                .iter()
+                .find(|s| s.kind == k)
+                .map_or(0, |s| s.snapshot.count)
+        };
+        assert!(
+            count_of(OpKind::RfqQuote) > 0,
+            "the rates quote construction records the RfqQuote stage, got {stats:?}"
+        );
+        assert!(
+            count_of(OpKind::StreamPublish) > 0,
+            "the outbound emit records the StreamPublish stage, got {stats:?}"
+        );
     }
 
     /// The auto-quote policy admits small, on-the-run clips and routes larger or

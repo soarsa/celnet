@@ -797,6 +797,12 @@ impl RfqDeskEdge {
         let traded_side = traded_side_of(current.instrument.as_ref())?;
         let desk_side = opposite_side(traded_side);
 
+        // Best-order timer O2 (quote→lift handling, `OpKind::QuoteAccept`): bracket the
+        // FIX-lift accept span — the rebook-at-dealt-level + booking commit — with a monotonic
+        // `Instant`, recorded into the shared telemetry hub (via the rates store) on the
+        // success path below. The async desk edge, never the pinned pricing core (guardrail 11).
+        let lift_t0 = std::time::Instant::now();
+
         // Book the dealt rates position (desk perspective) at the lifted level, on the
         // ACTUAL traded family — the swap/FRA fixed rate (or the bond face) struck at
         // the dealt terms, priced/booked through celnet-rates / celnet-bond.
@@ -833,6 +839,12 @@ impl RfqDeskEdge {
                 },
             )
             .ok()?;
+        // O2: record the quote→lift accept latency (the FIX-lift span) into the per-`OpKind`
+        // store. A no-op when no telemetry hub is installed.
+        self.rates.record_latency(
+            celnet_observability::OpKind::QuoteAccept,
+            u64::try_from(lift_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
 
         let now = self.clock.now_nanos();
         let deal = Deal {
@@ -1113,6 +1125,13 @@ impl RfqDeskService for RfqDeskEdge {
             .ok_or_else(|| Status::invalid_argument("request carries no bookable FI instrument"))?;
         let desk_side = opposite_side(traded_side);
 
+        // Best-order timer O2 (quote→lift/accept handling, `OpKind::QuoteAccept`): bracket the
+        // platform accept span — the rebook-at-dealt-level + booking commit — with a monotonic
+        // `Instant`, recorded into the shared telemetry hub (via the rates store) on the
+        // success path below. The booking work is synchronous (no `.await` inside the bracket);
+        // the async desk edge, never the pinned pricing core (guardrail 11).
+        let accept_t0 = std::time::Instant::now();
+
         // Book the dealt rates position (desk perspective) at the lifted level, on the
         // ACTUAL traded family — the swap/FRA fixed rate (or bond face) struck at the
         // dealt terms, priced/booked through celnet-rates / celnet-bond.
@@ -1146,6 +1165,12 @@ impl RfqDeskService for RfqDeskEdge {
                 reference_mid,
             },
         )?;
+        // O2: record the quote→accept latency (the platform-lift span) into the per-`OpKind`
+        // store. A no-op when no telemetry hub is installed.
+        self.rates.record_latency(
+            celnet_observability::OpKind::QuoteAccept,
+            u64::try_from(accept_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
 
         let now = self.clock.now_nanos();
         let deal = Deal {
@@ -2549,6 +2574,91 @@ pub(crate) mod tests {
         assert!(
             risk.dv01.is_some(),
             "a routed rates fill surfaces a DV01 on the dashboard",
+        );
+    }
+
+    /// Latency instrumentation (docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md): driving a
+    /// full RFQ → quote → FIX-lift → book through the desk edge, with a telemetry hub installed
+    /// on the rates store, records every FI booking stage — the accept/lift span
+    /// (`QuoteAccept`), the booking commit (`Book`), the risk-routing decision (`RiskRoute`),
+    /// and the auto-hedge decision (`HedgeFire`) — all with `count > 0` in `stage_stats()`.
+    #[tokio::test]
+    async fn desk_lift_records_quoteaccept_and_booking_stages() {
+        use crate::config::hedge_policy::{
+            HedgeConfigDef, HedgeMetric, HedgeScopeKind, HedgeThresholdDef, ScopedThreshold,
+        };
+        use crate::config::identity::default_hedge_policy_graph;
+        use crate::services::auto_hedge::AutoHedgeEngine;
+        use crate::services::rates_book::RatesHedgePolicy;
+        use crate::services::telemetry::TelemetryHub;
+        use celnet_observability::OpKind;
+        use celnet_risk_routing::{RiskRoutingGraph, RoutingNode};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let rates = Arc::new(RatesPositionStore::new());
+        // Install the shared latency hub on the rates store the desk edge books through.
+        let hub = Arc::new(TelemetryHub::new(1_000_000_000));
+        rates.set_telemetry(Arc::clone(&hub));
+        // Route every fill to the "warehouse" book so RiskRoute fires.
+        let graph = {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                0u32,
+                RoutingNode::Book {
+                    risk_book_id: "warehouse".to_owned(),
+                },
+            );
+            RiskRoutingGraph { entry: 0, nodes }
+        };
+        rates.set_routing(Some(graph));
+        // Prime a hedge policy so the internalise/HedgeFire decision runs on the lifted fill.
+        rates.set_hedge_policy(Some(RatesHedgePolicy {
+            engine: Arc::new(AutoHedgeEngine::default()),
+            graph: Some(default_hedge_policy_graph()),
+            thresholds: vec![ScopedThreshold {
+                scope_id: "warehouse".to_owned(),
+                def: HedgeThresholdDef {
+                    scope_kind: HedgeScopeKind::Book,
+                    metric: HedgeMetric::Dv01,
+                    cap: 10_000_000.0,
+                    amber: 0.8,
+                    red: 0.9,
+                    target_fraction: 0.8,
+                    min_clip: 0.0,
+                    max_clip: f64::INFINITY,
+                    ramped: false,
+                    ramp_k: 1.0,
+                },
+            }],
+            config: HedgeConfigDef::default(),
+            known_lps: BTreeSet::new(),
+        }));
+
+        let edge = edge_with_rates(Arc::clone(&rates));
+        let _deal = lift_a_deal(&edge).await;
+
+        let stats = hub.stage_stats();
+        let count_of = |k: OpKind| {
+            stats
+                .iter()
+                .find(|s| s.kind == k)
+                .map_or(0, |s| s.snapshot.count)
+        };
+        assert!(
+            count_of(OpKind::QuoteAccept) > 0,
+            "the FIX-lift accept span records the QuoteAccept stage, got {stats:?}"
+        );
+        assert!(
+            count_of(OpKind::Book) > 0,
+            "the booking commit records the Book stage, got {stats:?}"
+        );
+        assert!(
+            count_of(OpKind::RiskRoute) > 0,
+            "the routing decision records the RiskRoute stage, got {stats:?}"
+        );
+        assert!(
+            count_of(OpKind::HedgeFire) > 0,
+            "the auto-hedge decision records the HedgeFire stage, got {stats:?}"
         );
     }
 

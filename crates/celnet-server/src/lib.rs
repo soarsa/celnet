@@ -456,6 +456,12 @@ impl Edge {
         // stream edge for the per-book risk roster. Its risk router is primed below beside the
         // FX store's, so a routed rates fill buckets into its risk book from first boot.
         let rates_store = Arc::new(services::rates_book::RatesPositionStore::new());
+        // Wire the SAME shared latency/ops telemetry hub (owned by the `CoreLink`) into the
+        // rates book so the FI booking seams record their per-stage latency (best-order booking
+        // commit → Book, risk-routing decision → RiskRoute, auto-hedge fire → HedgeFire), and
+        // so the desk edge (which holds this store) can record the quote→lift accept span →
+        // QuoteAccept. Off the pinned pricing thread, uniform with the FX `store.set_telemetry`.
+        rates_store.set_telemetry(Arc::clone(link.telemetry()));
         let stream = StreamServiceServer::new(
             StreamEdge::with_store_and_fleet(
                 Arc::clone(&link),
