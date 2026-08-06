@@ -408,7 +408,9 @@
   padding: 2px var(--space-2);
   border-radius: var(--r-sm);
   background: color-mix(in oklab, var(--accent) 18%, transparent);
-  color: var(--accent);
+  /* Mix the accent toward text-primary: keeps the accent hue but clears WCAG AA on the
+     18% accent tint in both themes (bare var(--accent) on this tint fails contrast). */
+  color: color-mix(in oklab, var(--accent) 55%, var(--text-primary));
   font: var(--weight-emphasis) var(--type-micro) / 1 var(--font-mono, var(--font-ui));
   letter-spacing: 0.06em;
 }
