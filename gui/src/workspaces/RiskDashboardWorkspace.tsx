@@ -1,19 +1,25 @@
 /**
- * RiskDashboardWorkspace — the consolidated fixed-income RISK surface: a tabbed shell
- * over TWO sibling views that were previously two separate rail destinations
- * (mirroring the FI "Book → Risk" merge in {@link RiskWorkspace}):
+ * RiskDashboardWorkspace — the consolidated fixed-income RISK surface: ONE rail entry,
+ * "Risk", whose tabbed shell spans FIVE sibling views that were previously separate
+ * rail destinations (mirroring the Pricing and Transfers→Risk Transfer merges):
  *   • **Dashboard** (default) — the per-portfolio rolled-up risk view ({@link
  *     DashboardPanel}); the routed-risk roll-up (docs/FI-RISK-ROUTING-REQUIREMENTS.md
  *     §6.3, §8.6).
  *   • **Portfolios** — the create / enable / edit / limits / hierarchy editor
- *     ({@link RiskBooksWorkspace}, composed VERBATIM as a tab panel), so the editor
- *     the Dashboard's empty-state points at now lives one tab away, not in a separate
- *     rail entry.
- * Both tabs share the SAME rail gate (`risk_manage·fixed_income`), so anyone who can
- * reach this workspace can view both; the Portfolios editor keeps its own
- * `readOnly = !risk_manage·FI` affordance gate internally. The standalone "Risk
- * Portfolios" rail entry is removed (`lib/commands.ts`); the `riskbooks` workspace id
- * now deep-links straight to the Portfolios tab (`app/Shell.tsx`).
+ *     ({@link RiskBooksWorkspace}, composed VERBATIM), the target of the Dashboard's
+ *     empty-state link and the retired "Risk Portfolios" (`riskbooks`) deep-link.
+ *   • **Routing** — the fill → portfolio rule builder ({@link RiskRoutingWorkspace}),
+ *     the retired "Risk Routing" (`riskrouting`) rail entry, composed wholesale.
+ *   • **Acceptance** — the incoming-lift accept/reject rule builder ({@link
+ *     AcceptanceWorkspace}), the retired "Acceptance" (`acceptance`) rail entry.
+ *   • **Scenario** — the class-parametric scenario grid ({@link RiskWorkspace}) at its
+ *     FI rates lens; the cross-asset `risk` row STAYS on the FX rail and is only
+ *     withdrawn from the FI rail (DOMAIN_RAIL_EXCLUDED), so nothing FX is lost.
+ * Each tab keeps its ORIGINAL capability gate independently (see the shell function),
+ * hiding a tab the identity cannot view and clamping the active tab to the first
+ * visible one. The standalone "Risk Portfolios" / "Risk Routing" / "Acceptance" rail
+ * entries are removed (`lib/commands.ts`); their ids deep-link straight to the matching
+ * tab (`app/Shell.tsx` + CONSOLIDATED_WORKSPACE_ALIAS).
  *
  * The DASHBOARD tab ({@link DashboardPanel}) reads each enabled risk portfolio's
  * rolled-up risk from
@@ -30,19 +36,38 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../app/AppContext";
-import type { RiskLimitUtilization, RagBand, RiskBook, RiskBookRisk } from "../data/contract";
+import type {
+  CapabilityAction,
+  RiskLimitUtilization,
+  RagBand,
+  RiskBook,
+  RiskBookRisk,
+} from "../data/contract";
 import { RiskBooksWorkspace } from "./RiskBooksWorkspace";
+import { RiskRoutingWorkspace } from "./riskrouting/RiskRoutingWorkspace";
+import { AcceptanceWorkspace } from "./acceptance/AcceptanceWorkspace";
+import { RiskWorkspace } from "./RiskWorkspace";
 import styles from "./RiskDashboardWorkspace.module.css";
 
-/** The tab the consolidated Risk surface shows: the rolled-up Dashboard or the
- * risk-portfolio editor. `dashboard` is the default; `portfolios` is the deep-link
- * target for the old "Risk Portfolios" rail entry + the Dashboard empty-state link. */
-export type RiskDashboardTab = "dashboard" | "portfolios";
+/** The tab the consolidated Risk surface shows. `dashboard` is the default; the other
+ * four are the deep-link targets for the retired standalone rail entries — `portfolios`
+ * (old "Risk Portfolios"), `routing` (old "Risk Routing"), `acceptance` (old
+ * "Acceptance") and `scenario` (the FI rates lens of the cross-asset `risk` grid). */
+export type RiskDashboardTab = "dashboard" | "portfolios" | "routing" | "acceptance" | "scenario";
 
-/** One row per tab the consolidated Risk surface spans: its id + toggle label. */
-const RISK_TABS: readonly { tab: RiskDashboardTab; label: string }[] = [
-  { tab: "dashboard", label: "Dashboard" },
-  { tab: "portfolios", label: "Portfolios" },
+/**
+ * One row per tab the consolidated Risk surface spans: its id, toggle label, and the
+ * capability ACTION that gates it × fixed_income (each tab keeps its ORIGINAL rail
+ * gate — Dashboard/Portfolios/Routing on `risk_manage`, Acceptance on
+ * `manage_acceptance`, Scenario on the `view` floor). A tab the identity cannot view
+ * is hidden and the active tab clamps to the first visible one (never shown empty).
+ */
+const RISK_TABS: readonly { tab: RiskDashboardTab; label: string; cap: CapabilityAction }[] = [
+  { tab: "dashboard", label: "Dashboard", cap: "risk_manage" },
+  { tab: "portfolios", label: "Portfolios", cap: "risk_manage" },
+  { tab: "routing", label: "Routing", cap: "risk_manage" },
+  { tab: "acceptance", label: "Acceptance", cap: "manage_acceptance" },
+  { tab: "scenario", label: "Scenario", cap: "view" },
 ];
 
 const notional = (n: number): string =>
@@ -416,31 +441,51 @@ function DashboardPanel({
 }
 
 /**
- * RiskDashboardWorkspace — the tabbed shell composing the rolled-up {@link
- * DashboardPanel} and the {@link RiskBooksWorkspace} editor as sibling tabs (see the
- * file header). Mirrors the FI "Book → Risk" tab primitive: a slim segmented bar
- * above the active panel, which fills the remaining pane height and scrolls its own
- * content (the Shell pane is overflow:hidden with a definite height). Only the active
- * tab's body mounts, so each panel's effects (the Dashboard risk stream, the roster
- * load) fire only while it is on screen.
+ * RiskDashboardWorkspace — the tabbed shell composing the FIVE consolidated FI-risk
+ * views as sibling tabs (see the file header): the rolled-up {@link DashboardPanel},
+ * the {@link RiskBooksWorkspace} portfolio editor, the {@link RiskRoutingWorkspace}
+ * fill-routing builder, the {@link AcceptanceWorkspace} accept/reject builder, and the
+ * {@link RiskWorkspace} scenario grid (its FI rates lens). Mirrors the Risk Transfer /
+ * Pricing tab primitive VERBATIM: a slim segmented bar above the active panel, which
+ * fills the remaining pane height and scrolls its OWN content (the Shell pane is
+ * overflow:hidden with a definite height). Only the active tab's body mounts, so each
+ * panel's effects fire only while it is on screen.
+ *
+ * Each tab keeps its ORIGINAL capability gate: Dashboard/Portfolios/Routing on
+ * `risk_manage·FI`, Acceptance on `manage_acceptance·FI`, Scenario on the `view·FI`
+ * floor. A tab the identity cannot view is HIDDEN and the active tab clamps to the
+ * first visible one, so a hidden tab is never shown empty (`can` is permissive
+ * signed-out, so pre-login every tab renders). Reaching the host ROW itself follows
+ * the rail's `risk_manage·FI` viewCap; the Scenario grid also stays a standalone row
+ * on the FX rail (the cross-asset `risk` workspace), only WITHDRAWN from the FI rail.
  */
 export function RiskDashboardWorkspace({
   initialTab = "dashboard",
 }: {
-  /** The initial tab — the `riskbooks` deep-link opens on `portfolios`; the rail's
-   * Risk Dashboard entry (and stories/tests) default to `dashboard`. */
+  /** The initial tab — the `riskbooks` deep-link opens on `portfolios`, `riskrouting`
+   * on `routing`, `acceptance` on `acceptance`; the rail's "Risk" entry (and
+   * stories/tests) default to `dashboard`. */
   initialTab?: RiskDashboardTab;
 } = {}): React.ReactElement {
+  const { auth } = useApp();
+  const visibleTabs = RISK_TABS.filter((t) => auth.can(t.cap, "fixed_income"));
+
   const [tab, setTab] = useState<RiskDashboardTab>(initialTab);
+  // Clamp to a VISIBLE tab so a deep-link (or default) landing on a tab this identity
+  // cannot view falls to the first tab it can, never an empty pane.
+  const activeTab: RiskDashboardTab = visibleTabs.some((t) => t.tab === tab)
+    ? tab
+    : (visibleTabs[0]?.tab ?? "dashboard");
+
   return (
     <div className={styles.shell}>
       <div className={styles.tabBar} role="group" aria-label="risk view">
-        {RISK_TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t.tab}
             type="button"
-            className={`${styles.tabBtn} ${tab === t.tab ? styles.tabBtnActive : ""}`}
-            aria-pressed={tab === t.tab}
+            className={`${styles.tabBtn} ${activeTab === t.tab ? styles.tabBtnActive : ""}`}
+            aria-pressed={activeTab === t.tab}
             data-testid={`risk-tab-${t.tab}`}
             onClick={() => setTab(t.tab)}
           >
@@ -449,10 +494,18 @@ export function RiskDashboardWorkspace({
         ))}
       </div>
       <div className={styles.tabPanel}>
-        {tab === "dashboard" ? (
+        {activeTab === "dashboard" ? (
           <DashboardPanel onGoToPortfolios={() => setTab("portfolios")} />
-        ) : (
+        ) : activeTab === "portfolios" ? (
           <RiskBooksWorkspace />
+        ) : activeTab === "routing" ? (
+          <RiskRoutingWorkspace />
+        ) : activeTab === "acceptance" ? (
+          <AcceptanceWorkspace />
+        ) : (
+          // The cross-asset scenario grid, forced to its FI rates lens — the host is
+          // FI-only, so the Scenario tab always shows the rates netted-risk surface.
+          <RiskWorkspace initialLens="rates" />
         )}
       </div>
     </div>

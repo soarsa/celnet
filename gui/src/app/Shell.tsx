@@ -28,9 +28,7 @@ import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { FiStreamingWorkspace } from "../workspaces/FiStreamingWorkspace";
 import { AggregatedBookWorkspace } from "../workspaces/AggregatedBookWorkspace";
 import { RiskDashboardWorkspace } from "../workspaces/RiskDashboardWorkspace";
-import { RiskRoutingWorkspace } from "../workspaces/riskrouting/RiskRoutingWorkspace";
 import { HedgingWorkspace } from "../workspaces/hedging/HedgingWorkspace";
-import { AcceptanceWorkspace } from "../workspaces/acceptance/AcceptanceWorkspace";
 import { RiskTransferWorkspace } from "../workspaces/risktransfer/RiskTransferWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { XvaWorkspace } from "../workspaces/XvaWorkspace";
@@ -113,25 +111,28 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // kept valid so any deep-link (command palette / saved views) lands straight on that
   // tab within the merged surface. FI-only.
   riskbooks: () => <RiskDashboardWorkspace initialTab="portfolios" />,
-  // Risk Dashboard: the consolidated FI risk surface — a "Dashboard" tab (per-portfolio
-  // rolled-up net/gross, positions, DV01, RAG limit utilization + heat overview) and a
-  // "Portfolios" tab (the create/enable/edit/limits/hierarchy editor). FI-only.
+  // Risk: the consolidated FI risk surface — a tabbed shell hosting "Dashboard" (the
+  // per-portfolio routed-risk roll-up + heat overview), "Portfolios" (the tree editor),
+  // "Routing" (the fill→portfolio rule builder), "Acceptance" (the accept/reject rule
+  // builder) and "Scenario" (the FI rates scenario grid). FI-only; each tab keeps its
+  // own gate (risk_manage / manage_acceptance / view). The retired `riskbooks` /
+  // `riskrouting` / `acceptance` ids deep-link straight onto their folded tab.
   riskdashboard: RiskDashboardWorkspace,
-  // Risk Routing: the drag-and-drop decision-tree canvas — traders compose the
-  // firm-wide rules that route each fill's risk into a desk book (typed condition
-  // nodes → book leaves), with a live "trace a sample fill". Admin edit. FI-only.
-  riskrouting: RiskRoutingWorkspace,
+  // Risk Routing is CONSOLIDATED into the "Risk" host as its "Routing" tab (no
+  // standalone rail row). This id stays valid so any deep-link lands straight on that
+  // tab within the merged surface. FI-only.
+  riskrouting: () => <RiskDashboardWorkspace initialTab="routing" />,
   // Auto-Hedging (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md): the
   // trader-composed EXIT-POLICY graph (reusing the risk-routing drag-and-drop
   // editor with ExitAction leaves), the warehouse-threshold config, and the live
   // hedge monitor (advisory intents + provenance + per-book band RAG). Rail-gated
   // on the narrow `hedge` capability × FI. FI-only.
   hedging: HedgingWorkspace,
-  // Incoming-quote Acceptance (celnet-acceptance): the trader-composed first-match
-  // acceptance rule graph (accept / reject / hold-for-review), reusing the risk-routing
-  // rule-table ⇄ graph builder with decision leaves. Rail-gated on the narrow
-  // `manage_acceptance` capability × FI. FI-only.
-  acceptance: AcceptanceWorkspace,
+  // Incoming-quote Acceptance is CONSOLIDATED into the "Risk" host as its "Acceptance"
+  // tab (no standalone rail row). This id stays valid so any deep-link lands straight on
+  // that tab within the merged surface; the tab keeps its `manage_acceptance·FI` gate.
+  // FI-only.
+  acceptance: () => <RiskDashboardWorkspace initialTab="acceptance" />,
   // Risk Transfer (docs/RISK-TRANSFER-REQUIREMENTS.md §9): the CONSOLIDATED FI move-
   // existing-risk surface — a tabbed shell hosting the "Risk Transfer" initiate ticket
   // (default), the "Inbox" accept/reject four-eyes counterparty tab, and the "Audit"

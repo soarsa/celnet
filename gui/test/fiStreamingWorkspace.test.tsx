@@ -97,11 +97,14 @@ describe("FI Streaming — domain membership (Fixed Income ONLY)", () => {
   it("LEADS the Fixed Income rail (the primary FI surface) — above the shared widgets", () => {
     const fi = railForDomain("fixed_income").map((r) => r.id);
     expect(fi[0]).toBe("fistreaming");
-    // Above every other FI widget (Market Data / Risk / Quoting). "book" is no
-    // longer on the FI rail — the FI ledger is folded into FI "Risk" as tabs.
-    for (const other of ["surface", "risk", "quoting"] as const) {
+    // Above every other FI widget (Market Data / Quoting). "book" AND the "risk"
+    // Scenario grid are no longer on the FI rail — the FI ledger + scenario lens are
+    // folded into the consolidated FI "Risk" host (riskdashboard) as tabs.
+    for (const other of ["surface", "quoting"] as const) {
       expect(fi.indexOf("fistreaming")).toBeLessThan(fi.indexOf(other));
     }
+    // The consolidated Risk host leads the shared widgets too (it precedes Market Data).
+    expect(fi.indexOf("fistreaming")).toBeLessThan(fi.indexOf("riskdashboard"));
   });
 
   it("Ticket is NOT in the Fixed Income rail (re-scoped to FX only)", () => {

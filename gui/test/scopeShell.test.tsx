@@ -56,9 +56,18 @@ describe("data-driven single class-parametric rail + glyph fix (GW1-S1 / #6)", (
     // still derives from the FULL RAIL index — ⌘1..⌘9, ⌘0 for the tenth); an FI-only
     // row (Quoting) and the anonymous-hidden admin/ops panes are NOT in the FX rail.
     const fxRows = new Set(railForDomain("fx_options").map((r) => r.id));
+    const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     for (let i = 0; i < RAIL.length; i += 1) {
       const r = RAIL[i]!;
-      const btn = within(rail).queryByRole("button", { name: new RegExp(r.label, "i") });
+      // Disambiguate by the UNIQUE subtitle when present: the consolidated FI "Risk"
+      // host and the FX "Risk" scenario row share the label "Risk", so a label-only
+      // regex would ambiguously match. A subtitled row's aria-label is `label —
+      // subtitle`; a row without a subtitle has none, so its accessible name is
+      // `glyph label` — matched on the label alone.
+      const matcher = r.subtitle
+        ? new RegExp(escapeRe(r.subtitle))
+        : new RegExp(`\\b${escapeRe(r.label)}\\b`);
+      const btn = within(rail).queryByRole("button", { name: matcher });
       const shouldShow = fxRows.has(r.id) && !ADMIN_ONLY_WORKSPACES.has(r.id);
       if (!shouldShow) {
         expect(btn).toBeNull();

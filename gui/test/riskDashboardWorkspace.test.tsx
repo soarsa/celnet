@@ -36,16 +36,35 @@ function bookOf(id: string, name: string, deskId: string | null = null): RiskBoo
   return { id, name, parentId: null, deskId, description: "", limits: null, enabled: true };
 }
 
-function makeApp(opts: { risk: RiskBookRisk[]; books: RiskBook[] }) {
+function makeApp(opts: {
+  risk: RiskBookRisk[];
+  books: RiskBook[];
+  auth?: { user: unknown; isAdmin: boolean; can: (a: string, s: string) => boolean };
+}) {
   return {
     transport: {
+      label: "mock",
       listRiskBookRisk: vi.fn(async () => opts.risk),
       listRiskBooks: vi.fn(async () => opts.books),
-      // The Portfolios tab (RiskBooksWorkspace) loads the desk roster on mount for
-      // admins — stub it so switching tabs in a test does not throw.
+      // The other consolidated tabs load their own seams on mount — stub them so
+      // switching tabs (only the ACTIVE tab mounts) never throws:
+      //   • Portfolios (RiskBooksWorkspace) + Routing (RiskRoutingWorkspace) → listDesks
+      //   • Routing → getRiskRoutingGraph, Acceptance → getAcceptanceGraph
+      //   • Scenario (RiskWorkspace rates lens → RatesRiskPanel) → aggregateRatesRisk.
       listDesks: vi.fn(async () => []),
+      listFixConnections: vi.fn(async () => []),
+      getRiskRoutingGraph: vi.fn(async () => null),
+      getAcceptanceGraph: vi.fn(async () => null),
+      aggregateRatesRisk: vi.fn(async () => ({ nodes: [] })),
     },
-    auth: { user: { id: "u", email: "admin@celnet.com" }, isAdmin: true, can: () => true },
+    conventions: {},
+    scope: undefined,
+    activeDomain: "fixed_income",
+    auth: opts.auth ?? {
+      user: { id: "u", email: "admin@celnet.com" },
+      isAdmin: true,
+      can: () => true,
+    },
     setSignInOpen: vi.fn(),
   };
 }
@@ -241,5 +260,106 @@ describe("RiskDashboardWorkspace", () => {
 
     const detail = await screen.findByRole("region", { name: /risk detail for FX EMEA/i });
     expect(within(detail).getByRole("meter", { name: /net notional utilization/i })).toBeInTheDocument();
+  });
+});
+
+describe("RiskDashboardWorkspace — the consolidated 5-way Risk host", () => {
+  const emptyBooks = { risk: [] as RiskBookRisk[], books: [] as RiskBook[] };
+
+  it("renders all five tab toggles for an admin, defaulting to Dashboard", async () => {
+    state.app = makeApp(emptyBooks); // admin can() => true ⇒ every tab visible
+    await act(async () => {
+      render(<RiskDashboardWorkspace />);
+    });
+    for (const tab of ["dashboard", "portfolios", "routing", "acceptance", "scenario"] as const) {
+      expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
+    }
+    // Default lands on Dashboard (the routed-risk roll-up).
+    expect(screen.getByTestId("risk-tab-dashboard")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("switches to Routing then Acceptance — only the active tab's body mounts", async () => {
+    state.app = makeApp(emptyBooks);
+    await act(async () => {
+      render(<RiskDashboardWorkspace />);
+    });
+    // The Dashboard heat table is mounted by default.
+    expect(await screen.findByRole("table")).toBeInTheDocument();
+
+    // Routing tab → the fill→portfolio rule builder mounts; the Dashboard unmounts.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("risk-tab-routing"));
+    });
+    expect(await screen.findByRole("heading", { name: "Risk Routing" })).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+
+    // Acceptance tab → the accept/reject builder mounts; Routing unmounts.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("risk-tab-acceptance"));
+    });
+    expect(await screen.findByRole("heading", { name: "Acceptance" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Risk Routing" })).not.toBeInTheDocument();
+  });
+
+  it("hides the Acceptance tab from a risk_manage holder lacking manage_acceptance", async () => {
+    // risk_manage·FI (reaches the host + Dashboard/Portfolios/Routing) but NOT
+    // manage_acceptance ⇒ the Acceptance tab is hidden; Scenario stays (view floor).
+    state.app = makeApp({
+      ...emptyBooks,
+      auth: {
+        user: { id: "u", email: "riskmgr@celnet.com" },
+        isAdmin: false,
+        can: (a: string, s: string) =>
+          s === "fixed_income" && (a === "view" || a === "risk_manage"),
+      },
+    });
+    await act(async () => {
+      render(<RiskDashboardWorkspace />);
+    });
+    for (const tab of ["dashboard", "portfolios", "routing", "scenario"] as const) {
+      expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
+    }
+    expect(screen.queryByTestId("risk-tab-acceptance")).not.toBeInTheDocument();
+    // Default Dashboard still active (it is visible for this identity).
+    expect(screen.getByTestId("risk-tab-dashboard")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("clamps to the first visible tab when deep-linked to a forbidden tab", async () => {
+    // Same risk_manage-only identity, deep-linked to the hidden Acceptance tab ⇒ the
+    // active tab clamps to the first visible one (Dashboard), never an empty pane.
+    state.app = makeApp({
+      ...emptyBooks,
+      auth: {
+        user: { id: "u", email: "riskmgr@celnet.com" },
+        isAdmin: false,
+        can: (a: string, s: string) =>
+          s === "fixed_income" && (a === "view" || a === "risk_manage"),
+      },
+    });
+    await act(async () => {
+      render(<RiskDashboardWorkspace initialTab="acceptance" />);
+    });
+    expect(screen.queryByTestId("risk-tab-acceptance")).not.toBeInTheDocument();
+    expect(screen.getByTestId("risk-tab-dashboard")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows a view-only FI trader ONLY the Scenario tab (its view-floor gate)", async () => {
+    // A booking-only FI trader (view·FI, no risk_manage / manage_acceptance) sees only
+    // the Scenario tab and clamps onto it — the FI rates scenario surface mounts.
+    state.app = makeApp({
+      ...emptyBooks,
+      auth: {
+        user: { id: "u", email: "trader@celnet.com" },
+        isAdmin: false,
+        can: (a: string, s: string) => a === "view" && s === "fixed_income",
+      },
+    });
+    await act(async () => {
+      render(<RiskDashboardWorkspace />);
+    });
+    expect(screen.getByTestId("risk-tab-scenario")).toHaveAttribute("aria-pressed", "true");
+    for (const tab of ["dashboard", "portfolios", "routing", "acceptance"] as const) {
+      expect(screen.queryByTestId(`risk-tab-${tab}`)).not.toBeInTheDocument();
+    }
   });
 });

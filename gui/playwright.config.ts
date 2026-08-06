@@ -54,6 +54,8 @@ const FIDELITY_SPECS = [
   /help\.e2e\.ts/,
   // Consolidated Risk Transfer tabbed surface — offline (mock transport), no cargo edge.
   /riskTransferTabs\.e2e\.ts/,
+  // Consolidated Risk (dashboard+portfolios+routing+acceptance+scenario) tabbed surface.
+  /riskTabs\.e2e\.ts/,
 ];
 
 /**

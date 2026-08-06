@@ -206,22 +206,31 @@ export const RAIL: readonly {
   // FI aggregated-book live composite view (ADR-0022): consolidated best bid/offer
   // across a book's inbound liquidity members — a single-asset FI read surface.
   { id: "aggbook", glyph: "◫", label: "Agg Book", subtitle: "LP-aggregated prices", section: "markets", assets: ["fixed_income"] },
-  // FI Risk (docs/FI-RISK-ROUTING-REQUIREMENTS.md): the CONSOLIDATED risk surface — a
-  // single rail entry whose workspace hosts a "Dashboard" tab (the per-portfolio risk
-  // roll-up) AND a "Portfolios" tab (the hierarchical risk-portfolio tree editor,
-  // formerly the separate "Risk Portfolios" row, now folded in as a tab). Single-asset
-  // FI, gated at the rail on the granular `risk_manage·FI` capability
+  // FI Risk (docs/FI-RISK-ROUTING-REQUIREMENTS.md): the CONSOLIDATED risk surface — ONE
+  // rail entry, "Risk", whose workspace is a tabbed shell over FIVE sibling views that
+  // were previously separate rail destinations (mirroring the Risk Portfolios→Risk
+  // Dashboard, Pricing Groups+Tiering→Pricing and Transfers→Risk Transfer merges):
+  //   • "Dashboard" (default) — the per-portfolio routed-risk roll-up;
+  //   • "Portfolios" — the hierarchical risk-portfolio tree editor (former "Risk
+  //     Portfolios" row → `riskbooks` deep-link alias);
+  //   • "Routing" — the fill → portfolio rule builder (former "Risk Routing" row →
+  //     `riskrouting` alias);
+  //   • "Acceptance" — the incoming-lift accept/reject rule builder (former
+  //     "Acceptance" row → `acceptance` alias);
+  //   • "Scenario" — the class-parametric scenario grid (`risk` workspace, its FI rates
+  //     lens), folded in on FI while the cross-asset `risk` row STAYS on the FX rail
+  //     ({@link DOMAIN_RAIL_EXCLUDED}, exactly like the FI "Book" fold).
+  // Single-asset FI, gated at the rail on the granular `risk_manage·FI` capability
   // (docs/PERMISSIONS-GRANULAR-REVIEW.md §4) — a firm risk-control function distinct
-  // from super-admin, so a risk lead sees + edits it WITHOUT full Administer, and an
-  // ordinary FI trader does not see it at all. The `riskbooks` workspace id is kept
-  // valid (deep-links to the Portfolios tab) but has no rail row of its own. USER-FACING
-  // roll-up name "Risk Dashboard"; the wire type stays `RiskBookDef` (UI-only rename —
-  // see docs/FI-BOOK-CONCEPTS.md).
-  { id: "riskdashboard", glyph: "◉", label: "Risk Dashboard", subtitle: "Roll-up + portfolios", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
-  // Risk Routing: the ordered rules table that routes each fill's risk into a desk's
-  // risk portfolio. Rail-gated + edited on `risk_manage·FI` (was the overloaded
-  // `quote_respond·FI` stand-in). Single-asset FI row.
-  { id: "riskrouting", glyph: "⑃", label: "Risk Routing", subtitle: "Fill → portfolio rules", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
+  // from super-admin, so a risk lead sees + edits it WITHOUT full Administer. Each TAB
+  // keeps its ORIGINAL capability gate independently (Dashboard/Portfolios/Routing →
+  // `risk_manage`, Acceptance → `manage_acceptance`, Scenario → `view`), hiding a tab
+  // the identity cannot view and clamping the active tab to the first visible one. The
+  // retired `riskbooks` / `riskrouting` / `acceptance` ids stay valid deep-links
+  // resolving to this host (see {@link CONSOLIDATED_WORKSPACE_ALIAS}) — no rail row of
+  // their own. USER-FACING name "Risk"; the wire type stays `RiskBookDef` (UI-only
+  // rename — see docs/FI-BOOK-CONCEPTS.md).
+  { id: "riskdashboard", glyph: "◉", label: "Risk", subtitle: "Dashboard · portfolios · routing · acceptance · scenario", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
   // Auto-Hedging (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md): the
   // trader-composed EXIT-POLICY graph (internalise below the threshold, hedge the
   // overflow above), the warehouse-threshold config, and the live hedge monitor.
@@ -234,14 +243,11 @@ export const RAIL: readonly {
   // not FI-nested.
   { id: "hedging", glyph: "◈", label: "Hedging", subtitle: "Exit policy · thresholds · monitor", section: "risk", assets: ["fixed_income"], viewCap: { action: "hedge", asset: "fixed_income" } },
   // Incoming-quote Acceptance (docs — celnet-acceptance): the trader-composed
-  // first-match ACCEPTANCE rule graph — runs at acceptance (after last-look, before
-  // booking) on each incoming client lift and resolves it to Accept / Reject / Hold-
-  // for-review. The THIRD trader-configurable rule engine, mirroring the Risk Routing
-  // and Hedging builders. A single-asset FI risk surface, rail-gated on the narrow
-  // `manage_acceptance` capability × FI (held back from the default trader bundle), so
-  // only the granted acceptance-policy author sees it and an ordinary FI trader does
-  // not. It stays under the Fixed-Income "Risk" section (next to Risk Routing).
-  { id: "acceptance", glyph: "⊨", label: "Acceptance", subtitle: "Incoming lift accept/reject rules", section: "risk", assets: ["fixed_income"], viewCap: { action: "manage_acceptance", asset: "fixed_income" } },
+  // first-match ACCEPTANCE rule graph is CONSOLIDATED into the "Risk" host as its
+  // "Acceptance" tab (no standalone rail row). The `acceptance` id stays a valid
+  // deep-link resolving to that host (see {@link CONSOLIDATED_WORKSPACE_ALIAS}); the
+  // TAB keeps its narrow `manage_acceptance·FI` gate internally, while reaching the
+  // host row itself follows the host's `risk_manage·FI` viewCap.
   // FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md): the MANUAL move of
   // EXISTING risk between risk portfolios — the complement to routing (which
   // auto-assigns NEW fills). CONSOLIDATED into ONE rail row: a tabbed shell hosting
@@ -257,7 +263,11 @@ export const RAIL: readonly {
   { id: "risktransfer", glyph: "⇆", label: "Risk Transfer", subtitle: "Move risk · approve · audit trail", section: "transfers", assets: ["fixed_income"] },
   { id: "surface", glyph: "◷", label: "Market Data", subtitle: "Curves & vol surface", section: "markets", assets: CAPABILITY_ASSETS },
   // The class-parametric SCENARIO risk grid (spot×vol P&L / rates netted risk) — an
-  // analytics view, NOT the routed-risk roll-up (Risk Dashboard) nor the ledger.
+  // analytics view, NOT the routed-risk roll-up (the "Risk" Dashboard tab) nor the
+  // ledger. Cross-asset, so it STAYS a standalone row on the FX rail; under Fixed
+  // Income its FI rates lens is folded into the "Risk" host as the "Scenario" tab and
+  // the row is dropped from the FI rail ({@link DOMAIN_RAIL_EXCLUDED}, exactly like the
+  // FI "Book" fold). The `risk` id remains a live, mountable cross-asset workspace.
   { id: "risk", glyph: "⊞", label: "Risk", subtitle: "Scenario P&L / greeks", section: "risk", assets: CAPABILITY_ASSETS },
   // The position LEDGER — booked positions, booking, and deals (what you hold), NOT
   // the LP price composite (Agg Book) nor a risk-management bucket (Risk Portfolios).
@@ -336,12 +346,20 @@ export const RAIL: readonly {
  *   • `transferinbox` ("Transfer Inbox") → folded into `risktransfer`'s "Inbox" tab.
  *   • `transferaudit` ("Transfer Audit") → folded into `risktransfer`'s "Audit" tab
  *     (the consolidated "Risk Transfer" surface); each id opens that tab directly.
+ *   • `riskrouting` ("Risk Routing") → folded into `riskdashboard`'s "Routing" tab.
+ *   • `acceptance` ("Acceptance") → folded into `riskdashboard`'s "Acceptance" tab
+ *     (the consolidated "Risk" surface); each id opens that tab directly. (The
+ *     cross-asset `risk` Scenario grid is NOT aliased — it stays a live FX rail row and
+ *     is only WITHDRAWN from the FI rail via {@link DOMAIN_RAIL_EXCLUDED}, so `?view=risk`
+ *     still opens the scenario workspace directly, its lens derived from the domain.)
  */
 export const CONSOLIDATED_WORKSPACE_ALIAS: Partial<Record<WorkspaceId, WorkspaceId>> = {
   riskbooks: "riskdashboard",
   tiering: "pricinggroups",
   transferinbox: "risktransfer",
   transferaudit: "risktransfer",
+  riskrouting: "riskdashboard",
+  acceptance: "riskdashboard",
 };
 
 /**
@@ -474,9 +492,17 @@ export const HEDGING_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>
  * global `⌘N` chord are ALL unchanged — only the row's Fixed-Income rail MEMBERSHIP
  * is removed, mirroring how the membership-override sets scope a row's domains
  * without touching its `assets`.
+ *
+ * The cross-asset `risk` SCENARIO grid is withdrawn from the FI rail the SAME way: its
+ * FI rates lens is folded into the consolidated "Risk" host as the "Scenario" tab, so
+ * the standalone row is dropped from Fixed Income while it STAYS on FX Options (where
+ * the Risk host is FI-only and does not exist). `workspaceAssets("risk")` still returns
+ * BOTH classes — only the FI rail membership is removed — so `?view=risk` stays
+ * mountable/navigable and the FX scenario grid is untouched.
  */
 export const DOMAIN_RAIL_EXCLUDED: Partial<Record<WorkspaceId, ReadonlySet<Domain>>> = {
   book: new Set<Domain>(["fixed_income"]),
+  risk: new Set<Domain>(["fixed_income"]),
 };
 
 /**
