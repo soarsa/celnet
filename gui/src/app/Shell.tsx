@@ -32,8 +32,6 @@ import { RiskRoutingWorkspace } from "../workspaces/riskrouting/RiskRoutingWorks
 import { HedgingWorkspace } from "../workspaces/hedging/HedgingWorkspace";
 import { AcceptanceWorkspace } from "../workspaces/acceptance/AcceptanceWorkspace";
 import { RiskTransferWorkspace } from "../workspaces/risktransfer/RiskTransferWorkspace";
-import { RiskTransferInboxWorkspace } from "../workspaces/risktransfer/RiskTransferInboxWorkspace";
-import { RiskTransferAuditWorkspace } from "../workspaces/risktransfer/RiskTransferAuditWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { XvaWorkspace } from "../workspaces/XvaWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
@@ -134,13 +132,16 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // rule-table ⇄ graph builder with decision leaves. Rail-gated on the narrow
   // `manage_acceptance` capability × FI. FI-only.
   acceptance: AcceptanceWorkspace,
-  // Risk Transfer (docs/RISK-TRANSFER-REQUIREMENTS.md §9): the MANUAL move of
-  // existing risk — the complement to routing. Ticket (initiate) + Inbox (accept /
-  // reject four-eyes counterparty) + Audit (immutable provenance blotter). FI-only;
-  // initiate/accept gate on the `risk_transfer` capability, audit on `view`.
+  // Risk Transfer (docs/RISK-TRANSFER-REQUIREMENTS.md §9): the CONSOLIDATED FI move-
+  // existing-risk surface — a tabbed shell hosting the "Risk Transfer" initiate ticket
+  // (default), the "Inbox" accept/reject four-eyes counterparty tab, and the "Audit"
+  // immutable provenance blotter. FI-only; the initiate + inbox TABS gate on the
+  // `risk_transfer` capability, the audit tab (and the rail row) on `view`. The retired
+  // `transferinbox` / `transferaudit` ids stay valid deep-links that open the merged
+  // surface straight on their folded tab (via `initialTab`).
   risktransfer: RiskTransferWorkspace,
-  transferinbox: RiskTransferInboxWorkspace,
-  transferaudit: RiskTransferAuditWorkspace,
+  transferinbox: () => <RiskTransferWorkspace initialTab="inbox" />,
+  transferaudit: () => <RiskTransferWorkspace initialTab="audit" />,
   // Market Data: FX vol surface + FI rates curve as two lenses of ONE workspace
   // (#2). Opens the FX surface lens by default; the FI curve is the rates lens.
   surface: MarketDataWorkspace,

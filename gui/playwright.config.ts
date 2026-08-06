@@ -52,6 +52,8 @@ const FIDELITY_SPECS = [
   /pricingGroups\.e2e\.ts/,
   // Help & guided-tutorials system — offline (mock transport), no cargo edge.
   /help\.e2e\.ts/,
+  // Consolidated Risk Transfer tabbed surface — offline (mock transport), no cargo edge.
+  /riskTransferTabs\.e2e\.ts/,
 ];
 
 /**

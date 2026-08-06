@@ -208,6 +208,82 @@ describe("RiskTransferInboxWorkspace", () => {
   });
 });
 
+describe("RiskTransferWorkspace consolidated tabs", () => {
+  // A transport carrying every method the three tabs use, so switching tabs mounts a
+  // working panel (only the active tab mounts).
+  function fullTransport() {
+    return {
+      listRiskBooks: vi.fn(async () => BOOKS),
+      listRiskBookRisk: vi.fn(async () => RISK),
+      listDesks: vi.fn(async () => [
+        { id: "emea", name: "EMEA" },
+        { id: "marex", name: "Marex" },
+      ]),
+      listUsers: vi.fn(async () => []),
+      initiateRiskTransfer: vi.fn(),
+      streamRiskTransferInbox: (cb: (p: RiskTransfer[]) => void) => {
+        cb([]);
+        return () => undefined;
+      },
+      acceptRiskTransfer: vi.fn(),
+      rejectRiskTransfer: vi.fn(),
+      listRiskTransfers: vi.fn(async () => [] as RiskTransfer[]),
+    };
+  }
+
+  it("renders all three tabs for a risk_transfer holder and switches between them", async () => {
+    state.app = { transport: fullTransport(), auth: AUTH }; // admin can() => true
+    await act(async () => {
+      render(<RiskTransferWorkspace />);
+    });
+    // All three tab toggles present; default lands on the initiate ticket.
+    expect(screen.getByTestId("risk-transfer-tab-ticket")).toBeInTheDocument();
+    expect(screen.getByTestId("risk-transfer-tab-inbox")).toBeInTheDocument();
+    expect(screen.getByTestId("risk-transfer-tab-audit")).toBeInTheDocument();
+    expect(await screen.findByTestId("xfer-source")).toBeInTheDocument();
+
+    // Switch to Inbox → the four-eyes note + empty state mount.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("risk-transfer-tab-inbox"));
+    });
+    expect(await screen.findByTestId("inbox-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("xfer-source")).not.toBeInTheDocument();
+
+    // Switch to Audit → the audit blotter (state filter) mounts.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("risk-transfer-tab-audit"));
+    });
+    expect(await screen.findByTestId("audit-state")).toBeInTheDocument();
+  });
+
+  it("opens on the Inbox tab when deep-linked via initialTab", async () => {
+    state.app = { transport: fullTransport(), auth: AUTH };
+    await act(async () => {
+      render(<RiskTransferWorkspace initialTab="inbox" />);
+    });
+    expect(await screen.findByTestId("inbox-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("xfer-source")).not.toBeInTheDocument();
+  });
+
+  it("hides the write-class tabs from a view-only FI trader, landing on Audit", async () => {
+    const viewOnly = {
+      user: { id: "u", email: "trader@celnet.com" },
+      isAdmin: false,
+      can: (action: string, asset: string) => action === "view" && asset === "fixed_income",
+    };
+    state.app = { transport: fullTransport(), auth: viewOnly };
+    await act(async () => {
+      // Deep-linked to the initiate ticket, but the trader cannot view it → clamps to Audit.
+      render(<RiskTransferWorkspace initialTab="ticket" />);
+    });
+    expect(screen.queryByTestId("risk-transfer-tab-ticket")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("risk-transfer-tab-inbox")).not.toBeInTheDocument();
+    expect(screen.getByTestId("risk-transfer-tab-audit")).toBeInTheDocument();
+    expect(await screen.findByTestId("audit-state")).toBeInTheDocument();
+    expect(screen.queryByTestId("xfer-source")).not.toBeInTheDocument();
+  });
+});
+
 describe("RiskTransferAuditWorkspace", () => {
   function auditTransfer(): RiskTransfer {
     return {

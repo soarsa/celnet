@@ -42,7 +42,95 @@ import {
   synthesizePositions,
   PAR_MARK,
 } from "./transferModel";
+import { RiskTransferInboxWorkspace } from "./RiskTransferInboxWorkspace";
+import { RiskTransferAuditWorkspace } from "./RiskTransferAuditWorkspace";
 import styles from "./RiskTransferWorkspace.module.css";
+
+/** The tab the consolidated Risk Transfer surface shows: the initiate ticket
+ * (default), the accept/reject inbox, or the immutable audit trail. `ticket` is the
+ * default; `inbox` / `audit` are the deep-link targets for the retired
+ * "Transfer Inbox" / "Transfer Audit" rail entries. */
+export type RiskTransferTab = "ticket" | "inbox" | "audit";
+
+/** One row per tab the consolidated surface spans: its id, toggle label, and whether
+ * it is a write-class (initiate / accept) tab gated on `risk_transfer` — the audit
+ * trail sits on the `view·FI` floor, so it shows for any FI trader. */
+const RISK_TRANSFER_TABS: readonly {
+  tab: RiskTransferTab;
+  label: string;
+  needsTransfer: boolean;
+}[] = [
+  { tab: "ticket", label: "Risk Transfer", needsTransfer: true },
+  { tab: "inbox", label: "Inbox", needsTransfer: true },
+  { tab: "audit", label: "Audit", needsTransfer: false },
+];
+
+/**
+ * RiskTransferWorkspace — the tabbed shell composing the {@link
+ * RiskTransferTicketPanel} initiate ticket, the {@link RiskTransferInboxWorkspace}
+ * accept/reject inbox, and the {@link RiskTransferAuditWorkspace} audit trail as
+ * sibling tabs (formerly three separate rail rows). Reuses the Risk Dashboard /
+ * Pricing "Book → Risk" tab primitive VERBATIM: a slim segmented bar above the active
+ * panel, which fills the remaining pane height and scrolls its OWN content (the Shell
+ * pane is overflow:hidden with a definite height). Only the active tab's body mounts,
+ * so each panel's effects (the ticket's roster load, the inbox subscription, the audit
+ * query) fire only while it is on screen.
+ *
+ * Each tab keeps its ORIGINAL capability gate: the initiate + inbox tabs are hidden
+ * from a trader lacking `risk_transfer·fixed_income` (a booking-only FI trader), who
+ * still reaches the surface for the `view`-floor audit trail — the active tab clamps
+ * to the first VISIBLE tab so a hidden tab is never shown empty. `can` is permissive
+ * signed-out, so pre-login all three render.
+ */
+export function RiskTransferWorkspace({
+  initialTab = "ticket",
+}: {
+  /** The initial tab — the retired `transferinbox` deep-link opens on `inbox`, the
+   * `transferaudit` deep-link on `audit`; the rail's Risk Transfer entry (and stories
+   * / tests) default to `ticket`. */
+  initialTab?: RiskTransferTab;
+} = {}): React.ReactElement {
+  const { auth } = useApp();
+  // The initiate + inbox tabs are write-class (initiate / accept), gated on the narrow
+  // `risk_transfer` capability the server enforces; the audit trail stays `view`.
+  const canTransfer = auth.can("risk_transfer", "fixed_income");
+  const visibleTabs = RISK_TRANSFER_TABS.filter((t) => !t.needsTransfer || canTransfer);
+
+  const [tab, setTab] = useState<RiskTransferTab>(initialTab);
+  // Clamp to a VISIBLE tab so a deep-link (or default) landing on a tab this identity
+  // cannot view falls to the first tab it can (the audit trail), never an empty pane.
+  const activeTab: RiskTransferTab = visibleTabs.some((t) => t.tab === tab)
+    ? tab
+    : (visibleTabs[0]?.tab ?? "audit");
+
+  return (
+    <div className={styles.shell}>
+      <div className={styles.tabBar} role="group" aria-label="risk transfer view">
+        {visibleTabs.map((t) => (
+          <button
+            key={t.tab}
+            type="button"
+            className={`${styles.tabBtn} ${activeTab === t.tab ? styles.tabBtnActive : ""}`}
+            aria-pressed={activeTab === t.tab}
+            data-testid={`risk-transfer-tab-${t.tab}`}
+            onClick={() => setTab(t.tab)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className={styles.tabPanel}>
+        {activeTab === "ticket" ? (
+          <RiskTransferTicketPanel />
+        ) : activeTab === "inbox" ? (
+          <RiskTransferInboxWorkspace />
+        ) : (
+          <RiskTransferAuditWorkspace />
+        )}
+      </div>
+    </div>
+  );
+}
 
 /** A desk's display name from its id, falling back to the id itself. */
 function deskName(id: string, desks: readonly DeskDesc[]): string {
@@ -50,7 +138,12 @@ function deskName(id: string, desks: readonly DeskDesc[]): string {
   return desks.find((d) => d.id === id)?.name ?? id;
 }
 
-export function RiskTransferWorkspace(): React.ReactElement {
+/**
+ * RiskTransferTicketPanel — the FI Risk Transfer INITIATE ticket (this file's original
+ * body, extracted VERBATIM as the default "Risk Transfer" tab of the consolidated
+ * {@link RiskTransferWorkspace} shell). See the file header for the full ticket flow.
+ */
+function RiskTransferTicketPanel(): React.ReactElement {
   const app = useApp();
   const { auth } = app;
   const signedIn = auth.user !== null && auth.user !== undefined;

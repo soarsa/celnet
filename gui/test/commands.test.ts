@@ -359,9 +359,10 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         // acceptance (incoming-quote-acceptance rule builder) stays in the FI "Risk"
         // section, right after risk routing.
         "acceptance",
+        // Risk Transfer is CONSOLIDATED into ONE row: the initiate ticket + inbox +
+        // audit are tabs of the "risktransfer" host. The former "transferinbox" /
+        // "transferaudit" rows are retired (deep-link aliases to that host).
         "risktransfer",
-        "transferinbox",
-        "transferaudit",
         "surface",
         "risk",
         // "book" is DROPPED from the FI rail — the FI ledger is folded into FI "Risk"
@@ -562,7 +563,9 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
       "acceptance",
       "risk",
     ]);
-    expect(byLabel("Transfers")).toEqual(["risktransfer", "transferinbox", "transferaudit"]);
+    // Risk Transfer is CONSOLIDATED into ONE row (initiate + inbox + audit as tabs);
+    // the former "transferinbox" / "transferaudit" rows are retired deep-link aliases.
+    expect(byLabel("Transfers")).toEqual(["risktransfer"]);
     expect(byLabel("Reference Data")).toEqual(["corpactions"]);
   });
 
@@ -701,10 +704,13 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
         expect(RAIL.some((r) => r.id === alias)).toBe(false); // the alias has no rail row
         expect(hosts.has(host)).toBe(true); // …but its host does (so the pane mounts)
       }
-      // The two consolidations: Tiering → Pricing, Risk Portfolios → Risk Dashboard.
+      // The consolidations: Tiering → Pricing, Risk Portfolios → Risk Dashboard, and
+      // Transfer Inbox / Transfer Audit → the "risktransfer" Risk Transfer host.
       expect(Object.fromEntries(CONSOLIDATED_ALIAS_ENTRIES)).toEqual({
         tiering: "pricinggroups",
         riskbooks: "riskdashboard",
+        transferinbox: "risktransfer",
+        transferaudit: "risktransfer",
       });
     });
 

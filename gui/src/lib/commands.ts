@@ -244,13 +244,17 @@ export const RAIL: readonly {
   { id: "acceptance", glyph: "⊨", label: "Acceptance", subtitle: "Incoming lift accept/reject rules", section: "risk", assets: ["fixed_income"], viewCap: { action: "manage_acceptance", asset: "fixed_income" } },
   // FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md): the MANUAL move of
   // EXISTING risk between risk portfolios — the complement to routing (which
-  // auto-assigns NEW fills). Three single-asset FI surfaces, initiate/accept gated
-  // on the narrow `risk_transfer` capability (see {@link WORKSPACE_CAPABILITY}); the
-  // audit trail stays `view` for any FI trader. Their subtitles disambiguate the
-  // trio the way FI-BOOK-CONCEPTS disambiguates the "Book" family.
-  { id: "risktransfer", glyph: "⇆", label: "Risk Transfer", subtitle: "Move existing risk between portfolios", section: "transfers", assets: ["fixed_income"] },
-  { id: "transferinbox", glyph: "⇱", label: "Transfer Inbox", subtitle: "Approve incoming transfers", section: "transfers", assets: ["fixed_income"] },
-  { id: "transferaudit", glyph: "❑", label: "Transfer Audit", subtitle: "Who moved what · when · at what price", section: "transfers", assets: ["fixed_income"] },
+  // auto-assigns NEW fills). CONSOLIDATED into ONE rail row: a tabbed shell hosting
+  // the "Risk Transfer" initiate ticket (default), an "Inbox" tab (approve incoming
+  // transfers — the former `transferinbox` row) and an "Audit" tab (who moved what ·
+  // when · at what price — the former `transferaudit` row), mirroring the Risk
+  // Dashboard + Pricing merges. The initiate + inbox TABS gate internally on the
+  // narrow `risk_transfer` capability; the audit tab (and hence the rail row) sits on
+  // the `view·FI` floor, so a booking-only FI trader still reaches the audit trail
+  // and simply sees the two write-class tabs hidden. The retired `transferinbox` /
+  // `transferaudit` ids stay valid deep-links resolving to this host (see {@link
+  // CONSOLIDATED_WORKSPACE_ALIAS}) — they no longer carry a rail row of their own.
+  { id: "risktransfer", glyph: "⇆", label: "Risk Transfer", subtitle: "Move risk · approve · audit trail", section: "transfers", assets: ["fixed_income"] },
   { id: "surface", glyph: "◷", label: "Market Data", subtitle: "Curves & vol surface", section: "markets", assets: CAPABILITY_ASSETS },
   // The class-parametric SCENARIO risk grid (spot×vol P&L / rates netted risk) — an
   // analytics view, NOT the routed-risk roll-up (Risk Dashboard) nor the ledger.
@@ -329,10 +333,15 @@ export const RAIL: readonly {
  *     tab (see the RAIL note above); the id opens the merged surface on that tab.
  *   • `tiering` ("Tiering") → folded into `pricinggroups`'s "Tiering" tab (the
  *     consolidated "Pricing" surface); the id opens the merged surface on that tab.
+ *   • `transferinbox` ("Transfer Inbox") → folded into `risktransfer`'s "Inbox" tab.
+ *   • `transferaudit` ("Transfer Audit") → folded into `risktransfer`'s "Audit" tab
+ *     (the consolidated "Risk Transfer" surface); each id opens that tab directly.
  */
 export const CONSOLIDATED_WORKSPACE_ALIAS: Partial<Record<WorkspaceId, WorkspaceId>> = {
   riskbooks: "riskdashboard",
   tiering: "pricinggroups",
+  transferinbox: "risktransfer",
+  transferaudit: "risktransfer",
 };
 
 /**
@@ -473,15 +482,18 @@ export const DOMAIN_RAIL_EXCLUDED: Partial<Record<WorkspaceId, ReadonlySet<Domai
 /**
  * The capability ACTION a workspace's reachability gates on, when it is NOT the
  * default `view`. A few surfaces are write-class enough that merely viewing their
- * asset does not entitle a user to reach them — the FI Risk Transfer ticket and
- * inbox are booking-class writes (initiate / accept), so they gate on the narrow
- * `risk_transfer` capability, exactly as the server does (initiate/accept require
- * `risk_transfer`; the audit trail stays `view` for any FI trader). A workspace
- * absent from this map defaults to `view` (the base "can see this at all" gate).
- * `can` is permissive signed-out, so pre-login these rails still render.
+ * asset does not entitle a user to reach them — accepting an incoming transfer is a
+ * booking-class write, so the `transferinbox` deep-link gates on the narrow
+ * `risk_transfer` capability, exactly as the server does. The CONSOLIDATED "Risk
+ * Transfer" host row itself is absent here (defaults to `view`): it also hosts the
+ * `view·FI`-floor audit trail, so any FI trader reaches the surface and the two
+ * write-class tabs (initiate + inbox) hide internally without `risk_transfer` —
+ * preserving each folded tab's original gate. A workspace absent from this map
+ * defaults to `view` (the base "can see this at all" gate). `can` is permissive
+ * signed-out, so pre-login these rails still render.
  */
 export const WORKSPACE_CAPABILITY: Partial<Record<WorkspaceId, CapabilityAction>> = {
-  risktransfer: "risk_transfer",
+  // `transferinbox` (the "Inbox" tab deep-link) is accept-class → `risk_transfer`.
   transferinbox: "risk_transfer",
   // Analytics is a management-sensitive READ gated on `view_analytics`. It serves
   // BOTH assets, so `workspaceAccessible`'s `.some` over the served assets makes

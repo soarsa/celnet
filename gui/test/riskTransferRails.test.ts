@@ -1,16 +1,24 @@
 /**
- * Risk-transfer rail + capability-gating tests. The three surfaces are Fixed-Income
- * rail rows; the ticket + inbox gate reachability on the NARROW `risk_transfer`
- * capability (not the default trader bundle), while the audit trail stays `view` for
- * any FI trader. `can` is permissive signed-out, so the rails still render pre-login.
+ * Risk-transfer rail + capability-gating tests. The three former surfaces (initiate
+ * ticket · inbox · audit) are CONSOLIDATED into ONE Fixed-Income rail row, "Risk
+ * Transfer", a tabbed shell (mirroring the Risk Dashboard + Pricing merges). The retired
+ * `transferinbox` / `transferaudit` ids keep no rail row of their own — they are
+ * deep-link ALIASES resolving to the `risktransfer` host and opening its folded tab.
+ *
+ * The write-class tabs (initiate + inbox) still gate on the NARROW `risk_transfer`
+ * capability, while the audit tab — and hence the consolidated rail row itself — sits on
+ * the `view·FI` floor, so a booking-only FI trader reaches the surface for the audit
+ * trail and simply sees the two write tabs hidden. `can` is permissive signed-out.
  */
 import { describe, expect, it } from "vitest";
 
 import {
+  CONSOLIDATED_WORKSPACE_ALIAS,
   RAIL,
   WORKSPACE_CAPABILITY,
   railForDomain,
   workspaceAccessible,
+  workspaceAssets,
   type NavAuth,
   type WorkspaceId,
 } from "../src/lib/commands";
@@ -21,6 +29,7 @@ function navAuth(allow: Iterable<string>): NavAuth {
   const set = new Set(allow);
   return {
     isAdmin: false,
+    signedIn: true,
     can: (action: CapabilityAction, asset: CapabilityAsset) => set.has(`${action}·${asset}`),
   };
 }
@@ -28,53 +37,73 @@ function navAuth(allow: Iterable<string>): NavAuth {
 /** Signed-out: `can` is permissive (everything true). */
 const signedOut: NavAuth = { isAdmin: false, can: () => true };
 
-const TRANSFER_ROWS: WorkspaceId[] = ["risktransfer", "transferinbox", "transferaudit"];
+const RETIRED_ROWS: WorkspaceId[] = ["transferinbox", "transferaudit"];
 
-describe("risk-transfer rail rows", () => {
-  it("adds the three FI rows in RAIL, each fixed-income, with distinct glyphs", () => {
-    const rows = RAIL.filter((r) => TRANSFER_ROWS.includes(r.id));
-    expect(rows.map((r) => r.id)).toEqual(TRANSFER_ROWS); // RAIL order, after riskrouting
-    for (const r of rows) {
-      expect(r.assets).toEqual(["fixed_income"]);
-      expect(r.subtitle && r.subtitle.length > 0).toBe(true);
+describe("consolidated Risk Transfer rail row", () => {
+  it("keeps ONE fixed-income row (Risk Transfer); the inbox + audit rows are retired", () => {
+    const transfers = RAIL.filter((r) => r.section === "transfers");
+    expect(transfers.map((r) => r.id)).toEqual(["risktransfer"]);
+    const host = transfers[0]!;
+    expect(host.label).toBe("Risk Transfer");
+    expect(host.assets).toEqual(["fixed_income"]);
+    // The two former standalone rows no longer exist in RAIL.
+    for (const id of RETIRED_ROWS) {
+      expect(RAIL.some((r) => r.id === id)).toBe(false);
     }
-    // Glyphs are unique across the whole rail (no collision with existing rows).
+    // Glyphs stay unique across the whole rail (no collision after the removal).
     const glyphs = RAIL.map((r) => r.glyph);
     expect(new Set(glyphs).size).toBe(glyphs.length);
   });
 
-  it("places all three under the Fixed Income domain immediately after acceptance", () => {
-    // Auto-hedging was hoisted OUT of the FI rail into its own top-level "Hedging"
-    // tab. The incoming-quote-acceptance row sits in the FI "Risk" section right after
-    // risk routing, so the transfer trio now follows `acceptance` directly.
+  it("places the consolidated row under Fixed Income immediately after acceptance", () => {
     const fi = railForDomain("fixed_income").map((r) => r.id);
-    expect(fi.includes("hedging")).toBe(false);
     expect(fi.indexOf("acceptance")).toBe(fi.indexOf("riskrouting") + 1);
-    const i = fi.indexOf("acceptance");
-    expect(fi.slice(i + 1, i + 4)).toEqual(TRANSFER_ROWS);
+    expect(fi[fi.indexOf("acceptance") + 1]).toBe("risktransfer");
+    // The retired ids are not standalone rail rows under any domain.
+    for (const id of RETIRED_ROWS) expect(fi.includes(id)).toBe(false);
   });
 });
 
-describe("WORKSPACE_CAPABILITY gating", () => {
-  it("gates initiate/accept surfaces on `risk_transfer`; audit defaults to `view`", () => {
-    expect(WORKSPACE_CAPABILITY.risktransfer).toBe("risk_transfer");
+describe("retired ids resolve to the host as consolidated aliases", () => {
+  it("maps transferinbox + transferaudit onto the risktransfer host", () => {
+    expect(CONSOLIDATED_WORKSPACE_ALIAS.transferinbox).toBe("risktransfer");
+    expect(CONSOLIDATED_WORKSPACE_ALIAS.transferaudit).toBe("risktransfer");
+  });
+
+  it("resolves the aliases' assets through the host row (still fixed-income)", () => {
+    for (const id of RETIRED_ROWS) expect(workspaceAssets(id)).toEqual(["fixed_income"]);
+  });
+});
+
+describe("WORKSPACE_CAPABILITY gating after the merge", () => {
+  it("host defaults to `view`; the inbox deep-link stays `risk_transfer`; audit is `view`", () => {
+    // The consolidated host is absent from the map (defaults to `view`) so the
+    // audit-floor surface stays reachable by any FI trader.
+    expect(WORKSPACE_CAPABILITY.risktransfer).toBeUndefined();
+    // The accept-class inbox deep-link keeps its narrow gate.
     expect(WORKSPACE_CAPABILITY.transferinbox).toBe("risk_transfer");
     expect(WORKSPACE_CAPABILITY.transferaudit).toBeUndefined();
   });
 
-  it("hides ticket + inbox from an FI trader lacking risk_transfer, but shows the audit trail", () => {
+  it("shows the consolidated row + audit deep-link to a view-only FI trader; hides the inbox deep-link", () => {
     const trader = navAuth(["view·fixed_income"]); // can view FI, but NOT risk_transfer
-    expect(workspaceAccessible("risktransfer", trader)).toBe(false);
-    expect(workspaceAccessible("transferinbox", trader)).toBe(false);
+    // The host row is reachable (its audit tab is on the view floor).
+    expect(workspaceAccessible("risktransfer", trader)).toBe(true);
     expect(workspaceAccessible("transferaudit", trader)).toBe(true);
+    // The accept-class inbox deep-link stays gated.
+    expect(workspaceAccessible("transferinbox", trader)).toBe(false);
   });
 
-  it("shows all three to a user holding risk_transfer·fixed_income", () => {
+  it("keeps every id reachable for a holder of risk_transfer·fixed_income", () => {
     const granted = navAuth(["view·fixed_income", "risk_transfer·fixed_income"]);
-    for (const id of TRANSFER_ROWS) expect(workspaceAccessible(id, granted)).toBe(true);
+    for (const id of ["risktransfer", ...RETIRED_ROWS] as WorkspaceId[]) {
+      expect(workspaceAccessible(id, granted)).toBe(true);
+    }
   });
 
-  it("shows all three signed-out (permissive `can` — rails render pre-login)", () => {
-    for (const id of TRANSFER_ROWS) expect(workspaceAccessible(id, signedOut)).toBe(true);
+  it("keeps every id reachable signed-out (permissive `can` — rails render pre-login)", () => {
+    for (const id of ["risktransfer", ...RETIRED_ROWS] as WorkspaceId[]) {
+      expect(workspaceAccessible(id, signedOut)).toBe(true);
+    }
   });
 });
