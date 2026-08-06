@@ -1,0 +1,667 @@
+/*
+ * SetupWizard — the Hedging guided-setup flow. A large, focused modal: a branded
+ * header, a left rail stepper (completed / active / upcoming), a scrolling step
+ * canvas of composed rule-builder primitives, and a persistent nav footer. Fully
+ * token-driven, so it inherits light / dark / high-contrast from the app theme.
+ */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 98;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: color-mix(in oklab, #05070d 62%, transparent);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  animation: scrim-in 140ms var(--ease-out);
+}
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1040px, 96vw);
+  height: min(760px, 92vh);
+  background: var(--bg-raised);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+  animation: panel-in 180ms var(--ease-spring);
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+}
+
+/* --- header --------------------------------------------------------------- */
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  background: linear-gradient(
+    120deg,
+    color-mix(in oklab, var(--brand) 20%, var(--bg-raised)),
+    var(--bg-raised) 70%
+  );
+  border-bottom: 1px solid var(--hairline);
+}
+.headMain {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.wand {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  font-size: 22px;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--accent) 24%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent);
+}
+.title {
+  margin: 0;
+  font: var(--weight-header) var(--type-title) / var(--type-title-lh) var(--font-display, var(--font-ui));
+  color: var(--text-primary);
+}
+.subtitle {
+  margin: 2px 0 0;
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  color: var(--text-secondary);
+}
+.closeBtn {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background var(--flash-decay, 120ms) var(--ease-out), color 120ms var(--ease-out);
+}
+.closeBtn:hover:not(:disabled) {
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+.closeBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.capBanner {
+  margin: 0;
+  padding: var(--space-2) var(--space-5);
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  color: color-mix(in oklab, var(--warn) 80%, var(--text-primary));
+  background: color-mix(in oklab, var(--warn) 14%, transparent);
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* --- layout: stepper rail + content --------------------------------------- */
+
+.layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  min-height: 0;
+}
+
+.stepper {
+  border-right: 1px solid var(--hairline);
+  background: var(--bg-inset);
+  padding: var(--space-4) var(--space-3);
+}
+.stepperList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.stepperItem {
+  position: relative;
+}
+.stepperItem:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--space-3) + 13px);
+  top: 40px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--hairline);
+}
+.stepNode {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms var(--ease-out);
+}
+.stepNode:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--text-primary) 6%, transparent);
+}
+.stepNode:disabled {
+  cursor: default;
+}
+.stepDot {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-full);
+  border: 2px solid var(--hairline);
+  background: var(--bg-raised);
+  font: var(--weight-emphasis) var(--type-caption) / 1 var(--font-mono, var(--font-ui));
+  color: var(--text-tertiary);
+  z-index: 1;
+}
+.stepLabels {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.stepTitle {
+  font: var(--weight-emphasis) var(--type-callout) / var(--type-callout-lh) var(--font-ui);
+}
+.stepLocked {
+  font: var(--type-micro) / var(--type-micro-lh) var(--font-ui);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.stepNode_active {
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  color: var(--text-primary);
+}
+.stepNode_active .stepDot {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+.stepNode_complete .stepDot {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--bg-base);
+}
+.stepNode_complete .stepTitle,
+.stepNode_active .stepTitle {
+  color: var(--text-primary);
+}
+
+.content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.stepScroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5);
+  outline: none;
+}
+
+/* --- step body: explainer + editors -------------------------------------- */
+
+.stepBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.explainer {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+}
+.explainerIcon {
+  font-size: 22px;
+  line-height: 1;
+}
+.explainerTitle {
+  margin: 0 0 2px;
+  font: var(--weight-header) var(--type-headline) / var(--type-headline-lh) var(--font-ui);
+  color: var(--text-primary);
+}
+.explainerBody {
+  margin: 0;
+  font: var(--type-body) / var(--type-body-lh) var(--font-ui);
+  color: var(--text-secondary);
+}
+
+.cardList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.emptyNote,
+.warnNote,
+.skipNote {
+  margin: 0;
+  font: var(--type-callout) / var(--type-callout-lh) var(--font-ui);
+  color: var(--text-tertiary);
+}
+.warnNote {
+  padding: var(--space-2) var(--space-3);
+  color: color-mix(in oklab, var(--warn) 80%, var(--text-primary));
+  background: color-mix(in oklab, var(--warn) 12%, transparent);
+  border-radius: var(--r-sm);
+}
+
+.entryCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-base);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+}
+.entryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
+}
+.entryFoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.miniLabel {
+  font: var(--weight-emphasis) var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  color: var(--text-secondary);
+}
+.hint {
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  color: var(--text-secondary);
+}
+.input,
+.select {
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  font: var(--type-callout) / var(--type-callout-lh) var(--font-ui);
+}
+.input:focus-visible,
+.select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.input:disabled,
+.select:disabled {
+  opacity: 0.6;
+}
+
+.checkField {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: var(--type-callout) / var(--type-callout-lh) var(--font-ui);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.limitsDisclosure {
+  flex: 1 1 100%;
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  color: var(--text-secondary);
+}
+.limitsDisclosure > summary {
+  cursor: pointer;
+  color: var(--accent);
+  margin-bottom: var(--space-2);
+}
+
+/* Primary add — a filled accent pill (same contrast pairing as the footer primary). */
+.addBtn {
+  align-self: flex-start;
+  padding: var(--space-2) var(--space-4);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  color: var(--bg-base);
+  font: var(--weight-emphasis) var(--type-callout) / 1 var(--font-ui);
+  cursor: pointer;
+  transition: filter 120ms var(--ease-out);
+}
+.addBtn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.addBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Secondary add — a subtle tinted chip; text is primary so contrast holds in both themes. */
+.addConditionBtn {
+  align-self: flex-start;
+  padding: 4px var(--space-2);
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--accent) 42%, transparent);
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  font: var(--weight-emphasis) var(--type-caption) / 1 var(--font-ui);
+  cursor: pointer;
+  transition: background 120ms var(--ease-out);
+}
+.addConditionBtn:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+}
+.removeBtn {
+  margin-left: auto;
+  padding: 4px var(--space-2);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  color: var(--text-secondary);
+  font: var(--type-caption) / 1 var(--font-ui);
+  cursor: pointer;
+}
+.removeBtn:hover {
+  color: var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 50%, var(--hairline));
+}
+
+/* --- rule cards ----------------------------------------------------------- */
+
+.ruleHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ruleBadge {
+  flex: none;
+  padding: 2px var(--space-2);
+  border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font: var(--weight-emphasis) var(--type-micro) / 1 var(--font-mono, var(--font-ui));
+  letter-spacing: 0.06em;
+}
+.ruleBadgeDefault {
+  background: color-mix(in oklab, var(--text-tertiary) 22%, transparent);
+  color: var(--text-secondary);
+}
+.rulePreview {
+  font: var(--type-callout) / var(--type-callout-lh) var(--font-ui);
+  color: var(--text-primary);
+}
+.condStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  border-left: 2px dashed var(--hairline);
+}
+.condRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.condAnd {
+  align-self: center;
+  font: var(--weight-emphasis) var(--type-micro) / 1 var(--font-mono, var(--font-ui));
+  color: var(--text-tertiary);
+}
+.condField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.condValue {
+  flex: 1;
+  min-width: 140px;
+}
+.condRemove {
+  width: 28px;
+  height: var(--control-h);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.condRemove:hover {
+  color: var(--danger);
+}
+
+/* --- step 3 sub-cards ----------------------------------------------------- */
+
+.subCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-base);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+}
+.subHeading {
+  margin: 0;
+  font: var(--weight-header) var(--type-callout) / var(--type-callout-lh) var(--font-ui);
+  color: var(--text-primary);
+}
+
+/* --- review --------------------------------------------------------------- */
+
+.reviewGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+.reviewCard {
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-base);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+}
+.reviewHeading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font: var(--weight-header) var(--type-callout) / var(--type-callout-lh) var(--font-ui);
+  color: var(--text-primary);
+}
+.countPill {
+  padding: 1px 8px;
+  border-radius: var(--r-full);
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font: var(--weight-emphasis) var(--type-micro) / 1.4 var(--font-mono, var(--font-ui));
+}
+.reviewList {
+  margin: 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  color: var(--text-secondary);
+}
+.reviewBad {
+  color: var(--danger);
+}
+
+/* --- footer --------------------------------------------------------------- */
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--hairline);
+  background: var(--bg-inset);
+}
+.footActions {
+  display: flex;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.footIssues {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  color: var(--text-primary);
+}
+.footError {
+  margin: 0;
+  font: var(--type-callout) / var(--type-callout-lh) var(--font-ui);
+  color: var(--danger);
+}
+.primaryBtn {
+  padding: 0 var(--space-4);
+  height: var(--control-h);
+  border: none;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--bg-base);
+  font: var(--weight-emphasis) var(--type-callout) / 1 var(--font-ui);
+  cursor: pointer;
+  transition: filter 120ms var(--ease-out);
+}
+.primaryBtn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.primaryBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ghostBtn {
+  padding: 0 var(--space-3);
+  height: var(--control-h);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: var(--type-callout) / 1 var(--font-ui);
+  cursor: pointer;
+}
+.ghostBtn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in oklab, var(--text-primary) 6%, transparent);
+}
+.ghostBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- apply progress ------------------------------------------------------- */
+
+.applyHeading {
+  margin: 0 0 var(--space-4);
+  font: var(--weight-header) var(--type-headline) / var(--type-headline-lh) var(--font-ui);
+  color: var(--text-primary);
+}
+.applyList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.applyRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-base);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+}
+.applyIcon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-full);
+  font: var(--weight-emphasis) var(--type-caption) / 1 var(--font-mono, var(--font-ui));
+  background: var(--bg-inset);
+  color: var(--text-tertiary);
+}
+.applyLabel {
+  font: var(--weight-emphasis) var(--type-callout) / var(--type-callout-lh) var(--font-ui);
+  color: var(--text-primary);
+}
+.applyDetail {
+  margin-left: auto;
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  color: var(--text-secondary);
+}
+.apply_running .applyIcon {
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+  color: var(--accent);
+}
+.apply_done .applyIcon {
+  background: var(--accent);
+  color: var(--bg-base);
+}
+.apply_error {
+  border-color: color-mix(in oklab, var(--danger) 50%, var(--hairline));
+}
+.apply_error .applyIcon {
+  background: var(--danger);
+  color: var(--bg-base);
+}
+.apply_skipped {
+  opacity: 0.62;
+}
+
+@media (max-width: 720px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  .stepper {
+    border-right: none;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .stepperList {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+  .stepperItem:not(:last-child)::before {
+    display: none;
+  }
+}

@@ -41,6 +41,7 @@ import { HedgeRuleEditor } from "./HedgeRuleEditor";
 import { HedgeRulesTable } from "./HedgeRulesTable";
 import { HedgeTracePanel } from "./HedgeTracePanel";
 import { LpPanelConfig } from "./LpPanelConfig";
+import { SetupWizard } from "./SetupWizard/SetupWizard";
 import { ThresholdConfig } from "./ThresholdConfig";
 import styles from "./HedgingWorkspace.module.css";
 import type { HedgeLpPanel } from "../../data/contract";
@@ -79,6 +80,7 @@ export function HedgingWorkspace(): React.ReactElement {
   const readOnly = !canEdit;
 
   const [tab, setTab] = useState<Tab>("policy");
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   if (!signedIn) {
     return (
@@ -97,6 +99,15 @@ export function HedgingWorkspace(): React.ReactElement {
             Internalise warehoused risk up to the threshold, then hedge the overflow — via a
             trader-composed exit policy. {readOnly ? "Read-only view." : "hedge · FI edit."}
           </p>
+          <button
+            type="button"
+            className={styles.guidedSetupBtn}
+            data-testid="open-guided-setup"
+            onClick={() => setWizardOpen(true)}
+          >
+            <span aria-hidden="true">🪄</span> Guided setup
+            <span className={styles.guidedSetupSub}>portfolios · routing · hedging in one flow</span>
+          </button>
         </div>
         <nav className={styles.tabs} aria-label="Hedging views">
           <button
@@ -142,6 +153,8 @@ export function HedgingWorkspace(): React.ReactElement {
       {tab === "thresholds" && <ThresholdsTab app={app} readOnly={readOnly} />}
       {tab === "lp-panels" && <LpPanelsTab app={app} readOnly={readOnly} />}
       {tab === "monitor" && <MonitorTab app={app} readOnly={readOnly} />}
+
+      {wizardOpen && <SetupWizard onClose={() => setWizardOpen(false)} />}
     </div>
   );
 }
