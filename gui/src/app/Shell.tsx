@@ -17,6 +17,7 @@ import { useApp } from "./AppContext";
 import { CommandPalette } from "../components/CommandPalette";
 import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
 import { HelpCenter } from "../components/HelpCenter";
+import { DefaultRoutePrompt } from "../components/DefaultRoutePrompt";
 import { TourProvider } from "./TourProvider";
 import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
@@ -540,6 +541,9 @@ export function Shell(): React.ReactElement {
       <SignInDialog />
       <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <HelpCenter open={helpCenterOpen} onClose={() => setHelpCenterOpen(false)} />
+      {/* Startup routing guard: flashes a warning when the firm has no valid default
+          routed portfolio, so unmatched fills' risk is never dropped into the void. */}
+      <DefaultRoutePrompt />
     </div>
     </TourProvider>
     </PricingControlProvider>

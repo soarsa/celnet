@@ -25,6 +25,7 @@ import { useApp } from "../../../app/AppContext";
 import type { DeskDesc, FixConnection, WarehouseThreshold } from "../../../data/contract";
 import { newDefaultHedgeRule, type HedgeRule } from "../../../lib/hedgeRules";
 import { newRuleId, type RiskRule } from "../../../lib/riskRules";
+import { notifyRiskRoutingChanged } from "../../../lib/routingGuard";
 import {
   applyWizard,
   defaultWizardThreshold,
@@ -154,6 +155,9 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
       (steps) => setPhase({ kind: "applying", steps }),
     );
     if (result.ok) {
+      // Let the startup routing guard re-evaluate immediately (a valid default may
+      // have just been set), so its warning retires without a reload.
+      notifyRiskRoutingChanged();
       app.setWorkspace("riskdashboard");
       onClose();
     } else {

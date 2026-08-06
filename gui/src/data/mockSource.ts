@@ -2383,9 +2383,13 @@ export class MockTransport implements CelnetTransport {
   /** Pending sample-alert timers, cleared when the last subscriber disposes. */
   private sampleAlertTimers: ReturnType<typeof setTimeout>[] = [];
 
-  constructor(opts: { seed?: bigint; tickMs?: number } = {}) {
+  constructor(opts: { seed?: bigint; tickMs?: number; riskGraph?: "seeded" | "none" } = {}) {
     this.seed = opts.seed ?? 0xce1_5eed_d00dn;
     this.tickMs = opts.tickMs ?? 100; // 10 Hz tape; render conflates to a frame
+    // Offline demo hook (used by the routing-guard e2e): start with NO firm routing
+    // graph, so `getRiskRoutingGraph` returns null and the startup default-route guard
+    // warns. Purely a seed selector — the flow editor still installs a graph normally.
+    if (opts.riskGraph === "none") this.mockRiskGraph = null;
     this.seedOfflineDesk();
   }
 
@@ -5861,5 +5865,15 @@ function crossGamma(
 export function createMockTransport(): CelnetTransport {
   void forward; // re-exported by pricing; referenced to keep tree-shaking honest
   void DEFAULT_CONVENTIONS;
-  return new MockTransport();
+  // Optional offline seed selector: `?noDefaultRoute` (or `riskDefault=none`) starts
+  // the mock with no firm routing graph so the startup routing guard warns — used to
+  // exercise the guard live without a server. Absent ⇒ the normal valid-default seed.
+  let riskGraph: "seeded" | "none" = "seeded";
+  if (typeof window !== "undefined" && typeof window.location !== "undefined") {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("noDefaultRoute") || params.get("riskDefault") === "none") {
+      riskGraph = "none";
+    }
+  }
+  return new MockTransport({ riskGraph });
 }

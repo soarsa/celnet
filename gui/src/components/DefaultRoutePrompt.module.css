@@ -1,0 +1,226 @@
+/*
+ * DefaultRoutePrompt — the startup routing-guard alertdialog. A scrim+blur modal on
+ * the SignInDialog/wizard material, but warning-accented (amber rail + glow) and with
+ * a brief attention PULSE on entry that settles to rest. The global
+ * prefers-reduced-motion rule (design/global.css) zeroes the pulse; the explicit
+ * override below also removes it so the panel simply appears.
+ */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 96; /* above SignInDialog (95); a firm-state alert sits on top */
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 16vh;
+  background: oklch(0 0 0 / 0.42);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  animation: scrim-in 120ms var(--ease-out);
+}
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.panel {
+  position: relative;
+  width: min(440px, 94vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-5) var(--space-5);
+  border-radius: var(--r-md);
+  background: var(--bg-overlay);
+  -webkit-backdrop-filter: blur(var(--blur-float));
+  backdrop-filter: blur(var(--blur-float));
+  border: 1px solid color-mix(in oklab, var(--warn) 55%, transparent);
+  /* The warning identity: an amber left rail + a soft float shadow. */
+  border-left: 3px solid var(--warn);
+  box-shadow: var(--shadow-float);
+  /* Entry: a settle-in, then a short 3× attention pulse of the amber glow. */
+  animation:
+    panel-in 160ms var(--ease-out),
+    guard-pulse 620ms var(--ease-out) 160ms 3;
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.985);
+  }
+}
+/* Pulse starts AND ends at rest so the settled state is neutral even at 0ms. */
+@keyframes guard-pulse {
+  0%,
+  100% {
+    box-shadow: var(--shadow-float);
+  }
+  50% {
+    box-shadow:
+      var(--shadow-float),
+      0 0 0 4px color-mix(in oklab, var(--warn) 34%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .panel {
+    animation: none;
+  }
+}
+
+.closeBtn {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: var(--type-body);
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.closeBtn:hover {
+  background: var(--bg-inset);
+  color: var(--text-primary);
+}
+.closeBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.head {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+  padding-right: var(--space-6); /* clear the close button */
+}
+.badge {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--warn);
+  background: color-mix(in oklab, var(--warn) 18%, transparent);
+}
+.headText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.title {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: var(--type-headline);
+  line-height: var(--type-headline-lh);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+}
+.desc {
+  margin: 0;
+  font-size: var(--type-body);
+  line-height: var(--type-body-lh);
+  color: var(--text-secondary);
+}
+.detail {
+  margin: 0;
+  font-size: var(--type-caption);
+  line-height: var(--type-caption-lh);
+  color: var(--text-tertiary);
+}
+
+.capNote {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  font-size: var(--type-caption);
+  line-height: var(--type-caption-lh);
+  color: var(--text-secondary);
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.footActions {
+  display: flex;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+
+.primaryBtn,
+.ghostBtn,
+.linkBtn {
+  font-family: var(--font-brand);
+  font-size: var(--type-callout);
+  font-weight: var(--weight-emphasis);
+  letter-spacing: 0.02em;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition:
+    background 120ms var(--ease-out),
+    border-color 120ms var(--ease-out),
+    opacity 120ms var(--ease-out);
+}
+.primaryBtn {
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid transparent;
+  background: var(--accent);
+  /* Dark ink on the accent fill — the app-wide primary-button contrast pattern
+     (components/Button.module.css), AA-safe in both themes. */
+  color: oklch(0.16 0.012 264);
+}
+.primaryBtn:hover:not(:disabled) {
+  background: oklch(from var(--accent) calc(l + 0.04) c h);
+}
+.primaryBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ghostBtn {
+  padding: var(--space-3) var(--space-4);
+  border: var(--hairline);
+  background: transparent;
+  color: var(--text-secondary);
+}
+.ghostBtn:hover {
+  background: var(--bg-inset);
+  color: var(--text-primary);
+}
+.linkBtn {
+  padding: var(--space-2) 0;
+  border: none;
+  background: transparent;
+  /* Secondary action: a quiet, AA-safe underlined link (accent as small text fails
+     4.5:1 on the overlay); accent is carried by the underline colour + hover. */
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 2px;
+}
+.linkBtn:hover {
+  color: var(--text-primary);
+}
+
+.primaryBtn:focus-visible,
+.ghostBtn:focus-visible,
+.linkBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

@@ -30,6 +30,7 @@ import {
   type RuleConflict,
 } from "../../lib/riskRules";
 import { validateGraph } from "../../lib/routeTrace";
+import { notifyRiskRoutingChanged } from "../../lib/routingGuard";
 import { makeBookLabel } from "./nodeLabel";
 import { RiskRulesTable } from "./RiskRulesTable";
 import { RuleEditor } from "./RuleEditor";
@@ -240,6 +241,8 @@ export function RiskRoutingWorkspace(): React.ReactElement {
       await app.transport.updateRiskRoutingGraph(compileRulesToGraph(rules.filter((r) => r.enabled)));
       // Keep the local rules (incl. disabled) as the new clean baseline.
       setBaseline(JSON.stringify(rules));
+      // Let the startup routing guard re-evaluate (the default may have just changed).
+      notifyRiskRoutingChanged();
       setSaveState({ kind: "ok", message: "Routing rules saved." });
     } catch (e: unknown) {
       setSaveState({

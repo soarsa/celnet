@@ -23,6 +23,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
 import type { DeskDesc, RiskBook, RiskLimits } from "../data/contract";
+import { notifyRiskRoutingChanged } from "../lib/routingGuard";
 import styles from "./RiskBooksWorkspace.module.css";
 
 /** A fresh blank book draft for the Create flow (id blank ⇒ server mints from name). */
@@ -246,6 +247,9 @@ export function RiskBooksWorkspace(): React.ReactElement {
       await reload();
       setCreating(false);
       setSelectedId(saved.id);
+      // Enabling/disabling or renaming a book can flip the default-route validity —
+      // let the startup routing guard re-evaluate.
+      notifyRiskRoutingChanged();
       setSaveState({ kind: "ok", message: `saved “${saved.name}”` });
     } catch (e: unknown) {
       setSaveState({
@@ -262,6 +266,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
       await app.transport.deleteRiskBook(selectedBook.id);
       const list = await reload();
       setSelectedId(list[0]?.id ?? null);
+      notifyRiskRoutingChanged();
       setSaveState({ kind: "ok", message: `deleted “${selectedBook.name}”` });
     } catch (e: unknown) {
       setSaveState({
