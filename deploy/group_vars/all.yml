@@ -120,6 +120,15 @@ celnet_env:
   CELNET_DEPLOY:    "{{ celnet_deploy_name | default('uat') }}"
   CELNET_ACCESS_MODE: "enforce"
   RUST_LOG:         "info"
+  # Split log sinks (crates/celnet-observability logging.rs): the server writes
+  # daily-rolling orders.log / executions.log / pricing.log / security.log here,
+  # right beside celnet-server.out.log, plus a lean combined log on stdout (which
+  # celnetctl still captures to celnet-server.out.log). Point at the shared log dir
+  # so operators find them next to the existing files. Retention: keep at most
+  # CELNET_LOG_MAX_FILES rolled files per sink (logrotate is a belt-and-braces
+  # backstop — see roles/celnet_provision logrotate template).
+  CELNET_LOG_DIR:   "{{ celnet_log_dir }}"
+  CELNET_LOG_MAX_FILES: "14"
   # FIX acceptors are NOT configured via this legacy env knob. The server binds its
   # FIX 4.4 acceptors from the MANAGED registry (fix-connections.json, edited in the
   # GUI FIX admin) — on this host that is "celer" (FX/options) at 127.0.0.1:51001 and

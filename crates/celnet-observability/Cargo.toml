@@ -31,6 +31,10 @@ tracing.workspace = true
 # `time` adds the `UtcTime` RFC-3339 timestamper used by the JSON subscriber; it
 # is additive to the workspace-pinned `["env-filter", "json"]` feature set.
 tracing-subscriber = { workspace = true, features = ["time"] }
+# `tracing-appender` adds the daily-rolling file writers + non-blocking worker for
+# the split order/execution/pricing sinks. Edge-only — the pinned hot core never
+# touches it (it pushes POD samples through the SPSC ring; the drain/edge logs).
+tracing-appender.workspace = true
 hdrhistogram.workspace = true
 metrics.workspace = true
 crossbeam-utils.workspace = true
@@ -38,3 +42,4 @@ rtrb.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+tempfile.workspace = true

@@ -111,6 +111,14 @@
     mode: "0640"
   notify: restart celnet-server
 
+- name: Install the logrotate policy for the stdout capture logs
+  ansible.builtin.template:
+    src: celnet-logrotate.j2
+    dest: /etc/logrotate.d/celnet
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Install the celnetctl start/stop control script
   ansible.builtin.template:
     src: celnetctl.sh.j2

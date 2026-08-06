@@ -43,13 +43,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // other work so every edge event — auth logins, RFQ quotes, the seed-admin
     // security warning, entitlement decisions — reaches stdout. `LogConfig`
     // defaults to INFO and honours `RUST_LOG` (the deploy runs `RUST_LOG=info`),
-    // so INFO events emit by default. A failed install (a global subscriber
-    // already set by a wrapping harness) is non-fatal: log to stderr and carry on.
-    if let Err(e) =
-        celnet_observability::init_json_subscriber(&celnet_observability::LogConfig::default())
-    {
-        eprintln!("celnet-server: structured logging subscriber not installed ({e}); continuing");
-    }
+    // so INFO events emit by default.
+    //
+    // We install the MULTI-SINK subscriber: a LEAN combined stdout sink PLUS four
+    // daily-rolling JSON file sinks fanned out by event `class` —
+    // `orders.log` (order/risk/hedge/amend/transfer), `executions.log`
+    // (execution), `pricing.log` (pricing) and `security.log` (the per-decision
+    // entitlement + trade-lifecycle audit, the highest-volume class). The combined
+    // stdout sink EXCLUDES those four routed classes, so celnetctl's `.out.log`
+    // carries only the residue (startup/lifecycle, faults, degraded, unclassed)
+    // and is readable again instead of ~99% entitlement audit. Sinks land under
+    // `CELNET_LOG_DIR` (default `./logs`; the deploy points it at `celnet_log_dir`,
+    // i.e. `/opt/celnet/shared/logs`), with a per-sink retention cap of
+    // `CELNET_LOG_MAX_FILES` rolled files (default 14; `logrotate` is a
+    // belt-and-braces backstop). The non-blocking `WorkerGuard`s MUST outlive the
+    // process — bind them to `_log_guards` so they live until shutdown (a dropped
+    // guard silently stops that file writer).
+    //
+    // If the split install fails (unwritable dir, or a global subscriber already
+    // set by a wrapping harness) we fall back to the combined stdout-only
+    // subscriber so structured logging is never lost, and carry on.
+    let log_dir = std::env::var("CELNET_LOG_DIR").unwrap_or_else(|_| "./logs".to_string());
+    let max_files = std::env::var("CELNET_LOG_MAX_FILES")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(14);
+    let log_cfg = celnet_observability::LogConfig {
+        dir: Some(std::path::PathBuf::from(&log_dir)),
+        max_files: Some(max_files),
+        ..celnet_observability::LogConfig::default()
+    };
+    let _log_guards: Vec<celnet_observability::WorkerGuard> =
+        match celnet_observability::install_split(&log_cfg) {
+            Ok(guards) => {
+                eprintln!(
+                    "celnet-server: split log sinks under {log_dir}/ \
+                     (orders.log, executions.log, pricing.log, security.log); \
+                     lean combined → stdout"
+                );
+                guards
+            }
+            Err(e) => {
+                eprintln!(
+                    "celnet-server: split log sinks unavailable ({e}); \
+                     falling back to combined stdout-only logging"
+                );
+                if let Err(e2) = celnet_observability::init_json_subscriber(
+                    &celnet_observability::LogConfig::default(),
+                ) {
+                    eprintln!(
+                        "celnet-server: structured logging subscriber not installed \
+                         ({e2}); continuing"
+                    );
+                }
+                Vec::new()
+            }
+        };
 
     let grpc_addr = addr_from_env("CELNET_GRPC_ADDR", "127.0.0.1:50051");
     // WS mirror: a fixed port when `CELNET_WS_ADDR` is set (so a reverse proxy can

@@ -1,0 +1,30 @@
+# Celnet log rotation — MANAGED BY ANSIBLE, do not edit by hand.
+# Installed to /etc/logrotate.d/celnet.
+# Environment: {{ celnet_deploy_name | default('default') }}
+#
+# The split domain sinks (orders.log / executions.log / pricing.log /
+# security.log) are DATE-ROLLED daily and retention-capped IN-PROCESS by
+# tracing-appender — one file per day, keeping at most CELNET_LOG_MAX_FILES
+# (default 14) rolled files per sink (see crates/celnet-observability/src/
+# logging.rs and CELNET_LOG_DIR / CELNET_LOG_MAX_FILES in celnet.env). Those
+# files are therefore NOT managed here (logrotate must not rename the file the
+# appender currently holds open).
+#
+# This policy is the belt-and-braces backstop for the UNBOUNDED *.out.log stdout
+# captures that celnetctl / lpsimctl / fixsimctl append to (celnet-server.out.log
+# now carries only the LEAN combined stream — startup/faults/residue — since the
+# order/execution/pricing/security volume is fanned into the split files). Those
+# stdout captures have no in-process cap, so logrotate keeps them bounded and
+# compressed. `copytruncate` is required: the writer holds the file open via `>>`
+# and does not reopen on a rename.
+
+{{ celnet_log_dir }}/*.out.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su {{ celnet_user }} {{ celnet_group }}
+}

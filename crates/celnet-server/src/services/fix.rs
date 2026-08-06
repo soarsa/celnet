@@ -876,7 +876,7 @@ impl FixSession {
             // subscription is STILL registered (with no live quote yet) so the ticker
             // resumes streaming from live on re-enable.
             let last_quote_id = if self.ctx.pricing_control.outbound_enabled() {
-                Some(self.emit_two_way_quote(
+                let quote_id = self.emit_two_way_quote(
                     st,
                     req_id,
                     symbol,
@@ -884,7 +884,26 @@ impl FixSession {
                     None,
                     request_id.clone(),
                     out,
-                ))
+                );
+                // PRICING (class=Pricing): the outbound rates auto-quote CONSTRUCTED +
+                // emitted on the async edge — the priced two-way (bid/offer/mid par) and
+                // the quote id, correlated to the desk request. The pinned pricing core
+                // never logs; this is the edge that published the maker quote.
+                tracing::info!(
+                    class = celnet_observability::LogClass::Pricing.label(),
+                    connection_id = %self.ctx.connection_id,
+                    counterparty = %counterparty,
+                    request_id = request_id.as_deref(),
+                    symbol = %String::from_utf8_lossy(symbol),
+                    quote_id = %String::from_utf8_lossy(&quote_id),
+                    bid = priced.bid,
+                    offer = priced.offer,
+                    mid,
+                    size = priced.size,
+                    good_for_nanos = QUOTE_VALIDITY_NANOS,
+                    "rates RFQ auto-quote priced (outbound)",
+                );
+                Some(quote_id)
             } else {
                 tracing::debug!(
                     connection_id = %self.ctx.connection_id,
@@ -1317,6 +1336,13 @@ impl FixSession {
             Some(t) => self.ledger.try_book(t, now),
             None => BookOutcome::UnknownToken,
         };
+        // Last-look verdict label for the incoming-order log below (async edge).
+        let last_look = match &outcome {
+            BookOutcome::Booked { .. } => "accepted",
+            BookOutcome::Expired => "expired",
+            BookOutcome::AlreadyConsumed => "replayed",
+            BookOutcome::UnknownToken => "unknown",
+        };
 
         let (mut filled, premium, mut text): (bool, f64, Option<&[u8]>) = match outcome {
             BookOutcome::Booked { premium, .. } => (true, premium, None),
@@ -1420,6 +1446,53 @@ impl FixSession {
             self.live.remove(q);
         }
 
+        // --- Order-lifecycle structured logging (async FIX edge; the pinned pricing
+        //     core is never on this path — guardrail 11). Shared string views for the
+        //     incoming-order (class=Order) and execution-report (class=Execution) events.
+        let symbol_str = String::from_utf8_lossy(&symbol).into_owned();
+        let cl_ord_str = String::from_utf8_lossy(&cl_ord_id).into_owned();
+        let quote_id_str = quote_id
+            .as_deref()
+            .map(|q| String::from_utf8_lossy(q).into_owned());
+        let counterparty = String::from_utf8_lossy(&self.ctx.counterparty).into_owned();
+        let side_label = if side_byte == dialect_fx::SIDE_SELL {
+            "sell"
+        } else {
+            "buy"
+        };
+        let reason_str = text.map(|t| String::from_utf8_lossy(t).into_owned());
+        // INCOMING ORDER (class=Order): the inbound lift + last-look verdict + the
+        // acceptance-rule decision (INFO when the lift is accepted, WARN on a
+        // reject/hold/last-look-fail).
+        if filled {
+            tracing::info!(
+                class = celnet_observability::LogClass::Order.label(),
+                connection_id = %self.ctx.connection_id,
+                counterparty = %counterparty,
+                cl_ord_id = %cl_ord_str,
+                quote_id = quote_id_str.as_deref(),
+                symbol = %symbol_str,
+                side = side_label,
+                last_look,
+                rates_request_id = rates_request_id.as_deref(),
+                "FIX new-order lift accepted",
+            );
+        } else {
+            tracing::warn!(
+                class = celnet_observability::LogClass::Order.label(),
+                connection_id = %self.ctx.connection_id,
+                counterparty = %counterparty,
+                cl_ord_id = %cl_ord_str,
+                quote_id = quote_id_str.as_deref(),
+                symbol = %symbol_str,
+                side = side_label,
+                last_look,
+                rates_request_id = rates_request_id.as_deref(),
+                reason = reason_str.as_deref(),
+                "FIX new-order lift rejected/held",
+            );
+        }
+
         let order_id = self.mint_id("O");
         let exec_id = self.mint_id("E");
         let frame_out = self.session.send_app(st, |h, e| {
@@ -1438,6 +1511,43 @@ impl FixSession {
             };
             messages::build_execution_report(h, &p, e)
         });
+        // EXECUTION (class=Execution): the ExecutionReport actually emitted on the wire
+        // — the fill (INFO) or the reject (WARN), with the dealt price + reason.
+        let order_id_str = String::from_utf8_lossy(&order_id).into_owned();
+        let exec_id_str = String::from_utf8_lossy(&exec_id).into_owned();
+        if filled {
+            tracing::info!(
+                class = celnet_observability::LogClass::Execution.label(),
+                connection_id = %self.ctx.connection_id,
+                counterparty = %counterparty,
+                order_id = %order_id_str,
+                exec_id = %exec_id_str,
+                cl_ord_id = %cl_ord_str,
+                symbol = %symbol_str,
+                side = side_label,
+                exec_type = "filled",
+                last_qty = 1_000_000.0_f64,
+                last_px = premium,
+                rates_request_id = rates_request_id.as_deref(),
+                "FIX execution report — filled",
+            );
+        } else {
+            tracing::warn!(
+                class = celnet_observability::LogClass::Execution.label(),
+                connection_id = %self.ctx.connection_id,
+                counterparty = %counterparty,
+                order_id = %order_id_str,
+                exec_id = %exec_id_str,
+                cl_ord_id = %cl_ord_str,
+                symbol = %symbol_str,
+                side = side_label,
+                exec_type = "rejected",
+                last_qty = 0.0_f64,
+                last_px = premium,
+                reason = reason_str.as_deref(),
+                "FIX execution report — rejected",
+            );
+        }
         out.push(frame_out);
     }
 

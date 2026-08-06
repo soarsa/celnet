@@ -50,6 +50,7 @@ fn emits_structured_json_lines() {
         filter: Some("info".to_string()),
         with_location: false,
         with_spans: true,
+        ..LogConfig::default()
     };
     let subscriber = build_json_subscriber(&cfg, writer.clone());
 
@@ -124,6 +125,7 @@ fn filter_directive_suppresses_below_threshold() {
         filter: Some("warn".to_string()),
         with_location: false,
         with_spans: false,
+        ..LogConfig::default()
     };
     let subscriber = build_json_subscriber(&cfg, writer.clone());
 

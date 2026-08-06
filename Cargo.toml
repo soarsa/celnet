@@ -100,6 +100,7 @@ clap = { version = "4", features = ["derive"] } # MIT/Apache-2.0 admin CLI
 # Observability lane (vetted: deny advisories+licenses ok) — async edge only, never the hot core
 tracing = "0.1"                                # MIT structured tracing facade
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] } # MIT subscriber
+tracing-appender = "0.2"                        # MIT time-based rolling file writers + non-blocking worker (async edge only, never the hot core)
 hdrhistogram = "7"                             # MIT/Apache-2.0 p50/p99/p99.9 latency (coordinated-omission aware)
 iai-callgrind = "0.16"                         # MIT/Apache-2.0 jitter-free instruction-count bench gate (Linux+Valgrind CI lane; dev-dep only)
 metrics = "0.24"                               # MIT counters/gauges/histograms facade

@@ -179,6 +179,19 @@ impl RiskTransferService {
                 // A re-attribution crosses NO P&L (economics unchanged, §3.1): the
                 // realised source P&L is exactly zero; only the risk re-buckets.
                 booked.provenance = Some(build_provenance(&booked, price_num, basis, 0.0, moved));
+                // TRANSFER (class=Transfer → orders sink): a single-control administrative
+                // re-attribution booked immediately (§6.1) — the risk re-buckets, no P&L.
+                tracing::info!(
+                    class = celnet_observability::LogClass::Transfer.label(),
+                    transfer_id = %booked.id,
+                    kind = "reattribute",
+                    from_book = %booked.source.risk_book_id,
+                    to_book = %booked.target.risk_book_id,
+                    quantity = ?booked.quantity,
+                    initiator = %booked.initiated_by,
+                    moved_risk = ?moved,
+                    "risk transfer re-attributed (booked)",
+                );
                 self.registry.insert(booked.clone());
                 self.publish_inbox();
                 Ok(wire::transfer_to_wire(&booked))
@@ -189,6 +202,18 @@ impl RiskTransferService {
             TransferKind::DeskToDesk | TransferKind::TraderToTrader => {
                 let mut pending = transfer;
                 pending.state = TransferState::Pending;
+                // TRANSFER (class=Transfer → orders sink): an economic cross parked Pending
+                // for the counterparty's four-eyes acceptance (§6.2) — no legs booked yet.
+                tracing::info!(
+                    class = celnet_observability::LogClass::Transfer.label(),
+                    transfer_id = %pending.id,
+                    kind = ?pending.kind,
+                    from_book = %pending.source.risk_book_id,
+                    to_book = %pending.target.risk_book_id,
+                    quantity = ?pending.quantity,
+                    initiator = %pending.initiated_by,
+                    "risk transfer initiated (pending four-eyes)",
+                );
                 self.registry.insert(pending.clone());
                 self.publish_inbox();
                 Ok(wire::transfer_to_wire(&pending))
@@ -240,6 +265,22 @@ impl RiskTransferService {
             legs.realized_pnl_source,
             legs.moved_risk,
         ));
+        // TRANSFER (class=Transfer → orders sink): the four-eyes accept booked the two
+        // offsetting legs. From/to book, quantity, approver + initiator, realised source
+        // P&L. Async control-plane edge — never the pinned pricing core.
+        tracing::info!(
+            class = celnet_observability::LogClass::Transfer.label(),
+            transfer_id = %id,
+            from_book = %t.source.risk_book_id,
+            to_book = %t.target.risk_book_id,
+            quantity = ?t.quantity,
+            price = ?t.price,
+            approver = %caller,
+            initiator = %t.initiated_by,
+            realized_pnl_source = legs.realized_pnl_source,
+            moved_risk = ?legs.moved_risk,
+            "risk transfer accepted (booked)",
+        );
         self.registry.replace(t.clone());
         self.publish_inbox();
         Ok(wire::transfer_to_wire(&t))
@@ -265,6 +306,19 @@ impl RiskTransferService {
         t.approver = Some(caller.to_owned());
         t.decided_at = Some(now_nanos());
         t.state = TransferState::Rejected;
+        // TRANSFER (class=Transfer → orders sink): the counterparty rejected the pending
+        // transfer — WARN (the risk stays in the source book, no legs booked).
+        tracing::warn!(
+            class = celnet_observability::LogClass::Transfer.label(),
+            transfer_id = %id,
+            from_book = %t.source.risk_book_id,
+            to_book = %t.target.risk_book_id,
+            quantity = ?t.quantity,
+            rejected_by = %caller,
+            initiator = %t.initiated_by,
+            reason = %_reason,
+            "risk transfer rejected",
+        );
         self.registry.replace(t.clone());
         self.publish_inbox();
         Ok(wire::transfer_to_wire(&t))
@@ -284,6 +338,17 @@ impl RiskTransferService {
         }
         t.decided_at = Some(now_nanos());
         t.state = TransferState::Cancelled;
+        // TRANSFER (class=Transfer → orders sink): the initiator withdrew the pending
+        // transfer pre-acceptance.
+        tracing::info!(
+            class = celnet_observability::LogClass::Transfer.label(),
+            transfer_id = %id,
+            from_book = %t.source.risk_book_id,
+            to_book = %t.target.risk_book_id,
+            quantity = ?t.quantity,
+            initiator = %caller,
+            "risk transfer cancelled by initiator",
+        );
         self.registry.replace(t.clone());
         self.publish_inbox();
         Ok(wire::transfer_to_wire(&t))

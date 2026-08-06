@@ -875,6 +875,22 @@ impl RfqDeskEdge {
             internalise: self.rates.internalise_of(booked.position_id),
         };
         self.deals.insert(deal.clone());
+        // EXECUTION (class=Execution → executions sink): the FIX-lift path booked a deal —
+        // the deal id, routed risk book, dealt price and notional (the wire ExecutionReport
+        // is logged in `FixSession::on_new_order`). Async desk edge, never the pinned core.
+        tracing::info!(
+            class = celnet_observability::LogClass::Execution.label(),
+            deal_id = %deal.deal_id,
+            request_id = %deal.request_id,
+            counterparty = %deal.counterparty,
+            desk = %deal.desk,
+            position_id = deal.position_id,
+            dealt_price = deal.price,
+            notional = deal.notional,
+            side = deal.side,
+            risk_book_id = deal.risk_book_id.as_deref(),
+            "FIX lift booked — deal booked",
+        );
 
         current.state = DeskRequestState::Accepted as i32;
         let stored = self.requests.replace(current)?;
@@ -979,6 +995,20 @@ impl RfqDeskService for RfqDeskEdge {
             correlation_id: req.correlation_id,
         };
         self.requests.insert(stored.clone());
+        // INCOMING ORDER (class=Order → orders sink): the RFQ/IOI intake and its terms.
+        // Async desk edge — never the pinned pricing core (guardrail 11).
+        tracing::info!(
+            class = celnet_observability::LogClass::Order.label(),
+            request_id = %stored.request_id,
+            kind = ?kind,
+            counterparty = %stored.counterparty,
+            desk = %stored.desk,
+            side = stored.side,
+            notional = stored.notional,
+            ttl_ms,
+            correlation_id = stored.correlation_id.as_deref(),
+            "desk RFQ/IOI intake received",
+        );
 
         // Tell the desk an RFQ/IOI needs pricing — instantly, over the push channel.
         let (nkind, head) = match kind {
@@ -1057,12 +1087,26 @@ impl RfqDeskService for RfqDeskEdge {
                 if quote.notional <= 0.0 {
                     return Err(Status::invalid_argument("quote notional must be > 0"));
                 }
+                let quote_notional = quote.notional;
+                let quote_price = quote.price;
                 current.quote = Some(quote);
                 current.state = DeskRequestState::Quoted as i32;
                 let stored = self
                     .requests
                     .replace(current)
                     .ok_or_else(|| Status::internal("request vanished mid-response"))?;
+                // AMEND (class=Amend → orders sink): the desk (re)prices the outstanding
+                // request — the closest cancel/replace seam in the FI RFQ lifecycle (there
+                // is no separate deal-amend RPC; the quote itself is the mutable artifact).
+                tracing::info!(
+                    class = celnet_observability::LogClass::Amend.label(),
+                    request_id = %stored.request_id,
+                    counterparty = %stored.counterparty,
+                    desk = %stored.desk,
+                    price = quote_price,
+                    notional = quote_notional,
+                    "desk quote (re)priced",
+                );
                 Ok(Response::new(RespondDeskRequestResponse {
                     request: Some(stored),
                 }))
@@ -1073,6 +1117,16 @@ impl RfqDeskService for RfqDeskEdge {
                     .requests
                     .replace(current)
                     .ok_or_else(|| Status::internal("request vanished mid-response"))?;
+                // AMEND (class=Amend → orders sink): the desk declines the request — a
+                // WARN mutation of the outstanding quote's lifecycle.
+                tracing::warn!(
+                    class = celnet_observability::LogClass::Amend.label(),
+                    request_id = %stored.request_id,
+                    counterparty = %stored.counterparty,
+                    desk = %stored.desk,
+                    reason = %reject.reason,
+                    "desk RFQ declined",
+                );
                 self.publish_notification(
                     NotificationKind::QuoteRejected,
                     &stored,
@@ -1202,6 +1256,22 @@ impl RfqDeskService for RfqDeskEdge {
             internalise: self.rates.internalise_of(booked.position_id),
         };
         self.deals.insert(deal.clone());
+        // EXECUTION (class=Execution → executions sink): the GUI/desk accept path booked a
+        // deal — the deal id, routed risk book, dealt price and notional. Async desk edge,
+        // never the pinned pricing core (the FIX-lift execution is logged in `on_new_order`).
+        tracing::info!(
+            class = celnet_observability::LogClass::Execution.label(),
+            deal_id = %deal.deal_id,
+            request_id = %deal.request_id,
+            counterparty = %deal.counterparty,
+            desk = %deal.desk,
+            position_id = deal.position_id,
+            dealt_price = deal.price,
+            notional = deal.notional,
+            side = deal.side,
+            risk_book_id = deal.risk_book_id.as_deref(),
+            "desk quote lifted — deal booked",
+        );
 
         current.state = DeskRequestState::Accepted as i32;
         let stored = self

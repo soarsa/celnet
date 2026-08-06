@@ -834,6 +834,7 @@ impl RatesPositionStore {
                     Ok(book) => Some(book.to_owned()),
                     Err(err) => {
                         tracing::warn!(
+                            class = celnet_observability::LogClass::Risk.label(),
                             position_id = position.position_id,
                             %err,
                             "rates risk routing failed; booking unrouted",
@@ -930,6 +931,20 @@ impl RatesPositionStore {
         // have moved: advance the monotonic risk version the live per-book risk stream folds
         // into its poll signal (mirrors the FX sink's unconditional post-mutation bump).
         self.risk_version.fetch_add(1, Ordering::Relaxed);
+        // RISK ROUTING (class=Risk → orders sink): the booked fill's resolved risk book,
+        // its position id, and the routing context (counterparty / ccy / dealt level).
+        // Async booking tier only — never the pinned pricing core (guardrail 11).
+        tracing::info!(
+            class = celnet_observability::LogClass::Risk.label(),
+            position_id = position.position_id,
+            risk_book_id = resolved_book.as_deref(),
+            routed = resolved_book.is_some(),
+            counterparty = %attribution.counterparty,
+            ccy = %attribution.ccy,
+            dealt_price = attribution.dealt_price,
+            reference_mid = attribution.reference_mid,
+            "rates fill routed to risk book",
+        );
         // Auto-hedge / internalise decision (§6): when a hedge policy is primed AND this fill
         // routed to a book AND the booking path supplied a priced reference mid + dealt price
         // (the RFQ-desk accept / FIX-lift paths), resolve the warehouse-vs-external split +
@@ -1064,6 +1079,47 @@ impl RatesPositionStore {
             within_tolerance: verdict.within_tolerance,
             hedge_band: band_label(wh.classify(book_net_dv01)).to_owned(),
         };
+        // HEDGING (class=Hedge → orders sink): the internalise-vs-back-to-back decision —
+        // the price-tolerance verdict, the internal/external DV01 split, the warehouse-cap
+        // utilisation and RAG band. WARN when the routed book has BREACHED its warehouse
+        // cap (the desk must shed), INFO otherwise. Async booking tier, never the core.
+        let warehouse_breached = wh.breached(book_net_dv01);
+        let utilization = wh.utilization(book_net_dv01);
+        if warehouse_breached {
+            tracing::warn!(
+                class = celnet_observability::LogClass::Hedge.label(),
+                position_id = fill.position_id,
+                book,
+                internalised = prov.internalised,
+                internal_dv01 = prov.internal_dv01,
+                external_dv01 = prov.external_dv01,
+                edge_bps = prov.edge_bps,
+                within_tolerance = prov.within_tolerance,
+                hedge_band = %prov.hedge_band,
+                book_net_dv01,
+                warehouse_cap = wh.cap,
+                utilization,
+                warehouse_breached,
+                "auto-hedge internalise decision — warehouse cap breached",
+            );
+        } else {
+            tracing::info!(
+                class = celnet_observability::LogClass::Hedge.label(),
+                position_id = fill.position_id,
+                book,
+                internalised = prov.internalised,
+                internal_dv01 = prov.internal_dv01,
+                external_dv01 = prov.external_dv01,
+                edge_bps = prov.edge_bps,
+                within_tolerance = prov.within_tolerance,
+                hedge_band = %prov.hedge_band,
+                book_net_dv01,
+                warehouse_cap = wh.cap,
+                utilization,
+                warehouse_breached,
+                "auto-hedge internalise decision",
+            );
+        }
         self.internalise
             .write()
             .expect("rates internalise lock poisoned")

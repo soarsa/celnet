@@ -51,7 +51,9 @@ pub use audit::{AuditClosed, AuditDrain, AuditSink, audit_channel};
 pub use channel::{HotProbe, TelemetryDrain, telemetry_channel};
 pub use latency::{LatencyByKind, LatencyRecorder, LatencySnapshot, REPORTED_PERCENTILES};
 pub use logging::{
-    AuditRecord, AuditStage, LogClass, LogConfig, SubscriberInstallError, build_json_subscriber,
-    init_json_subscriber,
+    AuditRecord, AuditStage, ClassFilter, LogClass, LogConfig, SplitLogError,
+    SubscriberInstallError, build_json_subscriber, build_split_subscriber, init_json_subscriber,
+    install_split,
 };
 pub use record::{ErrorClass, HotSample, OpKind, TickRate};
+pub use tracing_appender::non_blocking::WorkerGuard;
