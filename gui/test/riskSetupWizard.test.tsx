@@ -9,7 +9,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import type { AcceptanceGraph, RiskBook, RiskRoutingGraph } from "../src/data/contract";
+import type {
+  AcceptanceGraph,
+  CapabilityAction,
+  CapabilityAsset,
+  RiskBook,
+  RiskRoutingGraph,
+  UserRole,
+} from "../src/data/contract";
+import { can as capCan, resolveEffective } from "../src/lib/capabilityMatrix";
 
 const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
@@ -159,6 +167,62 @@ describe("RiskSetupWizard — capability gating", () => {
     await screen.findByTestId("risk-wiz-acceptance");
     // No editing affordance on the read-only acceptance step.
     expect(screen.queryByTestId("risk-wiz-add-acc-rule")).toBeNull();
+    expect(within(screen.getByTestId("wiz-step-2")).getByText("read-only")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Capability RESOLUTION — the real algebra, not a stubbed `can`.
+//
+// The gating tests above stub `auth.can` directly, so they cannot catch a
+// resolution-layer regression — e.g. `manage_acceptance` (the 18th action) being
+// dropped from the ADMIN grant-all or seeded into the trader bundle. These tests
+// wire the wizard's read-only decision to the GENUINE selector `useAuth.can` runs
+// for a signed-in user: `can(resolveEffective(role, ∅), action, asset)`. If
+// `manage_acceptance × fixed_income` fell out of the admin grant-all, step 3 would
+// flip to read-only and this ADMIN case would fail — the missing coverage that
+// would let the "acceptance step is read-only for the operator who set it up" bug
+// slip past the stubbed gating tests.
+// ---------------------------------------------------------------------------
+
+/** An app whose `can` is the REAL selector over a role's server-resolved effective
+ * set — mirroring `useAuth.can` for a signed-in user (never anonymous). */
+function makeAppForRole(role: UserRole) {
+  const caps = resolveEffective(role, new Map());
+  const base = makeApp();
+  return {
+    ...base.app,
+    auth: {
+      user: { id: "u", email: `${role.toLowerCase()}@celnet.com` },
+      can: (action: CapabilityAction, asset: CapabilityAsset): boolean =>
+        capCan(caps, action, asset),
+    },
+  };
+}
+
+describe("RiskSetupWizard — capability resolution (real algebra)", () => {
+  it("an ADMIN resolves manage_acceptance → the acceptance step is EDITABLE", async () => {
+    state.app = makeAppForRole("ADMIN");
+    render(<RiskSetupWizard onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByTestId("wiz-step-2"));
+    await screen.findByTestId("risk-wiz-acceptance");
+    // Editable: the add-rule + remove affordances are present and the step carries
+    // no "read-only" chip.
+    expect(screen.getByTestId("risk-wiz-add-acc-rule")).toBeInTheDocument();
+    expect(screen.getByTestId("risk-wiz-acc-remove-0")).toBeInTheDocument();
+    expect(within(screen.getByTestId("wiz-step-2")).queryByText("read-only")).toBeNull();
+  });
+
+  it("a default TRADER (manage_acceptance held back) keeps the acceptance step READ-ONLY", async () => {
+    state.app = makeAppForRole("TRADER");
+    render(<RiskSetupWizard onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByTestId("wiz-step-2"));
+    await screen.findByTestId("risk-wiz-acceptance");
+    // The correct deny-by-default lock stays in place for a non-holder.
+    expect(screen.queryByTestId("risk-wiz-add-acc-rule")).toBeNull();
+    expect(screen.queryByTestId("risk-wiz-acc-remove-0")).toBeNull();
     expect(within(screen.getByTestId("wiz-step-2")).getByText("read-only")).toBeInTheDocument();
   });
 });
