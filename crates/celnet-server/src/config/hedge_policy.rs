@@ -18,6 +18,84 @@
 use celnet_hedge_routing::{HedgeLpPanel, LimitMetric, WarehouseThreshold};
 use serde::{Deserialize, Serialize};
 
+/// Persistence-serde helper for `f64` fields that can legitimately hold a **non-finite**
+/// sentinel — chiefly `f64::INFINITY`, the "uncapped" [`HedgeThresholdDef::max_clip`] default
+/// seeded on first boot ([`WarehouseThreshold::new`] uses `max_clip = ∞`), and any threshold
+/// field a future config could set unbounded.
+///
+/// `serde_json` renders a non-finite `f64` as JSON `null`; the stock `f64` deserializer then
+/// REJECTS that `null` (`invalid type: null, expected f64`), so the very next server boot after
+/// such a value reaches `identity.json` fails to load and the process dies. This module makes
+/// the round-trip total while keeping finite values byte-identical:
+/// - **serialize**: a *finite* value is written as a bare JSON number (byte-identical to a plain
+///   `f64`, so untouched configs are unchanged); a non-finite value is written as a
+///   round-trippable string sentinel (`"inf"` / `"-inf"` / `"nan"`).
+/// - **deserialize**: accepts a JSON number, one of those sentinel strings, OR a legacy `null`
+///   (what the old serializer wrote for an uncapped `∞`) — the last heals an already-corrupted
+///   `identity.json` on load instead of crashing.
+///
+/// Contained to the persisted config structs only: the in-memory `f64` type and the wire/proto
+/// contract are unchanged.
+mod nonfinite_f64 {
+    use serde::de::{self, Unexpected, Visitor};
+    use serde::{Deserializer, Serializer};
+    use std::fmt;
+
+    /// Serialize a possibly non-finite `f64`: finite ⇒ bare number, else a sentinel string.
+    pub(super) fn serialize<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+        if value.is_finite() {
+            serializer.serialize_f64(*value)
+        } else if value.is_nan() {
+            serializer.serialize_str("nan")
+        } else if value.is_sign_positive() {
+            serializer.serialize_str("inf")
+        } else {
+            serializer.serialize_str("-inf")
+        }
+    }
+
+    /// Deserialize an `f64` that may arrive as a number, a non-finite sentinel string, or a
+    /// legacy `null` (⇒ `f64::INFINITY`, the only non-finite value the old path ever wrote).
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+        struct NonFiniteF64;
+
+        impl<'de> Visitor<'de> for NonFiniteF64 {
+            type Value = f64;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a number, a non-finite sentinel (\"inf\"/\"-inf\"/\"nan\"), or null")
+            }
+
+            fn visit_f64<E>(self, v: f64) -> Result<f64, E> {
+                Ok(v)
+            }
+            fn visit_i64<E>(self, v: i64) -> Result<f64, E> {
+                Ok(v as f64)
+            }
+            fn visit_u64<E>(self, v: u64) -> Result<f64, E> {
+                Ok(v as f64)
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<f64, E> {
+                match v.trim().to_ascii_lowercase().as_str() {
+                    "inf" | "+inf" | "infinity" | "+infinity" => Ok(f64::INFINITY),
+                    "-inf" | "-infinity" => Ok(f64::NEG_INFINITY),
+                    "nan" => Ok(f64::NAN),
+                    other => other
+                        .parse::<f64>()
+                        .map_err(|_| de::Error::invalid_value(Unexpected::Str(v), &self)),
+                }
+            }
+            // Legacy `null` — what `serde_json` emitted for a non-finite `f64` before this fix —
+            // heals to the "uncapped" `f64::INFINITY` the old serializer meant.
+            fn visit_unit<E>(self) -> Result<f64, E> {
+                Ok(f64::INFINITY)
+            }
+        }
+
+        deserializer.deserialize_any(NonFiniteF64)
+    }
+}
+
 /// The budget metric a warehouse threshold caps. A stored, serde-stable enum decoupled
 /// from `celnet_limits::LimitMetric` (which is not `Serialize`); [`Self::to_limit_metric`]
 /// maps it onto the pure-crate metric when a [`WarehouseThreshold`] is reconstructed.
@@ -154,20 +232,29 @@ pub struct HedgeThresholdDef {
     /// The budget metric.
     pub metric: HedgeMetric,
     /// The budget magnitude — the "100", in the metric's native units.
+    #[serde(with = "nonfinite_f64")]
     pub cap: f64,
     /// Amber utilisation fraction (start skewing) in `[0, red]`.
+    #[serde(with = "nonfinite_f64")]
     pub amber: f64,
     /// Red utilisation fraction (start hedging the overflow) in `[amber, 1]`.
+    #[serde(with = "nonfinite_f64")]
     pub red: f64,
     /// Band-edge target as a fraction of `cap` (default = `amber`).
+    #[serde(with = "nonfinite_f64")]
     pub target_fraction: f64,
     /// Minimum hedge clip (fixed-cost / minimum-ticket floor).
+    #[serde(with = "nonfinite_f64")]
     pub min_clip: f64,
-    /// Maximum single hedge clip; a larger overflow is worked.
+    /// Maximum single hedge clip; a larger overflow is worked. Defaults to `f64::INFINITY`
+    /// ("uncapped") — persisted through [`nonfinite_f64`] so an uncapped clip survives an
+    /// `identity.json` round-trip instead of serialising to `null` and bricking the next boot.
+    #[serde(with = "nonfinite_f64")]
     pub max_clip: f64,
     /// Whether to ramp the hedged fraction with utilisation.
     pub ramped: bool,
     /// The ramp gain `k`.
+    #[serde(with = "nonfinite_f64")]
     pub ramp_k: f64,
 }
 
@@ -260,13 +347,15 @@ pub struct HedgeConfigDef {
     #[serde(default)]
     pub desk_enabled: Vec<HedgeDeskToggle>,
     /// A hard ceiling on any single hedge clip (native metric units); `0` ⇒ unbounded.
-    #[serde(default)]
+    /// Persisted through [`nonfinite_f64`] so a future `∞` ("uncapped") value can never
+    /// serialise to `null` and brick the next boot — finite values stay byte-identical.
+    #[serde(default, with = "nonfinite_f64")]
     pub max_clip: f64,
     /// Max hedges fired per rate-limit interval; `0` ⇒ unbounded.
     #[serde(default)]
     pub max_hedges_per_interval: u32,
     /// A daily externalised-notional cap; `0` ⇒ unbounded.
-    #[serde(default)]
+    #[serde(default, with = "nonfinite_f64")]
     pub daily_external_notional_cap: f64,
     /// The standing **hedging LP panels** — per-scope include/exclude LP selection
     /// every external exit action inherits (§4/§6.2). Resolves most-specific-wins
@@ -282,7 +371,7 @@ pub struct HedgeConfigDef {
     /// An additive serde-default field (defaults to `0.5`bp, matching
     /// [`DEFAULT_MIN_EDGE_BPS`](crate::services::internalise::DEFAULT_MIN_EDGE_BPS)), so an
     /// existing `identity.json` loads unchanged.
-    #[serde(default = "default_min_edge_bps")]
+    #[serde(default = "default_min_edge_bps", with = "nonfinite_f64")]
     pub min_edge_bps: f64,
 }
 
@@ -512,5 +601,133 @@ mod tests {
         cfg.upsert_lp_panel(panel(HedgeScopeKind::Book, "RATES-EUR", &[], &[]));
         assert_eq!(cfg.lp_panels.len(), 1);
         assert!(cfg.resolve_lp_panel("RATES", "RATES-EUR", "x").is_some()); // desk panel still resolves
+    }
+
+    /// A threshold with an **uncapped** (`f64::INFINITY`) `max_clip` — exactly what
+    /// [`IdentityStore::ensure_seed_hedge_policy`](crate::config::identity::IdentityStore) seeds
+    /// on first boot and what the proto→def mapping produces for `max_clip <= 0` — must survive
+    /// the `identity.json` persistence round-trip (`serde_json` String out and back), NOT
+    /// serialise to `null` and fail to reload. Regression for the boot-crash
+    /// `invalid type: null, expected f64`.
+    #[test]
+    fn infinite_threshold_fields_survive_json_round_trip() {
+        let def = HedgeThresholdDef {
+            scope_kind: HedgeScopeKind::Book,
+            metric: HedgeMetric::Dv01,
+            // Every non-finite-capable field set to a non-finite sentinel at once, so a
+            // missed field would surface here rather than only moving the crash.
+            cap: f64::INFINITY,
+            amber: 0.8,
+            red: 0.9,
+            target_fraction: f64::NEG_INFINITY,
+            min_clip: f64::NAN,
+            max_clip: f64::INFINITY,
+            ramped: true,
+            ramp_k: f64::INFINITY,
+        };
+        // Nest inside the actual persisted element (ScopedThreshold), mirroring identity.json.
+        let scoped = ScopedThreshold {
+            scope_id: "RATES-EUR".into(),
+            def,
+        };
+        let json = serde_json::to_string(&scoped).expect("serialize must not fail");
+        // Non-finite values round-trip as string sentinels, never as `null`.
+        assert!(
+            !json.contains("null"),
+            "no field may serialise to null (that is the boot-crash trigger): {json}"
+        );
+        assert!(
+            json.contains("\"max_clip\":\"inf\""),
+            "max_clip → sentinel: {json}"
+        );
+
+        let back: ScopedThreshold = serde_json::from_str(&json).expect("must reload, not crash");
+        assert!(back.def.max_clip.is_infinite() && back.def.max_clip > 0.0);
+        assert!(back.def.cap.is_infinite() && back.def.cap > 0.0);
+        assert_eq!(back.def.target_fraction, f64::NEG_INFINITY);
+        assert!(back.def.min_clip.is_nan());
+        assert!(back.def.ramp_k.is_infinite() && back.def.ramp_k > 0.0);
+        // Finite fields are unchanged.
+        assert_eq!(back.def.amber, 0.8);
+        assert_eq!(back.def.red, 0.9);
+    }
+
+    /// Finite values are **byte-unchanged**: they serialise as bare JSON numbers (identical to a
+    /// plain `f64`), so an existing `identity.json` written before this helper loads unchanged.
+    #[test]
+    fn finite_threshold_json_is_byte_unchanged() {
+        let scoped = ScopedThreshold {
+            scope_id: "RATES-EUR".into(),
+            def: HedgeThresholdDef {
+                scope_kind: HedgeScopeKind::Book,
+                metric: HedgeMetric::Dv01,
+                cap: 100_000.0,
+                amber: 0.8,
+                red: 0.9,
+                target_fraction: 0.8,
+                min_clip: 0.0,
+                max_clip: 25_000.0,
+                ramped: false,
+                ramp_k: 1.0,
+            },
+        };
+        let json = serde_json::to_string(&scoped).unwrap();
+        // Bare numbers, not quoted sentinels.
+        assert!(json.contains("\"cap\":100000.0"), "{json}");
+        assert!(json.contains("\"max_clip\":25000.0"), "{json}");
+        // The finite clip is a bare number, never a quoted sentinel string.
+        assert!(!json.contains("\"max_clip\":\""), "{json}");
+        let back: ScopedThreshold = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, scoped, "finite config round-trips identically");
+    }
+
+    /// An already-corrupted `identity.json` — one written by the *old* serializer, which emitted
+    /// `null` for the uncapped `f64::INFINITY` `max_clip` — must **heal** to `f64::INFINITY` on
+    /// load instead of failing with `invalid type: null, expected f64`.
+    #[test]
+    fn legacy_null_max_clip_heals_to_infinity() {
+        let legacy = r#"{
+            "scope_id": "RATES-EUR",
+            "def": {
+                "scope_kind": "Book",
+                "metric": "Dv01",
+                "cap": 100000.0,
+                "amber": 0.8,
+                "red": 0.9,
+                "target_fraction": 0.8,
+                "min_clip": 0.0,
+                "max_clip": null,
+                "ramped": false,
+                "ramp_k": 1.0
+            }
+        }"#;
+        let back: ScopedThreshold =
+            serde_json::from_str(legacy).expect("legacy null must heal, not crash");
+        assert!(
+            back.def.max_clip.is_infinite() && back.def.max_clip > 0.0,
+            "legacy null max_clip heals to +INFINITY"
+        );
+        // The healed def still reconstructs the pure engine threshold uncapped.
+        let t = back.def.to_threshold();
+        assert_eq!(t.classify(50_000.0), RagStatus::Green);
+    }
+
+    /// The engine config round-trips with an `∞` clip too (defensive: the field uses `0` for
+    /// unbounded today, but a future `∞` must not brick boot).
+    #[test]
+    fn hedge_config_infinite_clip_round_trips() {
+        let cfg = HedgeConfigDef {
+            max_clip: f64::INFINITY,
+            ..HedgeConfigDef::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(!json.contains("null"), "{json}");
+        let back: HedgeConfigDef = serde_json::from_str(&json).unwrap();
+        assert!(back.max_clip.is_infinite() && back.max_clip > 0.0);
+        // Default (finite) config is byte-unchanged and reloads identically.
+        let default_json = serde_json::to_string(&HedgeConfigDef::default()).unwrap();
+        assert!(default_json.contains("\"max_clip\":0.0"), "{default_json}");
+        let default_back: HedgeConfigDef = serde_json::from_str(&default_json).unwrap();
+        assert_eq!(default_back, HedgeConfigDef::default());
     }
 }
