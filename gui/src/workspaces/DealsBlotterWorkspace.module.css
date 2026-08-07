@@ -1,8 +1,49 @@
+/* The blotter is a small column: a Client/Hedge lens toggle above the active body,
+   which fills the remaining height and scrolls its own content. */
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.lensBar {
+  display: flex;
+  gap: 2px;
+  align-self: flex-start;
+  margin: var(--space-4) var(--space-4) 0;
+  background: var(--bg-inset);
+  border-radius: var(--r-sm);
+  padding: 2px;
+}
+
+.lensBtn {
+  padding: var(--space-1) var(--space-4);
+  border-radius: 4px;
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lensBtn:hover {
+  color: var(--text-primary);
+}
+.lensBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.lensBtnActive {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent);
+  font-weight: var(--weight-emphasis);
+}
+
 .wrap {
   display: flex;
   gap: var(--space-4);
   align-items: stretch;
-  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
   padding: var(--space-4);
 }

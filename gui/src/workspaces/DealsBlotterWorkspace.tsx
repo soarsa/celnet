@@ -26,7 +26,11 @@ import type { Deal, Internalise, Side } from "../data/contract";
 import { capabilityAssetForDomain, dealAsset } from "../data/assetClass";
 import { fmtEdgeBps, hedgeBandLabel, internaliseLabel } from "../lib/internalise";
 import { DealTicket } from "./DealTicket";
+import { HedgeDealsView } from "./HedgeDealsView";
 import styles from "./DealsBlotterWorkspace.module.css";
+
+/** Which lens of the Deals blotter is shown: the client fills, or the executed hedges. */
+type DealsLens = "client" | "hedge";
 
 /**
  * The rates pay/receive-fixed reading of a `Side` — the SECONDARY detail kept
@@ -166,6 +170,8 @@ export function DealsBlotterWorkspace(): React.ReactElement {
   const seed = useAcceptanceSeed();
   const canManageAcceptance = app.auth.can("manage_acceptance", "fixed_income");
 
+  // Client fills vs executed hedges — the two separated lenses of the blotter.
+  const [lens, setLens] = useState<DealsLens>("client");
   const [allDeals, setAllDeals] = useState<Deal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Deal | null>(null);
@@ -229,8 +235,32 @@ export function DealsBlotterWorkspace(): React.ReactElement {
   const totalNotional = deals.reduce((acc, d) => acc + d.notional, 0);
 
   return (
-    <div className={styles.wrap}>
-      <Panel className={styles.panel} title="Received deals">
+    <div className={styles.shell}>
+      <div className={styles.lensBar} role="group" aria-label="deals lens">
+        <button
+          type="button"
+          className={`${styles.lensBtn} ${lens === "client" ? styles.lensBtnActive : ""}`}
+          aria-pressed={lens === "client"}
+          data-testid="deals-lens-client"
+          onClick={() => setLens("client")}
+        >
+          Client deals
+        </button>
+        <button
+          type="button"
+          className={`${styles.lensBtn} ${lens === "hedge" ? styles.lensBtnActive : ""}`}
+          aria-pressed={lens === "hedge"}
+          data-testid="deals-lens-hedge"
+          onClick={() => setLens("hedge")}
+        >
+          Hedge deals
+        </button>
+      </div>
+      {lens === "hedge" ? (
+        <HedgeDealsView />
+      ) : (
+        <div className={styles.wrap}>
+          <Panel className={styles.panel} title="Received deals">
         <div className={styles.head}>
           <span className={styles.engine}>{isOffline ? "in-app desk" : "live desk"}</span>
           <span className={styles.summary}>
@@ -354,18 +384,20 @@ export function DealsBlotterWorkspace(): React.ReactElement {
           </>
         )}
       </Panel>
-      <FlowRowContextMenu
-        target={rowMenu}
-        onClose={() => setRowMenu(null)}
-        onCreateAcceptanceRule={(cp) => {
-          // Seed the rule, then navigate to the Acceptance surface (the `acceptance` alias
-          // → the consolidated Risk host's Acceptance tab), which consumes the seed.
-          seed.requestAcceptanceSeed(cp);
-          app.setWorkspace("acceptance");
-        }}
-        canManageAcceptance={canManageAcceptance}
-      />
-      {selected && <DealTicket deal={selected} onClose={() => setSelected(null)} />}
+          <FlowRowContextMenu
+            target={rowMenu}
+            onClose={() => setRowMenu(null)}
+            onCreateAcceptanceRule={(cp) => {
+              // Seed the rule, then navigate to the Acceptance surface (the `acceptance`
+              // alias → the consolidated Risk host's Acceptance tab), which consumes the seed.
+              seed.requestAcceptanceSeed(cp);
+              app.setWorkspace("acceptance");
+            }}
+            canManageAcceptance={canManageAcceptance}
+          />
+          {selected && <DealTicket deal={selected} onClose={() => setSelected(null)} />}
+        </div>
+      )}
     </div>
   );
 }

@@ -58,6 +58,8 @@ const FIDELITY_SPECS = [
   /riskTabs\.e2e\.ts/,
   // Risk Dashboard numeric alignment + per-portfolio tenor/instrument drill-down.
   /riskDashboardDrilldown\.e2e\.ts/,
+  // Deals blotter Client/Hedge lens split (executed-hedge ledger).
+  /dealsHedgeLens\.e2e\.ts/,
   // Risk guided-setup wizard (portfolios → routing → acceptance) — offline (mock).
   /riskSetupWizard\.e2e\.ts/,
 ];

@@ -1,0 +1,208 @@
+/* HedgeDealsView — the executed-hedge ledger lens of the Deals blotter. Mirrors the
+   client-deals blotter's table conventions (sticky header, hairline grid, right-
+   aligned tabular numerics) + hedge-specific RAG / LP / mode chips. Theme-aware via
+   the shared design tokens. */
+
+.wrap {
+  display: flex;
+  gap: var(--space-4);
+  align-items: stretch;
+  height: 100%;
+  min-height: 0;
+  padding: var(--space-4);
+}
+
+.panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.engine {
+  font: var(--type-micro) / var(--type-micro-lh) var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  font-weight: var(--weight-emphasis);
+}
+
+.summary {
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.error {
+  color: var(--danger);
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  margin: 0 0 var(--space-2);
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font: var(--type-callout) / var(--type-callout-lh) var(--font-ui);
+  padding: var(--space-5) var(--space-2);
+  max-width: 76ch;
+}
+
+.tableWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: var(--hairline) solid var(--grid-line);
+  border-radius: var(--r-md);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-raised);
+  border-bottom: var(--hairline) solid var(--grid-line);
+  font: var(--type-micro) / 1 var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* Numeric HEADER cells right-align; scoped past the base `.table thead th` so the
+   right-align actually wins (a class-only `.num` loses to `.table thead th`). */
+.table thead th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.table tbody td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--hairline) solid var(--grid-line);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.table tbody tr:hover td {
+  background: var(--bg-inset);
+}
+
+/* Numeric BODY cells: right-aligned, mono, tabular figures so digits line up. */
+.num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.strong {
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
+}
+
+.px {
+  color: var(--accent);
+  font-weight: var(--weight-emphasis);
+}
+
+.muted {
+  color: var(--text-tertiary);
+}
+
+/* The LP we actually hit (the winner) — a solid accent-tinted chip. */
+.lpWon {
+  display: inline-block;
+  font: var(--type-micro) / 1 var(--font-mono);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--accent) 20%, transparent);
+  color: color-mix(in oklab, var(--accent) 66%, var(--text-primary));
+}
+
+/* The full LP panel the hedge fanned to; the winner is highlighted among them. */
+.lpChips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.lpChip {
+  font: var(--type-micro) / 1 var(--font-mono);
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--text-tertiary);
+}
+
+.lpChipWon {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  color: color-mix(in oklab, var(--accent) 62%, var(--text-primary));
+  font-weight: var(--weight-header);
+}
+
+/* RAG band chip (shared trading semantics). Amber pins a near-black label for AA. */
+.rag {
+  display: inline-block;
+  font: var(--type-micro) / 1 var(--font-mono);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  color: var(--bg-surface);
+}
+
+.rag_green {
+  background: var(--accent-positive);
+}
+.rag_amber {
+  background: var(--warn);
+  color: #17120a;
+}
+.rag_red {
+  background: var(--danger);
+}
+.rag_breach {
+  background: var(--danger);
+  outline: 1px solid var(--text-primary);
+}
+
+/* Mode badges: a live external fire vs an advisory (dry-run) computation. */
+.live,
+.advisory {
+  display: inline-block;
+  font: var(--type-micro) / 1 var(--font-mono);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+}
+.live {
+  background: color-mix(in oklab, var(--accent-positive) 20%, transparent);
+  color: color-mix(in oklab, var(--accent-positive) 60%, var(--text-primary));
+}
+.advisory {
+  background: color-mix(in oklab, var(--warn) 20%, transparent);
+  color: color-mix(in oklab, var(--warn) 62%, var(--text-primary));
+}
