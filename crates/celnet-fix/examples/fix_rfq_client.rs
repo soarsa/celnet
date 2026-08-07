@@ -48,9 +48,11 @@
 //!   Fixed income (--asset fi):
 //!   --curve SYMBOL       curve symbol (e.g. USD-OIS)     (default USD-OIS)
 //!   --tenor YEARS        OIS tenor in whole years (>= 1) (default 5)
-//!   --notional AMOUNT    notional (> 0)                  (default 10000000)
-//!   --side pay|receive|two-way  fixed-leg intent; absent ⇒ two-way market
-//!                                                         (default two-way)
+//!   --notional AMOUNT|mix  notional (> 0), or `mix` to rotate 100k…30m per stream
+//!                          request (one-shot uses the fixed value)   (default 10000000)
+//!   --side pay|receive|two-way|mix  fixed-leg intent; `mix` (and absent) rotate
+//!                          pay/receive per stream request → a BUY/SELL booked-deal mix;
+//!                          a one-shot uses the fixed side       (stream default: mix)
 //!
 //!   FX option (--asset fx):
 //!   --pair PAIR          6-letter currency pair          (default EURUSD)
@@ -119,7 +121,17 @@ struct Args {
     curve: String,
     tenor_years: u32,
     notional: f64,
+    // When set, a stream (`--repeat != 1`) rotates the notional per request over the
+    // deterministic `sim::rates_notional_for` ladder (100k … 30m) instead of using the
+    // fixed `notional`; a one-shot still uses the explicit `notional`. Selected by
+    // `--notional mix`. Gives booked deals (and their DV01) a realistic size spread.
+    notional_mix: bool,
     rates_side: RatesSide,
+    // When set, a stream (`--repeat != 1`) rotates the fixed-leg side per request over the
+    // deterministic `sim::rates_side_for` rotation (pay/receive) instead of using the fixed
+    // `rates_side`; a one-shot still uses the explicit `rates_side`. Selected by `--side mix`
+    // (and the default when no `--side` is given). Gives the blotter a BUY/SELL deal mix.
+    rates_side_mix: bool,
     // The FX lift policy. Fixed income always observes (the desk prices async), so
     // this is `Observe` there and only ever lifts on the FX path.
     policy: LiftPolicy,
@@ -178,7 +190,7 @@ fn print_help() -> ! {
         "fix_rfq_client — FIX 4.4 RFQ price-taker (rates OIS or FX option)\n\n\
          Flags (all optional; sensible defaults dial the demo edge):\n  \
          --asset fi|fx|esp (fi)   --addr HOST:PORT (127.0.0.1:9099)\n  \
-         fi:  --curve USD-OIS  --tenor 5  --notional 10000000  --side pay|receive|two-way\n  \
+         fi:  --curve USD-OIS  --tenor 5  --notional 10000000|mix  --side pay|receive|two-way|mix\n  \
          fx:  --pair EURUSD  --type call|put  --strike 1.10  --expiry-years 1.0\n       \
          --side observe|buy|sell  --settlement deliverable|ndf  --exercise european|american\n  \
          esp: --grpc-addr http://127.0.0.1:50051  --esp-instruments 15  --user admin@celnet.com  --password ****  --seed 0x5EED1234\n  \
@@ -233,6 +245,9 @@ fn parse_args() -> Args {
     let mut curve = String::from("USD-OIS");
     let mut tenor_years = 5_u32;
     let mut notional = 10_000_000.0_f64;
+    // `--notional mix` selects the per-request notional rotation on a stream (backward
+    // compatible: a number keeps the fixed notional; a one-shot always uses the fixed value).
+    let mut notional_mix = false;
     // Common defaults.
     let mut sender = String::from("CELNET-CPTY");
     let mut target = String::from("CELNET");
@@ -296,11 +311,17 @@ fn parse_args() -> Args {
                     .parse()
                     .unwrap_or_else(|_| usage_and_exit("--tenor must be a whole number of years"))
             }
-            "--notional" => {
-                notional = val
-                    .parse()
-                    .unwrap_or_else(|_| usage_and_exit("--notional must be a number"))
-            }
+            "--notional" => match val.to_lowercase().as_str() {
+                // A "mix" sentinel selects the deterministic per-request notional rotation
+                // (stream only); the numeric `notional` stays at its default as the one-shot
+                // fallback. Consistent with `--side mix`.
+                "mix" | "rotate" | "mixed" | "random" => notional_mix = true,
+                _ => {
+                    notional = val
+                        .parse()
+                        .unwrap_or_else(|_| usage_and_exit("--notional must be a number or `mix`"))
+                }
+            },
             "--pair" => pair = val.to_uppercase(),
             "--type" => {
                 option_type = match val.to_lowercase().as_str() {
@@ -399,17 +420,31 @@ fn parse_args() -> Args {
     // Fixed income never lifts (the desk prices async), so its lift policy is
     // always `Observe`; the fixed-leg direction rides `rates_side` instead.
     let mut rates_side = RatesSide::TwoWay;
+    let mut rates_side_mix = false;
     let mut policy = LiftPolicy::Observe;
     match asset {
         AssetClass::FixedIncome => {
+            // A stream (`--repeat != 1`) rotates the side per request when in "mix" mode,
+            // giving booked deals a realistic BUY/SELL spread; an explicit `pay`/`receive`/
+            // `two-way` is honoured exactly (backward compatible), and a one-shot always uses
+            // the fixed `rates_side`. No `--side` at all defaults to the mix (the common case:
+            // a bare `--asset fi` stream should show a mixture, not one direction). The base
+            // `rates_side` doubles as the one-shot fallback when mix is selected (two-way).
             rates_side = match side_raw.as_deref() {
-                None => RatesSide::TwoWay,
+                None => {
+                    rates_side_mix = true;
+                    RatesSide::TwoWay
+                }
                 Some(s) => match s.to_lowercase().as_str() {
                     "pay" | "payfixed" | "pay-fixed" => RatesSide::PayFixed,
                     "receive" | "rec" | "receivefixed" | "receive-fixed" => RatesSide::ReceiveFixed,
                     "two-way" | "twoway" | "2way" | "rfq" => RatesSide::TwoWay,
+                    "mix" | "mixed" | "rotate" | "both" => {
+                        rates_side_mix = true;
+                        RatesSide::TwoWay
+                    }
                     other => usage_and_exit(&format!(
-                        "--side (fi) must be pay|receive|two-way, got `{other}`"
+                        "--side (fi) must be pay|receive|two-way|mix, got `{other}`"
                     )),
                 },
             };
@@ -481,7 +516,9 @@ fn parse_args() -> Args {
         curve,
         tenor_years,
         notional,
+        notional_mix,
         rates_side,
+        rates_side_mix,
         policy,
         sender,
         target,
@@ -563,14 +600,23 @@ async fn main() -> std::io::Result<()> {
     );
     match args.asset {
         AssetClass::FixedIncome => {
-            let side_label = match args.rates_side {
-                RatesSide::PayFixed => "pay fixed",
-                RatesSide::ReceiveFixed => "receive fixed",
-                RatesSide::TwoWay => "two-way",
+            let side_label = if args.rates_side_mix {
+                "mix (rotating pay/receive → BUY/SELL)"
+            } else {
+                match args.rates_side {
+                    RatesSide::PayFixed => "pay fixed",
+                    RatesSide::ReceiveFixed => "receive fixed",
+                    RatesSide::TwoWay => "two-way",
+                }
+            };
+            let notional_label = if args.notional_mix {
+                "mix (100k…30m)".to_string()
+            } else {
+                format!("{:.2}", args.notional)
             };
             println!(
-                "  RFQ (fi)  {} OIS {}y · notional {:.2} · {}",
-                args.curve, args.tenor_years, args.notional, side_label
+                "  RFQ (fi)  {} OIS {}y · notional {} · {}",
+                args.curve, args.tenor_years, notional_label, side_label
             );
         }
         AssetClass::FxOption => {
@@ -695,6 +741,23 @@ async fn main() -> std::io::Result<()> {
                     && args.lift_every > 0
                     && auto_ordinal.is_multiple_of(args.lift_every);
 
+                // In a stream (`--repeat != 1`) rotate the fixed-leg side and the notional
+                // per request when in "mix" mode, so booked OIS deals show a realistic
+                // BUY/SELL direction spread and a varied size/DV01 on the risk dashboard; a
+                // one-shot honours the explicit `--side` / `--notional` exactly (backward
+                // compatible). The booked `Deal.side` is carried by the RFQ side field
+                // (server `rates_side_to_side`): PayFixed → BUY, ReceiveFixed → SELL.
+                let effective_side = if args.repeat != 1 && args.rates_side_mix {
+                    sim::rates_side_for(i)
+                } else {
+                    args.rates_side
+                };
+                let effective_notional = if args.repeat != 1 && args.notional_mix {
+                    sim::rates_notional_for(i)
+                } else {
+                    args.notional
+                };
+
                 if args.stream {
                     // RFS: Subscribe → the venue streams continuous re-priced quotes; hold
                     // the session reading updates, and lift one mid-hold when due (executing
@@ -706,8 +769,8 @@ async fn main() -> std::io::Result<()> {
                         quote_req_id: &stream_req_id,
                         symbol: &symbol,
                         tenor_years: tenor,
-                        notional: args.notional,
-                        side: args.rates_side,
+                        notional: effective_notional,
+                        side: effective_side,
                         subscription: SubscriptionRequest::Subscribe,
                     };
                     let hold = std::time::Duration::from_millis(args.stream_hold_ms.max(1));
@@ -756,8 +819,8 @@ async fn main() -> std::io::Result<()> {
                         quote_req_id: &req_id,
                         symbol: &symbol,
                         tenor_years: tenor,
-                        notional: args.notional,
-                        side: args.rates_side,
+                        notional: effective_notional,
+                        side: effective_side,
                         subscription: SubscriptionRequest::Snapshot,
                     };
                     let r = sess
@@ -1139,13 +1202,29 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
     loop {
         let bond = &bonds[(i as usize) % bonds.len()];
         let counterparty = sim::counterparty_for(i);
+        // In "mix" notional mode rotate the streamed size per request (ESP always streams),
+        // so booked streaming bond deals — and their DV01 — show a realistic size spread
+        // instead of one repeated clip; otherwise use the fixed `--notional`.
+        let esp_notional = if args.notional_mix {
+            sim::rates_notional_for(i)
+        } else {
+            args.notional
+        };
         // Randomly (seeded) LIFT ~1 in 3 cycles; a lift executes + books a streaming deal.
         let should_lift = rng.below(3) == 0;
-        sess.set_policy(if should_lift {
-            LiftPolicy::LiftOffer
+        // Vary the lift DIRECTION deterministically per index so booked streaming deals show
+        // a BUY/SELL mix (LiftOffer books BUY off the offer leg, HitBid books SELL off the
+        // bid leg), mirroring the RFQ side rotation; the two-way bond RFS mints both legs so
+        // either direction books symmetrically.
+        let lift_policy = if should_lift {
+            match sim::rates_side_for(i) {
+                RatesSide::PayFixed => LiftPolicy::LiftOffer,
+                RatesSide::ReceiveFixed | RatesSide::TwoWay => LiftPolicy::HitBid,
+            }
         } else {
             LiftPolicy::Observe
-        });
+        };
+        sess.set_policy(lift_policy);
 
         let stream_req_id = format!("{}-ESP-{}", args.req_id, bond.instrument_id).into_bytes();
         let symbol = bond.instrument_id.clone().into_bytes();
@@ -1157,7 +1236,7 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
             day_count: bond.day_count,
             maturity: bond.maturity,
             redemption: bond.redemption,
-            notional: args.notional,
+            notional: esp_notional,
             side: Side::TwoWay,
             subscription: SubscriptionRequest::Subscribe,
         };

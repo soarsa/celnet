@@ -23,7 +23,11 @@ export FIXSIM_HOST="{{ celnet_fixsim_host | default('127.0.0.1') }}"
 export FIXSIM_ASSET="{{ celnet_fixsim_asset | default('fi') }}"
 export FIXSIM_CURVE="{{ celnet_fixsim_curve | default('USD-OIS') }}"
 export FIXSIM_TENOR="{{ celnet_fixsim_tenor | default('5') }}"
-export FIXSIM_NOTIONAL="{{ celnet_fixsim_notional | default('10000000') }}"
+# Notional "mix" ⇒ a stream rotates a 100k…30m clip ladder per request (varied booked
+# sizes + DV01); a number pins it. Side "mix" ⇒ a stream rotates pay/receive per request
+# (BUY/SELL booked-deal mix); pay|receive|two-way pins it. Both are overridable.
+export FIXSIM_NOTIONAL="{{ celnet_fixsim_notional | default('mix') }}"
+export FIXSIM_SIDE="{{ celnet_fixsim_side | default('mix') }}"
 {% if celnet_fixsim_port is defined %}export FIXSIM_PORT="{{ celnet_fixsim_port }}"
 {% endif %}{% if celnet_fixsim_sender is defined %}export FIXSIM_SENDER="{{ celnet_fixsim_sender }}"
 {% endif %}{% if celnet_fixsim_target is defined %}export FIXSIM_TARGET="{{ celnet_fixsim_target }}"

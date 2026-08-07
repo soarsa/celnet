@@ -69,7 +69,20 @@ celnet_fixsim_stream_hold_ms: 2000       # ms RFS/ESP hold per cycle
 # client downloads the top-N reference-data instruments over gRPC and streams bond RFS on
 # them (priced off the aggregated-book composite, tiered by the connection's pricing group),
 # randomly lifting some to book LIVE streaming deals.
-celnet_fixsim_esp_enabled: false
+# ESP streaming taker: ON by default so a deployed box runs BOTH an RFQ taker AND a
+# STREAMING taker (subscribes to bond RFS off the aggregated-book composite and lifts →
+# books live streaming deals). It has its own FIX session (own SenderCompID + req-id) and
+# is backgrounded, so it never fights the RFQ leg; if its stream acceptor is unreachable
+# the launcher logs a loud, actionable line and skips it (the RFQ leg keeps running).
+# REQUIRES a FixedIncomeStream acceptor registered in the GUI FIX admin at
+# celnet_fixsim_stream_port whose accepted counterparty (target_comp_id) equals
+# celnet_fixsim_stream_sender — set these to match your registry.
+celnet_fixsim_esp_enabled: true
+# The fixed-income STREAM (RFS) acceptor the RFS + ESP legs subscribe to. Convention: the
+# stream venue sits one port above the FI quote venue (56002). Must be a `fixed_income_stream`
+# acceptor in the managed registry; override to match the GUI FIX admin.
+celnet_fixsim_stream_port: 56003
+celnet_fixsim_stream_sender: "CELER_RATES_STREAM"
 celnet_fixsim_grpc_addr: "http://127.0.0.1:50051"  # reference-data + login endpoint
 celnet_fixsim_esp_instruments: 15        # top-N most-liquid/relevant instruments to stream
 celnet_fixsim_esp_seed: "0x5EED1234"     # deterministic seed for the random-trade selection

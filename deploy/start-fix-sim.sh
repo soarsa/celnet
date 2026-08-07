@@ -33,7 +33,9 @@
 #                            # both = drive fi AND fx concurrently (two daemons)
 #   FIXSIM_HOST (127.0.0.1)  FIXSIM_PORT (fi:56002 / fx:56001)
 #   FIXSIM_SENDER (fi:CELER_RATES / fx:CELER_FXO)  FIXSIM_TARGET (CELNET)
-#   FIXSIM_CURVE (USD-OIS) FIXSIM_TENOR (5) FIXSIM_NOTIONAL (10000000)   # FI RFQ shape
+#   FIXSIM_CURVE (USD-OIS) FIXSIM_TENOR (5)   # FI RFQ shape
+#   FIXSIM_NOTIONAL (mix)    # stream rotates a 100k…30m clip ladder; a number pins it
+#   FIXSIM_SIDE (mix)        # stream rotates pay/receive → BUY/SELL; pay|receive|two-way pins it
 #   FIXSIM_PERIOD (120) FIXSIM_JITTER (60)   # seconds between RFQs (120s heartbeat)
 #   FIXSIM_BIN (target/release/fix-sim)      # preferred once the full bot is built
 #   FIXSIM_RFQ_BIN ()                        # prebuilt RFQ client (shipped by the release);
@@ -75,7 +77,16 @@ fi
 # Fixed-income RFQ shape (whole-year OIS tenor, notional in ccy units).
 FIXSIM_CURVE="${FIXSIM_CURVE:-USD-OIS}"
 FIXSIM_TENOR="${FIXSIM_TENOR:-5}"
-FIXSIM_NOTIONAL="${FIXSIM_NOTIONAL:-10000000}"
+# Notional: default "mix" so a STREAM rotates a realistic clip ladder (100k…30m) per
+# request — booked deals (and their DV01 on the risk dashboard) get a varied size spread
+# instead of one repeated 10m clip. Set a number to pin a fixed notional; a one-shot
+# always uses a fixed value (the client falls back off "mix" for --repeat 1).
+FIXSIM_NOTIONAL="${FIXSIM_NOTIONAL:-mix}"
+# Fixed-leg side: default "mix" so a STREAM rotates pay/receive per request, booking a
+# realistic BUY/SELL mixture on the blotter (PayFixed→BUY, ReceiveFixed→SELL) instead of
+# one repeated direction. Set pay|receive|two-way to pin a direction; a one-shot uses the
+# fixed side. This replaced the old hard-coded `--side pay` (which booked every deal SELL-only).
+FIXSIM_SIDE="${FIXSIM_SIDE:-mix}"
 # Cadence: the whole-second fallback (the operator-standard heartbeat). Named +
 # env-overridable, no bare magic number; flows to the client's `--interval`.
 FIXSIM_PERIOD="${FIXSIM_PERIOD:-120}"
@@ -287,7 +298,7 @@ build_client_args() {
     --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" --req-id "FIXSIM-$(date +%s)")
   if [ "$FIXSIM_ASSET" = "fi" ]; then
     CLIENT_ARGS+=(--asset fi --curve "$FIXSIM_CURVE" --tenor "$FIXSIM_TENOR" \
-      --notional "$FIXSIM_NOTIONAL" --side pay \
+      --notional "$FIXSIM_NOTIONAL" --side "$FIXSIM_SIDE" \
       --manual-every "$FIXSIM_MANUAL_EVERY" --manual-tenor "$RATES_MANUAL_TENOR" \
       --manual-security "$FIXSIM_MANUAL_SECURITY" \
       --lift-every "$FIXSIM_LIFT_EVERY")
@@ -337,7 +348,7 @@ if [ -n "$FIXSIM_STREAM_PORT" ]; then
       --sender "$FIXSIM_STREAM_SENDER" --target "$FIXSIM_TARGET" \
       --req-id "FIXSIM-RFS-$(date +%s)" \
       --asset fi --intent rfs --curve "$FIXSIM_CURVE" --notional "$FIXSIM_NOTIONAL" \
-      --side pay --manual-every 0 --lift-every "$FIXSIM_LIFT_EVERY" \
+      --side "$FIXSIM_SIDE" --manual-every 0 --lift-every "$FIXSIM_LIFT_EVERY" \
       --repeat 0 "${STREAM_CADENCE[@]}")
     log "RFS leg: streaming from $FIXSIM_HOST:$FIXSIM_STREAM_PORT ($FIXSIM_STREAM_SENDER); lift every ${FIXSIM_LIFT_EVERY}."
     ( while true; do "${STREAM_ARGS[@]}" || log "RFS client exited ($?) — reconnecting in 5s"; sleep 5; done ) &

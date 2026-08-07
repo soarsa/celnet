@@ -31,6 +31,7 @@
 use celnet_types::{OptionType, Settlement};
 
 use crate::dialect_fx::ExerciseStyle;
+use crate::dialect_rates::RatesSide;
 
 /// Major **deliverable** currency pairs the demo venue auto-quotes. The demo server
 /// prices every pair off its calibrated EUR/USD 1Y fixture (a single global surface at
@@ -210,6 +211,69 @@ pub fn counterparty_for(i: u64) -> &'static str {
     SIM_COUNTERPARTIES[(i as usize) % SIM_COUNTERPARTIES.len()]
 }
 
+/// The deterministic rotation of the **rates fixed-leg side** the FIX RFQ simulator
+/// applies per stream iteration when the client is in "mix" mode, so booked OIS deals
+/// show a realistic BUY/SELL mixture on the desk blotter instead of one repeated
+/// direction (the failure this rotation fixes: launching with a fixed `--side pay`
+/// booked every deal on the same side).
+///
+/// Booked-side mapping (server `rates_side_to_side` / `DeskSide::to_wire`): a
+/// `PayFixed` RFQ books `Side::Buy`, a `ReceiveFixed` RFQ books `Side::Sell`. The
+/// booked `Deal.side` is carried by the RFQ's side field (independent of the lift
+/// policy), so rotating this side alternates the booked deal direction on the blotter.
+///
+/// The table is length 5 — coprime with the 28-name [`SIM_COUNTERPARTIES`] pool, so a
+/// given counterparty is not locked to one direction — and holds 3 `PayFixed` : 2
+/// `ReceiveFixed` (a ~3:2 BUY:SELL blotter mix). Only the two firm directions appear
+/// (never `TwoWay`), so every rotated request books a firm side when lifted. Both
+/// directions occur within the first two indices (`i = 0` pays, `i = 1` receives).
+pub const RATES_SIDE_ROTATION: &[RatesSide] = &[
+    RatesSide::PayFixed,
+    RatesSide::ReceiveFixed,
+    RatesSide::PayFixed,
+    RatesSide::PayFixed,
+    RatesSide::ReceiveFixed,
+];
+
+/// The simulated rates fixed-leg side for stream iteration `i` — a deterministic
+/// rotation over [`RATES_SIDE_ROTATION`] (pure function of `i`, no RNG / no wall-clock,
+/// so a replay yields the same sequence). Used by the FIX RFQ simulator in "mix" mode to
+/// give the desk blotter a realistic BUY/SELL spread of booked OIS deals.
+#[must_use]
+pub fn rates_side_for(i: u64) -> RatesSide {
+    RATES_SIDE_ROTATION[(i as usize) % RATES_SIDE_ROTATION.len()]
+}
+
+/// A ladder of realistic OIS clip sizes (ccy notional) the FIX RFQ simulator rotates
+/// through in "mix" notional mode, so booked deals — and, because DV01 scales with
+/// notional, the per-book risk/DV01 the dashboard aggregates — show a realistic spread of
+/// sizes instead of one repeated `10m` clip. Spans 100k … 30m across the standard
+/// street clip increments a rates desk actually trades.
+///
+/// Length 9 — coprime with both the 28-name counterparty pool and the length-5 side
+/// rotation — so counterparty × side × size combinations vary widely over a run rather
+/// than locking into a short repeating pattern.
+pub const RATES_NOTIONAL_LADDER: &[f64] = &[
+    100_000.0,
+    250_000.0,
+    500_000.0,
+    1_000_000.0,
+    2_000_000.0,
+    5_000_000.0,
+    10_000_000.0,
+    20_000_000.0,
+    30_000_000.0,
+];
+
+/// The simulated OIS notional for stream iteration `i` — a deterministic rotation over
+/// [`RATES_NOTIONAL_LADDER`] (pure function of `i`, no RNG / no wall-clock). Used by the
+/// FIX RFQ simulator in "mix" notional mode so booked deals carry varied sizes and, in
+/// turn, varied DV01 on the risk dashboard. Always in `[100_000, 30_000_000]`.
+#[must_use]
+pub fn rates_notional_for(i: u64) -> f64 {
+    RATES_NOTIONAL_LADDER[(i as usize) % RATES_NOTIONAL_LADDER.len()]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,5 +422,78 @@ mod tests {
         // The dialect accepts American; the vanilla-GK edge (price_request) then declines
         // it because it prices European only.
         assert_eq!(desc.exercise, ExerciseStyle::American);
+    }
+
+    /// The rates side rotation is deterministic (no RNG / no wall-clock), yields BOTH firm
+    /// directions in a sensible (near-balanced) ratio, and never emits `TwoWay` (so every
+    /// rotated request books a firm side). This is what turns a fixed `--side pay` sim into
+    /// a realistic BUY/SELL booked-deal mixture on the blotter.
+    #[test]
+    fn rates_side_rotation_is_deterministic_and_covers_both_firm_sides() {
+        for i in 0..128 {
+            assert_eq!(rates_side_for(i), rates_side_for(i));
+        }
+        // Both firm directions appear within the first two indices.
+        assert_eq!(rates_side_for(0), RatesSide::PayFixed);
+        assert_eq!(rates_side_for(1), RatesSide::ReceiveFixed);
+        // Over a run: both sides present, neither degenerate, and never a two-way request.
+        let n = 200u64;
+        let mut pay = 0u64;
+        let mut receive = 0u64;
+        for i in 0..n {
+            match rates_side_for(i) {
+                RatesSide::PayFixed => pay += 1,
+                RatesSide::ReceiveFixed => receive += 1,
+                RatesSide::TwoWay => {
+                    panic!("the rotation must never book a two-way (no firm side)")
+                }
+            }
+        }
+        assert!(pay > 0 && receive > 0, "both booked directions must occur");
+        // A sensible ratio: neither side is more than ~70% of the flow (here exactly 3:2).
+        assert!(pay <= (n * 7) / 10, "pay-fixed must not dominate the mix");
+        assert!(
+            receive <= (n * 7) / 10,
+            "receive-fixed must not dominate the mix"
+        );
+        assert_eq!(pay + receive, n);
+    }
+
+    /// The notional rotation is deterministic, always in `[100k, 30m]`, and genuinely
+    /// spreads across small and large clips (not one repeated size) — so booked deals, and
+    /// the DV01 the risk dashboard aggregates (DV01 scales with notional), show a realistic
+    /// spread of sizes rather than a single `10m` clip.
+    #[test]
+    fn rates_notional_rotation_spans_the_range_with_small_and_large_clips() {
+        const MIN: f64 = 100_000.0;
+        const MAX: f64 = 30_000_000.0;
+        for i in 0..128 {
+            assert_eq!(rates_notional_for(i), rates_notional_for(i));
+        }
+        let mut saw_small = false; // a small clip (<= 500k)
+        let mut saw_large = false; // a large clip (>= 10m)
+        let mut distinct: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+        for i in 0..64 {
+            let n = rates_notional_for(i);
+            assert!(
+                n.is_finite() && (MIN..=MAX).contains(&n),
+                "notional {n} out of range"
+            );
+            if n <= 500_000.0 {
+                saw_small = true;
+            }
+            if n >= 10_000_000.0 {
+                saw_large = true;
+            }
+            distinct.insert(n as u64);
+        }
+        assert!(saw_small, "the rotation must produce small clips");
+        assert!(saw_large, "the rotation must produce large clips");
+        // Meaningfully varied — many distinct sizes, not just two values.
+        assert!(
+            distinct.len() >= 5,
+            "want a genuine spread of clip sizes, got {}",
+            distinct.len()
+        );
     }
 }
