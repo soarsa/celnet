@@ -56,6 +56,8 @@ const FIDELITY_SPECS = [
   /riskTransferTabs\.e2e\.ts/,
   // Consolidated Risk (dashboard+portfolios+routing+acceptance+scenario) tabbed surface.
   /riskTabs\.e2e\.ts/,
+  // Risk guided-setup wizard (portfolios → routing → acceptance) — offline (mock).
+  /riskSetupWizard\.e2e\.ts/,
 ];
 
 /**

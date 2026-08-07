@@ -1,49 +1,50 @@
 /**
- * SetupWizard — the Hedging guided-setup flow. A single, sequential on-ramp that walks a
- * trader through the whole risk-lifecycle model in one place, instead of navigating three
- * separate surfaces (Risk Portfolios → Risk Routing → Hedging) and having to already
- * understand how they relate:
+ * RiskSetupWizard — the Risk guided-setup flow. The risk-management sibling of the
+ * Hedging wizard: one sequential on-ramp that walks a trader through the whole
+ * incoming-risk model in one place instead of navigating three separate Risk tabs
+ * (Portfolios → Routing → Acceptance) and having to already understand how they relate:
  *
- *   1. Risk portfolios — create the buckets risk books into
- *   2. Routing — decide which fills land in which portfolio
- *   3. Internalise & hedge — the warehouse cap + a starter exit policy
+ *   1. Risk portfolios — create the buckets risk books into        (shared step)
+ *   2. Routing — decide which fills land in which portfolio         (shared step)
+ *   3. Acceptance criteria — accept / reject / hold incoming lifts  (risk-specific)
  *   4. Review & apply — commit everything through the existing RPCs, in order
  *
  * The chrome (stepper, footer, apply-progress, a11y) is the SHARED {@link WizardShell};
  * steps 1–2 are the SHARED {@link PortfoliosStep} / {@link RoutingStep} — this file owns
- * only the hedge-specific step CONTENT + draft state + the Apply sequence
- * ({@link applyWizard}). Capability-gated: steps 1–2 need `risk_manage·FI`, step 3 needs
- * `hedge·FI` — a step the caller can't apply renders read-only with a note rather than
- * failing at Apply. On success the wizard closes and lands the trader on the Risk
- * Dashboard so the new configuration is immediately visible.
+ * only the acceptance step CONTENT + draft state + the Apply sequence
+ * ({@link applyRiskWizard}). Capability-gated: steps 1–2 need `risk_manage·FI`, step 3
+ * needs `manage_acceptance·FI` — a step the caller can't apply renders read-only with a
+ * note rather than failing at Apply. On success the wizard closes and lands the trader on
+ * the Risk → Acceptance tab so the new policy is immediately visible.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { useApp } from "../../../app/AppContext";
-import type { DeskDesc, FixConnection, WarehouseThreshold } from "../../../data/contract";
-import { newDefaultHedgeRule, type HedgeRule } from "../../../lib/hedgeRules";
-import { newRuleId, type RiskRule } from "../../../lib/riskRules";
-import { notifyRiskRoutingChanged } from "../../../lib/routingGuard";
+import { useApp } from "../../app/AppContext";
+import type { DeskDesc, FixConnection } from "../../data/contract";
+import type { AcceptanceRule } from "../../lib/acceptanceRules";
+import { newRuleId, type RiskRule } from "../../lib/riskRules";
+import { notifyRiskRoutingChanged } from "../../lib/routingGuard";
 import {
   WizardShell,
   type ApplyPhase,
   type StepMeta,
-} from "../../setupWizard/WizardShell";
+} from "../setupWizard/WizardShell";
 import {
-  applyWizard,
-  defaultWizardThreshold,
   enabledBookKeys,
-  hedgingErrors,
   newBookKey,
   portfolioErrors,
   routingErrors,
-  thresholdErrors,
   type WizardBook,
-  type WizardDraft,
-} from "./wizardModel";
-import { HedgingStep, PortfoliosStep, ReviewStep, RoutingStep } from "./WizardSteps";
+} from "../setupWizard/wizardModel";
+import {
+  acceptanceErrors,
+  applyRiskWizard,
+  defaultAcceptanceRules,
+  type RiskWizardDraft,
+} from "./riskWizardModel";
+import { AcceptanceStep, PortfoliosStep, RiskReviewStep, RoutingStep } from "./RiskWizardSteps";
 
-export interface SetupWizardProps {
+export interface RiskSetupWizardProps {
   /** Close the wizard (discard). */
   onClose: () => void;
 }
@@ -51,15 +52,15 @@ export interface SetupWizardProps {
 const STEP_META: readonly StepMeta[] = [
   { title: "Risk portfolios", short: "Portfolios" },
   { title: "Routing", short: "Routing" },
-  { title: "Internalise & hedge", short: "Hedge" },
+  { title: "Acceptance criteria", short: "Acceptance" },
   { title: "Review & apply", short: "Review" },
 ];
 
-export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
+export function RiskSetupWizard({ onClose }: RiskSetupWizardProps): React.ReactElement {
   const app = useApp();
   const { auth } = app;
   const canRisk = auth.can("risk_manage", "fixed_income");
-  const canHedge = auth.can("hedge", "fixed_income");
+  const canAcceptance = auth.can("manage_acceptance", "fixed_income");
 
   const [step, setStep] = useState(0);
   const [books, setBooks] = useState<WizardBook[]>(() => [
@@ -68,21 +69,19 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
   const [routingRules, setRoutingRules] = useState<RiskRule[]>(() => [
     { id: newRuleId(), conditions: [], bookId: null, enabled: true },
   ]);
-  const [includeThreshold, setIncludeThreshold] = useState(true);
-  const [threshold, setThreshold] = useState<WarehouseThreshold>(() => defaultWizardThreshold(""));
-  const [hedgeRules, setHedgeRules] = useState<HedgeRule[]>(() => [newDefaultHedgeRule()]);
+  const [acceptanceRules, setAcceptanceRules] = useState<AcceptanceRule[]>(() => defaultAcceptanceRules());
   const [desks, setDesks] = useState<DeskDesc[]>([]);
   const [connections, setConnections] = useState<FixConnection[]>([]);
   const [phase, setPhase] = useState<ApplyPhase>({ kind: "idle" });
 
-  // Best-effort load of the rosters the routing conditions + portfolio desk picker read.
+  // Best-effort load of the rosters the routing + acceptance conditions read.
   useEffect(() => {
     let cancelled = false;
     void app.transport
       .listDesks()
       .then((d) => !cancelled && setDesks(d))
       .catch(() => undefined);
-    if (canRisk) {
+    if (canRisk || canAcceptance) {
       void app.transport
         .listFixConnections()
         .then((c) => !cancelled && setConnections(c))
@@ -91,7 +90,7 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [app.transport, canRisk]);
+  }, [app.transport, canRisk, canAcceptance]);
 
   const enabledKeys = useMemo(() => enabledBookKeys(books), [books]);
 
@@ -100,13 +99,13 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
     return [
       canRisk ? portfolioErrors(books) : [],
       canRisk ? routingErrors(routingRules, enabledKeys) : [],
-      canHedge ? [...(includeThreshold ? thresholdErrors(threshold) : []), ...hedgingErrors(hedgeRules)] : [],
+      canAcceptance ? acceptanceErrors(acceptanceRules) : [],
       [],
     ];
-  }, [canRisk, canHedge, books, routingRules, enabledKeys, includeThreshold, threshold, hedgeRules]);
+  }, [canRisk, canAcceptance, books, routingRules, enabledKeys, acceptanceRules]);
 
   const currentErrors = stepErrors[step] ?? [];
-  const stepLocked = (i: number): boolean => (i <= 1 ? !canRisk : i === 2 ? !canHedge : false);
+  const stepLocked = (i: number): boolean => (i <= 1 ? !canRisk : i === 2 ? !canAcceptance : false);
   const stepComplete = (i: number): boolean => i < step && (stepErrors[i]?.length ?? 0) === 0;
 
   const goNext = useCallback((): void => {
@@ -114,43 +113,43 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
   }, [step, currentErrors.length]);
   const goBack = useCallback((): void => setStep((s) => Math.max(0, s - 1)), []);
 
-  const draft: WizardDraft = useMemo(
-    () => ({ books, routingRules, includeThreshold, threshold, hedgeRules }),
-    [books, routingRules, includeThreshold, threshold, hedgeRules],
+  const draft: RiskWizardDraft = useMemo(
+    () => ({ books, routingRules, acceptanceRules }),
+    [books, routingRules, acceptanceRules],
   );
 
   const onApply = useCallback(async (): Promise<void> => {
     setPhase({ kind: "applying", steps: [] });
-    const result = await applyWizard(
+    const result = await applyRiskWizard(
       app.transport,
       draft,
-      { risk: canRisk, hedge: canHedge },
+      { risk: canRisk, acceptance: canAcceptance },
       (steps) => setPhase({ kind: "applying", steps }),
     );
     if (result.ok) {
-      // Let the startup routing guard re-evaluate immediately (a valid default may have
-      // just been set), so its warning retires without a reload.
+      // A valid routing default may have just been set — let the startup guard re-check.
       notifyRiskRoutingChanged();
-      app.setWorkspace("riskdashboard");
+      // Land on the Risk → Acceptance tab so the new policy is immediately visible.
+      app.setWorkspace("acceptance");
       onClose();
     } else {
       setPhase({ kind: "failed", steps: result.steps });
     }
-  }, [app, draft, canRisk, canHedge, onClose]);
+  }, [app, draft, canRisk, canAcceptance, onClose]);
 
   const capBanner =
-    !canRisk || !canHedge ? (
+    !canRisk || !canAcceptance ? (
       <>
         {!canRisk && "You lack Manage-Risk — the portfolio & routing steps are read-only. "}
-        {!canHedge && "You lack Hedge — the internalise & hedge step is read-only. "}
+        {!canAcceptance && "You lack Manage-Acceptance — the acceptance step is read-only. "}
         Those steps will be skipped on Apply.
       </>
     ) : null;
 
   return (
     <WizardShell
-      title="Guided setup"
-      subtitle="Define your risk portfolios, routing and hedging in one flow."
+      title="Risk guided setup"
+      subtitle="Define your risk portfolios, routing and acceptance in one flow."
       steps={STEP_META}
       step={step}
       onStep={setStep}
@@ -178,18 +177,15 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
         />
       )}
       {step === 2 && (
-        <HedgingStep
-          includeThreshold={includeThreshold}
-          threshold={threshold}
-          hedgeRules={hedgeRules}
-          books={books}
-          readOnly={!canHedge}
-          onToggleThreshold={setIncludeThreshold}
-          onChangeThreshold={setThreshold}
-          onChangeHedgeRules={setHedgeRules}
+        <AcceptanceStep
+          rules={acceptanceRules}
+          desks={desks}
+          connections={connections}
+          readOnly={!canAcceptance}
+          onChange={setAcceptanceRules}
         />
       )}
-      {step === 3 && <ReviewStep draft={draft} canRisk={canRisk} canHedge={canHedge} />}
+      {step === 3 && <RiskReviewStep draft={draft} canRisk={canRisk} canAcceptance={canAcceptance} />}
     </WizardShell>
   );
 }

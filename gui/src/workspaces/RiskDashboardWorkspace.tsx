@@ -47,6 +47,7 @@ import { RiskBooksWorkspace } from "./RiskBooksWorkspace";
 import { RiskRoutingWorkspace } from "./riskrouting/RiskRoutingWorkspace";
 import { AcceptanceWorkspace } from "./acceptance/AcceptanceWorkspace";
 import { RiskWorkspace } from "./RiskWorkspace";
+import { RiskSetupWizard } from "./risksetup/RiskSetupWizard";
 import styles from "./RiskDashboardWorkspace.module.css";
 
 /** The tab the consolidated Risk surface shows. `dashboard` is the default; the other
@@ -471,28 +472,51 @@ export function RiskDashboardWorkspace({
   const visibleTabs = RISK_TABS.filter((t) => auth.can(t.cap, "fixed_income"));
 
   const [tab, setTab] = useState<RiskDashboardTab>(initialTab);
+  const [wizardOpen, setWizardOpen] = useState(false);
   // Clamp to a VISIBLE tab so a deep-link (or default) landing on a tab this identity
   // cannot view falls to the first tab it can, never an empty pane.
   const activeTab: RiskDashboardTab = visibleTabs.some((t) => t.tab === tab)
     ? tab
     : (visibleTabs[0]?.tab ?? "dashboard");
 
+  // The guided-setup launcher shows for anyone who can actually run any part of the
+  // wizard — the risk books/routing half (`risk_manage`) or the acceptance half
+  // (`manage_acceptance`). Power users keep the individual tabs.
+  const canGuided =
+    auth.can("risk_manage", "fixed_income") || auth.can("manage_acceptance", "fixed_income");
+
   return (
     <div className={styles.shell}>
-      <div className={styles.tabBar} role="group" aria-label="risk view">
-        {visibleTabs.map((t) => (
+      <div className={styles.topBar}>
+        {canGuided && (
           <button
-            key={t.tab}
             type="button"
-            className={`${styles.tabBtn} ${activeTab === t.tab ? styles.tabBtnActive : ""}`}
-            aria-pressed={activeTab === t.tab}
-            data-testid={`risk-tab-${t.tab}`}
-            onClick={() => setTab(t.tab)}
+            className={styles.guidedSetupBtn}
+            data-testid="open-risk-guided-setup"
+            onClick={() => setWizardOpen(true)}
           >
-            {t.label}
+            <span aria-hidden="true">🪄</span> Guided setup
+            <span className={styles.guidedSetupSub}>portfolios · routing · acceptance in one flow</span>
           </button>
-        ))}
+        )}
+        <div className={styles.tabBar} role="group" aria-label="risk view">
+          {visibleTabs.map((t) => (
+            <button
+              key={t.tab}
+              type="button"
+              className={`${styles.tabBtn} ${activeTab === t.tab ? styles.tabBtnActive : ""}`}
+              aria-pressed={activeTab === t.tab}
+              data-testid={`risk-tab-${t.tab}`}
+              onClick={() => setTab(t.tab)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
+      {/* On apply the wizard navigates to the Risk → Acceptance tab (re-mounting this
+          host); on discard it simply closes. Either way onClose clears the overlay. */}
+      {wizardOpen && <RiskSetupWizard onClose={() => setWizardOpen(false)} />}
       <div className={styles.tabPanel}>
         {activeTab === "dashboard" ? (
           <DashboardPanel onGoToPortfolios={() => setTab("portfolios")} />
