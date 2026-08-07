@@ -1,0 +1,100 @@
+/* RiskBreakdownGrid — the per-portfolio drill-down: two compact breakdown tables
+   (by tenor · by instrument) shown side by side. Uses the app design tokens so
+   both themes are honoured; numbers are right-aligned + tabular so digits line up
+   (mirrors the roster table + the Deals/Positions blotters). */
+
+.grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  background: var(--bg-inset);
+  border-radius: var(--r-md, 8px);
+}
+
+.note {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  max-width: 76ch;
+}
+
+/* Two lenses side by side; they stack under a narrow container. */
+.lenses {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.lens {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.lensTitle {
+  font-size: var(--type-micro);
+  font-weight: var(--weight-emphasis);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-caption);
+  background: var(--bg-surface);
+  border: var(--hairline);
+  border-radius: var(--r-sm, 6px);
+}
+
+.table thead th {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-tertiary);
+  font-weight: var(--weight-emphasis);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: var(--hairline);
+  white-space: nowrap;
+}
+
+/* Numeric HEADER cells right-align + carry tabular figures so the header and its
+   column read as one aligned block. Scoped past the base `.table thead th`
+   (text-align:left) so the right-align actually wins. */
+.table thead th.numCol {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.table tbody td {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-primary);
+  border-bottom: var(--hairline);
+  white-space: nowrap;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Numeric BODY cells: right-aligned, mono, tabular figures — digits line up in a
+   column regardless of magnitude (reuses the roster/blotter numeric convention). */
+.num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--text-tertiary);
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  padding: var(--space-3) var(--space-4);
+}

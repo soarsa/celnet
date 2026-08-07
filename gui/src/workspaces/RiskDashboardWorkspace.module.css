@@ -199,8 +199,19 @@
   white-space: nowrap;
 }
 
-.numCol {
+/* Numeric HEADER cells: right-aligned + tabular figures so the header reads as one
+   aligned block with its column below. Scoped to `.table thead th.numCol` so it OUT-
+   specifies the base `.table thead th { text-align: left }` (which previously won and
+   left the numeric headers left-aligned — part of the reported misalignment). */
+.table thead th.numCol {
   text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The leading disclosure column is a fixed, narrow gutter for the expand chevron. */
+.expandCol {
+  width: 1%;
+  white-space: nowrap;
 }
 
 .table tbody td {
@@ -223,13 +234,84 @@
   background: var(--bg-accent-soft);
 }
 
+/* Numeric BODY cells: right-aligned, mono, tabular figures — every digit is fixed
+   width so magnitudes line up in a column (matches the Deals/Positions blotters). */
 .num {
   text-align: right;
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .muted {
   color: var(--text-tertiary);
+}
+
+/* --- per-portfolio drill-down (expand chevron + breakdown row) ------------- */
+
+.expandCell {
+  width: 1%;
+  padding-right: 0 !important;
+  text-align: center;
+}
+
+.expandBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm, 6px);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color var(--dur-fast, 120ms) ease, background var(--dur-fast, 120ms) ease;
+}
+.expandBtn:hover {
+  color: var(--text-primary);
+  background: var(--bg-inset);
+}
+.expandBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.chevron {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1;
+  transition: transform var(--dur-fast, 120ms) ease;
+}
+.chevron[data-open="true"] {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}
+
+/* The full-width breakdown row sits under its portfolio; its cell drops the row
+   padding so the RiskBreakdownGrid controls its own inset. */
+.breakdownRow > .breakdownCell {
+  padding: 0 var(--space-3) var(--space-3);
+  background: var(--bg-surface);
+  cursor: default;
+}
+.breakdownRow:hover {
+  background: transparent;
+}
+
+/* Visually-hidden label for the disclosure column header (kept for screen readers
+   while the column shows only chevrons). */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .dot {
@@ -359,8 +441,11 @@
   color: var(--text-primary);
 }
 
+/* Mono, tabular figures for the global-exposure + selected-book stat tiles, so
+   their digits are even and read consistently with the roster columns. */
 .mono {
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* --- limit utilization strip --------------------------------------------- */
@@ -397,6 +482,7 @@
 
 .utilRatio {
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }
 

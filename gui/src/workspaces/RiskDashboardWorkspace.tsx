@@ -42,17 +42,20 @@
  * server-side; this pane is read-only for everyone (a risk-management view).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { useAcceptanceSeed } from "../app/AcceptanceSeedContext";
 import type {
   CapabilityAction,
+  Deal,
   RiskLimitUtilization,
   RagBand,
   RiskBook,
   RiskBookRisk,
 } from "../data/contract";
+import { fmtCompact } from "../lib/format";
+import { RiskBreakdownGrid } from "./RiskBreakdownGrid";
 import { RiskBooksWorkspace } from "./RiskBooksWorkspace";
 import { RiskRoutingWorkspace } from "./riskrouting/RiskRoutingWorkspace";
 import { AcceptanceWorkspace } from "./acceptance/AcceptanceWorkspace";
@@ -97,8 +100,13 @@ const RISK_TABS: readonly { tab: RiskDashboardTab; label: string; cap: Capabilit
   { tab: "deals", label: "Deals", cap: "view" },
 ];
 
-const notional = (n: number): string =>
-  new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(n);
+/**
+ * Compact magnitude formatting — the SHARED app formatter (`lib/format.fmtCompact`),
+ * so the dashboard reads identically to the Deals / Positions blotters (`1.25m`, not
+ * a divergent `1.25M` from a bespoke `Intl` compact) and its digits line up under the
+ * tabular-figure numeric columns.
+ */
+const notional = fmtCompact;
 
 /** Render an optional metric: `null` ⇒ the honest "—" (not yet evaluated), never 0. */
 const optMetric = (n: number | null): string => (n === null ? "—" : notional(n));
@@ -200,7 +208,7 @@ function UtilizationBar({ util }: { util: RiskLimitUtilization }): React.ReactEl
  * to the sibling Portfolios tab via {@link onGoToPortfolios} instead of pointing at a
  * separate rail entry.
  */
-function DashboardPanel({
+export function DashboardPanel({
   onGoToPortfolios,
 }: {
   onGoToPortfolios: () => void;
@@ -214,6 +222,15 @@ function DashboardPanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [live, setLive] = useState(false);
+  // The routed deals that back the per-portfolio tenor/instrument drill-down. The
+  // risk roster carries only per-book aggregates (no buckets); the `Deal` is the one
+  // GUI source that links instrument-level detail (tenor / notional) to a risk
+  // PORTFOLIO via `riskBookId` — so we group the SAME deals the Deals blotter loads,
+  // per book, client-side (see data/riskBreakdown.ts for the honest-source rationale).
+  const [deals, setDeals] = useState<Deal[]>([]);
+  // The set of portfolio rows whose drill-down is expanded (independent of the
+  // selected-book detail; several may be open at once).
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
 
   // Apply a fresh risk-book set (from a pushed frame or the fallback poll): keep the
   // current selection if it still exists, else fall to the first book.
@@ -282,10 +299,69 @@ function DashboardPanel({
     };
   }, [app.transport, signedIn, applyRisk]);
 
+  // The routed deals for the drill-down: load once and refresh on every push
+  // `Notification` (a fill mints a deal), exactly as the Deals blotter does — so the
+  // per-book tenor/instrument breakdown stays live without its own poll. Best-effort:
+  // a transport without the seam (or that errors) simply leaves the breakdown empty.
+  useEffect(() => {
+    if (!signedIn) {
+      setDeals([]);
+      return;
+    }
+    let cancelled = false;
+    const listDeals = app.transport.listDeals;
+    // The deals seam is optional here (defensive, like the risk subscribe seam): a
+    // transport without it simply leaves the drill-down empty rather than throwing.
+    if (typeof listDeals !== "function") {
+      setDeals([]);
+      return;
+    }
+    const load = (): void => {
+      void listDeals
+        .call(app.transport, {})
+        .then((res) => {
+          if (!cancelled) setDeals(res.deals);
+        })
+        .catch(() => {
+          /* no deals seam ⇒ the drill-down shows its honest empty note. */
+        });
+    };
+    load();
+    const stream = app.transport.streamNotifications;
+    const dispose =
+      typeof stream === "function" ? stream.call(app.transport, undefined, () => load()) : undefined;
+    return () => {
+      cancelled = true;
+      dispose?.();
+    };
+  }, [app.transport, signedIn]);
+
   const deskOf = useCallback(
     (bookId: string): string | null => books.find((b) => b.id === bookId)?.deskId ?? null,
     [books],
   );
+
+  // Routed deals bucketed by the portfolio their risk routed into (`riskBookId`),
+  // so the drill-down for a book is an O(1) lookup rather than a per-row filter.
+  const dealsByBook = useMemo(() => {
+    const map = new Map<string, Deal[]>();
+    for (const d of deals) {
+      if (d.riskBookId === undefined) continue;
+      const list = map.get(d.riskBookId);
+      if (list) list.push(d);
+      else map.set(d.riskBookId, [d]);
+    }
+    return map;
+  }, [deals]);
+
+  const toggleExpanded = useCallback((bookId: string): void => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(bookId)) next.delete(bookId);
+      else next.add(bookId);
+      return next;
+    });
+  }, []);
 
   const selected = useMemo(
     () => risk.find((r) => r.bookId === selectedId) ?? null,
@@ -365,6 +441,9 @@ function DashboardPanel({
         <table className={styles.table}>
           <thead>
             <tr>
+              <th scope="col" className={styles.expandCol}>
+                <span className={styles.visuallyHidden}>Expand breakdown</span>
+              </th>
               <th scope="col">Portfolio</th>
               <th scope="col" className={styles.numCol}>
                 Net
@@ -384,7 +463,7 @@ function DashboardPanel({
           <tbody>
             {risk.length === 0 && (
               <tr>
-                <td colSpan={6} className={styles.empty}>
+                <td colSpan={7} className={styles.empty}>
                   No enabled risk portfolios to report. Routing <em>rules</em> only pick a
                   destination — they do not create the portfolio. Create one on the{" "}
                   <button
@@ -401,31 +480,65 @@ function DashboardPanel({
             )}
             {risk.map((r) => {
               const band = worstBand(r.limits);
+              const isOpen = expanded.has(r.bookId);
+              const panelId = `risk-breakdown-${r.bookId}`;
               return (
-                <tr
-                  key={r.bookId}
-                  className={r.bookId === selectedId ? styles.rowActive : undefined}
-                  onClick={() => setSelectedId(r.bookId)}
-                  aria-current={r.bookId === selectedId}
-                >
-                  <td>
-                    <span className={`${styles.dot} ${styles[`band_${band}`]}`} aria-hidden />
-                    {r.name}
-                  </td>
-                  <td className={styles.num}>{notional(r.netNotional)}</td>
-                  <td className={styles.num}>{notional(r.grossNotional)}</td>
-                  <td className={styles.num}>{r.positionCount}</td>
-                  <td className={styles.num}>{optMetric(r.dv01)}</td>
-                  <td>
-                    {r.limits.length === 0 ? (
-                      <span className={styles.muted}>none</span>
-                    ) : (
-                      <span className={`${styles.pill} ${styles[`band_${band}`]}`}>
-                        {band}
-                      </span>
-                    )}
-                  </td>
-                </tr>
+                <Fragment key={r.bookId}>
+                  <tr
+                    className={r.bookId === selectedId ? styles.rowActive : undefined}
+                    onClick={() => setSelectedId(r.bookId)}
+                    aria-current={r.bookId === selectedId}
+                  >
+                    <td className={styles.expandCell}>
+                      {/* A real disclosure button — keyboard-focusable, aria-expanded/
+                          controls the breakdown row; stopPropagation so it toggles the
+                          drill-down WITHOUT also selecting the row. */}
+                      <button
+                        type="button"
+                        className={styles.expandBtn}
+                        aria-expanded={isOpen}
+                        aria-controls={panelId}
+                        aria-label={`${isOpen ? "Collapse" : "Expand"} risk breakdown for ${r.name}`}
+                        data-testid={`risk-expand-${r.bookId}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleExpanded(r.bookId);
+                        }}
+                      >
+                        <span className={styles.chevron} data-open={isOpen} aria-hidden>
+                          ▸
+                        </span>
+                      </button>
+                    </td>
+                    <td>
+                      <span className={`${styles.dot} ${styles[`band_${band}`]}`} aria-hidden />
+                      {r.name}
+                    </td>
+                    <td className={styles.num}>{notional(r.netNotional)}</td>
+                    <td className={styles.num}>{notional(r.grossNotional)}</td>
+                    <td className={styles.num}>{r.positionCount}</td>
+                    <td className={styles.num}>{optMetric(r.dv01)}</td>
+                    <td>
+                      {r.limits.length === 0 ? (
+                        <span className={styles.muted}>none</span>
+                      ) : (
+                        <span className={`${styles.pill} ${styles[`band_${band}`]}`}>
+                          {band}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr className={styles.breakdownRow}>
+                      <td colSpan={7} id={panelId} className={styles.breakdownCell}>
+                        <RiskBreakdownGrid
+                          deals={dealsByBook.get(r.bookId) ?? []}
+                          bookName={r.name}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>
