@@ -248,6 +248,7 @@ mod tests {
             Clock::system(),
             surface_book,
             store,
+            Arc::new(crate::services::rates_book::RatesPositionStore::new()),
             sessions,
             risk,
             fix_admin,
@@ -258,6 +259,15 @@ mod tests {
             LpPanelConfig { synthetic_lps: 0 },
             crate::services::aggregation::AggregationHub::new(Clock::system()),
             crate::services::pricing_control::PricingControl::new(true, true),
+        );
+        // Regression guard: `WsServices::new` must wire the shared rates store onto its
+        // `StreamEdge`, or the WS-mirror per-book risk stream folds only the FX store and a
+        // WS-connected dashboard never aggregates routed FI fills (POSITIONS/NET/DV01 read 0
+        // for FI books even though the fills booked). This mirrors the `sessions` /
+        // `aggregation_hub` wiring the WS `StreamEdge` previously dropped.
+        assert!(
+            services.stream.rates_store_is_wired(),
+            "the WS StreamEdge must carry the shared rates store (per-book FI risk aggregation)"
         );
         WsMirror::start(
             "127.0.0.1:0".parse().expect("loopback bind addr parses"),

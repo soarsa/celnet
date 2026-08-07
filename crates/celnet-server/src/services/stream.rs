@@ -332,6 +332,17 @@ impl StreamEdge {
         self
     }
 
+    /// Whether a shared linear-rates position book is wired onto this edge — the
+    /// signal a session derives its [`Session::rates`] from. Guards the WS-mirror
+    /// construction (`ws::WsServices::new`) against silently dropping the rates
+    /// store: without it the per-book risk stream folds only the FX store and a
+    /// WS-connected dashboard never aggregates routed FI fills (`aggregate_enabled_
+    /// risk_books(store, None)`).
+    #[must_use]
+    pub(crate) fn rates_store_is_wired(&self) -> bool {
+        self.rates.is_some()
+    }
+
     /// The entitlements trust-boundary [`AccessMode`] this edge enforces, derived
     /// from its risk position book: production has a store (so its
     /// [`PositionStore::access_mode`](super::risk::store::PositionStore::access_mode)

@@ -931,6 +931,9 @@ impl Edge {
             clock,
             Arc::clone(&surface_book),
             Arc::clone(&store),
+            // The shared linear-rates position book — wired onto the WS `StreamEdge` so the
+            // WS-mirror per-book risk stream aggregates FI fills identically to gRPC.
+            Arc::clone(&rates_store),
             Arc::clone(&sessions),
             Arc::clone(&risk_edge),
             Arc::clone(&fix_admin_edge),

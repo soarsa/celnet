@@ -107,6 +107,7 @@ use crate::services::fix_admin::FixAdminEdge;
 use crate::services::pricing::PricingEdge;
 use crate::services::pricing_control::PricingControl;
 use crate::services::quote::{LpPanelConfig, QuoteEdge};
+use crate::services::rates_book::RatesPositionStore;
 use crate::services::risk::RiskEdge;
 use crate::services::risk::store::PositionStore;
 use crate::services::sessions::SessionRegistry;
@@ -170,6 +171,12 @@ impl WsServices {
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
         store: Arc<PositionStore>,
+        // The shared linear-rates position book, wired onto the WS `StreamEdge` below so the
+        // WS-mirror per-book risk stream sums FI/rates fills routed into each risk book (and
+        // folds the rates store's risk version into its poll signal) — identical to the gRPC
+        // `StreamEdge` (`lib.rs`). Without it a WS-connected dashboard's `aggregate_enabled_
+        // risk_books(store, None)` never rolls up rates positions, so booked FI deals show 0.
+        rates_store: Arc<RatesPositionStore>,
         sessions: Arc<SessionRegistry>,
         risk: Arc<RiskEdge>,
         fix_admin: Arc<FixAdminEdge>,
@@ -240,7 +247,17 @@ impl WsServices {
             // ("aggregated-book engine not available on this edge") — the GUI's
             // "Awaiting the first composite snapshot…" that never resolves — even
             // though ingest (gRPC-only) was landing quotes into the very same hub.
-            .with_aggregation_hub(Arc::clone(&aggregation_hub)),
+            .with_aggregation_hub(Arc::clone(&aggregation_hub))
+            // Install the SAME shared linear-rates position book the gRPC `StreamEdge`
+            // carries (`lib.rs`). Without this the WS `StreamEdge` defaulted to
+            // `rates: None`, so the per-book risk stream folded only the FX store —
+            // `aggregate_enabled_risk_books(store, None)` never summed the rates fills
+            // routed into a risk book (POSITIONS/NET/DV01 all read 0 for FI books on a
+            // WS-connected dashboard, even though the fills booked), and a rates fill
+            // (which bumps only the rates store's risk version) never woke the stream
+            // (`combined_risk_version` folds both stores). This brings the WS mirror to
+            // the same one coherent per-book risk view as gRPC.
+            .with_rates_store(Arc::clone(&rates_store)),
         );
         let surface = Arc::new(SurfaceEdge::with_fleet(
             Arc::clone(&link),
