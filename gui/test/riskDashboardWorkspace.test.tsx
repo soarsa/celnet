@@ -47,15 +47,24 @@ function makeApp(opts: {
       listRiskBookRisk: vi.fn(async () => opts.risk),
       listRiskBooks: vi.fn(async () => opts.books),
       // The other consolidated tabs load their own seams on mount — stub them so
-      // switching tabs (only the ACTIVE tab mounts) never throws:
+      // switching to (or clamping onto) any tab (only the ACTIVE tab mounts) never
+      // throws:
       //   • Portfolios (RiskBooksWorkspace) + Routing (RiskRoutingWorkspace) → listDesks
       //   • Routing → getRiskRoutingGraph, Acceptance → getAcceptanceGraph
-      //   • Scenario (RiskWorkspace rates lens → RatesRiskPanel) → aggregateRatesRisk.
+      //   • Positions (RatesBookWorkspace) → listRatesPositions / listEntities / listBooks
+      //   • Quotes (QuotesBlotterWorkspace) → listDeskRequests + streamNotifications
+      //   • Deals (DealsBlotterWorkspace) → listDeals + listRiskBooks + streamNotifications
       listDesks: vi.fn(async () => []),
       listFixConnections: vi.fn(async () => []),
       getRiskRoutingGraph: vi.fn(async () => null),
       getAcceptanceGraph: vi.fn(async () => null),
       aggregateRatesRisk: vi.fn(async () => ({ nodes: [] })),
+      listRatesPositions: vi.fn(async () => ({ positions: [] })),
+      listEntities: vi.fn(async () => []),
+      listBooks: vi.fn(async () => []),
+      listDeskRequests: vi.fn(async () => ({ requests: [] })),
+      listDeals: vi.fn(async () => ({ deals: [] })),
+      streamNotifications: vi.fn(() => () => {}),
     },
     conventions: {},
     scope: undefined,
@@ -263,17 +272,28 @@ describe("RiskDashboardWorkspace", () => {
   });
 });
 
-describe("RiskDashboardWorkspace — the consolidated 5-way Risk host", () => {
+describe("RiskDashboardWorkspace — the consolidated 7-way Risk host", () => {
   const emptyBooks = { risk: [] as RiskBookRisk[], books: [] as RiskBook[] };
 
-  it("renders all five tab toggles for an admin, defaulting to Dashboard", async () => {
+  it("renders all seven tab toggles for an admin, defaulting to Dashboard", async () => {
     state.app = makeApp(emptyBooks); // admin can() => true ⇒ every tab visible
     await act(async () => {
       render(<RiskDashboardWorkspace />);
     });
-    for (const tab of ["dashboard", "portfolios", "routing", "acceptance", "scenario"] as const) {
+    // The FI position-ledger views (Positions/Quotes/Deals) are now TOP-LEVEL tabs;
+    // the old "Scenario" tab (and its FI netted rates scenario-risk surface) is gone.
+    for (const tab of [
+      "dashboard",
+      "portfolios",
+      "routing",
+      "acceptance",
+      "positions",
+      "quotes",
+      "deals",
+    ] as const) {
       expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
     }
+    expect(screen.queryByTestId("risk-tab-scenario")).not.toBeInTheDocument();
     // Default lands on Dashboard (the routed-risk roll-up).
     expect(screen.getByTestId("risk-tab-dashboard")).toHaveAttribute("aria-pressed", "true");
   });
@@ -303,7 +323,8 @@ describe("RiskDashboardWorkspace — the consolidated 5-way Risk host", () => {
 
   it("hides the Acceptance tab from a risk_manage holder lacking manage_acceptance", async () => {
     // risk_manage·FI (reaches the host + Dashboard/Portfolios/Routing) but NOT
-    // manage_acceptance ⇒ the Acceptance tab is hidden; Scenario stays (view floor).
+    // manage_acceptance ⇒ the Acceptance tab is hidden; the ledger tabs
+    // (Positions/Quotes/Deals) stay (view floor).
     state.app = makeApp({
       ...emptyBooks,
       auth: {
@@ -316,7 +337,14 @@ describe("RiskDashboardWorkspace — the consolidated 5-way Risk host", () => {
     await act(async () => {
       render(<RiskDashboardWorkspace />);
     });
-    for (const tab of ["dashboard", "portfolios", "routing", "scenario"] as const) {
+    for (const tab of [
+      "dashboard",
+      "portfolios",
+      "routing",
+      "positions",
+      "quotes",
+      "deals",
+    ] as const) {
       expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
     }
     expect(screen.queryByTestId("risk-tab-acceptance")).not.toBeInTheDocument();
@@ -343,9 +371,10 @@ describe("RiskDashboardWorkspace — the consolidated 5-way Risk host", () => {
     expect(screen.getByTestId("risk-tab-dashboard")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("shows a view-only FI trader ONLY the Scenario tab (its view-floor gate)", async () => {
+  it("shows a view-only FI trader ONLY the ledger tabs (Positions/Quotes/Deals — the view floor)", async () => {
     // A booking-only FI trader (view·FI, no risk_manage / manage_acceptance) sees only
-    // the Scenario tab and clamps onto it — the FI rates scenario surface mounts.
+    // the three ledger tabs and clamps onto the first (Positions) — the rates position
+    // ledger mounts.
     state.app = makeApp({
       ...emptyBooks,
       auth: {
@@ -357,7 +386,11 @@ describe("RiskDashboardWorkspace — the consolidated 5-way Risk host", () => {
     await act(async () => {
       render(<RiskDashboardWorkspace />);
     });
-    expect(screen.getByTestId("risk-tab-scenario")).toHaveAttribute("aria-pressed", "true");
+    for (const tab of ["positions", "quotes", "deals"] as const) {
+      expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
+    }
+    // Clamps onto the first visible tab (Positions), never an empty pane.
+    expect(screen.getByTestId("risk-tab-positions")).toHaveAttribute("aria-pressed", "true");
     for (const tab of ["dashboard", "portfolios", "routing", "acceptance"] as const) {
       expect(screen.queryByTestId(`risk-tab-${tab}`)).not.toBeInTheDocument();
     }

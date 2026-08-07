@@ -193,6 +193,42 @@
   color: var(--text-tertiary);
 }
 
+/* BUY / SELL indicator — the primary read of a deal's Side. The tag chip is tinted
+   green (bid) for a buy and red (offer) for a sell using the SAME semantic trading
+   tokens as bid/offer prices, so it themes automatically in light + dark; the
+   pay/receive-fixed detail sits beside it as low-emphasis secondary text. Text is
+   mixed toward --text-primary so the hue reads while the chip clears WCAG AA. */
+.side {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.sideTag {
+  font: var(--type-micro) / 1 var(--font-mono);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+}
+
+.side[data-side="BUY"] .sideTag {
+  background: color-mix(in oklab, var(--bid) 18%, transparent);
+  color: color-mix(in oklab, var(--bid) 62%, var(--text-primary));
+}
+
+.side[data-side="SELL"] .sideTag {
+  background: color-mix(in oklab, var(--offer) 18%, transparent);
+  color: color-mix(in oklab, var(--offer) 62%, var(--text-primary));
+}
+
+.sideDetail {
+  font: var(--type-micro) / 1 var(--font-ui);
+  color: var(--text-tertiary);
+}
+
 /* Rows are click/keyboard targets that open the deal ticket. */
 .table tbody tr.row {
   cursor: pointer;

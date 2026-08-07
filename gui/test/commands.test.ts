@@ -260,10 +260,11 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
     });
 
     it("Book AND Risk-scenario are FX-only rows: their Fixed-Income rail membership is withdrawn", () => {
-      // The FI "Book" ledger is consolidated INTO the FI "Risk" host as tabs, and the
-      // cross-asset "risk" Scenario grid's FI lens is folded in as the host's Scenario
-      // tab — so BOTH rows are dropped from the Fixed-Income rail while STAYING on FX
-      // Options (DOMAIN_RAIL_EXCLUDED). `assets` is unchanged (see workspaceAssets).
+      // The FI "Book" ledger is consolidated INTO the FI "Risk" host as top-level
+      // Positions/Quotes/Deals tabs; the cross-asset "risk" Scenario grid's FI risk
+      // destination is that same host — so BOTH rows are dropped from the Fixed-Income
+      // rail while STAYING on FX Options (DOMAIN_RAIL_EXCLUDED). `assets` is unchanged
+      // (see workspaceAssets).
       expect(DOMAIN_RAIL_EXCLUDED.book).toEqual(new Set(["fixed_income"]));
       expect(DOMAIN_RAIL_EXCLUDED.risk).toEqual(new Set(["fixed_income"]));
       for (const id of ["book", "risk"] as const) {
@@ -369,11 +370,11 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         // "transferaudit" rows are retired (deep-link aliases to that host).
         "risktransfer",
         "surface",
-        // "risk" (Scenario) is DROPPED from the FI rail — its FI rates lens is folded
-        // into the "Risk" host's Scenario tab (DOMAIN_RAIL_EXCLUDED); the cross-asset
-        // row STAYS on the FX Options rail.
-        // "book" is likewise DROPPED from the FI rail — the FI ledger is folded into FI
-        // "Risk" as tabs (DOMAIN_RAIL_EXCLUDED); it stays on the FX Options rail.
+        // "risk" (Scenario) is DROPPED from the FI rail (DOMAIN_RAIL_EXCLUDED) — the FI
+        // risk destination is the consolidated "Risk" host; the cross-asset row STAYS on
+        // the FX Options rail (reachable under FI only via a direct ?view=risk deep-link).
+        // "book" is likewise DROPPED from the FI rail — the FI ledger is folded into the
+        // FI "Risk" host as top-level tabs (DOMAIN_RAIL_EXCLUDED); it stays on FX Options.
         "quoting",
         // Corporate Actions: a Fixed-Income reference-data surface (CA inbox +
         // schedule viewer), NOT admin-gated — reads on the view·FI floor.
@@ -560,9 +561,10 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     expect(byLabel("Pricing")).toEqual(["pricinggroups"]);
     // The whole FI "Risk" section is CONSOLIDATED into the ONE "riskdashboard" host:
     // Risk Portfolios / Risk Routing / Acceptance are its Portfolios / Routing /
-    // Acceptance tabs, and the cross-asset "risk" Scenario grid is folded in as its
-    // Scenario tab (dropped from the FI rail). Hedging is hoisted to its own top-level
-    // tab; the FI "Book" ledger is folded into the Scenario tab's FI risk surface.
+    // Acceptance tabs, and the FI "Book" ledger is folded in as its top-level
+    // Positions / Quotes / Deals tabs. The cross-asset "risk" Scenario grid is dropped
+    // from the FI rail (its FI risk destination is this host). Hedging is hoisted to
+    // its own top-level tab.
     expect(byLabel("Risk")).toEqual(["riskdashboard"]);
     // Risk Transfer is CONSOLIDATED into ONE row (initiate + inbox + audit as tabs);
     // the former "transferinbox" / "transferaudit" rows are retired deep-link aliases.
@@ -603,8 +605,8 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     for (const g of groups) expect(g.rows.length).toBeGreaterThan(0);
     // The FI "Risk" section ALSO vanishes for a view-only trader: the only FI Risk row
     // is the consolidated "riskdashboard" host, gated on `risk_manage·FI` — hidden here
-    // — and the cross-asset "risk" Scenario grid is off the FI rail (folded into the
-    // host's Scenario tab, DOMAIN_RAIL_EXCLUDED). So the section header drops entirely.
+    // — and the cross-asset "risk" Scenario grid is off the FI rail (DOMAIN_RAIL_EXCLUDED).
+    // So the section header drops entirely.
     expect(labels).not.toContain("Risk");
     // Markets survives too (Agg Book / Market Data are plain view·FI).
     expect(labels).toContain("Markets & Liquidity");

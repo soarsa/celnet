@@ -1,23 +1,31 @@
 /**
- * FI "Book" → "Risk" consolidation (docs/FI-BOOK-CONCEPTS.md).
+ * FI "Book" → "Risk" consolidation (docs/FI-BOOK-CONCEPTS.md), post-flatten.
  *
  * The redundant Fixed-Income "Book" rail entry is removed; its position-ledger
- * surfaces are folded INTO the Fixed-Income "Risk" workspace as tabs, so under
- * Fixed Income `RiskWorkspace` is the SINGLE risk + positions + deals surface
- * (tab bar: Scenario Risk · Positions · Quotes · Deals). FX is UNCHANGED — under
- * FX Options the Risk workspace still renders ONLY the scenario grid (no tab bar).
+ * surfaces (Positions · Quotes · Deals) are now TOP-LEVEL tabs of the consolidated
+ * "Risk" panel ({@link RiskDashboardWorkspace}) — previously they were nested a level
+ * deeper inside a "Scenario" tab that composed the cross-asset `RiskWorkspace` at its
+ * FI rates lens. That "Scenario" tab AND its netted rates scenario-risk surface are
+ * dropped; the three ledger views are promoted to siblings of Dashboard / Portfolios /
+ * Routing / Acceptance and composed verbatim.
  *
- * These render the REAL `RiskWorkspace` inside the REAL `AppProvider` driving the
- * REAL offline `MockTransport`, seeded via the genuine submit→quote→accept desk
- * flow (no stubs). `activeDomain` is seeded from the deep-link `dom` param, and the
- * moved lens bodies (Deals blotter, Positions ledger) are exercised through their
- * real tab buttons — proving nothing was lost by dropping the Book rail entry.
+ * These render the REAL workspaces inside the REAL `AppProvider` driving the REAL
+ * offline `MockTransport`, seeded via the genuine submit→quote→accept desk flow (no
+ * stubs). The moved lens bodies (Deals blotter, Positions ledger, Quotes blotter) are
+ * exercised through their real top-level tab buttons on the Risk panel — proving
+ * nothing was lost by dropping the Book rail entry and flattening the nesting.
+ *
+ * `RiskWorkspace` itself is now purely the cross-asset SCENARIO grid: under FX Options
+ * the spot×vol what-if grid, and under Fixed Income (reachable only via a direct
+ * `?view=risk` deep-link) just the netted rates-risk panel — with NO folded-in ledger
+ * tab bar.
  */
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { AppProvider } from "../src/app/AppContext";
+import { RiskDashboardWorkspace } from "../src/workspaces/RiskDashboardWorkspace";
 import { RiskWorkspace } from "../src/workspaces/RiskWorkspace";
 import { createMockTransport } from "../src/data/mockSource";
 
@@ -61,12 +69,25 @@ async function seededDeskTransport(): Promise<MockTransport> {
   return t;
 }
 
-/** Render the real Risk workspace under a given domain, backed by the transport. */
+/** Render the consolidated Risk panel under Fixed Income, backed by the transport. */
+async function renderRiskPanel(transport: MockTransport): Promise<void> {
+  window.history.replaceState(null, "", "/?mock&dom=fixed_income");
+  await act(async () => {
+    render(
+      <AppProvider transport={transport}>
+        <RiskDashboardWorkspace />
+      </AppProvider>,
+    );
+  });
+  await settle();
+}
+
+/** Render the standalone cross-asset Risk (scenario) workspace under a given domain. */
 async function renderRisk(
   transport: MockTransport,
   dom: "fx_options" | "fixed_income",
 ): Promise<void> {
-  window.history.replaceState(null, "", `/?mock&dom=${dom}`);
+  window.history.replaceState(null, "", `/?mock&dom=${dom}&view=risk`);
   await act(async () => {
     render(
       <AppProvider transport={transport}>
@@ -77,7 +98,7 @@ async function renderRisk(
   await settle();
 }
 
-/** Click one of the FI Risk surface's tabs by its label. */
+/** Click one of the Risk panel's top-level tabs by its label. */
 async function openTab(name: string): Promise<void> {
   const bar = screen.getByRole("group", { name: "risk view" });
   await act(async () => {
@@ -91,36 +112,40 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("FI Risk consolidation — the Fixed-Income Risk surface carries the folded-in tabs", () => {
+describe("FI Risk consolidation — the Risk panel carries the folded-in ledger tabs (top-level)", () => {
   let transport: MockTransport;
   beforeEach(async () => {
     transport = await seededDeskTransport();
   });
 
-  it("presents the tab bar Scenario Risk · Positions · Quotes · Deals under Fixed Income", async () => {
-    await renderRisk(transport, "fixed_income");
+  it("promotes Positions · Quotes · Deals to top-level tabs (no 'Scenario Risk' sub-view)", async () => {
+    await renderRiskPanel(transport);
     const bar = screen.getByRole("group", { name: "risk view" });
     const labels = within(bar)
       .getAllByRole("button")
       .map((b) => b.textContent);
-    expect(labels).toEqual(["Scenario Risk", "Positions", "Quotes", "Deals"]);
+    // The three ledger views are now siblings of the management tabs …
+    expect(labels).toEqual(expect.arrayContaining(["Positions", "Quotes", "Deals"]));
+    // … and the old nested "Scenario Risk" sub-view is gone.
+    expect(labels).not.toContain("Scenario Risk");
+    expect(within(bar).queryByRole("button", { name: "Scenario" })).toBeNull();
   });
 
-  it("the Deals tab renders the deals blotter incl. the routed Risk Portfolio column + the booked deal", async () => {
-    await renderRisk(transport, "fixed_income");
+  it("the Deals tab renders the deals blotter incl. the routed Risk Portfolio column, the booked deal, and a BUY/SELL badge", async () => {
+    await renderRiskPanel(transport);
     await openTab("Deals");
     // The blotter (former Book "Deals" lens) renders verbatim — its panel, the routed
     // Risk-Portfolio column header, and the booked Jane Street OIS deal.
     expect(await screen.findByText("Received deals")).toBeInTheDocument();
-    // The routed Risk-Portfolio column header lives inside the deals table region
-    // (the subtitle also names "Risk Portfolio", so scope the assertion to the table).
     const dealsTable = screen.getByRole("region", { name: "Deals table" });
     expect(within(dealsTable).getByText("Risk Portfolio")).toBeInTheDocument();
     expect(await screen.findByText("Jane Street")).toBeInTheDocument();
+    // Every row carries a primary BUY / SELL indicator (mapped from pay/receive fixed).
+    expect(within(dealsTable).getAllByText(/^(BUY|SELL)$/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("the Positions tab renders the rates position ledger (the seeded OIS positions)", async () => {
-    await renderRisk(transport, "fixed_income");
+    await renderRiskPanel(transport);
     await openTab("Positions");
     expect(await screen.findByText("2y OIS")).toBeInTheDocument();
     expect(screen.getByText("5y OIS")).toBeInTheDocument();
@@ -128,27 +153,31 @@ describe("FI Risk consolidation — the Fixed-Income Risk surface carries the fo
   });
 
   it("the Quotes tab renders the shown-quotes blotter (kept — non-redundant with Deals)", async () => {
-    await renderRisk(transport, "fixed_income");
+    await renderRiskPanel(transport);
     await openTab("Quotes");
     // Both quoted desk requests appear (Citadel shown-only, Jane Street shown+booked).
     expect(await screen.findByText("Citadel")).toBeInTheDocument();
     expect(screen.getByText("Jane Street")).toBeInTheDocument();
   });
-
-  it("the default tab is Scenario Risk (the netted rates panel), NOT a ledger view", async () => {
-    await renderRisk(transport, "fixed_income");
-    // The FI Risk workspace's own content — the netted rates-risk panel — is default.
-    expect(await screen.findByText("Netted rates risk")).toBeInTheDocument();
-  });
 });
 
-describe("FI Risk consolidation — FX Options is unchanged (no tab bar; scenario grid only)", () => {
-  it("under FX Options the Risk workspace renders NO folded-in tab bar", async () => {
+describe("FI Risk consolidation — RiskWorkspace is now purely the scenario grid", () => {
+  it("under Fixed Income the Risk workspace renders ONLY the netted rates risk (no ledger tab bar, no scenario heatmap)", async () => {
     const transport = await seededDeskTransport();
-    await renderRisk(transport, "fx_options");
-    // The consolidation is FI-only: the FX Risk surface has no "risk view" tab bar
-    // (Book stays a separate rail row on FX). The scenario what-if grid is what shows.
+    await renderRisk(transport, "fixed_income");
+    // The rates lens shows just the netted rates-risk panel — the FI scenario-risk
+    // surface the standalone `risk` row retains — with no folded-in ledger tab bar.
+    expect(await screen.findByRole("heading", { name: "Netted rates risk" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "risk view" })).toBeNull();
     expect(screen.queryByText("2y OIS")).toBeNull();
+    expect(screen.queryByLabelText(/scenario heatmap/i)).toBeNull();
+  });
+
+  it("under FX Options the Risk workspace renders the scenario grid (no tab bar, no OIS)", async () => {
+    const transport = await seededDeskTransport();
+    await renderRisk(transport, "fx_options");
+    expect(screen.queryByRole("group", { name: "risk view" })).toBeNull();
+    expect(screen.queryByText("2y OIS")).toBeNull();
+    expect(await screen.findByLabelText(/scenario heatmap/i)).toBeInTheDocument();
   });
 });

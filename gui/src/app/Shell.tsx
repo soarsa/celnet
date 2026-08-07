@@ -115,9 +115,10 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // Risk: the consolidated FI risk surface — a tabbed shell hosting "Dashboard" (the
   // per-portfolio routed-risk roll-up + heat overview), "Portfolios" (the tree editor),
   // "Routing" (the fill→portfolio rule builder), "Acceptance" (the accept/reject rule
-  // builder) and "Scenario" (the FI rates scenario grid). FI-only; each tab keeps its
-  // own gate (risk_manage / manage_acceptance / view). The retired `riskbooks` /
-  // `riskrouting` / `acceptance` ids deep-link straight onto their folded tab.
+  // builder) and the FI position-ledger views "Positions" / "Quotes" / "Deals" (folded
+  // in from the old "Book"). FI-only; each tab keeps its own gate (risk_manage /
+  // manage_acceptance / view). The retired `riskbooks` / `riskrouting` / `acceptance`
+  // ids deep-link straight onto their folded tab.
   riskdashboard: RiskDashboardWorkspace,
   // Risk Routing is CONSOLIDATED into the "Risk" host as its "Routing" tab (no
   // standalone rail row). This id stays valid so any deep-link lands straight on that

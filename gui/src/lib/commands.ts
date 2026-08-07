@@ -217,20 +217,24 @@ export const RAIL: readonly {
   //     `riskrouting` alias);
   //   • "Acceptance" — the incoming-lift accept/reject rule builder (former
   //     "Acceptance" row → `acceptance` alias);
-  //   • "Scenario" — the class-parametric scenario grid (`risk` workspace, its FI rates
-  //     lens), folded in on FI while the cross-asset `risk` row STAYS on the FX rail
-  //     ({@link DOMAIN_RAIL_EXCLUDED}, exactly like the FI "Book" fold).
+  //   • "Positions" / "Quotes" / "Deals" — the FI position-ledger views folded in from
+  //     the old FI "Book" (docs/FI-BOOK-CONCEPTS.md), now TOP-LEVEL tabs of this host
+  //     (previously nested a level deeper inside a "Scenario" tab, which — with the FI
+  //     netted rates scenario-risk surface — is REMOVED). The cross-asset `risk`
+  //     scenario grid STAYS an FX-rail row, only WITHDRAWN from the FI rail ({@link
+  //     DOMAIN_RAIL_EXCLUDED}, like the FI "Book" fold).
   // Single-asset FI, gated at the rail on the granular `risk_manage·FI` capability
   // (docs/PERMISSIONS-GRANULAR-REVIEW.md §4) — a firm risk-control function distinct
   // from super-admin, so a risk lead sees + edits it WITHOUT full Administer. Each TAB
   // keeps its ORIGINAL capability gate independently (Dashboard/Portfolios/Routing →
-  // `risk_manage`, Acceptance → `manage_acceptance`, Scenario → `view`), hiding a tab
-  // the identity cannot view and clamping the active tab to the first visible one. The
+  // `risk_manage`, Acceptance → `manage_acceptance`, Positions/Quotes/Deals → `view`),
+  // hiding a tab the identity cannot view and clamping the active tab to the first
+  // visible one. The
   // retired `riskbooks` / `riskrouting` / `acceptance` ids stay valid deep-links
   // resolving to this host (see {@link CONSOLIDATED_WORKSPACE_ALIAS}) — no rail row of
   // their own. USER-FACING name "Risk"; the wire type stays `RiskBookDef` (UI-only
   // rename — see docs/FI-BOOK-CONCEPTS.md).
-  { id: "riskdashboard", glyph: "◉", label: "Risk", subtitle: "Dashboard · portfolios · routing · acceptance · scenario", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
+  { id: "riskdashboard", glyph: "◉", label: "Risk", subtitle: "Dashboard · portfolios · routing · acceptance · positions · quotes · deals", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
   // Auto-Hedging (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md): the
   // trader-composed EXIT-POLICY graph (internalise below the threshold, hedge the
   // overflow above), the warehouse-threshold config, and the live hedge monitor.
@@ -264,10 +268,11 @@ export const RAIL: readonly {
   { id: "surface", glyph: "◷", label: "Market Data", subtitle: "Curves & vol surface", section: "markets", assets: CAPABILITY_ASSETS },
   // The class-parametric SCENARIO risk grid (spot×vol P&L / rates netted risk) — an
   // analytics view, NOT the routed-risk roll-up (the "Risk" Dashboard tab) nor the
-  // ledger. Cross-asset, so it STAYS a standalone row on the FX rail; under Fixed
-  // Income its FI rates lens is folded into the "Risk" host as the "Scenario" tab and
-  // the row is dropped from the FI rail ({@link DOMAIN_RAIL_EXCLUDED}, exactly like the
-  // FI "Book" fold). The `risk` id remains a live, mountable cross-asset workspace.
+  // ledger. Cross-asset, so it STAYS a standalone row on the FX rail; it is dropped
+  // from the FI rail ({@link DOMAIN_RAIL_EXCLUDED}) — the FI risk destination is the
+  // consolidated "Risk" host — and reachable under FI only via a direct `?view=risk`
+  // deep-link, where its rates lens shows just the netted rates risk. The `risk` id
+  // remains a live, mountable cross-asset workspace.
   { id: "risk", glyph: "⊞", label: "Risk", subtitle: "Scenario P&L / greeks", section: "risk", assets: CAPABILITY_ASSETS },
   // The position LEDGER — booked positions, booking, and deals (what you hold), NOT
   // the LP price composite (Agg Book) nor a risk-management bucket (Risk Portfolios).
@@ -493,12 +498,13 @@ export const HEDGING_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>
  * is removed, mirroring how the membership-override sets scope a row's domains
  * without touching its `assets`.
  *
- * The cross-asset `risk` SCENARIO grid is withdrawn from the FI rail the SAME way: its
- * FI rates lens is folded into the consolidated "Risk" host as the "Scenario" tab, so
- * the standalone row is dropped from Fixed Income while it STAYS on FX Options (where
- * the Risk host is FI-only and does not exist). `workspaceAssets("risk")` still returns
- * BOTH classes — only the FI rail membership is removed — so `?view=risk` stays
- * mountable/navigable and the FX scenario grid is untouched.
+ * The cross-asset `risk` SCENARIO grid is withdrawn from the FI rail the SAME way: the
+ * FI risk destination is the consolidated "Risk" host (its Positions/Quotes/Deals tabs
+ * carry the folded-in FI ledger; the FI netted rates scenario-risk surface is dropped),
+ * so the standalone `risk` row is dropped from Fixed Income while it STAYS on FX Options.
+ * `workspaceAssets("risk")` still returns BOTH classes — only the FI rail membership is
+ * removed — so `?view=risk` stays mountable/navigable (under FI it shows just the netted
+ * rates risk) and the FX scenario grid is untouched.
  */
 export const DOMAIN_RAIL_EXCLUDED: Partial<Record<WorkspaceId, ReadonlySet<Domain>>> = {
   book: new Set<Domain>(["fixed_income"]),

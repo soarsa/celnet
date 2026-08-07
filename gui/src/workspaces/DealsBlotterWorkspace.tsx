@@ -26,10 +26,43 @@ import { fmtEdgeBps, hedgeBandLabel, internaliseLabel } from "../lib/internalise
 import { DealTicket } from "./DealTicket";
 import styles from "./DealsBlotterWorkspace.module.css";
 
+/**
+ * The rates pay/receive-fixed reading of a `Side` — the SECONDARY detail kept
+ * alongside the primary BUY/SELL badge. The wire `Side` already IS the buy/sell
+ * axis (contract: `SIDE_BUY` pays fixed / is long the swap, `SIDE_SELL` receives
+ * fixed), so this only spells out the rates convention: BUY → "Pay fixed",
+ * SELL → "Receive fixed".
+ */
 function sideLabel(side: Side): string {
-  if (side === "BUY") return "Pay";
-  if (side === "SELL") return "Receive";
+  if (side === "BUY") return "Pay fixed";
+  if (side === "SELL") return "Receive fixed";
   return "Two-way";
+}
+
+/** The primary BUY / SELL / 2-WAY read of a deal's `Side` (native to the wire). */
+function sideBuySell(side: Side): string {
+  if (side === "BUY") return "BUY";
+  if (side === "SELL") return "SELL";
+  return "2-WAY";
+}
+
+/**
+ * The BUY / SELL indicator per deal row — the PRIMARY read of `Side`, tinted green
+ * (bid) for a buy and red (offer) for a sell via the shared trading semantic
+ * tokens, with the rates pay/receive-fixed detail kept as secondary text (and the
+ * accessible label). Rates deals map long-the-swap = BUY (pay fixed); FX / other
+ * deals use their native `Side` directly. A two-way quote stays neutral.
+ */
+function SideBadge({ side }: { readonly side: Side }): React.ReactElement {
+  const tag = sideBuySell(side);
+  const detail = sideLabel(side);
+  const label = `${tag} · ${detail}`;
+  return (
+    <span className={styles.side} data-side={side} aria-label={label} title={label}>
+      <span className={styles.sideTag}>{tag}</span>
+      <span className={styles.sideDetail}>{detail}</span>
+    </span>
+  );
 }
 
 /**
@@ -110,6 +143,7 @@ function dealSearchText(d: Deal, names: ReadonlyMap<string, string>): string {
     d.curveSet.currency,
     fmtCompact(d.notional),
     fmtRate(d.price),
+    sideBuySell(d.side),
     sideLabel(d.side),
     d.trader,
     positionLabel(d),
@@ -272,7 +306,9 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                     <td className={styles.mono}>{d.curveSet.currency}</td>
                     <td className={`${styles.num} ${styles.mono}`}>{fmtCompact(d.notional)}</td>
                     <td className={`${styles.num} ${styles.mono} ${styles.price}`}>{fmtRate(d.price)}</td>
-                    <td>{sideLabel(d.side)}</td>
+                    <td>
+                      <SideBadge side={d.side} />
+                    </td>
                     <td>{d.trader}</td>
                     <td className={styles.mono}>{positionLabel(d)}</td>
                     <td>{riskPortfolioLabel(d, riskBookNames)}</td>

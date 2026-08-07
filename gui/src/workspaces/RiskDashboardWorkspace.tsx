@@ -1,6 +1,6 @@
 /**
  * RiskDashboardWorkspace — the consolidated fixed-income RISK surface: ONE rail entry,
- * "Risk", whose tabbed shell spans FIVE sibling views that were previously separate
+ * "Risk", whose tabbed shell spans SEVEN sibling views that were previously separate
  * rail destinations (mirroring the Pricing and Transfers→Risk Transfer merges):
  *   • **Dashboard** (default) — the per-portfolio rolled-up risk view ({@link
  *     DashboardPanel}); the routed-risk roll-up (docs/FI-RISK-ROUTING-REQUIREMENTS.md
@@ -12,9 +12,18 @@
  *     the retired "Risk Routing" (`riskrouting`) rail entry, composed wholesale.
  *   • **Acceptance** — the incoming-lift accept/reject rule builder ({@link
  *     AcceptanceWorkspace}), the retired "Acceptance" (`acceptance`) rail entry.
- *   • **Scenario** — the class-parametric scenario grid ({@link RiskWorkspace}) at its
- *     FI rates lens; the cross-asset `risk` row STAYS on the FX rail and is only
- *     withdrawn from the FI rail (DOMAIN_RAIL_EXCLUDED), so nothing FX is lost.
+ *   • **Positions** — the rates position ledger + booking form ({@link
+ *     RatesBookWorkspace}, composed VERBATIM), folded in from the old FI "Book".
+ *   • **Quotes** — the shown-quotes blotter ({@link QuotesBlotterWorkspace}); what was
+ *     SHOWN (quoted), the non-redundant sibling of Deals.
+ *   • **Deals** — the executed-deals blotter ({@link DealsBlotterWorkspace}) incl. the
+ *     routed Risk-Portfolio column + a BUY/SELL indicator per row.
+ * The Positions/Quotes/Deals ledger views were previously nested one level deeper
+ * inside a "Scenario" tab (which composed `RiskWorkspace` at its FI rates lens); that
+ * tab AND its netted rates scenario-risk surface are REMOVED, and the three ledger
+ * views are promoted to top-level siblings here — the existing table components are
+ * composed directly, unchanged. The cross-asset `risk` scenario grid STAYS a
+ * standalone FX-rail row (DOMAIN_RAIL_EXCLUDED withdraws it from the FI rail only).
  * Each tab keeps its ORIGINAL capability gate independently (see the shell function),
  * hiding a tab the identity cannot view and clamping the active tab to the first
  * visible one. The standalone "Risk Portfolios" / "Risk Routing" / "Acceptance" rail
@@ -46,29 +55,45 @@ import type {
 import { RiskBooksWorkspace } from "./RiskBooksWorkspace";
 import { RiskRoutingWorkspace } from "./riskrouting/RiskRoutingWorkspace";
 import { AcceptanceWorkspace } from "./acceptance/AcceptanceWorkspace";
-import { RiskWorkspace } from "./RiskWorkspace";
+import { RatesBookWorkspace } from "./RatesBookWorkspace";
+import { QuotesBlotterWorkspace } from "./QuotesBlotterWorkspace";
+import { DealsBlotterWorkspace } from "./DealsBlotterWorkspace";
 import { RiskSetupWizard } from "./risksetup/RiskSetupWizard";
 import styles from "./RiskDashboardWorkspace.module.css";
 
 /** The tab the consolidated Risk surface shows. `dashboard` is the default; the other
- * four are the deep-link targets for the retired standalone rail entries — `portfolios`
- * (old "Risk Portfolios"), `routing` (old "Risk Routing"), `acceptance` (old
- * "Acceptance") and `scenario` (the FI rates lens of the cross-asset `risk` grid). */
-export type RiskDashboardTab = "dashboard" | "portfolios" | "routing" | "acceptance" | "scenario";
+ * management tabs are the deep-link targets for the retired standalone rail entries —
+ * `portfolios` (old "Risk Portfolios"), `routing` (old "Risk Routing") and `acceptance`
+ * (old "Acceptance"). The FI position-ledger views folded in from the old "Book" —
+ * `positions`, `quotes` and `deals` — are now TOP-LEVEL siblings (previously nested a
+ * level deeper inside a "Scenario" tab, which is removed along with the FI
+ * scenario-risk surface). */
+export type RiskDashboardTab =
+  | "dashboard"
+  | "portfolios"
+  | "routing"
+  | "acceptance"
+  | "positions"
+  | "quotes"
+  | "deals";
 
 /**
  * One row per tab the consolidated Risk surface spans: its id, toggle label, and the
- * capability ACTION that gates it × fixed_income (each tab keeps its ORIGINAL rail
- * gate — Dashboard/Portfolios/Routing on `risk_manage`, Acceptance on
- * `manage_acceptance`, Scenario on the `view` floor). A tab the identity cannot view
- * is hidden and the active tab clamps to the first visible one (never shown empty).
+ * capability ACTION that gates it × fixed_income (each tab keeps its ORIGINAL gate —
+ * Dashboard/Portfolios/Routing on `risk_manage`, Acceptance on `manage_acceptance`,
+ * and the folded-in ledger views (Positions/Quotes/Deals) on the `view` floor, so a
+ * booking-only FI trader still reaches them exactly as under the former Scenario
+ * fold). A tab the identity cannot view is hidden and the active tab clamps to the
+ * first visible one (never shown empty).
  */
 const RISK_TABS: readonly { tab: RiskDashboardTab; label: string; cap: CapabilityAction }[] = [
   { tab: "dashboard", label: "Dashboard", cap: "risk_manage" },
   { tab: "portfolios", label: "Portfolios", cap: "risk_manage" },
   { tab: "routing", label: "Routing", cap: "risk_manage" },
   { tab: "acceptance", label: "Acceptance", cap: "manage_acceptance" },
-  { tab: "scenario", label: "Scenario", cap: "view" },
+  { tab: "positions", label: "Positions", cap: "view" },
+  { tab: "quotes", label: "Quotes", cap: "view" },
+  { tab: "deals", label: "Deals", cap: "view" },
 ];
 
 const notional = (n: number): string =>
@@ -442,23 +467,26 @@ function DashboardPanel({
 }
 
 /**
- * RiskDashboardWorkspace — the tabbed shell composing the FIVE consolidated FI-risk
+ * RiskDashboardWorkspace — the tabbed shell composing the SEVEN consolidated FI-risk
  * views as sibling tabs (see the file header): the rolled-up {@link DashboardPanel},
  * the {@link RiskBooksWorkspace} portfolio editor, the {@link RiskRoutingWorkspace}
  * fill-routing builder, the {@link AcceptanceWorkspace} accept/reject builder, and the
- * {@link RiskWorkspace} scenario grid (its FI rates lens). Mirrors the Risk Transfer /
- * Pricing tab primitive VERBATIM: a slim segmented bar above the active panel, which
- * fills the remaining pane height and scrolls its OWN content (the Shell pane is
- * overflow:hidden with a definite height). Only the active tab's body mounts, so each
- * panel's effects fire only while it is on screen.
+ * three folded-in FI position-ledger views — {@link RatesBookWorkspace} (Positions),
+ * {@link QuotesBlotterWorkspace} (Quotes) and {@link DealsBlotterWorkspace} (Deals),
+ * composed VERBATIM. Mirrors the Risk Transfer / Pricing tab primitive VERBATIM: a
+ * slim segmented bar above the active panel, which fills the remaining pane height and
+ * scrolls its OWN content (the Shell pane is overflow:hidden with a definite height).
+ * Only the active tab's body mounts, so each panel's effects fire only while it is on
+ * screen.
  *
  * Each tab keeps its ORIGINAL capability gate: Dashboard/Portfolios/Routing on
- * `risk_manage·FI`, Acceptance on `manage_acceptance·FI`, Scenario on the `view·FI`
- * floor. A tab the identity cannot view is HIDDEN and the active tab clamps to the
- * first visible one, so a hidden tab is never shown empty (`can` is permissive
- * signed-out, so pre-login every tab renders). Reaching the host ROW itself follows
- * the rail's `risk_manage·FI` viewCap; the Scenario grid also stays a standalone row
- * on the FX rail (the cross-asset `risk` workspace), only WITHDRAWN from the FI rail.
+ * `risk_manage·FI`, Acceptance on `manage_acceptance·FI`, and Positions/Quotes/Deals
+ * on the `view·FI` floor (the same floor they had under the removed Scenario fold). A
+ * tab the identity cannot view is HIDDEN and the active tab clamps to the first
+ * visible one, so a hidden tab is never shown empty (`can` is permissive signed-out,
+ * so pre-login every tab renders). Reaching the host ROW itself follows the rail's
+ * `risk_manage·FI` viewCap; the cross-asset `risk` scenario grid stays a standalone
+ * row on the FX rail, only WITHDRAWN from the FI rail (DOMAIN_RAIL_EXCLUDED).
  */
 export function RiskDashboardWorkspace({
   initialTab = "dashboard",
@@ -526,10 +554,17 @@ export function RiskDashboardWorkspace({
           <RiskRoutingWorkspace />
         ) : activeTab === "acceptance" ? (
           <AcceptanceWorkspace />
+        ) : activeTab === "positions" ? (
+          // The FI position ledger + booking form (folded in from the old "Book"),
+          // composed verbatim — the same table the Book rail row used to render.
+          <RatesBookWorkspace />
+        ) : activeTab === "quotes" ? (
+          // The shown-quotes blotter — what was quoted (non-redundant with Deals).
+          <QuotesBlotterWorkspace />
         ) : (
-          // The cross-asset scenario grid, forced to its FI rates lens — the host is
-          // FI-only, so the Scenario tab always shows the rates netted-risk surface.
-          <RiskWorkspace initialLens="rates" />
+          // The executed-deals blotter incl. the routed Risk-Portfolio column and the
+          // per-row BUY/SELL indicator.
+          <DealsBlotterWorkspace />
         )}
       </div>
     </div>
