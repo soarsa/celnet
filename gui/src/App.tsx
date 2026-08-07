@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { AppProvider, useApp } from "./app/AppContext";
+import { AcceptanceSeedProvider } from "./app/AcceptanceSeedContext";
 import { LoginScreen } from "./app/LoginScreen";
 import { LoginView } from "./app/LoginView";
 import { ReconnectOverlay } from "./app/ReconnectOverlay";
@@ -70,21 +71,23 @@ export function App(): React.ReactElement {
   return (
     <AppProvider transport={transport} density={density} toggleDensity={toggleDensity}>
       <AuthGate>
-        <Shell />
-        {connection.phase === "reconnecting" && (
+        <AcceptanceSeedProvider>
+          <Shell />
+          {connection.phase === "reconnecting" && (
           <ReconnectOverlay
             remainingSeconds={connection.remainingSeconds}
             endpointLabel={transport.label}
             onSignInNow={() => setSignedOut(true)}
           />
         )}
-        {pendingRelease && (
-          <UpdateBanner
-            release={pendingRelease}
-            onReload={() => window.location.reload()}
-            onDismiss={() => setDismissedHash(pendingRelease.hash)}
-          />
-        )}
+          {pendingRelease && (
+            <UpdateBanner
+              release={pendingRelease}
+              onReload={() => window.location.reload()}
+              onDismiss={() => setDismissedHash(pendingRelease.hash)}
+            />
+          )}
+        </AcceptanceSeedProvider>
       </AuthGate>
     </AppProvider>
   );

@@ -5,7 +5,7 @@
  * DECISION (a coloured accept/reject/hold chip) instead of an exit action. Purely
  * presentational.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   describeAcceptanceRule,
@@ -24,6 +24,8 @@ interface AcceptanceRulesTableProps {
   onDelete: (index: number) => void;
   onToggle: (index: number) => void;
   onReorder: (from: number, to: number) => void;
+  /** The id of a just-seeded rule to scroll to + highlight (e.g. from a flow row). */
+  highlightRuleId?: string | null;
 }
 
 function worst(conflicts: AcceptanceRuleConflict[] | undefined): "error" | "warn" | null {
@@ -39,8 +41,18 @@ export function AcceptanceRulesTable({
   onDelete,
   onToggle,
   onReorder,
+  highlightRuleId,
 }: AcceptanceRulesTableProps): React.ReactElement {
   const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const highlightRef = useRef<HTMLTableRowElement | null>(null);
+
+  // Scroll the just-seeded row into view so the trader immediately sees which rule was
+  // added by "Create acceptance rule" from a live-flow row.
+  useEffect(() => {
+    if (highlightRuleId && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [highlightRuleId]);
 
   if (rules.length === 0) {
     return (
@@ -68,14 +80,18 @@ export function AcceptanceRulesTable({
           const conflicts = conflictsByRule.get(rule.id);
           const sev = worst(conflicts);
           const isDefault = rule.conditions.length === 0;
+          const isSeeded = highlightRuleId != null && rule.id === highlightRuleId;
           return (
             <tr
               key={rule.id}
+              ref={isSeeded ? highlightRef : undefined}
               data-testid={`acceptance-rule-row-${index}`}
+              data-seeded={isSeeded ? "true" : undefined}
               className={[
                 rr.ruleTr,
                 rule.enabled ? "" : rr.ruleTrDisabled,
                 sev === "error" ? rr.ruleTrError : "",
+                isSeeded ? styles.ruleTrSeeded : "",
               ]
                 .filter(Boolean)
                 .join(" ")}

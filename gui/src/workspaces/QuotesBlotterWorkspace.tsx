@@ -22,7 +22,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
+import { useAcceptanceSeed } from "../app/AcceptanceSeedContext";
 import { Panel } from "../components/Panel";
+import { FlowRowContextMenu, type FlowRowMenuTarget } from "../components/FlowRowContextMenu";
 import { TableSearch } from "../components/TableSearch";
 import { useTableFilter } from "../hooks/useTableFilter";
 import { principalForScope } from "../data/riskView";
@@ -69,8 +71,14 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
   // domain this lens is correctly empty and under Fixed Income it shows them.
   const activeAsset = capabilityAssetForDomain(app.activeDomain);
 
+  const seed = useAcceptanceSeed();
+  const canManageAcceptance = app.auth.can("manage_acceptance", "fixed_income");
+
   const [requests, setRequests] = useState<DeskRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // The row context menu (right-click / ⋯ kebab): the counterparty + anchor point of the
+  // row whose "Create acceptance rule" the trader is spawning.
+  const [rowMenu, setRowMenu] = useState<FlowRowMenuTarget | null>(null);
 
   const refresh = useCallback(() => {
     void app.transport
@@ -165,11 +173,20 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
                       <th className={styles.num}>Good for</th>
                       <th>Trader</th>
                       <th>State</th>
+                      <th className={styles.actionsCol}>
+                        <span className={styles.srOnly}>Row actions</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {filtered.map((r) => (
-                  <tr key={r.requestId}>
+                  <tr
+                    key={r.requestId}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setRowMenu({ counterparty: r.counterparty, x: e.clientX, y: e.clientY });
+                    }}
+                  >
                     <td className={styles.mono}>{fmtClock(r.receivedAtNanos)}</td>
                     <td className={styles.strong}>{r.counterparty}</td>
                     <td>{r.desk}</td>
@@ -196,6 +213,21 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
                     <td>
                       <span className={`${styles.state} ${stateClass(r.state)}`}>{r.state}</span>
                     </td>
+                    <td className={styles.actionsCol}>
+                      <button
+                        type="button"
+                        className={styles.kebab}
+                        aria-haspopup="menu"
+                        aria-label={`Row actions for ${r.counterparty}`}
+                        data-testid="quote-row-kebab"
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setRowMenu({ counterparty: r.counterparty, x: rect.left, y: rect.bottom });
+                        }}
+                      >
+                        <span aria-hidden>⋯</span>
+                      </button>
+                    </td>
                       </tr>
                     ))}
                   </tbody>
@@ -205,6 +237,17 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
           </>
         )}
       </Panel>
+      <FlowRowContextMenu
+        target={rowMenu}
+        onClose={() => setRowMenu(null)}
+        onCreateAcceptanceRule={(cp) => {
+          // Seed the rule, then navigate to the Acceptance surface (the `acceptance` alias
+          // → the consolidated Risk host's Acceptance tab), which consumes the seed.
+          seed.requestAcceptanceSeed(cp);
+          app.setWorkspace("acceptance");
+        }}
+        canManageAcceptance={canManageAcceptance}
+      />
     </div>
   );
 }

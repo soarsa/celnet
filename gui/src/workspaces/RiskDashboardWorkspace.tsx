@@ -42,9 +42,10 @@
  * server-side; this pane is read-only for everyone (a risk-management view).
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useApp } from "../app/AppContext";
+import { useAcceptanceSeed } from "../app/AcceptanceSeedContext";
 import type {
   CapabilityAction,
   RiskLimitUtilization,
@@ -497,10 +498,38 @@ export function RiskDashboardWorkspace({
   initialTab?: RiskDashboardTab;
 } = {}): React.ReactElement {
   const { auth } = useApp();
-  const visibleTabs = RISK_TABS.filter((t) => auth.can(t.cap, "fixed_income"));
+  const { pending: acceptanceSeed } = useAcceptanceSeed();
 
   const [tab, setTab] = useState<RiskDashboardTab>(initialTab);
   const [wizardOpen, setWizardOpen] = useState(false);
+  // A pending acceptance-seed (from a Deals/Quotes row "Create acceptance rule") reveals
+  // AND switches to the Acceptance tab. The reveal is sticky so a non-`manage_acceptance`
+  // holder — who normally can't see the tab — still LANDS on it (read-only) rather than
+  // being clamped away; it drops again once they leave the tab.
+  //
+  // ONLY the Acceptance-host instance reacts. The Shell keeps every workspace pane mounted
+  // (P0-11) and mounts a hidden `acceptance` alias pane (this component with
+  // `initialTab="acceptance"`) alongside the visible `riskdashboard` one — so several
+  // RiskDashboardWorkspace instances share this app-level seed. The blotter navigates to
+  // the `acceptance` alias, so gating on `initialTab === "acceptance"` makes exactly that
+  // (now-visible) instance the SINGLE reactor + seed consumer — no hidden pane races the
+  // one-shot, and the base dashboard instance never spuriously flips to Acceptance.
+  const isAcceptanceHost = initialTab === "acceptance";
+  const [seedRevealAcceptance, setSeedRevealAcceptance] = useState(false);
+  const seenSeedNonce = useRef(0);
+  useEffect(() => {
+    if (!isAcceptanceHost) return;
+    if (acceptanceSeed && acceptanceSeed.nonce !== seenSeedNonce.current) {
+      seenSeedNonce.current = acceptanceSeed.nonce;
+      setSeedRevealAcceptance(true);
+      setTab("acceptance");
+    }
+  }, [acceptanceSeed, isAcceptanceHost]);
+
+  const visibleTabs = RISK_TABS.filter(
+    (t) =>
+      auth.can(t.cap, "fixed_income") || (t.tab === "acceptance" && seedRevealAcceptance),
+  );
   // Clamp to a VISIBLE tab so a deep-link (or default) landing on a tab this identity
   // cannot view falls to the first tab it can, never an empty pane.
   const activeTab: RiskDashboardTab = visibleTabs.some((t) => t.tab === tab)
@@ -535,7 +564,12 @@ export function RiskDashboardWorkspace({
               className={`${styles.tabBtn} ${activeTab === t.tab ? styles.tabBtnActive : ""}`}
               aria-pressed={activeTab === t.tab}
               data-testid={`risk-tab-${t.tab}`}
-              onClick={() => setTab(t.tab)}
+              onClick={() => {
+                setTab(t.tab);
+                // Leaving the seed-revealed Acceptance tab drops the temporary reveal (a
+                // non-holder returns to their normal tab set); staying keeps it.
+                if (t.tab !== "acceptance") setSeedRevealAcceptance(false);
+              }}
             >
               {t.label}
             </button>

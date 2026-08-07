@@ -15,7 +15,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
+import { useAcceptanceSeed } from "../app/AcceptanceSeedContext";
 import { Panel } from "../components/Panel";
+import { FlowRowContextMenu, type FlowRowMenuTarget } from "../components/FlowRowContextMenu";
 import { TableSearch } from "../components/TableSearch";
 import { useTableFilter } from "../hooks/useTableFilter";
 import { principalForScope } from "../data/riskView";
@@ -161,9 +163,15 @@ export function DealsBlotterWorkspace(): React.ReactElement {
   // domain this lens is correctly empty and under Fixed Income it shows them.
   const activeAsset = capabilityAssetForDomain(app.activeDomain);
 
+  const seed = useAcceptanceSeed();
+  const canManageAcceptance = app.auth.can("manage_acceptance", "fixed_income");
+
   const [allDeals, setAllDeals] = useState<Deal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Deal | null>(null);
+  // The row context menu (right-click / context-menu key): the counterparty + anchor
+  // point of the row whose "Create acceptance rule" the trader is spawning.
+  const [rowMenu, setRowMenu] = useState<FlowRowMenuTarget | null>(null);
   // The Risk Portfolio roster (id → human name) resolves each deal's routed
   // `riskBookId` to its portfolio name. Best-effort: an unavailable roster (e.g. no
   // routing configured) leaves the column falling back to the raw id / `—`.
@@ -283,11 +291,28 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                     onClick={() => setSelected(d)}
                     tabIndex={0}
                     role="button"
-                    aria-label={`Open deal ${d.dealId}`}
+                    aria-label={`Open deal ${d.dealId}. Right-click or press the menu key for row actions`}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setRowMenu({ counterparty: d.counterparty, x: e.clientX, y: e.clientY });
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
                         setSelected(d);
+                        return;
+                      }
+                      // The standard context-menu key (or Shift+F10) opens the row menu —
+                      // keyboard parity for the right-click, without a nested-interactive
+                      // kebab inside this role="button" row (axe-clean).
+                      if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+                        e.preventDefault();
+                        const r = e.currentTarget.getBoundingClientRect();
+                        setRowMenu({
+                          counterparty: d.counterparty,
+                          x: r.left + 12,
+                          y: r.bottom - 8,
+                        });
                       }
                     }}
                   >
@@ -329,6 +354,17 @@ export function DealsBlotterWorkspace(): React.ReactElement {
           </>
         )}
       </Panel>
+      <FlowRowContextMenu
+        target={rowMenu}
+        onClose={() => setRowMenu(null)}
+        onCreateAcceptanceRule={(cp) => {
+          // Seed the rule, then navigate to the Acceptance surface (the `acceptance` alias
+          // → the consolidated Risk host's Acceptance tab), which consumes the seed.
+          seed.requestAcceptanceSeed(cp);
+          app.setWorkspace("acceptance");
+        }}
+        canManageAcceptance={canManageAcceptance}
+      />
       {selected && <DealTicket deal={selected} onClose={() => setSelected(null)} />}
     </div>
   );

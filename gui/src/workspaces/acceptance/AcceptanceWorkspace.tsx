@@ -11,9 +11,10 @@
  * the desk inbox for manual accept. Authoring gates on the narrow `manage_acceptance`
  * capability × fixed income; everyone else sees the surface read-only.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useApp } from "../../app/AppContext";
+import { useAcceptanceSeed } from "../../app/AcceptanceSeedContext";
 import type { AcceptanceGraph } from "../../data/contract";
 import { defaultAcceptanceAction } from "../../lib/acceptanceAction";
 import {
@@ -25,6 +26,7 @@ import {
   type AcceptanceRule,
   type AcceptanceRuleConflict,
 } from "../../lib/acceptanceRules";
+import { counterpartyAcceptanceRule, mergeSeedRule } from "../../lib/acceptanceSeed";
 import { validateAcceptanceGraph } from "../../lib/acceptanceTrace";
 import { AcceptanceRuleEditor } from "./AcceptanceRuleEditor";
 import { AcceptanceRulesTable } from "./AcceptanceRulesTable";
@@ -59,11 +61,36 @@ export function AcceptanceWorkspace(): React.ReactElement {
   const canEdit = auth.can("manage_acceptance", "fixed_income");
   const readOnly = !canEdit;
 
+  const seed = useAcceptanceSeed();
+  const { pending: pendingSeed, consumeAcceptanceSeed } = seed;
+
   const [rules, setRules] = useState<AcceptanceRule[]>([]);
   const [baseline, setBaseline] = useState<string>("[]");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>({ kind: "list" });
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+  // The just-seeded rule (from a Deals/Quotes "Create acceptance rule"): the rules-table
+  // scrolls to + highlights it, and — when the viewer lacks `manage_acceptance` — a note
+  // explains it landed read-only. `null` when nothing was seeded this session.
+  const [highlightRuleId, setHighlightRuleId] = useState<string | null>(null);
+  const [seededReadOnly, setSeededReadOnly] = useState(false);
+  // The load must not clobber a seed, and a seed must apply exactly once. `pendingSeed`
+  // is mirrored to a ref so the (transport-scoped) load effect reads the freshest value
+  // without re-running on every context change; `appliedSeedNonce` de-dupes application.
+  const pendingSeedRef = useRef(pendingSeed);
+  pendingSeedRef.current = pendingSeed;
+  const appliedSeedNonce = useRef(0);
+  const [loaded, setLoaded] = useState(false);
+
+  // Note which seeded rule to highlight (+ the read-only note for a non-holder). Kept OUT
+  // of any `setRules` updater so the updaters stay pure (StrictMode double-invokes them).
+  const markSeeded = useCallback(
+    (seedRule: AcceptanceRule): void => {
+      setHighlightRuleId(seedRule.id);
+      if (readOnly) setSeededReadOnly(true);
+    },
+    [readOnly],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -71,12 +98,24 @@ export function AcceptanceWorkspace(): React.ReactElement {
       try {
         const g = await app.transport.getAcceptanceGraph();
         if (cancelled) return;
-        const loaded = decompileAcceptanceGraphToRules(g ?? EMPTY_GRAPH);
+        const loadedRules = decompileAcceptanceGraphToRules(g ?? EMPTY_GRAPH);
         // A fresh install with no policy seeds a single accept-all catch-all so the table
-        // is never empty / invalid on first open (mirrors the server default).
-        const seeded = loaded.length > 0 ? loaded : [newDefaultAcceptanceRule()];
-        setRules(seeded);
-        setBaseline(JSON.stringify(seeded));
+        // is never empty / invalid on first open (mirrors the server default). This is the
+        // SAVED baseline (dirty is measured against it); a flow-seeded rule below is an
+        // unsaved edit ON TOP of it — the existing graph is never clobbered.
+        const base = loadedRules.length > 0 ? loadedRules : [newDefaultAcceptanceRule()];
+        setBaseline(JSON.stringify(base));
+        const p = pendingSeedRef.current;
+        if (p && p.nonce !== appliedSeedNonce.current) {
+          appliedSeedNonce.current = p.nonce;
+          const seedRule = counterpartyAcceptanceRule(p.counterparty);
+          setRules(mergeSeedRule(base, seedRule));
+          markSeeded(seedRule);
+          consumeAcceptanceSeed();
+        } else {
+          setRules(base);
+        }
+        setLoaded(true);
         setLoadError(null);
       } catch (e: unknown) {
         if (!cancelled) {
@@ -87,7 +126,21 @@ export function AcceptanceWorkspace(): React.ReactElement {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-load only on transport;
+    // the seed is read via a ref and de-duped by nonce, never a re-run trigger.
   }, [app.transport]);
+
+  // A seed that arrives AFTER the initial load (the surface already mounted) merges into
+  // the CURRENT rules as an unsaved edit. Guarded by `appliedSeedNonce` so it and the load
+  // effect never double-apply the same request.
+  useEffect(() => {
+    if (!loaded || !pendingSeed || pendingSeed.nonce === appliedSeedNonce.current) return;
+    appliedSeedNonce.current = pendingSeed.nonce;
+    const seedRule = counterpartyAcceptanceRule(pendingSeed.counterparty);
+    setRules((cur) => mergeSeedRule(cur, seedRule));
+    markSeeded(seedRule);
+    consumeAcceptanceSeed();
+  }, [loaded, pendingSeed, markSeeded, consumeAcceptanceSeed]);
 
   const conflicts = useMemo(() => detectAcceptanceRuleConflicts(rules), [rules]);
   const conflictsByRule = useMemo(() => {
@@ -209,6 +262,18 @@ export function AcceptanceWorkspace(): React.ReactElement {
         </div>
       </header>
 
+      {seededReadOnly && highlightRuleId !== null && (
+        <p
+          className={styles.seedNote}
+          role="status"
+          data-testid="acceptance-seed-readonly-note"
+        >
+          A rule for this counterparty was prepared from live flow, but you lack{" "}
+          <code>manage_acceptance</code> — it is shown read-only. Ask an admin to review and
+          save it.
+        </p>
+      )}
+
       <div className={styles.explainer}>
         <span>
           These rules run <strong>at acceptance</strong> — after last-look, before booking — on
@@ -300,6 +365,7 @@ export function AcceptanceWorkspace(): React.ReactElement {
           rules={rules}
           conflictsByRule={conflictsByRule}
           readOnly={readOnly}
+          highlightRuleId={highlightRuleId}
           onEdit={onEditRow}
           onDelete={(i) => applyRules(rules.filter((_, j) => j !== i))}
           onToggle={(i) => applyRules(rules.map((r, j) => (j === i ? { ...r, enabled: !r.enabled } : r)))}

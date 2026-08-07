@@ -1,0 +1,80 @@
+/* FlowRowContextMenu — a portalled, cursor-anchored row action menu over the app design
+   tokens, so both the dark trading-floor and light appearances are honoured. It layers
+   above every workspace (a raised surface + shadow) and animates in on the compositor
+   (transform + opacity) per the web performance rules. */
+
+.menu {
+  min-width: 15rem;
+  max-width: min(22rem, calc(100vw - 2 * var(--space-4)));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md, 10px);
+  background: var(--bg-raised, var(--bg-surface));
+  border: 1px solid var(--border-subtle, var(--border));
+  box-shadow: var(--shadow-2, var(--shadow-1));
+  z-index: 1000;
+  transform-origin: top left;
+  animation: flow-menu-in 120ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu {
+    animation: none;
+  }
+}
+
+@keyframes flow-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.item {
+  appearance: none;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 8px);
+  background: transparent;
+  color: var(--text-primary);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+}
+
+.item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.itemMain {
+  font: var(--type-callout) / var(--type-callout-lh) var(--font-ui);
+  font-weight: var(--weight-emphasis);
+}
+
+.itemSub {
+  font: var(--type-micro) / 1.3 var(--font-mono);
+  /* text-secondary (not tertiary) so the sub-label clears WCAG AA contrast on the raised
+     menu surface in both appearances. */
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
