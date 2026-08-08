@@ -101,6 +101,21 @@ function spectrumPos(ns: number, dom: { lo: number; hi: number }): number {
   return p < 0 ? 0 : p > 100 ? 100 : p;
 }
 
+// --- live-refresh cadence ----------------------------------------------------
+
+/**
+ * Trailing-debounce for the notification-driven revalidate: a fill storm from the
+ * sub-second FIX sim coalesces into at most ~1 refetch per this window.
+ */
+const REVALIDATE_DEBOUNCE_MS = 750;
+
+/**
+ * The idle poll: latency is a continuously-sampled histogram, so the digest keeps
+ * moving even with no deals booking — refresh on this low cadence so the table stays
+ * fresh independent of notification traffic.
+ */
+const IDLE_REFRESH_MS = 5_000;
+
 // --- column model ------------------------------------------------------------
 
 type SortDir = "asc" | "desc";
@@ -166,6 +181,35 @@ export function LatencyOpsWorkspace(): React.ReactElement {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Live refresh: latency is a continuously-sampled histogram, so give it BOTH a
+  // notification-driven revalidate (trailing-debounced, like the Risk Dashboard drill-
+  // down, so the FIX sim's fill storm coalesces into ≤1 refetch/REVALIDATE_DEBOUNCE_MS)
+  // AND a low-frequency idle poll so the digest stays fresh even when nothing is booking.
+  // The mount effect above owns the FIRST fetch; both timers + the disposer are torn
+  // down on unmount. Best-effort: a transport without the push seam still idle-polls.
+  useEffect(() => {
+    if (!signedIn) return;
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    const revalidate = (): void => {
+      if (debounce !== undefined) clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        debounce = undefined;
+        load();
+      }, REVALIDATE_DEBOUNCE_MS);
+    };
+    const interval = setInterval(load, IDLE_REFRESH_MS);
+    const stream = app.transport.streamNotifications;
+    const dispose =
+      typeof stream === "function"
+        ? stream.call(app.transport, undefined, revalidate)
+        : undefined;
+    return () => {
+      if (debounce !== undefined) clearTimeout(debounce);
+      clearInterval(interval);
+      dispose?.();
+    };
+  }, [app.transport, signedIn, load]);
 
   // Sort a header: same key toggles direction; a new key starts descending (ops reads
   // the worst tail first). The initial (unsorted) state preserves pipeline emit order.

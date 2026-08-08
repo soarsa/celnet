@@ -125,6 +125,12 @@ function metricColumns(axis: string): ColumnDef[] {
   ];
 }
 
+/**
+ * Trailing-debounce for the live revalidate: a fill storm from the sub-second FIX sim
+ * coalesces into at most ~1 refetch per this window rather than one per fill.
+ */
+const REVALIDATE_DEBOUNCE_MS = 750;
+
 /** Compare two sort values; `undefined` always sorts LAST regardless of direction. */
 function compareSort(
   a: number | undefined | string,
@@ -192,6 +198,32 @@ export function ClientFlowWorkspace(): React.ReactElement {
   useEffect(() => {
     load(groupBy);
   }, [load, groupBy]);
+
+  // Live revalidate: refetch the current group-by on every push `Notification`, exactly
+  // as the Risk Dashboard drill-down does — fills mint deals and fire notifications, so
+  // this keeps the flow table live without its own poll. Trailing-debounced so the
+  // sub-second FIX sim's fill storm coalesces into ≤1 refetch/REVALIDATE_DEBOUNCE_MS
+  // instead of one per fill. Re-subscribes when `groupBy` changes so the refetch always
+  // uses the active filter; the mount effect above owns the FIRST fetch (we only refetch
+  // on a frame, never on subscribe). Best-effort: a transport without the push seam (or
+  // one that lacks it) simply doesn't live-refresh.
+  useEffect(() => {
+    if (!signedIn) return;
+    const stream = app.transport.streamNotifications;
+    if (typeof stream !== "function") return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const dispose = stream.call(app.transport, undefined, () => {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        load(groupBy);
+      }, REVALIDATE_DEBOUNCE_MS);
+    });
+    return () => {
+      if (timer !== undefined) clearTimeout(timer);
+      dispose?.();
+    };
+  }, [app.transport, signedIn, groupBy, load]);
 
   // Sort a header: same key toggles direction; a new key starts descending (the
   // desk reads "worst/highest first" for $/mm net and fishing).

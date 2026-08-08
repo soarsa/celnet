@@ -64,12 +64,25 @@ function makeApp(
   byGroup: Partial<Record<FlowGroupBy, ClientFlowMetrics[]>> = {},
 ) {
   const listClientFlowMetrics = vi.fn(async (gb: FlowGroupBy) => byGroup[gb] ?? rows);
+  // A capturing notification seam: the workspace subscribes and refetches (debounced)
+  // on every frame; `emit()` drives a frame so the test can assert the live revalidate.
+  let onNotification: (() => void) | undefined;
+  const streamNotifications = vi.fn(
+    (_scope: unknown, cb: () => void) => {
+      onNotification = cb;
+      return () => {
+        onNotification = undefined;
+      };
+    },
+  );
   return {
     app: {
-      transport: { listClientFlowMetrics },
+      transport: { listClientFlowMetrics, streamNotifications },
       auth: { user: { id: "u", email: "admin@celnet.com" }, isAdmin: true, can: () => true },
     },
     listClientFlowMetrics,
+    streamNotifications,
+    emit: (): void => onNotification?.(),
   };
 }
 
@@ -188,6 +201,67 @@ describe("ClientFlowWorkspace", () => {
       fireEvent.click(screen.getByRole("button", { name: /\$\/mm net/ }));
     });
     expect(bodyRows()).toEqual(["AAA", "CCC", "BBB"]);
+  });
+
+  it("refetches the current group-by on a notification frame (debounced, coalescing a storm)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app, listClientFlowMetrics, emit } = makeApp([metric()]);
+      state.app = app;
+      await act(async () => {
+        render(<ClientFlowWorkspace />);
+      });
+      // Mount did the first fetch (group-by "client"), and the workspace subscribed.
+      expect(listClientFlowMetrics).toHaveBeenCalledTimes(1);
+      expect(listClientFlowMetrics).toHaveBeenLastCalledWith("client");
+
+      // A rapid burst of frames must coalesce into a single trailing-debounced refetch.
+      await act(async () => {
+        emit();
+        emit();
+        emit();
+        vi.advanceTimersByTime(200);
+        emit();
+      });
+      // Still within the 750ms window from the last frame → no refetch yet.
+      expect(listClientFlowMetrics).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(750);
+      });
+      // Exactly one refetch for the whole burst, using the active group-by.
+      expect(listClientFlowMetrics).toHaveBeenCalledTimes(2);
+      expect(listClientFlowMetrics).toHaveBeenLastCalledWith("client");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("tears down the notification subscription and pending debounce on unmount", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app, listClientFlowMetrics, streamNotifications, emit } = makeApp([metric()]);
+      state.app = app;
+      let unmount: () => void = () => {};
+      await act(async () => {
+        ({ unmount } = render(<ClientFlowWorkspace />));
+      });
+      expect(streamNotifications).toHaveBeenCalledTimes(1);
+
+      // A frame arrives, then we unmount before the debounce fires → no late refetch.
+      await act(async () => {
+        emit();
+        vi.advanceTimersByTime(200);
+        unmount();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(1_000);
+      });
+      // Only the mount fetch ran; the pending debounce was cleared on unmount.
+      expect(listClientFlowMetrics).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sorts undefined metrics last regardless of direction", async () => {

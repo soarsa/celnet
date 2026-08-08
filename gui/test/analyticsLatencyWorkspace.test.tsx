@@ -66,12 +66,23 @@ function metrics(stages: LatencyStage[]): LatencyMetrics {
 
 function makeApp(m: LatencyMetrics) {
   const listLatencyMetrics = vi.fn(async () => m);
+  // A capturing notification seam: the workspace subscribes and refetches (debounced)
+  // on every frame; `emit()` drives a frame so the test can assert the live revalidate.
+  let onNotification: (() => void) | undefined;
+  const streamNotifications = vi.fn((_scope: unknown, cb: () => void) => {
+    onNotification = cb;
+    return () => {
+      onNotification = undefined;
+    };
+  });
   return {
     app: {
-      transport: { listLatencyMetrics },
+      transport: { listLatencyMetrics, streamNotifications },
       auth: { user: { id: "u", email: "admin@celnet.com" }, isAdmin: true, can: () => true },
     },
     listLatencyMetrics,
+    streamNotifications,
+    emit: (): void => onNotification?.(),
   };
 }
 
@@ -165,6 +176,69 @@ describe("LatencyOpsWorkspace", () => {
     order = stageOrder();
     expect(order[0]).toContain("Price (pinned core)");
     expect(order[2]).toContain("Ack→fill→book");
+  });
+
+  it("refetches on a notification frame (debounced) and on the idle interval", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app, listLatencyMetrics, emit } = makeApp(metrics([stage()]));
+      state.app = app;
+      await act(async () => {
+        render(<LatencyOpsWorkspace />);
+      });
+      // Mount did the first fetch and the workspace subscribed.
+      expect(listLatencyMetrics).toHaveBeenCalledTimes(1);
+
+      // A burst of frames coalesces into a single trailing-debounced refetch.
+      await act(async () => {
+        emit();
+        emit();
+        vi.advanceTimersByTime(200);
+        emit();
+      });
+      expect(listLatencyMetrics).toHaveBeenCalledTimes(1); // still within the 750ms window
+      await act(async () => {
+        vi.advanceTimersByTime(750);
+      });
+      expect(listLatencyMetrics).toHaveBeenCalledTimes(2);
+
+      // The idle interval keeps refreshing even with no notification traffic (5s cadence).
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+      expect(listLatencyMetrics).toHaveBeenCalledTimes(3);
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+      expect(listLatencyMetrics).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("tears down the subscription, debounce and interval on unmount", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app, listLatencyMetrics, streamNotifications, emit } = makeApp(metrics([stage()]));
+      state.app = app;
+      let unmount: () => void = () => {};
+      await act(async () => {
+        ({ unmount } = render(<LatencyOpsWorkspace />));
+      });
+      expect(streamNotifications).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        emit();
+        vi.advanceTimersByTime(200);
+        unmount();
+      });
+      // No late debounced refetch and no further interval ticks after unmount.
+      await act(async () => {
+        vi.advanceTimersByTime(20_000);
+      });
+      expect(listLatencyMetrics).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows an empty state before sign-in", async () => {
