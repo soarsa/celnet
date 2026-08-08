@@ -243,7 +243,11 @@ export interface StreamSession {
 
 /** The full client surface over the Celnet contract. */
 export interface CelnetTransport {
-  /** Human-readable transport label for the status ribbon (e.g. "mock/replay"). */
+  /**
+   * Human-readable transport identity (e.g. "mock/replay" or "live ws://…"). Surfaced
+   * on the ribbon's `data-transport-seam` attribute (machine-checkable, not visible)
+   * and drives the workspaces' offline banners (`label.startsWith("live")`).
+   */
   readonly label: string;
 
   /**

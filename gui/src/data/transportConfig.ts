@@ -41,7 +41,7 @@ const DEV_WS_URL = "ws://127.0.0.1:8081";
 /** Which transport this session selected, plus a human label for diagnostics. */
 export interface TransportSelection {
   readonly transport: CelnetTransport;
-  /** "mock" or "ws" — the selected mode (the ribbon shows `transport.label`). */
+  /** "mock" or "ws" — the selected mode (the ribbon carries `transport.label` on `data-transport-seam`). */
   readonly mode: "mock" | "ws";
 }
 

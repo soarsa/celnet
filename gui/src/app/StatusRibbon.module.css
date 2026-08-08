@@ -1,11 +1,27 @@
 .ribbon {
   display: flex;
   align-items: center;
+  /* Single-line, constant-height strip. The Shell grid reserves a fixed 28px row
+   * for the ribbon; we pin the element to fill it exactly and forbid wrapping so a
+   * changing live value can never reflow onto a second line and push the canvas
+   * above. Overflow that does not fit is clipped, never wrapped. */
+  height: 100%;
+  min-height: 0;
+  flex-wrap: nowrap;
+  /* Never wrap internally either: every text descendant (clock, separators, build
+   * stamp) inherits nowrap so a squeezed item clips rather than breaking onto a
+   * second line. Overflow that does not fit is clipped. */
+  white-space: nowrap;
+  overflow: hidden;
   gap: var(--space-3);
   padding: 0 var(--space-5);
   border-top: var(--hairline);
   background: oklch(from var(--bg-base) calc(l - 0.01) c h);
   font-size: var(--type-micro);
+  /* Fixed-width digits so ticking numerics (clock, seq, server P99, avg quote,
+   * order p99) keep a constant width and never shift the row. Inherited by every
+   * numeric segment below. */
+  font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
 }
 
@@ -32,11 +48,6 @@
 .trading {
   color: var(--text-primary);
   font-weight: var(--weight-emphasis);
-}
-
-/* Demoted client paint metric — present but visually subordinate. */
-.muted {
-  color: var(--text-tertiary);
 }
 
 .sep {

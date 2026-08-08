@@ -38,11 +38,12 @@ export async function openLive(page: Page): Promise<void> {
   await signIn(page);
   // The shell renders synchronously; wait for the workspace rail to be live.
   await expect(page.getByRole("complementary", { name: "workspaces" })).toBeVisible();
-  // Confirm we are on the LIVE transport: the ribbon's transport-seam label reads
-  // "live ws://…" (the live WsTransport), NOT "mock/replay".
-  const transportLabel = page.locator('[title="transport seam"]');
-  await expect(transportLabel).toBeVisible();
-  await expect(transportLabel).toContainText("ws://");
+  // Confirm we are on the LIVE transport: the ribbon carries the active seam on a
+  // `data-transport-seam` attribute reading "live ws://…" (the live WsTransport),
+  // NOT "mock/replay". The visible seam badge was removed; the attribute remains as
+  // the machine-checkable signal.
+  const ribbon = page.locator("[data-transport-seam]");
+  await expect(ribbon).toHaveAttribute("data-transport-seam", /ws:\/\//);
 }
 
 /**

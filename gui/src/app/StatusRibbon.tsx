@@ -6,18 +6,16 @@
  * tail). These come from the shipped Latency/Ops analytics (`ListLatencyMetrics`),
  * polled on a low-frequency timer and gated on `view_analytics` (the same gate as
  * the Latency workspace) so a desk without analytics never sees a permanently-"—"
- * clutter and never hammers a server-denied RPC. The client-side P99 *render* time
- * (a paint metric, principle 10) is kept but demoted behind the trading numbers.
+ * clutter and never hammers a server-denied RPC.
  *
  * It also surfaces the SERVER's own observability — distilled from the live
  * heartbeats (`StreamApi.observability`): the drain-side price-compute p99, the
  * exact ring conflation-drop count, and the surface-version / correlation
  * provenance echo. These are honest server measurements (the ribbon shows "—"
- * until the first beat lands — never a fabricated zero), complementing the
- * client-side render p99.
+ * until the first beat lands — never a fabricated zero).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useApp } from "./AppContext";
 import { useSecondClock } from "../hooks/useClock";
 import type { ServerObservability } from "../hooks/useStreamSession";
@@ -151,43 +149,6 @@ export function TradingLatencyItems({ avgQuoteNs, orderP99Ns }: TradingLatency):
   );
 }
 
-/** A rolling P99 of inter-frame render times, computed off a small ring. */
-function useRenderP99(): number {
-  const samples = useRef<number[]>([]);
-  const last = useRef<number>(performance.now());
-  const [p99, setP99] = useState(0);
-
-  useEffect(() => {
-    let raf = 0;
-    let mounted = true;
-    const loop = () => {
-      if (!mounted) return;
-      const now = performance.now();
-      const dt = now - last.current;
-      last.current = now;
-      const ring = samples.current;
-      ring.push(dt);
-      if (ring.length > 120) ring.shift();
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    const id = setInterval(() => {
-      const ring = [...samples.current].sort((a, b) => a - b);
-      if (ring.length > 4) {
-        const idx = Math.min(ring.length - 1, Math.floor(ring.length * 0.99));
-        setP99(ring[idx] ?? 0);
-      }
-    }, 1000);
-    return () => {
-      mounted = false;
-      cancelAnimationFrame(raf);
-      clearInterval(id);
-    };
-  }, []);
-
-  return p99;
-}
-
 /** Compact UTC stamp "YYYY-MM-DD HH:MM:SSZ" from the build-time ISO string. */
 function fmtBuildTime(iso: string): string {
   const d = new Date(iso);
@@ -217,8 +178,8 @@ export function ServerObservabilityItems({
       <span className={styles.sep} aria-hidden>
         ·
       </span>
-      {/* Server price-compute p99 (drain-side HdrHistogram), distinct from the
-          client render p99 — the trader sees both ends of the latency budget. */}
+      {/* Server price-compute p99 (drain-side HdrHistogram) — the server end of
+          the latency budget, off the pinned hot core. */}
       <span
         className={`num ${styles.item}`}
         data-testid="server-p99"
@@ -263,7 +224,6 @@ export function ServerObservabilityItems({
 export function StatusRibbon(): React.ReactElement {
   const app = useApp();
   const now = useSecondClock();
-  const p99 = useRenderP99();
 
   // Gate the trading-latency readout on `view_analytics` (the same gate as the
   // Latency/Ops workspace) — held on EITHER asset admits (the server's cross-product
@@ -280,7 +240,10 @@ export function StatusRibbon(): React.ReactElement {
   const allHealthy = resyncing === 0;
 
   return (
-    <footer className={styles.ribbon}>
+    // `data-transport-seam` carries the active transport identity (e.g. "mock/replay"
+    // or "live ws://…") for machine checks (e2e live-vs-mock assertion) WITHOUT the
+    // visible seam badge — the trader sees a clean ribbon; tooling still reads the seam.
+    <footer className={styles.ribbon} data-transport-seam={app.transport.label}>
       <span className={`${styles.item} ${allHealthy ? styles.ok : styles.warn}`}>
         <span className={styles.dot} aria-hidden>
           {allHealthy ? "◉" : "◐"}
@@ -311,30 +274,13 @@ export function StatusRibbon(): React.ReactElement {
 
       <span className={styles.spacer} />
 
-      {/* Headline TRADING latency (the point of the ribbon's right edge) — first in
-          the right cluster, ahead of the transport badge and the demoted render p99.
-          Only rendered for a `view_analytics` caller (see `canViewLatency`). */}
+      {/* Headline TRADING latency (the point of the ribbon's right edge) — the
+          right cluster, ahead of the clock. Trailing separator is emitted by the
+          component. Only rendered for a `view_analytics` caller (see `canViewLatency`). */}
       {canViewLatency && (
         <TradingLatencyItems avgQuoteNs={latency.avgQuoteNs} orderP99Ns={latency.orderP99Ns} />
       )}
 
-      <span className={styles.item} title="transport seam">
-        {app.transport.label}
-      </span>
-      <span className={styles.sep} aria-hidden>
-        ·
-      </span>
-      {/* Client-side PAINT metric — kept as an instrument (principle 10) but demoted
-          (muted) behind the trading latencies: it measures the browser, not the desk. */}
-      <span
-        className={`num ${styles.item} ${styles.muted}`}
-        title="P99 inter-frame RENDER time — a client paint metric (target ≤8.3ms @120Hz, ceiling 16.6ms), distinct from the server/trading latencies"
-      >
-        render p99 {p99.toFixed(1)}ms
-      </span>
-      <span className={styles.sep} aria-hidden>
-        ·
-      </span>
       <span className={`num ${styles.clock}`}>◷ {fmtClock(now)}</span>
       <span className={styles.sep} aria-hidden>
         ·

@@ -4,7 +4,8 @@
  * mocked (no server): the headline **avg quote** + **order p99** show real values
  * from a stubbed `listLatencyMetrics` (incl. the mock fixture — parity), degrade to
  * "—" on absent/denied, and are gated on `view_analytics` (hidden — and NOT polled —
- * for a caller without it). The demoted client render p99 stays for everyone.
+ * for a caller without it). The transport (mock/replay) and client render-p99 segments
+ * were removed from the ribbon; the build stamp (version + date) stays for everyone.
  */
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -182,14 +183,20 @@ describe("StatusRibbon trading-latency readout", () => {
     expect(screen.queryByTestId("avg-quote")).toBeNull();
     expect(screen.queryByTestId("order-p99")).toBeNull();
     expect(listLatencyMetrics).not.toHaveBeenCalled();
-    // the client render p99 stays for everyone
-    expect(screen.getByText(/render p99/)).toBeInTheDocument();
   });
 
-  it("keeps the demoted client render p99 alongside the trading numbers", async () => {
+  it("removes the render-p99 and transport (mock/replay) segments, keeps version + date", async () => {
     const { app } = makeApp({ result: metrics([stage("stream_publish"), stage("book")]) });
     await renderRibbon(app);
     const footer = screen.getByRole("contentinfo");
-    expect(within(footer).getByText(/render p99/)).toBeInTheDocument();
+    // the two removed segments are gone
+    expect(within(footer).queryByText(/render p99/)).toBeNull();
+    expect(within(footer).queryByText(/mock\/replay/)).toBeNull();
+    // the build stamp (version + date) remains
+    expect(within(footer).getByText(/celnet test/)).toBeInTheDocument();
+    expect(within(footer).getByText(/1970-01-01/)).toBeInTheDocument();
+    // the headline trading latencies remain
+    expect(within(footer).getByTestId("avg-quote")).toBeInTheDocument();
+    expect(within(footer).getByTestId("order-p99")).toBeInTheDocument();
   });
 });
