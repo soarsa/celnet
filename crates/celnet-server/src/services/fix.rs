@@ -62,10 +62,11 @@ use celnet_fix::messages::{self, EXEC_FILLED, EXEC_REJECTED, ExecReportParams, Q
 use celnet_fix::session::{InMemoryStore, Role, Session, SessionAction, SessionConfig};
 use celnet_fix::transport::{FrameReader, write_frame};
 
-use celnet_proto::{CcyPair, Instrument, MarketContext, Quantity, Side, StrikeOrDelta, Vanilla};
 use celnet_proto::{
-    CurveSet, DeskQuote, ManualInterventionReason, OisInstrument, RatesInstrument, rates_instrument,
+    BondInstrument, CurveSet, DeskQuote, ManualInterventionReason, OisInstrument, RatesInstrument,
+    rates_instrument,
 };
+use celnet_proto::{CcyPair, Instrument, MarketContext, Quantity, Side, StrikeOrDelta, Vanilla};
 use celnet_proto::{instrument, strike_or_delta};
 
 use celnet_types::{OptionType, Tenor};
@@ -74,6 +75,7 @@ use celnet_acceptance::AcceptanceDecision;
 
 use crate::clock::Clock;
 use crate::config::fix_connections::AcceptorKind;
+use crate::config::identity::{DEFAULT_BOOK_SKEW_WEIGHT, PricingSourceMode};
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::services::clicktrade::{
@@ -145,13 +147,14 @@ struct RfsSubscription {
     symbol: Vec<u8>,
     /// The RFQ notional carried as the streamed quote size.
     notional: f64,
-    /// The static P0 par rate this stream oscillates a small demo movement around.
-    base_par: f64,
+    /// The pricing inputs to RE-PRICE this line each tick off the CURRENT live curve when
+    /// no aggregated book covers it — so a live curve re-mark moves the stream (no
+    /// fabricated movement). The composite path never consults this (it keys off
+    /// [`symbol`](Self::symbol)); this drives only the curve fallback.
+    line: RfsLine,
     /// The desk history row id this subscription opened, so a lift of any streamed update
     /// books it as a completed deal (`None` when the venue is not desk-routed).
     request_id: Option<String>,
-    /// A monotonic tick ordinal driving the deterministic (no wall-clock/RNG) movement.
-    tick: u64,
     /// The most recent streamed quote's `QuoteID(117)`.
     last_quote_id: Option<Vec<u8>>,
     /// The immediately-superseded quote's `QuoteID(117)`, kept liftable for ONE extra
@@ -159,6 +162,26 @@ struct RfsSubscription {
     /// in the same instant the next tick supersedes it) still fills. Retired the tick
     /// after — 2-deep, so the live-quote table stays bounded (two entries per stream).
     prev_quote_id: Option<Vec<u8>>,
+}
+
+/// The pricing inputs a live RFS subscription retains so each re-price tick can
+/// reconstruct the line off the CURRENT live curve (the honest alternative to
+/// oscillating a frozen base rate — a curve re-mark then moves the stream). Only the
+/// **curve fallback** uses this; the composite path re-prices off the book by symbol.
+#[derive(Clone, Debug)]
+enum RfsLine {
+    /// An OIS line: re-priced as the par rate of `tenor_years` on the live curve.
+    Ois { tenor_years: u32 },
+    /// A cash-bond line: re-priced as the clean price off the live curve.
+    Bond { instrument: Box<BondInstrument> },
+}
+
+impl RfsLine {
+    /// Whether this line is a cash bond (the product the [`PricingSourceMode::ProductSplit`]
+    /// policy routes to the composite).
+    fn is_bond(&self) -> bool {
+        matches!(self, RfsLine::Bond { .. })
+    }
 }
 
 /// The shared, immutable pricing context every FIX session on this edge prices and
@@ -845,7 +868,10 @@ impl FixSession {
             return;
         }
         let side = rates_side_to_side(rfq.side);
-        let curve = crate::rates_pricing::default_usd_sofr_curve_set();
+        // The CURRENT live curve (operator's most recent `MarkCurve`, else the static P0
+        // default) — desk display + the curve arm of the pricing-source policy both price
+        // off it, so editing SOFR pillars moves this venue's OIS quotes.
+        let curve = self.live_rates_curve();
         // Classify the RFQ (exception-vs-routine). An admitted, priceable on-the-run clip
         // is auto-quoted; a routine large clip is routed quietly; an unknown security /
         // unconfigured tenor / pricing failure is routed as an ALERT-worthy manual
@@ -856,7 +882,7 @@ impl FixSession {
         // telemetry hub. The FIX session runs on the async edge (allocation-OK), never the
         // pinned pricing core (guardrail 11).
         let price_t0 = std::time::Instant::now();
-        let admission = self.classify_ois_rfq(&rfq, intent, frame);
+        let admission = self.classify_ois_rfq(&rfq, intent, frame, &curve);
         self.ctx.link.telemetry().record_edge(
             celnet_observability::OpKind::RfqQuote,
             u64::try_from(price_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
@@ -923,9 +949,10 @@ impl FixSession {
                         req_id: req_id.to_vec(),
                         symbol: symbol.to_vec(),
                         notional: rfq.notional,
-                        base_par: mid,
+                        line: RfsLine::Ois {
+                            tenor_years: rfq.tenor_years,
+                        },
                         request_id,
-                        tick: 0,
                         last_quote_id,
                         prev_quote_id: None,
                     },
@@ -945,16 +972,24 @@ impl FixSession {
         rfq: &dialect_rates::RatesRfq,
         intent: RatesIntent,
         frame: &FrameCursor<'_>,
+        curve: &CurveSet,
     ) -> RatesAdmission {
         // Only touch the engine when the RFQ clears the cheap policy gates (known symbol,
         // on-the-run tenor, within the clip cap); otherwise the pure classifier reports the
         // exact reason without pricing. A cleared-but-unpriceable RFQ reports a genuine
-        // pricing failure (engine `Err`), distinct from an off-the-run tenor.
+        // pricing failure (engine `Err`), distinct from an off-the-run tenor. The gated-in
+        // price is sourced under this session's [`PricingSourceMode`]: the aggregated-book
+        // composite drives the INITIAL quote (not just the RFS re-price) when the policy
+        // selects it and a book covers the symbol, else the live curve. For a plain OIS
+        // curve no book covers it, so every fallback mode resolves to the curve — an
+        // ungrouped/`CurveOnly` session is byte-identical to before.
         let priced = if is_known_rates_symbol(&rfq.symbol)
             && self.ctx.auto_quote.tenors.contains(&rfq.tenor_years)
             && rfq.notional <= self.ctx.auto_quote.max_notional
         {
-            rates_line(frame, Some(intent)).ok()
+            self.priced_under_policy(&rfq.symbol, rfq.notional, false, || {
+                rates_line(frame, Some(intent), curve).ok()
+            })
         } else {
             None
         };
@@ -982,7 +1017,13 @@ impl FixSession {
     /// read locks) respects guardrail 11.
     fn composite_two_way(&self, symbol: &[u8], size: f64) -> Option<PricedLine> {
         let hub = self.ctx.aggregation_hub.as_ref()?;
-        let instrument_id = std::str::from_utf8(symbol).ok()?;
+        // Key off the FIX `Symbol(55)` TRIMMED — the book publishes each line under the
+        // canonical `instrument_id` the LP fed (a bond's CUSIP / a govvie slug), and the
+        // FIX client sends that same id as the symbol; the only benign divergence is
+        // padding whitespace, which we strip here so a covered book is actually found.
+        // (There is no case-fold: CUSIPs are case-significant and slugs are lower-case,
+        // so folding could conflate distinct ids.)
+        let instrument_id = std::str::from_utf8(symbol).ok()?.trim();
         let resolver = hub.pricing_groups();
         let desk = self.ctx.desk.trim();
         let comp = match resolver
@@ -994,18 +1035,111 @@ impl FixSession {
                 group.rfq_effective_pipeline(),
             ),
             None => hub.resolve_rfq_composite(instrument_id),
-        }?;
-        Some(PricedLine {
-            bid: comp.best_bid,
-            offer: comp.best_offer,
-            size,
-        })
+        };
+        match comp {
+            Some(comp) => Some(PricedLine {
+                bid: comp.best_bid,
+                offer: comp.best_offer,
+                size,
+            }),
+            None => {
+                // Distinguish an UNFED book (covered but no live line / below quorum /
+                // degenerate) from a KEY-MISMATCH (no enabled book's scope admits the id)
+                // — the current silent `None` is a diagnosis trap. Off the pinned pricer
+                // (guardrail 11); `debug` so it never spams a production `info` stream.
+                tracing::debug!(
+                    class = celnet_observability::LogClass::Pricing.label(),
+                    connection_id = %self.ctx.connection_id,
+                    instrument_id,
+                    reason = hub.diagnose_composite_miss(instrument_id).label(),
+                    "no aggregated-book composite for FIX symbol — falling back to curve",
+                );
+                None
+            }
+        }
+    }
+
+    /// This connection's resolved **pricing-source policy** `(mode, book_skew_weight)`:
+    /// the mode + blend weight of the pricing group this FIX session resolves to (by
+    /// connection id, then desk fallback), or the platform default when no hub is wired
+    /// or no group claims this session. Read off the pinned pricer (guardrail 11) — a
+    /// short read-lock on the hub's cached resolver.
+    fn pricing_policy(&self) -> (PricingSourceMode, f64) {
+        let Some(hub) = self.ctx.aggregation_hub.as_ref() else {
+            return (PricingSourceMode::default(), DEFAULT_BOOK_SKEW_WEIGHT);
+        };
+        let resolver = hub.pricing_groups();
+        let desk = self.ctx.desk.trim();
+        match resolver
+            .resolve_for_connection(&self.ctx.connection_id, (!desk.is_empty()).then_some(desk))
+        {
+            Some(group) => (group.pricing_source_mode, group.book_skew_weight),
+            None => (PricingSourceMode::default(), DEFAULT_BOOK_SKEW_WEIGHT),
+        }
+    }
+
+    /// Price a rates/bond line under this session's [`PricingSourceMode`], the seam that
+    /// makes the aggregated book drive the price **from the initial quote** — not just the
+    /// RFS re-price tick. `curve_line` is the internal-curve two-way (lazily evaluated, so
+    /// a mode that never needs the curve never prices it); `is_bond` selects the product
+    /// arm for [`PricingSourceMode::ProductSplit`]. Returns `None` only when the selected
+    /// source(s) all fail to produce a well-formed two-way (e.g. an unpriceable tenor with
+    /// no covering book) — the caller then declines/quotes nothing, never a fabricated
+    /// price. Runs on the async FIX edge, never the pinned pricer (guardrail 11).
+    fn priced_under_policy(
+        &self,
+        symbol: &[u8],
+        size: f64,
+        is_bond: bool,
+        curve_line: impl FnOnce() -> Option<PricedLine>,
+    ) -> Option<PricedLine> {
+        let (mode, weight) = self.pricing_policy();
+        match mode {
+            PricingSourceMode::CurveOnly => curve_line(),
+            PricingSourceMode::CompositeFirstCurveFallback => {
+                self.composite_two_way(symbol, size).or_else(curve_line)
+            }
+            PricingSourceMode::ProductSplit => {
+                if is_bond {
+                    self.composite_two_way(symbol, size).or_else(curve_line)
+                } else {
+                    curve_line()
+                }
+            }
+            PricingSourceMode::CurveAnchoredBookSkew => {
+                let curve = curve_line();
+                match (self.composite_two_way(symbol, size), curve) {
+                    // Both present: curve backbone, mid skewed `weight` of the way toward
+                    // the composite, spread taken from the (real-liquidity) composite.
+                    (Some(comp), Some(curve)) => {
+                        Some(blend_curve_toward_composite(&curve, &comp, weight))
+                    }
+                    // Only one source priced: use it (no book ⇒ pure curve; no curve ⇒
+                    // the composite is still a real price, never fabricated).
+                    (None, Some(curve)) => Some(curve),
+                    (Some(comp), None) => Some(comp),
+                    (None, None) => None,
+                }
+            }
+        }
+    }
+
+    /// The live rates curve this FIX session prices off: the operator's most recent
+    /// `MarkCurve` for the supported currency (so editing SOFR pillars in the GUI moves
+    /// outbound OIS/bond FIX quotes), or the static P0 default when none has been marked.
+    /// A snapshot clone taken off the pinned pricer (guardrail 11).
+    fn live_rates_curve(&self) -> CurveSet {
+        self.ctx
+            .surface_book
+            .live_curve(crate::rates_pricing::SUPPORTED_CURRENCY)
+            .unwrap_or_else(crate::rates_pricing::default_usd_sofr_curve_set)
     }
 
     /// Re-price every live RFS subscription and return the fresh two-way `Quote(S)` frames
-    /// to push. Each subscription is priced off the aggregated-book composite through this
-    /// connection's pricing group ([`Self::composite_two_way`]) when a book covers it, and
-    /// otherwise off the P0 curve with a small deterministic demo movement. Each update
+    /// to push. Each subscription is priced under this connection's
+    /// [`PricingSourceMode`](Self::priced_under_policy): the aggregated-book composite
+    /// (group-tiered) where a book covers it, else the **current live curve** re-resolved
+    /// each tick (so a `MarkCurve` moves the stream — no fabricated movement). Each update
     /// retires the subscription's prior live quote so only the latest stays liftable,
     /// keeping the live-quote table bounded to one entry per subscription. Driven by the
     /// session loop's streaming ticker; returns an empty vec when no subscription is live.
@@ -1017,23 +1151,41 @@ impl FixSession {
         if !self.ctx.pricing_control.outbound_enabled() {
             return Vec::new();
         }
+        // The operator's most recent curve, snapshot once for this whole tick (every
+        // subscription that falls back to the curve prices off the same mark).
+        let curve = self.live_rates_curve();
         let mut frames = Vec::new();
         // Snapshot the keys so the loop can re-borrow `self` (live table, quote minter)
         // between subscriptions while mutating the subscription set in place.
         let keys: Vec<Vec<u8>> = self.rfs.keys().cloned().collect();
         for key in keys {
-            let (req_id, symbol, notional, base_par, request_id, tick, to_retire, superseded) = {
+            let (req_id, symbol, notional, request_id, line) = {
                 let Some(sub) = self.rfs.get_mut(&key) else {
                     continue;
                 };
-                sub.tick += 1;
                 (
                     sub.req_id.clone(),
                     sub.symbol.clone(),
                     sub.notional,
-                    sub.base_par,
                     sub.request_id.clone(),
-                    sub.tick,
+                    sub.line.clone(),
+                )
+            };
+            // Price under the session policy: composite where a book covers the streamed
+            // instrument (design §5), else the current live curve re-priced from the
+            // retained line inputs. Compute BEFORE retiring/superseding so a tick that
+            // cannot price (e.g. a re-marked curve now missing this tenor) leaves the
+            // existing live quotes untouched rather than blanking the stream.
+            let Some(priced) = self.priced_under_policy(&symbol, notional, line.is_bond(), || {
+                curve_line_for(&line, &curve, notional)
+            }) else {
+                continue;
+            };
+            let (to_retire, superseded) = {
+                let Some(sub) = self.rfs.get_mut(&key) else {
+                    continue;
+                };
+                (
                     sub.prev_quote_id.take(), // 2 ticks old — safe to retire now
                     sub.last_quote_id.take(), // 1 tick old — keep liftable one more tick
                 )
@@ -1043,21 +1195,6 @@ impl FixSession {
             if let Some(q) = to_retire {
                 self.live.remove(&q);
             }
-            // Prefer the aggregated-book composite (this connection's group-tiered two-way)
-            // when a book covers the streamed instrument — the composite-based + tiered
-            // outbound seam (design §5). Fall back to the standalone P0 demo re-price for an
-            // instrument no book covers (e.g. a plain OIS curve) or when no hub is wired.
-            let priced = self
-                .composite_two_way(&symbol, notional)
-                .unwrap_or_else(|| {
-                    let moved_par = rfs_streamed_rate(base_par, tick);
-                    let (bid, offer) = dialect_rates::two_way_rates(moved_par, RATES_HALF_SPREAD);
-                    PricedLine {
-                        bid,
-                        offer,
-                        size: notional,
-                    }
-                });
             let quote_id = self.emit_two_way_quote(
                 st,
                 &req_id,
@@ -1172,17 +1309,25 @@ impl FixSession {
         if !subscription_matches_intent(intent, rfq.subscription) {
             return;
         }
-        let curve = crate::rates_pricing::default_usd_sofr_curve_set();
+        // The CURRENT live curve (operator's most recent `MarkCurve`, else static P0) — the
+        // curve arm of the pricing-source policy + the desk display curve.
+        let curve = self.live_rates_curve();
         // Classify (bond arm has no whole-year tenor to gate, so the clip cap is the only
         // routine route): over the cap ⇒ routed quietly to the desk; within the cap and
         // priceable ⇒ auto-quote; within the cap but the engine cannot price it (e.g. a
-        // maturity that does not resolve) ⇒ an ALERT-worthy pricing failure.
+        // maturity that does not resolve) ⇒ an ALERT-worthy pricing failure. The gated-in
+        // price is sourced under this session's [`PricingSourceMode`]: a bond is the arm an
+        // aggregated book actually covers, so the composite drives the INITIAL quote (not
+        // just the RFS re-price) when the policy selects it and a book covers the symbol,
+        // else the live curve.
         let admission = if rfq.notional > self.ctx.auto_quote.max_notional {
             RatesAdmission::RoutedToDesk
         } else {
-            match bond_line(frame, Some(intent)) {
-                Ok(priced) => RatesAdmission::Auto(priced),
-                Err(()) => RatesAdmission::Manual(ManualInterventionReason::PricingFailure),
+            match self.priced_under_policy(symbol, rfq.notional, true, || {
+                bond_line(frame, Some(intent), &curve).ok()
+            }) {
+                Some(priced) => RatesAdmission::Auto(priced),
+                None => RatesAdmission::Manual(ManualInterventionReason::PricingFailure),
             }
         };
         // Record the inbox row first so its id can ride an auto-quote (a lift then books
@@ -1190,7 +1335,6 @@ impl FixSession {
         let counterparty = self.display_counterparty(frame);
         let request_id = self.record_bond_rfq(&rfq, &counterparty, &curve, &admission);
         if let RatesAdmission::Auto(priced) = &admission {
-            let mid = 0.5 * (priced.bid + priced.offer);
             // Firm-wide OUTBOUND kill-switch: suppress the outbound `Quote(S)` while halted
             // (the desk-inbox row above already recorded it); on an RFS venue the
             // subscription is STILL registered so streaming resumes from live on re-enable.
@@ -1225,9 +1369,10 @@ impl FixSession {
                         req_id: req_id.to_vec(),
                         symbol: symbol.to_vec(),
                         notional: rfq.notional,
-                        base_par: mid,
+                        line: RfsLine::Bond {
+                            instrument: Box::new(rfq.instrument),
+                        },
                         request_id,
-                        tick: 0,
                         last_quote_id,
                         prev_quote_id: None,
                     },
@@ -1573,23 +1718,26 @@ impl FixSession {
         //
         // Either way the rate-valued two-way line flows through the SAME token / Quote
         // / lift / fill machinery as an FX option line.
+        // The CURRENT live curve (operator's most recent `MarkCurve`, else static P0) so
+        // this content-detect rates path also tracks live SOFR pillar edits (item C).
+        let curve = self.live_rates_curve();
         if let Some(intent) = rates_intent_for_kind(self.ctx.kind) {
             // A rates line has no canonical-vanilla risk leaf ⇒ no pre-trade template.
             // The bond arm is selected by `SecurityType(167)=BOND`; every other rates
             // request is the OIS arm.
             if frame.get(167) == Some(dialect_rates::SEC_TYPE_BOND) {
-                return bond_line(frame, Some(intent)).map(|line| (line, None));
+                return bond_line(frame, Some(intent), &curve).map(|line| (line, None));
             }
-            return rates_line(frame, Some(intent)).map(|line| (line, None));
+            return rates_line(frame, Some(intent), &curve).map(|line| (line, None));
         }
         // The FX-options / legacy-demo acceptor still content-detects a fixed-income
         // request by `SecurityType(167)` (BOND before OIS), so a mixed acceptor prices
         // cash bonds and OIS alongside FX options.
         if frame.get(167) == Some(dialect_rates::SEC_TYPE_BOND) {
-            return bond_line(frame, None).map(|line| (line, None));
+            return bond_line(frame, None, &curve).map(|line| (line, None));
         }
         if frame.get(167) == Some(dialect_rates::SEC_TYPE_OIS) {
-            return rates_line(frame, None).map(|line| (line, None));
+            return rates_line(frame, None, &curve).map(|line| (line, None));
         }
 
         // The vol-time in years carried by the dialect (fully wire-specified, no date
@@ -1692,21 +1840,65 @@ const RFS_STREAM_INTERVAL_SECS: u64 = 5;
 const RFS_STREAM_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(RFS_STREAM_INTERVAL_SECS);
 
-/// The demo movement amplitude a streamed rate oscillates around its static P0 par —
-/// ±2bp, a realistic intraday wiggle that keeps the live stream visibly moving without
-/// misrepresenting the curve level.
-const RFS_MOVE_AMPLITUDE: f64 = 0.0002;
+/// Price a retained [`RfsLine`] off `curve` to the two-way its arm centres a market on —
+/// an OIS around its par rate ([`crate::rates_pricing::par_rate_for`], split
+/// [`RATES_HALF_SPREAD`]) or a cash bond around its clean price
+/// ([`crate::rates_pricing::quote_bond`], split [`BOND_HALF_SPREAD`]) — with `notional`
+/// as the quote size. The RFS re-price fallback: because `curve` is the CURRENT live
+/// curve, a re-mark moves the stream, and an unpriceable line (`Err`) yields `None` so the
+/// ticker skips it rather than emitting a bad price. Mirrors [`rates_line`] / [`bond_line`]
+/// exactly (the same engine bodies), differing only in that the inputs are retained on the
+/// subscription rather than re-decoded from a frame.
+fn curve_line_for(line: &RfsLine, curve: &CurveSet, notional: f64) -> Option<PricedLine> {
+    match line {
+        RfsLine::Ois { tenor_years } => {
+            let par = crate::rates_pricing::par_rate_for(curve, *tenor_years).ok()?;
+            let (bid, offer) = dialect_rates::two_way_rates(par, RATES_HALF_SPREAD);
+            Some(PricedLine {
+                bid,
+                offer,
+                size: notional,
+            })
+        }
+        RfsLine::Bond { instrument } => {
+            let quote = crate::rates_pricing::quote_bond(instrument, curve).ok()?;
+            let (bid, offer) = dialect_rates::two_way_rates(quote.clean_price, BOND_HALF_SPREAD);
+            Some(PricedLine {
+                bid,
+                offer,
+                size: notional,
+            })
+        }
+    }
+}
 
-/// A deterministic small oscillation of a streamed par rate driven by the subscription
-/// tick ordinal — a triangle wave in `[-1, 1]` over an 8-tick period, scaled by
-/// [`RFS_MOVE_AMPLITUDE`]. Pure arithmetic (no wall-clock, no RNG, no libm), so the
-/// stream is reproducible and stays off the pricing hot path while looking alive.
-fn rfs_streamed_rate(base_par: f64, tick: u64) -> f64 {
-    const PERIOD: u64 = 8;
-    let phase = (tick % PERIOD) as f64 / PERIOD as f64; // [0, 1)
-    let saw = 2.0 * phase - 1.0; // [-1, 1)
-    let triangle = 1.0 - 2.0 * saw.abs(); // [-1, 1], peak at phase 0.5
-    base_par + RFS_MOVE_AMPLITUDE * triangle
+/// The [`PricingSourceMode::CurveAnchoredBookSkew`] blend: the internal `curve` two-way is
+/// the backbone, its mid pulled a fraction `w ∈ [0, 1]` of the way toward the composite
+/// mid, and the half-spread taken from the (real-liquidity) composite. Precisely:
+///
+/// ```text
+///   curve_mid = 0.5·(curve.bid + curve.offer)
+///   comp_mid  = 0.5·(comp.bid  + comp.offer)
+///   skew_mid  = curve_mid + w·(comp_mid − curve_mid)   // convex blend, bounded by the gap
+///   half      = 0.5·(comp.offer − comp.bid)            // composite spread
+///   bid,offer = skew_mid ∓ half
+/// ```
+///
+/// `w` is clamped to `[0, 1]` (also validated at the admin write), so `w = 0` is the pure
+/// curve mid, `w = 1` the pure composite mid, and the move can never overshoot the
+/// curve→composite gap. The result is non-crossed because the composite is non-crossed
+/// (`half ≥ 0`, guaranteed by the aggregation degenerate-composite guard).
+fn blend_curve_toward_composite(curve: &PricedLine, comp: &PricedLine, w: f64) -> PricedLine {
+    let w = w.clamp(0.0, 1.0);
+    let curve_mid = 0.5 * (curve.bid + curve.offer);
+    let comp_mid = 0.5 * (comp.bid + comp.offer);
+    let skew_mid = curve_mid + w * (comp_mid - curve_mid);
+    let half = 0.5 * (comp.offer - comp.bid);
+    PricedLine {
+        bid: skew_mid - half,
+        offer: skew_mid + half,
+        size: curve.size,
+    }
 }
 
 /// The rates request intent a fixed-income acceptor serves: a one-shot RFQ vs a
@@ -1770,15 +1962,21 @@ fn rates_side_to_side(side: dialect_rates::RatesSide) -> Side {
     }
 }
 
-fn rates_line(frame: &FrameCursor<'_>, expected: Option<RatesIntent>) -> Result<PricedLine, ()> {
+/// Price an inbound OIS RFQ to a two-way **rate** line off `curve` (the caller passes the
+/// current live curve, so editing SOFR pillars moves the quote). Split
+/// [`RATES_HALF_SPREAD`] either side of the par rate, with the RFQ notional as the size.
+fn rates_line(
+    frame: &FrameCursor<'_>,
+    expected: Option<RatesIntent>,
+    curve: &CurveSet,
+) -> Result<PricedLine, ()> {
     let rfq = dialect_rates::decode_rates_rfq(frame).map_err(|_| ())?;
     if let Some(intent) = expected
         && !subscription_matches_intent(intent, rfq.subscription)
     {
         return Err(());
     }
-    let curve = crate::rates_pricing::default_usd_sofr_curve_set();
-    let par = crate::rates_pricing::par_rate_for(&curve, rfq.tenor_years).map_err(|_| ())?;
+    let par = crate::rates_pricing::par_rate_for(curve, rfq.tenor_years).map_err(|_| ())?;
     let (bid, offer) = dialect_rates::two_way_rates(par, RATES_HALF_SPREAD);
     Ok(PricedLine {
         bid,
@@ -1807,15 +2005,18 @@ use crate::rates_pricing::BOND_RFQ_HALF_SPREAD as BOND_HALF_SPREAD;
 /// connection (`Some`), or `None` for the content-detected path (which imposes no `263`
 /// constraint). When set, an inbound subscription type that does not match the intent is
 /// refused.
-fn bond_line(frame: &FrameCursor<'_>, expected: Option<RatesIntent>) -> Result<PricedLine, ()> {
+fn bond_line(
+    frame: &FrameCursor<'_>,
+    expected: Option<RatesIntent>,
+    curve: &CurveSet,
+) -> Result<PricedLine, ()> {
     let rfq = dialect_rates::decode_bond_rfq(frame).map_err(|_| ())?;
     if let Some(intent) = expected
         && !subscription_matches_intent(intent, rfq.subscription)
     {
         return Err(());
     }
-    let curve = crate::rates_pricing::default_usd_sofr_curve_set();
-    let quote = crate::rates_pricing::quote_bond(&rfq.instrument, &curve).map_err(|_| ())?;
+    let quote = crate::rates_pricing::quote_bond(&rfq.instrument, curve).map_err(|_| ())?;
     let (bid, offer) = dialect_rates::two_way_rates(quote.clean_price, BOND_HALF_SPREAD);
     Ok(PricedLine {
         bid,
@@ -1985,6 +2186,8 @@ mod tests {
             esp_pipeline: flat_50.clone(),
             rfq_pipeline: flat_50,
             share_pipeline: false,
+            pricing_source_mode: PricingSourceMode::default(),
+            book_skew_weight: DEFAULT_BOOK_SKEW_WEIGHT,
             enabled: true,
         });
         hub.reconcile(&store);
@@ -2281,21 +2484,76 @@ mod tests {
         assert_eq!(rates_side_to_side(RatesSide::TwoWay), Side::TwoWay);
     }
 
-    /// The streamed RFS rate oscillates a small bounded movement around the static P0 par:
-    /// deterministic (same tick ⇒ same rate), centred, within ±the amplitude, and actually
-    /// moving — the wiggle that makes the live stream visibly alive without misquoting the
-    /// curve level.
+    /// The [`PricingSourceMode::CurveAnchoredBookSkew`] blend — a worked numerical example
+    /// plus its defining properties. Curve two-way `[0.0400, 0.0440]` (mid 0.0420, half
+    /// 0.0020); composite `[0.0426, 0.0434]` (mid 0.0430, half 0.0004). The skew takes the
+    /// COMPOSITE half-spread and pulls the mid `w` of the way from the curve mid toward the
+    /// composite mid.
     #[test]
-    fn rfs_streamed_rate_oscillates_within_amplitude() {
-        let base = 0.0405;
-        for tick in 0..64u64 {
-            let r = rfs_streamed_rate(base, tick);
-            assert!((r - base).abs() <= RFS_MOVE_AMPLITUDE + 1e-12);
+    fn curve_anchored_book_skew_blends_precisely() {
+        let curve = PricedLine {
+            bid: 0.0400,
+            offer: 0.0440,
+            size: 5_000_000.0,
+        };
+        let comp = PricedLine {
+            bid: 0.0426,
+            offer: 0.0434,
+            size: 5_000_000.0,
+        };
+        let curve_mid = 0.0420;
+        let comp_mid = 0.0430;
+        let comp_half = 0.0004;
+
+        // w = 0.5 → mid halfway (0.0425), composite half-spread.
+        let b = blend_curve_toward_composite(&curve, &comp, 0.5);
+        let mid = 0.5 * (b.bid + b.offer);
+        assert!((mid - 0.0425).abs() < 1e-12, "mid {mid}");
+        assert!((0.5 * (b.offer - b.bid) - comp_half).abs() < 1e-12);
+        assert!(b.bid <= b.offer, "non-crossed");
+        assert!((b.size - 5_000_000.0).abs() < 1e-9);
+
+        // w = 0 → pure curve mid; w = 1 → pure composite mid; both keep the composite spread.
+        let at0 = blend_curve_toward_composite(&curve, &comp, 0.0);
+        assert!((0.5 * (at0.bid + at0.offer) - curve_mid).abs() < 1e-12);
+        let at1 = blend_curve_toward_composite(&curve, &comp, 1.0);
+        assert!((0.5 * (at1.bid + at1.offer) - comp_mid).abs() < 1e-12);
+
+        // Out-of-range weights are clamped to [0, 1] (belt-and-braces vs the write-time check).
+        let hi = blend_curve_toward_composite(&curve, &comp, 5.0);
+        assert!((0.5 * (hi.bid + hi.offer) - comp_mid).abs() < 1e-12);
+        let lo = blend_curve_toward_composite(&curve, &comp, -3.0);
+        assert!((0.5 * (lo.bid + lo.offer) - curve_mid).abs() < 1e-12);
+    }
+
+    /// The RFS curve fallback re-prices a retained line off whatever curve it is handed —
+    /// so marking a different curve moves the stream (item C), with no fabricated movement.
+    /// An OIS line on the P0 default reproduces `par_rate_for` exactly; a curve whose pillars
+    /// are all shifted up moves the quoted par strictly up; an unpriceable (zero) tenor is
+    /// `None` (the ticker then skips, never emits a bad price).
+    #[test]
+    fn curve_line_for_reprices_off_the_supplied_curve() {
+        let base = crate::rates_pricing::default_usd_sofr_curve_set();
+        let line = RfsLine::Ois { tenor_years: 5 };
+        let priced = curve_line_for(&line, &base, 5_000_000.0).expect("prices on P0");
+        let mid = 0.5 * (priced.bid + priced.offer);
+        let par = crate::rates_pricing::par_rate_for(&base, 5).expect("par");
+        assert!((mid - par).abs() < 1e-12, "mid {mid} vs par {par}");
+        assert!((priced.size - 5_000_000.0).abs() < 1e-9);
+
+        // A uniformly +50bp-shifted curve lifts the 5y par strictly (monotone in the pillars).
+        let mut bumped = base.clone();
+        for p in &mut bumped.ois_pillars {
+            p.par_rate += 0.005;
         }
-        // Deterministic + periodic (period 8).
-        assert_eq!(rfs_streamed_rate(base, 3), rfs_streamed_rate(base, 11));
-        // The wave actually moves (not a constant line).
-        assert_ne!(rfs_streamed_rate(base, 0), rfs_streamed_rate(base, 4));
+        let bumped_mid = {
+            let l = curve_line_for(&line, &bumped, 5_000_000.0).expect("prices bumped");
+            0.5 * (l.bid + l.offer)
+        };
+        assert!(bumped_mid > mid, "bumped {bumped_mid} !> base {mid}");
+
+        // A zero tenor cannot price → None (skip, never a fabricated price).
+        assert!(curve_line_for(&RfsLine::Ois { tenor_years: 0 }, &base, 1.0).is_none());
     }
 
     // --- fixed-income dialect dispatch --------------------------------------
@@ -2377,17 +2635,18 @@ mod tests {
 
         let snap = FrameCursor::parse(&snapshot).unwrap();
         let sub = FrameCursor::parse(&subscribe).unwrap();
+        let curve = crate::rates_pricing::default_usd_sofr_curve_set();
 
         // A quote venue: snapshot prices, subscribe is refused.
-        assert!(rates_line(&snap, Some(RatesIntent::Rfq)).is_ok());
-        assert!(rates_line(&sub, Some(RatesIntent::Rfq)).is_err());
+        assert!(rates_line(&snap, Some(RatesIntent::Rfq), &curve).is_ok());
+        assert!(rates_line(&sub, Some(RatesIntent::Rfq), &curve).is_err());
 
         // A stream venue: subscribe prices, snapshot is refused.
-        assert!(rates_line(&sub, Some(RatesIntent::Rfs)).is_ok());
-        assert!(rates_line(&snap, Some(RatesIntent::Rfs)).is_err());
+        assert!(rates_line(&sub, Some(RatesIntent::Rfs), &curve).is_ok());
+        assert!(rates_line(&snap, Some(RatesIntent::Rfs), &curve).is_err());
 
         // The legacy/demo content-detect path (no intent) prices either.
-        assert!(rates_line(&snap, None).is_ok());
-        assert!(rates_line(&sub, None).is_ok());
+        assert!(rates_line(&snap, None, &curve).is_ok());
+        assert!(rates_line(&sub, None, &curve).is_ok());
     }
 }

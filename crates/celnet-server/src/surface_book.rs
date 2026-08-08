@@ -209,6 +209,15 @@ pub struct SurfaceBook {
     /// The deposited curve versions, keyed by their stamped version id — the
     /// fixed-income family alongside the surfaces (never a forked store).
     curves: RwLock<HashMap<u64, MarkedCurve>>,
+    /// The **latest** marked wire [`CurveSet`](celnet_proto::CurveSet) per currency (the
+    /// currency upper-cased), overwritten on every `MarkCurve` deposit. Unlike
+    /// [`curves`](Self::curves) — which is a version-pinned, append-only history — this
+    /// is a single "current curve" slot so a live consumer (the FIX rates/bond
+    /// auto-quote path) can price off the operator's most recent mark without a version
+    /// id, falling back to its own static default when the slot is empty. Stores the
+    /// exact wire pillars the operator marked (lossless — no re-derivation from the
+    /// bootstrapped curve).
+    live_curves: RwLock<HashMap<String, celnet_proto::CurveSet>>,
 }
 
 impl Default for SurfaceBook {
@@ -225,6 +234,7 @@ impl SurfaceBook {
             next_version: AtomicU64::new(1),
             versions: RwLock::new(HashMap::new()),
             curves: RwLock::new(HashMap::new()),
+            live_curves: RwLock::new(HashMap::new()),
         }
     }
 
@@ -312,6 +322,33 @@ impl SurfaceBook {
             .write()
             .expect("surface book not poisoned")
             .insert(version, curve);
+    }
+
+    /// Record `curve_set` as the **latest live** wire curve for its currency (upper-cased
+    /// key), overwriting any prior mark. Called from `MarkCurve` alongside
+    /// [`deposit_curve`](Self::deposit_curve) so a live consumer can price off the
+    /// operator's most recent mark without a version id (see [`live_curve`](Self::live_curve)).
+    pub fn set_live_curve(&self, curve_set: celnet_proto::CurveSet) {
+        let key = curve_set.currency.to_ascii_uppercase();
+        self.live_curves
+            .write()
+            .expect("surface book not poisoned")
+            .insert(key, curve_set);
+    }
+
+    /// The latest live wire curve marked for `currency` (case-insensitive), or `None` when
+    /// no curve has been marked for it. A cheap clone taken under a short read lock — a
+    /// **snapshot**, so the caller prices off a stable copy off the hot path. The FIX
+    /// rates/bond auto-quote path reads this and falls back to its static default when
+    /// `None`.
+    #[must_use]
+    pub fn live_curve(&self, currency: &str) -> Option<celnet_proto::CurveSet> {
+        let key = currency.to_ascii_uppercase();
+        self.live_curves
+            .read()
+            .expect("surface book not poisoned")
+            .get(&key)
+            .cloned()
     }
 
     /// Resolve the marked curve deposited under `version` (a cheap handle clone; the

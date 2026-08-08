@@ -4013,18 +4013,36 @@ fn feature_pipeline_desc_from_json(v: &Value) -> Result<FeaturePipelineDesc> {
 /// A pricing group → JSON. An absent `esp_pipeline` / `rfq_pipeline` renders as `null`
 /// (the singular-message convention shared with the descriptor-driven encoder).
 fn pricing_group_desc_to_json(d: &PricingGroupDesc) -> Value {
-    json!({
-        "id": d.id,
-        "name": d.name,
-        "description": d.description,
-        "member_connection_ids": d.member_connection_ids,
-        "member_user_ids": d.member_user_ids,
-        "member_desks": d.member_desks,
-        "esp_pipeline": d.esp_pipeline.as_ref().map(feature_pipeline_desc_to_json),
-        "rfq_pipeline": d.rfq_pipeline.as_ref().map(feature_pipeline_desc_to_json),
-        "share_pipeline": d.share_pipeline,
-        "enabled": d.enabled,
-    })
+    let mut m = Map::new();
+    m.insert("id".to_string(), json!(d.id));
+    m.insert("name".to_string(), json!(d.name));
+    m.insert("description".to_string(), json!(d.description));
+    m.insert(
+        "member_connection_ids".to_string(),
+        json!(d.member_connection_ids),
+    );
+    m.insert("member_user_ids".to_string(), json!(d.member_user_ids));
+    m.insert("member_desks".to_string(), json!(d.member_desks));
+    m.insert(
+        "esp_pipeline".to_string(),
+        json!(d.esp_pipeline.as_ref().map(feature_pipeline_desc_to_json)),
+    );
+    m.insert(
+        "rfq_pipeline".to_string(),
+        json!(d.rfq_pipeline.as_ref().map(feature_pipeline_desc_to_json)),
+    );
+    m.insert("share_pipeline".to_string(), json!(d.share_pipeline));
+    m.insert("enabled".to_string(), json!(d.enabled));
+    m.insert(
+        "pricing_source_mode".to_string(),
+        json!(d.pricing_source_mode),
+    );
+    // proto3 `optional` scalar: absent ⇒ omitted (mirrors the generated encoder and the
+    // `reference` field's treatment), so the differential harness stays byte-identical.
+    if let Some(w) = d.book_skew_weight {
+        m.insert("book_skew_weight".to_string(), json!(w));
+    }
+    Value::Object(m)
 }
 
 /// The editable pricing-group fields (a nested `spec` object on create/update).
@@ -4041,6 +4059,8 @@ fn pricing_group_spec_from_json(v: &Value) -> Result<PricingGroupSpec> {
         rfq_pipeline: opt_nested(o, "rfq_pipeline", feature_pipeline_desc_from_json)?,
         share_pipeline: bool_or_false(o, "share_pipeline"),
         enabled: bool_or_false(o, "enabled"),
+        pricing_source_mode: enum_or_zero(o, "pricing_source_mode"),
+        book_skew_weight: opt_f64(o, "book_skew_weight"),
     })
 }
 

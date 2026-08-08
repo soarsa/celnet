@@ -856,6 +856,12 @@ impl SurfaceService for SurfaceEdge {
                 par_pillars.clone(),
             ),
         );
+        // Also record this as the currency's LATEST live curve (the exact marked wire
+        // pillars, lossless), so the FIX rates/bond auto-quote path prices off the
+        // operator's most recent mark without a version id — i.e. editing SOFR pillars in
+        // the GUI moves outbound OIS/bond FIX quotes. The version-pinned history above is
+        // unchanged; this is a separate "current curve" slot.
+        self.surface_book.set_live_curve(curve_set.clone());
 
         Ok(Response::new(MarkCurveResponse {
             currency: curve_set.currency,

@@ -54,7 +54,7 @@ pub use engines::install_fi_house_models;
 pub mod stream_spread;
 
 /// The ISO 4217 code of the only currency the P0 rates arm supports.
-const SUPPORTED_CURRENCY: &str = "USD";
+pub(crate) const SUPPORTED_CURRENCY: &str = "USD";
 
 /// A typed failure of [`price_rates`]. Malformed-input variants map to
 /// `Status::invalid_argument`; [`RatesPriceError::Bootstrap`] (a numeric failure

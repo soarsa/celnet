@@ -5165,6 +5165,11 @@ fn pg_group_desc() -> PricingGroupDesc {
         esp_pipeline: Some(pipeline.clone()),
         rfq_pipeline: Some(pipeline),
         share_pipeline: true,
+        // Exercise a non-zero enum and a present `optional` weight; the sibling
+        // `PricingGroupDesc::default()` in the response fixture covers the zero-enum +
+        // absent-weight (omitted) path.
+        pricing_source_mode: celnet_proto::PricingSourceMode::CurveAnchoredBookSkew as i32,
+        book_skew_weight: Some(0.25),
         enabled: true,
     }
 }

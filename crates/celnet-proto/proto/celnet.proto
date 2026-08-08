@@ -4398,6 +4398,24 @@ enum EspOrRfq {
   ESP_OR_RFQ_RFQ = 1;
 }
 
+// How a rates/bond FIX auto-quote for a member of this pricing group SOURCES its price
+// (mirrors the store `config::identity::PricingSourceMode`). Orthogonal to the feature
+// pipelines, which shape a price AFTER it is sourced. The proto3 zero value is the
+// platform default (composite-first-curve-fallback), so an unset field on an existing
+// spec decodes to the least-surprising behaviour.
+enum PricingSourceMode {
+  // Composite where an enabled aggregated book covers the instrument, else the curve
+  // (proto3 zero default — see the enum doc).
+  PRICING_SOURCE_MODE_COMPOSITE_FIRST_CURVE_FALLBACK = 0;
+  // Always the internal curve (the safe back-out; never consults the composite).
+  PRICING_SOURCE_MODE_CURVE_ONLY = 1;
+  // Bond -> composite (book-covered), OIS/swap -> curve.
+  PRICING_SOURCE_MODE_PRODUCT_SPLIT = 2;
+  // Curve backbone, mid skewed toward the composite where a book exists (blend weight
+  // `book_skew_weight`).
+  PRICING_SOURCE_MODE_CURVE_ANCHORED_BOOK_SKEW = 3;
+}
+
 // One pluggable pricing-feature transform + its params (mirrors a
 // `celnet_tiering::PricingFeature` variant). Magnitudes a `kind` does not carry are
 // ignored (e.g. a `FEATURE_KIND_AXE` feature ignores `kappa` / `skew`). The single
@@ -4510,6 +4528,11 @@ message PricingGroupDesc {
   bool share_pipeline = 9;
   // Whether the group is active (a disabled group never participates in resolution).
   bool enabled = 10;
+  // How this group's outbound rates/bond FIX auto-quotes source their price.
+  PricingSourceMode pricing_source_mode = 11;
+  // The curve->composite blend weight `w in [0,1]` for
+  // `PRICING_SOURCE_MODE_CURVE_ANCHORED_BOOK_SKEW` (ignored by other modes).
+  optional double book_skew_weight = 12;
 }
 
 // The editable fields of a pricing group (the create/update payload). The
@@ -4537,6 +4560,12 @@ message PricingGroupSpec {
   bool share_pipeline = 9;
   // Whether the group is active.
   bool enabled = 10;
+  // How this group's outbound rates/bond FIX auto-quotes source their price (unset ⇒
+  // the proto3 zero, composite-first-curve-fallback).
+  PricingSourceMode pricing_source_mode = 11;
+  // The curve->composite blend weight `w in [0,1]` for
+  // `PRICING_SOURCE_MODE_CURVE_ANCHORED_BOOK_SKEW` (ignored by other modes).
+  optional double book_skew_weight = 12;
 }
 
 // List the pricing groups (any authenticated caller — a client's assigned pricing is

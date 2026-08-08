@@ -599,6 +599,27 @@ impl AggregationHub {
         None
     }
 
+    /// Diagnose why a composite lookup for `instrument_id` found nothing, so a caller can
+    /// log an **unfed book** (covered but no fresh/well-formed line) distinctly from a
+    /// **key-mismatch / uncovered** instrument (no enabled book's scope admits the id) —
+    /// turning the otherwise silent `None` from [`Self::resolve_rfq_composite`] into an
+    /// actionable signal. Off the pinned pricer (short read locks), for a `debug`-level log.
+    #[must_use]
+    pub fn diagnose_composite_miss(&self, instrument_id: &str) -> CompositeMiss {
+        let covered = {
+            let books = self.books.read().expect("aggregation books lock poisoned");
+            books.iter().any(|(_, engine)| {
+                let cfg = engine.cfg.lock().expect("book cfg lock poisoned");
+                scope_admits(&cfg.scope, instrument_id)
+            })
+        };
+        if covered {
+            CompositeMiss::CoveredButNoLine
+        } else {
+            CompositeMiss::NoCoveringBook
+        }
+    }
+
     /// The current **caller → pricing-group** resolver (an `Arc` clone — cheap, and a
     /// stable read-only snapshot until the next [`Self::reconcile`]). The ESP / RFQ
     /// hooks resolve their subscriber/caller against this before pricing.
@@ -974,6 +995,29 @@ fn bond_dv01(terms: &BondPricingTerms, settlement: time::Date, mid_clean: f64) -
     let dirty = mid_clean + accrued;
     let risk = bond_risk(&bond, dirty).ok()?;
     risk.dv01.is_finite().then_some(risk.dv01)
+}
+
+/// Why a composite lookup found nothing (see [`AggregationHub::diagnose_composite_miss`]).
+/// Distinguishes the two failure modes the previously-silent `None` conflated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompositeMiss {
+    /// No enabled book's scope admits the id — a genuinely uncovered instrument or a
+    /// symbol↔`instrument_id` key mismatch (the FIX symbol is not the canonical id).
+    NoCoveringBook,
+    /// A book covers the id but publishes no fresh, well-formed line for it right now
+    /// (below quorum / all members stale / a degenerate crossed two-way) — an "unfed" book.
+    CoveredButNoLine,
+}
+
+impl CompositeMiss {
+    /// A stable snake_case label for structured logs.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            CompositeMiss::NoCoveringBook => "no_covering_book",
+            CompositeMiss::CoveredButNoLine => "covered_but_no_line",
+        }
+    }
 }
 
 /// Whether a book's instrument scope admits `instrument_id`.

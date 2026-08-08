@@ -528,6 +528,62 @@ impl AggregatedBookEdit {
     }
 }
 
+/// How a rates/bond FIX auto-quote **sources its price** for a client in this pricing
+/// group — the admin-configurable pricing-source policy. Orthogonal to the feature
+/// pipelines (which shape a price *after* it is sourced): this decides whether the price
+/// comes from the internal curve, the aggregated-book composite, or a blend of the two,
+/// applied on the **initial** quote as well as on every RFS re-price.
+///
+/// The default (proto3 zero / serde default / an unconfigured session with no group) is
+/// [`CompositeFirstCurveFallback`](Self::CompositeFirstCurveFallback). That is the
+/// **least-surprising** default: it preserves and generalizes the existing RFS
+/// composite-first re-price (a `CurveOnly` default would *regress* a book-fed stream back
+/// to the curve), removes the historical quote-#1-curve vs quote-#2-composite
+/// discontinuity, and — because no aggregated book covers a plain OIS curve — leaves the
+/// OIS arm curve-priced exactly as before. Only instruments a book actually covers (cash
+/// bonds) move to the book-driven price.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PricingSourceMode {
+    /// Composite where an enabled aggregated book covers the instrument, else the internal
+    /// curve. The platform default (see the type doc).
+    #[default]
+    CompositeFirstCurveFallback,
+    /// Always the internal curve — the safe back-out that reproduces the pre-policy
+    /// initial-quote behaviour (never consults the composite).
+    CurveOnly,
+    /// Split by product: a cash **bond** prices off the composite (book-covered), an
+    /// **OIS/swap** off the curve.
+    ProductSplit,
+    /// Curve backbone with the mid skewed toward the composite where a book exists — see
+    /// [`PricingGroupDef::book_skew_weight`] for the exact blend.
+    CurveAnchoredBookSkew,
+}
+
+impl PricingSourceMode {
+    /// A stable lowercase wire/display token (mirrors the serde `snake_case` form).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PricingSourceMode::CompositeFirstCurveFallback => "composite_first_curve_fallback",
+            PricingSourceMode::CurveOnly => "curve_only",
+            PricingSourceMode::ProductSplit => "product_split",
+            PricingSourceMode::CurveAnchoredBookSkew => "curve_anchored_book_skew",
+        }
+    }
+}
+
+/// The default [`PricingGroupDef::book_skew_weight`]: pull the outbound mid **halfway**
+/// from the internal curve to the composite under
+/// [`PricingSourceMode::CurveAnchoredBookSkew`].
+pub const DEFAULT_BOOK_SKEW_WEIGHT: f64 = 0.5;
+
+/// serde default for [`PricingGroupDef::book_skew_weight`] (an additive field: an
+/// `identity.json` written before the pricing-source policy loads at the default weight).
+fn default_book_skew_weight() -> f64 {
+    DEFAULT_BOOK_SKEW_WEIGHT
+}
+
 /// One persisted **pricing group**: a named, trader-defined grouping that binds a
 /// set of connected clients (inbound FIX sessions, GUI/API principals, or a desk as
 /// a default tier) to their own outbound **feature pipelines**, so different clients
@@ -591,6 +647,21 @@ pub struct PricingGroupDef {
     /// pipeline drives both outbound modes; when `false`, each mode uses its own.
     #[serde(default)]
     pub share_pipeline: bool,
+    /// The admin-configurable **pricing-source policy** for this group's outbound
+    /// rates/bond FIX auto-quotes (see [`PricingSourceMode`]). Additive serde-default:
+    /// an `identity.json` written before the policy loads as
+    /// [`PricingSourceMode::CompositeFirstCurveFallback`] (the platform default), so a
+    /// pre-policy config behaves identically to before.
+    #[serde(default)]
+    pub pricing_source_mode: PricingSourceMode,
+    /// The blend weight `w ∈ [0, 1]` for [`PricingSourceMode::CurveAnchoredBookSkew`]: the
+    /// fraction of the curve→composite mid gap the outbound mid traverses,
+    /// `skew_mid = curve_mid + w·(composite_mid − curve_mid)` (a convex blend — `w = 0` is
+    /// pure curve, `w = 1` pure composite, and the move is inherently bounded by the gap).
+    /// Ignored by every other mode. Additive serde-default ([`DEFAULT_BOOK_SKEW_WEIGHT`]);
+    /// shape-validated finite and in `[0, 1]` at load and every admin write.
+    #[serde(default = "default_book_skew_weight")]
+    pub book_skew_weight: f64,
     /// Whether the group is active. A disabled group is persisted and editable but
     /// never participates in resolution — its members fall through as if it did not
     /// exist (so a disabled group's members can be re-homed without a determinism
@@ -642,6 +713,10 @@ pub struct PricingGroupEdit {
     pub rfq_pipeline: celnet_tiering::FeaturePipeline,
     /// When `true`, the RFS/RFQ mode reuses `esp_pipeline`.
     pub share_pipeline: bool,
+    /// The admin-configurable pricing-source policy (see [`PricingSourceMode`]).
+    pub pricing_source_mode: PricingSourceMode,
+    /// The curve→composite blend weight for [`PricingSourceMode::CurveAnchoredBookSkew`].
+    pub book_skew_weight: f64,
     /// Whether the group is active.
     pub enabled: bool,
 }
@@ -1620,6 +1695,8 @@ impl IdentityStore {
             esp_pipeline: edit.esp_pipeline,
             rfq_pipeline: edit.rfq_pipeline,
             share_pipeline: edit.share_pipeline,
+            pricing_source_mode: edit.pricing_source_mode,
+            book_skew_weight: edit.book_skew_weight,
             enabled: edit.enabled,
         };
         self.pricing_groups.push(def.clone());
@@ -1660,6 +1737,8 @@ impl IdentityStore {
             esp_pipeline: edit.esp_pipeline,
             rfq_pipeline: edit.rfq_pipeline,
             share_pipeline: edit.share_pipeline,
+            pricing_source_mode: edit.pricing_source_mode,
+            book_skew_weight: edit.book_skew_weight,
             enabled: edit.enabled,
         };
         let prev = std::mem::replace(&mut self.pricing_groups[pos], def.clone());
@@ -1854,6 +1933,15 @@ impl IdentityStore {
                     def.name, d
                 ));
             }
+        }
+        // The curve→composite blend weight must be finite and in `[0, 1]` (a convex blend
+        // weight) — rejected loudly at the admin write / at load rather than silently
+        // clamped at pricing time, so a bad config never reaches the hot path.
+        if !(def.book_skew_weight.is_finite() && (0.0..=1.0).contains(&def.book_skew_weight)) {
+            return Err(format!(
+                "pricing group {:?} book_skew_weight must be finite and in [0, 1]",
+                def.name
+            ));
         }
         validate_feature_pipeline(&def.name, "ESP", &def.esp_pipeline)?;
         // The RFQ pipeline is IGNORED when `share_pipeline` is set (`rfq_effective_pipeline`
@@ -2949,6 +3037,8 @@ mod tests {
             esp_pipeline: ok_pipeline(),
             rfq_pipeline: ok_pipeline(),
             share_pipeline: false,
+            pricing_source_mode: PricingSourceMode::default(),
+            book_skew_weight: DEFAULT_BOOK_SKEW_WEIGHT,
             enabled,
         }
     }
@@ -3133,6 +3223,49 @@ mod tests {
                 .resolve_for_user("alice", &[])
                 .map(|g| g.id.as_str()),
             Some("ga")
+        );
+    }
+
+    /// A pre-policy `identity.json` (no `pricing_source_mode` / `book_skew_weight` keys)
+    /// loads at the platform defaults — composite-first + a 0.5 skew weight — so an
+    /// existing config behaves identically to before (additive serde-default contract).
+    #[test]
+    fn pricing_group_pre_policy_json_loads_at_defaults() {
+        let legacy = r#"{
+            "pricing_groups": [{
+                "id": "ga", "name": "GROUP-A", "member_connection_ids": ["conn-1"],
+                "esp_pipeline": {"features": [], "guardrails":
+                    {"h_min": 0.0, "h_max": 5.0, "s_max": 2.0, "spread_floor": 0.01}},
+                "rfq_pipeline": {"features": [], "guardrails":
+                    {"h_min": 0.0, "h_max": 5.0, "s_max": 2.0, "spread_floor": 0.01}},
+                "share_pipeline": true, "enabled": true
+            }]
+        }"#;
+        let store: IdentityStore = serde_json::from_str(legacy).unwrap();
+        let g = &store.pricing_groups[0];
+        assert_eq!(
+            g.pricing_source_mode,
+            PricingSourceMode::CompositeFirstCurveFallback
+        );
+        assert!((g.book_skew_weight - DEFAULT_BOOK_SKEW_WEIGHT).abs() < 1e-12);
+        // And it round-trips through the enum's snake_case token on re-serialize.
+        let re = serde_json::to_string(&store.pricing_groups[0]).unwrap();
+        assert!(re.contains("\"composite_first_curve_fallback\""));
+    }
+
+    /// A `book_skew_weight` outside `[0, 1]` (or non-finite) is rejected at the admin write
+    /// and at load — a bad blend weight fails loudly, never silently clamped on the hot path.
+    #[test]
+    fn pricing_group_rejects_out_of_range_skew_weight() {
+        let mut store = IdentityStore::default();
+        let mut g = group("ga", "GROUP-A", &["conn-1"], &[], &[], true);
+        g.book_skew_weight = 1.5;
+        store.pricing_groups.push(g);
+        assert!(
+            store
+                .validate_pricing_groups()
+                .unwrap_err()
+                .contains("book_skew_weight")
         );
     }
 

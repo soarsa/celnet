@@ -338,6 +338,11 @@ impl StreamEdge {
     /// store: without it the per-book risk stream folds only the FX store and a
     /// WS-connected dashboard never aggregates routed FI fills (`aggregate_enabled_
     /// risk_books(store, None)`).
+    ///
+    /// A **test-only** regression-guard accessor (its sole caller is the
+    /// `ws::limits` construction test), scoped `#[cfg(test)]` so the plain lib target
+    /// does not carry it as dead code under `clippy -D warnings`.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn rates_store_is_wired(&self) -> bool {
         self.rates.is_some()
