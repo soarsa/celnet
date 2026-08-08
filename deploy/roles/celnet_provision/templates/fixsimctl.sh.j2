@@ -58,6 +58,11 @@ export FIXSIM_ESP_INSTRUMENTS="{{ celnet_fixsim_esp_instruments | default('15') 
 export FIXSIM_ESP_SEED="{{ celnet_fixsim_esp_seed | default('0x5EED1234') }}"
 export FIXSIM_USER="{{ celnet_fixsim_user | default(celnet_lpsim_user | default('admin@celnet.com')) }}"
 export FIXSIM_PASSWORD="{{ celnet_fixsim_password | default(celnet_lpsim_password | default('password')) }}"
+# Host-local password file (mode 600, NOT in git) — the launcher reads it into FIXSIM_PASSWORD
+# when present, so the ESP refdata gRPC login (AuthService.Login) uses the real service
+# credential instead of the "password" fallback (which fails login and kills the ESP leg).
+# Defaults to lp-sim's own pw file so a box that provisioned lp-sim needs no extra step.
+export FIXSIM_PASSWORD_FILE="{{ celnet_fixsim_password_file | default(celnet_lpsim_password_file | default('/home/' + (celnet_user | default('celnet')) + '/.lpsim_pw')) }}"
 PIDFILE="$FIXSIM_RUN_DIR/fix-sim.pid"
 
 is_running() {

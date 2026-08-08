@@ -85,7 +85,11 @@ celnet_fixsim_stream_port: 56003
 celnet_fixsim_stream_sender: "CELER_RATES_STREAM"
 celnet_fixsim_grpc_addr: "http://127.0.0.1:50051"  # reference-data + login endpoint
 celnet_fixsim_esp_instruments: 15        # top-N most-liquid/relevant instruments to stream
-celnet_fixsim_esp_seed: "0x5EED1234"     # deterministic seed for the random-trade selection
+celnet_fixsim_esp_seed: "0x5EED1234"     # deterministic seed (hex ok — the launcher normalizes 0x… → decimal)
+# Host-local password file for the ESP refdata gRPC login (AuthService.Login). The launcher
+# reads it into FIXSIM_PASSWORD when present, so no secret lives in group_vars/git and the ESP
+# leg authenticates with the SAME working credential as lp-sim. Defaults to lp-sim's pw file.
+celnet_fixsim_password_file: "/home/{{ celnet_user | default('celnet') }}/.lpsim_pw"
 
 # --- LP-SIM Treasury liquidity feed -----------------------------------------
 # When true, the release builds the celnet-lp-sim `lp-sim` binary, ships it as

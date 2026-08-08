@@ -119,8 +119,25 @@ FIXSIM_ESP_SENDER="${FIXSIM_ESP_SENDER:-${FIXSIM_STREAM_SENDER:-CELER_RATES_STRE
 FIXSIM_GRPC_ADDR="${FIXSIM_GRPC_ADDR:-http://127.0.0.1:50051}"
 FIXSIM_ESP_INSTRUMENTS="${FIXSIM_ESP_INSTRUMENTS:-15}"
 FIXSIM_ESP_SEED="${FIXSIM_ESP_SEED:-0x5EED1234}"
+# The client's `--seed` parses a DECIMAL u64 (plain str::parse); a `0x…`-prefixed hex value
+# aborts the ESP leg with "must be a whole number" (exit 2). Normalize a hex seed to decimal
+# here so the readable hex default (and any hex override) drives the ESP leg instead of
+# silently killing it on every launch.
+case "$FIXSIM_ESP_SEED" in
+  0x*|0X*) FIXSIM_ESP_SEED="$(( FIXSIM_ESP_SEED ))" ;;
+esac
 FIXSIM_USER="${FIXSIM_USER:-admin@celnet.com}"
 FIXSIM_PASSWORD="${FIXSIM_PASSWORD:-password}"
+# Prefer a host-local password file (kept OUT of the committed repo) for the ESP gRPC login,
+# exactly as start-lp-sim.sh does — the real service credential never lives in group_vars/git,
+# and the ESP refdata download (AuthService.Login) authenticates with the SAME working
+# credential as lp-sim instead of the literal "password" fallback (which fails login and
+# aborts the ESP leg with "invalid email or password"). Defaults to lp-sim's own pw file so a
+# box that already provisioned lp-sim needs no extra step. Falls back to FIXSIM_PASSWORD.
+FIXSIM_PASSWORD_FILE="${FIXSIM_PASSWORD_FILE:-/home/celnet/.lpsim_pw}"
+if [ -n "${FIXSIM_PASSWORD_FILE:-}" ] && [ -r "${FIXSIM_PASSWORD_FILE}" ]; then
+  FIXSIM_PASSWORD="$(cat "$FIXSIM_PASSWORD_FILE")"
+fi
 FIXSIM_ONESHOT="${FIXSIM_ONESHOT:-0}"
 FIXSIM_DAEMON="${FIXSIM_DAEMON:-0}"
 
@@ -330,7 +347,25 @@ fi
 # ONE session, lifting one per cycle (an executed streaming deal). Backgrounded so the RFQ
 # leg below stays in the foreground; reaped when this script exits. Skipped (with a loud,
 # actionable log) when no stream acceptor is present, so the RFQ leg never breaks.
-if [ -n "$FIXSIM_STREAM_PORT" ]; then
+#
+# COLLISION GUARD (2026-08-08): the fixed-income STREAM venue was converted to FIX 4.4
+# Market Data (35=V subscribe → 35=W snapshot → 35=D lift → 35=8) — it no longer speaks the
+# legacy `--intent rfs` QuoteRequest dialect (a stray 35=R is now IGNORED, which surfaces as
+# repeated `BrokenPipe` churn). The ESP leg below is the Market-Data driver. If the ESP leg
+# targets the SAME host:port with the SAME SenderCompID, running this `--intent rfs` leg too
+# would put TWO clients on one FIX session/CompID and knock each other off. So skip this
+# stale leg whenever the ESP leg drives the same stream venue; it still runs if someone
+# points FIXSIM_STREAM_PORT at a distinct legacy quote-stream venue with ESP disabled.
+__rfs_collides_with_esp=0
+if [ "$FIXSIM_ESP" = "1" ] && [ -n "${FIXSIM_ESP_PORT:-}" ] \
+   && [ "$FIXSIM_ESP_PORT" = "$FIXSIM_STREAM_PORT" ] \
+   && [ "$FIXSIM_ESP_SENDER" = "$FIXSIM_STREAM_SENDER" ]; then
+  __rfs_collides_with_esp=1
+fi
+if [ -n "$FIXSIM_STREAM_PORT" ] && [ "$__rfs_collides_with_esp" = "1" ]; then
+  log "RFS leg: streaming venue $FIXSIM_HOST:$FIXSIM_STREAM_PORT ($FIXSIM_STREAM_SENDER) is Market-Data —"
+  log "         driven by the ESP leg; SKIPPING the stale --intent rfs leg to avoid a CompID/port collision."
+elif [ -n "$FIXSIM_STREAM_PORT" ]; then
   stream_up=1
   if command -v nc >/dev/null 2>&1; then
     nc -z -w 3 "$FIXSIM_HOST" "$FIXSIM_STREAM_PORT" >/dev/null 2>&1 || stream_up=0
