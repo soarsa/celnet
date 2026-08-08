@@ -1,20 +1,29 @@
 /**
- * SettingsPanel — the trader's preferences popover, opened from a header gear. It
- * edits the persisted {@link AppSettings} (via {@link useSettings}) across four
- * opinionated sections: Alerts (master), Sound (enable + volume), Thresholds
- * (min-notional, with a live compact echo), and Notifications (desktop growl +
- * auto-clear). Every control writes immediately through `update` — there is no
- * separate save step, so a reload restores exactly what the trader set.
+ * SettingsPanel — the trader's preferences, opened from a header gear into a
+ * centered popup modal. It edits the persisted {@link AppSettings} (via
+ * {@link useSettings}) across opinionated sections: Alerts (master), Sound
+ * (enable + volume), Thresholds (min-notional, with a live compact echo),
+ * Notifications (desktop growl + auto-clear), and per-event notifications. Every
+ * control writes immediately through `update` — there is no separate save step,
+ * so a reload restores exactly what the trader set. A footer shows the running
+ * build version, read from {@link RUNNING_RELEASE} (the same identity the release
+ * watcher compares against — no second poller).
  *
- * Accessible by construction: the popover is a labelled `role="dialog"` with
- * `aria-modal`; opening focuses the panel and closing returns focus to the gear;
- * Escape and an outside click both close it. Nested switches are real
- * `role="switch"` buttons with `aria-checked`.
+ * The modal reuses the app's scrim+panel material (the SignInDialog / wizard /
+ * DefaultRoutePrompt family): a dimmed, centered `role="dialog"` rendered through
+ * a portal to `document.body` so it escapes any header overflow/stacking context.
+ *
+ * Accessible by construction: the dialog is labelled via `aria-labelledby` with
+ * `aria-modal`; opening moves focus in and closing restores it to the gear; Tab
+ * is focus-trapped within the panel; Escape, a scrim click, and an X button all
+ * close it. Nested switches are real `role="switch"` buttons with `aria-checked`.
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useSettings } from "../hooks/useSettings";
 import { fmtCompact } from "../lib/format";
+import { RUNNING_RELEASE } from "../data/versionManifest";
 import {
   effectiveEventVolume,
   type NotificationEventType,
@@ -27,6 +36,24 @@ import {
   type SoundChoice,
 } from "../lib/soundKit";
 import styles from "./SettingsPanel.module.css";
+
+/** Build hashes that are not real git identities — a dev/undefined build. */
+const PLACEHOLDER_HASHES: ReadonlySet<string> = new Set(["v0.0.0", "unknown", "test"]);
+
+/** `2026-06-27T13:25:28.000Z` -> `2026-06-27 13:25 UTC` for a compact, human label. */
+function humanBuildTime(iso: string): string {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(iso);
+  return m ? `${m[1]} ${m[2]} UTC` : iso;
+}
+
+/** The focusable descendants of `root`, in DOM order (for the Tab focus-trap). */
+function focusableWithin(root: HTMLElement): HTMLElement[] {
+  const sel =
+    'a[href],button:not([disabled]),textarea,input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  return Array.from(root.querySelectorAll<HTMLElement>(sel)).filter(
+    (el) => el.offsetParent !== null || el === document.activeElement,
+  );
+}
 
 /** The human label + urgency flag for each configurable event row. */
 const EVENT_ROWS: readonly { type: NotificationEventType; label: string }[] = [
@@ -200,8 +227,9 @@ export function SettingsPanel(): React.ReactElement {
 
   const close = useCallback(() => setOpen(false), []);
 
-  // On open: focus the panel. On close: return focus to the gear (only when it
-  // was our open that is closing, tracked by a ref so the mount does not steal focus).
+  // On open: refresh the live permission and move focus into the panel. On close:
+  // return focus to the gear (only when it was our open that is closing, tracked
+  // by a ref so the mount does not steal focus).
   const wasOpenRef = useRef(false);
   useEffect(() => {
     if (open) {
@@ -214,31 +242,40 @@ export function SettingsPanel(): React.ReactElement {
     }
   }, [open]);
 
-  // Escape-to-close + outside-click-to-close while open.
+  // Escape-to-close, plus a Tab focus-trap within the panel while open (matching
+  // the app's other modal dialogs). The scrim owns click-outside.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
         e.stopPropagation();
         close();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (panel === null) return;
+      const items = focusableWithin(panel);
+      if (items.length === 0) {
+        e.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = items[0] as HTMLElement;
+      const last = items[items.length - 1] as HTMLElement;
+      const active = document.activeElement;
+      // The panel itself (tabIndex=-1) is the initial focus target; treat it as
+      // "before first" so a forward Tab lands on the first control.
+      if (e.shiftKey && (active === first || active === panel)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
       }
     };
-    const onDown = (e: MouseEvent): void => {
-      const t = e.target as Node | null;
-      if (
-        t &&
-        !panelRef.current?.contains(t) &&
-        !gearRef.current?.contains(t)
-      ) {
-        close();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onDown);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onDown);
-    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [open, close]);
 
   // Toggling desktop growl ON while the browser permission is still undecided
@@ -288,6 +325,8 @@ export function SettingsPanel(): React.ReactElement {
     }
   }, []);
 
+  const hashIsPlaceholder = PLACEHOLDER_HASHES.has(RUNNING_RELEASE.hash);
+
   return (
     <div className={styles.root}>
       <button
@@ -304,16 +343,24 @@ export function SettingsPanel(): React.ReactElement {
         </span>
       </button>
 
-      {open && (
-        <div
-          ref={panelRef}
-          className={styles.panel}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={titleId}
-          tabIndex={-1}
-        >
-          <div className={styles.panelHead}>
+      {open &&
+        createPortal(
+          <div
+            className={styles.scrim}
+            role="presentation"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) close();
+            }}
+          >
+            <div
+              ref={panelRef}
+              className={styles.panel}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={titleId}
+              tabIndex={-1}
+            >
+              <div className={styles.panelHead}>
             <h2 id={titleId} className={styles.panelTitle}>
               Settings
             </h2>
@@ -505,8 +552,30 @@ export function SettingsPanel(): React.ReactElement {
               ))}
             </div>
           </section>
-        </div>
-      )}
+
+          {/* --- Version footer (plain div — NOT a <footer>, to avoid a second
+              contentinfo landmark inside the app's document) --- */}
+          <div className={styles.versionFoot} data-testid="settings-version">
+            <span className={styles.versionLabel}>Version</span>
+            <span className={styles.versionValue}>
+              {hashIsPlaceholder ? (
+                <span className={styles.versionHash}>
+                  {humanBuildTime(RUNNING_RELEASE.buildTime)}
+                </span>
+              ) : (
+                <>
+                  <span className={styles.versionHash}>{RUNNING_RELEASE.hash}</span>
+                  <span className={styles.versionTime}>
+                    {humanBuildTime(RUNNING_RELEASE.buildTime)}
+                  </span>
+                </>
+              )}
+            </span>
+          </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

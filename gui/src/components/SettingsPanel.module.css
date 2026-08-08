@@ -44,21 +44,53 @@
   line-height: 1;
 }
 
-/* --- popover --- */
+/* --- centered popup modal (SignInDialog / wizard / DefaultRoutePrompt material) --- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: oklch(0 0 0 / 0.42);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  animation: settings-scrim-in 120ms var(--ease-out);
+}
+
+@keyframes settings-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
 
 .panel {
-  position: absolute;
-  top: calc(100% + var(--space-2));
-  right: 0;
-  width: 340px;
-  max-height: 78vh;
+  width: min(380px, 94vw);
+  max-height: 86vh;
   overflow: auto;
-  z-index: 50;
   border: var(--hairline) solid var(--grid-line);
   border-radius: var(--r-lg);
   background: var(--bg-overlay-solid);
   box-shadow: var(--shadow-float);
+  -webkit-backdrop-filter: blur(var(--blur-float));
   backdrop-filter: blur(var(--blur-float));
+  animation: settings-panel-in 140ms var(--ease-out);
+}
+
+@keyframes settings-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.99);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .panel {
+    animation: none;
+  }
 }
 
 .panel:focus-visible {
@@ -149,7 +181,9 @@
 .hint {
   margin: var(--space-1) 0 0;
   font: var(--type-micro) / var(--type-micro-lh) var(--font-ui);
-  color: var(--text-tertiary);
+  /* --text-secondary (>=5.91:1) — --text-tertiary fails WCAG AA at this 10px size
+     (matches the sectionTitle / numEcho decision above). */
+  color: var(--text-secondary);
 }
 
 /* --- switch --- */
@@ -462,4 +496,46 @@
 
 .eventVol .slider {
   width: 100%;
+}
+
+/* --- version footer --- */
+
+.versionFoot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--hairline) solid var(--grid-line);
+  background: var(--bg-overlay-solid);
+}
+
+.versionLabel {
+  font: var(--type-micro) / 1 var(--font-ui);
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.versionValue {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.versionHash {
+  font: var(--type-caption) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.versionTime {
+  font: var(--type-micro) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  /* --text-secondary keeps AA at this 10px size (see .hint / sectionTitle). */
+  color: var(--text-secondary);
 }
