@@ -4845,6 +4845,17 @@ export interface Internalise {
 }
 
 /**
+ * The rates product FAMILY a booked {@link Deal} carries — the discriminant of the
+ * wire `RatesInstrument` oneof arm the deal dealt (`ois | irs | fra | bond`). Threaded
+ * onto every `Deal` so the blotter's Product column and the Risk Dashboard's
+ * "By product type" breakdown classify a fill by its real arm rather than assuming OIS.
+ * The full instrument economics still project onto {@link Deal.instrument} (the OIS
+ * shape) for the shared tenor/notional/direction reads; `productKind` is the honest
+ * arm tag alongside it.
+ */
+export type RatesProductKind = "OIS" | "IRS" | "FRA" | "BOND";
+
+/**
  * A booked received deal (`celnet.wire.Deal`): the executed terms of an
  * `ACCEPTED` desk request — the dealt `price`, `notional`, `side`, the booking
  * `trader`, and (when the deal booked a rates position) its `positionId`.
@@ -4856,6 +4867,13 @@ export interface Deal {
   kind: DeskRequestKind;
   counterparty: string;
   desk: string;
+  /**
+   * The dealt rates product family — which arm of the wire `RatesInstrument` oneof
+   * this deal dealt (`OIS`/`IRS`/`FRA`/`BOND`). Decoded from the actual arm present;
+   * the tenor/notional/direction still project onto {@link instrument} for the shared
+   * reads, but this preserves the arm discriminant (dropped by the OIS-only projection).
+   */
+  productKind: RatesProductKind;
   instrument: OisInstrument;
   curveSet: RatesCurveSet;
   side: Side;

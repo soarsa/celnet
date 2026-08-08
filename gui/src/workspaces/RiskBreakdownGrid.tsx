@@ -1,8 +1,10 @@
 /**
  * RiskBreakdownGrid — the Risk Dashboard drill-down body: a portfolio's routed
- * flow broken down TWO ways side by side — "By tenor" (coarse tenor buckets) and
- * "By instrument" (distinct instruments) — each a compact table of gross notional,
- * fill count and DV01. Pure/presentational: it takes the portfolio's already-
+ * flow broken down THREE ways side by side — "By tenor" (coarse tenor buckets),
+ * "By product type" (the OIS/IRS/FRA/BOND family) and "By instrument" (distinct
+ * instruments) — each a compact table of gross notional, fill count and DV01. Every
+ * lens folds the SAME item set, so the per-bucket gross reconciles to the book total
+ * across all three. Pure/presentational: it takes the portfolio's already-
  * filtered {@link Deal}s and folds them client-side via {@link riskBreakdownFor}
  * (see that module for the honest data-source rationale). DV01 renders "—" when the
  * source carries none (never a fabricated 0), consistent with the dashboard's
@@ -97,6 +99,7 @@ export function RiskBreakdownGrid({
       </p>
       <div className={styles.lenses}>
         <BreakdownTable caption="By tenor" keyHead="Tenor" rows={breakdown.byTenor} />
+        <BreakdownTable caption="By product type" keyHead="Product" rows={breakdown.byProduct} />
         <BreakdownTable
           caption="By instrument"
           keyHead="Instrument"

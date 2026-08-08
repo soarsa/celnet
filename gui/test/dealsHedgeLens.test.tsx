@@ -22,6 +22,7 @@ function fiDeal(over: Partial<Deal>): Deal {
     kind: "RFQ",
     counterparty: "Point72",
     desk: "g10-rates",
+    productKind: "OIS",
     instrument: { tenorYears: 5, fixedRate: 0.04, notional: 1e7, direction: "PAY_FIXED" },
     curveSet: { currency: "USD", referenceDate: { year: 2026, month: 6, day: 26 }, pillars: [] },
     side: "BUY",

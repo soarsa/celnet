@@ -221,6 +221,7 @@ import type {
   RatesAccrualBasis,
   RatesInstrument,
   RatesLegDayCount,
+  RatesProductKind,
   RatesCurveSet,
   RatesPricingResult,
   RatesQuote,
@@ -1577,19 +1578,102 @@ export function combinedTailRiskResponseFromWire(
 // injects, so the GUI omits the (optional) business `correlation_id` here.
 // ---------------------------------------------------------------------------
 
+/** The wire `side` → OIS direction (PAY_FIXED ← BUY = 0, RECEIVE_FIXED ← SELL = 1). */
+function directionFromWireSide(o: WireObject): OisInstrument["direction"] {
+  return enumNum(o, "side") === 1 ? "RECEIVE_FIXED" : "PAY_FIXED";
+}
+
 /**
- * Decode the OIS arm of a wire `RatesInstrument` into an `OisInstrument`. The
- * inverse of `ratesInstrumentToWire`: the wire `side` carries the OIS direction
- * (PAY_FIXED → BUY = 0, RECEIVE_FIXED → SELL = 1).
+ * Decode a wire `RatesInstrument` oneof into BOTH the shared `OisInstrument`
+ * projection (the tenor/notional/direction the tenor/instrument breakdowns + the
+ * Deals blotter read) AND the arm discriminant ({@link RatesProductKind}). Reads
+ * WHICHEVER arm is present — not just OIS — so a non-OIS fill is classified honestly
+ * rather than throwing on a missing `ois` key. The inverse of
+ * `ratesInstrumentUnionToWire`; the wire `side` carries direction on every arm.
+ *
+ * The projection is exact for OIS/IRS (both carry a whole-year tenor + fixed rate +
+ * notional); for FRA the tenor is the window end in years (`end_months / 12`) and for
+ * BOND the whole-year term from `referenceYear` (the deal's curve reference) to the
+ * maturity year — enough to bucket + classify the fill. Non-OIS arms carry richer
+ * fields the UI does not render yet (leg schedules, coupon/maturity) — decoded only
+ * as far as classification needs; the full ticket is a later slice (rule 2: narrow,
+ * never fake). `referenceYear` is `null` for callers with no curve context (positions/
+ * requests, which are OIS-only in practice); BOND then falls back to a 1y term.
+ */
+function decodeRatesInstrument(
+  o: WireObject,
+  referenceYear: number | null,
+): { instrument: OisInstrument; productKind: RatesProductKind } {
+  if ("ois" in o) {
+    const ois = child(o, "ois");
+    return {
+      productKind: "OIS",
+      instrument: {
+        tenorYears: num(ois, "tenor_years"),
+        fixedRate: num(ois, "fixed_rate"),
+        notional: num(ois, "notional"),
+        direction: directionFromWireSide(ois),
+      },
+    };
+  }
+  if ("irs" in o) {
+    const irs = child(o, "irs");
+    return {
+      productKind: "IRS",
+      instrument: {
+        tenorYears: num(irs, "tenor_years"),
+        fixedRate: num(irs, "fixed_rate"),
+        notional: num(irs, "notional"),
+        direction: directionFromWireSide(irs),
+      },
+    };
+  }
+  if ("fra" in o) {
+    const fra = child(o, "fra");
+    return {
+      productKind: "FRA",
+      instrument: {
+        tenorYears: num(fra, "end_months") / 12,
+        fixedRate: num(fra, "fixed_rate"),
+        notional: num(fra, "notional"),
+        direction: directionFromWireSide(fra),
+      },
+    };
+  }
+  if ("bond" in o) {
+    const bond = child(o, "bond");
+    const maturity = child(bond, "maturity_date");
+    // Whole-year term from the curve reference year to maturity (≥ 1); the position/
+    // request callers pass `null` (BOND does not flow there) ⇒ a harmless 1y fallback.
+    const tenorYears =
+      referenceYear === null
+        ? 1
+        : Math.max(1, num(maturity, "year") - referenceYear);
+    return {
+      productKind: "BOND",
+      instrument: {
+        tenorYears,
+        // The bond's economic "fixed rate" the OIS projection reports is its coupon.
+        fixedRate: num(bond, "coupon_rate"),
+        // BOND carries `redemption` (face), not `notional` — the dealt size lives on
+        // the parent `Deal.notional`; the projection reports the face for display.
+        notional: num(bond, "redemption"),
+        // SIDE_BUY = long (PAY_FIXED slot), SIDE_SELL = short (RECEIVE_FIXED slot).
+        direction: directionFromWireSide(bond),
+      },
+    };
+  }
+  throw new Error("`instrument`: expected one of an ois, irs, fra, or bond arm");
+}
+
+/**
+ * Decode the shared `OisInstrument` projection of a wire `RatesInstrument` (any
+ * arm). Used by the OIS-only callers (rates positions / desk requests) that carry no
+ * curve reference and no product-kind column; {@link dealFromWire} uses
+ * {@link decodeRatesInstrument} directly to also thread the arm discriminant.
  */
 function ratesInstrumentFromWire(o: WireObject): OisInstrument {
-  const ois = child(o, "ois");
-  return {
-    tenorYears: num(ois, "tenor_years"),
-    fixedRate: num(ois, "fixed_rate"),
-    notional: num(ois, "notional"),
-    direction: enumNum(ois, "side") === 1 ? "RECEIVE_FIXED" : "PAY_FIXED",
-  };
+  return decodeRatesInstrument(o, null).instrument;
 }
 
 /** Decode a wire `PillarTenor` `{ years | months | maturity_date }` into its arm. */
@@ -1889,14 +1973,21 @@ function internaliseFromWire(o: WireObject): Internalise {
 
 /** Decode a wire `Deal`. */
 export function dealFromWire(o: WireObject): Deal {
+  // Decode the curve first: its reference year anchors a BOND arm's whole-year term.
+  const curveSet = ratesCurveSetFromWire(child(o, "curve_set"));
+  const { instrument, productKind } = decodeRatesInstrument(
+    child(o, "instrument"),
+    curveSet.referenceDate.year,
+  );
   const d: Deal = {
     dealId: str(o, "deal_id"),
     requestId: str(o, "request_id"),
     kind: e.deskRequestKind.fromWire(enumNum(o, "kind")),
     counterparty: str(o, "counterparty"),
     desk: str(o, "desk"),
-    instrument: ratesInstrumentFromWire(child(o, "instrument")),
-    curveSet: ratesCurveSetFromWire(child(o, "curve_set")),
+    productKind,
+    instrument,
+    curveSet,
     side: e.side.fromWire(enumNum(o, "side")),
     notional: num(o, "notional"),
     price: num(o, "price"),

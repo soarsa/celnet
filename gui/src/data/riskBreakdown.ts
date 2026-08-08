@@ -22,7 +22,7 @@
  * {@link BreakdownItem}, the per-bucket DV01 sums correctly with zero rework.
  */
 
-import type { Deal } from "./contract";
+import type { Deal, RatesProductKind } from "./contract";
 
 /**
  * One normalized instrument-level contribution to a portfolio's breakdown — the
@@ -36,6 +36,8 @@ export interface BreakdownItem {
   tenorYears: number;
   /** The instrument label to group the "by instrument" view on (e.g. `10y OIS`). */
   instrument: string;
+  /** The rates product family the contribution belongs to (drives the product bucket). */
+  productKind: RatesProductKind;
   /** Gross (absolute) base-currency notional of this contribution. */
   notional: number;
   /** DV01 contribution, or `null` when the source carries none (rendered "—"). */
@@ -64,6 +66,8 @@ export interface RiskBreakdown {
   byTenor: BreakdownRow[];
   /** The distinct-instrument lens, ordered short → long tenor. */
   byInstrument: BreakdownRow[];
+  /** The product-family lens (`OIS`/`IRS`/`FRA`/`BOND`), ordered by gross desc. */
+  byProduct: BreakdownRow[];
   /** Total gross notional across all contributions. */
   totalNotional: number;
   /** Total number of contributing fills. */
@@ -91,16 +95,18 @@ export function tenorBucketLabel(years: number): string {
 }
 
 /**
- * Map a routed {@link Deal} to a normalized {@link BreakdownItem}. Booked desk
- * deals are structurally `OisInstrument` (the rates P0 arm), so the instrument
- * label reads `<n>y OIS`. DV01 is `null` — the `Deal` wire carries none (never
- * fabricated); the fold stays null-aware for when one is threaded through.
+ * Map a routed {@link Deal} to a normalized {@link BreakdownItem}. The instrument
+ * label reads `<n>y <PRODUCT>` off the deal's decoded arm ({@link Deal.productKind}) —
+ * `10y OIS`, `5y IRS`, `10y BOND` — so a mixed book classifies each fill by its real
+ * family. DV01 is `null` — the `Deal` wire carries none (never fabricated); the fold
+ * stays null-aware for when one is threaded through.
  */
 export function dealToBreakdownItem(deal: Deal): BreakdownItem {
   const tenorYears = deal.instrument.tenorYears;
   return {
     tenorYears,
-    instrument: `${tenorYears}y OIS`,
+    instrument: `${tenorYears}y ${deal.productKind}`,
+    productKind: deal.productKind,
     notional: Math.abs(deal.notional),
     dv01: null,
   };
@@ -153,6 +159,20 @@ export function groupByInstrument(items: readonly BreakdownItem[]): BreakdownRow
 }
 
 /**
+ * Group contributions into the product-family lens (`OIS`/`IRS`/`FRA`/`BOND`),
+ * ordered by gross notional DESCENDING (largest family first; tie-broken by DV01
+ * desc then key) — unlike the tenor/instrument lenses, a product bucket spans many
+ * tenors, so the short→long tenor order is meaningless and gross exposure is the
+ * natural rank. Pure; the summed gross reconciles to the same total the tenor and
+ * instrument lenses do (every lens folds the identical item set).
+ */
+export function groupByProduct(items: readonly BreakdownItem[]): BreakdownRow[] {
+  return [...aggregate(items, (item) => item.productKind)].sort(
+    (a, b) => b.notional - a.notional || (b.dv01 ?? 0) - (a.dv01 ?? 0) || a.key.localeCompare(b.key),
+  );
+}
+
+/**
  * The full tenor + instrument breakdown of a portfolio's routed deals — the
  * honest client-side fold the Risk Dashboard drill-down renders. Pass the deals
  * already filtered to the portfolio (`deal.riskBookId === bookId`).
@@ -164,6 +184,7 @@ export function riskBreakdownFor(deals: readonly Deal[]): RiskBreakdown {
   return {
     byTenor: groupByTenor(items),
     byInstrument: groupByInstrument(items),
+    byProduct: groupByProduct(items),
     totalNotional,
     count: items.length,
   };

@@ -58,6 +58,7 @@ function deal(instrument: OisInstrument, counterparty = "Acme"): Deal {
     kind: "RFQ",
     counterparty,
     desk: "g10-rates",
+    productKind: "OIS",
     instrument,
     curveSet: DEFAULT_USD_SOFR_CURVE,
     side: "BUY",

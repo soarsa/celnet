@@ -136,6 +136,7 @@ function fiDeal(over: Partial<Deal>, internalise?: Deal["internalise"]): Deal {
     kind: "RFQ",
     counterparty: "Citadel",
     desk: "g10-rates",
+    productKind: "OIS",
     instrument: { tenorYears: 5, fixedRate: 0.04, notional: 1e7, direction: "PAY_FIXED" },
     curveSet: { currency: "USD", referenceDate: { year: 2026, month: 6, day: 26 }, pillars: [] },
     side: "BUY",

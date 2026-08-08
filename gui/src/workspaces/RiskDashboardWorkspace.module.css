@@ -174,17 +174,46 @@
 
 /* --- overview table ------------------------------------------------------- */
 
+/* The per-portfolio roll-up is the FOCAL panel — a raised surface with a titled head,
+   larger type and taller rows, so it clearly reads as the star between the global
+   summary above and the per-desk detail below. */
 .overview {
   border: var(--hairline);
   border-radius: var(--r-lg, 12px);
-  background: var(--bg-surface);
+  background: var(--bg-raised, var(--bg-surface));
+  box-shadow: var(--shadow-panel, none);
+  display: flex;
+  flex-direction: column;
+}
+
+.overviewHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5) var(--space-3);
+  border-bottom: var(--hairline);
+}
+
+.overviewTitle {
+  font-size: var(--type-title, var(--type-headline));
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+
+.overviewSub {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+/* The horizontally-scrollable table region (the focusable scroll container). */
+.tableScroll {
   overflow-x: auto;
 }
 
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--type-caption);
+  font-size: var(--type-body);
 }
 
 .table thead th {
@@ -215,10 +244,59 @@
 }
 
 .table tbody td {
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-4) var(--space-4);
   color: var(--text-primary);
   border-bottom: var(--hairline);
   white-space: nowrap;
+}
+
+/* The portfolio name is the row's identity — carry it at a stronger weight/size so the
+   focal table reads with clear hierarchy rather than uniform emphasis. */
+.portfolioCell {
+  display: flex;
+  align-items: center;
+}
+.portfolioName {
+  font-size: var(--type-callout, var(--type-body));
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+/* Sortable numeric column header: a full-width button that right-aligns its label +
+   caret under the numeric column, keyboard-operable, with a clear active affordance. */
+.sortBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  width: 100%;
+  font: inherit;
+  font-weight: var(--weight-emphasis);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color var(--dur-fast, 120ms) ease;
+}
+.sortBtn:hover {
+  color: var(--text-primary);
+}
+.sortBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.sortBtnActive {
+  color: var(--text-primary);
+}
+.sortCaret {
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-quaternary, var(--text-tertiary));
+}
+.sortBtnActive .sortCaret {
+  color: var(--accent);
 }
 
 .table tbody tr {

@@ -121,6 +121,7 @@ import type {
   Quote,
   RatesCurveSet,
   RatesInstrument,
+  RatesProductKind,
   BrokenDate,
   PillarTenor,
   BuildCurveRequest,
@@ -3947,9 +3948,11 @@ export class MockTransport implements CelnetTransport {
     const graph = this.mockRiskGraph;
     if (graph === null) return null;
     const fill = blankFill();
-    // Every desk-booked deal is structurally an OIS; expose the routing fields the
-    // graph tests (product / ccy / notional / tenor / side / counterparty / desk).
-    fill.product = "OIS";
+    // Expose the routing fields the graph tests (product / ccy / notional / tenor /
+    // side / counterparty / desk). `product` is the deal's decoded arm, lower-cased to
+    // match the seeded graph's condition value (`product eq "bond"` → Marex FI), so a
+    // BOND fill routes to a different portfolio than the OIS/IRS flow.
+    fill.product = d.productKind.toLowerCase();
     fill.ccy = d.curveSet.currency;
     fill.notional = d.notional;
     fill.tenor = d.instrument.tenorYears;
@@ -4834,6 +4837,8 @@ export class MockTransport implements CelnetTransport {
       kind: existing.kind,
       counterparty: existing.counterparty,
       desk: existing.desk,
+      // The desk RFQ path deals OIS structurally (the P0 arm) — classified honestly.
+      productKind: "OIS",
       instrument: existing.instrument,
       curveSet: existing.curveSet,
       side: existing.side,
@@ -5297,17 +5302,26 @@ export class MockTransport implements CelnetTransport {
     // A handful of already-booked FI lifts so the deals blotter is populated on load
     // and demonstrates the full internalise spread (green/amber/red/breach, incl. a
     // below-tolerance losing back-to-back) without needing to accept a quote first.
+    // A realistic MIX of product families so the Deals blotter's Product column and
+    // the Risk Dashboard "By product type" drill-down render MULTIPLE buckets offline:
+    // OIS + IRS route to EMEA Rates, BOND routes to Marex FI (per the seeded graph), so
+    // the roll-up spreads across both portfolios. This is legitimate mock-TRANSPORT
+    // data representing what the live wire carries — the projection carries a whole-
+    // year tenor + the family tag, exactly as `dealFromWire` decodes each oneof arm.
     const dealSeeds: {
       counterpartyIdx: number;
+      productKind: RatesProductKind;
       tenorYears: number;
       notionalMm: number;
       side: "BUY" | "SELL";
       profileIdx: number;
     }[] = [
-      { counterpartyIdx: 4, tenorYears: 5, notionalMm: 120, side: "BUY", profileIdx: 0 },
-      { counterpartyIdx: 5, tenorYears: 10, notionalMm: 80, side: "SELL", profileIdx: 1 },
-      { counterpartyIdx: 6, tenorYears: 2, notionalMm: 200, side: "BUY", profileIdx: 2 },
-      { counterpartyIdx: 7, tenorYears: 30, notionalMm: 45, side: "SELL", profileIdx: 3 },
+      { counterpartyIdx: 4, productKind: "OIS", tenorYears: 5, notionalMm: 120, side: "BUY", profileIdx: 0 },
+      { counterpartyIdx: 5, productKind: "OIS", tenorYears: 10, notionalMm: 80, side: "SELL", profileIdx: 1 },
+      { counterpartyIdx: 6, productKind: "IRS", tenorYears: 2, notionalMm: 200, side: "BUY", profileIdx: 2 },
+      { counterpartyIdx: 7, productKind: "IRS", tenorYears: 7, notionalMm: 90, side: "SELL", profileIdx: 0 },
+      { counterpartyIdx: 8, productKind: "BOND", tenorYears: 10, notionalMm: 60, side: "BUY", profileIdx: 3 },
+      { counterpartyIdx: 9, productKind: "BOND", tenorYears: 30, notionalMm: 35, side: "SELL", profileIdx: 1 },
     ];
     const seedBase = nowNanos();
     for (const s of dealSeeds) {
@@ -5329,6 +5343,7 @@ export class MockTransport implements CelnetTransport {
         kind: "RFQ",
         counterparty: mockCounterpartyFor(s.counterpartyIdx),
         desk: "g10-rates",
+        productKind: s.productKind,
         instrument,
         curveSet: curve,
         side: s.side,

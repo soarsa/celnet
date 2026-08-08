@@ -24,6 +24,7 @@ import {
   createBookRequestToWire,
   createDeskRequestToWire,
   createEntityRequestToWire,
+  dealFromWire,
   deskResponseFromWire,
   updateDeskRequestToWire,
   deleteBookRequestToWire,
@@ -710,6 +711,94 @@ describe("wsCodec — RatesInstrument oneof arms (server decoder contract)", () 
       }),
     ];
     expect(arms.map((a) => Object.keys(a))).toEqual([["ois"], ["fra"]]);
+  });
+});
+
+describe("wsCodec — dealFromWire decodes each RatesInstrument arm to its productKind", () => {
+  // A minimal wire `Deal` carrying the given instrument arm; the curve reference year
+  // (2026) anchors a BOND arm's whole-year term.
+  function wireDeal(instrument: WireObject): WireObject {
+    return {
+      deal_id: "d-1",
+      request_id: "r-1",
+      kind: 0,
+      counterparty: "CP",
+      desk: "g10-rates",
+      instrument,
+      curve_set: {
+        currency: "USD",
+        reference_date: { year: 2026, month: 1, day: 1 },
+        ois_pillars: [],
+      },
+      side: 0,
+      notional: 100_000_000,
+      price: 0.04,
+      executed_at_nanos: 0,
+      trader: "T",
+    };
+  }
+
+  it("decodes the OIS arm → productKind OIS with the tenor/notional projection", () => {
+    const d = dealFromWire(
+      wireDeal({ ois: { tenor_years: 5, fixed_rate: 0.0405, notional: 1e7, side: 1 } }),
+    );
+    expect(d.productKind).toBe("OIS");
+    expect(d.instrument).toEqual({
+      tenorYears: 5,
+      fixedRate: 0.0405,
+      notional: 1e7,
+      direction: "RECEIVE_FIXED",
+    });
+  });
+
+  it("decodes the IRS arm → productKind IRS (tenor from tenor_years)", () => {
+    const d = dealFromWire(
+      wireDeal({
+        irs: {
+          tenor_years: 7,
+          fixed_rate: 0.041,
+          notional: 5e7,
+          side: 0,
+          fixed_frequency: 1,
+          fixed_day_count: 1,
+          float_frequency: 2,
+          float_day_count: 0,
+        },
+      }),
+    );
+    expect(d.productKind).toBe("IRS");
+    expect(d.instrument.tenorYears).toBe(7);
+    expect(d.instrument.direction).toBe("PAY_FIXED");
+  });
+
+  it("decodes the FRA arm → productKind FRA (tenor = end_months / 12)", () => {
+    const d = dealFromWire(
+      wireDeal({
+        fra: { start_months: 3, end_months: 6, fixed_rate: 0.033, notional: 2e7, side: 1, accrual_basis: 2 },
+      }),
+    );
+    expect(d.productKind).toBe("FRA");
+    expect(d.instrument.tenorYears).toBe(0.5);
+  });
+
+  it("decodes the BOND arm → productKind BOND (tenor = maturity year − curve ref year)", () => {
+    const d = dealFromWire(
+      wireDeal({
+        bond: {
+          coupon_rate: 0.06,
+          coupon_frequency: 1,
+          day_count: 2,
+          maturity_date: { year: 2036, month: 6, day: 15 },
+          redemption: 100,
+          side: 0,
+        },
+      }),
+    );
+    expect(d.productKind).toBe("BOND");
+    // 2036 − 2026 = 10y; the projection reports the coupon + face for display.
+    expect(d.instrument.tenorYears).toBe(10);
+    expect(d.instrument.fixedRate).toBe(0.06);
+    expect(d.instrument.notional).toBe(100);
   });
 });
 

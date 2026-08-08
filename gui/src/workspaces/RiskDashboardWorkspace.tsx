@@ -203,6 +203,100 @@ function UtilizationBar({ util }: { util: RiskLimitUtilization }): React.ReactEl
 }
 
 /**
+ * The per-portfolio roster column the overview is sorted on. Gross notional is the
+ * standard EXPOSURE measure, so it is the default sort key (descending — highest
+ * exposure first). Every key maps to a numeric roster field; DV01 is null-aware.
+ */
+type RiskSortKey = "net" | "gross" | "positions" | "dv01";
+type SortDir = "asc" | "desc";
+
+/** Human column labels for the active-sort sub-note. */
+const SORT_LABELS: Record<RiskSortKey, string> = {
+  net: "Net",
+  gross: "Gross",
+  positions: "Positions",
+  dv01: "DV01",
+};
+
+/** The numeric roster value a sort key reads (null only for the not-yet-wired DV01). */
+function sortValue(r: RiskBookRisk, key: RiskSortKey): number | null {
+  switch (key) {
+    case "net":
+      return r.netNotional;
+    case "gross":
+      return r.grossNotional;
+    case "positions":
+      return r.positionCount;
+    case "dv01":
+      return r.dv01;
+  }
+}
+
+/**
+ * Order the roster by the active sort — a pure, stable sort over a COPY (never
+ * mutating the streamed rows). A null metric (an unevaluated DV01) always sorts to
+ * the BOTTOM regardless of direction, so the honest "—" cells never crowd the top.
+ */
+function sortRisk(
+  rows: readonly RiskBookRisk[],
+  key: RiskSortKey,
+  dir: SortDir,
+): RiskBookRisk[] {
+  const sign = dir === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const av = sortValue(a, key);
+    const bv = sortValue(b, key);
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1; // nulls last, both directions
+    if (bv === null) return -1;
+    return sign * (av - bv);
+  });
+}
+
+/** The `aria-sort` token for a column header given the active sort. */
+function ariaSortFor(active: boolean, dir: SortDir): "ascending" | "descending" | "none" {
+  if (!active) return "none";
+  return dir === "asc" ? "ascending" : "descending";
+}
+
+/**
+ * A sortable numeric column header — a real `<button>` (keyboard-operable) inside a
+ * `<th className="numCol">` carrying `aria-sort`. The active column shows a directional
+ * caret (▲ asc / ▼ desc); an inactive one shows a dim neutral caret as the affordance.
+ * Clicking the active column toggles direction; clicking another selects it.
+ */
+function SortHeader({
+  label,
+  sortKey,
+  activeKey,
+  dir,
+  onSort,
+}: {
+  label: string;
+  sortKey: RiskSortKey;
+  activeKey: RiskSortKey;
+  dir: SortDir;
+  onSort: (key: RiskSortKey) => void;
+}): React.ReactElement {
+  const active = activeKey === sortKey;
+  return (
+    <th scope="col" className={styles.numCol} aria-sort={ariaSortFor(active, dir)}>
+      <button
+        type="button"
+        className={`${styles.sortBtn} ${active ? styles.sortBtnActive : ""}`}
+        data-testid={`risk-sort-${sortKey}`}
+        onClick={() => onSort(sortKey)}
+      >
+        {label}
+        <span className={styles.sortCaret} aria-hidden="true">
+          {active ? (dir === "asc" ? "▲" : "▼") : "▾"}
+        </span>
+      </button>
+    </th>
+  );
+}
+
+/**
  * DashboardPanel — the per-portfolio rolled-up RISK view (this workspace's original
  * body, unchanged). The empty-state's "create a portfolio" affordance now switches
  * to the sibling Portfolios tab via {@link onGoToPortfolios} instead of pointing at a
@@ -231,6 +325,22 @@ export function DashboardPanel({
   // The set of portfolio rows whose drill-down is expanded (independent of the
   // selected-book detail; several may be open at once).
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  // The active column sort. Default: GROSS notional DESCENDING — gross is the standard
+  // exposure measure, so the roster opens highest-exposure-first.
+  const [sort, setSort] = useState<{ key: RiskSortKey; dir: SortDir }>({
+    key: "gross",
+    dir: "desc",
+  });
+
+  // Toggle direction on the active column; select another column fresh at descending
+  // (largest-first, the exposure-ranked default). Pure state update — no mutation.
+  const onSort = useCallback((key: RiskSortKey): void => {
+    setSort((prev) =>
+      prev.key === key
+        ? { key, dir: prev.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: "desc" },
+    );
+  }, []);
 
   // Apply a fresh risk-book set (from a pushed frame or the fallback poll): keep the
   // current selection if it still exists, else fall to the first book.
@@ -372,6 +482,9 @@ export function DashboardPanel({
   // rows, so the desk reads total exposure without summing rows by eye.
   const global = useMemo(() => globalExposureOf(risk), [risk]);
 
+  // The roster in its active sort order (default: gross desc = highest exposure first).
+  const sortedRisk = useMemo(() => sortRisk(risk, sort.key, sort.dir), [risk, sort]);
+
   if (!signedIn) {
     return (
       <div className={styles.wrap}>
@@ -434,10 +547,25 @@ export function DashboardPanel({
         </section>
       )}
 
-      {/* --- heat overview across all books --- */}
-      {/* tabIndex makes the horizontally-scrollable region keyboard-reachable (axe
-          scrollable-region-focusable) so a keyboard user can scroll the wide table. */}
-      <section className={styles.overview} aria-label="Risk heat overview" tabIndex={0}>
+      {/* --- per-portfolio roll-up — the FOCAL panel: bigger rows/type, default-sorted
+          by gross notional (exposure) desc, with sortable numeric column headers. --- */}
+      <section className={styles.overview} aria-label="Risk portfolios by exposure">
+        <div className={styles.overviewHead}>
+          <h2 className={styles.overviewTitle}>Portfolios</h2>
+          <span className={styles.overviewSub}>
+            {risk.length} portfolio{risk.length === 1 ? "" : "s"} · sorted by{" "}
+            {SORT_LABELS[sort.key]} {sort.dir === "desc" ? "▼" : "▲"}
+            {sort.key === "gross" ? " (exposure)" : ""} · click a column to re-sort
+          </span>
+        </div>
+        {/* tabIndex makes the horizontally-scrollable region keyboard-reachable (axe
+            scrollable-region-focusable) so a keyboard user can scroll the wide table. */}
+        <div
+          className={styles.tableScroll}
+          tabIndex={0}
+          role="group"
+          aria-label="Risk heat overview table"
+        >
         <table className={styles.table}>
           <thead>
             <tr>
@@ -445,18 +573,16 @@ export function DashboardPanel({
                 <span className={styles.visuallyHidden}>Expand breakdown</span>
               </th>
               <th scope="col">Portfolio</th>
-              <th scope="col" className={styles.numCol}>
-                Net
-              </th>
-              <th scope="col" className={styles.numCol}>
-                Gross
-              </th>
-              <th scope="col" className={styles.numCol}>
-                Positions
-              </th>
-              <th scope="col" className={styles.numCol}>
-                DV01
-              </th>
+              <SortHeader label="Net" sortKey="net" activeKey={sort.key} dir={sort.dir} onSort={onSort} />
+              <SortHeader label="Gross" sortKey="gross" activeKey={sort.key} dir={sort.dir} onSort={onSort} />
+              <SortHeader
+                label="Positions"
+                sortKey="positions"
+                activeKey={sort.key}
+                dir={sort.dir}
+                onSort={onSort}
+              />
+              <SortHeader label="DV01" sortKey="dv01" activeKey={sort.key} dir={sort.dir} onSort={onSort} />
               <th scope="col">Limits</th>
             </tr>
           </thead>
@@ -478,7 +604,7 @@ export function DashboardPanel({
                 </td>
               </tr>
             )}
-            {risk.map((r) => {
+            {sortedRisk.map((r) => {
               const band = worstBand(r.limits);
               const isOpen = expanded.has(r.bookId);
               const panelId = `risk-breakdown-${r.bookId}`;
@@ -510,9 +636,9 @@ export function DashboardPanel({
                         </span>
                       </button>
                     </td>
-                    <td>
+                    <td className={styles.portfolioCell}>
                       <span className={`${styles.dot} ${styles[`band_${band}`]}`} aria-hidden />
-                      {r.name}
+                      <span className={styles.portfolioName}>{r.name}</span>
                     </td>
                     <td className={styles.num}>{notional(r.netNotional)}</td>
                     <td className={styles.num}>{notional(r.grossNotional)}</td>
@@ -543,6 +669,7 @@ export function DashboardPanel({
             })}
           </tbody>
         </table>
+        </div>
       </section>
 
       {/* --- selected book detail --- */}

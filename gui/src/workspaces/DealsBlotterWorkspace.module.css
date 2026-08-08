@@ -234,6 +234,65 @@
   color: var(--text-tertiary);
 }
 
+/* Hedge-badge legend — a concise key above the table explaining the internalise
+   badge (label = routing decision, colour = DV01 warehouse band, dot = losing). The
+   band swatches reuse the same semantic tokens as the badge so they match exactly. */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  font-size: var(--type-micro);
+  color: var(--text-secondary);
+}
+
+.legendTitle {
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+.legendGroupLabel {
+  color: var(--text-tertiary);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.legendSep {
+  width: var(--hairline-w, 1px);
+  align-self: stretch;
+  min-height: 1em;
+  background: var(--border, currentColor);
+  opacity: 0.4;
+}
+
+.legendSwatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--bid) 55%, transparent);
+}
+.legendSwatch[data-band="amber"] {
+  background: color-mix(in oklab, var(--warn) 60%, transparent);
+}
+.legendSwatch[data-band="red"] {
+  background: color-mix(in oklab, var(--offer) 60%, transparent);
+}
+.legendSwatch[data-band="breach"] {
+  background: color-mix(in oklab, var(--danger) 65%, transparent);
+}
+
 /* BUY / SELL indicator — the primary read of a deal's Side. The tag chip is tinted
    green (bid) for a buy and red (offer) for a sell using the SAME semantic trading
    tokens as bid/offer prices, so it themes automatically in light + dark; the

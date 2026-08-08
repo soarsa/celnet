@@ -72,13 +72,13 @@ function SideBadge({ side }: { readonly side: Side }): React.ReactElement {
 }
 
 /**
- * The product family a booked deal carries. Every desk-booked deal is structurally
- * an `OisInstrument` (the rates P0 arm), so the family is OIS — surfaced honestly as
- * a real column rather than invented. When the contract grows other rates families
- * (IRS / FRA / Bond) this reads them off the instrument discriminant.
+ * The product family a booked deal carries — its decoded `RatesInstrument` oneof arm
+ * ({@link Deal.productKind}): `OIS` / `IRS` / `FRA` / `BOND`. Surfaced honestly off the
+ * discriminant the codec threads through, so a mixed book classifies each fill by its
+ * real family rather than assuming OIS.
  */
-function productLabel(_d: Deal): string {
-  return "OIS";
+function productLabel(d: Deal): string {
+  return d.productKind;
 }
 
 /** The tenor a rates deal carries, as a compact `Ny` label (e.g. `10y`). */
@@ -123,6 +123,59 @@ function InternaliseBadge({ inl }: { readonly inl: Internalise }): React.ReactEl
       {internaliseLabel(inl)}
       {!inl.withinTolerance && <span className={styles.inlLosing} aria-hidden="true" />}
     </span>
+  );
+}
+
+/**
+ * The Hedge-column legend — a concise key for the internalise badge, since traders
+ * ask what the tints mean. Documents the REAL badge semantics read off the code:
+ *   • the LABEL is the routing decision — "Internalised" (warehoused from risk) vs
+ *     "B2B" (shed external back-to-back) — independent of colour;
+ *   • the COLOUR is the DV01 warehouse-utilisation band (NOT the edge): green =
+ *     comfortable, amber = approaching the cap, red = at/over the cap, breach = the
+ *     hard limit exceeded — the same bid/warn/offer/danger tokens as the badge;
+ *   • the DOT (+ ring) marks a LOSING fill — captured edge below the min-edge
+ *     tolerance (`withinTolerance === false`), shown regardless of band.
+ * The band swatches reuse the badge classes (`.inl` + `data-band`) so the legend
+ * colours are byte-identical to the rows and theme automatically.
+ */
+function InternaliseLegend(): React.ReactElement {
+  const bands: readonly { band: Internalise["hedgeBand"]; note: string }[] = [
+    { band: "green", note: "comfortable" },
+    { band: "amber", note: "approaching cap" },
+    { band: "red", note: "at / over cap" },
+    { band: "breach", note: "limit breached" },
+  ];
+  return (
+    <div className={styles.legend} role="note" aria-label="Hedge badge legend">
+      <span className={styles.legendTitle}>Hedge</span>
+      <span className={styles.legendItem}>
+        <span className={styles.inl} data-band="green" aria-hidden="true">
+          Internalised
+        </span>
+        warehoused
+      </span>
+      <span className={styles.legendItem}>
+        <span className={styles.inl} data-band="green" aria-hidden="true">
+          B2B
+        </span>
+        external back-to-back
+      </span>
+      <span className={styles.legendSep} aria-hidden="true" />
+      <span className={styles.legendGroupLabel}>DV01 band:</span>
+      {bands.map(({ band, note }) => (
+        <span key={band} className={styles.legendItem}>
+          <span className={styles.legendSwatch} data-band={band} aria-hidden="true" />
+          {hedgeBandLabel(band)} — {note}
+        </span>
+      ))}
+      <span className={styles.legendItem}>
+        <span className={styles.inl} data-band="red" data-losing="true" aria-hidden="true">
+          <span className={styles.inlLosing} />
+        </span>
+        dot = losing (edge below tolerance)
+      </span>
+    </div>
   );
 }
 
@@ -292,6 +345,8 @@ export function DealsBlotterWorkspace(): React.ReactElement {
             {filtered.length === 0 ? (
               <p className={styles.empty}>No deals match “{query}”.</p>
             ) : (
+              <>
+              <InternaliseLegend />
               <div className={styles.tableWrap} tabIndex={0} role="region" aria-label="Deals table">
                 <table className={styles.table}>
                   <thead>
@@ -380,6 +435,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </>
         )}

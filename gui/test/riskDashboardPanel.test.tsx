@@ -35,13 +35,19 @@ function risk(bookId: string, name: string, over: Partial<RiskBookRisk> = {}): R
   };
 }
 
-function deal(bookId: string, tenorYears: number, notional: number): Deal {
+function deal(
+  bookId: string,
+  tenorYears: number,
+  notional: number,
+  productKind: Deal["productKind"] = "OIS",
+): Deal {
   return {
-    dealId: `d-${bookId}-${tenorYears}-${notional}`,
+    dealId: `d-${bookId}-${tenorYears}-${notional}-${productKind}`,
     requestId: "r",
     kind: "RFQ",
     counterparty: "CP",
     desk: "rates",
+    productKind,
     instrument: { tenorYears, fixedRate: 0.04, notional, direction: "RECEIVE_FIXED" },
     curveSet: { currency: "USD", referenceDate: { year: 2026, month: 1, day: 1 }, pillars: [] },
     side: "BUY",
@@ -132,5 +138,86 @@ describe("DashboardPanel — tenor/instrument drill-down (Change 2)", () => {
     await waitFor(() =>
       expect(screen.getByText(/No routed fills to break down/i)).toBeInTheDocument(),
     );
+  });
+
+  it("renders a By-product-type breakdown reconciling to the book total", async () => {
+    state.app = makeApp({
+      riskRows: [risk("bk-1", "Alpha")],
+      deals: [
+        deal("bk-1", 5, 30_000_000, "OIS"),
+        deal("bk-1", 10, 60_000_000, "BOND"),
+        deal("bk-1", 2, 20_000_000, "IRS"),
+      ],
+    });
+    render(<DashboardPanel onGoToPortfolios={vi.fn()} />);
+    fireEvent.click(await screen.findByTestId("risk-expand-bk-1"));
+
+    const grid = await screen.findByLabelText("Risk breakdown for Alpha");
+    // The third lens renders, with a bucket per family (multiple product buckets).
+    expect(within(grid).getByText("By product type")).toBeInTheDocument();
+    expect(within(grid).getByText("BOND")).toBeInTheDocument();
+    expect(within(grid).getByText("OIS")).toBeInTheDocument();
+    expect(within(grid).getByText("IRS")).toBeInTheDocument();
+    // Reconciliation: the note reports the 110m book gross the product rows sum to.
+    expect(within(grid).getByText(/110m gross notional/)).toBeInTheDocument();
+    expect(within(grid).getAllByText("60m").length).toBeGreaterThanOrEqual(1); // BOND bucket
+  });
+});
+
+describe("DashboardPanel — sortable roster (Change 2)", () => {
+  // Three books with distinct gross so an order is observable: Beta 3m > Alpha 2m > Gamma 1m.
+  function threeBooks() {
+    return {
+      riskRows: [
+        risk("bk-a", "Alpha", { grossNotional: 2_000_000, netNotional: 900_000, positionCount: 5 }),
+        risk("bk-b", "Beta", { grossNotional: 3_000_000, netNotional: 100_000, positionCount: 2 }),
+        risk("bk-g", "Gamma", { grossNotional: 1_000_000, netNotional: 500_000, positionCount: 9 }),
+      ],
+    };
+  }
+
+  /** The portfolio names in DOM (roster) order — the sorted row sequence. */
+  function rosterOrder(container: HTMLElement): string[] {
+    return [...container.querySelectorAll('button[data-testid^="risk-expand-"]')].map(
+      (b) => b.getAttribute("aria-label")?.match(/for (\w+)/)?.[1] ?? "",
+    );
+  }
+
+  it("defaults to gross notional descending (highest exposure first)", async () => {
+    state.app = makeApp(threeBooks());
+    const { container } = render(<DashboardPanel onGoToPortfolios={vi.fn()} />);
+    await screen.findAllByText("Beta");
+
+    expect(rosterOrder(container)).toEqual(["Beta", "Alpha", "Gamma"]);
+    // The Gross header advertises the active descending sort.
+    const grossBtn = screen.getByTestId("risk-sort-gross");
+    expect(grossBtn.closest("th")).toHaveAttribute("aria-sort", "descending");
+  });
+
+  it("toggles direction on the active column and re-sorts", async () => {
+    state.app = makeApp(threeBooks());
+    const { container } = render(<DashboardPanel onGoToPortfolios={vi.fn()} />);
+    await screen.findAllByText("Beta");
+
+    fireEvent.click(screen.getByTestId("risk-sort-gross")); // desc → asc
+    expect(screen.getByTestId("risk-sort-gross").closest("th")).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+    expect(rosterOrder(container)).toEqual(["Gamma", "Alpha", "Beta"]);
+  });
+
+  it("sorts by a different column (net desc) and stamps aria-sort there", async () => {
+    state.app = makeApp(threeBooks());
+    const { container } = render(<DashboardPanel onGoToPortfolios={vi.fn()} />);
+    await screen.findAllByText("Beta");
+
+    fireEvent.click(screen.getByTestId("risk-sort-net")); // net desc: Alpha 900k > Gamma 500k > Beta 100k
+    expect(screen.getByTestId("risk-sort-net").closest("th")).toHaveAttribute(
+      "aria-sort",
+      "descending",
+    );
+    expect(screen.getByTestId("risk-sort-gross").closest("th")).toHaveAttribute("aria-sort", "none");
+    expect(rosterOrder(container)).toEqual(["Alpha", "Gamma", "Beta"]);
   });
 });
