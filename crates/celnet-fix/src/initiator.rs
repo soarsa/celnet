@@ -368,6 +368,100 @@ impl<S: MessageStore> Initiator<S> {
         Ok(outcome)
     }
 
+    /// Subscribe-and-hold on a **market-data** stream: drive the session for `hold`,
+    /// collecting every `MarketDataSnapshotFullRefresh(W)` the venue pushes (tracking the
+    /// latest top-of-book), answering heartbeats so the session stays alive. If `lift_after`
+    /// is set, lift the first snapshot at/after that elapsed point with a `NewOrderSingle(D)`
+    /// naming the `Symbol(55)` (BUY the offer / SELL the bid per the [`LiftPolicy`]) and
+    /// collect its `ExecutionReport(8)`. Returns the snapshot count and the last top-of-book
+    /// / fill state. The market-data analogue of [`Self::collect_stream`].
+    async fn collect_md_stream<R, W>(
+        &mut self,
+        reader: &mut FrameReader<R>,
+        write_half: &mut W,
+        sending_time: &[u8],
+        hold: Duration,
+        lift_after: Option<Duration>,
+    ) -> std::io::Result<StreamOutcome>
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        let start = tokio::time::Instant::now();
+        let mut deadline = start + hold;
+        let lift_at = lift_after.map(|d| start + d);
+        let mut outcome = StreamOutcome::default();
+        let mut awaiting_exec = false;
+        loop {
+            let frame_bytes = match tokio::time::timeout_at(deadline, reader.next_frame()).await {
+                Err(_elapsed) => break,
+                Ok(Ok(Some(bytes))) => bytes,
+                Ok(Ok(None)) => break,
+                Ok(Err(e)) => return Err(e),
+            };
+            let mt = self.drive(&frame_bytes, sending_time, write_half).await?;
+            match mt {
+                Some(MsgType::MarketDataSnapshotFullRefresh) => {
+                    let frame = FrameCursor::parse(&frame_bytes)
+                        .map_err(|_| std::io::Error::other("bad market-data snapshot frame"))?;
+                    let view = messages::MarketDataSnapshotView::new(frame);
+                    let tob = view.top_of_book();
+                    outcome.updates += 1;
+                    outcome.result.quote_id = None; // a snapshot carries no QuoteID
+                    outcome.result.bid = tob.bid_px;
+                    outcome.result.offer = tob.offer_px;
+                    let lift_due = lift_at.is_some_and(|t| tokio::time::Instant::now() >= t);
+                    if lift_due
+                        && !awaiting_exec
+                        && !outcome.result.filled
+                        && self.policy != LiftPolicy::Observe
+                    {
+                        // Lift the streamed top-of-book by symbol: BUY the offer (LiftOffer)
+                        // or SELL the bid (HitBid) — executing a streaming deal.
+                        let hit_bid = self.policy == LiftPolicy::HitBid;
+                        let (side, price) = if hit_bid {
+                            (crate::dialect_fx::SIDE_SELL, tob.bid_px)
+                        } else {
+                            (crate::dialect_fx::SIDE_BUY, tob.offer_px)
+                        };
+                        let Some(symbol) = view.symbol().map(<[u8]>::to_vec) else {
+                            continue;
+                        };
+                        let cl = self.mint("C");
+                        let px = price.unwrap_or(0.0);
+                        let order = self.session.send_app(sending_time, |h, e| {
+                            let p = messages::MarketOrderParams {
+                                cl_ord_id: &cl,
+                                symbol: &symbol,
+                                side,
+                                qty: 1_000_000.0,
+                                price: px,
+                                transact_time: b"20260530-12:00:01.000",
+                            };
+                            messages::build_new_order_by_symbol(h, &p, e)
+                        });
+                        write_frame(write_half, &order).await?;
+                        awaiting_exec = true;
+                        let exec_deadline = tokio::time::Instant::now() + self.quote_timeout;
+                        if exec_deadline > deadline {
+                            deadline = exec_deadline;
+                        }
+                    }
+                }
+                Some(MsgType::ExecutionReport) if awaiting_exec => {
+                    let frame = FrameCursor::parse(&frame_bytes)
+                        .map_err(|_| std::io::Error::other("bad exec frame"))?;
+                    let view = messages::ExecReportView::new(frame);
+                    outcome.result.filled = view.exec_type() == Some(messages::EXEC_FILLED);
+                    outcome.result.fill_px = view.last_px();
+                    break;
+                }
+                _ => {}
+            }
+        }
+        Ok(outcome)
+    }
+
     /// Feed one inbound frame to the session and transmit any session-level
     /// outbound. Returns the inbound application `MsgType` (if delivered).
     async fn drive<W>(
@@ -452,6 +546,37 @@ impl<S: MessageStore, RW: AsyncRead + AsyncWrite + Unpin> InitiatorSession<'_, S
             .await?;
         self.initiator
             .collect_stream(
+                &mut self.reader,
+                &mut self.write_half,
+                sending_time,
+                hold,
+                lift_after,
+            )
+            .await
+    }
+
+    /// Open a **market-data** stream: send a `MarketDataRequest(V)` subscribe
+    /// (`build_subscribe`) over the already-open session, then hold for `hold`, collecting
+    /// every `MarketDataSnapshotFullRefresh(W)` the venue pushes and answering heartbeats.
+    /// If `lift_after` is set, lift the first snapshot at/after that point with a
+    /// `NewOrderSingle(D)` by symbol (executing a streaming deal) and collect its fill.
+    /// Reuses the SAME session — the sequence increments, no new logon. The market-data
+    /// analogue of [`Self::stream`].
+    ///
+    /// # Errors
+    /// Propagates transport I/O errors.
+    pub async fn md_stream(
+        &mut self,
+        sending_time: &[u8],
+        build_subscribe: impl FnOnce(&Header<'_>, &mut crate::framing::FrameEncoder) -> Vec<u8>,
+        hold: Duration,
+        lift_after: Option<Duration>,
+    ) -> std::io::Result<StreamOutcome> {
+        self.initiator
+            .send_request(&mut self.write_half, sending_time, build_subscribe)
+            .await?;
+        self.initiator
+            .collect_md_stream(
                 &mut self.reader,
                 &mut self.write_half,
                 sending_time,

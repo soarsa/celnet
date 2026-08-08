@@ -66,6 +66,10 @@ pub enum MsgType {
     SecurityListRequest,
     /// `y` — SecurityList (the venue's tradable-securities universe response).
     SecurityList,
+    /// `V` — MarketDataRequest (subscribe / unsubscribe a streaming market-data feed).
+    MarketDataRequest,
+    /// `W` — MarketDataSnapshotFullRefresh (a full top-of-book snapshot per instrument).
+    MarketDataSnapshotFullRefresh,
 }
 
 impl MsgType {
@@ -90,6 +94,8 @@ impl MsgType {
             MsgType::QuoteRequestReject => b"AG",
             MsgType::SecurityListRequest => b"x",
             MsgType::SecurityList => b"y",
+            MsgType::MarketDataRequest => b"V",
+            MsgType::MarketDataSnapshotFullRefresh => b"W",
         }
     }
 
@@ -114,6 +120,8 @@ impl MsgType {
             b"AG" => MsgType::QuoteRequestReject,
             b"x" => MsgType::SecurityListRequest,
             b"y" => MsgType::SecurityList,
+            b"V" => MsgType::MarketDataRequest,
+            b"W" => MsgType::MarketDataSnapshotFullRefresh,
             _ => return None,
         })
     }
@@ -533,6 +541,52 @@ pub const TAGS: &[TagSpec] = &[
         field_type: FieldType::Char,
         name: "LastFragment",
     },
+    // --- market-data (35=V MarketDataRequest / 35=W MarketDataSnapshotFullRefresh) ---
+    TagSpec {
+        tag: 262,
+        field_type: FieldType::String,
+        name: "MDReqID",
+    },
+    TagSpec {
+        tag: 263,
+        field_type: FieldType::Char,
+        name: "SubscriptionRequestType",
+    },
+    TagSpec {
+        tag: 264,
+        field_type: FieldType::Int,
+        name: "MarketDepth",
+    },
+    TagSpec {
+        tag: 265,
+        field_type: FieldType::Int,
+        name: "MDUpdateType",
+    },
+    TagSpec {
+        tag: 267,
+        field_type: FieldType::Int,
+        name: "NoMDEntryTypes",
+    },
+    TagSpec {
+        tag: 269,
+        field_type: FieldType::Char,
+        name: "MDEntryType",
+    },
+    TagSpec {
+        tag: 268,
+        field_type: FieldType::Int,
+        name: "NoMDEntries",
+    },
+    TagSpec {
+        tag: 270,
+        field_type: FieldType::Float,
+        name: "MDEntryPx",
+    },
+    TagSpec {
+        tag: 271,
+        field_type: FieldType::Float,
+        name: "MDEntrySize",
+    },
 ];
 
 /// Look up the [`TagSpec`] for a tag number, if it is in the dialect.
@@ -569,6 +623,12 @@ pub const fn required_tags(mt: MsgType) -> &'static [u32] {
         // request states its type (559), the response its result (560).
         MsgType::SecurityListRequest => &[35, 320, 559],
         MsgType::SecurityList => &[35, 320, 560],
+        // A MarketDataRequest carries the request id (262), the subscribe/unsubscribe
+        // intent (263), and at least one instrument in the NoRelatedSym(146) group.
+        MsgType::MarketDataRequest => &[35, 262, 263, 146],
+        // A full-refresh snapshot echoes the request id (262), names the instrument (55),
+        // and carries the market-data entries group (268).
+        MsgType::MarketDataSnapshotFullRefresh => &[35, 262, 55, 268],
     }
 }
 
@@ -692,9 +752,16 @@ mod tests {
             MsgType::NewOrderSingle,
             MsgType::NewOrderMultileg,
             MsgType::ExecutionReport,
+            MsgType::MarketDataRequest,
+            MsgType::MarketDataSnapshotFullRefresh,
         ] {
             assert_eq!(MsgType::from_bytes(mt.as_bytes()), Some(mt));
         }
+        assert_eq!(MsgType::from_bytes(b"V"), Some(MsgType::MarketDataRequest));
+        assert_eq!(
+            MsgType::from_bytes(b"W"),
+            Some(MsgType::MarketDataSnapshotFullRefresh)
+        );
         assert_eq!(MsgType::from_bytes(b"ZZZ"), None);
     }
 

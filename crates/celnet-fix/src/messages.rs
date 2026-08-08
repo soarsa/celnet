@@ -502,6 +502,46 @@ pub fn build_new_order_single(
     enc.finish()
 }
 
+/// Build a `NewOrderSingle(D)` lifting a streamed market-data top-of-book by `Symbol(55)`
+/// — no `QuoteID(117)`, since a `MarketDataSnapshotFullRefresh(W)` carries none. The venue
+/// resolves the current liftable token for the symbol (see the market-data lift path). The
+/// `Price(44)` is the top-of-book level being hit (Bid on a sell / Offer on a buy).
+#[derive(Debug, Clone, Copy)]
+pub struct MarketOrderParams<'a> {
+    /// `ClOrdID(11)`.
+    pub cl_ord_id: &'a [u8],
+    /// `Symbol(55)` being lifted.
+    pub symbol: &'a [u8],
+    /// `Side(54)` byte.
+    pub side: u8,
+    /// `OrderQty(38)`.
+    pub qty: f64,
+    /// `Price(44)` — the streamed top-of-book level being hit.
+    pub price: f64,
+    /// `TransactTime(60)` bytes.
+    pub transact_time: &'a [u8],
+}
+
+/// Build a `NewOrderSingle(D)` frame from [`MarketOrderParams`] (a market-data lift by
+/// symbol — carries `Price(44)`, omits `QuoteID(117)`).
+#[must_use]
+pub fn build_new_order_by_symbol(
+    hdr: &Header<'_>,
+    p: &MarketOrderParams<'_>,
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
+    enc.clear();
+    hdr.encode(MsgType::NewOrderSingle, enc);
+    enc.push(11, p.cl_ord_id);
+    enc.push(55, p.symbol);
+    enc.push(54, &[p.side]);
+    push_decimal(enc, 38, p.qty);
+    push_decimal(enc, 44, p.price);
+    enc.push(40, b"D"); // OrdType = previously quoted (the streamed snapshot)
+    enc.push(60, p.transact_time);
+    enc.finish()
+}
+
 /// `ExecType(150)` / `OrdStatus(39)`: filled.
 pub const EXEC_FILLED: u8 = b'F';
 /// `ExecType(150)` / `OrdStatus(39)`: rejected.
@@ -613,6 +653,227 @@ impl<'a> ExecReportView<'a> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Market-data streaming (35=V MarketDataRequest / 35=W MarketDataSnapshotFullRefresh)
+//
+// The fixed-income **streaming** venue speaks Market Data, not Quote: a taker
+// SUBSCRIBES to instruments with a `MarketDataRequest(V)` and the venue pushes a
+// `MarketDataSnapshotFullRefresh(W)` per subscribed instrument on each stream tick,
+// carrying a top-of-book Bid/Offer under the `NoMDEntries(268)` group. A lift is a
+// plain `NewOrderSingle(D)` naming the `Symbol(55)` (no `QuoteID` — the taker hits the
+// last snapshot it saw), answered by the same `ExecutionReport(8)` the RFQ lift uses.
+// ---------------------------------------------------------------------------
+
+/// `MDReqID(262)` — the taker-minted market-data request correlation id, echoed on
+/// every `MarketDataSnapshotFullRefresh(W)` the subscription produces.
+pub const TAG_MD_REQ_ID: u32 = 262;
+/// `SubscriptionRequestType(263)` — subscribe (snapshot+updates) / unsubscribe intent.
+pub const TAG_SUBSCRIPTION_REQUEST_TYPE: u32 = 263;
+/// `MarketDepth(264)` — book depth requested (`1` = top-of-book).
+pub const TAG_MARKET_DEPTH: u32 = 264;
+/// `NoMDEntryTypes(267)` — the count of requested entry types (Bid/Offer).
+pub const TAG_NO_MD_ENTRY_TYPES: u32 = 267;
+/// `MDEntryType(269)` — the entry side: [`MD_ENTRY_BID`] / [`MD_ENTRY_OFFER`].
+pub const TAG_MD_ENTRY_TYPE: u32 = 269;
+/// `NoMDEntries(268)` — the count of entries carried in a snapshot.
+pub const TAG_NO_MD_ENTRIES: u32 = 268;
+/// `MDEntryPx(270)` — the price of a market-data entry.
+pub const TAG_MD_ENTRY_PX: u32 = 270;
+/// `MDEntrySize(271)` — the size of a market-data entry.
+pub const TAG_MD_ENTRY_SIZE: u32 = 271;
+/// `NoRelatedSym(146)` — the count of instruments in a `MarketDataRequest`.
+pub const TAG_NO_RELATED_SYM: u32 = 146;
+
+/// `MDEntryType(269)` value: Bid.
+pub const MD_ENTRY_BID: u8 = b'0';
+/// `MDEntryType(269)` value: Offer.
+pub const MD_ENTRY_OFFER: u8 = b'1';
+
+/// `SubscriptionRequestType(263)`: snapshot only (a one-shot).
+pub const SUBSCRIPTION_SNAPSHOT: &[u8] = b"0";
+/// `SubscriptionRequestType(263)`: snapshot + updates (an ESP subscribe).
+pub const SUBSCRIPTION_SNAPSHOT_UPDATES: &[u8] = b"1";
+/// `SubscriptionRequestType(263)`: disable a previous snapshot (an ESP unsubscribe).
+pub const SUBSCRIPTION_DISABLE: &[u8] = b"2";
+/// `MarketDepth(264)`: top-of-book (the venue streams a single best bid + best offer).
+pub const MARKET_DEPTH_TOP_OF_BOOK: i64 = 1;
+
+/// Open a `MarketDataRequest(V)` body: after the caller has written the header, push the
+/// request envelope — `MDReqID(262)`, `SubscriptionRequestType(263)`, `MarketDepth(264)`,
+/// the two-sided `NoMDEntryTypes(267)` group (Bid + Offer), and `NoRelatedSym(146)=1`.
+/// The caller then pushes the single instrument block (the dialect's `Symbol(55)` + terms)
+/// and calls [`FrameEncoder::finish`]. Kept asset-agnostic here (the instrument block is a
+/// dialect concern), so any product family can ride the one market-data envelope.
+pub fn push_md_request_envelope(
+    enc: &mut FrameEncoder,
+    md_req_id: &[u8],
+    subscription: &[u8],
+    depth: i64,
+) {
+    enc.push(TAG_MD_REQ_ID, md_req_id);
+    enc.push(TAG_SUBSCRIPTION_REQUEST_TYPE, subscription);
+    enc.push_int(TAG_MARKET_DEPTH, depth);
+    // Request BOTH sides of the book (Bid then Offer).
+    enc.push_int(TAG_NO_MD_ENTRY_TYPES, 2);
+    enc.push(TAG_MD_ENTRY_TYPE, &[MD_ENTRY_BID]);
+    enc.push(TAG_MD_ENTRY_TYPE, &[MD_ENTRY_OFFER]);
+    // A single instrument per request (NoRelatedSym=1); the instrument block follows.
+    enc.push_int(TAG_NO_RELATED_SYM, 1);
+}
+
+/// A borrowed view over an inbound `MarketDataRequest(V)` frame.
+#[derive(Debug, Clone, Copy)]
+pub struct MarketDataRequestView<'a> {
+    frame: FrameCursor<'a>,
+}
+
+impl<'a> MarketDataRequestView<'a> {
+    /// Wrap a frame confirmed to be a `MarketDataRequest`.
+    #[must_use]
+    pub fn new(frame: FrameCursor<'a>) -> Self {
+        Self { frame }
+    }
+
+    /// `MDReqID(262)`.
+    #[must_use]
+    pub fn md_req_id(&self) -> Option<&'a [u8]> {
+        self.frame.get(TAG_MD_REQ_ID)
+    }
+
+    /// `SubscriptionRequestType(263)` byte.
+    #[must_use]
+    pub fn subscription_type(&self) -> Option<u8> {
+        self.frame
+            .get(TAG_SUBSCRIPTION_REQUEST_TYPE)
+            .and_then(|v| v.first().copied())
+    }
+
+    /// `Symbol(55)` (the single subscribed instrument).
+    #[must_use]
+    pub fn symbol(&self) -> Option<&'a [u8]> {
+        self.frame.get(55)
+    }
+
+    /// The underlying frame, for dialect decoding of the instrument block.
+    #[must_use]
+    pub fn frame(&self) -> &FrameCursor<'a> {
+        &self.frame
+    }
+}
+
+/// Build a `MarketDataSnapshotFullRefresh(W)`: a top-of-book snapshot for one instrument.
+#[derive(Debug, Clone, Copy)]
+pub struct MarketDataSnapshotParams<'a> {
+    /// Echoed `MDReqID(262)` of the subscription this snapshot serves.
+    pub md_req_id: &'a [u8],
+    /// `Symbol(55)`.
+    pub symbol: &'a [u8],
+    /// Best bid (`MDEntryType=0`, `MDEntryPx(270)`).
+    pub bid_px: f64,
+    /// Best offer (`MDEntryType=1`, `MDEntryPx(270)`).
+    pub offer_px: f64,
+    /// Size on both entries (`MDEntrySize(271)`).
+    pub size: f64,
+}
+
+/// Build a `MarketDataSnapshotFullRefresh(W)` frame from [`MarketDataSnapshotParams`].
+/// Two entries under `NoMDEntries(268)=2`: Bid then Offer, each with px + size.
+#[must_use]
+pub fn build_market_data_snapshot(
+    hdr: &Header<'_>,
+    p: &MarketDataSnapshotParams<'_>,
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
+    enc.clear();
+    hdr.encode(MsgType::MarketDataSnapshotFullRefresh, enc);
+    enc.push(TAG_MD_REQ_ID, p.md_req_id);
+    enc.push(55, p.symbol);
+    enc.push_int(TAG_NO_MD_ENTRIES, 2);
+    // Bid entry.
+    enc.push(TAG_MD_ENTRY_TYPE, &[MD_ENTRY_BID]);
+    push_decimal(enc, TAG_MD_ENTRY_PX, p.bid_px);
+    push_decimal(enc, TAG_MD_ENTRY_SIZE, p.size);
+    // Offer entry.
+    enc.push(TAG_MD_ENTRY_TYPE, &[MD_ENTRY_OFFER]);
+    push_decimal(enc, TAG_MD_ENTRY_PX, p.offer_px);
+    push_decimal(enc, TAG_MD_ENTRY_SIZE, p.size);
+    enc.finish()
+}
+
+/// A borrowed view over a `MarketDataSnapshotFullRefresh(W)` frame: extracts the echoed
+/// `MDReqID(262)`, the `Symbol(55)`, and the top-of-book Bid/Offer + sizes by walking the
+/// `NoMDEntries(268)` group in wire order (delimiter `MDEntryType(269)`).
+#[derive(Debug, Clone, Copy)]
+pub struct MarketDataSnapshotView<'a> {
+    frame: FrameCursor<'a>,
+}
+
+impl<'a> MarketDataSnapshotView<'a> {
+    /// Wrap a frame confirmed to be a `MarketDataSnapshotFullRefresh`.
+    #[must_use]
+    pub fn new(frame: FrameCursor<'a>) -> Self {
+        Self { frame }
+    }
+
+    /// `MDReqID(262)`.
+    #[must_use]
+    pub fn md_req_id(&self) -> Option<&'a [u8]> {
+        self.frame.get(TAG_MD_REQ_ID)
+    }
+
+    /// `Symbol(55)`.
+    #[must_use]
+    pub fn symbol(&self) -> Option<&'a [u8]> {
+        self.frame.get(55)
+    }
+
+    /// The top-of-book `(bid_px, offer_px, bid_size, offer_size)` extracted from the
+    /// `NoMDEntries(268)` group. Each entry starts with `MDEntryType(269)` (`0`=Bid,
+    /// `1`=Offer); the following `MDEntryPx(270)` / `MDEntrySize(271)` bind to it. A side
+    /// absent from the snapshot returns `None` for its px/size.
+    #[must_use]
+    pub fn top_of_book(&self) -> MdTopOfBook {
+        let mut tob = MdTopOfBook::default();
+        let mut current: Option<u8> = None;
+        for field in self.frame.fields() {
+            match field.tag {
+                TAG_MD_ENTRY_TYPE => current = field.value.first().copied(),
+                TAG_MD_ENTRY_PX => {
+                    let px = crate::dialect_fx::parse_float(field.value);
+                    match current {
+                        Some(MD_ENTRY_BID) => tob.bid_px = px,
+                        Some(MD_ENTRY_OFFER) => tob.offer_px = px,
+                        _ => {}
+                    }
+                }
+                TAG_MD_ENTRY_SIZE => {
+                    let sz = crate::dialect_fx::parse_float(field.value);
+                    match current {
+                        Some(MD_ENTRY_BID) => tob.bid_size = sz,
+                        Some(MD_ENTRY_OFFER) => tob.offer_size = sz,
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        tob
+    }
+}
+
+/// The top-of-book a [`MarketDataSnapshotView`] extracts: best bid/offer + their sizes.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MdTopOfBook {
+    /// Best bid price (`MDEntryType=0`).
+    pub bid_px: Option<f64>,
+    /// Best offer price (`MDEntryType=1`).
+    pub offer_px: Option<f64>,
+    /// Bid size.
+    pub bid_size: Option<f64>,
+    /// Offer size.
+    pub offer_size: Option<f64>,
+}
+
 /// Build a `QuoteRequestReject(AG)` declining an RFQ that could not be priced —
 /// the desk declined, the request expired/withdrew, or the gateway could not
 /// reach the desk. Carries the echoed `QuoteReqID(131)`, the `Symbol(55)`, a
@@ -691,6 +952,92 @@ mod tests {
             seq_num: 7,
             sending_time: b"20260530-12:00:00.000",
         }
+    }
+
+    #[test]
+    fn market_data_snapshot_roundtrips_and_validates() {
+        let mut enc = FrameEncoder::new();
+        let p = MarketDataSnapshotParams {
+            md_req_id: b"MDR-1",
+            symbol: b"US-912828-5Y",
+            bid_px: 99.4567_8901,
+            offer_px: 99.6543_2109,
+            size: 5_000_000.0,
+        };
+        let raw = build_market_data_snapshot(&hdr(), &p, &mut enc);
+        let frame = FrameCursor::parse(&raw).expect("W frame parses (BodyLength + CheckSum ok)");
+        // The dictionary accepts it (35=W required tags present, MD entry types valid).
+        assert_eq!(
+            crate::dictionary::validate(&frame),
+            Ok(MsgType::MarketDataSnapshotFullRefresh)
+        );
+        let v = MarketDataSnapshotView::new(frame);
+        assert_eq!(v.md_req_id(), Some(&b"MDR-1"[..]));
+        assert_eq!(v.symbol(), Some(&b"US-912828-5Y"[..]));
+        let tob = v.top_of_book();
+        assert!((tob.bid_px.unwrap() - 99.4567_8901).abs() < 1e-6);
+        assert!((tob.offer_px.unwrap() - 99.6543_2109).abs() < 1e-6);
+        assert!((tob.bid_size.unwrap() - 5_000_000.0).abs() < 1e-3);
+        assert!((tob.offer_size.unwrap() - 5_000_000.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn market_data_request_envelope_roundtrips_and_validates() {
+        // Build a MarketDataRequest(V) envelope + a single (bond-style) instrument block.
+        let mut enc = FrameEncoder::new();
+        enc.clear();
+        hdr().encode(MsgType::MarketDataRequest, &mut enc);
+        push_md_request_envelope(
+            &mut enc,
+            b"MDR-2",
+            SUBSCRIPTION_SNAPSHOT_UPDATES,
+            MARKET_DEPTH_TOP_OF_BOOK,
+        );
+        enc.push(55, b"US-912828-5Y");
+        enc.push(167, b"BOND");
+        let raw = enc.finish();
+        let frame = FrameCursor::parse(&raw).expect("V frame parses");
+        assert_eq!(
+            crate::dictionary::validate(&frame),
+            Ok(MsgType::MarketDataRequest)
+        );
+        let v = MarketDataRequestView::new(frame);
+        assert_eq!(v.md_req_id(), Some(&b"MDR-2"[..]));
+        assert_eq!(v.subscription_type(), Some(b'1')); // subscribe (snapshot+updates)
+        assert_eq!(v.symbol(), Some(&b"US-912828-5Y"[..]));
+    }
+
+    #[test]
+    fn market_order_by_symbol_omits_quote_id() {
+        let mut enc = FrameEncoder::new();
+        let p = MarketOrderParams {
+            cl_ord_id: b"C-1",
+            symbol: b"US-912828-5Y",
+            side: crate::dialect_fx::SIDE_BUY,
+            qty: 1_000_000.0,
+            price: 99.65,
+            transact_time: b"20260530-12:00:01.000",
+        };
+        let raw = build_new_order_by_symbol(&hdr(), &p, &mut enc);
+        let frame = FrameCursor::parse(&raw).expect("D frame parses");
+        assert_eq!(
+            crate::dictionary::validate(&frame),
+            Ok(MsgType::NewOrderSingle)
+        );
+        // No QuoteID(117) on a market-data lift — the venue resolves by Symbol.
+        assert_eq!(frame.get(117), None);
+        let v = NewOrderSingleView::new(frame);
+        assert_eq!(v.quote_id(), None);
+        assert_eq!(v.side(), Some(crate::dialect_fx::SIDE_BUY));
+        assert!(
+            (frame
+                .get(44)
+                .and_then(crate::dialect_fx::parse_float)
+                .unwrap()
+                - 99.65)
+                .abs()
+                < 1e-6
+        );
     }
 
     #[test]

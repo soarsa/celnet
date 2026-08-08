@@ -1223,10 +1223,12 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
         };
         sess.set_policy(lift_policy);
 
-        let stream_req_id = format!("{}-ESP-{}", args.req_id, bond.instrument_id).into_bytes();
+        // A stable per-instrument MDReqID: re-subscribing the same instrument REPLACES its
+        // one live server-side market-data stream (keyed by MDReqID) rather than piling up.
+        let md_req_id = format!("{}-ESP-{}", args.req_id, bond.instrument_id).into_bytes();
         let symbol = bond.instrument_id.clone().into_bytes();
-        let params = dialect_rates::BondQuoteRequestParams {
-            quote_req_id: &stream_req_id,
+        let params = dialect_rates::BondMarketDataRequestParams {
+            md_req_id: &md_req_id,
             symbol: &symbol,
             coupon_rate: bond.coupon_rate,
             coupon_frequency: bond.coupon_frequency,
@@ -1241,10 +1243,10 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
         let sending_time = fix_utc_timestamp().into_bytes();
         let lift_after = should_lift.then(|| hold / 2);
         let outcome = sess
-            .stream(
+            .md_stream(
                 &sending_time,
                 |hdr, enc| {
-                    dialect_rates::build_bond_quote_request_with_party(
+                    dialect_rates::build_bond_market_data_request_with_party(
                         hdr,
                         &params,
                         Some(party),
@@ -1256,7 +1258,7 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
             )
             .await?;
         println!(
-            "[{i}] {counterparty} · {} ({}) ESP — streamed {} update(s)",
+            "[{i}] {counterparty} · {} ({}) ESP — streamed {} snapshot(s)",
             bond.name, bond.instrument_id, outcome.updates
         );
         if let (Some(bid), Some(offer)) = (outcome.result.bid, outcome.result.offer) {

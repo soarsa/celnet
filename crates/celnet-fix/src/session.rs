@@ -381,7 +381,9 @@ impl<S: MessageStore> Session<S> {
             | MsgType::ExecutionReport
             | MsgType::QuoteRequestReject
             | MsgType::SecurityListRequest
-            | MsgType::SecurityList => {
+            | MsgType::SecurityList
+            | MsgType::MarketDataRequest
+            | MsgType::MarketDataSnapshotFullRefresh => {
                 action.deliver = Some(mt);
             }
             MsgType::Reject => {}

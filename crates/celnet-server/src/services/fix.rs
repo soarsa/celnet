@@ -134,18 +134,19 @@ struct FixQuote {
     mint_nanos: i64,
 }
 
-/// A live **RFS** (request-for-stream) subscription on a fixed-income STREAM venue: the
-/// venue re-prices this line off the P0 curve on every session tick and pushes a fresh
-/// two-way `Quote(S)` until the taker Unsubscribes (or the session drops). Each streamed
-/// update supersedes the prior one — only `last_quote_id` stays liftable, which keeps the
-/// live-quote table bounded to one entry per subscription rather than growing per tick.
+/// A live **market-data** subscription on a fixed-income STREAM venue: opened by an
+/// inbound `MarketDataRequest(V)` (subscribe), the venue re-prices this line every session
+/// tick and pushes a fresh top-of-book `MarketDataSnapshotFullRefresh(W)` until the taker
+/// unsubscribes (or the session drops). The per-tick liftable token is held symbol-keyed in
+/// [`FixSession::live_md`] (a market-data lift names the `Symbol(55)`, not a `QuoteID`), so
+/// the subscription itself carries only the re-price inputs and the desk-row correlation.
 #[derive(Debug, Clone)]
-struct RfsSubscription {
-    /// The wire `QuoteReqID(131)` correlating every streamed update (and the Unsubscribe).
-    req_id: Vec<u8>,
-    /// The curve symbol echoed on each streamed `Quote(S)`.
+struct MdSubscription {
+    /// The wire `MDReqID(262)` correlating every streamed snapshot (and the unsubscribe).
+    md_req_id: Vec<u8>,
+    /// The instrument symbol echoed on each streamed snapshot (`Symbol(55)`).
     symbol: Vec<u8>,
-    /// The RFQ notional carried as the streamed quote size.
+    /// The subscribed size carried as the streamed entry size (`MDEntrySize(271)`).
     notional: f64,
     /// The pricing inputs to RE-PRICE this line each tick off the CURRENT live curve when
     /// no aggregated book covers it — so a live curve re-mark moves the stream (no
@@ -155,13 +156,33 @@ struct RfsSubscription {
     /// The desk history row id this subscription opened, so a lift of any streamed update
     /// books it as a completed deal (`None` when the venue is not desk-routed).
     request_id: Option<String>,
-    /// The most recent streamed quote's `QuoteID(117)`.
-    last_quote_id: Option<Vec<u8>>,
-    /// The immediately-superseded quote's `QuoteID(117)`, kept liftable for ONE extra
-    /// tick so a lift that races the re-price (the taker lifts the update they just saw
-    /// in the same instant the next tick supersedes it) still fills. Retired the tick
-    /// after — 2-deep, so the live-quote table stays bounded (two entries per stream).
-    prev_quote_id: Option<Vec<u8>>,
+}
+
+/// The currently-liftable market-data quote for one streamed symbol, refreshed every tick:
+/// the two per-side keyed-MAC tokens (SELL@bid, BUY@offer) a market-data lift authenticates
+/// against, plus the desk-row id a fill books and the mint time a stale-quote acceptance
+/// rule reads. Keyed by `Symbol(55)` in [`FixSession::live_md`] — a fresh tick OVERWRITES
+/// the entry, so a lift always executes against the latest published top-of-book (the older
+/// tokens simply lapse in the ledger's validity window).
+#[derive(Debug, Clone)]
+struct MdLiveQuote {
+    /// The BUY (offer) token, if a positive offer was published.
+    buy_token: Option<u64>,
+    /// The SELL (bid) token, if a positive bid was published.
+    sell_token: Option<u64>,
+    /// The desk request id this streamed line opened (so a lift books the deal).
+    request_id: Option<String>,
+    /// The clock time (nanos) this snapshot was minted (for the quote-age acceptance gate).
+    mint_nanos: i64,
+}
+
+/// The decoded inbound market-data instrument, tagged by arm so [`FixSession::on_market_data_request`]
+/// records the correct desk-inbox row (bond vs OIS) after registering the subscription.
+enum MdRecord {
+    /// A cash-bond subscription: recorded via [`FixSession::record_bond_rfq`].
+    Bond(dialect_rates::BondRfq),
+    /// An OIS subscription: recorded via [`FixSession::record_rates_rfq`].
+    Ois(dialect_rates::RatesRfq),
 }
 
 /// The pricing inputs a live RFS subscription retains so each re-price tick can
@@ -551,19 +572,26 @@ struct FixSession {
     /// The last-look / replay ledger — the SAME [`TokenLedger`] the RFS click-to-trade
     /// path uses; a FIX lift books through its [`TokenLedger::try_book`].
     ledger: TokenLedger,
-    /// Live FIX quotes keyed by the wire `QuoteID(117)` string.
+    /// Live FIX quotes keyed by the wire `QuoteID(117)` string — the RFQ / FX auto-quote
+    /// path (a lift names the `QuoteID`). The market-data stream venue uses
+    /// [`Self::live_md`] instead (a lift names the `Symbol`).
     live: HashMap<Vec<u8>, FixQuote>,
+    /// Live market-data quotes keyed by `Symbol(55)`: on a fixed-income STREAM venue each
+    /// tick refreshes the liftable top-of-book token for a symbol here, so an inbound
+    /// `NewOrderSingle(D)` naming that symbol (no `QuoteID`) books through the SAME ledger.
+    /// Empty on a quote/RFQ or FX venue.
+    live_md: HashMap<Vec<u8>, MdLiveQuote>,
     /// A monotonic line ordinal the keyed-MAC binds (the FIX analogue of the RFS
     /// `subscription_id`); fresh per quote so each line's tokens are distinct.
     next_line: u64,
     /// A counter minting unique `QuoteID`/`OrderID`/`ExecID` strings.
     seq: u64,
-    /// Live RFS subscriptions keyed by the wire `QuoteReqID(131)`: on a fixed-income
+    /// Live market-data subscriptions keyed by the wire `MDReqID(262)`: on a fixed-income
     /// STREAM venue, the session's periodic ticker re-prices each and pushes a fresh
-    /// `Quote(S)`. Empty on a quote/RFQ venue (and while an idle stream venue has no
-    /// subscription) — so the ticker branch is dormant and the loop stays byte-identical
-    /// to the request-response path.
-    rfs: HashMap<Vec<u8>, RfsSubscription>,
+    /// `MarketDataSnapshotFullRefresh(W)`. Empty on a quote/RFQ venue (and while an idle
+    /// stream venue has no subscription) — so the ticker branch is dormant and the loop
+    /// stays byte-identical to the request-response path.
+    md_subs: HashMap<Vec<u8>, MdSubscription>,
 }
 
 impl FixSession {
@@ -574,9 +602,10 @@ impl FixSession {
             minter: TokenMinter::new(),
             ledger: TokenLedger::new(),
             live: HashMap::new(),
+            live_md: HashMap::new(),
             next_line: 0,
             seq: 0,
-            rfs: HashMap::new(),
+            md_subs: HashMap::new(),
         }
     }
 
@@ -598,11 +627,12 @@ impl FixSession {
     {
         let (read_half, mut write_half) = tokio::io::split(stream);
         let mut reader = FrameReader::new(read_half);
-        // The RFS streaming cadence. A fixed-income STREAM venue re-prices every live
-        // subscription on this interval and pushes fresh two-way quotes; the ticker branch
-        // is armed only while at least one subscription is live (`!self.rfs.is_empty()`),
-        // so a quote/RFQ venue — or an idle stream venue — stays byte-identical to the
-        // pure request-response loop. `next_frame` is cancellation-safe (its only await
+        // The market-data streaming cadence. A fixed-income STREAM venue re-prices every
+        // live subscription on this interval and pushes fresh top-of-book snapshots; the
+        // ticker branch is armed only while at least one subscription is live
+        // (`!self.md_subs.is_empty()`), so a quote/RFQ venue — or an idle stream venue —
+        // stays byte-identical to the pure request-response loop. `next_frame` is
+        // cancellation-safe (its only await
         // commits the socket read into a struct-field buffer before any further await), so
         // `select!` dropping the read future on a tick loses no bytes.
         let mut ticker = tokio::time::interval(RFS_STREAM_INTERVAL);
@@ -639,11 +669,12 @@ impl FixSession {
                         break;
                     }
                 }
-                // Re-price + push every live RFS subscription. Dormant (guard false, never
-                // polled) while no subscription is live, so an RFQ venue is unaffected.
-                _ = ticker.tick(), if !self.rfs.is_empty() => {
+                // Re-price + push every live market-data subscription. Dormant (guard
+                // false, never polled) while no subscription is live, so an RFQ venue is
+                // unaffected.
+                _ = ticker.tick(), if !self.md_subs.is_empty() => {
                     let st = self.sending_time();
-                    let frames = self.tick_rfs_stream(&st);
+                    let frames = self.tick_md_stream(&st);
                     for f in frames {
                         self.ctx.monitor.record(
                             &self.ctx.connection_id,
@@ -675,6 +706,9 @@ impl FixSession {
             };
             match mt {
                 MsgType::QuoteRequest => self.on_quote_request(&frame, st, &mut out).await,
+                MsgType::MarketDataRequest => {
+                    self.on_market_data_request(&frame, st, &mut out).await;
+                }
                 MsgType::NewOrderSingle | MsgType::NewOrderMultileg => {
                     self.on_new_order(&frame, st, &mut out);
                 }
@@ -700,14 +734,22 @@ impl FixSession {
             return;
         };
 
-        // A dedicated fixed-income venue records every inbound RFQ into the desk inbox
-        // (so the GUI shows inbound RFQs — live pending + processed history) and decides
-        // auto-quote vs route-to-human. The FX-options path and the legacy
-        // content-detected OIS path below are unchanged (byte-identical).
-        if rates_intent_for_kind(self.ctx.kind).is_some() {
-            self.on_rates_quote_request(frame, st, &req_id, &symbol, out)
-                .await;
-            return;
+        // A dedicated fixed-income venue routes an inbound `QuoteRequest(R)` by intent:
+        //  * the RFQ venue records it into the desk inbox and auto-quotes / routes-to-human
+        //    (the FX-options path and the legacy content-detected OIS path below are
+        //    unchanged / byte-identical);
+        //  * the STREAM venue does NOT serve `QuoteRequest(R)` at all — it speaks Market
+        //    Data, so streaming is opened by a `MarketDataRequest(V)`
+        //    ([`Self::on_market_data_request`]); a stray `35=R` on the stream venue is
+        //    out-of-contract and ignored.
+        match rates_intent_for_kind(self.ctx.kind) {
+            Some(RatesIntent::Rfq) => {
+                self.on_rates_quote_request(frame, st, &req_id, &symbol, out)
+                    .await;
+                return;
+            }
+            Some(RatesIntent::Rfs) => return,
+            None => {}
         }
 
         // Resolve the option + price it; a dialect/convention/pricing error declines
@@ -858,15 +900,6 @@ impl FixSession {
         if !subscription_matches_intent(intent, rfq.subscription) {
             return;
         }
-        // An RFS Unsubscribe tears down the live stream for this correlation id and stops
-        // (no quote, no desk row) — the session ticker no longer re-prices it.
-        if matches!(
-            rfq.subscription,
-            dialect_rates::SubscriptionRequest::Unsubscribe
-        ) {
-            self.rfs.remove(req_id);
-            return;
-        }
         let side = rates_side_to_side(rfq.side);
         // The CURRENT live curve (operator's most recent `MarkCurve`, else the static P0
         // default) — desk display + the curve arm of the pricing-source policy both price
@@ -898,10 +931,8 @@ impl FixSession {
             let mid = 0.5 * (priced.bid + priced.offer);
             // Firm-wide OUTBOUND kill-switch: while outbound pricing is halted, suppress
             // the outbound `Quote(S)` frame (do NOT push it) — the desk-inbox row above
-            // was already recorded, so nothing internal is lost. On an RFS venue the
-            // subscription is STILL registered (with no live quote yet) so the ticker
-            // resumes streaming from live on re-enable.
-            let last_quote_id = if self.ctx.pricing_control.outbound_enabled() {
+            // was already recorded, so nothing internal is lost.
+            if self.ctx.pricing_control.outbound_enabled() {
                 let quote_id = self.emit_two_way_quote(
                     st,
                     req_id,
@@ -929,33 +960,10 @@ impl FixSession {
                     good_for_nanos = QUOTE_VALIDITY_NANOS,
                     "rates RFQ auto-quote priced (outbound)",
                 );
-                Some(quote_id)
             } else {
                 tracing::debug!(
                     connection_id = %self.ctx.connection_id,
                     "outbound pricing halted: suppressing OIS RFQ auto-quote"
-                );
-                None
-            };
-            // On a STREAM (RFS) venue a Subscribe opens a CONTINUOUS stream: register the
-            // subscription so the session ticker re-prices and pushes updates until an
-            // Unsubscribe (or session close). The quote just emitted (if any) is the first
-            // update; the desk row id rides every update so a lift of any one books the
-            // same deal and closes the stream.
-            if intent == RatesIntent::Rfs {
-                self.rfs.insert(
-                    req_id.to_vec(),
-                    RfsSubscription {
-                        req_id: req_id.to_vec(),
-                        symbol: symbol.to_vec(),
-                        notional: rfq.notional,
-                        line: RfsLine::Ois {
-                            tenor_years: rfq.tenor_years,
-                        },
-                        request_id,
-                        last_quote_id,
-                        prev_quote_id: None,
-                    },
                 );
             }
         }
@@ -1135,17 +1143,17 @@ impl FixSession {
             .unwrap_or_else(crate::rates_pricing::default_usd_sofr_curve_set)
     }
 
-    /// Re-price every live RFS subscription and return the fresh two-way `Quote(S)` frames
-    /// to push. Each subscription is priced under this connection's
-    /// [`PricingSourceMode`](Self::priced_under_policy): the aggregated-book composite
-    /// (group-tiered) where a book covers it, else the **current live curve** re-resolved
-    /// each tick (so a `MarkCurve` moves the stream — no fabricated movement). Each update
-    /// retires the subscription's prior live quote so only the latest stays liftable,
-    /// keeping the live-quote table bounded to one entry per subscription. Driven by the
-    /// session loop's streaming ticker; returns an empty vec when no subscription is live.
-    fn tick_rfs_stream(&mut self, st: &[u8]) -> Vec<Vec<u8>> {
+    /// Re-price every live market-data subscription and return the fresh
+    /// `MarketDataSnapshotFullRefresh(W)` frames to push. Each subscription is priced under
+    /// this connection's [`PricingSourceMode`](Self::priced_under_policy): the aggregated-
+    /// book composite (group-tiered) where a book covers it, else the **current live curve**
+    /// re-resolved each tick (so a `MarkCurve` moves the stream — no fabricated movement).
+    /// Each snapshot refreshes the symbol's liftable token in [`Self::live_md`] (overwriting
+    /// the prior one — the latest top-of-book is what a lift hits). Driven by the session
+    /// loop's streaming ticker; returns an empty vec when no subscription is live.
+    fn tick_md_stream(&mut self, st: &[u8]) -> Vec<Vec<u8>> {
         // Firm-wide OUTBOUND kill-switch: while outbound pricing is halted, pause every
-        // live RFS/ESP stream (push no updates). Cheap `Relaxed` load off the pinned
+        // live market-data stream (push no updates). Cheap `Relaxed` load off the pinned
         // pricer; the ticker re-checks each tick, so streams resume from live on
         // re-enable (the subscriptions stay registered, never torn down).
         if !self.ctx.pricing_control.outbound_enabled() {
@@ -1157,14 +1165,14 @@ impl FixSession {
         let mut frames = Vec::new();
         // Snapshot the keys so the loop can re-borrow `self` (live table, quote minter)
         // between subscriptions while mutating the subscription set in place.
-        let keys: Vec<Vec<u8>> = self.rfs.keys().cloned().collect();
+        let keys: Vec<Vec<u8>> = self.md_subs.keys().cloned().collect();
         for key in keys {
-            let (req_id, symbol, notional, request_id, line) = {
-                let Some(sub) = self.rfs.get_mut(&key) else {
+            let (md_req_id, symbol, notional, request_id, line) = {
+                let Some(sub) = self.md_subs.get(&key) else {
                     continue;
                 };
                 (
-                    sub.req_id.clone(),
+                    sub.md_req_id.clone(),
                     sub.symbol.clone(),
                     sub.notional,
                     sub.request_id.clone(),
@@ -1173,43 +1181,228 @@ impl FixSession {
             };
             // Price under the session policy: composite where a book covers the streamed
             // instrument (design §5), else the current live curve re-priced from the
-            // retained line inputs. Compute BEFORE retiring/superseding so a tick that
-            // cannot price (e.g. a re-marked curve now missing this tenor) leaves the
-            // existing live quotes untouched rather than blanking the stream.
+            // retained line inputs. A tick that cannot price (e.g. a re-marked curve now
+            // missing this tenor) skips this symbol, leaving its existing live token intact
+            // rather than blanking the stream.
             let Some(priced) = self.priced_under_policy(&symbol, notional, line.is_bond(), || {
                 curve_line_for(&line, &curve, notional)
             }) else {
                 continue;
             };
-            let (to_retire, superseded) = {
-                let Some(sub) = self.rfs.get_mut(&key) else {
-                    continue;
-                };
-                (
-                    sub.prev_quote_id.take(), // 2 ticks old — safe to retire now
-                    sub.last_quote_id.take(), // 1 tick old — keep liftable one more tick
-                )
-            };
-            // Retire only the 2-ticks-old quote; the immediately-superseded update stays
-            // liftable through this tick so a lift racing the re-price still fills.
-            if let Some(q) = to_retire {
-                self.live.remove(&q);
-            }
-            let quote_id = self.emit_two_way_quote(
-                st,
-                &req_id,
-                &symbol,
-                &priced,
-                None,
-                request_id,
-                &mut frames,
-            );
-            if let Some(sub) = self.rfs.get_mut(&key) {
-                sub.prev_quote_id = superseded;
-                sub.last_quote_id = Some(quote_id);
-            }
+            self.emit_md_snapshot(st, &md_req_id, &symbol, &priced, request_id, &mut frames);
         }
         frames
+    }
+
+    /// Mint the keyed-MAC two-way tokens for a streamed line and push a
+    /// `MarketDataSnapshotFullRefresh(W)`, refreshing the symbol's liftable token in
+    /// [`Self::live_md`]. The market-data analogue of [`Self::emit_two_way_quote`]: the
+    /// SAME token minting + ledger registration (so a `NewOrderSingle(D)` naming the symbol
+    /// books through the identical last-look ledger), but the wire frame is a top-of-book
+    /// snapshot keyed by `Symbol(55)` rather than a `Quote(S)` keyed by `QuoteID(117)`. A
+    /// fresh snapshot OVERWRITES the symbol's entry — the latest published top-of-book is
+    /// what a lift executes against; the superseded token simply lapses in the ledger's
+    /// validity window. Runs on the async FIX edge, never the pinned pricer (guardrail 11).
+    fn emit_md_snapshot(
+        &mut self,
+        st: &[u8],
+        md_req_id: &[u8],
+        symbol: &[u8],
+        priced: &PricedLine,
+        request_id: Option<String>,
+        out: &mut Vec<Vec<u8>>,
+    ) {
+        // Best-order timer O1 (outbound snapshot publish, `OpKind::StreamPublish`): bracket
+        // the snapshot-ready → frame-emitted span with a monotonic `Instant`.
+        let publish_t0 = std::time::Instant::now();
+        let now = self.ctx.clock.now_nanos();
+        let line_id = {
+            self.next_line += 1;
+            self.next_line
+        };
+        // The SAME keyed-MAC two-way tokens the RFQ auto-quote stamps (SELL@bid, BUY@offer),
+        // registered in the SAME ledger that books a lift.
+        let minted: Vec<MintedToken> = mint_two_way(
+            &mut self.ledger,
+            &self.minter,
+            TwoWayLine {
+                line_id,
+                sequence: 1,
+                bid: priced.bid,
+                offer: priced.offer,
+            },
+            now,
+            QUOTE_VALIDITY_NANOS,
+        );
+        let mut buy_token = None;
+        let mut sell_token = None;
+        for m in &minted {
+            match m.side {
+                Side::Buy => buy_token = Some(m.token),
+                Side::Sell => sell_token = Some(m.token),
+                Side::TwoWay => {}
+            }
+        }
+        // Refresh (overwrite) the symbol's liftable top-of-book token.
+        self.live_md.insert(
+            symbol.to_vec(),
+            MdLiveQuote {
+                buy_token,
+                sell_token,
+                request_id,
+                mint_nanos: now,
+            },
+        );
+        let frame_out = self.session.send_app(st, |h, e| {
+            let p = messages::MarketDataSnapshotParams {
+                md_req_id,
+                symbol,
+                bid_px: priced.bid,
+                offer_px: priced.offer,
+                size: priced.size,
+            };
+            messages::build_market_data_snapshot(h, &p, e)
+        });
+        out.push(frame_out);
+        self.ctx.link.telemetry().record_edge(
+            celnet_observability::OpKind::StreamPublish,
+            u64::try_from(publish_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
+    }
+
+    /// Handle an inbound `MarketDataRequest(V)` on a fixed-income STREAM venue: a subscribe
+    /// (`SubscriptionRequestType(263)=1`) decodes the single instrument block (bond or OIS),
+    /// records a desk-inbox row (so a lift books a deal), registers the subscription so the
+    /// session ticker re-prices + pushes `MarketDataSnapshotFullRefresh(W)` updates, and
+    /// emits an INITIAL snapshot; an unsubscribe (`263=2`) tears the subscription down. Only
+    /// a STREAM venue serves this — a quote/RFQ or FX venue ignores it.
+    async fn on_market_data_request(
+        &mut self,
+        frame: &FrameCursor<'_>,
+        st: &[u8],
+        out: &mut Vec<Vec<u8>>,
+    ) {
+        // Market-data streaming is the STREAM venue's contract only.
+        if rates_intent_for_kind(self.ctx.kind) != Some(RatesIntent::Rfs) {
+            return;
+        }
+        let view = messages::MarketDataRequestView::new(*frame);
+        let Some(md_req_id) = view.md_req_id().map(<[u8]>::to_vec) else {
+            return;
+        };
+        let Some(sub_type) = view.subscription_type() else {
+            return;
+        };
+        // An unsubscribe tears down the live stream for this correlation id (no snapshot,
+        // no desk row) — the ticker no longer re-prices it, and its liftable token lapses.
+        if sub_type == messages::SUBSCRIPTION_DISABLE[0] {
+            if let Some(sub) = self.md_subs.remove(&md_req_id) {
+                self.live_md.remove(&sub.symbol);
+            }
+            return;
+        }
+        // Only a subscribe (snapshot+updates) opens a stream; any other type is ignored.
+        if sub_type != messages::SUBSCRIPTION_SNAPSHOT_UPDATES[0] {
+            return;
+        }
+        let Some(symbol) = view.symbol().map(<[u8]>::to_vec) else {
+            return;
+        };
+        // The CURRENT live curve (operator's most recent `MarkCurve`, else static P0) — the
+        // curve arm of the pricing-source policy + the desk display curve.
+        let curve = self.live_rates_curve();
+        // Decode the single instrument block. `SecurityType(167)=BOND` selects the cash-bond
+        // arm (the family an aggregated book covers); every other request is the OIS arm.
+        let (line, notional, is_bond, record) = if frame.get(167)
+            == Some(dialect_rates::SEC_TYPE_BOND)
+        {
+            let Ok((instrument, notional)) = dialect_rates::decode_bond_instrument(frame) else {
+                return;
+            };
+            let rfq = dialect_rates::BondRfq {
+                quote_req_id: md_req_id.clone(),
+                symbol: symbol.clone(),
+                notional,
+                subscription: dialect_rates::SubscriptionRequest::Subscribe,
+                instrument,
+            };
+            let line = RfsLine::Bond {
+                instrument: Box::new(instrument),
+            };
+            (line, notional, true, MdRecord::Bond(rfq))
+        } else {
+            let Ok((tenor_years, notional, side)) = dialect_rates::decode_ois_instrument(frame)
+            else {
+                return;
+            };
+            let rfq = dialect_rates::RatesRfq {
+                quote_req_id: md_req_id.clone(),
+                symbol: symbol.clone(),
+                tenor_years,
+                notional,
+                side,
+                subscription: dialect_rates::SubscriptionRequest::Subscribe,
+            };
+            let line = RfsLine::Ois { tenor_years };
+            (line, notional, false, MdRecord::Ois(rfq))
+        };
+        // Price the initial line under this session's pricing-source policy — the SAME path
+        // the streaming ticker uses ([`Self::priced_under_policy`] + [`curve_line_for`]):
+        // the aggregated-book composite where a book covers the instrument, else the live
+        // curve re-priced from the decoded line inputs. A priceable line is auto-quoted
+        // (QUOTED desk row + initial snapshot); an unpriceable one routes to a human
+        // (PENDING, no snapshot until the book/curve can price it).
+        let admission = match self.priced_under_policy(&symbol, notional, is_bond, || {
+            curve_line_for(&line, &curve, notional)
+        }) {
+            Some(priced) => RatesAdmission::Auto(priced),
+            None => RatesAdmission::Manual(ManualInterventionReason::PricingFailure),
+        };
+        let counterparty = self.display_counterparty(frame);
+        // Record the desk-inbox row first (its id rides the stream so a lift books a deal).
+        let request_id = match &record {
+            MdRecord::Bond(rfq) => self.record_bond_rfq(rfq, &counterparty, &curve, &admission),
+            MdRecord::Ois(rfq) => {
+                let side = rates_side_to_side(rfq.side);
+                self.record_rates_rfq(rfq, &counterparty, side, &curve, &admission)
+            }
+        };
+        // Register the subscription so the ticker re-prices + pushes updates until an
+        // unsubscribe (or session close), keyed by the MDReqID.
+        self.md_subs.insert(
+            md_req_id.clone(),
+            MdSubscription {
+                md_req_id: md_req_id.clone(),
+                symbol: symbol.clone(),
+                notional,
+                line,
+                request_id: request_id.clone(),
+            },
+        );
+        // Emit an INITIAL snapshot when the line priced and outbound pricing is enabled
+        // (the kill-switch suppresses the snapshot but keeps the subscription registered, so
+        // the ticker resumes streaming from live on re-enable).
+        if let RatesAdmission::Auto(priced) = &admission {
+            if self.ctx.pricing_control.outbound_enabled() {
+                self.emit_md_snapshot(st, &md_req_id, &symbol, priced, request_id, out);
+                tracing::info!(
+                    class = celnet_observability::LogClass::Pricing.label(),
+                    connection_id = %self.ctx.connection_id,
+                    counterparty = %counterparty,
+                    md_req_id = %String::from_utf8_lossy(&md_req_id),
+                    symbol = %String::from_utf8_lossy(&symbol),
+                    bid = priced.bid,
+                    offer = priced.offer,
+                    size = priced.size,
+                    "market-data subscribe: initial snapshot published (outbound)",
+                );
+            } else {
+                tracing::debug!(
+                    connection_id = %self.ctx.connection_id,
+                    "outbound pricing halted: suppressing initial market-data snapshot"
+                );
+            }
+        }
     }
 
     /// Record an inbound rates RFQ into the desk inbox under this venue's desk, mapping the
@@ -1336,46 +1529,13 @@ impl FixSession {
         let request_id = self.record_bond_rfq(&rfq, &counterparty, &curve, &admission);
         if let RatesAdmission::Auto(priced) = &admission {
             // Firm-wide OUTBOUND kill-switch: suppress the outbound `Quote(S)` while halted
-            // (the desk-inbox row above already recorded it); on an RFS venue the
-            // subscription is STILL registered so streaming resumes from live on re-enable.
-            let last_quote_id = if self.ctx.pricing_control.outbound_enabled() {
-                Some(self.emit_two_way_quote(
-                    st,
-                    req_id,
-                    symbol,
-                    priced,
-                    None,
-                    request_id.clone(),
-                    out,
-                ))
+            // (the desk-inbox row above already recorded it).
+            if self.ctx.pricing_control.outbound_enabled() {
+                self.emit_two_way_quote(st, req_id, symbol, priced, None, request_id, out);
             } else {
                 tracing::debug!(
                     connection_id = %self.ctx.connection_id,
                     "outbound pricing halted: suppressing bond RFQ auto-quote"
-                );
-                None
-            };
-            // On a STREAM (RFS) venue a bond Subscribe opens a CONTINUOUS stream — register
-            // it so the session ticker re-prices and pushes updates until an Unsubscribe.
-            // The re-price prefers the aggregated-book composite (this connection's
-            // group-tiered two-way) via [`Self::composite_two_way`] — the bond arm is the
-            // instrument family an aggregated book actually covers, so this is where the
-            // composite-based + tiered outbound RFS is exercised. The desk row id rides
-            // every update so a lift of any one books the same deal and closes the stream.
-            if intent == RatesIntent::Rfs {
-                self.rfs.insert(
-                    req_id.to_vec(),
-                    RfsSubscription {
-                        req_id: req_id.to_vec(),
-                        symbol: symbol.to_vec(),
-                        notional: rfq.notional,
-                        line: RfsLine::Bond {
-                            instrument: Box::new(rfq.instrument),
-                        },
-                        request_id,
-                        last_quote_id,
-                        prev_quote_id: None,
-                    },
                 );
             }
         }
@@ -1439,43 +1599,54 @@ impl FixSession {
         let quote_id = frame.get(117).map(<[u8]>::to_vec);
         let now = self.ctx.clock.now_nanos();
 
-        // Resolve the per-side token for this lift from the named quote.
-        let token = quote_id
-            .as_ref()
-            .and_then(|q| self.live.get(q))
-            .and_then(|lq| {
-                if side_byte == dialect_fx::SIDE_SELL {
+        // Resolve the lift target. A `QuoteID(117)` naming a live RFQ/FX quote takes the
+        // QuoteID path (`self.live` — byte-identical to the RFQ/FX flow). Otherwise a
+        // market-data STREAM lift names the `Symbol(55)` (a snapshot carries no QuoteID):
+        // resolve the CURRENT top-of-book token published for that symbol from
+        // [`Self::live_md`]. Either way the per-side token books through the SAME ledger.
+        let live_quote = quote_id.as_ref().and_then(|q| self.live.get(q));
+        let (token, symbol, fx_line, rates_request_id, quote_mint_nanos, via_md) = match live_quote
+        {
+            Some(lq) => {
+                let token = if side_byte == dialect_fx::SIDE_SELL {
                     lq.sell_token
                 } else {
                     lq.buy_token
+                };
+                (
+                    token,
+                    lq.symbol.clone(),
+                    lq.fx,
+                    lq.rates_request_id.clone(),
+                    Some(lq.mint_nanos),
+                    false,
+                )
+            }
+            None => {
+                let sym = frame.get(55).map(<[u8]>::to_vec).unwrap_or_default();
+                match self.live_md.get(&sym) {
+                    Some(md) => {
+                        let token = if side_byte == dialect_fx::SIDE_SELL {
+                            md.sell_token
+                        } else {
+                            md.buy_token
+                        };
+                        // A market-data line carries no FX pre-trade template (rates).
+                        (
+                            token,
+                            sym,
+                            None,
+                            md.request_id.clone(),
+                            Some(md.mint_nanos),
+                            true,
+                        )
+                    }
+                    None => (None, sym, None, None, None, false),
                 }
-            });
-        let symbol = quote_id
-            .as_ref()
-            .and_then(|q| self.live.get(q))
-            .map(|lq| lq.symbol.clone())
-            .or_else(|| frame.get(55).map(<[u8]>::to_vec))
-            .unwrap_or_default();
-        // The FX-vanilla pre-trade template for this line (ADR-0016 A1), captured at
-        // quote time; `None` for a rates line or an unknown quote.
-        let fx_line = quote_id
-            .as_ref()
-            .and_then(|q| self.live.get(q))
-            .and_then(|lq| lq.fx);
-        // The desk request id a rates auto-quote / RFS stream created for this line; a
-        // filled lift books it as a completed deal (below). `None` for an FX/unknown line.
-        let rates_request_id = quote_id
-            .as_ref()
-            .and_then(|q| self.live.get(q))
-            .and_then(|lq| lq.rates_request_id.clone());
-        // The clock time this quote was minted, so a lift can derive the quote's age for the
-        // incoming-quote-acceptance context (`None` for an FX/unknown line).
-        let quote_mint_nanos = quote_id
-            .as_ref()
-            .and_then(|q| self.live.get(q))
-            .map(|lq| lq.mint_nanos);
+            }
+        };
 
-        // Book through the SAME last-look ledger the RFS stream uses. An unknown
+        // Book through the SAME last-look ledger the RFQ/stream path uses. An unknown
         // quote/side ⇒ UnknownToken (no live token), exactly as a forged token.
         let outcome = match token {
             Some(t) => self.ledger.try_book(t, now),
@@ -1573,10 +1744,10 @@ impl FixSession {
                     }
                 }
             }
-            // Only a genuinely-booked (or no-edge test) lift closes the RFS stream; a
+            // Only a genuinely-booked (or no-edge test) lift closes the stream; a
             // rejected / held one leaves it live so the counterparty can re-request.
             if filled {
-                self.rfs
+                self.md_subs
                     .retain(|_, sub| sub.request_id.as_deref() != Some(request_id.as_str()));
             }
         }
@@ -1585,10 +1756,15 @@ impl FixSession {
         }
 
         // A successful lift retires the quote (idempotency: a second lift of the same
-        // QuoteID now rejects as already-consumed via the ledger). A rejected lift is NOT
-        // retired here, but its token is already consumed, so a re-lift still rejects.
-        if filled && let Some(q) = quote_id.as_ref() {
-            self.live.remove(q);
+        // QuoteID / symbol now rejects as already-consumed via the ledger). A rejected lift
+        // is NOT retired here, but its token is already consumed, so a re-lift still rejects.
+        if filled {
+            if let Some(q) = quote_id.as_ref() {
+                self.live.remove(q);
+            }
+            if via_md {
+                self.live_md.remove(&symbol);
+            }
         }
 
         // --- Order-lifecycle structured logging (async FIX edge; the pinned pricing
@@ -2327,51 +2503,210 @@ mod tests {
         build_rates_quote_request(&hdr, &p, &mut enc)
     }
 
-    /// The firm-wide OUTBOUND kill-switch (test i + the RFS-resume behaviour): with
-    /// outbound pricing halted, an inbound client RFQ produces NO outbound `Quote(S)`
-    /// frame, yet the RFS stream is still registered so it resumes from live on
-    /// re-enable. The desk-inbox recording (None here — no desk wired) is untouched.
+    /// A small, auto-quotable OIS `MarketDataRequest(V)` subscribe (within the clip cap +
+    /// on-the-run) for the market-data stream tests — 10 mm at 5 y, which the venue admits.
+    fn small_ois_md_subscribe_frame() -> Vec<u8> {
+        let hdr = Header {
+            sender: b"CELNET",
+            target: b"CELNET-CPTY",
+            seq_num: 7,
+            sending_time: b"20260625-12:00:00.000",
+        };
+        let p = dialect_rates::OisMarketDataRequestParams {
+            md_req_id: b"MDR-KS",
+            symbol: b"USD-OIS",
+            tenor_years: 5,
+            notional: 10_000_000.0,
+            side: RatesSide::TwoWay,
+            subscription: SubscriptionRequest::Subscribe,
+        };
+        let mut enc = FrameEncoder::new();
+        dialect_rates::build_ois_market_data_request(&hdr, &p, &mut enc)
+    }
+
+    /// The firm-wide OUTBOUND kill-switch (test i + the stream-resume behaviour): with
+    /// outbound pricing halted, an inbound `MarketDataRequest(V)` subscribe produces NO
+    /// outbound `MarketDataSnapshotFullRefresh(W)` frame, yet the market-data subscription
+    /// is still registered so it resumes from live on re-enable. The desk-inbox recording
+    /// (None here — no desk wired) is untouched.
     #[tokio::test]
-    async fn outbound_kill_switch_suppresses_auto_quote_but_keeps_stream() {
+    async fn outbound_kill_switch_suppresses_snapshot_but_keeps_stream() {
         use crate::services::pricing_control::PricingControl;
         let control = PricingControl::new(true, true);
         let mut session = stream_session_with_control("conn-ks", None, Some(Arc::clone(&control)));
         let st = session.sending_time();
-        let frame_bytes = small_ois_subscribe_frame();
+        let frame_bytes = small_ois_md_subscribe_frame();
         let frame = FrameCursor::parse(&frame_bytes).expect("frame parses");
-        let req_id = frame
-            .get(131)
-            .map(<[u8]>::to_vec)
-            .expect("QuoteReqID present");
-        let symbol = frame.get(55).map(<[u8]>::to_vec).expect("Symbol present");
 
-        // Outbound HALTED: no outbound Quote(S) frame, but the RFS stream registers so it
-        // can resume from live later (last_quote_id starts absent).
+        // Outbound HALTED: no outbound snapshot frame, but the market-data subscription
+        // registers so it can resume from live later (no live token while halted).
         control.set(false, true);
         let mut out = Vec::new();
-        session
-            .on_rates_quote_request(&frame, &st, &req_id, &symbol, &mut out)
-            .await;
-        assert!(out.is_empty(), "outbound halted: no Quote(S) frame pushed");
+        session.on_market_data_request(&frame, &st, &mut out).await;
+        assert!(out.is_empty(), "outbound halted: no snapshot frame pushed");
         assert_eq!(
-            session.rfs.len(),
+            session.md_subs.len(),
             1,
-            "the RFS subscription is still registered"
+            "the market-data subscription is still registered"
         );
-        assert!(
-            session.rfs.values().next().unwrap().last_quote_id.is_none(),
-            "no live quote while halted"
-        );
+        assert!(session.live_md.is_empty(), "no live token while halted");
         // A tick while halted pushes nothing.
         assert!(
-            session.tick_rfs_stream(&st).is_empty(),
+            session.tick_md_stream(&st).is_empty(),
             "the ticker pauses while outbound is halted"
         );
 
-        // Re-enable: the ticker now streams a fresh update from live (resume, no replay).
+        // Re-enable: the ticker now streams a fresh snapshot from live (resume, no replay).
         control.set(true, true);
-        let frames = session.tick_rfs_stream(&st);
+        let frames = session.tick_md_stream(&st);
         assert!(!frames.is_empty(), "streams resume from live on re-enable");
+        assert_eq!(session.live_md.len(), 1, "a live token is now published");
+    }
+
+    /// Build a stable OIS `MarketDataRequest(V)` with the given `md_req_id` + subscription
+    /// type (for the subscribe/unsubscribe round-trip test).
+    fn ois_md_request(md_req_id: &[u8], subscription: SubscriptionRequest) -> Vec<u8> {
+        let hdr = Header {
+            sender: b"CELNET",
+            target: b"CELNET-CPTY",
+            seq_num: 9,
+            sending_time: b"20260625-12:00:01.000",
+        };
+        let p = dialect_rates::OisMarketDataRequestParams {
+            md_req_id,
+            symbol: b"USD-OIS",
+            tenor_years: 5,
+            notional: 10_000_000.0,
+            side: RatesSide::TwoWay,
+            subscription,
+        };
+        let mut enc = FrameEncoder::new();
+        dialect_rates::build_ois_market_data_request(&hdr, &p, &mut enc)
+    }
+
+    /// The 35=V → 35=W round-trip: an inbound `MarketDataRequest(V)` subscribe registers the
+    /// subscription, publishes an INITIAL `MarketDataSnapshotFullRefresh(W)` two-way, the
+    /// streaming ticker pushes fresh snapshots, and a `263=2` unsubscribe tears it all down.
+    #[tokio::test]
+    async fn md_subscribe_streams_snapshots_and_unsubscribe_tears_down() {
+        let mut session = stream_session("conn-md", None);
+        let st = session.sending_time();
+
+        let sub = ois_md_request(b"MDR-1", SubscriptionRequest::Subscribe);
+        let sframe = FrameCursor::parse(&sub).expect("V frame parses");
+        let mut out = Vec::new();
+        session.on_market_data_request(&sframe, &st, &mut out).await;
+
+        assert_eq!(session.md_subs.len(), 1, "subscription registered");
+        assert_eq!(session.live_md.len(), 1, "a liftable token published");
+        assert_eq!(out.len(), 1, "an initial snapshot is pushed");
+
+        let snap = FrameCursor::parse(&out[0]).expect("W frame parses");
+        assert_eq!(
+            snap.msg_type(),
+            MsgType::MarketDataSnapshotFullRefresh.as_bytes()
+        );
+        let view = messages::MarketDataSnapshotView::new(snap);
+        assert_eq!(view.symbol(), Some(&b"USD-OIS"[..]));
+        assert_eq!(view.md_req_id(), Some(&b"MDR-1"[..]));
+        let tob = view.top_of_book();
+        assert!(
+            tob.bid_px.unwrap() <= tob.offer_px.unwrap(),
+            "a two-way top-of-book (bid <= offer)"
+        );
+
+        // The ticker re-prices and pushes a fresh snapshot for the live subscription.
+        let frames = session.tick_md_stream(&st);
+        assert_eq!(frames.len(), 1, "one snapshot per live subscription");
+        let tick = FrameCursor::parse(&frames[0]).unwrap();
+        assert_eq!(
+            tick.msg_type(),
+            MsgType::MarketDataSnapshotFullRefresh.as_bytes()
+        );
+
+        // An unsubscribe tears the stream down (no more snapshots, token dropped).
+        let unsub = ois_md_request(b"MDR-1", SubscriptionRequest::Unsubscribe);
+        let uframe = FrameCursor::parse(&unsub).unwrap();
+        let mut out2 = Vec::new();
+        session
+            .on_market_data_request(&uframe, &st, &mut out2)
+            .await;
+        assert!(
+            session.md_subs.is_empty(),
+            "unsubscribe tears the stream down"
+        );
+        assert!(session.live_md.is_empty(), "and drops the live token");
+        assert!(
+            session.tick_md_stream(&st).is_empty(),
+            "nothing left to stream"
+        );
+    }
+
+    /// The 35=D → 35=8 book: after a subscribe publishes a liftable top-of-book, an inbound
+    /// `NewOrderSingle(D)` naming the SYMBOL (no `QuoteID`) books through the SAME last-look
+    /// ledger and FILLS — an `ExecutionReport(150=F)`, retiring the symbol's live token; a
+    /// re-lift of the consumed line then rejects (idempotency), exactly as a QuoteID lift.
+    #[tokio::test]
+    async fn md_lift_by_symbol_books_and_fills_then_rejects_replay() {
+        let mut session = stream_session("conn-md-lift", None);
+        let st = session.sending_time();
+
+        let sub = ois_md_request(b"MDR-2", SubscriptionRequest::Subscribe);
+        let sframe = FrameCursor::parse(&sub).unwrap();
+        let mut out = Vec::new();
+        session.on_market_data_request(&sframe, &st, &mut out).await;
+        assert_eq!(session.live_md.len(), 1);
+
+        // Lift the offer (BUY) by symbol — a market-data lift carries no QuoteID(117).
+        let order = {
+            let hdr = Header {
+                sender: b"CELNET",
+                target: b"CELNET-CPTY",
+                seq_num: 11,
+                sending_time: b"20260625-12:00:02.000",
+            };
+            let p = messages::MarketOrderParams {
+                cl_ord_id: b"C-MD-1",
+                symbol: b"USD-OIS",
+                side: dialect_fx::SIDE_BUY,
+                qty: 1_000_000.0,
+                price: 0.05,
+                transact_time: b"20260625-12:00:02.000",
+            };
+            let mut enc = FrameEncoder::new();
+            messages::build_new_order_by_symbol(&hdr, &p, &mut enc)
+        };
+
+        let oframe = FrameCursor::parse(&order).unwrap();
+        assert_eq!(
+            oframe.get(117),
+            None,
+            "a market-data lift carries no QuoteID"
+        );
+        let mut exec_out = Vec::new();
+        session.on_new_order(&oframe, &st, &mut exec_out);
+
+        assert_eq!(exec_out.len(), 1, "one ExecutionReport emitted");
+        let exec = FrameCursor::parse(&exec_out[0]).unwrap();
+        assert_eq!(exec.msg_type(), MsgType::ExecutionReport.as_bytes());
+        let view = messages::ExecReportView::new(exec);
+        assert_eq!(view.exec_type(), Some(EXEC_FILLED), "the symbol lift fills");
+        assert!(
+            session.live_md.is_empty(),
+            "a filled lift retires the symbol's live token"
+        );
+
+        // A re-lift of the same (now-retired) symbol rejects — the token is consumed.
+        let oframe2 = FrameCursor::parse(&order).unwrap();
+        let mut exec_out2 = Vec::new();
+        session.on_new_order(&oframe2, &st, &mut exec_out2);
+        let exec2 = FrameCursor::parse(&exec_out2[0]).unwrap();
+        let view2 = messages::ExecReportView::new(exec2);
+        assert_eq!(
+            view2.exec_type(),
+            Some(EXEC_REJECTED),
+            "a re-lift of a consumed line rejects"
+        );
     }
 
     /// Latency instrumentation (docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md): driving an

@@ -229,6 +229,58 @@ pub fn build_rates_quote_request_with_party(
     enc.finish()
 }
 
+/// The inputs to an OIS `MarketDataRequest(V)` — the OIS analogue of
+/// [`BondMarketDataRequestParams`]. Carries the market-data correlation id plus the OIS
+/// instrument block the stream venue registers + re-prices.
+#[derive(Debug, Clone)]
+pub struct OisMarketDataRequestParams<'a> {
+    /// `MDReqID(262)` — the client-minted market-data correlation id.
+    pub md_req_id: &'a [u8],
+    /// `Symbol(55)` — the curve symbol (e.g. `b"USD-OIS"`).
+    pub symbol: &'a [u8],
+    /// The OIS tenor in whole years ([`TAG_TENOR_YEARS`]; must be `>= 1`).
+    pub tenor_years: u32,
+    /// `OrderQty(38)` — the streamed size / notional (must be `> 0`).
+    pub notional: f64,
+    /// The directional intent (`Side(54)`).
+    pub side: RatesSide,
+    /// Subscribe (snapshot+updates) / unsubscribe (`SubscriptionRequestType(263)`).
+    pub subscription: SubscriptionRequest,
+}
+
+/// Build an OIS `MarketDataRequest(V)` frame from [`OisMarketDataRequestParams`]: the
+/// market-data envelope (via [`crate::messages::push_md_request_envelope`]) plus the SAME
+/// OIS instrument block [`build_rates_quote_request`] lays down, so the venue decodes it
+/// with the shared [`decode_ois_instrument`].
+#[must_use]
+pub fn build_ois_market_data_request(
+    hdr: &Header<'_>,
+    p: &OisMarketDataRequestParams<'_>,
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
+    enc.clear();
+    hdr.encode(MsgType::MarketDataRequest, enc);
+    crate::messages::push_md_request_envelope(
+        enc,
+        p.md_req_id,
+        p.subscription.to_fix(),
+        crate::messages::MARKET_DEPTH_TOP_OF_BOOK,
+    );
+    enc.push(55, p.symbol);
+    enc.push(460, b"5"); // Product = RATE
+    enc.push(167, SEC_TYPE_OIS);
+    if is_integer_valued(p.notional) {
+        enc.push_int(38, p.notional as i64);
+    } else {
+        enc.push(38, format!("{}", p.notional).as_bytes());
+    }
+    enc.push_int(TAG_TENOR_YEARS, i64::from(p.tenor_years));
+    if let Some(side) = p.side.to_fix() {
+        enc.push(54, &[side]);
+    }
+    enc.finish()
+}
+
 /// A single OIS RFQ descriptor decoded from the FIX instrument block — the
 /// dialect's normalised view of one inbound rates request.
 #[derive(Debug, Clone, PartialEq)]
@@ -263,6 +315,32 @@ pub fn decode_rates_rfq(frame: &FrameCursor<'_>) -> Result<RatesRfq, RatesDialec
         .map(<[u8]>::to_vec)
         .ok_or(RatesDialectError::MissingSymbol)?;
 
+    let (tenor_years, notional, side) = decode_ois_instrument(frame)?;
+    let subscription = SubscriptionRequest::from_fix(frame.get(263))?;
+
+    Ok(RatesRfq {
+        quote_req_id,
+        symbol,
+        tenor_years,
+        notional,
+        side,
+        subscription,
+    })
+}
+
+/// Decode + validate the OIS **instrument block** (`SecurityType(167)=OIS`,
+/// [`TAG_TENOR_YEARS`], `OrderQty(38)` notional, `Side(54)`) into `(tenor_years, notional,
+/// side)`. Shared by [`decode_rates_rfq`] (which wraps it with the RFQ envelope:
+/// `QuoteReqID(131)` + `SubscriptionRequestType(263)`) and the market-data streaming
+/// subscribe path (which correlates on `MDReqID(262)` and so needs the instrument WITHOUT
+/// the QuoteReqID requirement).
+///
+/// # Errors
+///
+/// Returns a [`RatesDialectError`] for any missing/invalid instrument field.
+pub fn decode_ois_instrument(
+    frame: &FrameCursor<'_>,
+) -> Result<(u32, f64, RatesSide), RatesDialectError> {
     match frame.get(167) {
         Some(SEC_TYPE_OIS) => {}
         _ => return Err(RatesDialectError::BadSecurityType),
@@ -281,16 +359,7 @@ pub fn decode_rates_rfq(frame: &FrameCursor<'_>) -> Result<RatesRfq, RatesDialec
         .ok_or(RatesDialectError::BadNotional)?;
 
     let side = RatesSide::from_fix(frame.get(54))?;
-    let subscription = SubscriptionRequest::from_fix(frame.get(263))?;
-
-    Ok(RatesRfq {
-        quote_req_id,
-        symbol,
-        tenor_years,
-        notional,
-        side,
-        subscription,
-    })
+    Ok((tenor_years, notional, side))
 }
 
 /// Split a fair (par) rate into a two-way bid/offer market around it: the client
@@ -460,6 +529,94 @@ pub fn build_bond_quote_request_with_party(
     enc.finish()
 }
 
+/// The inputs to a cash-bond `MarketDataRequest(V)` — the streaming (ESP) subscribe /
+/// unsubscribe the fixed-income **stream** venue serves. Carries the market-data
+/// correlation id ([`crate::messages::TAG_MD_REQ_ID`]) plus the SAME bond instrument block
+/// a [`BondQuoteRequestParams`] carries, so the venue can register the subscription and
+/// price its `MarketDataSnapshotFullRefresh(W)` updates (composite-first, curve fallback).
+#[derive(Debug, Clone)]
+pub struct BondMarketDataRequestParams<'a> {
+    /// `MDReqID(262)` — the client-minted market-data correlation id.
+    pub md_req_id: &'a [u8],
+    /// `Symbol(55)` — the bond symbol (the canonical `instrument_id` the book keys on).
+    pub symbol: &'a [u8],
+    /// `CouponRate(223)` — annual coupon as a decimal (`0.05` = 5%; `0` for zero-coupon).
+    pub coupon_rate: f64,
+    /// The coupon payment frequency ([`TAG_COUPON_FREQUENCY`]).
+    pub coupon_frequency: PaymentFrequency,
+    /// The accrual day-count basis ([`TAG_DAY_COUNT`]).
+    pub day_count: AccrualBasis,
+    /// `MaturityDate(541)` — the final-redemption date.
+    pub maturity: BrokenDate,
+    /// The par redemption / face value ([`TAG_REDEMPTION`]; must be `> 0`).
+    pub redemption: f64,
+    /// `OrderQty(38)` — the streamed size / notional (must be `> 0`).
+    pub notional: f64,
+    /// The directional intent: `Side(54)=1` long / `2` short / absent ⇒ two-way.
+    pub side: Side,
+    /// Subscribe (snapshot+updates) / unsubscribe (`SubscriptionRequestType(263)`).
+    pub subscription: SubscriptionRequest,
+}
+
+/// Build a cash-bond `MarketDataRequest(V)` frame from [`BondMarketDataRequestParams`].
+#[must_use]
+pub fn build_bond_market_data_request(
+    hdr: &Header<'_>,
+    p: &BondMarketDataRequestParams<'_>,
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
+    build_bond_market_data_request_with_party(hdr, p, None, enc)
+}
+
+/// Build a cash-bond `MarketDataRequest(V)`, stamping an originating counterparty
+/// `PartyID(448)` when `party_id` is `Some` (the client the ESP streams on behalf of, so
+/// the desk blotter shows a varied pool). Passing `None` emits a party-free frame. The
+/// market-data envelope (`MDReqID(262)`, `SubscriptionRequestType(263)`, `MarketDepth(264)`,
+/// the two-sided `NoMDEntryTypes(267)` group, `NoRelatedSym(146)=1`) is written by
+/// [`crate::messages::push_md_request_envelope`]; the single instrument block that follows
+/// is the SAME bond tag layout [`build_bond_quote_request_with_party`] lays down, so the
+/// venue decodes it with the shared [`decode_bond_instrument`].
+#[must_use]
+pub fn build_bond_market_data_request_with_party(
+    hdr: &Header<'_>,
+    p: &BondMarketDataRequestParams<'_>,
+    party_id: Option<&[u8]>,
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
+    enc.clear();
+    hdr.encode(MsgType::MarketDataRequest, enc);
+    crate::messages::push_md_request_envelope(
+        enc,
+        p.md_req_id,
+        p.subscription.to_fix(),
+        crate::messages::MARKET_DEPTH_TOP_OF_BOOK,
+    );
+    // The single instrument block (NoRelatedSym=1): the SAME bond tags the RFQ carries,
+    // minus the RFQ-only QuoteReqID(131) / SubscriptionRequestType (already on the envelope).
+    enc.push(55, p.symbol);
+    enc.push(460, PRODUCT_BOND);
+    enc.push(167, SEC_TYPE_BOND);
+    enc.push(223, format!("{}", p.coupon_rate).as_bytes());
+    if is_integer_valued(p.notional) {
+        enc.push_int(38, p.notional as i64);
+    } else {
+        enc.push(38, format!("{}", p.notional).as_bytes());
+    }
+    enc.push(541, fmt_fix_date(&p.maturity).as_bytes());
+    enc.push_int(TAG_COUPON_FREQUENCY, periods_per_year(p.coupon_frequency));
+    enc.push(TAG_DAY_COUNT, day_count_token(p.day_count));
+    if is_integer_valued(p.redemption) {
+        enc.push_int(TAG_REDEMPTION, p.redemption as i64);
+    } else {
+        enc.push(TAG_REDEMPTION, format!("{}", p.redemption).as_bytes());
+    }
+    if let Some(side) = side_to_fix_byte(p.side) {
+        enc.push(54, &[side]);
+    }
+    crate::messages::push_originating_party(enc, party_id);
+    enc.finish()
+}
+
 /// A single cash-bond RFQ descriptor decoded from the FIX instrument block: the RFQ
 /// envelope (correlation id, symbol, notional, subscription) plus the LANDED
 /// [`BondInstrument`] wire shape the server prices verbatim.
@@ -496,6 +653,33 @@ pub fn decode_bond_rfq(frame: &FrameCursor<'_>) -> Result<BondRfq, RatesDialectE
         .map(<[u8]>::to_vec)
         .ok_or(RatesDialectError::MissingSymbol)?;
 
+    let (instrument, notional) = decode_bond_instrument(frame)?;
+    let subscription = SubscriptionRequest::from_fix(frame.get(263))?;
+
+    Ok(BondRfq {
+        quote_req_id,
+        symbol,
+        notional,
+        subscription,
+        instrument,
+    })
+}
+
+/// Decode + validate the cash-bond **instrument block** (`SecurityType(167)=BOND`,
+/// `CouponRate(223)`, [`TAG_COUPON_FREQUENCY`], [`TAG_DAY_COUNT`], `MaturityDate(541)`,
+/// [`TAG_REDEMPTION`]) plus the `OrderQty(38)` notional and `Side(54)` into the LANDED
+/// [`BondInstrument`] wire shape and its notional. Shared by [`decode_bond_rfq`] (which
+/// wraps it with the RFQ envelope: `QuoteReqID(131)` + `SubscriptionRequestType(263)`) and
+/// the market-data streaming subscribe path (which correlates on `MDReqID(262)` instead and
+/// so needs the instrument WITHOUT the QuoteReqID requirement). A malformed block never
+/// panics and never yields a partial descriptor.
+///
+/// # Errors
+///
+/// Returns a [`RatesDialectError`] for any missing/invalid instrument field.
+pub fn decode_bond_instrument(
+    frame: &FrameCursor<'_>,
+) -> Result<(BondInstrument, f64), RatesDialectError> {
     if frame.get(167) != Some(SEC_TYPE_BOND) {
         return Err(RatesDialectError::BadSecurityType);
     }
@@ -541,14 +725,9 @@ pub fn decode_bond_rfq(frame: &FrameCursor<'_>) -> Result<BondRfq, RatesDialectE
         Some([SIDE_SELL]) => Side::Sell,
         Some(_) => return Err(RatesDialectError::BadSide),
     };
-    let subscription = SubscriptionRequest::from_fix(frame.get(263))?;
 
-    Ok(BondRfq {
-        quote_req_id,
-        symbol,
-        notional,
-        subscription,
-        instrument: BondInstrument {
+    Ok((
+        BondInstrument {
             coupon_rate,
             coupon_frequency: frequency as i32,
             day_count: day_count as i32,
@@ -556,7 +735,8 @@ pub fn decode_bond_rfq(frame: &FrameCursor<'_>) -> Result<BondRfq, RatesDialectE
             redemption,
             side: side as i32,
         },
-    })
+        notional,
+    ))
 }
 
 /// Map the coupons-per-year int carried on [`TAG_COUPON_FREQUENCY`] to a
@@ -860,6 +1040,80 @@ mod tests {
         let raw = build_bond_quote_request(&header(), p, &mut enc);
         let frame = FrameCursor::parse(&raw).expect("frame parses");
         decode_bond_rfq(&frame).expect("bond rfq decodes")
+    }
+
+    #[test]
+    fn bond_market_data_request_round_trips_the_instrument_block() {
+        // A MarketDataRequest(V) carries the SAME bond instrument block the RFQ does; the
+        // shared `decode_bond_instrument` recovers it (no QuoteReqID needed).
+        let bp = bond_params();
+        let p = BondMarketDataRequestParams {
+            md_req_id: b"MDR-BND-1",
+            symbol: bp.symbol,
+            coupon_rate: bp.coupon_rate,
+            coupon_frequency: bp.coupon_frequency,
+            day_count: bp.day_count,
+            maturity: bp.maturity,
+            redemption: bp.redemption,
+            notional: bp.notional,
+            side: bp.side,
+            subscription: SubscriptionRequest::Subscribe,
+        };
+        let mut enc = FrameEncoder::new();
+        let raw = build_bond_market_data_request(&header(), &p, &mut enc);
+        let frame = FrameCursor::parse(&raw).expect("V frame parses");
+        // The dictionary accepts it as a MarketDataRequest.
+        assert_eq!(
+            crate::dictionary::validate(&frame),
+            Ok(crate::dictionary::MsgType::MarketDataRequest)
+        );
+        // The MD envelope carried the correlation id + subscribe intent.
+        let view = crate::messages::MarketDataRequestView::new(frame);
+        assert_eq!(view.md_req_id(), Some(&b"MDR-BND-1"[..]));
+        assert_eq!(view.subscription_type(), Some(b'1'));
+        // The instrument block decodes to EXACTLY the intended landed BondInstrument.
+        let (instrument, notional) =
+            decode_bond_instrument(&frame).expect("bond instrument decodes");
+        assert_eq!(notional, 25_000_000.0);
+        assert_eq!(
+            instrument,
+            BondInstrument {
+                coupon_rate: 0.045,
+                coupon_frequency: PaymentFrequency::SemiAnnual as i32,
+                day_count: AccrualBasis::Thirty360BondBasis as i32,
+                maturity_date: Some(BrokenDate {
+                    year: 2031,
+                    month: 6,
+                    day: 25,
+                }),
+                redemption: 100.0,
+                side: Side::Buy as i32,
+            }
+        );
+    }
+
+    #[test]
+    fn ois_market_data_request_round_trips_the_instrument_block() {
+        let p = OisMarketDataRequestParams {
+            md_req_id: b"MDR-OIS-1",
+            symbol: b"USD-OIS",
+            tenor_years: 5,
+            notional: 10_000_000.0,
+            side: RatesSide::TwoWay,
+            subscription: SubscriptionRequest::Subscribe,
+        };
+        let mut enc = FrameEncoder::new();
+        let raw = build_ois_market_data_request(&header(), &p, &mut enc);
+        let frame = FrameCursor::parse(&raw).expect("V frame parses");
+        assert_eq!(
+            crate::dictionary::validate(&frame),
+            Ok(crate::dictionary::MsgType::MarketDataRequest)
+        );
+        let (tenor_years, notional, side) =
+            decode_ois_instrument(&frame).expect("OIS instrument decodes");
+        assert_eq!(tenor_years, 5);
+        assert_eq!(notional, 10_000_000.0);
+        assert_eq!(side, RatesSide::TwoWay);
     }
 
     #[test]
