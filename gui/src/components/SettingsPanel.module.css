@@ -67,9 +67,15 @@
 }
 
 .panel {
-  width: min(380px, 94vw);
-  max-height: 86vh;
-  overflow: auto;
+  /* Wider, comfortable centered card; capped to the viewport with a margin so it
+     never touches the edges on small screens (the scrim adds --space-4 padding). */
+  width: min(620px, 94vw);
+  max-height: 85vh;
+  /* Flex column: pinned header + footer, scrollable body between. `overflow:
+     hidden` keeps the rounded corners clipping the scroll area. */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border: var(--hairline) solid var(--grid-line);
   border-radius: var(--r-lg);
   background: var(--bg-overlay-solid);
@@ -77,6 +83,35 @@
   -webkit-backdrop-filter: blur(var(--blur-float));
   backdrop-filter: blur(var(--blur-float));
   animation: settings-panel-in 140ms var(--ease-out);
+}
+
+/* The scrollable middle. min-height:0 lets it shrink inside the flex column so
+   overflow-y actually engages instead of the whole card growing past the cap. */
+.panelBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--grid-line) transparent;
+}
+
+.panelBody::-webkit-scrollbar {
+  width: 10px;
+}
+
+.panelBody::-webkit-scrollbar-thumb {
+  background: var(--grid-line);
+  border-radius: var(--r-full);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+.panelBody::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+  background-clip: padding-box;
 }
 
 @keyframes settings-panel-in {
@@ -99,8 +134,7 @@
 }
 
 .panelHead {
-  position: sticky;
-  top: 0;
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -501,8 +535,7 @@
 /* --- version footer --- */
 
 .versionFoot {
-  position: sticky;
-  bottom: 0;
+  flex: none;
   display: flex;
   align-items: baseline;
   justify-content: space-between;

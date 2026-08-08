@@ -374,6 +374,7 @@ export function SettingsPanel(): React.ReactElement {
             </button>
           </div>
 
+          <div className={styles.panelBody}>
           {/* --- Alerts --- */}
           <section className={styles.section} aria-labelledby={`${titleId}-alerts`}>
             <h3 id={`${titleId}-alerts`} className={styles.sectionTitle}>
@@ -552,6 +553,7 @@ export function SettingsPanel(): React.ReactElement {
               ))}
             </div>
           </section>
+          </div>
 
           {/* --- Version footer (plain div — NOT a <footer>, to avoid a second
               contentinfo landmark inside the app's document) --- */}
