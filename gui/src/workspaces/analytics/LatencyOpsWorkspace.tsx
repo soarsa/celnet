@@ -47,6 +47,43 @@ function fmtLatency(ns: number | undefined): string {
   return `${ms.toFixed(ms < 10 ? 2 : 1)} ms`;
 }
 
+// --- p99 traffic-light tint (latency-threshold row colouring) ----------------
+
+/**
+ * Row-tint thresholds in **milliseconds**, applied to each stage's p99 (the
+ * standard tail-SLA metric). Boundaries (kept identical in the legend):
+ *   • p99 < 1 ms          → green  (healthy)
+ *   • 1 ms ≤ p99 ≤ 2 ms   → amber  (watch)
+ *   • p99 > 2 ms          → red    (over-SLA)
+ * The edges are inclusive on the amber band: exactly 1 ms and exactly 2 ms are
+ * amber, never green/red.
+ */
+const LATENCY_GREEN_MS = 1;
+const LATENCY_RED_MS = 2;
+
+/** The traffic-light band a stage falls in, or undefined when p99 is unsampled. */
+export type LatencyTone = "green" | "amber" | "red";
+
+/**
+ * Classify a stage by its p99 tail latency (raw nanoseconds → ms) into a
+ * traffic-light band. An unsampled p99 (≤ 0) returns undefined — an absent tail
+ * must not read as a healthy green. Boundaries per `LATENCY_GREEN_MS`/`_RED_MS`.
+ */
+export function latencyTone(p99Ns: number): LatencyTone | undefined {
+  if (p99Ns <= 0) return undefined;
+  const ms = p99Ns / NS_PER_MS;
+  if (ms < LATENCY_GREEN_MS) return "green";
+  if (ms <= LATENCY_RED_MS) return "amber";
+  return "red";
+}
+
+/** Maps a traffic-light band to its module tint class (sets `--lat-tint`). */
+const TONE_CLASS: Record<LatencyTone, string> = {
+  green: styles.latGreen ?? "",
+  amber: styles.latAmber ?? "",
+  red: styles.latRed ?? "",
+};
+
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 
 /** Integer count with compact suffix (4.21M). Zero renders "—". */
@@ -280,7 +317,9 @@ export function LatencyOpsWorkspace(): React.ReactElement {
       ) : stages.length === 0 ? (
         <p className={styles.empty}>No latency metrics reported.</p>
       ) : (
-        <div className={styles.tableScroll}>
+        <>
+          <ToneLegend />
+          <div className={styles.tableScroll}>
           <table className={styles.table}>
             <caption className={styles.caption}>
               Per-stage pipeline latency (nanosecond histograms, adaptive units) — spectrum
@@ -314,8 +353,11 @@ export function LatencyOpsWorkspace(): React.ReactElement {
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((s) => (
-                <tr key={s.op}>
+              {visibleRows.map((s) => {
+                const tone = latencyTone(s.p99Ns);
+                const rowClass = tone ? `${styles.latRow} ${TONE_CLASS[tone]}` : undefined;
+                return (
+                <tr key={s.op} className={rowClass} data-latency-tone={tone}>
                   <th scope="row" className={styles.rowLabel}>
                     <span className={styles.stageName}>{s.stageLabel}</span>
                     <span className={styles.opTag}>{s.op}</span>
@@ -330,12 +372,39 @@ export function LatencyOpsWorkspace(): React.ReactElement {
                     <SpectrumBar stage={s} dom={dom} />
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </section>
+  );
+}
+
+/**
+ * The p99-tail traffic-light key: green < 1 ms, amber 1–2 ms, red > 2 ms. Sits by
+ * the table header so the row tint is self-explanatory. The colour labels are real
+ * text (screen-reader legible); the swatches are decorative reinforcement.
+ */
+function ToneLegend(): React.ReactElement {
+  return (
+    <div className={styles.legend}>
+      <span className={styles.legendLabel}>Row tint — p99 tail:</span>
+      <span className={styles.legendItem}>
+        <span className={`${styles.legendDot} ${styles.latGreen}`} aria-hidden />
+        &lt;1&nbsp;ms
+      </span>
+      <span className={styles.legendItem}>
+        <span className={`${styles.legendDot} ${styles.latAmber}`} aria-hidden />
+        1–2&nbsp;ms
+      </span>
+      <span className={styles.legendItem}>
+        <span className={`${styles.legendDot} ${styles.latRed}`} aria-hidden />
+        &gt;2&nbsp;ms
+      </span>
+    </div>
   );
 }
 

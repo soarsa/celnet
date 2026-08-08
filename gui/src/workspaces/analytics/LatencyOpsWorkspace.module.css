@@ -337,3 +337,76 @@
 .table tbody tr:hover .spectrumP50 {
   box-shadow: 0 0 0 2px var(--bg-inset);
 }
+
+/* --- p99 traffic-light row tint ------------------------------------------- */
+/* Each tone sets one custom property (--lat-tint) consumed by the shared rules,
+   so the wash + left-accent + legend swatch all stay in lockstep from one source.
+   Greens reuse the palette's --bid hue, amber/red the semantic --warn/--danger.
+   A 12% wash over the row's own surface keeps text contrast AA; the strong signal
+   is the 3px left-accent border on the sticky Stage cell (never background alone). */
+
+.latGreen {
+  --lat-tint: var(--bid);
+}
+
+.latAmber {
+  --lat-tint: var(--warn);
+}
+
+.latRed {
+  --lat-tint: var(--danger);
+}
+
+/* Paint at the CELL level (not the <tr>) so the tint wins over the zebra
+   :nth-child(even) row background and over the sticky row-header's own opaque
+   fill. color-mix onto the opaque surface keeps the sticky cell opaque. */
+.latRow > .num,
+.latRow > .spectrumCell {
+  background: color-mix(in oklab, var(--lat-tint) 12%, var(--bg-raised));
+}
+
+.latRow > .rowLabel {
+  background: color-mix(in oklab, var(--lat-tint) 12%, var(--bg-raised));
+  border-left: 3px solid var(--lat-tint);
+}
+
+/* Preserve a hover cue on tinted rows (deepen the wash over the hover surface). */
+.table tbody tr.latRow:hover > .num,
+.table tbody tr.latRow:hover > .spectrumCell,
+.table tbody tr.latRow:hover > .rowLabel {
+  background: color-mix(in oklab, var(--lat-tint) 20%, var(--bg-inset));
+}
+
+/* --- legend --------------------------------------------------------------- */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--type-micro);
+  line-height: var(--type-micro-lh);
+  color: var(--text-secondary);
+}
+
+.legendLabel {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-emphasis);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.legendDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--lat-tint);
+  flex: 0 0 auto;
+}

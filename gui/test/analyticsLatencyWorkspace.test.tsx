@@ -13,7 +13,7 @@ import type { LatencyMetrics, LatencyStage } from "../src/data/contract";
 const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 
-import { LatencyOpsWorkspace } from "../src/workspaces/analytics/LatencyOpsWorkspace";
+import { LatencyOpsWorkspace, latencyTone } from "../src/workspaces/analytics/LatencyOpsWorkspace";
 
 function stage(overrides: Partial<LatencyStage> = {}): LatencyStage {
   return {
@@ -239,6 +239,59 @@ describe("LatencyOpsWorkspace", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // --- p99 traffic-light row tint ------------------------------------------
+
+  describe("latencyTone (p99 → green/amber/red)", () => {
+    const MS = 1_000_000; // ns per ms
+
+    it("is green below 1 ms", () => {
+      expect(latencyTone(820)).toBe("green"); // 0.82 µs pinned core
+      expect(latencyTone(0.5 * MS)).toBe("green");
+      expect(latencyTone(1 * MS - 1)).toBe("green"); // just under 1 ms
+    });
+
+    it("is amber on the inclusive 1–2 ms band, including both boundaries", () => {
+      expect(latencyTone(1 * MS)).toBe("amber"); // exactly 1 ms → amber, not green
+      expect(latencyTone(1.3 * MS)).toBe("amber"); // ~1.3 ms quote_accept
+      expect(latencyTone(2 * MS)).toBe("amber"); // exactly 2 ms → amber, not red
+    });
+
+    it("is red above 2 ms", () => {
+      expect(latencyTone(2 * MS + 1)).toBe("red"); // just over 2 ms
+      expect(latencyTone(2.96 * MS)).toBe("red");
+      expect(latencyTone(6_100_000)).toBe("red"); // 6.1 ms book round-trip
+    });
+
+    it("returns undefined for an unsampled p99 (never a false green)", () => {
+      expect(latencyTone(0)).toBeUndefined();
+      expect(latencyTone(-5)).toBeUndefined();
+    });
+  });
+
+  it("tints each stage row by its p99 band (data-latency-tone) and renders the legend", async () => {
+    // p99: price 2.4µs → green, surface 88µs → green, book 6.1ms → red.
+    const AMBER = stage({
+      op: "quote_accept",
+      stageLabel: "Quote accept",
+      p99Ns: 1_300_000, // 1.3 ms → amber
+    });
+    const { app } = makeApp(metrics([stage(), AMBER, BOOK]));
+    await renderWorkspace(app);
+
+    const green = screen.getByRole("row", { name: /Price \(pinned core\)/ });
+    const amber = screen.getByRole("row", { name: /Quote accept/ });
+    const red = screen.getByRole("row", { name: /Ack→fill→book/ });
+    expect(green).toHaveAttribute("data-latency-tone", "green");
+    expect(amber).toHaveAttribute("data-latency-tone", "amber");
+    expect(red).toHaveAttribute("data-latency-tone", "red");
+
+    // The legend states the coding in real (screen-reader-legible) text.
+    expect(screen.getByText(/Row tint/)).toBeInTheDocument();
+    expect(screen.getByText(/<1/)).toBeInTheDocument();
+    expect(screen.getByText(/1–2/)).toBeInTheDocument();
+    expect(screen.getByText(/>2/)).toBeInTheDocument();
   });
 
   it("shows an empty state before sign-in", async () => {
