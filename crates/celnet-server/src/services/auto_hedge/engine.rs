@@ -615,6 +615,75 @@ mod tests {
         assert!(e.provenance(Some("OTHER"), None).is_empty());
     }
 
+    /// A `counterparty == "X"` rule back-to-backs X's flow externally while any other
+    /// counterparty's fill warehouses — driven through the full `evaluate` path.
+    #[test]
+    fn counterparty_rule_backs_to_back_matching_flow_only() {
+        use celnet_hedge_routing::HedgeNode;
+        // Graph: `counterparty == "CITADEL" ? SubmitMarketOrder(Full) : Warehouse`.
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0,
+            HedgeNode::Condition {
+                field: celnet_hedge_routing::HedgeField::Counterparty,
+                op: RouteOp::Eq,
+                value: RouteValue::Text("CITADEL".into()),
+                on_true: 1,
+                on_false: 2,
+            },
+        );
+        nodes.insert(
+            1,
+            HedgeNode::Action {
+                exit: ExitAction::SubmitMarketOrder {
+                    size: HedgeSize::Full,
+                    style: ExecStyle::Immediate,
+                },
+            },
+        );
+        nodes.insert(
+            2,
+            HedgeNode::Action {
+                exit: ExitAction::Warehouse,
+            },
+        );
+        let g = HedgeGraph { entry: 0, nodes };
+        let e = AutoHedgeEngine::default();
+
+        // A CITADEL fill (breached book) → external back-to-back, provenance stamped.
+        let citadel = HedgeContext {
+            counterparty: "CITADEL".into(),
+            ..ctx(95_000.0, true, 0.0, "RATES")
+        };
+        let out = e.evaluate(
+            &g,
+            &thr(),
+            &HedgeConfigDef::default(),
+            &citadel,
+            &known(),
+            1,
+        );
+        assert_eq!(
+            out.intent.action.unwrap().kind,
+            ExitActionKind::ExitActionSubmitMarketOrder as i32,
+            "CITADEL flow is backed-to-back"
+        );
+        assert!(out.provenance.is_some(), "a fired hedge stamps provenance");
+
+        // Any other counterparty's fill → warehouse, no provenance.
+        let other = HedgeContext {
+            counterparty: "MILLENNIUM".into(),
+            ..ctx(95_000.0, true, 0.0, "RATES")
+        };
+        let out2 = e.evaluate(&g, &thr(), &HedgeConfigDef::default(), &other, &known(), 2);
+        assert_eq!(
+            out2.intent.action.unwrap().kind,
+            ExitActionKind::ExitActionWarehouse as i32,
+            "non-CITADEL flow warehouses"
+        );
+        assert!(out2.provenance.is_none(), "a warehouse hold stamps nothing");
+    }
+
     #[test]
     fn cross_internal_nets_against_offset_and_is_not_advisory() {
         let e = AutoHedgeEngine::default();

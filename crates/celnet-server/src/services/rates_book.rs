@@ -1025,6 +1025,11 @@ impl RatesPositionStore {
             instrument_id: instrument,
             ccy: attribution.ccy.clone(),
             book: book.to_owned(),
+            // The originating counterparty of THIS fill — the same party id the Deal /
+            // blotter and the risk-routing attribution carry — so a hedge rule
+            // `counterparty == "X"` back-to-backs a given client's flow (a property of the
+            // incoming fill, not a per-counterparty net position).
+            counterparty: attribution.counterparty.clone(),
             net_dv01: book_net_dv01,
             // The rates warehouse budget is DV01-based; mirror it onto `net_notional` so a
             // threshold configured with a non-DV01 metric still classifies the SAME magnitude

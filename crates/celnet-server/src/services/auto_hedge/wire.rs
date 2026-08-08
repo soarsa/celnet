@@ -68,6 +68,7 @@ pub fn hedge_field_to_wire(f: HedgeField) -> i32 {
         HedgeField::InventoryAgeSecs => HedgeFieldEnum::HedgeFieldInventoryAgeSecs,
         HedgeField::InternalOffsetAvailable => HedgeFieldEnum::HedgeFieldInternalOffsetAvailable,
         HedgeField::HedgeCostBp => HedgeFieldEnum::HedgeFieldHedgeCostBp,
+        HedgeField::Counterparty => HedgeFieldEnum::HedgeFieldCounterparty,
     };
     e as i32
 }
@@ -98,6 +99,7 @@ pub fn hedge_field_from_wire(v: i32) -> Result<HedgeField, Status> {
             Ok(HedgeField::InternalOffsetAvailable)
         }
         Ok(HedgeFieldEnum::HedgeFieldHedgeCostBp) => Ok(HedgeField::HedgeCostBp),
+        Ok(HedgeFieldEnum::HedgeFieldCounterparty) => Ok(HedgeField::Counterparty),
         Err(_) => Err(Status::invalid_argument(format!(
             "unknown HedgeFieldEnum ordinal {v}"
         ))),
@@ -541,6 +543,7 @@ mod tests {
             HedgeField::InventoryAgeSecs,
             HedgeField::InternalOffsetAvailable,
             HedgeField::HedgeCostBp,
+            HedgeField::Counterparty,
         ] {
             assert_eq!(hedge_field_from_wire(hedge_field_to_wire(f)).unwrap(), f);
         }

@@ -39,6 +39,15 @@ pub enum HedgeField {
     Book,
     /// Owning desk (enum).
     Desk,
+    /// Originating counterparty of the fill being hedged — party id / name (string).
+    ///
+    /// A property of the *incoming flow*, not a per-counterparty net position: a rule
+    /// `counterparty == "X"` matches when the fill that triggered this evaluation came
+    /// from `X` (e.g. back-to-back all of one client's flow, warehouse the rest). Modelled
+    /// as free-form [`FieldKind::String`] (like [`HedgeField::InstrumentId`]) so a rule may
+    /// use `eq`/`ne`/`in`/`contains` — the `contains` operator lets a prefix such as
+    /// `"CITADEL"` match a family of session ids.
+    Counterparty,
 
     // ---- risk state ---------------------------------------------------------
     /// Signed net DV01 of the book (numeric, FI budget metric).
@@ -83,8 +92,8 @@ impl HedgeField {
     /// operator/value type matrix used by `RouteOp::valid_for` and validation.
     ///
     /// `Breached` is an [`FieldKind::Enum`] (compared by `== "true"/"false"`);
-    /// all other risk-state numbers are [`FieldKind::Numeric`]; only
-    /// `InstrumentId` is free-form [`FieldKind::String`].
+    /// all other risk-state numbers are [`FieldKind::Numeric`]; `InstrumentId` and
+    /// `Counterparty` are free-form [`FieldKind::String`].
     #[must_use]
     pub fn kind(self) -> FieldKind {
         match self {
@@ -105,7 +114,7 @@ impl HedgeField {
             | HedgeField::InventoryAgeSecs
             | HedgeField::InternalOffsetAvailable
             | HedgeField::HedgeCostBp => FieldKind::Numeric,
-            HedgeField::InstrumentId => FieldKind::String,
+            HedgeField::InstrumentId | HedgeField::Counterparty => FieldKind::String,
         }
     }
 }
@@ -143,6 +152,19 @@ mod tests {
             assert_eq!(f.kind(), FieldKind::Numeric, "{f:?} should be Numeric");
         }
         assert_eq!(HedgeField::InstrumentId.kind(), FieldKind::String);
+        assert_eq!(HedgeField::Counterparty.kind(), FieldKind::String);
+    }
+
+    #[test]
+    fn counterparty_supports_string_operators() {
+        // A string/identity field: eq / ne / in / contains are valid; ordering is not.
+        let k = HedgeField::Counterparty.kind();
+        assert!(RouteOp::Eq.valid_for(k));
+        assert!(RouteOp::Ne.valid_for(k));
+        assert!(RouteOp::In.valid_for(k));
+        assert!(RouteOp::Contains.valid_for(k));
+        assert!(!RouteOp::Gt.valid_for(k));
+        assert!(!RouteOp::Between.valid_for(k));
     }
 
     #[test]

@@ -503,6 +503,46 @@ mod tests {
         assert!(valid_graph().validate(&instruments(), &lps()).is_ok());
     }
 
+    /// A hedge graph carrying a `counterparty == "X"` condition validates and survives the
+    /// exact persistence representation — `serde_json` out and back (the same String
+    /// round-trip `identity.json` uses to store the graph). The counterparty field + its
+    /// literal must reload byte-for-byte after a server restart.
+    #[test]
+    fn counterparty_condition_graph_survives_persistence_round_trip() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0,
+            cond(
+                HedgeField::Counterparty,
+                RouteOp::Eq,
+                RouteValue::Text("CITADEL".into()),
+                1,
+                2,
+            ),
+        );
+        nodes.insert(
+            1,
+            act(ExitAction::SubmitMarketOrder {
+                size: HedgeSize::Full,
+                style: ExecStyle::Immediate,
+            }),
+        );
+        nodes.insert(2, act(ExitAction::Warehouse));
+        let g = HedgeGraph { entry: 0, nodes };
+
+        // A counterparty condition is a well-formed graph (String field, Eq operator).
+        assert!(g.validate(&instruments(), &lps()).is_ok());
+
+        // Persist (serde_json String) → reload — the on-disk `identity.json` path.
+        let json = serde_json::to_string(&g).expect("serialize must not fail");
+        assert!(
+            json.contains("Counterparty") && json.contains("CITADEL"),
+            "the counterparty field + literal are persisted: {json}"
+        );
+        let back: HedgeGraph = serde_json::from_str(&json).expect("must reload after restart");
+        assert_eq!(back, g, "the counterparty rule reloads byte-identical");
+    }
+
     #[test]
     fn missing_entry_rejected() {
         let mut g = valid_graph();

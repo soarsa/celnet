@@ -161,6 +161,54 @@ mod tests {
     }
 
     #[test]
+    fn counterparty_condition_routes_by_incoming_fill() {
+        // `counterparty == "CITADEL" ? SubmitMarketOrder(back-to-back) : Warehouse`.
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0,
+            cond(
+                HedgeField::Counterparty,
+                RouteOp::Eq,
+                RouteValue::Text("CITADEL".into()),
+                1,
+                2,
+            ),
+        );
+        nodes.insert(
+            1,
+            act(ExitAction::SubmitMarketOrder {
+                size: HedgeSize::Full,
+                style: ExecStyle::Immediate,
+            }),
+        );
+        nodes.insert(2, act(ExitAction::Warehouse));
+        let g = HedgeGraph { entry: 0, nodes };
+
+        // A CITADEL fill → back-to-back (external).
+        let x = HedgeContext {
+            counterparty: "CITADEL".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            HedgeRouter::resolve(&g, &x).unwrap().action,
+            &ExitAction::SubmitMarketOrder {
+                size: HedgeSize::Full,
+                style: ExecStyle::Immediate
+            }
+        );
+
+        // Any other counterparty's fill → warehouse.
+        let other = HedgeContext {
+            counterparty: "MILLENNIUM".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            HedgeRouter::resolve(&g, &other).unwrap().action,
+            &ExitAction::Warehouse
+        );
+    }
+
+    #[test]
     fn entry_is_an_action_returns_immediately() {
         let mut nodes = BTreeMap::new();
         nodes.insert(0, act(ExitAction::Warehouse));

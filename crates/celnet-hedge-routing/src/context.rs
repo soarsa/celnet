@@ -32,6 +32,11 @@ pub struct HedgeContext {
     pub book: String,
     /// Owning desk.
     pub desk: String,
+    /// Originating counterparty of the fill that triggered this evaluation — the party
+    /// id / name the Deal/blotter carries. A property of the *incoming flow* (not a
+    /// per-counterparty net position), so a rule `counterparty == "X"` back-to-backs a
+    /// given client's flow while the rest warehouses.
+    pub counterparty: String,
 
     // ---- risk state ---------------------------------------------------------
     /// Signed net DV01 (FI budget metric).
@@ -84,6 +89,7 @@ impl HedgeContext {
             HedgeField::Product => CtxValue::Text(self.product.clone()),
             HedgeField::Book => CtxValue::Text(self.book.clone()),
             HedgeField::Desk => CtxValue::Text(self.desk.clone()),
+            HedgeField::Counterparty => CtxValue::Text(self.counterparty.clone()),
             HedgeField::Breached => {
                 CtxValue::Text(if self.breached { "true" } else { "false" }.to_string())
             }
@@ -111,6 +117,7 @@ impl Default for HedgeContext {
             product: String::new(),
             book: String::new(),
             desk: String::new(),
+            counterparty: String::new(),
             net_dv01: 0.0,
             net_notional: 0.0,
             net_vega: 0.0,
@@ -139,6 +146,7 @@ mod tests {
             product: "swap".into(),
             book: "RATES-EUR".into(),
             desk: "RATES".into(),
+            counterparty: "CITADEL".into(),
             net_dv01: 125_000.0,
             net_notional: 60_000_000.0,
             net_vega: -12_000.0,
@@ -163,6 +171,10 @@ mod tests {
         assert_eq!(
             c.get(HedgeField::InstrumentId),
             CtxValue::Text("EURUSD".into())
+        );
+        assert_eq!(
+            c.get(HedgeField::Counterparty),
+            CtxValue::Text("CITADEL".into())
         );
     }
 

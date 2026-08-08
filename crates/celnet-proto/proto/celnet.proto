@@ -5020,6 +5020,9 @@ enum HedgeFieldEnum {
   HEDGE_FIELD_INTERNAL_OFFSET_AVAILABLE = 16;
   // Current external hedge-cost estimate — spread + impact, in bp (Numeric).
   HEDGE_FIELD_HEDGE_COST_BP = 17;
+  // Originating counterparty of the fill being hedged — party id / name (String;
+  // eq/ne/in/contains). A property of the incoming flow, not a net position.
+  HEDGE_FIELD_COUNTERPARTY = 18;
 }
 
 // The execution schedule of an external hedge (mirrors
