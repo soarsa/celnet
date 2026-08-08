@@ -55,7 +55,6 @@ import {
 } from "../lib/scope";
 import {
   decodeView,
-  encodeView,
   loadSavedViews,
   storeSavedViews,
   type AnalyticsSelection,
@@ -793,24 +792,40 @@ export function AppProvider({
   // still routes through `applyViewState` (see `recallView`). The transport params
   // (mock/ws/transport) are untouched by both paths.
 
-  // Live URL mirror (GW1-S4): keep the address bar in sync with the current view
-  // so a bookmark/copy captures the live state. We MERGE the view params over the
-  // existing query (preserving transport params) and `replaceState` (no history
-  // spam). The canonical view query is computed by the shared codec.
+  // Clean address bar (GW1-S4 → clean-bar): the workspace/domain/model view state
+  // is NO LONGER mirrored into the URL as the user navigates. In-app navigation is
+  // purely in-memory (`navigate`/`setWorkspace`, tab-merge `initialTab`, the
+  // acceptance alias, the command palette, saved-view recall via `applyViewState`),
+  // so no `view`/`dom`/`model` params accrete in the bar as the user clicks around.
+  //
+  // Deep-links are still honoured, on INITIAL LOAD ONLY: `bootView` above decodes a
+  // pasted/bookmarked `?view=…&dom=…&model=…` link ONCE into the initial workspace +
+  // domain + scope + analytics + smile model (so the first paint matches the link).
+  // This one-shot mount effect then STRIPS those view params from the URL so the bar
+  // is clean immediately after landing — the link routed us, but it doesn't linger.
+  //
+  // Non-view transport params are PRESERVED untouched: the local-dev WS override
+  // `?ws=…` and `?mock` (tests/e2e) are not in VIEW_PARAM_KEYS, so they survive. A
+  // saved-view SHARE link is still generated on demand by SavedViewsMenu's shareLink
+  // (the codec is unchanged); it's just no longer forced onto the live address bar.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const current = new URLSearchParams(window.location.search);
-    // Drop the prior view params, then write the fresh ones — so a field that is
-    // no longer present (e.g. group-by relaxed to none, or the domain relaxed back
-    // to the fx_options default which emits no `dom`) is removed from the URL.
+    let changed = false;
     for (const key of VIEW_PARAM_KEYS) {
-      current.delete(key);
+      if (current.has(key)) {
+        current.delete(key);
+        changed = true;
+      }
     }
-    for (const [k, v] of encodeView(viewState)) current.set(k, v);
+    // Nothing to strip (a bare URL, or only transport params) ⇒ leave it as-is.
+    if (!changed) return;
     const qs = current.toString();
     const next = `${window.location.pathname}${qs.length > 0 ? `?${qs}` : ""}${window.location.hash}`;
     window.history.replaceState(window.history.state, "", next);
-  }, [viewState]);
+    // Runs ONCE on mount — the boot seed has already been read into state above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const drillToRisk = (instrument: Instrument, label: string) => {
     setSelected({ instrument, label });
