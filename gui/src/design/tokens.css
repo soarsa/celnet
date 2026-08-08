@@ -107,41 +107,51 @@
     inset 0 0.5px 0 oklch(1 0 0 / 0.06);
   --shadow-float: 0 8px 28px oklch(0 0 0 / 0.42), 0 1px 2px oklch(0 0 0 / 0.3);
   --shadow-hud: 0 24px 64px oklch(0 0 0 / 0.55), 0 2px 8px oklch(0 0 0 / 0.4);
-  --hairline: 1px solid oklch(1 0 0 / 0.07);
+  /* Dark seam hairline — bumped 0.07→0.1 (Aug-2026) so structure stays visible
+   * against the lifted surfaces. Light appearance overrides this below. */
+  --hairline: 1px solid oklch(1 0 0 / 0.1);
   --blur-float: 20px;
   --blur-hud: 40px;
 
   /* --- DARK appearance (default trading-floor) --- */
-  /* Tight dark surface stack (July-2026 SOTA, faithful to mockups/celer.css):
-   * inset 0.165 < base 0.2 < raised 0.255 < overlay 0.29, hue ~264 to sit
-   * warm-cool-neutral under the indigo accent. Darkened from the original
-   * Celer-navy anchors (base #1B1F2A L≈0.255, raised #282C3E L≈0.315) so the
-   * aurora wash + hairline elevation carry the depth, not big lightness jumps.
-   * A11Y GATE: this darkening changes every text-on-surface contrast pair —
-   * the axe a11y e2e (gui/e2e/a11y.e2e.ts) MUST re-verify at t2. */
-  --bg-base: oklch(0.2 0.015 264);
-  --bg-raised: oklch(0.255 0.02 264);
-  --bg-overlay: oklch(0.29 0.024 264 / 0.7);
-  --bg-overlay-solid: oklch(0.29 0.024 264);
-  --bg-inset: oklch(0.165 0.013 264);
+  /* Dark surface stack (July-2026 SOTA, hue ~264 warm-cool-neutral under the
+   * indigo accent): inset 0.185 < base 0.215 < raised 0.285 < overlay 0.325.
+   * Aug-2026 readability lift — the earlier tight stack (inset 0.165 / base 0.2 /
+   * raised 0.255 / overlay 0.29) read too near-black for sustained desk use, so
+   * every surface is raised ~+0.015–0.035 L toward a soft dark charcoal while
+   * the elevation STEPS grew (inset→base +0.03, base→raised +0.07, raised→overlay
+   * +0.04) so hierarchy is if anything clearer — hairline + shadow still carry the
+   * depth, this is not a wash to mid-gray (base L≈0.215 is still a deliberate dark).
+   * NB --bg-base doubles as the DARK on-accent text colour for active segmented-
+   * control pills (color:var(--bg-base) over --accent); at base 0.215 that pair is
+   * 4.57:1 (AA) but 0.22+ dips under 4.5, which is why the page canvas is lifted
+   * only to 0.215 while the dominant CARD surface (raised) carries the larger lift.
+   * A11Y GATE: lifting surfaces lowers every light-text contrast pair, so the
+   * muted text below was lifted in lockstep — the axe a11y e2e (gui/e2e/a11y.e2e.ts)
+   * MUST re-verify at t2. */
+  --bg-base: oklch(0.215 0.015 264);
+  --bg-raised: oklch(0.285 0.02 264);
+  --bg-overlay: oklch(0.325 0.024 264 / 0.7);
+  --bg-overlay-solid: oklch(0.325 0.024 264);
+  --bg-inset: oklch(0.185 0.013 264);
 
-  --text-primary: oklch(0.97 0.008 264);
+  --text-primary: oklch(0.975 0.008 264);
   /* Celer secondary text ≈ #979CB7 (periwinkle-grey), lifted to stay above the
-   * AA-tuned tertiary and keep the secondary>tertiary hierarchy. */
-  --text-secondary: oklch(0.8 0.03 276);
-  /* Tertiary tuned to clear WCAG AA 4.5:1 at the 9–12px sizes it labels (rail
-   * labels, kbd hints, search placeholder, build stamp, blotter owner/tenor)
-   * against the darkest→lightest dark surfaces incl. the raised row bg — verified
-   * by the axe a11y e2e (was 0.55 ⇒ 3.4:1; 0.68 still left 4.44:1 on the old
-   * 0.315-L raised). RE-DERIVED for the tight dark surface stack (computed
-   * OKLCH→sRGB→WCAG, not guessed): 0.74 ⇒ 8.36:1 on inset(0.165), 7.83:1 on
-   * base(0.2), 6.82:1 on raised(0.255), 6.14:1 on overlay-solid(0.29), and
-   * 4.78:1 in the worst composite case (white-8% kbd tint over overlay chrome)
-   * — every pair clears AA 4.5:1 with more headroom than before (surfaces got
-   * darker, text stayed put), so the value is unchanged. It stays dimmer than
-   * --text-secondary (0.8 ⇒ ≥5.91:1 everywhere), preserving the type
-   * hierarchy. The axe a11y e2e (gui/e2e/a11y.e2e.ts) MUST re-verify at t2. */
-  --text-tertiary: oklch(0.74 0.025 276);
+   * AA-tuned tertiary and keep the secondary>tertiary hierarchy. Aug-2026: 0.8→0.84
+   * so it still clears AAA 7:1 on the lifted surfaces (base 10.69:1, raised 8.76:1,
+   * overlay-solid 7.60:1; computed OKLCH→sRGB→WCAG). */
+  --text-secondary: oklch(0.84 0.03 276);
+  /* Tertiary/muted — the usual "hard to read" culprit — tuned to clear WCAG AA
+   * 4.5:1 (and AAA 7:1 on solid surfaces) at the 9–12px sizes it labels (rail
+   * labels, kbd hints, search placeholder, build stamp, blotter owner/tenor).
+   * Aug-2026 readability lift: 0.74→0.8, RE-DERIVED for the lifted surface stack
+   * (computed OKLCH→sRGB→WCAG, not guessed): 0.8 ⇒ 9.95:1 on inset(0.185), 9.36:1
+   * on base(0.215), 7.67:1 on raised(0.285), 6.65:1 on overlay-solid(0.325) — every
+   * solid pair clears AAA, well above the old 6.1–8.3:1 band, so muted text reads
+   * markedly easier despite the lighter surfaces. It stays dimmer than
+   * --text-secondary (0.84 ⇒ ≥7.60:1 everywhere), preserving the type hierarchy.
+   * The axe a11y e2e (gui/e2e/a11y.e2e.ts) MUST re-verify at t2. */
+  --text-tertiary: oklch(0.8 0.025 276);
 
   /* Celer brand coral #ff7357 — logo/pulse/active-pair marker (NOT up/down). */
   --brand: oklch(0.72 0.17 35);
@@ -176,8 +186,8 @@
   --div-neg2: oklch(0.58 0.13 248); --div-neg1: oklch(0.70 0.07 240); --div-mid: oklch(0.5 0.006 264);
   --div-pos1: oklch(0.72 0.11 62); --div-pos2: oklch(0.68 0.16 45);
 
-  --grid-line: oklch(1 0 0 / 0.06);
-  --highlight-top: oklch(1 0 0 / 0.06);
+  --grid-line: oklch(1 0 0 / 0.08);
+  --highlight-top: oklch(1 0 0 / 0.07);
 }
 
 :root[data-appearance="light"] {
@@ -223,11 +233,15 @@
   --highlight-top: oklch(1 0 0 / 0.7);
 }
 
-/* Increased-Contrast: AAA numerics, stronger hues, no translucency. */
+/* Increased-Contrast: AAA numerics, stronger hues, no translucency.
+ * Aug-2026: the dark surfaces this inherits were lifted (see :root), so the muted
+ * overrides were raised too (secondary 0.85→0.88, tertiary 0.7→0.82) to keep this
+ * mode strictly higher-contrast than the new default — tertiary 0.82 ⇒ 7.12:1 on
+ * overlay-solid vs the default's 6.65:1 (computed OKLCH→sRGB→WCAG). */
 :root[data-contrast="high"] {
   --text-primary: oklch(1 0 0 / 1);
-  --text-secondary: oklch(0.85 0.02 276);
-  --text-tertiary: oklch(0.7 0.02 276);
+  --text-secondary: oklch(0.88 0.02 276);
+  --text-tertiary: oklch(0.82 0.02 276);
   --brand: oklch(0.76 0.19 35);
   --brand-soft: oklch(0.76 0.19 35 / 0.24);
   --accent: oklch(0.7 0.2 280);
