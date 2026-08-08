@@ -125,15 +125,23 @@ invalid).
 
 | Group | Fields |
 |---|---|
-| **Identity** | `instrument_id`, `ccy`, `product`, `book`, `desk` |
+| **Identity** | `instrument_id`, `ccy`, `product`, `book`, `desk`, `counterparty` |
 | **Risk state** | `net_dv01`, `net_notional`, `net_vega`, `net_gamma`, `inventory_sign` (+1 long / −1 short) |
 | **Budget state** | `threshold`, `utilization` (`|risk|/threshold`), `overflow`, `breached` (`true`/`false` — the red-band trigger) |
 | **Flow quality** | `counterparty_toxicity` (markout; high ⇒ hedge sooner), `inventory_age_secs` |
 | **Market state** | `internal_offset_available` (opposing internal flow you could cross now), `hedge_cost_bp` |
 
 Numeric fields support `> ≥ < ≤ = ≠ between in`; enum/string fields (`ccy`, `product`,
-`book`, `desk`, `breached`) support `= ≠` (and `contains`/`in` for strings). A malformed rule
+`book`, `desk`, `breached`, `instrument_id`, `counterparty`) support `= ≠` (and
+`contains`/`in` for the string fields `instrument_id`/`counterparty`). A malformed rule
 such as `net_dv01 contains "x"` is rejected by validation and is unrepresentable in the UI.
+
+Hedging **by counterparty** and **by book** are the two identity dimensions a desk reaches
+for most: `book` scopes the policy to one risk book, while `counterparty` (the originating
+party-id, matched as the blotter shows it) scopes it to one client's flow — e.g.
+`Counterparty = CITADEL → SUBMIT_MARKET_ORDER` back-to-backs **all** of Citadel's flow the
+moment it lands. Right-clicking a deal on the Deals blotter → **Change hedging strategy**
+pre-fills exactly this counterparty condition (alongside currency/product/desk).
 
 ### The exit-action leaves
 

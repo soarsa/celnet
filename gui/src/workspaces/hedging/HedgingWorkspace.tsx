@@ -99,7 +99,10 @@ export function HedgingWorkspace(): React.ReactElement {
           <h1 className={styles.title}>Hedging</h1>
           <p className={styles.note}>
             Internalise warehoused risk up to the threshold, then hedge the overflow — via a
-            trader-composed exit policy. {readOnly ? "Read-only view." : "hedge · FI edit."}
+            trader-composed exit policy. Scope rules by <strong>book</strong> or by{" "}
+            <strong>counterparty</strong> (e.g. <em>Counterparty = CITADEL → Submit market order</em>{" "}
+            back-to-backs all of that counterparty&rsquo;s flow), among the other risk-state fields.{" "}
+            {readOnly ? "Read-only view." : "hedge · FI edit."}
           </p>
           <button
             type="button"

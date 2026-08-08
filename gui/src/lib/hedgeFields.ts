@@ -9,9 +9,10 @@
  *
  * The kind ↔ field mapping is a byte-faithful mirror of the Rust
  * `celnet_hedge_routing::HedgeField::kind` (`crates/celnet-hedge-routing/src/field.rs`):
- * `breached` + the five identity fields (ccy/product/book/desk/breached) are ENUM
- * (compared by equality / membership); `instrument_id` is free STRING; every other
- * risk-state number (net_dv01 … hedge_cost_bp) is NUMERIC. Keeping the matrices here
+ * `breached` + the identity enum fields (ccy/product/book/desk) are ENUM
+ * (compared by equality / membership); `instrument_id` and `counterparty` are free
+ * STRINGs; every other risk-state number (net_dv01 … hedge_cost_bp) is NUMERIC. Keeping
+ * the matrices here
  * (not re-derived per component) lets the editor render a TYPED value editor and the
  * client-side validator reject a graph the server would reject.
  */
@@ -38,8 +39,11 @@ export interface HedgeFieldSpec {
 }
 
 /**
- * The full hedge-field registry, in palette-render order 0..17 — the SAME ordinal
- * order as the Rust `HedgeField` enum and the proto `HedgeFieldEnum`.
+ * The full hedge-field registry, in ordinal order 0..18 — the SAME ordinal order as
+ * the Rust `HedgeField` enum and the proto `HedgeFieldEnum` (so the array index equals
+ * the wire tag). The palette clusters chips by their {@link HedgeFieldSpec.group}, so a
+ * field's ordinal position and its render section are independent — `counterparty` sits
+ * last (wire tag 18) yet renders under the `Identity` section.
  */
 export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
   // --- Identity -----------------------------------------------------------
@@ -189,6 +193,15 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "Current external hedge-cost estimate (spread + impact).",
+  },
+  // --- Identity (wire tag 18, appended after the numeric fields) -----------
+  {
+    field: "counterparty",
+    label: "Counterparty",
+    group: "Identity",
+    kind: "string",
+    validOps: STRING_OPS,
+    hint: "Originating party-id/name of the flow that built this risk (e.g. CITADEL).",
   },
 ];
 

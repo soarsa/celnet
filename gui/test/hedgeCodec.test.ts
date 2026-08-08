@@ -60,11 +60,13 @@ const fullAction: ExitAction = {
 };
 
 describe("hedge enum ordinals (byte-parity with the proto)", () => {
-  it("HedgeFieldEnum maps in ordinal order 0..17", () => {
+  it("HedgeFieldEnum maps in ordinal order 0..18", () => {
     expect(hedgeFieldToWire("instrument_id")).toBe(0);
     expect(hedgeFieldToWire("breached")).toBe(13);
     expect(hedgeFieldToWire("hedge_cost_bp")).toBe(17);
+    expect(hedgeFieldToWire("counterparty")).toBe(18); // string identity field, wire tag 18
     expect(hedgeFieldFromWire(13)).toBe("breached");
+    expect(hedgeFieldFromWire(18)).toBe("counterparty");
     expect(hedgeFieldFromWire(99)).toBe("instrument_id"); // out-of-range ⇒ proto3 zero
   });
   it("the other enums map to their proto tags", () => {

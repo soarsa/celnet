@@ -4385,7 +4385,7 @@ export function riskRoutingGraphFromWire(o: WireObject): RiskRoutingGraph {
 // `action` sub-object beside `id`, the reused `RouteValueDesc` value oneof, and the
 // null/omit policy for absent presence-tracked fields (`size`/`value`/`action`
 // singular messages render as JSON `null`; proto3-`optional` `skew_bp`/`lp_won` are
-// OMITTED when absent). Enum ordinals verified vs the proto (`HedgeFieldEnum` 0..17,
+// OMITTED when absent). Enum ordinals verified vs the proto (`HedgeFieldEnum` 0..18,
 // `ExecStyleEnum` 0..1, `HedgeMetricEnum` 0..3, `HedgeScopeKindEnum` 0..2,
 // `HedgeSizeKind` 0..2, `ExitActionKind` 0..6); `RouteOpEnum` is reused via
 // {@link routeOpToWire}/{@link routeOpFromWire}.
@@ -4409,6 +4409,7 @@ const HEDGE_FIELD_WIRE: Record<HedgeField, number> = {
   inventory_age_secs: 15,
   internal_offset_available: 16,
   hedge_cost_bp: 17,
+  counterparty: 18,
 };
 const HEDGE_FIELD_FROM: readonly HedgeField[] = [
   "instrument_id",
@@ -4429,6 +4430,7 @@ const HEDGE_FIELD_FROM: readonly HedgeField[] = [
   "inventory_age_secs",
   "internal_offset_available",
   "hedge_cost_bp",
+  "counterparty",
 ];
 /** The wire `HedgeFieldEnum` i32 tag for a GUI hedge field. */
 export function hedgeFieldToWire(f: HedgeField): number {

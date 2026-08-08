@@ -3367,10 +3367,10 @@ export interface RiskRoutingGraph {
 
 /**
  * Which risk-state attribute a hedge condition matches (mirrors the wire
- * `HedgeFieldEnum` / `celnet_hedge_routing::HedgeField`, same ordinal order 0..17).
- * `breached` is an ENUM field compared by `== "true"/"false"`; `instrument_id` is a
- * free STRING; every other risk number is NUMERIC (its kind is pinned in
- * `lib/hedgeFields.ts`, the mirror of `HedgeField::kind`).
+ * `HedgeFieldEnum` / `celnet_hedge_routing::HedgeField`, same ordinal order 0..18).
+ * `breached` is an ENUM field compared by `== "true"/"false"`; `instrument_id` and
+ * `counterparty` are free STRINGs; every other risk number is NUMERIC (its kind is
+ * pinned in `lib/hedgeFields.ts`, the mirror of `HedgeField::kind`).
  */
 export type HedgeField =
   | "instrument_id"
@@ -3390,7 +3390,8 @@ export type HedgeField =
   | "counterparty_toxicity"
   | "inventory_age_secs"
   | "internal_offset_available"
-  | "hedge_cost_bp";
+  | "hedge_cost_bp"
+  | "counterparty";
 
 /**
  * The execution schedule of an external hedge (mirrors the wire `ExecStyleEnum`,

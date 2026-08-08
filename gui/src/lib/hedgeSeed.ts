@@ -8,10 +8,12 @@
  * ONE honest asymmetry the code makes explicit: the auto-hedge decision graph runs on
  * POST-AGGREGATION RISK STATE — it is keyed by the identity of the risk it nets (see
  * the `Identity` group of `lib/hedgeFields`: `instrument_id` / `ccy` / `product` /
- * `book` / `desk`), NOT by per-deal trade attributes. So of a deal's fields only the
- * IDENTITY ones the graph can actually test are seeded as conditions — `ccy`,
- * `product`, `desk` (+ `instrument_id` when the deal carries a symbol). The originating
- * COUNTERPARTY, the TENOR, the deal NOTIONAL and the SIDE have NO field in the hedge
+ * `book` / `desk` / `counterparty`), NOT by per-deal trade attributes. So of a deal's
+ * fields only the IDENTITY ones the graph can actually test are seeded as conditions —
+ * `ccy`, `product`, `desk`, `counterparty` (+ `instrument_id` when the deal carries a
+ * symbol). The `counterparty` field (wire tag 18) keys the graph on the ORIGINATING
+ * party-id, so a right-click seed can now scope a rule to exactly that counterparty's
+ * flow. The TENOR, the deal NOTIONAL and the SIDE still have NO field in the hedge
  * vocabulary (the graph nets many fills into a book before it ever fires), so they are
  * surfaced in the seed HINT for context but NEVER invented as conditions.
  * {@link HEDGE_SEED_UNREPRESENTED} names them.
@@ -33,7 +35,7 @@ import { newHedgeRuleId, type HedgeRule, type HedgeRuleCondition } from "./hedge
 export interface HedgeSeedDeal {
   /** The originating deal id — shown in the seed hint (`New rule seeded from deal #…`). */
   dealId: string;
-  /** The originating counterparty — CONTEXT ONLY (no hedge field keys on it). */
+  /** The originating counterparty — seeds `counterparty = …` (wire tag 18). */
   counterparty: string;
   /** The dealt product family (OIS/IRS/FRA/BOND) — seeds `product = …`. */
   productKind: RatesProductKind;
@@ -70,12 +72,7 @@ export function hedgeSeedFromDeal(deal: Deal): HedgeSeedDeal {
  * condition (the graph fires on netted book risk, not per-deal trade attributes). They
  * appear in the seed hint for context but are never fabricated into a rule condition.
  */
-export const HEDGE_SEED_UNREPRESENTED: readonly string[] = [
-  "counterparty",
-  "tenor",
-  "notional",
-  "side",
-];
+export const HEDGE_SEED_UNREPRESENTED: readonly string[] = ["tenor", "notional", "side"];
 
 /** Build one enum/string equality condition `field = <text>` (skips an empty value). */
 function eqCondition(field: HedgeField, text: string): HedgeRuleCondition | null {
@@ -88,18 +85,22 @@ function eqCondition(field: HedgeField, text: string): HedgeRuleCondition | null
 
 /**
  * Build a fresh hedge rule pre-scoped to a deal's FLOW IDENTITY: `ccy = <ccy> AND
- * product = <productKind> AND desk = <desk>` (+ `instrument_id = <symbol>` when the
- * deal carries a symbol). The exit action defaults to WAREHOUSE (hold) — the same safe
- * leaf the manual "+ Create hedge rule" seeds and the neutral internalise default; the
- * builder's seed hint prompts the trader to pick the real exit action before saving.
- * The rule is a NON-catch-all (it has conditions), so the builder slots it ABOVE the
- * trailing default on save (first-match-wins).
+ * product = <productKind> AND desk = <desk> AND counterparty = <counterparty>` (+
+ * `instrument_id = <symbol>` when the deal carries a symbol). The counterparty leg
+ * (wire tag 18) matches the deal's party-id literal exactly as the blotter shows it —
+ * no transformation — so the rule keys on that counterparty's netted flow. The exit
+ * action defaults to WAREHOUSE (hold) — the same safe leaf the manual "+ Create hedge
+ * rule" seeds and the neutral internalise default; the builder's seed hint prompts the
+ * trader to pick the real exit action before saving. The rule is a NON-catch-all (it
+ * has conditions), so the builder slots it ABOVE the trailing default on save
+ * (first-match-wins).
  */
 export function hedgeRuleFromSeed(d: HedgeSeedDeal): HedgeRule {
   const conditions = [
     eqCondition("ccy", d.currency),
     eqCondition("product", d.productKind),
     eqCondition("desk", d.desk),
+    eqCondition("counterparty", d.counterparty),
     d.instrumentSymbol ? eqCondition("instrument_id", d.instrumentSymbol) : null,
   ].filter((c): c is HedgeRuleCondition => c !== null);
   return {
@@ -127,11 +128,12 @@ export function hedgeSeedHint(d: HedgeSeedDeal): string {
 /**
  * The gap note that accompanies {@link hedgeSeedHint}: which deal facts became rule
  * CONDITIONS vs which are context-only, so the trader knows the seeded rule scopes on
- * the flow's identity — not its counterparty/size/side (the graph nets book risk).
+ * the flow's identity (including its counterparty) — not its size/side (the graph nets
+ * book risk before it fires).
  */
 export function hedgeSeedGapNote(): string {
   return (
-    "Seeded as conditions: currency, product, desk. " +
+    "Seeded as conditions: currency, product, desk, counterparty. " +
     `The hedge policy fires on netted book risk, so ${HEDGE_SEED_UNREPRESENTED.join(", ")} ` +
     "are shown for context only — not rule conditions."
   );

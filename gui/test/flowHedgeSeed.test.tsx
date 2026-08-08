@@ -6,9 +6,10 @@
  * Covered here (real modules, `useApp` mocked so there is no server):
  *   • the pure seed helpers — `hedgeSeedFromDeal` projects a Deal onto the seed;
  *     `hedgeRuleFromSeed` builds `ccy = <ccy> AND product = <productKind> AND
- *     desk = <desk>` (the identity fields the hedge graph can test), defaulting the exit
- *     action to WAREHOUSE, and `HEDGE_SEED_UNREPRESENTED` names the fields the graph
- *     vocabulary cannot express (counterparty/tenor/notional/side);
+ *     desk = <desk> AND counterparty = <counterparty>` (the identity fields the hedge
+ *     graph can test), defaulting the exit action to WAREHOUSE, and
+ *     `HEDGE_SEED_UNREPRESENTED` names the fields the graph vocabulary still cannot
+ *     express (tenor/notional/side);
  *   • right-clicking a DEAL row shows "Change hedging strategy"; invoking it captures the
  *     deal into the seed store AND navigates to the `hedging` workspace;
  *   • the item is HIDDEN for a viewer lacking the `hedge` capability;
@@ -122,18 +123,27 @@ describe("hedgeSeed — pure helpers", () => {
     expect(s.instrumentSymbol).toBeUndefined();
   });
 
-  it("builds ccy/product/desk equality conditions with a WAREHOUSE default action", () => {
+  it("builds ccy/product/desk/counterparty equality conditions with a WAREHOUSE default action", () => {
     const rule = hedgeRuleFromSeed(hedgeSeedFromDeal(fiDeal("Balyasny")));
-    expect(rule.conditions.map((c) => c.field)).toEqual(["ccy", "product", "desk"]);
+    expect(rule.conditions.map((c) => c.field)).toEqual(["ccy", "product", "desk", "counterparty"]);
     expect(rule.conditions.every((c) => c.op === "eq")).toBe(true);
     expect(rule.conditions.map((c) => c.value)).toEqual([
       { kind: "text", text: "USD" },
       { kind: "text", text: "OIS" },
       { kind: "text", text: "g10-rates" },
+      { kind: "text", text: "Balyasny" },
     ]);
     // The action is left as the safe WAREHOUSE default — the trader picks the real one.
     expect(rule.action.kind).toBe("warehouse");
     expect(rule.enabled).toBe(true);
+  });
+
+  it("seeds the counterparty literal exactly as the deal carries it (no transform)", () => {
+    const rule = hedgeRuleFromSeed(hedgeSeedFromDeal(fiDeal("CITADEL")));
+    const cp = rule.conditions.find((c) => c.field === "counterparty");
+    expect(cp).toBeDefined();
+    expect(cp?.op).toBe("eq");
+    expect(cp?.value).toEqual({ kind: "text", text: "CITADEL" });
   });
 
   it("seeds instrument_id only when the deal carries a symbol", () => {
@@ -145,8 +155,9 @@ describe("hedgeSeed — pure helpers", () => {
     });
   });
 
-  it("names the deal fields the hedge vocabulary cannot express", () => {
-    expect(HEDGE_SEED_UNREPRESENTED).toEqual(["counterparty", "tenor", "notional", "side"]);
+  it("names the deal fields the hedge vocabulary cannot express (counterparty is now representable)", () => {
+    expect(HEDGE_SEED_UNREPRESENTED).toEqual(["tenor", "notional", "side"]);
+    expect(HEDGE_SEED_UNREPRESENTED).not.toContain("counterparty");
   });
 });
 
@@ -232,13 +243,16 @@ describe("Hedging Exit Policy builder consumes the flow seed", () => {
     expect(hint).toHaveTextContent("Balyasny");
     expect(hint).toHaveTextContent("OIS 5y");
 
-    // The draft conditions scope the flow: Currency = USD AND Product = OIS AND Desk = g10-rates.
+    // The draft conditions scope the flow: Currency = USD AND Product = OIS AND
+    // Desk = g10-rates AND Counterparty = Balyasny.
     const preview = screen.getByTestId("hedge-rule-preview");
     expect(preview).toHaveTextContent("Currency");
     expect(preview).toHaveTextContent("USD");
     expect(preview).toHaveTextContent("Product");
     expect(preview).toHaveTextContent("OIS");
     expect(preview).toHaveTextContent("Desk");
+    expect(preview).toHaveTextContent("Counterparty");
+    expect(preview).toHaveTextContent("Balyasny");
     // Nothing auto-saved.
     expect((state.app as ReturnType<typeof makeApp>["app"]).transport.updateHedgePolicyGraph).not
       .toHaveBeenCalled();

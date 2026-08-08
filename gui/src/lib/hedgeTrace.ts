@@ -37,6 +37,7 @@ export interface HedgeSampleState {
   product: string;
   book: string;
   desk: string;
+  counterparty: string;
   netDv01: number;
   netNotional: number;
   netVega: number;
@@ -60,6 +61,7 @@ export function blankHedgeState(): HedgeSampleState {
     product: "",
     book: "",
     desk: "",
+    counterparty: "",
     netDv01: 0,
     netNotional: 0,
     netVega: 0,
@@ -89,6 +91,8 @@ export function hedgeFieldValue(state: HedgeSampleState, field: HedgeField): Ctx
       return { kind: "text", text: state.book };
     case "desk":
       return { kind: "text", text: state.desk };
+    case "counterparty":
+      return { kind: "text", text: state.counterparty };
     case "breached":
       return { kind: "text", text: state.breached ? "true" : "false" };
     case "net_dv01":

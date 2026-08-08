@@ -212,6 +212,14 @@ actions express the internalise-vs-hedge vocabulary:
 | Split              | Internalise first, hedge only the overflow above the cap.     |
 | Escalate           | Hand to a human.                                              |
 
+The condition side keys on the **netted risk-state** — including the identity fields
+`book` and `counterparty`. Hedging **by book** scopes a rule to one risk book; hedging
+**by counterparty** scopes it to one client's flow (the originating party-id, matched
+exactly as the blotter shows it). For example `Counterparty = CITADEL → Submit market
+order` back-to-backs **all** of Citadel's flow. Right-clicking a filled deal on the Deals
+blotter → **Change hedging strategy** drops you into this builder with the counterparty
+condition (plus currency/product/desk) already filled in.
+
 ### The Thresholds tab (the "internalise up to 100" control)
 
 Set the **warehouse DV01 cap** — the budget you are willing to hold before hedging out

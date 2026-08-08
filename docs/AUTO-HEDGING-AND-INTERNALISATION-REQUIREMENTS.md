@@ -413,6 +413,7 @@ aggregation + analytics on each `risk_version` bump:
 pub struct HedgeContext {
     // identity
     instrument_id: String, ccy: String, product: String, book: String, desk: String,
+    counterparty: String,     // originating party-id of the flow (HedgeField tag 18) — hedge by counterparty
     // risk state (the numbers the policy branches on)
     net_dv01: f64,            // signed net DV01 (FI)
     net_notional: f64,        // signed net notional / delta (FX)
@@ -432,9 +433,11 @@ pub struct HedgeContext {
 }
 ```
 
-Each numeric field is one `HedgeField`; `HedgeContext::get(field)` projects it to a `CtxValue`
-exactly as `RoutingContext::get` does (`context.rs:53`). The **field palette** the trader drags
-from (`gui/src/workspaces/riskrouting/FieldPalette.tsx`) simply lists these fields instead of the
+Each field is one `HedgeField`; `HedgeContext::get(field)` projects it to a `CtxValue`
+exactly as `RoutingContext::get` does (`context.rs:53`). The string identity fields
+(`instrument_id`, `counterparty`) support `= ≠ contains in`; the enum identity fields
+(`ccy`/`product`/`book`/`desk`) support `= ≠ in`. The **field palette** the trader drags
+from (`gui/src/workspaces/hedging/HedgeFieldPalette.tsx`) simply lists these fields instead of the
 routing ones.
 
 ### 5.3 `ExitAction` — the new action vocabulary (the leaves)
