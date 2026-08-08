@@ -84,6 +84,9 @@ function kitchenSinkGroup(): PricingGroup {
     rfqPipeline: { features: [midNoRef, position, panic], guardrails: null },
     sharePipeline: false,
     enabled: true,
+    // Curve-anchored + book-skew mode so the optional weight is exercised on the round-trip.
+    pricingSourceMode: 3,
+    bookSkewWeight: 0.35,
   };
 }
 
@@ -132,6 +135,63 @@ describe("pricing-group wire codec", () => {
     const decoded = pricingGroupDescFromWire(roundtrip(pricingGroupSpecToWire(g)));
     expect(decoded.espPipeline).toBeNull();
     expect(decoded.rfqPipeline).toBeNull();
+  });
+});
+
+describe("pricing-source policy codec", () => {
+  it("always emits the integer pricing_source_mode for every mode", () => {
+    for (const m of [0, 1, 2, 3] as const) {
+      const wire = pricingGroupSpecToWire({ ...kitchenSinkGroup(), pricingSourceMode: m, bookSkewWeight: null });
+      expect(wire["pricing_source_mode"]).toBe(m);
+    }
+  });
+
+  it("emits book_skew_weight ONLY for mode 3 with a set weight", () => {
+    // Non-skew mode with a weight present ⇒ still omitted (server ignores it there).
+    const nonSkew = pricingGroupSpecToWire({ ...kitchenSinkGroup(), pricingSourceMode: 1, bookSkewWeight: 0.4 });
+    expect("book_skew_weight" in nonSkew).toBe(false);
+
+    // Skew mode with a null weight ⇒ omitted so the server applies its 0.5 default.
+    const skewDefault = pricingGroupSpecToWire({ ...kitchenSinkGroup(), pricingSourceMode: 3, bookSkewWeight: null });
+    expect("book_skew_weight" in skewDefault).toBe(false);
+
+    // Skew mode with a weight ⇒ emitted.
+    const skewSet = pricingGroupSpecToWire({ ...kitchenSinkGroup(), pricingSourceMode: 3, bookSkewWeight: 0.25 });
+    expect(skewSet["book_skew_weight"]).toBe(0.25);
+  });
+
+  it("decodes an absent mode as 0 and an absent weight as null", () => {
+    const decoded = pricingGroupDescFromWire({
+      id: "g",
+      name: "G",
+      description: "",
+      member_connection_ids: [],
+      member_user_ids: [],
+      member_desks: [],
+      esp_pipeline: null,
+      rfq_pipeline: null,
+      share_pipeline: false,
+      enabled: true,
+    });
+    expect(decoded.pricingSourceMode).toBe(0);
+    expect(decoded.bookSkewWeight).toBeNull();
+  });
+
+  it("clamps an out-of-range wire mode to 0", () => {
+    const decoded = pricingGroupDescFromWire({
+      id: "g",
+      name: "G",
+      description: "",
+      member_connection_ids: [],
+      member_user_ids: [],
+      member_desks: [],
+      esp_pipeline: null,
+      rfq_pipeline: null,
+      share_pipeline: false,
+      enabled: true,
+      pricing_source_mode: 9,
+    });
+    expect(decoded.pricingSourceMode).toBe(0);
   });
 });
 

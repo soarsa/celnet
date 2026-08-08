@@ -19,6 +19,7 @@ import type {
   FeaturePipeline,
   FeatureSpec,
   PricingGroup,
+  PricingSourceMode,
   TieringGuardrails,
 } from "../data/contract";
 import {
@@ -66,6 +67,33 @@ export const AXE_SIDE_LABEL: Record<AxeSide, string> = {
   BUY: "Buy (lift mid to attract sellers)",
   SELL: "Sell (drop mid to attract buyers)",
 };
+
+// --- pricing-source policy (how the raw rates/bond price is sourced) ----------
+
+/** The pricing-source modes, in wire (enum) order — the selector's option order. */
+export const PRICING_SOURCE_MODES: readonly PricingSourceMode[] = [0, 1, 2, 3];
+
+/** Trader-language label for each pricing-source mode (the selector option text). */
+export const PRICING_SOURCE_MODE_LABEL: Record<PricingSourceMode, string> = {
+  0: "Composite-first (book, else curve)",
+  1: "Curve only",
+  2: "Product split — bonds off book, OIS off curve",
+  3: "Curve-anchored + book skew",
+};
+
+/** A one-line explanation of each mode (rendered as helper text under the selector). */
+export const PRICING_SOURCE_MODE_HINT: Record<PricingSourceMode, string> = {
+  0: "Price off the aggregated book when it is fed; fall back to the bootstrapped curve otherwise.",
+  1: "Always price off the bootstrapped curve, ignoring the aggregated book.",
+  2: "Bonds price off the aggregated book; OIS prices off the curve.",
+  3: "Curve backbone with the mid pulled toward the composite by the book-skew weight.",
+};
+
+/** The server's default book-skew weight (shown when the group has no stored value). */
+export const DEFAULT_BOOK_SKEW_WEIGHT = 0.5;
+
+/** The mode (`3`) for which {@link PricingGroup.bookSkewWeight} is meaningful. */
+export const CURVE_ANCHORED_BOOK_SKEW_MODE: PricingSourceMode = 3;
 
 // --- defaults ----------------------------------------------------------------
 

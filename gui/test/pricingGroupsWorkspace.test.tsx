@@ -27,6 +27,7 @@ const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 
 import { PricingGroupsWorkspace } from "../src/workspaces/PricingGroupsWorkspace";
+import { pricingGroupSpecToWire } from "../src/data/wsCodec";
 
 function group(overrides: Partial<PricingGroup> = {}): PricingGroup {
   return {
@@ -40,6 +41,8 @@ function group(overrides: Partial<PricingGroup> = {}): PricingGroup {
     rfqPipeline: null,
     sharePipeline: false,
     enabled: true,
+    pricingSourceMode: 0,
+    bookSkewWeight: null,
     ...overrides,
   };
 }
@@ -179,6 +182,90 @@ describe("PricingGroupsWorkspace — closing the modal", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /^Cancel$/ }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(createPricingGroup).not.toHaveBeenCalled();
+  });
+});
+
+describe("PricingGroupsWorkspace — pricing-source control", () => {
+  it("reflects the group's current pricing-source mode on open", async () => {
+    state.app = makeApp({
+      user: admin,
+      isAdmin: true,
+      groups: [group({ id: "GROUP-PS", name: "GROUP-PS", pricingSourceMode: 2 })],
+    });
+    render(<PricingGroupsWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: /GROUP-PS/ }));
+    const dialog = await screen.findByRole("dialog");
+
+    const select = within(dialog).getByRole("combobox", { name: /Pricing source/ });
+    expect((select as HTMLSelectElement).value).toBe("2");
+    // Non-skew mode ⇒ no book-skew weight control.
+    expect(within(dialog).queryByRole("slider")).toBeNull();
+  });
+
+  it("reveals the book-skew weight control ONLY for mode 3", async () => {
+    state.app = makeApp({ user: admin, isAdmin: true, groups: [group()] });
+    render(<PricingGroupsWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: /New pricing group/i }));
+    const dialog = await screen.findByRole("dialog");
+
+    const select = within(dialog).getByRole("combobox", { name: /Pricing source/ });
+    expect(within(dialog).queryByRole("slider")).toBeNull();
+
+    fireEvent.change(select, { target: { value: "3" } });
+    expect(within(dialog).getByRole("slider", { name: /Book skew weight/ })).toBeInTheDocument();
+
+    // Switching back hides it again.
+    fireEvent.change(select, { target: { value: "1" } });
+    expect(within(dialog).queryByRole("slider")).toBeNull();
+  });
+
+  it("persists pricing_source_mode on the write, omitting book_skew_weight off mode 3", async () => {
+    const createPricingGroup = vi.fn(async (g: PricingGroup) => ({ ...g, id: "GROUP-NEW" }));
+    state.app = makeApp({ user: admin, isAdmin: true, groups: [], createPricingGroup });
+    render(<PricingGroupsWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: /New pricing group/i }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: "GROUP-NEW" } });
+    fireEvent.change(within(dialog).getByRole("combobox", { name: /Pricing source/ }), {
+      target: { value: "1" },
+    });
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: /Create group/i }));
+    });
+
+    await waitFor(() => expect(createPricingGroup).toHaveBeenCalledTimes(1));
+    const saved = createPricingGroup.mock.calls[0]![0] as PricingGroup;
+    expect(saved.pricingSourceMode).toBe(1);
+    const wire = pricingGroupSpecToWire(saved);
+    expect(wire["pricing_source_mode"]).toBe(1);
+    expect("book_skew_weight" in wire).toBe(false);
+  });
+
+  it("carries book_skew_weight on the write for mode 3 once the slider is moved", async () => {
+    const createPricingGroup = vi.fn(async (g: PricingGroup) => ({ ...g, id: "GROUP-SKEW" }));
+    state.app = makeApp({ user: admin, isAdmin: true, groups: [], createPricingGroup });
+    render(<PricingGroupsWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: /New pricing group/i }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: "GROUP-SKEW" } });
+    fireEvent.change(within(dialog).getByRole("combobox", { name: /Pricing source/ }), {
+      target: { value: "3" },
+    });
+    fireEvent.change(within(dialog).getByRole("slider", { name: /Book skew weight/ }), {
+      target: { value: "0.25" },
+    });
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: /Create group/i }));
+    });
+
+    await waitFor(() => expect(createPricingGroup).toHaveBeenCalledTimes(1));
+    const wire = pricingGroupSpecToWire(createPricingGroup.mock.calls[0]![0] as PricingGroup);
+    expect(wire["pricing_source_mode"]).toBe(3);
+    expect(wire["book_skew_weight"]).toBe(0.25);
   });
 });
 

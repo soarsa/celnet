@@ -3164,6 +3164,19 @@ export interface FeaturePipeline {
 }
 
 /**
+ * How a pricing group's rates/bond FIX auto-quotes source their RAW price (mirrors
+ * `celnet.wire.PricingSourceMode`, wire integer tags). Orthogonal to the feature
+ * pipeline: the pipeline SHAPES the quote, this selects the price the pipeline shapes.
+ *  - `0` COMPOSITE_FIRST_CURVE_FALLBACK (default): price off the aggregated book when
+ *    it is fed, else fall back to the curve.
+ *  - `1` CURVE_ONLY: always price off the bootstrapped curve, ignoring the book.
+ *  - `2` PRODUCT_SPLIT: bonds price off the book, OIS off the curve.
+ *  - `3` CURVE_ANCHORED_BOOK_SKEW: curve backbone with the mid pulled `bookSkewWeight`
+ *    ∈ [0,1] toward the composite (and the composite's half-spread).
+ */
+export type PricingSourceMode = 0 | 1 | 2 | 3;
+
+/**
  * A persisted pricing group (mirrors `celnet.wire.PricingGroupDesc`). Membership is
  * many-to-one (many FIX connections / users / desks resolve to ONE group). Each
  * mode carries its own pipeline; `esp_pipeline` / `rfq_pipeline` may be `null`
@@ -3192,6 +3205,14 @@ export interface PricingGroup {
   sharePipeline: boolean;
   /** Whether the group is active (a disabled group prices nobody). */
   enabled: boolean;
+  /** How rates/bond FIX auto-quotes source their raw price (default `0` composite-first). */
+  pricingSourceMode: PricingSourceMode;
+  /**
+   * Book skew weight ∈ [0,1], only meaningful when {@link pricingSourceMode} is `3`
+   * (CURVE_ANCHORED_BOOK_SKEW). `null` ⇒ omitted on write so the server applies its
+   * default (0.5); present on read only when the server has a stored value.
+   */
+  bookSkewWeight: number | null;
 }
 
 // ---------------------------------------------------------------------------

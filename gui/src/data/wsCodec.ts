@@ -108,6 +108,7 @@ import type {
   FeaturePipeline,
   FeatureSpec,
   PricingGroup,
+  PricingSourceMode,
   PricingMode,
   RiskBook,
   RiskLimits,
@@ -3950,9 +3951,19 @@ export function featurePipelineFromWire(o: WireObject): FeaturePipeline {
   };
 }
 
-/** Encode a pricing group spec/desc (`esp_pipeline`/`rfq_pipeline` ⇒ null when absent). */
+/** Clamp a wire integer to a valid {@link PricingSourceMode} (unknown ⇒ `0` default). */
+function pricingSourceModeFromWire(v: unknown): PricingSourceMode {
+  return v === 1 || v === 2 || v === 3 ? v : 0;
+}
+
+/**
+ * Encode a pricing group spec/desc (`esp_pipeline`/`rfq_pipeline` ⇒ null when absent).
+ * `pricing_source_mode` is always emitted (integer enum); `book_skew_weight` is emitted
+ * ONLY for mode `3` with a set weight — mirroring the server's `Option<f64>` presence
+ * treatment (absent ⇒ accept the server default of 0.5), never sent as `null`.
+ */
 export function pricingGroupSpecToWire(g: PricingGroup): WireObject {
-  return {
+  const body: WireObject = {
     id: g.id,
     name: g.name,
     description: g.description,
@@ -3963,13 +3974,19 @@ export function pricingGroupSpecToWire(g: PricingGroup): WireObject {
     rfq_pipeline: g.rfqPipeline ? featurePipelineToWire(g.rfqPipeline) : null,
     share_pipeline: g.sharePipeline,
     enabled: g.enabled,
+    pricing_source_mode: g.pricingSourceMode,
   };
+  if (g.pricingSourceMode === 3 && g.bookSkewWeight !== null) {
+    body["book_skew_weight"] = g.bookSkewWeight;
+  }
+  return body;
 }
 
 /** Decode a `PricingGroupDesc` from its wire form (pipelines may be null). */
 export function pricingGroupDescFromWire(o: WireObject): PricingGroup {
   const rawEsp = o["esp_pipeline"];
   const rawRfq = o["rfq_pipeline"];
+  const rawSkew = o["book_skew_weight"];
   return {
     id: str(o, "id"),
     name: str(o, "name"),
@@ -3983,6 +4000,8 @@ export function pricingGroupDescFromWire(o: WireObject): PricingGroup {
       rawRfq && typeof rawRfq === "object" ? featurePipelineFromWire(rawRfq as WireObject) : null,
     sharePipeline: o["share_pipeline"] === true,
     enabled: o["enabled"] === true,
+    pricingSourceMode: pricingSourceModeFromWire(o["pricing_source_mode"]),
+    bookSkewWeight: typeof rawSkew === "number" ? rawSkew : null,
   };
 }
 

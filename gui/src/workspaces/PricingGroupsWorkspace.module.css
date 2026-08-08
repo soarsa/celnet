@@ -352,6 +352,26 @@
   color: var(--text-secondary);
 }
 
+/* --- pricing-source book-skew weight (mode 3 only) ------------------------ */
+
+.skewRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.skewRange {
+  flex: 1 1 auto;
+  min-width: 140px;
+  accent-color: var(--accent, dodgerblue);
+  cursor: pointer;
+}
+
+.skewNum {
+  flex: 0 0 5.5rem;
+  width: 5.5rem;
+}
+
 /* --- ESP/RFQ mode tabs + share switch ------------------------------------- */
 
 .modeBar {

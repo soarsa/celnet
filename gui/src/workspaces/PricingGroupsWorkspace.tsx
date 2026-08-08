@@ -54,6 +54,7 @@ import type {
   FixConnection,
   PricingGroup,
   PricingMode,
+  PricingSourceMode,
   UserDesc,
 } from "../data/contract";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
@@ -68,6 +69,11 @@ import {
   insertFeatureAt,
   moveFeature,
   previewPipeline,
+  PRICING_SOURCE_MODE_HINT,
+  PRICING_SOURCE_MODE_LABEL,
+  PRICING_SOURCE_MODES,
+  DEFAULT_BOOK_SKEW_WEIGHT,
+  CURVE_ANCHORED_BOOK_SKEW_MODE,
   removeFeatureAt,
   SAMPLE_RAW,
   updateFeatureAt,
@@ -101,6 +107,8 @@ function blankGroup(): PricingGroup {
     rfqPipeline: null,
     sharePipeline: false,
     enabled: true,
+    pricingSourceMode: 0,
+    bookSkewWeight: null,
   };
 }
 
@@ -835,6 +843,80 @@ function PricingGroupsPanel(): React.ReactElement {
                     />
                     <span>Enabled — a disabled group prices nobody</span>
                   </label>
+
+                  {/*
+                    Pricing-source policy: how rates/bond FIX auto-quotes source their
+                    RAW price (persisted on the group spec; orthogonal to the feature
+                    pipeline below). Switching away from the book-skew mode drops the
+                    weight so it is OMITTED on write; switching TO it keeps `null` so the
+                    server default (0.5) applies until the trader moves the slider.
+                  */}
+                  <label className={`${styles.field} ${styles.fieldWide}`} htmlFor="pg-source-mode">
+                    <span className={styles.fieldLabel}>Pricing source</span>
+                    <select
+                      id="pg-source-mode"
+                      className={styles.select}
+                      value={draft.pricingSourceMode}
+                      disabled={readOnly}
+                      onChange={(e) => {
+                        const next = Number(e.target.value) as PricingSourceMode;
+                        patchDraft({
+                          pricingSourceMode: next,
+                          bookSkewWeight:
+                            next === CURVE_ANCHORED_BOOK_SKEW_MODE ? draft.bookSkewWeight : null,
+                        });
+                      }}
+                    >
+                      {PRICING_SOURCE_MODES.map((m) => (
+                        <option key={m} value={m}>
+                          {PRICING_SOURCE_MODE_LABEL[m]}
+                        </option>
+                      ))}
+                    </select>
+                    <span className={styles.modeNote}>
+                      {PRICING_SOURCE_MODE_HINT[draft.pricingSourceMode]}
+                    </span>
+                  </label>
+
+                  {draft.pricingSourceMode === CURVE_ANCHORED_BOOK_SKEW_MODE && (
+                    <label
+                      className={`${styles.field} ${styles.fieldWide}`}
+                      htmlFor="pg-skew-weight"
+                    >
+                      <span className={styles.fieldLabel}>
+                        Book skew weight — {(draft.bookSkewWeight ?? DEFAULT_BOOK_SKEW_WEIGHT).toFixed(2)}
+                      </span>
+                      <div className={styles.skewRow}>
+                        <input
+                          id="pg-skew-weight"
+                          className={styles.skewRange}
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={draft.bookSkewWeight ?? DEFAULT_BOOK_SKEW_WEIGHT}
+                          disabled={readOnly}
+                          aria-describedby="pg-skew-help"
+                          onChange={(e) => patchDraft({ bookSkewWeight: Number(e.target.value) })}
+                        />
+                        <input
+                          className={`${styles.input} ${styles.numInput} ${styles.skewNum}`}
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={draft.bookSkewWeight ?? DEFAULT_BOOK_SKEW_WEIGHT}
+                          disabled={readOnly}
+                          aria-label="Book skew weight"
+                          onChange={(e) => patchDraft({ bookSkewWeight: Number(e.target.value) })}
+                        />
+                      </div>
+                      <span className={styles.modeNote} id="pg-skew-help">
+                        0 = pure curve, 1 = pure book, 0.5 = halfway. Left unset, the server
+                        applies its 0.5 default.
+                      </span>
+                    </label>
+                  )}
                 </div>
               </div>
 

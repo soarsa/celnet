@@ -95,6 +95,8 @@ function group(overrides: Partial<PricingGroup> = {}): PricingGroup {
     rfqPipeline: null,
     sharePipeline: false,
     enabled: true,
+    pricingSourceMode: 0,
+    bookSkewWeight: null,
     ...overrides,
   };
 }

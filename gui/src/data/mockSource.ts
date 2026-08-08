@@ -1779,6 +1779,9 @@ export class MockTransport implements CelnetTransport {
       rfqPipeline: null,
       sharePipeline: true,
       enabled: true,
+      // Curve-anchored with a book skew pulled 25% toward the composite (mode 3).
+      pricingSourceMode: 3,
+      bookSkewWeight: 0.25,
     },
     {
       id: "group-b",
@@ -1791,6 +1794,9 @@ export class MockTransport implements CelnetTransport {
       rfqPipeline: null,
       sharePipeline: false,
       enabled: true,
+      // Default source policy: composite-first, curve fallback (mode 0).
+      pricingSourceMode: 0,
+      bookSkewWeight: null,
     },
   ];
 
