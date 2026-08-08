@@ -80,6 +80,7 @@ use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::services::clicktrade::{
     BookOutcome, MintedToken, TokenLedger, TokenMinter, TwoWayLine, mint_two_way,
+    mint_two_way_no_clear,
 };
 use crate::services::desk::RfqIngestOutcome;
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
@@ -170,6 +171,12 @@ struct MdLiveQuote {
     buy_token: Option<u64>,
     /// The SELL (bid) token, if a positive bid was published.
     sell_token: Option<u64>,
+    /// The published Bid price (`MDEntryType=0`) this snapshot advertised — a SELL lift's
+    /// `Price(44)` must match this (within tolerance) or the market has moved (last-look).
+    bid: f64,
+    /// The published Offer price (`MDEntryType=1`) this snapshot advertised — a BUY lift's
+    /// `Price(44)` must match this (within tolerance) or the market has moved (last-look).
+    offer: f64,
     /// The desk request id this streamed line opened (so a lift books the deal).
     request_id: Option<String>,
     /// The clock time (nanos) this snapshot was minted (for the quote-age acceptance gate).
@@ -1220,9 +1227,22 @@ impl FixSession {
             self.next_line += 1;
             self.next_line
         };
+        // Supersede this SYMBOL's prior tokens individually (retire only its own — NOT the
+        // whole-ledger `clear_live`, which would wipe every OTHER live symbol's token and is
+        // the root cause of the multi-instrument lift-reject bug). The shared session ledger
+        // holds one liftable two-way per subscribed symbol simultaneously.
+        if let Some(prev) = self.live_md.get(symbol) {
+            if let Some(t) = prev.buy_token {
+                self.ledger.retire(t);
+            }
+            if let Some(t) = prev.sell_token {
+                self.ledger.retire(t);
+            }
+        }
         // The SAME keyed-MAC two-way tokens the RFQ auto-quote stamps (SELL@bid, BUY@offer),
-        // registered in the SAME ledger that books a lift.
-        let minted: Vec<MintedToken> = mint_two_way(
+        // registered in the SAME ledger that books a lift — via the MULTI-line mint that does
+        // NOT clear sibling symbols' live tokens.
+        let minted: Vec<MintedToken> = mint_two_way_no_clear(
             &mut self.ledger,
             &self.minter,
             TwoWayLine {
@@ -1243,12 +1263,15 @@ impl FixSession {
                 Side::TwoWay => {}
             }
         }
-        // Refresh (overwrite) the symbol's liftable top-of-book token.
+        // Refresh (overwrite) the symbol's liftable top-of-book token + the published prices
+        // a by-symbol lift's `Price(44)` must match (last-look on price).
         self.live_md.insert(
             symbol.to_vec(),
             MdLiveQuote {
                 buy_token,
                 sell_token,
+                bid: priced.bid,
+                offer: priced.offer,
                 request_id,
                 mint_nanos: now,
             },
@@ -1296,8 +1319,15 @@ impl FixSession {
         // An unsubscribe tears down the live stream for this correlation id (no snapshot,
         // no desk row) — the ticker no longer re-prices it, and its liftable token lapses.
         if sub_type == messages::SUBSCRIPTION_DISABLE[0] {
-            if let Some(sub) = self.md_subs.remove(&md_req_id) {
-                self.live_md.remove(&sub.symbol);
+            if let Some(sub) = self.md_subs.remove(&md_req_id)
+                && let Some(md) = self.live_md.remove(&sub.symbol)
+            {
+                if let Some(t) = md.buy_token {
+                    self.ledger.retire(t);
+                }
+                if let Some(t) = md.sell_token {
+                    self.ledger.retire(t);
+                }
             }
             return;
         }
@@ -1605,46 +1635,62 @@ impl FixSession {
         // resolve the CURRENT top-of-book token published for that symbol from
         // [`Self::live_md`]. Either way the per-side token books through the SAME ledger.
         let live_quote = quote_id.as_ref().and_then(|q| self.live.get(q));
-        let (token, symbol, fx_line, rates_request_id, quote_mint_nanos, via_md) = match live_quote
-        {
-            Some(lq) => {
-                let token = if side_byte == dialect_fx::SIDE_SELL {
-                    lq.sell_token
-                } else {
-                    lq.buy_token
-                };
-                (
-                    token,
-                    lq.symbol.clone(),
-                    lq.fx,
-                    lq.rates_request_id.clone(),
-                    Some(lq.mint_nanos),
-                    false,
-                )
-            }
-            None => {
-                let sym = frame.get(55).map(<[u8]>::to_vec).unwrap_or_default();
-                match self.live_md.get(&sym) {
-                    Some(md) => {
-                        let token = if side_byte == dialect_fx::SIDE_SELL {
-                            md.sell_token
-                        } else {
-                            md.buy_token
-                        };
-                        // A market-data line carries no FX pre-trade template (rates).
-                        (
-                            token,
-                            sym,
-                            None,
-                            md.request_id.clone(),
-                            Some(md.mint_nanos),
-                            true,
-                        )
-                    }
-                    None => (None, sym, None, None, None, false),
+        // A market-data lift carries the streamed level in `Price(44)`; a moved market
+        // (the published side price has ticked away from what the taker hit) rejects the
+        // lift as superseded — the by-symbol analogue of the QuoteID last-look.
+        let presented_px = frame.get(44).and_then(dialect_fx::parse_float);
+        let (mut token, symbol, fx_line, rates_request_id, quote_mint_nanos, via_md, md_superseded) =
+            match live_quote {
+                Some(lq) => {
+                    let token = if side_byte == dialect_fx::SIDE_SELL {
+                        lq.sell_token
+                    } else {
+                        lq.buy_token
+                    };
+                    (
+                        token,
+                        lq.symbol.clone(),
+                        lq.fx,
+                        lq.rates_request_id.clone(),
+                        Some(lq.mint_nanos),
+                        false,
+                        false,
+                    )
                 }
-            }
-        };
+                None => {
+                    let sym = frame.get(55).map(<[u8]>::to_vec).unwrap_or_default();
+                    match self.live_md.get(&sym) {
+                        Some(md) => {
+                            let (token, expected_px) = if side_byte == dialect_fx::SIDE_SELL {
+                                (md.sell_token, md.bid)
+                            } else {
+                                (md.buy_token, md.offer)
+                            };
+                            // Price last-look: the streamed `Price(44)` must still match the
+                            // currently-published side price (within tolerance). A client that
+                            // omits `Price(44)` books at the current price (lenient fallback).
+                            let superseded = presented_px
+                                .is_some_and(|p| (p - expected_px).abs() > MD_LIFT_PRICE_TOL);
+                            // A market-data line carries no FX pre-trade template (rates).
+                            (
+                                token,
+                                sym,
+                                None,
+                                md.request_id.clone(),
+                                Some(md.mint_nanos),
+                                true,
+                                superseded,
+                            )
+                        }
+                        None => (None, sym, None, None, None, false, false),
+                    }
+                }
+            };
+        // A superseded market-data lift books nothing: drop the token so the ledger is never
+        // consumed (the live token stays liftable at the CURRENT price for a fresh re-lift).
+        if md_superseded {
+            token = None;
+        }
 
         // Book through the SAME last-look ledger the RFQ/stream path uses. An unknown
         // quote/side ⇒ UnknownToken (no live token), exactly as a forged token.
@@ -1666,6 +1712,11 @@ impl FixSession {
             BookOutcome::AlreadyConsumed => (false, 0.0, Some(b"quote already executed")),
             BookOutcome::UnknownToken => (false, 0.0, Some(b"unknown or forged quote")),
         };
+        // A superseded market-data lift is a moved-market last-look decline, not a forged
+        // token — surface the accurate reason (filled is already false: token was dropped).
+        if md_superseded {
+            text = Some(b"quote superseded: market moved (last-look)");
+        }
 
         // Pre-trade limit gate (ADR-0016 A1): a filled FX-vanilla lift consults the SAME
         // shared limit tree the RFS click-to-trade sink enforces. A hard breach converts
@@ -1762,8 +1813,15 @@ impl FixSession {
             if let Some(q) = quote_id.as_ref() {
                 self.live.remove(q);
             }
-            if via_md {
-                self.live_md.remove(&symbol);
+            // The booked token is already consumed by `try_book`; retire the symbol's
+            // OTHER-side token too so a booked line leaves no liftable residue.
+            if via_md && let Some(md) = self.live_md.remove(&symbol) {
+                if let Some(t) = md.buy_token {
+                    self.ledger.retire(t);
+                }
+                if let Some(t) = md.sell_token {
+                    self.ledger.retire(t);
+                }
             }
         }
 
@@ -2015,6 +2073,13 @@ use crate::rates_pricing::RATES_RFQ_HALF_SPREAD as RATES_HALF_SPREAD;
 const RFS_STREAM_INTERVAL_SECS: u64 = 5;
 const RFS_STREAM_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(RFS_STREAM_INTERVAL_SECS);
+
+/// The absolute tolerance a by-symbol market-data lift's `Price(44)` may differ from the
+/// currently-published side price before it is rejected as superseded (a moved-market
+/// last-look). Comfortably above the 8-dp wire-rounding of a snapshot price (~5e-9) yet far
+/// below a genuine market move on either a bond clean price (~100, ticks ≥ 0.01) or an OIS
+/// rate (~0.05, ticks ≥ 1e-4), so an unchanged price books and a moved price rejects.
+const MD_LIFT_PRICE_TOL: f64 = 1e-6;
 
 /// Price a retained [`RfsLine`] off `curve` to the two-way its arm centres a market on —
 /// an OIS around its par rate ([`crate::rates_pricing::par_rate_for`], split
@@ -2642,10 +2707,47 @@ mod tests {
         );
     }
 
+    /// The BUY (offer) top-of-book price the most recent snapshot in `frames` advertised —
+    /// so a lift can present the EXACT streamed `Price(44)` and clear the price last-look.
+    fn snapshot_offer(frames: &[Vec<u8>]) -> f64 {
+        let snap = FrameCursor::parse(frames.last().expect("a snapshot was pushed")).unwrap();
+        messages::MarketDataSnapshotView::new(snap)
+            .top_of_book()
+            .offer_px
+            .expect("the snapshot carried an offer")
+    }
+
+    /// Build a by-symbol BUY `NewOrderSingle(D)` lifting `symbol` at `price` (the streamed
+    /// offer) — the market-data lift the ESP sends (no `QuoteID(117)`).
+    fn md_buy_order(cl_ord_id: &[u8], symbol: &[u8], price: f64) -> Vec<u8> {
+        let hdr = Header {
+            sender: b"CELNET",
+            target: b"CELNET-CPTY",
+            seq_num: 11,
+            sending_time: b"20260625-12:00:02.000",
+        };
+        let p = messages::MarketOrderParams {
+            cl_ord_id,
+            symbol,
+            side: dialect_fx::SIDE_BUY,
+            qty: 1_000_000.0,
+            price,
+            transact_time: b"20260625-12:00:02.000",
+        };
+        let mut enc = FrameEncoder::new();
+        messages::build_new_order_by_symbol(&hdr, &p, &mut enc)
+    }
+
+    fn exec_type_of(frames: &[Vec<u8>]) -> Option<u8> {
+        let exec = FrameCursor::parse(frames.first().expect("an ExecutionReport")).unwrap();
+        assert_eq!(exec.msg_type(), MsgType::ExecutionReport.as_bytes());
+        messages::ExecReportView::new(exec).exec_type()
+    }
+
     /// The 35=D → 35=8 book: after a subscribe publishes a liftable top-of-book, an inbound
-    /// `NewOrderSingle(D)` naming the SYMBOL (no `QuoteID`) books through the SAME last-look
-    /// ledger and FILLS — an `ExecutionReport(150=F)`, retiring the symbol's live token; a
-    /// re-lift of the consumed line then rejects (idempotency), exactly as a QuoteID lift.
+    /// `NewOrderSingle(D)` naming the SYMBOL (no `QuoteID`) at the streamed `Price(44)` books
+    /// through the SAME last-look ledger and FILLS — an `ExecutionReport(150=F)`, retiring the
+    /// symbol's live token; a re-lift of the consumed line then rejects (idempotency).
     #[tokio::test]
     async fn md_lift_by_symbol_books_and_fills_then_rejects_replay() {
         let mut session = stream_session("conn-md-lift", None);
@@ -2656,27 +2758,10 @@ mod tests {
         let mut out = Vec::new();
         session.on_market_data_request(&sframe, &st, &mut out).await;
         assert_eq!(session.live_md.len(), 1);
+        let offer = snapshot_offer(&out);
 
-        // Lift the offer (BUY) by symbol — a market-data lift carries no QuoteID(117).
-        let order = {
-            let hdr = Header {
-                sender: b"CELNET",
-                target: b"CELNET-CPTY",
-                seq_num: 11,
-                sending_time: b"20260625-12:00:02.000",
-            };
-            let p = messages::MarketOrderParams {
-                cl_ord_id: b"C-MD-1",
-                symbol: b"USD-OIS",
-                side: dialect_fx::SIDE_BUY,
-                qty: 1_000_000.0,
-                price: 0.05,
-                transact_time: b"20260625-12:00:02.000",
-            };
-            let mut enc = FrameEncoder::new();
-            messages::build_new_order_by_symbol(&hdr, &p, &mut enc)
-        };
-
+        // Lift the offer (BUY) by symbol at the streamed price — no QuoteID(117).
+        let order = md_buy_order(b"C-MD-1", b"USD-OIS", offer);
         let oframe = FrameCursor::parse(&order).unwrap();
         assert_eq!(
             oframe.get(117),
@@ -2687,25 +2772,107 @@ mod tests {
         session.on_new_order(&oframe, &st, &mut exec_out);
 
         assert_eq!(exec_out.len(), 1, "one ExecutionReport emitted");
-        let exec = FrameCursor::parse(&exec_out[0]).unwrap();
-        assert_eq!(exec.msg_type(), MsgType::ExecutionReport.as_bytes());
-        let view = messages::ExecReportView::new(exec);
-        assert_eq!(view.exec_type(), Some(EXEC_FILLED), "the symbol lift fills");
+        assert_eq!(
+            exec_type_of(&exec_out),
+            Some(EXEC_FILLED),
+            "the symbol lift fills"
+        );
         assert!(
             session.live_md.is_empty(),
             "a filled lift retires the symbol's live token"
         );
 
         // A re-lift of the same (now-retired) symbol rejects — the token is consumed.
-        let oframe2 = FrameCursor::parse(&order).unwrap();
         let mut exec_out2 = Vec::new();
-        session.on_new_order(&oframe2, &st, &mut exec_out2);
-        let exec2 = FrameCursor::parse(&exec_out2[0]).unwrap();
-        let view2 = messages::ExecReportView::new(exec2);
+        session.on_new_order(&oframe, &st, &mut exec_out2);
         assert_eq!(
-            view2.exec_type(),
+            exec_type_of(&exec_out2),
             Some(EXEC_REJECTED),
             "a re-lift of a consumed line rejects"
+        );
+    }
+
+    /// Regression for the multi-instrument lift bug (UAT `912797UU9` et al. rejecting as
+    /// "unknown or forged quote"): N symbols stream into ONE session ledger, so a per-symbol
+    /// snapshot mint must NOT wipe sibling symbols' liftable tokens (the old whole-ledger
+    /// `clear_live` did). Publish TWO symbols' snapshots, then lift the FIRST — the one the
+    /// second mint's `clear_live` would have wiped — and confirm it BOOKS, not rejects.
+    #[tokio::test]
+    async fn md_lift_of_a_non_last_symbol_still_books() {
+        let mut session = stream_session("conn-md-multi", None);
+        let st = session.sending_time();
+        let a = PricedLine {
+            bid: 99.40,
+            offer: 99.60,
+            size: 5_000_000.0,
+        };
+        let b = PricedLine {
+            bid: 0.0401,
+            offer: 0.0403,
+            size: 5_000_000.0,
+        };
+
+        // Publish symbol A, then symbol B — into the SAME session ledger.
+        let mut out_a = Vec::new();
+        session.emit_md_snapshot(&st, b"MDR-A", b"912797UU9", &a, None, &mut out_a);
+        let a_offer = snapshot_offer(&out_a);
+        session.emit_md_snapshot(&st, b"MDR-B", b"ACME-5Y-CORP", &b, None, &mut Vec::new());
+        assert_eq!(
+            session.live_md.len(),
+            2,
+            "both symbols are live simultaneously"
+        );
+
+        // Lift the FIRST symbol (A) at its streamed offer — under the old whole-ledger
+        // clear_live A's token was wiped by B's mint → UnknownToken; now it must BOOK.
+        let order = md_buy_order(b"C-A", b"912797UU9", a_offer);
+        let mut exec_out = Vec::new();
+        session.on_new_order(&FrameCursor::parse(&order).unwrap(), &st, &mut exec_out);
+        assert_eq!(
+            exec_type_of(&exec_out),
+            Some(EXEC_FILLED),
+            "a non-last symbol's lift must BOOK, not reject as unknown-token"
+        );
+    }
+
+    /// The price last-look on a by-symbol MD lift: a lift whose `Price(44)` no longer matches
+    /// the currently-published side price (the market moved / the snapshot was superseded) is
+    /// REJECTED, while the live token stays liftable for a fresh re-lift at the current price.
+    #[tokio::test]
+    async fn md_superseded_price_lift_is_rejected() {
+        let mut session = stream_session("conn-md-stale", None);
+        let st = session.sending_time();
+
+        let sub = ois_md_request(b"MDR-S", SubscriptionRequest::Subscribe);
+        let mut out = Vec::new();
+        session
+            .on_market_data_request(&FrameCursor::parse(&sub).unwrap(), &st, &mut out)
+            .await;
+        let offer = snapshot_offer(&out);
+
+        // Lift at a STALE price (offer + 1bp, well beyond the tolerance) → superseded reject.
+        let stale = md_buy_order(b"C-STALE", b"USD-OIS", offer + 0.0001);
+        let mut exec_stale = Vec::new();
+        session.on_new_order(&FrameCursor::parse(&stale).unwrap(), &st, &mut exec_stale);
+        assert_eq!(
+            exec_type_of(&exec_stale),
+            Some(EXEC_REJECTED),
+            "a moved-price lift is rejected (last-look)"
+        );
+        assert_eq!(
+            session.live_md.len(),
+            1,
+            "the live token is untouched by a stale reject"
+        );
+
+        // A fresh lift at the CURRENT price still books (the stale reject consumed nothing).
+        let fresh = md_buy_order(b"C-FRESH", b"USD-OIS", offer);
+        let mut exec_fresh = Vec::new();
+        session.on_new_order(&FrameCursor::parse(&fresh).unwrap(), &st, &mut exec_fresh);
+        assert_eq!(
+            exec_type_of(&exec_fresh),
+            Some(EXEC_FILLED),
+            "a fresh lift at the current price books"
         );
     }
 

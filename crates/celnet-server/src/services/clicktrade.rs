@@ -177,6 +177,15 @@ impl TokenLedger {
         self.live.clear();
     }
 
+    /// Retire ONE specific live token (leaving every other live token intact). Used by a
+    /// **multi-line** ledger — the market-data stream venue holds one liftable two-way per
+    /// subscribed symbol simultaneously, so it supersedes a symbol's prior tokens
+    /// individually (it must NOT [`clear_live`](Self::clear_live) the whole ledger, which
+    /// would wipe sibling symbols' still-liftable tokens). A no-op for an absent token.
+    pub(crate) fn retire(&mut self, token: u64) {
+        self.live.remove(&token);
+    }
+
     /// Register a freshly-minted live token for `(side, premium)` under its deadline.
     pub(crate) fn register(
         &mut self,
@@ -324,15 +333,32 @@ pub(crate) fn mint_two_way(
     now_nanos: i64,
     validity_nanos: i64,
 ) -> Vec<MintedToken> {
+    // A new sequence retires the prior sequence's tokens: a click books the current quoted
+    // premium, never a stale one. This is the SINGLE-line ledger path (the RFQ/RFS
+    // click-to-trade + FIX RFQ auto-quote — one live two-way at a time per session).
+    ledger.clear_live();
+    mint_two_way_no_clear(ledger, minter, line, now_nanos, validity_nanos)
+}
+
+/// Mint a two-way line WITHOUT retiring the ledger's other live tokens — the **multi-line**
+/// mint the market-data stream venue uses. That venue streams one liftable two-way per
+/// subscribed symbol into ONE shared ledger, so it must register a symbol's fresh tokens
+/// without wiping sibling symbols' still-liftable ones (which the whole-ledger
+/// [`TokenLedger::clear_live`] in [`mint_two_way`] would do). The caller is responsible for
+/// superseding a symbol's OWN prior tokens with [`TokenLedger::retire`] before re-minting.
+pub(crate) fn mint_two_way_no_clear(
+    ledger: &mut TokenLedger,
+    minter: &TokenMinter,
+    line: TwoWayLine,
+    now_nanos: i64,
+    validity_nanos: i64,
+) -> Vec<MintedToken> {
     let TwoWayLine {
         line_id,
         sequence: seq,
         bid,
         offer,
     } = line;
-    // A new sequence retires the prior sequence's tokens: a click always books the
-    // current quoted premium, never a stale one.
-    ledger.clear_live();
     let valid_until = now_nanos.saturating_add(validity_nanos);
     let mut out = Vec::with_capacity(2);
     // SELL hits the bid (only when the bid is a real, positive price).
