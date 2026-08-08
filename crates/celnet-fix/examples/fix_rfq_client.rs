@@ -1200,7 +1200,7 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
     let forever = args.repeat == 0;
     let mut i: u64 = 0;
     loop {
-        let bond = &bonds[(i as usize) % bonds.len()];
+        let bond = &bonds[sim::esp_instrument_index_for(i, bonds.len())];
         let counterparty = sim::counterparty_for(i);
         // In "mix" notional mode rotate the streamed size per request (ESP always streams),
         // so booked streaming bond deals — and their DV01 — show a realistic size spread
@@ -1214,13 +1214,10 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
         let should_lift = rng.below(3) == 0;
         // Vary the lift DIRECTION deterministically per index so booked streaming deals show
         // a BUY/SELL mix (LiftOffer books BUY off the offer leg, HitBid books SELL off the
-        // bid leg), mirroring the RFQ side rotation; the two-way bond RFS mints both legs so
-        // either direction books symmetrically.
+        // bid leg), mirroring the RFQ side rotation via `sim::esp_lift_side_for`; the two-way
+        // bond RFS mints both legs so either direction books symmetrically.
         let lift_policy = if should_lift {
-            match sim::rates_side_for(i) {
-                RatesSide::PayFixed => LiftPolicy::LiftOffer,
-                RatesSide::ReceiveFixed | RatesSide::TwoWay => LiftPolicy::HitBid,
-            }
+            sim::esp_lift_side_for(i)
         } else {
             LiftPolicy::Observe
         };

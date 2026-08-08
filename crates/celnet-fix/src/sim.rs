@@ -32,6 +32,7 @@ use celnet_types::{OptionType, Settlement};
 
 use crate::dialect_fx::ExerciseStyle;
 use crate::dialect_rates::RatesSide;
+use crate::initiator::LiftPolicy;
 
 /// Major **deliverable** currency pairs the demo venue auto-quotes. The demo server
 /// prices every pair off its calibrated EUR/USD 1Y fixture (a single global surface at
@@ -274,6 +275,46 @@ pub fn rates_notional_for(i: u64) -> f64 {
     RATES_NOTIONAL_LADDER[(i as usize) % RATES_NOTIONAL_LADDER.len()]
 }
 
+/// The instrument the **ESP streaming client** ([`fix_rfq_client`](../../examples/fix_rfq_client.rs)
+/// `run_esp`) RFS-subscribes on stream cycle `i`, as an index into its downloaded
+/// tradeable universe of `n` instruments — a plain **round-robin** (`i mod n`).
+///
+/// The ESP client downloads the top-N most-liquid/relevant instruments from the
+/// reference-data service into a `Vec` and streams the WHOLE book: cycle `i` requests an
+/// RFS on the next instrument, so over `n` consecutive cycles every instrument in the
+/// universe gets a live `Subscribe` requested at least once (a client shopping the entire
+/// book), rather than repeating one name. Pure function of `(i, n)` — no RNG / no
+/// wall-clock — so a replayed stream visits the same instruments in the same order.
+///
+/// # Panics
+/// Panics if `n == 0` (an empty universe is unstreamable; the ESP client exits before
+/// this is reached when the download returns nothing).
+#[must_use]
+pub fn esp_instrument_index_for(i: u64, n: usize) -> usize {
+    assert!(n > 0, "the ESP instrument universe must be non-empty");
+    (i as usize) % n
+}
+
+/// The **firm lift direction** the ESP streaming client applies when it lifts a streamed
+/// quote on stream cycle `i` — `LiftOffer` (BUY, off the offer leg) or `HitBid` (SELL, off
+/// the bid leg) — so booked streaming deals show a realistic BUY/SELL mixture per
+/// instrument on the blotter instead of one repeated direction.
+///
+/// It **mirrors the rates side rotation** ([`rates_side_for`]): a `PayFixed` slot books a
+/// BUY, so it maps to `LiftOffer`; a `ReceiveFixed` (or `TwoWay`) slot books a SELL, so it
+/// maps to `HitBid`. Over the length-5 [`RATES_SIDE_ROTATION`] that is a 3 `LiftOffer` : 2
+/// `HitBid` (~3:2 BUY:SELL) balanced-ish mix, with both directions present within the first
+/// two cycles. Never returns [`LiftPolicy::Observe`] — whether to lift AT ALL is a separate
+/// (seeded) decision in the client; this only picks the side once a lift is chosen. Pure
+/// function of `i` (no RNG / no wall-clock), so a replay books the same side sequence.
+#[must_use]
+pub fn esp_lift_side_for(i: u64) -> LiftPolicy {
+    match rates_side_for(i) {
+        RatesSide::PayFixed => LiftPolicy::LiftOffer,
+        RatesSide::ReceiveFixed | RatesSide::TwoWay => LiftPolicy::HitBid,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,5 +536,77 @@ mod tests {
             "want a genuine spread of clip sizes, got {}",
             distinct.len()
         );
+    }
+
+    /// The ESP instrument selection is a deterministic round-robin over the downloaded
+    /// universe: over `n` consecutive cycles every instrument index `0..n` is RFS'd at
+    /// least once (a client shopping the WHOLE book), each returned index is in range, and
+    /// the same `(i, n)` always yields the same index — so a replayed stream visits the
+    /// same instruments in the same order.
+    #[test]
+    fn esp_instrument_round_robin_covers_every_instrument() {
+        for &n in &[1usize, 3, 15, 37] {
+            for i in 0..256u64 {
+                assert_eq!(
+                    esp_instrument_index_for(i, n),
+                    esp_instrument_index_for(i, n)
+                );
+                assert!(esp_instrument_index_for(i, n) < n, "index must be in range");
+            }
+            // Over exactly n cycles, every instrument index is visited at least once.
+            let visited: std::collections::BTreeSet<usize> = (0..n as u64)
+                .map(|i| esp_instrument_index_for(i, n))
+                .collect();
+            assert_eq!(
+                visited.len(),
+                n,
+                "every instrument in a size-{n} universe must be RFS'd over n cycles",
+            );
+            // Consecutive cycles advance to the NEXT instrument (no repeats) when n > 1.
+            if n > 1 {
+                assert_ne!(
+                    esp_instrument_index_for(0, n),
+                    esp_instrument_index_for(1, n),
+                );
+            }
+        }
+    }
+
+    /// The empty universe is rejected loudly rather than silently mis-indexing.
+    #[test]
+    #[should_panic(expected = "non-empty")]
+    fn esp_instrument_index_panics_on_empty_universe() {
+        let _ = esp_instrument_index_for(0, 0);
+    }
+
+    /// The ESP lift-side rotation is deterministic (no RNG / no wall-clock), produces BOTH
+    /// firm directions (`LiftOffer` = BUY, `HitBid` = SELL) in a near-balanced ratio, and
+    /// never yields `Observe` — so lifted streaming deals show a realistic BUY/SELL mixture
+    /// on the blotter, reproducibly. It mirrors [`rates_side_for`]: `PayFixed`→`LiftOffer`,
+    /// `ReceiveFixed`→`HitBid`.
+    #[test]
+    fn esp_lift_side_rotation_is_deterministic_and_covers_both_directions() {
+        for i in 0..128 {
+            assert_eq!(esp_lift_side_for(i), esp_lift_side_for(i));
+        }
+        // Both firm directions appear within the first two cycles (mirrors the 3:2 side
+        // rotation whose first two indices are PayFixed then ReceiveFixed).
+        assert_eq!(esp_lift_side_for(0), LiftPolicy::LiftOffer);
+        assert_eq!(esp_lift_side_for(1), LiftPolicy::HitBid);
+        let n = 200u64;
+        let mut buy = 0u64; // LiftOffer
+        let mut sell = 0u64; // HitBid
+        for i in 0..n {
+            match esp_lift_side_for(i) {
+                LiftPolicy::LiftOffer => buy += 1,
+                LiftPolicy::HitBid => sell += 1,
+                LiftPolicy::Observe => panic!("the ESP lift side must be a firm direction"),
+            }
+        }
+        assert!(buy > 0 && sell > 0, "both booked directions must occur");
+        // A sensible mix: neither direction is more than ~70% of the lifts (here 3:2).
+        assert!(buy <= (n * 7) / 10, "BUYs (lift offer) must not dominate");
+        assert!(sell <= (n * 7) / 10, "SELLs (hit bid) must not dominate");
+        assert_eq!(buy + sell, n);
     }
 }
