@@ -23,7 +23,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSettings } from "../hooks/useSettings";
 import { fmtCompact } from "../lib/format";
-import { RUNNING_RELEASE } from "../data/versionManifest";
+import { RUNNING_RELEASE, useUpdatePending } from "../data/versionManifest";
 import {
   effectiveEventVolume,
   type NotificationEventType,
@@ -326,6 +326,9 @@ export function SettingsPanel(): React.ReactElement {
   }, []);
 
   const hashIsPlaceholder = PLACEHOLDER_HASHES.has(RUNNING_RELEASE.hash);
+  // The shared release latch (populated by the single deploy-watcher — no 2nd poll):
+  // non-null means a newer build has been deployed and the app is (auto-)reloading.
+  const updatePending = useUpdatePending();
 
   return (
     <div className={styles.root}>
@@ -572,6 +575,13 @@ export function SettingsPanel(): React.ReactElement {
                   </span>
                 </>
               )}
+              <span
+                className={styles.versionStatus}
+                data-status={updatePending ? "pending" : "current"}
+                data-testid="settings-update-status"
+              >
+                {updatePending ? "Update pending" : "Up to date"}
+              </span>
             </span>
           </div>
             </div>

@@ -572,3 +572,25 @@
   /* --text-secondary keeps AA at this 10px size (see .hint / sectionTitle). */
   color: var(--text-secondary);
 }
+
+/* Deploy freshness pill: "Up to date" (subtle) vs "Update pending" (accent). */
+.versionStatus {
+  padding: 1px var(--space-2);
+  border-radius: var(--r-xs, 3px);
+  font: var(--type-micro) / 1.2 var(--font-ui);
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.versionStatus[data-status="current"] {
+  color: var(--text-secondary);
+  background: var(--bg-overlay-solid);
+  border: var(--hairline) solid var(--grid-line);
+}
+
+.versionStatus[data-status="pending"] {
+  color: var(--bg-base);
+  background: var(--accent);
+}

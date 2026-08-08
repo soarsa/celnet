@@ -62,6 +62,8 @@ const FIDELITY_SPECS = [
   /dealsHedgeLens\.e2e\.ts/,
   // Risk guided-setup wizard (portfolios → routing → acceptance) — offline (mock).
   /riskSetupWizard\.e2e\.ts/,
+  // Deploy auto-refresh: version bump → cache-busting reload + loop-guard — offline (mock).
+  /versionUpdate\.e2e\.ts/,
 ];
 
 /**

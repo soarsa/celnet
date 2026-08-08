@@ -1,106 +1,113 @@
 /**
- * UpdateBanner — a blocking-style **modal** shown when a newer release has been
- * deployed under the running page (detected by {@link useVersionWatch}). It tells
- * the trader a new version is available and prompts them to refresh.
+ * UpdateBanner — the auto-refresh notice shown when a newer release has been
+ * deployed under the running page (detected by {@link useVersionWatch}). Unlike the
+ * old "please refresh" prompt, this does NOT leave the trader stranded on a stale
+ * bundle: it announces the update and then performs a cache-busting reload onto the
+ * fresh build after a short countdown, with a "Reload now" button for the impatient.
  *
- * Deliberately NOT auto-reloading: this is a trading surface, and silently
- * swapping the bundle mid-ticket would discard in-progress work. The modal makes
- * the update prominent (centred, over a scrim) but the trader still chooses when
- * to refresh — "Refresh now" reloads immediately, "Later" dismisses until an even
- * newer release appears.
+ * Why auto-reload (a reversal of the earlier prompt-only stance): a plain "there's
+ * an update" prompt that the trader dismisses — or a prompt whose reload does not
+ * bust the browser cache — leaves them running the old app while believing the
+ * deploy landed. The single most reliable behaviour is to refetch the (content-
+ * hashed, cache-busted) bundle automatically. The countdown gives a brief, visible
+ * grace window rather than yanking the view instantly.
  *
- * Pure presentation — all detection/latch state lives in the version watcher and
- * the App root that owns the dismiss decision. Rendered via a portal to
- * `document.body` so it escapes any workspace overflow/stacking context.
+ * The actual cache-clear + reload lives in {@link resetAndReloadTo} (passed in as
+ * `onReload`) and is guarded to fire at most ONCE per detected build — so this
+ * banner can never drive a reload-loop. This component only owns the countdown UI
+ * and calls `onReload` exactly once (a fired-latch ref).
+ *
+ * Rendered via a portal to `document.body` (escapes workspace overflow/stacking) as
+ * a non-dismissable `role="status"` live region so assistive tech announces it once.
  */
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { ReleaseManifest } from "../data/versionManifest";
 import styles from "./UpdateBanner.module.css";
 
-export interface UpdateBannerProps {
-  /** The newer release the page can reload onto. */
-  readonly release: ReleaseManifest;
-  /** Reload the page onto the new bundle (App passes `window.location.reload`). */
-  readonly onReload: () => void;
-  /** Hide the modal until an even newer release appears. */
-  readonly onDismiss: () => void;
-}
+/** Seconds of visible grace before the automatic reload fires. */
+export const DEFAULT_COUNTDOWN_SECONDS = 5;
 
-/** `2026-06-27T13:25:28.000Z` -> `2026-06-27 13:25Z` for a compact label. */
-function shortStamp(iso: string): string {
-  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(iso);
-  return m ? `${m[1]} ${m[2]}Z` : iso;
+export interface UpdateBannerProps {
+  /** The newer release the page is reloading onto. */
+  readonly release: ReleaseManifest;
+  /**
+   * Perform the cache-busting reload onto {@link release}. App passes
+   * `resetAndReloadTo(release)`; it is idempotent per build, so calling it more than
+   * once is harmless — but this component still fires it at most once.
+   */
+  readonly onReload: () => void;
+  /** Grace seconds before the auto-reload. Defaults to {@link DEFAULT_COUNTDOWN_SECONDS}. */
+  readonly countdownSeconds?: number;
 }
 
 export function UpdateBanner({
   release,
   onReload,
-  onDismiss,
+  countdownSeconds = DEFAULT_COUNTDOWN_SECONDS,
 }: UpdateBannerProps): React.ReactElement {
+  const [remaining, setRemaining] = useState(countdownSeconds);
   const reloadRef = useRef<HTMLButtonElement>(null);
+  // Latest onReload without resetting the countdown timers when the parent re-renders
+  // with a fresh closure.
+  const onReloadRef = useRef(onReload);
+  onReloadRef.current = onReload;
+  // Fire the reload at most once (manual button OR countdown, whichever first).
+  const firedRef = useRef(false);
 
-  // Move focus to the primary action on open, and let Esc dismiss (matching the
-  // app's other portal dialogs).
+  const triggerReload = useCallback((): void => {
+    if (firedRef.current) return;
+    firedRef.current = true;
+    onReloadRef.current();
+  }, []);
+
+  // A NEW target release (an even newer build landed mid-countdown) restarts the
+  // grace window and re-arms the fired-latch, and moves focus to the action.
   useEffect(() => {
+    firedRef.current = false;
+    setRemaining(countdownSeconds);
     reloadRef.current?.focus();
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") onDismiss();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onDismiss]);
+  }, [release.buildTime, countdownSeconds]);
+
+  // One interval ticks the grace window down to zero (restarted for a new build).
+  useEffect(() => {
+    const id = setInterval(() => setRemaining((r) => (r <= 0 ? 0 : r - 1)), 1000);
+    return () => clearInterval(id);
+  }, [release.buildTime, countdownSeconds]);
+
+  // Fire the (guarded, once-only) reload when the countdown reaches zero.
+  useEffect(() => {
+    if (remaining <= 0) triggerReload();
+  }, [remaining, triggerReload]);
 
   return createPortal(
     <div
-      className={styles.scrim}
-      role="presentation"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onDismiss();
-      }}
+      className={styles.banner}
+      role="status"
+      aria-live="polite"
+      aria-label="Updating to the latest version"
+      data-testid="update-banner"
     >
-      <div
-        className={styles.dialog}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="update-modal-title"
-      >
-        <div className={styles.head}>
-          <span className={styles.glyph} aria-hidden="true">
-            ⟳
-          </span>
-          <h2 id="update-modal-title" className={styles.title}>
-            New version available
-          </h2>
-        </div>
-        <p className={styles.body}>
-          A new version of Celnet has been deployed. Refresh the screen to load it — your
-          current view will reload.
-        </p>
+      <span className={styles.glyph} aria-hidden="true">
+        ⟳
+      </span>
+      <div className={styles.text}>
+        <p className={styles.title}>Updating to the latest version…</p>
         <p className={styles.detail}>
-          {release.hash} · {shortStamp(release.buildTime)}
+          A new build was deployed — reloading shortly{" "}
+          <span aria-hidden="true">({remaining}s)</span>.
         </p>
-        <div className={styles.actions}>
-          <button
-            type="button"
-            className={styles.later}
-            onClick={onDismiss}
-            aria-label="Dismiss until the next release"
-          >
-            Later
-          </button>
-          <button
-            type="button"
-            ref={reloadRef}
-            className={styles.reload}
-            onClick={onReload}
-          >
-            Refresh now
-          </button>
-        </div>
       </div>
+      <button
+        type="button"
+        ref={reloadRef}
+        className={styles.reload}
+        onClick={triggerReload}
+      >
+        Reload now
+      </button>
     </div>,
     document.body,
   );

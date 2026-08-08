@@ -21,7 +21,7 @@ import { ReconnectOverlay } from "./app/ReconnectOverlay";
 import { Shell } from "./app/Shell";
 import { UpdateBanner } from "./app/UpdateBanner";
 import { resolveTransport } from "./data/transportConfig";
-import { useVersionWatch } from "./data/versionManifest";
+import { resetAndReloadTo, useVersionWatch } from "./data/versionManifest";
 import { useAppearance } from "./design/appearance";
 import { useDensity } from "./design/density";
 import { useConnectionStatus } from "./hooks/useConnectionStatus";
@@ -47,13 +47,12 @@ export function App(): React.ReactElement {
   const [{ transport }] = useState(resolveTransport);
   const connection = useConnectionStatus(transport);
 
-  // Watch the deploy's /version.json: when a newer release lands under the running
-  // page, surface a reload prompt. Dismiss is keyed on the release hash so the
-  // banner reappears for the NEXT release, not the one already waved away.
+  // Watch the deploy's /version.json: when a newer build (by buildTime) lands under
+  // the running page, the UpdateBanner announces it and auto-reloads onto the fresh
+  // bundle after a short grace — a cache-busting reload, guarded to fire at most once
+  // per detected build (see resetAndReloadTo), so it can never spin.
   const version = useVersionWatch(transport);
-  const [dismissedHash, setDismissedHash] = useState<string | null>(null);
-  const pendingRelease =
-    version.available && version.available.hash !== dismissedHash ? version.available : null;
+  const pendingRelease = version.available;
 
   // Once the reconnect window elapses, drop to the sign-in screen. Latched in
   // local state so a late background reconnect does not yank the trader back into
@@ -85,8 +84,7 @@ export function App(): React.ReactElement {
           {pendingRelease && (
             <UpdateBanner
               release={pendingRelease}
-              onReload={() => window.location.reload()}
-              onDismiss={() => setDismissedHash(pendingRelease.hash)}
+              onReload={() => void resetAndReloadTo(pendingRelease)}
             />
           )}
           </HedgeSeedProvider>
