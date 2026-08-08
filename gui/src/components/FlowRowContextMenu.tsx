@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import type { HedgeSeedDeal } from "../lib/hedgeSeed";
 import styles from "./FlowRowContextMenu.module.css";
 
 /** Where + for whom a row menu is open: the row's counterparty and a viewport point. */
@@ -26,6 +27,12 @@ export interface FlowRowMenuTarget {
   x: number;
   /** Viewport y (px) to anchor the menu's top edge at (clamped inside the viewport). */
   y: number;
+  /**
+   * The deal facts for the "Change hedging strategy" action, present ONLY on rows that
+   * carry a booked deal (the Deals blotter). Absent for rows without deal economics
+   * (e.g. the Quotes blotter) — the hedge item then does not render.
+   */
+  hedgeSeed?: HedgeSeedDeal;
 }
 
 interface FlowRowContextMenuProps {
@@ -41,6 +48,18 @@ interface FlowRowContextMenuProps {
    * offered so the surface is discoverable; the builder itself lands the seed read-only.
    */
   canManageAcceptance: boolean;
+  /**
+   * Invoke "Change hedging strategy" for the row's deal — seed a new hedge rule scoped to
+   * the flow, then deep-link to the Hedging → Exit Policy builder. Omitted on surfaces
+   * whose rows carry no deal (the item then never renders).
+   */
+  onChangeHedgingStrategy?: (seed: HedgeSeedDeal) => void;
+  /**
+   * Whether the viewer can author a hedge policy (`hedge` × FI). The "Change hedging
+   * strategy" item is HIDDEN (not shown read-only) without it — a user who cannot edit
+   * hedging is never offered the action.
+   */
+  canHedge?: boolean;
 }
 
 /** Viewport margin (px) the clamp keeps around the menu. */
@@ -51,6 +70,8 @@ export function FlowRowContextMenu({
   onClose,
   onCreateAcceptanceRule,
   canManageAcceptance,
+  onChangeHedgingStrategy,
+  canHedge = false,
 }: FlowRowContextMenuProps): React.ReactElement | null {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -133,6 +154,11 @@ export function FlowRowContextMenu({
   if (!open || target === null) return null;
 
   const cp = target.counterparty;
+  const hedgeSeed = target.hedgeSeed;
+  // The hedge item is offered ONLY when the row carries a deal AND the viewer can author
+  // a hedge policy — a non-`hedge` user is never shown it (unlike acceptance, which is
+  // always shown so it stays discoverable).
+  const showHedge = hedgeSeed !== undefined && onChangeHedgingStrategy !== undefined && canHedge;
   return createPortal(
     <div
       ref={menuRef}
@@ -159,6 +185,23 @@ export function FlowRowContextMenu({
             : `${cp} · view only — ask an admin to save`}
         </span>
       </button>
+      {showHedge && (
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.item}
+          data-testid="flow-change-hedging-strategy"
+          onClick={() => {
+            onChangeHedgingStrategy(hedgeSeed);
+            onClose();
+          }}
+        >
+          <span className={styles.itemMain}>Change hedging strategy</span>
+          <span className={styles.itemSub}>
+            {`${hedgeSeed.productKind} ${hedgeSeed.currency} · new exit-policy rule from this deal`}
+          </span>
+        </button>
+      )}
     </div>,
     document.body,
   );

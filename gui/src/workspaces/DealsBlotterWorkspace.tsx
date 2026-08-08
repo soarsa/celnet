@@ -16,6 +16,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { useAcceptanceSeed } from "../app/AcceptanceSeedContext";
+import { useHedgeSeed } from "../app/HedgeSeedContext";
+import { hedgeSeedFromDeal } from "../lib/hedgeSeed";
 import { Panel } from "../components/Panel";
 import { FlowRowContextMenu, type FlowRowMenuTarget } from "../components/FlowRowContextMenu";
 import { TableSearch } from "../components/TableSearch";
@@ -222,6 +224,10 @@ export function DealsBlotterWorkspace(): React.ReactElement {
 
   const seed = useAcceptanceSeed();
   const canManageAcceptance = app.auth.can("manage_acceptance", "fixed_income");
+  const hedge = useHedgeSeed();
+  // Authoring a hedge policy gates on `hedge` × FI (same as the Hedging surface); the
+  // "Change hedging strategy" row action is hidden entirely without it.
+  const canHedge = app.auth.can("hedge", "fixed_income");
 
   // Client fills vs executed hedges — the two separated lenses of the blotter.
   const [lens, setLens] = useState<DealsLens>("client");
@@ -379,7 +385,12 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                     aria-label={`Open deal ${d.dealId}. Right-click or press the menu key for row actions`}
                     onContextMenu={(e) => {
                       e.preventDefault();
-                      setRowMenu({ counterparty: d.counterparty, x: e.clientX, y: e.clientY });
+                      setRowMenu({
+                        counterparty: d.counterparty,
+                        x: e.clientX,
+                        y: e.clientY,
+                        hedgeSeed: hedgeSeedFromDeal(d),
+                      });
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
@@ -397,6 +408,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                           counterparty: d.counterparty,
                           x: r.left + 12,
                           y: r.bottom - 8,
+                          hedgeSeed: hedgeSeedFromDeal(d),
                         });
                       }
                     }}
@@ -450,6 +462,14 @@ export function DealsBlotterWorkspace(): React.ReactElement {
               app.setWorkspace("acceptance");
             }}
             canManageAcceptance={canManageAcceptance}
+            onChangeHedgingStrategy={(s) => {
+              // Seed a hedge rule scoped to this deal's flow, then deep-link to the Hedging
+              // workspace — its Exit Policy tab (the default) consumes the seed and opens a
+              // pre-filled draft rule for the trader to tailor + save.
+              hedge.requestHedgeSeed(s);
+              app.setWorkspace("hedging");
+            }}
+            canHedge={canHedge}
           />
           {selected && <DealTicket deal={selected} onClose={() => setSelected(null)} />}
         </div>

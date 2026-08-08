@@ -21,6 +21,7 @@ import {
   defaultValueForOp,
 } from "../../lib/hedgeGraphOps";
 import { describeHedgeRule, type HedgeRule, type HedgeRuleCondition } from "../../lib/hedgeRules";
+import { hedgeSeedGapNote, hedgeSeedHint, type HedgeSeedDeal } from "../../lib/hedgeSeed";
 import { opLabel } from "../../lib/routeOps";
 import { ValueEditor, type ValueOption } from "../riskrouting/ValueEditor";
 import { decodeHedgeDrag, HedgeFieldPalette } from "./HedgeFieldPalette";
@@ -35,6 +36,12 @@ interface HedgeRuleEditorProps {
   lpOptions: readonly string[];
   onSave: (rule: HedgeRule) => void;
   onCancel: () => void;
+  /**
+   * When this editor opened from a Deals-blotter "Change hedging strategy" seed, the
+   * originating deal — drives a hint banner explaining what the draft was scoped from.
+   * `null`/absent for a hand-built rule (no banner).
+   */
+  seedDeal?: HedgeSeedDeal | null;
 }
 
 /** Build the enum value options for a hedge field (static advisory lists). */
@@ -59,6 +66,7 @@ export function HedgeRuleEditor({
   lpOptions,
   onSave,
   onCancel,
+  seedDeal = null,
 }: HedgeRuleEditorProps): React.ReactElement {
   const [conditions, setConditions] = useState<HedgeRuleCondition[]>(draft.conditions);
   const [action, setAction] = useState<ExitAction>(draft.action);
@@ -112,6 +120,13 @@ export function HedgeRuleEditor({
             ✕
           </button>
         </header>
+
+        {seedDeal !== null && (
+          <div className={rr.seedHint} role="status" data-testid="hedge-seed-hint">
+            <strong className={rr.seedHintMain}>{hedgeSeedHint(seedDeal)}</strong>
+            <span className={rr.seedHintNote}>{hedgeSeedGapNote()}</span>
+          </div>
+        )}
 
         <div className={rr.ruleEditorBody}>
           {!readOnly && <HedgeFieldPalette readOnly={readOnly} />}

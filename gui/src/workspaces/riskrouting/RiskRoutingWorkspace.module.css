@@ -1201,6 +1201,28 @@
   color: var(--text-muted);
   max-width: 52ch;
 }
+/* Seed hint banner — shown when the editor opens from a Deals "Change hedging strategy"
+   seed, explaining what the draft was scoped from + the exit-action prompt. */
+.seedHint {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 var(--space-4, 16px);
+  padding: var(--space-3, 12px) var(--space-4, 16px);
+  border: 1px solid var(--accent, #4f7cff);
+  border-left-width: 3px;
+  border-radius: var(--radius-2, 8px);
+  background: color-mix(in oklab, var(--accent, #4f7cff) 10%, transparent);
+}
+.seedHintMain {
+  font-size: var(--type-body, 0.9rem);
+  color: var(--text-primary, inherit);
+}
+.seedHintNote {
+  font-size: var(--type-micro);
+  color: var(--text-muted);
+  max-width: 72ch;
+}
 .ruleEditorBody {
   display: flex;
   gap: var(--space-4, 16px);

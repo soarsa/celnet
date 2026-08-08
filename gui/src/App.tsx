@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { AppProvider, useApp } from "./app/AppContext";
 import { AcceptanceSeedProvider } from "./app/AcceptanceSeedContext";
+import { HedgeSeedProvider } from "./app/HedgeSeedContext";
 import { LoginScreen } from "./app/LoginScreen";
 import { LoginView } from "./app/LoginView";
 import { ReconnectOverlay } from "./app/ReconnectOverlay";
@@ -72,6 +73,7 @@ export function App(): React.ReactElement {
     <AppProvider transport={transport} density={density} toggleDensity={toggleDensity}>
       <AuthGate>
         <AcceptanceSeedProvider>
+          <HedgeSeedProvider>
           <Shell />
           {connection.phase === "reconnecting" && (
           <ReconnectOverlay
@@ -87,6 +89,7 @@ export function App(): React.ReactElement {
               onDismiss={() => setDismissedHash(pendingRelease.hash)}
             />
           )}
+          </HedgeSeedProvider>
         </AcceptanceSeedProvider>
       </AuthGate>
     </AppProvider>

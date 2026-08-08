@@ -14,9 +14,11 @@
  * back via {@link decompileHedgeGraphToRules}. Authoring gates on the `hedge`
  * capability × fixed income; everyone else sees the surface read-only.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useApp } from "../../app/AppContext";
+import { useHedgeSeed } from "../../app/HedgeSeedContext";
+import { hedgeRuleFromSeed, type HedgeSeedDeal } from "../../lib/hedgeSeed";
 import type {
   HedgeConfig,
   HedgeGraph,
@@ -173,6 +175,12 @@ function PolicyTab({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>({ kind: "list" });
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+  // A "Change hedging strategy" hand-off from a Deals-blotter row: the originating deal +
+  // the id of the draft rule it seeded, so the editor shows the hint ONLY for that draft
+  // (a subsequent hand-built rule has a different id ⇒ no stale hint).
+  const { pending: pendingSeed, consumeHedgeSeed } = useHedgeSeed();
+  const [seed, setSeed] = useState<{ deal: HedgeSeedDeal; ruleId: string } | null>(null);
+  const appliedSeedNonce = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -195,6 +203,20 @@ function PolicyTab({
       cancelled = true;
     };
   }, [app.transport]);
+
+  // Consume a pending "Change hedging strategy" seed exactly once (de-duped by nonce):
+  // open a NEW draft rule pre-scoped to the deal's flow, and remember which draft it is so
+  // the editor shows the seed hint. The trader picks the exit action + Saves — nothing
+  // auto-saves; the seed is cleared so re-entering the tab does not re-seed.
+  useEffect(() => {
+    if (!pendingSeed || pendingSeed.nonce === appliedSeedNonce.current) return;
+    appliedSeedNonce.current = pendingSeed.nonce;
+    const draft = hedgeRuleFromSeed(pendingSeed.deal);
+    setSeed({ deal: pendingSeed.deal, ruleId: draft.id });
+    setMode({ kind: "editor", index: null, draft });
+    setSaveState({ kind: "idle" });
+    consumeHedgeSeed();
+  }, [pendingSeed, consumeHedgeSeed]);
 
   const conflicts = useMemo(() => detectHedgeRuleConflicts(rules), [rules]);
   const conflictsByRule = useMemo(() => {
@@ -222,6 +244,7 @@ function PolicyTab({
   }, []);
 
   const onCreate = useCallback((): void => {
+    setSeed(null); // a hand-built rule carries no seed hint
     setMode({
       kind: "editor",
       index: null,
@@ -232,7 +255,10 @@ function PolicyTab({
   const onEditRow = useCallback(
     (index: number): void => {
       const draft = rules[index];
-      if (draft) setMode({ kind: "editor", index, draft });
+      if (draft) {
+        setSeed(null); // editing an existing rule carries no seed hint
+        setMode({ kind: "editor", index, draft });
+      }
     },
     [rules],
   );
@@ -279,6 +305,9 @@ function PolicyTab({
   }, [baseline]);
 
   if (mode.kind === "editor") {
+    // The seed hint shows ONLY for the exact draft the seed created (id match) — a
+    // hand-built rule opened afterwards has a different id and no banner.
+    const seedDeal = seed !== null && mode.draft.id === seed.ruleId ? seed.deal : null;
     return (
       <HedgeRuleEditor
         draft={mode.draft}
@@ -288,6 +317,7 @@ function PolicyTab({
         lpOptions={LP_OPTIONS}
         onSave={onEditorSave}
         onCancel={() => setMode({ kind: "list" })}
+        seedDeal={seedDeal}
       />
     );
   }
