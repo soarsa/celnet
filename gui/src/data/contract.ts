@@ -3177,6 +3177,18 @@ export interface FeaturePipeline {
 export type PricingSourceMode = 0 | 1 | 2 | 3;
 
 /**
+ * The dealer last-look policy for a streamed-quote lift when the market moved
+ * between quote and order (mirrors `celnet.wire.LastLookMode`, wire integer tag).
+ * Governs ONLY the favorable side — an adverse move beyond
+ * {@link PricingGroup.lastLookToleranceBps} is always rejected regardless of mode.
+ *  - `0` SYNC (default): the client is filled at exactly the price they requested;
+ *    the desk keeps the ENTIRE favorable move.
+ *  - `1` ASYNC: the client gets price improvement — {@link PricingGroup.asyncGivebackPct}%
+ *    of the favorable move is passed back to them; the desk keeps the rest.
+ */
+export type LastLookMode = 0 | 1;
+
+/**
  * A persisted pricing group (mirrors `celnet.wire.PricingGroupDesc`). Membership is
  * many-to-one (many FIX connections / users / desks resolve to ONE group). Each
  * mode carries its own pipeline; `esp_pipeline` / `rfq_pipeline` may be `null`
@@ -3213,6 +3225,24 @@ export interface PricingGroup {
    * default (0.5); present on read only when the server has a stored value.
    */
   bookSkewWeight: number | null;
+  /**
+   * The market-data last-look policy for a streamed-quote lift (default `0` SYNC).
+   * Always present as an int on the wire (a plain, non-`optional` proto enum).
+   */
+  lastLookMode: LastLookMode;
+  /**
+   * Adverse-move tolerance in bps of price: a lift is rejected when the market has
+   * moved AGAINST the desk by more than this between quote and order; within it, the
+   * lift is honored. `null` ⇒ omitted on write so the server applies its default
+   * (1.0); present on read only when the server has a stored value.
+   */
+  lastLookToleranceBps: number | null;
+  /**
+   * The % of a FAVORABLE move passed back to the client as price improvement, `0..100`.
+   * Only meaningful when {@link lastLookMode} is `1` (ASYNC). `null` ⇒ omitted on write
+   * so the server applies its default (50); present on read only when set.
+   */
+  asyncGivebackPct: number | null;
 }
 
 // ---------------------------------------------------------------------------

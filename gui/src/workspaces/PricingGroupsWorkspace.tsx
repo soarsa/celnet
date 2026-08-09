@@ -52,6 +52,7 @@ import type {
   FeaturePipeline,
   FeatureSpec,
   FixConnection,
+  LastLookMode,
   PricingGroup,
   PricingMode,
   PricingSourceMode,
@@ -74,6 +75,12 @@ import {
   PRICING_SOURCE_MODES,
   DEFAULT_BOOK_SKEW_WEIGHT,
   CURVE_ANCHORED_BOOK_SKEW_MODE,
+  LAST_LOOK_MODE_HINT,
+  LAST_LOOK_MODE_LABEL,
+  LAST_LOOK_MODES,
+  DEFAULT_LAST_LOOK_TOLERANCE_BPS,
+  DEFAULT_ASYNC_GIVEBACK_PCT,
+  ASYNC_LAST_LOOK_MODE,
   removeFeatureAt,
   SAMPLE_RAW,
   updateFeatureAt,
@@ -109,6 +116,9 @@ function blankGroup(): PricingGroup {
     enabled: true,
     pricingSourceMode: 0,
     bookSkewWeight: null,
+    lastLookMode: 0,
+    lastLookToleranceBps: null,
+    asyncGivebackPct: null,
   };
 }
 
@@ -914,6 +924,100 @@ function PricingGroupsPanel(): React.ReactElement {
                       <span className={styles.modeNote} id="pg-skew-help">
                         0 = pure curve, 1 = pure book, 0.5 = halfway. Left unset, the server
                         applies its 0.5 default.
+                      </span>
+                    </label>
+                  )}
+
+                  {/*
+                    Last-look policy: governs a streamed-quote lift when the market
+                    moved between quote and order (persisted on the group spec). The
+                    TOLERANCE protects the desk (an adverse move beyond it is rejected);
+                    the MODE decides who keeps a FAVORABLE move — Sync ⇒ the desk keeps
+                    it all; Async ⇒ a configurable % is passed back to the client. The
+                    giveback control is only meaningful (and only written) for Async;
+                    both scalars stay `null` until the trader moves them, so the server
+                    applies its defaults (1.0 bps / 50%).
+                  */}
+                  <label className={`${styles.field} ${styles.fieldWide}`} htmlFor="pg-last-look-mode">
+                    <span className={styles.fieldLabel}>Last-look</span>
+                    <select
+                      id="pg-last-look-mode"
+                      className={styles.select}
+                      value={draft.lastLookMode}
+                      disabled={readOnly}
+                      onChange={(e) => {
+                        const next = Number(e.target.value) as LastLookMode;
+                        patchDraft({
+                          lastLookMode: next,
+                          asyncGivebackPct:
+                            next === ASYNC_LAST_LOOK_MODE ? draft.asyncGivebackPct : null,
+                        });
+                      }}
+                    >
+                      {LAST_LOOK_MODES.map((m) => (
+                        <option key={m} value={m}>
+                          {LAST_LOOK_MODE_LABEL[m]}
+                        </option>
+                      ))}
+                    </select>
+                    <span className={styles.modeNote}>{LAST_LOOK_MODE_HINT[draft.lastLookMode]}</span>
+                  </label>
+
+                  <label className={`${styles.field} ${styles.fieldWide}`} htmlFor="pg-last-look-tol">
+                    <span className={styles.fieldLabel}>Tolerance (bps)</span>
+                    <input
+                      id="pg-last-look-tol"
+                      className={`${styles.input} ${styles.numInput}`}
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={draft.lastLookToleranceBps ?? DEFAULT_LAST_LOOK_TOLERANCE_BPS}
+                      disabled={readOnly}
+                      aria-describedby="pg-last-look-tol-help"
+                      onChange={(e) => patchDraft({ lastLookToleranceBps: Number(e.target.value) })}
+                    />
+                    <span className={styles.modeNote} id="pg-last-look-tol-help">
+                      Reject a lift when the market moved against the desk by more than this
+                      between quote and order. Left unset, the server applies its 1.0 default.
+                    </span>
+                  </label>
+
+                  {draft.lastLookMode === ASYNC_LAST_LOOK_MODE && (
+                    <label
+                      className={`${styles.field} ${styles.fieldWide}`}
+                      htmlFor="pg-async-giveback"
+                    >
+                      <span className={styles.fieldLabel}>
+                        Async giveback % — {(draft.asyncGivebackPct ?? DEFAULT_ASYNC_GIVEBACK_PCT).toFixed(0)}
+                      </span>
+                      <div className={styles.skewRow}>
+                        <input
+                          id="pg-async-giveback"
+                          className={styles.skewRange}
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={5}
+                          value={draft.asyncGivebackPct ?? DEFAULT_ASYNC_GIVEBACK_PCT}
+                          disabled={readOnly}
+                          aria-describedby="pg-async-giveback-help"
+                          onChange={(e) => patchDraft({ asyncGivebackPct: Number(e.target.value) })}
+                        />
+                        <input
+                          className={`${styles.input} ${styles.numInput} ${styles.skewNum}`}
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={5}
+                          value={draft.asyncGivebackPct ?? DEFAULT_ASYNC_GIVEBACK_PCT}
+                          disabled={readOnly}
+                          aria-label="Async giveback %"
+                          onChange={(e) => patchDraft({ asyncGivebackPct: Number(e.target.value) })}
+                        />
+                      </div>
+                      <span className={styles.modeNote} id="pg-async-giveback-help">
+                        The share of a favorable move handed back to the client as price
+                        improvement. Left unset, the server applies its 50% default.
                       </span>
                     </label>
                   )}

@@ -97,6 +97,9 @@ function group(overrides: Partial<PricingGroup> = {}): PricingGroup {
     enabled: true,
     pricingSourceMode: 0,
     bookSkewWeight: null,
+    lastLookMode: 0,
+    lastLookToleranceBps: null,
+    asyncGivebackPct: null,
     ...overrides,
   };
 }

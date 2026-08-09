@@ -87,6 +87,10 @@ function kitchenSinkGroup(): PricingGroup {
     // Curve-anchored + book-skew mode so the optional weight is exercised on the round-trip.
     pricingSourceMode: 3,
     bookSkewWeight: 0.35,
+    // Async last-look so both optional last-look scalars are exercised on the round-trip.
+    lastLookMode: 1,
+    lastLookToleranceBps: 2.5,
+    asyncGivebackPct: 40,
   };
 }
 
@@ -175,6 +179,10 @@ describe("pricing-source policy codec", () => {
     });
     expect(decoded.pricingSourceMode).toBe(0);
     expect(decoded.bookSkewWeight).toBeNull();
+    // Last-look also defaults: absent mode ⇒ 0 (Sync), absent scalars ⇒ null.
+    expect(decoded.lastLookMode).toBe(0);
+    expect(decoded.lastLookToleranceBps).toBeNull();
+    expect(decoded.asyncGivebackPct).toBeNull();
   });
 
   it("clamps an out-of-range wire mode to 0", () => {
@@ -192,6 +200,83 @@ describe("pricing-source policy codec", () => {
       pricing_source_mode: 9,
     });
     expect(decoded.pricingSourceMode).toBe(0);
+  });
+});
+
+describe("last-look policy codec (tags 13/14/15)", () => {
+  it("always emits the integer last_look_mode for both modes", () => {
+    for (const m of [0, 1] as const) {
+      const wire = pricingGroupSpecToWire({
+        ...kitchenSinkGroup(),
+        lastLookMode: m,
+        lastLookToleranceBps: null,
+        asyncGivebackPct: null,
+      });
+      expect(wire["last_look_mode"]).toBe(m);
+    }
+  });
+
+  it("omits both optional scalars when unset (⇒ server defaults), never sends null", () => {
+    const wire = pricingGroupSpecToWire({
+      ...kitchenSinkGroup(),
+      lastLookMode: 1,
+      lastLookToleranceBps: null,
+      asyncGivebackPct: null,
+    });
+    expect("last_look_tolerance_bps" in wire).toBe(false);
+    expect("async_giveback_pct" in wire).toBe(false);
+  });
+
+  it("emits the tolerance regardless of mode, and the giveback when set", () => {
+    // Tolerance protects the desk in BOTH modes ⇒ emitted even in Sync.
+    const sync = pricingGroupSpecToWire({
+      ...kitchenSinkGroup(),
+      lastLookMode: 0,
+      lastLookToleranceBps: 1.5,
+      asyncGivebackPct: null,
+    });
+    expect(sync["last_look_tolerance_bps"]).toBe(1.5);
+    expect("async_giveback_pct" in sync).toBe(false);
+
+    const async_ = pricingGroupSpecToWire({
+      ...kitchenSinkGroup(),
+      lastLookMode: 1,
+      lastLookToleranceBps: 2.5,
+      asyncGivebackPct: 40,
+    });
+    expect(async_["last_look_mode"]).toBe(1);
+    expect(async_["last_look_tolerance_bps"]).toBe(2.5);
+    expect(async_["async_giveback_pct"]).toBe(40);
+  });
+
+  it("round-trips the async policy through the wire", () => {
+    const g: PricingGroup = {
+      ...kitchenSinkGroup(),
+      lastLookMode: 1,
+      lastLookToleranceBps: 2.5,
+      asyncGivebackPct: 40,
+    };
+    const decoded = pricingGroupDescFromWire(roundtrip(pricingGroupSpecToWire(g)));
+    expect(decoded.lastLookMode).toBe(1);
+    expect(decoded.lastLookToleranceBps).toBe(2.5);
+    expect(decoded.asyncGivebackPct).toBe(40);
+  });
+
+  it("clamps an out-of-range wire last_look_mode to 0 (Sync)", () => {
+    const decoded = pricingGroupDescFromWire({
+      id: "g",
+      name: "G",
+      description: "",
+      member_connection_ids: [],
+      member_user_ids: [],
+      member_desks: [],
+      esp_pipeline: null,
+      rfq_pipeline: null,
+      share_pipeline: false,
+      enabled: true,
+      last_look_mode: 7,
+    });
+    expect(decoded.lastLookMode).toBe(0);
   });
 });
 

@@ -18,6 +18,7 @@ import type {
   FeatureKind,
   FeaturePipeline,
   FeatureSpec,
+  LastLookMode,
   PricingGroup,
   PricingSourceMode,
   TieringGuardrails,
@@ -94,6 +95,32 @@ export const DEFAULT_BOOK_SKEW_WEIGHT = 0.5;
 
 /** The mode (`3`) for which {@link PricingGroup.bookSkewWeight} is meaningful. */
 export const CURVE_ANCHORED_BOOK_SKEW_MODE: PricingSourceMode = 3;
+
+// --- last-look policy (how a streamed-quote lift is honored on a market move) --
+
+/** The last-look modes, in wire (enum) order — the selector's option order. */
+export const LAST_LOOK_MODES: readonly LastLookMode[] = [0, 1];
+
+/** Trader-language label for each last-look mode (the selector option text). */
+export const LAST_LOOK_MODE_LABEL: Record<LastLookMode, string> = {
+  0: "Sync — desk keeps the full favorable move",
+  1: "Async — client gets a % of the favorable move back",
+};
+
+/** A one-line explanation of each mode (rendered as helper text under the selector). */
+export const LAST_LOOK_MODE_HINT: Record<LastLookMode, string> = {
+  0: "The client is filled at exactly the price they requested; the desk keeps the entire favorable move.",
+  1: "The client gets price improvement — a share of the favorable move is passed back to them; the desk keeps the rest.",
+};
+
+/** The server's default adverse-move tolerance in bps (shown when the group has no stored value). */
+export const DEFAULT_LAST_LOOK_TOLERANCE_BPS = 1.0;
+
+/** The server's default async giveback % (shown when the group has no stored value). */
+export const DEFAULT_ASYNC_GIVEBACK_PCT = 50;
+
+/** The mode (`1`) for which {@link PricingGroup.asyncGivebackPct} is meaningful. */
+export const ASYNC_LAST_LOOK_MODE: LastLookMode = 1;
 
 // --- defaults ----------------------------------------------------------------
 

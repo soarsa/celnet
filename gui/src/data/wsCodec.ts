@@ -107,6 +107,7 @@ import type {
   FeatureKind,
   FeaturePipeline,
   FeatureSpec,
+  LastLookMode,
   PricingGroup,
   PricingSourceMode,
   PricingMode,
@@ -4047,11 +4048,19 @@ function pricingSourceModeFromWire(v: unknown): PricingSourceMode {
   return v === 1 || v === 2 || v === 3 ? v : 0;
 }
 
+/** Clamp a wire integer to a valid {@link LastLookMode} (unknown ⇒ `0` SYNC default). */
+function lastLookModeFromWire(v: unknown): LastLookMode {
+  return v === 1 ? 1 : 0;
+}
+
 /**
  * Encode a pricing group spec/desc (`esp_pipeline`/`rfq_pipeline` ⇒ null when absent).
  * `pricing_source_mode` is always emitted (integer enum); `book_skew_weight` is emitted
  * ONLY for mode `3` with a set weight — mirroring the server's `Option<f64>` presence
  * treatment (absent ⇒ accept the server default of 0.5), never sent as `null`.
+ * The last-look policy mirrors the same treatment: `last_look_mode` is ALWAYS emitted
+ * (a plain integer enum); `last_look_tolerance_bps` / `async_giveback_pct` are emitted
+ * only when set (absent ⇒ the server default of 1.0 / 50), never sent as `null`.
  */
 export function pricingGroupSpecToWire(g: PricingGroup): WireObject {
   const body: WireObject = {
@@ -4066,9 +4075,16 @@ export function pricingGroupSpecToWire(g: PricingGroup): WireObject {
     share_pipeline: g.sharePipeline,
     enabled: g.enabled,
     pricing_source_mode: g.pricingSourceMode,
+    last_look_mode: g.lastLookMode,
   };
   if (g.pricingSourceMode === 3 && g.bookSkewWeight !== null) {
     body["book_skew_weight"] = g.bookSkewWeight;
+  }
+  if (g.lastLookToleranceBps !== null) {
+    body["last_look_tolerance_bps"] = g.lastLookToleranceBps;
+  }
+  if (g.asyncGivebackPct !== null) {
+    body["async_giveback_pct"] = g.asyncGivebackPct;
   }
   return body;
 }
@@ -4078,6 +4094,8 @@ export function pricingGroupDescFromWire(o: WireObject): PricingGroup {
   const rawEsp = o["esp_pipeline"];
   const rawRfq = o["rfq_pipeline"];
   const rawSkew = o["book_skew_weight"];
+  const rawTol = o["last_look_tolerance_bps"];
+  const rawGiveback = o["async_giveback_pct"];
   return {
     id: str(o, "id"),
     name: str(o, "name"),
@@ -4093,6 +4111,9 @@ export function pricingGroupDescFromWire(o: WireObject): PricingGroup {
     enabled: o["enabled"] === true,
     pricingSourceMode: pricingSourceModeFromWire(o["pricing_source_mode"]),
     bookSkewWeight: typeof rawSkew === "number" ? rawSkew : null,
+    lastLookMode: lastLookModeFromWire(o["last_look_mode"]),
+    lastLookToleranceBps: typeof rawTol === "number" ? rawTol : null,
+    asyncGivebackPct: typeof rawGiveback === "number" ? rawGiveback : null,
   };
 }
 

@@ -43,6 +43,9 @@ function group(overrides: Partial<PricingGroup> = {}): PricingGroup {
     enabled: true,
     pricingSourceMode: 0,
     bookSkewWeight: null,
+    lastLookMode: 0,
+    lastLookToleranceBps: null,
+    asyncGivebackPct: null,
     ...overrides,
   };
 }
@@ -266,6 +269,116 @@ describe("PricingGroupsWorkspace — pricing-source control", () => {
     const wire = pricingGroupSpecToWire(createPricingGroup.mock.calls[0]![0] as PricingGroup);
     expect(wire["pricing_source_mode"]).toBe(3);
     expect(wire["book_skew_weight"]).toBe(0.25);
+  });
+});
+
+describe("PricingGroupsWorkspace — last-look control", () => {
+  it("reflects the group's current last-look mode + tolerance on open", async () => {
+    state.app = makeApp({
+      user: admin,
+      isAdmin: true,
+      groups: [
+        group({
+          id: "GROUP-LL",
+          name: "GROUP-LL",
+          lastLookMode: 1,
+          lastLookToleranceBps: 2.5,
+          asyncGivebackPct: 40,
+        }),
+      ],
+    });
+    render(<PricingGroupsWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: /GROUP-LL/ }));
+    const dialog = await screen.findByRole("dialog");
+
+    const select = within(dialog).getByRole("combobox", { name: /Last-look/ });
+    expect((select as HTMLSelectElement).value).toBe("1");
+    expect((within(dialog).getByLabelText(/Tolerance \(bps\)/) as HTMLInputElement).value).toBe("2.5");
+    // Async ⇒ the giveback slider is present, seeded from the stored value.
+    expect(within(dialog).getByRole("slider", { name: /Async giveback %/ })).toBeInTheDocument();
+  });
+
+  it("reveals the async giveback control ONLY for Async (mode 1)", async () => {
+    state.app = makeApp({ user: admin, isAdmin: true, groups: [group()] });
+    render(<PricingGroupsWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: /New pricing group/i }));
+    const dialog = await screen.findByRole("dialog");
+
+    const select = within(dialog).getByRole("combobox", { name: /Last-look/ });
+    // Sync by default ⇒ no giveback slider (the book-skew slider is also absent at mode 0).
+    expect(within(dialog).queryByRole("slider", { name: /Async giveback %/ })).toBeNull();
+
+    fireEvent.change(select, { target: { value: "1" } });
+    expect(within(dialog).getByRole("slider", { name: /Async giveback %/ })).toBeInTheDocument();
+
+    // Switching back to Sync hides + drops it.
+    fireEvent.change(select, { target: { value: "0" } });
+    expect(within(dialog).queryByRole("slider", { name: /Async giveback %/ })).toBeNull();
+  });
+
+  it("persists last_look_mode + tolerance on the write, omitting giveback off Async", async () => {
+    const createPricingGroup = vi.fn(async (g: PricingGroup) => ({ ...g, id: "GROUP-LL" }));
+    state.app = makeApp({ user: admin, isAdmin: true, groups: [], createPricingGroup });
+    render(<PricingGroupsWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: /New pricing group/i }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: "GROUP-LL" } });
+    // Stay Sync (mode 0); set a tolerance.
+    fireEvent.change(within(dialog).getByLabelText(/Tolerance \(bps\)/), { target: { value: "1.5" } });
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: /Create group/i }));
+    });
+
+    await waitFor(() => expect(createPricingGroup).toHaveBeenCalledTimes(1));
+    const saved = createPricingGroup.mock.calls[0]![0] as PricingGroup;
+    expect(saved.lastLookMode).toBe(0);
+    const wire = pricingGroupSpecToWire(saved);
+    expect(wire["last_look_mode"]).toBe(0);
+    expect(wire["last_look_tolerance_bps"]).toBe(1.5);
+    // Sync ⇒ no giveback on the write.
+    expect("async_giveback_pct" in wire).toBe(false);
+  });
+
+  it("carries async_giveback_pct on the write for Async once the slider is moved", async () => {
+    const createPricingGroup = vi.fn(async (g: PricingGroup) => ({ ...g, id: "GROUP-LL" }));
+    state.app = makeApp({ user: admin, isAdmin: true, groups: [], createPricingGroup });
+    render(<PricingGroupsWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: /New pricing group/i }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: "GROUP-LL" } });
+    fireEvent.change(within(dialog).getByRole("combobox", { name: /Last-look/ }), {
+      target: { value: "1" },
+    });
+    fireEvent.change(within(dialog).getByRole("slider", { name: /Async giveback %/ }), {
+      target: { value: "40" },
+    });
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: /Create group/i }));
+    });
+
+    await waitFor(() => expect(createPricingGroup).toHaveBeenCalledTimes(1));
+    const wire = pricingGroupSpecToWire(createPricingGroup.mock.calls[0]![0] as PricingGroup);
+    expect(wire["last_look_mode"]).toBe(1);
+    expect(wire["async_giveback_pct"]).toBe(40);
+  });
+
+  it("disables the last-look controls without manage_pricing", async () => {
+    state.app = makeApp({
+      user: { id: "trader", email: "trader@celnet.com" },
+      isAdmin: false,
+      groups: [group({ id: "GROUP-LL", name: "GROUP-LL", lastLookMode: 1 })],
+    });
+    render(<PricingGroupsWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: /GROUP-LL/ }));
+    const dialog = await screen.findByRole("dialog");
+
+    expect(within(dialog).getByRole("combobox", { name: /Last-look/ })).toBeDisabled();
+    expect(within(dialog).getByLabelText(/Tolerance \(bps\)/)).toBeDisabled();
+    expect(within(dialog).getByRole("slider", { name: /Async giveback %/ })).toBeDisabled();
   });
 });
 

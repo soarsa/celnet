@@ -17,15 +17,20 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { gotoMockView, installFrozenClock } from "./fidelityHelpers";
 import { expectNoSeriousA11y } from "./helpers";
 
-/** Open the Administration domain's Pricing Groups workspace from the mock boot. */
+/**
+ * Open the consolidated FI "Pricing" surface (its default "Pricing Groups" tab) from
+ * the mock boot. The surface is `manage_pricing·fixed_income`-gated and now lives under
+ * the Fixed Income domain (the Administration→Pricing-Groups rail entry was retired when
+ * Pricing Groups + Tiering were consolidated into one FI "Pricing" workspace).
+ */
 async function openPricingGroups(page: Page): Promise<void> {
   await page
     .getByRole("tablist", { name: "product domains" })
-    .getByRole("tab", { name: "Administration" })
+    .getByRole("tab", { name: "Fixed Income" })
     .click();
   await page
     .getByRole("complementary", { name: "workspaces" })
-    .getByRole("button", { name: "Pricing Groups", exact: false })
+    .getByRole("button", { name: "Pricing", exact: false })
     .click();
   await expect(page.getByRole("heading", { name: "Groups", exact: true })).toBeVisible();
 }
@@ -113,13 +118,14 @@ test("admin builds a pricing-group pipeline by drag-and-drop, saves, and it pers
   await page.getByTestId("pipeline-canvas").scrollIntoViewIfNeeded();
   await page.screenshot({ path: "e2e-artifacts/pricing-groups-canvas-1440.png", fullPage: true });
 
-  // 9) Save (Create). The roster then carries the new group; select it and confirm
-  //    the pipeline persisted (3 cards round-tripped through the mock registry).
+  // 9) Save (Create). A successful create CLOSES the editor popup and the roster then
+  //    carries the new group; select it and confirm the pipeline persisted (3 cards
+  //    round-tripped through the mock registry).
   await page.getByRole("button", { name: "Create group" }).click();
-  await expect(page.getByText("✓ Saved")).toBeVisible();
+  await expect(page.getByRole("dialog")).toBeHidden();
 
-  // Reselect a different group then back to E2E-TIER to force a fresh reseed from the store.
-  await page.getByRole("button", { name: "TIER1-EU", exact: false }).first().click();
+  // Reopen E2E-TIER from the roster (the modal closed on save) — a fresh reseed from
+  // the store, confirming the pipeline persisted.
   await page.getByRole("button", { name: "E2E-TIER", exact: false }).first().click();
   await expect(page.getByRole("heading", { name: "E2E-TIER" })).toBeVisible();
   await expect(page.locator('[data-testid^="feature-card-"]')).toHaveCount(3);
@@ -128,4 +134,57 @@ test("admin builds a pricing-group pipeline by drag-and-drop, saves, and it pers
   // 10) axe: 0 serious/critical on the pipeline builder.
   await page.clock.runFor(30_000);
   await expectNoSeriousA11y(page, "pricing groups workspace (pipeline builder)");
+});
+
+test("admin sets the last-look policy (Async + tolerance + giveback), saves, and it persists", async ({
+  page,
+}) => {
+  await installFrozenClock(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await gotoMockView(page, "admin");
+  await openPricingGroups(page);
+
+  // 1) Create a new group.
+  await page.getByRole("button", { name: "+ New" }).click();
+  await page.locator("#pg-name").fill("E2E-LL");
+  await expect(page.getByRole("heading", { name: "New pricing group" })).toBeVisible();
+
+  // 2) Last-look defaults to Sync ⇒ the async-giveback control is hidden.
+  const mode = page.locator("#pg-last-look-mode");
+  await expect(mode).toHaveValue("0");
+  await expect(page.locator("#pg-async-giveback")).toHaveCount(0);
+
+  // 3) Set the adverse-move tolerance (protects the desk in both modes).
+  await page.locator("#pg-last-look-tol").fill("2.5");
+
+  // 4) Switch to Async ⇒ the giveback slider appears; set it to 40%.
+  await mode.selectOption("1");
+  const giveback = page.locator("#pg-async-giveback");
+  await expect(giveback).toBeVisible();
+  await giveback.fill("40");
+
+  // Screenshot the last-look section for the artifact.
+  await page.screenshot({ path: "e2e-artifacts/pricing-groups-last-look-1440.png", fullPage: true });
+
+  // 5) Save (Create) — a successful create CLOSES the editor popup. Then reselect the
+  //    group from the roster to force a fresh reseed from the store.
+  await page.getByRole("button", { name: "Create group" }).click();
+  await expect(page.getByRole("dialog")).toBeHidden();
+
+  // Reopen E2E-LL from the roster (the modal closed on save) — a fresh reseed from the store.
+  await page.getByRole("button", { name: "E2E-LL", exact: false }).first().click();
+  await expect(page.getByRole("heading", { name: "E2E-LL" })).toBeVisible();
+
+  // 6) The last-look policy round-tripped: mode Async, tolerance 2.5, giveback 40.
+  await expect(page.locator("#pg-last-look-mode")).toHaveValue("1");
+  await expect(page.locator("#pg-last-look-tol")).toHaveValue("2.5");
+  await expect(page.locator("#pg-async-giveback")).toHaveValue("40");
+
+  // 7) Flip back to Sync ⇒ the giveback control disappears (and is dropped from the write).
+  await page.locator("#pg-last-look-mode").selectOption("0");
+  await expect(page.locator("#pg-async-giveback")).toHaveCount(0);
+
+  // 8) axe: 0 serious/critical with the last-look section rendered.
+  await page.clock.runFor(30_000);
+  await expectNoSeriousA11y(page, "pricing groups workspace (last-look policy)");
 });
