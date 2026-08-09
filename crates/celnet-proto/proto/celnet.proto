@@ -3413,8 +3413,8 @@ enum CurveInterpolation {
 
 // A named, reference-data-carrying interest-rate curve definition — the unit the
 // multi-curve registry lists and edits. `curve_id` is the stable registry key;
-// `pillars` reuses `CurveSet` (which already carries the currency + reference date
-// + calibrating par-OIS pillars). The `index_label` / `day_count` / `calendar`
+// `pillars` reuses `CurveSet` (which already carries the currency + reference date +
+// calibrating par-OIS pillars). The `index_label` / `day_count` / `calendar`
 // fields are descriptive reference-data metadata rendered in the curve editor; the
 // bootstrap conventions the engine applies (US calendar, ACT/360 accrual, ACT/365F
 // discount time) are fixed by the USD-SOFR convention set today and are documented
