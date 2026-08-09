@@ -45,7 +45,7 @@ pub use bond::{
 };
 pub use bootstrap::{
     BootstrapError, CalibrationInstrument, OisQuote, VanillaIrsQuote, bootstrap_curve,
-    bootstrap_ois,
+    bootstrap_curve_with, bootstrap_ois, bootstrap_ois_with,
 };
 pub use curve::{Curve, CurveError, Interpolation};
 pub use daycount::AccrualBasis;

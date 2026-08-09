@@ -36,10 +36,11 @@ use celnet_proto::{
     RatesPricingResult, Side, VanillaIrsInstrument, pillar_tenor, rates_instrument,
 };
 use celnet_rates::{
-    AccrualBasis, BootstrapError, Curve, Fra, FraError, OisQuote, OisSchedule, PaymentFrequency,
-    ScheduleError, SwapError, VanillaSwap, bootstrap_ois, fra_par_rate, fra_risk, ois_par_rate,
-    ois_risk, swap_leg_schedule, swap_par_rate, swap_risk, us_settlement_calendar,
-    usd_ois_schedule_for_months, usd_ois_schedule_to_maturity, usd_sofr_ois_schedule,
+    AccrualBasis, BootstrapError, Curve, Fra, FraError, Interpolation, OisQuote, OisSchedule,
+    PaymentFrequency, ScheduleError, SwapError, VanillaSwap, bootstrap_ois, bootstrap_ois_with,
+    fra_par_rate, fra_risk, ois_par_rate, ois_risk, swap_leg_schedule, swap_par_rate, swap_risk,
+    us_settlement_calendar, usd_ois_schedule_for_months, usd_ois_schedule_to_maturity,
+    usd_sofr_ois_schedule,
 };
 use celnet_types::{DayCount, Rate};
 use time::{Date, Month};
@@ -322,13 +323,34 @@ pub(crate) struct ResolvedCurveSet {
 /// reference date, unsupported currency, empty/non-increasing pillars, or a
 /// [`RatesPriceError::Bootstrap`] numeric failure).
 pub(crate) fn resolve_curve_set(curve: &CurveSet) -> Result<ResolvedCurveSet, RatesPriceError> {
+    resolve_curve_set_with(curve, Interpolation::LogLinearDf)
+}
+
+/// Resolve and bootstrap a wire [`CurveSet`] into a [`ResolvedCurveSet`] under a selected
+/// interpolation scheme, so a queried curve is bootstrapped with the interpolation the caller
+/// stored for it (`FI-CURVES-SPEC.md` §4). The curve genuinely reprices its calibrating OIS to par
+/// *under `interp`* — for [`Interpolation::MonotoneConvexForward`] the bootstrap solves with
+/// monotone-convex intermediate-cashflow interpolation, not a post-hoc re-wrap of log-linear pillars.
+///
+/// [`resolve_curve_set`] is exactly this with [`Interpolation::LogLinearDf`] — unchanged, so every
+/// existing caller stays byte-identical / log-linear.
+///
+/// # Errors
+///
+/// Any [`RatesPriceError`] the shared resolve/bootstrap path raises (missing/invalid reference date,
+/// unsupported currency, empty/non-increasing pillars, or a [`RatesPriceError::Bootstrap`] numeric
+/// failure — which, for the monotone-convex scheme, includes a non-converging refinement).
+pub(crate) fn resolve_curve_set_with(
+    curve: &CurveSet,
+    interp: Interpolation,
+) -> Result<ResolvedCurveSet, RatesPriceError> {
     let reference_date = curve
         .reference_date
         .as_ref()
         .ok_or(RatesPriceError::MissingReferenceDate)?;
     let reference = resolve_date(reference_date)?;
     let quotes = build_quotes(curve, reference)?;
-    let curve = bootstrap_ois(&quotes)?;
+    let curve = bootstrap_ois_with(&quotes, interp)?;
     Ok(ResolvedCurveSet { quotes, curve })
 }
 
