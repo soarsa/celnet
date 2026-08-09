@@ -4768,6 +4768,9 @@ fn hedge_provenance_to_json(p: &HedgeProvenance) -> Value {
     }
     m.insert("advisory".to_string(), json!(p.advisory));
     m.insert("lps".to_string(), json!(p.lps));
+    if let Some(parent) = p.parent_position_id {
+        m.insert("parent_position_id".to_string(), json!(parent));
+    }
     Value::Object(m)
 }
 

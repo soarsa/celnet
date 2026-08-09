@@ -5429,6 +5429,12 @@ message HedgeProvenance {
   // when no scope panel is set, the per-rule RFQ include list / the full known panel).
   // Empty for internal / no-trade actions. Answers "which LPs did we hedge on?".
   repeated string lps = 20;
+  // The parent booked position id this hedge offsets — the reconciliation key to the
+  // originating `Deal` (which carries the same `position_id`). Present on a per-fill
+  // execution record emitted when a fill was classified B2B / shed externally; absent on
+  // the book-level advisory-intent records the policy engine stamps on a threshold breach
+  // (those are keyed by book, not a single fill). Presence-tracked.
+  optional uint64 parent_position_id = 21;
 }
 
 // The advisory shadow-run projection of one hedge decision — what the engine WOULD

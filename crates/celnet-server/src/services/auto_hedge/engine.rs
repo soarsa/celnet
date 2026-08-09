@@ -111,6 +111,26 @@ impl AutoHedgeEngine {
         g.daily_external = 0.0;
     }
 
+    /// Record a **per-fill external hedge-execution** record into the shared provenance ring
+    /// the `ListHedgeProvenance` RPC serves, assigning it a fresh `hedge_id`; returns the
+    /// stored record. Unlike the book-level advisory-intent records [`Self::evaluate`] stamps
+    /// on a threshold breach, this is keyed to a single fill (`parent_position_id`) and carries
+    /// the real shed price/mid, so the Hedge Desk populates and reconciles to the originating
+    /// B2B deal even when the book-level band did not itself breach (a below-min-edge fill is
+    /// backed-to-back regardless of the book's RAG band). The caller supplies the fully-built
+    /// record (all economics computed off the fill); this method only mints the id + rings it.
+    pub fn record_execution(&self, mut prov: HedgeProvenance) -> HedgeProvenance {
+        let mut g = self.lock();
+        let id = g.next_hedge;
+        g.next_hedge = g.next_hedge.saturating_add(1);
+        prov.hedge_id = format!("HDG-{id}");
+        if g.ring.len() >= self.capacity {
+            g.ring.pop_front();
+        }
+        g.ring.push_back(prov.clone());
+        prov
+    }
+
     /// The recorded provenance, newest first, optionally filtered by `book` / `instrument`.
     #[must_use]
     pub fn provenance(&self, book: Option<&str>, instrument: Option<&str>) -> Vec<HedgeProvenance> {
@@ -343,6 +363,10 @@ impl AutoHedgeEngine {
             lp_won: None,
             advisory,
             lps,
+            // A book-level advisory-intent record is not keyed to a single fill — the per-fill
+            // execution record (`RatesPositionStore::stamp_internalise` → `record_execution`)
+            // carries the parent position id for deal reconciliation.
+            parent_position_id: None,
         };
         if g.ring.len() >= self.capacity {
             g.ring.pop_front();

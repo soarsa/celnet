@@ -6800,6 +6800,8 @@ fn hedge_provenance_full() -> HedgeProvenance {
         advisory: false,
         // The effective LP set the RFQ hedge targeted (repeated string — populated edge).
         lps: vec!["LP-A".to_owned(), "LP-B".to_owned()],
+        // A per-fill execution record carries the parent position id (the PRESENT edge).
+        parent_position_id: Some(4242),
     }
 }
 
@@ -6832,6 +6834,8 @@ fn hedge_provenance_no_lp() -> HedgeProvenance {
         advisory: true,
         // Internal / no-trade fire → no LP targeted (empty repeated edge).
         lps: Vec::new(),
+        // A book-level advisory-intent record is not keyed to a fill (the ABSENT edge).
+        parent_position_id: None,
     }
 }
 

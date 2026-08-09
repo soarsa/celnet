@@ -8965,6 +8965,9 @@ impl WireAdapter for HedgeProvenance {
             "lp_won" => self.lp_won.as_deref().map(WireVal::Str),
             "advisory" => Some(WireVal::Bool(self.advisory)),
             "lps" => Some(WireVal::RepeatedStr(&self.lps)),
+            // proto3 `optional`: absent ⇒ omitted (a per-fill execution record's parent
+            // position id; the book-level advisory-intent records carry none).
+            "parent_position_id" => self.parent_position_id.map(WireVal::U64),
             _ => None,
         }
     }

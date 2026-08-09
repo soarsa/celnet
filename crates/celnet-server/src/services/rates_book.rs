@@ -39,8 +39,8 @@ use celnet_limits::{
     PreTradeResult, ScopePath, pre_trade_check,
 };
 use celnet_proto::{
-    EntitlementPrincipal, EntitlementRule, InternaliseProvenance, RatesPosition, RiskDimension,
-    Side, rates_instrument,
+    EntitlementPrincipal, EntitlementRule, HedgeProvenance, InternaliseProvenance, RatesPosition,
+    RiskDimension, Side, rates_instrument,
 };
 use celnet_risk_cube::{BookId, EntityId, NetGreeks, NodeAggregate, VegaPillar};
 use celnet_risk_routing::{RiskRouter, RiskRoutingGraph, RoutingContext};
@@ -1141,7 +1141,47 @@ impl RatesPositionStore {
         self.internalise
             .write()
             .expect("rates internalise lock poisoned")
-            .insert(fill.position_id, prov);
+            .insert(fill.position_id, prov.clone());
+
+        // Hedge Desk population (§6/§8.4): when THIS fill sheds risk externally (an over-cap
+        // overflow OR a below-min-edge back-to-back) but the policy engine did NOT itself stamp
+        // a book-level advisory-intent record (a green/amber-band `Warehouse` action stamps
+        // none — yet a below-tolerance fill is still backed-to-back), emit a **per-fill
+        // hedge-execution record** into the same ring the `ListHedgeProvenance` RPC serves, so
+        // the LIVE HEDGE DESK populates and reconciles to the originating B2B deal (keyed by the
+        // fill's `position_id`, which the `Deal` also carries). The shed amount is the fill's
+        // external DV01; the reference price is the engine mid the composite/curve produced — an
+        // ADVISORY record (nothing is submitted to a live venue at this shadow-run seam, §8.4),
+        // never a fabricated fill. When the engine already recorded a book-level intent (a
+        // threshold breach) the desk is populated from that, so we do not double-record.
+        if external_dv01 > 0.0 && outcome.provenance.is_none() {
+            let execution = HedgeProvenance {
+                hedge_id: String::new(), // minted by `record_execution`
+                book: book.to_owned(),
+                instrument: ctx.instrument_id.clone(),
+                fired_at: now,
+                metric: thr_def.metric.as_i32(),
+                threshold: wh.cap,
+                net_risk: book_net_dv01,
+                utilization,
+                band: prov.hedge_band.clone(),
+                policy_path: outcome.intent.policy_path.clone(),
+                action: outcome.intent.action.clone(),
+                internal_crossed: internal_dv01,
+                external_hedged: external_dv01,
+                residual: 0.0,
+                // The advisory shed level is the engine reference mid the composite/curve
+                // produced for this fill (§8.4 — nothing is executed on a venue at this seam).
+                hedge_price: mid,
+                mid_at_fire: mid,
+                slippage_bp: 0.0,
+                lp_won: None,
+                advisory: true,
+                lps: outcome.intent.lps.clone(),
+                parent_position_id: Some(fill.position_id),
+            };
+            policy.engine.record_execution(execution);
+        }
     }
 
     /// The routed book's net DV01 (signed linear PV01 proxy) over the positions currently
@@ -2252,6 +2292,64 @@ pub(crate) mod tests {
         assert_eq!(prov.external_dv01, 0.0);
         assert!((prov.edge_bps - 5.0).abs() < 1e-6);
         assert_eq!(prov.hedge_band, "green");
+    }
+
+    /// Part C: a fill classified B2B (below the min-edge tolerance) that the book-level band
+    /// did NOT itself breach STILL emits a per-fill hedge-EXECUTION record into the ring the
+    /// LIVE HEDGE DESK reads (`ListHedgeProvenance`), so the desk populates and reconciles to
+    /// the originating B2B deal via `parent_position_id`. Regression for "0 hedges · 0 external
+    /// despite B2B deals": the tolerance-driven external shed used to be advisory-only with no
+    /// execution record when the engine warehoused at book level.
+    #[test]
+    fn b2b_below_tolerance_fill_emits_a_reconcilable_hedge_execution() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let policy = hedge_policy("wh", 100_000.0, 0.5);
+        // The SAME engine the `ListHedgeProvenance` RPC serves (production wires
+        // `Arc::clone(&self.auto_hedge)` into the policy).
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+        // Deal AT the mid ⇒ 0 captured edge, below the 0.5bp floor ⇒ below tolerance ⇒ the
+        // whole fill is backed-to-back externally; the 5000-DV01 fill sits far under the 100k
+        // cap (green band) ⇒ the policy engine warehouses and stamps NO book-level intent.
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+        let prov = store
+            .internalise_of(booked.position_id)
+            .expect("a priced fill under a hedge policy is stamped");
+        assert!(
+            !prov.within_tolerance,
+            "a zero-edge fill is below the floor"
+        );
+        assert!(
+            prov.external_dv01 > 0.0,
+            "the whole fill is shed externally"
+        );
+        assert!(
+            !prov.internalised,
+            "a below-tolerance fill is not warehoused"
+        );
+
+        // The Hedge Desk ring now carries a per-fill execution record reconciling to the deal.
+        let records = engine.provenance(None, None);
+        let exec = records
+            .iter()
+            .find(|p| p.parent_position_id == Some(booked.position_id))
+            .expect("a hedge-execution record was emitted for the B2B fill");
+        assert!(
+            (exec.external_hedged - prov.external_dv01).abs() < 1e-6,
+            "the shed amount is the fill's external DV01"
+        );
+        assert!(exec.advisory, "the shadow-run shed is advisory");
+        assert!(
+            exec.mid_at_fire > 0.0,
+            "the record carries the reference mid"
+        );
+        assert_eq!(
+            exec.mid_at_fire, exec.hedge_price,
+            "the advisory shed level is the engine reference mid"
+        );
     }
 
     /// Regression (live UAT 4375541): the firm primed a hedge policy with NO exit graph and
