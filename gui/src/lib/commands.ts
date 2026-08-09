@@ -63,6 +63,7 @@ export type WorkspaceId =
   | "clientflow"
   | "latencyops"
   | "streetliquidity"
+  | "eventtrace"
   | "connections"
   | "admin"
   | "permissions"
@@ -312,6 +313,11 @@ export const RAIL: readonly {
   // rejects, win-rate + mean cover. Cross-asset, same `view_analytics` gate as the
   // other analytics rows. Read-only ops/analytics observability.
   { id: "streetliquidity", glyph: "⇶", label: "Street Liquidity", subtitle: "Per-LP win-rate · deals · last-look", section: "analytics", assets: CAPABILITY_ASSETS },
+  // Event Trace — the per-LIFT timeline (the per-trace complement to Latency/Ops'
+  // aggregate histograms): one lift stitched under a single trace id price→order→
+  // acceptance→risk→hedge, with inter-stage latency + each stage's detail. Cross-asset,
+  // same `view_analytics` gate as the other analytics rows. Read-only observability.
+  { id: "eventtrace", glyph: "⛓", label: "Event Trace", subtitle: "Price→order→risk→hedge timeline", section: "analytics", assets: CAPABILITY_ASSETS },
   // Administration / ops — the Administration DOMAIN tab, no license concept. These
   // four surfaces carry an explicit `viewCap` so they are DELEGABLE off the coarse
   // `isAdmin` flag (docs/PERMISSIONS-GRANULAR-REVIEW.md §4): a signed-in holder of
@@ -492,6 +498,7 @@ export const ANALYTICS_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceI
   "clientflow",
   "latencyops",
   "streetliquidity",
+  "eventtrace",
 ]);
 
 /**
@@ -563,6 +570,8 @@ export const WORKSPACE_CAPABILITY: Partial<Record<WorkspaceId, CapabilityAction>
   latencyops: "view_analytics",
   // Street Liquidity is the LP-side analytics READ — same `view_analytics` gate.
   streetliquidity: "view_analytics",
+  // Event Trace is the per-lift analytics READ — same `view_analytics` gate.
+  eventtrace: "view_analytics",
 };
 
 /**

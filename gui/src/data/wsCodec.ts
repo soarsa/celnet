@@ -256,6 +256,11 @@ import type {
   StreamReject,
   StrikeOrDelta,
   Tenor,
+  TraceEvent,
+  TraceFilter,
+  TraceOutcome,
+  TraceStage,
+  TraceSummary,
   TradableToken,
   TwoWayPrice,
   Underlying,
@@ -269,7 +274,7 @@ import type {
   XvaResult,
   XvaSurvivalCurve,
 } from "./contract";
-import { curveInterpolationCode, curveInterpolationFromCode } from "./contract";
+import { curveInterpolationCode, curveInterpolationFromCode, TRACE_STAGE_ORDER } from "./contract";
 import * as e from "./enums";
 
 /** A decoded server frame is a JSON object with a `type` discriminator. */
@@ -6054,6 +6059,112 @@ export function listLatencyMetricsResponseFromWire(o: WireObject): LatencyMetric
     stages: array(o, "stages").map(latencyStageFromWire),
     health: latencyHealthFromWire(child(o, "health")),
   };
+}
+
+// --- event tracing (GetTrace / ListTraces) ----------------------------------
+
+/**
+ * A presence-tracked optional wire STRING: a set string ⇒ its value, `null`/absent
+ * ⇒ `undefined` (the `undefined`-returning sibling of {@link optStrOrNull}). Used
+ * for the null-when-absent optional strings on a {@link TraceEvent} / {@link TraceSummary}.
+ */
+function optStr(o: WireObject, key: string): string | undefined {
+  const v = o[key];
+  return typeof v === "string" ? v : undefined;
+}
+
+/**
+ * Map the wire stage int (0–9) to its canonical {@link TraceStage} via
+ * {@link TRACE_STAGE_ORDER} (index === enum int). An out-of-range / unknown int
+ * decodes to `"unspecified"`, never a throw.
+ */
+export function traceStageFromWire(n: number): TraceStage {
+  return TRACE_STAGE_ORDER[n] ?? "unspecified";
+}
+
+/** Coerce the wire `outcome` string to a {@link TraceOutcome} (unknown ⇒ `in_flight`). */
+function traceOutcomeFromWire(s: string): TraceOutcome {
+  return s === "booked" || s === "hedged" || s === "rejected" ? s : "in_flight";
+}
+
+/**
+ * Decode one `TraceEvent`. `trace_id` / `timestamp_ns` are `uint64` recovered as
+ * `bigint`; `position_id` is a null-absent `uint64` (`optBigInt`); `stage` is the
+ * enum-as-int; `price`/`notional` are null-absent doubles; the id-like strings are
+ * null-absent (`optStr` ⇒ undefined when the field is `null`/absent).
+ */
+export function traceEventFromWire(o: WireObject): TraceEvent {
+  return {
+    traceId: numToBigInt(o, "trace_id"),
+    seq: num(o, "seq"),
+    stage: traceStageFromWire(num(o, "stage")),
+    timestampNs: numToBigInt(o, "timestamp_ns"),
+    symbol: str(o, "symbol"),
+    side: str(o, "side"),
+    price: optNum(o, "price"),
+    notional: optNum(o, "notional"),
+    quoteId: optStr(o, "quote_id"),
+    dealId: optStr(o, "deal_id"),
+    bookId: optStr(o, "book_id"),
+    counterparty: optStr(o, "counterparty"),
+    decision: optStr(o, "decision"),
+    hedgeId: optStr(o, "hedge_id"),
+    detail: optStr(o, "detail"),
+    positionId: optBigInt(o, "position_id"),
+  };
+}
+
+/** Decode one `TraceSummary` row. `total_latency_ns` is a duration recovered as a `number`. */
+export function traceSummaryFromWire(o: WireObject): TraceSummary {
+  return {
+    traceId: numToBigInt(o, "trace_id"),
+    firstStage: traceStageFromWire(num(o, "first_stage")),
+    lastStage: traceStageFromWire(num(o, "last_stage")),
+    firstTimestampNs: numToBigInt(o, "first_timestamp_ns"),
+    lastTimestampNs: numToBigInt(o, "last_timestamp_ns"),
+    totalLatencyNs: num(o, "total_latency_ns"),
+    eventCount: num(o, "event_count"),
+    symbol: str(o, "symbol"),
+    counterparty: optStr(o, "counterparty"),
+    outcome: traceOutcomeFromWire(str(o, "outcome")),
+  };
+}
+
+/**
+ * Frame `get_trace` — just the `trace_id` (`session_token` is auto-injected by the
+ * WS connection). The `bigint` id serializes as a JSON number (trace ids stay well
+ * within the safe-integer range).
+ */
+export function getTraceRequestToWire(traceId: bigint): WireObject {
+  return { trace_id: Number(traceId) };
+}
+
+/**
+ * Decode the `{ events: [...] }` get_trace reply (events already in `seq` /
+ * timestamp order, earliest first). An unknown / evicted trace_id yields `[]`.
+ */
+export function getTraceResponseFromWire(o: WireObject): TraceEvent[] {
+  return array(o, "events").map(traceEventFromWire);
+}
+
+/**
+ * Frame `list_traces` — optional `limit` / `symbol` / `counterparty` filters, each
+ * omitted when absent (an empty body lists the recent traces newest-first).
+ * `session_token` is auto-injected by the WS connection.
+ */
+export function listTracesRequestToWire(filter?: TraceFilter): WireObject {
+  const m: WireObject = {};
+  if (filter?.limit !== undefined) m["limit"] = filter.limit;
+  if (filter?.symbol !== undefined && filter.symbol.length > 0) m["symbol"] = filter.symbol;
+  if (filter?.counterparty !== undefined && filter.counterparty.length > 0) {
+    m["counterparty"] = filter.counterparty;
+  }
+  return m;
+}
+
+/** Decode the `{ traces: [...] }` list_traces reply (summary rows, newest first). */
+export function listTracesResponseFromWire(o: WireObject): TraceSummary[] {
+  return array(o, "traces").map(traceSummaryFromWire);
 }
 
 /** Decode a `RiskTransferInbox` push frame (`{ pending: [...], at_nanos }`). */

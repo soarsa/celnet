@@ -157,6 +157,11 @@ import type {
   SubmitDeskRequestRequest,
   SubmitDeskRequestResponse,
   TradableToken,
+  TraceEvent,
+  TraceFilter,
+  TraceOutcome,
+  TraceStage,
+  TraceSummary,
   TwoWayPrice,
   Update,
   UpdateUserInput,
@@ -497,6 +502,139 @@ function mockLatencyMetrics(): LatencyMetrics {
     stages: MOCK_LATENCY_STAGES.map((s) => ({ ...s })),
     health: { ...MOCK_LATENCY_HEALTH },
   };
+}
+
+// --- event-trace fixtures (the offline Event Trace view) --------------------
+
+/**
+ * A fixed civil anchor (ns since the Unix epoch, ≈ 2026-07-28T09:00Z) the STATIC
+ * trace fixtures hang their per-stage timestamps off, so `fmtClock` renders a
+ * sensible wall-clock and the whole fixture set is byte-for-byte deterministic
+ * across reloads. (The server's real trace timestamps are monotonic PROCESS-epoch
+ * nanos — the Δ-latencies are exact either way; only the absolute clock differs.)
+ */
+const TRACE_FIXTURE_BASE_NS = 1_785_661_200_000_000_000n;
+
+/** Build one trace event; `undefined` optionals stay absent (null-when-absent). */
+function mkTraceEvent(
+  traceId: bigint,
+  seq: number,
+  stage: TraceStage,
+  offsetNs: bigint,
+  symbol: string,
+  side: string,
+  extra: Partial<Omit<TraceEvent, "traceId" | "seq" | "stage" | "timestampNs" | "symbol" | "side">>,
+): TraceEvent {
+  return {
+    traceId,
+    seq,
+    stage,
+    timestampNs: TRACE_FIXTURE_BASE_NS + offsetNs,
+    symbol,
+    side,
+    ...extra,
+  };
+}
+
+/**
+ * The terminal outcome derived from a trace's events — mirrors the server's
+ * last-stage rule: HEDGE_FIRED ⇒ hedged, DEAL_BOOKED / HEDGE_DECIDED ⇒ booked, an
+ * explicit `reject…` decision ⇒ rejected, otherwise still in flight.
+ */
+function deriveTraceOutcome(events: readonly TraceEvent[]): TraceOutcome {
+  const last = events[events.length - 1];
+  if (!last) return "in_flight";
+  if (last.stage === "hedge_fired") return "hedged";
+  if (last.stage === "deal_booked" || last.stage === "hedge_decided") return "booked";
+  if (events.some((e) => e.decision?.toLowerCase().startsWith("reject"))) return "rejected";
+  return "in_flight";
+}
+
+/** Summarise a trace's ordered events into a {@link TraceSummary} row (list view). */
+function summaryFromEvents(events: readonly TraceEvent[]): TraceSummary {
+  const first = events[0]!;
+  const last = events[events.length - 1]!;
+  const cp = events.find((e) => e.counterparty !== undefined)?.counterparty;
+  return {
+    traceId: first.traceId,
+    firstStage: first.stage,
+    lastStage: last.stage,
+    firstTimestampNs: first.timestampNs,
+    lastTimestampNs: last.timestampNs,
+    totalLatencyNs: Number(last.timestampNs - first.timestampNs),
+    eventCount: events.length,
+    symbol: first.symbol,
+    counterparty: cp,
+    outcome: deriveTraceOutcome(events),
+  };
+}
+
+/**
+ * The static fixture traces the Event Trace view shows immediately under `?mock`
+ * (independent of any booked deal): (A) a fully booked+hedged EURUSD lift spanning
+ * ALL 9 stages with realistic per-stage optionals and strictly increasing
+ * timestamps → outcome "hedged"; (B) a GBPUSD lift the acceptance engine rejects,
+ * terminating at ACCEPTANCE_DECIDED → outcome "rejected". Deterministic.
+ */
+function staticFixtureTraces(): TraceEvent[][] {
+  // (A) booked + hedged — trace_id 7, all 9 stages. Deltas vary so one hop (the
+  // counterparty think-time between QUOTE_PUBLISHED→ORDER_RECEIVED) dominates.
+  const a: TraceEvent[] = [
+    mkTraceEvent(7n, 0, "price_computed", 0n, "EURUSD", "buy", {
+      price: 1.08495, notional: 5_000_000, counterparty: "cp-alpha", detail: "pinned-core level",
+    }),
+    mkTraceEvent(7n, 1, "quote_published", 2_400n, "EURUSD", "buy", {
+      price: 1.0850, notional: 5_000_000, quoteId: "Q-7001", counterparty: "cp-alpha",
+      detail: "bid=1.08490; offer=1.08510",
+    }),
+    mkTraceEvent(7n, 2, "order_received", 812_000_000n, "EURUSD", "buy", {
+      price: 1.0850, notional: 5_000_000, quoteId: "Q-7001", counterparty: "cp-alpha",
+      detail: "35=D lifting Q-7001",
+    }),
+    mkTraceEvent(7n, 3, "last_look", 812_050_000n, "EURUSD", "buy", {
+      quoteId: "Q-7001", counterparty: "cp-alpha", decision: "accepted", detail: "within tolerance",
+    }),
+    mkTraceEvent(7n, 4, "acceptance_decided", 812_180_000n, "EURUSD", "buy", {
+      counterparty: "cp-alpha", decision: "accept", detail: "auto-accept: within limits",
+    }),
+    mkTraceEvent(7n, 5, "risk_routed", 813_900_000n, "EURUSD", "buy", {
+      bookId: "BOOK-G10-FX", counterparty: "cp-alpha", detail: "routed by flow rule → G10 FX",
+    }),
+    mkTraceEvent(7n, 6, "deal_booked", 816_400_000n, "EURUSD", "buy", {
+      price: 1.0850, notional: 5_000_000, dealId: "deal-7", bookId: "BOOK-G10-FX",
+      counterparty: "cp-alpha", positionId: 4242n, detail: "position #4242 minted",
+    }),
+    mkTraceEvent(7n, 7, "hedge_decided", 816_950_000n, "EURUSD", "buy", {
+      hedgeId: "hedge-7", counterparty: "cp-alpha", positionId: 4242n,
+      detail: "warehouse 40% / shed 60%",
+    }),
+    mkTraceEvent(7n, 8, "hedge_fired", 820_300_000n, "EURUSD", "sell", {
+      price: 1.08505, notional: 3_000_000, hedgeId: "hedge-7", positionId: 4242n,
+      detail: "shed 3mm to LP cp-beta",
+    }),
+  ];
+  // (B) rejected — trace_id 8, terminates at ACCEPTANCE_DECIDED (reject).
+  const b: TraceEvent[] = [
+    mkTraceEvent(8n, 0, "price_computed", 0n, "GBPUSD", "sell", {
+      price: 1.27310, notional: 8_000_000, counterparty: "cp-gamma", detail: "pinned-core level",
+    }),
+    mkTraceEvent(8n, 1, "quote_published", 1_900n, "GBPUSD", "sell", {
+      price: 1.27300, notional: 8_000_000, quoteId: "Q-8001", counterparty: "cp-gamma",
+      detail: "bid=1.27290; offer=1.27310",
+    }),
+    mkTraceEvent(8n, 2, "order_received", 540_000_000n, "GBPUSD", "sell", {
+      price: 1.27300, notional: 8_000_000, quoteId: "Q-8001", counterparty: "cp-gamma",
+      detail: "35=D lifting Q-8001",
+    }),
+    mkTraceEvent(8n, 3, "last_look", 540_060_000n, "GBPUSD", "sell", {
+      quoteId: "Q-8001", counterparty: "cp-gamma", decision: "accepted", detail: "within tolerance",
+    }),
+    mkTraceEvent(8n, 4, "acceptance_decided", 540_120_000n, "GBPUSD", "sell", {
+      counterparty: "cp-gamma", decision: "reject: over counterparty limit",
+      detail: "credit check failed — exposure cap breached",
+    }),
+  ];
+  return [a, b];
 }
 
 /** The desk the exception-contract sample notifications are attributed to. */
@@ -2409,6 +2547,17 @@ export class MockTransport implements CelnetTransport {
   /** Live `pricing_control` push subscribers (banner + toolbar control). */
   private readonly pricingControlSubs = new Set<(c: PricingControl) => void>();
   private ratesPositionSeq = 1n;
+  /**
+   * The event-trace store: trace_id → ordered {@link TraceEvent}s (seq order). Seeded
+   * with the static fixtures (a booked+hedged + a rejected lift) so the Event Trace
+   * view is populated immediately, and appended to on every booked deal so any deal a
+   * trader lifts here has a resolvable trace (joined by `positionId`). Newer trace ids
+   * are minted from {@link traceSeq}, kept above the fixture ids.
+   */
+  private readonly traces = new Map<bigint, TraceEvent[]>(
+    staticFixtureTraces().map((events) => [events[0]!.traceId, events]),
+  );
+  private traceSeq = 100_000n;
   /**
    * The risk-transfer store: transfer_id → RiskTransfer. Backs the ticket (initiate),
    * the inbox (Pending set), and the audit trail (ListRiskTransfers). A re-attribution
@@ -4485,6 +4634,69 @@ export class MockTransport implements CelnetTransport {
     return mockLatencyMetrics();
   }
 
+  async getTrace(traceId: bigint): Promise<TraceEvent[]> {
+    // Unknown / evicted id ⇒ empty (mirrors the server). Deep-copy so a caller can
+    // never mutate the stored fixture.
+    const events = this.traces.get(traceId);
+    return events ? events.map((e) => ({ ...e })) : [];
+  }
+
+  async listTraces(filter?: TraceFilter): Promise<TraceSummary[]> {
+    let rows = [...this.traces.values()].map(summaryFromEvents);
+    // Newest-first by entry timestamp (synthesized booked-deal traces use the live
+    // clock, so they sort above the fixed-anchor fixtures).
+    rows.sort((a, b) => Number(b.firstTimestampNs - a.firstTimestampNs));
+    if (filter?.symbol !== undefined && filter.symbol.length > 0) {
+      rows = rows.filter((r) => r.symbol === filter.symbol);
+    }
+    if (filter?.counterparty !== undefined && filter.counterparty.length > 0) {
+      rows = rows.filter((r) => r.counterparty === filter.counterparty);
+    }
+    if (filter?.limit !== undefined && filter.limit > 0) rows = rows.slice(0, filter.limit);
+    return rows;
+  }
+
+  /**
+   * Synthesize + store a deterministic trace for a freshly-booked desk deal, so the
+   * Deals blotter's "View trace" link resolves live under `?mock`. The trace carries
+   * the seven pre-hedge stages (price → quote → order → last-look → acceptance →
+   * risk-route → book) with the deal's own facts — crucially `positionId ===
+   * deal.positionId`, the join key the blotter link scans for. Timestamps hang off
+   * the deal's execution instant (a booked lift's real wall-clock), working forward
+   * so DEAL_BOOKED lands at the execution time and the earlier stages precede it.
+   */
+  private recordDealTrace(deal: Deal): void {
+    const traceId = this.traceSeq++;
+    const bookedAt = deal.executedAtNanos;
+    // Stage offsets (ns) BEFORE the booking instant — the timeline ends at DEAL_BOOKED.
+    const base = bookedAt - 6_820_000n;
+    const symbol = `${deal.curveSet.currency} ${deal.instrument.tenorYears}Y OIS`;
+    const side = deal.side === "BUY" ? "buy" : "sell";
+    const cp = deal.counterparty;
+    const bookId = deal.riskBookId;
+    const ev = (
+      seq: number,
+      stage: TraceStage,
+      offsetNs: bigint,
+      extra: Partial<Omit<TraceEvent, "traceId" | "seq" | "stage" | "timestampNs" | "symbol" | "side">>,
+    ): TraceEvent => ({ traceId, seq, stage, timestampNs: base + offsetNs, symbol, side, ...extra });
+    const events: TraceEvent[] = [
+      ev(0, "price_computed", 0n, { price: deal.price, notional: deal.notional, counterparty: cp, detail: "pinned-core level" }),
+      ev(1, "quote_published", 2_100n, { price: deal.price, notional: deal.notional, quoteId: `Q-${deal.dealId}`, counterparty: cp, detail: "desk quote published" }),
+      ev(2, "order_received", 3_100_000n, { price: deal.price, notional: deal.notional, quoteId: `Q-${deal.dealId}`, counterparty: cp, detail: "counterparty lifted the quote" }),
+      ev(3, "last_look", 3_160_000n, { counterparty: cp, decision: "accepted", detail: "within tolerance" }),
+      ev(4, "acceptance_decided", 3_300_000n, { counterparty: cp, decision: "accept", detail: "auto-accept: within limits" }),
+      ev(5, "risk_routed", 4_900_000n, bookId !== undefined ? { bookId, counterparty: cp, detail: "routed by flow rule" } : { counterparty: cp, detail: "unrouted (no matching rule)" }),
+      ev(6, "deal_booked", 6_820_000n, {
+        price: deal.price, notional: deal.notional, dealId: deal.dealId,
+        ...(bookId !== undefined ? { bookId } : {}), counterparty: cp,
+        ...(deal.positionId !== undefined ? { positionId: deal.positionId } : {}),
+        detail: deal.positionId !== undefined ? `position #${deal.positionId.toString()} minted` : "booked",
+      }),
+    ];
+    this.traces.set(traceId, events);
+  }
+
   /** The set of book ids strictly below `id` in the seeded tree (for the acyclic guard). */
   private riskBookDescendants(id: string): Set<string> {
     const out = new Set<string>();
@@ -5081,6 +5293,9 @@ export class MockTransport implements CelnetTransport {
     // it carries the decision; rotated so a session shows the full band spread.
     deal.internalise = this.internaliseFor(deal, this.deals.size);
     this.deals.set(dealId, deal);
+    // Synthesize this lift's event trace so the Deals blotter "View trace" link
+    // resolves live (joined on positionId). Deterministic — derived from deal facts.
+    this.recordDealTrace(deal);
     const updated: DeskRequest = { ...existing, state: "ACCEPTED" };
     this.deskRequests.set(existing.requestId, updated);
     this.emitNotification({

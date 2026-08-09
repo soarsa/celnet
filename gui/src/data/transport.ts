@@ -131,6 +131,9 @@ import type {
   ListRiskTransfersFilter,
   StreamReject,
   Tenor,
+  TraceEvent,
+  TraceFilter,
+  TraceSummary,
   TwoWayPrice,
   Update,
   UpdateUserInput,
@@ -950,6 +953,25 @@ export interface CelnetTransport {
    * the `view_analytics` capability × the caller's assets (either asset admits).
    */
   listLatencyMetrics(): Promise<LatencyMetrics>;
+
+  /**
+   * AuthService.GetTrace — the full ordered event list of ONE lift's trace (the
+   * per-trace complement to the aggregate latency histograms): every stage of the
+   * lift's life (price → quote → order → last-look → acceptance → risk-route → book
+   * → hedge), each a timestamped {@link TraceEvent}, in `seq` (timestamp) order.
+   * An unknown / evicted `traceId` resolves to `[]`. Read-only, gated server-side
+   * on the `view_analytics` capability × the caller's assets (either asset admits).
+   */
+  getTrace(traceId: bigint): Promise<TraceEvent[]>;
+
+  /**
+   * AuthService.ListTraces — recent trace {@link TraceSummary} rows, newest first,
+   * optionally narrowed by exact-match `symbol` / `counterparty` and bounded by
+   * `limit` ({@link TraceFilter}; an absent filter lists the recent traces,
+   * server-clamped). The list companion to {@link getTrace}. Read-only, gated
+   * server-side on the `view_analytics` capability × the caller's assets.
+   */
+  listTraces(filter?: TraceFilter): Promise<TraceSummary[]>;
 
   // --- instrument reference-data registry ------------------------------------
 

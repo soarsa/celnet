@@ -437,6 +437,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                         x: e.clientX,
                         y: e.clientY,
                         hedgeSeed: hedgeSeedFromDeal(d),
+                        positionId: d.positionId,
                       });
                     }}
                     onKeyDown={(e) => {
@@ -456,6 +457,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                           x: r.left + 12,
                           y: r.bottom - 8,
                           hedgeSeed: hedgeSeedFromDeal(d),
+                          positionId: d.positionId,
                         });
                       }
                     }}
@@ -520,6 +522,13 @@ export function DealsBlotterWorkspace(): React.ReactElement {
               app.setWorkspace("hedging");
             }}
             canHedge={canHedge}
+            onViewTrace={(t) => {
+              // Deep-link to the Event Trace timeline, resolved by the deal's durable
+              // positionId (the blotter↔trace join key). Only present on booked-position
+              // rows (the item hides otherwise).
+              if (t.positionId === undefined) return;
+              app.openTrace({ kind: "position", positionId: t.positionId, label: t.counterparty });
+            }}
           />
           {selected && <DealTicket deal={selected} onClose={() => setSelected(null)} />}
         </div>

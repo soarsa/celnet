@@ -1,0 +1,547 @@
+/* EventTraceWorkspace — the per-lift event-trace view (list + timeline).
+   Uses the app design tokens (src/design/tokens.css) so both themes are honoured
+   automatically. A two-pane layout: a scannable recent-traces grid on the left, a
+   vertical stage timeline on the right whose per-hop Δ latency is drawn to scale
+   (single accent hue) with the slowest hop emphasised. Motion stays on
+   transform/opacity only. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.headMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 12rem;
+}
+
+.title {
+  font-family: var(--font-brand, var(--font-ui));
+  font-size: var(--type-title);
+  line-height: var(--type-title-lh);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.subtitle {
+  font-size: var(--type-caption);
+  line-height: var(--type-caption-lh);
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 46rem;
+}
+
+/* --- explainer ------------------------------------------------------------ */
+
+.explainer {
+  font-size: var(--type-caption);
+  line-height: var(--type-caption-lh);
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 70rem;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+}
+
+.explainer strong {
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
+}
+
+.error {
+  color: var(--danger);
+  font-size: var(--type-caption);
+  margin: 0;
+}
+
+.notice {
+  font-size: var(--type-caption);
+  line-height: var(--type-caption-lh);
+  color: var(--text-secondary);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in oklab, var(--warn) 10%, var(--bg-inset));
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r-sm);
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: var(--type-body);
+  margin: var(--space-6) 0;
+  text-align: center;
+}
+
+/* --- two-pane layout ------------------------------------------------------ */
+
+.panes {
+  display: grid;
+  grid-template-columns: minmax(20rem, 30rem) 1fr;
+  gap: var(--space-4);
+  align-items: start;
+  min-height: 0;
+}
+
+@media (max-width: 60rem) {
+  .panes {
+    grid-template-columns: 1fr;
+  }
+}
+
+.listPane,
+.timelinePane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* --- filters -------------------------------------------------------------- */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.filter {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 9rem;
+  min-width: 8rem;
+}
+
+.filterLabel {
+  font-size: var(--type-micro);
+  line-height: var(--type-micro-lh);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-emphasis);
+}
+
+.filterInput {
+  appearance: none;
+  font: inherit;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.filterInput:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+/* --- list table ----------------------------------------------------------- */
+
+.tableScroll {
+  overflow-x: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+}
+
+.table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+}
+
+.caption {
+  caption-side: top;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--grid-line);
+  white-space: nowrap;
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+}
+
+.thText {
+  text-align: left;
+}
+
+.thNum {
+  text-align: right;
+}
+
+.sortBtn,
+.sortBtnNum {
+  appearance: none;
+  background: transparent;
+  border: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--cell-pad-y, 6px) var(--cell-pad-x, 10px);
+  width: 100%;
+}
+
+.sortBtnNum {
+  justify-content: flex-end;
+}
+
+.sortBtn:hover,
+.sortBtnNum:hover {
+  color: var(--text-primary);
+}
+
+.sortBtn:focus-visible,
+.sortBtnNum:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.sortGlyph {
+  font-size: 0.7em;
+  color: var(--text-tertiary);
+}
+
+.table tbody tr:nth-child(even) {
+  background: color-mix(in oklab, var(--bg-inset) 40%, transparent);
+}
+
+.row:hover {
+  background: var(--bg-inset);
+}
+
+.rowSelected,
+.table tbody tr.rowSelected:nth-child(even) {
+  background: color-mix(in oklab, var(--accent) 14%, var(--bg-raised));
+}
+
+.rowHead {
+  text-align: left;
+  padding: 0;
+}
+
+.selectBtn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  /* Lift the accent link toward text-primary so 11px normal weight still clears
+     WCAG AA (raw --accent is 4.2:1 at this size); the hue still reads as a link. */
+  color: color-mix(in oklab, var(--accent) 42%, var(--text-primary));
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  padding: var(--cell-pad-y, 6px) var(--cell-pad-x, 10px);
+  border-bottom: 1px solid var(--hairline);
+  font-weight: var(--weight-emphasis);
+}
+
+.selectBtn:hover {
+  text-decoration: underline;
+}
+
+.selectBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.rowSelected .selectBtn {
+  color: var(--text-primary);
+}
+
+.cell {
+  padding: var(--cell-pad-y, 6px) var(--cell-pad-x, 10px);
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+.num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: var(--cell-pad-y, 6px) var(--cell-pad-x, 10px);
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* --- outcome badge -------------------------------------------------------- */
+
+.outcome {
+  display: inline-block;
+  font-size: var(--type-micro);
+  line-height: 1.4;
+  font-weight: var(--weight-emphasis);
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--out-tint, var(--hairline));
+  /* Text lifted toward text-primary for WCAG AA at 10px (the raw hue is ~4:1); the
+     full-strength hue stays on the border + fill so the outcome still reads by colour. */
+  color: color-mix(in oklab, var(--out-tint, var(--text-secondary)) 48%, var(--text-primary));
+  background: color-mix(in oklab, var(--out-tint, var(--hairline)) 14%, transparent);
+  white-space: nowrap;
+}
+
+.outHedged {
+  --out-tint: var(--bid, var(--accent));
+}
+
+.outBooked {
+  --out-tint: var(--accent);
+}
+
+.outRejected {
+  --out-tint: var(--danger);
+}
+
+.outInFlight {
+  --out-tint: var(--warn);
+}
+
+/* --- timeline ------------------------------------------------------------- */
+
+.paneTitle {
+  font-size: var(--type-body);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.paneTitleSub {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  font-weight: var(--weight-body, 400);
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: 1.75rem 1fr;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+}
+
+/* --- the connecting rail + node ------------------------------------------- */
+
+.stageRail {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+.stageRail::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--grid-line);
+}
+
+/* No rail above the first node / below the last, so the line reads as a spine. */
+.stage:first-child .stageRail::before {
+  top: 0.55rem;
+}
+
+.stage:last-child .stageRail::before {
+  bottom: calc(100% - 0.55rem);
+}
+
+.stageDot {
+  position: relative;
+  margin-top: 0.35rem;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--bg-raised);
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 3px var(--bg-base, var(--bg-raised));
+}
+
+.stageMax .stageDot {
+  background: var(--warn);
+  border-color: var(--warn);
+}
+
+.stageBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--bg-raised);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  min-width: 0;
+}
+
+.stageMax .stageBody {
+  border-color: color-mix(in oklab, var(--warn) 55%, var(--hairline));
+  background: color-mix(in oklab, var(--warn) 7%, var(--bg-raised));
+}
+
+.stageHead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+.stageName {
+  font-size: var(--type-body);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+.stageClock {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+.stageDelta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.deltaLabel {
+  color: var(--text-tertiary);
+}
+
+.deltaStart {
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: var(--type-micro);
+}
+
+.stageMax .stageDelta {
+  color: var(--warn);
+  font-weight: var(--weight-emphasis);
+}
+
+.maxPill {
+  font-size: var(--type-micro);
+  font-weight: var(--weight-emphasis);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--warn);
+  border: 1px solid color-mix(in oklab, var(--warn) 55%, transparent);
+  background: color-mix(in oklab, var(--warn) 12%, transparent);
+  padding: 0 6px;
+  border-radius: 999px;
+}
+
+/* --- per-hop Δ bar (to scale across the trace) ---------------------------- */
+
+.stageBarTrack {
+  position: relative;
+  height: 6px;
+  width: 100%;
+  background: var(--grid-line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stageBarFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: color-mix(in oklab, var(--accent) 70%, transparent);
+  border-radius: 3px;
+}
+
+.stageMax .stageBarFill {
+  background: var(--warn);
+}
+
+/* --- stage details -------------------------------------------------------- */
+
+.details {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+}
+
+.detailField {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.detailLabel {
+  font-size: var(--type-micro);
+  line-height: var(--type-micro-lh);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-emphasis);
+}
+
+.detailValue {
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.detailAbsent {
+  color: var(--text-tertiary);
+}

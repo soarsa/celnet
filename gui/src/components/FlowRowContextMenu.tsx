@@ -33,6 +33,13 @@ export interface FlowRowMenuTarget {
    * (e.g. the Quotes blotter) — the hedge item then does not render.
    */
   hedgeSeed?: HedgeSeedDeal;
+  /**
+   * The deal's durable position id (`Deal.positionId`), present on booked-deal rows —
+   * the join key to the deal's EVENT TRACE. Enables the "View trace" action. Absent on
+   * rows without a booked position (unrouted / non-position deals, the Quotes blotter);
+   * the "View trace" item then does not render.
+   */
+  positionId?: bigint | undefined;
 }
 
 interface FlowRowContextMenuProps {
@@ -60,6 +67,12 @@ interface FlowRowContextMenuProps {
    * hedging is never offered the action.
    */
   canHedge?: boolean;
+  /**
+   * Invoke "View trace" for the row's deal — deep-link to the Event Trace timeline,
+   * resolved by the deal's `positionId`. Omitted on surfaces whose rows carry no
+   * position; the item also hides when the target has no `positionId`.
+   */
+  onViewTrace?: (target: FlowRowMenuTarget) => void;
 }
 
 /** Viewport margin (px) the clamp keeps around the menu. */
@@ -72,6 +85,7 @@ export function FlowRowContextMenu({
   canManageAcceptance,
   onChangeHedgingStrategy,
   canHedge = false,
+  onViewTrace,
 }: FlowRowContextMenuProps): React.ReactElement | null {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -159,6 +173,10 @@ export function FlowRowContextMenu({
   // a hedge policy — a non-`hedge` user is never shown it (unlike acceptance, which is
   // always shown so it stays discoverable).
   const showHedge = hedgeSeed !== undefined && onChangeHedgingStrategy !== undefined && canHedge;
+  // "View trace" is offered whenever the row carries a booked position (its join key to
+  // the event trace) AND the surface wired the handler — a read gate (`view_analytics`),
+  // enforced by the workspace's own gate, so the item stays discoverable here.
+  const showTrace = target.positionId !== undefined && onViewTrace !== undefined;
   return createPortal(
     <div
       ref={menuRef}
@@ -199,6 +217,23 @@ export function FlowRowContextMenu({
           <span className={styles.itemMain}>Change hedging strategy</span>
           <span className={styles.itemSub}>
             {`${hedgeSeed.productKind} ${hedgeSeed.currency} · new exit-policy rule from this deal`}
+          </span>
+        </button>
+      )}
+      {showTrace && (
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.item}
+          data-testid="flow-view-trace"
+          onClick={() => {
+            onViewTrace(target);
+            onClose();
+          }}
+        >
+          <span className={styles.itemMain}>View trace</span>
+          <span className={styles.itemSub}>
+            {`Event timeline for position #${target.positionId?.toString()}`}
           </span>
         </button>
       )}

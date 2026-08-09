@@ -40,6 +40,7 @@ import { PermissionsWorkspace } from "../workspaces/PermissionsWorkspace";
 import { PricingGroupsWorkspace } from "../workspaces/PricingGroupsWorkspace";
 import { ClientFlowWorkspace } from "../workspaces/analytics/ClientFlowWorkspace";
 import { LatencyOpsWorkspace } from "../workspaces/analytics/LatencyOpsWorkspace";
+import { EventTraceWorkspace } from "../workspaces/analytics/EventTraceWorkspace";
 import { StreetLiquidityWorkspace } from "../workspaces/analytics/StreetLiquidityWorkspace";
 import { ExcelWorkspace } from "../workspaces/ExcelWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
@@ -168,6 +169,9 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // Analytics: the street-side LP-liquidity league table — same top-level tab and
   // `view_analytics` gate. Cross-asset, read-only.
   streetliquidity: StreetLiquidityWorkspace,
+  // Analytics: the per-lift Event Trace timeline — same top-level tab and
+  // `view_analytics` gate. Cross-asset, read-only.
+  eventtrace: EventTraceWorkspace,
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,
   permissions: PermissionsWorkspace,

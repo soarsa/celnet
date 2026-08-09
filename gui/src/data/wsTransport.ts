@@ -116,6 +116,9 @@ import type {
   Side,
   Smile,
   SmileModel,
+  TraceEvent,
+  TraceFilter,
+  TraceSummary,
   UpdateUserInput,
   UserCapabilities,
   RoleCapabilities,
@@ -311,6 +314,10 @@ import {
   listLpFlowMetricsResponseFromWire,
   listLatencyMetricsRequestToWire,
   listLatencyMetricsResponseFromWire,
+  getTraceRequestToWire,
+  getTraceResponseFromWire,
+  listTracesRequestToWire,
+  listTracesResponseFromWire,
   riskBookRiskSubscribeToWire,
   riskBookRiskStreamSnapshotFromWire,
   riskBookRiskStreamUpdateFromWire,
@@ -2527,6 +2534,24 @@ export class WsTransport implements CelnetTransport {
       "latency_metrics",
     );
     return listLatencyMetricsResponseFromWire(reply);
+  }
+
+  async getTrace(traceId: bigint): Promise<TraceEvent[]> {
+    const reply = await this.conn.request(
+      "get_trace",
+      getTraceRequestToWire(traceId),
+      "trace",
+    );
+    return getTraceResponseFromWire(reply);
+  }
+
+  async listTraces(filter?: TraceFilter): Promise<TraceSummary[]> {
+    const reply = await this.conn.request(
+      "list_traces",
+      listTracesRequestToWire(filter),
+      "traces",
+    );
+    return listTracesResponseFromWire(reply);
   }
 
   /**

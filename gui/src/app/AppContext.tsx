@@ -97,6 +97,7 @@ export type WorkspaceId =
   | "clientflow"
   | "latencyops"
   | "streetliquidity"
+  | "eventtrace"
   | "connections"
   | "admin"
   | "permissions"
@@ -151,6 +152,20 @@ export interface TicketTarget {
   underlying: Underlying;
   settlementStyle: SettlementStyle;
 }
+
+/**
+ * A one-shot focus for the Event Trace workspace — the deep-link seam a blotter
+ * "View trace" action arms (mirroring {@link TicketTarget}). The EventTrace workspace
+ * consumes it on mount/change and clears it. Two arms:
+ *   • `trace` — a known trace id: the workspace loads it directly.
+ *   • `position` — a booked deal's `positionId` (the blotter join key): there is no
+ *     direct server position→trace lookup, so the workspace scans the listed page of
+ *     traces for the event carrying it. `label` is an optional human hint (the deal's
+ *     counterparty) shown in the "no trace found" state.
+ */
+export type TraceFocus =
+  | { kind: "trace"; traceId: bigint }
+  | { kind: "position"; positionId: bigint; label?: string };
 
 // --- scope (P0-6: entitlement-ready "what slice of the firm" seam) ----------
 
@@ -246,6 +261,12 @@ interface AppState {
   ticketTarget: TicketTarget | null;
   /** Consume the ticket pre-target (the TicketWorkspace clears it on apply). */
   clearTicketTarget: () => void;
+  /** The armed Event Trace focus (a blotter "View trace" deep-link), or `null`. */
+  traceFocus: TraceFocus | null;
+  /** Arm an Event Trace focus AND navigate to the Event Trace workspace. */
+  openTrace: (focus: TraceFocus) => void;
+  /** Consume the Event Trace focus (the EventTrace workspace clears it once resolved). */
+  clearTraceFocus: () => void;
   /** The user's favourite underlier ids (persisted in-memory for the session). */
   favourites: ReadonlySet<string>;
   /** Toggle a pair's favourite status (keyed by `pairId`). */
@@ -447,6 +468,9 @@ export function AppProvider({
   // The one-shot ticket pre-target a non-FX selection arms (consumed by the
   // TicketWorkspace, which seeds the cross-asset spec from it and clears it).
   const [ticketTarget, setTicketTarget] = useState<TicketTarget | null>(null);
+  // The one-shot Event Trace focus a blotter "View trace" action arms (consumed +
+  // cleared by the EventTrace workspace).
+  const [traceFocus, setTraceFocus] = useState<TraceFocus | null>(null);
   const [surface, setSurface] = useState<MarkedSurface | null>(null);
   // The smile-calibration model the surface is marked under (default = the desk's
   // market-hedge construction; the server's default when the field is absent). A
@@ -700,6 +724,18 @@ export function AppProvider({
 
   const clearTicketTarget = useCallback(() => setTicketTarget(null), []);
 
+  // Arm the Event Trace focus AND jump to the Event Trace workspace — the blotter
+  // "View trace" deep-link (mirrors `selectUnderlier`'s arm-and-navigate). The
+  // EventTrace workspace consumes `traceFocus` on change and clears it.
+  const openTrace = useCallback(
+    (focus: TraceFocus) => {
+      setTraceFocus(focus);
+      navigate("eventtrace");
+    },
+    [navigate],
+  );
+  const clearTraceFocus = useCallback(() => setTraceFocus(null), []);
+
   // The active scope: the reducer's path + group-by, wrapped with the (grant-all)
   // entitlement principal. `groupBy` is now REAL — driven by the scope reducer.
   const scope: ScopeContext = useMemo(
@@ -850,6 +886,9 @@ export function AppProvider({
     selectUnderlier,
     ticketTarget,
     clearTicketTarget,
+    traceFocus,
+    openTrace,
+    clearTraceFocus,
     favourites,
     toggleFavourite,
     toggleFavouriteId,

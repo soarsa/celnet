@@ -2495,6 +2495,160 @@ export interface LatencyMetrics {
 }
 
 // ---------------------------------------------------------------------------
+// event tracing — the per-lift EVENT TRACE (`AuthService.GetTrace` / `ListTraces`).
+// The per-trace COMPLEMENT to the aggregate latency histograms: one `traceId` links
+// every stage of a single lift's life (price → quote → order → last-look →
+// acceptance → risk-route → book → hedge-decide → hedge-fire), each a timestamped
+// `TraceEvent`, so a client renders ONE timeline with inter-stage latency + the
+// per-stage details. Mirrors the `celnet.wire` trace messages one-to-one.
+// ---------------------------------------------------------------------------
+
+/**
+ * One stage of a lift's life (`celnet.wire.TraceStage`). The wire carries the enum
+ * as an int (0–9); {@link TRACE_STAGE_ORDER} is indexed by that int and
+ * {@link traceStageLabel} gives the human title. Canonical machine names so the
+ * timeline renders deterministically regardless of wire encoding.
+ */
+export type TraceStage =
+  | "unspecified"
+  | "price_computed"
+  | "quote_published"
+  | "order_received"
+  | "last_look"
+  | "acceptance_decided"
+  | "risk_routed"
+  | "deal_booked"
+  | "hedge_decided"
+  | "hedge_fired";
+
+/**
+ * The stages in wire-ordinal order — the array index IS the `TraceStage` enum int
+ * (0 = unspecified … 9 = hedge_fired), so a decoder maps `stage` by direct index.
+ */
+export const TRACE_STAGE_ORDER: readonly TraceStage[] = [
+  "unspecified",
+  "price_computed",
+  "quote_published",
+  "order_received",
+  "last_look",
+  "acceptance_decided",
+  "risk_routed",
+  "deal_booked",
+  "hedge_decided",
+  "hedge_fired",
+];
+
+/** Human titles for each stage (the timeline row headers). */
+export const TRACE_STAGE_LABELS: Record<TraceStage, string> = {
+  unspecified: "Unspecified",
+  price_computed: "Price computed",
+  quote_published: "Quote published",
+  order_received: "Order received",
+  last_look: "Last look",
+  acceptance_decided: "Acceptance decided",
+  risk_routed: "Risk routed",
+  deal_booked: "Deal booked",
+  hedge_decided: "Hedge decided",
+  hedge_fired: "Hedge fired",
+};
+
+/** The human title of a stage (e.g. `"Deal booked"`). */
+export function traceStageLabel(stage: TraceStage): string {
+  return TRACE_STAGE_LABELS[stage];
+}
+
+/**
+ * The terminal outcome of a trace (`TraceSummary.outcome`), derived server-side
+ * from the last stage: `booked` (reached DEAL_BOOKED), `hedged` (reached
+ * HEDGE_FIRED), `rejected` (acceptance / last-look declined), or `in_flight`
+ * (still progressing).
+ */
+export type TraceOutcome = "booked" | "hedged" | "rejected" | "in_flight";
+
+/**
+ * One timestamped stage event in a lift's trace (`celnet.wire.TraceEvent`). Only
+ * the fields relevant to the stage are populated; the rest are absent (`undefined`
+ * — null-when-absent on the wire). `symbol`/`side` are echoed on every event.
+ *
+ * `timestampNs` is a monotonic capture time (nanoseconds from a fixed process
+ * epoch), strictly increasing across a trace, so inter-stage latency =
+ * `later.timestampNs − earlier.timestampNs`. It is carried as `bigint` so no
+ * precision is lost above the JS safe-integer range. `traceId` / `positionId` are
+ * u64 (`bigint`); the id-LIKE `quoteId` / `dealId` / `hedgeId` are free-form
+ * strings (FIX QuoteID, the display deal id, the hedge id).
+ */
+export interface TraceEvent {
+  /** The trace this event belongs to (shared across every stage of one lift). */
+  traceId: bigint;
+  /** The event's 0-based, gap-free ordinal within its trace (timestamp order). */
+  seq: number;
+  /** Which stage this event marks. */
+  stage: TraceStage;
+  /** Monotonic capture time (ns from a fixed process epoch), strictly increasing. */
+  timestampNs: bigint;
+  /** The instrument symbol, echoed on every event of the trace. */
+  symbol: string;
+  /** The dealt/quoted side ("buy"/"sell"), or empty when the stage is side-agnostic. */
+  side: string;
+  /** The price at this stage (computed/quoted/dealt/hedge-fill level), when set. */
+  price?: number | undefined;
+  /** The notional / size in scope at this stage, when set. */
+  notional?: number | undefined;
+  /** The FIX QuoteID tying the quote↔order stages, when known. */
+  quoteId?: string | undefined;
+  /** The booked display deal id (`Deal.dealId`), when known at capture. */
+  dealId?: string | undefined;
+  /** The risk book the fill routed to (`Deal.riskBookId`), set at RISK_ROUTED. */
+  bookId?: string | undefined;
+  /** The originating counterparty, when known. */
+  counterparty?: string | undefined;
+  /** The stage's decision text (last-look / acceptance outcome), when set. */
+  decision?: string | undefined;
+  /** The fired hedge id, set at HEDGE_DECIDED / HEDGE_FIRED. */
+  hedgeId?: string | undefined;
+  /** Free-form human-readable stage detail (never parsed), when set. */
+  detail?: string | undefined;
+  /** The booked `Deal.positionId` — the join key from the blotter to this trace. */
+  positionId?: bigint | undefined;
+}
+
+/**
+ * A one-row summary of a whole trace (`celnet.wire.TraceSummary`), for the recent-
+ * traces list (newest first). `totalLatencyNs` = `lastTimestampNs − firstTimestampNs`
+ * (a duration, well within the safe-integer range so carried as `number`).
+ */
+export interface TraceSummary {
+  traceId: bigint;
+  /** The first stage observed (by timestamp) — the trace's entry point. */
+  firstStage: TraceStage;
+  /** The last stage observed — how far the lift progressed. */
+  lastStage: TraceStage;
+  firstTimestampNs: bigint;
+  lastTimestampNs: bigint;
+  /** End-to-end latency of the trace (`last − first` timestamp), nanoseconds. */
+  totalLatencyNs: number;
+  /** The number of stage events captured for this trace. */
+  eventCount: number;
+  symbol: string;
+  counterparty?: string | undefined;
+  outcome: TraceOutcome;
+}
+
+/**
+ * Optional filters for {@link CelnetTransport.listTraces} — all exact-match, all
+ * omitted when absent (an empty filter lists the recent traces newest-first,
+ * server-clamped to a sane cap).
+ */
+export interface TraceFilter {
+  /** Max rows to return (newest first); absent ⇒ the server default. */
+  limit?: number;
+  /** Exact-match symbol filter. */
+  symbol?: string;
+  /** Exact-match counterparty filter. */
+  counterparty?: string;
+}
+
+// ---------------------------------------------------------------------------
 // fixed-income (rates) — the linear-rates pricing contract (`PricingService
 // .PriceRates`). Mirrors the `celnet.wire` rates messages one-to-one: a
 // `CurveSet` of par-OIS pillars + an `OisInstrument`, priced to a
