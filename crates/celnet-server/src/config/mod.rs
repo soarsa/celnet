@@ -12,9 +12,14 @@
 //!   persisted inside the same identity document; curve-building and pricing
 //!   resolve against it
 //!   (`docs/CURVES-AND-INSTRUMENT-REFERENCE-DATA-REVIEW.md`).
+//! * [`curve_definitions`] — the multi-curve registry: named, definable
+//!   interest-rate curves (reference data + calibrating pillars + interpolation +
+//!   a primary-per-currency flag), managed through the `SurfaceService` curve-CRUD
+//!   verbs and resolved against by the FIX rates edge (`usd-sofr` primary seeded).
 
 pub mod consistency;
 pub mod curve_calibration;
+pub mod curve_definitions;
 pub mod fix_connections;
 pub mod hedge_policy;
 pub mod identity;

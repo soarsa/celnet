@@ -368,6 +368,27 @@ impl Edge {
         // surface edge deposits marks; the pricing / RFQ / RFS paths resolve a
         // pinned `surface_version` against it (§ surface_version pinning).
         let surface_book = Arc::new(SurfaceBook::new());
+        // The multi-curve registry: load the persisted named curve definitions
+        // (`curve-definitions.json`, path from `CELNET_CURVE_CONFIG` or the data dir),
+        // install any saved set over the seeded USD-SOFR primary, wire the persistence
+        // path so CRUD mutations survive restart, and materialise the seed on first run
+        // so the registry file exists. The `SurfaceService` curve-CRUD verbs manage it.
+        {
+            let curve_path = data_dir
+                .map(|d| d.join(config::curve_definitions::DEFAULT_CONFIG_PATH))
+                .unwrap_or_else(config::curve_definitions::CurveDefinitionStore::config_path);
+            let curve_store = config::curve_definitions::CurveDefinitionStore::load(&curve_path)
+                .map_err(|e| {
+                    std::io::Error::new(e.kind(), format!("curve definition config: {e}"))
+                })?;
+            if !curve_store.curves.is_empty() {
+                surface_book.install_curve_registry(curve_store);
+            }
+            surface_book.set_curve_persistence(curve_path);
+            surface_book.persist_curves().map_err(|e| {
+                std::io::Error::new(e.kind(), format!("persist curve definitions: {e}"))
+            })?;
+        }
         // The single shared live position book: the RFS click-to-trade path records
         // booked vanilla lines into it, and `RiskService` aggregates the same book
         // (API-first parity: the Book/Risk views read the server's aggregate, never
@@ -478,13 +499,19 @@ impl Edge {
             // the FX ones and advances on a rates fill.
             .with_rates_store(Arc::clone(&rates_store)),
         );
-        let surface = SurfaceServiceServer::new(SurfaceEdge::with_fleet(
-            Arc::clone(&link),
-            Arc::clone(&gate),
-            clock.clone(),
-            Arc::clone(&surface_book),
-            fleet.clone(),
-        ));
+        let surface = SurfaceServiceServer::new(
+            SurfaceEdge::with_fleet(
+                Arc::clone(&link),
+                Arc::clone(&gate),
+                clock.clone(),
+                Arc::clone(&surface_book),
+                fleet.clone(),
+            )
+            // Share the edge-wide session registry so the curve-definition CRUD verbs
+            // authenticate `session_token`s against the sessions `AuthService` issues
+            // (the WS mirror's SurfaceEdge is wired the same way in `ws::WsServices`).
+            .with_sessions(Arc::clone(&sessions)),
+        );
         // The risk edge: a distributed topology federates every RiskService RPC across
         // the SAME shared backend fleet (one pool of channels for the whole edge), so
         // it reconciles to the single-node answer over the union book (Phase 3,

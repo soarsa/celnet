@@ -21,13 +21,19 @@ use std::sync::Arc;
 
 use celnet_proto::surface_service_server::SurfaceService;
 use celnet_proto::{
-    ArbReport, BrokenDate, BrokerQuoteSet, BucketedRisk, Conventions, CrossGamma, CurveParPillar,
-    CurvePoint, CurveScenarioReprice, CurveScenarioRequest, CurveScenarioResponse, GetCurveRequest,
-    GetCurveResponse, GetSmileRequest, MarkCurveRequest, MarkCurveResponse, MarkSurfaceRequest,
+    ArbReport, BrokenDate, BrokerQuoteSet, BucketedRisk, Conventions, CreateCurveDefinitionRequest,
+    CreateCurveDefinitionResponse, CrossGamma, CurveDefinition as WireCurveDefinition,
+    CurveInterpolation, CurveParPillar, CurvePoint, CurveScenarioReprice, CurveScenarioRequest,
+    CurveScenarioResponse, DeleteCurveDefinitionRequest, DeleteCurveDefinitionResponse,
+    GetCurveRequest, GetCurveResponse, GetSmileRequest, ListCurveDefinitionsRequest,
+    ListCurveDefinitionsResponse, MarkCurveRequest, MarkCurveResponse, MarkSurfaceRequest,
     MarkSurfaceResponse, MarketContext as WireMarketContext, RatesPriceRequest, ScenarioPoint,
-    ScenarioRequest, ScenarioResponse, Smile, SmilePoint, VegaBucket, shock_axis,
+    ScenarioRequest, ScenarioResponse, Smile, SmilePoint, UpdateCurveDefinitionRequest,
+    UpdateCurveDefinitionResponse, VegaBucket, shock_axis,
 };
 use tonic::{Request, Response, Status};
+
+use celnet_entitlements::{Action, AssetClass, Capability};
 
 use celnet_conventions::ConventionRecord;
 use celnet_surface::{
@@ -41,13 +47,25 @@ use celnet_types::{
 use celnet_types::Time;
 
 use crate::clock::Clock;
+use crate::config::curve_definitions::{
+    CurveDefinitionDef, CurveInterpolationKind, CurvePillarDef, CurveRemoveError, PillarTenorDef,
+};
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
-use crate::rates_pricing::{RatesPriceError, ResolvedCurveSet, price_rates, resolve_curve_set};
+use crate::rates_pricing::{
+    RatesPriceError, ResolvedCurveSet, curve_def_to_curve_set, engine_supported_currency,
+    interpolation_of, price_rates, resolve_curve_set, resolve_curve_set_with,
+};
 use crate::readiness::ReadinessGate;
 use crate::services::forward::{Serve, route_pair, route_underlying, serve_mode};
 use crate::services::risk::federate::Fleet;
-use crate::surface_book::{MarkedCurve, SurfaceBook};
+use crate::services::sessions::SessionRegistry;
+use crate::surface_book::{CurveDefRemoveError, MarkedCurve, SurfaceBook};
+
+/// The capability curve-definition MUTATIONS require: reference-data management on
+/// fixed income (the same authority the corporate-actions golden source uses). Reads
+/// (list) require only a valid session.
+const REFDATA_FI: Capability = Capability::new(Action::Refdata, AssetClass::FixedIncome);
 
 /// The delta pillars (signed convention deltas) the smile is reported on: the
 /// 10Δ and 25Δ wings plus the 50Δ (ATM) — the market-standard read axis.
@@ -87,6 +105,13 @@ pub struct SurfaceEdge {
     /// The connected backend fleet for owned-pair forwarding; `None` ⇒ in-process.
     /// Reuses the SAME `Fleet` the risk federation connects.
     fleet: Option<Arc<Fleet>>,
+    /// The live session registry the curve-definition CRUD verbs authenticate the
+    /// caller's `session_token` against (list = a valid session; create/update/delete
+    /// = the `refdata·fixed_income` capability). Defaults to a fresh empty registry so
+    /// unit tests constructing the edge directly are unaffected; production shares the
+    /// edge-wide registry via [`SurfaceEdge::with_sessions`]. The existing curve/smile
+    /// read/mark verbs are unchanged (never gated).
+    sessions: Arc<SessionRegistry>,
 }
 
 impl SurfaceEdge {
@@ -104,6 +129,7 @@ impl SurfaceEdge {
             clock,
             surface_book,
             fleet: None,
+            sessions: Arc::new(SessionRegistry::new(Clock::system())),
         }
     }
 
@@ -124,7 +150,17 @@ impl SurfaceEdge {
             clock,
             surface_book,
             fleet,
+            sessions: Arc::new(SessionRegistry::new(Clock::system())),
         }
+    }
+
+    /// Share the edge-wide session registry so the curve-definition CRUD verbs
+    /// authenticate `session_token`s against the same sessions `AuthService` issues
+    /// (production startup). Without this the edge uses its own empty registry.
+    #[must_use]
+    pub fn with_sessions(mut self, sessions: Arc<SessionRegistry>) -> Self {
+        self.sessions = sessions;
+        self
     }
 
     fn require_ready(&self) -> Result<(), Status> {
@@ -136,6 +172,145 @@ impl SurfaceEdge {
             ))
         }
     }
+
+    /// The read floor for the curve registry: a valid (non-expired) session.
+    fn require_session(&self, token: Option<&str>) -> Result<(), Status> {
+        let token = token.ok_or_else(|| Status::unauthenticated("a session token is required"))?;
+        self.sessions
+            .validate(token)
+            .map(|_| ())
+            .ok_or_else(|| Status::unauthenticated("invalid or expired session token"))
+    }
+
+    /// The write authority for the curve registry: a valid session holding the
+    /// `refdata·fixed_income` capability (deny-wins over any grant).
+    fn require_refdata(&self, token: Option<&str>) -> Result<(), Status> {
+        let token = token.ok_or_else(|| Status::unauthenticated("a session token is required"))?;
+        let who = self
+            .sessions
+            .validate(token)
+            .ok_or_else(|| Status::unauthenticated("invalid or expired session token"))?;
+        if who.capabilities().allows(REFDATA_FI) {
+            Ok(())
+        } else {
+            Err(Status::permission_denied(
+                "capability refdata·fixed_income required to manage curve definitions",
+            ))
+        }
+    }
+}
+
+// --- wire ↔ domain conversion for the multi-curve registry -------------------
+
+/// Map the wire interpolation enum onto the persisted/domain kind.
+fn wire_interpolation_to_kind(interp: i32) -> CurveInterpolationKind {
+    match CurveInterpolation::try_from(interp) {
+        Ok(CurveInterpolation::MonotoneConvexForward) => {
+            CurveInterpolationKind::MonotoneConvexForward
+        }
+        // Unset / LogLinearDf / any unknown code ⇒ the log-linear default.
+        _ => CurveInterpolationKind::LogLinearDf,
+    }
+}
+
+/// Map the persisted/domain interpolation kind onto its wire enum number.
+fn kind_to_wire_interpolation(kind: CurveInterpolationKind) -> i32 {
+    match kind {
+        CurveInterpolationKind::LogLinearDf => CurveInterpolation::LogLinearDf as i32,
+        CurveInterpolationKind::MonotoneConvexForward => {
+            CurveInterpolation::MonotoneConvexForward as i32
+        }
+    }
+}
+
+/// Convert a stored curve definition into its wire message.
+fn curve_def_to_wire(def: &CurveDefinitionDef) -> WireCurveDefinition {
+    WireCurveDefinition {
+        curve_id: def.curve_id.clone(),
+        display_name: def.display_name.clone(),
+        index_label: def.index_label.clone(),
+        day_count: def.day_count.clone(),
+        calendar: def.calendar.clone(),
+        interpolation: kind_to_wire_interpolation(def.interpolation),
+        pillars: Some(curve_def_to_curve_set(def)),
+        primary: def.primary,
+    }
+}
+
+/// Convert a wire curve definition into the persisted/domain form, validating the
+/// structural shape. `id_override` (the request-level `curve_id` on update) wins over
+/// the message's own id when present and non-empty.
+fn wire_to_curve_def(
+    wire: &WireCurveDefinition,
+    id_override: Option<&str>,
+) -> Result<CurveDefinitionDef, Status> {
+    let pillars_set = wire
+        .pillars
+        .as_ref()
+        .ok_or_else(|| Status::invalid_argument("a curve definition needs `pillars`"))?;
+    let reference = pillars_set
+        .reference_date
+        .as_ref()
+        .ok_or_else(|| Status::invalid_argument("`pillars` needs a `reference_date`"))?;
+
+    let pillars: Vec<CurvePillarDef> = pillars_set
+        .ois_pillars
+        .iter()
+        .map(wire_pillar_to_domain)
+        .collect::<Result<_, _>>()?;
+
+    let curve_id = id_override
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| wire.curve_id.clone());
+
+    let def = CurveDefinitionDef {
+        curve_id,
+        display_name: wire.display_name.clone(),
+        index_label: wire.index_label.clone(),
+        day_count: wire.day_count.clone(),
+        calendar: wire.calendar.clone(),
+        interpolation: wire_interpolation_to_kind(wire.interpolation),
+        currency: pillars_set.currency.trim().to_ascii_uppercase(),
+        reference_date: (reference.year, reference.month, reference.day),
+        pillars,
+        primary: wire.primary,
+    };
+    def.validate().map_err(Status::invalid_argument)?;
+    Ok(def)
+}
+
+/// Convert one wire `OisPillar` into the domain pillar (its `tenor` oneof arm must be set).
+fn wire_pillar_to_domain(p: &celnet_proto::OisPillar) -> Result<CurvePillarDef, Status> {
+    use celnet_proto::pillar_tenor::Point;
+    let tenor = p
+        .tenor
+        .as_ref()
+        .and_then(|t| t.point.as_ref())
+        .ok_or_else(|| Status::invalid_argument("a pillar needs a `tenor`"))?;
+    let tenor = match tenor {
+        Point::Years(y) => PillarTenorDef::Years(*y),
+        Point::Months(m) => PillarTenorDef::Months(*m),
+        Point::MaturityDate(d) => PillarTenorDef::MaturityDate(d.year, d.month, d.day),
+    };
+    Ok(CurvePillarDef {
+        tenor,
+        par_rate: p.par_rate,
+    })
+}
+
+/// Numerically validate a curve definition by bootstrapping it under its stored
+/// interpolation — but only for a currency the pricing engine implements (USD-SOFR
+/// conventions today). A non-engine currency is stored on structural validity alone
+/// (no silent mispricing against USD schedules; no fabricated multi-currency curve).
+fn validate_curve_numerically(def: &CurveDefinitionDef) -> Result<(), Status> {
+    if !engine_supported_currency(&def.currency) {
+        return Ok(());
+    }
+    let curve_set = curve_def_to_curve_set(def);
+    resolve_curve_set_with(&curve_set, interpolation_of(def.interpolation))
+        .map_err(rates_err_to_status)
+        .map(|_| ())
 }
 
 /// A resolved convention record built from the wire conventions, supplying the
@@ -784,10 +959,43 @@ impl SurfaceService for SurfaceEdge {
             }));
         }
 
+        // Registered: read a NAMED registry curve on the tenor axis under its stored
+        // interpolation — the multi-curve read path, and where a monotone-convex
+        // definition reaches the smooth engine bootstrap/read. Takes precedence over an
+        // inline `curve_set` (a `curve_version` pin, handled above, still wins over both).
+        if let Some(curve_id) = req.curve_id.as_deref().filter(|s| !s.is_empty()) {
+            let def = self.surface_book.get_curve_def(curve_id).ok_or_else(|| {
+                Status::failed_precondition(format!("unknown curve id `{curve_id}`"))
+            })?;
+            let curve_set = curve_def_to_curve_set(&def);
+            let resolved = resolve_curve_set_with(&curve_set, interpolation_of(def.interpolation))
+                .map_err(rates_err_to_status)?;
+            let points = req
+                .query_tenor_years
+                .iter()
+                .map(|&t| CurvePoint {
+                    tenor_years: t,
+                    zero_rate: resolved.curve.zero_rate(Time(t)).0,
+                    discount_factor: resolved.curve.discount_factor(Time(t)).0,
+                })
+                .collect();
+            let par_pillars = par_pillars_of(&resolved);
+            return Ok(Response::new(GetCurveResponse {
+                currency: curve_set.currency,
+                reference_date: curve_set.reference_date,
+                points,
+                par_pillars,
+                curve_version: None,
+                epoch_nanos: self.clock.now_nanos(),
+            }));
+        }
+
         // Live: bootstrap the inline curve set (wrapping the same rates path a
         // `price_rates` uses) and read it on the requested tenor axis.
         let curve_set = req.curve_set.ok_or_else(|| {
-            Status::invalid_argument("get_curve requires either `curve_version` or `curve_set`")
+            Status::invalid_argument(
+                "get_curve requires a `curve_version`, a `curve_id`, or a `curve_set`",
+            )
         })?;
         let resolved = resolve_curve_set(&curve_set).map_err(rates_err_to_status)?;
         let points = req
@@ -955,6 +1163,131 @@ impl SurfaceService for SurfaceEdge {
             points,
             reprice,
         }))
+    }
+
+    async fn list_curve_definitions(
+        &self,
+        request: Request<ListCurveDefinitionsRequest>,
+    ) -> Result<Response<ListCurveDefinitionsResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_session(req.session_token.as_deref())?;
+
+        let curves = self
+            .surface_book
+            .list_curve_defs()
+            .iter()
+            .map(curve_def_to_wire)
+            .collect();
+        Ok(Response::new(ListCurveDefinitionsResponse {
+            curves,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn create_curve_definition(
+        &self,
+        request: Request<CreateCurveDefinitionRequest>,
+    ) -> Result<Response<CreateCurveDefinitionResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_refdata(req.session_token.as_deref())?;
+
+        let wire = req
+            .definition
+            .ok_or_else(|| Status::invalid_argument("create: missing curve `definition`"))?;
+        let def = wire_to_curve_def(&wire, None)?;
+
+        // Unique id (create must not clobber an existing curve — that is `update`).
+        if self.surface_book.get_curve_def(&def.curve_id).is_some() {
+            return Err(Status::already_exists(format!(
+                "a curve with id `{}` already exists",
+                def.curve_id
+            )));
+        }
+        validate_curve_numerically(&def)?;
+
+        let stored = self
+            .surface_book
+            .upsert_curve_def(def)
+            .map_err(|e| Status::internal(format!("persist curve definition: {e}")))?;
+        Ok(Response::new(CreateCurveDefinitionResponse {
+            definition: Some(curve_def_to_wire(&stored)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn update_curve_definition(
+        &self,
+        request: Request<UpdateCurveDefinitionRequest>,
+    ) -> Result<Response<UpdateCurveDefinitionResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_refdata(req.session_token.as_deref())?;
+
+        if req.curve_id.trim().is_empty() {
+            return Err(Status::invalid_argument("update: missing `curve_id`"));
+        }
+        let wire = req
+            .definition
+            .ok_or_else(|| Status::invalid_argument("update: missing curve `definition`"))?;
+        // The request-level `curve_id` is authoritative over the message's own id.
+        let def = wire_to_curve_def(&wire, Some(&req.curve_id))?;
+
+        if self.surface_book.get_curve_def(&def.curve_id).is_none() {
+            return Err(Status::not_found(format!(
+                "no curve with id `{}` to update",
+                def.curve_id
+            )));
+        }
+        validate_curve_numerically(&def)?;
+
+        let stored = self
+            .surface_book
+            .upsert_curve_def(def)
+            .map_err(|e| Status::internal(format!("persist curve definition: {e}")))?;
+        Ok(Response::new(UpdateCurveDefinitionResponse {
+            definition: Some(curve_def_to_wire(&stored)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn delete_curve_definition(
+        &self,
+        request: Request<DeleteCurveDefinitionRequest>,
+    ) -> Result<Response<DeleteCurveDefinitionResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_refdata(req.session_token.as_deref())?;
+
+        if req.curve_id.trim().is_empty() {
+            return Err(Status::invalid_argument("delete: missing `curve_id`"));
+        }
+        self.surface_book
+            .remove_curve_def(&req.curve_id)
+            .map_err(delete_err_to_status)?;
+        Ok(Response::new(DeleteCurveDefinitionResponse {
+            correlation_id: req.correlation_id,
+        }))
+    }
+}
+
+/// Map a curve-registry delete failure onto its `tonic::Status`: an unknown id is
+/// `not_found`, a delete-rule violation `failed_precondition`, a persist IO failure
+/// `internal`.
+fn delete_err_to_status(err: CurveDefRemoveError) -> Status {
+    match err {
+        CurveDefRemoveError::Rule(CurveRemoveError::NotFound) => {
+            Status::not_found("no curve with that id")
+        }
+        CurveDefRemoveError::Rule(
+            rule @ (CurveRemoveError::PrimaryHasSiblings | CurveRemoveError::LastEngineCurve),
+        ) => Status::failed_precondition(rule.to_string()),
+        CurveDefRemoveError::Persist(e) => Status::internal(format!("persist curve registry: {e}")),
     }
 }
 
@@ -1269,5 +1602,71 @@ mod tests {
         for (&m, &want) in families.iter().zip([0, 1, 2, 3, 4].iter()) {
             assert_eq!(wire_smile_model(m) as i32, want, "tag for {m:?}");
         }
+    }
+
+    // --- multi-curve registry wire↔domain + numeric validation ---------------
+
+    #[test]
+    fn wire_interpolation_round_trips_both_schemes() {
+        for kind in [
+            CurveInterpolationKind::LogLinearDf,
+            CurveInterpolationKind::MonotoneConvexForward,
+        ] {
+            let back = wire_interpolation_to_kind(kind_to_wire_interpolation(kind));
+            assert_eq!(
+                back, kind,
+                "wire interpolation is a round-trip for {kind:?}"
+            );
+        }
+        // The proto3 zero value decodes to the log-linear default (legacy/unset safe).
+        assert_eq!(
+            wire_interpolation_to_kind(0),
+            CurveInterpolationKind::LogLinearDf
+        );
+    }
+
+    #[test]
+    fn curve_def_wire_round_trip_preserves_every_field() {
+        // domain → wire → domain is identity for the seeded default (incl. pillars,
+        // interpolation, primary, reference data) — the contract the CRUD handlers rely on.
+        let def = crate::rates_pricing::default_curve_definition();
+        let wire = curve_def_to_wire(&def);
+        let back = wire_to_curve_def(&wire, None).expect("wire → domain");
+        assert_eq!(back, def, "curve definition round-trips through the wire");
+    }
+
+    #[test]
+    fn update_id_override_wins_over_message_id() {
+        let mut def = crate::rates_pricing::default_curve_definition();
+        def.curve_id = "ignored-in-message".to_string();
+        let wire = curve_def_to_wire(&def);
+        let back = wire_to_curve_def(&wire, Some("authoritative-id")).expect("wire → domain");
+        assert_eq!(
+            back.curve_id, "authoritative-id",
+            "the request-level curve_id is authoritative on update"
+        );
+    }
+
+    #[test]
+    fn monotone_convex_usd_definition_validates_through_the_engine() {
+        // The functional half of the interpolation enum: a monotone-convex USD
+        // definition is numerically validated by BOOTSTRAPPING under the smooth scheme
+        // — proving the wire selector reaches the numeric core at the server layer (the
+        // rates crate proves the par-repricing correctness).
+        let mut def = crate::rates_pricing::default_curve_definition();
+        def.interpolation = CurveInterpolationKind::MonotoneConvexForward;
+        validate_curve_numerically(&def)
+            .expect("a monotone-convex USD ladder bootstraps under the smooth scheme");
+    }
+
+    #[test]
+    fn non_engine_currency_is_stored_on_structural_validity_alone() {
+        // A currency the engine has no convention set for is stored (display / future
+        // build-out) without numeric bootstrap — never silently mispriced against USD.
+        let mut def = crate::rates_pricing::default_curve_definition();
+        def.curve_id = "eur-estr".to_string();
+        def.currency = "EUR".to_string();
+        validate_curve_numerically(&def)
+            .expect("non-engine currency skips numeric validation (structural only)");
     }
 }

@@ -57,6 +57,109 @@ pub mod stream_spread;
 /// The ISO 4217 code of the only currency the P0 rates arm supports.
 pub(crate) const SUPPORTED_CURRENCY: &str = "USD";
 
+/// The stable registry id of the seeded default (primary USD-SOFR) curve.
+pub const DEFAULT_CURVE_ID: &str = "usd-sofr";
+
+/// Whether the linear-rates engine implements a convention set for `currency`.
+///
+/// Today only the USD-SOFR convention set (US settlement calendar, ACT/360 accrual,
+/// ACT/365F discount time, spot-starting OIS schedules) is implemented, so USD is
+/// the sole engine-priced currency; a non-USD curve is still rejected here rather
+/// than silently mispriced against USD schedules. The multi-curve registry can
+/// nonetheless STORE definitions in other currencies (for display / future
+/// build-out) — this predicate governs only what the numeric engine will *price*.
+/// (Replaces the former bare `== SUPPORTED_CURRENCY` literal so the supported set is
+/// a named policy rather than an inline equality on the hot path.)
+#[must_use]
+pub(crate) fn engine_supported_currency(currency: &str) -> bool {
+    currency.eq_ignore_ascii_case(SUPPORTED_CURRENCY)
+}
+
+/// Map the persisted/domain interpolation choice onto the numeric engine's
+/// [`celnet_rates::Interpolation`] — the one place the wire/registry selector reaches
+/// the bootstrap/read scheme.
+#[must_use]
+pub(crate) fn interpolation_of(
+    kind: crate::config::curve_definitions::CurveInterpolationKind,
+) -> Interpolation {
+    use crate::config::curve_definitions::CurveInterpolationKind;
+    match kind {
+        CurveInterpolationKind::LogLinearDf => Interpolation::LogLinearDf,
+        CurveInterpolationKind::MonotoneConvexForward => Interpolation::MonotoneConvexForward,
+    }
+}
+
+/// The seeded default curve **definition**: the primary USD-SOFR curve the
+/// multi-curve registry starts with. Its pillars/reference/currency are the exact
+/// [`P0_USD_SOFR_PILLARS`] / [`P0_REFERENCE`] the FIX rates edge has always priced
+/// against, so [`curve_def_to_curve_set`] of this definition is byte-identical to
+/// [`default_usd_sofr_curve_set`] — seeding the registry changes no pricing.
+#[must_use]
+pub fn default_curve_definition() -> crate::config::curve_definitions::CurveDefinitionDef {
+    use crate::config::curve_definitions::{
+        CurveDefinitionDef, CurveInterpolationKind, CurvePillarDef, PillarTenorDef,
+    };
+    CurveDefinitionDef {
+        curve_id: DEFAULT_CURVE_ID.to_string(),
+        display_name: "USD SOFR".to_string(),
+        index_label: "USD-SOFR".to_string(),
+        day_count: "ACT/360".to_string(),
+        calendar: "US / Modified Following".to_string(),
+        interpolation: CurveInterpolationKind::LogLinearDf,
+        currency: SUPPORTED_CURRENCY.to_string(),
+        reference_date: (P0_REFERENCE.year, P0_REFERENCE.month, P0_REFERENCE.day),
+        pillars: P0_USD_SOFR_PILLARS
+            .iter()
+            .map(|&(years, par_rate)| CurvePillarDef {
+                tenor: PillarTenorDef::Years(years),
+                par_rate,
+            })
+            .collect(),
+        primary: true,
+    }
+}
+
+/// Reconstruct the wire [`CurveSet`] a curve definition calibrates against — the
+/// inverse of the wire→domain conversion in [`crate::services::surface`]. The
+/// currency + reference date + par-OIS pillars travel; the reference-data labels and
+/// interpolation live on the definition, not the pillar set.
+#[must_use]
+pub(crate) fn curve_def_to_curve_set(
+    def: &crate::config::curve_definitions::CurveDefinitionDef,
+) -> CurveSet {
+    use crate::config::curve_definitions::PillarTenorDef;
+    CurveSet {
+        currency: def.currency.clone(),
+        reference_date: Some(BrokenDate {
+            year: def.reference_date.0,
+            month: def.reference_date.1,
+            day: def.reference_date.2,
+        }),
+        ois_pillars: def
+            .pillars
+            .iter()
+            .map(|p| OisPillar {
+                tenor: Some(match p.tenor {
+                    PillarTenorDef::Years(y) => PillarTenor {
+                        point: Some(pillar_tenor::Point::Years(y)),
+                    },
+                    PillarTenorDef::Months(m) => PillarTenor {
+                        point: Some(pillar_tenor::Point::Months(m)),
+                    },
+                    PillarTenorDef::MaturityDate(y, m, d) => PillarTenor {
+                        point: Some(pillar_tenor::Point::MaturityDate(BrokenDate {
+                            year: y,
+                            month: m,
+                            day: d,
+                        })),
+                    },
+                }),
+                par_rate: p.par_rate,
+            })
+            .collect(),
+    }
+}
+
 /// A typed failure of [`price_rates`]. Malformed-input variants map to
 /// `Status::invalid_argument`; [`RatesPriceError::Bootstrap`] (a numeric failure
 /// on otherwise-valid input) maps to `Status::internal`.
@@ -263,7 +366,7 @@ fn side_sign(side: Side) -> Result<f64, RatesPriceError> {
 /// USD-SOFR schedule per pillar, paired with its observed par rate. Validates the
 /// currency, non-emptiness, and strictly-increasing tenors.
 fn build_quotes(curve: &CurveSet, reference: Date) -> Result<Vec<OisQuote>, RatesPriceError> {
-    if !curve.currency.eq_ignore_ascii_case(SUPPORTED_CURRENCY) {
+    if !engine_supported_currency(&curve.currency) {
         return Err(RatesPriceError::UnsupportedCurrency(curve.currency.clone()));
     }
     if curve.ois_pillars.is_empty() {
@@ -1175,6 +1278,43 @@ mod tests {
         let curve = default_usd_sofr_curve_set();
         let par5 = par_rate_for(&curve, 5).unwrap();
         assert!((par5 - 0.0405).abs() < 1e-6, "5y par {par5}");
+    }
+
+    #[test]
+    fn seeded_default_definition_is_byte_identical_to_default_curve_set() {
+        // Backward-compat contract: the multi-curve registry's seeded primary is the
+        // EXACT curve the FIX rates edge has always priced against. Reconstructing the
+        // wire `CurveSet` from the seeded definition must equal `default_usd_sofr_curve_set`
+        // field-for-field, so seeding the registry changes no pricing. The oracle here is
+        // the pre-existing shipping constant, NOT a re-run of the engine.
+        let def = default_curve_definition();
+        assert_eq!(def.curve_id, DEFAULT_CURVE_ID);
+        assert_eq!(def.currency, SUPPORTED_CURRENCY);
+        assert!(def.primary, "the seeded default is its currency's primary");
+        assert_eq!(
+            def.interpolation,
+            crate::config::curve_definitions::CurveInterpolationKind::LogLinearDf,
+            "the shipping default is log-linear (byte-identical to today)"
+        );
+        assert_eq!(
+            curve_def_to_curve_set(&def),
+            default_usd_sofr_curve_set(),
+            "seed → CurveSet must be byte-identical to the shipping default"
+        );
+    }
+
+    #[test]
+    fn interpolation_of_maps_both_schemes() {
+        use crate::config::curve_definitions::CurveInterpolationKind;
+        assert_eq!(
+            interpolation_of(CurveInterpolationKind::LogLinearDf),
+            Interpolation::LogLinearDf
+        );
+        assert_eq!(
+            interpolation_of(CurveInterpolationKind::MonotoneConvexForward),
+            Interpolation::MonotoneConvexForward,
+            "the monotone-convex selector reaches the engine's smooth scheme"
+        );
     }
 
     #[test]

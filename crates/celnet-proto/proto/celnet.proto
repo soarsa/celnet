@@ -3217,6 +3217,25 @@ service SurfaceService {
   // shift of the calibrating par rates → the shifted curve (+ optional repriced PV)
   // — the FI analogue of the vol-surface `Scenario`.
   rpc CurveScenario(CurveScenarioRequest) returns (CurveScenarioResponse);
+  // List the registered named curve definitions (the multi-curve registry). Each
+  // carries its reference data (index label, day-count, calendar, interpolation),
+  // its calibrating pillars, and whether it is its currency's primary (default)
+  // curve. The registry seeds a USD-SOFR primary so this never returns empty on a
+  // fresh install.
+  rpc ListCurveDefinitions(ListCurveDefinitionsRequest) returns (ListCurveDefinitionsResponse);
+  // Define a new named curve. Validates a unique `curve_id`, a present currency, at
+  // least one pillar, and (for the engine-priced currency) that the pillars
+  // bootstrap under the chosen interpolation. Persists to disk (survives restart).
+  rpc CreateCurveDefinition(CreateCurveDefinitionRequest) returns (CreateCurveDefinitionResponse);
+  // Replace an existing curve definition (reference data + pillars + interpolation
+  // + primary flag) by `curve_id`. Same validation + persistence as create.
+  rpc UpdateCurveDefinition(UpdateCurveDefinitionRequest) returns (UpdateCurveDefinitionResponse);
+  // Delete a curve definition by `curve_id`. Refused if it is its currency's primary
+  // while another curve for that currency exists (a currency must never lose its
+  // primary while it still has curves) and refused if it is the last curve of the
+  // currency the pricing engine resolves against (never leave pricing without a
+  // curve).
+  rpc DeleteCurveDefinition(DeleteCurveDefinitionRequest) returns (DeleteCurveDefinitionResponse);
 }
 
 // ===========================================================================
@@ -3265,6 +3284,12 @@ message GetCurveRequest {
   // field selecting a marked curve, never an API version (the contract is
   // unversioned, rule 9). An unknown version is `failed_precondition`.
   optional uint64 curve_version = 3;
+  // Optional read of a REGISTERED named curve (the multi-curve registry): present ⇒
+  // read that curve definition's stored pillars, bootstrapped under its stored
+  // interpolation, on `query_tenor_years` — so a monotone-convex-registered curve is
+  // read through the smooth engine path. Takes precedence over `curve_set` (a
+  // `curve_version` pin still wins over both). An unknown id is `failed_precondition`.
+  optional string curve_id = 4;
 }
 
 // The read curve: the currency + reference date, the queried points, the echoed
@@ -3361,6 +3386,144 @@ message CurveScenarioResponse {
   repeated CurvePoint points = 2;
   // The repriced instrument leg, present when the request carried an `instrument`.
   CurveScenarioReprice reprice = 3;
+}
+
+// ===========================================================================
+// multi-curve registry — named, definable interest-rate curves with reference
+// data + list/CRUD. Generalises the single-curve-per-currency model: each
+// currency has a designated PRIMARY curve the pricing engine resolves against
+// (seeded USD-SOFR, byte-identical to the shipping default), and further named
+// curves can be defined, listed, and edited alongside it. Additive; the existing
+// `GetCurve`/`MarkCurve` currency-only paths are unchanged.
+// ===========================================================================
+
+// The term-structure interpolation a curve evaluates between its calibrating
+// pillars — the wire selector for the two schemes the rates engine implements.
+// The proto3 zero default is log-linear (today's hardcoded behaviour), so an
+// unset/legacy definition is byte-identical to the shipping curve.
+enum CurveInterpolation {
+  // Linear in `ln DF` against time — piecewise-constant instantaneous forwards.
+  // The shipping default; the QuantLib `LogLinear` `InterpolatedDiscountCurve`
+  // equivalent. (Method provenance lives in doc comments only, CLAUDE.md §8.)
+  CURVE_INTERPOLATION_LOG_LINEAR_DF = 0;
+  // Piecewise-quadratic, continuous, monotonicity-preserving instantaneous
+  // forwards — the smooth view (no log-linear forward sawtooth).
+  CURVE_INTERPOLATION_MONOTONE_CONVEX_FORWARD = 1;
+}
+
+// A named, reference-data-carrying interest-rate curve definition — the unit the
+// multi-curve registry lists and edits. `curve_id` is the stable registry key;
+// `pillars` reuses `CurveSet` (which already carries the currency + reference date
+// + calibrating par-OIS pillars). The `index_label` / `day_count` / `calendar`
+// fields are descriptive reference-data metadata rendered in the curve editor; the
+// bootstrap conventions the engine applies (US calendar, ACT/360 accrual, ACT/365F
+// discount time) are fixed by the USD-SOFR convention set today and are documented
+// there, so these labels never silently re-map the schedule. `interpolation` IS
+// functional — it selects the engine interpolation the curve is bootstrapped/read
+// under.
+message CurveDefinition {
+  // Stable registry key / slug, e.g. `usd-sofr`. Unique across the registry;
+  // immutable across an update (the update targets this id). Non-empty.
+  string curve_id = 1;
+  // Human-friendly display name shown in the curve picker, e.g. `USD SOFR`.
+  string display_name = 2;
+  // The floating-index / discount label this curve represents (reference-data
+  // metadata, e.g. `USD-SOFR`). Descriptive; not parsed by the engine.
+  string index_label = 3;
+  // The accrual day-count convention label (reference-data metadata, e.g.
+  // `ACT/360`). Descriptive; the engine applies the USD-SOFR convention set.
+  string day_count = 4;
+  // The calendar / business-day convention label (reference-data metadata, e.g.
+  // `US / Modified Following`). Descriptive; the engine applies the USD-SOFR set.
+  string calendar = 5;
+  // The term-structure interpolation the engine bootstraps + reads this curve
+  // under (functional — reaches the numeric core).
+  CurveInterpolation interpolation = 6;
+  // The calibrating par-OIS pillars + currency + reference date (reuses
+  // `CurveSet`). At least one pillar is required; `pillars.currency` is the
+  // curve's currency.
+  CurveSet pillars = 7;
+  // Whether this is its currency's PRIMARY (default) curve — the one a bare
+  // currency resolution (the FIX rates edge, Excel `MARKCURVE`/`GETCURVE`) prices
+  // against. The registry maintains exactly one primary per currency.
+  bool primary = 8;
+}
+
+// List the registered curve definitions.
+message ListCurveDefinitionsRequest {
+  // The client-asserted entitlement principal (legacy/demo path when no token).
+  optional EntitlementPrincipal principal = 1;
+  // Echoed back so a multiplexed client joins reply to request.
+  optional uint64 correlation_id = 2;
+  // The bearer session token from `AuthService.Login`; the server authenticates
+  // the caller from it (a valid session is the read floor). A secret.
+  optional string session_token = 3;
+}
+// The registered curve definitions (registry order; the primary of each currency
+// first within its currency group is not guaranteed — read the `primary` flag).
+message ListCurveDefinitionsResponse {
+  // All registered curve definitions.
+  repeated CurveDefinition curves = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Define a new named curve.
+message CreateCurveDefinitionRequest {
+  // The curve to define (its `curve_id` must be unique).
+  CurveDefinition definition = 1;
+  // The client-asserted entitlement principal (legacy/demo path when no token).
+  optional EntitlementPrincipal principal = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+  // The bearer session token; the server authenticates the caller and requires the
+  // `refdata` capability on FixedIncome (curve reference-data management). A secret.
+  optional string session_token = 4;
+}
+// The created curve.
+message CreateCurveDefinitionResponse {
+  // The stored curve definition (as persisted, incl. any primary re-designation).
+  CurveDefinition definition = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Replace an existing curve definition by id.
+message UpdateCurveDefinitionRequest {
+  // The id of the curve to replace (authoritative over `definition.curve_id`).
+  string curve_id = 1;
+  // The new definition (reference data + pillars + interpolation + primary flag).
+  CurveDefinition definition = 2;
+  // The client-asserted entitlement principal (legacy/demo path when no token).
+  optional EntitlementPrincipal principal = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+  // The bearer session token; requires the `refdata` capability on FixedIncome.
+  optional string session_token = 5;
+}
+// The updated curve.
+message UpdateCurveDefinitionResponse {
+  // The stored curve definition after the update.
+  CurveDefinition definition = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Delete a curve definition by id.
+message DeleteCurveDefinitionRequest {
+  // The id of the curve to delete.
+  string curve_id = 1;
+  // The client-asserted entitlement principal (legacy/demo path when no token).
+  optional EntitlementPrincipal principal = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+  // The bearer session token; requires the `refdata` capability on FixedIncome.
+  optional string session_token = 4;
+}
+// Acknowledges a delete.
+message DeleteCurveDefinitionResponse {
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 1;
 }
 
 // ===========================================================================

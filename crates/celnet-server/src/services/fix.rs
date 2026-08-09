@@ -1179,9 +1179,20 @@ impl FixSession {
     /// outbound OIS/bond FIX quotes), or the static P0 default when none has been marked.
     /// A snapshot clone taken off the pinned pricer (guardrail 11).
     fn live_rates_curve(&self) -> CurveSet {
+        // Resolution order: the operator's latest `MarkCurve` slot (a live re-mark
+        // moves outbound quotes), else the multi-curve registry's PRIMARY curve for
+        // the currency, else the static default. The seeded primary's pillars ARE the
+        // P0 ladder, so routing through the registry is byte-identical to the former
+        // direct default fallback — the registry now owns "which curve a bare currency
+        // resolves to" (`docs/…` multi-curve registry).
         self.ctx
             .surface_book
             .live_curve(crate::rates_pricing::SUPPORTED_CURRENCY)
+            .or_else(|| {
+                self.ctx
+                    .surface_book
+                    .primary_curve_set(crate::rates_pricing::SUPPORTED_CURRENCY)
+            })
             .unwrap_or_else(crate::rates_pricing::default_usd_sofr_curve_set)
     }
 

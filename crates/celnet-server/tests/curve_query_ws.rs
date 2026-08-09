@@ -521,6 +521,7 @@ async fn grpc_mark_then_get_pinned_curve() {
                 curve_set: None,
                 query_tenor_years: tenors,
                 curve_version: Some(marked.curve_version),
+                curve_id: None,
             }),
         )
         .await

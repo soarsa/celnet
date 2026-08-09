@@ -259,13 +259,22 @@ impl WsServices {
             // the same one coherent per-book risk view as gRPC.
             .with_rates_store(Arc::clone(&rates_store)),
         );
-        let surface = Arc::new(SurfaceEdge::with_fleet(
-            Arc::clone(&link),
-            Arc::clone(&gate),
-            clock,
-            surface_book,
-            fleet,
-        ));
+        let surface = Arc::new(
+            SurfaceEdge::with_fleet(
+                Arc::clone(&link),
+                Arc::clone(&gate),
+                clock,
+                surface_book,
+                fleet,
+            )
+            // Share the SAME edge-wide session registry the gRPC SurfaceEdge and the
+            // auth edge use, so a WS curve-definition CRUD frame's `session_token`
+            // authenticates against the sessions `AuthService.Login` issues (list = a
+            // valid session; create/update/delete = `refdata·fixed_income`). Without
+            // this the WS SurfaceEdge would default to a fresh EMPTY registry and every
+            // tokened curve-CRUD call would be rejected under enforcement.
+            .with_sessions(Arc::clone(&sessions)),
+        );
         // `risk` is the SAME connected edge the gRPC server uses (a distributed edge's
         // backend fleet is connected once at boot and shared behind an `Arc`).
         Self {
@@ -951,6 +960,39 @@ async fn handle_unary(
                 services.surface.curve_scenario(Request::new(req)),
                 "curve_scenario_response",
                 generated_codec::encode_curve_scenario_response
+            )
+        }
+        // ---- multi-curve registry: named curve definitions (CRUD) ------------
+        "list_curve_definitions" => {
+            let req = decode!(generated_codec::decode_list_curve_definitions_request(o));
+            call!(
+                services.surface.list_curve_definitions(Request::new(req)),
+                "curve_definitions",
+                generated_codec::encode_list_curve_definitions_response
+            )
+        }
+        "create_curve_definition" => {
+            let req = decode!(generated_codec::decode_create_curve_definition_request(o));
+            call!(
+                services.surface.create_curve_definition(Request::new(req)),
+                "curve_definition_created",
+                generated_codec::encode_create_curve_definition_response
+            )
+        }
+        "update_curve_definition" => {
+            let req = decode!(generated_codec::decode_update_curve_definition_request(o));
+            call!(
+                services.surface.update_curve_definition(Request::new(req)),
+                "curve_definition_updated",
+                generated_codec::encode_update_curve_definition_response
+            )
+        }
+        "delete_curve_definition" => {
+            let req = decode!(generated_codec::decode_delete_curve_definition_request(o));
+            call!(
+                services.surface.delete_curve_definition(Request::new(req)),
+                "curve_definition_deleted",
+                generated_codec::encode_delete_curve_definition_response
             )
         }
         // ---- risk: server-side hierarchical risk over the live book ----------

@@ -86,6 +86,14 @@ use celnet_proto::{
     CurveParPillar, CurvePoint, CurveScenarioReprice, CurveScenarioRequest, CurveScenarioResponse,
     GetCurveRequest, GetCurveResponse, MarkCurveRequest, MarkCurveResponse,
 };
+// Multi-curve registry verb family (SurfaceService curve-definition CRUD): named,
+// definable curves with reference data + interpolation. Pure messages with no
+// FX-legacy wire quirks — encode/decode straight from the field tables.
+use celnet_proto::{
+    CreateCurveDefinitionRequest, CreateCurveDefinitionResponse, CurveDefinition,
+    DeleteCurveDefinitionRequest, DeleteCurveDefinitionResponse, ListCurveDefinitionsRequest,
+    ListCurveDefinitionsResponse, UpdateCurveDefinitionRequest, UpdateCurveDefinitionResponse,
+};
 // Wave-4 verb family (arch item G — `ws-codec-from-proto`): the AuthService surface
 // — login/session, the user / desk / entity / book CRUD, capabilities + roles, the
 // instrument registry (`InstrumentDefDesc` + its `definition` family oneof), and the
@@ -2258,6 +2266,7 @@ impl WireBuilder for GetCurveRequest {
             "curve_set" => self.curve_set = opt_msg::<CurveSet>(value, "curve_set")?,
             "query_tenor_years" => self.query_tenor_years = f64_vec(value),
             "curve_version" => self.curve_version = opt_u64(value),
+            "curve_id" => self.curve_id = opt_string(value, "curve_id")?,
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -3125,6 +3134,216 @@ pub fn encode_set_fix_connection_enabled_response(r: &SetFixConnectionEnabledRes
 #[must_use]
 pub fn encode_list_fix_messages_response(r: &ListFixMessagesResponse) -> Value {
     encode("ListFixMessagesResponse", r)
+}
+
+// ===========================================================================
+// multi-curve registry — the SurfaceService curve-definition CRUD verbs. Named
+// curves (reference data + calibrating pillars + interpolation + primary flag),
+// listed/created/updated/deleted. Encode/decode straight from the field tables.
+// ===========================================================================
+
+impl WireAdapter for CurveDefinition {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "curve_id" => Some(WireVal::Str(&self.curve_id)),
+            "display_name" => Some(WireVal::Str(&self.display_name)),
+            "index_label" => Some(WireVal::Str(&self.index_label)),
+            "day_count" => Some(WireVal::Str(&self.day_count)),
+            "calendar" => Some(WireVal::Str(&self.calendar)),
+            "interpolation" => Some(WireVal::Enum(self.interpolation)),
+            "pillars" => self
+                .pillars
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            "primary" => Some(WireVal::Bool(self.primary)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListCurveDefinitionsResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "curves" => Some(WireVal::RepeatedMsg(
+                self.curves.iter().map(|c| c as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for CreateCurveDefinitionResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "definition" => self
+                .definition
+                .as_ref()
+                .map(|d| WireVal::Msg(d as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for UpdateCurveDefinitionResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "definition" => self
+                .definition
+                .as_ref()
+                .map(|d| WireVal::Msg(d as &dyn WireAdapter)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DeleteCurveDefinitionResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireBuilder for CurveDefinition {
+    const MESSAGE: &'static str = "CurveDefinition";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "curve_id" => self.curve_id = string_or_empty(value),
+            "display_name" => self.display_name = string_or_empty(value),
+            "index_label" => self.index_label = string_or_empty(value),
+            "day_count" => self.day_count = string_or_empty(value),
+            "calendar" => self.calendar = string_or_empty(value),
+            "interpolation" => self.interpolation = enum_or_zero(value),
+            "pillars" => self.pillars = opt_msg::<CurveSet>(value, "pillars")?,
+            "primary" => self.primary = bool_or_false(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListCurveDefinitionsRequest {
+    const MESSAGE: &'static str = "ListCurveDefinitionsRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for CreateCurveDefinitionRequest {
+    const MESSAGE: &'static str = "CreateCurveDefinitionRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "definition" => self.definition = opt_msg::<CurveDefinition>(value, "definition")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for UpdateCurveDefinitionRequest {
+    const MESSAGE: &'static str = "UpdateCurveDefinitionRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "curve_id" => self.curve_id = req_string(value, "curve_id")?,
+            "definition" => self.definition = opt_msg::<CurveDefinition>(value, "definition")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for DeleteCurveDefinitionRequest {
+    const MESSAGE: &'static str = "DeleteCurveDefinitionRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "curve_id" => self.curve_id = req_string(value, "curve_id")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+/// Decode a WS `list_curve_definitions` body — fully generic.
+///
+/// # Errors
+/// A malformed `principal` body, as a [`CodecError`].
+pub fn decode_list_curve_definitions_request(
+    o: &Map<String, Value>,
+) -> DResult<ListCurveDefinitionsRequest> {
+    decode(ListCurveDefinitionsRequest::MESSAGE, o)
+}
+
+/// Decode a WS `create_curve_definition` body — fully generic.
+///
+/// # Errors
+/// A missing/malformed `definition`, as a [`CodecError`].
+pub fn decode_create_curve_definition_request(
+    o: &Map<String, Value>,
+) -> DResult<CreateCurveDefinitionRequest> {
+    decode(CreateCurveDefinitionRequest::MESSAGE, o)
+}
+
+/// Decode a WS `update_curve_definition` body — fully generic.
+///
+/// # Errors
+/// A missing `curve_id` or malformed `definition`, as a [`CodecError`].
+pub fn decode_update_curve_definition_request(
+    o: &Map<String, Value>,
+) -> DResult<UpdateCurveDefinitionRequest> {
+    decode(UpdateCurveDefinitionRequest::MESSAGE, o)
+}
+
+/// Decode a WS `delete_curve_definition` body — fully generic.
+///
+/// # Errors
+/// A missing `curve_id`, as a [`CodecError`].
+pub fn decode_delete_curve_definition_request(
+    o: &Map<String, Value>,
+) -> DResult<DeleteCurveDefinitionRequest> {
+    decode(DeleteCurveDefinitionRequest::MESSAGE, o)
+}
+
+/// Encode a [`ListCurveDefinitionsResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_curve_definitions_response(r: &ListCurveDefinitionsResponse) -> Value {
+    encode("ListCurveDefinitionsResponse", r)
+}
+
+/// Encode a [`CreateCurveDefinitionResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_create_curve_definition_response(r: &CreateCurveDefinitionResponse) -> Value {
+    encode("CreateCurveDefinitionResponse", r)
+}
+
+/// Encode an [`UpdateCurveDefinitionResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_update_curve_definition_response(r: &UpdateCurveDefinitionResponse) -> Value {
+    encode("UpdateCurveDefinitionResponse", r)
+}
+
+/// Encode a [`DeleteCurveDefinitionResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_delete_curve_definition_response(r: &DeleteCurveDefinitionResponse) -> Value {
+    encode("DeleteCurveDefinitionResponse", r)
 }
 
 // ===========================================================================
