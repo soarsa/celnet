@@ -63,8 +63,8 @@ use celnet_fix::session::{InMemoryStore, Role, Session, SessionAction, SessionCo
 use celnet_fix::transport::{FrameReader, write_frame};
 
 use celnet_proto::{
-    BondInstrument, CurveSet, DeskQuote, ManualInterventionReason, OisInstrument, RatesInstrument,
-    rates_instrument,
+    BondInstrument, CurveSet, DeskQuote, DeskRequestKind, ManualInterventionReason, OisInstrument,
+    RatesInstrument, rates_instrument,
 };
 use celnet_proto::{CcyPair, Instrument, MarketContext, Quantity, Side, StrikeOrDelta, Vanilla};
 use celnet_proto::{instrument, strike_or_delta};
@@ -170,6 +170,10 @@ struct MdSubscription {
 /// tokens simply lapse in the ledger's validity window).
 #[derive(Debug, Clone)]
 struct MdLiveQuote {
+    /// The liftable `QuoteID(117)` this snapshot advertised — the client-visible handle for
+    /// the two-way token pair below. A `NewOrderSingle(D)` that echoes it resolves back to
+    /// this entry (via [`FixSession::md_quote_index`]); a by-`Symbol(55)` lift still works.
+    quote_id: Vec<u8>,
     /// The BUY (offer) token, if a positive offer was published.
     buy_token: Option<u64>,
     /// The SELL (bid) token, if a positive bid was published.
@@ -591,6 +595,13 @@ struct FixSession {
     /// `NewOrderSingle(D)` naming that symbol (no `QuoteID`) books through the SAME ledger.
     /// Empty on a quote/RFQ or FX venue.
     live_md: HashMap<Vec<u8>, MdLiveQuote>,
+    /// Reverse index from a streamed `QuoteID(117)` to the `Symbol(55)` whose current
+    /// top-of-book it names, so a market-data `NewOrderSingle(D)` that echoes the QuoteID
+    /// (rather than naming the symbol) resolves to the live per-symbol entry in
+    /// [`Self::live_md`] and still runs the market-data last-look. A fresh snapshot for a
+    /// symbol supersedes its prior QuoteID here; an unsubscribe drops it. Empty on a
+    /// quote/RFQ or FX venue.
+    md_quote_index: HashMap<Vec<u8>, Vec<u8>>,
     /// A monotonic line ordinal the keyed-MAC binds (the FIX analogue of the RFS
     /// `subscription_id`); fresh per quote so each line's tokens are distinct.
     next_line: u64,
@@ -613,6 +624,7 @@ impl FixSession {
             ledger: TokenLedger::new(),
             live: HashMap::new(),
             live_md: HashMap::new(),
+            md_quote_index: HashMap::new(),
             next_line: 0,
             seq: 0,
             md_subs: HashMap::new(),
@@ -934,7 +946,14 @@ impl FixSession {
         // (a SIM rotates realistic names per request), else the authenticated CompID.
         let counterparty = self.display_counterparty(frame);
         // Record the inbox row first (its id rides an auto-quote so a lift books the deal).
-        let request_id = self.record_rates_rfq(&rfq, &counterparty, side, &curve, &admission);
+        let request_id = self.record_rates_rfq(
+            &rfq,
+            &counterparty,
+            side,
+            &curve,
+            DeskRequestKind::Rfq,
+            &admission,
+        );
         // Only an auto-quote shows a `Quote(S)`; routed / manual-intervention RFQs carry no
         // price (the desk prices them).
         if let RatesAdmission::Auto(priced) = &admission {
@@ -1284,6 +1303,9 @@ impl FixSession {
             if let Some(t) = prev.sell_token {
                 self.ledger.retire(t);
             }
+            // Retire the superseded QuoteID from the reverse index so a lift naming the OLD
+            // handle no longer resolves (the client should lift the freshly-published one).
+            self.md_quote_index.remove(&prev.quote_id);
         }
         // The SAME keyed-MAC two-way tokens the RFQ auto-quote stamps (SELL@bid, BUY@offer),
         // registered in the SAME ledger that books a lift — via the MULTI-line mint that does
@@ -1309,11 +1331,23 @@ impl FixSession {
                 Side::TwoWay => {}
             }
         }
+        // The wire `QuoteID(117)` naming this top-of-book: the BUY token's value (mirrors the
+        // RFQ/FX `Quote(S)` id convention — a session-unique, unforgeable handle), or a minted
+        // id when only a bid was published. The client echoes it on a `NewOrderSingle(D)`.
+        let quote_id = buy_token
+            .or(sell_token)
+            .map(|t| t.to_string().into_bytes())
+            .unwrap_or_else(|| self.mint_id("MDQ"));
+        // Register the QuoteID → Symbol mapping so a lift that names the QuoteID (no
+        // `Symbol(55)`) resolves to this symbol's live top-of-book (and its last-look).
+        self.md_quote_index
+            .insert(quote_id.clone(), symbol.to_vec());
         // Refresh (overwrite) the symbol's liftable top-of-book token + the published prices
         // a by-symbol lift's `Price(44)` must match (last-look on price).
         self.live_md.insert(
             symbol.to_vec(),
             MdLiveQuote {
+                quote_id: quote_id.clone(),
                 buy_token,
                 sell_token,
                 bid: priced.bid,
@@ -1326,6 +1360,7 @@ impl FixSession {
             let p = messages::MarketDataSnapshotParams {
                 md_req_id,
                 symbol,
+                quote_id: &quote_id,
                 bid_px: priced.bid,
                 offer_px: priced.offer,
                 size: priced.size,
@@ -1374,6 +1409,7 @@ impl FixSession {
                 if let Some(t) = md.sell_token {
                     self.ledger.retire(t);
                 }
+                self.md_quote_index.remove(&md.quote_id);
             }
             return;
         }
@@ -1437,10 +1473,21 @@ impl FixSession {
         let counterparty = self.display_counterparty(frame);
         // Record the desk-inbox row first (its id rides the stream so a lift books a deal).
         let request_id = match &record {
-            MdRecord::Bond(rfq) => self.record_bond_rfq(rfq, &counterparty, &curve, &admission),
+            // A market-data STREAM subscribe is the ESP venue — a lift of a streamed
+            // top-of-book books an ESP deal (distinct from a one-off RFQ).
+            MdRecord::Bond(rfq) => {
+                self.record_bond_rfq(rfq, &counterparty, &curve, DeskRequestKind::Esp, &admission)
+            }
             MdRecord::Ois(rfq) => {
                 let side = rates_side_to_side(rfq.side);
-                self.record_rates_rfq(rfq, &counterparty, side, &curve, &admission)
+                self.record_rates_rfq(
+                    rfq,
+                    &counterparty,
+                    side,
+                    &curve,
+                    DeskRequestKind::Esp,
+                    &admission,
+                )
             }
         };
         // Register the subscription so the ticker re-prices + pushes updates until an
@@ -1511,6 +1558,7 @@ impl FixSession {
         counterparty: &str,
         side: Side,
         curve: &CurveSet,
+        kind: DeskRequestKind,
         admission: &RatesAdmission,
     ) -> Option<String> {
         let edge = self.ctx.desk_edge.as_ref()?;
@@ -1548,6 +1596,7 @@ impl FixSession {
             curve.clone(),
             side,
             rfq.notional,
+            kind,
             outcome,
         );
         Some(stored.request_id)
@@ -1602,7 +1651,13 @@ impl FixSession {
         // Record the inbox row first so its id can ride an auto-quote (a lift then books
         // the deal), exactly as the OIS arm does.
         let counterparty = self.display_counterparty(frame);
-        let request_id = self.record_bond_rfq(&rfq, &counterparty, &curve, &admission);
+        let request_id = self.record_bond_rfq(
+            &rfq,
+            &counterparty,
+            &curve,
+            DeskRequestKind::Rfq,
+            &admission,
+        );
         if let RatesAdmission::Auto(priced) = &admission {
             // Firm-wide OUTBOUND kill-switch: suppress the outbound `Quote(S)` while halted
             // (the desk-inbox row above already recorded it).
@@ -1629,6 +1684,7 @@ impl FixSession {
         rfq: &dialect_rates::BondRfq,
         counterparty: &str,
         curve: &CurveSet,
+        kind: DeskRequestKind,
         admission: &RatesAdmission,
     ) -> Option<String> {
         let edge = self.ctx.desk_edge.as_ref()?;
@@ -1662,6 +1718,7 @@ impl FixSession {
             curve.clone(),
             side,
             rfq.notional,
+            kind,
             outcome,
         );
         Some(stored.request_id)
@@ -1720,7 +1777,14 @@ impl FixSession {
                 )
             }
             None => {
-                let sym = frame.get(55).map(<[u8]>::to_vec).unwrap_or_default();
+                // A market-data STREAM lift echoes the `QuoteID(117)` the `35=W` published
+                // (resolved to its symbol via the reverse index), and/or names the `Symbol(55)`
+                // directly. Prefer the QuoteID handle; fall back to the symbol for compatibility.
+                let sym = quote_id
+                    .as_ref()
+                    .and_then(|q| self.md_quote_index.get(q).cloned())
+                    .or_else(|| frame.get(55).map(<[u8]>::to_vec))
+                    .unwrap_or_default();
                 match self.live_md.get(&sym) {
                     Some(md) => {
                         let (token, cur_px) = if is_sell {
@@ -2852,6 +2916,14 @@ mod tests {
         let view = messages::MarketDataSnapshotView::new(snap);
         assert_eq!(view.symbol(), Some(&b"USD-OIS"[..]));
         assert_eq!(view.md_req_id(), Some(&b"MDR-1"[..]));
+        // The streamed snapshot advertises a liftable QuoteID(117) resolving to this symbol.
+        let snap_qid = view.quote_id().expect("the 35=W carries a QuoteID(117)");
+        assert!(!snap_qid.is_empty(), "the QuoteID is non-empty");
+        assert_eq!(
+            session.md_quote_index.get(snap_qid).map(Vec::as_slice),
+            Some(&b"USD-OIS"[..]),
+            "the QuoteID resolves back to the streamed symbol"
+        );
         let tob = view.top_of_book();
         assert!(
             tob.bid_px.unwrap() <= tob.offer_px.unwrap(),
@@ -2907,6 +2979,36 @@ mod tests {
         let p = messages::MarketOrderParams {
             cl_ord_id,
             symbol,
+            quote_id: b"",
+            security_type: b"",
+            side: dialect_fx::SIDE_BUY,
+            qty: 1_000_000.0,
+            price,
+            transact_time: b"20260625-12:00:02.000",
+        };
+        let mut enc = FrameEncoder::new();
+        messages::build_new_order_by_symbol(&hdr, &p, &mut enc)
+    }
+
+    /// Build a BUY `NewOrderSingle(D)` lifting `symbol` at `price` by **QuoteID(117)** (plus
+    /// the `SecurityType(167)`) — the ESP lift a client sends after reading a `35=W` QuoteID.
+    fn md_buy_order_by_quote_id(
+        cl_ord_id: &[u8],
+        quote_id: &[u8],
+        symbol: &[u8],
+        price: f64,
+    ) -> Vec<u8> {
+        let hdr = Header {
+            sender: b"CELNET",
+            target: b"CELNET-CPTY",
+            seq_num: 11,
+            sending_time: b"20260625-12:00:02.000",
+        };
+        let p = messages::MarketOrderParams {
+            cl_ord_id,
+            symbol,
+            quote_id,
+            security_type: dialect_rates::SEC_TYPE_BOND,
             side: dialect_fx::SIDE_BUY,
             qty: 1_000_000.0,
             price,
@@ -2967,6 +3069,53 @@ mod tests {
             exec_type_of(&exec_out2),
             Some(EXEC_REJECTED),
             "a re-lift of a consumed line rejects"
+        );
+    }
+
+    /// The ESP lift-by-QuoteID path: after a subscribe publishes a top-of-book with a
+    /// `QuoteID(117)`, a `NewOrderSingle(D)` that ECHOES that QuoteID (+ `SecurityType(167)`)
+    /// resolves through the reverse index to the symbol's live token and FILLS — the
+    /// client-visible handle books the SAME token a by-symbol lift would.
+    #[tokio::test]
+    async fn md_lift_by_quote_id_books_and_fills() {
+        let mut session = stream_session("conn-md-qid", None);
+        let st = session.sending_time();
+
+        let sub = ois_md_request(b"MDR-Q", SubscriptionRequest::Subscribe);
+        let sframe = FrameCursor::parse(&sub).unwrap();
+        let mut out = Vec::new();
+        session.on_market_data_request(&sframe, &st, &mut out).await;
+        let snap = FrameCursor::parse(&out[0]).unwrap();
+        let view = messages::MarketDataSnapshotView::new(snap);
+        let quote_id = view
+            .quote_id()
+            .expect("the 35=W carries a QuoteID")
+            .to_vec();
+        let offer = view.top_of_book().offer_px.expect("an offer");
+
+        // Lift by QuoteID(117) — the venue resolves it to the symbol's live token.
+        let order = md_buy_order_by_quote_id(b"C-Q-1", &quote_id, b"USD-OIS", offer);
+        let oframe = FrameCursor::parse(&order).unwrap();
+        assert_eq!(
+            oframe.get(117),
+            Some(quote_id.as_slice()),
+            "35=D echoes the QuoteID"
+        );
+        assert_eq!(
+            oframe.get(167),
+            Some(dialect_rates::SEC_TYPE_BOND),
+            "35=D carries a SecurityType"
+        );
+        let mut exec_out = Vec::new();
+        session.on_new_order(&oframe, &st, &mut exec_out);
+        assert_eq!(
+            exec_type_of(&exec_out),
+            Some(EXEC_FILLED),
+            "the QuoteID lift fills"
+        );
+        assert!(
+            session.live_md.is_empty(),
+            "a filled lift retires the symbol's live token"
         );
     }
 
@@ -3033,6 +3182,8 @@ mod tests {
         let p = messages::MarketOrderParams {
             cl_ord_id,
             symbol,
+            quote_id: b"",
+            security_type: b"",
             side: dialect_fx::SIDE_SELL,
             qty: 1_000_000.0,
             price,

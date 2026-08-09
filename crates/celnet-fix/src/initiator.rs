@@ -380,6 +380,7 @@ impl<S: MessageStore> Initiator<S> {
         reader: &mut FrameReader<R>,
         write_half: &mut W,
         sending_time: &[u8],
+        security_type: &[u8],
         hold: Duration,
         lift_after: Option<Duration>,
     ) -> std::io::Result<StreamOutcome>
@@ -407,7 +408,9 @@ impl<S: MessageStore> Initiator<S> {
                     let view = messages::MarketDataSnapshotView::new(frame);
                     let tob = view.top_of_book();
                     outcome.updates += 1;
-                    outcome.result.quote_id = None; // a snapshot carries no QuoteID
+                    // The streamed snapshot now advertises a liftable QuoteID(117) — capture it
+                    // so the caller can display it and a lift echoes it back.
+                    outcome.result.quote_id = view.quote_id().map(<[u8]>::to_vec);
                     outcome.result.bid = tob.bid_px;
                     outcome.result.offer = tob.offer_px;
                     let lift_due = lift_at.is_some_and(|t| tokio::time::Instant::now() >= t);
@@ -433,12 +436,17 @@ impl<S: MessageStore> Initiator<S> {
                         let Some(symbol) = view.symbol().map(<[u8]>::to_vec) else {
                             continue;
                         };
+                        // Echo the streamed QuoteID(117) as the lift handle (empty ⇒ the venue
+                        // falls back to resolving by Symbol(55)).
+                        let quote_id = view.quote_id().map(<[u8]>::to_vec).unwrap_or_default();
                         let cl = self.mint("C");
                         let px = price.unwrap_or(0.0);
                         let order = self.session.send_app(sending_time, |h, e| {
                             let p = messages::MarketOrderParams {
                                 cl_ord_id: &cl,
                                 symbol: &symbol,
+                                quote_id: &quote_id,
+                                security_type,
                                 side,
                                 qty: 1_000_000.0,
                                 price: px,
@@ -574,6 +582,7 @@ impl<S: MessageStore, RW: AsyncRead + AsyncWrite + Unpin> InitiatorSession<'_, S
     pub async fn md_stream(
         &mut self,
         sending_time: &[u8],
+        security_type: &[u8],
         build_subscribe: impl FnOnce(&Header<'_>, &mut crate::framing::FrameEncoder) -> Vec<u8>,
         hold: Duration,
         lift_after: Option<Duration>,
@@ -586,6 +595,7 @@ impl<S: MessageStore, RW: AsyncRead + AsyncWrite + Unpin> InitiatorSession<'_, S
                 &mut self.reader,
                 &mut self.write_half,
                 sending_time,
+                security_type,
                 hold,
                 lift_after,
             )

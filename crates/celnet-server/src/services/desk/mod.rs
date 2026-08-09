@@ -721,6 +721,7 @@ impl RfqDeskEdge {
         curve_set: CurveSet,
         side: Side,
         notional: f64,
+        kind: DeskRequestKind,
         outcome: RfqIngestOutcome,
     ) -> DeskRequest {
         let now = self.clock.now_nanos();
@@ -733,7 +734,7 @@ impl RfqDeskEdge {
         };
         let stored = DeskRequest {
             request_id: self.requests.next_request_id(),
-            kind: DeskRequestKind::Rfq as i32,
+            kind: kind as i32,
             counterparty: counterparty.to_owned(),
             desk: desk.to_owned(),
             instrument: Some(instrument),
@@ -2354,6 +2355,43 @@ pub(crate) mod tests {
         edge.book_fix_lift(&id).expect("fix lift books a deal")
     }
 
+    /// Part B: a lift of a market-data STREAM (ESP) subscription books a `Deal` stamped
+    /// `DeskRequestKind::Esp`, so the blotter shows an ESP fill distinctly from an RFQ. The
+    /// ESP kind is set at ingest (the FIX MD-venue path passes it) and flows onto the deal.
+    #[tokio::test]
+    async fn esp_ingest_books_a_deal_stamped_esp() {
+        let edge = edge();
+        // The FIX MD-venue records the streamed line as an ESP auto-quote (QUOTED).
+        let stored = edge.ingest_fix_rfq(
+            "g10",
+            "CELER_RATES",
+            ois_instrument(Side::Buy),
+            curve(),
+            Side::Buy,
+            25_000_000.0,
+            DeskRequestKind::Esp,
+            RfqIngestOutcome::AutoQuoted(DeskQuote {
+                price: 0.0411,
+                notional: 25_000_000.0,
+                valid_for_ms: 30_000,
+                trader: "auto".to_owned(),
+            }),
+        );
+        assert_eq!(
+            stored.kind,
+            DeskRequestKind::Esp as i32,
+            "the desk row is stamped ESP"
+        );
+        let deal = edge
+            .book_fix_lift(&stored.request_id)
+            .expect("an ESP lift books a deal");
+        assert_eq!(
+            deal.kind,
+            DeskRequestKind::Esp as i32,
+            "the booked deal carries the ESP kind"
+        );
+    }
+
     // --- incoming-quote acceptance (`evaluate_fix_acceptance`) --------------
 
     use celnet_acceptance::{
@@ -2912,6 +2950,7 @@ pub(crate) mod tests {
             curve(),
             Side::Buy,
             10_000_000.0,
+            DeskRequestKind::Rfq,
             RfqIngestOutcome::AutoQuoted(DeskQuote {
                 price: 0.0405,
                 notional: 10_000_000.0,
@@ -2936,6 +2975,7 @@ pub(crate) mod tests {
             curve(),
             Side::Sell,
             50_000_000.0,
+            DeskRequestKind::Rfq,
             RfqIngestOutcome::RoutedToDesk,
         );
         assert_eq!(manual.state, DeskRequestState::Pending as i32);
@@ -2972,6 +3012,7 @@ pub(crate) mod tests {
             curve(),
             Side::Buy,
             10_000_000.0,
+            DeskRequestKind::Rfq,
             RfqIngestOutcome::ManualIntervention(ManualInterventionReason::UnconfiguredTenor),
         );
         assert_eq!(manual.state, DeskRequestState::Pending as i32);

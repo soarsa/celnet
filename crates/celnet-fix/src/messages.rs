@@ -512,6 +512,12 @@ pub struct MarketOrderParams<'a> {
     pub cl_ord_id: &'a [u8],
     /// `Symbol(55)` being lifted.
     pub symbol: &'a [u8],
+    /// The streamed `QuoteID(117)` the `35=W` advertised for this top-of-book — the primary
+    /// lift handle. Empty ⇒ omitted (a pure by-`Symbol(55)` lift, still accepted by the venue).
+    pub quote_id: &'a [u8],
+    /// `SecurityType(167)` echoing the streamed instrument's product arm (e.g. `BOND`). Empty
+    /// ⇒ omitted.
+    pub security_type: &'a [u8],
     /// `Side(54)` byte.
     pub side: u8,
     /// `OrderQty(38)`.
@@ -533,7 +539,15 @@ pub fn build_new_order_by_symbol(
     enc.clear();
     hdr.encode(MsgType::NewOrderSingle, enc);
     enc.push(11, p.cl_ord_id);
+    // The streamed QuoteID handle (the primary lift key); omitted for a pure by-symbol lift.
+    if !p.quote_id.is_empty() {
+        enc.push(117, p.quote_id);
+    }
     enc.push(55, p.symbol);
+    // Echo the streamed instrument's SecurityType so the lift is a complete FI order.
+    if !p.security_type.is_empty() {
+        enc.push(167, p.security_type);
+    }
     enc.push(54, &[p.side]);
     push_decimal(enc, 38, p.qty);
     push_decimal(enc, 44, p.price);
@@ -768,6 +782,11 @@ pub struct MarketDataSnapshotParams<'a> {
     pub md_req_id: &'a [u8],
     /// `Symbol(55)`.
     pub symbol: &'a [u8],
+    /// The liftable `QuoteID(117)` naming this streamed top-of-book — the client-visible
+    /// handle for the SAME keyed-MAC two-way token the venue will honour on a lift. A
+    /// `NewOrderSingle(D)` echoes it (plus `Side(54)` to pick the leg); the venue also still
+    /// accepts a by-`Symbol(55)` lift for compatibility.
+    pub quote_id: &'a [u8],
     /// Best bid (`MDEntryType=0`, `MDEntryPx(270)`).
     pub bid_px: f64,
     /// Best offer (`MDEntryType=1`, `MDEntryPx(270)`).
@@ -788,6 +807,8 @@ pub fn build_market_data_snapshot(
     hdr.encode(MsgType::MarketDataSnapshotFullRefresh, enc);
     enc.push(TAG_MD_REQ_ID, p.md_req_id);
     enc.push(55, p.symbol);
+    // The liftable QuoteID naming this top-of-book (a client echoes it on the lift).
+    enc.push(117, p.quote_id);
     enc.push_int(TAG_NO_MD_ENTRIES, 2);
     // Bid entry.
     enc.push(TAG_MD_ENTRY_TYPE, &[MD_ENTRY_BID]);
@@ -825,6 +846,12 @@ impl<'a> MarketDataSnapshotView<'a> {
     #[must_use]
     pub fn symbol(&self) -> Option<&'a [u8]> {
         self.frame.get(55)
+    }
+
+    /// The liftable `QuoteID(117)` this snapshot advertised (a client echoes it on the lift).
+    #[must_use]
+    pub fn quote_id(&self) -> Option<&'a [u8]> {
+        self.frame.get(117)
     }
 
     /// The top-of-book `(bid_px, offer_px, bid_size, offer_size)` extracted from the
@@ -960,6 +987,7 @@ mod tests {
         let p = MarketDataSnapshotParams {
             md_req_id: b"MDR-1",
             symbol: b"US-912828-5Y",
+            quote_id: b"Q-42",
             bid_px: 99.4567_8901,
             offer_px: 99.6543_2109,
             size: 5_000_000.0,
@@ -974,6 +1002,7 @@ mod tests {
         let v = MarketDataSnapshotView::new(frame);
         assert_eq!(v.md_req_id(), Some(&b"MDR-1"[..]));
         assert_eq!(v.symbol(), Some(&b"US-912828-5Y"[..]));
+        assert_eq!(v.quote_id(), Some(&b"Q-42"[..]));
         let tob = v.top_of_book();
         assert!((tob.bid_px.unwrap() - 99.4567_8901).abs() < 1e-6);
         assert!((tob.offer_px.unwrap() - 99.6543_2109).abs() < 1e-6);
@@ -1013,6 +1042,8 @@ mod tests {
         let p = MarketOrderParams {
             cl_ord_id: b"C-1",
             symbol: b"US-912828-5Y",
+            quote_id: b"",
+            security_type: b"",
             side: crate::dialect_fx::SIDE_BUY,
             qty: 1_000_000.0,
             price: 99.65,
@@ -1024,8 +1055,9 @@ mod tests {
             crate::dictionary::validate(&frame),
             Ok(MsgType::NewOrderSingle)
         );
-        // No QuoteID(117) on a market-data lift — the venue resolves by Symbol.
+        // No QuoteID(117) on a bare by-symbol lift — the venue resolves by Symbol.
         assert_eq!(frame.get(117), None);
+        assert_eq!(frame.get(167), None);
         let v = NewOrderSingleView::new(frame);
         assert_eq!(v.quote_id(), None);
         assert_eq!(v.side(), Some(crate::dialect_fx::SIDE_BUY));
@@ -1038,6 +1070,35 @@ mod tests {
                 .abs()
                 < 1e-6
         );
+    }
+
+    /// An ESP lift echoes the streamed `QuoteID(117)`, the `Symbol(55)`, and the
+    /// `SecurityType(167)` — a complete, venue-resolvable fixed-income order.
+    #[test]
+    fn market_order_by_symbol_carries_quote_id_and_security_type() {
+        let mut enc = FrameEncoder::new();
+        let p = MarketOrderParams {
+            cl_ord_id: b"C-2",
+            symbol: b"912828XY7",
+            quote_id: b"7734901234",
+            security_type: crate::dialect_rates::SEC_TYPE_BOND,
+            side: crate::dialect_fx::SIDE_SELL,
+            qty: 5_000_000.0,
+            price: 99.40,
+            transact_time: b"20260530-12:00:01.000",
+        };
+        let raw = build_new_order_by_symbol(&hdr(), &p, &mut enc);
+        let frame = FrameCursor::parse(&raw).expect("D frame parses");
+        assert_eq!(
+            crate::dictionary::validate(&frame),
+            Ok(MsgType::NewOrderSingle)
+        );
+        assert_eq!(frame.get(117), Some(&b"7734901234"[..]));
+        assert_eq!(frame.get(55), Some(&b"912828XY7"[..]));
+        assert_eq!(frame.get(167), Some(crate::dialect_rates::SEC_TYPE_BOND));
+        let v = NewOrderSingleView::new(frame);
+        assert_eq!(v.quote_id(), Some(&b"7734901234"[..]));
+        assert_eq!(v.side(), Some(crate::dialect_fx::SIDE_SELL));
     }
 
     #[test]

@@ -1245,6 +1245,8 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
         let outcome = sess
             .md_stream(
                 &sending_time,
+                // An ESP bond lift echoes SecurityType(167)=BOND on its NewOrderSingle.
+                dialect_rates::SEC_TYPE_BOND,
                 |hdr, enc| {
                     dialect_rates::build_bond_market_data_request_with_party(
                         hdr,
