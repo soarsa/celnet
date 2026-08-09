@@ -5084,6 +5084,9 @@ fn pg_spec_body() -> Value {
         "esp_pipeline": pg_pipeline_body(),
         "rfq_pipeline": pg_pipeline_body(),
         "share_pipeline": true,
+        "last_look_mode": 1,
+        "last_look_tolerance_bps": 2.5,
+        "async_giveback_pct": 40.0,
         "enabled": true
     })
 }
@@ -5170,6 +5173,12 @@ fn pg_group_desc() -> PricingGroupDesc {
         // absent-weight (omitted) path.
         pricing_source_mode: celnet_proto::PricingSourceMode::CurveAnchoredBookSkew as i32,
         book_skew_weight: Some(0.25),
+        // Exercise a non-zero last-look mode and both present `optional` scalars; the
+        // sibling `PricingGroupDesc::default()` in the response fixture covers the zero
+        // mode + absent (omitted) scalars.
+        last_look_mode: celnet_proto::LastLookMode::Async as i32,
+        last_look_tolerance_bps: Some(2.5),
+        async_giveback_pct: Some(40.0),
         enabled: true,
     }
 }

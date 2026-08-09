@@ -584,6 +584,60 @@ fn default_book_skew_weight() -> f64 {
     DEFAULT_BOOK_SKEW_WEIGHT
 }
 
+/// How this pricing group treats the **favorable** side of a market-data (ESP) last-look
+/// — the admin-configurable last-look policy governing what happens when the published
+/// price moved in the **dealer's** favor between the streamed snapshot the client lifted
+/// (`q`) and the current published price at order arrival (`c`). The adverse side is a
+/// plain reject-beyond-tolerance / honor-within-tolerance regardless of this mode.
+///
+/// The default is [`Sync`](Self::Sync): the dealer keeps the whole favorable move and the
+/// client is filled at exactly the price they requested — the least-surprising "you get
+/// what you asked for" behaviour, and the proto3 zero value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LastLookMode {
+    /// Fill the client at EXACTLY their requested (lifted) price; the dealer captures
+    /// 100% of the favorable slippage. The platform default (see the type doc).
+    #[default]
+    Sync,
+    /// Fill at an IMPROVED price: the requested price adjusted toward the current price by
+    /// [`PricingGroupDef::async_giveback_pct`]% of the favorable move (that % passed back
+    /// to the client; the dealer keeps the rest).
+    Async,
+}
+
+impl LastLookMode {
+    /// A stable lowercase wire/display token (mirrors the serde `snake_case` form).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LastLookMode::Sync => "sync",
+            LastLookMode::Async => "async",
+        }
+    }
+}
+
+/// The default [`PricingGroupDef::last_look_tolerance_bps`]: the market-data last-look
+/// adverse-move band, **1 bp of price** (relative, so it scales across bond price points
+/// and OIS rates). Comfortably absorbs the sub-second composite drift a fast bond shows
+/// between the snapshot the client lifted and order arrival, while still rejecting a
+/// genuine market move.
+pub const DEFAULT_LAST_LOOK_TOLERANCE_BPS: f64 = 1.0;
+
+/// serde default for [`PricingGroupDef::last_look_tolerance_bps`] (additive field).
+fn default_last_look_tolerance_bps() -> f64 {
+    DEFAULT_LAST_LOOK_TOLERANCE_BPS
+}
+
+/// The default [`PricingGroupDef::async_giveback_pct`]: in Async mode, return **50%** of
+/// the favorable slippage to the client (the dealer keeps the other half).
+pub const DEFAULT_ASYNC_GIVEBACK_PCT: f64 = 50.0;
+
+/// serde default for [`PricingGroupDef::async_giveback_pct`] (additive field).
+fn default_async_giveback_pct() -> f64 {
+    DEFAULT_ASYNC_GIVEBACK_PCT
+}
+
 /// One persisted **pricing group**: a named, trader-defined grouping that binds a
 /// set of connected clients (inbound FIX sessions, GUI/API principals, or a desk as
 /// a default tier) to their own outbound **feature pipelines**, so different clients
@@ -662,6 +716,26 @@ pub struct PricingGroupDef {
     /// shape-validated finite and in `[0, 1]` at load and every admin write.
     #[serde(default = "default_book_skew_weight")]
     pub book_skew_weight: f64,
+    /// The **market-data (ESP) last-look mode** for this group's outbound stream — how a
+    /// FAVORABLE move between the streamed snapshot the client lifted and the current
+    /// published price is shared (see [`LastLookMode`]). Additive serde-default
+    /// ([`LastLookMode::Sync`]).
+    #[serde(default)]
+    pub last_look_mode: LastLookMode,
+    /// The market-data last-look **adverse-move tolerance in bps of price** (relative, so
+    /// it scales across bond price points and OIS rates): a lift whose price has moved
+    /// against the dealer by more than `tolerance_bps · 1e-4 · |price|` is rejected as
+    /// superseded (token preserved, so a fresh re-lift at the current price can book).
+    /// Additive serde-default ([`DEFAULT_LAST_LOOK_TOLERANCE_BPS`]); shape-validated finite
+    /// and `>= 0` at load and every admin write.
+    #[serde(default = "default_last_look_tolerance_bps")]
+    pub last_look_tolerance_bps: f64,
+    /// Only meaningful under [`LastLookMode::Async`]: the percentage `∈ [0, 100]` of the
+    /// **favorable** slippage returned to the client (the dealer keeps the rest). Additive
+    /// serde-default ([`DEFAULT_ASYNC_GIVEBACK_PCT`]); shape-validated finite and in
+    /// `[0, 100]` at load and every admin write.
+    #[serde(default = "default_async_giveback_pct")]
+    pub async_giveback_pct: f64,
     /// Whether the group is active. A disabled group is persisted and editable but
     /// never participates in resolution — its members fall through as if it did not
     /// exist (so a disabled group's members can be re-homed without a determinism
@@ -717,6 +791,12 @@ pub struct PricingGroupEdit {
     pub pricing_source_mode: PricingSourceMode,
     /// The curve→composite blend weight for [`PricingSourceMode::CurveAnchoredBookSkew`].
     pub book_skew_weight: f64,
+    /// The market-data (ESP) last-look mode (see [`LastLookMode`]).
+    pub last_look_mode: LastLookMode,
+    /// The market-data last-look adverse-move tolerance, in bps of price.
+    pub last_look_tolerance_bps: f64,
+    /// The % of favorable slippage returned to the client under [`LastLookMode::Async`].
+    pub async_giveback_pct: f64,
     /// Whether the group is active.
     pub enabled: bool,
 }
@@ -1697,6 +1777,9 @@ impl IdentityStore {
             share_pipeline: edit.share_pipeline,
             pricing_source_mode: edit.pricing_source_mode,
             book_skew_weight: edit.book_skew_weight,
+            last_look_mode: edit.last_look_mode,
+            last_look_tolerance_bps: edit.last_look_tolerance_bps,
+            async_giveback_pct: edit.async_giveback_pct,
             enabled: edit.enabled,
         };
         self.pricing_groups.push(def.clone());
@@ -1739,6 +1822,9 @@ impl IdentityStore {
             share_pipeline: edit.share_pipeline,
             pricing_source_mode: edit.pricing_source_mode,
             book_skew_weight: edit.book_skew_weight,
+            last_look_mode: edit.last_look_mode,
+            last_look_tolerance_bps: edit.last_look_tolerance_bps,
+            async_giveback_pct: edit.async_giveback_pct,
             enabled: edit.enabled,
         };
         let prev = std::mem::replace(&mut self.pricing_groups[pos], def.clone());
@@ -1940,6 +2026,22 @@ impl IdentityStore {
         if !(def.book_skew_weight.is_finite() && (0.0..=1.0).contains(&def.book_skew_weight)) {
             return Err(format!(
                 "pricing group {:?} book_skew_weight must be finite and in [0, 1]",
+                def.name
+            ));
+        }
+        // The market-data last-look tolerance is a non-negative bps-of-price band; a bad
+        // value fails loudly at the admin write / at load rather than at pricing time.
+        if !(def.last_look_tolerance_bps.is_finite() && def.last_look_tolerance_bps >= 0.0) {
+            return Err(format!(
+                "pricing group {:?} last_look_tolerance_bps must be finite and >= 0",
+                def.name
+            ));
+        }
+        // The async giveback is a percentage in [0, 100].
+        if !(def.async_giveback_pct.is_finite() && (0.0..=100.0).contains(&def.async_giveback_pct))
+        {
+            return Err(format!(
+                "pricing group {:?} async_giveback_pct must be finite and in [0, 100]",
                 def.name
             ));
         }
@@ -3039,6 +3141,9 @@ mod tests {
             share_pipeline: false,
             pricing_source_mode: PricingSourceMode::default(),
             book_skew_weight: DEFAULT_BOOK_SKEW_WEIGHT,
+            last_look_mode: LastLookMode::default(),
+            last_look_tolerance_bps: DEFAULT_LAST_LOOK_TOLERANCE_BPS,
+            async_giveback_pct: DEFAULT_ASYNC_GIVEBACK_PCT,
             enabled,
         }
     }
@@ -3226,6 +3331,32 @@ mod tests {
         );
     }
 
+    /// Non-default market-data last-look settings survive a save → reload (restart
+    /// persistence): the enum as its `snake_case` token, the tolerance and giveback as
+    /// numbers, all reload byte-for-byte and the reloaded store re-validates.
+    #[test]
+    fn pricing_group_last_look_config_persists_across_reload() {
+        let mut store = IdentityStore::default();
+        let mut g = group("ll", "GROUP-LL", &["conn-ll"], &[], &[], true);
+        g.last_look_mode = LastLookMode::Async;
+        g.last_look_tolerance_bps = 2.5;
+        g.async_giveback_pct = 40.0;
+        store.pricing_groups.push(g);
+        store
+            .validate_pricing_groups()
+            .expect("valid last-look config");
+
+        let json = serde_json::to_string(&store).unwrap();
+        // The enum persists as its lowercase wire token, not an int.
+        assert!(json.contains("\"last_look_mode\":\"async\""));
+        let back: IdentityStore = serde_json::from_str(&json).unwrap();
+        assert_eq!(store, back, "the whole store reloads identically");
+        let g = &back.pricing_groups[0];
+        assert_eq!(g.last_look_mode, LastLookMode::Async);
+        assert!((g.last_look_tolerance_bps - 2.5).abs() < 1e-12);
+        assert!((g.async_giveback_pct - 40.0).abs() < 1e-12);
+    }
+
     /// A pre-policy `identity.json` (no `pricing_source_mode` / `book_skew_weight` keys)
     /// loads at the platform defaults — composite-first + a 0.5 skew weight — so an
     /// existing config behaves identically to before (additive serde-default contract).
@@ -3248,9 +3379,42 @@ mod tests {
             PricingSourceMode::CompositeFirstCurveFallback
         );
         assert!((g.book_skew_weight - DEFAULT_BOOK_SKEW_WEIGHT).abs() < 1e-12);
+        // The market-data last-look fields also default (Sync / 1bp / 50%).
+        assert_eq!(g.last_look_mode, LastLookMode::Sync);
+        assert!((g.last_look_tolerance_bps - DEFAULT_LAST_LOOK_TOLERANCE_BPS).abs() < 1e-12);
+        assert!((g.async_giveback_pct - DEFAULT_ASYNC_GIVEBACK_PCT).abs() < 1e-12);
         // And it round-trips through the enum's snake_case token on re-serialize.
         let re = serde_json::to_string(&store.pricing_groups[0]).unwrap();
         assert!(re.contains("\"composite_first_curve_fallback\""));
+        assert!(re.contains("\"sync\""));
+    }
+
+    /// The market-data last-look shape guards: a negative tolerance or an out-of-range
+    /// giveback percentage is rejected at the admin write / at load, so a bad last-look
+    /// config never reaches the hot path.
+    #[test]
+    fn pricing_group_rejects_bad_last_look_config() {
+        let mut neg_tol = IdentityStore::default();
+        let mut g = group("ga", "GROUP-A", &["conn-1"], &[], &[], true);
+        g.last_look_tolerance_bps = -1.0;
+        neg_tol.pricing_groups.push(g);
+        assert!(
+            neg_tol
+                .validate_pricing_groups()
+                .unwrap_err()
+                .contains("last_look_tolerance_bps")
+        );
+
+        let mut bad_pct = IdentityStore::default();
+        let mut g = group("gb", "GROUP-B", &["conn-2"], &[], &[], true);
+        g.async_giveback_pct = 150.0;
+        bad_pct.pricing_groups.push(g);
+        assert!(
+            bad_pct
+                .validate_pricing_groups()
+                .unwrap_err()
+                .contains("async_giveback_pct")
+        );
     }
 
     /// A `book_skew_weight` outside `[0, 1]` (or non-finite) is rejected at the admin write

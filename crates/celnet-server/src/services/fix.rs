@@ -75,7 +75,10 @@ use celnet_acceptance::AcceptanceDecision;
 
 use crate::clock::Clock;
 use crate::config::fix_connections::AcceptorKind;
-use crate::config::identity::{DEFAULT_BOOK_SKEW_WEIGHT, PricingSourceMode};
+use crate::config::identity::{
+    DEFAULT_ASYNC_GIVEBACK_PCT, DEFAULT_BOOK_SKEW_WEIGHT, DEFAULT_LAST_LOOK_TOLERANCE_BPS,
+    LastLookMode, PricingSourceMode,
+};
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::services::clicktrade::{
@@ -1093,6 +1096,38 @@ impl FixSession {
         }
     }
 
+    /// This session's resolved **market-data (ESP) last-look policy**
+    /// `(mode, tolerance_bps, giveback_pct)`: the last-look settings of the pricing group
+    /// this FIX session resolves to (by connection id, then desk fallback), or the platform
+    /// defaults when no hub is wired or no group claims this session. Read on the async FIX
+    /// edge (a short read-lock on the hub's cached resolver), never the pinned pricer
+    /// (guardrail 11).
+    fn last_look_policy(&self) -> (LastLookMode, f64, f64) {
+        let Some(hub) = self.ctx.aggregation_hub.as_ref() else {
+            return (
+                LastLookMode::default(),
+                DEFAULT_LAST_LOOK_TOLERANCE_BPS,
+                DEFAULT_ASYNC_GIVEBACK_PCT,
+            );
+        };
+        let resolver = hub.pricing_groups();
+        let desk = self.ctx.desk.trim();
+        match resolver
+            .resolve_for_connection(&self.ctx.connection_id, (!desk.is_empty()).then_some(desk))
+        {
+            Some(group) => (
+                group.last_look_mode,
+                group.last_look_tolerance_bps,
+                group.async_giveback_pct,
+            ),
+            None => (
+                LastLookMode::default(),
+                DEFAULT_LAST_LOOK_TOLERANCE_BPS,
+                DEFAULT_ASYNC_GIVEBACK_PCT,
+            ),
+        }
+    }
+
     /// Price a rates/bond line under this session's [`PricingSourceMode`], the seam that
     /// makes the aggregated book drive the price **from the initial quote** — not just the
     /// RFS re-price tick. `curve_line` is the internal-curve two-way (lazily evaluated, so
@@ -1635,57 +1670,80 @@ impl FixSession {
         // resolve the CURRENT top-of-book token published for that symbol from
         // [`Self::live_md`]. Either way the per-side token books through the SAME ledger.
         let live_quote = quote_id.as_ref().and_then(|q| self.live.get(q));
-        // A market-data lift carries the streamed level in `Price(44)`; a moved market
-        // (the published side price has ticked away from what the taker hit) rejects the
-        // lift as superseded — the by-symbol analogue of the QuoteID last-look.
+        // A market-data lift carries the streamed level in `Price(44)` (`q`, the price the
+        // taker hit). This session's configurable last-look policy compares it to the
+        // current published side price (`c`) at order arrival: an adverse move beyond the
+        // tolerance band rejects the lift as superseded; a favorable move is kept (Sync) or
+        // partly returned to the client (Async). Resolved once off the pricing group (async
+        // FIX edge, guardrail 11).
         let presented_px = frame.get(44).and_then(dialect_fx::parse_float);
-        let (mut token, symbol, fx_line, rates_request_id, quote_mint_nanos, via_md, md_superseded) =
-            match live_quote {
-                Some(lq) => {
-                    let token = if side_byte == dialect_fx::SIDE_SELL {
-                        lq.sell_token
-                    } else {
-                        lq.buy_token
-                    };
-                    (
-                        token,
-                        lq.symbol.clone(),
-                        lq.fx,
-                        lq.rates_request_id.clone(),
-                        Some(lq.mint_nanos),
-                        false,
-                        false,
-                    )
-                }
-                None => {
-                    let sym = frame.get(55).map(<[u8]>::to_vec).unwrap_or_default();
-                    match self.live_md.get(&sym) {
-                        Some(md) => {
-                            let (token, expected_px) = if side_byte == dialect_fx::SIDE_SELL {
-                                (md.sell_token, md.bid)
-                            } else {
-                                (md.buy_token, md.offer)
-                            };
-                            // Price last-look: the streamed `Price(44)` must still match the
-                            // currently-published side price (within tolerance). A client that
-                            // omits `Price(44)` books at the current price (lenient fallback).
-                            let superseded = presented_px
-                                .is_some_and(|p| (p - expected_px).abs() > MD_LIFT_PRICE_TOL);
-                            // A market-data line carries no FX pre-trade template (rates).
-                            (
-                                token,
-                                sym,
-                                None,
-                                md.request_id.clone(),
-                                Some(md.mint_nanos),
-                                true,
-                                superseded,
-                            )
-                        }
-                        None => (None, sym, None, None, None, false, false),
+        let (ll_mode, ll_tolerance_bps, ll_giveback_pct) = self.last_look_policy();
+        let is_sell = side_byte == dialect_fx::SIDE_SELL;
+        let (
+            mut token,
+            symbol,
+            fx_line,
+            rates_request_id,
+            quote_mint_nanos,
+            via_md,
+            md_superseded,
+            md_fill_px,
+        ) = match live_quote {
+            Some(lq) => {
+                let token = if is_sell { lq.sell_token } else { lq.buy_token };
+                (
+                    token,
+                    lq.symbol.clone(),
+                    lq.fx,
+                    lq.rates_request_id.clone(),
+                    Some(lq.mint_nanos),
+                    false,
+                    false,
+                    None,
+                )
+            }
+            None => {
+                let sym = frame.get(55).map(<[u8]>::to_vec).unwrap_or_default();
+                match self.live_md.get(&sym) {
+                    Some(md) => {
+                        let (token, cur_px) = if is_sell {
+                            (md.sell_token, md.bid)
+                        } else {
+                            (md.buy_token, md.offer)
+                        };
+                        // Configurable market-data last-look. A client that omits `Price(44)`
+                        // books at the current price (lenient fallback — no `q` to compare, so
+                        // no adverse/favorable move and no supersede).
+                        let (superseded, fill_px) = match presented_px {
+                            Some(q) => match md_last_look_decision(
+                                is_sell,
+                                q,
+                                cur_px,
+                                ll_mode,
+                                ll_tolerance_bps,
+                                ll_giveback_pct,
+                            ) {
+                                MdLastLook::Fill(px) => (false, Some(px)),
+                                MdLastLook::Superseded => (true, None),
+                            },
+                            None => (false, None),
+                        };
+                        // A market-data line carries no FX pre-trade template (rates).
+                        (
+                            token,
+                            sym,
+                            None,
+                            md.request_id.clone(),
+                            Some(md.mint_nanos),
+                            true,
+                            superseded,
+                            fill_px,
+                        )
                     }
+                    None => (None, sym, None, None, None, false, false, None),
                 }
-            };
+            }
+        };
         // A superseded market-data lift books nothing: drop the token so the ledger is never
         // consumed (the live token stays liftable at the CURRENT price for a fresh re-lift).
         if md_superseded {
@@ -1706,7 +1764,7 @@ impl FixSession {
             BookOutcome::UnknownToken => "unknown",
         };
 
-        let (mut filled, premium, mut text): (bool, f64, Option<&[u8]>) = match outcome {
+        let (mut filled, mut premium, mut text): (bool, f64, Option<&[u8]>) = match outcome {
             BookOutcome::Booked { premium, .. } => (true, premium, None),
             BookOutcome::Expired => (false, 0.0, Some(b"quote expired (last-look)")),
             BookOutcome::AlreadyConsumed => (false, 0.0, Some(b"quote already executed")),
@@ -1716,6 +1774,14 @@ impl FixSession {
         // token — surface the accurate reason (filled is already false: token was dropped).
         if md_superseded {
             text = Some(b"quote superseded: market moved (last-look)");
+        }
+        // The ACTUAL fill price of a market-data lift is the last-look policy result (the
+        // client's requested price, honored or improved toward the current price under an
+        // Async giveback) — NOT the raw token premium (the current published price). Report
+        // and book THAT dealt price so the wire `35=8`, the booked position, the internalise
+        // edge, risk routing and hedging all see the real economics.
+        if filled && let Some(px) = md_fill_px {
+            premium = px;
         }
 
         // Pre-trade limit gate (ADR-0016 A1): a filled FX-vanilla lift consults the SAME
@@ -1773,7 +1839,10 @@ impl FixSession {
                     .unwrap_or(0.0);
                 match edge.evaluate_fix_acceptance(request_id, quote_age_ms) {
                     AcceptanceDecision::Accept => {
-                        if edge.book_fix_lift(request_id).is_none() {
+                        // Book at the ACTUAL last-look fill price (`premium`, already the
+                        // policy result for a market-data lift), so the booked position and
+                        // deal carry the real dealt level, not the raw streamed quote.
+                        if edge.book_fix_lift_priced(request_id, premium).is_none() {
                             filled = false;
                             const REJECT: &[u8] =
                                 b"rates lift rejected: pre-trade / risk-book limit breach";
@@ -2074,12 +2143,68 @@ const RFS_STREAM_INTERVAL_SECS: u64 = 5;
 const RFS_STREAM_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(RFS_STREAM_INTERVAL_SECS);
 
-/// The absolute tolerance a by-symbol market-data lift's `Price(44)` may differ from the
-/// currently-published side price before it is rejected as superseded (a moved-market
-/// last-look). Comfortably above the 8-dp wire-rounding of a snapshot price (~5e-9) yet far
-/// below a genuine market move on either a bond clean price (~100, ticks ≥ 0.01) or an OIS
-/// rate (~0.05, ticks ≥ 1e-4), so an unchanged price books and a moved price rejects.
-const MD_LIFT_PRICE_TOL: f64 = 1e-6;
+/// The verdict of the configurable market-data (ESP) last-look policy for one lift.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MdLastLook {
+    /// Book the lift at this **fill price** — the client's requested price `q`, possibly
+    /// improved toward the current published price under an Async giveback.
+    Fill(f64),
+    /// The published price moved AGAINST the dealer beyond the tolerance band: reject the
+    /// lift as superseded. The caller preserves the live token so a fresh re-lift at the
+    /// current price can still book.
+    Superseded,
+}
+
+/// Resolve the configurable market-data last-look for a single lift.
+///
+/// `q` is the client's requested (lifted) price carried in `Price(44)`; `c` is the current
+/// published price on the SAME side at order arrival. `is_sell` is `true` when the client
+/// **sells into our bid** (the dealer BUYS), `false` when the client **buys our offer** (the
+/// dealer SELLS). The relative `tolerance_bps` is the adverse-move band (bps of the current
+/// price); `giveback_pct ∈ [0, 100]` is the Async share of the favorable move returned to
+/// the client.
+///
+/// Sign convention — the dealer's signed benefit of the current price over the requested
+/// price (`> 0` favorable to the dealer, `< 0` adverse):
+/// * client sells into our bid (dealer buys, wants a LOWER price): favorable when the bid
+///   ROSE, i.e. `c > q` ⇒ `gain = c - q`;
+/// * client buys our offer (dealer sells, wants a HIGHER price): favorable when the offer
+///   FELL, i.e. `c < q` ⇒ `gain = q - c`.
+///
+/// * **Adverse beyond tolerance** (`-gain > band`) ⇒ [`MdLastLook::Superseded`].
+/// * **Adverse within tolerance** ⇒ fill at exactly `q` (the dealer honors, absorbing the
+///   small adverse move).
+/// * **Favorable / neutral** ⇒ Sync fills at `q` (the dealer keeps the whole gain); Async
+///   fills at `q + f·(c − q)` with `f = giveback_pct/100` (that share of the favorable move
+///   passed back to the client, the dealer keeps the rest). Both sides collapse to the one
+///   formula because `c − q` carries the correct improvement sign per side.
+fn md_last_look_decision(
+    is_sell: bool,
+    q: f64,
+    c: f64,
+    mode: LastLookMode,
+    tolerance_bps: f64,
+    giveback_pct: f64,
+) -> MdLastLook {
+    let dealer_gain = if is_sell { c - q } else { q - c };
+    if dealer_gain < 0.0 {
+        // Adverse: reject only beyond the relative band (bps of the current published
+        // price). Within the band the dealer honors the client's requested price `q`.
+        let band = tolerance_bps * 1e-4 * c.abs();
+        if -dealer_gain > band {
+            return MdLastLook::Superseded;
+        }
+        return MdLastLook::Fill(q);
+    }
+    // Favorable (or exactly neutral): Sync keeps the whole move; Async returns a share.
+    match mode {
+        LastLookMode::Sync => MdLastLook::Fill(q),
+        LastLookMode::Async => {
+            let f = (giveback_pct / 100.0).clamp(0.0, 1.0);
+            MdLastLook::Fill(q + f * (c - q))
+        }
+    }
+}
 
 /// Price a retained [`RfsLine`] off `curve` to the two-way its arm centres a market on —
 /// an OIS around its par rate ([`crate::rates_pricing::par_rate_for`], split
@@ -2429,6 +2554,9 @@ mod tests {
             share_pipeline: false,
             pricing_source_mode: PricingSourceMode::default(),
             book_skew_weight: DEFAULT_BOOK_SKEW_WEIGHT,
+            last_look_mode: LastLookMode::default(),
+            last_look_tolerance_bps: DEFAULT_LAST_LOOK_TOLERANCE_BPS,
+            async_giveback_pct: DEFAULT_ASYNC_GIVEBACK_PCT,
             enabled: true,
         });
         hub.reconcile(&store);
@@ -2444,6 +2572,39 @@ mod tests {
             }),
             "LP-1 ingested into the book"
         );
+        hub
+    }
+
+    /// A hub whose pricing group binds connection `conn-async` to a market-data last-look
+    /// policy of [`LastLookMode::Async`] with a 50% giveback — so a favorable lift on that
+    /// session is improved half-way toward the current price. No aggregated book / pipeline
+    /// is needed: the last-look test publishes an explicit snapshot via `emit_md_snapshot`.
+    fn async_lastlook_hub() -> Arc<crate::services::aggregation::AggregationHub> {
+        use crate::config::identity::{IdentityStore, PricingGroupDef};
+        use celnet_tiering::{FeaturePipeline, Guardrails};
+        const HUB_NOW: i64 = 1_700_000_000_000_000_000;
+        let empty = FeaturePipeline::new(vec![], Guardrails::new(0.0, 1_000.0, 1_000.0, 1e-9));
+        let hub =
+            crate::services::aggregation::AggregationHub::new(crate::clock::Clock::manual(HUB_NOW));
+        let mut store = IdentityStore::default();
+        store.pricing_groups.push(PricingGroupDef {
+            id: "grp-async".to_string(),
+            name: "GRP-ASYNC".to_string(),
+            description: String::new(),
+            member_connection_ids: vec!["conn-async".to_string()],
+            member_user_ids: vec![],
+            member_desks: vec![],
+            esp_pipeline: empty.clone(),
+            rfq_pipeline: empty,
+            share_pipeline: false,
+            pricing_source_mode: PricingSourceMode::default(),
+            book_skew_weight: DEFAULT_BOOK_SKEW_WEIGHT,
+            last_look_mode: LastLookMode::Async,
+            last_look_tolerance_bps: DEFAULT_LAST_LOOK_TOLERANCE_BPS,
+            async_giveback_pct: 50.0,
+            enabled: true,
+        });
+        hub.reconcile(&store);
         hub
     }
 
@@ -2835,11 +2996,42 @@ mod tests {
         );
     }
 
-    /// The price last-look on a by-symbol MD lift: a lift whose `Price(44)` no longer matches
-    /// the currently-published side price (the market moved / the snapshot was superseded) is
-    /// REJECTED, while the live token stays liftable for a fresh re-lift at the current price.
+    /// The BUY `last_px` (dealt price) the emitted `ExecutionReport(8)` carried — so a test
+    /// can assert the ACTUAL fill price the last-look policy produced (Async improvement).
+    fn exec_last_px_of(frames: &[Vec<u8>]) -> Option<f64> {
+        let exec = FrameCursor::parse(frames.first().expect("an ExecutionReport")).unwrap();
+        assert_eq!(exec.msg_type(), MsgType::ExecutionReport.as_bytes());
+        messages::ExecReportView::new(exec).last_px()
+    }
+
+    /// Build a by-symbol SELL `NewOrderSingle(D)` hitting `symbol`'s bid at `price` — the
+    /// market-data lift the ESP sends to sell into the streamed bid (no `QuoteID(117)`).
+    fn md_sell_order(cl_ord_id: &[u8], symbol: &[u8], price: f64) -> Vec<u8> {
+        let hdr = Header {
+            sender: b"CELNET",
+            target: b"CELNET-CPTY",
+            seq_num: 11,
+            sending_time: b"20260625-12:00:02.000",
+        };
+        let p = messages::MarketOrderParams {
+            cl_ord_id,
+            symbol,
+            side: dialect_fx::SIDE_SELL,
+            qty: 1_000_000.0,
+            price,
+            transact_time: b"20260625-12:00:02.000",
+        };
+        let mut enc = FrameEncoder::new();
+        messages::build_new_order_by_symbol(&hdr, &p, &mut enc)
+    }
+
+    /// The market-data last-look policy on a by-symbol lift, ADVERSE side: a BUY whose
+    /// `Price(44)` is BELOW the current published offer (the client wants to pay less than
+    /// the market — the dealer would sell below the current level) beyond the tolerance band
+    /// is REJECTED as superseded, while the live token stays liftable for a fresh re-lift at
+    /// the current price (the reject consumed nothing).
     #[tokio::test]
-    async fn md_superseded_price_lift_is_rejected() {
+    async fn md_adverse_lift_beyond_tolerance_is_rejected_token_preserved() {
         let mut session = stream_session("conn-md-stale", None);
         let st = session.sending_time();
 
@@ -2850,22 +3042,23 @@ mod tests {
             .await;
         let offer = snapshot_offer(&out);
 
-        // Lift at a STALE price (offer + 1bp, well beyond the tolerance) → superseded reject.
-        let stale = md_buy_order(b"C-STALE", b"USD-OIS", offer + 0.0001);
+        // BUY at an ADVERSE price (offer − 1bp of price, well beyond the 1bp tolerance band):
+        // the offer would have to be LOWER than the current market ⇒ superseded reject.
+        let stale = md_buy_order(b"C-STALE", b"USD-OIS", offer - 0.0001);
         let mut exec_stale = Vec::new();
         session.on_new_order(&FrameCursor::parse(&stale).unwrap(), &st, &mut exec_stale);
         assert_eq!(
             exec_type_of(&exec_stale),
             Some(EXEC_REJECTED),
-            "a moved-price lift is rejected (last-look)"
+            "an adverse-beyond-tolerance lift is rejected (last-look)"
         );
         assert_eq!(
             session.live_md.len(),
             1,
-            "the live token is untouched by a stale reject"
+            "the live token is untouched by an adverse reject"
         );
 
-        // A fresh lift at the CURRENT price still books (the stale reject consumed nothing).
+        // A fresh lift at the CURRENT price still books (the adverse reject consumed nothing).
         let fresh = md_buy_order(b"C-FRESH", b"USD-OIS", offer);
         let mut exec_fresh = Vec::new();
         session.on_new_order(&FrameCursor::parse(&fresh).unwrap(), &st, &mut exec_fresh);
@@ -2873,6 +3066,155 @@ mod tests {
             exec_type_of(&exec_fresh),
             Some(EXEC_FILLED),
             "a fresh lift at the current price books"
+        );
+    }
+
+    /// The FAVORABLE side is NEVER superseded: a BUY whose `Price(44)` is ABOVE the current
+    /// offer (the client offered to overpay — a move in the DEALER's favor) FILLS under the
+    /// default Sync policy at exactly the client's requested price `q` (the dealer keeps the
+    /// whole favorable move). This is the asymmetry the old ±exact-match reject lacked.
+    #[tokio::test]
+    async fn md_favorable_lift_fills_at_requested_price_under_sync() {
+        let mut session = stream_session("conn-md-fav", None);
+        let st = session.sending_time();
+        let line = PricedLine {
+            bid: 99.40,
+            offer: 99.60,
+            size: 5_000_000.0,
+        };
+        let mut out = Vec::new();
+        session.emit_md_snapshot(&st, b"MDR-F", b"BND-5Y", &line, None, &mut out);
+
+        // BUY at q = 99.70 > current offer 99.60 ⇒ favorable to the dealer. Sync ⇒ fill @ q.
+        let q = 99.70;
+        let order = md_buy_order(b"C-FAV", b"BND-5Y", q);
+        let mut exec = Vec::new();
+        session.on_new_order(&FrameCursor::parse(&order).unwrap(), &st, &mut exec);
+        assert_eq!(
+            exec_type_of(&exec),
+            Some(EXEC_FILLED),
+            "favorable BUY fills"
+        );
+        assert!(
+            exec_last_px_of(&exec).is_some_and(|px| (px - q).abs() < 1e-9),
+            "Sync fills at exactly the requested price q"
+        );
+    }
+
+    /// The SELL (hit-bid) mirror: a SELL whose `Price(44)` is BELOW the current bid (the
+    /// client sells for less than the current market — favorable to the dealer, who buys
+    /// cheaper) FILLS under Sync at exactly the requested price `q`.
+    #[tokio::test]
+    async fn md_favorable_sell_fills_at_requested_price_under_sync() {
+        let mut session = stream_session("conn-md-sell", None);
+        let st = session.sending_time();
+        let line = PricedLine {
+            bid: 99.40,
+            offer: 99.60,
+            size: 5_000_000.0,
+        };
+        let mut out = Vec::new();
+        session.emit_md_snapshot(&st, b"MDR-SL", b"BND-5Y", &line, None, &mut out);
+
+        // SELL at q = 99.30 < current bid 99.40 ⇒ favorable to the dealer. Sync ⇒ fill @ q.
+        let q = 99.30;
+        let order = md_sell_order(b"C-SELL", b"BND-5Y", q);
+        let mut exec = Vec::new();
+        session.on_new_order(&FrameCursor::parse(&order).unwrap(), &st, &mut exec);
+        assert_eq!(
+            exec_type_of(&exec),
+            Some(EXEC_FILLED),
+            "favorable SELL fills"
+        );
+        assert!(
+            exec_last_px_of(&exec).is_some_and(|px| (px - q).abs() < 1e-9),
+            "Sync fills the SELL at exactly the requested price q"
+        );
+    }
+
+    /// End-to-end Async improvement on the wire: a session whose pricing group is
+    /// `LastLookMode::Async` with a 50% giveback fills a FAVORABLE BUY at `q + 50%·(c − q)`
+    /// — the client's requested price improved half-way toward the current published price
+    /// — and reports THAT dealt price in the `ExecutionReport(8)` `LastPx(31)`.
+    #[tokio::test]
+    async fn md_async_lift_improves_client_price_on_the_wire() {
+        let hub = async_lastlook_hub();
+        let mut session = stream_session("conn-async", Some(hub));
+        let st = session.sending_time();
+        let line = PricedLine {
+            bid: 99.40,
+            offer: 99.60,
+            size: 5_000_000.0,
+        };
+        let mut out = Vec::new();
+        session.emit_md_snapshot(&st, b"MDR-AS", b"BND-5Y", &line, None, &mut out);
+
+        // BUY at q = 99.70 while the current offer c = 99.60 (favorable, Δ = q − c = 0.10).
+        // Async 50% ⇒ fill = q + 0.5·(c − q) = 99.70 + 0.5·(−0.10) = 99.65 (client keeps half
+        // the favorable move; the dealer keeps the other half over the current price).
+        let q = 99.70;
+        let order = md_buy_order(b"C-AS", b"BND-5Y", q);
+        let mut exec = Vec::new();
+        session.on_new_order(&FrameCursor::parse(&order).unwrap(), &st, &mut exec);
+        assert_eq!(exec_type_of(&exec), Some(EXEC_FILLED), "async BUY fills");
+        assert!(
+            exec_last_px_of(&exec).is_some_and(|px| (px - 99.65).abs() < 1e-9),
+            "Async fills at q + 50%·(c − q) = 99.65, not the raw {q} or the current 99.60"
+        );
+    }
+
+    /// Pure last-look decision math — the sign convention and the Async improvement formula,
+    /// asserted with EXACT numerics for BOTH sides (client buys our offer / sells into our
+    /// bid) and every branch (adverse-beyond ⇒ supersede, adverse-within ⇒ honor `q`,
+    /// favorable Sync ⇒ keep, favorable Async ⇒ share).
+    #[test]
+    fn md_last_look_decision_covers_both_sides_and_all_branches() {
+        // Reference prices ~100 ⇒ the default 1bp band is ~0.01 (1e-4·100).
+        let tol = DEFAULT_LAST_LOOK_TOLERANCE_BPS; // 1.0
+        let give = 50.0;
+
+        // --- Client BUYS our offer (dealer SELLS; favorable when the offer FELL, c < q). ---
+        // Adverse (c > q) beyond band ⇒ supersede. q=100.50, c=100.52 (0.02 > ~0.010052).
+        assert_eq!(
+            md_last_look_decision(false, 100.50, 100.52, LastLookMode::Sync, tol, give),
+            MdLastLook::Superseded
+        );
+        // Adverse within band ⇒ honor q. q=100.50, c=100.505 (0.005 < band).
+        assert_eq!(
+            md_last_look_decision(false, 100.50, 100.505, LastLookMode::Sync, tol, give),
+            MdLastLook::Fill(100.50)
+        );
+        // Favorable (c < q) Sync ⇒ keep the whole move, fill @ q. q=100.50, c=100.40.
+        assert_eq!(
+            md_last_look_decision(false, 100.50, 100.40, LastLookMode::Sync, tol, give),
+            MdLastLook::Fill(100.50)
+        );
+        // Favorable Async 50% ⇒ fill = q + 0.5·(c − q) = 100.50 + 0.5·(−0.10) = 100.45.
+        assert_eq!(
+            md_last_look_decision(false, 100.50, 100.40, LastLookMode::Async, tol, give),
+            MdLastLook::Fill(100.45)
+        );
+
+        // --- Client SELLS into our bid (dealer BUYS; favorable when the bid ROSE, c > q). ---
+        // Adverse (c < q) beyond band ⇒ supersede. q=99.50, c=99.48 (0.02 > ~0.009948).
+        assert_eq!(
+            md_last_look_decision(true, 99.50, 99.48, LastLookMode::Sync, tol, give),
+            MdLastLook::Superseded
+        );
+        // Adverse within band ⇒ honor q. q=99.50, c=99.495 (0.005 < band).
+        assert_eq!(
+            md_last_look_decision(true, 99.50, 99.495, LastLookMode::Sync, tol, give),
+            MdLastLook::Fill(99.50)
+        );
+        // Favorable (c > q) Sync ⇒ fill @ q. q=99.40, c=99.60.
+        assert_eq!(
+            md_last_look_decision(true, 99.40, 99.60, LastLookMode::Sync, tol, give),
+            MdLastLook::Fill(99.40)
+        );
+        // Favorable Async 50% ⇒ fill = q + 0.5·(c − q) = 99.40 + 0.5·(0.20) = 99.50.
+        assert_eq!(
+            md_last_look_decision(true, 99.40, 99.60, LastLookMode::Async, tol, give),
+            MdLastLook::Fill(99.50)
         );
     }
 

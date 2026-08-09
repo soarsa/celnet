@@ -4042,6 +4042,16 @@ fn pricing_group_desc_to_json(d: &PricingGroupDesc) -> Value {
     if let Some(w) = d.book_skew_weight {
         m.insert("book_skew_weight".to_string(), json!(w));
     }
+    // The market-data last-look policy. The mode is a plain (non-`optional`) proto enum, so
+    // it always renders as its int discriminant. The two scalars are proto3 `optional`:
+    // absent ⇒ omitted (not `null`), matching `book_skew_weight` and the generated encoder.
+    m.insert("last_look_mode".to_string(), json!(d.last_look_mode));
+    if let Some(t) = d.last_look_tolerance_bps {
+        m.insert("last_look_tolerance_bps".to_string(), json!(t));
+    }
+    if let Some(p) = d.async_giveback_pct {
+        m.insert("async_giveback_pct".to_string(), json!(p));
+    }
     Value::Object(m)
 }
 
@@ -4061,6 +4071,9 @@ fn pricing_group_spec_from_json(v: &Value) -> Result<PricingGroupSpec> {
         enabled: bool_or_false(o, "enabled"),
         pricing_source_mode: enum_or_zero(o, "pricing_source_mode"),
         book_skew_weight: opt_f64(o, "book_skew_weight"),
+        last_look_mode: enum_or_zero(o, "last_look_mode"),
+        last_look_tolerance_bps: opt_f64(o, "last_look_tolerance_bps"),
+        async_giveback_pct: opt_f64(o, "async_giveback_pct"),
     })
 }
 

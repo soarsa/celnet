@@ -6007,6 +6007,9 @@ impl WireBuilder for PricingGroupSpec {
             "enabled" => self.enabled = bool_or_false(value),
             "pricing_source_mode" => self.pricing_source_mode = enum_or_zero(value),
             "book_skew_weight" => self.book_skew_weight = opt_f64(value),
+            "last_look_mode" => self.last_look_mode = enum_or_zero(value),
+            "last_look_tolerance_bps" => self.last_look_tolerance_bps = opt_f64(value),
+            "async_giveback_pct" => self.async_giveback_pct = opt_f64(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -8165,6 +8168,11 @@ impl WireAdapter for PricingGroupDesc {
             "pricing_source_mode" => Some(WireVal::Enum(self.pricing_source_mode)),
             // proto3 `optional` scalar: absent ⇒ omitted (the hand codec omits it too).
             "book_skew_weight" => self.book_skew_weight.map(WireVal::F64),
+            // The market-data last-look policy: the mode is a plain enum (always emitted as
+            // its discriminant); the two scalars are proto3 `optional` (absent ⇒ omitted).
+            "last_look_mode" => Some(WireVal::Enum(self.last_look_mode)),
+            "last_look_tolerance_bps" => self.last_look_tolerance_bps.map(WireVal::F64),
+            "async_giveback_pct" => self.async_giveback_pct.map(WireVal::F64),
             _ => None,
         }
     }

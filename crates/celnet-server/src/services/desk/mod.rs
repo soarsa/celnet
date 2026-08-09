@@ -783,13 +783,43 @@ impl RfqDeskEdge {
     /// This is what makes a FIX auto-quote that the taker executes appear as a **booked
     /// deal** in the blotter and a live position in the rates Book, not merely a shown
     /// price.
+    ///
+    /// Books at the auto-quote's own level (the streamed price the request carries). A
+    /// market-data (ESP) lift resolved through the last-look policy instead books at its
+    /// ACTUAL fill price — see [`Self::book_fix_lift_priced`].
     #[must_use]
     pub fn book_fix_lift(&self, request_id: &str) -> Option<Deal> {
+        self.book_fix_lift_inner(request_id, None)
+    }
+
+    /// Book a FIX-venue lift at an explicit **dealt price** — the actual fill price the
+    /// market-data last-look policy produced (the client's requested price `q`, possibly
+    /// improved toward the current price under an Async giveback). The booked position,
+    /// routing attribution and [`Deal::price`] all carry this real dealt level, so the
+    /// internalise edge, risk routing and hedging see the true economics. Everything else
+    /// (notional, direction, limit/risk-book gating, notifications) is identical to
+    /// [`Self::book_fix_lift`].
+    #[must_use]
+    pub fn book_fix_lift_priced(&self, request_id: &str, dealt_price: f64) -> Option<Deal> {
+        self.book_fix_lift_inner(request_id, Some(dealt_price))
+    }
+
+    /// Shared FIX-lift booking body. `dealt_override` replaces the auto-quote's own price
+    /// with the last-look fill price when the caller carries one; otherwise the request's
+    /// quoted level is used.
+    fn book_fix_lift_inner(&self, request_id: &str, dealt_override: Option<f64>) -> Option<Deal> {
         let mut current = self.requests.get(request_id)?;
         if current.state != DeskRequestState::Quoted as i32 {
             return None;
         }
         let quote: DeskQuote = current.quote.clone()?;
+        // The dealt level the fill books at: the last-look fill price when the FIX edge
+        // carries one (a market-data lift resolved through the policy), else the
+        // auto-quote's own streamed level. Non-finite overrides are ignored defensively.
+        let dealt_price = match dealt_override {
+            Some(px) if px.is_finite() => px,
+            _ => quote.price,
+        };
 
         // The desk's traded direction is the opposite of the counterparty's firm
         // instrument side (validated priceable at ingest, so always Buy/Sell) — read
@@ -808,7 +838,7 @@ impl RfqDeskEdge {
         // the dealt terms, priced/booked through celnet-rates / celnet-bond.
         let booked_instrument = rebook_at_dealt_level(
             current.instrument.as_ref(),
-            quote.price,
+            dealt_price,
             quote.notional,
             desk_side,
         )?;
@@ -834,7 +864,7 @@ impl RfqDeskEdge {
                         .as_ref()
                         .map(|c| c.currency.clone())
                         .unwrap_or_default(),
-                    dealt_price: Some(quote.price),
+                    dealt_price: Some(dealt_price),
                     reference_mid,
                 },
             )
@@ -857,7 +887,7 @@ impl RfqDeskEdge {
             curve_set: current.curve_set.clone(),
             side: desk_side as i32,
             notional: quote.notional,
-            price: quote.price,
+            price: dealt_price,
             executed_at_nanos: now,
             trader: quote.trader.clone(),
             position_id: Some(booked.position_id),

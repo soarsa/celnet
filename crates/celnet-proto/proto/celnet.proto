@@ -4416,6 +4416,23 @@ enum PricingSourceMode {
   PRICING_SOURCE_MODE_CURVE_ANCHORED_BOOK_SKEW = 3;
 }
 
+// How this pricing group treats the FAVORABLE side of a market-data (ESP) last-look:
+// when the price moved in the DEALER's favor between the streamed snapshot the client
+// lifted and the current published price at order arrival (mirrors the store
+// `config::identity::LastLookMode`). Governs only the favorable side — the adverse side
+// is a plain reject-beyond-tolerance / honor-within-tolerance regardless. The proto3 zero
+// value is SYNC (the dealer keeps the whole favorable move — the least-surprising
+// "client gets exactly what they asked" fill).
+enum LastLookMode {
+  // Fill the client at EXACTLY their requested (lifted) price; the dealer captures 100%
+  // of the favorable slippage (proto3 zero default).
+  LAST_LOOK_MODE_SYNC = 0;
+  // Fill at an IMPROVED price: the requested price adjusted toward the current price by
+  // `async_giveback_pct`% of the favorable move (that % passed back to the client, the
+  // dealer keeps the rest).
+  LAST_LOOK_MODE_ASYNC = 1;
+}
+
 // One pluggable pricing-feature transform + its params (mirrors a
 // `celnet_tiering::PricingFeature` variant). Magnitudes a `kind` does not carry are
 // ignored (e.g. a `FEATURE_KIND_AXE` feature ignores `kappa` / `skew`). The single
@@ -4533,6 +4550,15 @@ message PricingGroupDesc {
   // The curve->composite blend weight `w in [0,1]` for
   // `PRICING_SOURCE_MODE_CURVE_ANCHORED_BOOK_SKEW` (ignored by other modes).
   optional double book_skew_weight = 12;
+  // How this group treats the FAVORABLE side of a market-data (ESP) last-look.
+  LastLookMode last_look_mode = 13;
+  // The market-data last-look ADVERSE-move tolerance, in bps OF PRICE (relative, so it
+  // scales across bond price points and OIS rates): a lift whose price has moved against
+  // the dealer by more than this is rejected (superseded). Unset ⇒ the server default.
+  optional double last_look_tolerance_bps = 14;
+  // Only for `LAST_LOOK_MODE_ASYNC`: the % of the favorable slippage passed back to the
+  // client (0..100). Unset ⇒ the server default.
+  optional double async_giveback_pct = 15;
 }
 
 // The editable fields of a pricing group (the create/update payload). The
@@ -4566,6 +4592,13 @@ message PricingGroupSpec {
   // The curve->composite blend weight `w in [0,1]` for
   // `PRICING_SOURCE_MODE_CURVE_ANCHORED_BOOK_SKEW` (ignored by other modes).
   optional double book_skew_weight = 12;
+  // How this group treats the FAVORABLE side of a market-data (ESP) last-look.
+  LastLookMode last_look_mode = 13;
+  // The market-data last-look ADVERSE-move tolerance, in bps OF PRICE (unset ⇒ default).
+  optional double last_look_tolerance_bps = 14;
+  // Only for `LAST_LOOK_MODE_ASYNC`: % of favorable slippage returned to the client,
+  // 0..100 (unset ⇒ default).
+  optional double async_giveback_pct = 15;
 }
 
 // List the pricing groups (any authenticated caller — a client's assigned pricing is

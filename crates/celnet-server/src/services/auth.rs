@@ -99,10 +99,11 @@ use crate::config::curve_calibration::{
     CurveCalibrationError, calibration_set, date_pillar_instrument,
 };
 use crate::config::identity::{
-    AggregatedBookDef, AggregatedBookEdit, AggregationParams, BookDef, DEFAULT_BOOK_SKEW_WEIGHT,
-    DeskDef, EntityDef, IdentityStore, PermissionGrant, PricingControlDef, PricingGroupDef,
-    PricingGroupEdit, PricingMode, PricingSourceMode, RiskBookDef, RiskBookEdit, RiskLimits, Role,
-    Scope, UserDef, hash_password, mint_desk_id, mint_user_id, verify_password,
+    AggregatedBookDef, AggregatedBookEdit, AggregationParams, BookDef, DEFAULT_ASYNC_GIVEBACK_PCT,
+    DEFAULT_BOOK_SKEW_WEIGHT, DEFAULT_LAST_LOOK_TOLERANCE_BPS, DeskDef, EntityDef, IdentityStore,
+    LastLookMode, PermissionGrant, PricingControlDef, PricingGroupDef, PricingGroupEdit,
+    PricingMode, PricingSourceMode, RiskBookDef, RiskBookEdit, RiskLimits, Role, Scope, UserDef,
+    hash_password, mint_desk_id, mint_user_id, verify_password,
 };
 use crate::config::reference_data::{InstrumentDef, mint_instrument_id, validate_instruments};
 use crate::readiness::ReadinessGate;
@@ -3413,6 +3414,24 @@ fn pricing_source_mode_from_wire(value: i32) -> PricingSourceMode {
     }
 }
 
+/// Map the store [`LastLookMode`] onto its proto enum discriminant (proto3 zero = Sync).
+fn last_look_mode_to_wire(mode: LastLookMode) -> i32 {
+    let wire = match mode {
+        LastLookMode::Sync => celnet_proto::LastLookMode::Sync,
+        LastLookMode::Async => celnet_proto::LastLookMode::Async,
+    };
+    wire as i32
+}
+
+/// Map a proto enum discriminant onto the store [`LastLookMode`]. An unknown / unset
+/// value (proto3 zero) resolves to [`LastLookMode::Sync`] (the platform default).
+fn last_look_mode_from_wire(value: i32) -> LastLookMode {
+    match celnet_proto::LastLookMode::try_from(value) {
+        Ok(celnet_proto::LastLookMode::Async) => LastLookMode::Async,
+        _ => LastLookMode::Sync,
+    }
+}
+
 /// Map a stored [`PricingGroupDef`] onto its wire [`PricingGroupDesc`] (field for field).
 fn pricing_group_to_wire(def: &PricingGroupDef) -> PricingGroupDesc {
     PricingGroupDesc {
@@ -3427,6 +3446,9 @@ fn pricing_group_to_wire(def: &PricingGroupDef) -> PricingGroupDesc {
         share_pipeline: def.share_pipeline,
         pricing_source_mode: pricing_source_mode_to_wire(def.pricing_source_mode),
         book_skew_weight: Some(def.book_skew_weight),
+        last_look_mode: last_look_mode_to_wire(def.last_look_mode),
+        last_look_tolerance_bps: Some(def.last_look_tolerance_bps),
+        async_giveback_pct: Some(def.async_giveback_pct),
         enabled: def.enabled,
     }
 }
@@ -3448,6 +3470,15 @@ fn pricing_group_spec_parts(spec: PricingGroupSpec) -> PricingGroupEdit {
         // An unset weight (proto3 `optional` absent) resolves to the platform default,
         // so a client that sets only the mode gets the sensible 0.5 blend.
         book_skew_weight: spec.book_skew_weight.unwrap_or(DEFAULT_BOOK_SKEW_WEIGHT),
+        last_look_mode: last_look_mode_from_wire(spec.last_look_mode),
+        // Unset last-look scalars (proto3 `optional` absent) resolve to the platform
+        // defaults, so a client that sets only the mode gets a sensible band + giveback.
+        last_look_tolerance_bps: spec
+            .last_look_tolerance_bps
+            .unwrap_or(DEFAULT_LAST_LOOK_TOLERANCE_BPS),
+        async_giveback_pct: spec
+            .async_giveback_pct
+            .unwrap_or(DEFAULT_ASYNC_GIVEBACK_PCT),
         enabled: spec.enabled,
     }
 }
@@ -5929,6 +5960,9 @@ mod tests {
             share_pipeline: false,
             pricing_source_mode: 0,
             book_skew_weight: None,
+            last_look_mode: 0,
+            last_look_tolerance_bps: None,
+            async_giveback_pct: None,
             enabled: true,
         }
     }

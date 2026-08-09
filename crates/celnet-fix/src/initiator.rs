@@ -417,7 +417,13 @@ impl<S: MessageStore> Initiator<S> {
                         && self.policy != LiftPolicy::Observe
                     {
                         // Lift the streamed top-of-book by symbol: BUY the offer (LiftOffer)
-                        // or SELL the bid (HitBid) — executing a streaming deal.
+                        // or SELL the bid (HitBid) — executing a streaming deal. The lift
+                        // price is read from THIS snapshot's per-side top-of-book (`tob`,
+                        // parsed from the very `35=W` frame that triggered the lift) — the
+                        // FRESHEST published level for that symbol/side, never a price cached
+                        // from an earlier tick. Lifting at the current level (rather than a
+                        // stale one) is what keeps the server's price last-look from
+                        // superseding the order for a market move that already happened.
                         let hit_bid = self.policy == LiftPolicy::HitBid;
                         let (side, price) = if hit_bid {
                             (crate::dialect_fx::SIDE_SELL, tob.bid_px)
