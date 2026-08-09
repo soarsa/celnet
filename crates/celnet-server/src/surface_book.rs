@@ -50,7 +50,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use celnet_core::Smile;
 use celnet_rates::Curve;
@@ -237,6 +237,15 @@ pub struct SurfaceBook {
     /// data dir wired); production installs it via
     /// [`set_curve_persistence`](Self::set_curve_persistence) at startup.
     curve_config_path: RwLock<Option<PathBuf>>,
+    /// Serializes registry MUTATORS (`upsert`/`remove`) so their
+    /// snapshot→persist→commit sequence is atomic with respect to each other (no lost
+    /// update), WITHOUT holding the reader-blocking [`curve_registry`](Self::curve_registry)
+    /// write lock across the blocking disk persist. Readers ([`list_curve_defs`](Self::list_curve_defs)
+    /// et al.) take only the `curve_registry` read lock and therefore never stall behind
+    /// a slow disk write — the fix for the "curve list times out while a curve is being
+    /// created" hang (a `create`'s persist under disk pressure previously held the
+    /// `curve_registry` write lock for the whole write, blocking every concurrent read).
+    curve_write_gate: Mutex<()>,
 }
 
 impl Default for SurfaceBook {
@@ -261,6 +270,7 @@ impl SurfaceBook {
             live_curves: RwLock::new(HashMap::new()),
             curve_registry: RwLock::new(registry),
             curve_config_path: RwLock::new(None),
+            curve_write_gate: Mutex::new(()),
         }
     }
 
@@ -476,14 +486,29 @@ impl SurfaceBook {
     /// An IO/serialization failure persisting the registry (the in-memory registry is
     /// left unchanged).
     pub fn upsert_curve_def(&self, def: CurveDefinitionDef) -> std::io::Result<CurveDefinitionDef> {
-        let mut guard = self
+        // Serialize with other mutators so snapshot→persist→commit is atomic (no lost
+        // update), but DO NOT hold the `curve_registry` write lock across the disk
+        // persist: readers (`list_curve_defs`) take the registry read lock and must not
+        // block behind a slow disk write. The write gate — not the registry lock — is
+        // what guarantees the snapshot is current (no concurrent mutator can interleave).
+        let _writers = self
+            .curve_write_gate
+            .lock()
+            .expect("curve write gate not poisoned");
+        let mut next = self
+            .curve_registry
+            .read()
+            .expect("surface book not poisoned")
+            .clone();
+        let stored = next.upsert(def);
+        // Persist BEFORE committing in memory (disk and memory never diverge on a write
+        // failure) — with NO registry lock held, so concurrent reads run free.
+        self.persist_registry(&next)?;
+        // Commit under a momentary write lock; no IO happens under the lock.
+        *self
             .curve_registry
             .write()
-            .expect("surface book not poisoned");
-        let mut next = guard.clone();
-        let stored = next.upsert(def);
-        self.persist_registry(&next)?;
-        *guard = next;
+            .expect("surface book not poisoned") = next;
         Ok(stored)
     }
 
@@ -500,16 +525,26 @@ impl SurfaceBook {
     /// removal; [`CurveDefRemoveError::Persist`] on an IO failure writing the registry
     /// (the in-memory registry is left unchanged).
     pub fn remove_curve_def(&self, curve_id: &str) -> Result<(), CurveDefRemoveError> {
-        let mut guard = self
+        // Same discipline as `upsert_curve_def`: serialize mutators via the write gate,
+        // persist with NO registry lock held, then commit under a momentary write lock —
+        // so a concurrent `list_curve_defs` read never stalls behind the disk write.
+        let _writers = self
+            .curve_write_gate
+            .lock()
+            .expect("curve write gate not poisoned");
+        let mut next = self
             .curve_registry
-            .write()
-            .expect("surface book not poisoned");
-        let mut next = guard.clone();
+            .read()
+            .expect("surface book not poisoned")
+            .clone();
         next.remove(curve_id, Some(crate::rates_pricing::SUPPORTED_CURRENCY))
             .map_err(CurveDefRemoveError::Rule)?;
         self.persist_registry(&next)
             .map_err(CurveDefRemoveError::Persist)?;
-        *guard = next;
+        *self
+            .curve_registry
+            .write()
+            .expect("surface book not poisoned") = next;
         Ok(())
     }
 
@@ -800,6 +835,101 @@ mod tests {
             fresh.primary_curve_set("USD"),
             Some(default_usd_sofr_curve_set()),
             "the primary (and thus FIX pricing) is unchanged across restart"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Concurrent registry mutation (each persisting to a real disk path) interleaved
+    /// with concurrent reads. Guards the locking discipline that fixes the "list times
+    /// out while a curve is being created" hang: mutators persist to disk WITHOUT
+    /// holding the `curve_registry` write lock (readers never stall behind a disk
+    /// write), while the dedicated write gate keeps snapshot→persist→commit atomic so
+    /// concurrent upserts never lose an update. This asserts BOTH invariants:
+    ///   (1) every concurrent upsert survives (no lost update — the write-gate property;
+    ///       a naive snapshot-under-read-lock-without-the-gate would drop writes), and
+    ///   (2) every concurrent read observes an internally-consistent snapshot (exactly
+    ///       one USD primary, unique ids, the seed always present) and never deadlocks.
+    #[test]
+    fn concurrent_upserts_persist_without_blocking_reads_and_never_lose_an_update() {
+        let dir = std::env::temp_dir().join("celnet-surfacebook-concurrency");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("curves-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let book = Arc::new(SurfaceBook::new());
+        book.set_curve_persistence(path.clone());
+        book.persist_curves().expect("materialise the seed");
+
+        const WRITERS: usize = 16;
+        const READERS: usize = 4;
+        const READS_PER_THREAD: usize = 250;
+        let start = Arc::new(std::sync::Barrier::new(WRITERS + READERS));
+
+        let mut handles = Vec::new();
+        for i in 0..WRITERS {
+            let book = Arc::clone(&book);
+            let start = Arc::clone(&start);
+            handles.push(std::thread::spawn(move || {
+                start.wait();
+                book.upsert_curve_def(alt_usd_curve(&format!("usd-sofr-alt-{i}")))
+                    .expect("persisted upsert under contention succeeds");
+            }));
+        }
+        for _ in 0..READERS {
+            let book = Arc::clone(&book);
+            let start = Arc::clone(&start);
+            handles.push(std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..READS_PER_THREAD {
+                    let snap = book.list_curve_defs();
+                    // Every snapshot is internally consistent — never a torn registry.
+                    assert!(
+                        snap.iter().any(|d| d.curve_id == DEFAULT_CURVE_ID),
+                        "the seed is present in every snapshot"
+                    );
+                    assert_eq!(
+                        snap.iter().filter(|d| d.primary).count(),
+                        1,
+                        "exactly one USD primary in every snapshot"
+                    );
+                    let mut ids: Vec<&str> = snap.iter().map(|d| d.curve_id.as_str()).collect();
+                    let n = ids.len();
+                    ids.sort_unstable();
+                    ids.dedup();
+                    assert_eq!(ids.len(), n, "no duplicate ids in a snapshot");
+                    assert!((1..=1 + WRITERS).contains(&n), "cardinality stays in range");
+                }
+            }));
+        }
+        for h in handles {
+            h.join()
+                .expect("no reader/writer thread panicked or deadlocked");
+        }
+
+        // (1) Every concurrent upsert survived — no lost update.
+        let defs = book.list_curve_defs();
+        assert_eq!(
+            defs.len(),
+            1 + WRITERS,
+            "seed + all {WRITERS} concurrently-created curves present"
+        );
+        for i in 0..WRITERS {
+            assert!(
+                book.get_curve_def(&format!("usd-sofr-alt-{i}")).is_some(),
+                "curve usd-sofr-alt-{i} must have survived concurrent creation"
+            );
+        }
+        // The persisted document matches memory (disk and memory never diverged).
+        let reloaded = CurveDefinitionStore::load(&path).expect("reload persisted registry");
+        assert_eq!(
+            reloaded.curves.len(),
+            1 + WRITERS,
+            "the persisted registry holds every committed curve"
+        );
+        assert_eq!(
+            book.primary_curve_set("USD"),
+            Some(default_usd_sofr_curve_set()),
+            "USD pricing is unchanged after concurrent creation"
         );
         let _ = std::fs::remove_file(&path);
     }

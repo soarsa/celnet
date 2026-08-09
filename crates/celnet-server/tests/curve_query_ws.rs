@@ -44,7 +44,7 @@ use time::{Date, Month};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use common::{TEST_DEADLINE, start_ready_edge};
+use common::{TEST_DEADLINE, login_seed_admin, start_ready_edge};
 
 const STEP: Duration = Duration::from_secs(20);
 const NOTIONAL: f64 = 100_000_000.0;
@@ -534,6 +534,107 @@ async fn grpc_mark_then_get_pinned_curve() {
             assert_eq!(p.zero_rate.to_bits(), m.zero_rate.to_bits());
             assert_eq!(p.discount_factor.to_bits(), m.discount_factor.to_bits());
         }
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+// ---------------------------------------------------------------------------
+// (6) multi-curve registry CRUD over WS — the GUI Curves editor path
+// ---------------------------------------------------------------------------
+
+/// The GUI Curves editor opens by issuing `list_curve_definitions` (read floor: a
+/// valid session), then `create_curve_definition` (write authority: `refdata`). This
+/// drives BOTH end to end over the WS dispatch with an authed admin session and
+/// asserts a tagged reply promptly arrives — the regression guard for the reported
+/// "the list request times out when creating a curve" hang.
+#[tokio::test]
+async fn ws_list_and_create_curve_definitions_reply_promptly() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, addr, _dir) = start_ready_edge().await;
+        let token = login_seed_admin(&format!("http://{addr}")).await;
+        let url = format!("ws://{}", edge.ws_addr());
+        let (mut ws, _resp) = tokio::time::timeout(STEP, connect_async(url))
+            .await
+            .expect("WS connects in time")
+            .expect("WS connects");
+
+        // (a) list: the seeded `usd-sofr` primary must come back.
+        send_json(
+            &mut ws,
+            json!({
+                "type": "list_curve_definitions",
+                "session_token": token,
+                "correlation_id": 7
+            }),
+        )
+        .await;
+        let listed = next_json(&mut ws).await;
+        assert_eq!(listed["type"], json!("curve_definitions"), "list reply tag");
+        let curves = listed["curves"].as_array().expect("curves array");
+        assert!(
+            curves.iter().any(|c| c["curve_id"] == json!("usd-sofr")),
+            "the seeded usd-sofr curve must be listed, got {curves:?}"
+        );
+
+        // (b) create: a fresh named curve is stored and echoed back.
+        send_json(
+            &mut ws,
+            json!({
+                "type": "create_curve_definition",
+                "session_token": token,
+                "correlation_id": 8,
+                "definition": {
+                    "curve_id": "usd-sofr-alt",
+                    "display_name": "USD SOFR (alt)",
+                    "index_label": "USD-SOFR",
+                    "day_count": "ACT/360",
+                    "calendar": "US / Modified Following",
+                    "interpolation": 0,
+                    "primary": false,
+                    "pillars": curve_json()
+                }
+            }),
+        )
+        .await;
+        let created = next_json(&mut ws).await;
+        assert_eq!(
+            created["type"],
+            json!("curve_definition_created"),
+            "create reply tag, got {created:?}"
+        );
+        assert_eq!(created["definition"]["curve_id"], json!("usd-sofr-alt"));
+        // The reply MUST echo the request correlation id so the client's by-id waiter
+        // resolves (its only robust join; the type-match is a fallback for the few
+        // proto messages that carry no correlation field).
+        assert_eq!(created["correlation_id"], json!(8), "create echoes corr id");
+
+        // (c) list AGAIN — now the registry also holds the user-created curve. This is
+        // the exact "create a curve then the editor re-lists" path the report hit; the
+        // freshly-stored curve must encode + list without hanging.
+        send_json(
+            &mut ws,
+            json!({
+                "type": "list_curve_definitions",
+                "session_token": token,
+                "correlation_id": 9
+            }),
+        )
+        .await;
+        let relisted = next_json(&mut ws).await;
+        assert_eq!(relisted["type"], json!("curve_definitions"), "relist tag");
+        assert_eq!(relisted["correlation_id"], json!(9), "list echoes corr id");
+        let after = relisted["curves"].as_array().expect("curves array");
+        assert!(
+            after.iter().any(|c| c["curve_id"] == json!("usd-sofr")),
+            "seeded curve still listed after create"
+        );
+        assert!(
+            after.iter().any(|c| c["curve_id"] == json!("usd-sofr-alt")),
+            "the user-created curve is listed after create"
+        );
 
         edge.shutdown(Duration::from_secs(5)).await;
     })
