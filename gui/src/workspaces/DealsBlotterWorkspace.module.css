@@ -167,6 +167,14 @@
   color: var(--warn);
 }
 
+/* ESP — an executable streaming-price lift (market-data venue). Tinted with the
+   bid/streaming semantic token so it reads distinctly from RFQ (accent) and IOI
+   (warn) and themes automatically. */
+.kindEsp {
+  background: color-mix(in oklab, var(--bid) 20%, transparent);
+  color: color-mix(in oklab, var(--bid) 62%, var(--text-primary));
+}
+
 .product {
   display: inline-block;
   font: var(--type-micro) / 1 var(--font-mono);
@@ -180,6 +188,31 @@
 
 .dealId {
   font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+
+/* SECURITY cell (BOND fills only) — the human descriptor over the stable security id,
+   matching the Agg Book tile. The descriptor reads primary; the id is a muted mono
+   sub-line. OIS/IRS/FRA rows render a plain em dash (no security). */
+.security {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+}
+
+.securityName {
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
+}
+
+.securityId {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+.securityNone {
   color: var(--text-tertiary);
 }
 

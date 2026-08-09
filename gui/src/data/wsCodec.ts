@@ -1606,7 +1606,14 @@ function directionFromWireSide(o: WireObject): OisInstrument["direction"] {
 function decodeRatesInstrument(
   o: WireObject,
   referenceYear: number | null,
-): { instrument: OisInstrument; productKind: RatesProductKind } {
+): {
+  instrument: OisInstrument;
+  productKind: RatesProductKind;
+  /** The BOND arm's security id (`instrument_id`); empty/absent otherwise. */
+  bondSecurityId?: string;
+  /** The BOND arm's human descriptor (`display_name`); empty when outside refdata. */
+  bondDisplayName?: string;
+} {
   if ("ois" in o) {
     const ois = child(o, "ois");
     return {
@@ -1652,6 +1659,12 @@ function decodeRatesInstrument(
       referenceYear === null
         ? 1
         : Math.max(1, num(maturity, "year") - referenceYear);
+    // The bond identity the Deals blotter's SECURITY cell renders (matching the Agg
+    // Book tile): the stable `instrument_id` + the human `display_name`. `display_name`
+    // is EMPTY when the bond is outside the curated refdata — the server never
+    // fabricates it, so the blotter falls back to the raw id.
+    const bondSecurityId = str(bond, "instrument_id");
+    const bondDisplayName = str(bond, "display_name");
     return {
       productKind: "BOND",
       instrument: {
@@ -1664,6 +1677,8 @@ function decodeRatesInstrument(
         // SIDE_BUY = long (PAY_FIXED slot), SIDE_SELL = short (RECEIVE_FIXED slot).
         direction: directionFromWireSide(bond),
       },
+      ...(bondSecurityId.length > 0 ? { bondSecurityId } : {}),
+      ...(bondDisplayName.length > 0 ? { bondDisplayName } : {}),
     };
   }
   throw new Error("`instrument`: expected one of an ois, irs, fra, or bond arm");
@@ -2058,10 +2073,8 @@ function internaliseFromWire(o: WireObject): Internalise {
 export function dealFromWire(o: WireObject): Deal {
   // Decode the curve first: its reference year anchors a BOND arm's whole-year term.
   const curveSet = ratesCurveSetFromWire(child(o, "curve_set"));
-  const { instrument, productKind } = decodeRatesInstrument(
-    child(o, "instrument"),
-    curveSet.referenceDate.year,
-  );
+  const { instrument, productKind, bondSecurityId, bondDisplayName } =
+    decodeRatesInstrument(child(o, "instrument"), curveSet.referenceDate.year);
   const d: Deal = {
     dealId: str(o, "deal_id"),
     requestId: str(o, "request_id"),
@@ -2077,6 +2090,10 @@ export function dealFromWire(o: WireObject): Deal {
     executedAtNanos: numToBigInt(o, "executed_at_nanos"),
     trader: str(o, "trader"),
   };
+  // The BOND security identity (id + descriptor), threaded off the bond arm — present
+  // only for a BOND fill whose arm carried it (never fabricated for OIS/IRS/FRA).
+  if (bondSecurityId !== undefined) d.bondSecurityId = bondSecurityId;
+  if (bondDisplayName !== undefined) d.bondDisplayName = bondDisplayName;
   const pid = optBigInt(o, "position_id");
   if (pid !== undefined) d.positionId = pid;
   const corr = o["correlation_id"];
@@ -4784,13 +4801,18 @@ export function hedgeProvenanceToWire(p: HedgeProvenance): WireObject {
     lps: [...p.lps],
   };
   if (p.lpWon !== null) m["lp_won"] = p.lpWon;
+  // The parent-deal reconciliation link (field 21) — present ONLY on per-fill
+  // execution records; omitted for book-level advisory records (proto-optional).
+  if (p.parentPositionId !== undefined) {
+    m["parent_position_id"] = Number(p.parentPositionId);
+  }
   return m;
 }
 /** Decode a `HedgeProvenance`. */
 export function hedgeProvenanceFromWire(o: WireObject): HedgeProvenance {
   const rawAction = o["action"];
   const rawLp = o["lp_won"];
-  return {
+  const prov: HedgeProvenance = {
     hedgeId: str(o, "hedge_id"),
     book: str(o, "book"),
     instrument: str(o, "instrument"),
@@ -4813,6 +4835,11 @@ export function hedgeProvenanceFromWire(o: WireObject): HedgeProvenance {
     advisory: boolOf(o, "advisory"),
     lps: strArrayOf(o, "lps"),
   };
+  // The parent-deal reconciliation link (field 21): present only on per-fill
+  // execution records; a null/absent value leaves it undefined (never fabricated).
+  const parent = optBigInt(o, "parent_position_id");
+  if (parent !== undefined) prov.parentPositionId = parent;
+  return prov;
 }
 
 /** Encode a hedge intent (advisory shadow-run projection; absent `action` ⇒ null). */

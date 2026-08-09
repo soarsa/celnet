@@ -47,12 +47,22 @@ function slippageLabel(bp: number): string {
   return bp < 0 ? `−${s}bp` : `+${s}bp`;
 }
 
+/**
+ * The parent client deal a per-fill hedge execution reconciles to — its `position_id`
+ * as a `#id` link. Book-level advisory records carry no single parent, so they read a
+ * plain em dash. This is the reconciliation link back to the Deals blotter.
+ */
+function parentDealLabel(p: HedgeProvenance): string {
+  return p.parentPositionId !== undefined ? `#${p.parentPositionId.toString()}` : "—";
+}
+
 /** All of a hedge row's user-visible textual fields, concatenated for substring search. */
 function hedgeSearchText(p: HedgeProvenance): string {
   return [
     timeOf(p.firedAt),
     p.book,
     p.instrument,
+    parentDealLabel(p),
     p.band,
     describeExitAction(p.action),
     p.lpWon ?? "",
@@ -159,6 +169,7 @@ export function HedgeDealsView(): React.ReactElement {
                     <tr>
                       <th>Time</th>
                       <th>Book · Instrument</th>
+                      <th>Parent deal</th>
                       <th>Band</th>
                       <th>Action</th>
                       <th>Hedged with</th>
@@ -178,6 +189,13 @@ export function HedgeDealsView(): React.ReactElement {
                         <td className={styles.mono}>{timeOf(p.firedAt)}</td>
                         <td className={styles.strong}>
                           {p.book} · {p.instrument}
+                        </td>
+                        <td className={styles.mono} data-testid={`hedge-parent-${p.hedgeId}`}>
+                          {p.parentPositionId !== undefined ? (
+                            <span className={styles.parentLink}>{parentDealLabel(p)}</span>
+                          ) : (
+                            <span className={styles.muted}>—</span>
+                          )}
                         </td>
                         <td>
                           <span className={`${styles.rag} ${styles[`rag_${ragKey(p.band)}`]}`}>

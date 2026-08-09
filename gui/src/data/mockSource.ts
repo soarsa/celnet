@@ -5531,6 +5531,11 @@ export class MockTransport implements CelnetTransport {
     // the roll-up spreads across both portfolios. This is legitimate mock-TRANSPORT
     // data representing what the live wire carries — the projection carries a whole-
     // year tenor + the family tag, exactly as `dealFromWire` decodes each oneof arm.
+    // The `refdataIdx` picks a curated Treasury identity (id + descriptor) from the
+    // SAME universe the Agg Book tile shows, so a BOND fill's SECURITY cell renders the
+    // real security descriptor; `kind` overrides RFQ (the BOND 10Y is an ESP — a
+    // market-data streaming lift). One BOND fill is a B2B (external-shed) lift carrying
+    // a `position_id` so a fired-hedge execution record reconciles back to it.
     const dealSeeds: {
       counterpartyIdx: number;
       productKind: RatesProductKind;
@@ -5538,13 +5543,18 @@ export class MockTransport implements CelnetTransport {
       notionalMm: number;
       side: "BUY" | "SELL";
       profileIdx: number;
+      kind?: DeskRequestKind;
+      refdataIdx?: number;
+      positionId?: bigint;
     }[] = [
       { counterpartyIdx: 4, productKind: "OIS", tenorYears: 5, notionalMm: 120, side: "BUY", profileIdx: 0 },
       { counterpartyIdx: 5, productKind: "OIS", tenorYears: 10, notionalMm: 80, side: "SELL", profileIdx: 1 },
       { counterpartyIdx: 6, productKind: "IRS", tenorYears: 2, notionalMm: 200, side: "BUY", profileIdx: 2 },
       { counterpartyIdx: 7, productKind: "IRS", tenorYears: 7, notionalMm: 90, side: "SELL", profileIdx: 0 },
-      { counterpartyIdx: 8, productKind: "BOND", tenorYears: 10, notionalMm: 60, side: "BUY", profileIdx: 3 },
-      { counterpartyIdx: 9, productKind: "BOND", tenorYears: 30, notionalMm: 35, side: "SELL", profileIdx: 1 },
+      // The BOND 10Y — an ESP streaming lift, external-shed (profile 2 = B2B/red), the
+      // parent of the seeded hedge execution (positionId 9001).
+      { counterpartyIdx: 8, productKind: "BOND", tenorYears: 10, notionalMm: 60, side: "BUY", profileIdx: 2, kind: "ESP", refdataIdx: 5, positionId: 9001n },
+      { counterpartyIdx: 9, productKind: "BOND", tenorYears: 30, notionalMm: 35, side: "SELL", profileIdx: 1, refdataIdx: 6 },
     ];
     const seedBase = nowNanos();
     for (const s of dealSeeds) {
@@ -5556,14 +5566,16 @@ export class MockTransport implements CelnetTransport {
         direction: s.side === "BUY" ? "PAY_FIXED" : "RECEIVE_FIXED",
       };
       const dealId = `deal-${this.dealSeq++}`;
-      // These demo lifts populate the DEALS blotter (the internalise surface) only;
-      // they intentionally do NOT register a rates-ledger position (positionId is
-      // absent → the Position column reads "—", a valid state), so the seeded
-      // position ledger the risk/positions views assert on stays untouched.
+      // These demo lifts populate the DEALS blotter (the internalise surface); most do
+      // NOT register a rates-ledger position (positionId absent → the Position column
+      // reads "—", a valid state), so the seeded position ledger the risk/positions
+      // views assert on stays untouched. The single B2B bond fill carries a synthetic
+      // `positionId` used ONLY as the parent-deal reconciliation key for the seeded
+      // hedge execution (it is NOT added to the rates ledger, so the ledger is intact).
       const deal: Deal = {
         dealId,
         requestId: `seed-req-${dealId}`,
-        kind: "RFQ",
+        kind: s.kind ?? "RFQ",
         counterparty: mockCounterpartyFor(s.counterpartyIdx),
         desk: "g10-rates",
         productKind: s.productKind,
@@ -5575,10 +5587,52 @@ export class MockTransport implements CelnetTransport {
         executedAtNanos: seedBase - BigInt(s.profileIdx) * 60_000_000_000n,
         trader: "desk",
       };
+      // Thread the curated bond identity (descriptor + id) onto a BOND fill, exactly as
+      // `dealFromWire` decodes `deal.instrument.bond.{display_name,instrument_id}`.
+      if (s.productKind === "BOND" && s.refdataIdx !== undefined) {
+        const rd = MOCK_AGG_TREASURY_UNIVERSE[s.refdataIdx];
+        if (rd !== undefined) {
+          deal.bondSecurityId = rd.instrumentId;
+          deal.bondDisplayName = rd.displayName;
+        }
+      }
+      if (s.positionId !== undefined) deal.positionId = s.positionId;
       const landedBook = this.landedBookForDeal(deal);
       if (landedBook !== null) deal.riskBookId = landedBook;
       deal.internalise = this.internaliseFor(deal, s.profileIdx);
       this.deals.set(dealId, deal);
+
+      // For the B2B bond fill, seed a per-fill hedge EXECUTION record so `?mock` shows
+      // the Hedge Desk populated on load (not "0 hedges") and demonstrates the
+      // parent-deal reconciliation. Fields match the wire external-shed shape: advisory
+      // external DV01, internal cross, zero residual, hedge price == mid at fire.
+      if (s.positionId !== undefined && deal.internalise !== undefined && !deal.internalise.internalised) {
+        const externalHedged = deal.internalise.externalDv01;
+        const mid = 100.25;
+        this.pushHedgeProvenance({
+          hedgeId: `HDG-${this.hedgeIntentSeq++}`,
+          book: landedBook ?? "fi-marex",
+          instrument: deal.bondDisplayName ?? deal.bondSecurityId ?? `${s.tenorYears}y BOND`,
+          firedAt: Date.now() - 45_000,
+          metric: "dv01",
+          threshold: externalHedged / 0.85,
+          netRisk: externalHedged,
+          utilization: 0.85,
+          band: "red",
+          policyPath: [0],
+          action: null,
+          internalCrossed: deal.internalise.internalDv01,
+          externalHedged,
+          residual: 0,
+          hedgePrice: mid,
+          midAtFire: mid,
+          slippageBp: 0,
+          lpWon: mockCounterpartyFor(s.counterpartyIdx + 1),
+          advisory: true,
+          lps: [mockCounterpartyFor(s.counterpartyIdx + 1), mockCounterpartyFor(s.counterpartyIdx + 2)],
+          parentPositionId: s.positionId,
+        });
+      }
     }
   }
 }

@@ -128,6 +128,15 @@
   color: var(--text-tertiary);
 }
 
+/* The parent-deal reconciliation link (`#<position_id>`) — the tie back to the client
+   fill on the Deals blotter, on the per-fill execution records. Accent-tinted mono so
+   it reads as a reference id, not a magnitude. */
+.parentLink {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-weight: var(--weight-emphasis);
+}
+
 /* The LP we actually hit (the winner) — a solid accent-tinted chip. */
 .lpWon {
   display: inline-block;

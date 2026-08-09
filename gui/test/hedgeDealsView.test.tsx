@@ -85,6 +85,27 @@ describe("HedgeDealsView", () => {
     expect(scope.getByText("LIVE")).toBeInTheDocument();
   });
 
+  it("reconciles a per-fill execution record to its parent deal via parent_position_id", async () => {
+    state.app = makeApp({
+      can: true,
+      rows: [provenance({ hedgeId: "HDG-7", advisory: true, parentPositionId: 9001n })],
+    }).app;
+    render(<HedgeDealsView />);
+
+    const row = await screen.findByTestId("hedge-deal-row-HDG-7");
+    // The parent-deal link cell carries the `#<position_id>` reconciliation reference.
+    expect(within(row).getByTestId("hedge-parent-HDG-7")).toHaveTextContent("#9001");
+    // An advisory external-shed fill still renders (it is NOT hidden) — it reads ADVISORY.
+    expect(within(row).getByText("ADVISORY")).toBeInTheDocument();
+  });
+
+  it("renders an em dash in the parent-deal cell for a book-level record (no parent)", async () => {
+    state.app = makeApp({ can: true, rows: [provenance({ hedgeId: "HDG-8" })] }).app;
+    render(<HedgeDealsView />);
+    const cell = await screen.findByTestId("hedge-parent-HDG-8");
+    expect(cell).toHaveTextContent("—");
+  });
+
   it("shows the honest empty note when no hedges have fired", async () => {
     state.app = makeApp({ can: true, rows: [] }).app;
     render(<HedgeDealsView />);

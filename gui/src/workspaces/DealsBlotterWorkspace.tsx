@@ -83,6 +83,50 @@ function productLabel(d: Deal): string {
   return d.productKind;
 }
 
+/**
+ * The CSS chip class for a deal's request kind: RFQ (accent), IOI (warn), or ESP —
+ * an executable streaming-price lift, tinted with the bid/streaming token so it reads
+ * distinctly from the request-driven flows.
+ */
+function kindClass(kind: Deal["kind"]): string {
+  if (kind === "IOI") return styles.kindIoi ?? "";
+  if (kind === "ESP") return styles.kindEsp ?? "";
+  return styles.kindRfq ?? "";
+}
+
+/**
+ * The security descriptor a BOND deal renders in the SECURITY cell — the human
+ * `display_name` when the bond is in the curated refdata (matching the Agg Book tile),
+ * else the raw `instrument_id`, else empty. OIS/IRS/FRA carry no security identity.
+ */
+function securityDescriptor(d: Deal): string {
+  return d.bondDisplayName ?? d.bondSecurityId ?? "";
+}
+
+/**
+ * The SECURITY cell — for a BOND fill, the human descriptor over the stable security
+ * id (matching the Agg Book tile); the descriptor falls back to the raw id when the
+ * bond is outside the curated refdata (never blank/fabricated). OIS/IRS/FRA rows have
+ * no security identity, so they render a plain em dash.
+ */
+function SecurityCell({ deal }: { readonly deal: Deal }): React.ReactElement {
+  const descriptor = securityDescriptor(deal);
+  if (descriptor.length === 0) {
+    return <span className={styles.securityNone}>—</span>;
+  }
+  const id = deal.bondSecurityId ?? "";
+  // Show the id sub-line only when it exists AND is not already the descriptor (a
+  // refdata-less bond shows the id as the descriptor, so avoid repeating it).
+  const showId = id.length > 0 && id !== descriptor;
+  const label = showId ? `${descriptor} · ${id}` : descriptor;
+  return (
+    <span className={styles.security} aria-label={label} title={label}>
+      <span className={styles.securityName}>{descriptor}</span>
+      {showId && <span className={styles.securityId}>{id}</span>}
+    </span>
+  );
+}
+
 /** The tenor a rates deal carries, as a compact `Ny` label (e.g. `10y`). */
 function tenorLabel(d: Deal): string {
   return `${d.instrument.tenorYears}y`;
@@ -200,6 +244,8 @@ function dealSearchText(d: Deal, names: ReadonlyMap<string, string>): string {
     d.desk,
     d.kind,
     productLabel(d),
+    securityDescriptor(d),
+    d.bondSecurityId ?? "",
     tenorLabel(d),
     d.curveSet.currency,
     fmtCompact(d.notional),
@@ -362,6 +408,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                       <th>Desk</th>
                       <th>Type</th>
                       <th>Product</th>
+                      <th>Security</th>
                       <th className={styles.num}>Tenor</th>
                       <th>Ccy</th>
                       <th className={styles.num}>Notional</th>
@@ -417,12 +464,15 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                     <td className={styles.strong}>{d.counterparty}</td>
                     <td>{d.desk}</td>
                     <td>
-                      <span className={`${styles.kind} ${d.kind === "IOI" ? styles.kindIoi : styles.kindRfq}`}>
+                      <span className={`${styles.kind} ${kindClass(d.kind)}`}>
                         {d.kind}
                       </span>
                     </td>
                     <td>
                       <span className={styles.product}>{productLabel(d)}</span>
+                    </td>
+                    <td>
+                      <SecurityCell deal={d} />
                     </td>
                     <td className={`${styles.num} ${styles.mono}`}>{tenorLabel(d)}</td>
                     <td className={styles.mono}>{d.curveSet.currency}</td>

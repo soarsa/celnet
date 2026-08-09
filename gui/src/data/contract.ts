@@ -3775,6 +3775,14 @@ export interface HedgeProvenance {
    * on?" (mirrors `HedgeProvenance.lps`, field 20).
    */
   lps: string[];
+  /**
+   * The `position_id` of the parent client deal this hedge sheds risk for (mirrors
+   * `HedgeProvenance.parent_position_id`, field 21) — the reconciliation link back to
+   * the fill on the Deals blotter. Present ONLY on per-fill EXECUTION records (a B2B /
+   * external-shed fill); absent on book-level advisory records (which aggregate across
+   * fills and carry no single parent). Never fabricated.
+   */
+  parentPositionId?: bigint;
 }
 
 /**
@@ -4801,11 +4809,13 @@ export interface CombinedTailRiskResponse {
 
 /**
  * The flavour of an inbound dealer request (`celnet.wire.DeskRequestKind`,
- * proto RFQ=1 / IOI=2): an `RFQ` is a firm request-for-quote the desk responds
- * to with a price; an `IOI` is an indication-of-interest (an advertised axe the
- * desk may also price). Purpose-named, vendor-neutral.
+ * proto RFQ=1 / IOI=2 / ESP=3): an `RFQ` is a firm request-for-quote the desk
+ * responds to with a price; an `IOI` is an indication-of-interest (an advertised
+ * axe the desk may also price); an `ESP` is an executable streaming-price lift —
+ * a market-data (streaming) venue fill booked off the continuously-streamed line,
+ * distinct from the request-driven RFQ/IOI flow. Purpose-named, vendor-neutral.
  */
-export type DeskRequestKind = "RFQ" | "IOI";
+export type DeskRequestKind = "RFQ" | "IOI" | "ESP";
 
 /**
  * The lifecycle state of a `DeskRequest` (`celnet.wire.DeskRequestState`, proto
@@ -4967,6 +4977,22 @@ export interface Deal {
    */
   productKind: RatesProductKind;
   instrument: OisInstrument;
+  /**
+   * The dealt security's stable identifier — for a `BOND` fill, the bond's
+   * `instrument_id` (the curated-refdata id / CUSIP the Agg Book keys on). Threaded
+   * off the wire `deal.instrument.bond.instrument_id`; present ONLY for BOND deals
+   * (absent for OIS/IRS/FRA, which have no security id). The blotter's SECURITY cell
+   * falls back to this raw id when {@link bondDisplayName} is empty.
+   */
+  bondSecurityId?: string;
+  /**
+   * The dealt bond's human security descriptor (e.g. "US 10Y GOV 4.125% May-36") —
+   * the SAME `display_name` the Agg Book tile shows, threaded off the wire
+   * `deal.instrument.bond.display_name`. Present ONLY for BOND fills whose security
+   * is in the curated refdata; EMPTY (absent) when outside it — never fabricated, so
+   * the blotter falls back to {@link bondSecurityId}.
+   */
+  bondDisplayName?: string;
   curveSet: RatesCurveSet;
   side: Side;
   notional: number;

@@ -253,6 +253,17 @@ describe("provenance + intent round-trip", () => {
     expect(back.lpWon).toBeNull();
     expect(back.action).toBeNull();
   });
+  it("round-trips a per-fill execution record's parent_position_id (field 21)", () => {
+    const withParent: HedgeProvenance = { ...prov, parentPositionId: 9001n };
+    const wire = hedgeProvenanceToWire(withParent);
+    expect(wire["parent_position_id"]).toBe(9001);
+    expect(hedgeProvenanceFromWire(wire).parentPositionId).toBe(9001n);
+  });
+  it("OMITS parent_position_id for a book-level advisory record (no single parent)", () => {
+    const wire = hedgeProvenanceToWire(prov);
+    expect("parent_position_id" in wire).toBe(false);
+    expect(hedgeProvenanceFromWire(wire).parentPositionId).toBeUndefined();
+  });
   it("round-trips an intent", () => {
     const intent: HedgeIntent = {
       book: "fi-rates-emea",
