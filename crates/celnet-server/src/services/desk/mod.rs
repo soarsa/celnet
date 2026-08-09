@@ -43,8 +43,8 @@ use std::sync::Arc;
 
 use celnet_proto::rfq_desk_service_server::RfqDeskService;
 use celnet_proto::{
-    AcceptDeskQuoteRequest, AcceptDeskQuoteResponse, CurveSet, Deal, DeskQuote, DeskRequest,
-    DeskRequestKind, DeskRequestState, ListDealsRequest, ListDealsResponse,
+    AcceptDeskQuoteRequest, AcceptDeskQuoteResponse, BondInstrument, CurveSet, Deal, DeskQuote,
+    DeskRequest, DeskRequestKind, DeskRequestState, ListDealsRequest, ListDealsResponse,
     ListDeskRequestsRequest, ListDeskRequestsResponse, ManualInterventionReason, Notification,
     NotificationKind, RatesInstrument, RatesPosition, RespondDeskRequestRequest,
     RespondDeskRequestResponse, Side, SubmitDeskRequestRequest, SubmitDeskRequestResponse,
@@ -464,15 +464,50 @@ fn rebook_at_dealt_level(
             // separate quantity, so the redemption face IS the position size), set from
             // the dealt notional, plus the desk's direction. (celnet-bond's YTM solve
             // is price-scale-relative, so a large face books correctly.)
-            let mut b = *b;
+            let mut b = b.clone();
             b.redemption = notional;
             b.side = side;
+            // Stamp the security's static identity (instrument_id / display_name / ISIN /
+            // CUSIP) from the curated refdata universe so the booked Deal carries the same
+            // descriptor the Aggregated Book shows — resolved, never fabricated.
+            stamp_bond_identity(&mut b);
             rates_instrument::Instrument::Bond(b)
         }
     };
     Some(RatesInstrument {
         instrument: Some(booked),
     })
+}
+
+/// Enrich a booked cash-bond's static identity from the curated `celnet-refdata` universe —
+/// the SAME source that names an [`AggregatedInstrument`](celnet_proto::AggregatedInstrument)
+/// tile — keyed by whichever id the bond already carries (`instrument_id`, else CUSIP, else
+/// ISIN). Fills `instrument_id` / `display_name` / `isin` / `cusip` only where they are
+/// currently empty, so a bond outside the curated universe (or already resolved) is left
+/// untouched — the fields stay empty rather than fabricated. Off the pinned pricing core
+/// (guardrail 11): a booking-tier lookup against a process-cached index.
+fn stamp_bond_identity(bond: &mut BondInstrument) {
+    let key = [&bond.instrument_id, &bond.cusip, &bond.isin]
+        .into_iter()
+        .map(|s| s.trim())
+        .find(|s| !s.is_empty());
+    let Some(spec) = key.and_then(celnet_refdata::spec_by_id) else {
+        return;
+    };
+    if bond.instrument_id.trim().is_empty() {
+        bond.instrument_id = spec.instrument_id.clone();
+    }
+    if bond.display_name.trim().is_empty() {
+        bond.display_name = spec.name.clone();
+    }
+    if bond.isin.trim().is_empty() {
+        bond.isin = spec.isin.clone();
+    }
+    if bond.cusip.trim().is_empty()
+        && let Some(cusip) = spec.cusip.as_ref()
+    {
+        bond.cusip = cusip.clone();
+    }
 }
 
 /// The desk's side of a deal: the opposite of the counterparty's submitted
@@ -855,7 +890,7 @@ impl RfqDeskEdge {
                     position_id: 0,
                     entity: 0,
                     book: 0,
-                    instrument: Some(booked_instrument),
+                    instrument: Some(booked_instrument.clone()),
                 },
                 RatesRoutingAttribution {
                     counterparty: current.counterparty.clone(),
@@ -1236,7 +1271,7 @@ impl RfqDeskService for RfqDeskEdge {
                 position_id: 0,
                 entity: 0,
                 book: 0,
-                instrument: Some(booked_instrument),
+                instrument: Some(booked_instrument.clone()),
             },
             RatesRoutingAttribution {
                 counterparty: current.counterparty.clone(),
@@ -1475,6 +1510,63 @@ pub(crate) mod tests {
         crate::rates_pricing::default_usd_sofr_curve_set()
     }
 
+    /// Part A: a booked cash bond carries the security's resolved static identity
+    /// (instrument_id / display_name / ISIN / CUSIP) sourced from the curated refdata —
+    /// the SAME universe the Aggregated Book names — never a fabricated descriptor.
+    #[test]
+    fn rebook_stamps_bond_identity_from_refdata() {
+        // A real US Treasury from the curated universe: its instrument_id IS the CUSIP the
+        // FIX venue streams under, so a booking that carries only the id resolves the rest.
+        let spec = celnet_refdata::government_universe()
+            .into_iter()
+            .find(|s| s.region == "us" && s.cusip.is_some())
+            .expect("a US treasury with a CUSIP");
+        let bond = BondInstrument {
+            coupon_rate: spec.coupon_rate,
+            redemption: 100.0,
+            instrument_id: spec.instrument_id.clone(),
+            ..Default::default()
+        };
+        let req = RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Bond(bond)),
+        };
+        let booked = rebook_at_dealt_level(Some(&req), 101.5, 5_000_000.0, Side::Buy)
+            .expect("a bond arm rebooks");
+        let Some(rates_instrument::Instrument::Bond(b)) = booked.instrument else {
+            panic!("expected a bond arm");
+        };
+        assert_eq!(b.instrument_id, spec.instrument_id);
+        assert_eq!(b.display_name, spec.name);
+        assert_eq!(b.isin, spec.isin);
+        assert_eq!(b.cusip, spec.cusip.unwrap());
+        // The trade economics are still applied (face = dealt notional, desk side).
+        assert_eq!(b.redemption, 5_000_000.0);
+        assert_eq!(b.side, Side::Buy as i32);
+    }
+
+    /// A bond outside the curated universe leaves the identity fields empty — surfaced,
+    /// never fabricated.
+    #[test]
+    fn rebook_leaves_unknown_bond_identity_empty() {
+        let bond = BondInstrument {
+            redemption: 100.0,
+            instrument_id: "NOT-A-CURATED-ID".to_owned(),
+            ..Default::default()
+        };
+        let req = RatesInstrument {
+            instrument: Some(rates_instrument::Instrument::Bond(bond)),
+        };
+        let booked = rebook_at_dealt_level(Some(&req), 99.0, 1_000_000.0, Side::Sell)
+            .expect("a bond arm rebooks");
+        let Some(rates_instrument::Instrument::Bond(b)) = booked.instrument else {
+            panic!("expected a bond arm");
+        };
+        assert_eq!(b.instrument_id, "NOT-A-CURATED-ID");
+        assert!(b.display_name.is_empty());
+        assert!(b.isin.is_empty());
+        assert!(b.cusip.is_empty());
+    }
+
     fn ois_instrument(side: Side) -> RatesInstrument {
         RatesInstrument {
             instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
@@ -1676,6 +1768,7 @@ pub(crate) mod tests {
                     }),
                     redemption: 100.0,
                     side: side as i32,
+                    ..Default::default()
                 },
             )),
         }
@@ -1855,7 +1948,7 @@ pub(crate) mod tests {
         assert_eq!(deal.side, Side::Sell as i32);
         assert!(deal.position_id.is_some());
         assert_eq!(edge.rates.len(), 1);
-        let pos = edge.rates.snapshot()[0];
+        let pos = edge.rates.snapshot()[0].clone();
         (edge, pos)
     }
 
@@ -1865,7 +1958,7 @@ pub(crate) mod tests {
         let priced = price_rates(&RatesPriceRequest {
             request_id: 0,
             curve_set: Some(curve()),
-            instrument: pos.instrument,
+            instrument: pos.instrument.clone(),
             correlation_id: None,
         })
         .expect("booked position prices");

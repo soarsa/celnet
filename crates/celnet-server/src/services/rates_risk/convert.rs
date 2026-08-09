@@ -65,7 +65,7 @@ pub fn fact_from_position(
             curve_set.currency
         ))
     })?;
-    let instrument: RatesInstrument = position.instrument.ok_or_else(|| {
+    let instrument: RatesInstrument = position.instrument.clone().ok_or_else(|| {
         Status::invalid_argument(format!(
             "AggregateRatesRisk: position {} carries no instrument",
             position.position_id

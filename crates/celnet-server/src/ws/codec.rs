@@ -1525,6 +1525,12 @@ fn bond_instrument_from_json(v: &Value) -> Result<BondInstrument> {
         maturity_date: Some(nested(o, "maturity_date", broken_date_from_json)?),
         redemption: f64_field(o, "redemption")?,
         side: enum_or_zero(o, "side"),
+        // Server-resolved identity output fields — lenient on decode (a client price request
+        // need not send them; the server resolves and stamps them onto the booked Deal).
+        instrument_id: string_or_empty(o, "instrument_id"),
+        isin: string_or_empty(o, "isin"),
+        cusip: string_or_empty(o, "cusip"),
+        display_name: string_or_empty(o, "display_name"),
     })
 }
 
@@ -2726,6 +2732,10 @@ fn rates_instrument_to_json(i: &RatesInstrument) -> Value {
                 "maturity_date": bond.maturity_date.as_ref().map(broken_date_to_json),
                 "redemption": bond.redemption,
                 "side": bond.side,
+                "instrument_id": bond.instrument_id,
+                "isin": bond.isin,
+                "cusip": bond.cusip,
+                "display_name": bond.display_name,
             }
         }),
         None => json!({}),

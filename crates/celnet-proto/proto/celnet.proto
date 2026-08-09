@@ -7425,6 +7425,22 @@ message BondInstrument {
   double redemption = 5;
   // SIDE_BUY = long (+PV); SIDE_SELL = short (-PV). SIDE_TWO_WAY rejected.
   Side side = 6;
+  // The canonical internal instrument id — the identity shared across the reference
+  // registry, the wire and the LP feed (US Treasuries: the 9-char CUSIP; curated non-US
+  // govvies: a stable slug). Resolved server-side at booking from the venue's `Symbol(55)`
+  // against `celnet-refdata` — the SAME curated universe that names an `AggregatedInstrument`.
+  // Empty when unresolved; never fabricated. Additive output field (a price request need not
+  // set it — the server resolves and stamps it onto the booked `Deal`).
+  string instrument_id = 7;
+  // The ISO-6166 ISIN, resolved from the same refdata entry. Empty when unresolved.
+  string isin = 8;
+  // The CUSIP (US Treasuries carry one), resolved from the same refdata entry. Empty for a
+  // security with no CUSIP, or when unresolved.
+  string cusip = 9;
+  // A compact, human-friendly blotter/security descriptor (e.g. "US 10Y GOV 4.125% May-36")
+  // — the SAME name the FI Aggregated Book tile shows, resolved from the refdata entry.
+  // Empty when unresolved; never fabricated.
+  string display_name = 10;
 }
 
 // A linear interest-rate instrument to price: exactly one arm is set. The oneof

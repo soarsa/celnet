@@ -55,10 +55,81 @@ pub fn government_universe() -> Vec<GovBondSpec> {
     u
 }
 
+/// The curated universe indexed for O(1) identity resolution: keyed by `instrument_id`,
+/// and additionally cross-referenced by CUSIP and ISIN, so a booking venue can resolve a
+/// bond's full static identity from whichever id its `Symbol(55)` carried. Built once
+/// (deterministic, allocation-only) — the SAME records `government_universe` emits.
+static IDENTITY_INDEX: std::sync::LazyLock<std::collections::HashMap<String, GovBondSpec>> =
+    std::sync::LazyLock::new(|| {
+        let mut idx = std::collections::HashMap::new();
+        for spec in government_universe() {
+            // Cross-refs first (weaker keys), then the canonical id LAST so an
+            // `instrument_id` that also equals some other row's CUSIP/ISIN wins.
+            if let Some(cusip) = spec.cusip.clone() {
+                idx.entry(cusip).or_insert_with(|| spec.clone());
+            }
+            idx.entry(spec.isin.clone()).or_insert_with(|| spec.clone());
+            idx.insert(spec.instrument_id.clone(), spec);
+        }
+        idx
+    });
+
+/// Resolve one curated [`GovBondSpec`] by any of its ids — the canonical `instrument_id`,
+/// its CUSIP, or its ISIN (the `instrument_id` match takes precedence). Returns `None` for
+/// an id outside the curated government universe (the caller then leaves the bond's identity
+/// fields empty — surfaced, never fabricated). O(1), backed by a process-wide cached index.
+#[must_use]
+pub fn spec_by_id(id: &str) -> Option<&'static GovBondSpec> {
+    let id = id.trim();
+    if id.is_empty() {
+        return None;
+    }
+    IDENTITY_INDEX.get(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn spec_by_id_resolves_every_universe_id_cusip_and_isin() {
+        let u = government_universe();
+        // A US Treasury (carries a CUSIP) and a curated govvie (slug id, no CUSIP).
+        let us = u
+            .iter()
+            .find(|s| s.region == "us" && s.cusip.is_some())
+            .expect("a US treasury with a CUSIP");
+        let uk = u
+            .iter()
+            .find(|s| s.region == "uk")
+            .expect("a UK gilt in the universe");
+
+        // Resolve by the canonical instrument_id.
+        assert_eq!(spec_by_id(&us.instrument_id).unwrap().isin, us.isin);
+        assert_eq!(spec_by_id(&uk.instrument_id).unwrap().name, uk.name);
+        // Resolve by CUSIP and by ISIN — the same record.
+        assert_eq!(
+            spec_by_id(us.cusip.as_ref().unwrap())
+                .unwrap()
+                .instrument_id,
+            us.instrument_id
+        );
+        assert_eq!(
+            spec_by_id(&us.isin).unwrap().instrument_id,
+            us.instrument_id
+        );
+        // Whitespace-padded (a FIX Symbol(55) is space-padded) still resolves.
+        assert_eq!(
+            spec_by_id(&format!("  {}  ", us.instrument_id))
+                .unwrap()
+                .instrument_id,
+            us.instrument_id
+        );
+        // An unknown / empty id resolves to nothing (never fabricated).
+        assert!(spec_by_id("NOT-A-REAL-ID").is_none());
+        assert!(spec_by_id("   ").is_none());
+    }
 
     #[test]
     fn combined_universe_spans_every_region_and_is_globally_unique() {

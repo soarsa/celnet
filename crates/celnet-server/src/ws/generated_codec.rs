@@ -2176,6 +2176,12 @@ impl WireBuilder for BondInstrument {
             }
             "redemption" => self.redemption = req_f64(value, "redemption")?,
             "side" => self.side = enum_or_zero(value),
+            // Server-resolved identity output fields — lenient on decode (a client price
+            // request need not send them; the server resolves and stamps them at booking).
+            "instrument_id" => self.instrument_id = string_or_empty(value),
+            "isin" => self.isin = string_or_empty(value),
+            "cusip" => self.cusip = string_or_empty(value),
+            "display_name" => self.display_name = string_or_empty(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -4408,6 +4414,10 @@ impl WireAdapter for BondInstrument {
                 .map(|d| WireVal::Msg(d as &dyn WireAdapter)),
             "redemption" => Some(WireVal::F64(self.redemption)),
             "side" => Some(WireVal::Enum(self.side)),
+            "instrument_id" => Some(WireVal::Str(&self.instrument_id)),
+            "isin" => Some(WireVal::Str(&self.isin)),
+            "cusip" => Some(WireVal::Str(&self.cusip)),
+            "display_name" => Some(WireVal::Str(&self.display_name)),
             _ => None,
         }
     }

@@ -1400,7 +1400,7 @@ impl FixSession {
                 symbol: symbol.clone(),
                 notional,
                 subscription: dialect_rates::SubscriptionRequest::Subscribe,
-                instrument,
+                instrument: instrument.clone(),
             };
             let line = RfsLine::Bond {
                 instrument: Box::new(instrument),
@@ -1636,8 +1636,14 @@ impl FixSession {
             return None;
         }
         let side = Side::try_from(rfq.instrument.side).unwrap_or(Side::TwoWay);
+        // The FIX `Symbol(55)` IS the canonical `instrument_id` (a US CUSIP or a curated
+        // govvie slug) the book/LP feed published under — stamp it onto the bond arm so the
+        // booked Deal (via `rebook_at_dealt_level` → `stamp_bond_identity`) resolves the full
+        // static identity (display name / ISIN / CUSIP) from the same curated refdata.
+        let mut bond = rfq.instrument.clone();
+        bond.instrument_id = String::from_utf8_lossy(&rfq.symbol).trim().to_owned();
         let instrument = RatesInstrument {
-            instrument: Some(rates_instrument::Instrument::Bond(rfq.instrument)),
+            instrument: Some(rates_instrument::Instrument::Bond(bond)),
         };
         let outcome = match admission {
             RatesAdmission::Auto(priced) => RfqIngestOutcome::AutoQuoted(DeskQuote {

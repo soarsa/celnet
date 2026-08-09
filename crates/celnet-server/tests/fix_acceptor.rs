@@ -253,6 +253,7 @@ fn bond_instrument() -> BondInstrument {
         }),
         redemption: 100.0,
         side: Side::TwoWay as i32,
+        ..Default::default()
     }
 }
 

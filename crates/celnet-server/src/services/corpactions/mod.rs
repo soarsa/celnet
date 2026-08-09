@@ -354,6 +354,9 @@ impl CorporateActionsEdge {
             }),
             redemption: delta.face_delta.abs(),
             side: side as i32,
+            // Corporate-action rebooking preserves the security's identity via its own
+            // instrument records; the wire identity fields default empty here.
+            ..Default::default()
         };
         let pos = RatesPosition {
             position_id: 0,

@@ -66,6 +66,7 @@ fn bond_5y() -> RatesInstrument {
             }),
             redemption: 100.0,
             side: Side::Buy as i32,
+            ..Default::default()
         })),
     }
 }

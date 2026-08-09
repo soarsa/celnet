@@ -1039,7 +1039,7 @@ pub fn quote_rates_two_way(
 
     // The full risk at the resolved directional side — the RFQ envelope side
     // governs the sign, so the wire instrument arm's own `side` is overridden.
-    let mut priced = *instrument;
+    let mut priced = instrument.clone();
     override_arm_side(&mut priced, pricing_side)?;
     let result = price_rates(&RatesPriceRequest {
         request_id: 0,
@@ -1404,6 +1404,7 @@ mod tests {
                     }),
                     redemption,
                     side: side as i32,
+                    ..Default::default()
                 })),
             }),
             correlation_id: None,
@@ -1614,6 +1615,7 @@ mod tests {
             }),
             redemption: 100.0,
             side: Side::TwoWay as i32, // a two-way request price_rates would reject
+            ..Default::default()
         };
 
         let quote = quote_bond(&bond, &curve_set()).expect("two-way bond quotes at magnitude");

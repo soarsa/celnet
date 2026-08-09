@@ -698,6 +698,8 @@ impl BondSpec {
                 maturity_date: Some(self.maturity.to_wire()),
                 redemption: self.redemption,
                 side: self.side.to_wire(),
+                // Identity is server-resolved at booking (empty on a client price request).
+                ..Default::default()
             })),
         }
     }

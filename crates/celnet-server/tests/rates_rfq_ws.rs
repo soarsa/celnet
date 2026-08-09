@@ -122,6 +122,7 @@ fn bond_proto(side: Side) -> BondInstrument {
         }),
         redemption: 100.0,
         side: side as i32,
+        ..Default::default()
     }
 }
 

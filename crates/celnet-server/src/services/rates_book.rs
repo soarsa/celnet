@@ -502,7 +502,7 @@ impl RatesPositionStore {
             .inner
             .read()
             .expect("rates position store lock poisoned");
-        let position = *g.iter().find(|p| p.position_id == position_id)?;
+        let position = g.iter().find(|p| p.position_id == position_id)?.clone();
         drop(g);
         Some(RatesTransferView {
             risk_book: self.risk_book_of(position_id),
@@ -567,13 +567,14 @@ impl RatesPositionStore {
                 .inner
                 .read()
                 .expect("rates position store lock poisoned");
-            *g.iter()
+            g.iter()
                 .find(|p| p.position_id == source_position_id)
                 .ok_or_else(|| {
                     tonic::Status::not_found(format!(
                         "rates position {source_position_id} is not booked"
                     ))
                 })?
+                .clone()
         };
         if template
             .instrument
@@ -710,9 +711,9 @@ impl RatesPositionStore {
                 }
             }
             if let Some(slot) = g.iter_mut().find(|p| p.position_id == position.position_id) {
-                *slot = position;
+                *slot = position.clone();
             } else {
-                g.push(position);
+                g.push(position.clone());
             }
         }
         self.risk_book
@@ -905,9 +906,9 @@ impl RatesPositionStore {
             }
         }
         if let Some(slot) = g.iter_mut().find(|p| p.position_id == position.position_id) {
-            *slot = position;
+            *slot = position.clone();
         } else {
-            g.push(position);
+            g.push(position.clone());
         }
         drop(g);
 
@@ -1482,7 +1483,7 @@ pub(crate) fn rates_with_signed_notional(
     signed_notional: f64,
     position_id: u64,
 ) -> RatesPosition {
-    let mut out = *template;
+    let mut out = template.clone();
     out.position_id = position_id;
     let magnitude = signed_notional.abs();
     let side = if signed_notional < 0.0 {
@@ -1970,6 +1971,7 @@ pub(crate) mod tests {
                     maturity_date: None,
                     redemption,
                     side: side as i32,
+                    ..Default::default()
                 })),
             }),
         }

@@ -734,6 +734,9 @@ pub fn decode_bond_instrument(
             maturity_date: Some(maturity),
             redemption,
             side: side as i32,
+            // Static identity (instrument_id / display_name / ISIN / CUSIP) is resolved
+            // server-side at booking from the FIX `Symbol(55)` — empty at decode.
+            ..Default::default()
         },
         notional,
     ))
@@ -1088,6 +1091,7 @@ mod tests {
                 }),
                 redemption: 100.0,
                 side: Side::Buy as i32,
+                ..Default::default()
             }
         );
     }
@@ -1168,6 +1172,7 @@ mod tests {
                 }),
                 redemption: 100.0,
                 side: Side::Buy as i32,
+                ..Default::default()
             }
         );
     }

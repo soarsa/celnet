@@ -677,6 +677,7 @@ impl RiskEdge {
     ) -> Result<BookRatesPositionResponse, Status> {
         let position = req
             .position
+            .clone()
             .ok_or_else(|| Status::invalid_argument("BookRatesPosition missing `position`"))?;
         if position.instrument.is_none() {
             return Err(Status::invalid_argument(
@@ -1644,7 +1645,7 @@ mod tests {
         let booked = edge
             .book_rates_position(Request::new(BookRatesPositionRequest {
                 session_token: Some(token),
-                position: Some(line),
+                position: Some(line.clone()),
                 principal: None,
                 correlation_id: None,
             }))
@@ -1662,7 +1663,7 @@ mod tests {
         let denied = edge
             .book_rates_position(Request::new(BookRatesPositionRequest {
                 session_token: None,
-                position: Some(line),
+                position: Some(line.clone()),
                 principal: Some(EntitlementPrincipal {
                     grant_all: true,
                     grants: vec![],
@@ -1726,7 +1727,7 @@ mod tests {
         let err = edge
             .book_rates_position(Request::new(BookRatesPositionRequest {
                 session_token: Some(token),
-                position: Some(line),
+                position: Some(line.clone()),
                 principal: None,
                 correlation_id: None,
             }))

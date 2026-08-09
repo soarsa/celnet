@@ -377,7 +377,8 @@ mod tests {
             &FleetTopology::InProcess,
         )
         .unwrap();
-        let entity1_only = single_node_aggregate(&request(vec![positions[0]], None)).unwrap();
+        let entity1_only =
+            single_node_aggregate(&request(vec![positions[0].clone()], None)).unwrap();
         assert_eq!(scoped.nodes.len(), 1);
         assert_eq!(
             scoped.nodes[0].net_pv.to_bits(),

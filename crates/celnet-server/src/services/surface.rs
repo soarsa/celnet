@@ -1133,11 +1133,12 @@ impl SurfaceService for SurfaceEdge {
         // real re-bootstrap-and-reprice, and report the base DV01 as its first-order
         // predictor.
         let reprice = if let Some(instrument) = req.instrument {
-            // `RatesInstrument` is `Copy`, so it rides both requests by value.
+            // Clone the instrument onto both requests (a bond arm now owns identity strings,
+            // so `RatesInstrument` is no longer `Copy`).
             let base_req = RatesPriceRequest {
                 request_id: 0,
                 curve_set: Some(base_set.clone()),
-                instrument: Some(instrument),
+                instrument: Some(instrument.clone()),
                 correlation_id: None,
             };
             let shifted_req = RatesPriceRequest {

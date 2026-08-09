@@ -480,9 +480,9 @@ impl RatesSubscription {
         let req = RatesPriceRequest {
             request_id: 0,
             curve_set: Some(shifted.clone()),
-            // `RatesInstrument` is a small `Copy` POD (scalar-only arms), so this is
-            // a register copy, not an allocation.
-            instrument: Some(self.instrument),
+            // A cheap clone of the retained `RatesInstrument` (a bond arm now carries
+            // owned identity strings, so this is no longer a bare register copy).
+            instrument: Some(self.instrument.clone()),
             correlation_id: None,
         };
         let mut result = price_rates(&req).map_err(rates_error_to_status)?;
@@ -2743,7 +2743,7 @@ mod tests {
         price_rates(&RatesPriceRequest {
             request_id: 0,
             curve_set: Some(curve.clone()),
-            instrument: Some(*instrument),
+            instrument: Some(instrument.clone()),
             correlation_id: None,
         })
         .expect("the oracle prices the fixed-income line")
@@ -2785,7 +2785,7 @@ mod tests {
         let tick = hub.subscribe_rates(&curve).expect("the curve's rates ring");
         let sub = RatesSubscription {
             id: SubscriptionId { value: 7 },
-            instrument,
+            instrument: instrument.clone(),
             curve_set: curve.clone(),
             tick,
             sequence: 1,
@@ -2830,7 +2830,7 @@ mod tests {
         let tick = hub.subscribe_rates(&curve).expect("the curve's rates ring");
         let sub = RatesSubscription {
             id: SubscriptionId { value: 11 },
-            instrument,
+            instrument: instrument.clone(),
             curve_set: curve.clone(),
             tick,
             sequence: 1,
@@ -2898,7 +2898,7 @@ mod tests {
                 message: Some(client_stream_message::Message::RatesSubscribe(
                     RatesSubscribe {
                         subscription: Some(SubscriptionId { value: 42 }),
-                        instrument: Some(instrument),
+                        instrument: Some(instrument.clone()),
                         curve_set: Some(curve.clone()),
                         throttle_nanos: 0,
                         correlation_id: Some(9),
