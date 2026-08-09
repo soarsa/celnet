@@ -15,11 +15,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { FixMessage } from "../data/contract";
 import type { CelnetTransport } from "../data/transport";
+import { appendCapped } from "../lib/fixMessageFilter";
 
 /** The poll cadence (ms) — brisk enough to feel live, light on the edge. */
 const POLL_MS = 1200;
-/** The local retained-frame cap (older frames drop off the top). */
-const BUFFER_CAP = 1000;
+/**
+ * The local retained-frame cap (older frames drop off the top). Sized for
+ * INVESTIGATION, not just a live tail: a few thousand frames give real history
+ * to search over while staying bounded (~a few MB of small strings), so an admin
+ * can pause and hunt back through the recent flow. Ring-buffered (newest-last)
+ * so memory stays flat on a long-lived, high-rate session.
+ */
+export const FIX_BUFFER_CAP = 5000;
 
 export interface FixMessagesApi {
   /** The retained captured frames for the selected session (oldest-first). */
@@ -61,10 +68,7 @@ export function useFixMessages(
         if (cancelled) return;
         cursorRef.current = page.latestSeq;
         if (page.messages.length > 0) {
-          setMessages((prev) => {
-            const next = prev.concat(page.messages);
-            return next.length > BUFFER_CAP ? next.slice(next.length - BUFFER_CAP) : next;
-          });
+          setMessages((prev) => appendCapped(prev, page.messages, FIX_BUFFER_CAP));
         }
         setError(null);
       } catch (e: unknown) {

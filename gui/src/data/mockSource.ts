@@ -1783,6 +1783,10 @@ export class MockTransport implements CelnetTransport {
       // Curve-anchored with a book skew pulled 25% toward the composite (mode 3).
       pricingSourceMode: 3,
       bookSkewWeight: 0.25,
+      // Async last-look: 0.5bp tolerance, 40% of the favorable move handed back.
+      lastLookMode: 1,
+      lastLookToleranceBps: 0.5,
+      asyncGivebackPct: 40,
     },
     {
       id: "group-b",
@@ -1798,6 +1802,10 @@ export class MockTransport implements CelnetTransport {
       // Default source policy: composite-first, curve fallback (mode 0).
       pricingSourceMode: 0,
       bookSkewWeight: null,
+      // Default last-look policy: Sync, server-default tolerance (no stored values).
+      lastLookMode: 0,
+      lastLookToleranceBps: null,
+      asyncGivebackPct: null,
     },
   ];
 
@@ -3032,29 +3040,83 @@ export class MockTransport implements CelnetTransport {
     return { messages, latestSeq: this.fixSeq };
   }
 
-  /** Seed a short, realistic inbound/outbound RFQ transcript for `connectionId`. */
+  /**
+   * Seed a realistic, multi-instrument inbound/outbound transcript for
+   * `connectionId` so the monitor's search/investigation bar has genuine traffic
+   * to hunt through — several symbols (rates + a bond CUSIP), an RFQ round trip
+   * per symbol, a market-data subscribe/snapshot, and an order/fill. Every frame
+   * carries the business tags (Symbol(55), Side(54), Price(44), …) an admin would
+   * actually filter on. This is OFFLINE MOCK data only.
+   */
   private seedFixTranscript(connectionId: string): void {
-    this.pushFix(connectionId, "INBOUND", "A", "Logon");
-    this.pushFix(connectionId, "OUTBOUND", "A", "Logon");
-    this.pushFix(connectionId, "INBOUND", "R", "QuoteRequest");
-    this.pushFix(connectionId, "OUTBOUND", "S", "Quote");
-    this.pushFix(connectionId, "INBOUND", "D", "NewOrderSingle");
-    this.pushFix(connectionId, "OUTBOUND", "8", "ExecutionReport");
+    const logon = "20260809-08:00:00.000";
+    this.pushFix(connectionId, "INBOUND", "A", "Logon", { 98: 0, 108: 30, 52: logon });
+    this.pushFix(connectionId, "OUTBOUND", "A", "Logon", { 98: 0, 108: 30, 52: logon });
+
+    // A handful of symbols the desk quotes — a rate curve, a couple of govies.
+    const rfqs: ReadonlyArray<{ sym: string; side: number; qty: number; bid: number; ofr: number }> = [
+      { sym: "USD-OIS", side: 1, qty: 25_000_000, bid: 3.912, ofr: 3.918 },
+      { sym: "EUR-OIS", side: 2, qty: 10_000_000, bid: 2.451, ofr: 2.457 },
+      { sym: "912797UU9", side: 1, qty: 5_000_000, bid: 96.214, ofr: 96.238 },
+      { sym: "91282CJL6", side: 2, qty: 8_000_000, bid: 99.02, ofr: 99.06 },
+    ];
+    let n = 0;
+    for (const r of rfqs) {
+      n += 1;
+      const qid = `Q-${connectionId.slice(0, 4)}-${n}`;
+      const oid = `O-${connectionId.slice(0, 4)}-${n}`;
+      this.pushFix(connectionId, "INBOUND", "R", "QuoteRequest", {
+        131: qid, 146: 1, 55: r.sym, 54: r.side, 38: r.qty, 15: r.sym.slice(0, 3),
+      });
+      this.pushFix(connectionId, "OUTBOUND", "S", "Quote", {
+        117: qid, 55: r.sym, 132: r.bid, 133: r.ofr, 134: r.qty, 135: r.qty,
+      });
+      // Roughly every other RFQ is lifted into an order + fill.
+      if (n % 2 === 1) {
+        this.pushFix(connectionId, "INBOUND", "D", "NewOrderSingle", {
+          11: oid, 55: r.sym, 54: r.side, 38: r.qty, 40: 2, 44: r.side === 1 ? r.ofr : r.bid,
+        });
+        this.pushFix(connectionId, "OUTBOUND", "8", "ExecutionReport", {
+          37: oid, 17: `E-${n}`, 150: "F", 39: 2, 55: r.sym, 54: r.side,
+          38: r.qty, 32: r.qty, 31: r.side === 1 ? r.ofr : r.bid,
+        });
+      }
+    }
+
+    // A streaming market-data subscribe + snapshot on the front rate.
+    this.pushFix(connectionId, "INBOUND", "V", "MarketDataRequest", {
+      262: "MD-1", 263: 1, 264: 1, 146: 1, 55: "USD-OIS",
+    });
+    this.pushFix(connectionId, "OUTBOUND", "W", "MarketDataSnapshotFullRefresh", {
+      262: "MD-1", 55: "USD-OIS", 268: 2, 269: 0, 270: 3.912, 271: 25_000_000,
+    });
   }
 
-  /** Append one synthetic captured frame to the offline monitor ring (cap 500). */
+  /**
+   * Append one synthetic captured frame to the offline monitor ring (cap 500).
+   * `body` weaves the business tags into the raw pipe-delimited FIX string
+   * (between the standard header and the `10=` trailer) so the frame is
+   * searchable by `tag=value` exactly as a live one would be.
+   */
   private pushFix(
     connectionId: string,
     direction: FixMessage["direction"],
     msgType: string,
     summary: string,
+    body: Readonly<Record<number, string | number>> = {},
   ): void {
     this.fixSeq += 1n;
     const seq = this.fixSeq;
     const inbound = direction === "INBOUND";
+    const sender = inbound ? "CELER_RATES" : "CELNET";
+    const target = inbound ? "CELNET" : "CELER_RATES";
+    const bodyTags = Object.entries(body)
+      .map(([tag, val]) => `${tag}=${val}`)
+      .join("|");
     const raw =
-      `8=FIX.4.4|9=0|35=${msgType}|49=${inbound ? "CELNET-CPTY" : "CELNET"}|` +
-      `56=${inbound ? "CELNET" : "CELNET-CPTY"}|34=${seq.toString()}|10=000`;
+      `8=FIX.4.4|9=0|35=${msgType}|49=${sender}|56=${target}|34=${seq.toString()}` +
+      (bodyTags ? `|${bodyTags}` : "") +
+      `|10=000`;
     this.fixMessages.push({
       seq,
       connectionId,
