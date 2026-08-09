@@ -483,6 +483,10 @@ impl Edge {
         // so the desk edge (which holds this store) can record the quote→lift accept span →
         // QuoteAccept. Off the pinned pricing thread, uniform with the FX `store.set_telemetry`.
         rates_store.set_telemetry(Arc::clone(link.telemetry()));
+        // Share the SAME event-trace hub so the booking seam emits the routing / deal-booked /
+        // hedge stages of a FIX lift into the ring store the `GetTrace` / `ListTraces` RPCs read
+        // (the FIX-side stages are captured by the `FixSession` edge). Off the pinned core.
+        rates_store.set_trace(Arc::clone(link.trace()));
         let stream = StreamServiceServer::new(
             StreamEdge::with_store_and_fleet(
                 Arc::clone(&link),
@@ -905,6 +909,10 @@ impl Edge {
             // `CoreLink` owns — the pinned core + async edges fold their per-stage
             // latency into it, and this RPC reads that store (Analytics pillar B).
             .with_telemetry(Arc::clone(link.telemetry()))
+            // Share the SAME event-trace hub the `CoreLink` owns — the FIX + rates-book
+            // edges record per-lift stage events into it, and the `GetTrace` /
+            // `ListTraces` RPCs read that ring store (Analytics pillar C).
+            .with_trace(Arc::clone(link.trace()))
             // Drive the firm-wide pricing kill-switch (`SetPricingControl`) through the
             // SAME runtime control the aggregation ingest + FIX seams read and the WS
             // layer fans out.

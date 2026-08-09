@@ -902,6 +902,7 @@ impl RfqDeskEdge {
                         .unwrap_or_default(),
                     dealt_price: Some(dealt_price),
                     reference_mid,
+                    request_id: Some(request_id.to_owned()),
                 },
             )
             .ok()?;
@@ -1283,6 +1284,7 @@ impl RfqDeskService for RfqDeskEdge {
                     .unwrap_or_default(),
                 dealt_price: Some(quote.price),
                 reference_mid,
+                request_id: Some(req.request_id.clone()),
             },
         )?;
         // O2: record the quote→accept latency (the platform-lift span) into the per-`OpKind`

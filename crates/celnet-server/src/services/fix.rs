@@ -62,9 +62,10 @@ use celnet_fix::messages::{self, EXEC_FILLED, EXEC_REJECTED, ExecReportParams, Q
 use celnet_fix::session::{InMemoryStore, Role, Session, SessionAction, SessionConfig};
 use celnet_fix::transport::{FrameReader, write_frame};
 
+use crate::services::trace::TraceDetails;
 use celnet_proto::{
     BondInstrument, CurveSet, DeskQuote, DeskRequestKind, ManualInterventionReason, OisInstrument,
-    RatesInstrument, rates_instrument,
+    RatesInstrument, TraceStage, rates_instrument,
 };
 use celnet_proto::{CcyPair, Instrument, MarketContext, Quantity, Side, StrikeOrDelta, Vanilla};
 use celnet_proto::{instrument, strike_or_delta};
@@ -890,6 +891,51 @@ impl FixSession {
             celnet_observability::OpKind::StreamPublish,
             u64::try_from(publish_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         );
+        // End-to-end event trace (Analytics pillar C): mint THIS lift's trace at quote publish
+        // and bind it to the wire `QuoteID(117)` (the order that lifts this quote resolves the
+        // SAME trace) + the rates acceptance `request_id` (the booking seam resolves it). Emit
+        // the PRICE_COMPUTED + QUOTE_PUBLISHED stages. Off the pinned pricing core (guardrail 11).
+        let trace_id = self.ctx.link.trace().mint_trace();
+        let quote_id_str = String::from_utf8_lossy(&quote_id).into_owned();
+        self.ctx
+            .link
+            .trace()
+            .bind_quote(quote_id_str.clone(), trace_id);
+        if let Some(rid) = self
+            .live
+            .get(&quote_id)
+            .and_then(|q| q.rates_request_id.clone())
+        {
+            self.ctx.link.trace().bind_request(rid, trace_id);
+        }
+        let sym = String::from_utf8_lossy(symbol).into_owned();
+        let cp = (!self.ctx.counterparty.is_empty())
+            .then(|| String::from_utf8_lossy(&self.ctx.counterparty).into_owned());
+        let mid = 0.5 * (priced.bid + priced.offer);
+        self.trace_stage(
+            trace_id,
+            TraceStage::PriceComputed,
+            &sym,
+            TraceDetails {
+                price: Some(mid),
+                notional: Some(priced.size),
+                counterparty: cp.clone(),
+                detail: Some(format!("bid={}; offer={}", priced.bid, priced.offer)),
+                ..Default::default()
+            },
+        );
+        self.trace_stage(
+            trace_id,
+            TraceStage::QuotePublished,
+            &sym,
+            TraceDetails {
+                price: Some(mid),
+                notional: Some(priced.size),
+                quote_id: Some(quote_id_str),
+                counterparty: cp,
+                ..Default::default()
+            },
+        );
         quote_id
     }
 
@@ -1113,6 +1159,17 @@ impl FixSession {
             Some(group) => (group.pricing_source_mode, group.book_skew_weight),
             None => (PricingSourceMode::default(), DEFAULT_BOOK_SKEW_WEIGHT),
         }
+    }
+
+    /// Emit one FIX-side event-trace stage for `trace_id` into the shared hub
+    /// (`services::trace`) — the per-lift COMPLEMENT to the aggregate latency histograms.
+    /// Off the pinned pricing core (guardrail 11): an `Arc` deref + a bounded lossy
+    /// `try_send`, never a store operation on this thread.
+    fn trace_stage(&self, trace_id: u64, stage: TraceStage, symbol: &str, details: TraceDetails) {
+        self.ctx
+            .link
+            .trace()
+            .record(trace_id, stage, symbol, details);
     }
 
     /// This session's resolved **market-data (ESP) last-look policy**
@@ -1371,6 +1428,43 @@ impl FixSession {
         self.ctx.link.telemetry().record_edge(
             celnet_observability::OpKind::StreamPublish,
             u64::try_from(publish_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
+        // End-to-end event trace (Analytics pillar C): mint THIS top-of-book's trace and bind
+        // it to the wire `QuoteID(117)` (a `35=D` lift echoing it resolves the SAME trace) + the
+        // stream `request_id` (the booking seam resolves it). Emit PRICE_COMPUTED +
+        // QUOTE_PUBLISHED. Off the pinned pricing core (guardrail 11).
+        let trace_id = self.ctx.link.trace().mint_trace();
+        let quote_id_str = String::from_utf8_lossy(&quote_id).into_owned();
+        self.ctx
+            .link
+            .trace()
+            .bind_quote(quote_id_str.clone(), trace_id);
+        if let Some(rid) = self.live_md.get(symbol).and_then(|q| q.request_id.clone()) {
+            self.ctx.link.trace().bind_request(rid, trace_id);
+        }
+        let sym = String::from_utf8_lossy(symbol).into_owned();
+        let mid = 0.5 * (priced.bid + priced.offer);
+        self.trace_stage(
+            trace_id,
+            TraceStage::PriceComputed,
+            &sym,
+            TraceDetails {
+                price: Some(mid),
+                notional: Some(priced.size),
+                detail: Some(format!("bid={}; offer={}", priced.bid, priced.offer)),
+                ..Default::default()
+            },
+        );
+        self.trace_stage(
+            trace_id,
+            TraceStage::QuotePublished,
+            &sym,
+            TraceDetails {
+                price: Some(mid),
+                notional: Some(priced.size),
+                quote_id: Some(quote_id_str),
+                ..Default::default()
+            },
         );
     }
 
@@ -1865,6 +1959,63 @@ impl FixSession {
             premium = px;
         }
 
+        // End-to-end event trace (Analytics pillar C): resolve the trace THIS lift belongs to
+        // via the `QuoteID(117)` bound at quote publish; mint a fresh trace when the order names
+        // no known quote. Re-bind the QuoteID + rates `request_id` so the downstream booking seam
+        // resolves the SAME trace. Emit the ORDER_RECEIVED + LAST_LOOK stages HERE — before the
+        // acceptance/book below — so the timeline orders correctly (the booking stages, emitted
+        // inside `book_fix_lift_priced`, carry strictly-later timestamps). Off the pinned core.
+        let lift_quote_key = quote_id
+            .as_ref()
+            .map(|q| String::from_utf8_lossy(q).into_owned());
+        let lift_trace_id = lift_quote_key
+            .as_deref()
+            .and_then(|q| self.ctx.link.trace().resolve_quote(q))
+            .unwrap_or_else(|| self.ctx.link.trace().mint_trace());
+        if let Some(q) = &lift_quote_key {
+            self.ctx.link.trace().bind_quote(q.clone(), lift_trace_id);
+        }
+        if let Some(rid) = &rates_request_id {
+            self.ctx
+                .link
+                .trace()
+                .bind_request(rid.clone(), lift_trace_id);
+        }
+        let trace_symbol = String::from_utf8_lossy(&symbol).into_owned();
+        let trace_side = if is_sell { "sell" } else { "buy" }.to_owned();
+        let trace_cp = (!self.ctx.counterparty.is_empty())
+            .then(|| String::from_utf8_lossy(&self.ctx.counterparty).into_owned());
+        self.trace_stage(
+            lift_trace_id,
+            TraceStage::OrderReceived,
+            &trace_symbol,
+            TraceDetails {
+                side: trace_side.clone(),
+                price: presented_px,
+                quote_id: lift_quote_key.clone(),
+                counterparty: trace_cp.clone(),
+                ..Default::default()
+            },
+        );
+        let last_look_decision = if md_superseded {
+            "superseded"
+        } else {
+            last_look
+        };
+        self.trace_stage(
+            lift_trace_id,
+            TraceStage::LastLook,
+            &trace_symbol,
+            TraceDetails {
+                side: trace_side.clone(),
+                price: if filled { Some(premium) } else { presented_px },
+                quote_id: lift_quote_key.clone(),
+                counterparty: trace_cp.clone(),
+                decision: Some(last_look_decision.to_owned()),
+                ..Default::default()
+            },
+        );
+
         // Pre-trade limit gate (ADR-0016 A1): a filled FX-vanilla lift consults the SAME
         // shared limit tree the RFS click-to-trade sink enforces. A hard breach converts
         // the fill into a rejected `ExecutionReport(ExecType=8)` with a `Text(58)` reason
@@ -1913,6 +2064,9 @@ impl FixSession {
         // (consistent with the existing last-look ordering) — a Hold relies on the GUI
         // desk-accept path, not a FIX re-lift.
         let mut acceptance_reason: Option<String> = None;
+        // Whether the ACCEPTANCE_DECIDED trace stage has been emitted inside an arm below (so a
+        // path that runs the acceptance graph does not double-emit via the fallback after).
+        let mut acceptance_traced = false;
         if filled && let Some(request_id) = rates_request_id.as_ref() {
             if let Some(edge) = self.ctx.desk_edge.as_ref() {
                 let quote_age_ms = quote_mint_nanos
@@ -1920,6 +2074,22 @@ impl FixSession {
                     .unwrap_or(0.0);
                 match edge.evaluate_fix_acceptance(request_id, quote_age_ms) {
                     AcceptanceDecision::Accept => {
+                        // Emit ACCEPTANCE_DECIDED(accept) BEFORE booking so it strictly precedes
+                        // the RISK_ROUTED / DEAL_BOOKED / HEDGE stages the book call emits.
+                        self.trace_stage(
+                            lift_trace_id,
+                            TraceStage::AcceptanceDecided,
+                            &trace_symbol,
+                            TraceDetails {
+                                side: trace_side.clone(),
+                                price: Some(premium),
+                                quote_id: lift_quote_key.clone(),
+                                counterparty: trace_cp.clone(),
+                                decision: Some("accept".to_owned()),
+                                ..Default::default()
+                            },
+                        );
+                        acceptance_traced = true;
                         // Book at the ACTUAL last-look fill price (`premium`, already the
                         // policy result for a market-data lift), so the booked position and
                         // deal carry the real dealt level, not the raw streamed quote.
@@ -1954,6 +2124,32 @@ impl FixSession {
         }
         if let Some(reason) = &acceptance_reason {
             text = Some(reason.as_bytes());
+        }
+        // Emit ACCEPTANCE_DECIDED for any path that did NOT emit it inside an accept arm above
+        // (a reject/hold verdict, a non-rates lift, or an already-unfilled lift) — with the
+        // final verdict. Nothing is booked on these paths, so ordering vs booking is moot.
+        if !acceptance_traced {
+            let decision = acceptance_reason.clone().unwrap_or_else(|| {
+                if filled {
+                    "accept".to_owned()
+                } else {
+                    text.map(|t| String::from_utf8_lossy(t).into_owned())
+                        .unwrap_or_else(|| "rejected".to_owned())
+                }
+            });
+            self.trace_stage(
+                lift_trace_id,
+                TraceStage::AcceptanceDecided,
+                &trace_symbol,
+                TraceDetails {
+                    side: trace_side.clone(),
+                    price: if filled { Some(premium) } else { presented_px },
+                    quote_id: lift_quote_key.clone(),
+                    counterparty: trace_cp.clone(),
+                    decision: Some(decision),
+                    ..Default::default()
+                },
+            );
         }
 
         // A successful lift retires the quote (idempotency: a second lift of the same

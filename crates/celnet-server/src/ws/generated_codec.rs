@@ -157,9 +157,11 @@ use celnet_proto::{
     RiskVectorDesc, TransferLeg,
 };
 use celnet_proto::{
-    ClientFlowMetricsDesc, LatencyStageDesc, LatencyTelemetryHealth, ListClientFlowMetricsRequest,
-    ListClientFlowMetricsResponse, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
-    ListLpFlowMetricsRequest, ListLpFlowMetricsResponse, LpFlowMetricsDesc,
+    ClientFlowMetricsDesc, GetTraceRequest, GetTraceResponse, LatencyStageDesc,
+    LatencyTelemetryHealth, ListClientFlowMetricsRequest, ListClientFlowMetricsResponse,
+    ListLatencyMetricsRequest, ListLatencyMetricsResponse, ListLpFlowMetricsRequest,
+    ListLpFlowMetricsResponse, ListTracesRequest, ListTracesResponse, LpFlowMetricsDesc,
+    TraceEvent, TraceSummary,
 };
 // Auto-hedging / risk-internalisation verb family (AuthService hedge RPCs): the
 // request decode + reply/push encode side, proven byte-identical to the hand codec
@@ -6957,6 +6959,34 @@ impl WireBuilder for ListLatencyMetricsRequest {
     }
 }
 
+impl WireBuilder for GetTraceRequest {
+    const MESSAGE: &'static str = "GetTraceRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "trace_id" => self.trace_id = req_u64(value, "trace_id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListTracesRequest {
+    const MESSAGE: &'static str = "ListTracesRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "limit" => self.limit = opt_u32(value),
+            "symbol" => self.symbol = opt_string(value, "symbol")?,
+            "counterparty" => self.counterparty = opt_string(value, "counterparty")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for ListClientFlowMetricsRequest {
     const MESSAGE: &'static str = "ListClientFlowMetricsRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -7629,6 +7659,22 @@ pub fn decode_list_latency_metrics_request(
     o: &Map<String, Value>,
 ) -> DResult<ListLatencyMetricsRequest> {
     decode(ListLatencyMetricsRequest::MESSAGE, o)
+}
+
+/// Decode a [`GetTraceRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token` / `trace_id`, as a [`CodecError`].
+pub fn decode_get_trace_request(o: &Map<String, Value>) -> DResult<GetTraceRequest> {
+    decode(GetTraceRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListTracesRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_traces_request(o: &Map<String, Value>) -> DResult<ListTracesRequest> {
+    decode(ListTracesRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListInstrumentsRequest`] envelope — fully generic.
@@ -8672,6 +8718,74 @@ impl WireAdapter for ListLatencyMetricsResponse {
                 self.stages.iter().map(|s| s as &dyn WireAdapter).collect(),
             )),
             "health" => self.health.as_ref().map(|h| WireVal::Msg(h)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for TraceEvent {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "trace_id" => Some(WireVal::U64(self.trace_id)),
+            "seq" => Some(WireVal::U64(u64::from(self.seq))),
+            // `TraceStage` on the wire is its canonical enum number (enum-as-int).
+            "stage" => Some(WireVal::Enum(self.stage)),
+            "timestamp_ns" => Some(WireVal::U64(self.timestamp_ns)),
+            "symbol" => Some(WireVal::Str(&self.symbol)),
+            "side" => Some(WireVal::Str(&self.side)),
+            // proto3 `optional`: absent ⇒ JSON null (TraceEvent is null-absent).
+            "price" => self.price.map(WireVal::F64),
+            "notional" => self.notional.map(WireVal::F64),
+            "quote_id" => self.quote_id.as_deref().map(WireVal::Str),
+            "deal_id" => self.deal_id.as_deref().map(WireVal::Str),
+            "book_id" => self.book_id.as_deref().map(WireVal::Str),
+            "counterparty" => self.counterparty.as_deref().map(WireVal::Str),
+            "decision" => self.decision.as_deref().map(WireVal::Str),
+            "hedge_id" => self.hedge_id.as_deref().map(WireVal::Str),
+            "detail" => self.detail.as_deref().map(WireVal::Str),
+            "position_id" => self.position_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for TraceSummary {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "trace_id" => Some(WireVal::U64(self.trace_id)),
+            "first_stage" => Some(WireVal::Enum(self.first_stage)),
+            "last_stage" => Some(WireVal::Enum(self.last_stage)),
+            "first_timestamp_ns" => Some(WireVal::U64(self.first_timestamp_ns)),
+            "last_timestamp_ns" => Some(WireVal::U64(self.last_timestamp_ns)),
+            "total_latency_ns" => Some(WireVal::U64(self.total_latency_ns)),
+            "event_count" => Some(WireVal::U64(u64::from(self.event_count))),
+            "symbol" => Some(WireVal::Str(&self.symbol)),
+            "counterparty" => self.counterparty.as_deref().map(WireVal::Str),
+            "outcome" => Some(WireVal::Str(&self.outcome)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for GetTraceResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "events" => Some(WireVal::RepeatedMsg(
+                self.events.iter().map(|e| e as &dyn WireAdapter).collect(),
+            )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListTracesResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "traces" => Some(WireVal::RepeatedMsg(
+                self.traces.iter().map(|t| t as &dyn WireAdapter).collect(),
+            )),
             "correlation_id" => self.correlation_id.map(WireVal::U64),
             _ => None,
         }
@@ -9745,6 +9859,18 @@ pub fn encode_list_lp_flow_metrics_response(r: &ListLpFlowMetricsResponse) -> Va
 #[must_use]
 pub fn encode_list_latency_metrics_response(r: &ListLatencyMetricsResponse) -> Value {
     encode("ListLatencyMetricsResponse", r)
+}
+
+/// Encode a [`GetTraceResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_get_trace_response(r: &GetTraceResponse) -> Value {
+    encode("GetTraceResponse", r)
+}
+
+/// Encode a [`ListTracesResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_traces_response(r: &ListTracesResponse) -> Value {
+    encode("ListTracesResponse", r)
 }
 
 /// Encode a [`RiskTransferInbox`] push frame to its WS JSON — descriptor-driven

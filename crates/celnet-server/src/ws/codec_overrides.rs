@@ -210,6 +210,16 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     // as `null` by the descriptor default) — quirk-symmetric with the client-flow
     // envelope so the hand + generated encoders stay byte-identical.
     "ListLatencyMetricsResponse",
+    // End-to-end event tracing (Analytics pillar C): the `GetTraceResponse` /
+    // `ListTracesResponse` envelopes emit their `Option<u64>` `correlation_id` as JSON
+    // `null` when absent, and every nested row emits its optional stage detail as JSON
+    // `null` when the stage does not carry it (`TraceEvent`'s price/notional/quote_id/
+    // deal_id/book_id/counterparty/decision/hedge_id/detail; `TraceSummary`'s
+    // counterparty) — stable keys for the client timeline, never a fabricated value.
+    "GetTraceResponse",
+    "ListTracesResponse",
+    "TraceEvent",
+    "TraceSummary",
     "ListInstrumentsResponse",
     "GetInstrumentResponse",
     "CreateInstrumentResponse",

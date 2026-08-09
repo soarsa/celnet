@@ -35,12 +35,13 @@ use celnet_entitlements::{Action, AssetClass, Capability};
 use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
     AcceptRiskTransferRequest, AcceptRiskTransferResponse, CancelRiskTransferRequest,
-    CancelRiskTransferResponse, InitiateRiskTransferRequest, InitiateRiskTransferResponse,
-    LatencyStageDesc, LatencyTelemetryHealth, ListClientFlowMetricsRequest,
-    ListClientFlowMetricsResponse, ListLatencyMetricsRequest, ListLatencyMetricsResponse,
-    ListLpFlowMetricsRequest, ListLpFlowMetricsResponse, ListRiskTransfersRequest,
-    ListRiskTransfersResponse, RejectRiskTransferRequest, RejectRiskTransferResponse,
-    SetPricingControlRequest, SetPricingControlResponse,
+    CancelRiskTransferResponse, GetTraceRequest, GetTraceResponse, InitiateRiskTransferRequest,
+    InitiateRiskTransferResponse, LatencyStageDesc, LatencyTelemetryHealth,
+    ListClientFlowMetricsRequest, ListClientFlowMetricsResponse, ListLatencyMetricsRequest,
+    ListLatencyMetricsResponse, ListLpFlowMetricsRequest, ListLpFlowMetricsResponse,
+    ListRiskTransfersRequest, ListRiskTransfersResponse, ListTracesRequest, ListTracesResponse,
+    RejectRiskTransferRequest, RejectRiskTransferResponse, SetPricingControlRequest,
+    SetPricingControlResponse,
 };
 use celnet_proto::{
     AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, AggregationScopeMode, AxeSide,
@@ -234,6 +235,11 @@ pub struct AuthEdge {
     /// backing the `ListLatencyMetrics` RPC. `None` in an isolated auth test (the
     /// RPC then reports the hub is not wired), `Some` on the real boot path.
     telemetry: Option<Arc<crate::services::telemetry::TelemetryHub>>,
+    /// The shared end-to-end **event-trace** hub (the `CoreLink`'s drain-side ring
+    /// store) backing the `GetTrace` / `ListTraces` RPCs — the per-lift COMPLEMENT
+    /// to the aggregate `telemetry` histograms. `None` in an isolated auth test,
+    /// `Some` on the real boot path.
+    trace: Option<Arc<crate::services::trace::TraceHub>>,
     /// The auto-hedge engine (Phase B) whose immutable provenance ring the
     /// `ListHedgeProvenance` RPC reads. Always present — a self-contained, off-core
     /// decision + provenance engine; the live control loop that feeds it on each
@@ -273,6 +279,7 @@ impl AuthEdge {
             analytics_sources: Vec::new(),
             lp_analytics_sources: Vec::new(),
             telemetry: None,
+            trace: None,
             auto_hedge: Arc::new(AutoHedgeEngine::default()),
             pricing_control: PricingControl::new(true, true),
         }
@@ -317,6 +324,15 @@ impl AuthEdge {
         telemetry: Arc<crate::services::telemetry::TelemetryHub>,
     ) -> Self {
         self.telemetry = Some(telemetry);
+        self
+    }
+
+    /// Inject the shared end-to-end event-trace hub so the `GetTrace` / `ListTraces`
+    /// RPCs serve the per-lift stage timeline the FIX + rates-book edges capture
+    /// (the SAME `Arc<TraceHub>` the `CoreLink` owns and its services record into).
+    #[must_use]
+    pub fn with_trace(mut self, trace: Arc<crate::services::trace::TraceHub>) -> Self {
+        self.trace = Some(trace);
         self
     }
 
@@ -2632,6 +2648,82 @@ impl AuthService for AuthEdge {
         Ok(Response::new(ListLatencyMetricsResponse {
             stages,
             health,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    // --- end-to-end event tracing ----------------------------------------------
+    // The per-lift stage timeline (price → quote → order → last-look → acceptance
+    // → routing → deal → hedge), captured OFF the pinned hot core by the FIX +
+    // rates-book edges into the `CoreLink`'s drain-side ring store
+    // (`docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md` Part 2). Gated on the
+    // SAME cross-asset `view_analytics` capability as the latency/flow analytics.
+
+    async fn get_trace(
+        &self,
+        request: Request<GetTraceRequest>,
+    ) -> Result<Response<GetTraceResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let who = self.authenticate(&req.session_token)?;
+        let caps = who.capabilities();
+        let allowed = caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FxOptions,
+        )) || caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FixedIncome,
+        ));
+        if !allowed {
+            return Err(Status::permission_denied(
+                "capability view_analytics·{fx_options|fixed_income} required",
+            ));
+        }
+
+        // No hub wired (isolated auth test) ⇒ an empty, honest timeline.
+        let events = match &self.trace {
+            Some(hub) => hub.get_trace(req.trace_id),
+            None => Vec::new(),
+        };
+        Ok(Response::new(GetTraceResponse {
+            events,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn list_traces(
+        &self,
+        request: Request<ListTracesRequest>,
+    ) -> Result<Response<ListTracesResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let who = self.authenticate(&req.session_token)?;
+        let caps = who.capabilities();
+        let allowed = caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FxOptions,
+        )) || caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FixedIncome,
+        ));
+        if !allowed {
+            return Err(Status::permission_denied(
+                "capability view_analytics·{fx_options|fixed_income} required",
+            ));
+        }
+
+        let traces = match &self.trace {
+            Some(hub) => hub.list_traces(
+                req.limit,
+                req.symbol.as_deref().filter(|s| !s.is_empty()),
+                req.counterparty.as_deref().filter(|s| !s.is_empty()),
+            ),
+            None => Vec::new(),
+        };
+        Ok(Response::new(ListTracesResponse {
+            traces,
             correlation_id: req.correlation_id,
         }))
     }

@@ -71,6 +71,7 @@ use celnet_types::{OptionType, VanillaInputs};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::services::telemetry::TelemetryHub;
+use crate::services::trace::TraceHub;
 
 /// The number of requests the core prices per busy-poll iteration before it
 /// services the control channel and yields the CPU once if idle. Bounded work
@@ -281,6 +282,13 @@ pub struct CoreLink {
     /// the `ListLatencyMetrics` RPC reads the same store (guardrail 11 — the core
     /// only reads the cycle counter and pushes; all aggregation is on the drain).
     telemetry: Arc<TelemetryHub>,
+    /// The shared end-to-end **event-trace** hub — the per-lift COMPLEMENT to the
+    /// aggregate `telemetry` histograms. The FIX + rates-book service edges record
+    /// stage events into it OFF the pinned core (via a bounded lossy offload); a
+    /// drain worker (spawned in [`Self::start`]) folds them into the capped ring
+    /// store the `GetTrace` / `ListTraces` RPCs read. Shared (`Arc`) with those
+    /// services and the analytics edge (guardrail 11 — capture never on the core).
+    trace: Arc<TraceHub>,
 }
 
 impl CoreLink {
@@ -313,6 +321,12 @@ impl CoreLink {
         // the hot core (guardrail 11).
         let telemetry = Arc::new(TelemetryHub::new(celnet_engine::tick_hz()));
         let mut hot_probe = telemetry.install_hot_ring();
+
+        // The end-to-end event-trace hub + its producer→drain offload receiver. The
+        // service edges (FIX / rates-book) record stage events into `trace` off the
+        // pinned core; the drain worker (spawned below) folds the offload into the
+        // ring store (guardrail 11).
+        let (trace, trace_rx) = TraceHub::new();
         // The core id the pinned thread runs on (best-effort, for per-core
         // attribution in the POD sample); `pin_core` names the requested index.
         let core_id = u16::try_from(pin_core.unwrap_or(0)).unwrap_or(0);
@@ -490,6 +504,11 @@ impl CoreLink {
             }
         });
 
+        // The trace-drain worker: a sibling of the telemetry drain, it recv-loops
+        // the bounded event offload and folds each stage event into the ring store
+        // on a non-critical async worker — never on the pinned core (guardrail 11).
+        TraceHub::spawn_drain(Arc::clone(&trace), trace_rx, Arc::clone(&shutdown));
+
         Arc::new(Self {
             next_id: AtomicU64::new(1),
             submit_tx,
@@ -497,6 +516,7 @@ impl CoreLink {
             shutdown,
             threads: std::sync::Mutex::new(Some((core_thread, router_thread))),
             telemetry,
+            trace,
         })
     }
 
@@ -505,6 +525,13 @@ impl CoreLink {
     #[must_use]
     pub fn telemetry(&self) -> &Arc<TelemetryHub> {
         &self.telemetry
+    }
+
+    /// The shared end-to-end event-trace hub the FIX + rates-book edges record into
+    /// and the `GetTrace` / `ListTraces` analytics RPCs read. Cheap `Arc` clone.
+    #[must_use]
+    pub fn trace(&self) -> &Arc<TraceHub> {
+        &self.trace
     }
 
     /// Allocate the next hot-path correlation id.

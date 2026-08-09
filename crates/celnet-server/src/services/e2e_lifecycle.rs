@@ -102,6 +102,7 @@ fn attribution(counterparty: &str, ccy: &str) -> RatesRoutingAttribution {
         ccy: ccy.to_owned(),
         dealt_price: None,
         reference_mid: None,
+        request_id: None,
     }
 }
 

@@ -1654,6 +1654,22 @@ async fn handle_unary(
                 generated_codec::encode_list_latency_metrics_response
             )
         }
+        "get_trace" => {
+            let req = decode!(generated_codec::decode_get_trace_request(o));
+            call!(
+                services.auth.get_trace(Request::new(req)),
+                "trace",
+                generated_codec::encode_get_trace_response
+            )
+        }
+        "list_traces" => {
+            let req = decode!(generated_codec::decode_list_traces_request(o));
+            call!(
+                services.auth.list_traces(Request::new(req)),
+                "traces",
+                generated_codec::encode_list_traces_response
+            )
+        }
         "list_instruments" => {
             let req = decode!(generated_codec::decode_list_instruments_request(o));
             call!(

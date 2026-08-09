@@ -85,6 +85,12 @@ pub struct RatesRoutingAttribution {
     /// markets) or the mid clean price (bonds) the pricer computed in the accept/lift handler.
     /// `Some` beside [`dealt_price`](Self::dealt_price); `None` ⇒ no internalise decision.
     pub reference_mid: Option<f64>,
+    /// The acceptance **`request_id`** the FIX-lift / RFQ-desk accept booked against — the
+    /// correlation key the event-trace hub bound the lift's `trace_id` to at quote publish
+    /// (`services::trace`). Threaded through here so `book_with_routing` can resolve the same
+    /// `trace_id` and emit the routing / booking / hedge stage events at their TRUE instants.
+    /// `None` on the manual `BookRatesPosition` / test paths (no trace).
+    pub request_id: Option<String>,
 }
 
 /// The firm-wide **auto-hedge / internalisation policy** snapshot primed into the rates
@@ -198,6 +204,11 @@ pub struct RatesPositionStore {
     /// (guardrail 11). `None` (a store never given a hub — the unit tests' default) ⇒ the
     /// record calls are no-ops, byte-identical to the pre-instrumentation path.
     telemetry: OnceLock<Arc<crate::services::telemetry::TelemetryHub>>,
+    /// The shared end-to-end **event-trace** hub (the SAME `Arc` the `CoreLink` and FIX edge
+    /// hold). Set once at boot; the booking seam records the routing / deal-booked / hedge
+    /// stage events into it OFF the pinned pricing core (guardrail 11). `None` (the unit-test
+    /// default) ⇒ every trace call is a no-op, byte-identical to the pre-tracing path.
+    trace: OnceLock<Arc<crate::services::trace::TraceHub>>,
 }
 
 /// A read view of one booked rates position assembled for a **risk transfer** (§6):
@@ -257,6 +268,7 @@ impl RatesPositionStore {
             internalise: RwLock::new(HashMap::new()),
             acceptance: RwLock::new(None),
             telemetry: OnceLock::new(),
+            trace: OnceLock::new(),
         }
     }
 
@@ -270,6 +282,13 @@ impl RatesPositionStore {
         let _ = self.telemetry.set(hub);
     }
 
+    /// Attach the shared end-to-end event-trace hub so the booking seam emits the
+    /// routing / deal-booked / hedge stage events for a lift. The SAME hub the `CoreLink`
+    /// owns, wired once at boot. Idempotent-once; a store never given a hub records nothing.
+    pub fn set_trace(&self, hub: Arc<crate::services::trace::TraceHub>) {
+        let _ = self.trace.set(hub);
+    }
+
     /// Record an async-edge stage latency (`nanos`) under `kind` into the shared telemetry hub,
     /// when one is installed — the drain-side `record_edge` idiom, off the pinned pricing core
     /// (guardrail 11). A no-op when no hub is attached, so the booking seams and the desk edge
@@ -278,6 +297,22 @@ impl RatesPositionStore {
     pub fn record_latency(&self, kind: celnet_observability::OpKind, nanos: u64) {
         if let Some(hub) = self.telemetry.get() {
             hub.record_edge(kind, nanos);
+        }
+    }
+
+    /// Emit one booking-side event-trace stage for `trace_id`, when a trace hub is
+    /// installed (a no-op otherwise). Booking-side events pass an EMPTY symbol so the
+    /// store keeps the FIX-side `Symbol(55)` captured earlier in the lift; the durable
+    /// `position_id` in the details links a blotter `Deal` to its trace. Off the pinned
+    /// pricing core (guardrail 11) — an `Arc` deref + a bounded lossy `try_send`.
+    fn trace_stage(
+        &self,
+        trace_id: u64,
+        stage: celnet_proto::TraceStage,
+        details: crate::services::trace::TraceDetails,
+    ) {
+        if let Some(hub) = self.trace.get() {
+            hub.record(trace_id, stage, "", details);
         }
     }
 
@@ -948,12 +983,67 @@ impl RatesPositionStore {
             reference_mid = attribution.reference_mid,
             "rates fill routed to risk book",
         );
+        // End-to-end event trace (Analytics pillar C): resolve THIS lift's trace via the
+        // acceptance `request_id` the FIX-lift bound at quote publish, bind the freshly-minted
+        // `position_id` so the hedge stage inherits the trace, and emit the routing + deal-booked
+        // stage events at their TRUE instants (before the hedge decision below, so the timeline
+        // orders correctly). A no-op when no hub / no request_id / an unknown request_id — the
+        // manual-booking + gRPC-accept paths never bound a trace. Off the pinned core (guardrail 11).
+        let booking_trace_id = self
+            .trace
+            .get()
+            .zip(attribution.request_id.as_deref())
+            .and_then(|(hub, rid)| hub.resolve_request(rid));
+        if let Some(trace_id) = booking_trace_id {
+            if let Some(hub) = self.trace.get() {
+                hub.bind_position(position.position_id, trace_id);
+            }
+            let counterparty =
+                (!attribution.counterparty.is_empty()).then(|| attribution.counterparty.clone());
+            self.trace_stage(
+                trace_id,
+                celnet_proto::TraceStage::RiskRouted,
+                crate::services::trace::TraceDetails {
+                    price: attribution.dealt_price,
+                    book_id: resolved_book.clone(),
+                    counterparty: counterparty.clone(),
+                    position_id: Some(position.position_id),
+                    detail: Some(
+                        if resolved_book.is_some() {
+                            "routed"
+                        } else {
+                            "unrouted"
+                        }
+                        .to_owned(),
+                    ),
+                    ..Default::default()
+                },
+            );
+            self.trace_stage(
+                trace_id,
+                celnet_proto::TraceStage::DealBooked,
+                crate::services::trace::TraceDetails {
+                    price: attribution.dealt_price,
+                    book_id: resolved_book.clone(),
+                    counterparty,
+                    position_id: Some(position.position_id),
+                    ..Default::default()
+                },
+            );
+        }
+
         // Auto-hedge / internalise decision (§6): when a hedge policy is primed AND this fill
         // routed to a book AND the booking path supplied a priced reference mid + dealt price
         // (the RFQ-desk accept / FIX-lift paths), resolve the warehouse-vs-external split +
         // price-tolerance verdict and stamp it onto the fill for the deal blotter. A no-op
         // otherwise (the manual `BookRatesPosition` path, or no policy) — byte-identical.
-        self.stamp_internalise(&position, resolved_book.as_deref(), &attribution);
+        // `booking_trace_id` threads the lift's trace so the hedge decision/fire emit stages.
+        self.stamp_internalise(
+            &position,
+            resolved_book.as_deref(),
+            &attribution,
+            booking_trace_id,
+        );
         // O3: record the ack→fill→book commit latency into the per-`OpKind` store (mirrors the
         // FX sink). Off the pinned pricing core; a no-op when no hub is installed.
         self.record_latency(
@@ -978,6 +1068,7 @@ impl RatesPositionStore {
         fill: &RatesPosition,
         resolved_book: Option<&str>,
         attribution: &RatesRoutingAttribution,
+        trace_id: Option<u64>,
     ) {
         let Some(book) = resolved_book else { return };
         let (Some(dealt), Some(mid)) = (attribution.dealt_price, attribution.reference_mid) else {
@@ -1142,6 +1233,67 @@ impl RatesPositionStore {
             .write()
             .expect("rates internalise lock poisoned")
             .insert(fill.position_id, prov.clone());
+
+        // End-to-end event trace (Analytics pillar C): emit the HEDGE_DECIDED stage (the
+        // internalise-vs-shed verdict + RAG band) always, and the HEDGE_FIRED stage when the
+        // fill actually sheds risk externally (`external_dv01 > 0`) — the terminal stage of a
+        // hedged lift. Timestamps strictly increase, so decided precedes fired. Off the pinned
+        // pricing core (guardrail 11); a no-op when this lift carries no trace.
+        if let Some(tid) = trace_id {
+            let counterparty =
+                (!attribution.counterparty.is_empty()).then(|| attribution.counterparty.clone());
+            self.trace_stage(
+                tid,
+                celnet_proto::TraceStage::HedgeDecided,
+                crate::services::trace::TraceDetails {
+                    price: Some(mid),
+                    counterparty: counterparty.clone(),
+                    position_id: Some(fill.position_id),
+                    detail: Some(format!(
+                        "band={}; {}; edge={:.2}bp; int_dv01={:.1}; ext_dv01={:.1}",
+                        prov.hedge_band,
+                        if prov.internalised {
+                            "internalised"
+                        } else {
+                            "shed"
+                        },
+                        prov.edge_bps,
+                        prov.internal_dv01,
+                        prov.external_dv01,
+                    )),
+                    ..Default::default()
+                },
+            );
+            if external_dv01 > 0.0 {
+                // The minted hedge id when the engine stamped a book-level intent for this
+                // shed; the per-fill advisory record mints its own id inside `record_execution`
+                // (not returned), so it is absent (honest) rather than fabricated here.
+                let hedge_id = outcome
+                    .provenance
+                    .as_ref()
+                    .map(|p| p.hedge_id.clone())
+                    .filter(|s| !s.is_empty());
+                let lp = outcome.intent.lps.first().cloned();
+                self.trace_stage(
+                    tid,
+                    celnet_proto::TraceStage::HedgeFired,
+                    crate::services::trace::TraceDetails {
+                        price: Some(mid),
+                        notional: Some(external_dv01),
+                        counterparty,
+                        position_id: Some(fill.position_id),
+                        hedge_id,
+                        detail: Some(format!(
+                            "band={}; ext_dv01={:.1}; advisory{}",
+                            prov.hedge_band,
+                            external_dv01,
+                            lp.map(|l| format!("; lp={l}")).unwrap_or_default(),
+                        )),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
 
         // Hedge Desk population (§6/§8.4): when THIS fill sheds risk externally (an over-cap
         // overflow OR a below-min-edge back-to-back) but the policy engine did NOT itself stamp
@@ -2265,6 +2417,7 @@ pub(crate) mod tests {
             ccy: "USD".to_owned(),
             dealt_price: Some(dealt),
             reference_mid: Some(mid),
+            request_id: None,
         }
     }
 

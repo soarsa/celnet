@@ -6071,6 +6071,161 @@ message ListLatencyMetricsResponse {
 }
 
 // ===========================================================================
+// End-to-end event tracing — the per-lift event log that COMPLEMENTS the
+// aggregate latency histograms (`ListLatencyMetrics`). Where the histograms
+// answer "how fast is stage X across all flow", a trace answers "what happened,
+// stage by stage, to THIS one lift" — price → quote → order → last-look →
+// acceptance → risk-routing → deal → hedge, each a timestamped event carrying
+// that stage's specifics, all sharing one `trace_id`. Capture is OFF the pinned
+// pricing hot core (guardrail 11): stage sites enqueue onto a bounded off-core
+// offload that a drain worker folds into a capped ring store.
+// (`docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md` Part 2.)
+// ===========================================================================
+
+// One stage in a lift's lifecycle. Carried on the wire as its canonical enum
+// NUMBER (the WS codec's enum-as-int convention); the client maps number→label.
+enum TraceStage {
+  // Zero value — never emitted; guards against an unset field reading as a real
+  // stage (proto3 default-presence rule).
+  TRACE_STAGE_UNSPECIFIED = 0;
+  // A price was computed for a quotable line (the pricer returned a level).
+  TRACE_STAGE_PRICE_COMPUTED = 1;
+  // A quote (`35=W` / MD snapshot / RFQ reply) was published to a counterparty.
+  TRACE_STAGE_QUOTE_PUBLISHED = 2;
+  // An order (`35=D`) that lifts a published quote was received.
+  TRACE_STAGE_ORDER_RECEIVED = 3;
+  // The last-look window was evaluated (fill vs superseded/expired/replayed).
+  TRACE_STAGE_LAST_LOOK = 4;
+  // The acceptance decision engine ruled on the lift (accept / reject / hold).
+  TRACE_STAGE_ACCEPTANCE_DECIDED = 5;
+  // The accepted fill was routed to a risk book by the firm-wide decision graph.
+  TRACE_STAGE_RISK_ROUTED = 6;
+  // The deal / position was booked (position_id minted, stamped to its book).
+  TRACE_STAGE_DEAL_BOOKED = 7;
+  // The auto-hedge / internalise policy decided the warehouse-vs-shed split.
+  TRACE_STAGE_HEDGE_DECIDED = 8;
+  // A hedge was fired (external shed) — the terminal stage of a hedged lift.
+  TRACE_STAGE_HEDGE_FIRED = 9;
+}
+
+// One timestamped stage event in a lift's trace. Only the fields relevant to the
+// stage are populated; the rest are absent (`optional`, rendered `null`). The
+// non-optional `symbol`/`side` are echoed on every event so a client can render
+// a row without joining back to the first event.
+message TraceEvent {
+  // The trace this event belongs to (shared across every stage of one lift).
+  uint64 trace_id = 1;
+  // The event's ordinal within its trace, assigned by the store in timestamp
+  // order (0-based, gap-free) so the client renders the timeline deterministically.
+  uint32 seq = 2;
+  // Which stage this event marks.
+  TraceStage stage = 3;
+  // Monotonic capture time (nanoseconds from a fixed process epoch). Strictly
+  // increasing across a process, so inter-stage latency = later.ts − earlier.ts.
+  uint64 timestamp_ns = 4;
+  // The instrument symbol (FIX `Symbol(55)` / internal symbol), echoed on every
+  // event of the trace.
+  string symbol = 5;
+  // The dealt/quoted side from the counterparty's perspective ("buy"/"sell"), or
+  // empty when the stage is side-agnostic.
+  string side = 6;
+  // The price at this stage: the computed level, quoted level, presented order
+  // level, dealt level, or hedge fill price — as the stage dictates.
+  optional double price = 7;
+  // The notional / size in scope at this stage.
+  optional double notional = 8;
+  // The FIX `QuoteID(117)` that ties the quote↔order stages, when known.
+  optional string quote_id = 9;
+  // The booked deal id (`Deal.deal_id`, the display id), set when known at the
+  // capture instant. The durable booked-position key is `position_id` below —
+  // clients join the blotter `Deal` (which carries both) to a trace on that.
+  optional string deal_id = 10;
+  // The risk book the fill routed to (`Deal.risk_book_id`), set at RISK_ROUTED.
+  optional string book_id = 11;
+  // The originating counterparty (FIX session / PartyID), when known.
+  optional string counterparty = 12;
+  // The stage's decision text — last-look ("accepted"/"expired"/"replayed") or
+  // acceptance ("accept"/"reject: <reason>"/"hold: <reason>").
+  optional string decision = 13;
+  // The fired hedge id (`HedgeProvenance.hedge_id`), set at HEDGE_DECIDED/FIRED.
+  optional string hedge_id = 14;
+  // Free-form stage detail (e.g. the hedge RAG band, the reject reason, the LP
+  // that won) — a human-readable annotation, never parsed.
+  optional string detail = 15;
+  // The booked `Deal.position_id` — the durable internal key the fill was stamped
+  // under (minted at the DEAL_BOOKED commit, before the display `deal_id`). The
+  // hedge stage (keyed by `HedgeProvenance.parent_position_id`) shares it. Clients
+  // join a blotter `Deal` to its trace on this.
+  optional uint64 position_id = 16;
+}
+
+// A one-row summary of a whole trace, for the recent-traces list (newest first).
+message TraceSummary {
+  // The trace id.
+  uint64 trace_id = 1;
+  // The first stage observed (by timestamp) — the trace's entry point.
+  TraceStage first_stage = 2;
+  // The last stage observed (by timestamp) — how far the lift progressed.
+  TraceStage last_stage = 3;
+  // The first event's timestamp (ns from the process epoch).
+  uint64 first_timestamp_ns = 4;
+  // The last event's timestamp (ns from the process epoch).
+  uint64 last_timestamp_ns = 5;
+  // End-to-end latency of the trace: `last_timestamp_ns − first_timestamp_ns`.
+  uint64 total_latency_ns = 6;
+  // The number of stage events captured for this trace.
+  uint32 event_count = 7;
+  // The instrument symbol of the trace.
+  string symbol = 8;
+  // The originating counterparty, when known.
+  optional string counterparty = 9;
+  // The terminal outcome, derived from the last stage: "booked" | "hedged" |
+  // "rejected" | "in_flight".
+  string outcome = 10;
+}
+
+// Fetch the full ordered event list of one trace by id.
+message GetTraceRequest {
+  // The caller's session token (validated + capability-checked server-side).
+  string session_token = 1;
+  // The trace to fetch.
+  uint64 trace_id = 2;
+  // Optional echoed correlation id.
+  optional uint64 correlation_id = 3;
+}
+
+// The ordered events of one trace (empty when the id is unknown / evicted).
+message GetTraceResponse {
+  // The trace's events, ordered by `seq` (timestamp order), earliest first.
+  repeated TraceEvent events = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// List recent traces (summary rows), newest first, bounded.
+message ListTracesRequest {
+  // The caller's session token (validated + capability-checked server-side).
+  string session_token = 1;
+  // Max rows to return (newest first). Server-clamped to a sane cap; absent ⇒
+  // the server default.
+  optional uint32 limit = 2;
+  // Optional exact-match symbol filter.
+  optional string symbol = 3;
+  // Optional exact-match counterparty filter.
+  optional string counterparty = 4;
+  // Optional echoed correlation id.
+  optional uint64 correlation_id = 5;
+}
+
+// Recent trace summaries, newest first.
+message ListTracesResponse {
+  // The summary rows, newest first, bounded by the request/server cap.
+  repeated TraceSummary traces = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// ===========================================================================
 // LP liquidity ingest — the machine-to-machine feed by which an inbound
 // liquidity connection (the `lp-sim` binary today, any FIX/API LP adapter
 // tomorrow) pushes its per-instrument two-way top-of-book INTO the server, where
@@ -7235,6 +7390,13 @@ service AuthService {
   // (`docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md` Part 1). Gated on the
   // same `view_analytics` capability × the caller's assets (spans FI+FXO).
   rpc ListLatencyMetrics(ListLatencyMetricsRequest) returns (ListLatencyMetricsResponse);
+  // Fetch the full ordered stage-event list of one lift trace by id — the
+  // per-trace COMPLEMENT to the aggregate `ListLatencyMetrics` histograms. Gated
+  // on the same cross-asset `view_analytics` capability.
+  rpc GetTrace(GetTraceRequest) returns (GetTraceResponse);
+  // List recent lift traces (summary rows, newest first, bounded + filterable).
+  // Same `view_analytics` gate as `GetTrace`.
+  rpc ListTraces(ListTracesRequest) returns (ListTracesResponse);
   // List the instrument reference-data definitions (any authenticated caller —
   // curve-building and pricing resolve against this, so it is NOT admin-only).
   rpc ListInstruments(ListInstrumentsRequest) returns (ListInstrumentsResponse);
