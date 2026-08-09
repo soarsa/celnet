@@ -2286,18 +2286,7 @@ impl IdentityStore {
         self.hedge_policy_graph = Some(default_hedge_policy_graph());
         self.hedge_thresholds.push(ScopedThreshold {
             scope_id: DEFAULT_WAREHOUSE_BOOK_ID.to_owned(),
-            def: HedgeThresholdDef {
-                scope_kind: HedgeScopeKind::Book,
-                metric: HedgeMetric::Dv01,
-                cap: DEFAULT_WAREHOUSE_DV01_CAP,
-                amber: 0.8,
-                red: 0.9,
-                target_fraction: 0.8,
-                min_clip: 0.0,
-                max_clip: f64::INFINITY,
-                ramped: false,
-                ramp_k: 1.0,
-            },
+            def: default_warehouse_threshold_def(),
         });
         true
     }
@@ -2923,6 +2912,31 @@ pub fn default_hedge_policy_graph() -> HedgeGraph {
         },
     );
     HedgeGraph { entry: 0, nodes }
+}
+
+/// The default firm **warehouse threshold** — a DV01 cap at [`DEFAULT_WAREHOUSE_DV01_CAP`]
+/// with amber/red bands at 80% / 90% utilisation and an 80% target shed fraction. Single-
+/// sourced so both the pristine-store seed ([`IdentityStore::ensure_seed_hedge_policy`], which
+/// binds it to the default warehouse book) AND the booking-path runtime fallback
+/// (`RatesPositionStore::stamp_internalise`, when a fill routes into a book with no configured
+/// threshold) measure against the SAME warehouse budget — so every booked fill carries an
+/// internalise decision + RAG band, never an empty `—`, regardless of which risk book it lands
+/// in. `max_clip` is `f64::INFINITY` (a single fill is never held back), which the persisted
+/// seed serialises through the `nonfinite_f64` module; the runtime fallback is never persisted.
+#[must_use]
+pub fn default_warehouse_threshold_def() -> HedgeThresholdDef {
+    HedgeThresholdDef {
+        scope_kind: HedgeScopeKind::Book,
+        metric: HedgeMetric::Dv01,
+        cap: DEFAULT_WAREHOUSE_DV01_CAP,
+        amber: 0.8,
+        red: 0.9,
+        target_fraction: 0.8,
+        min_clip: 0.0,
+        max_clip: f64::INFINITY,
+        ramped: false,
+        ramp_k: 1.0,
+    }
 }
 
 /// Mint a stable, unique, URL-safe id for a new risk book from its name, disambiguating

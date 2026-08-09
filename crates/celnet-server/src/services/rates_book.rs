@@ -48,7 +48,9 @@ use celnet_risk_routing::{RiskRouter, RiskRoutingGraph, RoutingContext};
 use crate::config::hedge_policy::{
     HedgeConfigDef, HedgeScopeKind, HedgeThresholdDef, ScopedThreshold,
 };
-use crate::config::identity::RiskLimits;
+use crate::config::identity::{
+    RiskLimits, default_hedge_policy_graph, default_warehouse_threshold_def,
+};
 use crate::services::auto_hedge::AutoHedgeEngine;
 use crate::services::auto_hedge::wire::band_label;
 use crate::services::internalise::{self, QuoteKind};
@@ -988,9 +990,18 @@ impl RatesPositionStore {
         else {
             return;
         };
-        // A hedge-policy graph is required to resolve an exit action.
-        let Some(graph) = policy.graph.as_ref() else {
-            return;
+        // The exit graph the decision resolves an action against. A firm that has NOT
+        // configured a hedge policy (no persisted graph — e.g. the pristine-store seed was
+        // skipped because the operator's routing book is not the default warehouse book) still
+        // gets a decision: fall back to the default warehouse-hold-vs-advisory-shed graph, so
+        // every booked fill stamps an internalise decision + RAG band rather than an empty `—`.
+        let fallback_graph;
+        let graph = match policy.graph.as_ref() {
+            Some(g) => g,
+            None => {
+                fallback_graph = default_hedge_policy_graph();
+                &fallback_graph
+            }
         };
         // The fill's side + whether its dealt level is a rate or a clean price.
         let Some((desk_side, kind)) = fill_side_and_quote_kind(fill) else {
@@ -998,11 +1009,12 @@ impl RatesPositionStore {
         };
         let instrument = internalise_instrument_label(fill);
         // Resolve the most-specific warehouse threshold for this fill (instrument > book >
-        // desk). No configured threshold ⇒ no "100" to decide against ⇒ no decision.
-        let Some(thr_def) = resolve_hedge_threshold(&policy.thresholds, "", book, &instrument)
-        else {
-            return;
-        };
+        // desk). No threshold configured for ANY of the fill's scopes — e.g. it routed into an
+        // operator-defined risk book the firm never bound a warehouse cap to — falls back to
+        // the default firm warehouse budget, so the fill is still measured against a real cap
+        // and stamps a decision, never silently carrying none.
+        let thr_def = resolve_hedge_threshold(&policy.thresholds, "", book, &instrument)
+            .unwrap_or_else(default_warehouse_threshold_def);
         let wh = thr_def.to_threshold();
 
         // The routed book's post-fill net DV01 (signed linear PV01 proxy) — the risk state the
@@ -2240,6 +2252,66 @@ pub(crate) mod tests {
         assert_eq!(prov.hedge_band, "green");
     }
 
+    /// Regression (live UAT 4375541): the firm primed a hedge policy with NO exit graph and
+    /// NO configured thresholds — exactly what `lib.rs` primes when the pristine-store seed was
+    /// skipped (the operator's routing book is not the default `warehouse` book, so
+    /// `ensure_seed_hedge_policy` found no book to bind to). Fills routed into that operator
+    /// book. Before the fix `stamp_internalise` bailed on the missing graph → the deal carried
+    /// NO internalise decision → the blotter HEDGE column showed `—`. The booking path must
+    /// STILL stamp a real decision + RAG band by falling back to the default warehouse graph +
+    /// threshold — a genuine engine evaluation against the default firm warehouse budget,
+    /// never a fabricated value.
+    #[test]
+    fn internalise_stamps_with_default_when_policy_unconfigured() {
+        let store = RatesPositionStore::new();
+        // Route into an operator-defined book the firm never bound a warehouse cap to (the
+        // live box booked into "default-book").
+        store.set_routing(Some(single_book_graph("default-book")));
+        // The runtime prime `lib.rs` performs when nothing is persisted: the shared engine is
+        // present, but there is no graph and no thresholds.
+        store.set_hedge_policy(Some(RatesHedgePolicy {
+            engine: Arc::new(AutoHedgeEngine::default()),
+            graph: None,
+            thresholds: Vec::new(),
+            config: HedgeConfigDef::default(),
+            known_lps: BTreeSet::new(),
+        }));
+        // Pay-fixed 4.00% vs a 4.05% fair mid → +5bp dealer edge; the 5000-DV01 fill sits deep
+        // under the default 1mm-DV01 warehouse cap.
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
+            .expect("books");
+        let prov = store
+            .internalise_of(booked.position_id)
+            .expect("an unconfigured policy still stamps via the default warehouse fallback");
+        assert!(
+            prov.within_tolerance,
+            "5bp edge clears the 0.5bp default tolerance floor"
+        );
+        assert!(
+            prov.internalised,
+            "deep under the default warehouse cap + making money ⇒ fully internalised"
+        );
+        assert!((prov.internal_dv01 - 5000.0).abs() < 1e-6);
+        assert_eq!(prov.external_dv01, 0.0);
+        assert_eq!(
+            prov.hedge_band, "green",
+            "the deal must carry a real RAG band, never an empty `—`"
+        );
+    }
+
+    /// The single-sourced default warehouse threshold is the firm DV01 budget the runtime
+    /// fallback measures an unbound fill against — active from first boot for any routed book.
+    #[test]
+    fn default_warehouse_threshold_is_the_firm_dv01_budget() {
+        let def = default_warehouse_threshold_def();
+        assert_eq!(def.metric, HedgeMetric::Dv01);
+        assert_eq!(def.cap, crate::config::identity::DEFAULT_WAREHOUSE_DV01_CAP);
+        // A normally-sized single fill sits green under it (⇒ warehoused / internalised).
+        let wh = def.to_threshold();
+        assert!(!wh.breached(5_000.0));
+    }
+
     // ---- latency instrumentation (docs/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md) ----
 
     /// A routed, priced rates booking through the FI sink records its per-stage latency into
@@ -2403,17 +2475,26 @@ pub(crate) mod tests {
         assert!(store.internalise_of(booked.position_id).is_none());
     }
 
-    /// With no warehouse threshold configured for the routed book, there is no "100" to
-    /// decide against ⇒ no internalise decision (even with a graph + priced fill).
+    /// With no warehouse threshold configured for the routed book (the policy's only threshold
+    /// is on a DIFFERENT book), the fill falls back to the default firm warehouse budget and
+    /// STILL stamps a real internalise decision + band — never an empty `—` (live UAT 4375541).
+    /// This is the taker-facing guarantee: every booked fill carries a HEDGE decision.
     #[test]
-    fn no_threshold_for_book_stamps_no_internalise_decision() {
+    fn no_threshold_for_book_falls_back_to_default_warehouse_budget() {
         let store = RatesPositionStore::new();
         store.set_routing(Some(single_book_graph("wh")));
-        // A policy whose only threshold is on a DIFFERENT book ⇒ unresolved for "wh".
+        // A policy whose only threshold is on a DIFFERENT book ⇒ unresolved for "wh" ⇒ the
+        // default warehouse budget (1mm DV01) applies.
         store.set_hedge_policy(Some(hedge_policy("other-book", 100_000.0, 0.5)));
         let booked = store
             .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
             .expect("books");
-        assert!(store.internalise_of(booked.position_id).is_none());
+        let prov = store
+            .internalise_of(booked.position_id)
+            .expect("the fill falls back to the default warehouse budget and is stamped");
+        // 5000 DV01 is deep green under the default 1mm cap, +5bp edge ⇒ fully internalised.
+        assert!(prov.within_tolerance);
+        assert!(prov.internalised);
+        assert_eq!(prov.hedge_band, "green");
     }
 }
