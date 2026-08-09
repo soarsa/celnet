@@ -62,8 +62,9 @@ celnet_fixsim_enabled: true
 # the client's --interval-ms, so a redeploy builds up deals/positions/flow/risk quickly.
 # Set to "" to fall back to celnet_fixsim_period (whole seconds). Bounded so it stays
 # livelier-but-not-flooding.
-celnet_fixsim_period_ms: 750             # ms between streamed RFQs (sub-second; "" ⇒ seconds)
-celnet_fixsim_stream_hold_ms: 2000       # ms RFS/ESP hold per cycle
+celnet_fixsim_period_ms: 3000            # ms between streamed RFQs (slowed 750→3000: less memory pressure on the box)
+celnet_fixsim_stream_hold_ms: 3000       # ms RFS/ESP hold per cycle
+celnet_fixsim_lift_every: 6              # book a deal every Nth quote (raised 3→6: fewer deals accumulate)
 # ESP streaming leg: when enabled AND a fixed-income STREAM acceptor is reachable
 # (celnet_fixsim_esp_port, else celnet_fixsim_stream_port), a supervised `--asset esp`
 # client downloads the top-N reference-data instruments over gRPC and streams bond RFS on
@@ -84,7 +85,7 @@ celnet_fixsim_esp_enabled: true
 celnet_fixsim_stream_port: 56003
 celnet_fixsim_stream_sender: "CELER_RATES_STREAM"
 celnet_fixsim_grpc_addr: "http://127.0.0.1:50051"  # reference-data + login endpoint
-celnet_fixsim_esp_instruments: 15        # top-N most-liquid/relevant instruments to stream
+celnet_fixsim_esp_instruments: 8         # top-N most-liquid/relevant instruments to stream (trimmed 15→8)
 celnet_fixsim_esp_seed: "0x5EED1234"     # deterministic seed (hex ok — the launcher normalizes 0x… → decimal)
 # Host-local password file for the ESP refdata gRPC login (AuthService.Login). The launcher
 # reads it into FIXSIM_PASSWORD when present, so no secret lives in group_vars/git and the ESP
@@ -106,13 +107,13 @@ celnet_fixsim_password_file: "/home/{{ celnet_user | default('celnet') }}/.lpsim
 celnet_lpsim_enabled: true
 celnet_lpsim_lp_name: "LP-SIM"           # base LP connection name → LP-SIM-01..LP-SIM-0N
 celnet_lpsim_book: "ust-composite"       # cosmetic book label (book-aware mode discovers books)
-celnet_lpsim_members: 5                   # 5 distinct-character LPs by default (LP-SIM-01..05)
-celnet_lpsim_interval: 2                  # seconds between quote-emission rounds
+celnet_lpsim_members: 4                   # distinct-character LPs (trimmed 5→4 to reduce quote volume)
+celnet_lpsim_interval: 5                  # seconds between quote-emission rounds (slowed 2→5)
 celnet_lpsim_interval_ms: ""             # sub-second override (ms); "" ⇒ use interval seconds
-celnet_lpsim_book_poll: 5                 # seconds between aggregated-book polls (book-aware)
+celnet_lpsim_book_poll: 10                # seconds between aggregated-book polls (book-aware; slowed 5→10)
 celnet_lpsim_no_book_poll: 0             # 1 = broadcast fallback (no book polling)
 celnet_lpsim_instruments: "all"          # all (book-aware default), or a CSV of ISINs/CUSIPs
-celnet_lpsim_max_instruments: 12          # cap on instruments (broadcast/local modes only)
+celnet_lpsim_max_instruments: 8           # cap on instruments (broadcast/local modes only; trimmed 12→8)
 celnet_lpsim_seed: 305419896              # reproducibility seed
 celnet_lpsim_settlement: "2026-04-16"    # valuation date (YYYY-MM-DD)
 celnet_lpsim_include_bills: 0             # 1 = also stream zero-coupon Bills
