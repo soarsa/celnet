@@ -124,13 +124,10 @@ impl CurveDefinitionDef {
                     return Err("pillar tenor must be >= 1".to_string());
                 }
                 PillarTenorDef::MaturityDate(y, m, d) => {
-                    if time::Date::from_calendar_date(
-                        y,
-                        time::Month::try_from(u8::try_from(m).unwrap_or(0))
-                            .map_err(|_| format!("pillar maturity month {m} is not 1..=12"))?,
-                        u8::try_from(d).unwrap_or(0),
-                    )
-                    .is_err()
+                    let month = time::Month::try_from(u8::try_from(m).unwrap_or(0))
+                        .map_err(|_| format!("pillar maturity month {m} is not 1..=12"))?;
+                    if time::Date::from_calendar_date(y, month, u8::try_from(d).unwrap_or(0))
+                        .is_err()
                     {
                         return Err(format!("pillar maturity {y}-{m}-{d} is not a real date"));
                     }
